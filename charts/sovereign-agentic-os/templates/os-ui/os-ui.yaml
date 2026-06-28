@@ -11,6 +11,55 @@
   see os-ui/INTEGRATION.md. Without that block this file renders to nothing.
 */}}
 {{- $u := .Values.osUI }}
+{{- /*
+  Scoped RBAC for the native Components surface. The OS UI server reads workload
+  status + scales Deployments/StatefulSets 0<->1 and reads CNPG Clusters
+  directly via the in-cluster API (lib/platform.ts) — this is what the standalone
+  admin-console used to do. Same least-privilege Role, now bound to os-ui.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: os-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui") | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: os-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "deployments/scale", "statefulsets/scale"]
+    verbs: ["get", "list", "patch", "update"]
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods", "services"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: os-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: os-ui
+subjects:
+  - kind: ServiceAccount
+    name: os-ui
+    namespace: {{ .Release.Namespace }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,6 +79,11 @@ spec:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui") | nindent 8 }}
     spec:
+      serviceAccountName: os-ui
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         {{- include "soa.podSecurityContext" . | nindent 8 }}
         runAsUser: 1000
@@ -45,6 +99,10 @@ spec:
               value: "3000"
             - name: HOSTNAME
               value: "0.0.0.0"
+            # Namespace the stack workloads live in — the native Components
+            # surface reads their status + scales them 0<->1 here via the k8s API.
+            - name: NAMESPACE
+              value: {{ .Release.Namespace | quote }}
             # In-cluster backend Service URLs (overridable per environment).
             - name: SAMPLE_AGENT_URL
               value: {{ $u.sampleAgentUrl | quote }}
@@ -66,19 +124,24 @@ spec:
               value: {{ $u.opaUrl | quote }}
             - name: DAGSTER_URL
               value: {{ $u.dagsterUrl | quote }}
-            # Browser-reachable consoles (linked/opened from the browser).
+            # Browser-reachable consoles (linked/opened from the browser). When
+            # ingress is enabled these resolve to the PUBLIC ingress host
+            # (https://<tool>.<domain>) via soa.consoleUrl — never localhost — so
+            # deployed links work; tools with no public host (e.g. dagster) get an
+            # empty value and the UI hides their "Open" link. Local-kind keeps the
+            # port-forward defaults from values.yaml.
             - name: SUPERSET_URL
-              value: {{ $u.supersetUrl | quote }}
+              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "superset" "fallback" $u.supersetUrl) | quote }}
             - name: LANGFUSE_CONSOLE_URL
-              value: {{ $u.langfuseConsoleUrl | quote }}
+              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "langfuse" "fallback" $u.langfuseConsoleUrl) | quote }}
             - name: FORGEJO_CONSOLE_URL
-              value: {{ $u.forgejoConsoleUrl | quote }}
+              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "forgejo" "fallback" $u.forgejoConsoleUrl) | quote }}
             - name: ARGOCD_URL
-              value: {{ $u.argocdUrl | quote }}
+              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "argocd" "fallback" $u.argocdUrl) | quote }}
             - name: OPENMETADATA_URL
-              value: {{ $u.openmetadataUrl | quote }}
+              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "openmetadata" "fallback" $u.openmetadataUrl) | quote }}
             - name: DAGSTER_CONSOLE_URL
-              value: {{ $u.dagsterConsoleUrl | quote }}
+              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "dagster" "fallback" $u.dagsterConsoleUrl) | quote }}
             # Langfuse project keys — public key is non-secret; secret key via Secret.
             - name: LANGFUSE_PUBLIC_KEY
               value: {{ .Values.langfuseInit.publicKey | quote }}

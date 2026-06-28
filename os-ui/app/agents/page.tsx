@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import PageHeader from '@/components/PageHeader';
 import AgentChat from '@/components/AgentChat';
+import ArtifactPanel from '@/components/ArtifactPanel';
 import { useApi } from '@/lib/useApi';
 
 type Agent = {
@@ -27,25 +28,55 @@ const STARTERS = [
 
 export default function AgentsPage() {
   const { data, loading, error, reload } = useApi<Data>('/api/agents');
-  const [tab, setTab] = useState<'running' | 'build'>('running');
+  const [tab, setTab] = useState<'running' | 'workspace' | 'build'>('running');
 
   return (
     <>
-      <PageHeader title="Agents" crumb="LangGraph multi-agent systems — run & build" />
+      <PageHeader title="Agents" crumb="LangGraph multi-agent systems — run, author & build" />
       <div className="content">
         <p className="lead">
-          See the multi-agent systems running on LangGraph, and design new ones with the
-          agent builder. (Talk-to-your-data moved to the Data tab, where it belongs.)
+          See the multi-agent systems running on LangGraph, manage your own agent artifacts, and
+          design new ones with the agent builder.
         </p>
 
         <div className="tabstrip">
           <button className={tab === 'running' ? 'active' : ''} onClick={() => setTab('running')}>
             Running agents
           </button>
+          <button className={tab === 'workspace' ? 'active' : ''} onClick={() => setTab('workspace')}>
+            My agents
+          </button>
           <button className={tab === 'build' ? 'active' : ''} onClick={() => setTab('build')}>
             Build a new system
           </button>
         </div>
+
+        {tab === 'workspace' ? (
+          <ArtifactPanel
+            type="agent"
+            createLabel="Create agent"
+            specFields={[
+              { key: 'graph', label: 'Graph (nodes, comma-separated)', placeholder: 'retrieve, generate, review' },
+              { key: 'tools', label: 'Tools / OPA grants', placeholder: 'knowledge_search, sql_query' },
+            ]}
+            renderSpec={(a) => {
+              const g = String(a.spec?.graph ?? '');
+              const t = String(a.spec?.tools ?? '');
+              return g || t ? (
+                <div className="muted mono" style={{ fontSize: 11 }}>
+                  {g ? <>graph: {g}<br /></> : null}{t ? <>tools: {t}</> : null}
+                </div>
+              ) : null;
+            }}
+            intro={
+              <p className="hint" style={{ marginTop: 0 }}>
+                Author a LangGraph agent as an artifact (Personal → Shared → Certified). Codegen &
+                live deploy from a spec is <strong>scaffolded in v1</strong>; the artifact captures
+                the graph + tools for review and reuse.
+              </p>
+            }
+          />
+        ) : null}
 
         {tab === 'running' ? (
           <>

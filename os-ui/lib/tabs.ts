@@ -45,6 +45,7 @@ export const TAB_GROUPS: TabGroup[] = [
   {
     heading: 'Platform',
     tabs: [
+      { label: 'Users', icon: '☖', href: '/users', role: 'Administrator' },
       { label: 'Components', icon: '▥', href: '/components', role: 'Builder / Administrator' },
       { label: 'Gateway', icon: '⌁', href: '/gateway' },
       { label: 'Orchestration', icon: '⟲', href: '/orchestration' },

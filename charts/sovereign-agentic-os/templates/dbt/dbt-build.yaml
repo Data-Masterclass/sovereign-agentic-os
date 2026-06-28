@@ -30,6 +30,10 @@ spec:
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "dbt") | nindent 8 }}
     spec:
       restartPolicy: Never
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         {{- include "soa.podSecurityContext" . | nindent 8 }}
         runAsUser: 1000
@@ -41,7 +45,7 @@ spec:
             {{- include "soa.containerSecurityContext" . | nindent 12 }}
           env:
             - name: PGHOST
-              value: pg-rw
+              value: {{ include "soa.pgHost" . }}
             - name: PGDATABASE
               value: {{ $d.warehouse.database | quote }}
             - name: PGSCHEMA

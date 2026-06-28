@@ -59,6 +59,10 @@ spec:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "egress-proxy") | nindent 8 }}
     spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         {{- include "soa.podSecurityContext" . | nindent 8 }}
         runAsUser: 65534

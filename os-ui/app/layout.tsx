@@ -4,7 +4,7 @@ import { rubik, oswald, marcellus } from './fonts';
 import Sidebar from '@/components/Sidebar';
 
 export const metadata: Metadata = {
-  title: 'Sovereign Agentic OS',
+  title: 'Sovereign Agentic OS by datamasterclass.com',
   description: 'The front door for the Sovereign Agentic OS — talk to your data.',
   // app/icon.svg is auto-emitted as /icon.svg and served from the standalone
   // build output (public/ is not copied into the container image).

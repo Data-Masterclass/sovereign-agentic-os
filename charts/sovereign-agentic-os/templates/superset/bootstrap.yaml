@@ -26,7 +26,7 @@ data:
         "provider": "db", "refresh": True}, timeout=15).json()["access_token"]
     H = {"Authorization": "Bearer " + t, "Referer": B}
     H["X-CSRFToken"] = S.get(B + "/api/v1/security/csrf_token/", headers=H).json()["result"]
-    uri = f'postgresql://{os.environ["WH_USER"]}:{os.environ["WH_PASS"]}@pg-rw:5432/warehouse'
+    uri = f'postgresql://{os.environ["WH_USER"]}:{os.environ["WH_PASS"]}@{{ include "soa.pgHost" . }}:5432/warehouse'
     ex = S.get(B + "/api/v1/database/?q=(filters:!((col:database_name,opr:eq,value:warehouse)))", headers=H).json()["result"]
     if ex:
         dbid = ex[0]["id"]; print("warehouse db exists", dbid)
@@ -61,6 +61,10 @@ spec:
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "superset-bootstrap") | nindent 8 }}
     spec:
       restartPolicy: Never
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         {{- include "soa.podSecurityContext" . | nindent 8 }}
         runAsUser: 1000

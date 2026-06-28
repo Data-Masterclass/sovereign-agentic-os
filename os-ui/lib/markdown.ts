@@ -8,7 +8,7 @@
  * deliberately small subset: headings, fenced + inline code, bold/italic,
  * links, unordered/ordered lists, blockquotes, horizontal rules and paragraphs.
  * Input is HTML-escaped FIRST, so even though the docs come from our own
- * Admin Console the output is safe to inject. Returns an HTML string.
+ * docs/components/*.md the output is safe to inject. Returns an HTML string.
  */
 function esc(s: string): string {
   return s

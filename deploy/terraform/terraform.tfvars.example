@@ -16,15 +16,39 @@ service_account_key_path = "../../../stackit/sa-key.json"
 region      = "eu01"
 name_prefix = "dm-agentic-os"
 
-# --- SKE node pool ----------------------------------------------------------
-# Confirm the exact flavor name in the STACKIT machine-type catalog. go-live
-# targets ~4 vCPU / 32 GB nodes; `c1.4` is a verified 4 vCPU compute flavor.
-node_machine_type   = "c1.4"
-node_pool_min       = 3
-node_pool_max       = 4
+# --- Mode toggle ------------------------------------------------------------
+# The VERIFIED single-node path runs every backend IN-CLUSTER (self-hosted), so
+# set Mode A. Mode B (managed) is wired but not the verified path and bills 24/7.
+# false = Mode A — SKE cluster + DNS ONLY; all backends bundled in-cluster from
+#                  the self-contained chart (pauses with the node pool). The
+#                  CLI/Makefile also set this for you (`make stackit-up` /
+#                  `stackit deploy --self-hosted` pass -var enable_managed_backends=false).
+enable_managed_backends = false
+
+# --- SKE cluster / Kubernetes -----------------------------------------------
+# 1.31 (the old default) is REJECTED by SKE at apply — use 1.34.
+kubernetes_version_min = "1.34"
+
+# --- SKE node pool (VERIFIED single-node path) ------------------------------
+# DEFAULT, verified topology: ONE `g2i.8` worker (8 vCPU / 32 GB) in a SINGLE AZ,
+# node pool pinned min=1/max=1. The full L1–L3 self-contained stack (CloudNativePG,
+# OpenSearch, ClickHouse, Valkey, MinIO, Langfuse, Superset, OpenMetadata, Forgejo,
+# Dagster, …) fits on one 32 GB node (~14 GB working set) and pauses fully when the
+# pool scales to 0 off-hours.
+#
+# ⚠ DO NOT add nodes / AZs. Cross-node pod networking on SKE-in-an-SNA is BROKEN
+#   (pods on a node without a CoreDNS replica can't resolve DNS or reach pods on
+#   other nodes — verified 100% cross-node loss; it took out CloudNativePG). One
+#   node sidesteps it entirely. Multi-node / Mode-B stay overridable but BLOCKED.
+# Confirm `g2i.8` exists in the STACKIT machine-type catalog for your project
+# before apply (`c1.4` is deprecated).
+node_machine_type   = "g2i.8"
+node_pool_min       = 1
+node_pool_max       = 1            # one AZ ⇒ max=1 (SKE needs max ≥ #AZs)
+availability_zones  = ["eu01-1"]   # single AZ — a 1-node pool cannot span AZs
 node_volume_size_gb = 50
 
-# --- PostgreSQL Flex --------------------------------------------------------
+# --- PostgreSQL Flex (MODE B only — ignored when enable_managed_backends=false) -
 postgres_version  = "16"
 postgres_flavor   = { cpu = 2, ram = 8 }
 postgres_replicas = 1
@@ -32,9 +56,9 @@ postgres_storage  = { class = "premium-perf2-stackit", size = 20 }
 # Tighten to the SKE egress CIDR at go-live (terraform output / stackit ske).
 postgres_acl = ["0.0.0.0/0"]
 
-# --- OpenSearch (confirm plan names: `stackit opensearch plans`) ------------
+# --- OpenSearch (MODE B only; confirm plan names: `stackit opensearch plans`) -
 opensearch_plan_name = "stackit-opensearch-single-small"
 opensearch_version   = "2"
 
-# --- Container Registry (manual — provider has no resource) -----------------
+# --- Container Registry (MODE B; manual — provider has no resource) ----------
 container_registry_url = "REPLACE-registry-host/agentic-os"

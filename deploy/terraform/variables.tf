@@ -1,8 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 #
-# Input variables for the STACKIT Mode B stack. Sensible defaults for an EU01
-# demo; sizing follows stackit.md §5 and go-live-stackit.md (3× ~4 vCPU / 32 GB).
+# Input variables for the STACKIT stack. DEFAULTS now target the VERIFIED
+# single-node path: a plain `tofu apply` yields one `g2i.8` worker in a single
+# AZ (eu01-1), node pool pinned min=1/max=1, Kubernetes 1.34. This is the only
+# end-to-end-verified topology — multi-node and Mode-B managed backends remain
+# available via explicit tfvars overrides but are BLOCKED today by broken
+# cross-node pod networking on SKE-in-an-SNA (see ske.tf + the deployment guide).
 # No secrets here — credentials are provider-generated outputs (see outputs.tf).
 
 # --- Identity / region -------------------------------------------------------
@@ -34,37 +38,76 @@ variable "name_prefix" {
   default     = "dm-agentic-os"
 }
 
+# --- Deploy mode (managed vs self-hosted backends) ---------------------------
+
+variable "enable_managed_backends" {
+  description = <<-EOT
+    Mode toggle for the stateful backends.
+
+      true  (DEFAULT) = Mode B — provision the STACKIT MANAGED services
+                        (PostgreSQL Flex, OpenSearch, Object Storage, Secrets
+                        Manager, AI Model Serving). The chart points at them via
+                        values.stackit-managed.yaml. Managed services bill 24/7.
+
+      false           = Mode A — provision ONLY the SKE cluster + DNS. Every
+                        backend (Postgres/OpenSearch/ClickHouse/Valkey/MinIO) runs
+                        IN the cluster from the self-contained chart, so the whole
+                        deployment pauses with the node pool (`stackit off` / `make
+                        sleep`) — NO 24/7 managed-service billing. The chart uses
+                        values.selfcontained.yaml + values.stackit-selfhosted.yaml.
+
+    ske.tf (cluster + kubeconfig) and dns.tf (zone + records) are ALWAYS created;
+    only the managed-service resources are gated on this flag.
+  EOT
+  type        = bool
+  default     = true
+}
+
 # --- Kubernetes (SKE) --------------------------------------------------------
 
 variable "kubernetes_version_min" {
   description = "Minimum SKE Kubernetes version (SKE picks the patch)."
   type        = string
-  default     = "1.31"
+  default     = "1.34"
 }
 
 variable "node_machine_type" {
   description = <<-EOT
-    SKE node-pool machine flavor. stackit.md §5 / go-live target ~4 vCPU / 32 GB
-    RAM-bound nodes (OpenSearch JVM heaps move to the managed service in Mode B,
-    so the pool can be smaller than Mode A). Confirm the exact flavor name in the
-    STACKIT machine-type catalog for the project — availability is project/region
-    dependent. `c1.4` (4 vCPU) is a verified compute flavor; switch to a memory
-    flavor (~32 GB) before go-live if the workload needs the headroom.
+    SKE node-pool machine flavor. Confirm the exact flavor name in the STACKIT
+    machine-type catalog for the project — availability is project/region
+    dependent. `c1.4` (4 vCPU) is a verified compute flavor.
+
+    Mode B (enable_managed_backends=true): OpenSearch JVM heaps + Postgres live in
+    managed services, so ~4 vCPU / 32 GB nodes suffice.
+
+    Mode A (enable_managed_backends=false): the full self-contained L1–L3 stack runs
+    in-cluster — budget ~40–64 GB schedulable RAM across the pool (a ~16–32 GB
+    memory flavor × 2–3 nodes). See deploy/terraform/terraform.tfvars.example.
   EOT
   type        = string
-  default     = "c1.4"
+  default     = "g2i.8"
 }
 
 variable "node_pool_min" {
-  description = "Node-pool minimum (cluster-autoscaler floor = the cost ceiling lower bound; `make sleep` scales here to 0)."
+  description = <<-EOT
+    Node-pool minimum (cluster-autoscaler floor; `make sleep` scales here to 0).
+    DEFAULT 1 = the verified single-node path. Raising this past 1 puts the
+    cluster on the multi-node topology, which is currently BLOCKED on STACKIT:
+    cross-node pod networking on SKE-in-an-SNA is broken (see ske.tf / the
+    deployment guide Cautions). Keep at 1 unless you have a STACKIT resolution.
+  EOT
   type        = number
-  default     = 3
+  default     = 1
 }
 
 variable "node_pool_max" {
-  description = "Node-pool maximum (cluster-autoscaler ceiling = the structural cost cap, stackit.md §5)."
+  description = <<-EOT
+    Node-pool maximum (cluster-autoscaler ceiling = the structural cost cap).
+    DEFAULT 1 = single node. >1 enables multi-node scheduling, which is BLOCKED
+    on STACKIT today (broken cross-node pod overlay — see node_pool_min).
+  EOT
   type        = number
-  default     = 4
+  default     = 1
 }
 
 variable "node_volume_size_gb" {
@@ -80,9 +123,15 @@ variable "node_volume_type" {
 }
 
 variable "availability_zones" {
-  description = "EU01 availability zones for the node pool (eu01-1/-2/-3)."
+  description = <<-EOT
+    EU01 availability zones for the node pool (eu01-1/-2/-3). DEFAULT is a SINGLE
+    AZ (`["eu01-1"]`) to match the verified single-node path — a 1-node pool
+    cannot span AZs (SKE requires node_pool_max ≥ #AZs). Multi-AZ implies
+    multi-node, which is currently BLOCKED on STACKIT (broken cross-node pod
+    overlay on SKE-in-an-SNA — see node_pool_min / the deployment guide).
+  EOT
   type        = list(string)
-  default     = ["eu01-1", "eu01-2", "eu01-3"]
+  default     = ["eu01-1"]
 }
 
 # --- PostgreSQL Flex ---------------------------------------------------------

@@ -61,4 +61,4 @@ received the bundle: Borek Data Ventures UG will, on request, provide a copy of 
 corresponding source for the exact versions shipped, for a charge no more than the
 cost of physically performing the distribution.
 
-Contact: contact@datamasterclass.com
+Contact: alex@datamasterclass.com

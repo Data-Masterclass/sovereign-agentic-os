@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import PageHeader from '@/components/PageHeader';
 import AgentChat from '@/components/AgentChat';
+import ArtifactPanel from '@/components/ArtifactPanel';
 import { useApi } from '@/lib/useApi';
 import { CONNECTORS, CONNECTOR_CATEGORIES } from '@/lib/connectors';
 
@@ -20,7 +21,7 @@ const STARTERS = [
 
 export default function ConnectionsPage() {
   const { data, loading, error, reload } = useApi<Status>('/api/status');
-  const [tab, setTab] = useState<'registry' | 'build'>('registry');
+  const [tab, setTab] = useState<'mine' | 'registry' | 'build'>('mine');
 
   return (
     <>
@@ -33,9 +34,31 @@ export default function ConnectionsPage() {
         </p>
 
         <div className="tabstrip">
+          <button className={tab === 'mine' ? 'active' : ''} onClick={() => setTab('mine')}>My connections</button>
           <button className={tab === 'registry' ? 'active' : ''} onClick={() => setTab('registry')}>Registry</button>
           <button className={tab === 'build' ? 'active' : ''} onClick={() => setTab('build')}>Build a connector</button>
         </div>
+
+        {tab === 'mine' ? (
+          <ArtifactPanel
+            type="connection"
+            createLabel="Register connection"
+            specFields={[
+              { key: 'kind', label: 'Source type', placeholder: 'postgres | rest-api | onedrive | s3' },
+              { key: 'endpoint', label: 'Endpoint / host', placeholder: 'db.internal:5432 / https://api.example.com' },
+            ]}
+            renderSpec={(a) => (a.spec?.kind || a.spec?.endpoint ? (
+              <div className="muted mono" style={{ fontSize: 11 }}>{a.spec?.kind ? <>kind: {String(a.spec.kind)}<br /></> : null}{a.spec?.endpoint ? <>endpoint: {String(a.spec.endpoint)}</> : null}</div>
+            ) : null)}
+            intro={
+              <p className="hint" style={{ marginTop: 0 }}>
+                Connections you (and your domain) own, share, or added from the Marketplace — same
+                Personal → Shared → Certified lifecycle as every artifact. Credentials live in the secrets
+                store; you share <em>use</em>, never the secret. Live wiring is <strong>scaffolded in v1</strong>.
+              </p>
+            }
+          />
+        ) : null}
 
         {tab === 'registry' ? (
           <>
@@ -101,7 +124,9 @@ export default function ConnectionsPage() {
               );
             })}
           </>
-        ) : (
+        ) : null}
+
+        {tab === 'build' ? (
           <>
             <div className="section-title">Connections agent</div>
             <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
@@ -116,7 +141,7 @@ export default function ConnectionsPage() {
               starters={STARTERS}
             />
           </>
-        )}
+        ) : null}
       </div>
     </>
   );

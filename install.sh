@@ -124,11 +124,10 @@ ok "Install complete."
 # --- 7. report -------------------------------------------------------------
 cat <<EOF
 
-$(c "Start here — two front doors:")
-  OS UI (product)       kubectl -n $NS port-forward svc/os-ui 8080:3000
+$(c "Start here — one front door:")
+  OS UI (product + ops) kubectl -n $NS port-forward svc/os-ui 8080:3000
                         -> http://localhost:8080   (Home / Agents / Structured Data / Monitoring / Dashboards)
-  Admin Console (ops)   kubectl -n $NS port-forward svc/admin-console 8081:8080
-                        -> http://localhost:8081   (every component's status, on/off, login + docs)
+                        -> Platform -> Components   (every component's status, on/off, login + docs)
 
 $(c "Demo logins (port-forward, then open in a browser):")
   Langfuse (traces)     kubectl -n $NS port-forward svc/agentic-os-langfuse-web 3000:3000

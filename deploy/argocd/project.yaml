@@ -11,7 +11,7 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  description: Sovereign Agentic OS — platform + umbrella chart (Mode B)
+  description: Sovereign Agentic OS — platform + umbrella chart (Mode A self-hosted / Mode B managed)
   sourceRepos:
     # The OS repo (this repo) + the upstream chart repos the platform apps pull.
     - "*"

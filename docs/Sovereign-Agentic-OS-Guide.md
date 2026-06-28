@@ -441,6 +441,93 @@ In production, the privileged DinD builder is swapped for rootless kaniko/builda
 
 \newpage
 
+# The golden paths in depth
+
+The walkthroughs above show the seeded demos. This chapter describes the **operating model** —
+how you actually load data, build agents, do ML, build software, and connect to external systems —
+and how each is governed.
+
+> **Scope:** this is the end-to-end model the OS is built around. Layers 1–3 are in place; **Science
+> (Layer 4) is opt-in and off by default**; some surfaces (per-domain spaces, identity, the
+> cross-domain Marketplace, and parts of the Governance approval UI) are on the near-term roadmap —
+> see *Version & changelog*.
+
+## One model for everything
+
+Every capability is an **artifact** with the same attributes — **owner · domain · type · visibility**.
+Whatever the type (data product, knowledge, file, agent, software, ML model, feature set, connection,
+dashboard), the lifecycle is the same: **Create → Document → Use → Promote**, through the OS UI,
+scaffolding the real tools underneath, preview-first, cataloged and audited.
+
+**Promotion ladder (role-gated):**
+
+| Visibility | Meaning | Who can promote |
+|---|---|---|
+| **Personal / private** | the creator only (default for drafts + app-created data/files) | — |
+| **Domain (Shared)** | usable across the owning domain | **Builder** or **Administrator** |
+| **Marketplace (cross-domain)** | discoverable by other domains | **Administrator** only |
+
+Roles: **User** consumes · **Creator** builds (drafts) · **Builder** certifies + shares in-domain +
+approves go-live/connection-writes · **Administrator** sets tenant guardrails + promotes to the
+Marketplace.
+
+## Data
+
+In **Structured Data → New data product** you **load** (file/connection/Supabase snapshot), **transform**
+(dbt models + tests), **document** (cataloged in OpenMetadata with lineage), define **metrics** (Cube),
+and build **dashboards** (Superset). Two tiers stay separate: **Supabase** holds operational/app state;
+**Iceberg** on object storage holds the analytical data products. DuckDB/Trino query the lake. Agents
+read the *same* marts + metrics as the dashboards, so the numbers never diverge.
+
+## Agents
+
+In **Agents → New agent** you define behaviour (`AGENT.md`) and memory (`MEMORY.md`), then **grant the
+resources** the agent may use — data products, knowledge, files, connections — and the tools it may
+call. **The one rule:** an agent never touches a raw resource; every call goes through the **model
+gateway + policy engine (OPA)**, is **cost-capped** and **traced**. Short-term memory is per-
+conversation; long-term memory is a governed, domain-scoped artifact. By default agents are
+**read-only / propose-don't-commit** — publishing data/knowledge, writing to external systems, sharing,
+overspend, or deletes require **approval** by a Builder/Admin. Inside a domain, agents collaborate as a
+**LangGraph** team; across domains they call each other as **governed tools**.
+
+## Science (ML) — opt-in, Layer 4
+
+In the **Science** tab (off by default) you take **traditional ML** end to end: explore a data product
+in a notebook (JupyterHub), build reusable **features** (Featureform), **train + track** experiments
+(MLflow), register and compare **models**, and — after a Builder **certifies + approves go-live** —
+**deploy** to **KServe**. The deployed model becomes a governed `predict` tool agents can call. GPU is
+optional and cost-gated. This is classic ML, not LLMs.
+
+## Software
+
+In the **Software** tab, **New software** opens a **chat dedicated to that one app**. You build it in
+plain language (it scaffolds a Next.js + Supabase app, commits to its own repo, deploys via CI →
+Argo CD). All of the app's **design decisions, data descriptions and documentation live under that
+app**. Data and files it creates are **Personal** to you by default. Crucially, building the app
+**auto-creates an MCP connection** for it — instantly available in **Connections** and usable as a
+**tool by your agents**. Promote it to Shared (Builder/Admin) or the Marketplace (Admin) as usual.
+
+## Connections
+
+In the **Connections** tab, a **Builder or Administrator** adds an **API, MCP server, database or
+SaaS** integration by entering credentials — which go **only** into the secrets store; the agent or app
+never sees the token. The connection's operations are wrapped as **governed tools**, and you choose a
+**capability profile per tool**: **Off / Read / Write-with-approval / Write-bounded / Blocked**, with
+scope, rate and cost limits. **Reads on, writes off by default** — write-back is opt-in and limited
+(e.g. "update opportunity ≤ €X"). New connections are **Personal**, then Shared (Builder/Admin) or
+Marketplace (Admin only).
+
+## The governance spine
+
+One **gateway** (every tool/model call, cost caps), one **policy engine** (OPA — `allow` / `deny` /
+`requires_approval`), one **trace** (Langfuse), one **audit**. Two layers of policy: **tenant
+guardrails** set by Administrators (default-deny egress, no plaintext secrets to agents, no
+cross-domain data without a grant, model allowlist) that domains cannot override, and **domain policy**
+set by Builders within those guardrails. High-stakes actions queue for approval in the **Governance**
+tab.
+
+\newpage
+
 # Component reference
 
 A section per component, grouped by layer. Each entry summarizes what the component is, how to reach it,
@@ -884,6 +971,8 @@ in-cluster host `http://agentic-os-langfuse-web:3000`.
   OpenMetadata), L3 self-service (Polaris + DuckDB lakehouse, Superset, Forgejo + Argo CD), the
   secure-by-default egress baseline, the Admin Console, and the **OS UI v1.0** (every sidebar tab a
   real surface — brand-themed, light/dark, with the Admin Console embedded at Platform → Components).
+- **Docs:** added *The golden paths in depth* chapter — the operating model across data, agents,
+  science, software and connections, with the artifact/promotion ladder and the governance spine.
 - **Next:** per-domain spaces, identity (Ory), live agent/connector codegen, full MCP tool embeds. Bump
   this section additively as the OS evolves and re-run `scripts/build-docs.sh`.
 

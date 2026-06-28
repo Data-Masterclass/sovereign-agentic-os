@@ -77,11 +77,13 @@ for e in $IMAGES; do
   build_push "$dir" "$tag" "$token"
 done
 
-# Special build contexts (mirror scripts/build-images.sh).
+# Special build contexts (mirror scripts/build-images.sh). The OS UI now builds
+# from the repo root so it can bake in docs/components/* for the native
+# Components surface. admin-console is DEPRECATED (its function is native to the
+# OS UI) — build it only for the legacy standalone service.
 for spec in \
   "dagster:0.2.0:REPLACE-DAGSTER-DIGEST:-f images/dagster/Dockerfile images/" \
-  "admin-console:0.1.0:REPLACE-ADMIN-CONSOLE-DIGEST:-f images/admin-console/Dockerfile ." \
-  "os-ui:0.1.0:REPLACE-OS-UI-DIGEST:-f images/os-ui/Dockerfile os-ui"
+  "os-ui:0.1.0:REPLACE-OS-UI-DIGEST:-f images/os-ui/Dockerfile ."
 do
   IFS=':' read -r name tag token ctx <<<"$spec"
   ref="$REGISTRY/sovereign-os/$name:$tag"

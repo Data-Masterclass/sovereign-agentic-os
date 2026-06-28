@@ -21,6 +21,16 @@ kind create cluster --name agentic-os
 and prints the demo logins. Non-interactive: `./install.sh --defaults`. Remove:
 `./install.sh --uninstall`.
 
+## Deploy to STACKIT (recommended: single node)
+
+Ready to run it in the cloud? Follow the **primary, verified path**:
+**[Deploy to STACKIT — recommended: single node](stackit-deployment-guide.md)**. One `g2i.8`
+node (8 vCPU / 32 GB) in a single availability zone, every backend self-contained in-cluster,
+TLS via Let's Encrypt, and `deploy/stackit off` to pause the whole stack off-hours. Managed
+services (Mode B) and multi-node HA are **known-blocked** on STACKIT today (cross-node pod
+networking on SKE-in-an-SNA is broken — see the guide's Cautions); single node is the only
+verified path.
+
 ## Two front doors
 **OS UI** — the product front door. **v1.0: every sidebar tab is a real surface** (Home, Agents,
 Structured Data with talk-to-your-data, Knowledge, Software, Science, Metrics, Governance,

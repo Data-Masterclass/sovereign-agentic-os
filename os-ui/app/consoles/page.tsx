@@ -83,12 +83,18 @@ export default function ConsolesPage() {
                   <span className="ico" style={{ fontSize: 18, color: 'var(--teal)' }}>{c.glyph}</span>
                   <h3 style={{ margin: 0 }}>{c.name}</h3>
                 </div>
-                <a className="btn ghost" href={c.url} target="_blank" rel="noreferrer">
-                  Open →
-                </a>
+                {c.url ? (
+                  <a className="btn ghost" href={c.url} target="_blank" rel="noreferrer">
+                    Open →
+                  </a>
+                ) : (
+                  <span className="btn ghost" aria-disabled="true" title="Internal — reach via port-forward" style={{ opacity: 0.5, cursor: 'default' }}>
+                    Internal
+                  </span>
+                )}
               </div>
               <div className="muted" style={{ marginTop: 8 }}>{c.blurb}</div>
-              <div className="muted mono" style={{ marginTop: 8, fontSize: 11.5 }}>{c.url}</div>
+              <div className="muted mono" style={{ marginTop: 8, fontSize: 11.5 }}>{c.url || 'internal — not publicly exposed; use the port-forward below'}</div>
               <div className="codeblock">{c.forward}</div>
               {c.login ? <div className="hint" style={{ marginTop: 8 }}>Login: {c.login}</div> : null}
             </div>

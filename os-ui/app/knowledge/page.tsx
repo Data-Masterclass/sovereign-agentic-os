@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import PageHeader from '@/components/PageHeader';
 import AgentChat from '@/components/AgentChat';
+import ArtifactPanel from '@/components/ArtifactPanel';
 
 type Hit = { id: string; score: number; title: string; text: string };
 type Result = { query: string; total: number; index: string; hits: Hit[] };
@@ -25,7 +26,7 @@ const STARTERS = [
 ];
 
 export default function KnowledgePage() {
-  const [tab, setTab] = useState<'search' | 'author'>('search');
+  const [tab, setTab] = useState<'search' | 'author' | 'workspace'>('search');
 
   // search
   const [q, setQ] = useState('');
@@ -105,7 +106,24 @@ export default function KnowledgePage() {
         <div className="tabstrip">
           <button className={tab === 'search' ? 'active' : ''} onClick={() => setTab('search')}>Search</button>
           <button className={tab === 'author' ? 'active' : ''} onClick={() => setTab('author')}>Author with the knowledge agent</button>
+          <button className={tab === 'workspace' ? 'active' : ''} onClick={() => setTab('workspace')}>My knowledge docs</button>
         </div>
+
+        {tab === 'workspace' ? (
+          <ArtifactPanel
+            type="knowledge"
+            createLabel="Create knowledge doc"
+            specFields={[{ key: 'index', label: 'Target index', placeholder: 'knowledge' }]}
+            renderSpec={(a) => (a.spec?.index ? <div className="muted mono" style={{ fontSize: 11 }}>index: {String(a.spec.index)}</div> : null)}
+            intro={
+              <p className="hint" style={{ marginTop: 0 }}>
+                Track knowledge docs as artifacts through the lifecycle. Ingestion into the live
+                OpenSearch index happens on the Author tab; here you manage visibility (Personal →
+                Shared → Certified) and reuse.
+              </p>
+            }
+          />
+        ) : null}
 
         {tab === 'search' ? (
           <>
@@ -151,7 +169,9 @@ export default function KnowledgePage() {
               ) : null}
             </div>
           </>
-        ) : (
+        ) : null}
+
+        {tab === 'author' ? (
           <>
             <div className="section-title">Three categories per workflow</div>
             <div className="grid">
@@ -197,7 +217,7 @@ export default function KnowledgePage() {
             {authorError ? <div className="error" style={{ marginTop: 12 }}>{authorError}</div> : null}
             {authorMsg ? <div className="hint" style={{ marginTop: 12, color: 'var(--teal)' }}>✓ {authorMsg}</div> : null}
           </>
-        )}
+        ) : null}
       </div>
     </>
   );

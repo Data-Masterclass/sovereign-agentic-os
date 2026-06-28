@@ -13,3 +13,11 @@ terraform/override.tf.json
 *.bak
 kubeconfig.yaml
 *.kubeconfig
+
+# local control (stackit CLI)
+.env.stackit
+.stackit-logs/
+.stackit-mode
+values.stackit-deploy.yaml
+# ingress basic-auth credential (htpasswd) — local secret, never commit
+.basic-auth-cred

@@ -64,6 +64,11 @@ mockModel:
 # (`sovereign-mock` / `sovereign-embed`) so the agents need no change. Swap the
 # `model:` ids for entries from `stackit ai-model-serving models`.
 litellm:
+  # Point the gateway's admin/virtual-key DB at managed PostgreSQL (was in-cluster
+  # pg-rw). useExisting + the `postgres-litellm-credentials` Secret are unchanged
+  # (values.yaml); only the host moves. Same REPLACE token as postgres.external.host.
+  db:
+    endpoint: "REPLACE-postgres-flex-host"
   environmentSecrets:
     - litellm-credentials          # master key (unchanged)
     - stackit-ai-model-serving-key # provides api_key + api_base envs
@@ -86,6 +91,30 @@ litellm:
       master_key: os.environ/PROXY_MASTER_KEY
 
 # =============================================================================
+# Subchart backend wiring (Mode B). The bespoke templates resolve their backend
+# host through the soa.* helpers automatically; the upstream SUBCHARTS take their
+# host from values, so we point them at the managed endpoints here (deep-merged
+# over values.yaml — only the host/endpoint changes; the per-app credential
+# Secret names are identical in both modes, supplied by External Secrets).
+# Same REPLACE tokens as postgres.external.host / opensearch.external.host /
+# objectStorage.external.endpoint, so render-values.sh fills them in one pass.
+# ClickHouse + Valkey stay bundled (no managed STACKIT equivalent) — not overridden.
+# =============================================================================
+langfuse:
+  postgresql:
+    host: "REPLACE-postgres-flex-host"   # Langfuse metadata DB -> managed PostgreSQL
+  s3:
+    endpoint: "https://object.storage.eu01.onstackit.cloud" # blob store -> managed S3
+
+openmetadata:
+  openmetadata:
+    config:
+      database:
+        host: "REPLACE-postgres-flex-host"  # catalog DB -> managed PostgreSQL
+      elasticsearch:
+        host: "REPLACE-opensearch-host"     # search backend -> managed OpenSearch
+
+# =============================================================================
 # Bespoke images -> STACKIT Container Registry, referenced by immutable digest.
 # kind's local image load does NOT work on a real cluster (build-deploy §4), so
 # every custom image is pulled from the registry. The template renders
@@ -98,6 +127,14 @@ osUI:
   image:
     repository: REPLACE-REGISTRY/sovereign-os/os-ui
     tag: "0.1.0@sha256:REPLACE-OS-UI-DIGEST"
+  # Server-side search now hits managed OpenSearch (was in-cluster opensearch:9200).
+  opensearchUrl: "https://REPLACE-opensearch-host:9200"
+  # Browser-reachable consoles -> the public Ingress hosts (was localhost port-forwards).
+  supersetUrl: "https://superset.REPLACE-DNS-NAME"
+  langfuseConsoleUrl: "https://langfuse.REPLACE-DNS-NAME"
+  forgejoConsoleUrl: "https://forgejo.REPLACE-DNS-NAME"
+  argocdUrl: "https://argocd.REPLACE-DNS-NAME"
+  openmetadataUrl: "https://openmetadata.REPLACE-DNS-NAME"
 
 sampleAgent:
   image:
@@ -134,7 +171,12 @@ queryTool:
     repository: REPLACE-REGISTRY/sovereign-os/query-tool
     tag: "0.2.0@sha256:REPLACE-QUERY-TOOL-DIGEST"
 
+# Admin Console is DEPRECATED — its functionality is now native to the OS UI
+# (Platform -> Components). Off by default in the chart; no image needed. Set
+# adminConsole.enabled=true (and supply the image below) only for the legacy
+# standalone service.
 adminConsole:
+  enabled: false
   image:
     repository: REPLACE-REGISTRY/sovereign-os/admin-console
     tag: "0.1.0@sha256:REPLACE-ADMIN-CONSOLE-DIGEST"
@@ -143,6 +185,12 @@ superset:
   image:
     repository: REPLACE-REGISTRY/sovereign-os/superset
     tag: "6.1.0@sha256:REPLACE-SUPERSET-DIGEST"
+  # Superset metadata DB on managed PostgreSQL (was in-cluster pg-rw). user/name +
+  # the superset DB password (External Secrets) are otherwise unchanged. The
+  # bespoke superset-bootstrap Job resolves its host via soa.pgHost automatically.
+  supersetNode:
+    connections:
+      db_host: "REPLACE-postgres-flex-host"
 
 # Dagster has three image refs (user-code, webserver, daemon) — all the same
 # bespoke image. webserver/daemon are maps (safe to deep-merge). The user-code
@@ -151,6 +199,10 @@ superset:
 # deployment's grpc args/env). Pin it at go-live by editing that single
 # `repository`/`tag` in values.yaml, or keep it on the registry tag.
 dagster:
+  # Run/event/schedule storage on managed PostgreSQL (was in-cluster pg-rw). The
+  # `dagster-postgresql` Secret + username/database are unchanged (values.yaml).
+  postgresql:
+    postgresqlHost: "REPLACE-postgres-flex-host"
   dagsterWebserver:
     image:
       repository: REPLACE-REGISTRY/sovereign-os/dagster

@@ -42,10 +42,68 @@ capabilities:
     - ALL
 {{- end -}}
 
+{{/*
+Backend-host indirection (Mode A bundled <-> Mode B external/STACKIT-managed).
+These return the in-cluster Service when the backend is bundled and the external
+managed endpoint when its bundled deployment is disabled. Mode A is byte-for-byte
+unchanged: when `enabled` is true the helper yields the same literal as before.
+Per-app credential Secrets are referenced by name (unchanged across modes); only
+the host/endpoint is indirected — see values.stackit-managed.yaml.
+*/}}
+
+{{/* Postgres host: in-cluster CloudNativePG `pg-rw`, or the managed host. */}}
+{{- define "soa.pgHost" -}}
+{{- if .Values.postgres.enabled -}}
+pg-rw
+{{- else -}}
+{{ required "postgres.external.host is required when postgres.enabled=false" .Values.postgres.external.host }}
+{{- end -}}
+{{- end -}}
+
+{{/* OpenSearch base URL: bundled `http://opensearch:9200`, or the managed endpoint. */}}
+{{- define "soa.opensearchUrl" -}}
+{{- if .Values.opensearch.enabled -}}
+http://opensearch:9200
+{{- else -}}
+{{- $os := .Values.opensearch.external -}}
+{{ $os.protocol | default "https" }}://{{ required "opensearch.external.host is required when opensearch.enabled=false" $os.host }}:{{ $os.port | default "9200" }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Browser-reachable console URL for a tool, derived so DEPLOYED links never point
+at localhost. When ingress is enabled (Mode A self-hosted / Mode B managed), the
+public URL is the tool's ingress host as `https://<host>` — the same host the
+ingress template routes — so the OS UI links resolve through the real LB/DNS. If
+ingress is enabled but the tool has NO public host (e.g. dagster/cube, kept
+internal), this returns "" and the UI hides that tool's "Open" link rather than
+linking to an unreachable localhost. When ingress is disabled (local-kind), it
+falls back to the per-tool port-forward default.
+Args: dict "ctx" $ "key" "<ingress host key>" "fallback" "<local url>"
+*/}}
+{{- define "soa.consoleUrl" -}}
+{{- $ing := .ctx.Values.ingress | default dict -}}
+{{- if $ing.enabled -}}
+{{- $host := index ($ing.hosts | default dict) .key | default "" -}}
+{{- if $host -}}https://{{ $host }}{{- end -}}
+{{- else -}}
+{{- .fallback -}}
+{{- end -}}
+{{- end -}}
+
+{{/* S3/object-storage endpoint: bundled `http://minio:9000`, or the managed endpoint. */}}
+{{- define "soa.s3Endpoint" -}}
+{{- if or (not .Values.objectStorage.enabled) (eq (.Values.objectStorage.mode | default "") "external") -}}
+{{ required "objectStorage.external.endpoint is required when objectStorage is external" .Values.objectStorage.external.endpoint }}
+{{- else -}}
+http://minio:9000
+{{- end -}}
+{{- end -}}
+
 {{/* Shared env for the query tool + its bootstrap (catalog DB + object storage). */}}
 {{- define "soa.queryToolEnv" -}}
 - name: PGHOST
-  value: pg-rw
+  value: {{ include "soa.pgHost" . }}
 - name: PGDATABASE
   value: polaris
 - name: PGUSER
@@ -53,7 +111,7 @@ capabilities:
 - name: PGPASSWORD
   valueFrom: { secretKeyRef: { name: postgres-polaris-credentials, key: password } }
 - name: S3_ENDPOINT
-  value: "http://minio:9000"
+  value: {{ include "soa.s3Endpoint" . | quote }}
 - name: BASE_LOCATION
   value: {{ .Values.queryTool.baseLocation | quote }}
 - name: NAMESPACE

@@ -19,6 +19,11 @@ global:
   # Empty => use the cluster's default StorageClass (kind: "standard").
   storageClass: ""
   imagePullPolicy: IfNotPresent
+  # Registry pull secret(s) for the bespoke images. Empty by default (Mode A pulls
+  # locally-built images loaded into kind — no auth). Mode B (STACKIT) sets this to
+  # the registry-pull-secret materialised by External Secrets so the bespoke
+  # workloads can pull from the STACKIT Container Registry. List of {name: <secret>}.
+  imagePullSecrets: []
   # Secure-by-default pod hardening applied to bespoke workloads.
   podSecurity:
     runAsNonRoot: true
@@ -35,6 +40,25 @@ networkPolicies:
   defaultDeny: true
 
 # -----------------------------------------------------------------------------
+# Ingress + TLS — OFF by default (Mode A is port-forward only). When enabled
+# (Mode B / STACKIT, see values.stackit-managed.yaml) the chart emits one Ingress
+# per public tool whose `hosts.<key>` is set (templates/ingress.yaml): a
+# cert-manager-issued TLS cert + a rule routing `/` to the tool's Service.
+# Nothing renders while `enabled: false`, so the bundled path is untouched.
+# -----------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: nginx            # ingress controller class (Mode B: ingress-nginx)
+  tlsIssuer: letsencrypt-prod # cert-manager ClusterIssuer (cert-manager.io/cluster-issuer)
+  annotations: {}             # extra annotations merged onto every tool Ingress
+  # Per-tool public hostnames. Empty => that tool gets NO Ingress. Filled by the
+  # Mode-B overlay (render-values.sh substitutes the DNS zone). Keys map to
+  # Services in templates/ingress.yaml: osUI->os-ui:3000, litellm->litellm:4000,
+  # langfuse->langfuse-web:3000, superset->superset:8088, forgejo->forgejo-http:3000,
+  # argocd->argocd-server:80, openmetadata->openmetadata:8585.
+  hosts: {}
+
+# -----------------------------------------------------------------------------
 # Object storage — local stand-in for STACKIT Object Storage (MinIO, S3).
 # Local-kind uses MinIO for reliable S3 (Iceberg multipart + Langfuse). SeaweedFS
 # remains the air-gap/sovereign-bundled option but is unreliable for Iceberg on
@@ -43,6 +67,14 @@ networkPolicies:
 # -----------------------------------------------------------------------------
 objectStorage:
   enabled: true
+  # Backend mode. "bundled" (default) runs MinIO in-cluster; "external" (or
+  # enabled:false) points the S3 consumers (Polaris, MLflow, query-tool, Langfuse,
+  # KServe) at a managed endpoint via soa.s3Endpoint. The per-app AWS creds come
+  # from `secretName` (same name in both modes; External Secrets supplies it on STACKIT).
+  mode: bundled
+  external:
+    # Managed S3 endpoint used when objectStorage is external (e.g. STACKIT Object Storage).
+    endpoint: ""
   # Name of the Secret holding S3 credentials. For profile=local the chart creates
   # it with the dev-only creds below; on STACKIT it must pre-exist (External Secrets).
   secretName: object-storage-credentials
@@ -78,6 +110,13 @@ objectStorage:
 # -----------------------------------------------------------------------------
 postgres:
   enabled: true
+  # When enabled:false (Mode B), the in-cluster CNPG cluster is NOT created and the
+  # PG consumers (Langfuse, LiteLLM, Dagster, warehouse, Polaris, Superset, MLflow)
+  # resolve their host via soa.pgHost -> external.host instead of `pg-rw`. The
+  # per-app credential Secrets keep the SAME names (External Secrets supplies them).
+  external:
+    host: ""                   # managed PostgreSQL host (e.g. STACKIT PostgreSQL Flex)
+    port: "5432"
   clusterName: pg              # creates services pg-rw / pg-ro / pg-r
   instances: 1                 # local: single instance (3 in production for HA)
   database: langfuse
@@ -364,6 +403,16 @@ litellm:
 # -----------------------------------------------------------------------------
 opensearch:
   enabled: true
+  # When enabled:false (Mode B), the bundled OpenSearch subchart is NOT deployed and
+  # consumers (sample agent, Haystack) resolve their endpoint via soa.opensearchUrl
+  # -> external.{protocol,host,port}. NOTE: managed OpenSearch requires auth; the
+  # bespoke agent/Haystack images do not yet consume an OpenSearch credential Secret
+  # (see external.secretName) — wiring those auth envs is a follow-up (documented gap).
+  external:
+    protocol: https            # managed endpoints terminate TLS
+    host: ""                   # managed OpenSearch host
+    port: "9200"
+    secretName: opensearch-credentials
   clusterName: opensearch
   masterService: opensearch
   singleNode: true
@@ -882,11 +931,20 @@ ciRunner:
   builderTag: "0.1.0"          # tag for the ci-builder job image (docker CLI + buildx)
 
 # -----------------------------------------------------------------------------
-# Admin Console — single-pane dashboard over the whole stack (status, on/off,
-# addresses, logins, per-component docs). Port-forward svc/admin-console 8080.
+# Admin Console — DEPRECATED / OFF BY DEFAULT.
+#
+# The Admin Console's functionality (live status, on/off toggling, addresses,
+# logins, per-component docs) is now built NATIVELY into the OS UI's
+# Platform -> Components tab: the OS UI server reads the in-cluster Kubernetes
+# API + the baked-in docs/components/*.md directly, so there is no separate
+# service and no cross-pod fetch (the old fragile "fetch failed" path).
+#
+# This block + templates/admin-console/* remain only so an operator can still
+# stand up the legacy standalone service for debugging by setting enabled=true.
+# Nothing in the stack depends on it. Leave it off.
 # -----------------------------------------------------------------------------
 adminConsole:
-  enabled: true
+  enabled: false
   image:
     repository: sovereign-os/admin-console   # built locally, loaded into kind
     tag: "0.1.0"
@@ -922,14 +980,18 @@ osUI:
   opaUrl:         "http://opa:8181"
   dagsterUrl:     "http://agentic-os-dagster-webserver:80"
   # Browser-reachable consoles (linked/opened from the browser, never proxied;
-  # each tool keeps its own auth). Defaults point at the local port-forwards from
-  # docs/components/*.md; override per environment (e.g. an Ingress host).
+  # each tool keeps its own auth). These are the LOCAL-KIND port-forward defaults
+  # (docs/components/*.md). When `ingress.enabled` (Mode A self-hosted / Mode B
+  # managed) the os-ui template DERIVES each console URL from the matching
+  # `ingress.hosts.<key>` as `https://<tool>.<domain>` (soa.consoleUrl), so the
+  # DEPLOYED UI never links to localhost. Tools with no public ingress host (e.g.
+  # dagster) resolve to "" and the UI hides their "Open" link.
   supersetUrl:        "http://localhost:8088"
   langfuseConsoleUrl: "http://localhost:3000"
   forgejoConsoleUrl:  "http://localhost:3001"
   argocdUrl:          "http://localhost:8082"
   openmetadataUrl:    "http://localhost:8585"
-  dagsterConsoleUrl:  "http://localhost:3070"
+  dagsterConsoleUrl:  "http://localhost:3070"  # internal on ingress (no public host)
   # Secret-backed credentials — reuse the stack's existing Secrets so nothing
   # sensitive sits in plaintext (names/keys verified against the running cluster).
   langfuseSecret:

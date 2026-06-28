@@ -33,6 +33,27 @@ data:
           - name: order_date
             type: time
             sql: order_date
+  mart_sales.yml: |
+    cubes:
+      - name: mart_sales
+        sql_table: analytics.mart_sales
+        measures:
+          - name: revenue
+            title: Revenue
+            type: sum
+            sql: net_amount
+          - name: orders
+            type: count
+        dimensions:
+          - name: order_date
+            type: time
+            sql: order_date
+          - name: region
+            type: string
+            sql: region
+          - name: product
+            type: string
+            sql: product
 ---
 {{- if eq .Values.global.profile "local" }}
 apiVersion: v1
@@ -96,7 +117,7 @@ spec:
             - name: CUBEJS_DB_TYPE
               value: postgres
             - name: CUBEJS_DB_HOST
-              value: pg-rw
+              value: {{ include "soa.pgHost" . }}
             - name: CUBEJS_DB_PORT
               value: "5432"
             - name: CUBEJS_DB_NAME

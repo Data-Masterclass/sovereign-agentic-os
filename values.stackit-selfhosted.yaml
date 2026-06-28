@@ -1,0 +1,87 @@
+# =============================================================================
+# values.stackit-selfhosted.yaml — Mode A: self-hosted on STACKIT SKE.
+# =============================================================================
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+# SPDX-License-Identifier: Apache-2.0
+#
+# Thin overlay LAYERED ON TOP of values.selfcontained.yaml — apply BOTH, in order:
+#
+#   helm ... -f values.selfcontained.yaml -f values.stackit-selfhosted.yaml
+#
+# values.selfcontained.yaml keeps EVERY stateful backend bundled in-cluster
+# (Postgres via CloudNativePG, OpenSearch, ClickHouse, Valkey, object storage via
+# MinIO; LiteLLM -> bundled local mock model). NOTHING managed/external. So the
+# whole deployment pauses with the SKE node pool (`stackit off` / `make sleep`) —
+# there is NO 24/7 managed-service bill. Terraform for Mode A provisions ONLY the
+# SKE cluster + DNS (enable_managed_backends=false).
+#
+# This overlay only changes what differs between a 14 GB kind box and a real SKE
+# node pool:
+#   1. global.storageClass -> SKE's CSI StorageClass (kind's "standard" is wrong).
+#   2. ingress -> ON, public TLS hosts for the 7 tools (cert-manager + nginx).
+#   3. re-enable the heavy Layer-2 components that values.selfcontained.yaml turns
+#      off for the small kind node (SKE nodes have the RAM for the full L1–L3 set).
+#
+# WIRING: `agentic.datamasterclass.com` is filled by deploy/scripts/render-values.sh from
+# `terraform output dns_name` (MODE=selfhosted). No secret VALUES land here.
+# =============================================================================
+
+global:
+  profile: local
+  # SKE in-cluster CSI StorageClass for ALL bundled PVCs (Postgres/OpenSearch/
+  # ClickHouse/Valkey/MinIO). kind's "standard" (rancher local-path) does not
+  # exist on SKE, so it MUST be overridden here.
+  #
+  # VERIFY before go-live: `kubectl get storageclass` on the SKE cluster and use
+  # the actual name (or the one marked `(default)`). Set to "" to fall back to the
+  # cluster's default StorageClass if you'd rather not pin a name.
+  storageClass: ""
+  imagePullPolicy: IfNotPresent
+
+# Cilium enforces FQDN-aware default-deny egress on SKE (security.md). Bundled
+# mode keeps the same secure baseline as kind — just actually enforced here.
+networkPolicies:
+  defaultDeny: true
+
+# -----------------------------------------------------------------------------
+# Heavy Layer-2 components: OFF in values.selfcontained.yaml so the full L1–L3
+# slice fits a single ~14 GB kind node. SKE worker nodes have the headroom, so
+# re-enable them here for the complete self-hosted experience.
+# (Size the node pool for the full set — see deploy/terraform/terraform.tfvars.example.)
+# -----------------------------------------------------------------------------
+docling:
+  enabled: true
+osdashboards:
+  enabled: true
+openmetadata:
+  enabled: true
+
+# Layer 4 (Science / ML — MLflow, KServe, ml-agent) stays OFF: heavy + GPU-leaning
+# and out of scope for the self-hosted demo. Flip on only on a sized node pool.
+ml:
+  enabled: false
+
+# -----------------------------------------------------------------------------
+# Ingress + TLS — public consoles for the 7 tools. Hostnames resolve to the
+# ingress-nginx LoadBalancer (its public IP is written into the STACKIT DNS zone
+# by `make dns`); cert-manager issues Let's Encrypt certs. `agentic.datamasterclass.com` is
+# substituted with `terraform output dns_name` by render-values.sh.
+# Same 7 keys the chart's templates/ingress.yaml routes to in-cluster Services.
+# -----------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: nginx
+  tlsIssuer: letsencrypt-prod
+  hosts:
+    osUI: "os.agentic.datamasterclass.com"
+    litellm: "litellm.agentic.datamasterclass.com"
+    langfuse: "langfuse.agentic.datamasterclass.com"
+    openmetadata: "openmetadata.agentic.datamasterclass.com"
+    superset: "superset.agentic.datamasterclass.com"
+    forgejo: "forgejo.agentic.datamasterclass.com"
+    argocd: "argocd.agentic.datamasterclass.com"
+
+# NOTE: NO objectStorage/postgres/opensearch/llm `external:` blocks here on
+# purpose — every backend stays BUNDLED (the values.selfcontained.yaml +
+# chart defaults). Adding an `external:` block would re-introduce a managed
+# dependency and defeat the pause-with-the-node-pool cost model.

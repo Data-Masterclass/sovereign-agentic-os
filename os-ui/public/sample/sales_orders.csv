@@ -1,0 +1,11 @@
+order_id,order_date,region,product,net_amount
+1,2026-01-05,DE,widget,100
+2,2026-01-20,DE,gadget,200
+3,2026-02-10,DE,widget,150
+4,2026-02-15,FR,widget,300
+5,2026-03-01,DE,gadget,250
+6,2026-03-20,FR,gadget,120
+7,2026-01-15,US,widget,400
+8,2026-02-25,US,gadget,180
+9,2026-03-10,DE,widget,300
+10,2026-03-28,FR,widget,220

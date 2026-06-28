@@ -21,7 +21,7 @@ stringData:
   LANGFUSE_INIT_PROJECT_NAME: "Agent Core"
   LANGFUSE_INIT_PROJECT_PUBLIC_KEY: {{ .Values.langfuseInit.publicKey | quote }}
   LANGFUSE_INIT_PROJECT_SECRET_KEY: {{ .Values.langfuseInit.secretKey | quote }}
-  LANGFUSE_INIT_USER_EMAIL: "contact@datamasterclass.com"
+  LANGFUSE_INIT_USER_EMAIL: "alex@datamasterclass.com"
   LANGFUSE_INIT_USER_NAME: "Alex"
   LANGFUSE_INIT_USER_PASSWORD: "langfuse-local-dev-admin"
 {{- end }}

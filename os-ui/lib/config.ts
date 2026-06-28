@@ -44,6 +44,20 @@ export const config = {
   // Security plugin is disabled locally (no auth); on STACKIT enable security+TLS.
   opensearchUrl: base(env('OPENSEARCH_URL', 'http://opensearch:9200')),
   knowledgeIndex: env('KNOWLEDGE_INDEX', 'knowledge'),
+  // Artifact-metadata index (workspace lifecycle store). Best-effort durable
+  // mirror of the artifact registry; the OS UI degrades to an in-process store
+  // when OpenSearch is unreachable so the teaching flows work offline.
+  artifactsIndex: env('ARTIFACTS_INDEX', 'os-artifacts'),
+
+  // ---- Identity (pragmatic, Ory-replaceable). OS_USERS is a JSON array of
+  // seeded users { id, name, password, domain, role }. OS_SESSION_SECRET signs
+  // the session cookie (HMAC-SHA256). Both are server-only. Replace this whole
+  // block with Ory (Kratos/Hydra) later without touching the consumers. -------
+  sessionSecret: env(
+    'OS_SESSION_SECRET',
+    'dev-only-insecure-session-secret-change-me-in-prod',
+  ),
+  usersSeed: env('OS_USERS', ''),
 
   // Forgejo (Software / Delivery): GET {FORGEJO_URL}/api/v1/...  (HTTP basic auth)
   forgejoUrl: base(env('FORGEJO_URL', 'http://forgejo-http:3000')),
@@ -64,11 +78,12 @@ export const config = {
   // GET {OPA_URL}/v1/data/grants for the principal -> tools grant map.
   opaUrl: base(env('OPA_URL', 'http://opa:8181')),
 
-  // Admin Console (Platform / Components surface): the in-cluster service that
-  // holds the scoped Kubernetes RBAC + component registry. The OS UI proxies it
-  // SERVER-SIDE only (GET /api/components, POST /api/toggle, GET /api/doc/<id>);
-  // this URL + any k8s token never reach the browser.
-  adminConsoleUrl: base(env('ADMIN_CONSOLE_URL', 'http://admin-console:8080')),
+  // Platform / Components surface — namespace the stack workloads live in. The
+  // OS UI server reads their status + scales them 0<->1 NATIVELY via the
+  // in-cluster Kubernetes API using the pod's scoped ServiceAccount (see
+  // lib/platform.ts + lib/k8s.ts). This replaces the former server-side proxy to
+  // the standalone `admin-console` service — there is no cross-pod hop anymore.
+  platformNamespace: env('NAMESPACE', env('OS_NAMESPACE', 'agentic-os')),
 
   // Dagster (Orchestration): POST {DAGSTER_URL}/graphql (no auth locally).
   dagsterUrl: base(env('DAGSTER_URL', 'http://agentic-os-dagster-webserver:80')),

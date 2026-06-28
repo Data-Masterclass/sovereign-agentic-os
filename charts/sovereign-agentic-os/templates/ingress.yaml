@@ -1,0 +1,64 @@
+{{- /*
+  Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+  SPDX-License-Identifier: Apache-2.0
+
+  Public-tool Ingress (Mode B / STACKIT). OFF by default (`ingress.enabled=false`)
+  so the bundled/local Mode A path is untouched — nothing here renders unless an
+  operator opts in via the values.stackit-managed.yaml overlay.
+
+  One Ingress per public tool, emitted ONLY when its `ingress.hosts.<key>` is set
+  (non-empty). Each carries the cert-manager cluster-issuer annotation + a TLS
+  block (host + a `<host>-tls` secret cert-manager fills) and routes `/` to the
+  in-cluster Service. Hostnames resolve to the ingress LB (terraform DNS zone).
+*/ -}}
+{{- if .Values.ingress.enabled }}
+{{- $ctx := . }}
+{{- $ing := .Values.ingress }}
+{{- /* host key -> in-cluster Service + port (release name `agentic-os`). */}}
+{{- $routes := dict
+  "osUI"         (dict "service" "os-ui" "port" 3000)
+  "litellm"      (dict "service" "agentic-os-litellm" "port" 4000)
+  "langfuse"     (dict "service" "agentic-os-langfuse-web" "port" 3000)
+  "superset"     (dict "service" "agentic-os-superset" "port" 8088)
+  "forgejo"      (dict "service" "forgejo-http" "port" 3000)
+  "argocd"       (dict "service" "argocd-server" "port" 80)
+  "openmetadata" (dict "service" "openmetadata" "port" 8585)
+}}
+{{- range $key, $route := $routes }}
+{{- $host := index ($ing.hosts | default dict) $key }}
+{{- if $host }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ printf "%s-ingress" $route.service }}
+  namespace: {{ $ctx.Release.Namespace }}
+  labels:
+    {{- include "soa.labels" $ctx | nindent 4 }}
+    app.kubernetes.io/name: {{ $route.service }}
+    app.kubernetes.io/component: ingress
+  annotations:
+    cert-manager.io/cluster-issuer: {{ $ing.tlsIssuer | quote }}
+    {{- with $ing.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ $ing.className }}
+  tls:
+    - hosts:
+        - {{ $host | quote }}
+      secretName: {{ printf "%s-tls" $host | quote }}
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $route.service }}
+                port:
+                  number: {{ $route.port }}
+{{- end }}
+{{- end }}
+{{- end }}

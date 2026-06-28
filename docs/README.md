@@ -7,6 +7,7 @@ User-facing documentation for the Sovereign Agentic OS.
 | [`Sovereign-Agentic-OS-Guide.md`](Sovereign-Agentic-OS-Guide.md) | **The official end-user guide** — install, operate, and understand the platform. The single source of truth (Markdown). |
 | `Sovereign-Agentic-OS-Guide.pdf` | The same guide as a polished, distributable PDF. **Generated — do not edit by hand.** |
 | [`getting-started.md`](getting-started.md) | The short quickstart (also rendered in the Admin Console). |
+| [`stackit-deployment-guide.md`](stackit-deployment-guide.md) | **Deploy to STACKIT — recommended: single node.** The primary, end-to-end cloud install (single `g2i.8` node, self-contained). |
 | [`cloud-configuration.md`](cloud-configuration.md) | What you set up to deploy on STACKIT / your cloud. |
 | [`components/`](components/) | The 28 per-component guides (access, login, usage, FAQ). |
 

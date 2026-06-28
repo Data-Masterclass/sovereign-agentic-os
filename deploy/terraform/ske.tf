@@ -7,11 +7,25 @@
 # egress + default-deny per security.md). The provider exposes NO cni/plugin
 # attribute — Cilium is not a Terraform-selectable knob, it is the SKE default.
 # The chart's Cilium NetworkPolicies (default-deny egress) ride on top.
+#
+# ⚠ VERIFIED LIMITATION — cross-node pod networking is BROKEN on SKE inside a
+# STACKIT Network Area (SNA). Pods scheduled on a node WITHOUT a CoreDNS replica
+# cannot reach DNS or pods on other nodes (verified: same-node traffic works,
+# cross-node is 100% loss / "no servers could be reached"). This took down the
+# Postgres-backed components on the first multi-node deploy: CloudNativePG's init
+# pod landed on the bad node, could not resolve, and cascaded. A SINGLE node
+# sidesteps it entirely (no cross-node traffic) — hence the node pool below
+# defaults to min=1/max=1 in a single AZ. Do NOT scale past one node until
+# STACKIT confirms cross-node overlay works for SKE-in-an-SNA.
 
 resource "stackit_ske_cluster" "this" {
   project_id             = var.project_id
-  name                   = var.name_prefix
+  name                   = substr(replace(var.name_prefix, "-", ""), 0, 11)
   kubernetes_version_min = var.kubernetes_version_min
+
+  network = {
+    id = stackit_network.this.network_id
+  }
 
   node_pools = [
     {
@@ -43,4 +57,6 @@ resource "stackit_ske_kubeconfig" "this" {
   cluster_name = stackit_ske_cluster.this.name
   # Refresh on apply so the bootstrap always has a valid credential.
   refresh = true
+  # Long-lived admin kubeconfig (default is ~1h, which expires mid-deploy). 30 days.
+  expiration = 2592000
 }

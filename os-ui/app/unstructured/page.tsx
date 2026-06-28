@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
+import ArtifactPanel from '@/components/ArtifactPanel';
 
 type Doc = { id: string; title: string; excerpt: string; source: string; ingestedAt: string | null };
 type Classification = { source: string; description: string; contentType: string; tags: string[] };
@@ -26,7 +27,7 @@ function fmt(ts: string | null): string {
 }
 
 export default function UnstructuredPage() {
-  const [tab, setTab] = useState<'library' | 'add' | 'sources'>('library');
+  const [tab, setTab] = useState<'library' | 'files' | 'add' | 'sources'>('library');
 
   // library
   const [docs, setDocs] = useState<Doc[]>([]);
@@ -129,9 +130,31 @@ export default function UnstructuredPage() {
 
         <div className="tabstrip">
           <button className={tab === 'library' ? 'active' : ''} onClick={() => setTab('library')}>Library</button>
+          <button className={tab === 'files' ? 'active' : ''} onClick={() => setTab('files')}>My files</button>
           <button className={tab === 'add' ? 'active' : ''} onClick={() => setTab('add')}>Add &amp; classify</button>
           <button className={tab === 'sources' ? 'active' : ''} onClick={() => setTab('sources')}>Sources</button>
         </div>
+
+        {tab === 'files' ? (
+          <ArtifactPanel
+            type="file"
+            createLabel="Register file"
+            specFields={[
+              { key: 'kind', label: 'File type', placeholder: 'pdf | image | video | audio | doc' },
+              { key: 'location', label: 'Location', placeholder: 'object-storage prefix / URL' },
+            ]}
+            renderSpec={(a) => (a.spec?.kind || a.spec?.location ? (
+              <div className="muted mono" style={{ fontSize: 11 }}>{a.spec?.kind ? <>type: {String(a.spec.kind)}<br /></> : null}{a.spec?.location ? <>at: {String(a.spec.location)}</> : null}</div>
+            ) : null)}
+            intro={
+              <p className="hint" style={{ marginTop: 0 }}>
+                Files you (and your domain) own, share, or added from the Marketplace — same Personal →
+                Shared → Certified lifecycle as every artifact. Binary content lands in object storage
+                (never Supabase); curate selected items into Knowledge for RAG under &quot;Add &amp; classify&quot;.
+              </p>
+            }
+          />
+        ) : null}
 
         {tab === 'library' ? (
           <>

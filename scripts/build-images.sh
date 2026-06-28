@@ -39,14 +39,12 @@ echo "==> building sovereign-os/dagster:0.2.0 (context=images/)"
 docker build -q -f images/dagster/Dockerfile -t sovereign-os/dagster:0.2.0 images/ >/dev/null
 kind load docker-image sovereign-os/dagster:0.2.0 --name "$CLUSTER" >/dev/null 2>&1 || true
 
-# Admin console needs the repo root as context (it COPYs docs/).
-echo "==> building sovereign-os/admin-console:0.1.0 (context=repo root)"
-docker build -q -f images/admin-console/Dockerfile -t sovereign-os/admin-console:0.1.0 . >/dev/null
-kind load docker-image sovereign-os/admin-console:0.1.0 --name "$CLUSTER" >/dev/null 2>&1 || true
-
-# OS UI needs the app dir (os-ui/) as the build context.
-echo "==> building sovereign-os/os-ui:0.1.0 (context=os-ui/)"
-docker build -q -t sovereign-os/os-ui:0.1.0 -f images/os-ui/Dockerfile os-ui >/dev/null
+# OS UI needs the repo root as context (it COPYs os-ui/ + bakes in docs/components
+# for the native Components surface). The standalone admin-console image is
+# DEPRECATED — its functionality now lives natively in the OS UI; build it only
+# if you explicitly want the legacy standalone service.
+echo "==> building sovereign-os/os-ui:0.1.0 (context=repo root)"
+docker build -q -t sovereign-os/os-ui:0.1.0 -f images/os-ui/Dockerfile . >/dev/null
 kind load docker-image sovereign-os/os-ui:0.1.0 --name "$CLUSTER" >/dev/null 2>&1 || true
 
 echo "All images built and loaded into kind cluster '$CLUSTER'."

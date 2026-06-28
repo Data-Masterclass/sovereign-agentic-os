@@ -15,7 +15,11 @@
 #                                 registry pull-secret) using the user below
 #   3. External Secrets        -> syncs them into the cluster as k8s Secrets
 
+# Mode A (var.enable_managed_backends=false): NOT created — the self-contained
+# chart carries its own in-cluster secrets; External Secrets / Secrets Manager
+# are a Mode B concern only.
 resource "stackit_secretsmanager_instance" "this" {
+  count      = var.enable_managed_backends ? 1 : 0
   project_id = var.project_id
   name       = "${var.name_prefix}-secrets"
   # Tighten to the SKE egress CIDR at go-live (default open for first bring-up).
@@ -24,16 +28,18 @@ resource "stackit_secretsmanager_instance" "this" {
 
 # Writer user used by scripts/push-secrets.sh to populate secret values.
 resource "stackit_secretsmanager_user" "writer" {
+  count         = var.enable_managed_backends ? 1 : 0
   project_id    = var.project_id
-  instance_id   = stackit_secretsmanager_instance.this.instance_id
+  instance_id   = stackit_secretsmanager_instance.this[0].instance_id
   description   = "sovereign-os terraform writer (push-secrets.sh)"
   write_enabled = true
 }
 
 # Reader user for External Secrets Operator (read-only).
 resource "stackit_secretsmanager_user" "eso" {
+  count         = var.enable_managed_backends ? 1 : 0
   project_id    = var.project_id
-  instance_id   = stackit_secretsmanager_instance.this.instance_id
+  instance_id   = stackit_secretsmanager_instance.this[0].instance_id
   description   = "external-secrets-operator reader"
   write_enabled = false
 }

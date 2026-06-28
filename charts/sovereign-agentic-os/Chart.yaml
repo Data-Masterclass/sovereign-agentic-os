@@ -9,15 +9,15 @@ description: >-
 type: application
 
 # Chart SemVer (the product version). Bump additively per packaging.md.
-version: 0.1.0-alpha.1
+version: 0.2.0
 
-# Informational: the slice this chart currently stands up.
-appVersion: "0.1.0-alpha.1"
+# Informational: the public pre-release this chart corresponds to.
+appVersion: "0.2.0-alpha.1"
 
 home: https://github.com/datamasterclass/sovereign-agentic-os
 maintainers:
   - name: aborek
-    email: contact@datamasterclass.com
+    email: alex@datamasterclass.com
 
 keywords:
   - sovereign

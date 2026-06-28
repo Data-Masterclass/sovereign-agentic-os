@@ -6,6 +6,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
 import AgentChat from '@/components/AgentChat';
+import ArtifactPanel from '@/components/ArtifactPanel';
+import NewDataProduct from '@/components/NewDataProduct';
 
 type QueryResult = {
   engine: string;
@@ -26,10 +28,10 @@ const ASK_EXAMPLES = [
   'What gives observability and tracing?',
 ];
 
-type View = 'catalog' | 'ask' | 'products' | 'query';
+type View = 'new' | 'datasets' | 'transform' | 'catalog' | 'ask' | 'products' | 'query';
 
 export default function DataPage() {
-  const [view, setView] = useState<View>('catalog');
+  const [view, setView] = useState<View>('new');
 
   // ---- catalog ----
   const [catalog, setCatalog] = useState<Catalog | null>(null);
@@ -128,11 +130,51 @@ export default function DataPage() {
         </p>
 
         <div className="tabstrip">
+          <button className={view === 'new' ? 'active' : ''} onClick={() => setView('new')}>+ New data product</button>
+          <button className={view === 'datasets' ? 'active' : ''} onClick={() => setView('datasets')}>Datasets</button>
+          <button className={view === 'transform' ? 'active' : ''} onClick={() => setView('transform')}>Transform (dbt)</button>
           <button className={view === 'catalog' ? 'active' : ''} onClick={() => setView('catalog')}>Catalog</button>
           <button className={view === 'ask' ? 'active' : ''} onClick={() => setView('ask')}>Talk to your data</button>
           <button className={view === 'products' ? 'active' : ''} onClick={() => setView('products')}>Data products</button>
           <button className={view === 'query' ? 'active' : ''} onClick={() => setView('query')}>Query</button>
         </div>
+
+        {view === 'new' ? <NewDataProduct onDone={() => setView('datasets')} /> : null}
+
+        {view === 'datasets' ? (
+          <ArtifactPanel
+            type="dataset"
+            createLabel="Load dataset"
+            specFields={[{ key: 'table', label: 'Source table / file', placeholder: 'raw_orders' }]}
+            renderSpec={(a) => (a.spec?.table ? <div className="muted mono" style={{ fontSize: 11 }}>table: {String(a.spec.table)}</div> : null)}
+            intro={
+              <p className="hint" style={{ marginTop: 0 }}>
+                Load data as a dataset artifact (Personal). Document it, then a builder promotes it to
+                Shared and an admin certifies it to the Marketplace. The full upload pipeline is
+                <strong> scaffolded in v1</strong> — the artifact captures the dataset metadata.
+              </p>
+            }
+          />
+        ) : null}
+
+        {view === 'transform' ? (
+          <ArtifactPanel
+            type="transformation"
+            createLabel="Create dbt model"
+            specFields={[
+              { key: 'sql', label: 'dbt model SQL', textarea: true, mono: true, placeholder: 'select day, sum(amount) as revenue\nfrom {{ ref("stg_orders") }}\ngroup by 1' },
+              { key: 'materialization', label: 'Materialization', placeholder: 'table | view | incremental' },
+            ]}
+            renderSpec={(a) => (a.spec?.sql ? <pre className="codeblock" style={{ marginTop: 8 }}>{String(a.spec.sql)}</pre> : null)}
+            intro={
+              <p className="hint" style={{ marginTop: 0 }}>
+                Author a dbt-core transformation as an artifact. Running it against the dbt backend
+                (Dagster-materialized) is <strong>scaffolded in v1</strong>; the model SQL + grain are
+                captured for review, promotion, and reuse.
+              </p>
+            }
+          />
+        ) : null}
 
         {view === 'catalog' ? (
           <>

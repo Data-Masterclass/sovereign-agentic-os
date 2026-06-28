@@ -1,0 +1,35 @@
+# =============================================================================
+# kind overlay — local validation only (no STACKIT).
+# =============================================================================
+# Small resource sizes, single replicas, local object-storage stand-in
+# (SeaweedFS) for STACKIT Object Storage. Layered on top of
+# charts/sovereign-agentic-os/values.yaml.
+#
+#   helm install agentic-os charts/sovereign-agentic-os \
+#     -n agentic-os --create-namespace -f values.local.yaml
+# =============================================================================
+
+global:
+  profile: local
+  storageClass: "standard"   # kind's default StorageClass (rancher local-path)
+
+# Default-deny egress policies are applied (kindnet doesn't enforce them
+# locally; they're validated as applied + are enforced on STACKIT/Cilium).
+networkPolicies:
+  defaultDeny: true
+
+# Component sizing/toggles for kind are added here as each is wired in.
+
+# Build-and-toggle (RAM): on a 14 GB VM the full L1+L2 set doesn't all fit
+# (the spec sizes it for a 96 GB STACKIT node). These two are already validated
+# and committed; turned off locally to make room for OpenMetadata. Flip back on
+# (or scale the VM) to run them together. Product defaults (values.yaml) keep
+# them enabled for STACKIT.
+docling:
+  enabled: false
+osdashboards:
+  enabled: false
+# OpenMetadata (~2.5 GB) toggled off locally to make room for Layer 3 (Superset
+# etc.). Validated + committed earlier; product default keeps it on for STACKIT.
+openmetadata:
+  enabled: false

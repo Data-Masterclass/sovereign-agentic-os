@@ -1,12 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 #
-# Wave 5 — the Sovereign Agentic OS umbrella chart (Mode B). Renders AFTER the
-# platform (ingress, cert-manager, ESO + secret config, CNPG, Velero, KEDA).
-# Multi-source: the chart at charts/sovereign-agentic-os + the Mode B overlay
-# values.stackit-managed.yaml from the repo root (referenced via $values). The
-# overlay's REPLACE-… placeholders are filled by deploy/scripts/render-values.sh
-# from terraform outputs; secrets are pulled by External Secrets, never inlined.
+# Wave 5 — the Sovereign Agentic OS umbrella chart. Renders AFTER the platform
+# (ingress, cert-manager, ESO + secret config, CNPG, Velero, KEDA).
+# Multi-source: the chart at charts/sovereign-agentic-os + the mode overlay(s)
+# from the repo root (referenced via $values). The valueFiles list is MODE-aware
+# and rewritten by deploy/scripts/render-values.sh between the MODE-VALUEFILES
+# markers below:
+#
+#   Mode B (managed,    default committed): values.stackit-managed.yaml
+#   Mode A (selfhosted, MODE=selfhosted):   values.selfcontained.yaml
+#                                           + values.stackit-selfhosted.yaml
+#
+# The overlay's REPLACE-… placeholders are filled by render-values.sh from
+# terraform outputs (Mode B: endpoints/registry/DNS; Mode A: DNS only). Mode B
+# secrets are pulled by External Secrets, never inlined; Mode A bundles its own.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -28,7 +36,9 @@ spec:
       helm:
         releaseName: agentic-os
         valueFiles:
+          # >>> MODE-VALUEFILES (render-values.sh rewrites this block per MODE)
           - $values/values.stackit-managed.yaml
+          # <<< MODE-VALUEFILES
   destination:
     server: https://kubernetes.default.svc
     namespace: agentic-os

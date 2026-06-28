@@ -1332,3 +1332,156 @@ code {
   border-radius: 5px;
   padding: 1px 5px;
 }
+
+/* ============================================================================
+ * Multi-tenant workspace: identity, visibility badges, grouped lists, sign-in.
+ * Copyright 2026 Borek Data Ventures UG
+ * ========================================================================== */
+
+/* Form controls without an explicit text type (selects, password, bare input) */
+input:not([type='text']):not([type='checkbox']):not([type='radio']),
+select {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 12px 14px;
+  font-size: 13.5px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.14s, box-shadow 0.14s;
+}
+select { width: auto; min-width: 130px; cursor: pointer; }
+input:not([type='text']):focus,
+select:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px var(--gold-soft);
+}
+
+/* ---- Visibility badges (Personal / Shared / Certified) ---- */
+.badge.vis-personal {
+  color: var(--text-muted);
+  background: var(--panel-2);
+  border-color: var(--border-strong);
+}
+.badge.vis-shared {
+  color: var(--teal);
+  background: rgba(42, 163, 155, 0.12);
+  border-color: var(--teal-dim);
+}
+.badge.vis-certified {
+  color: var(--gold-text);
+  background: var(--gold-soft);
+  border-color: var(--gold-line);
+}
+
+/* ---- Grouped artifact lists ---- */
+.group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 12px;
+}
+.group-heading {
+  font-family: var(--font-head);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text);
+}
+.group-sub {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+/* ---- Sidebar user block ---- */
+.sidebar-foot .who {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.sidebar-foot .who-name {
+  font-weight: 600;
+  color: #f4f0e7;
+  font-size: 12.5px;
+}
+
+/* ---- Sign-in screen (full-viewport overlay so it covers the shell) ---- */
+.signin-wrap {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    radial-gradient(1100px 600px at 70% -10%, rgba(200, 162, 74, 0.16), transparent 60%),
+    radial-gradient(900px 600px at -10% 110%, rgba(255, 0, 153, 0.08), transparent 55%),
+    #0c0b0d;
+}
+.signin-card {
+  width: 100%;
+  max-width: 400px;
+  background: #16131d;
+  border: 1px solid #272231;
+  border-radius: 16px;
+  padding: 34px 30px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+}
+.signin-brand {
+  font-family: var(--font-head);
+  font-weight: 600;
+  font-size: 22px;
+  letter-spacing: 0.5px;
+  color: #f4f0e7;
+}
+.signin-brand .accent {
+  background: linear-gradient(90deg, #c8a24a, #e7cd86);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.signin-sub {
+  font-family: var(--font-sub);
+  color: #b0a99c;
+  margin-top: 6px;
+  font-size: 14px;
+}
+.signin-form {
+  margin-top: 22px;
+  display: grid;
+  gap: 14px;
+}
+.signin-form label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: #b0a99c;
+  font-family: var(--font-head);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.signin-form input {
+  background: #100e15;
+  border: 1px solid #38313f;
+  color: #f4f0e7;
+}
+.signin-form .btn {
+  margin-top: 4px;
+  justify-content: center;
+  width: 100%;
+}
+.signin-roster {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid #272231;
+}
+.signin-roster .hint { color: #8a8270; }
+.signin-roster .chip {
+  color: #b0a99c;
+  border-color: #38313f;
+}

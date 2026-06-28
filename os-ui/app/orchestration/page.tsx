@@ -100,11 +100,17 @@ export default function OrchestrationPage() {
             <div className="card row" style={{ alignItems: 'center', gap: 14, maxWidth: 480 }}>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600 }}>Dagster</div>
-                <div className="muted mono">{data.consoleUrl}</div>
+                <div className="muted mono">{data.consoleUrl || 'internal — not publicly exposed; use the port-forward'}</div>
               </div>
-              <a className="btn ghost" href={data.consoleUrl} target="_blank" rel="noreferrer">
-                Open →
-              </a>
+              {data.consoleUrl ? (
+                <a className="btn ghost" href={data.consoleUrl} target="_blank" rel="noreferrer">
+                  Open →
+                </a>
+              ) : (
+                <span className="btn ghost" aria-disabled="true" title="Internal — reach via port-forward" style={{ opacity: 0.5, cursor: 'default' }}>
+                  Internal
+                </span>
+              )}
             </div>
           </>
         ) : loading ? (

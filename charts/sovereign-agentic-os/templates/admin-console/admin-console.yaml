@@ -68,6 +68,10 @@ spec:
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "admin-console") | nindent 8 }}
     spec:
       serviceAccountName: admin-console
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         {{- include "soa.podSecurityContext" . | nindent 8 }}
         runAsUser: 1000

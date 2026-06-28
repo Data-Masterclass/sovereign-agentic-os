@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
-# Platform wave 1 — CloudNativePG operator. In Mode B the PRIMARY Postgres is
-# managed Flex (postgres.enabled=false in the overlay); the operator is kept
+# Platform wave 1 — CloudNativePG operator. REQUIRED in Mode A (self-hosted): the
+# bundled in-cluster Postgres (postgres.enabled=true) is a CNPG Cluster CR, so the
+# operator must be present to reconcile it. In Mode B the PRIMARY Postgres is
+# managed Flex (postgres.enabled=false in the overlay) and the operator is kept
 # only for any component that still wants an in-cluster PG (e.g. self-hosted
-# Supabase). Harmless if unused — the CRD/operator simply sits idle.
+# Supabase) — harmless if unused, the CRD/operator simply sits idle.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

@@ -12,9 +12,10 @@ import { renderMarkdown } from '@/lib/markdown';
  *
  * Lists every stack component with live status, lets you switch toggleable
  * workloads on/off (scale 0<->1), and surfaces each one's address (the
- * port-forward command + URL), login, and docs. Everything is proxied
- * SERVER-SIDE through /api/platform/* — the browser never touches the Admin
- * Console URL or any Kubernetes credential.
+ * port-forward command + URL), login, and docs. The /api/platform/* routes
+ * are served NATIVELY by the OS UI server (it reads the in-cluster Kubernetes
+ * API + the baked-in docs/components/*.md directly) — the browser never touches
+ * any Kubernetes credential, and there is no separate admin-console service.
  */
 
 type Component = {

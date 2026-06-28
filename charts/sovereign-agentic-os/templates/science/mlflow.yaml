@@ -30,6 +30,10 @@ spec:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "mlflow") | nindent 8 }}
     spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         {{- include "soa.podSecurityContext" . | nindent 8 }}
         runAsUser: 1000
@@ -45,7 +49,7 @@ spec:
             - >-
               exec mlflow server
               --host 0.0.0.0 --port 5000
-              --backend-store-uri "postgresql://${PGUSER}:${PGPASSWORD}@pg-rw:5432/{{ $m.backendDatabase }}"
+              --backend-store-uri "postgresql://${PGUSER}:${PGPASSWORD}@{{ include "soa.pgHost" . }}:5432/{{ $m.backendDatabase }}"
               --artifacts-destination "s3://{{ $m.artifactBucket }}"
               --serve-artifacts
               --gunicorn-opts "--timeout 120"
@@ -58,7 +62,7 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ $m.backendSecretName }}, key: password } }
             # S3 artifact store (MinIO locally / STACKIT Object Storage in prod).
             - name: MLFLOW_S3_ENDPOINT_URL
-              value: {{ $m.s3.endpoint | quote }}
+              value: {{ include "soa.s3Endpoint" . | quote }}
             - name: AWS_DEFAULT_REGION
               value: {{ .Values.objectStorage.region | quote }}
             - name: AWS_ACCESS_KEY_ID
