@@ -1,0 +1,220 @@
+{{- if and .Values.forgejo.enabled .Values.softwareDelivery.demoApp.enabled }}
+{{- /*
+  Software golden path (demo): seed a Forgejo repo with REAL buildable source (a
+  tiny static site + Dockerfile), a k8s manifest that references the image built
+  by CI, and a real Forgejo Actions workflow. On push the in-cluster runner
+  builds the image, pushes it to Forgejo's registry, and bumps the manifest tag
+  so Argo CD redeploys. Post-install/upgrade hook; idempotent.
+*/}}
+{{- $d := .Values.softwareDelivery.demoApp }}
+{{- $owner := .Values.forgejo.gitea.admin.username }}
+{{- $img := printf "forgejo-http:3000/%s/%s" $owner $d.repo }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: forgejo-seed-manifest
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "forgejo-seed") | nindent 4 }}
+data:
+  # --- app source: a tiny static site (built into a container by CI) ---
+  index.html: |
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Sovereign Agentic OS — demo-app</title>
+        <style>
+          body { font-family: system-ui, sans-serif; background: #0b0f14; color: #e6edf3;
+                 display: grid; place-items: center; height: 100vh; margin: 0; }
+          .card { text-align: center; padding: 2rem 3rem; border: 1px solid #1f2937;
+                  border-radius: 12px; background: #0f1620; }
+          h1 { margin: 0 0 .5rem; font-size: 1.6rem; }
+          p { margin: .25rem 0; color: #9fb0c0; } code { color: #7ee787; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <h1>Deployed by Sovereign Agentic OS CI</h1>
+          <p>push &rarr; Forgejo Actions &rarr; <code>docker build</code> &rarr; Forgejo registry &rarr; Argo CD</p>
+        </div>
+      </body>
+    </html>
+  Dockerfile: |
+    # demo-app — built by Sovereign Agentic OS CI. nginx-unprivileged listens on
+    # :8080 as a non-root user. Base pinned by multi-arch (OCI index) digest.
+    FROM nginxinc/nginx-unprivileged:stable-alpine@sha256:458ecbec226a23120713b35945bcdf0d6e4ea5bbec60c149ce1deca5d264071b
+    COPY index.html /usr/share/nginx/html/index.html
+    EXPOSE 8080
+  # --- k8s manifest Argo syncs; CI bumps the :tag below to redeploy ---
+  app.yaml: |
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: demo-app
+      labels: { app: demo-app }
+    spec:
+      replicas: 1
+      selector: { matchLabels: { app: demo-app } }
+      template:
+        metadata: { labels: { app: demo-app } }
+        spec:
+          containers:
+            - name: demo-app
+              image: {{ $img }}:bootstrap
+              imagePullPolicy: IfNotPresent
+              ports: [ { containerPort: 8080 } ]
+              resources:
+                requests: { cpu: 10m, memory: 16Mi }
+                limits: { cpu: 100m, memory: 64Mi }
+    ---
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: demo-app
+    spec:
+      selector: { app: demo-app }
+      ports: [ { port: 80, targetPort: 8080 } ]
+  # --- real CI workflow: build -> push -> bump manifest (no external actions) ---
+  ci.yml: |
+    # Forgejo Actions CI — runs on push, executed by the in-cluster runner inside
+    # the ci-builder job container (docker CLI + buildx + git). Fully sovereign:
+    # no external actions (manual git over forgejo-http), builds via the in-pod
+    # DinD ($DOCKER_HOST), pushes to Forgejo's registry, bumps the manifest tag
+    # (commit marked [skip ci]) so Argo CD redeploys.
+    on:
+      push:
+        branches: [main]
+    jobs:
+      build-and-deploy:
+        runs-on: docker
+        env:
+          DOCKER_HOST: tcp://localhost:2375     # in-pod DinD (job shares pod netns)
+          REGISTRY: forgejo-http:3000
+          OWNER: {{ $owner }}
+          REPO: {{ $d.repo }}
+        steps:
+          - name: Checkout (manual — sovereign, no github.com)
+            env: { REG_PASS: "{{ "${{ secrets.REGISTRY_PASS }}" }}" }
+            run: |
+              set -eu
+              git clone --depth 1 "http://${OWNER}:${REG_PASS}@${REGISTRY}/${OWNER}/${REPO}.git" src
+              cd src && git log -1 --oneline
+          - name: Build & push image
+            env: { REG_PASS: "{{ "${{ secrets.REGISTRY_PASS }}" }}" }
+            run: |
+              set -eu
+              TAG="$(echo "${GITHUB_SHA}" | cut -c1-12)"
+              IMAGE="${REGISTRY}/${OWNER}/${REPO}:${TAG}"
+              echo "${REG_PASS}" | docker login "${REGISTRY}" -u "${OWNER}" --password-stdin
+              docker build -t "${IMAGE}" ./src
+              docker push "${IMAGE}"
+              echo "TAG=${TAG}" >> "${GITHUB_ENV}"
+          - name: Bump manifest tag -> Argo redeploys
+            env: { REG_PASS: "{{ "${{ secrets.REGISTRY_PASS }}" }}" }
+            run: |
+              set -eu
+              cd src
+              sed -i "s#\(image: ${REGISTRY}/${OWNER}/${REPO}:\)[^[:space:]]*#\1${TAG}#" manifests/app.yaml
+              grep 'image:' manifests/app.yaml
+              if git diff --quiet; then echo "manifest already at ${TAG}"; exit 0; fi
+              git config user.email "ci@sovereign.local"
+              git config user.name "Sovereign CI"
+              git commit -am "ci: deploy ${TAG} [skip ci]"
+              git push "http://${OWNER}:${REG_PASS}@${REGISTRY}/${OWNER}/${REPO}.git" HEAD:main
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: forgejo-seed
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "forgejo-seed") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "25"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 8
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "forgejo-seed") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: seed
+          image: curlimages/curl:8.11.1
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          env:
+            - name: FORGEJO
+              value: "http://forgejo-http:3000"
+            - name: USER
+              value: {{ .Values.forgejo.gitea.admin.username | quote }}
+            - name: PASS
+              value: {{ .Values.forgejo.gitea.admin.password | quote }}
+            - name: REPO
+              value: {{ $d.repo | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              echo "waiting for Forgejo..."
+              for i in $(seq 1 80); do
+                curl -sf "$FORGEJO/api/v1/version" >/dev/null 2>&1 && break || sleep 3
+              done
+              AUTH="-u $USER:$PASS"
+              # create the repo (ignore if it exists)
+              curl -s $AUTH -X POST "$FORGEJO/api/v1/user/repos" \
+                -H "Content-Type: application/json" \
+                -d "{\"name\":\"$REPO\",\"private\":false,\"auto_init\":true,\"default_branch\":\"main\"}" \
+                -o /dev/null -w "create repo -> %{http_code}\n" || true
+              # put_file <local> <repo-path> — create or update (idempotent)
+              put_file() {
+                local f="$1" path="$2"
+                B64=$(base64 -w0 "$f" 2>/dev/null || base64 "$f" | tr -d '\n')
+                SHA=$(curl -s $AUTH "$FORGEJO/api/v1/repos/$USER/$REPO/contents/$path?ref=main" | sed -n 's/.*"sha":"\([0-9a-f]*\)".*/\1/p' | head -1)
+                if [ -n "$SHA" ]; then
+                  curl -s $AUTH -X PUT "$FORGEJO/api/v1/repos/$USER/$REPO/contents/$path" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"branch\":\"main\",\"content\":\"$B64\",\"message\":\"update $path\",\"sha\":\"$SHA\"}" \
+                    -o /dev/null -w "update $path -> %{http_code}\n"
+                else
+                  curl -s $AUTH -X POST "$FORGEJO/api/v1/repos/$USER/$REPO/contents/$path" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"branch\":\"main\",\"content\":\"$B64\",\"message\":\"add $path\"}" \
+                    -o /dev/null -w "add $path -> %{http_code}\n"
+                fi
+              }
+              # Seed the source + manifest FIRST (these commits don't trigger CI —
+              # the workflow file doesn't exist yet), then add the workflow LAST so
+              # the trigger fires with all source present.
+              put_file /seed/index.html index.html
+              put_file /seed/Dockerfile Dockerfile
+              put_file /seed/app.yaml manifests/app.yaml
+              # Forgejo Actions secret the workflow uses to login to the registry
+              # and push the manifest bump (admin creds; local-dev convenience).
+              curl -s $AUTH -X PUT "$FORGEJO/api/v1/repos/$USER/$REPO/actions/secrets/REGISTRY_PASS" \
+                -H "Content-Type: application/json" \
+                -d "{\"data\":\"$PASS\"}" \
+                -o /dev/null -w "put secret REGISTRY_PASS -> %{http_code}\n" || true
+              # the CI workflow — pushing it triggers the build->push->deploy run
+              put_file /seed/ci.yml .forgejo/workflows/ci.yml
+              echo "seed done"
+          volumeMounts:
+            - { name: manifest, mountPath: /seed, readOnly: true }
+      volumes:
+        - name: manifest
+          configMap:
+            name: forgejo-seed-manifest
+{{- end }}

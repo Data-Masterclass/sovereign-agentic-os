@@ -1,0 +1,41 @@
+# =============================================================================
+# values.example.yaml — annotated example of the per-backend mode contract.
+# =============================================================================
+# The default is fully self-contained (Mode A): every backend bundled. Override
+# any single backend to `external` to use a managed service — same chart, mode is
+# only a values choice. Copy what you need into your own overlay (or let
+# ./install.sh write values.generated.yaml for you).
+# =============================================================================
+
+global:
+  profile: local            # local (kind) | stackit
+  storageClass: "standard"
+
+# Each stateful backend exposes:  mode: bundled | external  (+ external refs).
+# Shown here as external; omit the block entirely to keep it bundled (default).
+
+# objectStorage:
+#   mode: external
+#   external:
+#     endpoint: "https://object.storage.eu01.onstackit.cloud"
+#     secretName: object-storage-credentials   # holds AWS_ACCESS_KEY_ID/SECRET
+
+# postgres:
+#   mode: external
+#   external:
+#     host: my-postgres.example.com
+#     secretName: postgres-credentials
+
+# LLM endpoint: bundled tiny mock (default) or an external provider.
+# llm:
+#   mode: external
+#   provider: azure            # openai | azure | mistral | stackit | vllm
+#   secretRef: litellm-provider-key
+
+# Heavy components you can toggle for RAM:
+# docling:      { enabled: false }
+# osdashboards: { enabled: false }
+# openmetadata: { enabled: false }
+# Optional scale engines (off by default; DuckDB is the default query engine):
+# trino: { enabled: true }
+# spark: { enabled: true }

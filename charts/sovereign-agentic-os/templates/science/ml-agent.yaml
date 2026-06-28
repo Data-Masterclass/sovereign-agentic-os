@@ -1,0 +1,93 @@
+{{- if and .Values.ml.enabled .Values.mlAgent.enabled }}
+{{- /*
+  ML agent (LangGraph, MIT library) — drives the traditional-ML flow from plain
+  language: build features (Featureform) -> train + track (MLflow) -> deploy
+  (KServe). It calls the LLM through the LiteLLM gateway with a scoped virtual key
+  (least privilege), and is traced in Langfuse — same pattern as the sample agent.
+  Its tools should be exposed via the LiteLLM MCP gateway and OPA-gated; that
+  wiring is an integration step (CI-LAYER4-INTEGRATION.md) so this stays isolated.
+  Custom image sovereign-os/ml-agent, built locally and loaded into kind. Off by
+  default everywhere.
+*/}}
+{{- $a := .Values.mlAgent }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-agent
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "ml-agent") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "ml-agent") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "ml-agent") | nindent 8 }}
+    spec:
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: agent
+          image: "{{ $a.image.repository }}:{{ $a.image.tag }}"
+          imagePullPolicy: IfNotPresent      # locally-built image, loaded into kind
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          env:
+            - name: PORT
+              value: "8000"
+            - name: LITELLM_BASE_URL
+              value: "http://agentic-os-litellm:4000/v1"
+            - name: LITELLM_API_KEY     # scoped virtual key (not the master key)
+              valueFrom: { secretKeyRef: { name: agent-litellm-key, key: apiKey } }
+            - name: CHAT_MODEL
+              value: {{ $a.chatModel | quote }}
+            # Backing Science services.
+            - name: MLFLOW_TRACKING_URI
+              value: "http://mlflow:5000"
+            - name: FEATUREFORM_HOST
+              value: "featureform:7878"
+            - name: KSERVE_ENDPOINT
+              value: {{ $a.kserveEndpoint | quote }}
+            # Langfuse tracing (public key + host not secret; secret key via Secret).
+            - name: LANGFUSE_HOST
+              value: {{ .Values.langfuseInit.host | quote }}
+            - name: LANGFUSE_PUBLIC_KEY
+              value: {{ .Values.langfuseInit.publicKey | quote }}
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef: { name: langfuse-init, key: LANGFUSE_INIT_PROJECT_SECRET_KEY }
+          ports:
+            - { name: http, containerPort: 8000 }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            {{- toYaml $a.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-agent
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "ml-agent") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "ml-agent") | nindent 4 }}
+  ports:
+    - { name: http, port: 8000, targetPort: http }
+{{- end }}

@@ -1,0 +1,8 @@
+# DuckDB query MCP tool — DuckDB over Iceberg.
+# Iceberg catalog metadata in CloudNativePG (pyiceberg SQL catalog), data on S3
+# (SeaweedFS) with static creds. (Polaris is the production REST catalog; its S3
+# credential vending needs AWS STS, which the local SeaweedFS stand-in lacks.)
+pyiceberg[pyarrow,s3fs,sql-postgres]>=0.8,<0.10
+duckdb>=1.1,<2
+requests>=2.31,<3
+mcp>=1.2,<2

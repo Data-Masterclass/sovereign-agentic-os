@@ -1,0 +1,26 @@
+# Allowed SPDX license identifiers for BUNDLED platform components.
+#
+# This is the data file read by scripts/license-check.sh. One SPDX id per line.
+# Blank lines and lines starting with '#' are ignored. Matching is exact against
+# the normalized SPDX id in licenses/components.tsv (and against simple-id
+# licenses discovered by syft).
+#
+# Policy (see THIRD-PARTY-LICENSES.md and stackit/delivery-models.md):
+#   - Permissive licenses are bundled and redistributed freely.
+#   - GPL-3.0 is allowed ONLY as a SEPARATE SERVICE (mere aggregation) — Forgejo.
+#   - MPL-2.0 is allowed (file-level copyleft) — Featureform, optional.
+#   - Anything NOT in this list fails the gate. In particular ELv2 / Elastic-2.0,
+#     BSL-1.1 / BUSL-1.1, SSPL-1.0, Commons-Clause, and AGPL-3.0 are NOT allowed
+#     to be bundled. (MinIO/AGPL is a local dev-only stand-in, never bundled —
+#     marked bundled=no in components.tsv and therefore not gated.)
+
+Apache-2.0
+MIT
+BSD-2-Clause
+BSD-3-Clause
+ISC
+0BSD
+PostgreSQL
+MPL-2.0
+GPL-3.0-only
+GPL-3.0-or-later

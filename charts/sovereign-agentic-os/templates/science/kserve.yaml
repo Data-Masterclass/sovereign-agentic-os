@@ -1,0 +1,70 @@
+{{- if and .Values.ml.enabled .Values.kserve.enabled }}
+{{- /*
+  KServe (Apache 2.0) — model serving / inference (Layer 4 Science). The KServe
+  controller (+ cert-manager, RawDeployment mode — no Knative needed) is a
+  cluster-scoped BOOTSTRAP prerequisite, installed before the OS chart exactly
+  like the CloudNativePG operator (stack-decisions.md: "operators are bootstrap,
+  not bundled in the release"). See CI-LAYER4-INTEGRATION.md.
+
+  This chart ships only the namespaced custom resource: a sample InferenceService
+  that pulls a trained model (logged to the MLflow registry, stored in the `mlflow`
+  object-storage bucket) and serves it. CPU by default; a GPU node pool is opt-in.
+  Off by default everywhere.
+*/}}
+{{- $k := .Values.kserve }}
+{{- if eq .Values.global.profile "local" }}
+# Local-only S3 credentials for KServe's storage-initializer (same dev creds as the
+# object-storage stand-in). KServe reads the endpoint/region from these annotations.
+# On STACKIT this Secret is provided externally (External Secrets Operator).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $k.s3SecretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "kserve") | nindent 4 }}
+  annotations:
+    serving.kserve.io/s3-endpoint: {{ $k.s3.endpoint | quote }}
+    serving.kserve.io/s3-usehttps: "0"
+    serving.kserve.io/s3-region: {{ .Values.objectStorage.region | quote }}
+    serving.kserve.io/s3-useanoncredential: "false"
+type: Opaque
+stringData:
+  AWS_ACCESS_KEY_ID: {{ .Values.objectStorage.local.accessKey | quote }}
+  AWS_SECRET_ACCESS_KEY: {{ .Values.objectStorage.local.secretKey | quote }}
+---
+{{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $k.serviceAccountName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "kserve") | nindent 4 }}
+secrets:
+  - name: {{ $k.s3SecretName }}
+---
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: {{ $k.sampleModel.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "kserve") | nindent 4 }}
+  annotations:
+    # RawDeployment mode — plain k8s Deployment/Service, no Knative dependency.
+    serving.kserve.io/deploymentMode: RawDeployment
+spec:
+  predictor:
+    serviceAccountName: {{ $k.serviceAccountName }}
+    model:
+      modelFormat:
+        name: {{ $k.sampleModel.format }}
+      # Trained model artifact (logged via MLflow) in object storage.
+      storageUri: {{ $k.sampleModel.storageUri | quote }}
+      resources:
+        {{- toYaml $k.resources | nindent 8 }}
+{{- end }}

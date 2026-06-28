@@ -1,0 +1,112 @@
+{{- if .Values.adminConsole.enabled }}
+{{- /*
+  Admin Console — single-pane dashboard over the whole stack: live status,
+  on/off toggling (scale 0<->1), addresses + logins + per-component docs.
+  Uses a scoped ServiceAccount (read workloads + patch their scale).
+*/}}
+{{- $a := .Values.adminConsole }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: admin-console
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "admin-console") | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: admin-console
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "deployments/scale", "statefulsets/scale"]
+    verbs: ["get", "list", "patch", "update"]
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods", "services"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: admin-console
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: admin-console
+subjects:
+  - kind: ServiceAccount
+    name: admin-console
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin-console
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "admin-console") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "admin-console") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "admin-console") | nindent 8 }}
+    spec:
+      serviceAccountName: admin-console
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: admin-console
+          image: "{{ $a.image.repository }}:{{ $a.image.tag }}"
+          imagePullPolicy: IfNotPresent      # locally-built image, loaded into kind
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          env:
+            - name: PORT
+              value: "8080"
+            - name: NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            {{- toYaml $a.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-console
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "admin-console") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "admin-console") | nindent 4 }}
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+{{- end }}

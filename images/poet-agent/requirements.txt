@@ -1,0 +1,7 @@
+# Sample LangGraph agent deps. Ranges chosen for a reliable build; freezing the
+# resolved set into a lockfile is a follow-up. LangGraph is the MIT *library*
+# (not the Elastic-licensed Platform/api server) — stack-decisions.md.
+requests>=2.31,<3
+openai>=1.40,<2
+langgraph>=0.2,<0.4
+langfuse>=3.0,<4

@@ -1,0 +1,102 @@
+{{- if .Values.clickhouse.enabled }}
+{{- /*
+  ClickHouse (Apache 2.0) — Langfuse v3 analytics store. Single local node.
+  Exposes HTTP (8123, client + migrations health) and native (9000, migrations).
+  The image (uid 101 'clickhouse') creates the app user/db from env on first start.
+*/}}
+{{- $ch := .Values.clickhouse }}
+{{- if eq .Values.global.profile "local" }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $ch.secretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "clickhouse") | nindent 4 }}
+type: Opaque
+stringData:
+  password: {{ $ch.local.password | quote }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clickhouse
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "clickhouse") | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "clickhouse") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "clickhouse") | nindent 8 }}
+    spec:
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+      containers:
+        - name: clickhouse
+          image: "{{ $ch.image.repository }}:{{ $ch.image.tag }}@{{ $ch.image.digest }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: CLICKHOUSE_DB
+              value: {{ $ch.database | quote }}
+            - name: CLICKHOUSE_USER
+              value: {{ $ch.user | quote }}
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $ch.secretName }}, key: password } }
+            # Let the app user run the DDL Langfuse migrations need.
+            - name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT
+              value: "1"
+          ports:
+            - { name: http, containerPort: 8123 }
+            - { name: native, containerPort: 9000 }
+          startupProbe:
+            httpGet: { path: /ping, port: http }
+            periodSeconds: 5
+            failureThreshold: 30        # up to ~150s
+          readinessProbe:
+            httpGet: { path: /ping, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /ping, port: http }
+            periodSeconds: 20
+          resources:
+            {{- toYaml $ch.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/clickhouse }
+            - { name: logs, mountPath: /var/log/clickhouse-server }
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "clickhouse") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "clickhouse") | nindent 4 }}
+  ports:
+    - { name: http, port: 8123, targetPort: http }
+    - { name: native, port: 9000, targetPort: native }
+{{- end }}

@@ -1,0 +1,5 @@
+# MLflow tracking + registry, plus the Postgres backend-store and S3 artifact
+# drivers (the upstream image ships neither). Pinned to the chart's image tag.
+mlflow==2.19.0
+psycopg2-binary==2.9.10
+boto3==1.35.99

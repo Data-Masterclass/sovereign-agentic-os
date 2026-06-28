@@ -1,0 +1,68 @@
+{{- if .Values.dbt.enabled }}
+{{- /*
+  dbt build Job — transforms the seed data into the analytics warehouse
+  (Postgres `warehouse` DB on CNPG). Runs as a post-install/upgrade hook so the
+  warehouse is built/refreshed after the DB exists. Cube reads these models.
+  (Local adapter is dbt-postgres; production target is dbt-duckdb over Iceberg.)
+*/}}
+{{- $d := .Values.dbt }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dbt-build
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "dbt") | nindent 4 }}
+  annotations:
+    # post-install only: the warehouse persists in Postgres, so we don't rebuild
+    # on every upgrade (which would slow every release). Re-run on demand by
+    # deleting this Job and re-applying, or `kubectl create job --from`.
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "15"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 8
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "dbt") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: dbt
+          image: "{{ $d.image.repository }}:{{ $d.image.tag }}"
+          imagePullPolicy: IfNotPresent      # locally-built image, loaded into kind
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: PGHOST
+              value: pg-rw
+            - name: PGDATABASE
+              value: {{ $d.warehouse.database | quote }}
+            - name: PGSCHEMA
+              value: {{ $d.warehouse.schema | quote }}
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: {{ $d.warehouse.secretName }}, key: username } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $d.warehouse.secretName }}, key: password } }
+          # Wait for the warehouse DB/role, then seed + build + test.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              echo "waiting for warehouse Postgres..."
+              for i in $(seq 1 40); do
+                if dbt debug --profiles-dir /opt/dbt/project >/dev/null 2>&1; then break; fi
+                sleep 3
+              done
+              dbt seed --profiles-dir /opt/dbt/project
+              dbt build --profiles-dir /opt/dbt/project
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 512Mi }
+{{- end }}

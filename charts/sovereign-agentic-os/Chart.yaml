@@ -1,0 +1,107 @@
+apiVersion: v2
+name: sovereign-agentic-os
+description: >-
+  Sovereign Agentic OS — umbrella chart (Layers 1+2). A self-hostable, EU-residency
+  agentic data platform assembled from permissively-licensed open source. Step 1 brings
+  up the agent-core vertical slice: LiteLLM (model/MCP gateway), Langfuse v3
+  (observability) with its backends (CloudNativePG Postgres, ClickHouse, Valkey,
+  object storage), OpenSearch (retrieval backbone), and a sample LangGraph agent.
+type: application
+
+# Chart SemVer (the product version). Bump additively per packaging.md.
+version: 0.1.0-alpha.1
+
+# Informational: the slice this chart currently stands up.
+appVersion: "0.1.0-alpha.1"
+
+home: https://github.com/datamasterclass/sovereign-agentic-os
+maintainers:
+  - name: aborek
+    email: contact@datamasterclass.com
+
+keywords:
+  - sovereign
+  - agentic
+  - langgraph
+  - litellm
+  - langfuse
+  - opensearch
+  - rag
+
+# Subchart dependencies are added incrementally as each component is wired in
+# (thinnest runnable slice first). Upstream charts are pinned by version; bespoke
+# components (object storage stand-in, ClickHouse, Valkey, the agent, the mock model)
+# live in templates/. See README.md for the build order.
+dependencies:
+  # Langfuse v3 (MIT core; /ee not shipped). Wired to OUR external backends
+  # (CloudNativePG Postgres, ClickHouse, Valkey, SeaweedFS S3) — its bundled
+  # Bitnami subcharts are disabled (now paywalled/legacy, and the spec mandates
+  # specific permissive components).
+  - name: langfuse
+    version: "1.5.36"
+    repository: "https://langfuse.github.io/langfuse-k8s"
+    condition: langfuse.enabled
+  # LiteLLM — model/MCP gateway. Run DB-less for the thin slice (master key +
+  # static config); DB-backed virtual keys + cost caps are a documented
+  # fast-follow against CloudNativePG.
+  - name: litellm-helm
+    alias: litellm
+    version: "1.90.0"
+    repository: "oci://ghcr.io/berriai"
+    condition: litellm.enabled
+  # OpenSearch — the retrieval backbone (hybrid vector + lexical). Single node
+  # locally; security plugin disabled for the local slice (default-deny network
+  # baseline lands in a later step).
+  - name: opensearch
+    version: "3.7.0"
+    repository: "https://opensearch-project.github.io/helm-charts"
+    condition: opensearch.enabled
+  # OpenSearch Dashboards — the search/visualization UI over OpenSearch.
+  - name: opensearch-dashboards
+    alias: osdashboards
+    version: "3.7.0"
+    repository: "https://opensearch-project.github.io/helm-charts"
+    condition: osdashboards.enabled
+  # Dagster — data orchestrator (Layer 2). Uses our CloudNativePG dagster DB.
+  - name: dagster
+    version: "1.13.11"
+    repository: "https://dagster-io.github.io/helm"
+    condition: dagster.enabled
+  # OpenMetadata — catalog/lineage (Layer 2). External CNPG Postgres + our
+  # OpenSearch as the search backend; Airflow ingestion disabled locally.
+  - name: openmetadata
+    version: "1.13.0"
+    repository: "https://helm.open-metadata.org"
+    condition: openmetadata.enabled
+  # Superset — dashboards/BI (Layer 3). External CNPG `superset` DB; web-only
+  # (SimpleCache) locally to keep it light.
+  - name: superset
+    version: "0.17.2"
+    repository: "https://apache.github.io/superset"
+    condition: superset.enabled
+  # Software delivery (Layer 3): Forgejo (git) + Argo CD (GitOps deploy).
+  - name: forgejo
+    version: "17.1.1"
+    repository: "oci://code.forgejo.org/forgejo-helm"
+    condition: forgejo.enabled
+  - name: argo-cd
+    version: "10.0.0"
+    repository: "https://argoproj.github.io/argo-helm"
+    condition: argo-cd.enabled
+  # Layer 4 (Science / ML) — off by default (GPU-cost, opt-in; not cohort-1).
+  # JupyterHub (Apache 2.0 / BSD-3, Zero-to-JupyterHub) — per-domain multi-user
+  # notebooks; GPU-capable for training. Auth federates to Ory in production
+  # (DummyAuthenticator locally). MLflow / Featureform / KServe / the ML agent are
+  # bespoke under templates/science/.
+  #
+  # Layer 4 master gate: the whole Science layer is off unless `ml.enabled=true`
+  # (see values.yaml `ml.enabled`). JupyterHub additionally requires its own
+  # `jupyterhub.enabled=true` — both default false, so the subchart only renders
+  # when ml.enabled AND jupyterhub.enabled are set (the install wizard + the
+  # science preset set them together). Helm subchart `condition` is single-path,
+  # so the AND with `ml.enabled` is enforced by keeping `jupyterhub.enabled`
+  # default-false under the `ml`-gated Layer 4 block.
+  - name: jupyterhub
+    version: "4.4.0"
+    repository: "https://hub.jupyter.org/helm-chart/"
+    condition: jupyterhub.enabled

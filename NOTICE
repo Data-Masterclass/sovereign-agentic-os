@@ -1,0 +1,76 @@
+Sovereign Agentic OS
+Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+Chausseestr. 86, c/o Meeet Mitte, 10115 Berlin, Germany
+
+This product includes third-party open-source software under their own licenses;
+see THIRD-PARTY-LICENSES.md. This project is not affiliated with, or endorsed by,
+the Apache Software Foundation.
+
+================================================================================
+Required attribution notices from bundled Apache-2.0 components
+================================================================================
+
+Section 4(d) of the Apache License, Version 2.0 requires that the attribution
+notices carried in the NOTICE files of bundled Apache-2.0 works be reproduced in
+redistributions. The full NOTICE text of each such component is bundled verbatim
+under licenses/notices/. The notices below are reproduced from those files.
+
+--------------------------------------------------------------------------------
+Apache Superset  (licenses/notices/Apache-Superset-NOTICE.txt)
+--------------------------------------------------------------------------------
+Apache Superset
+Copyright 2016-2024 The Apache Software Foundation
+
+This product includes software developed at The Apache Software
+Foundation (http://www.apache.org/).
+
+--------------------------------------------------------------------------------
+Apache Polaris  (licenses/notices/Apache-Polaris-NOTICE.txt)
+--------------------------------------------------------------------------------
+Apache Polaris
+Copyright 2026 The Apache Software Foundation
+
+This product includes software developed at
+The Apache Software Foundation (http://www.apache.org/).
+
+The initial code for the Polaris project was donated to the ASF by Snowflake
+Inc. (https://www.snowflake.com/) copyright 2024. This project includes code
+from Project Nessie, developed at Dremio (Copyright 2015-2025 Dremio
+Corporation). See the bundled NOTICE for the full text.
+
+--------------------------------------------------------------------------------
+Apache Spark  (licenses/notices/Apache-Spark-NOTICE.txt) — optional, off by default
+--------------------------------------------------------------------------------
+Apache Spark
+Copyright 2014 and onwards The Apache Software Foundation.
+
+This product includes software developed at
+The Apache Software Foundation (http://www.apache.org/).
+
+(Includes an Export Control Notice — see the bundled NOTICE file.)
+
+--------------------------------------------------------------------------------
+OpenSearch / OpenSearch Dashboards  (licenses/notices/OpenSearch-NOTICE.txt)
+--------------------------------------------------------------------------------
+OpenSearch (https://opensearch.org/)
+Copyright OpenSearch Contributors
+
+This product includes software developed by Elasticsearch (http://www.elastic.co)
+(Copyright 2009-2018 Elasticsearch), by The Apache Software Foundation
+(http://www.apache.org/), and by Joda.org (http://www.joda.org/).
+
+--------------------------------------------------------------------------------
+Other bundled Apache-2.0 components
+--------------------------------------------------------------------------------
+ClickHouse, Apache Polaris, Apache Trino (optional), dbt Core, Haystack, Cube,
+OpenMetadata, OPA, Dagster, MLflow, KServe, Harbor, Argo CD, Velero,
+cert-manager, Cilium, CloudNativePG, SeaweedFS, Supabase, JupyterHub, the
+amazon/aws-cli image, and others carry their own NOTICE/attribution where
+applicable. Where a component ships a NOTICE file, it is reproduced under
+licenses/notices/. The complete, per-component attribution manifest — with
+versions, SPDX identifiers, and pointers to the bundled full license texts under
+licenses/ — is in THIRD-PARTY-LICENSES.md.
+
+"Sovereign Agentic OS" and "Data Masterclass" are trademarks of Borek Data
+Ventures UG (haftungsbeschränkt); see TRADEMARKS.md. All other trademarks are the
+property of their respective owners.

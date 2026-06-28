@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+# Never commit Terraform state, vars, provider plugins, or cluster credentials.
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfvars
+!terraform/*.tfvars.example
+terraform/crash.log
+terraform/override.tf
+terraform/override.tf.json
+*.bak
+kubeconfig.yaml
+*.kubeconfig

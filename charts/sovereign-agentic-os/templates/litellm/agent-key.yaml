@@ -1,0 +1,85 @@
+{{- if and .Values.litellm.enabled .Values.litellmAgentKey.enabled }}
+{{- /*
+  Provision a scoped LiteLLM virtual key for the agents (least privilege).
+  The key value lives in a Secret (the agents read it); a post-install/upgrade
+  hook Job calls /key/generate with the master key to register it in LiteLLM,
+  limited to the allowed models with a budget cap. Idempotent.
+*/}}
+{{- $k := .Values.litellmAgentKey }}
+{{- if eq .Values.global.profile "local" }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $k.secretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "litellm") | nindent 4 }}
+type: Opaque
+stringData:
+  apiKey: {{ $k.local.value | quote }}
+---
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: litellm-agent-key-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "litellm-key-init") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "litellm-key-init") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: key-init
+          image: curlimages/curl:8.11.1
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          env:
+            - name: MASTER_KEY
+              valueFrom: { secretKeyRef: { name: litellm-credentials, key: masterkey } }
+            - name: VIRTUAL_KEY
+              valueFrom: { secretKeyRef: { name: {{ $k.secretName }}, key: apiKey } }
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              B=http://agentic-os-litellm:4000
+              echo "waiting for LiteLLM readiness..."
+              for i in $(seq 1 60); do
+                code=$(curl -s -o /dev/null -w "%{http_code}" "$B/health/readiness" || true)
+                [ "$code" = "200" ] && { echo "litellm ready"; break; }
+                sleep 3
+              done
+              info=$(curl -s -o /dev/null -w "%{http_code}" \
+                -H "Authorization: Bearer $MASTER_KEY" \
+                "$B/key/info?key=$VIRTUAL_KEY" || true)
+              if [ "$info" = "200" ]; then
+                echo "virtual key already provisioned"; exit 0
+              fi
+              echo "provisioning scoped virtual key (alias={{ $k.alias }}, budget={{ $k.maxBudget }})..."
+              PAYLOAD='{"key":"'"$VIRTUAL_KEY"'","key_alias":"{{ $k.alias }}","models":{{ $k.models | toJson }},"max_budget":{{ $k.maxBudget }}}'
+              curl -fsS -X POST "$B/key/generate" \
+                -H "Authorization: Bearer $MASTER_KEY" \
+                -H "Content-Type: application/json" \
+                -d "$PAYLOAD" >/dev/null && echo "virtual key created"
+          resources:
+            requests: { cpu: 25m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 64Mi }
+{{- end }}

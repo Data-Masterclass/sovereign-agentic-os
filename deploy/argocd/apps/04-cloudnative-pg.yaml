@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+# Platform wave 1 — CloudNativePG operator. In Mode B the PRIMARY Postgres is
+# managed Flex (postgres.enabled=false in the overlay); the operator is kept
+# only for any component that still wants an in-cluster PG (e.g. self-hosted
+# Supabase). Harmless if unused — the CRD/operator simply sits idle.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudnative-pg
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: sovereign-os
+  source:
+    repoURL: https://cloudnative-pg.github.io/charts
+    chart: cloudnative-pg
+    targetRevision: 0.22.1
+    helm:
+      releaseName: cloudnative-pg
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cnpg-system
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

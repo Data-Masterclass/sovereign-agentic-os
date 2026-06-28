@@ -1,0 +1,115 @@
+{{- if .Values.opa.enabled }}
+{{- /*
+  OPA — policy-as-code at the MCP/tool boundary (Layer 2 / security.md).
+  Default-deny tool authorization: a principal (a LiteLLM key / agent identity)
+  may invoke a tool only if it's granted. Internet tools (web_fetch) are not in
+  the default grants, so they're denied unless explicitly granted — exactly the
+  "deny internet tools unless granted" baseline. The governed web_fetch tool and
+  its wiring arrive with the egress baseline step.
+*/}}
+{{- $opa := .Values.opa }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opa-policy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa") | nindent 4 }}
+data:
+  authz.rego: |
+    package agentic.authz
+
+    import rego.v1
+
+    # Default-deny at the tool boundary (least privilege).
+    default allow := false
+
+    # A principal may use a tool only if it has been granted that tool.
+    # Internet tools (e.g. web_fetch) are absent from grants -> denied.
+    allow if {
+        some tool in data.grants[input.principal]
+        tool == input.tool
+    }
+
+    decision := {
+        "allow": allow,
+        "principal": input.principal,
+        "tool": input.tool,
+    }
+  data.json: |
+    {{ dict "grants" $opa.grants | toJson }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa") | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/policy: {{ printf "%s-%s" ($opa.grants | toJson) "v1" | sha256sum }}
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa") | nindent 8 }}
+    spec:
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: opa
+          image: "{{ $opa.image.repository }}:{{ $opa.image.tag }}@{{ $opa.image.digest }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          args:
+            - "run"
+            - "--server"
+            - "--addr=0.0.0.0:8181"
+            - "--log-level=info"
+            # Explicit files, not the dir: ConfigMap volumes add ..data symlinks
+            # that make a recursive dir load see each file multiple times.
+            - "/policies/authz.rego"
+            - "/policies/data.json"
+          ports:
+            - { name: http, containerPort: 8181 }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            {{- toYaml $opa.resources | nindent 12 }}
+          volumeMounts:
+            - { name: policy, mountPath: /policies, readOnly: true }
+      volumes:
+        - name: policy
+          configMap:
+            name: opa-policy
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa") | nindent 4 }}
+  ports:
+    - { name: http, port: 8181, targetPort: http }
+{{- end }}

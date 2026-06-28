@@ -1,0 +1,107 @@
+{{- if .Values.egressProxy.enabled }}
+{{- /*
+  Egress proxy (tinyproxy) — the single sanctioned outbound chokepoint
+  (security.md). Allowlist-only via a deny-by-default Filter: requests to
+  non-allowlisted domains are blocked; everything is logged. The governed
+  web_fetch tool routes through here; agents have no other path out. On STACKIT
+  this pairs with Cilium FQDN egress + DLP. (Squid was rejected — its arm64 edge
+  build runs away on memory; tinyproxy is tiny and reliable.)
+*/}}
+{{- $p := .Values.egressProxy }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: egress-proxy-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "egress-proxy") | nindent 4 }}
+data:
+  tinyproxy.conf: |
+    Port 3128
+    Listen 0.0.0.0
+    Timeout 600
+    PidFile "/tmp/tinyproxy.pid"
+    LogLevel Info
+    MaxClients 100
+    # Allow all source pods to use the proxy (in-cluster only via Service/NetPol).
+    Allow 0.0.0.0/0
+    # Deny-by-default domain allowlist.
+    Filter "/etc/tinyproxy/filter"
+    FilterDefaultDeny Yes
+    FilterExtended On
+    # CONNECT (HTTPS) only to standard web ports.
+    ConnectPort 443
+    ConnectPort 80
+  filter: |
+    {{- range $p.allowlist }}
+    (^|\.){{ . | replace "." "\\." }}$
+    {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: egress-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "egress-proxy") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "egress-proxy") | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ printf "%s-tinyproxy" ($p.allowlist | toJson) | sha256sum }}
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "egress-proxy") | nindent 8 }}
+    spec:
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 65534
+      containers:
+        - name: tinyproxy
+          image: "{{ $p.image.repository }}:{{ $p.image.tag }}"
+          imagePullPolicy: IfNotPresent      # locally-built image, loaded into kind
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          ports:
+            - { name: proxy, containerPort: 3128 }
+          readinessProbe:
+            tcpSocket: { port: proxy }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: proxy }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            {{- toYaml $p.resources | nindent 12 }}
+          volumeMounts:
+            - { name: config, mountPath: /etc/tinyproxy, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: config
+          configMap:
+            name: egress-proxy-config
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: egress-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "egress-proxy") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "egress-proxy") | nindent 4 }}
+  ports:
+    - { name: proxy, port: 3128, targetPort: proxy }
+{{- end }}

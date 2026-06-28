@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# Copy to terraform.tfvars (GITIGNORED) and fill in. terraform.tfvars is never
+# committed. Secrets are NOT set here — credentials are provider-generated.
+
+# --- Required ---------------------------------------------------------------
+project_id = "00000000-0000-0000-0000-000000000000" # STACKIT project ID
+dns_name   = "agentic-os.example.com"                # apex DNS name you control
+
+# Path to the provisioning-scoped SA key (gitignored). Or unset and use the
+# STACKIT_SERVICE_ACCOUNT_KEY_PATH env var / STACKIT CLI credentials.
+service_account_key_path = "../../../stackit/sa-key.json"
+
+# --- Region / naming (defaults shown) ---------------------------------------
+region      = "eu01"
+name_prefix = "dm-agentic-os"
+
+# --- SKE node pool ----------------------------------------------------------
+# Confirm the exact flavor name in the STACKIT machine-type catalog. go-live
+# targets ~4 vCPU / 32 GB nodes; `c1.4` is a verified 4 vCPU compute flavor.
+node_machine_type   = "c1.4"
+node_pool_min       = 3
+node_pool_max       = 4
+node_volume_size_gb = 50
+
+# --- PostgreSQL Flex --------------------------------------------------------
+postgres_version  = "16"
+postgres_flavor   = { cpu = 2, ram = 8 }
+postgres_replicas = 1
+postgres_storage  = { class = "premium-perf2-stackit", size = 20 }
+# Tighten to the SKE egress CIDR at go-live (terraform output / stackit ske).
+postgres_acl = ["0.0.0.0/0"]
+
+# --- OpenSearch (confirm plan names: `stackit opensearch plans`) ------------
+opensearch_plan_name = "stackit-opensearch-single-small"
+opensearch_version   = "2"
+
+# --- Container Registry (manual — provider has no resource) -----------------
+container_registry_url = "REPLACE-registry-host/agentic-os"

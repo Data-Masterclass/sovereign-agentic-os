@@ -1,0 +1,33 @@
+# Secrets — never commit. Secrets are external (values references / k8s Secrets).
+*.secret.yaml
+*-secret.yaml
+secrets.yaml
+values.secret.yaml
+sa-key.json
+*.key
+*.pem
+.env
+.env.*
+
+# Helm
+# Vendored subchart archives are pulled via `helm dependency build` — not committed.
+charts/sovereign-agentic-os/charts/*.tgz
+**/charts/*.tgz
+*.tgz
+
+# kube / local
+kubeconfig.yaml
+*.kubeconfig
+
+# OS / editor
+.DS_Store
+*.swp
+
+# Runtime output pulled from the cluster (not source)
+poems/
+
+# install wizard output
+values.generated.yaml
+
+# agent worktrees
+.claude/

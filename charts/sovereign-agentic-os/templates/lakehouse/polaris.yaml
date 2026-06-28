@@ -1,0 +1,102 @@
+{{- if .Values.polaris.enabled }}
+{{- /*
+  Apache Polaris — the Iceberg REST catalog (Layer 3 lakehouse). Iceberg tables
+  live on object storage (SeaweedFS locally / STACKIT Object Storage in prod).
+  Local persistence is in-memory (a stand-in); production uses relational-jdbc
+  against a CNPG `polaris` DB. The catalog + a sample table are created by the
+  bootstrap Job (templates/lakehouse/polaris-bootstrap.yaml).
+*/}}
+{{- $pl := .Values.polaris }}
+{{- if eq .Values.global.profile "local" }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $pl.secretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "polaris") | nindent 4 }}
+type: Opaque
+stringData:
+  # realm,clientId,clientSecret — bootstraps the realm's root principal.
+  POLARIS_BOOTSTRAP_CREDENTIALS: "{{ $pl.realm }},{{ $pl.local.rootClientId }},{{ $pl.local.rootClientSecret }}"
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: polaris
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "polaris") | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "polaris") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "polaris") | nindent 8 }}
+    spec:
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 10000        # image's 'polaris' user (numeric, for runAsNonRoot)
+        runAsGroup: 10001
+      containers:
+        - name: polaris
+          image: "{{ $pl.image.repository }}:{{ $pl.image.tag }}@{{ $pl.image.digest }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: POLARIS_PERSISTENCE_TYPE
+              value: {{ $pl.persistenceType | quote }}
+            - name: POLARIS_BOOTSTRAP_CREDENTIALS
+              valueFrom: { secretKeyRef: { name: {{ $pl.secretName }}, key: POLARIS_BOOTSTRAP_CREDENTIALS } }
+            - name: POLARIS_REALM_CONTEXT_REALMS    # Quarkus: polaris.realm-context.realms
+              value: {{ $pl.realm | quote }}
+            # S3 access to the object store (for credential vending + validation).
+            - name: AWS_REGION
+              value: {{ $pl.s3.region | quote }}
+            - name: AWS_ENDPOINT_URL_S3
+              value: {{ $pl.s3.endpoint | quote }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_ACCESS_KEY_ID } }
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_SECRET_ACCESS_KEY } }
+          ports:
+            - { name: catalog, containerPort: 8181 }
+            - { name: mgmt, containerPort: 8182 }
+          startupProbe:
+            httpGet: { path: /q/health/ready, port: mgmt }
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /q/health/ready, port: mgmt }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /q/health/live, port: mgmt }
+            periodSeconds: 20
+          resources:
+            {{- toYaml $pl.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: polaris
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "polaris") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "polaris") | nindent 4 }}
+  ports:
+    - { name: catalog, port: 8181, targetPort: catalog }
+    - { name: mgmt, port: 8182, targetPort: mgmt }
+{{- end }}

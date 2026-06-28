@@ -1,0 +1,1104 @@
+# =============================================================================
+# Sovereign Agentic OS — default values (secure, opinionated)
+# =============================================================================
+# These are the PRODUCT defaults. Overlays (values.local.yaml for kind,
+# values.stackit.yaml for STACKIT) trim sizes and point at environment storage.
+#
+# RULES (packaging.md / security.md):
+#   - No real secrets here, ever. Secrets are external (k8s Secret / External
+#     Secrets references). The chart ships sane secure defaults only.
+#   - Pin upstream chart versions (Chart.yaml) and image digests (below).
+#   - Components carry an `enabled` flag so the slice can come up incrementally.
+# =============================================================================
+
+global:
+  # Logical namespace the workloads live in (created via --create-namespace).
+  namespace: agentic-os
+  # Profile: "local" (kind) or "stackit". Templates may branch on this.
+  profile: local
+  # Empty => use the cluster's default StorageClass (kind: "standard").
+  storageClass: ""
+  imagePullPolicy: IfNotPresent
+  # Secure-by-default pod hardening applied to bespoke workloads.
+  podSecurity:
+    runAsNonRoot: true
+    seccompProfile: RuntimeDefault
+
+# -----------------------------------------------------------------------------
+# Secure-by-default network baseline (security.md).
+# Default-deny egress ships ON (secure by default). Agents reach the internet
+# only via the egress proxy + governed web_fetch tool. NOTE: kind's kindnet CNI
+# does not enforce NetworkPolicies; on STACKIT, Cilium enforces and adds
+# FQDN-aware allowlists + DLP. See templates/network/egress-policies.yaml.
+# -----------------------------------------------------------------------------
+networkPolicies:
+  defaultDeny: true
+
+# -----------------------------------------------------------------------------
+# Object storage — local stand-in for STACKIT Object Storage (MinIO, S3).
+# Local-kind uses MinIO for reliable S3 (Iceberg multipart + Langfuse). SeaweedFS
+# remains the air-gap/sovereign-bundled option but is unreliable for Iceberg on
+# kind. On STACKIT this is disabled and the real Object Storage endpoint + an
+# externally-managed Secret are used instead (values.stackit.yaml).
+# -----------------------------------------------------------------------------
+objectStorage:
+  enabled: true
+  # Name of the Secret holding S3 credentials. For profile=local the chart creates
+  # it with the dev-only creds below; on STACKIT it must pre-exist (External Secrets).
+  secretName: object-storage-credentials
+  region: us-east-1            # clients just need a value
+  buckets:
+    - langfuse                 # Langfuse v3 blob store (events/media)
+    - lakehouse                # Iceberg warehouse (Polaris / Layer 3)
+    - mlflow                   # MLflow artifact store (Layer 4 Science; only used when mlflow.enabled)
+  # MinIO is the local-kind S3 stand-in (reliable for Iceberg + Langfuse).
+  # SeaweedFS is the air-gap/sovereign alternative but proved unreliable for
+  # Iceberg writes on kind. MinIO is AGPL — local dev stand-in only, never bundled.
+  image:
+    repository: minio/minio
+    digest: sha256:8834ae47a2de3509b83e0e70da9369c24bbbc22de42f2a2eddc530eee88acd1b
+  awsCli:
+    repository: amazon/aws-cli
+    digest: sha256:e14216fb361cce909ce199616711ad103182d5937f851cda9bebf25867d7180a   # 2.31.13
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 768Mi }
+  # Dev-only credentials, used ONLY when global.profile == local. Not a real secret:
+  # the local stand-in has no production value. Overridable via values.local.yaml.
+  local:
+    accessKey: agentic-os-local
+    secretKey: agentic-os-local-secret
+
+# -----------------------------------------------------------------------------
+# Postgres (infra tier) — CloudNativePG-managed.
+# stack-decisions.md: infra DBs (Langfuse/Cube/OpenMetadata) run on plain Postgres
+# via the CloudNativePG operator (continuous WAL backup + PITR in production).
+# The operator itself is a cluster-scoped prerequisite (scripts/bootstrap-local.sh);
+# this chart ships only the Cluster CR + the app database/credentials.
+# -----------------------------------------------------------------------------
+postgres:
+  enabled: true
+  clusterName: pg              # creates services pg-rw / pg-ro / pg-r
+  instances: 1                 # local: single instance (3 in production for HA)
+  database: langfuse
+  username: langfuse
+  # Secret (kubernetes.io/basic-auth) for the app owner. For profile=local the chart
+  # creates it from the dev password below; on STACKIT it must pre-exist (External Secrets).
+  secretName: postgres-langfuse-credentials
+  storageSize: 2Gi
+  image:
+    # CNPG needs a tag for upgrade detection; tag@digest pins the exact image too.
+    repository: ghcr.io/cloudnative-pg/postgresql
+    tag: "17.5"
+    digest: sha256:b1deeed2aa998b2f381e39c5cadb9ec06127708c8bd62965743af19abf21628f
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 512Mi }
+  # Dev-only password, used ONLY when global.profile == local. Not a production secret.
+  local:
+    password: langfuse-local-dev
+  # Additional databases on the SAME CNPG cluster, each as a managed role +
+  # Database CR. Other services (LiteLLM, Dagster, …) own their own database.
+  extraDatabases:
+    - name: litellm           # LiteLLM admin UI + virtual keys + cost caps
+      username: litellm
+      secretName: postgres-litellm-credentials
+      createdb: true          # Prisma's migration resolver needs a shadow DB
+      localPassword: litellm-local-dev
+    - name: dagster           # Dagster run/event/schedule storage
+      username: dagster
+      secretName: postgres-dagster-credentials
+      createdb: false
+      localPassword: dagster-local-dev
+    - name: warehouse         # dbt-built analytics warehouse (read by Cube)
+      username: warehouse
+      secretName: postgres-warehouse-credentials
+      createdb: false
+      localPassword: warehouse-local-dev
+    - name: openmetadata      # OpenMetadata catalog metadata
+      username: openmetadata
+      secretName: postgres-openmetadata-credentials
+      createdb: false
+      localPassword: openmetadata-local-dev
+    - name: polaris           # Iceberg catalog metadata (CloudNativePG)
+      username: polaris
+      secretName: postgres-polaris-credentials
+      createdb: false
+      localPassword: polaris-local-dev
+    - name: superset          # Superset metadata DB
+      username: superset
+      secretName: postgres-superset-credentials
+      createdb: false
+      localPassword: superset-local-dev
+    - name: mlflow            # MLflow tracking + model registry backend (Layer 4 Science)
+      username: mlflow
+      secretName: postgres-mlflow-credentials
+      createdb: false
+      localPassword: mlflow-local-dev
+
+# -----------------------------------------------------------------------------
+# Valkey (BSD-3) — Langfuse queue/cache. NOT Redis (SSPL) — stack-decisions.md.
+# Cache only; not backed up. Local: single ephemeral pod with auth.
+# -----------------------------------------------------------------------------
+valkey:
+  enabled: true
+  secretName: valkey-credentials   # local: chart-created; STACKIT: external
+  image:
+    repository: valkey/valkey
+    tag: "8.1-alpine"
+    digest: sha256:77643d152547b446fc15cbafaff22004545663fcd40c6b28038ad283837baa75
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  local:
+    password: valkey-local-dev
+
+# -----------------------------------------------------------------------------
+# ClickHouse (Apache 2.0) — Langfuse v3 analytics backend.
+# Local: single ephemeral node (cgroup-aware memory cap via the resource limit).
+# Production uses native ClickHouse backup (stack-decisions.md).
+# -----------------------------------------------------------------------------
+clickhouse:
+  enabled: true
+  secretName: clickhouse-credentials   # local: chart-created; STACKIT: external
+  database: langfuse
+  user: langfuse
+  image:
+    repository: clickhouse/clickhouse-server
+    tag: "24.8"
+    digest: sha256:1ffa82edee000a42c09313bd9f1293d94c570aee74babc1b3ca9983a35fa597b
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits: { cpu: "2", memory: 2Gi }
+  local:
+    password: clickhouse-local-dev
+
+# -----------------------------------------------------------------------------
+# Langfuse project keys (consumed by the sample agent + LiteLLM to send traces).
+# For profile=local these provision a deterministic project via LANGFUSE_INIT_*
+# (templates/langfuse/init.yaml). The secretKey is a dev throwaway; on STACKIT,
+# real project keys are managed externally.
+# -----------------------------------------------------------------------------
+langfuseInit:
+  publicKey: "pk-lf-localdev0000public"
+  secretKey: "sk-lf-localdev0000secret"
+  host: "http://agentic-os-langfuse-web:3000"
+
+# -----------------------------------------------------------------------------
+# Langfuse v3 (MIT core) — wrapped upstream subchart, wired to OUR backends.
+# NOTE: this is the `langfuse` SUBCHART's value tree; the chart's own core
+# config section is itself called `langfuse`, hence `langfuse.langfuse.*`.
+# Secrets are referenced (never inlined): core secrets come from the local-only
+# Secret created by templates/langfuse/core-secrets.yaml; backend passwords reuse
+# the per-backend Secrets created earlier.
+# -----------------------------------------------------------------------------
+langfuse:
+  enabled: true
+
+  # ---- Langfuse application core ----
+  langfuse:
+    salt:
+      secretKeyRef: { name: langfuse-core-secrets, key: salt }
+    encryptionKey:
+      secretKeyRef: { name: langfuse-core-secrets, key: encryptionKey }
+    nextauth:
+      url: http://localhost:3000        # local port-forward target
+      secret:
+        secretKeyRef: { name: langfuse-core-secrets, key: nextauthSecret }
+    features:
+      telemetryEnabled: false           # sovereign/offline — no phone-home
+    # Headless org/project/key provisioning (Secret from templates/langfuse/init.yaml).
+    additionalEnvFrom:
+      - secretRef:
+          name: langfuse-init
+
+  # ---- Postgres: external (CloudNativePG `pg-rw`) ----
+  postgresql:
+    deploy: false
+    host: pg-rw
+    port: 5432
+    auth:
+      username: langfuse
+      database: langfuse
+      existingSecret: postgres-langfuse-credentials
+      secretKeys:
+        userPasswordKey: password
+        adminPasswordKey: password
+
+  # ---- Redis protocol: external Valkey ----
+  redis:
+    deploy: false
+    host: valkey
+    port: 6379
+    auth:
+      username: default
+      existingSecret: valkey-credentials
+      existingSecretPasswordKey: password
+
+  # ---- ClickHouse: external single node (NOT a cluster) ----
+  clickhouse:
+    deploy: false
+    host: clickhouse
+    httpPort: 8123
+    nativePort: 9000
+    database: langfuse
+    clusterEnabled: false               # single node — no ON CLUSTER DDL
+    auth:
+      username: langfuse
+      existingSecret: clickhouse-credentials
+      existingSecretKey: password
+
+  # ---- Blob storage: external SeaweedFS (S3) ----
+  s3:
+    deploy: false
+    storageProvider: s3
+    bucket: langfuse
+    region: us-east-1
+    endpoint: http://minio:9000
+    forcePathStyle: true                # required for non-AWS S3
+    accessKeyId:
+      secretKeyRef: { name: object-storage-credentials, key: AWS_ACCESS_KEY_ID }
+    secretAccessKey:
+      secretKeyRef: { name: object-storage-credentials, key: AWS_SECRET_ACCESS_KEY }
+
+# -----------------------------------------------------------------------------
+# Mock model — local OpenAI-compatible stub (sovereign/offline). Disabled on
+# STACKIT (LiteLLM routes to real in-region models there).
+# -----------------------------------------------------------------------------
+mockModel:
+  enabled: true
+  image:
+    repository: sovereign-os/mock-model   # built locally, loaded into kind
+    tag: "0.1.1"                           # 0.1.1 adds poem mode
+  embedDim: 384                            # must match opensearch.knnDimension
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 128Mi }
+
+# -----------------------------------------------------------------------------
+# LiteLLM master key (consumed by the sample agent to call the gateway).
+# Local dev throwaway; external on STACKIT.
+# -----------------------------------------------------------------------------
+litellmMasterKey: "sk-litellm-local-dev-master"
+
+# LiteLLM admin UI login (DB-backed UI at /ui). Local dev throwaway.
+litellmUI:
+  username: "admin"
+  password: "litellm-admin-local-dev"
+
+# -----------------------------------------------------------------------------
+# Scoped virtual key for the agents (least privilege — security.md). Provisioned
+# in LiteLLM by a post-install hook; the agents use THIS instead of the master
+# key. Limited to the two models, with a cost cap.
+# -----------------------------------------------------------------------------
+litellmAgentKey:
+  enabled: true
+  secretName: agent-litellm-key
+  alias: "sovereign-agents"
+  maxBudget: 5            # USD spend cap on this key
+  models:                 # only these models are callable with this key
+    - sovereign-mock
+    - sovereign-embed
+  local:
+    value: "sk-agents-local-dev"
+
+# -----------------------------------------------------------------------------
+# LiteLLM — model/MCP gateway (wrapped upstream subchart, alias `litellm`).
+# DB-less thin slice: master key + static config routing to the mock model.
+# Also ships gateway traces to Langfuse via the success_callback.
+# -----------------------------------------------------------------------------
+litellm:
+  enabled: true
+  # Use the existing CloudNativePG database (enables the admin UI + virtual keys
+  # + cost caps). No bundled Bitnami Postgres.
+  db:
+    deployStandalone: false
+    useExisting: true
+    endpoint: pg-rw
+    database: litellm
+    secret:
+      name: postgres-litellm-credentials
+      usernameKey: username
+      passwordKey: password
+  migrationJob:
+    enabled: true
+  # Master key + Langfuse env come from our local Secret.
+  masterkeySecretName: litellm-credentials
+  masterkeySecretKey: masterkey
+  environmentSecrets:
+    - litellm-credentials
+  resources:
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1536Mi }   # litellm proxy is import-heavy; <1Gi OOMs
+  proxy_config:
+    model_list:
+      - model_name: sovereign-mock          # chat model the agent calls
+        litellm_params:
+          model: openai/mock-gpt
+          api_base: http://mock-model:8080/v1
+          api_key: "sk-mock-unused"          # mock ignores it; not a real secret
+      - model_name: sovereign-embed          # embeddings for RAG
+        litellm_params:
+          model: openai/mock-embed
+          api_base: http://mock-model:8080/v1
+          api_key: "sk-mock-unused"
+    litellm_settings:
+      success_callback: ["langfuse"]         # gateway-level tracing to Langfuse
+      drop_params: true
+    general_settings:
+      master_key: os.environ/PROXY_MASTER_KEY
+    # MCP gateway — register tool servers; agents call them via LiteLLM
+    # (per-key access). The DuckDB lakehouse query tool; Superset/OpenMetadata/
+    # dbt MCP servers get added as they come online.
+    mcp_servers:
+      sovereign_query:
+        url: "http://query-tool:8000/mcp"
+        transport: "http"
+        description: "DuckDB query over the lakehouse (Iceberg) — default query engine"
+
+# -----------------------------------------------------------------------------
+# OpenSearch — retrieval backbone (vector + lexical). Single node for local.
+# Security plugin disabled here for a simple local slice; the secure-by-default
+# network baseline (default-deny + egress) is a later expansion step. Service
+# is named `opensearch` (clusterName/masterService) for a clean client URL.
+# -----------------------------------------------------------------------------
+opensearch:
+  enabled: true
+  clusterName: opensearch
+  masterService: opensearch
+  singleNode: true
+  replicas: 1
+  protocol: http                          # security plugin disabled -> plain HTTP
+  opensearchJavaOpts: "-Xmx512M -Xms512M"
+  securityConfig:
+    enabled: false
+  persistence:
+    enabled: false                        # ephemeral local stand-in
+  sysctlInit:
+    enabled: true                         # set vm.max_map_count=262144
+  extraEnvs:
+    - name: DISABLE_INSTALL_DEMO_CONFIG
+      value: "true"
+    - name: DISABLE_SECURITY_PLUGIN
+      value: "true"
+  resources:
+    requests: { cpu: 250m, memory: 1Gi }
+    limits: { cpu: "2", memory: 1536Mi }
+
+# OpenSearch Dashboards — UI over OpenSearch. Security disabled to match the
+# (local) security-disabled OpenSearch node. (Aliased `osdashboards` so k8s
+# resource names stay RFC-1123 valid.)
+osdashboards:
+  enabled: true
+  fullnameOverride: opensearch-dashboards
+  opensearchHosts: "http://opensearch:9200"
+  replicaCount: 1
+  extraEnvs:
+    - name: DISABLE_SECURITY_DASHBOARDS_PLUGIN
+      value: "true"
+  resources:
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+# Shared retrieval settings (consumed by the sample agent's index bootstrap).
+# Dimension MUST match mockModel.embedDim.
+retrieval:
+  indexName: knowledge
+  knnDimension: 384
+
+# -----------------------------------------------------------------------------
+# Sample LangGraph agent — the agent-core slice's proof of life.
+# retrieve (OpenSearch) -> generate (LiteLLM) -> traced (Langfuse).
+# -----------------------------------------------------------------------------
+sampleAgent:
+  enabled: true
+  image:
+    repository: sovereign-os/sample-agent   # built locally, loaded into kind
+    tag: "0.1.0"
+  chatModel: sovereign-mock
+  embedModel: sovereign-embed
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  # Seed knowledge ingested into OpenSearch on startup (editable, no rebuild).
+  knowledge:
+    - title: "Retrieval backbone"
+      text: >-
+        OpenSearch is the retrieval backbone of the Sovereign Agentic OS,
+        providing hybrid vector and lexical search for RAG. There is no pgvector.
+    - title: "Model gateway"
+      text: >-
+        LiteLLM is the model and MCP gateway. Agents call one governed endpoint
+        with per-key access control, cost caps, and logging.
+    - title: "Observability"
+      text: >-
+        Langfuse v3 provides observability and tracing for every agent action,
+        backed by Postgres, ClickHouse, and Valkey.
+    - title: "Sovereignty"
+      text: >-
+        The platform is self-hosted on STACKIT in the EU for data residency,
+        assembled only from permissively licensed open source.
+
+# -----------------------------------------------------------------------------
+# Poet agent — a second LangGraph agent that writes a poem file each run
+# (compose via LiteLLM -> save to a PVC), traced in Langfuse. Pull poems with
+# scripts/get-poems.sh.
+# -----------------------------------------------------------------------------
+poetAgent:
+  enabled: true
+  image:
+    repository: sovereign-os/poet-agent     # built locally, loaded into kind
+    tag: "0.1.0"
+  chatModel: sovereign-mock
+  defaultTopic: "the sovereign cloud"
+  storageSize: 1Gi
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+# =============================================================================
+# Layer 2 (Context / Foundations) — added incrementally, validated one at a time.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# OPA — policy-as-code at the MCP/tool boundary. Default-deny tool authorization.
+# `grants` maps a principal (LiteLLM key / agent identity) to its allowed tools;
+# internet tools (web_fetch) are intentionally omitted -> denied until granted.
+# -----------------------------------------------------------------------------
+opa:
+  enabled: true
+  image:
+    repository: openpolicyagent/opa
+    tag: "1.4.2-static"
+    digest: sha256:3c995dc8a59f6ddfd92eb7404d2f7ff9fe71cd025d9251199957a8a6afbfd76e
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { cpu: 250m, memory: 128Mi }
+  grants:
+    sovereign-agents:           # the default agent key — no internet
+      - rag_search
+      - llm_generate
+      - query                    # DuckDB lakehouse query MCP tool
+    sovereign-agents-web:        # explicitly granted the governed web tool
+      - rag_search
+      - llm_generate
+      - query
+      - web_fetch
+
+# -----------------------------------------------------------------------------
+# Docling — document parsing (docling-serve). Parses uploaded docs into
+# text/markdown for the knowledge index.
+# -----------------------------------------------------------------------------
+docling:
+  enabled: true
+  image:
+    repository: quay.io/docling-project/docling-serve-cpu
+    tag: "latest"
+    digest: sha256:7b7448d333e0e444adcc3818c65f87bc3e5861bea4f72100e4ac49048d73eae3
+  resources:
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { cpu: "2", memory: 2Gi }
+
+# -----------------------------------------------------------------------------
+# Haystack — RAG retrieval pipeline over OpenSearch (embeds via LiteLLM).
+# Uses its own index so it doesn't collide with the sample agent's index.
+# -----------------------------------------------------------------------------
+haystack:
+  enabled: true
+  image:
+    repository: sovereign-os/haystack-retriever   # built locally, loaded into kind
+    tag: "0.1.0"
+  embedModel: sovereign-embed
+  indexName: haystack_knowledge
+  topK: 3
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 768Mi }
+
+# -----------------------------------------------------------------------------
+# Dagster — data orchestrator (subchart). External CloudNativePG `dagster` DB;
+# a minimal example user-code deployment for now (dbt assets land in the dbt step).
+# -----------------------------------------------------------------------------
+dagster:
+  enabled: true
+  postgresPasswordLocal: dagster-local-dev    # must match postgres.extraDatabases dagster
+  # External Postgres (our CNPG), password from the Secret above.
+  generatePostgresqlPasswordSecret: false
+  global:
+    postgresqlSecretName: dagster-postgresql
+  postgresql:
+    enabled: false
+    postgresqlHost: pg-rw
+    postgresqlUsername: dagster
+    postgresqlDatabase: dagster
+  # Official dagster/* images are amd64-only; we use an arm64-native image we
+  # build (sovereign-os/dagster) for webserver, daemon, and user-code.
+  dagster-user-deployments:
+    enabled: true
+    deployments:
+      - name: example-user-code
+        image:
+          repository: sovereign-os/dagster
+          tag: "0.2.0"
+          pullPolicy: IfNotPresent
+        dagsterApiGrpcArgs:
+          - "--python-file"
+          - "/opt/dagster/app/repo.py"
+        port: 3030
+        # Warehouse creds for dbt runs (env propagates to launched run pods via
+        # includeConfigInLaunchedRuns). username/password come from the Secret.
+        env:
+          - { name: PGHOST, value: pg-rw }
+          - { name: PGDATABASE, value: warehouse }
+          - { name: PGSCHEMA, value: analytics }
+        envSecrets:
+          - name: postgres-warehouse-credentials
+        resources:
+          requests: { cpu: 50m, memory: 384Mi }
+          limits: { cpu: "1", memory: 1Gi }   # headroom for dbt materializations
+  dagsterWebserver:
+    image:
+      repository: sovereign-os/dagster
+      tag: "0.2.0"
+      pullPolicy: IfNotPresent
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 500m, memory: 512Mi }
+  dagsterDaemon:
+    image:
+      repository: sovereign-os/dagster
+      tag: "0.2.0"
+      pullPolicy: IfNotPresent
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 500m, memory: 512Mi }
+
+# -----------------------------------------------------------------------------
+# dbt — transforms the seed data into the analytics warehouse (CNPG `warehouse`).
+# Runs as a post-install hook Job; Cube reads the resulting models.
+# -----------------------------------------------------------------------------
+dbt:
+  enabled: true
+  image:
+    repository: sovereign-os/dbt     # built locally, loaded into kind
+    tag: "0.1.0"
+  warehouse:
+    database: warehouse
+    schema: analytics
+    secretName: postgres-warehouse-credentials
+
+# -----------------------------------------------------------------------------
+# Cube — semantic/metrics layer over the dbt warehouse (CNPG `warehouse`).
+# Dev mode enables the Cube Playground. Metrics defined on analytics.daily_revenue.
+# -----------------------------------------------------------------------------
+cube:
+  enabled: true
+  image:
+    repository: cubejs/cube
+    digest: sha256:42418fc85830763178abd45ca93e60fefec27effb92418f9d977699bc38483f5
+  warehouse:
+    database: warehouse
+    secretName: postgres-warehouse-credentials
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 768Mi }
+  local:
+    apiSecret: cube-local-dev-secret
+
+# -----------------------------------------------------------------------------
+# OpenMetadata — catalog/lineage (subchart). External CNPG `openmetadata` DB +
+# our OpenSearch as the search backend; Airflow ingestion disabled (no Airflow
+# locally — metadata crawls run as K8s Jobs in production). basic auth; the
+# server image ships dev JWT keys. Heavy (JVM) — toggled with build-and-toggle.
+# -----------------------------------------------------------------------------
+openmetadata:
+  enabled: true
+  replicaCount: 1
+  openmetadata:
+    config:
+      database:
+        host: pg-rw
+        port: 5432
+        driverClass: org.postgresql.Driver
+        dbScheme: postgresql
+        databaseName: openmetadata
+        auth:
+          username: openmetadata
+          password:
+            secretRef: postgres-openmetadata-credentials
+            secretKey: password
+        dbParams: "sslmode=prefer"
+      elasticsearch:                 # our OpenSearch (security disabled, http)
+        enabled: true
+        host: opensearch
+        searchType: opensearch
+        port: 9200
+        scheme: http
+        auth:
+          enabled: false
+      pipelineServiceClientConfig:
+        enabled: false               # no Airflow ingestion locally
+  extraEnvs:
+    - name: OPENMETADATA_HEAP_OPTS
+      value: "-Xmx2g -Xms1g"
+  resources:
+    requests: { cpu: 200m, memory: 1Gi }
+    limits: { cpu: "2", memory: 2560Mi }
+
+# =============================================================================
+# Secure-by-default egress baseline (security.md) — default-deny + proxy +
+# governed web tool. Agents get no raw internet; outbound is granted, proxied,
+# allowlisted, audited.
+# =============================================================================
+
+# Egress proxy (tinyproxy) — the single outbound chokepoint. Allowlist-only.
+egressProxy:
+  enabled: true
+  image:
+    repository: sovereign-os/egress-proxy    # built locally, loaded into kind
+    tag: "0.1.0"
+  # Approved external domains (matched against host; subdomains included).
+  # Default-deny otherwise. example.com proves the allow path locally.
+  allowlist:
+    - example.com
+    - github.com
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { cpu: 250m, memory: 96Mi }
+
+# Governed web_fetch tool — OPA-authorized, proxy-routed, sanitized. The only
+# sanctioned path to the web; present-but-restricted.
+webFetch:
+  enabled: true
+  image:
+    repository: sovereign-os/web-fetch     # built locally, loaded into kind
+    tag: "0.1.0"
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { cpu: 250m, memory: 128Mi }
+
+# =============================================================================
+# Layer 3 (Self-service) — lakehouse, query MCP tools, dashboards, delivery.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Polaris — Iceberg REST catalog. Local persistence is in-memory (stand-in);
+# production uses relational-jdbc against a CNPG `polaris` DB. Warehouse storage
+# is SeaweedFS (S3) locally.
+# -----------------------------------------------------------------------------
+polaris:
+  enabled: true
+  image:
+    repository: apache/polaris
+    tag: "1.0.1-incubating"
+    digest: sha256:91d94987a2641220091c612900db30dbb596b45c3379115dbe08c4dd3b0855f9
+  persistenceType: in-memory      # local; relational-jdbc (CNPG) for STACKIT
+  realm: default-realm
+  secretName: polaris-credentials  # local: chart-created; STACKIT: external
+  s3:
+    endpoint: http://minio:9000
+    region: us-east-1
+  catalog:
+    name: lakehouse
+    baseLocation: s3://lakehouse/wh
+  local:
+    rootClientId: root
+    rootClientSecret: polaris-local-dev-secret
+  resources:
+    requests: { cpu: 200m, memory: 384Mi }
+    limits: { cpu: "2", memory: 1Gi }
+
+# -----------------------------------------------------------------------------
+# DuckDB query tool — the default query engine over the lakehouse (Iceberg).
+# Trino/Spark are optional scale modules (off by default — see below).
+# -----------------------------------------------------------------------------
+queryTool:
+  enabled: true
+  image:
+    repository: sovereign-os/query-tool     # built locally, loaded into kind
+    tag: "0.2.0"                             # 0.2.0 adds the MCP server
+  namespace: analytics                       # Iceberg namespace for the sample
+  baseLocation: s3://lakehouse/wh
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 768Mi }
+
+# Trino — optional scale/federation engine (off by default; DuckDB is the default).
+trino:
+  enabled: false
+
+# Apache Spark — optional distributed batch/ETL engine (off by default).
+spark:
+  enabled: false
+
+# -----------------------------------------------------------------------------
+# Superset — dashboards/BI (subchart). External CNPG `superset` DB; web-only with
+# SimpleCache (no Redis/workers) locally to keep it light. Connect it to the dbt
+# warehouse / Cube for charts.
+# -----------------------------------------------------------------------------
+superset:
+  enabled: true
+  # Custom image = apache/superset:6.1.0 + psycopg2 (the stock 6.1.0 image lacks
+  # the Postgres driver in its venv). Built locally, loaded into kind.
+  image:
+    repository: sovereign-os/superset
+    tag: "6.1.0"
+    pullPolicy: IfNotPresent
+  postgresql:
+    enabled: false              # external CNPG
+  redis:
+    enabled: false              # web-only, SimpleCache
+  # The chart always deploys the worker/beat; scale to 0 (no Celery/Redis locally).
+  supersetWorker:
+    replicas:
+      enabled: true
+      replicaCount: 0
+  supersetCeleryBeat:
+    enabled: false
+  init:
+    loadExamples: false
+    adminUser:
+      username: admin
+      firstname: Admin
+      lastname: User
+      email: admin@datamasterclass.com
+      password: superset-admin-local-dev
+  supersetNode:
+    connections:
+      db_host: pg-rw
+      db_port: "5432"
+      db_user: superset
+      db_pass: superset-local-dev    # local dev throwaway (CNPG superset role)
+      db_name: superset
+    resources:
+      requests: { cpu: 100m, memory: 512Mi }
+      limits: { cpu: "1", memory: 1536Mi }
+  extraSecretEnv:
+    SUPERSET_SECRET_KEY: "sovereign-os-superset-local-dev-secret-key"
+  configOverrides:
+    simplecache: |
+      CACHE_CONFIG = {"CACHE_TYPE": "SimpleCache"}
+      DATA_CACHE_CONFIG = {"CACHE_TYPE": "SimpleCache"}
+      FILTER_STATE_CACHE_CONFIG = {"CACHE_TYPE": "SimpleCache"}
+      EXPLORE_FORM_DATA_CACHE_CONFIG = {"CACHE_TYPE": "SimpleCache"}
+
+# -----------------------------------------------------------------------------
+# Forgejo — self-hosted git (Layer 3 software delivery). Lean local: sqlite,
+# single replica, no bundled DB/Redis. Service name pinned to `forgejo`.
+# -----------------------------------------------------------------------------
+forgejo:
+  enabled: true
+  fullnameOverride: forgejo
+  replicaCount: 1
+  image:
+    tag: "11"
+    rootless: true            # chart default registry/repo -> code.forgejo.org/forgejo/forgejo:11-rootless
+  persistence:
+    enabled: true
+    size: 2Gi
+  redis-cluster:
+    enabled: false
+  redis:
+    enabled: false
+  postgresql:
+    enabled: false
+  postgresql-ha:
+    enabled: false
+  test:
+    enabled: false
+  gitea:
+    admin:
+      username: gitea_admin
+      password: forgejo-admin-local-dev
+      email: admin@datamasterclass.com
+    config:
+      database:
+        DB_TYPE: sqlite3
+      server:
+        # Use the actual Service name so the container-registry token realm
+        # (ROOT_URL + /v2/token) resolves from DinD + the node's containerd.
+        DOMAIN: forgejo-http
+        ROOT_URL: http://forgejo-http:3000/
+        HTTP_PORT: 3000
+        OFFLINE_MODE: true
+      service:
+        DISABLE_REGISTRATION: true
+      cron:
+        ENABLED: false
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 640Mi }
+
+# -----------------------------------------------------------------------------
+# Argo CD — GitOps deploy (Layer 3). Minimal local: no dex/appset/notifications.
+# Deploys apps from Forgejo repos into per-domain namespaces.
+# -----------------------------------------------------------------------------
+argo-cd:
+  enabled: true
+  fullnameOverride: argocd
+  global:
+    domain: argocd.local
+  dex:
+    enabled: false
+  notifications:
+    enabled: false
+  applicationSet:
+    enabled: false
+  configs:
+    params:
+      server.insecure: true        # local: no TLS termination in front
+  server:
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: 500m, memory: 256Mi }
+  repoServer:
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: 500m, memory: 384Mi }
+  controller:
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: "1", memory: 512Mi }
+  redis:
+    resources:
+      requests: { cpu: 25m, memory: 64Mi }
+      limits: { cpu: 250m, memory: 128Mi }
+
+# Demo app the software-delivery golden path deploys (Forgejo -> Argo -> namespace).
+softwareDelivery:
+  demoApp:
+    enabled: true
+    repo: demo-app
+    image: traefik/whoami:v1.10.3
+    namespace: demo
+
+# Forgejo Actions CI runner — completes the golden path (push -> CI build ->
+# registry). Uses Forgejo's built-in OCI registry locally; Harbor is the
+# production registry (documented in docs/components, off on local arm64 kind).
+ciRunner:
+  enabled: true
+  image: code.forgejo.org/forgejo/runner:6
+  dindImage: docker:27-dind
+  builderTag: "0.1.0"          # tag for the ci-builder job image (docker CLI + buildx)
+
+# -----------------------------------------------------------------------------
+# Admin Console — single-pane dashboard over the whole stack (status, on/off,
+# addresses, logins, per-component docs). Port-forward svc/admin-console 8080.
+# -----------------------------------------------------------------------------
+adminConsole:
+  enabled: true
+  image:
+    repository: sovereign-os/admin-console   # built locally, loaded into kind
+    tag: "0.1.0"
+  resources:
+    requests: { cpu: 25m, memory: 48Mi }
+    limits: { cpu: 250m, memory: 128Mi }
+
+# -----------------------------------------------------------------------------
+# OS UI — the Next.js front door. App shell + live surfaces:
+#   Home (with a live stack-status strip), Agents/Chat, Knowledge (OpenSearch
+#   search), Structured Data (query-tool + Iceberg table browser), Software
+#   (Forgejo repos + CI runs), Monitoring (Langfuse), Governance (OPA grants
+#   matrix), Dashboards (Superset link), and a Platform group: Gateway (LiteLLM
+#   models + MCP tools), Orchestration (Dagster assets/runs), Consoles (launchpad
+#   for the full external tool UIs).
+# Server-side API routes call the in-cluster backends; all secret keys/passwords
+# are read from existing Secrets so they never sit in plaintext. Non-root,
+# port 3000, probes /api/health.
+osUI:
+  enabled: true
+  image:
+    repository: sovereign-os/os-ui    # built locally, loaded into kind
+    tag: "0.1.0"
+  # In-cluster backend Service URLs (base URLs; the app appends the paths).
+  sampleAgentUrl: "http://sample-agent:8000"
+  queryToolUrl:   "http://query-tool:8000"
+  langfuseUrl:    "http://agentic-os-langfuse-web:3000"
+  opensearchUrl:  "http://opensearch:9200"
+  knowledgeIndex: "knowledge"
+  forgejoUrl:     "http://forgejo-http:3000"
+  forgejoUser:    "gitea_admin"
+  litellmUrl:     "http://agentic-os-litellm:4000"
+  opaUrl:         "http://opa:8181"
+  dagsterUrl:     "http://agentic-os-dagster-webserver:80"
+  # Browser-reachable consoles (linked/opened from the browser, never proxied;
+  # each tool keeps its own auth). Defaults point at the local port-forwards from
+  # docs/components/*.md; override per environment (e.g. an Ingress host).
+  supersetUrl:        "http://localhost:8088"
+  langfuseConsoleUrl: "http://localhost:3000"
+  forgejoConsoleUrl:  "http://localhost:3001"
+  argocdUrl:          "http://localhost:8082"
+  openmetadataUrl:    "http://localhost:8585"
+  dagsterConsoleUrl:  "http://localhost:3070"
+  # Secret-backed credentials — reuse the stack's existing Secrets so nothing
+  # sensitive sits in plaintext (names/keys verified against the running cluster).
+  langfuseSecret:
+    name: langfuse-init
+    key: LANGFUSE_INIT_PROJECT_SECRET_KEY
+  forgejoSecret:
+    name: forgejo-admin           # keys: username, password
+    key: password
+  litellmSecret:
+    name: litellm-credentials     # keys incl. masterkey
+    key: masterkey
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+# =============================================================================
+# Layer 4 (Science / ML) — traditional data science, NOT LLM serving.
+# =============================================================================
+# JupyterHub (notebooks) + MLflow (tracking + model registry) + Featureform
+# (feature store, MPL-2.0) + KServe (model serving) + an ML agent that drives the
+# flow. A GPU-cost, opt-in capability — OFF BY DEFAULT EVERYWHERE (not in the
+# cohort-1 path; stack-decisions.md / build-layer4.md). Enable per component
+# (and/or scale the node) when a domain needs classic ML. On a 14 GB kind VM,
+# enable AT MOST MLflow (+ a single small notebook) at once — see
+# CI-LAYER4-INTEGRATION.md for the RAM budget.
+#
+# Backing services reuse the stack: Postgres via CNPG `mlflow` extraDatabase,
+# object storage via the `mlflow` bucket (MinIO/objectStorage), Valkey as the
+# Featureform online store, LiteLLM (scoped key) for the ML agent.
+
+# -----------------------------------------------------------------------------
+# Layer 4 MASTER SWITCH. OFF by default. `ml.enabled` is the single gate for the
+# entire Science layer: every `templates/science/*` object AND the `jupyterhub`
+# subchart are gated behind it, composed (logical AND) with their own
+# per-component flag below (`mlflow.enabled`, `featureform.enabled`,
+# `kserve.enabled`, `mlAgent.enabled`, `jupyterhub.enabled`). This lets the whole
+# layer be turned off (or on) with one value while still allowing fine-grained
+# per-component control underneath. Nothing in Layer 4 renders unless
+# `ml.enabled=true`.
+# -----------------------------------------------------------------------------
+ml:
+  enabled: false
+
+# -----------------------------------------------------------------------------
+# JupyterHub (Apache 2.0 / BSD-3) — Zero-to-JupyterHub subchart. Per-domain
+# multi-user notebooks; GPU-capable. Local: DummyAuthenticator + ephemeral
+# storage. Production: federate auth to Ory (OAuthenticator) + persistent home
+# dirs + a GPU profile. Singleuser image is the multi-arch Jupyter scipy stack.
+# -----------------------------------------------------------------------------
+jupyterhub:
+  enabled: false
+  # Minimal, lint-light config; the full Z2JH value tree applies when enabled.
+  hub:
+    config:
+      JupyterHub:
+        authenticator_class: dummy
+      # Local dev only — DO NOT use in production (federate to Ory instead).
+      DummyAuthenticator:
+        password: jupyter-local-dev
+    resources:
+      requests: { cpu: 100m, memory: 384Mi }
+      limits: { cpu: "1", memory: 768Mi }
+  proxy:
+    # Local dev throwaway; on STACKIT this is an externally-managed secret.
+    secretToken: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    chp:
+      resources:
+        requests: { cpu: 50m, memory: 64Mi }
+        limits: { cpu: 250m, memory: 192Mi }
+  singleuser:
+    image:
+      name: quay.io/jupyter/scipy-notebook   # multi-arch (amd64 + arm64)
+      tag: "2024-10-14"
+    storage:
+      type: none                             # ephemeral locally; PVC in production
+    memory:
+      guarantee: 512M
+      limit: 2G
+    cpu:
+      guarantee: 0.2
+      limit: 2
+  # Pre-pull hooks slow + bloat local installs; keep them off (singleuser image
+  # is pulled on first spawn instead).
+  prePuller:
+    hook:
+      enabled: false
+    continuous:
+      enabled: false
+  scheduling:
+    userScheduler:
+      enabled: false
+  cull:
+    enabled: true
+    timeout: 3600
+
+# -----------------------------------------------------------------------------
+# MLflow (Apache 2.0) — experiment tracking + model registry (bespoke). Backend
+# store = CNPG `mlflow` DB; artifact store = object-storage `mlflow` bucket,
+# served via `--serve-artifacts`. Custom image (mlflow + psycopg2 + boto3),
+# built locally + loaded into kind (images/mlflow/).
+# -----------------------------------------------------------------------------
+mlflow:
+  enabled: false
+  image:
+    repository: sovereign-os/mlflow      # built locally, loaded into kind
+    tag: "2.19.0"
+  backendDatabase: mlflow
+  backendSecretName: postgres-mlflow-credentials   # CNPG `mlflow` role (extraDatabases)
+  artifactBucket: mlflow                            # objectStorage.buckets entry
+  s3:
+    endpoint: "http://minio:9000"        # MinIO locally; STACKIT Object Storage in prod
+  resources:
+    requests: { cpu: 100m, memory: 384Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+# -----------------------------------------------------------------------------
+# Featureform (MPL-2.0) — virtual feature store (bespoke, optional). Offline =
+# Iceberg via the query engine; online = Valkey. Providers are registered from a
+# notebook / the ML agent. Image is multi-arch (amd64 + arm64) — verified.
+# -----------------------------------------------------------------------------
+featureform:
+  enabled: false
+  image:
+    repository: featureformcom/featureform
+    tag: "0.15.10"
+  valkeySecretName: valkey-credentials   # reuse the stack's Valkey secret (online store)
+  resources:
+    requests: { cpu: 100m, memory: 384Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+# -----------------------------------------------------------------------------
+# KServe (Apache 2.0) — model serving / inference (bespoke CR). The KServe
+# controller + cert-manager are a BOOTSTRAP prerequisite (RawDeployment mode, no
+# Knative) — see CI-LAYER4-INTEGRATION.md. The chart ships a sample
+# InferenceService pulling a model from the MLflow artifact bucket. CPU default;
+# GPU node pool opt-in.
+# -----------------------------------------------------------------------------
+kserve:
+  enabled: false
+  serviceAccountName: kserve-sa
+  s3SecretName: kserve-s3-credentials    # local: chart-created; STACKIT: external
+  s3:
+    endpoint: "minio:9000"               # host:port (no scheme; usehttps=0 annotation)
+  sampleModel:
+    name: sample-sklearn
+    format: sklearn
+    # A trained model artifact in the MLflow object-storage bucket (replace with a
+    # real registry path). Demo path under the `mlflow` bucket.
+    storageUri: "s3://mlflow/models/sample-sklearn"
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+# -----------------------------------------------------------------------------
+# ML agent (LangGraph) — drives features -> train+track -> deploy from plain
+# language (bespoke, custom image sovereign-os/ml-agent). Calls the LLM via
+# LiteLLM (scoped key), traced in Langfuse. Expose its tools via the LiteLLM MCP
+# gateway + OPA grant as an integration step (CI-LAYER4-INTEGRATION.md).
+# -----------------------------------------------------------------------------
+mlAgent:
+  enabled: false
+  image:
+    repository: sovereign-os/ml-agent    # built locally, loaded into kind
+    tag: "0.1.0"
+  chatModel: sovereign-mock
+  kserveEndpoint: "http://sample-sklearn-predictor:80"   # KServe RawDeployment svc
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+# Components are added to this file as each is wired into the chart
+# (thinnest runnable slice first). See README.md for the build order.

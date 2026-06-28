@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+# Platform wave 1 — Velero. Cluster backup to STACKIT Object Storage (the
+# `-velero` bucket from terraform). S3 creds come from the velero-credentials
+# Secret (External Secrets). Bucket/region/endpoint patched by render-values.sh.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: velero
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: sovereign-os
+  source:
+    repoURL: https://vmware-tanzu.github.io/helm-charts
+    chart: velero
+    targetRevision: 8.1.0
+    helm:
+      releaseName: velero
+      values: |
+        # AWS plugin speaks S3 -> STACKIT Object Storage.
+        initContainers:
+          - name: velero-plugin-for-aws
+            image: velero/velero-plugin-for-aws:v1.11.0
+            volumeMounts:
+              - mountPath: /target
+                name: plugins
+        credentials:
+          existingSecret: velero-credentials   # External Secrets -> object storage keys
+        configuration:
+          backupStorageLocation:
+            - name: stackit
+              provider: aws
+              bucket: REPLACE-velero-bucket          # render-values.sh
+              config:
+                region: eu01
+                s3ForcePathStyle: "true"
+                s3Url: https://object.storage.eu01.onstackit.cloud
+          volumeSnapshotLocation: []
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: velero
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

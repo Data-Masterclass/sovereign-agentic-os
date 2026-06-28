@@ -1,0 +1,14 @@
+# Hard-deny SPDX identifiers / substrings. scripts/license-check.sh FAILS
+# immediately if any of these appears for a bundled component OR anywhere in the
+# syft SBOM. These are the source-available / non-OSI licenses the bundle must
+# never accidentally pull in (see stackit/delivery-models.md, packaging.md).
+#
+# Matching is case-insensitive substring against the SPDX id / license string.
+
+SSPL
+Elastic-2.0
+ELv2
+BUSL
+BSL-1.1
+Commons-Clause
+AGPL

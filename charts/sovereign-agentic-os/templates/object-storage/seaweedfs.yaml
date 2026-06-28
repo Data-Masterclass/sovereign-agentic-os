@@ -1,0 +1,97 @@
+{{- if .Values.objectStorage.enabled }}
+{{- /*
+  Object storage — local stand-in for STACKIT Object Storage. MinIO (S3) is the
+  local-kind stand-in: reliable S3 (multipart + read-after-write) that Iceberg
+  and Langfuse need. (SeaweedFS, the air-gap/bundled option, proved unreliable
+  for Iceberg writes on kind — multipart + consistency issues.) Service name is
+  kept generic-ish; all consumers point at http://minio:9000.
+  On STACKIT this component is disabled and the real Object Storage endpoint is
+  used. Local-only dev credentials become the MinIO root user.
+*/}}
+{{- $os := .Values.objectStorage }}
+{{- if eq .Values.global.profile "local" }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $os.secretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "object-storage") | nindent 4 }}
+type: Opaque
+stringData:
+  AWS_ACCESS_KEY_ID: {{ $os.local.accessKey | quote }}
+  AWS_SECRET_ACCESS_KEY: {{ $os.local.secretKey | quote }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "object-storage") | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "object-storage") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "object-storage") | nindent 8 }}
+    spec:
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: minio
+          image: "{{ $os.image.repository }}@{{ $os.image.digest }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          args: ["server", "/data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom: { secretKeyRef: { name: {{ $os.secretName }}, key: AWS_ACCESS_KEY_ID } }
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $os.secretName }}, key: AWS_SECRET_ACCESS_KEY } }
+          ports:
+            - { name: s3, containerPort: 9000 }
+            - { name: console, containerPort: 9001 }
+          readinessProbe:
+            httpGet: { path: /minio/health/ready, port: s3 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /minio/health/live, port: s3 }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml $os.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "object-storage") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "object-storage") | nindent 4 }}
+  ports:
+    - { name: s3, port: 9000, targetPort: s3 }
+    - { name: console, port: 9001, targetPort: console }
+{{- end }}

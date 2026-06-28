@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
+#
+# License gate — fails the build if any bundled component's license is not on the
+# allowlist (licenses/allowed-licenses.txt), blocking accidental ELv2 / BSL / SSPL
+# (and AGPL-when-bundled) dependencies. Also (re)generates the CycloneDX SBOM with
+# syft and uploads it as an artifact.
+name: license-gate
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  license-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+          syft version
+
+      - name: SPDX headers present on our source
+        run: bash scripts/add-spdx-headers.sh --check
+
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          SYFT_CHECK_FOR_APP_UPDATE=false \
+            syft scan dir:. -o cyclonedx-json=sbom.cdx.json -q
+          test -s sbom.cdx.json
+
+      - name: License allowlist gate
+        run: bash scripts/license-check.sh
+
+      - name: Upload SBOM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cdx.json

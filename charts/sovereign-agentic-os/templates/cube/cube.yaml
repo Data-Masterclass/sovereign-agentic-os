@@ -1,0 +1,149 @@
+{{- if .Values.cube.enabled }}
+{{- /*
+  Cube (Apache 2.0) — semantic/metrics layer over the dbt warehouse (CNPG
+  `warehouse`). Defines metrics on analytics.daily_revenue, served via REST /
+  GraphQL / SQL. Dev mode enables the Cube Playground UI. Runs non-root with a
+  writable emptyDir at /cube/conf (the image expects to write there) and the
+  model ConfigMap mounted inside it.
+*/}}
+{{- $c := .Values.cube }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cube-model
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "cube") | nindent 4 }}
+data:
+  daily_revenue.yml: |
+    cubes:
+      - name: daily_revenue
+        sql_table: analytics.daily_revenue
+        measures:
+          - name: total_revenue
+            type: sum
+            sql: revenue
+          - name: total_orders
+            type: sum
+            sql: orders
+          - name: count
+            type: count
+        dimensions:
+          - name: order_date
+            type: time
+            sql: order_date
+---
+{{- if eq .Values.global.profile "local" }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cube-secrets
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "cube") | nindent 4 }}
+type: Opaque
+stringData:
+  CUBEJS_API_SECRET: {{ $c.local.apiSecret | quote }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cube
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "cube") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "cube") | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/model: {{ .Files.Get "templates/cube/cube.yaml" | default "" | sha256sum }}
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "cube") | nindent 8 }}
+    spec:
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+        fsGroup: 1000
+      initContainers:
+        # Seed the writable conf dir with the model (configmap is read-only).
+        - name: model-init
+          image: "{{ $c.image.repository }}@{{ $c.image.digest }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["/bin/sh", "-c", "mkdir -p /conf/model && cp /model/*.yml /conf/model/"]
+          volumeMounts:
+            - { name: conf, mountPath: /conf }
+            - { name: model, mountPath: /model, readOnly: true }
+      containers:
+        - name: cube
+          image: "{{ $c.image.repository }}@{{ $c.image.digest }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: HOME
+              value: /tmp
+            - name: CUBEJS_DEV_MODE
+              value: "true"
+            - name: CUBEJS_DB_TYPE
+              value: postgres
+            - name: CUBEJS_DB_HOST
+              value: pg-rw
+            - name: CUBEJS_DB_PORT
+              value: "5432"
+            - name: CUBEJS_DB_NAME
+              value: {{ $c.warehouse.database | quote }}
+            - name: CUBEJS_DB_USER
+              valueFrom: { secretKeyRef: { name: {{ $c.warehouse.secretName }}, key: username } }
+            - name: CUBEJS_DB_PASS
+              valueFrom: { secretKeyRef: { name: {{ $c.warehouse.secretName }}, key: password } }
+            - name: CUBEJS_API_SECRET
+              valueFrom: { secretKeyRef: { name: cube-secrets, key: CUBEJS_API_SECRET } }
+          ports:
+            - { name: http, containerPort: 4000 }
+          startupProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /livez, port: http }
+            periodSeconds: 20
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          volumeMounts:
+            - { name: conf, mountPath: /cube/conf }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: model
+          configMap:
+            name: cube-model
+        - name: conf
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cube
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "cube") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "cube") | nindent 4 }}
+  ports:
+    - { name: http, port: 4000, targetPort: http }
+{{- end }}

@@ -1,0 +1,393 @@
+{{- if .Values.forgejo.enabled }}
+{{- if .Values.ciRunner.enabled }}
+{{- /*
+  Forgejo Actions CI runner — completes the Software golden path: push -> CI
+  builds an image -> pushes to a registry. act_runner with a Docker-in-Docker
+  sidecar (DinD is privileged — CI builders need it; on STACKIT prefer a rootless
+  kaniko/buildah builder). A bootstrap Job fetches the runner registration token
+  from the Forgejo admin API (reproducible) into a Secret.
+*/}}
+{{- $r := .Values.ciRunner }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ci-runner-token
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "ci-runner") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "22"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 8
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "ci-runner") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: ci-runner-token
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: token
+          image: curlimages/curl:8.11.1
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          env:
+            - name: FORGEJO
+              value: "http://forgejo-http:3000"
+            - name: ADMIN_USER
+              value: {{ .Values.forgejo.gitea.admin.username | quote }}
+            - name: ADMIN_PASS
+              value: {{ .Values.forgejo.gitea.admin.password | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              for i in $(seq 1 60); do curl -sf "$FORGEJO/api/v1/version" >/dev/null 2>&1 && break || sleep 3; done
+              TOK=$(curl -s -u "$ADMIN_USER:$ADMIN_PASS" "$FORGEJO/api/v1/admin/runners/registration-token" | sed 's/.*"token":"\([^"]*\)".*/\1/')
+              echo "got token (len ${#TOK})"
+              cat <<EOF | curl -s -k -X POST "https://kubernetes.default.svc/api/v1/namespaces/{{ .Release.Namespace }}/secrets" \
+                -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+                -H "Content-Type: application/json" -d @- -o /dev/null -w "create secret -> %{http_code}\n" || true
+              {"apiVersion":"v1","kind":"Secret","metadata":{"name":"ci-runner-token"},"stringData":{"token":"$TOK"}}
+              EOF
+              # if it already exists, update it
+              cat <<EOF | curl -s -k -X PUT "https://kubernetes.default.svc/api/v1/namespaces/{{ .Release.Namespace }}/secrets/ci-runner-token" \
+                -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+                -H "Content-Type: application/json" -d @- -o /dev/null -w "update secret -> %{http_code}\n" || true
+              {"apiVersion":"v1","kind":"Secret","metadata":{"name":"ci-runner-token"},"stringData":{"token":"$TOK"}}
+              EOF
+          resources:
+            requests: { cpu: 25m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 64Mi }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ci-runner-token
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "21"
+    "helm.sh/hook-delete-policy": before-hook-creation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ci-runner-token
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "21"
+    "helm.sh/hook-delete-policy": before-hook-creation
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ci-runner-token
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "21"
+    "helm.sh/hook-delete-policy": before-hook-creation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ci-runner-token
+subjects:
+  - kind: ServiceAccount
+    name: ci-runner-token
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ci-runner
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "ci-runner") | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "ci-runner") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "ci-runner") | nindent 8 }}
+    spec:
+      securityContext:
+        seccompProfile:
+          type: {{ .Values.global.podSecurity.seccompProfile }}
+      containers:
+        # Docker-in-Docker — the build daemon (privileged; trusts the Forgejo registry).
+        - name: dind
+          image: "{{ $r.dindImage }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            privileged: true
+          env:
+            - name: DOCKER_TLS_CERTDIR
+              value: ""
+          args:
+            - "--insecure-registry=forgejo-http:3000"
+            - "--registry-mirror=https://mirror.gcr.io"
+          volumeMounts:
+            - { name: dind-storage, mountPath: /var/lib/docker }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "2", memory: 1Gi }
+        # act_runner — registers with Forgejo and executes workflows via DinD.
+        - name: runner
+          image: "{{ $r.image }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: DOCKER_HOST
+              value: tcp://localhost:2375
+            - name: FORGEJO_INSTANCE
+              value: "http://forgejo-http:3000"
+            - name: RUNNER_REGISTRATION_TOKEN
+              valueFrom: { secretKeyRef: { name: ci-runner-token, key: token } }
+            - name: RUNNER_NAME
+              value: sovereign-ci
+            # The job-container image: act_runner runs each `runs-on: docker` job
+            # inside this image on the DinD daemon. It's pulled from Forgejo's
+            # registry (the ci-builder-publish hook puts it there); DinD trusts
+            # forgejo-http:3000 as insecure. See docs/components/ci-build.md.
+            - name: RUNNER_LABELS
+              value: {{ printf "docker:docker://forgejo-http:3000/%s/ci-builder:%s" .Values.forgejo.gitea.admin.username ($r.builderTag | default "0.1.0") | quote }}
+          # Register once (persisted to the PVC), then run the daemon. The act
+          # config (mounted) sets container.network=host so a job container shares
+          # the pod netns and reaches the DinD daemon at tcp://localhost:2375.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              cd /data
+              for i in $(seq 1 40); do nc -z forgejo-http 3000 2>/dev/null && break || sleep 3; done
+              for i in $(seq 1 40); do docker info >/dev/null 2>&1 && break || sleep 2; done
+              # Re-register if the persisted label no longer matches (e.g. on upgrade).
+              if [ -f .runner ] && ! grep -q "ci-builder" .runner 2>/dev/null; then
+                echo "runner label changed; clearing stale registration"; rm -f .runner
+              fi
+              if [ ! -f .runner ]; then
+                forgejo-runner register --no-interactive \
+                  --instance "$FORGEJO_INSTANCE" --token "$RUNNER_REGISTRATION_TOKEN" \
+                  --name "$RUNNER_NAME" --labels "$RUNNER_LABELS" || echo "register failed (may already exist)"
+              fi
+              exec forgejo-runner daemon --config /config/config.yaml
+          volumeMounts:
+            - { name: runner-data, mountPath: /data }
+            - { name: runner-config, mountPath: /config, readOnly: true }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }
+      volumes:
+        - name: dind-storage
+          emptyDir: {}
+        - name: runner-data
+          persistentVolumeClaim:
+            claimName: ci-runner-data
+        - name: runner-config
+          configMap:
+            name: ci-runner-config
+---
+{{- /*
+  act_runner config. The crux: container.network=host makes each job container
+  share the *pod* network namespace, which is the same namespace the in-pod DinD
+  daemon binds 2375 on — so `DOCKER_HOST=tcp://localhost:2375` works *inside the
+  job container* exactly as it does for the runner sidecar. No service, no
+  host-gateway games. valid_volumes is left empty (jobs build via the daemon API,
+  no host bind-mounts needed).
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ci-runner-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "ci-runner") | nindent 4 }}
+data:
+  config.yaml: |
+    log:
+      level: info
+    runner:
+      capacity: 1
+      timeout: 1h
+      fetch_timeout: 5s
+      fetch_interval: 2s
+    cache:
+      enabled: false
+    container:
+      network: host
+      privileged: false
+      force_pull: false
+      options: ""
+      valid_volumes: []
+---
+{{- /*
+  Cluster-internal Service exposing the DinD daemon's TCP port so the
+  ci-builder-publish hook (a separate pod) can build+push the builder image into
+  Forgejo's registry. Reaches the DinD daemon, which binds 2375 in the pod netns.
+  Intra-namespace only (ClusterIP); harden/remove on STACKIT (use rootless
+  kaniko/buildah instead of an exposed daemon).
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: ci-runner-dind
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "ci-runner") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "ci-runner") | nindent 4 }}
+  ports:
+    - name: dockerd
+      port: 2375
+      targetPort: 2375
+---
+{{- /*
+  The ci-builder Dockerfile, embedded so a fresh install can build it in-cluster.
+  Keep in sync with images/ci-builder/Dockerfile (the host/build-images.sh copy).
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ci-builder-dockerfile
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "ci-runner") | nindent 4 }}
+data:
+  Dockerfile: |
+    # Sovereign OS CI builder — the job-container image for Forgejo Actions.
+    # docker CLI + buildx copied from the official docker image (version-matched
+    # to the DinD daemon); bases pinned by multi-arch (OCI index) digest.
+    FROM docker:27.5.1-cli@sha256:851f91d241214e7c6db86513b270d58776379aacc5eb9c4a87e5b47115e3065c AS dockercli
+    FROM node:20-bookworm@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5
+    RUN apt-get update \
+     && apt-get install -y --no-install-recommends ca-certificates curl git \
+     && rm -rf /var/lib/apt/lists/*
+    COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
+    COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
+    ENV DOCKER_HOST=tcp://localhost:2375
+    RUN docker --version && docker buildx version && git --version
+    CMD ["/bin/bash"]
+---
+{{- /*
+  ci-builder-publish — builds the ci-builder job image in DinD and pushes it to
+  Forgejo's registry, so act_runner can pull it for `runs-on: docker` jobs. Runs
+  before the repo seed (lower hook-weight) so the image is present before the
+  first workflow fires. Idempotent (overwrites the tag).
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ci-builder-publish
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "ci-runner") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "24"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "ci-runner") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: publish
+          image: "docker:27.5.1-cli@sha256:851f91d241214e7c6db86513b270d58776379aacc5eb9c4a87e5b47115e3065c"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: DOCKER_HOST
+              value: tcp://ci-runner-dind:2375
+            - name: DOCKER_CONFIG
+              value: /tmp/.docker
+            - name: REGISTRY
+              value: "forgejo-http:3000"
+            - name: IMAGE
+              value: {{ printf "forgejo-http:3000/%s/ci-builder:%s" .Values.forgejo.gitea.admin.username ($r.builderTag | default "0.1.0") | quote }}
+            - name: REG_USER
+              value: {{ .Values.forgejo.gitea.admin.username | quote }}
+            - name: REG_PASS
+              value: {{ .Values.forgejo.gitea.admin.password | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              echo "waiting for DinD..."
+              for i in $(seq 1 60); do docker info >/dev/null 2>&1 && break || sleep 3; done
+              echo "waiting for Forgejo registry..."
+              for i in $(seq 1 60); do nc -z forgejo-http 3000 2>/dev/null && break || sleep 3; done
+              echo "$REG_PASS" | docker login "$REGISTRY" -u "$REG_USER" --password-stdin
+              # ci-builder needs no build context (it COPYs from the docker:cli
+              # stage), so feed the Dockerfile via stdin — robust + context-free.
+              docker build -t "$IMAGE" - < /work/Dockerfile
+              docker push "$IMAGE"
+              echo "published $IMAGE"
+          volumeMounts:
+            - { name: dockerfile, mountPath: /work, readOnly: true }
+            - { name: docker-config, mountPath: /tmp/.docker }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: "1", memory: 256Mi }
+      volumes:
+        - name: dockerfile
+          configMap:
+            name: ci-builder-dockerfile
+        - name: docker-config
+          emptyDir: {}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ci-runner-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+  {{- if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}

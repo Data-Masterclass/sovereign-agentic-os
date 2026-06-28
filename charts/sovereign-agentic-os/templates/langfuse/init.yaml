@@ -1,0 +1,27 @@
+{{- if and .Values.langfuse.enabled (eq .Values.global.profile "local") }}
+{{- /*
+  Headless Langfuse provisioning (local only). LANGFUSE_INIT_* makes the web pod
+  create a deterministic org/project + API keys on first start (idempotent), so
+  the sample agent and LiteLLM can send traces with known keys — no manual UI
+  setup. NOT production secrets; on STACKIT projects/keys are managed for real.
+*/}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: langfuse-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "langfuse") | nindent 4 }}
+type: Opaque
+stringData:
+  LANGFUSE_INIT_ORG_ID: "sovereign-os"
+  LANGFUSE_INIT_ORG_NAME: "Sovereign Agentic OS"
+  LANGFUSE_INIT_PROJECT_ID: "agent-core"
+  LANGFUSE_INIT_PROJECT_NAME: "Agent Core"
+  LANGFUSE_INIT_PROJECT_PUBLIC_KEY: {{ .Values.langfuseInit.publicKey | quote }}
+  LANGFUSE_INIT_PROJECT_SECRET_KEY: {{ .Values.langfuseInit.secretKey | quote }}
+  LANGFUSE_INIT_USER_EMAIL: "contact@datamasterclass.com"
+  LANGFUSE_INIT_USER_NAME: "Alex"
+  LANGFUSE_INIT_USER_PASSWORD: "langfuse-local-dev-admin"
+{{- end }}

@@ -1,0 +1,97 @@
+{{- if .Values.postgres.enabled }}
+{{- /*
+  CloudNativePG Cluster — infra Postgres for Langfuse (and later Cube/OpenMetadata).
+  Requires the CNPG operator (scripts/bootstrap-local.sh). On STACKIT, CNPG also
+  does continuous WAL archiving + PITR to Object Storage (stack-decisions.md).
+*/}}
+{{- $pg := .Values.postgres }}
+{{- if eq .Values.global.profile "local" }}
+# Local-only dev credentials for the Postgres app owner. NOT a production secret:
+# on STACKIT this Secret is provided externally (External Secrets Operator).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $pg.secretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 4 }}
+type: kubernetes.io/basic-auth
+stringData:
+  username: {{ $pg.username | quote }}
+  password: {{ $pg.local.password | quote }}
+---
+{{- end }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ $pg.clusterName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 4 }}
+spec:
+  instances: {{ $pg.instances }}
+  imageName: "{{ $pg.image.repository }}:{{ $pg.image.tag }}@{{ $pg.image.digest }}"
+  # Langfuse owns its schema; superuser access stays off (least privilege).
+  enableSuperuserAccess: false
+  bootstrap:
+    initdb:
+      database: {{ $pg.database | quote }}
+      owner: {{ $pg.username | quote }}
+      secret:
+        name: {{ $pg.secretName }}
+  storage:
+    size: {{ $pg.storageSize | quote }}
+    {{- if .Values.global.storageClass }}
+    storageClass: {{ .Values.global.storageClass | quote }}
+    {{- end }}
+  resources:
+    {{- toYaml $pg.resources | nindent 4 }}
+{{- if $pg.extraDatabases }}
+  # Managed roles for the extra service databases (each owns its own DB).
+  managed:
+    roles:
+      {{- range $pg.extraDatabases }}
+      - name: {{ .username | quote }}
+        ensure: present
+        login: true
+        createdb: {{ .createdb | default false }}
+        passwordSecret:
+          name: {{ .secretName }}
+      {{- end }}
+{{- end }}
+{{- range $pg.extraDatabases }}
+{{- if eq $.Values.global.profile "local" }}
+---
+# Local-only dev credentials for the {{ .name }} Postgres role.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .secretName }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" $ "component" "postgres") | nindent 4 }}
+type: kubernetes.io/basic-auth
+stringData:
+  username: {{ .username | quote }}
+  password: {{ .localPassword | quote }}
+{{- end }}
+---
+# {{ .name }} database on the same CloudNativePG cluster.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" $ "component" "postgres") | nindent 4 }}
+spec:
+  name: {{ .name | quote }}
+  owner: {{ .username | quote }}
+  cluster:
+    name: {{ $pg.clusterName }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# Wave 5 — the Sovereign Agentic OS umbrella chart (Mode B). Renders AFTER the
+# platform (ingress, cert-manager, ESO + secret config, CNPG, Velero, KEDA).
+# Multi-source: the chart at charts/sovereign-agentic-os + the Mode B overlay
+# values.stackit-managed.yaml from the repo root (referenced via $values). The
+# overlay's REPLACE-… placeholders are filled by deploy/scripts/render-values.sh
+# from terraform outputs; secrets are pulled by External Secrets, never inlined.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sovereign-agentic-os
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: sovereign-os
+  sources:
+    - repoURL: https://github.com/datamasterclass/sovereign-agentic-os.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/datamasterclass/sovereign-agentic-os.git
+      targetRevision: main
+      path: charts/sovereign-agentic-os
+      helm:
+        releaseName: agentic-os
+        valueFiles:
+          - $values/values.stackit-managed.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: agentic-os
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff: { duration: 30s, factor: 2, maxDuration: 5m }

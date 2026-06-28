@@ -1,0 +1,4 @@
+# Haystack retrieval service deps (Apache 2.0). Ranges for a reliable build.
+# OpenAI embedder + OpenSearch document store — no torch (we embed via LiteLLM).
+haystack-ai>=2.5,<2.20
+opensearch-haystack>=1.2,<3

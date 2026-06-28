@@ -1,0 +1,47 @@
+# Bundled-component license manifest (authoritative, machine-readable).
+# Tab-separated. Columns: name	version	spdx	bundled	license_file	note
+# bundled: yes | optional | no   (no = referenced but NOT redistributed, e.g.
+#   local dev-only stand-ins; these are NOT enforced by the license gate)
+# scripts/license-check.sh reads this file and THIRD-PARTY-LICENSES.md mirrors it.
+# Versions track Chart.yaml / charts/sovereign-agentic-os/values.yaml.
+#
+name	version	spdx	bundled	license_file	note
+LangGraph (library)	0.3.34	MIT	yes	licenses/MIT.txt	Agent framework (MIT library only; NOT the Elastic-licensed LangGraph Platform)
+LiteLLM	chart 1.90.0	MIT	yes	licenses/MIT.txt	Model / MCP gateway
+Langfuse (core)	chart 1.5.36 / app 3.194.1	MIT	yes	licenses/MIT.txt	Observability core; /ee modules NOT shipped
+OpenSearch	chart 3.7.0	Apache-2.0	yes	licenses/Apache-2.0.txt	Retrieval backbone; NOTICE bundled
+OpenSearch Dashboards	chart 3.7.0	Apache-2.0	yes	licenses/Apache-2.0.txt	Search UI
+ClickHouse	24.8	Apache-2.0	yes	licenses/Apache-2.0.txt	Langfuse analytics backend
+Valkey	8.1	BSD-3-Clause	yes	licenses/BSD-3-Clause.txt	Cache/queue (NOT Redis/SSPL)
+PostgreSQL	17.5	PostgreSQL	yes	licenses/PostgreSQL.txt	Relational DB (CloudNativePG image)
+CloudNativePG (operator)	chart 0.28.3 / op 1.29.1	Apache-2.0	yes	licenses/Apache-2.0.txt	Postgres operator (bootstrap prereq)
+dbt Core	0.1.0 image	Apache-2.0	yes	licenses/Apache-2.0.txt	Transformations
+Haystack	in retriever image	Apache-2.0	yes	licenses/Apache-2.0.txt	RAG retrieval pipeline
+Cube	digest-pinned	Apache-2.0	yes	licenses/Apache-2.0.txt	Semantic/metrics layer
+OpenMetadata	chart 1.13.0	Apache-2.0	yes	licenses/Apache-2.0.txt	Catalog/lineage
+Docling	digest-pinned	MIT	yes	licenses/MIT.txt	Document parsing
+OPA (Open Policy Agent)	1.4.2	Apache-2.0	yes	licenses/Apache-2.0.txt	Policy-as-code at tool boundary
+Dagster	chart 1.13.11	Apache-2.0	yes	licenses/Apache-2.0.txt	Orchestrator
+DuckDB	in query-tool image	MIT	yes	licenses/MIT.txt	Default lakehouse query engine
+Apache Polaris	1.0.1-incubating	Apache-2.0	yes	licenses/Apache-2.0.txt	Iceberg REST catalog; NOTICE bundled
+Superset	chart 0.17.2 / app 6.1.0	Apache-2.0	yes	licenses/Apache-2.0.txt	Dashboards/BI; NOTICE bundled
+Trino	optional	Apache-2.0	optional	licenses/Apache-2.0.txt	Optional scale/federation engine (off by default)
+Apache Spark	optional	Apache-2.0	optional	licenses/Apache-2.0.txt	Optional distributed ETL (off by default); NOTICE bundled
+SeaweedFS	3.97	Apache-2.0	yes	licenses/Apache-2.0.txt	Air-gap object storage
+Supabase	platform	Apache-2.0	yes	licenses/Apache-2.0.txt	Wrapped per packaging.md
+Forgejo	v11.0.15 (chart 17.1.1)	GPL-3.0-or-later	yes	licenses/GPL-3.0.txt	SEPARATE SERVICE / mere aggregation; source: licenses/source-offer.md
+Forgejo Runner	6	MIT	yes	licenses/MIT.txt	CI runner (act_runner)
+Argo CD	chart 10.0.0	Apache-2.0	yes	licenses/Apache-2.0.txt	GitOps deploy
+Harbor	platform	Apache-2.0	yes	licenses/Apache-2.0.txt	Production container registry
+Velero	platform	Apache-2.0	yes	licenses/Apache-2.0.txt	Backup/restore
+cert-manager	platform	Apache-2.0	yes	licenses/Apache-2.0.txt	TLS certificate management
+Cilium	platform	Apache-2.0	yes	licenses/Apache-2.0.txt	CNI / NetworkPolicy enforcement
+Ory	platform	Apache-2.0	yes	licenses/Apache-2.0.txt	Identity (auth federation)
+JupyterHub	Layer 4 (off)	BSD-3-Clause	optional	licenses/BSD-3-Clause.txt	Notebooks (ml.enabled=false)
+Featureform	v0.12.1	MPL-2.0	optional	licenses/MPL-2.0.txt	OPTIONAL feature store (Layer 4, off); source: licenses/source-offer.md
+MLflow	Layer 4 (off)	Apache-2.0	optional	licenses/Apache-2.0.txt	Experiment tracking / model registry
+KServe	Layer 4 (off)	Apache-2.0	optional	licenses/Apache-2.0.txt	Model serving / inference
+amazon/aws-cli	2.31.13	Apache-2.0	yes	licenses/Apache-2.0.txt	Bucket-init helper image
+traefik/whoami	1.10.3	MIT	yes	licenses/MIT.txt	Software-delivery demo app
+Docker-in-Docker (dind)	27	Apache-2.0	yes	licenses/Apache-2.0.txt	CI build sidecar (Moby/Docker engine)
+MinIO	digest-pinned	AGPL-3.0	no	licenses/AGPL-3.0.txt	LOCAL DEV-ONLY S3 stand-in; AGPL, NEVER bundled/redistributed (SeaweedFS is the bundled option)

@@ -1,0 +1,101 @@
+{{- if and .Values.ml.enabled .Values.mlflow.enabled }}
+{{- /*
+  MLflow (Apache 2.0) — experiment tracking + model registry (Layer 4 Science).
+  Backend store = CloudNativePG `mlflow` DB (pg-rw); artifact store = object
+  storage bucket `mlflow` (MinIO locally / STACKIT Object Storage in prod), served
+  through the tracking server (`--serve-artifacts`) so notebooks/agents need only
+  the tracking URL. Custom image (sovereign-os/mlflow = mlflow + psycopg2 + boto3),
+  built locally and loaded into kind — the upstream ghcr.io/mlflow/mlflow image
+  ships no Postgres/S3 drivers (same pattern as sovereign-os/dbt + superset).
+*/}}
+{{- $m := .Values.mlflow }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "mlflow") | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "mlflow") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "mlflow") | nindent 8 }}
+    spec:
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: mlflow
+          image: "{{ $m.image.repository }}:{{ $m.image.tag }}"
+          imagePullPolicy: IfNotPresent      # locally-built image, loaded into kind
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          command: ["sh", "-c"]
+          args:
+            - >-
+              exec mlflow server
+              --host 0.0.0.0 --port 5000
+              --backend-store-uri "postgresql://${PGUSER}:${PGPASSWORD}@pg-rw:5432/{{ $m.backendDatabase }}"
+              --artifacts-destination "s3://{{ $m.artifactBucket }}"
+              --serve-artifacts
+              --gunicorn-opts "--timeout 120"
+          env:
+            - name: HOME
+              value: /tmp
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: {{ $m.backendSecretName }}, key: username } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $m.backendSecretName }}, key: password } }
+            # S3 artifact store (MinIO locally / STACKIT Object Storage in prod).
+            - name: MLFLOW_S3_ENDPOINT_URL
+              value: {{ $m.s3.endpoint | quote }}
+            - name: AWS_DEFAULT_REGION
+              value: {{ .Values.objectStorage.region | quote }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_ACCESS_KEY_ID } }
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_SECRET_ACCESS_KEY } }
+          ports:
+            - { name: http, containerPort: 5000 }
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 5
+            failureThreshold: 40          # waits for the Postgres backend migration
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 20
+          resources:
+            {{- toYaml $m.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "mlflow") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "mlflow") | nindent 4 }}
+  ports:
+    - { name: http, port: 5000, targetPort: http }
+{{- end }}

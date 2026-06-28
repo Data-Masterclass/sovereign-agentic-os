@@ -1,0 +1,14 @@
+# Patterns to ignore when building Helm packages.
+.DS_Store
+.git
+.gitignore
+*.swp
+*.bak
+*.tmp
+*.orig
+*~
+.vscode/
+.idea/
+# Local-only overlays and notes never belong in the packaged artifact.
+values.local.yaml
+values.secret.yaml

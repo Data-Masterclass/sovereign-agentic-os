@@ -1,0 +1,66 @@
+{{- if .Values.docling.enabled }}
+{{- /*
+  Docling (MIT) — document parsing service (docling-serve). Converts uploaded
+  documents (PDF/DOCX/HTML/…) into clean text/markdown for the knowledge index
+  (architecture.md: "upload docs (parsed by Docling) -> embedded into OpenSearch").
+  Runs as the image's non-root uid 1001; rootfs stays writable for the model cache.
+*/}}
+{{- $d := .Values.docling }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docling
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "docling") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "docling") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "docling") | nindent 8 }}
+    spec:
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+        - name: docling
+          image: "{{ $d.image.repository }}:{{ $d.image.tag }}@{{ $d.image.digest }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          ports:
+            - { name: http, containerPort: 5001 }
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 20
+          resources:
+            {{- toYaml $d.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: docling
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "docling") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "docling") | nindent 4 }}
+  ports:
+    - { name: http, port: 5001, targetPort: http }
+{{- end }}

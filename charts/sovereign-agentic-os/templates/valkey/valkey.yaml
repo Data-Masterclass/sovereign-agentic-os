@@ -1,0 +1,98 @@
+{{- if .Values.valkey.enabled }}
+{{- /*
+  Valkey (BSD-3) — Redis-protocol queue/cache for Langfuse v3. Cache only
+  (not backed up). Password-protected; auth from a Secret.
+*/}}
+{{- $v := .Values.valkey }}
+{{- if eq .Values.global.profile "local" }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $v.secretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "valkey") | nindent 4 }}
+type: Opaque
+stringData:
+  password: {{ $v.local.password | quote }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: valkey
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "valkey") | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "valkey") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "valkey") | nindent 8 }}
+    spec:
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: valkey
+          image: "{{ $v.image.repository }}:{{ $v.image.tag }}@{{ $v.image.digest }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          command:
+            - valkey-server
+            - --requirepass
+            - "$(VALKEY_PASSWORD)"
+            - --save
+            - ""                       # cache only — no RDB persistence
+            - --appendonly
+            - "no"
+            # Langfuse uses Valkey as a job queue — MUST NOT evict keys, or queued
+            # work is silently lost (Langfuse requires noeviction).
+            - --maxmemory-policy
+            - noeviction
+          env:
+            - name: VALKEY_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $v.secretName }}, key: password } }
+          ports:
+            - { name: valkey, containerPort: 6379 }
+          readinessProbe:
+            tcpSocket: { port: valkey }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: valkey }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            {{- toYaml $v.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "valkey") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "valkey") | nindent 4 }}
+  ports:
+    - { name: valkey, port: 6379, targetPort: valkey }
+{{- end }}

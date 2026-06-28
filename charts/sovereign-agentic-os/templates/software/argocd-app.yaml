@@ -1,0 +1,35 @@
+{{- if and (index .Values "argo-cd" "enabled") .Values.softwareDelivery.demoApp.enabled }}
+{{- /*
+  Argo CD Application — GitOps-deploys the demo app from its Forgejo repo into
+  the demo namespace. Argo auto-syncs once the repo is seeded. Demonstrates the
+  Software golden path: git (Forgejo) -> GitOps (Argo CD) -> per-domain namespace.
+*/}}
+{{- $d := .Values.softwareDelivery.demoApp }}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ $d.repo }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "software-delivery") | nindent 4 }}
+  annotations:
+    # Apply after Argo CRDs + the repo seed (hook resources run earlier).
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "35"
+spec:
+  project: default
+  source:
+    repoURL: "http://forgejo-http:3000/{{ .Values.forgejo.gitea.admin.username }}/{{ $d.repo }}.git"
+    path: manifests
+    targetRevision: HEAD
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ $d.namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+{{- end }}

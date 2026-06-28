@@ -1,0 +1,9 @@
+node_modules
+.next
+out
+build
+npm-debug.log*
+.env*.local
+.DS_Store
+INTEGRATION.md
+README.md

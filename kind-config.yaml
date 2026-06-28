@@ -1,0 +1,14 @@
+# kind cluster config for the Sovereign Agentic OS.
+# Enables containerd's registry certs.d so the deployed CI-built images can be
+# pulled from Forgejo's in-cluster registry (plain HTTP). install.sh creates the
+# cluster with `--config kind-config.yaml`; scripts/configure-registry.sh then
+# drops the per-registry hosts.toml + node /etc/hosts entry (after the Service IP
+# exists). See docs/components/ci-build.md.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry]
+      config_path = "/etc/containerd/certs.d"
+nodes:
+  - role: control-plane

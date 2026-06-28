@@ -1,0 +1,15 @@
+Sovereign Agentic OS — {{ .Chart.Version }} ({{ .Chart.AppVersion }})
+
+Release:    {{ .Release.Name }}
+Namespace:  {{ .Release.Namespace }}
+Profile:    {{ .Values.global.profile }}
+
+This is the agent-core vertical slice (Layers 1+2, built incrementally).
+
+Next steps after install:
+  kubectl -n {{ .Release.Namespace }} get pods
+  # Port-forward the UIs once their components are enabled, e.g.:
+  #   kubectl -n {{ .Release.Namespace }} port-forward svc/langfuse-web 3000:3000
+  #   kubectl -n {{ .Release.Namespace }} port-forward svc/litellm 4000:4000
+
+Local only. Do NOT deploy to STACKIT from this overlay.

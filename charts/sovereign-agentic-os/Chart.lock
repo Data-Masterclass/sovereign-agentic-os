@@ -1,0 +1,33 @@
+dependencies:
+- name: langfuse
+  repository: https://langfuse.github.io/langfuse-k8s
+  version: 1.5.36
+- name: litellm-helm
+  repository: oci://ghcr.io/berriai
+  version: 1.90.0
+- name: opensearch
+  repository: https://opensearch-project.github.io/helm-charts
+  version: 3.7.0
+- name: opensearch-dashboards
+  repository: https://opensearch-project.github.io/helm-charts
+  version: 3.7.0
+- name: dagster
+  repository: https://dagster-io.github.io/helm
+  version: 1.13.11
+- name: openmetadata
+  repository: https://helm.open-metadata.org
+  version: 1.13.0
+- name: superset
+  repository: https://apache.github.io/superset
+  version: 0.17.2
+- name: forgejo
+  repository: oci://code.forgejo.org/forgejo-helm
+  version: 17.1.1
+- name: argo-cd
+  repository: https://argoproj.github.io/argo-helm
+  version: 10.0.0
+- name: jupyterhub
+  repository: https://hub.jupyter.org/helm-chart/
+  version: 4.4.0
+digest: sha256:12db47e85678e8b16cfb44ccd9e3c3dd822074369f200d77ff9dba82129057cd
+generated: "2026-06-28T12:04:07.285935+02:00"

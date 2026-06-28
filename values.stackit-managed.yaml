@@ -1,0 +1,185 @@
+# =============================================================================
+# values.stackit-managed.yaml — Mode B: backends -> STACKIT managed services.
+# =============================================================================
+# Opt-in overlay: each stateful backend's bundled deployment is disabled and the
+# chart points at the managed STACKIT endpoint instead; secrets come from the
+# secrets store via External Secrets (never inline). LiteLLM routes to STACKIT AI
+# Model Serving. Same chart — mode is only a values choice. (Provision the
+# managed services first: deploy/terraform; needs the SA key + cost sign-off.)
+#
+# WIRING: `REPLACE-…` tokens are filled by deploy/scripts/render-values.sh from
+# `terraform output` (endpoints, registry, ingress) and by
+# deploy/scripts/publish-images.sh (image @sha256 digests). Secret VALUES never
+# land here — only secret *names* the chart references via External Secrets.
+# See deploy/README.md "values.stackit-managed.yaml wiring" for the full map.
+# =============================================================================
+
+global:
+  profile: stackit
+  storageClass: "" # SKE CSI default
+  imagePullPolicy: IfNotPresent
+  # Registry pull secret for the bespoke images (materialised by External
+  # Secrets from Secrets Manager — see deploy/argocd/secrets/externalsecrets.yaml).
+  imagePullSecrets:
+    - name: registry-pull-secret
+
+networkPolicies:
+  defaultDeny: true # Cilium enforces FQDN egress on SKE (security.md)
+
+# --- Object storage -> STACKIT Object Storage --------------------------------
+objectStorage:
+  enabled: false # no bundled MinIO/SeaweedFS
+  external:
+    endpoint: "https://object.storage.eu01.onstackit.cloud"
+    secretName: object-storage-credentials # External Secrets -> Secrets Manager
+
+# --- Postgres -> STACKIT PostgreSQL Flex -------------------------------------
+postgres:
+  enabled: false # no in-cluster CloudNativePG cluster
+  external:
+    host: "REPLACE-postgres-flex-host" # render-values.sh <- output postgres_host
+    port: "5432"
+    secretName: postgres-credentials
+
+# --- OpenSearch -> STACKIT managed OpenSearch --------------------------------
+opensearch:
+  enabled: false # no in-cluster OpenSearch subchart
+  external:
+    host: "REPLACE-opensearch-host" # render-values.sh <- output opensearch_host
+    port: "9200"
+    secretName: opensearch-credentials
+
+# --- LLM -> STACKIT AI Model Serving (LiteLLM routes to it) -------------------
+llm:
+  mode: external
+  provider: stackit
+  secretRef: stackit-ai-model-serving-key
+
+# No mock model in Mode B — real inference comes from AI Model Serving.
+mockModel:
+  enabled: false
+
+# Actual LiteLLM wiring: point the gateway's model list at the OpenAI-compatible
+# AI Model Serving endpoint. Model names are kept identical to the bundled slice
+# (`sovereign-mock` / `sovereign-embed`) so the agents need no change. Swap the
+# `model:` ids for entries from `stackit ai-model-serving models`.
+litellm:
+  environmentSecrets:
+    - litellm-credentials          # master key (unchanged)
+    - stackit-ai-model-serving-key # provides api_key + api_base envs
+  proxy_config:
+    model_list:
+      - model_name: sovereign-mock # chat model the agents call
+        litellm_params:
+          model: openai/REPLACE-chat-model-id # e.g. a STACKIT-served chat model
+          api_base: "REPLACE-model-serving-base-url" # render <- model_serving_base_url
+          api_key: os.environ/api_key
+      - model_name: sovereign-embed # embeddings for RAG
+        litellm_params:
+          model: openai/REPLACE-embed-model-id
+          api_base: "REPLACE-model-serving-base-url"
+          api_key: os.environ/api_key
+    litellm_settings:
+      success_callback: ["langfuse"]
+      drop_params: true
+    general_settings:
+      master_key: os.environ/PROXY_MASTER_KEY
+
+# =============================================================================
+# Bespoke images -> STACKIT Container Registry, referenced by immutable digest.
+# kind's local image load does NOT work on a real cluster (build-deploy §4), so
+# every custom image is pulled from the registry. The template renders
+# `repository:tag`; we set repository to the registry path and tag to
+# `<ver>@sha256:<digest>` (a valid OCI ref — the digest is authoritative).
+# `REPLACE-REGISTRY` <- render-values.sh (output container_registry_url);
+# `REPLACE-*-DIGEST` <- publish-images.sh (the pushed digest).
+# =============================================================================
+osUI:
+  image:
+    repository: REPLACE-REGISTRY/sovereign-os/os-ui
+    tag: "0.1.0@sha256:REPLACE-OS-UI-DIGEST"
+
+sampleAgent:
+  image:
+    repository: REPLACE-REGISTRY/sovereign-os/sample-agent
+    tag: "0.1.0@sha256:REPLACE-SAMPLE-AGENT-DIGEST"
+
+poetAgent:
+  image:
+    repository: REPLACE-REGISTRY/sovereign-os/poet-agent
+    tag: "0.1.0@sha256:REPLACE-POET-AGENT-DIGEST"
+
+haystack:
+  image:
+    repository: REPLACE-REGISTRY/sovereign-os/haystack-retriever
+    tag: "0.1.0@sha256:REPLACE-HAYSTACK-DIGEST"
+
+dbt:
+  image:
+    repository: REPLACE-REGISTRY/sovereign-os/dbt
+    tag: "0.1.0@sha256:REPLACE-DBT-DIGEST"
+
+egressProxy:
+  image:
+    repository: REPLACE-REGISTRY/sovereign-os/egress-proxy
+    tag: "0.1.0@sha256:REPLACE-EGRESS-PROXY-DIGEST"
+
+webFetch:
+  image:
+    repository: REPLACE-REGISTRY/sovereign-os/web-fetch
+    tag: "0.1.0@sha256:REPLACE-WEB-FETCH-DIGEST"
+
+queryTool:
+  image:
+    repository: REPLACE-REGISTRY/sovereign-os/query-tool
+    tag: "0.2.0@sha256:REPLACE-QUERY-TOOL-DIGEST"
+
+adminConsole:
+  image:
+    repository: REPLACE-REGISTRY/sovereign-os/admin-console
+    tag: "0.1.0@sha256:REPLACE-ADMIN-CONSOLE-DIGEST"
+
+superset:
+  image:
+    repository: REPLACE-REGISTRY/sovereign-os/superset
+    tag: "6.1.0@sha256:REPLACE-SUPERSET-DIGEST"
+
+# Dagster has three image refs (user-code, webserver, daemon) — all the same
+# bespoke image. webserver/daemon are maps (safe to deep-merge). The user-code
+# image lives inside the `dagster-user-deployments.deployments` LIST: Helm
+# replaces lists wholesale, so we do NOT override it here (that would drop the
+# deployment's grpc args/env). Pin it at go-live by editing that single
+# `repository`/`tag` in values.yaml, or keep it on the registry tag.
+dagster:
+  dagsterWebserver:
+    image:
+      repository: REPLACE-REGISTRY/sovereign-os/dagster
+      tag: "0.2.0@sha256:REPLACE-DAGSTER-DIGEST"
+  dagsterDaemon:
+    image:
+      repository: REPLACE-REGISTRY/sovereign-os/dagster
+      tag: "0.2.0@sha256:REPLACE-DAGSTER-DIGEST"
+
+# Layer 4 (Science / ML) stays OFF by default (ml.enabled=false). When enabled,
+# wire sovereign-os/mlflow + sovereign-os/ml-agent the same way (publish-images.sh
+# includes them).
+
+# =============================================================================
+# Ingress + TLS — hostnames resolve to the ingress LB (DNS zone from terraform);
+# cert-manager issues TLS. `REPLACE-DNS-NAME` <- render-values.sh (var dns_name).
+# =============================================================================
+ingress:
+  enabled: true
+  className: nginx
+  tlsIssuer: letsencrypt-prod
+  hosts:
+    osUI: "os.REPLACE-DNS-NAME"
+    litellm: "litellm.REPLACE-DNS-NAME"
+    langfuse: "langfuse.REPLACE-DNS-NAME"
+    openmetadata: "openmetadata.REPLACE-DNS-NAME"
+    superset: "superset.REPLACE-DNS-NAME"
+    forgejo: "forgejo.REPLACE-DNS-NAME"
+    argocd: "argocd.REPLACE-DNS-NAME"
+
+# Cache/analytics (Valkey/ClickHouse) stay bundled — no managed STACKIT
+# equivalent (stackit.md). Flip enabled:false + external here if that changes.

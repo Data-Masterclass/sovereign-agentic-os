@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# AppProject scoping every Application in this deploy. Keeps the GitOps surface
+# explicit (allowed repos / destinations / namespaces).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: sovereign-os
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Sovereign Agentic OS — platform + umbrella chart (Mode B)
+  sourceRepos:
+    # The OS repo (this repo) + the upstream chart repos the platform apps pull.
+    - "*"
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "*"
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

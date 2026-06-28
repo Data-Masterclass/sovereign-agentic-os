@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# Bootstrap Argo CD itself (the one component that can't be GitOps-managed by
+# Argo before it exists). Pinned to a release tag. `kubectl apply -k` installs
+# the namespace + the upstream Argo CD install manifest, then the Makefile
+# applies app-of-apps.yaml so Argo reconciles everything else from git.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: argocd
+
+resources:
+  - namespace.yaml
+  # Pinned Argo CD release (bump deliberately). Remote base is fetched at apply
+  # time (needs network); for air-gap, vendor manifests/install.yaml locally.
+  - https://raw.githubusercontent.com/argoproj/argo-cd/v2.13.1/manifests/install.yaml

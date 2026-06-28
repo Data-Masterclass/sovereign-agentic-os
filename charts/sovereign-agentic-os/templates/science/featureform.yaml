@@ -1,0 +1,72 @@
+{{- if and .Values.ml.enabled .Values.featureform.enabled }}
+{{- /*
+  Featureform (MPL-2.0) — the *virtual* feature store (Layer 4 Science). It sits
+  atop our existing infra rather than copying data: offline store = Iceberg via the
+  query engine (DuckDB/Trino over Polaris), online store = Valkey (BSD-3, the
+  stack's cache — NOT Redis). Providers (Valkey online, Iceberg offline) are
+  registered through the Featureform client from a notebook or the ML agent; this
+  template runs the single-container server + dashboard.
+
+  IMAGE / ARM64: featureformcom/featureform:0.15.10 is multi-arch (amd64 + arm64,
+  verified) — runs natively on Apple-Silicon kind. Off by default everywhere;
+  opt-in only.
+*/}}
+{{- $f := .Values.featureform }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: featureform
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "featureform") | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "featureform") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "featureform") | nindent 8 }}
+    spec:
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: featureform
+          image: "{{ $f.image.repository }}:{{ $f.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          env:
+            # Online store = Valkey (host/port; auth from the stack's valkey secret).
+            - name: FEATUREFORM_ONLINE_VALKEY_HOST
+              value: valkey
+            - name: FEATUREFORM_ONLINE_VALKEY_PORT
+              value: "6379"
+            - name: FEATUREFORM_ONLINE_VALKEY_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $f.valkeySecretName }}, key: password } }
+          ports:
+            - { name: api, containerPort: 7878 }
+            - { name: dashboard, containerPort: 80 }
+          resources:
+            {{- toYaml $f.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: featureform
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "featureform") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "featureform") | nindent 4 }}
+  ports:
+    - { name: api, port: 7878, targetPort: api }
+    - { name: dashboard, port: 80, targetPort: dashboard }
+{{- end }}

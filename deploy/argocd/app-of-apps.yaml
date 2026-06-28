@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# Root "app-of-apps" — the single Application you apply by hand. It points Argo
+# CD at deploy/argocd/apps/ in this repo; Argo then reconciles every child
+# Application (platform prerequisites + the OS umbrella chart) by sync wave.
+# Adding a layer = committing a new Application file under apps/.
+#
+# repoURL/targetRevision below are the GitOps source of truth. `make sync` (and
+# the render step) can override repoURL to the real remote; the default points
+# at the published repo (Chart.yaml `home`).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sovereign-os-root
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: sovereign-os
+  source:
+    repoURL: https://github.com/datamasterclass/sovereign-agentic-os.git
+    targetRevision: main
+    path: deploy/argocd/apps
+    directory:
+      recurse: true
+      include: "*.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

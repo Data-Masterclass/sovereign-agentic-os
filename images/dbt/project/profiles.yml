@@ -1,0 +1,15 @@
+sovereign:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('PGHOST', 'pg-rw') }}"
+      port: 5432
+      # PGUSER/PGPASSWORD (the dbt hook Job) or username/password (Dagster
+      # envSecrets from the warehouse Secret) — works in both contexts.
+      user: "{{ env_var('PGUSER', env_var('username', 'warehouse')) }}"
+      password: "{{ env_var('PGPASSWORD', env_var('password', '')) }}"
+      dbname: "{{ env_var('PGDATABASE', 'warehouse') }}"
+      schema: "{{ env_var('PGSCHEMA', 'analytics') }}"
+      threads: 4
+      sslmode: prefer

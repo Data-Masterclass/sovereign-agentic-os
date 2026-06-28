@@ -1,0 +1,71 @@
+{{- if .Values.objectStorage.enabled }}
+{{- /*
+  One-shot bucket bootstrap. Waits for the S3 endpoint, then idempotently creates
+  the buckets the slice needs (Langfuse blob store). Runs as a Helm hook so it
+  re-runs cleanly on upgrade without colliding with the immutable prior Job.
+  aws-cli is Apache 2.0 (mc/MinIO client is AGPL — avoided).
+*/}}
+{{- $os := .Values.objectStorage }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seaweedfs-bucket-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "object-storage-init") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "object-storage-init") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: bucket-init
+          image: "{{ $os.awsCli.repository }}@{{ $os.awsCli.digest }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: {{ $os.secretName }}, key: AWS_ACCESS_KEY_ID } }
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: {{ $os.secretName }}, key: AWS_SECRET_ACCESS_KEY } }
+            - name: AWS_DEFAULT_REGION
+              value: {{ $os.region | quote }}
+            - name: ENDPOINT
+              value: "http://minio:9000"
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              echo "waiting for S3 endpoint $ENDPOINT ..."
+              for i in $(seq 1 60); do
+                if aws --endpoint-url "$ENDPOINT" s3 ls >/dev/null 2>&1; then
+                  echo "S3 endpoint is up"; break
+                fi
+                sleep 3
+              done
+              for b in {{ range $os.buckets }}{{ . }} {{ end }}; do
+                if aws --endpoint-url "$ENDPOINT" s3 ls "s3://$b" >/dev/null 2>&1; then
+                  echo "bucket $b already exists"
+                else
+                  echo "creating bucket $b"
+                  aws --endpoint-url "$ENDPOINT" s3 mb "s3://$b"
+                fi
+              done
+              echo "bucket init done"
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+{{- end }}

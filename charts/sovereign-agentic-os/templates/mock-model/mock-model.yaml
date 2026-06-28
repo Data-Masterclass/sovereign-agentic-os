@@ -1,0 +1,70 @@
+{{- if .Values.mockModel.enabled }}
+{{- /*
+  Sovereign mock model — local OpenAI-compatible stub (chat + embeddings) that
+  LiteLLM routes to. Fully offline; proves the agent-core slice end-to-end with
+  no provider key. Bespoke image, built locally and loaded into kind
+  (imagePullPolicy IfNotPresent). On STACKIT, LiteLLM routes to real in-region
+  models instead and this component is disabled.
+*/}}
+{{- $m := .Values.mockModel }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-model
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "mock-model") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "mock-model") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "mock-model") | nindent 8 }}
+    spec:
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: mock-model
+          image: "{{ $m.image.repository }}:{{ $m.image.tag }}"
+          imagePullPolicy: IfNotPresent      # locally-built image, loaded into kind
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          env:
+            - name: PORT
+              value: "8080"
+            - name: EMBED_DIM
+              value: {{ $m.embedDim | quote }}
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          resources:
+            {{- toYaml $m.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-model
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "mock-model") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "mock-model") | nindent 4 }}
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+{{- end }}

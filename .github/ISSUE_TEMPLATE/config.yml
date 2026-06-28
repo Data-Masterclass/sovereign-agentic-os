@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation — Sovereign Agentic OS Guide
+    url: https://github.com/Data-Masterclass/sovereign-agentic-os/blob/main/docs/Sovereign-Agentic-OS-Guide.md
+    about: The full install / operate / understand manual — please check here first.
+  - name: Security report
+    url: https://github.com/Data-Masterclass/sovereign-agentic-os/security/advisories/new
+    about: Please report security vulnerabilities privately, not as a public issue.

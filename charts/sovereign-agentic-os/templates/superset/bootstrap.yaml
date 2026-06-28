@@ -1,0 +1,99 @@
+{{- if .Values.superset.enabled }}
+{{- /*
+  Superset bootstrap — registers the dbt warehouse as a database connection and
+  creates a dataset on analytics.daily_revenue, so a domain can build charts on
+  it. Post-install/upgrade hook; idempotent. Uses the query-tool image (requests).
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: superset-bootstrap-script
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "superset-bootstrap") | nindent 4 }}
+data:
+  bootstrap.py: |
+    import os, time, requests
+    B = os.environ["SUPERSET_URL"]; S = requests.Session()
+    for _ in range(80):
+        try:
+            if S.get(B + "/health", timeout=5).status_code == 200: break
+        except Exception: pass
+        time.sleep(3)
+    t = S.post(B + "/api/v1/security/login", json={
+        "username": os.environ["SUPERSET_USER"], "password": os.environ["SUPERSET_PASS"],
+        "provider": "db", "refresh": True}, timeout=15).json()["access_token"]
+    H = {"Authorization": "Bearer " + t, "Referer": B}
+    H["X-CSRFToken"] = S.get(B + "/api/v1/security/csrf_token/", headers=H).json()["result"]
+    uri = f'postgresql://{os.environ["WH_USER"]}:{os.environ["WH_PASS"]}@pg-rw:5432/warehouse'
+    ex = S.get(B + "/api/v1/database/?q=(filters:!((col:database_name,opr:eq,value:warehouse)))", headers=H).json()["result"]
+    if ex:
+        dbid = ex[0]["id"]; print("warehouse db exists", dbid)
+    else:
+        dbid = S.post(B + "/api/v1/database/", headers=H, json={"database_name": "warehouse", "sqlalchemy_uri": uri}).json()["id"]
+        print("created warehouse db", dbid)
+    ds = S.get(B + "/api/v1/dataset/?q=(filters:!((col:table_name,opr:eq,value:daily_revenue)))", headers=H).json()["result"]
+    if ds:
+        print("dataset exists", ds[0]["id"])
+    else:
+        r = S.post(B + "/api/v1/dataset/", headers=H, json={"database": dbid, "schema": "analytics", "table_name": "daily_revenue"})
+        print("created dataset", r.status_code, r.json().get("id"))
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: superset-bootstrap
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "superset-bootstrap") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "30"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "superset-bootstrap") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: bootstrap
+          image: "{{ .Values.queryTool.image.repository }}:{{ .Values.queryTool.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: HOME
+              value: /tmp
+            - name: SUPERSET_URL
+              value: "http://agentic-os-superset:8088"
+            - name: SUPERSET_USER
+              value: {{ .Values.superset.init.adminUser.username | quote }}
+            - name: SUPERSET_PASS
+              value: {{ .Values.superset.init.adminUser.password | quote }}
+            - name: WH_USER
+              valueFrom: { secretKeyRef: { name: postgres-warehouse-credentials, key: username } }
+            - name: WH_PASS
+              valueFrom: { secretKeyRef: { name: postgres-warehouse-credentials, key: password } }
+          command: ["python", "/script/bootstrap.py"]
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 192Mi }
+          volumeMounts:
+            - { name: script, mountPath: /script, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: script
+          configMap:
+            name: superset-bootstrap-script
+        - name: tmp
+          emptyDir: {}
+{{- end }}

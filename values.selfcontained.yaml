@@ -1,0 +1,34 @@
+# =============================================================================
+# values.selfcontained.yaml — Mode A (DEFAULT): the fully self-contained OS.
+# =============================================================================
+# Every stateful backend runs IN the chart (Postgres via CloudNativePG,
+# OpenSearch, ClickHouse, Valkey, object storage via MinIO) and the LLM endpoint
+# is the bundled local mock — nothing external required. This is what
+# `./install.sh` (Enter through every prompt) uses. See stackit/packaging.md.
+#
+# Tuned to fit a single ~14 GB kind VM: a few heavy Layer-2 components are off by
+# default locally (flip on / scale the node to run the full set). On a large node
+# (STACKIT) enable everything via values.yaml defaults.
+# =============================================================================
+
+global:
+  profile: local
+  storageClass: "standard"        # kind default (rancher local-path)
+
+# Secure-by-default: default-deny egress + OPA + governed web tool all shipped.
+networkPolicies:
+  defaultDeny: true
+
+# RAM fit on a single kind node: these are validated but heavy; off locally so
+# the full L1–L3 slice fits. Set enabled: true (or use a bigger node) to run them.
+docling:
+  enabled: false
+osdashboards:
+  enabled: false
+openmetadata:
+  enabled: false
+# Optional scale engines stay off by default (DuckDB is the default query engine).
+trino:
+  enabled: false
+spark:
+  enabled: false

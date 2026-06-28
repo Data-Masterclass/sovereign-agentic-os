@@ -1,0 +1,14 @@
+name: sovereign
+version: "1.0.0"
+config-version: 2
+profile: sovereign
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+
+models:
+  sovereign:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table
