@@ -13,10 +13,33 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [0.2.0-alpha.5] — 2026-06-29
+
+Headline: the **default light model is now Ministral 3 (3B, Apache-2.0)** — the
+**only in-box self-hosted default**. The self-hosted default tier is now
+**Apache-clean** and the model server is **right-sized** for the smaller weights.
+
+### Changed
+
+- **Default self-hosted model → Ministral 3 3B (Apache-2.0).** `modelServer.model`
+  is now `ministral-3:3b-instruct-2512-q4_K_M` (~2.95 GB, verified against the
+  Ollama library), serving the **light tier** (chat, coding, tool-selection).
+  LiteLLM `sovereign-default` / `sovereign-mock` routes and
+  `values.private.example.yaml` updated to match. Escalation/fallback tiers
+  (optional bigger self-host, STACKIT premium/vision) are unchanged.
+- **Model server right-sized.** `modelServer.resources` dropped from 5Gi/8Gi back
+  to **3Gi req / 4Gi limit** to fit the ~3 GB Ministral 3 3B working set.
+
+### Removed
+
+- **No non-permissive model option ships in-box.** The previous non-permissive
+  opt-in default alternative — and its license records — are removed. The
+  self-hosted tier is now **Apache-2.0 only** (Ministral 3).
+
 ## [0.2.0-alpha.4] — 2026-06-29
 
 Headline: the OS gains an **in-browser code editor** for Layer 3 apps, a
-**self-hosted model-serving + routing** stack (Gemma default + LiteLLM
+**self-hosted model-serving + routing** stack (self-hosted default + LiteLLM
 fallback/cost-caps/rate-limits to STACKIT), and **experimental** in-UI
 **terminal** and **domain-builder workbench** tabs (off by default).
 
@@ -33,27 +56,24 @@ fallback/cost-caps/rate-limits to STACKIT), and **experimental** in-UI
     pinned to the **same-origin** path `/monaco/vs`. **No CDN fetch** — the
     editor works fully offline.
 - **Self-hosted model serving + routing.** New `model-server` component: a CPU
-  OpenAI-compatible LLM runtime (**Ollama**, MIT) serving **Gemma 3n E4B
-  (`gemma3n:e4b-it-q4_K_M`)** as the **default chat backend**, replacing the mock
-  LLM — fully offline, no provider key, **N replicas** behind LiteLLM
-  load-balancing (`modelServer.replicas`). The mock model is retained for offline
-  embeddings.
-  - **⚠ License:** Gemma weights ship under the **Gemma Terms of Use**, **not**
-    Apache-2.0 / not OSI-permissive. We ship only the Ollama engine; the weights
-    are **pulled at runtime, not redistributed** (recorded as
-    `LicenseRef-Gemma-Terms-of-Use`, `bundled=no`, in `licenses/components.tsv`;
-    documented in `NOTICE` + `THIRD-PARTY-LICENSES.md` +
-    `licenses/Gemma-Terms-of-Use.txt`). For a strictly Apache-only stack,
-    override `modelServer.model` to a permissive tag (e.g. a Qwen Apache-2.0 tag
-    or Ministral).
-  - **LiteLLM router:** fallback chain (self-hosted Gemma → optional bigger
+  OpenAI-compatible LLM runtime (**Ollama**, MIT) serving **Ministral 3 3B
+  (`ministral-3:3b-instruct-2512-q4_K_M`, Apache-2.0)** as the **default chat
+  backend**, replacing the mock LLM — fully offline, no provider key, **N
+  replicas** behind LiteLLM load-balancing (`modelServer.replicas`). The mock
+  model is retained for offline embeddings.
+  - **License:** Ministral 3 ships under **Apache-2.0** (OSI-permissive). We ship
+    only the Ollama engine; the weights are **pulled at runtime, not
+    redistributed** (recorded `bundled=no` in `licenses/components.tsv`;
+    documented in `NOTICE` + `THIRD-PARTY-LICENSES.md`). The self-hosted default
+    is **Apache-clean**.
+  - **LiteLLM router:** fallback chain (self-hosted Ministral 3 → optional bigger
     self-host → STACKIT last-resort), with retries, timeouts, circuit-breaking
     (`allowed_fails`/`cooldown_time`), and load-balancing. **STACKIT AI Model
     Serving** (`Qwen/Qwen3-VL-235B-A22B-Instruct-FP8`) is wired as the
     **vision** route + **last-resort** only — never the default; key via
     **External Secrets**, with a dedicated **per-model spend cap** and per-key
     **rate limits** on the agent virtual key.
-  - **Config alternatives/toggles:** swap the default to Ministral 3
+  - **Config alternatives/toggles:** swap the default model
     (`modelServer.model`); optional GPU **vLLM** bigger model
     (`modelServer.big.enabled`, off by default).
   - **Private overlay:** `values.private.yaml` (gitignored) registers extra

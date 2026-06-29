@@ -72,17 +72,14 @@ versions, SPDX identifiers, and pointers to the bundled full license texts under
 licenses/ — is in THIRD-PARTY-LICENSES.md.
 
 ================================================================================
-Non-Apache default model weights — Gemma Terms of Use
+Self-hosted default model weights — Apache-2.0 (Ministral 3)
 ================================================================================
 
-The DEFAULT self-hosted chat model (modelServer.model = gemma3n:e4b-it-q4_K_M,
-Google "Gemma 3n E4B") is licensed under the GEMMA TERMS OF USE
-(https://ai.google.dev/gemma/terms) — NOT Apache-2.0 and NOT an OSI-permissive
-license. The weights are pulled at runtime by the Ollama engine and are NOT
-redistributed as part of this product (see licenses/Gemma-Terms-of-Use.txt and
-THIRD-PARTY-LICENSES.md). Running the default configuration downloads and uses
-Gemma under those terms; override modelServer.model with a permissively-licensed
-tag for a strictly Apache-2.0 stack.
+The DEFAULT self-hosted chat model (modelServer.model =
+ministral-3:3b-instruct-2512-q4_K_M, Mistral AI "Ministral 3" 3B) is licensed
+under APACHE-2.0 — an OSI-permissive license. The weights are pulled at runtime
+by the Ollama engine and are NOT redistributed as part of this product (see
+THIRD-PARTY-LICENSES.md). The self-hosted default is therefore Apache-clean.
 
 "Sovereign Agentic OS" and "Data Masterclass" are trademarks of Borek Data
 Ventures UG (haftungsbeschränkt); see TRADEMARKS.md. All other trademarks are the

@@ -36,12 +36,12 @@ litellm:
       # ---- PUBLIC DEFAULTS (copy verbatim from charts/.../values.yaml) --------
       - model_name: sovereign-default
         litellm_params:
-          model: openai/gemma3n:e4b-it-q4_K_M
+          model: openai/ministral-3:3b-instruct-2512-q4_K_M
           api_base: http://model-server:11434/v1
           api_key: "sk-local-unused"
       - model_name: sovereign-mock
         litellm_params:
-          model: openai/gemma3n:e4b-it-q4_K_M
+          model: openai/ministral-3:3b-instruct-2512-q4_K_M
           api_base: http://model-server:11434/v1
           api_key: "sk-local-unused"
       - model_name: sovereign-embed

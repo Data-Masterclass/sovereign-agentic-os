@@ -19,8 +19,8 @@ kubectl -n agentic-os port-forward svc/agentic-os-litellm 4000:4000
     -H "Authorization: Bearer sk-litellm-local-dev-master" -H "Content-Type: application/json" \
     -d '{"model":"sovereign-mock","messages":[{"role":"user","content":"hi"}]}'
   ```
-  Models: `sovereign-default` (chat, self-hosted Gemma E4B — default), `sovereign-mock`
-  (back-compat alias → same Gemma default), `sovereign-embed` (embeddings), `sovereign-vision` /
+  Models: `sovereign-default` (chat, self-hosted Ministral 3 3B — default), `sovereign-mock`
+  (back-compat alias → same Ministral default), `sovereign-embed` (embeddings), `sovereign-vision` /
   `sovereign-premium` (STACKIT Qwen3-VL — vision + last-resort only). See
   [model-server](model-server.md) for the full routing/fallback strategy.
 - **Virtual keys + cost caps:** UI → *Virtual Keys*. The agents use a scoped key
@@ -33,7 +33,7 @@ kubectl -n agentic-os port-forward svc/agentic-os-litellm 4000:4000
 `litellm`). If you see this, the litellm pod isn't connected; check it's running.
 **Q: How do I add a real model?** Add it to `litellm.proxy_config.model_list` with the
 provider + an API key secret, then `helm upgrade`. The **default** chat model is already a real
-self-hosted **Gemma E4B** ([model-server](model-server.md)); the offline mock now only serves
+self-hosted **Ministral 3 3B** ([model-server](model-server.md)); the offline mock now only serves
 embeddings (`sovereign-embed`).
 **Q: When does STACKIT get called?** Only as the **last-resort** fallback when every self-hosted
 route fails/overloads, or for **vision** inputs (`sovereign-vision`). Cost is hard-capped on the

@@ -45,5 +45,5 @@ amazon/aws-cli	2.31.13	Apache-2.0	yes	licenses/Apache-2.0.txt	Bucket-init helper
 traefik/whoami	1.10.3	MIT	yes	licenses/MIT.txt	Software-delivery demo app
 Docker-in-Docker (dind)	27	Apache-2.0	yes	licenses/Apache-2.0.txt	CI build sidecar (Moby/Docker engine)
 MinIO	digest-pinned	AGPL-3.0	no	licenses/AGPL-3.0.txt	LOCAL DEV-ONLY S3 stand-in; AGPL, NEVER bundled/redistributed (SeaweedFS is the bundled option)
-Ollama (engine)	0.6.8	MIT	yes	licenses/MIT.txt	Self-hosted model runtime (modelServer); OpenAI-compatible. Engine only — model weights pulled at runtime, see Gemma row.
-Gemma 3n E4B (weights)	gemma3n:e4b-it-q4_K_M	LicenseRef-Gemma-Terms-of-Use	no	licenses/Gemma-Terms-of-Use.txt	DEFAULT modelServer.model. NOT Apache-2.0 — Gemma Terms of Use (https://ai.google.dev/gemma/terms). Weights pulled at runtime by Ollama, NOT redistributed here. Override modelServer.model to a permissive tag for an Apache-only stack.
+Ollama (engine)	0.6.8	MIT	yes	licenses/MIT.txt	Self-hosted model runtime (modelServer); OpenAI-compatible. Engine only — model weights pulled at runtime, see the model-weights rows below.
+Ministral 3 3B (weights)	ministral-3:3b-instruct-2512-q4_K_M	Apache-2.0	no	licenses/Apache-2.0.txt	DEFAULT modelServer.model. Apache-2.0 (OSI-permissive) — the self-hosted default is Apache-clean. Weights pulled at runtime by Ollama, NOT redistributed here (bundled=no).

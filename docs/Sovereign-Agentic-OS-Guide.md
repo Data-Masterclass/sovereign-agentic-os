@@ -374,7 +374,7 @@ kubectl -n agentic-os run ask --rm -i --restart=Never --image=curlimages/curl:8.
 You get an answer, the retrieved knowledge titles, and `traced_in_langfuse: true`. Open **Langfuse**
 (`admin@datamasterclass.com` / `langfuse-local-dev-admin`) → project *Agent Core* → Tracing → Traces to
 see the `rag-agent` run with its retrieve + generate spans. (Real prose comes from the self-hosted
-**Gemma** default served by `model-server`; if you disable it the offline **mock model** answers read
+**Ministral 3** default served by `model-server`; if you disable it the offline **mock model** answers read
 canned — swap in any model in LiteLLM with no agent change.) You can also do this in the OS UI
 **Agents** tab. Edit the seed knowledge via
 `sampleAgent.knowledge` in values — it is re-ingested on restart.
@@ -546,24 +546,23 @@ every call logged to Langfuse, MCP tool servers fronted here. DB-backed (CNPG `l
 
 - **Access:** `svc/agentic-os-litellm 4000:4000` → admin UI `http://localhost:4000/ui`, API docs `/docs`.
 - **Login:** `admin` / `litellm-admin-local-dev`; master key `sk-litellm-local-dev-master`.
-- **Key tasks:** call models (`sovereign-default` → Gemma, `sovereign-embed`, `sovereign-vision`/
+- **Key tasks:** call models (`sovereign-default` → Ministral 3, `sovereign-embed`, `sovereign-vision`/
   `sovereign-premium` → STACKIT; `sovereign-mock` is a back-compat alias for the default); manage virtual
   keys + cost caps; register MCP tool servers. Agents use the scoped key `sk-agents-local-dev` (alias
   `sovereign-agents`).
 
 ### Model serving — self-hosted default LLM (`model-server`)
 The default chat backend is a self-hosted, OpenAI-compatible **Ollama** runtime (`model-server`) serving
-**Gemma 3n E4B** (`gemma3n:e4b-it-q4_K_M`) — fully offline, no provider key, with `modelServer.replicas`
-pods behind LiteLLM load-balancing. LiteLLM routes a fallback chain (self-hosted → optional bigger
-self-host → **STACKIT** last-resort / vision) with retries, circuit-breaking, and a per-model spend cap.
-Swap the default with `modelServer.model`, or disable it (`modelServer.enabled: false`) to fall back to
-the mock model.
+**Ministral 3 3B** (`ministral-3:3b-instruct-2512-q4_K_M`) — the light tier for chat, coding, and
+tool-selection — fully offline, no provider key, with `modelServer.replicas` pods behind LiteLLM
+load-balancing. LiteLLM routes a fallback chain (self-hosted → optional bigger self-host → **STACKIT**
+last-resort / vision) with retries, circuit-breaking, and a per-model spend cap. Swap the default with
+`modelServer.model`, or disable it (`modelServer.enabled: false`) to fall back to the mock model.
 
-> **License note:** Gemma ships under the **Gemma Terms of Use** — **not** Apache-2.0 / not
-> OSI-permissive. We ship only the Ollama engine; the weights are pulled at runtime and **not
-> redistributed** (see `THIRD-PARTY-LICENSES.md` / `licenses/Gemma-Terms-of-Use.txt`). For a strictly
-> Apache-only stack, override `modelServer.model` to a permissively-licensed tag (e.g. a Qwen Apache-2.0
-> tag, or Ministral).
+> **License note:** Ministral 3 ships under **Apache-2.0** (OSI-permissive), so the self-hosted default
+> is **Apache-clean**. We ship only the Ollama engine; the weights are pulled at runtime and **not
+> redistributed** (see `THIRD-PARTY-LICENSES.md`). To swap models, keep to permissively-licensed
+> weights and size `modelServer.resources` to the tag.
 
 ### Mock model — offline embeddings + fallback LLM (`mock-model`)
 A tiny, dependency-free OpenAI-compatible server (chat + deterministic-hash embeddings). It now backs the
@@ -868,8 +867,8 @@ Roughly **€450–670/mo** for L1+L2 at typical sizing. **Scale the node pool t
   the `agentic-os-langfuse-worker` pod is running. Per-project RBAC is an `/ee` feature (not bundled);
   domain scoping is enforced in the app layer.
 - **LiteLLM: "Not connected to DB" at login** → the litellm pod is not running / not connected to CNPG.
-  The self-hosted Gemma default has no pricing, so spend shows `0` until a paid (e.g. STACKIT) route is hit.
-- **Agent answers look canned** → `model-server` (Gemma) is disabled, so the offline mock model is
+  The self-hosted Ministral 3 default has no pricing, so spend shows `0` until a paid (e.g. STACKIT) route is hit.
+- **Agent answers look canned** → `model-server` (Ministral 3) is disabled, so the offline mock model is
   answering; enable `modelServer` or swap in any model in LiteLLM with no agent change.
 - **OpenSearch / OpenSearch Dashboards have no login locally** → the security plugin is disabled; the
   default-deny network baseline + in-cluster-only services protect them. Enable security + TLS on STACKIT.
@@ -924,7 +923,7 @@ in-cluster host `http://agentic-os-langfuse-web:3000`.
 | Langfuse v3 | L1 | wrapped chart 1.5.36 (app v3.194.1) | upstream (MIT core) |
 | OpenSearch | L1 | wrapped chart 3.7.0 | upstream |
 | OpenSearch Dashboards | L3 | wrapped chart 3.7.0 (off locally) | upstream |
-| Model server (default LLM) | L1 | Ollama (MIT engine) · Gemma 3n E4B weights (Gemma Terms) | `ollama/ollama:0.6.8` |
+| Model server (default LLM) | L1 | Ollama (MIT engine) · Ministral 3 3B weights (Apache-2.0) | `ollama/ollama:0.6.8` |
 | Mock model | L1 | bespoke (embeddings + fallback) | `sovereign-os/mock-model:0.1.1` |
 | Sample agent | L1 | bespoke | `sovereign-os/sample-agent:0.1.0` |
 | Poet agent | L1 | bespoke | `sovereign-os/poet-agent:0.1.0` |

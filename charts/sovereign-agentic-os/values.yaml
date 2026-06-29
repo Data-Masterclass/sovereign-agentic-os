@@ -457,7 +457,7 @@ langfuse:
 
 # -----------------------------------------------------------------------------
 # Mock model — local OpenAI-compatible stub. Since the self-hosted model-server
-# (Gemma E4B) became the DEFAULT CHAT backend, this is retained as the offline
+# (Ministral 3 3B) became the DEFAULT CHAT backend, this is retained as the offline
 # EMBEDDINGS provider (`sovereign-embed`): deterministic 384-dim hash vectors that
 # match opensearch.knnDimension with zero download and no key. (Changing the embed
 # model would change the vector dimension and reindex the whole retrieval store —
@@ -477,12 +477,12 @@ mockModel:
 # -----------------------------------------------------------------------------
 # Model server — the DEFAULT self-hosted, OpenAI-compatible LLM (replaces the mock
 # LLM for chat). A CPU llama.cpp/Ollama runtime serving a small permissively-
-# licensed model (Gemma E4B, Q4) FULLY OFFLINE — no provider key, nothing leaves
-# the sovereign boundary. LiteLLM routes `sovereign-default` (+ back-compat
-# `sovereign-mock`) here and load-balances across `replicas` pods.
+# licensed model (Ministral 3 3B, Q4, Apache-2.0) FULLY OFFLINE — no provider key,
+# nothing leaves the sovereign boundary. LiteLLM routes `sovereign-default`
+# (+ back-compat `sovereign-mock`) here and load-balances across `replicas` pods.
 #
-# SCALE (model-benchmark.md): a Gemma E4B Q4 CPU replica needs ~3-4 GB RAM; for
-# ~30 concurrent users run ~3-5 replicas, OR a single small GPU. See
+# SCALE (model-benchmark.md): a Ministral 3 3B Q4 CPU replica needs ~3-4 GB RAM;
+# for ~30 concurrent users run ~3-5 replicas, OR a single small GPU. See
 # docs/components/model-server.md. The first request per pod triggers a one-time
 # model pull (needs egress to the model registry once; air-gap by baking weights
 # into an image) — steady state is offline.
@@ -494,22 +494,22 @@ modelServer:
     repository: ollama/ollama
     tag: "0.6.8"
   # Default model tag pulled on first boot (Ollama library tag). This is the real
-  # Gemma 3n E4B Q4_K_M tag — verify with `ollama pull gemma3n:e4b-it-q4_K_M`.
-  # ⚠ LICENSE: Gemma weights ship under the GEMMA TERMS OF USE (NOT Apache-2.0 —
-  #   https://ai.google.dev/gemma/terms). They are redistributable & self-hostable
-  #   but are NOT an OSI-permissive license; see NOTICE / THIRD-PARTY-LICENSES.md.
-  #   To stay fully Apache-2.0-only, override to a permissive ALTERNATIVE such as
-  #   Ministral 3 (e.g. model: "ministral-3:q4") or a Qwen Apache-2.0 tag.
-  model: "gemma3n:e4b-it-q4_K_M"
+  # Ministral 3 3B Q4_K_M tag — verify with
+  # `ollama pull ministral-3:3b-instruct-2512-q4_K_M` (~2.95 GB).
+  # LICENSE: Ministral 3 ships under APACHE-2.0 (OSI-permissive) — the stack is
+  #   Apache-clean by default; see NOTICE / THIRD-PARTY-LICENSES.md. To use a
+  #   different model, keep to permissively-licensed weights and size
+  #   modelServer.resources to the tag.
+  model: "ministral-3:3b-instruct-2512-q4_K_M"
   port: 11434
   # N replicas behind LiteLLM load-balancing (the Service round-robins). Bump for
   # more concurrent users (~3-5 for ~30 users on CPU).
   replicas: 2
   resources:
-    # The gemma3n:e4b-it-q4_K_M tag is ~7.5 GB on disk; CPU resident set ~5-6 GB.
-    # Give headroom so it doesn't OOMKill on load (cf. the ClickHouse 2->3Gi fix).
-    requests: { cpu: "1", memory: 5Gi }
-    limits: { cpu: "4", memory: 8Gi }
+    # The ministral-3:3b-instruct-2512-q4_K_M tag is ~2.95 GB on disk; CPU resident
+    # set ~3 GB. Give headroom so it doesn't OOMKill on load.
+    requests: { cpu: "1", memory: 3Gi }
+    limits: { cpu: "4", memory: 4Gi }
   persistence:
     # OFF locally (emptyDir per pod — re-pulls on restart). For a shared, no-re-pull
     # model cache set enabled + an RWX storageClass (or RWO with replicas:1).
@@ -594,7 +594,7 @@ litellmAgentKey:
   alias: "sovereign-agents"
   maxBudget: 5            # overall USD spend cap on this key
   models:                 # only these models are callable with this key
-    - sovereign-default   # Gemma E4B (self-hosted default chat)
+    - sovereign-default   # Ministral 3 3B (self-hosted default chat)
     - sovereign-mock      # back-compat alias -> same self-hosted default
     - sovereign-embed     # offline embeddings (mock-model)
     - sovereign-vision    # vision route -> STACKIT Qwen3-VL
@@ -709,24 +709,24 @@ litellm:
     limits: { cpu: "1", memory: 2Gi }
   proxy_config:
     model_list:
-      # --- Self-hosted DEFAULT (Gemma E4B, fully offline, no key) --------------
+      # --- Self-hosted DEFAULT (Ministral 3 3B, Apache-2.0, offline, no key) ----
       # `sovereign-default` is the cheap-first light tier. The k8s Service in front
       # of the model-server Deployment round-robins across its `replicas` pods, so
       # this single entry already load-balances; LiteLLM adds retries/fallbacks on
       # top. `sovereign-mock` is a back-compat ALIAS (existing agents/UI default to
       # that name) pointing at the SAME self-hosted default — despite the name it is
-      # now real Gemma, not the stub.
+      # now real Ministral 3, not the stub.
       # NOTE: proxy_config is static config (the LiteLLM subchart consumes it as-is,
       # in its OWN value context), so these are LITERALS — keep `model` and the
       # api_base port in sync with modelServer.model / modelServer.port above.
       - model_name: sovereign-default
         litellm_params:
-          model: openai/gemma3n:e4b-it-q4_K_M          # == modelServer.model
+          model: openai/ministral-3:3b-instruct-2512-q4_K_M   # == modelServer.model
           api_base: http://model-server:11434/v1   # == modelServer.port
           api_key: "sk-local-unused"          # self-hosted; ignored, not a secret
-      - model_name: sovereign-mock            # back-compat alias -> Gemma default
+      - model_name: sovereign-mock            # back-compat alias -> Ministral default
         litellm_params:
-          model: openai/gemma3n:e4b-it-q4_K_M
+          model: openai/ministral-3:3b-instruct-2512-q4_K_M
           api_base: http://model-server:11434/v1
           api_key: "sk-local-unused"
       # --- Offline embeddings (mock-model, deterministic 384-dim) -------------
@@ -751,7 +751,7 @@ litellm:
           api_key: os.environ/STACKIT_API_KEY
     # ------------------------------------------------------------------------
     # Router — fallback chain, retries, timeouts, circuit-breaking, load-balancing.
-    # Chain: self-hosted Gemma replicas -> STACKIT (last resort). To insert the
+    # Chain: self-hosted Ministral 3 replicas -> STACKIT (last resort). To insert the
     # OPTIONAL bigger self-host (modelServer.big.enabled) BEFORE STACKIT, add a
     # `sovereign-big` model_list entry (api_base http://model-server-big:8000/v1)
     # and change the fallbacks below to ["sovereign-big","sovereign-premium"].

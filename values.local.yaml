@@ -20,8 +20,8 @@ networkPolicies:
 
 # Component sizing/toggles for kind are added here as each is wired in.
 
-# Self-hosted default LLM (Gemma E4B). On a single ~14 GB kind node run ONE
-# replica (a Q4 E4B working set is ~3-4 GB); the product default (values.yaml) is
+# Self-hosted default LLM (Ministral 3 3B). On a single ~14 GB kind node run ONE
+# replica (a Q4 3B working set is ~3 GB); the product default (values.yaml) is
 # 2+ for HA/throughput on a sized node. The first request pulls the model once
 # (needs egress to the model registry) — air-gap by baking weights into an image.
 modelServer:

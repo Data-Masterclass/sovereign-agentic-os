@@ -3,7 +3,7 @@
   Self-hosted, OpenAI-compatible LLM server — the DEFAULT inference backend of
   the Sovereign Agentic OS (replaces the offline mock LLM for chat). A CPU
   llama.cpp/Ollama runtime that serves a small, permissively-licensed model
-  (default: Gemma E4B, Q4) fully offline — no provider key, nothing leaves the
+  (default: Ministral 3 3B, Q4, Apache-2.0) fully offline — no provider key, nothing leaves the
   sovereign boundary. LiteLLM routes `sovereign-default` (and the back-compat
   `sovereign-mock` alias) here and load-balances across the `replicas` pods (the
   ClusterIP Service round-robins; size for ~3-4 GB RAM each — see

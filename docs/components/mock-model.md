@@ -1,7 +1,7 @@
 # Mock model — local offline embeddings (+ legacy chat stub)
 
 **What it is:** A tiny, dependency-free **OpenAI-compatible** server. Since the self-hosted
-[model-server](model-server.md) (**Gemma E4B**) became the default **chat** backend, the mock is
+[model-server](model-server.md) (**Ministral 3 3B**) became the default **chat** backend, the mock is
 retained as the offline **embeddings** provider (`sovereign-embed`): deterministic 384-dim hash
 vectors that match `opensearch.knnDimension` with zero download and no key (so kNN works). It still
 exposes a chat stub, but LiteLLM **no longer routes chat to it**.
