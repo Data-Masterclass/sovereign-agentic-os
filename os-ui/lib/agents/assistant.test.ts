@@ -44,6 +44,23 @@ test('the helper never grants a tool the system lacks (narrow-only safe)', () =>
   assert.doesNotThrow(() => compile(system));
 });
 
+test('a handoff is only reported as wired when the target agent actually exists', () => {
+  // Finding #5 — applyInstruction must not claim a handoff was wired when the
+  // target does not exist (no edge was added).
+  const before = parseSystem(BASE);
+  const { system, summary } = applyInstruction(before, 'add a research sub-agent that hands off to the ghost');
+  const researcher = system.agents.find((a) => /research/i.test(a.id))!;
+  // No edge to a non-existent 'ghost' was added...
+  assert.ok(!system.edges.some((e) => e.from === researcher.id && e.to === 'ghost'));
+  // ...and the summary must NOT falsely claim it hands off to 'ghost'.
+  assert.doesNotMatch(summary, /hands off to 'ghost'/);
+  // A real target is still wired and reported.
+  const ok = applyInstruction(before, 'add a research sub-agent that hands off to the writer');
+  const r2 = ok.system.agents.find((a) => /research/i.test(a.id))!;
+  assert.ok(ok.system.edges.some((e) => e.from === r2.id && e.to === 'writer' && e.type === 'handoff'));
+  assert.match(ok.summary, /hands off to 'writer'/);
+});
+
 test('an unrecognised instruction is reported, not silently ignored', () => {
   const before = parseSystem(BASE);
   assert.throws(() => applyInstruction(before, 'make me a sandwich'), /could not turn that into a system edit/i);

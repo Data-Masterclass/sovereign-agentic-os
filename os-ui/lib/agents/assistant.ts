@@ -70,14 +70,17 @@ export function applyInstruction(input: System, instruction: string): Instructio
     if (supervisor) supervisor.members = [...(supervisor.members ?? []), newId];
 
     // Wire the requested handoff (only to a declared agent).
-    if (handoffTarget && system.agents.some((a) => a.id === handoffTarget)) {
-      const edge: Edge = { from: newId, to: handoffTarget, type: 'handoff', when: `${roleWord} complete` };
+    const wired = !!handoffTarget && system.agents.some((a) => a.id === handoffTarget);
+    if (wired) {
+      const edge: Edge = { from: newId, to: handoffTarget!, type: 'handoff', when: `${roleWord} complete` };
       system.edges.push(edge);
     }
 
     const summary = `Added a ${roleWord} sub-agent '${newId}'${
-      handoffTarget ? ` that hands off to '${handoffTarget}'` : ''
-    }${supervisor ? ` under supervisor '${supervisor.id}'` : ''}. Tools: ${tools.join(', ') || '(none)'}.`;
+      wired ? ` that hands off to '${handoffTarget}'` : ''
+    }${supervisor ? ` under supervisor '${supervisor.id}'` : ''}. Tools: ${tools.join(', ') || '(none)'}.${
+      handoffTarget && !wired ? ` (Requested handoff target '${handoffTarget}' does not exist — not wired.)` : ''
+    }`;
     return { system, summary };
   }
 

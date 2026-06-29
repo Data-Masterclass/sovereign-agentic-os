@@ -8,6 +8,7 @@ import {
   createSystem,
   listSystems,
   getSystem,
+  getSystemForEdit,
   listFiles,
   readFile,
   writeFile,
@@ -20,6 +21,7 @@ import {
 const sara = { id: 'sara', domains: ['sales'], role: 'builder' as const };
 const amir = { id: 'amir', domains: ['sales'], role: 'participant' as const };
 const kenji = { id: 'kenji', domains: ['finance'], role: 'builder' as const };
+const admin = { id: 'arya', domains: ['sales'], role: 'admin' as const };
 
 test('create → appears under Mine; whitelisted files round-trip read=write', () => {
   __resetStore();
@@ -94,6 +96,43 @@ test('fork-to-own creates an independent copy owned by the installer', () => {
   const f = readFile(fork.id, amir, 'system.yaml');
   writeFile(fork.id, amir, { path: 'system.yaml', content: f.content + '\n#mine', sha: f.sha });
   assert.notEqual(readFile(market.id, sara, 'system.yaml').content, readFile(fork.id, amir, 'system.yaml').content);
+});
+
+test('Run pre-auth: a Marketplace viewer can view but is denied edit-scope (no side effects)', () => {
+  // Finding #1 — Run must authorize at EDIT level before any side effect. The
+  // route now reads the system through getSystemForEdit, so a mere viewer is
+  // rejected (403) BEFORE runSystem can trace / enqueue approvals.
+  __resetStore();
+  const market = createSystem(sara, { name: 'Pub', domain: 'sales', visibility: 'Marketplace' });
+  // amir (participant) can VIEW a Marketplace system...
+  assert.ok(getSystem(market.id, amir));
+  // ...but cannot acquire the edit-scoped view the Run/Build/Probe routes require.
+  assert.throws(() => getSystemForEdit(market.id, amir), /not permitted to edit/i);
+  // The owner can.
+  assert.ok(getSystemForEdit(market.id, sara));
+});
+
+test('Probe pre-auth: a Shared in-domain viewer is denied edit-scope; an in-domain admin is allowed', () => {
+  // Finding #4 — Probe enqueues Governance approvals, so it must authorize at
+  // edit level. A Shared-system viewer (can view, cannot edit) is rejected,
+  // while an in-domain admin is allowed (admin bypass).
+  __resetStore();
+  const shared = createSystem(sara, { name: 'Triage', domain: 'sales', visibility: 'Shared' });
+  assert.ok(getSystem(shared.id, amir)); // amir can view (Shared, in-domain)
+  assert.throws(() => getSystemForEdit(shared.id, amir), /not permitted to edit/i);
+  assert.ok(getSystemForEdit(shared.id, admin)); // in-domain admin may edit
+});
+
+test("an owner's own Marketplace system lists under Mine only (no double-list)", () => {
+  // Finding #6 — listSystems must use else-if for Marketplace so an owner's own
+  // published system is not listed twice (Mine + Marketplace).
+  __resetStore();
+  const m = createSystem(sara, { name: 'Pubbed', domain: 'sales', visibility: 'Marketplace' });
+  const g = listSystems(sara);
+  assert.ok(g.mine.some((s) => s.id === m.id), 'appears in Mine');
+  assert.ok(!g.marketplace.some((s) => s.id === m.id), 'not double-listed in Marketplace');
+  // A different user still discovers it in the Marketplace.
+  assert.ok(listSystems(amir).marketplace.some((s) => s.id === m.id));
 });
 
 test('schedule persists and an agent toggle is recorded', () => {

@@ -70,12 +70,17 @@ export function registerGrants(backends: MockBackends, sys: System): void {
  */
 export function gatewayFor(backends: MockBackends): Gateway {
   return {
-    authorize: (_principal, tool) => {
+    authorize: (_principal, tool, args) => {
       if (backends.opa.tools.has(tool)) return { effect: 'allow', reason: 'granted by system grants' };
       const cap = backends.opa.connections.get(tool);
+      if (!cap || !enabled(cap)) return { effect: 'deny', reason: `${tool} is not granted` };
+      // Honor the read/write flag: a read is allowed on any usable connection;
+      // a write depends on the connection's capability.
+      const write = args?.write === true;
+      if (!write) return { effect: 'allow', reason: `${tool} read (${cap})` };
       if (cap === 'Write-approval') return { effect: 'requires_approval', reason: `${tool} is a write — approval required` };
-      if (cap && enabled(cap)) return { effect: 'allow', reason: `${tool} granted (${cap})` };
-      return { effect: 'deny', reason: `${tool} is not granted` };
+      if (cap === 'Write-bounded') return { effect: 'allow', reason: `${tool} write (${cap})` };
+      return { effect: 'deny', reason: `${tool} is read-only` };
     },
     trace: (e) => {
       backends.langfuse.traces.push(e);
@@ -131,9 +136,10 @@ export function makeMockAdapters(backends: MockBackends): BuildAdapter[] {
         if (d.effect !== 'allow') return fail(`granted tool ${grantedTool} did not resolve (${d.effect})`);
         probes.push(`granted '${grantedTool}' → allow`);
       }
-      // A tool the system was NOT granted must be blocked.
+      // A write the system was NOT granted outright must be blocked (denied, or
+      // held for approval) — never auto-allowed.
       const ungranted = 'connection_crm_write';
-      const d2 = await gw.authorize('probe', ungranted);
+      const d2 = await gw.authorize('probe', ungranted, { write: true });
       if (d2.effect === 'allow') return fail(`non-granted tool ${ungranted} was not blocked`);
       probes.push(`non-granted '${ungranted}' → ${d2.effect === 'requires_approval' ? 'approval' : 'denied'}`);
       return ok(probes.join('; '));

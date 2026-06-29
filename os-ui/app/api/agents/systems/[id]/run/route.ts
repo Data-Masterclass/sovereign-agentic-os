@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { getSystem, setRunning } from '@/lib/agents/store';
+import { getSystemForEdit, setRunning } from '@/lib/agents/store';
 import { runSystem } from '@/lib/agents/build/server';
 
 export const dynamic = 'force-dynamic';
@@ -29,7 +29,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       return NextResponse.json({ running: rec.running });
     }
 
-    const view = getSystem(id, user);
+    // Edit-level authorization BEFORE any side effect: a Run traces + enqueues
+    // Governance approvals, so a viewer must be rejected before runSystem.
+    const view = getSystemForEdit(id, user);
     const prompt = typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : 'Test invocation';
     const report = await runSystem(id, view.yaml, {
       prompt,

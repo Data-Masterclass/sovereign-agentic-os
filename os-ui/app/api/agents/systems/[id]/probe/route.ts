@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { getSystem } from '@/lib/agents/store';
+import { getSystemForEdit } from '@/lib/agents/store';
 import { probeConnection } from '@/lib/agents/build/server';
 
 export const dynamic = 'force-dynamic';
@@ -25,7 +25,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if (typeof body.connectionId !== 'string') {
       return NextResponse.json({ error: 'connectionId is required.' }, { status: 400 });
     }
-    const view = getSystem(id, user);
+    // Edit-level authorization BEFORE enqueuing: a Probe can inject Governance
+    // approvals into the system's domain queue, so a viewer must be rejected here.
+    const view = getSystemForEdit(id, user);
     const result = await probeConnection(view.system, id, {
       connectionId: body.connectionId,
       write: body.write === true,

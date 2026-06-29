@@ -13,6 +13,14 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [0.2.0-alpha.7] — 2026-06-29
+
+### Fixed
+
+- **Agents tab — fixed 6 governance/authorization findings from code review**
+  (view-vs-edit auth on Run/Probe, read-only-authorizes-write,
+  disabled-agents-still-run, phantom-handoff, Marketplace double-list).
+
 ## [0.2.0-alpha.6] — 2026-06-29
 
 Headline: the new **Agents tab** — a three-level agent IDE for building, governing,

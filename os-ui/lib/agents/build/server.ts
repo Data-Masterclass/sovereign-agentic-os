@@ -65,7 +65,7 @@ export async function runSystem(
   registerGrants(backends, sys);
   const gw = bridged(gatewayFor(backends), systemId);
 
-  const res = await runGraph(ir, { gateway: gw, probe: opts.prompt });
+  const res = await runGraph(ir, { gateway: gw, probe: opts.prompt, disabled: opts.disabledAgents });
 
   // Any write the run could not perform without approval is held in Governance.
   let held = 0;

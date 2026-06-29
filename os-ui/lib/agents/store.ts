@@ -259,7 +259,7 @@ export function listSystems(user: Principal): SystemGroups {
   for (const rec of store.values()) {
     if (rec.owner === user.id) mine.push(summarise(rec));
     else if (rec.visibility === 'Shared' && user.domains.includes(rec.domain)) domain.push(summarise(rec));
-    if (rec.visibility === 'Marketplace') marketplace.push(summarise(rec));
+    else if (rec.visibility === 'Marketplace') marketplace.push(summarise(rec));
   }
   const byName = (a: SystemSummary, b: SystemSummary) => a.name.localeCompare(b.name);
   return { mine: mine.sort(byName), domain: domain.sort(byName), marketplace: marketplace.sort(byName) };
@@ -269,6 +269,17 @@ export type SystemView = SystemRecord & { system: System };
 
 export function getSystem(systemId: string, user: Principal): SystemView {
   const rec = requireView(systemId, user);
+  return { ...rec, system: parseSystem(rec.yaml) };
+}
+
+/**
+ * Edit-scoped read of the canonical yaml. The Run / Build / Probe routes use this
+ * (not {@link getSystem}) so a mere viewer is rejected (403) BEFORE any
+ * side effect — they execute the system (Langfuse traces, Governance approvals),
+ * which is an edit-level action, not a view.
+ */
+export function getSystemForEdit(systemId: string, user: Principal): SystemView {
+  const rec = requireEdit(systemId, user);
   return { ...rec, system: parseSystem(rec.yaml) };
 }
 

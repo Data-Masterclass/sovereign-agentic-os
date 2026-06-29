@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { getSystem } from '@/lib/agents/store';
+import { getSystemForEdit } from '@/lib/agents/store';
 import { buildSystem } from '@/lib/agents/build/server';
 
 export const dynamic = 'force-dynamic';
@@ -18,7 +18,9 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   try {
     const user = await requireUser();
     const { id } = await ctx.params;
-    const view = getSystem(id, user); // view-scoped read of the canonical yaml
+    // Build executes the system + lands Langfuse traces (a side effect into
+    // shared Monitoring), so it is edit-level, consistent with Run/Probe.
+    const view = getSystemForEdit(id, user);
     const report = await buildSystem(id, view.yaml);
     return NextResponse.json(report);
   } catch (e) {

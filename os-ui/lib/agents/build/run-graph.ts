@@ -31,6 +31,8 @@ export type RunOptions = {
   toolRunner?: (principal: string, tool: string, args: Record<string, unknown>) => unknown;
   /** A test prompt threaded through as the tool input. */
   probe?: string;
+  /** Sub-agent ids toggled off for this Run — skipped (their tools never run). */
+  disabled?: string[];
 };
 
 export async function runGraph(ir: IR, opts: RunOptions): Promise<RunResult> {
@@ -45,6 +47,7 @@ export async function runGraph(ir: IR, opts: RunOptions): Promise<RunResult> {
   const principalOf = opts.principalOf ?? ((id: string) => id);
   const toolRunner = opts.toolRunner ?? (() => 'ok');
   const probe = opts.probe ?? 'test invocation';
+  const disabled = new Set(opts.disabled ?? []);
 
   const steps: RunStep[] = [];
   const path: string[] = [];
@@ -56,6 +59,9 @@ export async function runGraph(ir: IR, opts: RunOptions): Promise<RunResult> {
     const id = queue.shift()!;
     if (visited.has(id)) continue;
     visited.add(id);
+    // A toggled-off agent is skipped: it does not run its tools, and the run does
+    // not follow it onward.
+    if (disabled.has(id)) continue;
     const node = nodeById.get(id);
     if (!node) continue;
     path.push(id);
