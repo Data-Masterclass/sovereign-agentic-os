@@ -122,6 +122,8 @@ kind: Deployment
 metadata:
   name: ci-runner
   namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "apps") | nindent 4 }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "ci-runner") | nindent 4 }}
@@ -138,6 +140,7 @@ spec:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "ci-runner") | nindent 8 }}
     spec:
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "app") | nindent 6 }}
       securityContext:
         seccompProfile:
           type: {{ .Values.global.podSecurity.seccompProfile }}

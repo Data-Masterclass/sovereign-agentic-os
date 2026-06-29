@@ -32,19 +32,54 @@ data:
         tool == input.tool
     }
 
+    # High-stakes tools (external connection writes, certify/publish) are paused
+    # for human approval even when granted (Agent golden path §7). The list lives
+    # in data.requires_approval (set by opa.requiresApproval in values).
+    needs_approval if {
+        some tool in data.requires_approval
+        tool == input.tool
+    }
+
+    # Rich effect: deny (not granted) / requires_approval (granted + high-stakes)
+    # / allow (granted + low-stakes). The legacy boolean `allow` above is kept so
+    # the Governance grants matrix keeps working unchanged.
+    effect := "deny" if not allow
+    effect := "requires_approval" if {
+        allow
+        needs_approval
+    }
+    effect := "allow" if {
+        allow
+        not needs_approval
+    }
+
+    reason := "not granted" if not allow
+    reason := "high-stakes — human approval required" if {
+        allow
+        needs_approval
+    }
+    reason := "granted" if {
+        allow
+        not needs_approval
+    }
+
     decision := {
         "allow": allow,
+        "effect": effect,
+        "reason": reason,
         "principal": input.principal,
         "tool": input.tool,
     }
   data.json: |
-    {{ dict "grants" $opa.grants | toJson }}
+    {{ dict "grants" $opa.grants "requires_approval" ($opa.requiresApproval | default list) | toJson }}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: opa
   namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "apps") | nindent 4 }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa") | nindent 4 }}
@@ -61,6 +96,7 @@ spec:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa") | nindent 8 }}
     spec:
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "app") | nindent 6 }}
       securityContext:
         {{- include "soa.podSecurityContext" . | nindent 8 }}
         runAsUser: 1000

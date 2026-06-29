@@ -61,4 +61,45 @@ spec:
                   number: {{ $route.port }}
 {{- end }}
 {{- end }}
+{{- /*
+  Apex route — the bare zone apex (e.g. agentic.datamasterclass.com) also serving
+  the OS UI, so the apex no longer 404s alongside os.<zone>. Opt-in via
+  `ingress.hosts.osUIApex`; a SECOND Ingress to the same os-ui Service (distinct
+  name so it never collides with the osUI host's `os-ui-ingress`), its own TLS.
+*/ -}}
+{{- $apex := index ($ing.hosts | default dict) "osUIApex" }}
+{{- if $apex }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: os-ui-apex-ingress
+  namespace: {{ $ctx.Release.Namespace }}
+  labels:
+    {{- include "soa.labels" $ctx | nindent 4 }}
+    app.kubernetes.io/name: os-ui
+    app.kubernetes.io/component: ingress
+  annotations:
+    cert-manager.io/cluster-issuer: {{ $ing.tlsIssuer | quote }}
+    {{- with $ing.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ $ing.className }}
+  tls:
+    - hosts:
+        - {{ $apex | quote }}
+      secretName: {{ printf "%s-tls" $apex | quote }}
+  rules:
+    - host: {{ $apex | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: os-ui
+                port:
+                  number: 3000
+{{- end }}
 {{- end }}

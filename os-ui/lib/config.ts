@@ -48,6 +48,9 @@ export const config = {
   // mirror of the artifact registry; the OS UI degrades to an in-process store
   // when OpenSearch is unreachable so the teaching flows work offline.
   artifactsIndex: env('ARTIFACTS_INDEX', 'os-artifacts'),
+  // App registry index (Software golden path). Best-effort durable mirror of the
+  // in-process app store; the OS UI degrades to in-memory when OpenSearch is off.
+  appsIndex: env('APPS_INDEX', 'os-apps'),
 
   // ---- Identity (pragmatic, Ory-replaceable). OS_USERS is a JSON array of
   // seeded users { id, name, password, domain, role }. OS_SESSION_SECRET signs
@@ -65,6 +68,13 @@ export const config = {
   forgejoPassword: env('FORGEJO_PASSWORD', 'forgejo-admin-local-dev'),
   forgejoRepoOwner: env('FORGEJO_REPO_OWNER', 'gitea_admin'),
   forgejoDemoRepo: env('FORGEJO_DEMO_REPO', 'demo-app'),
+
+  // Software golden path: per-app live subdomain suffix + image registry. Harbor
+  // is a default-off heavy workload (chart `harbor.enabled`); locally CI uses
+  // Forgejo's built-in OCI registry, so HARBOR_REGISTRY defaults to it.
+  appsBaseDomain: env('OS_APPS_DOMAIN', 'apps.local'),
+  harborEnabled: env('HARBOR_ENABLED', '') === 'true',
+  harborRegistry: env('HARBOR_REGISTRY', 'forgejo-http:3000/gitea_admin'),
 
   // LiteLLM gateway (Models & Tools): GET {LITELLM_URL}/v1/models +
   // {LITELLM_URL}/v1/mcp/tools  (Bearer master key).

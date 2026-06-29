@@ -4,14 +4,30 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
 import AgentChat from '@/components/AgentChat';
 import ArtifactPanel from '@/components/ArtifactPanel';
+import GovernedConnections from '@/components/GovernedConnections';
 import { useApi } from '@/lib/useApi';
 import { CONNECTORS, CONNECTOR_CATEGORIES } from '@/lib/connectors';
 
 type Service = { key: string; label: string; up: boolean; detail: string };
 type Status = { services: Service[]; up: number; total: number };
+
+type AppTool = { name: string; description: string; write: boolean };
+type AppConn = {
+  id: string;
+  appId: string;
+  appSlug: string;
+  name: string;
+  principal: string;
+  owner: string;
+  domain: string;
+  visibility: 'Personal' | 'Shared' | 'Certified';
+  tools: AppTool[];
+};
+type AppConns = { connections: AppConn[] };
 
 const STARTERS = [
   'Build a connector to a OneDrive folder of invoices.',
@@ -21,7 +37,8 @@ const STARTERS = [
 
 export default function ConnectionsPage() {
   const { data, loading, error, reload } = useApi<Status>('/api/status');
-  const [tab, setTab] = useState<'mine' | 'registry' | 'build'>('mine');
+  const { data: appConns } = useApi<AppConns>('/api/connections/apps');
+  const [tab, setTab] = useState<'mine' | 'registry' | 'governed' | 'build'>('mine');
 
   return (
     <>
@@ -36,6 +53,7 @@ export default function ConnectionsPage() {
         <div className="tabstrip">
           <button className={tab === 'mine' ? 'active' : ''} onClick={() => setTab('mine')}>My connections</button>
           <button className={tab === 'registry' ? 'active' : ''} onClick={() => setTab('registry')}>Registry</button>
+          <button className={tab === 'governed' ? 'active' : ''} onClick={() => setTab('governed')}>Governed connections</button>
           <button className={tab === 'build' ? 'active' : ''} onClick={() => setTab('build')}>Build a connector</button>
         </div>
 
@@ -60,7 +78,9 @@ export default function ConnectionsPage() {
           />
         ) : null}
 
-        {tab === 'registry' ? (
+        {tab === 'governed' ? (
+          <GovernedConnections />
+        ) : tab === 'registry' ? (
           <>
             <div className="section-title">
               Platform services
@@ -93,6 +113,34 @@ export default function ConnectionsPage() {
             ) : loading ? (
               <div className="stub-page">Checking connections…</div>
             ) : null}
+
+            <div className="section-title">App MCP connections (auto-generated)</div>
+            <p className="hint" style={{ marginTop: 0, marginBottom: 14 }}>
+              Every app you build in the Software tab auto-generates an MCP, registered here as a
+              governed Connection + agent tool. Building an app and creating a connection are one act.
+            </p>
+            {(appConns?.connections?.length ?? 0) === 0 ? (
+              <div className="stub-page">No app connections yet — build one in the Software tab.</div>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Connection</th><th>Principal</th><th>Tools</th><th>Visibility</th><th>App</th></tr>
+                  </thead>
+                  <tbody>
+                    {appConns!.connections.map((c) => (
+                      <tr key={c.id}>
+                        <td style={{ fontWeight: 600 }}>{c.name}</td>
+                        <td className="mono">{c.principal}</td>
+                        <td className="muted mono" style={{ fontSize: 11.5 }}>{c.tools.map((t) => t.name).join(', ')}</td>
+                        <td><span className={`badge vis-${c.visibility.toLowerCase()}`}>{c.visibility}</span></td>
+                        <td><Link className="btn ghost" href={`/software/${c.appId}`}>Open →</Link></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             <div className="section-title">Supported connectors</div>
             <p className="hint" style={{ marginTop: 0, marginBottom: 14 }}>

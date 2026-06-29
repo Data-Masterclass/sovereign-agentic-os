@@ -1,0 +1,45 @@
+{{- if .Values.priorityClasses.enabled }}
+{{- /*
+  PriorityClasses for the orchestrated, memory-safe startup (see values.yaml
+  `priorityClasses`). Two tiers:
+    - infra (high value): Postgres/CNPG + the wave-0 backends (OpenSearch,
+      ClickHouse, Valkey, MinIO). Under node memory pressure the kubelet evicts
+      LOWER-priority pods first, so the database is the last thing to go.
+    - app  (low value):  everything else. Evicted/OOMed before infra.
+  Both values sit FAR below the reserved system-cluster-critical /
+  system-node-critical band (2000000000), so these never preempt kube-system.
+  Cluster-scoped objects, but gated by `priorityClasses.enabled` and supported on
+  kind — local Mode A is unaffected. Created in an early sync-wave so they exist
+  before any pod that references them (Argo CD); Helm's native install order
+  already applies PriorityClass before workloads.
+*/}}
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ .Values.priorityClasses.infra.name }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+value: {{ .Values.priorityClasses.infra.value }}
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: >-
+  Sovereign Agentic OS infra tier (Postgres + wave-0 backends). Protected from
+  eviction so the data layer survives memory pressure; application pods go first.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ .Values.priorityClasses.app.name }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+value: {{ .Values.priorityClasses.app.value }}
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: >-
+  Sovereign Agentic OS application tier. Evicted/OOMed before the infra tier
+  under node memory pressure (never above the database).
+{{- end }}

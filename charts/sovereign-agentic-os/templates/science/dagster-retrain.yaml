@@ -1,0 +1,69 @@
+{{- if and .Values.ml.enabled .Values.dagsterRetrain.enabled }}
+{{- /*
+  Churn retrain job (Layer 4 Science) — orchestration of repeatable training +
+  scheduled retraining (science-golden-path.md step 8). Dagster itself is a Layer-3
+  component (already deployed); this ships ONLY the churn pipeline definition as a
+  ConfigMap that a Dagster user-code deployment loads. It re-enters the path at
+  step 3 (train + track in MLflow) on a schedule, producing a new model version to
+  re-certify. CPU-only by default; no GPU. Off unless `ml.enabled=true`.
+
+  Keeping this as data (not a CronJob) avoids a second scheduler: Dagster owns the
+  cron via the @schedule below. The actual training image is sovereign-os/ml-agent
+  (or a notebook export) wired in CI-LAYER4-INTEGRATION.md.
+*/}}
+{{- $r := .Values.dagsterRetrain }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: churn-retrain-pipeline
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "dagster-retrain") | nindent 4 }}
+data:
+  # Dagster definitions for the churn retrain. Materializes the Featureform feature
+  # set, retrains the XGBoost classifier, logs to MLflow, and registers a new
+  # version (Staging) — Builder still certifies go-live (governance, not automated).
+  churn_retrain.py: |
+    """Churn model retraining (Layer 4 Science golden path, step 8).
+
+    Schedule: {{ $r.schedule | quote }} (cron). CPU-only; GPU is opt-in + approved.
+    Backends are read from env (set on the Dagster user-code deployment):
+      MLFLOW_TRACKING_URI, FEATUREFORM_HOST.
+    """
+    import os
+    from dagster import Definitions, ScheduleDefinition, asset, define_asset_job
+
+    MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://mlflow:5000")
+    FEATUREFORM_HOST = os.environ.get("FEATUREFORM_HOST", "featureform:7878")
+    MODEL_NAME = {{ $r.modelName | quote }}
+    FEATURE_SET = {{ $r.featureSet | quote }}
+
+    @asset
+    def churn_features():
+        """Materialize the offline (Iceberg) + online (Valkey) feature set."""
+        # featureform.materialize(FEATURE_SET) — wired in CI-LAYER4-INTEGRATION.md
+        return {"feature_set": FEATURE_SET, "host": FEATUREFORM_HOST}
+
+    @asset
+    def churn_model(churn_features):
+        """Retrain XGBoost on the materialized features; log + register to MLflow."""
+        # import mlflow; mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+        # with mlflow.start_run(): train + mlflow.xgboost.log_model(...);
+        #   mlflow.register_model(..., MODEL_NAME)  -> new version in Staging.
+        return {"model": MODEL_NAME, "stage": "Staging", "tracking_uri": MLFLOW_TRACKING_URI}
+
+    churn_retrain_job = define_asset_job("churn_retrain", selection="*")
+
+    # Scheduled retrain (e.g. monthly / on drift). Builder certifies go-live.
+    churn_retrain_schedule = ScheduleDefinition(
+        job=churn_retrain_job,
+        cron_schedule={{ $r.schedule | quote }},
+    )
+
+    defs = Definitions(
+        assets=[churn_features, churn_model],
+        jobs=[churn_retrain_job],
+        schedules=[churn_retrain_schedule],
+    )
+{{- end }}

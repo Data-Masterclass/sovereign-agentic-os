@@ -11,6 +11,111 @@
 #   - Components carry an `enabled` flag so the slice can come up incrementally.
 # =============================================================================
 
+# =============================================================================
+# Orchestrated, memory-safe startup (anti-OOM)
+# =============================================================================
+# Steady-state the bundled stack fits ~14 GB, but booting all ~30 pods at once on
+# a single 32 GB node spiked transient memory > 32 GB and OOMKilled litellm /
+# errored openmetadata. Three coordinated levers tame the rollout:
+#
+#   1. Right-sized memory requests + limits on EVERY component (below). Requests
+#      are honest steady-state values (the scheduler accounts memory accurately
+#      and excess pods sit Pending under pressure — natural backpressure); limits
+#      cap each pod so one can't run away. This is the foundation and works even
+#      with plain `helm install` (no Argo CD).
+#   2. Argo CD sync-waves (`startup.syncWaves`) stage the rollout: wave 0 infra,
+#      wave 1 middleware, wave 2 apps — each wave waits for the prior to be
+#      healthy, so memory ramps gradually instead of all at once.
+#   3. PriorityClasses (`priorityClasses`) protect the data layer: infra (Postgres
+#      + wave-0 backends) is high priority; apps are low — under pressure the
+#      kubelet evicts app pods first, never the database.
+#
+# -----------------------------------------------------------------------------
+# MEMORY REQUEST BUDGET (default-enabled components, profile=local).
+# Sum of `requests.memory` paces scheduler admission; must fit a 32 GB node with
+# headroom for kube-system + boot transients. Keep this table in sync when you
+# change a request below.
+#
+#   WAVE 0 — infra            request
+#     postgres (CNPG)          384Mi
+#     opensearch              1024Mi
+#     clickhouse              1024Mi
+#     valkey                    64Mi
+#     minio (object-storage)   256Mi
+#                            --------
+#     subtotal                2752Mi  (~2.7 GiB)
+#
+#   WAVE 1 — middleware       request
+#     litellm                 1024Mi   (was OOMKilled — real request + 2Gi limit)
+#     langfuse-web             768Mi
+#     langfuse-worker          768Mi
+#     mock-model                64Mi
+#     egress-proxy              32Mi
+#     web-fetch                 32Mi
+#                            --------
+#     subtotal                2688Mi  (~2.6 GiB)
+#
+#   WAVE 2 — apps             request
+#     openmetadata            2048Mi   (JVM -Xmx2g)
+#     dagster (web+daemon+uc)  896Mi
+#     superset                 768Mi
+#     argo-cd (4 pods)         576Mi
+#     docling                  512Mi
+#     osdashboards             512Mi
+#     polaris                  512Mi
+#     ci-runner (dind+runner)  384Mi
+#     cube                     256Mi
+#     haystack                 256Mi
+#     forgejo                  256Mi
+#     query-tool               256Mi
+#     sample-agent             128Mi
+#     poet-agent               128Mi
+#     os-ui                    128Mi
+#     opa                       32Mi
+#                            --------
+#     subtotal                7648Mi  (~7.5 GiB)
+#
+#   TOTAL default requests   13088Mi  (~12.8 GiB)  << 26–28 GiB target,
+#   leaving ~19 GiB headroom on a 32 GB node for kube-system + boot spikes.
+#   (Verified via `helm template` of the Mode A self-hosted overlay; sum of all
+#   rendered container request.memory. Short-lived hook Jobs — dbt, migrations,
+#   bucket/seed init — are transient and not counted; Layer-4 Science is off by
+#   default.)
+# -----------------------------------------------------------------------------
+startup:
+  # Argo CD sync-wave numbers per tier (string values — Argo reads them as ints).
+  # Lower = applied earlier; each wave waits for the prior to be Healthy. Wired
+  # onto every long-running workload via subchart annotation values + the bespoke
+  # templates' `soa.syncWaveAnno` helper. PriorityClasses use wave "-1" so they
+  # exist before any referencing pod.
+  syncWaves:
+    infra: "0"        # Postgres/CNPG, OpenSearch, ClickHouse, Valkey, MinIO
+    middleware: "1"   # LiteLLM, Langfuse, mock-model, egress proxy + web-fetch
+    apps: "2"         # Superset, Dagster, OpenMetadata, Forgejo, Argo, OS UI, agents
+
+# PriorityClasses — protect the data layer under memory pressure. Cluster-scoped
+# objects, gated so local-kind still works (kind supports PriorityClass). Values
+# sit far below the reserved system-critical band (2e9) so they never preempt
+# kube-system. infra > app, so the kubelet evicts/OOMs app pods before any DB.
+#
+# WIRING: bespoke pods (postgres/CNPG, clickhouse, valkey, minio = infra; all
+# bespoke app pods = app) reference the classes through the gated
+# `soa.priorityClassName` helper, so setting `enabled: false` drops every one of
+# those references automatically. The bundled SUBCHARTS mostly expose no
+# priorityClassName knob, so their pods run at the cluster-default priority (0) —
+# already below the infra tier, which preserves the "apps evicted before the DB"
+# guarantee. The ONE exception is OpenSearch (a wave-0 backend that DOES expose
+# the knob): its `opensearch.priorityClassName` is hardcoded to the infra class,
+# so if you disable this gate, also clear that one line (noted there).
+priorityClasses:
+  enabled: true
+  infra:
+    name: sovereign-os-infra
+    value: 100000
+  app:
+    name: sovereign-os-app
+    value: 1000
+
 global:
   # Logical namespace the workloads live in (created via --create-namespace).
   namespace: agentic-os
@@ -56,6 +161,8 @@ ingress:
   # Services in templates/ingress.yaml: osUI->os-ui:3000, litellm->litellm:4000,
   # langfuse->langfuse-web:3000, superset->superset:8088, forgejo->forgejo-http:3000,
   # argocd->argocd-server:80, openmetadata->openmetadata:8585.
+  # osUIApex (opt-in) -> a SECOND os-ui:3000 Ingress on the bare zone apex
+  # (e.g. agentic.datamasterclass.com) so the apex serves the OS UI instead of 404ing.
   hosts: {}
 
 # -----------------------------------------------------------------------------
@@ -110,8 +217,20 @@ objectStorage:
 # -----------------------------------------------------------------------------
 postgres:
   enabled: true
-  # When enabled:false (Mode B), the in-cluster CNPG cluster is NOT created and the
-  # PG consumers (Langfuse, LiteLLM, Dagster, warehouse, Polaris, Superset, MLflow)
+  # In-cluster engine (only applies when enabled:true):
+  #   plain — a self-contained Postgres StatefulSet (official postgres image). It
+  #           NEVER calls the Kubernetes API, so it works on STACKIT SKE-in-an-SNA
+  #           where the internal SKE API hostname is unresolvable and CNPG's initdb
+  #           pod (which calls that API) hangs. DEFAULT — like ClickHouse/Valkey/
+  #           MinIO/OpenSearch, it just runs in-cluster.
+  #   cnpg  — the CloudNativePG operator Cluster (requires the operator from
+  #           scripts/bootstrap-local.sh). Adds HA + continuous WAL archiving/PITR
+  #           to object storage, at the cost of the K8s-API dependency above.
+  # Both engines share the SAME credential Secrets, the SAME `pg-rw:5432` Service,
+  # and the SAME databases/users — consumers connect identically either way.
+  engine: plain
+  # When enabled:false (Mode B), no in-cluster Postgres is created and the PG
+  # consumers (Langfuse, LiteLLM, Dagster, warehouse, Polaris, Superset, MLflow)
   # resolve their host via soa.pgHost -> external.host instead of `pg-rw`. The
   # per-app credential Secrets keep the SAME names (External Secrets supplies them).
   external:
@@ -125,14 +244,27 @@ postgres:
   # creates it from the dev password below; on STACKIT it must pre-exist (External Secrets).
   secretName: postgres-langfuse-credentials
   storageSize: 2Gi
+  # Image for engine:cnpg — CloudNativePG's PostgreSQL build (operator needs a tag
+  # for upgrade detection; tag@digest pins the exact image too).
   image:
-    # CNPG needs a tag for upgrade detection; tag@digest pins the exact image too.
     repository: ghcr.io/cloudnative-pg/postgresql
     tag: "17.5"
     digest: sha256:b1deeed2aa998b2f381e39c5cadb9ec06127708c8bd62965743af19abf21628f
+  # Image for engine:plain — the official upstream Postgres (PostgreSQL license).
+  # No Kubernetes-API dependency; bootstraps DBs/users purely from env + initdb.
+  plainImage:
+    repository: postgres
+    tag: "17"
+    digest: sha256:5c855ad7b85e68e48a62f34662853f38b57c1c1d80f3a927ab58034fd6d31c5e
+  # Infra tier — wave 0, high-priority. BOTH engines carry the sync-wave
+  # annotation + infra priorityClassName + memory requests/limits: the CNPG
+  # Cluster in templates/postgres/cluster.yaml and the plain StatefulSet in
+  # templates/postgres/statefulset.yaml. `resources` below applies to both.
   resources:
-    requests: { cpu: 100m, memory: 256Mi }
-    limits: { cpu: "1", memory: 512Mi }
+    # Request bumped so concurrent boot-time schema migrations (Langfuse, LiteLLM,
+    # Dagster, Superset, OpenMetadata all migrate at once) have real headroom.
+    requests: { cpu: 100m, memory: 384Mi }
+    limits: { cpu: "1", memory: 1Gi }
   # Dev-only password, used ONLY when global.profile == local. Not a production secret.
   local:
     password: langfuse-local-dev
@@ -206,8 +338,11 @@ clickhouse:
     repository: clickhouse/clickhouse-server
     tag: "24.8"
     digest: sha256:1ffa82edee000a42c09313bd9f1293d94c570aee74babc1b3ca9983a35fa597b
+  # Infra tier — wave 0, high-priority (wired in templates/clickhouse/clickhouse.yaml).
   resources:
-    requests: { cpu: 200m, memory: 512Mi }
+    # ClickHouse keeps mark/uncompressed caches resident; request reflects real
+    # steady-state (~0.8–1Gi). The 2Gi limit is cgroup-aware (CH caps to it).
+    requests: { cpu: 200m, memory: 1Gi }
     limits: { cpu: "2", memory: 2Gi }
   local:
     password: clickhouse-local-dev
@@ -250,6 +385,24 @@ langfuse:
     additionalEnvFrom:
       - secretRef:
           name: langfuse-init
+
+    # Middleware tier — wave 1. Applies to BOTH langfuse deployments (web + worker)
+    # via the subchart's shared deployment annotations. NOTE: langfuse-k8s exposes
+    # NO priorityClassName value, so these pods run at the cluster-default priority
+    # (0) — below the infra tier (DB protected), which is the guarantee we need.
+    deployment:
+      annotations:
+        argocd.argoproj.io/sync-wave: "1"   # startup.syncWaves.middleware
+    # Right-sized so the previously-unbounded langfuse pods can't balloon during
+    # the boot spike. web = Next.js UI; worker = event/ingestion processing.
+    web:
+      resources:
+        requests: { cpu: 100m, memory: 768Mi }
+        limits: { cpu: "1", memory: 1280Mi }
+    worker:
+      resources:
+        requests: { cpu: 100m, memory: 768Mi }
+        limits: { cpu: "1", memory: 1280Mi }
 
   # ---- Postgres: external (CloudNativePG `pg-rw`) ----
   postgresql:
@@ -366,9 +519,18 @@ litellm:
   masterkeySecretKey: masterkey
   environmentSecrets:
     - litellm-credentials
+  # Middleware tier — wave 1. deploymentAnnotations lands on the Deployment
+  # metadata (Argo ordering). NOTE: litellm-helm exposes NO priorityClassName
+  # value, so this pod runs at the cluster-default priority (0) — already below
+  # the infra tier, which is what matters (DB protected). Documented gap.
+  deploymentAnnotations:
+    argocd.argoproj.io/sync-wave: "1"      # startup.syncWaves.middleware
   resources:
-    requests: { cpu: 100m, memory: 512Mi }
-    limits: { cpu: "1", memory: 1536Mi }   # litellm proxy is import-heavy; <1Gi OOMs
+    # This proxy was OOMKilled during the all-at-once boot. Honest steady-state
+    # request (~1Gi; the import-heavy proxy needs >1Gi or it OOMs) + a 2Gi limit
+    # so a transient spike no longer kills it.
+    requests: { cpu: 100m, memory: 1Gi }
+    limits: { cpu: "1", memory: 2Gi }
   proxy_config:
     model_list:
       - model_name: sovereign-mock          # chat model the agent calls
@@ -430,7 +592,17 @@ opensearch:
       value: "true"
     - name: DISABLE_SECURITY_PLUGIN
       value: "true"
+  # Infra tier — wave 0. openSearchAnnotations lands on the StatefulSet metadata
+  # (Argo reads it for ordering); priorityClassName protects it from eviction.
+  # COUPLING: this is the one subchart whose priorityClassName references the infra
+  # PriorityClass directly (subchart values can't read the `priorityClasses.enabled`
+  # gate). If you set priorityClasses.enabled=false, ALSO clear this line, or this
+  # StatefulSet will reference a non-existent PriorityClass. Default (enabled) ships.
+  openSearchAnnotations:
+    argocd.argoproj.io/sync-wave: "0"     # startup.syncWaves.infra
+  priorityClassName: sovereign-os-infra   # priorityClasses.infra.name
   resources:
+    # Heap is -Xmx512M; request covers heap + Lucene off-heap/page cache.
     requests: { cpu: 250m, memory: 1Gi }
     limits: { cpu: "2", memory: 1536Mi }
 
@@ -445,6 +617,12 @@ osdashboards:
   extraEnvs:
     - name: DISABLE_SECURITY_DASHBOARDS_PLUGIN
       value: "true"
+  # App tier — wave 2 (UI, not critical path). dashboardAnnotations -> Deployment.
+  # No priorityClassName set: app subcharts run at the cluster-default priority (0),
+  # already below the infra tier — so disabling priorityClasses leaves no dangling
+  # class reference here (only the gated bespoke pods + opensearch carry one).
+  dashboardAnnotations:
+    argocd.argoproj.io/sync-wave: "2"     # startup.syncWaves.apps
   resources:
     requests: { cpu: 100m, memory: 512Mi }
     limits: { cpu: "1", memory: 1Gi }
@@ -533,6 +711,47 @@ opa:
       - llm_generate
       - query
       - web_fetch
+    sales-assistant:            # Agent golden-path slice — scoped LiteLLM key
+      - metrics                  # Cube semantic layer (same metric as the BI)
+      - retrieve                 # governed RAG over contract + discount policy
+      - connection_crm_read      # read the CRM account (low-stakes)
+      - connection_crm_write     # write the CRM — high-stakes (see requiresApproval)
+      - write_file               # agent-output sandbox (drafts/exports)
+      - knowledge_certify        # propose certify — high-stakes (approval-gated)
+      - predict                  # consume the deployed churn model (Science golden path §7)
+    churn-model:                # Layer-4 model-as-tool — the deployed churn model's identity
+      - predict                  # KServe InferenceService exposed as a governed MCP tool
+    # Connections golden-path slice — each manually-credentialed Connection
+    # compiles its capability profile into per-connection OPA policy data. These
+    # two are the worked examples (Notion MCP + Salesforce API). Only ENABLED,
+    # in-scope tools are granted; Off/Blocked tools are absent (default-deny). The
+    # OS UI ALSO mirrors this offline (lib/agent-governed.ts) so the gate is
+    # demonstrable with no live OPA. Principal = conn-<slug> of the connection.
+    conn-notion-workspace:      # MCP connection — reads on, create held for approval
+      - notion_search
+      - notion_get_page
+      - notion_create_page       # Write-approval (see requiresApproval); delete is Blocked (absent)
+    conn-salesforce-sales-org:  # API connection — reads scoped to Sales, bounded write
+      - read_account
+      - read_opportunity
+      - update_opportunity_amount # Write-bounded (≤ €X enforced in policy); delete/mass_update absent
+  # High-stakes tools held for human approval even when granted (golden path §7):
+  # external connection writes + knowledge certify/publish. The grant lets the
+  # agent ATTEMPT it; the approval gate (Governance tab) decides.
+  requiresApproval:
+    - connection_crm_write
+    - knowledge_certify
+    - notion_create_page         # Connections slice: Write-approval (Notion create page)
+
+# -----------------------------------------------------------------------------
+# Sales Assistant — the Agent golden-path vertical slice. Ships AGENT.md +
+# MEMORY.md as a versioned ConfigMap (templates/sales-assistant/). The supervisor
+# runs inside the OS UI (lib/sales-assistant.ts) over the governed LiteLLM + OPA +
+# Langfuse spine; its scoped key is opa.grants `sales-assistant` above. ConfigMap
+# only — no extra workload, so it's effectively free to keep on.
+# -----------------------------------------------------------------------------
+salesAssistant:
+  enabled: true
 
 # -----------------------------------------------------------------------------
 # Docling — document parsing (docling-serve). Parses uploaded docs into
@@ -586,6 +805,9 @@ dagster:
     enabled: true
     deployments:
       - name: example-user-code
+        # App tier — wave 2 (lands on the user-code Deployment metadata).
+        annotations:
+          argocd.argoproj.io/sync-wave: "2"   # startup.syncWaves.apps
         image:
           repository: sovereign-os/dagster
           tag: "0.2.0"
@@ -605,7 +827,12 @@ dagster:
         resources:
           requests: { cpu: 50m, memory: 384Mi }
           limits: { cpu: "1", memory: 1Gi }   # headroom for dbt materializations
+  # App tier — wave 2. NOTE: the dagster subchart exposes NO priorityClassName for
+  # webserver/daemon/user-code, so these run at the cluster-default priority (0),
+  # already below the infra tier (DB protected). Documented gap.
   dagsterWebserver:
+    annotations:
+      argocd.argoproj.io/sync-wave: "2"     # startup.syncWaves.apps
     image:
       repository: sovereign-os/dagster
       tag: "0.2.0"
@@ -614,6 +841,8 @@ dagster:
       requests: { cpu: 100m, memory: 256Mi }
       limits: { cpu: 500m, memory: 512Mi }
   dagsterDaemon:
+    annotations:
+      argocd.argoproj.io/sync-wave: "2"     # startup.syncWaves.apps
     image:
       repository: sovereign-os/dagster
       tag: "0.2.0"
@@ -690,9 +919,17 @@ openmetadata:
   extraEnvs:
     - name: OPENMETADATA_HEAP_OPTS
       value: "-Xmx2g -Xms1g"
+  # App tier — wave 2. Booting OM after the infra wave is healthy fixes the
+  # Init:Error it hit when it raced OpenSearch/Postgres during the all-at-once
+  # boot. deploymentAnnotations -> Deployment metadata (Argo ordering). NOTE: the
+  # openmetadata subchart has no priorityClassName value (cluster-default 0).
+  deploymentAnnotations:
+    argocd.argoproj.io/sync-wave: "2"       # startup.syncWaves.apps
   resources:
-    requests: { cpu: 200m, memory: 1Gi }
-    limits: { cpu: "2", memory: 2560Mi }
+    # JVM heap is -Xmx2g; request reflects that (the process WILL use ~2g) and the
+    # 3Gi limit covers heap + metaspace + threads + direct buffers without OOM.
+    requests: { cpu: 200m, memory: 2Gi }
+    limits: { cpu: "2", memory: 3Gi }
 
 # =============================================================================
 # Secure-by-default egress baseline (security.md) — default-deny + proxy +
@@ -707,10 +944,19 @@ egressProxy:
     repository: sovereign-os/egress-proxy    # built locally, loaded into kind
     tag: "0.1.0"
   # Approved external domains (matched against host; subdomains included).
-  # Default-deny otherwise. example.com proves the allow path locally.
+  # Default-deny otherwise. example.com proves the allow path locally. The
+  # Connections golden path checks every external endpoint against this list
+  # (Admin guardrail) before a Connection may be created; the slice's Notion +
+  # Salesforce endpoints are allowlisted here (and mirrored in lib/secrets.ts).
   allowlist:
     - example.com
     - github.com
+    - salesforce.com           # Connections slice — Salesforce API endpoints
+    - my.salesforce.com
+    - login.salesforce.com
+    - notion.com               # Connections slice — Notion MCP endpoints
+    - mcp.notion.com
+    - api.notion.com
   resources:
     requests: { cpu: 25m, memory: 32Mi }
     limits: { cpu: 250m, memory: 96Mi }
@@ -725,6 +971,35 @@ webFetch:
   resources:
     requests: { cpu: 25m, memory: 32Mi }
     limits: { cpu: 250m, memory: 128Mi }
+
+# -----------------------------------------------------------------------------
+# Connections golden path — manually-credentialed Connections (API/MCP/Database/
+# SaaS) a Builder/Admin creates. The connection RECORD holds metadata + a Secrets
+# Manager reference; the credential lives ONLY in Secrets Manager, synced via the
+# External Secrets Operator. `externalSecrets.enabled` renders example
+# ExternalSecret CRs for the slice (default OFF — ESO CRDs aren't installed
+# locally; helm template/lint stay valid). The capability profile, egress
+# guardrail and approval gate run in the OS UI over the same LiteLLM+OPA+Langfuse
+# spine; `opa.grants` (conn-*) above is the compiled, in-cluster policy data.
+# -----------------------------------------------------------------------------
+connections:
+  enabled: true
+  externalSecrets:
+    enabled: false             # turn on once the External Secrets Operator + a
+                               # STACKIT Secrets Manager SecretStore are installed
+    secretStoreRef:
+      name: stackit-secrets-manager
+      kind: ClusterSecretStore
+    # The slice's two worked-example connections. Each maps a Secrets Manager
+    # entry to a K8s Secret the connection proxy mounts — the value never touches
+    # git or a connection record; only this reference does.
+    items:
+      - name: connection-notion-workspace
+        remoteKey: connection-notion-workspace
+        property: mcp-token
+      - name: connection-salesforce-sales-org
+        remoteKey: connection-salesforce-sales-org
+        property: oauth-token
 
 # =============================================================================
 # Layer 3 (Self-service) — lakehouse, query MCP tools, dashboards, delivery.
@@ -753,8 +1028,9 @@ polaris:
   local:
     rootClientId: root
     rootClientSecret: polaris-local-dev-secret
+  # Quarkus/JVM catalog — request reflects steady JVM footprint (heap + metaspace).
   resources:
-    requests: { cpu: 200m, memory: 384Mi }
+    requests: { cpu: 200m, memory: 512Mi }
     limits: { cpu: "2", memory: 1Gi }
 
 # -----------------------------------------------------------------------------
@@ -813,6 +1089,12 @@ superset:
       email: admin@datamasterclass.com
       password: superset-admin-local-dev
   supersetNode:
+    # App tier — wave 2. deploymentAnnotations -> supersetNode Deployment metadata.
+    # NOTE: the superset chart has no supersetNode priorityClassName value (it does
+    # for worker/beat, which we scale to 0), so the web pod runs at cluster-default
+    # priority (0) — below the infra tier (DB protected). Documented gap.
+    deploymentAnnotations:
+      argocd.argoproj.io/sync-wave: "2"     # startup.syncWaves.apps
     connections:
       db_host: pg-rw
       db_port: "5432"
@@ -820,7 +1102,8 @@ superset:
       db_pass: superset-local-dev    # local dev throwaway (CNPG superset role)
       db_name: superset
     resources:
-      requests: { cpu: 100m, memory: 512Mi }
+      # gunicorn web workers; request raised to honest steady-state.
+      requests: { cpu: 100m, memory: 768Mi }
       limits: { cpu: "1", memory: 1536Mi }
   extraSecretEnv:
     SUPERSET_SECRET_KEY: "sovereign-os-superset-local-dev-secret-key"
@@ -839,6 +1122,12 @@ forgejo:
   enabled: true
   fullnameOverride: forgejo
   replicaCount: 1
+  # App tier — wave 2. deployment.annotations -> the forgejo Deployment metadata.
+  # No priorityClassName (cluster-default 0, below infra) — keeps the disable path
+  # clean (see osdashboards note).
+  deployment:
+    annotations:
+      argocd.argoproj.io/sync-wave: "2"     # startup.syncWaves.apps
   image:
     tag: "11"
     rootless: true            # chart default registry/repo -> code.forgejo.org/forgejo/forgejo:11-rootless
@@ -887,6 +1176,13 @@ argo-cd:
   fullnameOverride: argocd
   global:
     domain: argocd.local
+    # App tier — wave 2. These globals apply the sync-wave to ALL argo-cd workloads
+    # (server, repo-server, controller statefulset, redis). No priorityClassName
+    # (cluster-default 0, below infra) — keeps the disable path clean.
+    deploymentAnnotations:
+      argocd.argoproj.io/sync-wave: "2"     # startup.syncWaves.apps
+    statefulsetAnnotations:
+      argocd.argoproj.io/sync-wave: "2"     # startup.syncWaves.apps
   dex:
     enabled: false
   notifications:
@@ -920,6 +1216,30 @@ softwareDelivery:
     repo: demo-app
     image: traefik/whoami:v1.10.3
     namespace: demo
+  # Software golden path (per-app builds in the Software tab): the live-subdomain
+  # suffix surfaced on each app page (set OS_APPS_DOMAIN on the OS UI to match).
+  appsDomain: apps.local
+
+# -----------------------------------------------------------------------------
+# Harbor — production image registry for the Software golden path (per-app
+# builds: Forgejo Actions -> Harbor -> Argo CD -> subdomain). DEFAULT-OFF heavy
+# workload: locally CI uses Forgejo's built-in OCI registry, so the bundle is
+# untouched unless harbor.enabled=true. A minimal OCI registry stands in for the
+# full Harbor stack on a laptop; on STACKIT swap in the upstream Harbor chart.
+# When on, set the OS UI's HARBOR_ENABLED=true + HARBOR_REGISTRY accordingly.
+# -----------------------------------------------------------------------------
+harbor:
+  enabled: false
+  image:
+    repository: registry
+    tag: "2.8.3"
+    digest: sha256:cc6393207bf9d3e032c4d9277834c1695117532c9f7e8c64e7b7adcdc7993365
+  persistence:
+    enabled: true
+    size: 5Gi
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
 
 # Forgejo Actions CI runner — completes the golden path (push -> CI build ->
 # registry). Uses Forgejo's built-in OCI registry locally; Harbor is the
@@ -1161,6 +1481,19 @@ mlAgent:
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 500m, memory: 512Mi }
+
+# -----------------------------------------------------------------------------
+# Dagster churn-retrain pipeline (Layer 4 Science, step 8). Ships the churn
+# retrain definition as a ConfigMap a Dagster user-code deployment loads; Dagster
+# (Layer 3) owns the cron. Re-enters the path at step 3 (train+track in MLflow) →
+# new version (Staging) → Builder re-certifies. CPU-only; GPU opt-in + approved.
+# Gated behind ml.enabled AND this flag; off by default.
+# -----------------------------------------------------------------------------
+dagsterRetrain:
+  enabled: false
+  modelName: churn_model               # MLflow registry model name
+  featureSet: customer_rfm             # Featureform feature set (RFM + tenure)
+  schedule: "0 3 1 * *"                # monthly (03:00 on the 1st); or on drift
 
 # Components are added to this file as each is wired into the chart
 # (thinnest runnable slice first). See README.md for the build order.

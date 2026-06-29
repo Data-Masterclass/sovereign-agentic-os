@@ -42,6 +42,10 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
+        # Gardener/SKE CoreDNS listens on 8053 (kube-dns svc remaps 53->8053);
+        # Calico enforces egress post-DNAT, so the backend port must be allowed.
+        - { protocol: UDP, port: 8053 }
+        - { protocol: TCP, port: 8053 }
 ---
 # 3) Allow intra-namespace egress (components talk to each other).
 apiVersion: networking.k8s.io/v1
@@ -109,4 +113,7 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
+        # Gardener/SKE CoreDNS listens on 8053 (see note above).
+        - { protocol: UDP, port: 8053 }
+        - { protocol: TCP, port: 8053 }
 {{- end }}

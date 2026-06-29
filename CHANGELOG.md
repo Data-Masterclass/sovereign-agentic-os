@@ -11,6 +11,66 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 This is **pre-beta** software: APIs, values, and surfaces may change between
 `alpha`/`beta` pre-releases without notice.
 
+## [0.2.0-alpha.2] — 2026-06-29
+
+Headline: **four golden paths** become demonstrable end-to-end, the in-cluster
+database moves to a **plain Postgres** that survives STACKIT's SKE-in-an-SNA
+internal-DNS wall, startup is **orchestrated** so the node no longer OOMs, and
+the bare zone **apex** now serves the OS UI.
+
+### Added
+
+- **Four golden paths** (agent / science / software / connections).
+  - **Agent** — a Sales Assistant vertical slice: `AGENT.md` + `MEMORY.md`
+    shipped as a versioned ConfigMap, a supervisor running in the OS UI over the
+    governed LiteLLM + OPA + Langfuse spine, with a scoped key and approval-gated
+    high-stakes tools (CRM write, knowledge certify).
+  - **Science** — churn model as a governed tool (`predict`), a Dagster
+    retrain pipeline (off by default), MLflow-tracked re-train → re-certify loop.
+  - **Software** — per-app builds in the Software tab (Forgejo Actions → registry
+    → Argo CD → subdomain), with an optional Harbor registry (off by default).
+  - **Connections** — manually-credentialed API/MCP/Database/SaaS connections
+    whose capability profile compiles into per-connection OPA policy data; the
+    credential lives only in Secrets Manager (External Secrets, opt-in). Worked
+    examples: Notion MCP + Salesforce API, allowlisted on the egress proxy.
+- **Apex route.** `ingress.hosts.osUIApex` adds a second os-ui Ingress on the
+  bare zone apex (e.g. `agentic.datamasterclass.com`), with its own TLS, so the
+  apex serves the OS UI instead of 404ing next to `os.<zone>`. Set in the
+  self-hosted overlay.
+- **PriorityClasses** (`sovereign-os-infra` / `sovereign-os-app`) protecting the
+  data layer under memory pressure; gated so local-kind still admits every pod.
+
+### Changed
+
+- **Plain in-cluster Postgres is now the default** (`postgres.engine: plain`,
+  `cnpg` opt-in). A self-contained StatefulSet on the official `postgres` image
+  that never talks to the Kubernetes API — fixing the **STACKIT SKE-in-an-SNA
+  internal-DNS wall** that hung CloudNativePG's API-dependent bootstrap. It
+  reproduces the CNPG path exactly (same `pg-rw`/`pg-ro`/`pg-r` Services, app DB
+  + per-`extraDatabases` role/db/grants) so every consumer connects unchanged.
+- **Orchestrated startup — no OOM.** Argo CD **sync-waves** (infra 0 / middleware
+  1 / apps 2) stage the rollout, **resource requests** add memory backpressure,
+  and **PriorityClasses** evict app pods before the DB — replacing the ~30-pods-
+  at-once boot that spiked > 32 GB and OOMKilled LiteLLM / errored OpenMetadata.
+  Both database engines (plain StatefulSet **and** CNPG cluster) carry the wave-0
+  annotation, infra priority, and bumped memory requests/limits.
+
+### Fixed
+
+- **NetworkPolicy DNS egress on `:8053` — the SKE-in-an-SNA root cause.**
+  Gardener/SKE runs CoreDNS listening on **8053** (the `kube-dns` Service remaps
+  `53 → 8053`), and Calico enforces egress **post-DNAT**, so a policy that only
+  allowed port 53 silently dropped every pod's DNS. `allow-dns-egress` now
+  permits UDP/TCP **8053** alongside 53, fixing the all-night cluster-internal
+  resolution failures (`pg-rw` and internal-API i/o timeouts) on both the
+  multi-node and single-node STACKIT SKE deploys. With this fix plus the default
+  **plain in-cluster Postgres**, the stack was validated **GREEN on live
+  STACKIT** — Postgres up, all 5 governed tools reachable, and the Components
+  API healthy.
+- **OS UI console links** no longer point at `localhost` when deployed: each
+  console URL derives from the matching ingress host (`soa.consoleUrl`); tools
+  with no public host hide their "Open" link.
+
 ## [0.2.0-alpha.1] — 2026-06-28
 
 Headline: the OS UI becomes a **teaching-ready, multi-tenant workspace**, the
@@ -146,5 +206,6 @@ Initial public pre-release: the umbrella Helm chart (Layers 1–4 + a
 secure-by-default baseline), the OS UI front door, the Apache-2.0 licensing
 baseline (LICENSE/NOTICE, third-party manifest, SBOM), and the end-user guide.
 
+[0.2.0-alpha.2]: https://github.com/Data-Masterclass/sovereign-agentic-os/releases/tag/v0.2.0-alpha.2
 [0.2.0-alpha.1]: https://github.com/Data-Masterclass/sovereign-agentic-os/releases/tag/v0.2.0-alpha.1
 [0.1.0-alpha.1]: https://github.com/Data-Masterclass/sovereign-agentic-os/releases/tag/v0.1.0-alpha.1

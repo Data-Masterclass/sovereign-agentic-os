@@ -74,6 +74,8 @@ ingress:
   tlsIssuer: letsencrypt-prod
   hosts:
     osUI: "os.agentic.datamasterclass.com"
+    # Bare zone apex also serves the OS UI so it no longer 404s next to os.<zone>.
+    osUIApex: "agentic.datamasterclass.com"
     litellm: "litellm.agentic.datamasterclass.com"
     langfuse: "langfuse.agentic.datamasterclass.com"
     openmetadata: "openmetadata.agentic.datamasterclass.com"

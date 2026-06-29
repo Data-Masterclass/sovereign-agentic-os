@@ -1,0 +1,197 @@
+{{- if .Values.postgres.enabled }}
+{{- if eq .Values.postgres.engine "plain" }}
+{{- /*
+  Plain in-cluster Postgres — DEFAULT engine. A self-contained StatefulSet on the
+  official `postgres` image. Unlike CloudNativePG, it NEVER talks to the Kubernetes
+  API, so it bootstraps on STACKIT SKE-in-an-SNA (where the internal SKE API
+  hostname is unresolvable and CNPG's initdb pod hangs). Like ClickHouse/Valkey/
+  MinIO/OpenSearch, it just runs in-cluster.
+
+  It recreates EXACTLY what the CNPG path provided, so every consumer connects
+  unchanged:
+    - the app database/owner ({{ .Values.postgres.database }} / {{ .Values.postgres.username }}),
+      bootstrapped from the shared Secret via POSTGRES_* env;
+    - one role + database + grants per extraDatabases entry, created idempotently
+      by the initdb script below (passwords injected from the SAME credential
+      Secrets — see templates/postgres/credentials.yaml);
+    - the `pg-rw` Service (+ `pg-ro` / `pg-r` aliases) on :5432.
+*/}}
+{{- $pg := .Values.postgres }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pg-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 4 }}
+data:
+  # Runs once, on first boot, from /docker-entrypoint-initdb.d (postgres entrypoint
+  # sources it while a local-only server is up). Connected as the bootstrap owner
+  # ({{ $pg.username }}, a superuser on this self-contained instance), it creates
+  # the extra service roles/databases. Idempotent so a re-init is safe.
+  10-extra-databases.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    psql_super() { psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres "$@"; }
+
+    create_role_db() {
+      local role="$1" db="$2" pw="$3" createdb="$4"
+      # Escape single quotes so the literal is safe inside the SQL string.
+      local pw_esc=${pw//\'/\'\'}
+      psql_super <<SQL
+    DO \$do\$
+    BEGIN
+      IF EXISTS (SELECT FROM pg_roles WHERE rolname = '${role}') THEN
+        ALTER ROLE "${role}" WITH LOGIN PASSWORD '${pw_esc}';
+      ELSE
+        CREATE ROLE "${role}" WITH LOGIN PASSWORD '${pw_esc}';
+      END IF;
+    END
+    \$do\$;
+    SQL
+      if [ "${createdb}" = "true" ]; then
+        psql_super -c "ALTER ROLE \"${role}\" CREATEDB;"
+      fi
+      if ! psql_super -tAc "SELECT 1 FROM pg_database WHERE datname = '${db}'" | grep -q 1; then
+        psql_super -c "CREATE DATABASE \"${db}\" OWNER \"${role}\";"
+      fi
+      psql_super -c "ALTER DATABASE \"${db}\" OWNER TO \"${role}\";"
+      psql_super -c "GRANT ALL PRIVILEGES ON DATABASE \"${db}\" TO \"${role}\";"
+      # PG15+ revokes CREATE-on-public from PUBLIC; hand the schema to the owner so
+      # the consumer (which connects as ${role}) can run its migrations.
+      psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "${db}" \
+        -c "ALTER SCHEMA public OWNER TO \"${role}\";" \
+        -c "GRANT ALL ON SCHEMA public TO \"${role}\";"
+    }
+
+    {{- range $pg.extraDatabases }}
+    create_role_db "{{ .username }}" "{{ .name }}" "${PG_{{ .username | upper }}_PASSWORD}" "{{ .createdb | default false }}"
+    {{- end }}
+    echo "pg-init: extra databases ready"
+---
+# Headless service backing the StatefulSet's stable network identity.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $pg.clusterName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 4 }}
+  ports:
+    - { name: postgres, port: 5432, targetPort: postgres }
+{{- range $svc := list (printf "%s-rw" $pg.clusterName) (printf "%s-ro" $pg.clusterName) (printf "%s-r" $pg.clusterName) }}
+---
+# {{ $svc }} — same name/port the consumers and credential Secrets already use.
+# Single instance, so rw/ro/r all resolve to the one primary (CNPG-compatible names).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $svc }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" $ "component" "postgres") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" $ "component" "postgres") | nindent 4 }}
+  ports:
+    - { name: postgres, port: 5432, targetPort: postgres }
+{{- end }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $pg.clusterName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- /* Wave 0 — the database is the very first thing to come up (matches the
+           CNPG cluster.yaml so the plain default engine is orchestrated too). */}}
+    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "infra") | nindent 4 }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 4 }}
+spec:
+  serviceName: {{ $pg.clusterName }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 8 }}
+    spec:
+      {{- /* High-priority infra: the kubelet evicts app pods before the DB. */}}
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "infra") | nindent 6 }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: "{{ $pg.plainImage.repository }}:{{ $pg.plainImage.tag }}{{ if $pg.plainImage.digest }}@{{ $pg.plainImage.digest }}{{ end }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          env:
+            # Bootstrap the app database + owner from the shared credential Secret.
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: {{ $pg.secretName }}, key: username } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $pg.secretName }}, key: password } }
+            - name: POSTGRES_DB
+              value: {{ $pg.database | quote }}
+            # PGDATA in a subdir so the entrypoint (running as uid 999) can create
+            # and own it under the fsGroup-writable PVC mount.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            {{- range $pg.extraDatabases }}
+            # Password for the {{ .name }} role, consumed by the initdb script.
+            - name: PG_{{ .username | upper }}_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .secretName }}, key: password } }
+            {{- end }}
+          ports:
+            - { name: postgres, containerPort: 5432 }
+          startupProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -h 127.0.0.1 -q"]
+            periodSeconds: 5
+            failureThreshold: 30        # up to ~150s for first-boot initdb + scripts
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -h 127.0.0.1 -q"]
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -h 127.0.0.1 -q"]
+            periodSeconds: 20
+          resources:
+            {{- toYaml $pg.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+            - { name: init, mountPath: /docker-entrypoint-initdb.d, readOnly: true }
+      volumes:
+        - name: init
+          configMap:
+            name: pg-init
+            defaultMode: 0o755
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- include "soa.storageClass" . | nindent 8 }}
+        resources:
+          requests:
+            storage: {{ $pg.storageSize | quote }}
+{{- end }}
+{{- end }}

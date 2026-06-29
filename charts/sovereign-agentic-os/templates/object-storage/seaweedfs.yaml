@@ -29,6 +29,8 @@ kind: Deployment
 metadata:
   name: minio
   namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "infra") | nindent 4 }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "object-storage") | nindent 4 }}
@@ -45,6 +47,7 @@ spec:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "object-storage") | nindent 8 }}
     spec:
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "infra") | nindent 6 }}
       securityContext:
         {{- include "soa.podSecurityContext" . | nindent 8 }}
         runAsUser: 1000

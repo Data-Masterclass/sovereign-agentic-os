@@ -1,6 +1,7 @@
 'use client';
 
 import PageHeader from '@/components/PageHeader';
+import ApprovalQueue from '@/components/ApprovalQueue';
 import { useApi } from '@/lib/useApi';
 
 type Cell = { principal: string; decisions: Record<string, boolean> };
@@ -16,8 +17,10 @@ export default function GovernancePage() {
 
   return (
     <>
-      <PageHeader title="Governance" crumb="default-deny tool authorization — OPA" />
+      <PageHeader title="Governance" crumb="approval queue + default-deny tool authorization — OPA" />
       <div className="content">
+        <ApprovalQueue />
+
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <p className="lead" style={{ marginBottom: 0 }}>
             Open Policy Agent makes the default-deny decision at the tool boundary: a

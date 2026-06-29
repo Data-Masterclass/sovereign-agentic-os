@@ -22,6 +22,8 @@ export default function AgentChat({
   onAssistant,
   minHeight = 240,
   label = 'agent',
+  endpoint = '/api/agent-chat',
+  initialMessages = [],
 }: {
   agent: string;
   placeholder?: string;
@@ -29,8 +31,17 @@ export default function AgentChat({
   onAssistant?: (content: string) => void;
   minHeight?: number;
   label?: string;
+  /**
+   * Where to POST the conversation. Defaults to the shared `/api/agent-chat`
+   * task-scoped gateway; a per-app build chat passes its own `/api/apps/{id}/chat`
+   * endpoint, which follows the SAME request shape ({ agent, messages }) but is
+   * built from that app's full context server-side and persisted under the app.
+   */
+  endpoint?: string;
+  /** Seed the window with prior turns (e.g. an app's saved build-chat history). */
+  initialMessages?: ChatMessage[];
 }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -46,7 +57,7 @@ export default function AgentChat({
       setInput('');
       setLoading(true);
       try {
-        const res = await fetch('/api/agent-chat', {
+        const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ agent, messages: next }),
@@ -68,7 +79,7 @@ export default function AgentChat({
         });
       }
     },
-    [agent, loading, messages, onAssistant],
+    [agent, endpoint, loading, messages, onAssistant],
   );
 
   return (

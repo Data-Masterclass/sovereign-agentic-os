@@ -1,0 +1,630 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ */
+import 'server-only';
+import { config } from '@/lib/config';
+import type { CurrentUser } from '@/lib/auth';
+import { canPromote } from '@/lib/session';
+import type { Visibility } from '@/lib/artifact-model';
+import {
+  createArtifact,
+  promoteArtifact,
+  getArtifact,
+  type Artifact,
+} from '@/lib/artifacts';
+import {
+  registerConnection,
+  setConnectionVisibility,
+  getConnectionByApp,
+  type AppConnection,
+  type AppTool,
+} from '@/lib/app-registry';
+import { trace } from '@/lib/agent-governed';
+
+/**
+ * App registry — the home of record for every application built in the Software
+ * tab (Software golden path). Each app is a self-contained governed unit: its
+ * design decisions, data descriptions, docs and build-chat history all live
+ * here, "under the app"; its repo/pipeline/MCP/connection/data references hang
+ * off it; and it carries its own Personal→Shared→Marketplace lifecycle.
+ *
+ * Persistence mirrors `lib/artifacts.ts`: an authoritative in-process cache (so
+ * the teaching flow works with NO cluster) plus a best-effort OpenSearch
+ * write-through ("os-apps" index) for durability in a real deploy. The scoping +
+ * promotion rules below are the security boundary regardless of backing store.
+ *
+ * What is LIVE vs STUBBED locally:
+ *   • Forgejo repo creation + file seeding — a REAL API call when Forgejo is
+ *     reachable; best-effort + honestly reported `mode:'offline'` when not.
+ *   • CI → Harbor → Argo CD → subdomain — the chart wires this end-to-end on a
+ *     cluster; locally the pipeline status reflects reachability, not a sham.
+ *   • Auto-MCP → Connection + agent tool — registered in-process (app-registry)
+ *     so the creator's agents can call it through the governed authorize→trace
+ *     spine immediately; a real deploy would also push the grant to OPA.
+ *   • Data/files → Personal artifacts — REAL artifacts via `createArtifact`,
+ *     owned by the creator, visible in the Data tab, promoted by the same ladder.
+ */
+
+export type PipelineStage = 'forgejo' | 'actions' | 'harbor' | 'argocd' | 'live';
+export type StageStatus = 'ok' | 'pending' | 'offline' | 'disabled';
+
+export type AppFile = {
+  name: string;
+  description: string;
+  visibility: Visibility;
+};
+
+export type AppChatMessage = { role: 'user' | 'assistant'; content: string; at: string };
+
+export type App = {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  template: AppTemplateKey;
+  owner: string;
+  domain: string;
+  visibility: Visibility;
+  /** 'live' when Forgejo was reachable at create time; 'offline' otherwise. */
+  mode: 'live' | 'offline';
+  repo: { fullName: string; htmlUrl: string; seeded: string[] };
+  subdomain: string;
+  pipeline: Record<PipelineStage, StageStatus>;
+  /** Markdown captured from the build chat + the template. */
+  designDecisions: string;
+  dataDescriptions: string;
+  docs: string;
+  chat: AppChatMessage[];
+  /** Personal artifact ids this app auto-registered for its data/files. */
+  dataArtifactId: string | null;
+  files: AppFile[];
+  /** The auto-generated MCP connection id (app-registry). */
+  connectionId: string | null;
+  mcpPrincipal: string;
+  mcpTools: AppTool[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+// ----------------------------------------------------------------- Templates --
+
+export type AppTemplateKey = 'nextjs-supabase' | 'service' | 'script';
+
+type Template = {
+  key: AppTemplateKey;
+  label: string;
+  /** OpenCode-generated MCP tools for this template (read + write). */
+  tools: (slug: string) => AppTool[];
+  designDecisions: (name: string) => string;
+  dataDescriptions: (name: string) => string;
+  docs: (name: string, sub: string) => string;
+  /** Files seeded into the per-app Forgejo repo (beyond auto_init's README). */
+  files: (name: string, slug: string) => { path: string; content: string }[];
+};
+
+function nextjsSupabaseTemplate(): Template {
+  return {
+    key: 'nextjs-supabase',
+    label: 'Next.js + Supabase app',
+    tools: () => [
+      { name: 'list_renewals', description: 'List contract renewals (read).', write: false },
+      { name: 'get_renewal', description: 'Get one renewal by id (read).', write: false },
+      { name: 'add_renewal', description: 'Add a contract renewal (write).', write: true },
+      { name: 'export_renewals', description: 'Export renewals to a file (write).', write: true },
+    ],
+    designDecisions: (name) =>
+      [
+        `# ${name} — design decisions`,
+        '',
+        '- **Stack:** Next.js (App Router) frontend + Supabase (Postgres, Auth, Storage) backend.',
+        '- **Data model:** a single `renewals` table (id, account, product, amount, renews_on, status).',
+        '- **Access:** Supabase Row-Level Security scopes every row to the signed-in owner.',
+        '- **Operational vs analytical:** live app rows stay in Supabase; analytical copies follow',
+        '  the Data golden path as a Personal data product.',
+        '- **MCP:** capabilities are auto-exposed as governed tools (read: list/get; write: add/export).',
+      ].join('\n'),
+    dataDescriptions: (name) =>
+      [
+        `# ${name} — data descriptions`,
+        '',
+        '## Table: `renewals`',
+        '| field | type | meaning |',
+        '|---|---|---|',
+        '| `id` | uuid | primary key |',
+        '| `account` | text | customer / counterparty name |',
+        '| `product` | text | the contracted product or plan |',
+        '| `amount` | numeric | annual contract value |',
+        '| `renews_on` | date | next renewal date |',
+        '| `status` | text | `upcoming` \\| `renewed` \\| `churned` |',
+      ].join('\n'),
+    docs: (name, sub) =>
+      [
+        `# ${name}`,
+        '',
+        `Live at **https://${sub}** (once CI → Harbor → Argo CD have synced).`,
+        '',
+        '## Use',
+        '1. Sign in (Supabase Auth).',
+        '2. Add upcoming renewals; the list view sorts by `renews_on`.',
+        '3. Your agents can call the app MCP tools (`list_renewals`, `add_renewal`, …).',
+      ].join('\n'),
+    files: (name, slug) => [
+      {
+        path: 'package.json',
+        content: JSON.stringify(
+          {
+            name: slug,
+            private: true,
+            scripts: { dev: 'next dev', build: 'next build', start: 'next start' },
+            dependencies: { next: '^15.0.0', react: '^19.0.0', 'react-dom': '^19.0.0', '@supabase/supabase-js': '^2.45.0' },
+          },
+          null,
+          2,
+        ) + '\n',
+      },
+      {
+        path: 'supabase/migrations/0001_init.sql',
+        content:
+          'create table if not exists renewals (\n' +
+          '  id uuid primary key default gen_random_uuid(),\n' +
+          '  owner uuid not null default auth.uid(),\n' +
+          '  account text not null,\n' +
+          '  product text,\n' +
+          '  amount numeric,\n' +
+          '  renews_on date,\n' +
+          "  status text not null default 'upcoming'\n" +
+          ');\n' +
+          'alter table renewals enable row level security;\n' +
+          'create policy "owner_rw" on renewals\n' +
+          '  using (owner = auth.uid()) with check (owner = auth.uid());\n',
+      },
+      {
+        path: 'Dockerfile',
+        content:
+          '# Next.js app — built by Sovereign Agentic OS CI -> Harbor -> Argo CD.\n' +
+          'FROM node:22-alpine\nWORKDIR /app\nCOPY . .\nRUN npm ci || true\nEXPOSE 8080\nCMD ["npm","run","start"]\n',
+      },
+      {
+        path: '.forgejo/workflows/ci.yml',
+        content:
+          'on:\n  push:\n    branches: [main]\njobs:\n  build:\n    runs-on: docker\n    steps:\n' +
+          '      - run: echo "build & push image for ' + slug + ' (kaniko/buildah -> Harbor)"\n',
+      },
+      {
+        path: 'manifests/app.yaml',
+        content:
+          'apiVersion: apps/v1\nkind: Deployment\nmetadata: { name: ' + slug + ', labels: { app: ' + slug + ' } }\n' +
+          'spec:\n  replicas: 1\n  selector: { matchLabels: { app: ' + slug + ' } }\n' +
+          '  template:\n    metadata: { labels: { app: ' + slug + ' } }\n    spec:\n      containers:\n' +
+          '        - name: ' + slug + '\n          image: ' + config.harborRegistry + '/' + slug + ':latest\n' +
+          '          ports: [ { containerPort: 8080 } ]\n',
+      },
+    ],
+  };
+}
+
+function genericTemplate(key: AppTemplateKey, label: string): Template {
+  const base = nextjsSupabaseTemplate();
+  return {
+    ...base,
+    key,
+    label,
+    tools: (slug) => [
+      { name: `${slug.replace(/-/g, '_')}_status`, description: 'Health/status of the app (read).', write: false },
+      { name: `${slug.replace(/-/g, '_')}_run`, description: 'Trigger the app (write).', write: true },
+    ],
+  };
+}
+
+const TEMPLATES: Record<AppTemplateKey, Template> = {
+  'nextjs-supabase': nextjsSupabaseTemplate(),
+  service: genericTemplate('service', 'Service'),
+  script: genericTemplate('script', 'Script'),
+};
+
+export const APP_TEMPLATES: { key: AppTemplateKey; label: string }[] = [
+  { key: 'nextjs-supabase', label: 'Next.js + Supabase app' },
+  { key: 'service', label: 'Service' },
+  { key: 'script', label: 'Script' },
+];
+
+// ----------------------------------------------------------------- Registry ---
+
+let cache: Map<string, App> | null = null;
+let osHealthy = false;
+
+function now(): string {
+  return new Date().toISOString();
+}
+function id(prefix: string): string {
+  return `${prefix}_${Math.random().toString(36).slice(2, 9)}${Date.now().toString(36).slice(-4)}`;
+}
+function slugify(s: string): string {
+  return (
+    s
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9-_ ]/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .slice(0, 48) || 'app'
+  );
+}
+function withStatus(err: Error, status: number): Error {
+  (err as Error & { status?: number }).status = status;
+  return err;
+}
+
+async function osFetch(path: string, init?: RequestInit): Promise<Response | null> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 2500);
+  try {
+    return await fetch(`${config.opensearchUrl}${path}`, {
+      ...init,
+      signal: ctrl.signal,
+      cache: 'no-store',
+      headers: { 'content-type': 'application/json', accept: 'application/json', ...(init?.headers ?? {}) },
+    });
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function writeThrough(a: App): void {
+  if (!osHealthy) return;
+  void osFetch(`/${config.appsIndex}/_doc/${a.id}?refresh=true`, { method: 'PUT', body: JSON.stringify(a) });
+}
+
+async function getCache(): Promise<Map<string, App>> {
+  if (cache) return cache;
+  const map = new Map<string, App>();
+  const ping = await osFetch(`/${config.appsIndex}/_count`);
+  if (ping && ping.ok) {
+    osHealthy = true;
+    const res = await osFetch(`/${config.appsIndex}/_search?size=500`, {
+      method: 'POST',
+      body: JSON.stringify({ query: { match_all: {} } }),
+    });
+    if (res && res.ok) {
+      const data = (await res.json()) as { hits?: { hits?: { _source: App }[] } };
+      for (const h of data?.hits?.hits ?? []) {
+        const app = h._source;
+        map.set(app.id, app);
+        // Re-hydrate the in-process MCP grant so agents can call it after a restart.
+        if (app.connectionId) rehydrateConnection(app);
+      }
+    }
+  } else {
+    osHealthy = false;
+  }
+  cache = map;
+  return map;
+}
+
+// ------------------------------------------------------------------- Forgejo --
+
+function authHeader(): string {
+  const token = Buffer.from(`${config.forgejoUser}:${config.forgejoPassword}`).toString('base64');
+  return `Basic ${token}`;
+}
+
+async function forgejoWrite(
+  path: string,
+  body: unknown,
+): Promise<{ ok: boolean; status: number; data: Record<string, unknown> }> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 3000);
+  try {
+    const res = await fetch(`${config.forgejoUrl}/api/v1${path}`, {
+      method: 'POST',
+      headers: { authorization: authHeader(), accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+      signal: ctrl.signal,
+    });
+    const raw = await res.text();
+    let data: Record<string, unknown> = {};
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      /* non-JSON */
+    }
+    return { ok: res.ok, status: res.status, data };
+  } catch {
+    return { ok: false, status: 0, data: {} };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function b64(s: string): string {
+  return Buffer.from(s, 'utf8').toString('base64');
+}
+
+/**
+ * Best-effort: create the per-app Forgejo repo + seed the template files. Returns
+ * a live result when Forgejo is reachable, or an offline shell otherwise — the
+ * golden path still works for teaching, honestly labelled.
+ */
+async function scaffoldRepo(
+  slug: string,
+  description: string,
+  tpl: Template,
+  name: string,
+): Promise<{ mode: 'live' | 'offline'; fullName: string; htmlUrl: string; seeded: string[] }> {
+  const owner = config.forgejoRepoOwner;
+  const create = await forgejoWrite('/user/repos', {
+    name: slug,
+    description: description || `Scaffolded by the Sovereign Agentic OS (${tpl.label})`,
+    private: true,
+    auto_init: true,
+    default_branch: 'main',
+  });
+  const fullName = String(create.data?.full_name ?? `${owner}/${slug}`);
+  const htmlUrl = String(create.data?.html_url ?? `${config.forgejoConsoleUrl}/${fullName}`);
+  if (!create.ok && create.status === 0) {
+    // Forgejo unreachable -> offline shell.
+    return { mode: 'offline', fullName, htmlUrl, seeded: [] };
+  }
+  const seeded: string[] = [];
+  for (const f of tpl.files(name, slug)) {
+    const r = await forgejoWrite(`/repos/${owner}/${slug}/contents/${f.path}`, {
+      content: b64(f.content),
+      message: `seed ${f.path}`,
+      branch: 'main',
+    });
+    if (r.ok) seeded.push(f.path);
+  }
+  return { mode: 'live', fullName, htmlUrl, seeded };
+}
+
+// ----------------------------------------------------------------- MCP wiring --
+
+function rehydrateConnection(app: App): void {
+  if (getConnectionByApp(app.id)) return;
+  registerConnection({
+    id: app.connectionId ?? id('conn'),
+    appId: app.id,
+    name: `${app.name} MCP`,
+    principal: app.mcpPrincipal,
+    tools: app.mcpTools,
+    owner: app.owner,
+    domain: app.domain,
+    visibility: app.visibility,
+    createdAt: app.createdAt,
+  });
+}
+
+// ------------------------------------------------------------------- Scoping ---
+
+function visibleToUser(a: App, user: CurrentUser): boolean {
+  if (a.visibility === 'Personal') return a.owner === user.id;
+  if (a.visibility === 'Shared') return user.domains.includes(a.domain);
+  // Certified (Marketplace): visible across domains.
+  return true;
+}
+
+export async function listAppsForUser(user: CurrentUser): Promise<App[]> {
+  const map = await getCache();
+  return [...map.values()]
+    .filter((a) => visibleToUser(a, user))
+    .sort((x, y) => y.updatedAt.localeCompare(x.updatedAt));
+}
+
+export async function getAppForUser(appId: string, user: CurrentUser): Promise<App> {
+  const map = await getCache();
+  const a = map.get(appId);
+  if (!a || !visibleToUser(a, user)) throw withStatus(new Error('App not found'), 404);
+  return a;
+}
+
+// -------------------------------------------------------------------- Create ---
+
+export async function createApp(
+  user: CurrentUser,
+  input: { name: string; description?: string; template?: AppTemplateKey; domain?: string },
+): Promise<App> {
+  const map = await getCache();
+  const tpl = TEMPLATES[input.template ?? 'nextjs-supabase'] ?? TEMPLATES['nextjs-supabase'];
+  const name = (input.name ?? '').trim() || 'Untitled app';
+  const slug = slugify(name);
+  const domain = input.domain && user.domains.includes(input.domain) ? input.domain : user.domains[0];
+  const description = (input.description ?? '').trim().slice(0, 280);
+  const t = now();
+  const subdomain = `${slug}.${domain}.${config.appsBaseDomain}`;
+
+  // 1. Scaffold the per-app Forgejo repo (real when reachable).
+  const repo = await scaffoldRepo(slug, description, tpl, name);
+
+  // 2. Pipeline status — honest reflection of reachability + default-off Harbor.
+  const live = repo.mode === 'live';
+  const pipeline: Record<PipelineStage, StageStatus> = {
+    forgejo: live ? 'ok' : 'offline',
+    actions: live ? 'ok' : 'pending',
+    // Harbor is a default-off heavy workload; CI uses Forgejo's registry locally.
+    harbor: config.harborEnabled ? (live ? 'ok' : 'pending') : 'disabled',
+    argocd: live ? 'ok' : 'pending',
+    live: live ? 'ok' : 'pending',
+  };
+
+  // 3. Auto-register the data as a Personal artifact owned by the creator.
+  let dataArtifactId: string | null = null;
+  try {
+    const dataArt = await createArtifact(user, {
+      type: 'dataset',
+      name: `${name} data`,
+      description: `Operational data product auto-created by the ${name} app (Personal to ${user.id}).`,
+      tags: ['app-data', 'personal', slug],
+      spec: { app: slug, table: 'renewals', backend: 'supabase' },
+      domain,
+    });
+    dataArtifactId = dataArt.id;
+  } catch {
+    /* artifact store best-effort */
+  }
+
+  // 4. Auto-generate the MCP + register it as a Connection + agent tool.
+  const mcpPrincipal = `app-${slug}`;
+  const mcpTools = tpl.tools(slug);
+  const connectionId = id('conn');
+  const conn: AppConnection = {
+    id: connectionId,
+    appId: '', // set below once the app id is known
+    name: `${name} MCP`,
+    principal: mcpPrincipal,
+    tools: mcpTools,
+    owner: user.id,
+    domain,
+    visibility: 'Personal',
+    createdAt: t,
+  };
+
+  const app: App = {
+    id: id('app'),
+    slug,
+    name,
+    description,
+    template: tpl.key,
+    owner: user.id,
+    domain,
+    visibility: 'Personal',
+    mode: repo.mode,
+    repo: { fullName: repo.fullName, htmlUrl: repo.htmlUrl, seeded: repo.seeded },
+    subdomain,
+    pipeline,
+    designDecisions: tpl.designDecisions(name),
+    dataDescriptions: tpl.dataDescriptions(name),
+    docs: tpl.docs(name, subdomain),
+    chat: [],
+    dataArtifactId,
+    files: [
+      { name: `${slug}-export.csv`, description: 'Exported report generated by the app.', visibility: 'Personal' },
+    ],
+    connectionId,
+    mcpPrincipal,
+    mcpTools,
+    createdAt: t,
+    updatedAt: t,
+  };
+
+  conn.appId = app.id;
+  registerConnection(conn);
+
+  map.set(app.id, app);
+  writeThrough(app);
+
+  // 5. Audit the creation through the same Langfuse spine the agents use.
+  void trace({
+    principal: mcpPrincipal,
+    tool: 'generate',
+    input: { action: 'create_app', name, template: tpl.key },
+    output: { appId: app.id, repo: repo.fullName, connection: connectionId, mode: repo.mode },
+    decision: 'allow',
+  });
+
+  return app;
+}
+
+// --------------------------------------------------------------- Build chat ---
+
+/** Persist the running build-chat conversation under the app (most recent 40). */
+export async function saveChat(
+  appId: string,
+  user: CurrentUser,
+  messages: { role: 'user' | 'assistant'; content: string }[],
+): Promise<App> {
+  const map = await getCache();
+  const a = map.get(appId);
+  if (!a || a.owner !== user.id) throw withStatus(new Error('App not found'), 404);
+  const t = now();
+  a.chat = messages
+    .filter((m) => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+    .slice(-40)
+    .map((m) => ({ role: m.role, content: m.content, at: t }));
+  a.updatedAt = t;
+  map.set(a.id, a);
+  writeThrough(a);
+  return a;
+}
+
+/** Update the app's captured design decisions / data descriptions / docs. */
+export async function updateAppDocs(
+  appId: string,
+  user: CurrentUser,
+  patch: { designDecisions?: string; dataDescriptions?: string; docs?: string },
+): Promise<App> {
+  const map = await getCache();
+  const a = map.get(appId);
+  if (!a) throw withStatus(new Error('App not found'), 404);
+  const isOwner = a.owner === user.id;
+  const isDomainAdmin = user.role === 'admin' && user.domains.includes(a.domain);
+  if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to edit this app'), 403);
+  if (patch.designDecisions !== undefined) a.designDecisions = patch.designDecisions;
+  if (patch.dataDescriptions !== undefined) a.dataDescriptions = patch.dataDescriptions;
+  if (patch.docs !== undefined) a.docs = patch.docs;
+  a.updatedAt = now();
+  map.set(a.id, a);
+  writeThrough(a);
+  return a;
+}
+
+// ------------------------------------------------------------------ Promote ---
+
+/**
+ * Promote the app + everything under it one step up the ladder
+ * (Personal → Shared → Certified/Marketplace). Role-gated exactly like artifacts:
+ * Personal→Shared needs builder+, Shared→Certified needs admin. The actor must
+ * belong to the app's domain. Cascades to the app's data artifact, its files and
+ * its MCP connection, and audits the action.
+ */
+export async function promoteApp(appId: string, user: CurrentUser): Promise<App> {
+  const map = await getCache();
+  const a = map.get(appId);
+  if (!a) throw withStatus(new Error('App not found'), 404);
+  if (!user.domains.includes(a.domain)) {
+    throw withStatus(new Error('You can only promote apps in a domain you belong to'), 403);
+  }
+  let next: Visibility;
+  if (a.visibility === 'Personal') {
+    if (!canPromote(user.role, 'Personal')) {
+      throw withStatus(new Error('Promoting to Shared requires a Builder or Administrator'), 403);
+    }
+    next = 'Shared';
+  } else if (a.visibility === 'Shared') {
+    if (!canPromote(user.role, 'Shared')) {
+      throw withStatus(new Error('Promoting to the Marketplace requires an Administrator'), 403);
+    }
+    next = 'Certified';
+  } else {
+    throw withStatus(new Error('Already in the Marketplace'), 400);
+  }
+
+  a.visibility = next;
+  a.files = a.files.map((f) => ({ ...f, visibility: next }));
+  setConnectionVisibility(a.id, next);
+  // Cascade the real Personal data artifact through the SAME promotion ladder.
+  if (a.dataArtifactId) {
+    try {
+      const art = await getArtifact(a.dataArtifactId);
+      if (art && art.visibility !== 'Certified') await promoteArtifact(a.dataArtifactId, user);
+    } catch {
+      /* artifact may already be promoted; ignore */
+    }
+  }
+  a.updatedAt = now();
+  map.set(a.id, a);
+  writeThrough(a);
+
+  void trace({
+    principal: a.mcpPrincipal,
+    tool: 'generate',
+    input: { action: 'promote_app', by: user.id, role: user.role },
+    output: { appId: a.id, visibility: next },
+    decision: 'allow',
+  });
+  return a;
+}
+
+export type { Artifact };

@@ -51,7 +51,7 @@ Per-app credential Secrets are referenced by name (unchanged across modes); only
 the host/endpoint is indirected — see values.stackit-managed.yaml.
 */}}
 
-{{/* Postgres host: in-cluster CloudNativePG `pg-rw`, or the managed host. */}}
+{{/* Postgres host: in-cluster `pg-rw` (plain StatefulSet or CNPG), or the managed host. */}}
 {{- define "soa.pgHost" -}}
 {{- if .Values.postgres.enabled -}}
 pg-rw
@@ -125,4 +125,32 @@ http://minio:9000
 {{/* StorageClass helper: "" => cluster default. */}}
 {{- define "soa.storageClass" -}}
 {{- if .Values.global.storageClass }}storageClassName: {{ .Values.global.storageClass | quote }}{{- end -}}
+{{- end -}}
+
+{{/*
+Orchestrated, memory-safe startup (see values.yaml `startup` + `priorityClasses`).
+-----------------------------------------------------------------------------
+Argo CD sync-wave annotation for a startup tier. Waves stage the rollout so the
+node's memory ramps gradually instead of ~30 pods booting at once (which spiked
+> 32 GB and OOMKilled litellm / errored openmetadata). Tiers:
+  infra      -> wave 0 (Postgres/CNPG, OpenSearch, ClickHouse, Valkey, MinIO)
+  middleware -> wave 1 (LiteLLM, Langfuse, mock-model, egress)
+  apps       -> wave 2 (Superset, Dagster, OpenMetadata, Forgejo, Argo, OS UI, agents)
+Inert without Argo CD (e.g. local `helm install`), where the resource `requests`
+provide the memory backpressure instead. Args: dict "ctx" $ "tier" "<tier>".
+*/}}
+{{- define "soa.syncWaveAnno" -}}
+argocd.argoproj.io/sync-wave: {{ index .ctx.Values.startup.syncWaves .tier | quote }}
+{{- end -}}
+
+{{/*
+priorityClassName line for a tier ("infra" high / "app" low), gated by
+`priorityClasses.enabled`. Renders nothing when disabled so local-kind installs
+that don't create the PriorityClass objects still admit every pod. Place under a
+pod `spec:`. Args: dict "ctx" $ "tier" "<infra|app>".
+*/}}
+{{- define "soa.priorityClassName" -}}
+{{- if .ctx.Values.priorityClasses.enabled -}}
+priorityClassName: {{ index .ctx.Values.priorityClasses .tier "name" }}
+{{- end -}}
 {{- end -}}

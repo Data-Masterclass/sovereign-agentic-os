@@ -7,6 +7,7 @@ import { useState } from 'react';
 import PageHeader from '@/components/PageHeader';
 import AgentChat from '@/components/AgentChat';
 import ArtifactPanel from '@/components/ArtifactPanel';
+import SalesAssistant from '@/components/SalesAssistant';
 import { useApi } from '@/lib/useApi';
 
 type Agent = {
@@ -28,7 +29,7 @@ const STARTERS = [
 
 export default function AgentsPage() {
   const { data, loading, error, reload } = useApi<Data>('/api/agents');
-  const [tab, setTab] = useState<'running' | 'workspace' | 'build'>('running');
+  const [tab, setTab] = useState<'sales' | 'running' | 'workspace' | 'build'>('sales');
 
   return (
     <>
@@ -40,6 +41,9 @@ export default function AgentsPage() {
         </p>
 
         <div className="tabstrip">
+          <button className={tab === 'sales' ? 'active' : ''} onClick={() => setTab('sales')}>
+            Sales Assistant
+          </button>
           <button className={tab === 'running' ? 'active' : ''} onClick={() => setTab('running')}>
             Running agents
           </button>
@@ -50,6 +54,13 @@ export default function AgentsPage() {
             Build a new system
           </button>
         </div>
+
+        {tab === 'sales' ? (
+          <>
+            <div className="section-title">Sales Assistant · governed vertical slice</div>
+            <SalesAssistant />
+          </>
+        ) : null}
 
         {tab === 'workspace' ? (
           <ArtifactPanel
@@ -119,7 +130,9 @@ export default function AgentsPage() {
               <div className="stub-page">Probing agents…</div>
             ) : null}
           </>
-        ) : (
+        ) : null}
+
+        {tab === 'build' ? (
           <>
             <div className="section-title">Agent builder</div>
             <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
@@ -134,7 +147,7 @@ export default function AgentsPage() {
               starters={STARTERS}
             />
           </>
-        )}
+        ) : null}
       </div>
     </>
   );

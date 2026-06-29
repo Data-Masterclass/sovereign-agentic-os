@@ -9,10 +9,10 @@ description: >-
 type: application
 
 # Chart SemVer (the product version). Bump additively per packaging.md.
-version: 0.2.0
+version: 0.2.1
 
 # Informational: the public pre-release this chart corresponds to.
-appVersion: "0.2.0-alpha.1"
+appVersion: "0.2.0-alpha.2"
 
 home: https://github.com/datamasterclass/sovereign-agentic-os
 maintainers:
