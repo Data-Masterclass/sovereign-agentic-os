@@ -22,6 +22,12 @@ spec:
         controller:
           service:
             type: LoadBalancer
+            # Pin the STACKIT managed LB (yawol) to the reserved/static public IP
+            # so the OS keeps the SAME ingress IP across Service/cluster recreation
+            # (no DNS change, no cert re-issue). The IP is a user-managed STACKIT
+            # public IP tracked in Terraform (deploy/terraform/publicip.tf).
+            annotations:
+              lb.stackit.cloud/external-address: "193.148.171.38"
           ingressClassResource:
             default: true
   destination:

@@ -160,3 +160,11 @@ output "ingress_hostnames" {
   description = "Fully-qualified ingress hostnames -> chart ingress hosts."
   value       = { for s in var.ingress_subdomains : s => "${s}.${var.dns_name}" }
 }
+
+# Reserved/static public IP pinned to the ingress LB (see publicip.tf). Feed this
+# into `-var ingress_lb_ip=...` for `make dns` so DNS always tracks the reserved
+# address; it is stable across Service/cluster recreation.
+output "ingress_public_ip" {
+  description = "Reserved public IPv4 pinned to the ingress LoadBalancer via lb.stackit.cloud/external-address."
+  value       = stackit_public_ip.ingress.ip
+}

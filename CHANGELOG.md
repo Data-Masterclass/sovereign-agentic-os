@@ -29,6 +29,47 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   CODEOWNERS review + green CI, **signed commits required**, linear history, and
   admin self-merge bypass for the sole maintainer.
 
+## [0.2.0-alpha.3] — 2026-06-29
+
+Headline: a **clean deploy now brings the agents up green on its own** — the
+LiteLLM schema is migrated and the scoped agent key registered without relying
+on Helm/Argo hooks — plus the public console links, a stable ingress IP, and a
+ClickHouse OOM fix from the live STACKIT shakedown.
+
+### Fixed
+
+- **Agent-Core clean-deploy fix — agents come up green without `--no-hooks`
+  gaps.** A fresh install left the agents returning **401s**: the LiteLLM Prisma
+  schema was never created and the scoped agent virtual key was never
+  registered. Both steps were **hook-gated**, and the deploy is forced to run
+  `helm ... --no-hooks` (the argo-cd `argocd-redis-secret-init` pre-upgrade hook
+  fails on this cluster), so both were silently skipped.
+  - **Schema migration** now runs as a `db-migrate` **initContainer** on the
+    LiteLLM proxy pod (`prisma migrate deploy`), part of the Deployment so it
+    runs on every pod start regardless of `--no-hooks` / hooks-disabled / ArgoCD
+    sync. It gates the proxy (the proxy never serves before the schema exists)
+    and is independent of `DISABLE_SCHEMA_UPDATE`. 2Gi limit (1Gi OOMKills on a
+    cold DB). The subchart `migrationJob` stays enabled only for the
+    `DISABLE_SCHEMA_UPDATE=true` it sets on the proxy.
+  - **Agent key** (`litellm-agent-key-init`) is converted from a Helm
+    post-install/post-upgrade **hook** to a **normal sync-wave resource** (apps
+    tier) so a plain `helm install` (hooks on OR off) and ArgoCD sync always run
+    it; an ArgoCD `Replace=true` sync-option lets the immutable Job recreate
+    idempotently on later syncs.
+  - Validated on local kind: schema migrates from an empty DB (0 → 66 tables);
+    a clean apply brings LiteLLM + sample-agent + poet-agent up green with the
+    agent key returning 200 (no 401) and no manual steps.
+- **OS UI console links use the public ingress URLs when deployed**, not
+  `localhost`: the Next.js console route is `force-dynamic` and derives each
+  console URL from its `consoleEnv` / matching ingress host at request time.
+- **Static reserved ingress public IP.** The ingress-nginx LoadBalancer is
+  pinned to a reserved STACKIT public IP via the
+  `lb.stackit.cloud/external-address` annotation, with the address tracked in
+  Terraform — so the IP (and the DNS records pointing at it) survive LB
+  re-creation.
+- **ClickHouse memory limit 2Gi → 3Gi** to stop the `OOMKilled` crashloop
+  (resident caches + Langfuse schema migrations exceeded 2Gi).
+
 ## [0.2.0-alpha.2] — 2026-06-29
 
 Headline: **four golden paths** become demonstrable end-to-end, the in-cluster

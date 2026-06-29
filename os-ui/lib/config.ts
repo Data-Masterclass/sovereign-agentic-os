@@ -16,6 +16,19 @@ function env(name: string, fallback: string): string {
   return v && v.length > 0 ? v : fallback;
 }
 
+// Like env(), but distinguishes "unset" from "set-but-empty". Used for the
+// browser-reachable console URLs: when ingress is enabled but a tool has NO
+// public host, the chart sets its console env var to an EXPLICIT empty string
+// (soa.consoleUrl). That empty string must be honoured as "no public URL" so
+// the UI HIDES that tool's "Open" link — NOT silently fall back to a localhost
+// default (which would render a dead localhost link on a real deployment). When
+// the var is genuinely unset (local dev / local-kind), we still use the
+// port-forward fallback so local links keep working.
+function consoleEnv(name: string, fallback: string): string {
+  const v = process.env[name];
+  return v === undefined ? fallback : v;
+}
+
 // Trim a single trailing slash so we can safely append paths.
 function base(url: string): string {
   return url.replace(/\/+$/, '');
@@ -125,23 +138,26 @@ export const config = {
   // ---- Browser-reachable consoles (opened/linked from the browser, never
   // proxied; each tool has its own auth + session). Default to the local
   // port-forward addresses from docs/components/*.md; override per environment
-  // (e.g. an Ingress host) once each console is exposed. -----------------------
-  supersetUrl: base(env('SUPERSET_URL', 'http://localhost:8088')),
-  langfuseConsoleUrl: base(env('LANGFUSE_CONSOLE_URL', 'http://localhost:3000')),
-  forgejoConsoleUrl: base(env('FORGEJO_CONSOLE_URL', 'http://localhost:3001')),
-  argocdUrl: base(env('ARGOCD_URL', 'http://localhost:8080')),
-  openmetadataUrl: base(env('OPENMETADATA_URL', 'http://localhost:8585')),
-  dagsterConsoleUrl: base(env('DAGSTER_CONSOLE_URL', 'http://localhost:3070')),
+  // (e.g. an Ingress host) once each console is exposed. These use consoleEnv so
+  // an EXPLICIT empty value from the chart (tool exposed via ingress but with no
+  // public host) yields "" and the UI hides the "Open" link instead of linking
+  // to a dead localhost address on a real deployment. -------------------------
+  supersetUrl: base(consoleEnv('SUPERSET_URL', 'http://localhost:8088')),
+  langfuseConsoleUrl: base(consoleEnv('LANGFUSE_CONSOLE_URL', 'http://localhost:3000')),
+  forgejoConsoleUrl: base(consoleEnv('FORGEJO_CONSOLE_URL', 'http://localhost:3001')),
+  argocdUrl: base(consoleEnv('ARGOCD_URL', 'http://localhost:8080')),
+  openmetadataUrl: base(consoleEnv('OPENMETADATA_URL', 'http://localhost:8585')),
+  dagsterConsoleUrl: base(consoleEnv('DAGSTER_CONSOLE_URL', 'http://localhost:3070')),
   opensearchDashboardsUrl: base(
-    env('OPENSEARCH_DASHBOARDS_URL', 'http://localhost:5601'),
+    consoleEnv('OPENSEARCH_DASHBOARDS_URL', 'http://localhost:5601'),
   ),
-  cubeConsoleUrl: base(env('CUBE_CONSOLE_URL', 'http://localhost:4001')),
+  cubeConsoleUrl: base(consoleEnv('CUBE_CONSOLE_URL', 'http://localhost:4001')),
 
   // Layer-4 consoles (browser-reachable; default to local port-forwards).
-  jupyterhubConsoleUrl: base(env('JUPYTERHUB_CONSOLE_URL', 'http://localhost:8000')),
-  mlflowConsoleUrl: base(env('MLFLOW_CONSOLE_URL', 'http://localhost:5000')),
-  featureformConsoleUrl: base(env('FEATUREFORM_CONSOLE_URL', 'http://localhost:7878')),
-  kserveConsoleUrl: base(env('KSERVE_CONSOLE_URL', 'http://localhost:8080')),
+  jupyterhubConsoleUrl: base(consoleEnv('JUPYTERHUB_CONSOLE_URL', 'http://localhost:8000')),
+  mlflowConsoleUrl: base(consoleEnv('MLFLOW_CONSOLE_URL', 'http://localhost:5000')),
+  featureformConsoleUrl: base(consoleEnv('FEATUREFORM_CONSOLE_URL', 'http://localhost:7878')),
+  kserveConsoleUrl: base(consoleEnv('KSERVE_CONSOLE_URL', 'http://localhost:8080')),
 } as const;
 
 export type AppConfig = typeof config;

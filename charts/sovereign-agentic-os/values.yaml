@@ -341,9 +341,11 @@ clickhouse:
   # Infra tier — wave 0, high-priority (wired in templates/clickhouse/clickhouse.yaml).
   resources:
     # ClickHouse keeps mark/uncompressed caches resident; request reflects real
-    # steady-state (~0.8–1Gi). The 2Gi limit is cgroup-aware (CH caps to it).
+    # steady-state (~0.8–1Gi). The limit is cgroup-aware (CH caps max_server_memory_usage
+    # to ~90% of it). A 2Gi limit OOMKilled (exit 137) on boot/migrations — ClickHouse's
+    # resident caches + Langfuse schema migrations exceed 2Gi; 3Gi gives headroom.
     requests: { cpu: 200m, memory: 1Gi }
-    limits: { cpu: "2", memory: 2Gi }
+    limits: { cpu: "2", memory: 3Gi }
   local:
     password: clickhouse-local-dev
 
@@ -513,7 +515,63 @@ litellm:
       usernameKey: username
       passwordKey: password
   migrationJob:
+    # Keep enabled: the subchart sets DISABLE_SCHEMA_UPDATE=true on the proxy
+    # container when this is on, so the running proxy never races the DB on a
+    # `prisma db push` at startup. The ACTUAL schema migration is owned by the
+    # initContainer below (extraInitContainers), NOT this Job — see why there.
     enabled: true
+  # ---------------------------------------------------------------------------
+  # Schema migration as an initContainer on the proxy pod (NOT a Helm/Argo hook).
+  #
+  # ROOT-CAUSE FIX: the subchart owns the migration only via its `migrations` Job,
+  # which is hook-gated — an ArgoCD `PreSync` hook by default (migrationJob.hooks),
+  # and a Helm pre-install/pre-upgrade hook if hooks.helm.enabled. On this cluster
+  # the deploy is forced to run `helm ... --no-hooks` (the argo-cd
+  # `argocd-redis-secret-init` pre-upgrade hook fails here), and any hook-gated
+  # migration is unreliable under that constraint (a Helm-hook migration is
+  # skipped outright; a PreSync/Job migration can be skipped or fail without
+  # blocking the proxy) — so the LiteLLM Prisma schema ended up missing and agents
+  # hit 401s. An initContainer is part of the Deployment, so it runs on EVERY pod
+  # start regardless of `--no-hooks` / hooks-disabled / ArgoCD sync — making the
+  # schema unconditional rather than hook-dependent.
+  #
+  # `prisma migrate deploy` (via the proxy's prisma_migration.py) is idempotent
+  # and independent of DISABLE_SCHEMA_UPDATE, and gates the proxy: the proxy
+  # container will not start until the schema exists in pg-rw/litellm — so agents
+  # can never reach LiteLLM before the schema is present. Reuses the subchart
+  # migration Job's image + command, with the DB-connection env it needs. (Where
+  # the subchart Job does still run it is a redundant idempotent no-op — kept
+  # enabled only for the DISABLE_SCHEMA_UPDATE=true it sets on the proxy, above.)
+  extraInitContainers:
+    - name: db-migrate
+      image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+      imagePullPolicy: "{{ .Values.image.pullPolicy }}"
+      command: ["python", "litellm/proxy/prisma_migration.py"]
+      workingDir: "/app"
+      env:
+        - name: DATABASE_USERNAME
+          valueFrom:
+            secretKeyRef: { name: postgres-litellm-credentials, key: username }
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef: { name: postgres-litellm-credentials, key: password }
+        - name: DATABASE_HOST
+          value: pg-rw
+        - name: DATABASE_NAME
+          value: litellm
+        # $(VAR) refers to the env vars defined above (k8s dependent-env expansion).
+        - name: DATABASE_URL
+          value: postgresql://$(DATABASE_USERNAME):$(DATABASE_PASSWORD)@$(DATABASE_HOST)/$(DATABASE_NAME)
+        # Force the migration to run here even though the proxy container has it
+        # disabled (schema ownership lives in this initContainer).
+        - name: DISABLE_SCHEMA_UPDATE
+          value: "false"
+      resources:
+        # Prisma client-generate + `migrate deploy` spikes RAM; 1Gi OOMKills
+        # (exit 137) on a cold DB. 2Gi limit matches the proxy container and
+        # migrates a fresh schema reliably. Short-lived (runs once per pod start).
+        requests: { cpu: 100m, memory: 512Mi }
+        limits: { cpu: "1", memory: 2Gi }
   # Master key + Langfuse env come from our local Secret.
   masterkeySecretName: litellm-credentials
   masterkeySecretKey: masterkey

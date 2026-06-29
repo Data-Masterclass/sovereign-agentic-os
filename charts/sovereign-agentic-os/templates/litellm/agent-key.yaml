@@ -1,9 +1,19 @@
 {{- if and .Values.litellm.enabled .Values.litellmAgentKey.enabled }}
 {{- /*
   Provision a scoped LiteLLM virtual key for the agents (least privilege).
-  The key value lives in a Secret (the agents read it); a post-install/upgrade
-  hook Job calls /key/generate with the master key to register it in LiteLLM,
-  limited to the allowed models with a budget cap. Idempotent.
+  The key value lives in a Secret (the agents read it); a Job calls /key/generate
+  with the master key to register it in LiteLLM, limited to the allowed models
+  with a budget cap. Idempotent (re-checks /key/info and exits 0 if present).
+
+  ROOT-CAUSE FIX: this Job used to be a Helm post-install/post-upgrade *hook*.
+  The live deploy is forced to run `helm ... --no-hooks` (the argo-cd
+  `argocd-redis-secret-init` pre-upgrade hook fails on this cluster), which
+  silently skips ALL hooks — so the agent key was never registered and the
+  agents hit 401s. It is now a NORMAL (non-hook) resource so a plain
+  `helm install` (hooks on OR off) and ArgoCD sync both always run it. It polls
+  LiteLLM readiness (the proxy only serves after its migration initContainer has
+  created the schema), then registers the key. `ttlSecondsAfterFinished` lets it
+  self-clean and be recreated/re-run idempotently on a later upgrade/sync.
 */}}
 {{- $k := .Values.litellmAgentKey }}
 {{- if eq .Values.global.profile "local" }}
@@ -29,9 +39,14 @@ metadata:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "litellm-key-init") | nindent 4 }}
   annotations:
-    "helm.sh/hook": post-install,post-upgrade
-    "helm.sh/hook-weight": "10"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    # NOT a Helm hook (see header): normal resource so `--no-hooks` deploys and
+    # ArgoCD syncs always run it. App tier so it lands after LiteLLM (wave 1).
+    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "apps") | nindent 4 }}
+    # A Job spec is immutable. When ArgoCD manages this chart, Replace lets a
+    # spec change (image/models/budget) recreate the Job instead of failing a
+    # patch; with ttlSecondsAfterFinished it re-runs idempotently. Inert under
+    # plain `helm install/upgrade` (helm ignores this annotation).
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
   backoffLimit: 10
   ttlSecondsAfterFinished: 300

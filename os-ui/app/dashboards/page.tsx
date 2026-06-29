@@ -8,6 +8,13 @@ import { config } from '@/lib/config';
 
 // Server component: renders the (client) artifact workspace for dashboards and
 // hands the browser a plain Superset link (Superset has its own auth + session).
+//
+// force-dynamic so the Superset console URL is read from the RUNTIME env
+// (SUPERSET_URL, e.g. the public ingress host) at request time. Without this,
+// Next prerenders this page at build time and bakes in the localhost default
+// from config.ts — making the deployed "Open" link point at localhost.
+export const dynamic = 'force-dynamic';
+
 export default function DashboardsPage() {
   const url = config.supersetUrl;
   return (

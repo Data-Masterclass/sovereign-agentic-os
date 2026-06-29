@@ -4,6 +4,13 @@ import { config } from '@/lib/config';
 // Server component: the launchpad for the full external tool consoles. These
 // keep their own auth + session, so the OS UI links out rather than proxying.
 // Each card carries the port-forward command + URL + dev login from the docs.
+//
+// force-dynamic so the console URLs are read from the RUNTIME env (SUPERSET_URL,
+// LANGFUSE_CONSOLE_URL, … — the public ingress hosts on a deploy) at request
+// time. Without this, Next prerenders this page at build time and bakes in the
+// localhost defaults from config.ts, so every deployed "Open" link goes to
+// localhost regardless of the container's (correct) runtime env.
+export const dynamic = 'force-dynamic';
 
 type Console = {
   name: string;
