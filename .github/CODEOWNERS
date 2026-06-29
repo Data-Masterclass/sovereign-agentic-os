@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# Code owners for Sovereign Agentic OS.
+# Owners listed here are automatically requested for review and — with the branch
+# ruleset on `main` — must approve a pull request before it can be merged.
+# The LAST matching pattern for a given path takes precedence.
+
+# Default — the maintainers team owns everything not matched more specifically.
+*                         @Data-Masterclass/maintainers
+
+# Helm chart & deployment surface (infrastructure-sensitive).
+/charts/                  @Data-Masterclass/maintainers
+/deploy/                  @Data-Masterclass/maintainers
+/install.sh               @Data-Masterclass/maintainers
+/Makefile                 @Data-Masterclass/maintainers
+
+# Security, licensing, packaging & governance (high-trust files).
+/SECURITY.md              @Data-Masterclass/maintainers
+/GOVERNANCE.md            @Data-Masterclass/maintainers
+/CONTRIBUTING.md          @Data-Masterclass/maintainers
+/CLA.md                   @Data-Masterclass/maintainers
+/LICENSE                  @Data-Masterclass/maintainers
+/NOTICE                   @Data-Masterclass/maintainers
+/TRADEMARKS.md            @Data-Masterclass/maintainers
+/licenses/                @Data-Masterclass/maintainers
+/.github/                 @Data-Masterclass/maintainers

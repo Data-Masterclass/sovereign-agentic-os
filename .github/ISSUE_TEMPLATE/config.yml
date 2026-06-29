@@ -1,8 +1,13 @@
-blank_issues_enabled: true
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+blank_issues_enabled: false
 contact_links:
   - name: Documentation — Sovereign Agentic OS Guide
     url: https://github.com/Data-Masterclass/sovereign-agentic-os/blob/main/docs/Sovereign-Agentic-OS-Guide.md
     about: The full install / operate / understand manual — please check here first.
-  - name: Security report
+  - name: Report a security vulnerability (private)
     url: https://github.com/Data-Masterclass/sovereign-agentic-os/security/advisories/new
-    about: Please report security vulnerabilities privately, not as a public issue.
+    about: Please report security vulnerabilities privately via a security advisory, never as a public issue.
+  - name: Ask a question / discuss
+    url: https://github.com/Data-Masterclass/sovereign-agentic-os/discussions
+    about: General questions, ideas, and help. Bugs and feature requests use the forms above.

@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+name: Bug report
+description: Report a problem with Sovereign Agentic OS (pre-beta)
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ⚠️ This is **pre-beta / experimental** software. Rough edges and breaking
+        changes are expected — thank you for reporting!
+
+        **Do not report security vulnerabilities here.** Use a
+        [private security advisory](https://github.com/Data-Masterclass/sovereign-agentic-os/security/advisories/new)
+        instead (see `SECURITY.md`).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Describe the bug
+      description: A clear and concise description of what went wrong.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: To reproduce
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1. `./install.sh` with which options (defaults / managed / `ml.enabled`)?
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      value: |
+        - Deployment target: kind / STACKIT / Azure / on-prem / air-gapped
+        - Chart version: (e.g. `0.2.1`)
+        - Kubernetes version + how (kind / SKE / ...):
+        - Host OS + arch (e.g. macOS arm64, Linux x86_64):
+        - Helm / kubectl versions:
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / output
+      description: >-
+        Relevant `kubectl logs`, `helm` output, or the failing pod's events.
+        **Redact any real secrets** before pasting.
+      render: shell
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else that helps.
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have searched existing issues and this is not a duplicate.
+          required: true
+        - label: This is not a security vulnerability (those go to a private advisory).
+          required: true

@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+name: Feature request
+description: Suggest an idea or improvement for Sovereign Agentic OS
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Is your feature request related to a problem?
+      description: A clear and concise description of the problem or limitation.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Describe the solution you'd like
+      description: What you'd like to happen.
+    validations:
+      required: true
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Which layer / component does this touch?
+      multiple: true
+      options:
+        - L1 · Agent core (LangGraph / LiteLLM / Langfuse / OpenSearch)
+        - L2 · Context (OPA / Docling / Haystack / dbt / Cube / OpenMetadata / Dagster)
+        - L3 · Self-service (Iceberg/Polaris / DuckDB/Trino / Superset / Forgejo / Argo CD / MCP)
+        - L4 · Science (JupyterHub / MLflow / Featureform / KServe)
+        - OS UI / Admin Console
+        - Packaging / install / docs
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Describe alternatives you've considered
+      description: Any alternative solutions or features.
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else, mockups, or references.
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have searched existing issues and this is not a duplicate.
+          required: true

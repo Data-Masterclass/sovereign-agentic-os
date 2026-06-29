@@ -11,6 +11,24 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 This is **pre-beta** software: APIs, values, and surfaces may change between
 `alpha`/`beta` pre-releases without notice.
 
+## [Unreleased]
+
+### Governance
+
+- **Open-source Git governance.** Added `GOVERNANCE.md` (roles, lazy-consensus
+  decision-making, how to become a maintainer, SemVer release process),
+  `SECURITY.md` (private vulnerability reporting via GitHub Security Advisories +
+  `security@datamasterclass.com`, coordinated disclosure), `.github/CODEOWNERS`
+  (the `@Data-Masterclass/maintainers` team owns the tree), a pull-request
+  template, and YAML issue forms (`bug_report.yml`, `feature_request.yml`,
+  `config.yml` — blank issues disabled, security routed to advisories).
+- **CI workflow** (`.github/workflows/ci.yml`) running on pull requests to `main`
+  with stable, required-check job names: `build` (os-ui), `helm-lint`, and
+  `secret-scan` (gitleaks); actions pinned to commit SHAs.
+- **Branch protection** on `main` (public repo): PR required with 1 approval +
+  CODEOWNERS review + green CI, **signed commits required**, linear history, and
+  admin self-merge bypass for the sole maintainer.
+
 ## [0.2.0-alpha.2] — 2026-06-29
 
 Headline: **four golden paths** become demonstrable end-to-end, the in-cluster
