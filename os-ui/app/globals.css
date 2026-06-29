@@ -1161,6 +1161,56 @@ code {
   font-size: 11px;
 }
 
+/* Reasoning-target segmented control (agent editor) — three-way model choice.
+   Reuses the warm gold tokens + snappy transitions of the design system so the
+   selected state reads identically in light + dark; the routing/fallback
+   machinery stays hidden behind one calm hint line below it. */
+.rt-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  margin-top: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.rt-seg-opt {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: calc(var(--radius) - 4px);
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease, transform 0.12s ease;
+}
+.rt-seg-opt:hover:not(.active):not(:disabled) {
+  color: var(--text);
+}
+.rt-seg-opt:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.rt-seg-opt.active {
+  background: var(--gold-soft);
+  border-color: var(--gold-line);
+  color: var(--gold-text);
+}
+.rt-seg-opt:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.rt-seg-hint {
+  color: var(--text-faint);
+}
+@media (prefers-reduced-motion: reduce) {
+  .rt-seg-opt {
+    transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+  }
+}
+
 .comp-core {
   margin-left: auto;
   text-transform: uppercase;

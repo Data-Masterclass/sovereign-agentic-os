@@ -72,6 +72,15 @@ data:
     }
   data.json: |
     {{ dict "grants" $opa.grants "requires_approval" ($opa.requiresApproval | default list) | toJson }}
+  # SECOND policy doc — Trino data governance (row filter by domain + column mask
+  # by sensitivity). Same OPA, different package (`trino`); agentic.authz untouched.
+  trino.rego: |
+{{ .Files.Get "policies/trino.rego" | indent 4 }}
+  # Governance data the Trino policy reads (data.governance). In production this is
+  # populated from the artifact-registry / OpenMetadata visibility model; locally
+  # we seed the Sales worked example so the governance proof runs on kind.
+  governance.json: |
+    {{ dict "governance" ($opa.governance | default dict) | toJson }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -91,7 +100,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/policy: {{ printf "%s-%s" ($opa.grants | toJson) "v1" | sha256sum }}
+        checksum/policy: {{ printf "%s-%s-%s" ($opa.grants | toJson) (($opa.governance | default dict) | toJson) (.Files.Get "policies/trino.rego") | sha256sum }}
       labels:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa") | nindent 8 }}
@@ -116,6 +125,8 @@ spec:
             # that make a recursive dir load see each file multiple times.
             - "/policies/authz.rego"
             - "/policies/data.json"
+            - "/policies/trino.rego"
+            - "/policies/governance.json"
           ports:
             - { name: http, containerPort: 8181 }
           readinessProbe:

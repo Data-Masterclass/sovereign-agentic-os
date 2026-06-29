@@ -113,6 +113,20 @@ litellm:
           model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
           api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
           api_key: os.environ/STACKIT_API_KEY
+      # Reasoning contract (keeps routing.ts' `sovereign-reasoning` default valid in
+      # pure Mode B). There is NO in-box self-host here, so BOTH the sovereign and
+      # the fast reasoning names map to STACKIT Qwen — the local/fast distinction
+      # only exists where the m3i.16 box runs Magistral (Mode A / self-hosted).
+      - model_name: sovereign-reasoning
+        litellm_params:
+          model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
+          api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
+          api_key: os.environ/STACKIT_API_KEY
+      - model_name: sovereign-reasoning-fast
+        litellm_params:
+          model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
+          api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
+          api_key: os.environ/STACKIT_API_KEY
     router_settings:
       routing_strategy: simple-shuffle
       num_retries: 3
@@ -122,6 +136,7 @@ litellm:
       fallbacks:
         - sovereign-default: ["sovereign-premium"]
         - sovereign-mock: ["sovereign-premium"]
+        - sovereign-reasoning: ["sovereign-reasoning-fast"]
     litellm_settings:
       success_callback: ["langfuse"]
       drop_params: true

@@ -1,0 +1,4 @@
+# Test-only deps. pytest runs the interpreter fully HERMETIC (no network): the
+# model client and the governed-tool call are injected as fakes, so neither the
+# runtime deps nor a live LiteLLM/os-ui are needed to run the suite.
+pytest>=8.0,<9

@@ -1,8 +1,10 @@
 {{- if .Values.superset.enabled }}
 {{- /*
-  Superset bootstrap — registers the dbt warehouse as a database connection and
-  creates a dataset on analytics.daily_revenue, so a domain can build charts on
-  it. Post-install/upgrade hook; idempotent. Uses the query-tool image (requests).
+  Superset bootstrap — registers CENTRAL TRINO as a database connection (Trino
+  SQLAlchemy dialect) and creates a dataset on analytics.daily_revenue, so a
+  domain can build charts on the governed mart THROUGH Trino (OPA row/column
+  enforced). No DuckDB / Postgres-warehouse datasource. Post-install/upgrade hook;
+  idempotent. Uses the query-tool image (requests).
 */}}
 apiVersion: v1
 kind: ConfigMap
@@ -26,13 +28,14 @@ data:
         "provider": "db", "refresh": True}, timeout=15).json()["access_token"]
     H = {"Authorization": "Bearer " + t, "Referer": B}
     H["X-CSRFToken"] = S.get(B + "/api/v1/security/csrf_token/", headers=H).json()["result"]
-    uri = f'postgresql://{os.environ["WH_USER"]}:{os.environ["WH_PASS"]}@{{ include "soa.pgHost" . }}:5432/warehouse'
-    ex = S.get(B + "/api/v1/database/?q=(filters:!((col:database_name,opr:eq,value:warehouse)))", headers=H).json()["result"]
+    # Central Trino (no password on kind; the user identifies the domain to OPA).
+    uri = f'trino://{os.environ["TRINO_USER"]}@{os.environ["TRINO_HOST"]}:{os.environ["TRINO_PORT"]}/{os.environ["TRINO_CATALOG"]}'
+    ex = S.get(B + "/api/v1/database/?q=(filters:!((col:database_name,opr:eq,value:trino)))", headers=H).json()["result"]
     if ex:
-        dbid = ex[0]["id"]; print("warehouse db exists", dbid)
+        dbid = ex[0]["id"]; print("trino db exists", dbid)
     else:
-        dbid = S.post(B + "/api/v1/database/", headers=H, json={"database_name": "warehouse", "sqlalchemy_uri": uri}).json()["id"]
-        print("created warehouse db", dbid)
+        dbid = S.post(B + "/api/v1/database/", headers=H, json={"database_name": "trino", "sqlalchemy_uri": uri}).json()["id"]
+        print("created trino db", dbid)
     ds = S.get(B + "/api/v1/dataset/?q=(filters:!((col:table_name,opr:eq,value:daily_revenue)))", headers=H).json()["result"]
     if ds:
         print("dataset exists", ds[0]["id"])
@@ -83,10 +86,14 @@ spec:
               value: {{ .Values.superset.init.adminUser.username | quote }}
             - name: SUPERSET_PASS
               value: {{ .Values.superset.init.adminUser.password | quote }}
-            - name: WH_USER
-              valueFrom: { secretKeyRef: { name: postgres-warehouse-credentials, key: username } }
-            - name: WH_PASS
-              valueFrom: { secretKeyRef: { name: postgres-warehouse-credentials, key: password } }
+            - name: TRINO_HOST
+              value: "trino"
+            - name: TRINO_PORT
+              value: "8080"
+            - name: TRINO_USER
+              value: "superset-sales"
+            - name: TRINO_CATALOG
+              value: "iceberg"
           command: ["python", "/script/bootstrap.py"]
           resources:
             requests: { cpu: 25m, memory: 64Mi }

@@ -13,6 +13,44 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [0.2.0-alpha.8] — 2026-06-29
+
+Headline: the **consolidation release** — agents now **execute for real**. This
+folds together the central governed query engine, a **live agent-runtime** that
+replaces the alpha.6 in-process mocks, a **local reasoning tier**, and a
+**two-local-Mistral** model default — all on the alpha.7 governance fixes.
+
+### Added
+
+- **Central governed Trino + a DuckDB personal/sandbox lane.** A central,
+  policy-governed **Trino** query engine is the shared analytics plane (every
+  query routed through the governed spine), with **DuckDB** providing the
+  fast, embedded **personal / sandbox** lane for individual exploration that
+  never touches the shared engine.
+- **Live agent-runtime + 5 live BuildAdapters.** The Agents tab no longer runs
+  against in-process mocks (alpha.6): a **live agent-runtime** with **five live
+  BuildAdapters** means agents **execute for real**, fully governed —
+  model/connection/tool calls routed **LiteLLM → OPA → Langfuse**, **Cilium
+  default-deny egress** on agent workloads, and **CronJob**-backed schedules for
+  scheduled systems.
+- **Local Magistral 24B reasoning tier.** A self-hosted **Magistral 24B**
+  reasoning model served on **llama.cpp** (capped at **6 cores**) adds an in-box
+  reasoning tier — no provider key, fully offline.
+
+### Changed
+
+- **Default model routing → two local Mistral models.** The default is now
+  **two-local-Mistral**: the **reasoning** tier resolves to the local
+  **Magistral 24B** and the **fallback/light** tier to the **in-box Ministral**,
+  with **STACKIT off by default**. The stack's default reasoning + chat path is
+  now fully self-hosted and permissive out of the box.
+
+### Fixed
+
+- Consolidated the **alpha.7 governance/authorization fixes** (the six Agents-tab
+  view-vs-edit / read-only-authorizes-write / disabled-agents-still-run /
+  phantom-handoff / Marketplace double-list findings) into this release.
+
 ## [0.2.0-alpha.7] — 2026-06-29
 
 ### Fixed

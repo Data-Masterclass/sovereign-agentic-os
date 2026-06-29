@@ -92,8 +92,9 @@ The platform is organized into layers that you can reason about — and enable �
   (RAG pipelines), **Dagster** (orchestration), **dbt** (transforms), **Cube** (the metrics/semantic
   layer), and **OpenMetadata** (catalog + lineage).
 - **Layer 3 — Self-service.** Query, explore, visualize, and ship: the **Iceberg** lakehouse
-  (**Polaris** catalog + **DuckDB** as the default query engine, Trino/Spark optional at scale),
-  **Superset** for BI/dashboards, and **Forgejo + Argo CD** for software delivery (git → CI → GitOps;
+  (**Polaris** catalog + **central Trino** as the governed query engine for all shared marts — OPA
+  row/column governance + per-domain resource groups; DuckDB kept only for the personal/sandbox lane
+  behind Trino), **Superset** for BI/dashboards, and **Forgejo + Argo CD** for software delivery (git → CI → GitOps;
   the CI runner builds a container image, pushes it to Forgejo's registry, and Argo redeploys it).
 - **Layer 4 — Science / ML (opt-in, off by default).** Traditional ML: **JupyterHub** (notebooks),
   **MLflow** (experiment tracking + model registry), **Featureform** (feature store, MPL-2.0,
@@ -261,7 +262,7 @@ The full L1+L2+L3 set is sized for a large (96 GB) STACKIT node. To fit a 14 GB 
 docling:      { enabled: false }   # pulls ML models; RAM-heavy
 osdashboards: { enabled: false }   # ~0.5–1 GB Node.js app
 openmetadata: { enabled: false }   # heaviest single component (JVM ~2–3 GB)
-trino:        { enabled: false }   # optional scale engine (DuckDB is the default)
+trino:        { enabled: true }    # central GOVERNED query engine (off only on a tiny node)
 spark:        { enabled: false }   # optional distributed batch engine
 ```
 
@@ -379,26 +380,24 @@ canned — swap in any model in LiteLLM with no agent change.) You can also do t
 **Agents** tab. Edit the seed knowledge via
 `sampleAgent.knowledge` in values — it is re-ingested on restart.
 
-## 2. Query the lakehouse (DuckDB / MCP via LiteLLM)
+## 2. Query the lakehouse (central Trino / MCP via LiteLLM)
 
-The **query-tool** runs DuckDB SQL over the Iceberg lakehouse and is registered in the LiteLLM **MCP
-gateway** as the OPA-gated `query` tool, so agents can query data through the same governed endpoint.
+The **query-tool** runs read-only SQL **through central Trino** over the Iceberg marts and is
+registered in the LiteLLM **MCP gateway** as the OPA-gated `query` tool. OPA gates tool access;
+**Trino enforces row/column governance** (row filter by domain, column mask by sensitivity) on every
+read, so agents query data through the same governed endpoint as the BI layer.
 
 ```bash
-# Direct HTTP against the query tool (seeded table: analytics.orders, 5 demo rows):
+# Direct HTTP against the governed query tool (dbt-trino mart: analytics.daily_revenue):
 kubectl -n agentic-os run q --rm -i --restart=Never --image=curlimages/curl:8.11.1 -- \
   curl -sS http://query-tool:8000/query -H "Content-Type: application/json" \
-  -d '{"sql":"select customer, sum(amount) from orders group by 1"}'
-
-# List tables:
-kubectl -n agentic-os run t --rm -i --restart=Never --image=curlimages/curl:8.11.1 -- \
-  curl -sS http://query-tool:8000/tables
+  -d '{"sql":"select order_date, revenue from daily_revenue order by 1"}'
 ```
 
 Agents reach the same tool via LiteLLM's MCP endpoint (`http://agentic-os-litellm:4000/mcp`, tool
 `sovereign_query-query`), and OPA decides whether the calling key is allowed. In the OS UI, the
-**Data** tab is the table browser + SQL surface. DuckDB is the default engine (embedded,
-fast at normal scale); enable `trino.enabled` for federation at scale.
+**Data** tab is the table browser + SQL surface (governed, via Trino). The **My data** lane gives a
+private DuckDB sandbox — uploads + a masked pull-extract through Trino — never the governed marts.
 
 ## 3. Build a dashboard (Superset)
 
@@ -480,8 +479,9 @@ Marketplace.
 In **Data → New data product** you **load** (file/connection/Supabase snapshot), **transform**
 (dbt models + tests), **document** (cataloged in OpenMetadata with lineage), define **metrics** (Cube),
 and build **dashboards** (Superset). Two tiers stay separate: **Supabase** holds operational/app state;
-**Iceberg** on object storage holds the analytical data products. DuckDB/Trino query the lake. Agents
-read the *same* marts + metrics as the dashboards, so the numbers never diverge.
+**Iceberg** on object storage holds the analytical data products. **Central Trino** is the governed
+engine over the lake (dbt-trino builds the marts; Cube, Superset and the agent `query` tool all read
+through it). Agents read the *same* marts + metrics as the dashboards, so the numbers never diverge.
 
 ## Agents
 
@@ -557,33 +557,48 @@ every call logged to Langfuse, MCP tool servers fronted here. DB-backed (CNPG `l
 
 - **Access:** `svc/agentic-os-litellm 4000:4000` → admin UI `http://localhost:4000/ui`, API docs `/docs`.
 - **Login:** `admin` / `litellm-admin-local-dev`; master key `sk-litellm-local-dev-master`.
-- **Key tasks:** call models (`sovereign-default` → Ministral 3, `sovereign-embed`, `sovereign-vision`/
-  `sovereign-premium` → STACKIT; `sovereign-mock` is a back-compat alias for the default); manage virtual
-  keys + cost caps; register MCP tool servers. Agents use the scoped key `sk-agents-local-dev` (alias
-  `sovereign-agents`).
+- **Key tasks:** call models (`sovereign-default` → Ministral 3, `sovereign-reasoning` → in-box Magistral
+  24B, `sovereign-reasoning-fast` → STACKIT Qwen, `sovereign-embed`, `sovereign-vision`/`sovereign-premium`
+  → STACKIT; `sovereign-mock` is a back-compat alias for the default); manage virtual keys + cost caps;
+  register MCP tool servers. Agents use the scoped key `sk-agents-local-dev` (alias `sovereign-agents`).
 
-### Model serving — self-hosted default LLM (`model-server`)
+### Model serving — self-hosted LLMs (`model-server` + `magistral-reasoning`)
 The default chat backend is a self-hosted, OpenAI-compatible **Ollama** runtime (`model-server`) serving
 **Ministral 3 3B** (`ministral-3:3b-instruct-2512-q4_K_M`) — the light tier for chat, coding, and
 tool-selection — fully offline, no provider key, with `modelServer.replicas` pods behind LiteLLM
-load-balancing. LiteLLM routes a fallback chain (self-hosted → optional bigger self-host → **STACKIT**
-last-resort / vision) with retries, circuit-breaking, and a per-model spend cap. Swap the default with
-`modelServer.model`, or disable it (`modelServer.enabled: false`) to fall back to the mock model.
+load-balancing.
 
-> **License note:** Ministral 3 ships under **Apache-2.0** (OSI-permissive), so the self-hosted default
-> is **Apache-clean**. We ship only the Ollama engine; the weights are pulled at runtime and **not
-> redistributed** (see `THIRD-PARTY-LICENSES.md`). To swap models, keep to permissively-licensed
-> weights and size `modelServer.resources` to the tag.
+The **reasoning** tier is a second self-hosted runtime (`magistral-reasoning`, `modelServer.reasoning`):
+**Magistral Small 24B** (`Magistral-Small-2506-Q4_K_M.gguf`) on a **llama.cpp `llama-server`**,
+registered with LiteLLM as **`sovereign-reasoning`** — the **sovereign** default for planning/deep
+reasoning, zero per-token, in-box. It is a single **resident** replica and **core-capped**:
+`modelServer.reasoning.cores` is *both* the CFS CPU limit *and* the llama.cpp `-t` thread count, so it can
+never starve co-located workloads (e.g. Trino) on a shared box. It is intentionally **slow on CPU** —
+LiteLLM gives it a generous ~300 s timeout but still trips the breaker on a connection failure and falls
+over to **`sovereign-reasoning-fast`** (STACKIT Qwen — the explicit *fast* alternative, pay-per-token,
+spend-capped). The GGUF is **provided on the box** and mounted at runtime (not redistributed); per-agent
+the **Reasoning target** picker switches Local-sovereign / Fast / Light.
+
+LiteLLM routes the full fallback chain (self-hosted → STACKIT last-resort / vision) with retries,
+circuit-breaking, and a per-model spend cap. Swap the default with `modelServer.model`, or disable a tier
+(`modelServer.enabled` / `modelServer.reasoning.enabled: false`).
+
+> **License note:** Ministral 3 **and** Magistral Small 24B ship under **Apache-2.0** (OSI-permissive), so
+> the self-hosted tiers are **Apache-clean**. We ship only the Ollama (MIT) and llama.cpp (MIT) engines;
+> the weights are pulled/mounted at runtime and **not redistributed** (see `THIRD-PARTY-LICENSES.md`). To
+> swap models, keep to permissively-licensed weights and size the resources to the tag.
 
 ### Mock model — offline embeddings + fallback LLM (`mock-model`)
 A tiny, dependency-free OpenAI-compatible server (chat + deterministic-hash embeddings). It now backs the
 **offline embeddings** route (`sovereign-embed`) and serves as the zero-dependency chat fallback when
 `model-server` is disabled. Reached only through LiteLLM (`http://mock-model:8080/v1`).
 
-### Query tool — DuckDB engine (MCP) (`query-tool`)
-Runs DuckDB SQL over Iceberg tables; registered in the LiteLLM MCP gateway as the OPA-gated `query`
-tool. See [golden path 2](#the-golden-paths). The local catalog lives in Postgres (the local S3 stand-in
-lacks AWS STS for Polaris credential vending); on STACKIT, Polaris vends credentials directly.
+### Query tool — central Trino engine (MCP) (`query-tool`)
+Runs read-only SQL through central Trino over the Iceberg marts; registered in the LiteLLM MCP
+gateway as the OPA-gated `query` tool (Trino enforces row/column governance). See
+[golden path 2](#the-golden-paths). Locally Trino uses static S3 creds (the local S3 stand-in lacks
+AWS STS for Polaris credential vending); on STACKIT, vended credentials are enabled. DuckDB is scoped
+to the personal/sandbox lane (`sandbox-duckdb`), never the governed marts.
 
 ### Sample RAG agent (`sample-agent`)
 The LangGraph agent that proves the core loop (retrieve → generate → trace). Seed knowledge describes
@@ -619,7 +634,7 @@ Materializing the dbt assets actually runs `dbt build` against the warehouse.
 ### dbt — transforms (`dbt`)
 dbt Core transforms seed data into the analytics warehouse (`raw_orders → stg_orders → daily_revenue`).
 Runs as a post-install Job and as Dagster assets. No UI — its "UI" is Dagster plus the resulting tables.
-Locally targets CNPG `warehouse`; production targets dbt-duckdb over Iceberg/Trino.
+Single governed adapter **dbt-trino**: marts build as Iceberg via central Trino (no dbt-duckdb/postgres).
 
 ### Cube — semantic / metrics layer (`cube`)
 Defines business metrics once on top of the dbt warehouse (`daily_revenue` on `analytics.daily_revenue`),
@@ -938,7 +953,9 @@ in-cluster host `http://agentic-os-langfuse-web:3000`.
 | Mock model | L1 | bespoke (embeddings + fallback) | `sovereign-os/mock-model:0.1.1` |
 | Sample agent | L1 | bespoke | `sovereign-os/sample-agent:0.1.0` |
 | Poet agent | L1 | bespoke | `sovereign-os/poet-agent:0.1.0` |
-| Query tool (DuckDB/MCP) | L1/L3 | bespoke | `sovereign-os/query-tool:0.2.0` |
+| Query tool (Trino/MCP) | L1/L3 | bespoke | `sovereign-os/query-tool:0.3.0` |
+| Sandbox DuckDB (personal lane) | L3 | bespoke | `sovereign-os/sandbox-duckdb:0.1.0` |
+| Trino (governed engine) | L3 | upstream | `trinodb/trino:476` |
 | OPA | L2 | bespoke template | `openpolicyagent/opa:1.4.2-static` |
 | Docling | L2 | wrapped (off locally) | `docling-serve-cpu` |
 | Haystack | L2 | bespoke | `sovereign-os/haystack-retriever:0.1.0` |
@@ -998,7 +1015,7 @@ in-cluster host `http://agentic-os-langfuse-web:3000`.
 - **This build:** generated `{{DATE}}` from commit `{{GIT_COMMIT}}`.
 - **0.1.0** — agent-core vertical slice + Layers 2–3 built incrementally: L1 agent core (LangGraph /
   LiteLLM / Langfuse / OpenSearch), L2 context (OPA / Docling / Haystack / Dagster / dbt / Cube /
-  OpenMetadata), L3 self-service (Polaris + DuckDB lakehouse, Superset, Forgejo + Argo CD), the
+  OpenMetadata), L3 self-service (Polaris + central Trino lakehouse, Superset, Forgejo + Argo CD), the
   secure-by-default egress baseline, the Admin Console, and the **OS UI v1.0** (every sidebar tab a
   real surface — brand-themed, light/dark, with the Admin Console embedded at Platform → Components).
 - **Docs:** added *The golden paths in depth* chapter — the operating model across data, agents,

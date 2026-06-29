@@ -76,11 +76,11 @@ test('the OPA row proves a granted tool resolves and a non-granted one is blocke
   assert.match(opa.detail, /blocked|denied/);
 });
 
-test('the LiteLLM row proves light→Ministral and reasoning→Qwen routing', async () => {
+test('the LiteLLM row proves light→Ministral and reasoning→local Magistral routing', async () => {
   const backends = newMockBackends();
   const report = await orchestrateBuild({ yaml: SUP, adapters: makeMockAdapters(backends) });
   const litellm = report.rows.find((r) => r.tool === 'litellm')!;
   assert.equal(litellm.status, 'ok');
   assert.match(litellm.detail.toLowerCase(), /ministral/);
-  assert.match(litellm.detail.toLowerCase(), /qwen/);
+  assert.match(litellm.detail.toLowerCase(), /sovereign-reasoning/);
 });

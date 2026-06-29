@@ -1,9 +1,9 @@
 {{- if .Values.queryTool.enabled }}
 {{- /*
-  DuckDB `query` tool — the default query engine over the lakehouse. Runs DuckDB
-  SQL over Iceberg tables (catalog in CNPG `polaris` DB, data on object storage).
-  Exposed over HTTP for the LiteLLM MCP gateway (OPA-gated). Trino/Spark are
-  optional scale modules (off by default).
+  Governed `query` tool — read-only SQL THROUGH central Trino over the Iceberg
+  marts. Exposed over HTTP + MCP for the LiteLLM gateway (OPA gates tool access);
+  Trino enforces row/column governance on every read. No embedded DuckDB — that is
+  the personal/sandbox lane (behind Trino).
 */}}
 {{- $q := .Values.queryTool }}
 apiVersion: apps/v1

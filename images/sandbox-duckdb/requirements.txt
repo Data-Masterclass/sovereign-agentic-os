@@ -1,0 +1,4 @@
+# Sandbox DuckDB (personal/sandbox lane). DuckDB + httpfs read the user's PRIVATE
+# prefix on object storage. No pyiceberg/Polaris — the sandbox can't reach
+# governed marts by construction.
+duckdb>=1.1,<2

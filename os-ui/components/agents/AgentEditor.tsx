@@ -8,6 +8,7 @@ import MonacoFile from './MonacoFile';
 import { commitSystem } from './commitSystem';
 import { type System } from '@/lib/agents/system-schema';
 import { setAgentModel, setAgentTools } from '@/lib/agents/canvas-edit';
+import { REASONING_TARGETS } from '@/lib/agents/routing';
 
 /**
  * Level 3 — the agent editor (one agent's native inputs): AGENT.md (behaviour),
@@ -144,10 +145,34 @@ export default function AgentEditor({
             </div>
           )}
 
+          <div className="section-title">Reasoning target</div>
+          <p className="hint" style={{ marginTop: 0 }}>How this agent thinks. We handle the routing and fallback for you.</p>
+          <div className="rt-seg" role="group" aria-label="Reasoning target">
+            {REASONING_TARGETS.map((t) => {
+              const active = agent.model === t.model;
+              return (
+                <button
+                  key={t.model}
+                  type="button"
+                  className={`rt-seg-opt${active ? ' active' : ''}`}
+                  aria-pressed={active}
+                  disabled={!canEdit || busy}
+                  onClick={() => { if (!active) changeModel(t.model); }}
+                >
+                  {t.label.split(' · ')[0]}
+                </button>
+              );
+            })}
+          </div>
+          <p className="hint rt-seg-hint" style={{ marginTop: 6 }}>
+            {REASONING_TARGETS.find((t) => t.model === agent.model)?.hint
+              ?? 'On activity routing — reasoning defaults to the in-box sovereign model.'}
+          </p>
+
           <div className="section-title">Model routing</div>
           <p className="hint" style={{ marginTop: 0 }}>
             Per-agent model is a LiteLLM <span className="mono">model_name</span> (no endpoint in the UI).
-            Leave on activity routing for cheap-first (Ministral light · STACKIT Qwen reasoning/vision).
+            Leave on activity routing for cheap-first (Ministral light · local Magistral reasoning).
             {modelsSource === 'offline' ? ' LiteLLM is unreachable — showing the install tier defaults.' : ''}
           </p>
           <select

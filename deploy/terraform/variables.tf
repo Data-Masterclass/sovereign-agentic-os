@@ -77,15 +77,25 @@ variable "node_machine_type" {
     machine-type catalog for the project — availability is project/region
     dependent. `c1.4` (4 vCPU) is a verified compute flavor.
 
-    Mode B (enable_managed_backends=true): OpenSearch JVM heaps + Postgres live in
-    managed services, so ~4 vCPU / 32 GB nodes suffice.
+    DEFAULT `m3i.16` (memory-optimized, gen-3 Intel; ~16 vCPU / 128 GB — confirm
+    the exact vCPU/RAM/price in the STACKIT machine-type catalog / calculator at
+    provisioning), SINGLE node. Sizing decision (2026-06-29): central Trino is a
+    memory-hungry, always-on JVM added to the L1–L3 stack (~15 GB) + in-box model
+    (~3–4 GB). We pick a MEMORY-OPTIMIZED flavor for Trino's heap headroom and the
+    GEN-3 Intel CPU for concurrent-query throughput (no old-gen tradeoff), on ONE
+    node rather than a dedicated 2nd node — cross-node pod networking on
+    SKE-in-an-SNA is broken (see node_pool_min). One bigger box keeps Trino, the
+    stack and the model on a single node and avoids the broken overlay.
 
-    Mode A (enable_managed_backends=false): the full self-contained L1–L3 stack runs
-    in-cluster — budget ~40–64 GB schedulable RAM across the pool (a ~16–32 GB
-    memory flavor × 2–3 nodes). See deploy/terraform/terraform.tfvars.example.
+    Mode B (enable_managed_backends=true): OpenSearch JVM heaps + Postgres live in
+    managed services, so a smaller flavor (~4 vCPU / 32 GB, `g2i.8`) suffices.
+
+    Mode A (enable_managed_backends=false): the full self-contained L1–L3 stack +
+    central Trino run in-cluster on the one node — budget a memory-optimized
+    flavor (`m3i.16`, ~128 GB). See deploy/terraform/terraform.tfvars.example.
   EOT
   type        = string
-  default     = "g2i.8"
+  default     = "m3i.16"
 }
 
 variable "node_pool_min" {

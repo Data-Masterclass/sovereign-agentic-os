@@ -1,0 +1,65 @@
+{{- if .Values.agentRuntime.enabled }}
+{{- /*
+  CronJob-per-schedule. Each entry in `.Values.agentRuntime.schedules` becomes one
+  CronJob that POSTs to the OS UI scheduled-run endpoint (which fans out to the
+  agent-runtime under the same shared token). The list is EMPTY by default, so no
+  CronJob renders out of the box (helm lint/template stay clean). Each entry:
+    { name, systemId, cron, prompt }
+*/}}
+{{- $r := .Values.agentRuntime }}
+{{- range $s := $r.schedules }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: agent-runtime-schedule-{{ $s.name }}
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    {{- include "soa.syncWaveAnno" (dict "ctx" $ "tier" "apps") | nindent 4 }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" $ "component" "agent-runtime") | nindent 4 }}
+spec:
+  schedule: {{ $s.cron | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "soa.selectorLabels" (dict "ctx" $ "component" "agent-runtime") | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          {{- with $.Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "soa.podSecurityContext" $ | nindent 12 }}
+            runAsUser: 1000
+          containers:
+            - name: scheduled-run
+              image: curlimages/curl:8.11.1
+              imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "soa.containerSecurityContext" $ | nindent 16 }}
+                readOnlyRootFilesystem: true
+              env:
+                - name: AGENT_RUNTIME_TOKEN
+                  valueFrom: { secretKeyRef: { name: agent-runtime-token, key: token } }
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  curl -fsS -X POST \
+                    -H "Authorization: Bearer $AGENT_RUNTIME_TOKEN" \
+                    -H "Content-Type: application/json" \
+                    -d '{"systemId":{{ $s.systemId | quote }},"prompt":{{ $s.prompt | quote }}}' \
+                    http://os-ui:3000/api/agents/scheduled-run
+              resources:
+                requests: { cpu: 25m, memory: 32Mi }
+                limits: { cpu: 200m, memory: 64Mi }
+{{- end }}
+{{- end }}

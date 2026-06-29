@@ -1,9 +1,9 @@
 {{- if .Values.dbt.enabled }}
 {{- /*
-  dbt build Job — transforms the seed data into the analytics warehouse
-  (Postgres `warehouse` DB on CNPG). Runs as a post-install/upgrade hook so the
-  warehouse is built/refreshed after the DB exists. Cube reads these models.
-  (Local adapter is dbt-postgres; production target is dbt-duckdb over Iceberg.)
+  dbt build Job — builds the seed data into Iceberg marts via the central Trino
+  engine (dbt-trino over the Polaris REST catalog). Runs as a post-install/upgrade
+  hook once Trino is up. Cube + Superset + the agent query tool read these marts
+  THROUGH Trino. (dbt-trino is the single governed adapter — no DuckDB/Postgres.)
 */}}
 {{- $d := .Values.dbt }}
 apiVersion: batch/v1
@@ -44,28 +44,30 @@ spec:
           securityContext:
             {{- include "soa.containerSecurityContext" . | nindent 12 }}
           env:
-            - name: PGHOST
-              value: {{ include "soa.pgHost" . }}
-            - name: PGDATABASE
-              value: {{ $d.warehouse.database | quote }}
-            - name: PGSCHEMA
-              value: {{ $d.warehouse.schema | quote }}
-            - name: PGUSER
-              valueFrom: { secretKeyRef: { name: {{ $d.warehouse.secretName }}, key: username } }
-            - name: PGPASSWORD
-              valueFrom: { secretKeyRef: { name: {{ $d.warehouse.secretName }}, key: password } }
-          # Wait for the warehouse DB/role, then seed + build + test.
+            - name: TRINO_HOST
+              value: {{ $d.trino.host | quote }}
+            - name: TRINO_PORT
+              value: {{ $d.trino.port | quote }}
+            - name: TRINO_USER
+              value: {{ $d.trino.user | quote }}
+            - name: TRINO_CATALOG
+              value: {{ $d.trino.catalog | quote }}
+            - name: TRINO_SCHEMA
+              value: {{ $d.trino.schema | quote }}
+          # Wait for Trino, then seed + build + test, then emit artifacts for
+          # OpenMetadata (lineage/catalog) + cube_dbt (the semantic layer).
           command: ["/bin/sh", "-c"]
           args:
             - |
               set -e
-              echo "waiting for warehouse Postgres..."
-              for i in $(seq 1 40); do
+              echo "waiting for central Trino..."
+              for i in $(seq 1 60); do
                 if dbt debug --profiles-dir /opt/dbt/project >/dev/null 2>&1; then break; fi
                 sleep 3
               done
               dbt seed --profiles-dir /opt/dbt/project
               dbt build --profiles-dir /opt/dbt/project
+              dbt docs generate --profiles-dir /opt/dbt/project
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits: { cpu: "1", memory: 512Mi }

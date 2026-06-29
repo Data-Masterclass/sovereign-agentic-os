@@ -59,6 +59,18 @@ litellm:
           model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
           api_base: os.environ/STACKIT_API_BASE
           api_key: os.environ/STACKIT_API_KEY
+      # Self-hosted reasoning (Magistral 24B, in-box) + its fast STACKIT fallback.
+      - model_name: sovereign-reasoning
+        litellm_params:
+          model: openai/magistral-small-24b
+          api_base: http://magistral-reasoning:8081/v1
+          api_key: "sk-local-unused"
+          timeout: 300
+      - model_name: sovereign-reasoning-fast
+        litellm_params:
+          model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
+          api_base: os.environ/STACKIT_API_BASE
+          api_key: os.environ/STACKIT_API_KEY
       # ---- PRIVATE ADDITIONS (instance-specific; placeholders shown) ----------
       # Extra self-hosted endpoints reachable from the cluster. Keep them to
       # permissively-licensed weights. Real hosts live ONLY in values.private.yaml.
@@ -83,6 +95,7 @@ litellm:
       fallbacks:
         - sovereign-default: ["private-self-hosted-a", "private-self-hosted-b", "sovereign-premium"]
         - sovereign-mock: ["private-self-hosted-a", "private-self-hosted-b", "sovereign-premium"]
+        - sovereign-reasoning: ["sovereign-reasoning-fast"]
 
 # Allow the agent virtual key to call the private models too (deep-merged list is
 # also replaced — copy the public set from values.yaml and append).
@@ -90,6 +103,8 @@ litellmAgentKey:
   models:
     - sovereign-default
     - sovereign-mock
+    - sovereign-reasoning
+    - sovereign-reasoning-fast
     - sovereign-embed
     - sovereign-vision
     - sovereign-premium

@@ -8,6 +8,7 @@ import PageHeader from '@/components/PageHeader';
 import AgentChat from '@/components/AgentChat';
 import ArtifactPanel from '@/components/ArtifactPanel';
 import NewDataProduct from '@/components/NewDataProduct';
+import SandboxLane from '@/components/SandboxLane';
 
 type QueryResult = {
   engine: string;
@@ -21,14 +22,14 @@ type Catalog = { source: string; note?: string; assets: Asset[] };
 type Answer = { question: string; answer: string; retrieved: string[]; traced: boolean };
 
 const DEFAULT_SQL =
-  'select customer, sum(amount) as total\nfrom orders\ngroup by 1\norder by total desc';
+  'select order_date, revenue, orders\nfrom daily_revenue\norder by order_date';
 const ASK_EXAMPLES = [
   'What provides the retrieval backbone for vector and lexical search?',
   'How does the platform stay sovereign?',
   'What gives observability and tracing?',
 ];
 
-type View = 'new' | 'datasets' | 'transform' | 'catalog' | 'ask' | 'products' | 'query';
+type View = 'new' | 'mydata' | 'datasets' | 'transform' | 'catalog' | 'ask' | 'products' | 'query';
 
 export default function DataPage() {
   const [view, setView] = useState<View>('new');
@@ -131,6 +132,7 @@ export default function DataPage() {
 
         <div className="tabstrip">
           <button className={view === 'new' ? 'active' : ''} onClick={() => setView('new')}>+ New data product</button>
+          <button className={view === 'mydata' ? 'active' : ''} onClick={() => setView('mydata')}>My data</button>
           <button className={view === 'datasets' ? 'active' : ''} onClick={() => setView('datasets')}>Datasets</button>
           <button className={view === 'transform' ? 'active' : ''} onClick={() => setView('transform')}>Transform (dbt)</button>
           <button className={view === 'catalog' ? 'active' : ''} onClick={() => setView('catalog')}>Catalog</button>
@@ -140,6 +142,8 @@ export default function DataPage() {
         </div>
 
         {view === 'new' ? <NewDataProduct onDone={() => setView('datasets')} /> : null}
+
+        {view === 'mydata' ? <SandboxLane /> : null}
 
         {view === 'datasets' ? (
           <ArtifactPanel

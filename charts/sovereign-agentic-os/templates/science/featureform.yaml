@@ -1,8 +1,8 @@
 {{- if and .Values.ml.enabled .Values.featureform.enabled }}
 {{- /*
   Featureform (MPL-2.0) — the *virtual* feature store (Layer 4 Science). It sits
-  atop our existing infra rather than copying data: offline store = Iceberg via the
-  query engine (DuckDB/Trino over Polaris), online store = Valkey (BSD-3, the
+  atop our existing infra rather than copying data: offline store = Iceberg via
+  the central Trino engine (over Polaris), online store = Valkey (BSD-3, the
   stack's cache — NOT Redis). Providers (Valkey online, Iceberg offline) are
   registered through the Featureform client from a notebook or the ML agent; this
   template runs the single-container server + dashboard.

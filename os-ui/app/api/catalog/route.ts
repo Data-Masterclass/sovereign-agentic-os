@@ -9,8 +9,9 @@ export const dynamic = 'force-dynamic';
 /**
  * Structured-data catalog. Prefers OpenMetadata (the platform catalog + lineage)
  * when it's reachable; OpenMetadata is OFF by default locally (~2.5 GB JVM), so
- * we degrade gracefully to the query-tool's Iceberg/DuckDB table list. The
- * response says which source answered so the UI can be honest about it.
+ * we degrade gracefully to the governed query-tool's Iceberg table list (via
+ * Trino `show tables`). The response says which source answered so the UI can be
+ * honest about it.
  */
 
 type Asset = { name: string; fqn: string; description: string; type: string };
@@ -43,19 +44,18 @@ async function fromQueryTool(): Promise<Asset[]> {
   const res = await fetch(`${config.queryToolUrl}/query`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
-    body: JSON.stringify({ sql: 'select 1' }),
+    body: JSON.stringify({ sql: 'show tables' }),
     cache: 'no-store',
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`query-tool ${res.status}: ${text.slice(0, 160)}`);
   const data = JSON.parse(text);
-  const tables: string[] = Array.isArray(data?.tables) ? data.tables.map(String) : [];
-  return tables.map((t) => ({
-    name: t.includes('.') ? t.split('.').slice(-1)[0] : t,
-    fqn: t,
-    description: '',
-    type: 'iceberg table',
-  }));
+  const schema = String(data?.schema ?? 'analytics');
+  const rows: unknown[][] = Array.isArray(data?.rows) ? data.rows : [];
+  return rows.map((r) => {
+    const name = String(r[0]);
+    return { name, fqn: `${schema}.${name}`, description: '', type: 'iceberg table' };
+  });
 }
 
 export async function GET() {

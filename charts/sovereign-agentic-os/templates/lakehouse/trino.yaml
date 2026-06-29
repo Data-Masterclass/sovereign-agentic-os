@@ -1,0 +1,254 @@
+{{- if .Values.trino.enabled }}
+{{- /*
+  Apache Trino — the CENTRAL GOVERNED query engine for all shared marts
+  (stack-decisions.md "Query engine — central Trino"). Single coordinator-as-worker
+  pod (node-scheduler.include-coordinator=true) — one box, no cross-node networking
+  (broken on SKE-in-an-SNA; see deploy/terraform). Iceberg connector against the
+  Polaris REST catalog (OAuth2); storage on object storage (MinIO locally / STACKIT
+  Object Storage). Governance (Trino->OPA row/column) + per-domain resource groups
+  are layered by their own templates. dbt-trino builds the marts; Cube, Superset and
+  the agent `query` tool all read THROUGH this Trino.
+*/}}
+{{- $t := .Values.trino }}
+{{- $pl := .Values.polaris }}
+{{- $ice := $t.catalog.iceberg }}
+{{- if eq .Values.global.profile "local" }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: trino-catalog-credentials
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "trino") | nindent 4 }}
+type: Opaque
+stringData:
+  # Polaris OAuth2 client (clientId:clientSecret) — local dev root principal.
+  POLARIS_OAUTH_CREDENTIAL: "{{ $pl.local.rootClientId }}:{{ $pl.local.rootClientSecret }}"
+---
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "trino") | nindent 4 }}
+data:
+  config.properties: |
+    coordinator=true
+    node-scheduler.include-coordinator=true
+    http-server.http.port=8080
+    discovery.uri=http://localhost:8080
+    query.max-memory={{ $t.query.maxMemory }}
+    query.max-memory-per-node={{ $t.query.maxMemoryPerNode }}
+    {{- if $t.query.spillEnabled }}
+    spill-enabled=true
+    spiller-spill-path=/data/trino/spill
+    {{- end }}
+  node.properties: |
+    node.environment={{ $t.environment }}
+    node.data-dir=/data/trino
+  jvm.config: |
+    -server
+    -Xmx{{ $t.jvm.maxHeap }}
+    -XX:+UseG1GC
+    -XX:G1HeapRegionSize=32M
+    -XX:+ExplicitGCInvokesConcurrent
+    -XX:+HeapDumpOnOutOfMemoryError
+    -XX:+ExitOnOutOfMemoryError
+    -Djdk.attach.allowAttachSelf=true
+  log.properties: |
+    io.trino=INFO
+  {{- if $t.opa.enabled }}
+  # Governance = the official Trino->OPA access-control plugin, pointed at the SAME
+  # OPA that governs agent tools (package `trino`: row filter by domain + column
+  # mask by sensitivity). Tool/domain ACLs stay in package agentic.authz.
+  access-control.properties: |
+    access-control.name=opa
+    opa.policy.uri={{ $t.opa.uri }}/v1/data/trino/allow
+    opa.policy.row-filters-uri={{ $t.opa.uri }}/v1/data/trino/rowFilters
+    opa.policy.column-masking-uri={{ $t.opa.uri }}/v1/data/trino/columnMask
+    opa.policy.batch-column-masking-uri={{ $t.opa.uri }}/v1/data/trino/batchColumnMask
+  {{- end }}
+  {{- if $t.resourceGroups.enabled }}
+  {{- $rg := $t.resourceGroups }}
+  # Per-domain isolation via the file resource-group manager (static JSON).
+  resource-groups.properties: |
+    resource-groups.configuration-manager=file
+    resource-groups.config-file=/etc/trino/resource-groups.json
+  resource-groups.json: |
+    {
+      "rootGroups": [
+        {
+          "name": "global",
+          "softMemoryLimit": {{ $rg.rootSoftMemoryLimit | quote }},
+          "hardConcurrencyLimit": {{ $rg.rootHardConcurrency }},
+          "maxQueued": {{ $rg.rootMaxQueued }},
+          "subGroups": [
+            {{- range $i, $d := $rg.domains }}
+            {{- if $i }},{{ end }}
+            {
+              "name": {{ $d | quote }},
+              "softMemoryLimit": {{ $rg.perDomainSoftMemoryLimit | quote }},
+              "hardConcurrencyLimit": {{ $rg.perDomainHardConcurrency }},
+              "maxQueued": {{ $rg.perDomainMaxQueued }}
+            }
+            {{- end }}
+            ,
+            {
+              "name": "shared",
+              "softMemoryLimit": {{ $rg.perDomainSoftMemoryLimit | quote }},
+              "hardConcurrencyLimit": {{ $rg.perDomainHardConcurrency }},
+              "maxQueued": {{ $rg.perDomainMaxQueued }}
+            }
+          ]
+        }
+      ],
+      "selectors": [
+        {{- range $rg.domains }}
+        { "clientTags": [{{ printf "domain=%s" . | quote }}], "group": {{ printf "global.%s" . | quote }} },
+        {{- end }}
+        { "group": "global.shared" }
+      ]
+    }
+  {{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-catalog
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "trino") | nindent 4 }}
+data:
+  iceberg.properties: |
+    connector.name=iceberg
+    iceberg.catalog.type=rest
+    iceberg.rest-catalog.uri={{ $ice.restUri }}
+    iceberg.rest-catalog.warehouse={{ $ice.warehouse }}
+    iceberg.rest-catalog.security=OAUTH2
+    iceberg.rest-catalog.oauth2.credential=${ENV:POLARIS_OAUTH_CREDENTIAL}
+    iceberg.rest-catalog.oauth2.scope={{ $ice.oauth2Scope }}
+    iceberg.rest-catalog.vended-credentials-enabled={{ $ice.vendedCredentials }}
+    fs.native-s3.enabled=true
+    s3.endpoint={{ include "soa.s3Endpoint" . }}
+    s3.region={{ $t.s3.region }}
+    s3.path-style-access={{ $t.s3.pathStyleAccess }}
+    {{- if not $ice.vendedCredentials }}
+    s3.aws-access-key=${ENV:AWS_ACCESS_KEY_ID}
+    s3.aws-secret-key=${ENV:AWS_SECRET_ACCESS_KEY}
+    {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trino
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "apps") | nindent 4 }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "trino") | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "trino") | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/catalog: {{ printf "%s-%s" ($ice | toJson) (include "soa.s3Endpoint" .) | sha256sum }}
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "trino") | nindent 8 }}
+    spec:
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "app") | nindent 6 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000               # the image's 'trino' user
+        fsGroup: 1000
+      containers:
+        - name: trino
+          image: "{{ $t.image.repository }}:{{ $t.image.tag }}"
+          imagePullPolicy: {{ $t.image.pullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          env:
+            {{- if eq .Values.global.profile "local" }}
+            - name: POLARIS_OAUTH_CREDENTIAL
+              valueFrom: { secretKeyRef: { name: trino-catalog-credentials, key: POLARIS_OAUTH_CREDENTIAL } }
+            {{- else }}
+            - name: POLARIS_OAUTH_CREDENTIAL
+              valueFrom: { secretKeyRef: { name: {{ required "trino.catalog.iceberg.oauth2SecretName is required when not local" $ice.oauth2SecretName }}, key: POLARIS_OAUTH_CREDENTIAL } }
+            {{- end }}
+            {{- if not $ice.vendedCredentials }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_ACCESS_KEY_ID } }
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_SECRET_ACCESS_KEY } }
+            {{- end }}
+          ports:
+            - { name: http, containerPort: 8080 }
+          startupProbe:
+            httpGet: { path: /v1/info, port: http }
+            periodSeconds: 5
+            failureThreshold: 60        # JVM + catalog discovery is slow to warm
+          readinessProbe:
+            httpGet: { path: /v1/info, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /v1/info, port: http }
+            periodSeconds: 20
+          resources:
+            {{- toYaml $t.resources | nindent 12 }}
+          volumeMounts:
+            - { name: config, mountPath: /etc/trino/config.properties, subPath: config.properties, readOnly: true }
+            - { name: config, mountPath: /etc/trino/node.properties, subPath: node.properties, readOnly: true }
+            - { name: config, mountPath: /etc/trino/jvm.config, subPath: jvm.config, readOnly: true }
+            - { name: config, mountPath: /etc/trino/log.properties, subPath: log.properties, readOnly: true }
+            {{- if $t.opa.enabled }}
+            - { name: config, mountPath: /etc/trino/access-control.properties, subPath: access-control.properties, readOnly: true }
+            {{- end }}
+            {{- if $t.resourceGroups.enabled }}
+            - { name: config, mountPath: /etc/trino/resource-groups.properties, subPath: resource-groups.properties, readOnly: true }
+            - { name: config, mountPath: /etc/trino/resource-groups.json, subPath: resource-groups.json, readOnly: true }
+            {{- end }}
+            - { name: catalog, mountPath: /etc/trino/catalog, readOnly: true }
+            - { name: data, mountPath: /data/trino }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: config
+          configMap:
+            name: trino-config
+        - name: catalog
+          configMap:
+            name: trino-catalog
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trino
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "trino") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "trino") | nindent 4 }}
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+{{- end }}

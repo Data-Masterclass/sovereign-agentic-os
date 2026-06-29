@@ -56,6 +56,26 @@ osdashboards:
 openmetadata:
   enabled: true
 
+# -----------------------------------------------------------------------------
+# Self-hosted SOVEREIGN reasoning tier (Magistral Small 24B) — ON for the box.
+# OFF in the chart default (needs the m3i.16 node + the GGUF provided out of band).
+# Here on a sized SKE node we run the single RESIDENT, core-capped replica.
+#
+# BEFORE go-live you MUST provide the GGUF: with persistence.enabled below, the pod
+# mounts the `magistral-reasoning-models` PVC at /models — place
+# `Magistral-Small-2506-Q4_K_M.gguf` there (e.g. an init job / `kubectl cp` / a
+# pre-seeded volume). The pod stays NotReady (and LiteLLM uses the STACKIT fast
+# route) until llama-server has loaded the weights. Set `nodeSelector` to the
+# m3i.16 node-pool label so it never lands on a small node.
+# -----------------------------------------------------------------------------
+modelServer:
+  reasoning:
+    enabled: true
+    persistence:
+      enabled: true
+      size: 20Gi
+    # nodeSelector: { topology.kubernetes.io/node-pool: m3i-16 }   # set to the real label
+
 # Layer 4 (Science / ML — MLflow, KServe, ml-agent) stays OFF: heavy + GPU-leaning
 # and out of scope for the self-hosted demo. Flip on only on a sized node pool.
 ml:

@@ -221,9 +221,10 @@ export default function GrantsRouting({
 
       <div className="section-title">Model routing — by activity</div>
       <p className="hint" style={{ marginTop: 0 }}>
-        Workspace default (cheap-first): light → Ministral, reasoning/vision → STACKIT Qwen. A
-        per-activity override writes this system’s LiteLLM routing config (applied on Build). No
-        endpoint in the UI — models come live from LiteLLM.
+        Workspace default (cheap-first): light → Ministral, reasoning → in-box Magistral (sovereign,
+        STACKIT Qwen as fast fallback), vision → STACKIT Qwen. A per-activity override writes this
+        system’s LiteLLM routing config (applied on Build). No endpoint in the UI — models come live
+        from LiteLLM.
       </p>
       <div className="table-wrap">
         <table>

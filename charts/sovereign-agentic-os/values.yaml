@@ -190,6 +190,7 @@ objectStorage:
     - langfuse                 # Langfuse v3 blob store (events/media)
     - lakehouse                # Iceberg warehouse (Polaris / Layer 3)
     - mlflow                   # MLflow artifact store (Layer 4 Science; only used when mlflow.enabled)
+    - sandbox                  # personal/sandbox lane — per-user private prefixes (DuckDB)
   # MinIO is the local-kind S3 stand-in (reliable for Iceberg + Langfuse).
   # SeaweedFS is the air-gap/sovereign alternative but proved unreliable for
   # Iceberg writes on kind. MinIO is AGPL — local dev stand-in only, never bundled.
@@ -538,6 +539,56 @@ modelServer:
     resources:
       requests: { cpu: "2", memory: 16Gi, nvidia.com/gpu: "1" }
       limits: { cpu: "8", memory: 32Gi, nvidia.com/gpu: "1" }
+  # ---------------------------------------------------------------------------
+  # Self-hosted REASONING tier — Magistral Small 24B (Apache-2.0, Mistral/EU)
+  # served by llama.cpp `llama-server` (OpenAI-compatible /v1) from a MOUNTED GGUF.
+  # This is the SOVEREIGN reasoning default: a single RESIDENT (always-loaded) CPU
+  # replica, registered with LiteLLM as `sovereign-reasoning`. STACKIT Qwen
+  # (`sovereign-reasoning-fast`) is the explicit fast alternative AND the fallback.
+  #
+  # CORE CAP (the hard guardrail on a shared box): `cores` is BOTH the CFS CPU
+  # limit AND the llama.cpp thread count (`-t`) — one number, kept equal by the
+  # template — so the model can never exceed its budget and starve Trino.
+  #
+  # SIZING (m3i.16 = 16 vCPU / 118 GB): 6 cores capped, ~18-22 GB. Schedule on the
+  # box via `nodeSelector`. The Q4_K_M GGUF (~14-16 GB) is PROVIDED OUT OF BAND on
+  # the box (NOT redistributed): place it in the mounted models volume at
+  # `<modelPath>/<model>`. NOT for a CPU-tiny kind box at full size — kind e2e uses
+  # a tiny stand-in under the SAME `sovereign-reasoning` model_name.
+  #
+  # OFF by default (like `big`): it needs the m3i.16 box AND the GGUF provided out
+  # of band, so a kind/unsized node would only get a Pending 6-core pod. Enable it
+  # where the box provides the weights (values.stackit-selfhosted.yaml). The LiteLLM
+  # `sovereign-reasoning` model_name stays DEFINED regardless (the routing contract);
+  # with no pod, LiteLLM simply fails over to `sovereign-reasoning-fast` (STACKIT).
+  reasoning:
+    enabled: false
+    image:
+      # llama.cpp server (MIT) — OpenAI-compatible at /v1. Pinned for reproducibility.
+      repository: ghcr.io/ggml-org/llama.cpp
+      tag: "server"
+    # The single knob that protects Trino: CPU limit == request == `-t` threads.
+    cores: 6
+    port: 8081
+    # The GGUF filename in the mounted models volume (provided on the box).
+    model: "Magistral-Small-2506-Q4_K_M.gguf"
+    modelPath: /models
+    # Prompt context window (RAG-sized). Bump with care — KV cache grows with it.
+    ctxSize: 8192
+    memory:
+      request: 18Gi
+      limit: 22Gi
+    # Schedule on the big box. Empty {} schedules anywhere (kind). On STACKIT set
+    # the m3i.16 node-pool label, e.g. { topology.kubernetes.io/node-pool: m3i-16 }.
+    nodeSelector: {}
+    persistence:
+      # The GGUF volume. On the box, pre-populate this PVC with the Q4_K_M file
+      # (RWO + single resident replica). Off => emptyDir (operator must mount/seed
+      # the GGUF another way; the pod stays NotReady until the file is present).
+      enabled: false
+      size: 20Gi
+      accessMode: ReadWriteOnce
+      storageClass: ""
 
 # -----------------------------------------------------------------------------
 # STACKIT AI Model Serving — PREMIUM, managed, pay-per-token. NOT the default.
@@ -592,19 +643,28 @@ litellmAgentKey:
   enabled: true
   secretName: agent-litellm-key
   alias: "sovereign-agents"
+  # Per-model cost caps (model_max_budget) need a LiteLLM ENTERPRISE license; OSS
+  # /key/generate rejects them. Leave false for the self-hosted/OSS default (the
+  # overall max_budget still applies); set true only with LITELLM_LICENSE present.
+  enterprise: false
   maxBudget: 5            # overall USD spend cap on this key
   models:                 # only these models are callable with this key
     - sovereign-default   # Ministral 3 3B (self-hosted default chat)
     - sovereign-mock      # back-compat alias -> same self-hosted default
+    - sovereign-reasoning # self-hosted Magistral 24B (local reasoning, free)
+    - sovereign-reasoning-fast # STACKIT Qwen (fast reasoning + fallback, capped)
     - sovereign-embed     # offline embeddings (mock-model)
     - sovereign-vision    # vision route -> STACKIT Qwen3-VL
     - sovereign-premium   # last-resort fallback -> STACKIT Qwen3-VL
   # HARD COST GUARDRAIL: a dedicated per-model USD cap for the pay-per-token
   # STACKIT routes (self-hosted models are free, so no cap needed there). LiteLLM
   # blocks calls to a model once its cap is hit — independent of the overall cap.
+  # NOTE: sovereign-reasoning (local Magistral) is intentionally absent — it is
+  # self-hosted and free; only the pay-per-token STACKIT routes are capped.
   modelMaxBudget:
     sovereign-premium: 2
     sovereign-vision: 2
+    sovereign-reasoning-fast: 2
   # Per-key rate limits with graceful queueing (security.md). rpm/tpm soft-limit
   # the key; max_parallel_requests caps in-flight calls; the router's num_retries
   # back-pressures bursts instead of hard-failing.
@@ -729,6 +789,30 @@ litellm:
           model: openai/ministral-3:3b-instruct-2512-q4_K_M
           api_base: http://model-server:11434/v1
           api_key: "sk-local-unused"
+      # --- Self-hosted REASONING (Magistral Small 24B, Apache-2.0, in-box) -----
+      # `sovereign-reasoning` is the SOVEREIGN reasoning default (the routing.ts
+      # reasoning tier points here). Served by the llama.cpp `magistral-reasoning`
+      # Deployment (core-capped, RESIDENT). Intentionally SLOW on CPU, so it gets a
+      # generous per-model timeout (~300 s) — but a *connection* failure (pod down/
+      # overloaded) still trips the router breaker (allowed_fails) and fails over to
+      # `sovereign-reasoning-fast`. Free (self-hosted) — no spend cap on the key.
+      # NOTE: keep `api_base` port in sync with modelServer.reasoning.port above.
+      - model_name: sovereign-reasoning
+        litellm_params:
+          model: openai/magistral-small-24b   # llama-server ignores the id (single model)
+          api_base: http://magistral-reasoning:8081/v1   # == modelServer.reasoning.port
+          api_key: "sk-local-unused"          # self-hosted; ignored, not a secret
+          timeout: 300                        # generous: CPU reasoning is slow by design
+      # --- Fast reasoning + fallback (STACKIT Qwen, pay-per-token, capped) ------
+      # `sovereign-reasoning-fast` is the explicit FAST alternative AND the LiteLLM
+      # fallback for `sovereign-reasoning`. Pay-per-token, so it carries a hard
+      # per-model spend cap on the agent key (modelMaxBudget). Key is empty unless
+      # stackitPremium is configured (then it only errors if reached).
+      - model_name: sovereign-reasoning-fast
+        litellm_params:
+          model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8   # == stackitPremium.chatModelId
+          api_base: os.environ/STACKIT_API_BASE
+          api_key: os.environ/STACKIT_API_KEY
       # --- Offline embeddings (mock-model, deterministic 384-dim) -------------
       - model_name: sovereign-embed
         litellm_params:
@@ -767,21 +851,26 @@ litellm:
       allowed_fails: 3                        # circuit-breaking: trip after N fails...
       cooldown_time: 60                       # ...then cool the deployment down (s)
       fallbacks:
-        - sovereign-default: ["sovereign-premium"]
-        - sovereign-mock: ["sovereign-premium"]
+        # Two local Mistral models only (STACKIT off for now). If local reasoning
+        # (Magistral / sovereign-reasoning) trips the breaker, fail over to the in-box
+        # light model (Ministral / sovereign-default) — fully sovereign, nothing leaves
+        # the box. The light model has no external fallback. The STACKIT model_list
+        # entries (sovereign-reasoning-fast / -vision / -premium) stay DEFINED but out
+        # of the active chain until STACKIT is switched on.
+        - sovereign-reasoning: ["sovereign-default"]
     litellm_settings:
       success_callback: ["langfuse"]          # gateway-level tracing to Langfuse
       drop_params: true
     general_settings:
       master_key: os.environ/PROXY_MASTER_KEY
     # MCP gateway — register tool servers; agents call them via LiteLLM
-    # (per-key access). The DuckDB lakehouse query tool; Superset/OpenMetadata/
-    # dbt MCP servers get added as they come online.
+    # (per-key access). The governed Trino lakehouse query tool; Superset/
+    # OpenMetadata/dbt MCP servers get added as they come online.
     mcp_servers:
       sovereign_query:
         url: "http://query-tool:8000/mcp"
         transport: "http"
-        description: "DuckDB query over the lakehouse (Iceberg) — default query engine"
+        description: "Governed SQL over the lakehouse marts via central Trino (row/column governed)"
 
 # -----------------------------------------------------------------------------
 # OpenSearch — retrieval backbone (vector + lexical). Single node for local.
@@ -893,6 +982,28 @@ sampleAgent:
         assembled only from permissively licensed open source.
 
 # -----------------------------------------------------------------------------
+# Agent runtime — the live-execution backend for the Agents tab (Phase 4). It
+# holds ONLY its scoped LiteLLM virtual key (least privilege): no OPA, no
+# Langfuse, no Forgejo, no platform creds. Its egress is default-deny except the
+# LiteLLM gateway + the OS UI governed-tool endpoint (templates/network).
+# -----------------------------------------------------------------------------
+agentRuntime:
+  enabled: true
+  image:
+    repository: sovereign-os/agent-runtime   # built locally, loaded into kind
+    tag: "0.1.0"
+  chatModel: sovereign-mock
+  # Shared runtime <-> OS UI token. Local dev throwaway; on STACKIT it comes from
+  # External Secrets (ESO), never committed.
+  token: "agent-runtime-local-dev-token"
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  # CronJob-per-schedule entries (empty by default -> no CronJob renders). Each:
+  #   { name, systemId, cron, prompt }
+  schedules: []
+
+# -----------------------------------------------------------------------------
 # Poet agent — a second LangGraph agent that writes a poem file each run
 # (compose via LiteLLM -> save to a PVC), traced in Langfuse. Pull poems with
 # scripts/get-poems.sh.
@@ -931,7 +1042,7 @@ opa:
     sovereign-agents:           # the default agent key — no internet
       - rag_search
       - llm_generate
-      - query                    # DuckDB lakehouse query MCP tool
+      - query                    # governed Trino lakehouse query MCP tool
     sovereign-agents-web:        # explicitly granted the governed web tool
       - rag_search
       - llm_generate
@@ -968,6 +1079,37 @@ opa:
     - connection_crm_write
     - knowledge_certify
     - notion_create_page         # Connections slice: Write-approval (Notion create page)
+  # Trino data governance (read by package `trino` -> data.governance). Row filter
+  # by domain + column mask by sensitivity. In production a sync writes this from
+  # the artifact-registry / OpenMetadata visibility model (the SAME domain +
+  # visibility + sensitivity model agent governance uses) — NOT hand-authored per
+  # table. Locally we seed the Sales worked example so the governance proof
+  # (cross-domain read masked; owner sees it; PII column masked) runs on kind.
+  governance:
+    tables:
+      # The Sales mart (dbt-trino Iceberg) — row filter by domain.
+      iceberg.analytics.daily_revenue:
+        domain: sales
+        visibility: domain          # domain-scoped: non-members get a `false` row filter
+        shared_with: []
+        sensitive_columns: {}
+      # The Sales staging table — column mask by sensitivity (customer = PII).
+      iceberg.analytics.stg_orders:
+        domain: sales
+        visibility: domain
+        shared_with: []
+        sensitive_columns:
+          customer: pii              # masked unless the principal holds the `pii` clearance
+    principals:
+      sales-agent:                  # owning domain — sees rows + PII
+        domains: [sales]
+        clearances: [pii]
+      sales-assistant:              # the Agent golden-path key, in the Sales domain
+        domains: [sales]
+        clearances: [pii]
+      marketing-agent:              # cross-domain — rows masked, PII masked
+        domains: [marketing]
+        clearances: []
 
 # -----------------------------------------------------------------------------
 # Sales Assistant — the Agent golden-path vertical slice. Ships AGENT.md +
@@ -1042,14 +1184,15 @@ dagster:
           - "--python-file"
           - "/opt/dagster/app/repo.py"
         port: 3030
-        # Warehouse creds for dbt runs (env propagates to launched run pods via
-        # includeConfigInLaunchedRuns). username/password come from the Secret.
+        # Central Trino connection for dbt-trino runs (env propagates to launched
+        # run pods via includeConfigInLaunchedRuns). No password on kind — OPA
+        # governs the identity; marts build as Iceberg via Trino.
         env:
-          - { name: PGHOST, value: pg-rw }
-          - { name: PGDATABASE, value: warehouse }
-          - { name: PGSCHEMA, value: analytics }
-        envSecrets:
-          - name: postgres-warehouse-credentials
+          - { name: TRINO_HOST, value: trino }
+          - { name: TRINO_PORT, value: "8080" }
+          - { name: TRINO_USER, value: dbt-sales }
+          - { name: TRINO_CATALOG, value: iceberg }
+          - { name: TRINO_SCHEMA, value: analytics }
         resources:
           requests: { cpu: 50m, memory: 384Mi }
           limits: { cpu: "1", memory: 1Gi }   # headroom for dbt materializations
@@ -1078,31 +1221,43 @@ dagster:
       limits: { cpu: 500m, memory: 512Mi }
 
 # -----------------------------------------------------------------------------
-# dbt — transforms the seed data into the analytics warehouse (CNPG `warehouse`).
-# Runs as a post-install hook Job; Cube reads the resulting models.
+# dbt (dbt-trino) — the SINGLE governed transform path. staging -> marts build as
+# Iceberg tables via the central Trino engine (Polaris REST catalog). Runs as a
+# post-install hook Job; Cube + Superset + the agent query tool read the marts
+# THROUGH Trino. No dbt-duckdb / dbt-postgres on the governed path.
 # -----------------------------------------------------------------------------
 dbt:
   enabled: true
   image:
     repository: sovereign-os/dbt     # built locally, loaded into kind
-    tag: "0.1.0"
-  warehouse:
-    database: warehouse
+    tag: "0.2.0"                      # 0.2.0 = dbt-trino adapter
+  # Central Trino connection. No password on kind (OPA governs the identity);
+  # STACKIT fronts Trino with TLS + auth. user identifies the domain to OPA.
+  trino:
+    host: trino
+    port: 8080
+    user: dbt-sales
+    catalog: iceberg
     schema: analytics
-    secretName: postgres-warehouse-credentials
 
 # -----------------------------------------------------------------------------
-# Cube — semantic/metrics layer over the dbt warehouse (CNPG `warehouse`).
-# Dev mode enables the Cube Playground. Metrics defined on analytics.daily_revenue.
+# Cube — semantic/metrics layer reading the marts THROUGH central Trino
+# (CUBEJS_DB_TYPE=trino). Metrics defined on analytics.daily_revenue (Iceberg).
+# Dev mode enables the Cube Playground. cube_dbt model generation reads the dbt
+# manifest (unchanged).
 # -----------------------------------------------------------------------------
 cube:
   enabled: true
   image:
     repository: cubejs/cube
     digest: sha256:42418fc85830763178abd45ca93e60fefec27effb92418f9d977699bc38483f5
-  warehouse:
-    database: warehouse
-    secretName: postgres-warehouse-credentials
+  # Central Trino connection (Presto/Trino driver). The Iceberg catalog is the
+  # Presto catalog; sql_table values stay `<schema>.<table>`.
+  trino:
+    host: trino
+    port: 8080
+    user: cube-sales
+    catalog: iceberg
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "1", memory: 768Mi }
@@ -1260,23 +1415,111 @@ polaris:
     limits: { cpu: "2", memory: 1Gi }
 
 # -----------------------------------------------------------------------------
-# DuckDB query tool — the default query engine over the lakehouse (Iceberg).
-# Trino/Spark are optional scale modules (off by default — see below).
+# Governed `query` MCP tool — read-only SQL THROUGH central Trino over the Iceberg
+# marts. OPA gates tool ACCESS at the gateway; Trino enforces ROW/COLUMN governance
+# on every read. No embedded DuckDB (that is the personal/sandbox lane — see the
+# sandbox section). (Pre-2026-06-29 this was a DuckDB engine; now Trino-backed.)
 # -----------------------------------------------------------------------------
 queryTool:
   enabled: true
   image:
     repository: sovereign-os/query-tool     # built locally, loaded into kind
-    tag: "0.2.0"                             # 0.2.0 adds the MCP server
-  namespace: analytics                       # Iceberg namespace for the sample
-  baseLocation: s3://lakehouse/wh
+    tag: "0.3.0"                             # 0.3.0 = Trino-backed governed tool
+  # Central Trino connection. The user identifies the governed domain principal to
+  # the Trino->OPA row/column plugin.
+  trino:
+    host: trino
+    port: 8080
+    user: query-agent
+    catalog: iceberg
+    schema: analytics
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "1", memory: 768Mi }
 
-# Trino — optional scale/federation engine (off by default; DuckDB is the default).
+# -----------------------------------------------------------------------------
+# Sandbox DuckDB — the PERSONAL/SANDBOX lane engine (behind Trino's governance).
+# Ephemeral DuckDB scoped to the user's PRIVATE PREFIX only (uploads + a
+# Trino-authorized, already-masked extract). It has NO Polaris/Iceberg-catalog
+# credentials, so by construction it can never read governed marts — the invariant.
+# -----------------------------------------------------------------------------
+sandbox:
+  enabled: true
+  image:
+    repository: sovereign-os/sandbox-duckdb   # built locally, loaded into kind
+    tag: "0.1.0"
+  bucket: sandbox                             # the per-user private-prefix bucket
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+# -----------------------------------------------------------------------------
+# Trino — the CENTRAL GOVERNED query engine for all shared marts (decided
+# 2026-06-29). Single coordinator-as-worker pod on kind; on STACKIT it runs on the
+# memory-optimized m3i.16 node. Iceberg read/write/maintenance on the Polaris REST catalog
+# (OAuth2), storage on object storage (MinIO locally / STACKIT Object Storage).
+# Governance = the Trino->OPA plugin (row filter + column mask; same OPA as agent
+# tools) + per-domain resource groups. dbt-trino builds the marts; Cube, Superset
+# and the agent `query` tool all read THROUGH this Trino.
+# -----------------------------------------------------------------------------
 trino:
-  enabled: false
+  enabled: true
+  image:
+    repository: trinodb/trino
+    tag: "476"
+    pullPolicy: IfNotPresent
+  # node.environment label (Trino requires it; lowercase alnum).
+  environment: sovereign
+  jvm:
+    # Heap for the single coordinator-as-worker. Sized for the m3i.16 node; drop to
+    # ~2G for a tight local kind bring-up (helm value override).
+    maxHeap: "6G"
+  query:
+    # Cluster-wide + per-node memory ceilings; spill to disk keeps big joins alive.
+    maxMemory: "4GB"
+    maxMemoryPerNode: "2GB"
+    spillEnabled: true
+  catalog:
+    # Iceberg connector against the Polaris REST catalog (OAuth2).
+    iceberg:
+      restUri: "http://polaris:8181/api/catalog"
+      warehouse: lakehouse
+      oauth2Scope: "PRINCIPAL_ROLE:ALL"
+      # Local: static S3 creds (Polaris S3 credential vending needs AWS STS, absent
+      # in the MinIO stand-in). STACKIT: vended creds (vendedCredentials: true).
+      vendedCredentials: false
+      # local: clientId:clientSecret derived from polaris.local; external: from a
+      # Secret named here with key POLARIS_OAUTH_CREDENTIAL (External Secrets).
+      oauth2SecretName: ""
+  s3:
+    region: us-east-1
+    pathStyleAccess: true
+  # OPA governance + resource groups are layered in their own phases (the chart
+  # renders access-control.properties + resource-groups.properties from these).
+  opa:
+    enabled: true
+    uri: "http://opa:8181"          # same OPA instance that governs agent tools
+  # Per-domain resource groups (static JSON file manager). Each domain gets its own
+  # queue/limits so one domain's heavy query can't starve others. Selectors match
+  # the `domain=<name>` client tag that dbt-trino / the query tool set; everything
+  # else falls through to a shared catch-all group.
+  resourceGroups:
+    enabled: true
+    rootSoftMemoryLimit: "80%"
+    rootHardConcurrency: 100
+    rootMaxQueued: 1000
+    # Per-domain cap — low enough that a burst of heavy queries from one domain
+    # QUEUES rather than starving the cluster (the "resource group caps a heavy
+    # query" governance proof).
+    perDomainSoftMemoryLimit: "30%"
+    perDomainHardConcurrency: 3
+    perDomainMaxQueued: 20
+    domains:
+      - sales
+      - marketing
+  resources:
+    requests: { cpu: "1", memory: 2Gi }
+    limits: { cpu: "4", memory: 8Gi }
 
 # Apache Spark — optional distributed batch/ETL engine (off by default).
 spark:

@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
  * and audited, exactly like the LiteLLM MCP gateway does for the LangGraph agent.
  *
  *   POST { tool: 'metrics', query: <CubeQuery> }   -> Cube semantic layer
- *   POST { tool: 'query',   sql: '<read-only SQL>' } -> DuckDB over Iceberg marts
+ *   POST { tool: 'query',   sql: '<read-only SQL>' } -> Trino over Iceberg marts
  *
  * The principal is the signed-in user's domain (the OPA grant unit); the response
  * always reports which policy decision applied + whether the call was traced.
@@ -64,7 +64,7 @@ export async function POST(req: Request) {
     // query tool
     const sql = (body.sql ?? '').toString().trim();
     if (!sql) return NextResponse.json({ error: 'query tool needs sql' }, { status: 400 });
-    const result = await queryRun(sql);
+    const result = await queryRun(sql, principal);
     const traced = await trace({ principal, tool, input: sql, output: result.rows });
     return NextResponse.json({ tool, principal, authorized: true, policy: authz.policy, traced, ...result });
   } catch (e) {

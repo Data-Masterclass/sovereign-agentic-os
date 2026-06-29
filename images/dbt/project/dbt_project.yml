@@ -6,9 +6,15 @@ profile: sovereign
 model-paths: ["models"]
 seed-paths: ["seeds"]
 
+# All models build as Iceberg tables in the central Trino `iceberg` catalog.
+# Staging materializes as a table (Iceberg); marts are INCREMENTAL (merge on a
+# tested unique key) so big marts refresh cheaply — the field convention for
+# Trino/Iceberg.
 models:
   sovereign:
     staging:
-      +materialized: view
-    marts:
       +materialized: table
+    marts:
+      +materialized: incremental
+      +incremental_strategy: merge
+      +on_schema_change: append_new_columns

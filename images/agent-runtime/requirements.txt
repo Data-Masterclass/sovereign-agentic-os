@@ -1,0 +1,6 @@
+# agent-runtime deps. A GENERIC IR interpreter (Approach A): the graph walk is
+# hand-rolled and stdlib-only; these libs are only used by the real default
+# model/tool implementations (LiteLLM via the OpenAI-compatible client, and the
+# governed-tool HTTP call). Ranges mirror the sample/poet agents for cache reuse.
+requests>=2.31,<3
+openai>=1.40,<2

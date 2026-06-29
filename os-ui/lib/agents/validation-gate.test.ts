@@ -131,14 +131,15 @@ test('GATE B — the agent-system helper builds the same kind of system from cha
   await assertBuildsAndVerifies(rec.id);
 });
 
-test('routing hits Ministral (light) and STACKIT Qwen (reasoning)', () => {
+test('routing hits Ministral (light) and local Magistral (reasoning default)', () => {
   const backends = newMockBackends();
   const light = routeProbe('coding', backends.litellm.routing);
   const reasoning = routeProbe('planning', backends.litellm.routing);
   assert.equal(light.tier, 'light');
   assert.match(light.model, /ministral/i);
   assert.equal(reasoning.tier, 'reasoning');
-  assert.match(reasoning.model, /qwen/i);
+  // Reasoning now defaults to the local sovereign model (Magistral); STACKIT Qwen is the fast option + fallback.
+  assert.match(reasoning.model, /sovereign-reasoning/i);
 });
 
 test('granted connection works while a non-granted one is blocked; a write is held for approval', async () => {

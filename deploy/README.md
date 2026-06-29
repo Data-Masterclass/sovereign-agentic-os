@@ -125,6 +125,20 @@ The 8–8 window saves ~€200/mo (compute only). **A 24/7 Mode B demo can brush
 overnight savings, Mode A scales almost entirely to zero — at the cost of
 self-managing the databases.)
 
+### Single-node Mode A sizing (central Trino) — decided 2026-06-29
+
+The verified Mode A path runs everything on **one** node. With **central Trino**
+added (a memory-hungry, always-on JVM) the single node is sized to **`m3i.16`** — a
+**memory-optimized, gen-3 Intel** flavor (~16 vCPU / **128 GB**; confirm the exact
+vCPU/RAM/price in the STACKIT calculator at provisioning). Memory-optimized gives
+Trino's heap headroom; gen-3 Intel gives the concurrent-query throughput without an
+old-gen tradeoff. We deliberately do **not** add a dedicated 2nd Trino node:
+cross-node pod networking on SKE-in-an-SNA is broken (verified 100% cross-node
+loss), so one bigger box is the only viable topology. Price the flavor in the
+STACKIT calculator and keep it under the **€1000 cost-alert hard-stop**; the node
+still pauses to ~0 off-hours via `make stackit-sleep`. The **user provisions**
+(`m3i.16`) — we never provision STACKIT.
+
 ## `values.stackit-managed.yaml` wiring (Terraform output → overlay)
 
 `render-values.sh` substitutes (endpoints/registry/DNS — never secrets):

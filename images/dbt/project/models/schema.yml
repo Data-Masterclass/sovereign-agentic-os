@@ -1,0 +1,40 @@
+version: 2
+
+models:
+  - name: stg_orders
+    description: "Typed, cleaned orders from the raw seed (Iceberg staging)."
+    columns:
+      - name: order_id
+        description: "Primary key of an order."
+        tests:
+          - not_null
+          - unique
+      - name: customer
+        description: "Customer name."
+        tests:
+          - not_null
+      - name: amount
+        description: "Order amount (net)."
+        tests:
+          - not_null
+      - name: order_date
+        description: "Date the order was placed."
+        tests:
+          - not_null
+
+  - name: daily_revenue
+    description: "Revenue + order count per day. The Sales mart Cube reads."
+    columns:
+      - name: order_date
+        description: "Calendar day (mart grain + merge unique key)."
+        tests:
+          - not_null
+          - unique
+      - name: revenue
+        description: "Sum of order amounts for the day."
+        tests:
+          - not_null
+      - name: orders
+        description: "Number of orders for the day."
+        tests:
+          - not_null

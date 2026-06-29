@@ -1,8 +1,6 @@
-# DuckDB query MCP tool — DuckDB over Iceberg.
-# Iceberg catalog metadata in CloudNativePG (pyiceberg SQL catalog), data on S3
-# (SeaweedFS) with static creds. (Polaris is the production REST catalog; its S3
-# credential vending needs AWS STS, which the local SeaweedFS stand-in lacks.)
-pyiceberg[pyarrow,s3fs,sql-postgres]>=0.8,<0.10
-duckdb>=1.1,<2
+# Trino `query` MCP tool — the governed query engine. Reads the lakehouse marts
+# THROUGH central Trino (Iceberg on Polaris); Trino enforces row/column governance
+# (the Trino->OPA plugin). No DuckDB/pyiceberg here — that is the sandbox lane.
+trino>=0.330,<1
 requests>=2.31,<3
 mcp>=1.2,<2

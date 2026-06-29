@@ -47,7 +47,11 @@ spec:
         - { protocol: UDP, port: 8053 }
         - { protocol: TCP, port: 8053 }
 ---
-# 3) Allow intra-namespace egress (components talk to each other).
+# 3) Allow intra-namespace egress (components talk to each other) — EXCEPT the
+# agent-runtime. K8s NetworkPolicy is additive, so a blanket podSelector {} here
+# would re-open every in-namespace path for the runtime and defeat its lockdown.
+# The runtime is therefore EXCLUDED from this allow and governed SOLELY by its
+# dedicated tight policy (`allow-agent-runtime-egress`) below.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -56,7 +60,9 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
 spec:
-  podSelector: {}
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/component, operator: NotIn, values: [agent-runtime] }
   policyTypes:
     - Egress
   egress:
@@ -116,4 +122,39 @@ spec:
         # Gardener/SKE CoreDNS listens on 8053 (see note above).
         - { protocol: UDP, port: 8053 }
         - { protocol: TCP, port: 8053 }
+---
+# 6) Default-deny egress for the agent-runtime (REAL lockdown). The runtime is
+# excluded from the blanket intra-namespace allow (policy 3), so this is its ONLY
+# egress allowlist: the LiteLLM model gateway + the OS UI governed-tool endpoint.
+# DNS is already covered by `allow-dns-egress` (policy 2). NOTHING else — no
+# Forgejo, no other in-namespace pod (least privilege; graph semantics come via
+# the OS UI /reload, not Forgejo). Plain networking.k8s.io/v1 to match this file;
+# Cilium enforces it on STACKIT (see header).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-agent-runtime-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: agent-runtime
+  policyTypes:
+    - Egress
+  egress:
+    # The LiteLLM model gateway (the runtime's only model path). LiteLLM is an
+    # upstream SUBCHART, so its pods carry `app.kubernetes.io/name: litellm` (the
+    # subchart's label), NOT this chart's `component` label — select by that or the
+    # rule matches nothing and Cilium blocks the runtime's only model path.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: litellm
+    # The OS UI governed-tool endpoint (component label `os-ui`).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui
 {{- end }}

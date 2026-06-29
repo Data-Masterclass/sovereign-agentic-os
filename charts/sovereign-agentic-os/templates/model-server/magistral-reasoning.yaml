@@ -1,0 +1,151 @@
+{{- if .Values.modelServer.reasoning.enabled }}
+{{- /*
+  Self-hosted REASONING tier — Magistral Small 24B (Apache-2.0, Mistral/EU) on a
+  CPU llama.cpp `llama-server` (OpenAI-compatible /v1). The SOVEREIGN reasoning
+  default: ONE RESIDENT (always-loaded) replica, registered with LiteLLM as
+  `sovereign-reasoning`. STACKIT Qwen (`sovereign-reasoning-fast`) is the explicit
+  fast alternative AND the LiteLLM fallback when this is slow/overloaded/down.
+
+  CORE CAP (the hard guardrail on a box shared with Trino): `reasoning.cores` is
+  BOTH the CFS CPU limit/request AND the llama.cpp thread count (`-t`) — one number,
+  so the model can NEVER exceed its budget and starve Trino. Slow-on-CPU by design
+  (latency-tolerant); LiteLLM gives it a generous timeout and breaks over to the
+  fast STACKIT route on connection failure.
+
+  The Q4_K_M GGUF (~14-16 GB) is PROVIDED OUT OF BAND on the box (NOT redistributed)
+  in the mounted models volume at `<modelPath>/<model>`; the pod stays NotReady
+  until llama-server has loaded it (readiness gates on /health). This is a CPU
+  sibling of model-server — NOT the GPU `big` toggle.
+*/}}
+{{- $r := .Values.modelServer.reasoning }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: magistral-reasoning
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "middleware") | nindent 4 }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "magistral-reasoning") | nindent 4 }}
+spec:
+  # SINGLE RESIDENT replica — always-loaded so reasoning has no cold-start; the
+  # 24B weights stay in RAM. Do not scale >1 on the box (each replica is +cores/+RAM).
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "magistral-reasoning") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "magistral-reasoning") | nindent 8 }}
+    spec:
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "app") | nindent 6 }}
+      {{- with $r.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: magistral-reasoning
+          image: "{{ $r.image.repository }}:{{ $r.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            # Read-only inference: llama-server only READS the mounted GGUF; KV cache
+            # lives in RAM, nothing is written to disk.
+            readOnlyRootFilesystem: true
+          args:
+            - "-m"
+            - "{{ $r.modelPath }}/{{ $r.model }}"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "{{ $r.port }}"
+            # CORE CAP: threads == reasoning.cores == the CFS CPU limit below. The
+            # two are the SAME number by construction — the Trino guardrail.
+            - "-t"
+            - "{{ $r.cores }}"
+            - "-c"
+            - "{{ $r.ctxSize }}"
+            # Parse the model's reasoning channel into OpenAI-compatible output.
+            - "--jinja"
+            - "--reasoning-format"
+            - "auto"
+          ports:
+            - { name: http, containerPort: {{ $r.port }} }
+          readinessProbe:
+            # llama.cpp /health returns 200 ONLY once the GGUF is fully loaded (503
+            # while loading) — so LiteLLM never routes a reasoning call onto a pod
+            # that hasn't loaded the 24B weights yet. This is the "/v1/models +
+            # model loaded" gate. Generous threshold: a 24B Q4 load is slow on CPU.
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 90
+          livenessProbe:
+            # Only checks the server process is up (don't restart mid long generation).
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              # CPU request == the cap: a resident reasoning model has a predictable
+              # footprint, so reserve its budget (leaves the box's other cores for Trino).
+              cpu: {{ $r.cores | quote }}
+              memory: {{ $r.memory.request | quote }}
+            limits:
+              # CORE CAP (CFS): the hard ceiling == reasoning.cores == `-t` threads.
+              cpu: {{ $r.cores | quote }}
+              memory: {{ $r.memory.limit | quote }}
+          volumeMounts:
+            # GGUF mounted READ-ONLY (provided out of band on the box).
+            - { name: models, mountPath: {{ $r.modelPath }}, readOnly: true }
+      volumes:
+        - name: models
+          {{- if $r.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: magistral-reasoning-models
+          {{- else }}
+          emptyDir:
+            sizeLimit: {{ $r.persistence.size | default "20Gi" }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: magistral-reasoning
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "magistral-reasoning") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "magistral-reasoning") | nindent 4 }}
+  ports:
+    - { name: http, port: {{ $r.port }}, targetPort: http }
+{{- if $r.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: magistral-reasoning-models
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "magistral-reasoning") | nindent 4 }}
+spec:
+  accessModes: [ {{ $r.persistence.accessMode | default "ReadWriteOnce" | quote }} ]
+  {{- if $r.persistence.storageClass }}
+  storageClassName: {{ $r.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $r.persistence.size | default "20Gi" }}
+{{- end }}
+{{- end }}

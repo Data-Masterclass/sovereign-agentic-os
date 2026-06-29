@@ -74,10 +74,10 @@ Licenses in use and their bundled full text:
 | Docling | digest-pinned | MIT | `licenses/MIT.txt` | Document parsing |
 | OPA (Open Policy Agent) | 1.4.2 | Apache-2.0 | `licenses/Apache-2.0.txt` | Policy-as-code |
 | Dagster | chart 1.13.11 | Apache-2.0 | `licenses/Apache-2.0.txt` | Orchestrator |
-| DuckDB | in query-tool image | MIT | `licenses/MIT.txt` | Default lakehouse query engine |
+| DuckDB | in sandbox-duckdb image | MIT | `licenses/MIT.txt` | Personal/sandbox lane engine (behind Trino) |
 | Apache Polaris | 1.0.1-incubating | Apache-2.0 | `licenses/Apache-2.0.txt` | NOTICE: `licenses/notices/Apache-Polaris-NOTICE.txt` |
 | Superset | chart 0.17.2 / app 6.1.0 | Apache-2.0 | `licenses/Apache-2.0.txt` | NOTICE: `licenses/notices/Apache-Superset-NOTICE.txt` |
-| Trino | optional (off) | Apache-2.0 | `licenses/Apache-2.0.txt` | Optional scale/federation engine |
+| Trino | 476 | Apache-2.0 | `licenses/Apache-2.0.txt` | Central governed query engine (all shared marts) |
 | Apache Spark | optional (off) | Apache-2.0 | `licenses/Apache-2.0.txt` | Optional; NOTICE: `licenses/notices/Apache-Spark-NOTICE.txt` |
 | SeaweedFS | 3.97 | Apache-2.0 | `licenses/Apache-2.0.txt` | Air-gap object storage |
 | Supabase | platform | Apache-2.0 | `licenses/Apache-2.0.txt` | |
@@ -118,15 +118,18 @@ Licenses in use and their bundled full text:
 |---|---|---|---|---|
 | Ollama (engine) | 0.6.8 | MIT | `licenses/MIT.txt` | Self-hosted model runtime (`modelServer`); OpenAI-compatible. We ship the **engine only**. |
 | Ministral 3 3B (weights) | `ministral-3:3b-instruct-2512-q4_K_M` | Apache-2.0 | `licenses/Apache-2.0.txt` | **DEFAULT self-hosted chat weights.** **Apache-2.0** (OSI-permissive). Pulled at runtime by Ollama, **not redistributed here** (`bundled=no`). |
+| llama.cpp (engine) | `server` | MIT | `licenses/MIT.txt` | Self-hosted **reasoning** runtime (`modelServer.reasoning`, `llama-server`); OpenAI-compatible `/v1`. We ship the **engine only** — the GGUF is provided on the box. |
+| Magistral Small 24B (weights) | `Magistral-Small-2506-Q4_K_M.gguf` | Apache-2.0 | `licenses/Apache-2.0.txt` | **SOVEREIGN reasoning weights** (`sovereign-reasoning`, Mistral AI). **Apache-2.0** (OSI-permissive). GGUF mounted at runtime on the box, **not redistributed here** (`bundled=no`). |
 
-> ✅ **The default model weights are Apache-2.0.** The default `modelServer.model`
-> is **Ministral 3 3B** (`ministral-3:3b-instruct-2512-q4_K_M`, Mistral AI),
-> distributed under **Apache-2.0** — an OSI-permissive license. The weights are
-> **pulled at runtime** by Ollama and are **NOT redistributed** by this project
-> (hence `bundled=no` in `licenses/components.tsv`). The self-hosted default is
-> therefore **Apache-clean**.
-> STACKIT premium routes (`stackitPremium`, off by default) call a managed API
-> and ship **no** model weights.
+> ✅ **The self-hosted model weights are Apache-2.0.** The default `modelServer.model`
+> is **Ministral 3 3B** (`ministral-3:3b-instruct-2512-q4_K_M`, Mistral AI) and the
+> sovereign reasoning model is **Magistral Small 24B** (`Magistral-Small-2506-Q4_K_M.gguf`,
+> Mistral AI) — both distributed under **Apache-2.0**, an OSI-permissive license. The
+> weights are **pulled/mounted at runtime** (by Ollama and `llama-server` respectively)
+> and are **NOT redistributed** by this project (hence `bundled=no` in
+> `licenses/components.tsv`). The self-hosted tiers are therefore **Apache-clean**.
+> STACKIT premium routes (`stackitPremium`, off by default — including the fast
+> `sovereign-reasoning-fast` fallback) call a managed API and ship **no** model weights.
 
 ### Referenced but NOT bundled
 

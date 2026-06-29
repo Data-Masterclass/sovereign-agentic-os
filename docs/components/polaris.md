@@ -17,9 +17,9 @@ curl http://localhost:8181/api/catalog/v1/oauth/tokens \
 ```
 
 ## How it fits
-- The DuckDB **query tool** reads Iceberg tables; locally the functional catalog is pyiceberg's
-  SQL catalog in CloudNativePG (Polaris S3 credential vending needs AWS STS, absent locally).
-- On STACKIT (S3 with STS), Polaris vends scoped credentials to clients directly.
+- **Central Trino** reads/writes/maintains Iceberg tables through the Polaris REST catalog (OAuth2).
+  Locally Trino uses static S3 creds (Polaris S3 credential vending needs AWS STS, absent locally).
+- On STACKIT (S3 with STS), Polaris vends scoped credentials to clients directly (vended-credentials).
 
 ## FAQ
 **Q: Persistence?** In-memory locally (a restart re-bootstraps); relational-jdbc on CNPG in

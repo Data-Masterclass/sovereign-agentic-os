@@ -4,8 +4,9 @@ import { config } from '@/lib/config';
 export const dynamic = 'force-dynamic';
 
 /**
- * Structured Data -> query-tool. The browser POSTs { sql }; we forward it to
- * the in-cluster query-tool's POST /query and return columns + rows.
+ * Structured Data -> governed query-tool. The browser POSTs { sql }; we forward it
+ * to the in-cluster query-tool's POST /query (read-only SQL THROUGH central Trino,
+ * row/column governed) and return columns + rows.
  */
 export async function POST(req: Request) {
   let sql = '';
@@ -43,7 +44,7 @@ export async function POST(req: Request) {
       );
     }
     return NextResponse.json({
-      engine: data.engine ?? 'duckdb',
+      engine: data.engine ?? 'trino',
       tables: Array.isArray(data.tables) ? data.tables : [],
       columns: Array.isArray(data.columns) ? data.columns : [],
       rows: Array.isArray(data.rows) ? data.rows : [],

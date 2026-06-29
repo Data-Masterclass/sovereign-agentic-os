@@ -6,9 +6,9 @@ import { config } from '@/lib/config';
 
 /**
  * Governed data-tool spine. Every data access an agent makes — the Cube `metrics`
- * tool and the DuckDB/Iceberg `query` tool — funnels through here so the SAME
- * policy + audit applies whether the caller is the dashboard, an agent, or a UI
- * panel. Three concerns:
+ * tool and the Trino `query` tool — funnels through here so the SAME policy +
+ * audit applies whether the caller is the dashboard, an agent, or a UI panel.
+ * Three concerns:
  *
  *   1. OPA authorization (default-deny). We ask the live decision API whether the
  *      principal may call the tool. If OPA is unreachable (off locally) we fail
@@ -147,13 +147,15 @@ export type QueryResult = {
   rowCount: number;
 };
 
-export async function queryRun(sql: string): Promise<QueryResult> {
+export async function queryRun(sql: string, principal?: string): Promise<QueryResult> {
+  // principal is forwarded so Trino's OPA plugin governs row/column for the right
+  // domain identity (the same principal OPA gates tool access on).
   const res = await withTimeout(
     `${config.queryToolUrl}/query`,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify({ sql }),
+      body: JSON.stringify(principal ? { sql, principal } : { sql }),
     },
     8000,
   );
@@ -167,7 +169,7 @@ export async function queryRun(sql: string): Promise<QueryResult> {
   }
   if (!res.ok || data.error) throw new Error((data.error as string) ?? `query-tool ${res.status}`);
   return {
-    engine: String(data.engine ?? 'duckdb'),
+    engine: String(data.engine ?? 'trino'),
     tables: Array.isArray(data.tables) ? (data.tables as string[]) : [],
     columns: Array.isArray(data.columns) ? (data.columns as string[]) : [],
     rows: Array.isArray(data.rows) ? (data.rows as string[][]) : [],

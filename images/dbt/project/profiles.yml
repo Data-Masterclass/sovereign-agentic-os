@@ -2,14 +2,17 @@ sovereign:
   target: dev
   outputs:
     dev:
-      type: postgres
-      host: "{{ env_var('PGHOST', 'pg-rw') }}"
-      port: 5432
-      # PGUSER/PGPASSWORD (the dbt hook Job) or username/password (Dagster
-      # envSecrets from the warehouse Secret) — works in both contexts.
-      user: "{{ env_var('PGUSER', env_var('username', 'warehouse')) }}"
-      password: "{{ env_var('PGPASSWORD', env_var('password', '')) }}"
-      dbname: "{{ env_var('PGDATABASE', 'warehouse') }}"
-      schema: "{{ env_var('PGSCHEMA', 'analytics') }}"
+      type: trino
+      # Central governed Trino. No password auth on kind (the identity is the user
+      # the OPA plugin governs); STACKIT fronts Trino with TLS + auth. method=none
+      # keeps the local path simple while still carrying the user identity for OPA.
+      method: none
+      host: "{{ env_var('TRINO_HOST', 'trino') }}"
+      port: "{{ env_var('TRINO_PORT', '8080') | as_number }}"
+      user: "{{ env_var('TRINO_USER', 'dbt-sales') }}"
+      http_scheme: "{{ env_var('TRINO_HTTP_SCHEME', 'http') }}"
+      # Iceberg catalog + the domain namespace (= Iceberg schema). marts land as
+      # real Iceberg tables on Polaris.
+      catalog: "{{ env_var('TRINO_CATALOG', 'iceberg') }}"
+      schema: "{{ env_var('TRINO_SCHEMA', 'analytics') }}"
       threads: 4
-      sslmode: prefer

@@ -100,26 +100,18 @@ http://minio:9000
 {{- end -}}
 {{- end -}}
 
-{{/* Shared env for the query tool + its bootstrap (catalog DB + object storage). */}}
+{{/* Shared env for the governed Trino `query` tool (reads marts THROUGH Trino). */}}
 {{- define "soa.queryToolEnv" -}}
-- name: PGHOST
-  value: {{ include "soa.pgHost" . }}
-- name: PGDATABASE
-  value: polaris
-- name: PGUSER
-  valueFrom: { secretKeyRef: { name: postgres-polaris-credentials, key: username } }
-- name: PGPASSWORD
-  valueFrom: { secretKeyRef: { name: postgres-polaris-credentials, key: password } }
-- name: S3_ENDPOINT
-  value: {{ include "soa.s3Endpoint" . | quote }}
-- name: BASE_LOCATION
-  value: {{ .Values.queryTool.baseLocation | quote }}
-- name: NAMESPACE
-  value: {{ .Values.queryTool.namespace | quote }}
-- name: AWS_ACCESS_KEY_ID
-  valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_ACCESS_KEY_ID } }
-- name: AWS_SECRET_ACCESS_KEY
-  valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_SECRET_ACCESS_KEY } }
+- name: TRINO_HOST
+  value: {{ .Values.queryTool.trino.host | quote }}
+- name: TRINO_PORT
+  value: {{ .Values.queryTool.trino.port | quote }}
+- name: TRINO_USER
+  value: {{ .Values.queryTool.trino.user | quote }}
+- name: TRINO_CATALOG
+  value: {{ .Values.queryTool.trino.catalog | quote }}
+- name: TRINO_SCHEMA
+  value: {{ .Values.queryTool.trino.schema | quote }}
 {{- end -}}
 
 {{/* StorageClass helper: "" => cluster default. */}}

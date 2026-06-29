@@ -1,0 +1,95 @@
+{{- if .Values.sandbox.enabled }}
+{{- /*
+  Sandbox DuckDB — the personal/sandbox lane engine (behind Trino's governance).
+  Ephemeral DuckDB scoped to the user's PRIVATE PREFIX only (uploads + a
+  Trino-authorized, already row/column-masked extract). It is given ONLY the
+  sandbox object-storage prefix + creds and NO Polaris/Iceberg-catalog config, so
+  by construction it can never read governed marts — the invariant. Governed reads
+  go through central Trino (the query-tool).
+*/}}
+{{- $s := .Values.sandbox }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox-duckdb
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "apps") | nindent 4 }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "sandbox-duckdb") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "sandbox-duckdb") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "sandbox-duckdb") | nindent 8 }}
+    spec:
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "app") | nindent 6 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: sandbox-duckdb
+          image: "{{ $s.image.repository }}:{{ $s.image.tag }}"
+          imagePullPolicy: IfNotPresent      # locally-built image, loaded into kind
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          env:
+            - name: PORT
+              value: "8000"
+            - name: HOME
+              value: /tmp
+            # Object storage — the SANDBOX prefix only. Deliberately NO Polaris /
+            # Iceberg-catalog env: the sandbox engine cannot reach governed marts.
+            - name: S3_ENDPOINT
+              value: {{ include "soa.s3Endpoint" . | quote }}
+            - name: S3_REGION
+              value: {{ .Values.objectStorage.region | quote }}
+            - name: SANDBOX_BUCKET
+              value: {{ $s.bucket | quote }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_ACCESS_KEY_ID } }
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_SECRET_ACCESS_KEY } }
+          ports:
+            - { name: http, containerPort: 8000 }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml $s.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandbox-duckdb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "sandbox-duckdb") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "sandbox-duckdb") | nindent 4 }}
+  ports:
+    - { name: http, port: 8000, targetPort: http }
+{{- end }}

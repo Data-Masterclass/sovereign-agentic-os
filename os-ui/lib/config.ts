@@ -41,12 +41,27 @@ export const config = {
   // poet-agent (LangGraph compose→save): GET {POET_AGENT_URL}/write?topic=...
   poetAgentUrl: base(env('POET_AGENT_URL', 'http://poet-agent:8000')),
 
+  // agent-runtime (shared LangGraph IR interpreter, Agents tab live execution):
+  // POST {AGENT_RUNTIME_URL}/reload  {systemId, ir}  — register a compiled graph;
+  // POST {AGENT_RUNTIME_URL}/run     {systemId, prompt, ...guards} — one invocation.
+  // The runtime holds ONLY its scoped LiteLLM key + can reach ONLY LiteLLM, this
+  // governed-tool endpoint and Forgejo-read (Cilium default-deny egress).
+  agentRuntimeUrl: base(env('AGENT_RUNTIME_URL', 'http://agent-runtime:8000')),
+  // Shared bearer the runtime presents to the os-ui governed-tool endpoint (the
+  // ONLY way the runtime reaches OPA/Langfuse — it has neither itself). Server-only.
+  agentRuntimeToken: env('AGENT_RUNTIME_TOKEN', 'dev-only-insecure-agent-runtime-token'),
+
   // ml-agent (LangGraph Science driver): GET {ML_AGENT_URL}/health, /models;
   // POST /run. Off by default (opt-in Science component); probed gracefully.
   mlAgentUrl: base(env('ML_AGENT_URL', 'http://ml-agent:8000')),
 
-  // query-tool (DuckDB/Iceberg): POST {QUERY_TOOL_URL}/query  {"sql": "..."}
+  // query-tool (governed, Trino): POST {QUERY_TOOL_URL}/query  {"sql": "..."}
   queryToolUrl: base(env('QUERY_TOOL_URL', 'http://query-tool:8000')),
+
+  // sandbox-duckdb (personal/sandbox lane): ephemeral DuckDB scoped to the user's
+  // private prefix ONLY (uploads + Trino-authorized extracts) — never governed
+  // marts. POST {SANDBOX_DUCKDB_URL}/query {"sql": "..."}.
+  sandboxDuckdbUrl: base(env('SANDBOX_DUCKDB_URL', 'http://sandbox-duckdb:8000')),
 
   // Langfuse: GET {LANGFUSE_URL}/api/public/traces  (HTTP basic auth)
   langfuseUrl: base(env('LANGFUSE_URL', 'http://agentic-os-langfuse-web:3000')),

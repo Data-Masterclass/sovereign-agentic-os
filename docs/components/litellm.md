@@ -2,7 +2,7 @@
 
 **What it is:** LiteLLM (MIT) is the **one governed endpoint** agents call for both **models**
 and **MCP tools**. It enforces per-key access + cost caps, logs every call (to Langfuse), and
-fronts the registered MCP tool servers (the DuckDB `query` tool, etc.). DB-backed (CNPG
+fronts the registered MCP tool servers (the governed Trino `query` tool, etc.). DB-backed (CNPG
 `litellm`) so the admin UI, virtual keys and spend tracking work.
 
 ## Access
@@ -26,7 +26,7 @@ kubectl -n agentic-os port-forward svc/agentic-os-litellm 4000:4000
 - **Virtual keys + cost caps:** UI → *Virtual Keys*. The agents use a scoped key
   (`sk-agents-local-dev`, alias `sovereign-agents`) limited to those two models with a budget.
 - **MCP tools:** registered tool servers appear at `/v1/mcp/tools`; agents call them through
-  LiteLLM's `/mcp` endpoint (see the DuckDB query-tool doc).
+  LiteLLM's `/mcp` endpoint (see the governed Trino query-tool doc).
 
 ## FAQ
 **Q: "Not connected to DB" at login?** The UI needs Postgres — it's DB-backed here (CNPG

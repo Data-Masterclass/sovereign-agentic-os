@@ -95,7 +95,11 @@ spec:
               # guardrail), and per-key rate limits with graceful queueing
               # (rpm_limit/tpm_limit + max_parallel_requests; LiteLLM soft-limits and
               # the router's num_retries back-pressures rather than hard-failing).
-              PAYLOAD='{"key":"'"$VIRTUAL_KEY"'","key_alias":"{{ $k.alias }}","models":{{ $k.models | toJson }},"max_budget":{{ $k.maxBudget }},"model_max_budget":{{ $k.modelMaxBudget | toJson }},"rpm_limit":{{ $k.rpmLimit }},"tpm_limit":{{ $k.tpmLimit }},"max_parallel_requests":{{ $k.maxParallelRequests }}}'
+              # `model_max_budget` is a LiteLLM ENTERPRISE feature (OSS /key/generate
+              # 500s if it is set). Include the per-model STACKIT cost cap ONLY when
+              # litellmAgentKey.enterprise is true; otherwise rely on the overall
+              # max_budget cap (OSS) — the self-hosted default routes are free anyway.
+              PAYLOAD='{"key":"'"$VIRTUAL_KEY"'","key_alias":"{{ $k.alias }}","models":{{ $k.models | toJson }},"max_budget":{{ $k.maxBudget }},{{ if $k.enterprise }}"model_max_budget":{{ $k.modelMaxBudget | toJson }},{{ end }}"rpm_limit":{{ $k.rpmLimit }},"tpm_limit":{{ $k.tpmLimit }},"max_parallel_requests":{{ $k.maxParallelRequests }}}'
               curl -fsS -X POST "$B/key/generate" \
                 -H "Authorization: Bearer $MASTER_KEY" \
                 -H "Content-Type: application/json" \

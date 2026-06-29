@@ -72,7 +72,7 @@ versions, SPDX identifiers, and pointers to the bundled full license texts under
 licenses/ — is in THIRD-PARTY-LICENSES.md.
 
 ================================================================================
-Self-hosted default model weights — Apache-2.0 (Ministral 3)
+Self-hosted model weights — Apache-2.0 (Ministral 3 + Magistral Small 24B)
 ================================================================================
 
 The DEFAULT self-hosted chat model (modelServer.model =
@@ -80,6 +80,14 @@ ministral-3:3b-instruct-2512-q4_K_M, Mistral AI "Ministral 3" 3B) is licensed
 under APACHE-2.0 — an OSI-permissive license. The weights are pulled at runtime
 by the Ollama engine and are NOT redistributed as part of this product (see
 THIRD-PARTY-LICENSES.md). The self-hosted default is therefore Apache-clean.
+
+The self-hosted SOVEREIGN REASONING model (modelServer.reasoning, registered
+with LiteLLM as sovereign-reasoning) is Mistral AI "Magistral Small 24B"
+(Magistral-Small-2506-Q4_K_M.gguf), also licensed under APACHE-2.0. It is served
+by the llama.cpp llama-server engine (MIT); the GGUF weights are provided/mounted
+at runtime on the host and are NOT redistributed as part of this product. The
+fast/fallback reasoning route (sovereign-reasoning-fast) is the managed STACKIT
+API and ships no weights.
 
 "Sovereign Agentic OS" and "Data Masterclass" are trademarks of Borek Data
 Ventures UG (haftungsbeschränkt); see TRADEMARKS.md. All other trademarks are the

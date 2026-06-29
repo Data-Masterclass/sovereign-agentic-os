@@ -423,3 +423,18 @@ export function recordActivity(systemId: string): void {
   const rec = store.get(systemId);
   if (rec) rec.lastActivity = now();
 }
+
+/**
+ * UNSCOPED read for the in-cluster scheduler only (a schedule CronJob → the
+ * token-authenticated scheduled-run endpoint). There is no human user in a
+ * scheduled run, so this bypasses the per-user view scope; the endpoint is gated
+ * by the shared runtime bearer instead. Returns null for an unknown system.
+ */
+export function systemForScheduler(
+  systemId: string,
+): { yaml: string; domain: string; disabledAgents: string[] } | null {
+  ensureSeeded();
+  const rec = store.get(systemId);
+  if (!rec) return null;
+  return { yaml: rec.yaml, domain: rec.domain, disabledAgents: rec.disabledAgents };
+}

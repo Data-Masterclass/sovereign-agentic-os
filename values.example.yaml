@@ -36,6 +36,7 @@ global:
 # docling:      { enabled: false }
 # osdashboards: { enabled: false }
 # openmetadata: { enabled: false }
-# Optional scale engines (off by default; DuckDB is the default query engine):
-# trino: { enabled: true }
-# spark: { enabled: true }
+# Central Trino is the GOVERNED query engine (default on); DuckDB is scoped to the
+# personal/sandbox lane (sandbox-duckdb). On a tiny node flip Trino off:
+# trino: { enabled: false }
+# spark: { enabled: true }   # optional distributed batch/ETL

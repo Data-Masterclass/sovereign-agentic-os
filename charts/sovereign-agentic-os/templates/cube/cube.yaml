@@ -1,8 +1,9 @@
 {{- if .Values.cube.enabled }}
 {{- /*
-  Cube (Apache 2.0) — semantic/metrics layer over the dbt warehouse (CNPG
-  `warehouse`). Defines metrics on analytics.daily_revenue, served via REST /
-  GraphQL / SQL. Dev mode enables the Cube Playground UI. Runs non-root with a
+  Cube (Apache 2.0) — semantic/metrics layer reading the marts THROUGH central
+  Trino (CUBEJS_DB_TYPE=trino). Defines metrics on analytics.daily_revenue
+  (Iceberg), served via REST / GraphQL / SQL. Dev mode enables the Cube Playground
+  UI. Runs non-root with a
   writable emptyDir at /cube/conf (the image expects to write there) and the
   model ConfigMap mounted inside it.
 */}}
@@ -117,18 +118,18 @@ spec:
               value: /tmp
             - name: CUBEJS_DEV_MODE
               value: "true"
+            # Read the marts THROUGH central Trino (governed engine), not Postgres.
             - name: CUBEJS_DB_TYPE
-              value: postgres
+              value: trino
             - name: CUBEJS_DB_HOST
-              value: {{ include "soa.pgHost" . }}
+              value: {{ $c.trino.host | quote }}
             - name: CUBEJS_DB_PORT
-              value: "5432"
-            - name: CUBEJS_DB_NAME
-              value: {{ $c.warehouse.database | quote }}
+              value: {{ $c.trino.port | quote }}
             - name: CUBEJS_DB_USER
-              valueFrom: { secretKeyRef: { name: {{ $c.warehouse.secretName }}, key: username } }
-            - name: CUBEJS_DB_PASS
-              valueFrom: { secretKeyRef: { name: {{ $c.warehouse.secretName }}, key: password } }
+              value: {{ $c.trino.user | quote }}
+            # Iceberg catalog (Trino/Presto driver). sql_table stays <schema>.<table>.
+            - name: CUBEJS_DB_PRESTO_CATALOG
+              value: {{ $c.trino.catalog | quote }}
             - name: CUBEJS_API_SECRET
               valueFrom: { secretKeyRef: { name: cube-secrets, key: CUBEJS_API_SECRET } }
           ports:

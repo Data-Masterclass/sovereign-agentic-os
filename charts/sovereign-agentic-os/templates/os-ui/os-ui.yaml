@@ -109,6 +109,15 @@ spec:
             # In-cluster backend Service URLs (overridable per environment).
             - name: SAMPLE_AGENT_URL
               value: {{ $u.sampleAgentUrl | quote }}
+            # Live agent-runtime backend (Agents tab) + the shared token the UI
+            # uses to call it and to validate the runtime's governed-tool calls.
+            - name: AGENT_RUNTIME_URL
+              value: "http://agent-runtime:8000"
+            - name: AGENT_RUNTIME_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: agent-runtime-token
+                  key: token
             - name: QUERY_TOOL_URL
               value: {{ $u.queryToolUrl | quote }}
             - name: LANGFUSE_URL

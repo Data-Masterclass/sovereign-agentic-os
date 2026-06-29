@@ -2,14 +2,14 @@
 
 The Sovereign Agentic OS is a self-hostable, EU-sovereign platform that assembles ~25
 best-in-class open-source tools (LangGraph, LiteLLM, Langfuse, OpenSearch, dbt, Dagster,
-Cube, Superset, Forgejo, Argo CD, Iceberg/Polaris/DuckDB, OPA…) into one governed stack
+Cube, Superset, Forgejo, Argo CD, Iceberg/Polaris/Trino, OPA…) into one governed stack
 where every business **domain** can create, store, use, document and share data, knowledge,
 dashboards, agents and software.
 
 ## Layers
 - **Layer 1 — Agent core:** LangGraph agents · LiteLLM gateway · Langfuse tracing · OpenSearch retrieval.
 - **Layer 2 — Context:** OPA · Docling · Haystack · Dagster · dbt · Cube · OpenMetadata.
-- **Layer 3 — Self-service:** Iceberg lakehouse (Polaris + DuckDB) · Superset BI · Forgejo + Argo CD.
+- **Layer 3 — Self-service:** Iceberg lakehouse (Polaris + central Trino; DuckDB = personal/sandbox lane) · Superset BI · Forgejo + Argo CD.
 - **Security baseline:** default-deny egress · egress proxy · governed OPA-gated `web_fetch`.
 
 ## Install (local, kind)
@@ -49,7 +49,7 @@ kubectl -n agentic-os port-forward svc/admin-console 8081:8080   # http://localh
 ## The demo data that ships
 - A **knowledge** index in OpenSearch (the agents' RAG).
 - A **dbt warehouse** (`analytics.daily_revenue`) read by Cube + Superset.
-- An **Iceberg table** (`analytics.orders`) on object storage, queryable by DuckDB.
+- **Iceberg marts** (`analytics.daily_revenue`) on object storage, queryable through central Trino.
 - A **Langfuse** project (`agent-core`) with API keys.
 - A **Forgejo** repo (`demo-app`) with a CI workflow (**push → Forgejo Actions → CI runner**)
   that **Argo CD** deploys into the `demo` namespace.

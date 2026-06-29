@@ -13,7 +13,7 @@ kubectl -n agentic-os port-forward svc/minio 9001:9001     # web console
 
 ## How to use it
 - Browse buckets/objects in the console. S3 API is on port 9000 (`http://minio:9000`).
-- Used by: Polaris/DuckDB (lakehouse data), Langfuse (blobs).
+- Used by: Polaris/Trino (lakehouse data), the sandbox lane (private prefixes), Langfuse (blobs).
 
 ## FAQ
 **Q: Turning it off?** It's core — Langfuse + the lakehouse depend on it. Leave it on.

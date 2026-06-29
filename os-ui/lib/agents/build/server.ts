@@ -9,14 +9,26 @@ import { compile } from '../langgraph-compile.ts';
 import { type Effect, type Gateway } from '../gateway.ts';
 import { runGraph, type RunResult } from './run-graph.ts';
 import { newMockBackends, makeMockAdapters, registerGrants, gatewayFor } from './mocks.ts';
+import { makeLiveAdapters } from './live.ts';
+import { makeRealClients, runtimeReachable } from './live-clients.ts';
+import { reloadRequest, runRequest } from './runtime-contract.ts';
 import { orchestrateBuild, type BuildReport } from './orchestrate.ts';
 
 /**
- * Server boundary for Build/Run (kind-only, mocked). It runs the SAME pure
- * orchestrator + gateway the unit tests use, but bridges every governed tool
- * call into the REAL Langfuse trace ring buffer (so Monitoring shows the system's
- * activity) and enqueues any `requires_approval` write into the Governance queue.
+ * Server boundary for Build/Run (Approach A — live execution). When the shared
+ * agent-runtime is reachable (a cluster is up), Build runs the 5 LIVE adapters
+ * against the real services and Run is a synchronous os-ui → runtime `/run`; the
+ * runtime funnels every tool call back through the os-ui governed-tool endpoint
+ * (OPA authorize + Langfuse trace there). When the runtime is unreachable (a
+ * laptop with no cluster), it falls back to the in-process teaching MOCK so the
+ * golden-path flow still works — honestly labelled `mode: 'offline-mock'`.
+ *
+ * Auth discipline preserved: a write held by OPA (`requires_approval`) is never
+ * executed and is enqueued into the Governance queue with the run's human-in-the-
+ * loop attribution.
  */
+
+export type BuildMode = 'live' | 'offline-mock';
 
 /** A Gateway that wraps an inner one and also lands traces in the real ring buffer. */
 function bridged(inner: Gateway, principal: string): Gateway {
@@ -35,15 +47,30 @@ function bridged(inner: Gateway, principal: string): Gateway {
   };
 }
 
-export async function buildSystem(systemId: string, yaml: string): Promise<BuildReport> {
+export async function buildSystem(systemId: string, yaml: string): Promise<BuildReport & { mode: BuildMode }> {
+  if (await runtimeReachable()) {
+    const report = await orchestrateBuild({
+      yaml,
+      systemId,
+      adapters: makeLiveAdapters(makeRealClients()),
+      probe: 'Build verification',
+    });
+    // The live langgraph verify already traced every tool call via the governed
+    // endpoint, so there is nothing to mirror here.
+    return { ...report, mode: 'live' };
+  }
+  // Offline teaching fallback: the in-process mock build.
   const backends = newMockBackends();
-  const adapters = makeMockAdapters(backends);
-  const report = await orchestrateBuild({ yaml, systemId, adapters, probe: 'Build verification' });
-  // Mirror the test-invocation traces into the real Langfuse ring buffer.
+  const report = await orchestrateBuild({
+    yaml,
+    systemId,
+    adapters: makeMockAdapters(backends),
+    probe: 'Build verification',
+  });
   for (const t of backends.langfuse.traces) {
     void gvTrace({ principal: systemId, tool: t.tool, input: t.input, output: t.output, decision: t.decision as Effect });
   }
-  return report;
+  return { ...report, mode: 'offline-mock' };
 }
 
 export type RunReport = {
@@ -52,6 +79,7 @@ export type RunReport = {
   steps: RunResult['steps'];
   traces: number;
   held: number;
+  mode: BuildMode;
 };
 
 export async function runSystem(
@@ -61,29 +89,55 @@ export async function runSystem(
 ): Promise<RunReport> {
   const sys = parseSystem(yaml);
   const ir = compile(sys);
+
+  if (await runtimeReachable()) {
+    const clients = makeRealClients();
+    // Ensure the runtime has the current graph, then run it synchronously. Each
+    // tool call funnels back through the governed-tool endpoint (authorize+trace).
+    await clients.runtime.reload(reloadRequest(systemId, ir));
+    const res = await clients.runtime.run(
+      runRequest(systemId, opts.prompt, { disabledAgents: opts.disabledAgents ?? [] }),
+    );
+    const steps = res.steps;
+    const held = enqueueHolds(systemId, sys, steps, opts.requestedBy);
+    return { ok: res.reachedEnd, path: res.path, steps, traces: res.traces, held, mode: 'live' };
+  }
+
+  // Offline teaching fallback: run the graph in-process through the mock gateway.
   const backends = newMockBackends();
   registerGrants(backends, sys);
   const gw = bridged(gatewayFor(backends), systemId);
-
   const res = await runGraph(ir, { gateway: gw, probe: opts.prompt, disabled: opts.disabledAgents });
+  const held = enqueueHolds(systemId, sys, res.steps, opts.requestedBy);
+  return { ok: res.reachedEnd, path: res.path, steps: res.steps, traces: res.traces, held, mode: 'offline-mock' };
+}
 
-  // Any write the run could not perform without approval is held in Governance.
+/**
+ * Enqueue a Governance approval for every write the run could not perform without
+ * approval. The runtime/gateway already declined to execute the held write; this
+ * records the human-in-the-loop request with the run's attribution.
+ */
+function enqueueHolds(
+  systemId: string,
+  sys: System,
+  steps: RunResult['steps'],
+  requestedBy: string,
+): number {
   let held = 0;
-  for (const step of res.steps) {
-    if (step.effect === 'requires_approval') {
-      held++;
-      enqueue({
-        kind: 'connection_write',
-        title: `Approval needed: ${step.tool}`,
-        detail: `System '${systemId}' agent '${step.node}' attempted a write-approval tool during a run.`,
-        agent: `${systemId}:${step.node}`,
-        domain: sys.system.domain,
-        requestedBy: opts.requestedBy,
-        tool: step.tool,
-      });
-    }
+  for (const step of steps) {
+    if (step.effect !== 'requires_approval') continue;
+    held++;
+    enqueue({
+      kind: 'connection_write',
+      title: `Approval needed: ${step.tool}`,
+      detail: `System '${systemId}' agent '${step.node}' attempted a write-approval tool during a run.`,
+      agent: `${systemId}:${step.node}`,
+      domain: sys.system.domain,
+      requestedBy,
+      tool: step.tool,
+    });
   }
-  return { ok: res.reachedEnd, path: res.path, steps: res.steps, traces: res.traces, held };
+  return held;
 }
 
 export type ConnectionProbe = { effect: Effect; reason: string; held: boolean };
@@ -91,7 +145,8 @@ export type ConnectionProbe = { effect: Effect; reason: string; held: boolean };
 /**
  * Probe a connection tool against the system's grants (Task 6): granted Read →
  * allow, non-granted → deny, Write-approval → requires_approval (held in the
- * Governance queue). `asAgentTools` further narrows per-agent (never broadens).
+ * Governance queue). Authorizes BEFORE any side effect and honors the read/write
+ * flag.
  */
 export async function probeConnection(
   system: System,

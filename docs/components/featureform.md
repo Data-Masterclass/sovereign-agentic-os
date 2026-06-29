@@ -2,7 +2,7 @@
 
 **What it is:** Featureform (**MPL-2.0**) — a **virtual** feature store for Layer-4 ML. It
 defines and serves reusable ML **features** on top of existing infra rather than copying data:
-**offline** = Iceberg via the query engine (DuckDB/Trino over Polaris), **online** = **Valkey**
+**offline** = Iceberg via central Trino (over Polaris), **online** = **Valkey**
 (BSD-3 — the stack's cache, *not* Redis). **Off by default** (optional Science component).
 
 ## Enable it

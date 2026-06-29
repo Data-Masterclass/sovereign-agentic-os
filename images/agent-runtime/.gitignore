@@ -1,0 +1,5 @@
+# Local test virtualenv + Python caches — never committed (build/test only).
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc

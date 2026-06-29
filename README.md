@@ -197,7 +197,7 @@ The Dagster image bundles dbt + dagster-dbt; dbt models load as Dagster assets
 (`daily_revenue`/`stg_orders`/`raw_orders`) and materializing them runs `dbt
 build` against the warehouse (validated: RUN_SUCCESS).
 
-Remaining for later: Layer 3 (MCP tools + DuckDB/Iceberg + Superset) + the OS UI.
+Remaining for later: Layer 3 (MCP tools + central Trino/Iceberg + Superset) + the OS UI.
 
 ### Data tier wiring (Layer 2)
 
