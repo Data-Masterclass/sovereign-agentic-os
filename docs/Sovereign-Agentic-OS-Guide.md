@@ -2,7 +2,7 @@
 title: "Sovereign Agentic OS"
 subtitle: "The official end-user guide — install, operate, and understand the platform"
 author: "Orchestrated by Data Masterclass · datamasterclass.com · www.sovereign-agentic.com"
-date: "Chart version 0.1.0 (app 0.1.0-agent-core) · generated {{DATE}} from commit {{GIT_COMMIT}}"
+date: "Chart version 0.2.7 (app 0.2.0-alpha.8) · generated {{DATE}} from commit {{GIT_COMMIT}}"
 titlepage: true
 titlepage-rule-color: "1F6FEB"
 toc: true
@@ -299,7 +299,7 @@ credentials and keys never reach the browser. The tabs and their wiring:
 | **Strategy** | Strategic pillars + an agentic-transformation readiness heatmap — *seeded v1* | — |
 | **Big Bets** | Strategic AI bets (thesis · target value · confidence · backing artifacts) — *seeded v1* | — |
 | **Dashboards** | Launch into Superset | — |
-| **Agents** | A **three-level agent IDE** (Systems → canvas → agent editor): build agent systems three equivalent ways — visual **canvas**, **Monaco** text, or an **agent-system helper** chat, all editing the same Forgejo-versioned `system.yaml` — then **Build (= execute + verify)**, run/schedule/toggle, fork-to-own, with a per-agent model picker and grants/capability governance. *Build runs against in-process mocks in this pre-release; live-service adapters are a follow-up.* | `/api/agents/*`, LiteLLM |
+| **Agents** | A **three-level agent IDE** (Systems → canvas → agent editor): build agent systems three equivalent ways — visual **canvas**, **Monaco** text, or an **agent-system helper** chat, all editing the same Forgejo-versioned `system.yaml` — then **Build (= execute + verify)**, run/schedule/toggle, fork-to-own, with a per-agent model picker and grants/capability governance. *Build/Run execute against the live agent-runtime when a cluster is reachable (every tool call governed via LiteLLM→OPA→Langfuse), falling back to an in-process mock only offline.* | `/api/agents/*`, LiteLLM |
 | **Software** | Lists repos + recent CI runs **and creates a real Forgejo repo** (starter app → push → CI → Argo deploy) | Forgejo API |
 | **Science** | **Layer-4 launchpad** — health + links for MLflow / JupyterHub / Featureform / KServe (opt-in) | health probes |
 | **Knowledge** | A **knowledge agent** authors a 3-category `.md` (workflow steps · rules & decisions · tacit context) and **ingests** it; plus lexical search | OpenSearch, LiteLLM |
@@ -492,9 +492,10 @@ helper chat) that all edit the *same* Forgejo-versioned `system.yaml`. **Build =
 runs the compiled system and checks it, with **every** model/connection/tool call routed through the
 **governed gateway** (no agent reaches a capability it was not granted). You pick a LiteLLM model per
 agent, manage grants/routing, **run / schedule / toggle** the system, and **fork-to-own**; a
-**validation gate** must pass before a system can build or run. *(In this pre-release Build executes
-against in-process mocks; live-service adapter implementations are a deliberate follow-up before real
-deploy.)*
+**validation gate** must pass before a system can build or run. *(Build/Run execute against the **live
+agent-runtime** when a cluster is reachable — every model/connection/tool call governed via
+LiteLLM→OPA→Langfuse — and fall back to an **in-process mock only offline**, when no cluster is
+present.)*
 
 When you define an agent you write behaviour (`AGENT.md`) and memory (`MEMORY.md`), then **grant the
 resources** the agent may use — data products, knowledge, files, connections — and the tools it may
@@ -1011,7 +1012,7 @@ in-cluster host `http://agentic-os-langfuse-web:3000`.
 
 ## E. Version & changelog
 
-- **Chart version:** 0.1.0 — **appVersion:** `0.1.0-agent-core`.
+- **Chart version:** 0.2.7 — **appVersion:** `0.2.0-alpha.8`.
 - **This build:** generated `{{DATE}}` from commit `{{GIT_COMMIT}}`.
 - **0.1.0** — agent-core vertical slice + Layers 2–3 built incrementally: L1 agent core (LangGraph /
   LiteLLM / Langfuse / OpenSearch), L2 context (OPA / Docling / Haystack / Dagster / dbt / Cube /
