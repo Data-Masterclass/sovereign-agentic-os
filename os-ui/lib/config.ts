@@ -108,6 +108,37 @@ export const config = {
   // the standalone `admin-console` service — there is no cross-pod hop anymore.
   platformNamespace: env('NAMESPACE', env('OS_NAMESPACE', 'agentic-os')),
 
+  // ---- In-UI Terminal. The OS UI mints a short-lived, single-use HMAC token
+  // (signed with terminalBrokerSecret — the SAME value the terminal-broker
+  // verifies with) only for an authenticated user whose role is in
+  // terminalAllowedRoles. The browser then opens a WebSocket to the broker at
+  // terminalBrokerWsUrl with that token. The broker spawns the locked-down
+  // sandbox Pod. Default OFF; the secret is server-only and never reaches the
+  // browser. terminalBrokerWsUrl is browser-reachable (ingress host on a deploy;
+  // a `kubectl port-forward svc/terminal-broker 8090:8080` address locally). ----
+  terminalEnabled: env('TERMINAL_ENABLED', '') === 'true',
+  terminalAllowedRoles: env('TERMINAL_ALLOWED_ROLES', 'builder,admin')
+    .split(',')
+    .map((r) => r.trim())
+    .filter(Boolean),
+  terminalBrokerSecret: env('TERMINAL_BROKER_SECRET', 'dev-only-insecure-terminal-secret-change-me'),
+  terminalBrokerWsUrl: env('TERMINAL_BROKER_WS', 'ws://localhost:8090/terminal'),
+
+  // ---- Domain-Builder Workbench. The OS UI mints a short-lived single-use HMAC
+  // token (signed with workbenchBrokerSecret — the SAME value the workbench-broker
+  // verifies with) for an authenticated `builder` whose role is in
+  // workbenchAllowedRoles, scoped to ONE of their domains. The browser then opens
+  // their PERSISTENT code-server through the broker at workbenchBrokerUrl (which
+  // reconciles + reverse-proxies it). Default OFF; the secret is server-only and
+  // never reaches the browser. ----------------------------------------------
+  workbenchEnabled: env('WORKBENCH_ENABLED', '') === 'true',
+  workbenchAllowedRoles: env('WORKBENCH_ALLOWED_ROLES', 'builder,admin')
+    .split(',')
+    .map((r) => r.trim())
+    .filter(Boolean),
+  workbenchBrokerSecret: env('WORKBENCH_BROKER_SECRET', 'dev-only-insecure-workbench-secret-change-me'),
+  workbenchBrokerUrl: base(env('WORKBENCH_BROKER_URL', 'http://localhost:8091')),
+
   // Dagster (Orchestration): POST {DAGSTER_URL}/graphql (no auth locally).
   dagsterUrl: base(env('DAGSTER_URL', 'http://agentic-os-dagster-webserver:80')),
 

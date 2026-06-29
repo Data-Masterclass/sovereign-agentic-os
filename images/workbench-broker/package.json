@@ -1,0 +1,16 @@
+{
+  "name": "workbench-broker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sovereign Agentic OS — domain-builder workbench broker (the only k8s-credentialed component; reconciles + reverse-proxies per-builder code-server)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "^1.0.0",
+    "http-proxy": "^1.18.1"
+  }
+}

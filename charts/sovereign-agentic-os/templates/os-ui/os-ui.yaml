@@ -127,6 +127,39 @@ spec:
               value: {{ $u.opaUrl | quote }}
             - name: DAGSTER_URL
               value: {{ $u.dagsterUrl | quote }}
+            {{- if .Values.terminal.enabled }}
+            # In-UI Terminal. The UI mints a short-lived token (signed with the
+            # SAME secret the broker verifies) for authorised roles, then the
+            # browser opens a WebSocket to the broker at TERMINAL_BROKER_WS.
+            - name: TERMINAL_ENABLED
+              value: "true"
+            - name: TERMINAL_ALLOWED_ROLES
+              value: {{ join "," .Values.terminal.allowedRoles | quote }}
+            - name: TERMINAL_BROKER_WS
+              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "terminal" "fallback" (.Values.terminal.brokerWsUrl | default "ws://localhost:8090/terminal")) | quote }}
+            - name: TERMINAL_BROKER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: terminal-broker
+                  key: secret
+            {{- end }}
+            {{- if .Values.workbench.enabled }}
+            # Domain-Builder Workbench. The UI mints a short-lived single-use token
+            # (signed with the SAME secret the workbench-broker verifies) for an
+            # authorised builder scoped to ONE domain, then the browser opens their
+            # persistent code-server via the broker at WORKBENCH_BROKER_URL.
+            - name: WORKBENCH_ENABLED
+              value: "true"
+            - name: WORKBENCH_ALLOWED_ROLES
+              value: {{ join "," .Values.workbench.allowedRoles | quote }}
+            - name: WORKBENCH_BROKER_URL
+              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "workbench" "fallback" (.Values.workbench.brokerUrl | default "http://localhost:8091")) | quote }}
+            - name: WORKBENCH_BROKER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: workbench-broker
+                  key: secret
+            {{- end }}
             # Browser-reachable consoles (linked/opened from the browser). When
             # ingress is enabled these resolve to the PUBLIC ingress host
             # (https://<tool>.<domain>) via soa.consoleUrl — never localhost — so

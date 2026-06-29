@@ -1,0 +1,6 @@
+  Sovereign Agentic OS — teaching sandbox
+  ---------------------------------------
+  This is an ephemeral, network-restricted shell. It exists only while your
+  terminal tab is open and is destroyed on disconnect or after the session TTL.
+  Available: python3, duckdb. Data access is limited to the governed endpoints.
+  The cluster API, secrets, and the public internet are intentionally blocked.

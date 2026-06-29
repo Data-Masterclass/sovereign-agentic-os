@@ -1,0 +1,271 @@
+{{- if .Values.workbench.enabled }}
+{{- /*
+  Domain-Builder Workbench — a PERSISTENT, DOMAIN-SCOPED code-server (VS Code in
+  the browser) per builder, behind the OS UI "Workbench" tab. It EXTENDS the
+  terminal-sandbox trust model from an ephemeral PTY to a long-lived editor.
+
+  Two trust tiers (same shape as the terminal):
+    * workbench-broker (THIS namespace): the ONLY component with a Kubernetes
+      credential. Tightly scoped — it reconciles per-builder code-server
+      Deployments/PVCs/Services/Secrets/NetworkPolicies in the WORKBENCH namespace
+      ONLY (Role below) and reverse-proxies the browser to them. Nothing in the
+      release namespace; no secrets there; no cluster scope.
+    * code-server workbenches (WORKBENCH namespace): one persistent pod + PVC per
+      builder, scaled 0<->1 on demand. NO k8s token mounted, non-root, caps
+      dropped, seccomp RuntimeDefault, reachable ONLY from the broker, egress
+      restricted to its OWN domain's Forgejo + the governed query-tool. Carries a
+      DOMAIN-SCOPED Forgejo token (never the global admin) via a per-builder Secret.
+
+  Default OFF (.Values.workbench.enabled=false): more access than the terminal
+  (persistence + domain creds + git), so it is opt-in and gated for sign-off.
+
+  NOTE: kindnet does not enforce NetworkPolicies (they apply but are inert
+  locally); on STACKIT (Cilium) they enforce. Locally the isolation rests on
+  no-token + non-root + caps-dropped + domain-scoped-creds + no-tooling-to-pivot.
+*/}}
+{{- $w := .Values.workbench }}
+{{- $wbNs := $w.namespace | default (printf "%s-workbench" .Release.Namespace) }}
+---
+# ---- Workbench namespace (isolation boundary for the persistent editors) -----
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $wbNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    kubernetes.io/metadata.name: {{ $wbNs }}
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    soa.dev/purpose: domain-workbench
+---
+# Restricted ServiceAccount the code-server pods run as. Token is NOT automounted
+# (belt-and-braces with the pod spec) and it is bound to NO Role/ClusterRole.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $w.serviceAccount | default "workbench-nobody" }}
+  namespace: {{ $wbNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+# ---- Broker ServiceAccount (in the release namespace) ------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: workbench-broker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "workbench-broker") | nindent 4 }}
+---
+# Least-privilege Role IN THE WORKBENCH NAMESPACE: reconcile per-builder editor
+# workloads and their isolation objects. Nothing cluster-scoped, no nodes, no RBAC
+# objects, and — crucially — no rights at all in the release namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: workbench-broker
+  namespace: {{ $wbNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "create"]
+  - apiGroups: [""]
+    # Per-builder + per-domain credential Secrets, in the workbench namespace ONLY.
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "update"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: workbench-broker
+  namespace: {{ $wbNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: workbench-broker
+subjects:
+  - kind: ServiceAccount
+    name: workbench-broker
+    namespace: {{ .Release.Namespace }}
+---
+# ---- Shared broker token secret (OS UI mints, broker verifies) ---------------
+# Override `workbench.brokerSecret` per environment (or wire an ExternalSecret).
+# NEVER commit a real value.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: workbench-broker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  secret: {{ $w.brokerSecret | default "dev-only-insecure-workbench-secret-change-me" | quote }}
+{{- range $w.domains }}
+---
+# Per-domain credentials Secret. Holds a DOMAIN-SCOPED Forgejo token (scoped to
+# this domain's org/repos — NOT the global admin). The broker copies ONLY the
+# requesting builder's domain creds into their per-builder Secret, so a builder
+# never receives another domain's token. Seed real tokens via an ExternalSecret;
+# the placeholder below is for the local prototype only.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: workbench-domain-creds-{{ .name }}
+  namespace: {{ $wbNs }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+    soa.dev/domain: {{ .name | quote }}
+type: Opaque
+stringData:
+  forgejoUser: {{ .forgejoUser | default (printf "%s-builder" .name) | quote }}
+  forgejoToken: {{ .forgejoToken | default "" | quote }}
+  gitUserName: {{ .gitUserName | default (printf "%s builder" .name) | quote }}
+  gitUserEmail: {{ .gitUserEmail | default (printf "builder@%s.local" .name) | quote }}
+{{- end }}
+---
+# ---- Broker Deployment -------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workbench-broker
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "apps") | nindent 4 }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "workbench-broker") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "workbench-broker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "workbench-broker") | nindent 8 }}
+    spec:
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "app") | nindent 6 }}
+      serviceAccountName: workbench-broker
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: workbench-broker
+          image: "{{ $w.broker.image.repository }}:{{ $w.broker.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          env:
+            - name: PORT
+              value: "8080"
+            - name: RELEASE_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: WORKBENCH_NAMESPACE
+              value: {{ $wbNs | quote }}
+            - name: WORKBENCH_IMAGE
+              value: "{{ $w.workspace.image.repository }}:{{ $w.workspace.image.tag }}"
+            - name: WORKBENCH_SERVICEACCOUNT
+              value: {{ $w.serviceAccount | default "workbench-nobody" | quote }}
+            - name: CODE_SERVER_PORT
+              value: {{ $w.workspace.port | default 8080 | quote }}
+            - name: ALLOWED_ROLES
+              value: {{ join "," $w.allowedRoles | quote }}
+            - name: IDLE_TIMEOUT_SECONDS
+              value: {{ $w.idleTimeoutSeconds | default 1800 | quote }}
+            - name: MAX_ACTIVE_WORKBENCHES
+              value: {{ $w.maxActiveWorkbenches | default 12 | quote }}
+            - name: WORKBENCH_PVC_SIZE
+              value: {{ $w.workspace.pvcSize | default "2Gi" | quote }}
+            - name: WORKBENCH_STORAGE_CLASS
+              value: {{ $w.workspace.storageClass | default "" | quote }}
+            - name: FORGEJO_BASE
+              value: {{ $w.forgejoBase | default (printf "http://forgejo-http.%s.svc:3000" .Release.Namespace) | quote }}
+            - name: QUERY_TOOL_BASE
+              value: {{ $w.queryToolBase | default (printf "http://query-tool.%s.svc:8000" .Release.Namespace) | quote }}
+            - name: WB_CPU_REQUEST
+              value: {{ $w.workspace.resources.cpuRequest | default "100m" | quote }}
+            - name: WB_CPU_LIMIT
+              value: {{ $w.workspace.resources.cpuLimit | default "1" | quote }}
+            - name: WB_MEM_REQUEST
+              value: {{ $w.workspace.resources.memRequest | default "512Mi" | quote }}
+            - name: WB_MEM_LIMIT
+              value: {{ $w.workspace.resources.memLimit | default "2Gi" | quote }}
+            - name: WB_EPHEMERAL_LIMIT
+              value: {{ $w.workspace.resources.ephemeralLimit | default "1Gi" | quote }}
+            - name: WORKBENCH_BROKER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: workbench-broker
+                  key: secret
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            {{- toYaml $w.broker.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: workbench-broker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "workbench-broker") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "workbench-broker") | nindent 4 }}
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+# ---- Workbench-namespace baseline NetworkPolicy ------------------------------
+# Default-deny ingress + egress for the whole workbench namespace. The broker
+# layers a per-builder allow-policy (ingress from broker; egress to DNS + this
+# builder's domain Forgejo + the governed query-tool) on top at reconcile time.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: workbench-default-deny
+  namespace: {{ $wbNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+{{- end }}

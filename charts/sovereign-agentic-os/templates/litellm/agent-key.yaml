@@ -88,8 +88,14 @@ spec:
               if [ "$info" = "200" ]; then
                 echo "virtual key already provisioned"; exit 0
               fi
-              echo "provisioning scoped virtual key (alias={{ $k.alias }}, budget={{ $k.maxBudget }})..."
-              PAYLOAD='{"key":"'"$VIRTUAL_KEY"'","key_alias":"{{ $k.alias }}","models":{{ $k.models | toJson }},"max_budget":{{ $k.maxBudget }}}'
+              echo "provisioning scoped virtual key (alias={{ $k.alias }}, budget={{ $k.maxBudget }}, rpm={{ $k.rpmLimit }}, tpm={{ $k.tpmLimit }})..."
+              # Scoped virtual key (least privilege): allowed models + an overall
+              # spend cap, PLUS a dedicated per-model spend cap for the pay-per-token
+              # STACKIT premium/vision routes (model_max_budget — the hard cost
+              # guardrail), and per-key rate limits with graceful queueing
+              # (rpm_limit/tpm_limit + max_parallel_requests; LiteLLM soft-limits and
+              # the router's num_retries back-pressures rather than hard-failing).
+              PAYLOAD='{"key":"'"$VIRTUAL_KEY"'","key_alias":"{{ $k.alias }}","models":{{ $k.models | toJson }},"max_budget":{{ $k.maxBudget }},"model_max_budget":{{ $k.modelMaxBudget | toJson }},"rpm_limit":{{ $k.rpmLimit }},"tpm_limit":{{ $k.tpmLimit }},"max_parallel_requests":{{ $k.maxParallelRequests }}}'
               curl -fsS -X POST "$B/key/generate" \
                 -H "Authorization: Bearer $MASTER_KEY" \
                 -H "Content-Type: application/json" \

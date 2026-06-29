@@ -122,7 +122,7 @@ export default function DataPage() {
 
   return (
     <>
-      <PageHeader title="Structured Data" crumb="catalog · talk to your data · data products · query" />
+      <PageHeader title="Data" crumb="catalog · talk to your data · data products · query" />
       <div className="content">
         <p className="lead">
           All structured data in the platform: browse the catalog, talk to your data, define

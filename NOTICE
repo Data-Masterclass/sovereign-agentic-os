@@ -71,6 +71,19 @@ licenses/notices/. The complete, per-component attribution manifest — with
 versions, SPDX identifiers, and pointers to the bundled full license texts under
 licenses/ — is in THIRD-PARTY-LICENSES.md.
 
+================================================================================
+Non-Apache default model weights — Gemma Terms of Use
+================================================================================
+
+The DEFAULT self-hosted chat model (modelServer.model = gemma3n:e4b-it-q4_K_M,
+Google "Gemma 3n E4B") is licensed under the GEMMA TERMS OF USE
+(https://ai.google.dev/gemma/terms) — NOT Apache-2.0 and NOT an OSI-permissive
+license. The weights are pulled at runtime by the Ollama engine and are NOT
+redistributed as part of this product (see licenses/Gemma-Terms-of-Use.txt and
+THIRD-PARTY-LICENSES.md). Running the default configuration downloads and uses
+Gemma under those terms; override modelServer.model with a permissively-licensed
+tag for a strictly Apache-2.0 stack.
+
 "Sovereign Agentic OS" and "Data Masterclass" are trademarks of Borek Data
 Ventures UG (haftungsbeschränkt); see TRADEMARKS.md. All other trademarks are the
 property of their respective owners.

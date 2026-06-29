@@ -13,6 +13,69 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [0.2.0-alpha.4] — 2026-06-29
+
+Headline: the OS gains an **in-browser code editor** for Layer 3 apps, a
+**self-hosted model-serving + routing** stack (Gemma default + LiteLLM
+fallback/cost-caps/rate-limits to STACKIT), and **experimental** in-UI
+**terminal** and **domain-builder workbench** tabs (off by default).
+
+### Added
+
+- **In-browser code editor for Layer 3 apps (Monaco).** The Software golden path
+  gains a **Code** panel beside the build assistant: a file tree of the app's
+  Forgejo repo with a **Monaco** editor; Save commits back to Forgejo on `main`
+  (CI → Harbor → Argo CD pick it up). Repo access is **Builder/Admin-gated**
+  through a server route — no Forgejo URL/credential reaches the browser.
+  - **Sovereignty / air-gap:** Monaco's `vs/` assets are **self-hosted from the
+    app** (`public/monaco/vs`, generated at build time from the pinned
+    `monaco-editor` dependency by `scripts/copy-monaco.mjs`) and the loader is
+    pinned to the **same-origin** path `/monaco/vs`. **No CDN fetch** — the
+    editor works fully offline.
+- **Self-hosted model serving + routing.** New `model-server` component: a CPU
+  OpenAI-compatible LLM runtime (**Ollama**, MIT) serving **Gemma 3n E4B
+  (`gemma3n:e4b-it-q4_K_M`)** as the **default chat backend**, replacing the mock
+  LLM — fully offline, no provider key, **N replicas** behind LiteLLM
+  load-balancing (`modelServer.replicas`). The mock model is retained for offline
+  embeddings.
+  - **⚠ License:** Gemma weights ship under the **Gemma Terms of Use**, **not**
+    Apache-2.0 / not OSI-permissive. We ship only the Ollama engine; the weights
+    are **pulled at runtime, not redistributed** (recorded as
+    `LicenseRef-Gemma-Terms-of-Use`, `bundled=no`, in `licenses/components.tsv`;
+    documented in `NOTICE` + `THIRD-PARTY-LICENSES.md` +
+    `licenses/Gemma-Terms-of-Use.txt`). For a strictly Apache-only stack,
+    override `modelServer.model` to a permissive tag (e.g. a Qwen Apache-2.0 tag
+    or Ministral).
+  - **LiteLLM router:** fallback chain (self-hosted Gemma → optional bigger
+    self-host → STACKIT last-resort), with retries, timeouts, circuit-breaking
+    (`allowed_fails`/`cooldown_time`), and load-balancing. **STACKIT AI Model
+    Serving** (`Qwen/Qwen3-VL-235B-A22B-Instruct-FP8`) is wired as the
+    **vision** route + **last-resort** only — never the default; key via
+    **External Secrets**, with a dedicated **per-model spend cap** and per-key
+    **rate limits** on the agent virtual key.
+  - **Config alternatives/toggles:** swap the default to Ministral 3
+    (`modelServer.model`); optional GPU **vLLM** bigger model
+    (`modelServer.big.enabled`, off by default).
+  - **Private overlay:** `values.private.yaml` (gitignored) registers extra
+    self-hosted endpoints + extends the fallback chain without touching public
+    defaults — see `values.private.example.yaml`.
+- **Experimental — in-UI Terminal (off by default).** A sandboxed web terminal
+  tab (`terminal.enabled=false`): xterm.js front-end + a token-brokered
+  WebSocket to a locked-down `sandbox-shell` pod. **Prototype**, pending the
+  design decisions in `docs/terminal-tab-design.md`. Not wired into the default
+  deploy.
+- **Experimental — domain-builder Workbench (off by default).** A code-server
+  workbench tab (`workbench.enabled=false`) for domain builders, brokered through
+  a session API to a per-user `code-server-workbench` pod. **Prototype**, pending
+  the user's 7 open design decisions in `docs/workbench-tab-design.md §6`. Not
+  wired into the default deploy.
+
+### Changed
+
+- **UI labels:** the **Structured Data** tab/page is now **“Data”** and
+  **Unstructured Data** is now **“Files”** (display labels only; routes
+  `/data` and `/unstructured`, type keys and internal identifiers are unchanged).
+
 ### Governance
 
 - **Open-source Git governance.** Added `GOVERNANCE.md` (roles, lazy-consensus
@@ -265,6 +328,8 @@ Initial public pre-release: the umbrella Helm chart (Layers 1–4 + a
 secure-by-default baseline), the OS UI front door, the Apache-2.0 licensing
 baseline (LICENSE/NOTICE, third-party manifest, SBOM), and the end-user guide.
 
+[0.2.0-alpha.4]: https://github.com/Data-Masterclass/sovereign-agentic-os/releases/tag/v0.2.0-alpha.4
+[0.2.0-alpha.3]: https://github.com/Data-Masterclass/sovereign-agentic-os/releases/tag/v0.2.0-alpha.3
 [0.2.0-alpha.2]: https://github.com/Data-Masterclass/sovereign-agentic-os/releases/tag/v0.2.0-alpha.2
 [0.2.0-alpha.1]: https://github.com/Data-Masterclass/sovereign-agentic-os/releases/tag/v0.2.0-alpha.1
 [0.1.0-alpha.1]: https://github.com/Data-Masterclass/sovereign-agentic-os/releases/tag/v0.1.0-alpha.1

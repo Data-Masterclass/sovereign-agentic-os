@@ -120,7 +120,7 @@ export default function UnstructuredPage() {
 
   return (
     <>
-      <PageHeader title="Unstructured Data" crumb="catalog · classify · curate — OpenMetadata / OpenSearch" />
+      <PageHeader title="Files" crumb="catalog · classify · curate — OpenMetadata / OpenSearch" />
       <div className="content">
         <p className="lead">
           Documents, PDFs, and notes: catalog them, classify &amp; describe them for the domain

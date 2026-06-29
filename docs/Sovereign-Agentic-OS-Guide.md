@@ -302,9 +302,9 @@ credentials and keys never reach the browser. The tabs and their wiring:
 | **Software** | Lists repos + recent CI runs **and creates a real Forgejo repo** (starter app → push → CI → Argo deploy) | Forgejo API |
 | **Science** | **Layer-4 launchpad** — health + links for MLflow / JupyterHub / Featureform / KServe (opt-in) | health probes |
 | **Knowledge** | A **knowledge agent** authors a 3-category `.md` (workflow steps · rules & decisions · tacit context) and **ingests** it; plus lexical search | OpenSearch, LiteLLM |
-| **Structured Data** | **Talk-to-your-data RAG chat** (moved here from Agents), **SQL query**, a **catalog**, and a per-product **dbt agent** (draft) | sample-agent, query-tool, OpenMetadata, LiteLLM |
+| **Data** | **Talk-to-your-data RAG chat** (moved here from Agents), **SQL query**, a **catalog**, and a per-product **dbt agent** (draft) | sample-agent, query-tool, OpenMetadata, LiteLLM |
 | **Metrics** | Cube semantic-layer query (`daily_revenue`) | Cube |
-| **Unstructured Data** | Document library + **upload/paste → LLM classify & describe** → curate to Knowledge | OpenSearch, LiteLLM |
+| **Files** | Document library + **upload/paste → LLM classify & describe** → curate to Knowledge | OpenSearch, LiteLLM |
 | **Connections** | A **connections agent** drafts connector configs + a connector catalog (build is a *draft*) | LiteLLM |
 | **Marketplace** | Seeded catalog of installable components/agents/templates/datasets — *seeded v1* | — |
 | **Monitoring** | Recent agent traces | Langfuse public API |
@@ -373,9 +373,10 @@ kubectl -n agentic-os run ask --rm -i --restart=Never --image=curlimages/curl:8.
 
 You get an answer, the retrieved knowledge titles, and `traced_in_langfuse: true`. Open **Langfuse**
 (`admin@datamasterclass.com` / `langfuse-local-dev-admin`) → project *Agent Core* → Tracing → Traces to
-see the `rag-agent` run with its retrieve + generate spans. (Answers read canned because the bundled LLM
-is the offline **mock model** — swap in a real model in LiteLLM and the prose improves with no agent
-change.) You can also do this in the OS UI **Agents** tab. Edit the seed knowledge via
+see the `rag-agent` run with its retrieve + generate spans. (Real prose comes from the self-hosted
+**Gemma** default served by `model-server`; if you disable it the offline **mock model** answers read
+canned — swap in any model in LiteLLM with no agent change.) You can also do this in the OS UI
+**Agents** tab. Edit the seed knowledge via
 `sampleAgent.knowledge` in values — it is re-ingested on restart.
 
 ## 2. Query the lakehouse (DuckDB / MCP via LiteLLM)
@@ -396,7 +397,7 @@ kubectl -n agentic-os run t --rm -i --restart=Never --image=curlimages/curl:8.11
 
 Agents reach the same tool via LiteLLM's MCP endpoint (`http://agentic-os-litellm:4000/mcp`, tool
 `sovereign_query-query`), and OPA decides whether the calling key is allowed. In the OS UI, the
-**Structured Data** tab is the table browser + SQL surface. DuckDB is the default engine (embedded,
+**Data** tab is the table browser + SQL surface. DuckDB is the default engine (embedded,
 fast at normal scale); enable `trino.enabled` for federation at scale.
 
 ## 3. Build a dashboard (Superset)
@@ -418,6 +419,9 @@ kubectl -n agentic-os port-forward svc/forgejo-http 3001:3000   # http://localho
 ```
 
 Log in as `gitea_admin` / `forgejo-admin-local-dev`. A `demo-app` repo with a CI workflow is seeded.
+In the OS UI, the **Software → app → Code** panel gives an **in-browser editor** (Monaco, self-hosted —
+no CDN) over the app's repo: browse the file tree, edit, and **Save** commits straight back to Forgejo on
+`main` (Builder/Admin-gated; CI → Harbor → Argo CD then pick it up).
 A **`git push`** triggers **Forgejo Actions**, which the **CI runner** executes (Docker-in-Docker): it
 builds a container image, pushes it to Forgejo's built-in OCI registry, and commits a manifest bump
 (marked `[skip ci]` so the bump does not re-trigger CI). **Argo CD** sees the change and redeploys the
@@ -473,7 +477,7 @@ Marketplace.
 
 ## Data
 
-In **Structured Data → New data product** you **load** (file/connection/Supabase snapshot), **transform**
+In **Data → New data product** you **load** (file/connection/Supabase snapshot), **transform**
 (dbt models + tests), **document** (cataloged in OpenMetadata with lineage), define **metrics** (Cube),
 and build **dashboards** (Superset). Two tiers stay separate: **Supabase** holds operational/app state;
 **Iceberg** on object storage holds the analytical data products. DuckDB/Trino query the lake. Agents
@@ -542,14 +546,29 @@ every call logged to Langfuse, MCP tool servers fronted here. DB-backed (CNPG `l
 
 - **Access:** `svc/agentic-os-litellm 4000:4000` → admin UI `http://localhost:4000/ui`, API docs `/docs`.
 - **Login:** `admin` / `litellm-admin-local-dev`; master key `sk-litellm-local-dev-master`.
-- **Key tasks:** call models (`sovereign-mock`, `sovereign-embed`); manage virtual keys + cost caps;
-  register MCP tool servers. Agents use the scoped key `sk-agents-local-dev` (alias `sovereign-agents`).
+- **Key tasks:** call models (`sovereign-default` → Gemma, `sovereign-embed`, `sovereign-vision`/
+  `sovereign-premium` → STACKIT; `sovereign-mock` is a back-compat alias for the default); manage virtual
+  keys + cost caps; register MCP tool servers. Agents use the scoped key `sk-agents-local-dev` (alias
+  `sovereign-agents`).
 
-### Mock model — local offline LLM (`mock-model`)
-A tiny, dependency-free OpenAI-compatible server (chat + deterministic-hash embeddings) so the whole OS
-runs fully offline with no provider key. It echoes grounded context rather than writing real prose.
-Swap it for a real model in LiteLLM's `model_list` (or set `llm.mode: external`) with no agent changes.
-Reached only through LiteLLM (`http://mock-model:8080/v1`).
+### Model serving — self-hosted default LLM (`model-server`)
+The default chat backend is a self-hosted, OpenAI-compatible **Ollama** runtime (`model-server`) serving
+**Gemma 3n E4B** (`gemma3n:e4b-it-q4_K_M`) — fully offline, no provider key, with `modelServer.replicas`
+pods behind LiteLLM load-balancing. LiteLLM routes a fallback chain (self-hosted → optional bigger
+self-host → **STACKIT** last-resort / vision) with retries, circuit-breaking, and a per-model spend cap.
+Swap the default with `modelServer.model`, or disable it (`modelServer.enabled: false`) to fall back to
+the mock model.
+
+> **License note:** Gemma ships under the **Gemma Terms of Use** — **not** Apache-2.0 / not
+> OSI-permissive. We ship only the Ollama engine; the weights are pulled at runtime and **not
+> redistributed** (see `THIRD-PARTY-LICENSES.md` / `licenses/Gemma-Terms-of-Use.txt`). For a strictly
+> Apache-only stack, override `modelServer.model` to a permissively-licensed tag (e.g. a Qwen Apache-2.0
+> tag, or Ministral).
+
+### Mock model — offline embeddings + fallback LLM (`mock-model`)
+A tiny, dependency-free OpenAI-compatible server (chat + deterministic-hash embeddings). It now backs the
+**offline embeddings** route (`sovereign-embed`) and serves as the zero-dependency chat fallback when
+`model-server` is disabled. Reached only through LiteLLM (`http://mock-model:8080/v1`).
 
 ### Query tool — DuckDB engine (MCP) (`query-tool`)
 Runs DuckDB SQL over Iceberg tables; registered in the LiteLLM MCP gateway as the OPA-gated `query`
@@ -849,9 +868,9 @@ Roughly **€450–670/mo** for L1+L2 at typical sizing. **Scale the node pool t
   the `agentic-os-langfuse-worker` pod is running. Per-project RBAC is an `/ee` feature (not bundled);
   domain scoping is enforced in the app layer.
 - **LiteLLM: "Not connected to DB" at login** → the litellm pod is not running / not connected to CNPG.
-  The mock model has no pricing, so spend shows `0` until a real model is added.
-- **Agent answers look canned** → the bundled LLM is the offline mock model; swap in a real model in
-  LiteLLM with no agent change.
+  The self-hosted Gemma default has no pricing, so spend shows `0` until a paid (e.g. STACKIT) route is hit.
+- **Agent answers look canned** → `model-server` (Gemma) is disabled, so the offline mock model is
+  answering; enable `modelServer` or swap in any model in LiteLLM with no agent change.
 - **OpenSearch / OpenSearch Dashboards have no login locally** → the security plugin is disabled; the
   default-deny network baseline + in-cluster-only services protect them. Enable security + TLS on STACKIT.
 - **Polaris loses state on restart** → persistence is in-memory locally; it uses relational-jdbc on CNPG
@@ -905,7 +924,8 @@ in-cluster host `http://agentic-os-langfuse-web:3000`.
 | Langfuse v3 | L1 | wrapped chart 1.5.36 (app v3.194.1) | upstream (MIT core) |
 | OpenSearch | L1 | wrapped chart 3.7.0 | upstream |
 | OpenSearch Dashboards | L3 | wrapped chart 3.7.0 (off locally) | upstream |
-| Mock model | L1 | bespoke | `sovereign-os/mock-model:0.1.1` |
+| Model server (default LLM) | L1 | Ollama (MIT engine) · Gemma 3n E4B weights (Gemma Terms) | `ollama/ollama:0.6.8` |
+| Mock model | L1 | bespoke (embeddings + fallback) | `sovereign-os/mock-model:0.1.1` |
 | Sample agent | L1 | bespoke | `sovereign-os/sample-agent:0.1.0` |
 | Poet agent | L1 | bespoke | `sovereign-os/poet-agent:0.1.0` |
 | Query tool (DuckDB/MCP) | L1/L3 | bespoke | `sovereign-os/query-tool:0.2.0` |

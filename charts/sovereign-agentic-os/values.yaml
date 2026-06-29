@@ -456,8 +456,13 @@ langfuse:
       secretKeyRef: { name: object-storage-credentials, key: AWS_SECRET_ACCESS_KEY }
 
 # -----------------------------------------------------------------------------
-# Mock model — local OpenAI-compatible stub (sovereign/offline). Disabled on
-# STACKIT (LiteLLM routes to real in-region models there).
+# Mock model — local OpenAI-compatible stub. Since the self-hosted model-server
+# (Gemma E4B) became the DEFAULT CHAT backend, this is retained as the offline
+# EMBEDDINGS provider (`sovereign-embed`): deterministic 384-dim hash vectors that
+# match opensearch.knnDimension with zero download and no key. (Changing the embed
+# model would change the vector dimension and reindex the whole retrieval store —
+# out of scope here.) It still serves chat too, but LiteLLM no longer routes chat
+# to it. Disabled on STACKIT (managed embeddings there).
 # -----------------------------------------------------------------------------
 mockModel:
   enabled: true
@@ -468,6 +473,104 @@ mockModel:
   resources:
     requests: { cpu: 25m, memory: 64Mi }
     limits: { cpu: 250m, memory: 128Mi }
+
+# -----------------------------------------------------------------------------
+# Model server — the DEFAULT self-hosted, OpenAI-compatible LLM (replaces the mock
+# LLM for chat). A CPU llama.cpp/Ollama runtime serving a small permissively-
+# licensed model (Gemma E4B, Q4) FULLY OFFLINE — no provider key, nothing leaves
+# the sovereign boundary. LiteLLM routes `sovereign-default` (+ back-compat
+# `sovereign-mock`) here and load-balances across `replicas` pods.
+#
+# SCALE (model-benchmark.md): a Gemma E4B Q4 CPU replica needs ~3-4 GB RAM; for
+# ~30 concurrent users run ~3-5 replicas, OR a single small GPU. See
+# docs/components/model-server.md. The first request per pod triggers a one-time
+# model pull (needs egress to the model registry once; air-gap by baking weights
+# into an image) — steady state is offline.
+# -----------------------------------------------------------------------------
+modelServer:
+  enabled: true
+  image:
+    # Ollama (MIT) — OpenAI-compatible at /v1. Pinned for reproducibility.
+    repository: ollama/ollama
+    tag: "0.6.8"
+  # Default model tag pulled on first boot (Ollama library tag). This is the real
+  # Gemma 3n E4B Q4_K_M tag — verify with `ollama pull gemma3n:e4b-it-q4_K_M`.
+  # ⚠ LICENSE: Gemma weights ship under the GEMMA TERMS OF USE (NOT Apache-2.0 —
+  #   https://ai.google.dev/gemma/terms). They are redistributable & self-hostable
+  #   but are NOT an OSI-permissive license; see NOTICE / THIRD-PARTY-LICENSES.md.
+  #   To stay fully Apache-2.0-only, override to a permissive ALTERNATIVE such as
+  #   Ministral 3 (e.g. model: "ministral-3:q4") or a Qwen Apache-2.0 tag.
+  model: "gemma3n:e4b-it-q4_K_M"
+  port: 11434
+  # N replicas behind LiteLLM load-balancing (the Service round-robins). Bump for
+  # more concurrent users (~3-5 for ~30 users on CPU).
+  replicas: 2
+  resources:
+    # The gemma3n:e4b-it-q4_K_M tag is ~7.5 GB on disk; CPU resident set ~5-6 GB.
+    # Give headroom so it doesn't OOMKill on load (cf. the ClickHouse 2->3Gi fix).
+    requests: { cpu: "1", memory: 5Gi }
+    limits: { cpu: "4", memory: 8Gi }
+  persistence:
+    # OFF locally (emptyDir per pod — re-pulls on restart). For a shared, no-re-pull
+    # model cache set enabled + an RWX storageClass (or RWO with replicas:1).
+    enabled: false
+    size: 10Gi
+    accessMode: ReadWriteOnce
+    storageClass: ""
+  # Optional BIGGER self-hosted model (toggle, OFF by default) — a GPU vLLM serving
+  # a larger Apache-2.0 model (Qwen 3.6 / Mistral) for harder escalations, sitting
+  # BELOW STACKIT in the fallback chain. Registered with LiteLLM as `sovereign-big`.
+  # Enabling it needs a GPU node pool AND adding `sovereign-big` to the fallback
+  # chain (see litellm.proxy_config.router_settings below). Not for a kind box.
+  big:
+    enabled: false
+    image:
+      repository: vllm/vllm-openai
+      tag: "v0.6.6"
+    # vLLM CLI args — point at a permissively-licensed model id.
+    args:
+      - "--model"
+      - "Qwen/Qwen3.6-27B"
+      - "--port"
+      - "8000"
+    port: 8000
+    replicas: 1
+    resources:
+      requests: { cpu: "2", memory: 16Gi, nvidia.com/gpu: "1" }
+      limits: { cpu: "8", memory: 32Gi, nvidia.com/gpu: "1" }
+
+# -----------------------------------------------------------------------------
+# STACKIT AI Model Serving — PREMIUM, managed, pay-per-token. NOT the default.
+# Used ONLY as (a) the LAST-RESORT fallback when every self-hosted route is
+# unreachable/overloaded, and (b) the route for VISION inputs (`sovereign-vision`).
+# Confirmed catalog id (STACKIT docs, available-shared-models):
+#   Qwen/Qwen3-VL-235B-A22B-Instruct-FP8  (multimodal, OpenAI-compatible)
+# The PUBLIC default is fully self-hosted/offline: leave `enabled: false` and no
+# STACKIT account/key is needed. The model_list entries below still exist so the
+# fallback/vision routes are DEFINED; with no key they simply error if reached.
+# HARD COST GUARDRAIL: a dedicated per-key/per-model spend cap on the agent key
+# (litellmAgentKey.modelMaxBudget) — surfaced in Monitoring (Langfuse cost per
+# call) and the LiteLLM admin UI spend-per-key.
+# -----------------------------------------------------------------------------
+stackitPremium:
+  enabled: false                 # opt-in; public default is self-hosted only
+  # OpenAI-compatible base URL for STACKIT AI Model Serving (eu01).
+  apiBaseUrl: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
+  # Confirmed STACKIT catalog model ids.
+  visionModelId: "Qwen/Qwen3-VL-235B-A22B-Instruct-FP8"   # vision + last-resort chat
+  chatModelId: "Qwen/Qwen3-VL-235B-A22B-Instruct-FP8"     # reuse the VLM for text fallback
+  secretName: stackit-ai-model-serving-key
+  # Local dev: key stays EMPTY (route defined but unauthenticated; only errors if
+  # actually reached). On STACKIT the real key arrives via External Secrets below.
+  local:
+    apiKey: ""
+  externalSecrets:
+    enabled: false               # turn on with ESO + a STACKIT Secrets Manager store
+    secretStoreRef:
+      name: stackit-secrets-manager
+      kind: ClusterSecretStore
+    remoteKey: stackit-ai-model-serving-key
+    property: apiKey
 
 # -----------------------------------------------------------------------------
 # LiteLLM master key (consumed by the sample agent to call the gateway).
@@ -489,10 +592,25 @@ litellmAgentKey:
   enabled: true
   secretName: agent-litellm-key
   alias: "sovereign-agents"
-  maxBudget: 5            # USD spend cap on this key
+  maxBudget: 5            # overall USD spend cap on this key
   models:                 # only these models are callable with this key
-    - sovereign-mock
-    - sovereign-embed
+    - sovereign-default   # Gemma E4B (self-hosted default chat)
+    - sovereign-mock      # back-compat alias -> same self-hosted default
+    - sovereign-embed     # offline embeddings (mock-model)
+    - sovereign-vision    # vision route -> STACKIT Qwen3-VL
+    - sovereign-premium   # last-resort fallback -> STACKIT Qwen3-VL
+  # HARD COST GUARDRAIL: a dedicated per-model USD cap for the pay-per-token
+  # STACKIT routes (self-hosted models are free, so no cap needed there). LiteLLM
+  # blocks calls to a model once its cap is hit — independent of the overall cap.
+  modelMaxBudget:
+    sovereign-premium: 2
+    sovereign-vision: 2
+  # Per-key rate limits with graceful queueing (security.md). rpm/tpm soft-limit
+  # the key; max_parallel_requests caps in-flight calls; the router's num_retries
+  # back-pressures bursts instead of hard-failing.
+  rpmLimit: 120
+  tpmLimit: 200000
+  maxParallelRequests: 8
   local:
     value: "sk-agents-local-dev"
 
@@ -591,18 +709,68 @@ litellm:
     limits: { cpu: "1", memory: 2Gi }
   proxy_config:
     model_list:
-      - model_name: sovereign-mock          # chat model the agent calls
+      # --- Self-hosted DEFAULT (Gemma E4B, fully offline, no key) --------------
+      # `sovereign-default` is the cheap-first light tier. The k8s Service in front
+      # of the model-server Deployment round-robins across its `replicas` pods, so
+      # this single entry already load-balances; LiteLLM adds retries/fallbacks on
+      # top. `sovereign-mock` is a back-compat ALIAS (existing agents/UI default to
+      # that name) pointing at the SAME self-hosted default — despite the name it is
+      # now real Gemma, not the stub.
+      # NOTE: proxy_config is static config (the LiteLLM subchart consumes it as-is,
+      # in its OWN value context), so these are LITERALS — keep `model` and the
+      # api_base port in sync with modelServer.model / modelServer.port above.
+      - model_name: sovereign-default
         litellm_params:
-          model: openai/mock-gpt
-          api_base: http://mock-model:8080/v1
-          api_key: "sk-mock-unused"          # mock ignores it; not a real secret
-      - model_name: sovereign-embed          # embeddings for RAG
+          model: openai/gemma3n:e4b-it-q4_K_M          # == modelServer.model
+          api_base: http://model-server:11434/v1   # == modelServer.port
+          api_key: "sk-local-unused"          # self-hosted; ignored, not a secret
+      - model_name: sovereign-mock            # back-compat alias -> Gemma default
+        litellm_params:
+          model: openai/gemma3n:e4b-it-q4_K_M
+          api_base: http://model-server:11434/v1
+          api_key: "sk-local-unused"
+      # --- Offline embeddings (mock-model, deterministic 384-dim) -------------
+      - model_name: sovereign-embed
         litellm_params:
           model: openai/mock-embed
           api_base: http://mock-model:8080/v1
           api_key: "sk-mock-unused"
+      # --- STACKIT premium: VISION route + LAST-RESORT fallback (pay-per-token) -
+      # Not the default. Key is empty unless stackitPremium is configured, so these
+      # only succeed when STACKIT is wired; otherwise they error (acceptable — they
+      # are the final fallback). Spend is capped on the virtual key (modelMaxBudget).
+      - model_name: sovereign-vision          # vision inputs route here
+        litellm_params:
+          model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8   # == stackitPremium.visionModelId
+          api_base: os.environ/STACKIT_API_BASE
+          api_key: os.environ/STACKIT_API_KEY
+      - model_name: sovereign-premium         # last-resort text fallback
+        litellm_params:
+          model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8   # == stackitPremium.chatModelId
+          api_base: os.environ/STACKIT_API_BASE
+          api_key: os.environ/STACKIT_API_KEY
+    # ------------------------------------------------------------------------
+    # Router — fallback chain, retries, timeouts, circuit-breaking, load-balancing.
+    # Chain: self-hosted Gemma replicas -> STACKIT (last resort). To insert the
+    # OPTIONAL bigger self-host (modelServer.big.enabled) BEFORE STACKIT, add a
+    # `sovereign-big` model_list entry (api_base http://model-server-big:8000/v1)
+    # and change the fallbacks below to ["sovereign-big","sovereign-premium"].
+    # STACKIT fires ONLY if all self-hosted fail, OR when the caller selects the
+    # vision route. Escalation (failed verifier / low confidence / high-stakes) is
+    # the agent choosing a heavier model_name; LiteLLM logs model + cost per call
+    # to Langfuse so the tier and spend are visible in Monitoring.
+    # ------------------------------------------------------------------------
+    router_settings:
+      routing_strategy: simple-shuffle        # load-balance across healthy deployments
+      num_retries: 3                          # retry transient failures before failover
+      timeout: 120                            # per-request timeout (s)
+      allowed_fails: 3                        # circuit-breaking: trip after N fails...
+      cooldown_time: 60                       # ...then cool the deployment down (s)
+      fallbacks:
+        - sovereign-default: ["sovereign-premium"]
+        - sovereign-mock: ["sovereign-premium"]
     litellm_settings:
-      success_callback: ["langfuse"]         # gateway-level tracing to Langfuse
+      success_callback: ["langfuse"]          # gateway-level tracing to Langfuse
       drop_params: true
     general_settings:
       master_key: os.environ/PROXY_MASTER_KEY
@@ -1384,6 +1552,120 @@ osUI:
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits:   { cpu: 500m, memory: 512Mi }
+
+# -----------------------------------------------------------------------------
+# In-UI Terminal — the sandboxed shell behind the OS UI "Terminal" tab.
+# HIGHEST-RISK SURFACE → OFF BY DEFAULT (opt-in, pending sign-off). When enabled,
+# the chart deploys: a terminal-broker (the only k8s-credentialed component; it
+# may only manage Pods + exec in the sandbox namespace), a dedicated sandbox
+# namespace with a no-rights ServiceAccount, and deny-egress NetworkPolicies.
+# Each session gets an ephemeral, locked-down Pod (non-root, read-only rootfs,
+# drop-ALL caps, seccomp RuntimeDefault, no API token, tight limits) destroyed on
+# disconnect/idle/max-TTL. See templates/terminal/terminal.yaml + os-ui Terminal
+# tab. Authorization is tied to OS roles via `allowedRoles`.
+terminal:
+  enabled: false
+  # Roles permitted to open a terminal (maps to lib/session.ts Role union).
+  allowedRoles: ["builder", "admin"]
+  # Shared HMAC secret: the OS UI mints a short-lived single-use token, the broker
+  # verifies it. OVERRIDE per environment (or wire an ExternalSecret). The OS UI
+  # reads the same value via TERMINAL_BROKER_SECRET. Never commit a real value.
+  brokerSecret: "dev-only-insecure-terminal-secret-change-me"
+  # Dedicated sandbox namespace (default: <release-namespace>-sandbox).
+  sandboxNamespace: ""
+  sandboxServiceAccount: "sandbox-nobody"
+  wsPath: "/terminal"
+  # Browser-reachable broker WebSocket URL. Local-kind default = a
+  # `kubectl port-forward svc/terminal-broker 8090:8080` address; on a deploy,
+  # set ingress.hosts.terminal so the os-ui derives wss://terminal.<domain>.
+  brokerWsUrl: "ws://localhost:8090/terminal"
+  # Session lifecycle (seconds).
+  idleTimeoutSeconds: 600     # reap after 10m of no input
+  maxSessionSeconds: 3600     # hard cap: 60m
+  maxConcurrentSessions: 30   # broker-wide ceiling (≈ cohort size)
+  # Allow the sandbox egress to the governed query-tool ONLY (single data path).
+  # Everything else (API server, internet, other pods) stays denied.
+  allowGovernedQueryTool: true
+  broker:
+    image:
+      repository: sovereign-os/terminal-broker   # built locally, loaded into kind
+      tag: "0.1.0"
+    resources:
+      requests: { cpu: 50m, memory: 96Mi }
+      limits:   { cpu: 300m, memory: 256Mi }
+  sandbox:
+    image:
+      repository: sovereign-os/sandbox-shell      # built locally, loaded into kind
+      tag: "0.1.0"
+    shell: "/bin/bash"
+    resources:
+      cpuRequest: "50m"
+      cpuLimit: "500m"
+      memRequest: "128Mi"
+      memLimit: "512Mi"
+      ephemeralLimit: "512Mi"
+
+# =============================================================================
+# Domain-Builder Workbench — a PERSISTENT, DOMAIN-SCOPED code-server (VS Code in
+# the browser) per builder. EXTENDS the terminal sandbox model from an ephemeral
+# PTY to a long-lived editor (git + python + duckdb + the governed `dq` CLI) where
+# a `builder` builds/edits/administers ALL of THEIR domain's artifacts — software,
+# agents, data, knowledge — in one place. Default OFF (more access than the
+# terminal: persistence + domain creds + git, so it is opt-in, pending sign-off).
+# See docs/workbench-tab-design.md.
+# =============================================================================
+workbench:
+  enabled: false
+  # Roles permitted to open a workbench (maps to lib/session.ts Role union).
+  allowedRoles: ["builder", "admin"]
+  # Shared HMAC secret: the OS UI mints a short-lived single-use token, the broker
+  # verifies it. OVERRIDE per environment (or wire an ExternalSecret). The OS UI
+  # reads the same value via WORKBENCH_BROKER_SECRET. Never commit a real value.
+  brokerSecret: "dev-only-insecure-workbench-secret-change-me"
+  # Dedicated workbench namespace (default: <release-namespace>-workbench).
+  namespace: ""
+  serviceAccount: "workbench-nobody"
+  # Browser-reachable broker URL. Local-kind default = a
+  # `kubectl port-forward svc/workbench-broker 8091:8080` address; on a deploy,
+  # set ingress.hosts.workbench so the os-ui derives https://workbench.<domain>.
+  brokerUrl: "http://localhost:8091"
+  # In-cluster bases the broker injects into each workbench (domain scope enforced
+  # server-side by the query-tool/OPA; git uses the domain-scoped token).
+  forgejoBase: ""     # default http://forgejo-http.<ns>.svc:3000
+  queryToolBase: ""   # default http://query-tool.<ns>.svc:8000
+  # Lifecycle / capacity.
+  idleTimeoutSeconds: 1800     # scale a workbench to 0 after 30m idle (PVC persists)
+  maxActiveWorkbenches: 12     # broker-wide ceiling of CONCURRENTLY-RUNNING editors
+  # Per-domain credentials. Each entry seeds a `workbench-domain-creds-<name>`
+  # Secret in the workbench namespace holding a DOMAIN-SCOPED Forgejo token (NOT
+  # the global admin). The broker copies ONLY the requesting builder's domain creds
+  # into their pod. Seed real tokens via an ExternalSecret — placeholders here are
+  # for the local prototype (empty token => unscoped local Forgejo for the demo).
+  domains:
+    - { name: "sales",   forgejoUser: "sales-builder",   forgejoToken: "" }
+    - { name: "finance", forgejoUser: "finance-builder", forgejoToken: "" }
+  broker:
+    image:
+      repository: sovereign-os/workbench-broker   # built locally, loaded into kind
+      tag: "0.1.0"
+    resources:
+      requests: { cpu: 50m, memory: 96Mi }
+      limits:   { cpu: 300m, memory: 256Mi }
+  workspace:
+    image:
+      repository: sovereign-os/code-server-workbench  # built locally, loaded into kind
+      tag: "0.1.0"
+    port: 8080
+    # Per-builder persistence: a ReadWriteOnce PVC holding the editor workspace
+    # (edits, settings, extensions, git checkouts). Survives across sessions.
+    pvcSize: "2Gi"
+    storageClass: ""   # "" => cluster default (kind: standard / STACKIT: managed)
+    resources:
+      cpuRequest: "100m"
+      cpuLimit: "1"
+      memRequest: "512Mi"
+      memLimit: "2Gi"      # code-server ~1–2 GB each => maxActiveWorkbenches × 2Gi
+      ephemeralLimit: "1Gi"
 
 # =============================================================================
 # Layer 4 (Science / ML) — traditional data science, NOT LLM serving.

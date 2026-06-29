@@ -55,14 +55,24 @@ llm:
   provider: stackit
   secretRef: stackit-ai-model-serving-key
 
-# No mock model in Mode B — real inference comes from AI Model Serving.
+# No self-hosted inference in Mode B — STACKIT AI Model Serving is the backend.
 mockModel:
   enabled: false
+modelServer:
+  enabled: false
 
-# Actual LiteLLM wiring: point the gateway's model list at the OpenAI-compatible
-# AI Model Serving endpoint. Model names are kept identical to the bundled slice
-# (`sovereign-mock` / `sovereign-embed`) so the agents need no change. Swap the
-# `model:` ids for entries from `stackit ai-model-serving models`.
+# STACKIT premium ON in Mode B: the key comes from STACKIT Secrets Manager via
+# External Secrets (never inline). The dedicated per-model spend cap on the agent
+# key (values.yaml litellmAgentKey.modelMaxBudget) still applies.
+stackitPremium:
+  enabled: true
+  externalSecrets:
+    enabled: true
+
+# LiteLLM wiring (Mode B): route every model_name at the OpenAI-compatible STACKIT
+# endpoint. Confirmed catalog ids (STACKIT docs, available-shared-models). Names
+# match the bundled slice so the agents need NO change. `api_key` resolves from
+# the External-Secrets-synced `stackit-ai-model-serving-key` Secret (STACKIT_API_KEY).
 litellm:
   # Point the gateway's admin/virtual-key DB at managed PostgreSQL (was in-cluster
   # pg-rw). useExisting + the `postgres-litellm-credentials` Secret are unchanged
@@ -70,20 +80,48 @@ litellm:
   db:
     endpoint: "REPLACE-postgres-flex-host"
   environmentSecrets:
-    - litellm-credentials          # master key (unchanged)
-    - stackit-ai-model-serving-key # provides api_key + api_base envs
+    - litellm-credentials          # master key + STACKIT_API_BASE (unchanged)
+    - stackit-ai-model-serving-key # External-Secrets-synced STACKIT_API_KEY
   proxy_config:
     model_list:
-      - model_name: sovereign-mock # chat model the agents call
+      # Default/light chat -> Gemma family on STACKIT (cheap-first).
+      - model_name: sovereign-default
         litellm_params:
-          model: openai/REPLACE-chat-model-id # e.g. a STACKIT-served chat model
-          api_base: "REPLACE-model-serving-base-url" # render <- model_serving_base_url
-          api_key: os.environ/api_key
+          model: openai/google/gemma-3-27b-it
+          api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
+          api_key: os.environ/STACKIT_API_KEY
+      - model_name: sovereign-mock # back-compat alias
+        litellm_params:
+          model: openai/google/gemma-3-27b-it
+          api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
+          api_key: os.environ/STACKIT_API_KEY
       - model_name: sovereign-embed # embeddings for RAG
+        # NOTE: e5-mistral is 4096-dim — set opensearch.knnDimension to match and
+        # reindex, OR keep a 384-dim model. Dimension MUST match the index.
         litellm_params:
-          model: openai/REPLACE-embed-model-id
-          api_base: "REPLACE-model-serving-base-url"
-          api_key: os.environ/api_key
+          model: openai/intfloat/e5-mistral-7b-instruct
+          api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
+          api_key: os.environ/STACKIT_API_KEY
+      # Vision + heavy escalation -> Qwen3-VL 235B (the confirmed VLM).
+      - model_name: sovereign-vision
+        litellm_params:
+          model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
+          api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
+          api_key: os.environ/STACKIT_API_KEY
+      - model_name: sovereign-premium
+        litellm_params:
+          model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
+          api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
+          api_key: os.environ/STACKIT_API_KEY
+    router_settings:
+      routing_strategy: simple-shuffle
+      num_retries: 3
+      timeout: 120
+      allowed_fails: 3
+      cooldown_time: 60
+      fallbacks:
+        - sovereign-default: ["sovereign-premium"]
+        - sovereign-mock: ["sovereign-premium"]
     litellm_settings:
       success_callback: ["langfuse"]
       drop_params: true

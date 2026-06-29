@@ -21,6 +21,10 @@ query-tool:0.2.0
 superset:6.1.0
 mlflow:2.19.0
 ml-agent:0.1.0
+terminal-broker:0.1.0
+sandbox-shell:0.1.0
+workbench-broker:0.1.0
+code-server-workbench:0.1.0
 "
 
 build_one() {

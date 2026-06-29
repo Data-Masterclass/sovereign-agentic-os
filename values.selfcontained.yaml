@@ -32,3 +32,8 @@ trino:
   enabled: false
 spark:
   enabled: false
+
+# Self-hosted default LLM (Gemma E4B) — ONE replica to fit a single kind node
+# (~3-4 GB working set). Product default (values.yaml) is 2+ on a sized node.
+modelServer:
+  replicas: 1

@@ -1,0 +1,19 @@
+{
+  "name": "sovereign-terminal-broker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sovereign Agentic OS — in-UI terminal broker. Mints an ephemeral, locked-down sandbox Pod per session and bridges the browser WebSocket (xterm.js) to its PTY via the Kubernetes exec API. Destroys the Pod on disconnect / idle / max-TTL.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "1.4.0",
+    "ws": "8.18.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

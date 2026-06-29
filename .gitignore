@@ -29,5 +29,13 @@ poems/
 # install wizard output
 values.generated.yaml
 
+# Private instance overlay — registers extra self-hosted model endpoints + extends
+# the LiteLLM fallback chain WITHOUT touching public defaults. Instance-specific,
+# never published. The committed values.private.example.yaml shows the mechanism;
+# the real file (and any private model spec) stays out of git.
+values.private.yaml
+values.*.private.yaml
+stackit/private-instance-models.md
+
 # agent worktrees
 .claude/

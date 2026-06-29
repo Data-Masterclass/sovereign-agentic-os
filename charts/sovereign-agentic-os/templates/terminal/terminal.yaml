@@ -1,0 +1,280 @@
+{{- if .Values.terminal.enabled }}
+{{- /*
+  In-UI Terminal — the sandboxed shell behind the OS UI "Terminal" tab.
+
+  Two trust tiers:
+    * terminal-broker (THIS namespace): the only component with a Kubernetes
+      credential. Tightly scoped — it may create/get/list/delete Pods and open
+      pods/exec in the SANDBOX namespace ONLY (RoleBinding below). It bridges the
+      browser WebSocket (xterm.js) to an ephemeral sandbox Pod's PTY.
+    * sandbox Pods (SANDBOX namespace): ephemeral, per-session, locked down. They
+      run under `sandbox-nobody` with NO token automounted, non-root, read-only
+      rootfs, all caps dropped, seccomp RuntimeDefault, tight resource limits,
+      behind a deny-egress NetworkPolicy. They hold ZERO Kubernetes rights.
+
+  Default OFF (.Values.terminal.enabled=false): this is the highest-risk surface
+  in the stack, so it is opt-in and gated for sign-off.
+
+  NOTE: kind's kindnet CNI does not enforce NetworkPolicies (they apply but are
+  inert locally); on STACKIT (Cilium) they enforce. The sandbox is still locked
+  down on kind via no-token + non-root + read-only-rootfs + drop-ALL-caps.
+*/}}
+{{- $t := .Values.terminal }}
+{{- $sandboxNs := $t.sandboxNamespace | default (printf "%s-sandbox" .Release.Namespace) }}
+---
+# ---- Sandbox namespace (isolation boundary for the ephemeral shells) --------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $sandboxNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    kubernetes.io/metadata.name: {{ $sandboxNs }}
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    soa.dev/purpose: terminal-sandbox
+---
+# Restricted ServiceAccount the sandbox Pods run as. Token is NOT automounted
+# (belt-and-braces with the Pod spec's automountServiceAccountToken:false), and
+# it is bound to NO Role/ClusterRole — it can do nothing against the API.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $t.sandboxServiceAccount | default "sandbox-nobody" }}
+  namespace: {{ $sandboxNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+# ---- Broker ServiceAccount (in the release namespace) -----------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: terminal-broker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "terminal-broker") | nindent 4 }}
+---
+# Least-privilege Role IN THE SANDBOX NAMESPACE: manage ephemeral sandbox Pods
+# and open exec sessions. Nothing else — no secrets, no deployments, no nodes,
+# no cluster scope. The RoleBinding below grants it to the broker SA which lives
+# in the release namespace (cross-namespace subject, sandbox-namespace effect).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: terminal-broker-sandbox
+  namespace: {{ $sandboxNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create", "get"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: terminal-broker-sandbox
+  namespace: {{ $sandboxNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: terminal-broker-sandbox
+subjects:
+  - kind: ServiceAccount
+    name: terminal-broker
+    namespace: {{ .Release.Namespace }}
+---
+# ---- Shared broker token secret (UI mints, broker verifies) -----------------
+# The OS UI signs a short-lived single-use token with this key; the broker
+# verifies it. Override `terminal.brokerSecret` per environment (or wire an
+# ExternalSecret). NEVER commit a real value.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: terminal-broker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  secret: {{ $t.brokerSecret | default "dev-only-insecure-terminal-secret-change-me" | quote }}
+---
+# ---- Broker Deployment ------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: terminal-broker
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "apps") | nindent 4 }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "terminal-broker") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "terminal-broker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "terminal-broker") | nindent 8 }}
+    spec:
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "app") | nindent 6 }}
+      serviceAccountName: terminal-broker
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: terminal-broker
+          image: "{{ $t.broker.image.repository }}:{{ $t.broker.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          env:
+            - name: PORT
+              value: "8080"
+            - name: WS_PATH
+              value: {{ $t.wsPath | default "/terminal" | quote }}
+            - name: SANDBOX_NAMESPACE
+              value: {{ $sandboxNs | quote }}
+            - name: SANDBOX_IMAGE
+              value: "{{ $t.sandbox.image.repository }}:{{ $t.sandbox.image.tag }}"
+            - name: SANDBOX_SERVICEACCOUNT
+              value: {{ $t.sandboxServiceAccount | default "sandbox-nobody" | quote }}
+            - name: SANDBOX_SHELL
+              value: {{ $t.sandbox.shell | default "/bin/bash" | quote }}
+            - name: IDLE_TIMEOUT_SECONDS
+              value: {{ $t.idleTimeoutSeconds | default 600 | quote }}
+            - name: MAX_SESSION_SECONDS
+              value: {{ $t.maxSessionSeconds | default 3600 | quote }}
+            - name: MAX_CONCURRENT_SESSIONS
+              value: {{ $t.maxConcurrentSessions | default 30 | quote }}
+            - name: ALLOWED_ROLES
+              value: {{ join "," $t.allowedRoles | quote }}
+            - name: SANDBOX_CPU_REQUEST
+              value: {{ $t.sandbox.resources.cpuRequest | default "50m" | quote }}
+            - name: SANDBOX_CPU_LIMIT
+              value: {{ $t.sandbox.resources.cpuLimit | default "500m" | quote }}
+            - name: SANDBOX_MEM_REQUEST
+              value: {{ $t.sandbox.resources.memRequest | default "128Mi" | quote }}
+            - name: SANDBOX_MEM_LIMIT
+              value: {{ $t.sandbox.resources.memLimit | default "512Mi" | quote }}
+            - name: SANDBOX_EPHEMERAL_LIMIT
+              value: {{ $t.sandbox.resources.ephemeralLimit | default "512Mi" | quote }}
+            - name: TERMINAL_BROKER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: terminal-broker
+                  key: secret
+          ports:
+            - { name: ws, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: ws }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: ws }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            {{- toYaml $t.broker.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: terminal-broker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "terminal-broker") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "terminal-broker") | nindent 4 }}
+  ports:
+    - { name: ws, port: 8080, targetPort: ws }
+---
+# ---- Sandbox-namespace NetworkPolicies --------------------------------------
+# Default-deny egress for every sandbox Pod (the release-namespace baseline does
+# not reach this namespace, so it is re-declared here).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-default-deny-egress
+  namespace: {{ $sandboxNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+    - Ingress
+  # No ingress rules => deny all inbound (the broker uses exec via the API
+  # server, not a direct connection to the Pod, so the sandbox needs none).
+---
+# Allow DNS only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-allow-dns
+  namespace: {{ $sandboxNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+        - { protocol: UDP, port: 8053 }
+        - { protocol: TCP, port: 8053 }
+{{- if $t.allowGovernedQueryTool }}
+---
+# Allow egress ONLY to the governed query-tool in the release namespace (the
+# single sanctioned data path). Everything else — API server, internet, other
+# pods — stays denied.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-allow-governed-query-tool
+  namespace: {{ $sandboxNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: query-tool
+      ports:
+        - { protocol: TCP, port: 8000 }
+{{- end }}
+{{- end }}

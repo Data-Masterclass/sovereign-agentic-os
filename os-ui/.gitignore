@@ -2,6 +2,9 @@
 /.next
 /out
 /build
+# Self-hosted Monaco editor assets — regenerated from the monaco-editor
+# dependency at build time by scripts/copy-monaco.mjs (npm prebuild).
+/public/monaco
 next-env.d.ts
 *.tsbuildinfo
 .env*.local

@@ -112,11 +112,31 @@ Licenses in use and their bundled full text:
 | traefik/whoami | 1.10.3 | MIT | `licenses/MIT.txt` | Software-delivery demo app |
 | Docker-in-Docker (dind) | 27 | Apache-2.0 | `licenses/Apache-2.0.txt` | CI build sidecar (Moby/Docker) |
 
+### Model serving (engine + model weights)
+
+| Component | Version | License (SPDX) | Full text | Notes |
+|---|---|---|---|---|
+| Ollama (engine) | 0.6.8 | MIT | `licenses/MIT.txt` | Self-hosted model runtime (`modelServer`); OpenAI-compatible. We ship the **engine only**. |
+
+> ⚠ **Default model weights are NOT Apache-2.0.** The default `modelServer.model`
+> is **Gemma 3n E4B** (`gemma3n:e4b-it-q4_K_M`), distributed under the **Gemma
+> Terms of Use** (`LicenseRef-Gemma-Terms-of-Use`, https://ai.google.dev/gemma/terms)
+> — **not** an OSI-permissive license. The weights are **pulled at runtime** by
+> Ollama and are **NOT redistributed** by this project (hence `bundled=no` in
+> `licenses/components.tsv`; the license gate does not classify them as Apache).
+> However, **running the default configuration downloads and uses Gemma under
+> those terms.** For a strictly Apache-2.0 / OSI-permissive stack, **override
+> `modelServer.model`** to a permissive tag (e.g. a Qwen Apache-2.0 tag or
+> Ministral) before deploying. Full pointer: `licenses/Gemma-Terms-of-Use.txt`.
+> STACKIT premium routes (`stackitPremium`, off by default) call a managed API
+> and ship **no** model weights.
+
 ### Referenced but NOT bundled
 
 | Component | Version | License (SPDX) | Notes |
 |---|---|---|---|
 | MinIO | digest-pinned | AGPL-3.0 | **Local dev-only S3 stand-in.** AGPL — **never bundled/redistributed** in the product. SeaweedFS (Apache-2.0) is the bundled/air-gap object store. Full text kept for transparency at `licenses/AGPL-3.0.txt`. |
+| Gemma 3n E4B (weights) | `gemma3n:e4b-it-q4_K_M` | LicenseRef-Gemma-Terms-of-Use | **DEFAULT self-hosted chat weights.** **NOT Apache-2.0** — [Gemma Terms of Use](https://ai.google.dev/gemma/terms). Pulled at runtime by Ollama, **not redistributed here**. Pointer/summary: `licenses/Gemma-Terms-of-Use.txt`. |
 
 > Our own images (`sovereign-os/*`: mock-model, sample-agent, poet-agent,
 > haystack-retriever, query-tool, dbt, dagster, superset, egress-proxy, web-fetch,

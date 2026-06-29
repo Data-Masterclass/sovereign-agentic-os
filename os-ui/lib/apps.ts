@@ -380,6 +380,163 @@ async function scaffoldRepo(
   return { mode: 'live', fullName, htmlUrl, seeded };
 }
 
+// ------------------------------------------------------------- Code editor ----
+//
+// Read/edit/commit an app's source straight from its per-app Forgejo repo
+// (Software golden path §2 — the in-browser code editor beside the OpenCode
+// build assistant). Reuses the SAME Basic-auth credentials the scaffolder above
+// already uses (config.forgejoUser/forgejoPassword, wired into os-ui via the
+// chart's FORGEJO_* env + forgejo secret) — no new secret, nothing hardcoded.
+// Gated to Builders + Administrators here AND in the API route, and audited
+// through the same Langfuse spine as every other governed action.
+
+export type RepoFileMeta = { mode: 'live' | 'offline'; branch: string; files: string[] };
+export type RepoFile = { path: string; content: string; sha: string };
+export type RepoCommit = { path: string; sha: string; commitUrl: string | null };
+
+/** Builders + admins only — the code editor mutates the app's repo. */
+function ensureBuilder(user: CurrentUser): void {
+  if (user.role !== 'builder' && user.role !== 'admin') {
+    throw withStatus(new Error('The code editor is available to Builders and Administrators.'), 403);
+  }
+}
+
+function unreachable(): Error {
+  return withStatus(
+    new Error('Forgejo is unreachable — the code editor needs the Forgejo service running.'),
+    502,
+  );
+}
+
+/** Reject absolute / parent-traversal paths before they reach Forgejo. */
+function sanitizeRepoPath(p: string): string {
+  const clean = (p ?? '').replace(/^\/+/, '').trim();
+  if (!clean || clean.split('/').some((seg) => seg === '..' || seg === '.')) {
+    throw withStatus(new Error('Invalid file path'), 400);
+  }
+  return clean;
+}
+
+function encodeRepoPath(p: string): string {
+  return p.split('/').map(encodeURIComponent).join('/');
+}
+
+function repoCoords(app: App): { owner: string; repo: string } {
+  const [owner, repo] = app.repo.fullName.split('/');
+  return { owner: owner || config.forgejoRepoOwner, repo: repo || app.slug };
+}
+
+/** Generic Forgejo API request (any verb). status 0 means "unreachable". */
+async function forgejoApi(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<{ ok: boolean; status: number; data: unknown }> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 4000);
+  try {
+    const res = await fetch(`${config.forgejoUrl}/api/v1${path}`, {
+      method,
+      headers: { authorization: authHeader(), accept: 'application/json', 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      cache: 'no-store',
+      signal: ctrl.signal,
+    });
+    const raw = await res.text();
+    let data: unknown = null;
+    try {
+      data = raw ? JSON.parse(raw) : null;
+    } catch {
+      data = raw;
+    }
+    return { ok: res.ok, status: res.status, data };
+  } catch {
+    return { ok: false, status: 0, data: null };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Flat, recursive list of the app repo's files (blobs) on the default branch. */
+export async function listAppFiles(appId: string, user: CurrentUser): Promise<RepoFileMeta> {
+  ensureBuilder(user);
+  const app = await getAppForUser(appId, user);
+  const { owner, repo } = repoCoords(app);
+  const branch = 'main';
+  const res = await forgejoApi('GET', `/repos/${owner}/${repo}/git/trees/${branch}?recursive=true&per_page=1000`);
+  if (res.status === 0) throw unreachable();
+  // Empty repo / no main branch yet — surface an empty tree, not an error.
+  if (res.status === 404 || res.status === 409) return { mode: app.mode, branch, files: [] };
+  if (!res.ok) throw withStatus(new Error(`Forgejo error listing files (${res.status}).`), 502);
+  const data = res.data as { tree?: { path: string; type: string }[] };
+  const files = (data?.tree ?? [])
+    .filter((t) => t.type === 'blob' && typeof t.path === 'string')
+    .map((t) => t.path)
+    .sort((a, b) => a.localeCompare(b));
+  return { mode: app.mode, branch, files };
+}
+
+/** Read one file's decoded UTF-8 content + its current blob SHA (for commit). */
+export async function readAppFile(appId: string, user: CurrentUser, path: string): Promise<RepoFile> {
+  ensureBuilder(user);
+  const app = await getAppForUser(appId, user);
+  const clean = sanitizeRepoPath(path);
+  const { owner, repo } = repoCoords(app);
+  const res = await forgejoApi('GET', `/repos/${owner}/${repo}/contents/${encodeRepoPath(clean)}?ref=main`);
+  if (res.status === 0) throw unreachable();
+  if (res.status === 404) throw withStatus(new Error('File not found.'), 404);
+  if (!res.ok) throw withStatus(new Error(`Forgejo error reading file (${res.status}).`), 502);
+  const d = res.data as { content?: string; encoding?: string; sha?: string; type?: string };
+  if (d?.type !== 'file' || typeof d.content !== 'string') {
+    throw withStatus(new Error('That path is not an editable file.'), 400);
+  }
+  const content = d.encoding === 'base64' ? Buffer.from(d.content, 'base64').toString('utf8') : d.content;
+  return { path: clean, content, sha: String(d.sha ?? '') };
+}
+
+/**
+ * Save = commit. Writes the file back to the app's Forgejo repo on `main` via
+ * the contents API, using the blob SHA the editor loaded for optimistic
+ * concurrency (a stale SHA -> 409 "reload and retry"). Audited like every other
+ * governed mutation.
+ */
+export async function saveAppFile(
+  appId: string,
+  user: CurrentUser,
+  input: { path: string; content: string; sha: string; message?: string },
+): Promise<RepoCommit> {
+  ensureBuilder(user);
+  const app = await getAppForUser(appId, user);
+  const clean = sanitizeRepoPath(input.path);
+  const { owner, repo } = repoCoords(app);
+  const message =
+    (input.message ?? '').trim() || `Edit ${clean} via Sovereign Agentic OS code editor`;
+  const res = await forgejoApi('PUT', `/repos/${owner}/${repo}/contents/${encodeRepoPath(clean)}`, {
+    content: Buffer.from(input.content, 'utf8').toString('base64'),
+    message,
+    sha: input.sha || undefined,
+    branch: 'main',
+    author: { name: user.name, email: `${user.id}@${app.domain}` },
+  });
+  if (res.status === 0) throw unreachable();
+  if (res.status === 404) throw withStatus(new Error('File not found in repo.'), 404);
+  if (res.status === 409 || res.status === 422) {
+    throw withStatus(new Error('File changed since you loaded it — reload and retry.'), 409);
+  }
+  if (!res.ok) throw withStatus(new Error(`Forgejo error saving file (${res.status}).`), 502);
+  const d = res.data as { content?: { sha?: string }; commit?: { html_url?: string } };
+  app.updatedAt = now();
+  writeThrough(app);
+  void trace({
+    principal: app.mcpPrincipal,
+    tool: 'generate',
+    input: { action: 'edit_file', path: clean, by: user.id, role: user.role },
+    output: { repo: app.repo.fullName, commit: d?.commit?.html_url ?? null },
+    decision: 'allow',
+  });
+  return { path: clean, sha: String(d?.content?.sha ?? ''), commitUrl: d?.commit?.html_url ?? null };
+}
+
 // ----------------------------------------------------------------- MCP wiring --
 
 function rehydrateConnection(app: App): void {

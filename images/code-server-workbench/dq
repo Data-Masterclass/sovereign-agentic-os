@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
+#
+# `dq` — the governed data CLI for the workbench. It POSTs SQL to the governed
+# query-tool (the SINGLE sanctioned data path; the NetworkPolicy allows egress to
+# it and nothing else). It holds NO database credentials and cannot bypass the
+# governed layer — the query-tool/OPA enforce the caller's DOMAIN scope server-side.
+#
+# Usage:  dq "select * from mart_sales limit 5"
+set -euo pipefail
+QUERY_TOOL_BASE="${QUERY_TOOL_BASE:-http://query-tool:8000}"
+SQL="${1:-}"
+if [ -z "$SQL" ]; then
+  echo "usage: dq \"<sql>\"" >&2
+  exit 2
+fi
+curl -fsS -X POST "${QUERY_TOOL_BASE}/query" \
+  -H 'content-type: application/json' \
+  -H "x-soa-domain: ${WORKBENCH_DOMAIN:-default}" \
+  -d "$(jq -nc --arg sql "$SQL" '{sql:$sql}')" \
+  | jq .

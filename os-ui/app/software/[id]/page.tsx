@@ -8,6 +8,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
 import AgentChat from '@/components/AgentChat';
+import CodePanel from '@/components/CodePanel';
 import { useApi } from '@/lib/useApi';
 
 type Visibility = 'Personal' | 'Shared' | 'Certified';
@@ -71,6 +72,7 @@ export default function AppPage() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [toolOut, setToolOut] = useState('');
+  const [buildTab, setBuildTab] = useState<'assistant' | 'code'>('assistant');
 
   async function promote() {
     if (!id || busy) return;
@@ -128,6 +130,9 @@ export default function AppPage() {
   const app = data.app;
   const conn = data.connection;
   const canPromoteUI = promoteLabel(app.visibility);
+  // The in-browser code editor mutates the app's repo, so it is gated to
+  // Builders + Admins (enforced again server-side in /api/software/[id]/files).
+  const canEditCode = data.user.role === 'builder' || data.user.role === 'admin';
 
   return (
     <>
@@ -171,19 +176,44 @@ export default function AppPage() {
           </div>
         </div>
 
-        <div className="section-title">Build chat (this app)</div>
-        <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-          The dedicated OpenCode build assistant for <strong>{app.name}</strong>, via the governed
-          LiteLLM gateway, holding this app&apos;s full context. The conversation is saved under the app.
-        </p>
-        <AgentChat
-          agent="software-app"
-          label="build assistant"
-          endpoint={`/api/apps/${app.id}/chat`}
-          initialMessages={app.chat.map((m) => ({ role: m.role, content: m.content }))}
-          placeholder="e.g. Add a status filter to the renewals list and an email reminder 30 days before renews_on…"
-          starters={['Add a renewals list view sorted by renews_on.', 'Add an export-to-CSV action.']}
-        />
+        <div className="section-title">Build {app.name}</div>
+        {canEditCode ? (
+          <div className="tabstrip" style={{ marginBottom: 12 }}>
+            <button
+              type="button"
+              className={buildTab === 'assistant' ? 'active' : ''}
+              onClick={() => setBuildTab('assistant')}
+            >
+              AI assistant
+            </button>
+            <button
+              type="button"
+              className={buildTab === 'code' ? 'active' : ''}
+              onClick={() => setBuildTab('code')}
+            >
+              Code
+            </button>
+          </div>
+        ) : null}
+
+        {canEditCode && buildTab === 'code' ? (
+          <CodePanel appId={app.id} repoFullName={app.repo.fullName} />
+        ) : (
+          <>
+            <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
+              The dedicated OpenCode build assistant for <strong>{app.name}</strong>, via the governed
+              LiteLLM gateway, holding this app&apos;s full context. The conversation is saved under the app.
+            </p>
+            <AgentChat
+              agent="software-app"
+              label="build assistant"
+              endpoint={`/api/apps/${app.id}/chat`}
+              initialMessages={app.chat.map((m) => ({ role: m.role, content: m.content }))}
+              placeholder="e.g. Add a status filter to the renewals list and an email reminder 30 days before renews_on…"
+              starters={['Add a renewals list view sorted by renews_on.', 'Add an export-to-CSV action.']}
+            />
+          </>
+        )}
 
         <div className="section-title">Auto-generated MCP — Connection &amp; agent tools</div>
         <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>

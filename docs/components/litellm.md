@@ -19,7 +19,10 @@ kubectl -n agentic-os port-forward svc/agentic-os-litellm 4000:4000
     -H "Authorization: Bearer sk-litellm-local-dev-master" -H "Content-Type: application/json" \
     -d '{"model":"sovereign-mock","messages":[{"role":"user","content":"hi"}]}'
   ```
-  Models: `sovereign-mock` (chat), `sovereign-embed` (embeddings).
+  Models: `sovereign-default` (chat, self-hosted Gemma E4B — default), `sovereign-mock`
+  (back-compat alias → same Gemma default), `sovereign-embed` (embeddings), `sovereign-vision` /
+  `sovereign-premium` (STACKIT Qwen3-VL — vision + last-resort only). See
+  [model-server](model-server.md) for the full routing/fallback strategy.
 - **Virtual keys + cost caps:** UI → *Virtual Keys*. The agents use a scoped key
   (`sk-agents-local-dev`, alias `sovereign-agents`) limited to those two models with a budget.
 - **MCP tools:** registered tool servers appear at `/v1/mcp/tools`; agents call them through
@@ -29,7 +32,12 @@ kubectl -n agentic-os port-forward svc/agentic-os-litellm 4000:4000
 **Q: "Not connected to DB" at login?** The UI needs Postgres — it's DB-backed here (CNPG
 `litellm`). If you see this, the litellm pod isn't connected; check it's running.
 **Q: How do I add a real model?** Add it to `litellm.proxy_config.model_list` with the
-provider + an API key secret, then `helm upgrade`. Locally it routes to the mock model.
+provider + an API key secret, then `helm upgrade`. The **default** chat model is already a real
+self-hosted **Gemma E4B** ([model-server](model-server.md)); the offline mock now only serves
+embeddings (`sovereign-embed`).
+**Q: When does STACKIT get called?** Only as the **last-resort** fallback when every self-hosted
+route fails/overloads, or for **vision** inputs (`sovereign-vision`). Cost is hard-capped on the
+agent virtual key (`litellmAgentKey.modelMaxBudget`) and surfaced in Monitoring (Langfuse cost).
 **Q: Why a scoped key for agents?** Least privilege (security.md): agents can only reach the
 granted models, capped, and every call is attributable.
 **Q: Spend shows 0.** The mock model has no pricing; with a priced model spend tracks + the
