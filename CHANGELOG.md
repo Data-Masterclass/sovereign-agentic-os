@@ -13,6 +13,35 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [0.2.0-alpha.6] — 2026-06-29
+
+Headline: the new **Agents tab** — a three-level agent IDE for building, governing,
+and running multi-agent systems entirely inside the OS UI.
+
+### Added
+
+- **Agents tab — three-level agent IDE.** Navigate **Systems → canvas → agent
+  editor**: a list of agent systems, a per-system visual canvas (supervisor +
+  members with derived routes), and a focused editor for each individual agent.
+- **Dual-mode editing, one source of truth.** A drag/connect **SVG canvas**, a
+  self-hosted **Monaco** text editor, and an **agent-system helper** (chat) all
+  edit the *same* `system.yaml`, which is versioned in Forgejo. Edits made in any
+  mode round-trip losslessly through the shared schema/compiler.
+- **Build = execute + verify, with the governed-gateway invariant.** "Build" does
+  not just generate config — it executes the compiled system and verifies it,
+  with **every** model/connection/tool call routed through the governed gateway
+  (no agent reaches a capability it was not granted).
+- **Per-agent model picker** over the LiteLLM model list (light/reasoning/vision
+  tiers), **grants & capability governance** (granted connections work;
+  non-granted are blocked; writes are held for approval), **routing** rules,
+  **run / schedule / toggle** at the system level, **fork-to-own**, and a
+  **validation gate** that must pass before a system can build/run.
+
+> **Note (honest scope):** in this release **Build executes against in-process
+> mocks** (five mock Build adapters + a mock Forgejo-backed store). The
+> live-service adapter implementations (real Forgejo, real model/connection
+> backends) are a deliberate follow-up before real deployment.
+
 ## [0.2.0-alpha.5] — 2026-06-29
 
 Headline: the **default light model is now Ministral 3 (3B, Apache-2.0)** — the

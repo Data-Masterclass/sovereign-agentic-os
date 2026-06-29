@@ -298,7 +298,7 @@ credentials and keys never reach the browser. The tabs and their wiring:
 | **Strategy** | Strategic pillars + an agentic-transformation readiness heatmap — *seeded v1* | — |
 | **Big Bets** | Strategic AI bets (thesis · target value · confidence · backing artifacts) — *seeded v1* | — |
 | **Dashboards** | Launch into Superset | — |
-| **Agents** | Lists the deployed LangGraph agents (live health) + an **agent-builder chat**; agent codegen is a *draft* | `/api/agents`, LiteLLM |
+| **Agents** | A **three-level agent IDE** (Systems → canvas → agent editor): build agent systems three equivalent ways — visual **canvas**, **Monaco** text, or an **agent-system helper** chat, all editing the same Forgejo-versioned `system.yaml` — then **Build (= execute + verify)**, run/schedule/toggle, fork-to-own, with a per-agent model picker and grants/capability governance. *Build runs against in-process mocks in this pre-release; live-service adapters are a follow-up.* | `/api/agents/*`, LiteLLM |
 | **Software** | Lists repos + recent CI runs **and creates a real Forgejo repo** (starter app → push → CI → Argo deploy) | Forgejo API |
 | **Science** | **Layer-4 launchpad** — health + links for MLflow / JupyterHub / Featureform / KServe (opt-in) | health probes |
 | **Knowledge** | A **knowledge agent** authors a 3-category `.md` (workflow steps · rules & decisions · tacit context) and **ingests** it; plus lexical search | OpenSearch, LiteLLM |
@@ -485,7 +485,18 @@ read the *same* marts + metrics as the dashboards, so the numbers never diverge.
 
 ## Agents
 
-In **Agents → New agent** you define behaviour (`AGENT.md`) and memory (`MEMORY.md`), then **grant the
+The **Agents** tab is a **three-level IDE** — a list of **agent systems**, a per-system **canvas**
+(supervisor + members with derived routes), and a focused **editor** for each agent — with **three
+equivalent editing modes** (drag/connect SVG canvas, self-hosted Monaco text, and an agent-system
+helper chat) that all edit the *same* Forgejo-versioned `system.yaml`. **Build = execute + verify:** it
+runs the compiled system and checks it, with **every** model/connection/tool call routed through the
+**governed gateway** (no agent reaches a capability it was not granted). You pick a LiteLLM model per
+agent, manage grants/routing, **run / schedule / toggle** the system, and **fork-to-own**; a
+**validation gate** must pass before a system can build or run. *(In this pre-release Build executes
+against in-process mocks; live-service adapter implementations are a deliberate follow-up before real
+deploy.)*
+
+When you define an agent you write behaviour (`AGENT.md`) and memory (`MEMORY.md`), then **grant the
 resources** the agent may use — data products, knowledge, files, connections — and the tools it may
 call. **The one rule:** an agent never touches a raw resource; every call goes through the **model
 gateway + policy engine (OPA)**, is **cost-capped** and **traced**. Short-term memory is per-

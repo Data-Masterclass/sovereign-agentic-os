@@ -5,9 +5,8 @@
 
 import { useState } from 'react';
 import PageHeader from '@/components/PageHeader';
-import AgentChat from '@/components/AgentChat';
-import ArtifactPanel from '@/components/ArtifactPanel';
 import SalesAssistant from '@/components/SalesAssistant';
+import AgentSystems from '@/components/agents/AgentSystems';
 import { useApi } from '@/lib/useApi';
 
 type Agent = {
@@ -21,72 +20,39 @@ type Agent = {
 };
 type Data = { agents: Agent[]; up: number; total: number };
 
-const STARTERS = [
-  'Design a 3-agent system: a researcher, a writer, and a reviewer.',
-  'Build a customer-support triage multi-agent system over our knowledge base.',
-  'Plan a supervisor agent that routes to a SQL agent and a RAG agent.',
-];
-
 export default function AgentsPage() {
   const { data, loading, error, reload } = useApi<Data>('/api/agents');
-  const [tab, setTab] = useState<'sales' | 'running' | 'workspace' | 'build'>('sales');
+  const [tab, setTab] = useState<'systems' | 'sales' | 'running'>('systems');
 
   return (
     <>
-      <PageHeader title="Agents" crumb="LangGraph multi-agent systems — run, author & build" />
+      <PageHeader title="Agents" crumb="LangGraph multi-agent systems — author, build & run" />
       <div className="content">
         <p className="lead">
-          See the multi-agent systems running on LangGraph, manage your own agent artifacts, and
-          design new ones with the agent builder.
+          Author agent systems against their real artifacts — drag the canvas, edit
+          <span className="mono"> system.yaml</span>, or ask the agent-system helper — then Build to
+          execute and verify them across LangGraph, LiteLLM, OPA and Langfuse.
         </p>
 
         <div className="tabstrip">
+          <button className={tab === 'systems' ? 'active' : ''} onClick={() => setTab('systems')}>
+            Systems
+          </button>
           <button className={tab === 'sales' ? 'active' : ''} onClick={() => setTab('sales')}>
             Sales Assistant
           </button>
           <button className={tab === 'running' ? 'active' : ''} onClick={() => setTab('running')}>
             Running agents
           </button>
-          <button className={tab === 'workspace' ? 'active' : ''} onClick={() => setTab('workspace')}>
-            My agents
-          </button>
-          <button className={tab === 'build' ? 'active' : ''} onClick={() => setTab('build')}>
-            Build a new system
-          </button>
         </div>
+
+        {tab === 'systems' ? <AgentSystems /> : null}
 
         {tab === 'sales' ? (
           <>
             <div className="section-title">Sales Assistant · governed vertical slice</div>
             <SalesAssistant />
           </>
-        ) : null}
-
-        {tab === 'workspace' ? (
-          <ArtifactPanel
-            type="agent"
-            createLabel="Create agent"
-            specFields={[
-              { key: 'graph', label: 'Graph (nodes, comma-separated)', placeholder: 'retrieve, generate, review' },
-              { key: 'tools', label: 'Tools / OPA grants', placeholder: 'knowledge_search, sql_query' },
-            ]}
-            renderSpec={(a) => {
-              const g = String(a.spec?.graph ?? '');
-              const t = String(a.spec?.tools ?? '');
-              return g || t ? (
-                <div className="muted mono" style={{ fontSize: 11 }}>
-                  {g ? <>graph: {g}<br /></> : null}{t ? <>tools: {t}</> : null}
-                </div>
-              ) : null;
-            }}
-            intro={
-              <p className="hint" style={{ marginTop: 0 }}>
-                Author a LangGraph agent as an artifact (Personal → Shared → Certified). Codegen &
-                live deploy from a spec is <strong>scaffolded in v1</strong>; the artifact captures
-                the graph + tools for review and reuse.
-              </p>
-            }
-          />
         ) : null}
 
         {tab === 'running' ? (
@@ -129,23 +95,6 @@ export default function AgentsPage() {
             ) : loading ? (
               <div className="stub-page">Probing agents…</div>
             ) : null}
-          </>
-        ) : null}
-
-        {tab === 'build' ? (
-          <>
-            <div className="section-title">Agent builder</div>
-            <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-              Describe the multi-agent system you want. The builder proposes the agents, the
-              graph, the tools + OPA grants, and a spec to scaffold. Codegen + deploy is a
-              <strong> draft/plan for review</strong> in v1 — not a live deployment.
-            </p>
-            <AgentChat
-              agent="agent-builder"
-              label="agent builder"
-              placeholder="e.g. Design a multi-agent system that drafts and reviews marketing copy…"
-              starters={STARTERS}
-            />
           </>
         ) : null}
       </div>

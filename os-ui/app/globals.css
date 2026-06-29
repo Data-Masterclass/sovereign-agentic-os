@@ -1612,3 +1612,277 @@ select:focus {
   color: #b0a99c;
   border-color: #38313f;
 }
+
+/* ============================================================================
+ * Agents tab — three-level dual-mode experience (systems list, system canvas,
+ * agent editor). Native-fidelity cockpit; matches the gold/teal token system.
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ * ========================================================================== */
+
+/* ---- Level 2 header ---- */
+.system-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.system-title-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.system-title {
+  font-family: var(--font-head);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--text);
+}
+.system-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ---- SVG canvas ---- */
+.canvas-wrap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(var(--panel), var(--panel)) padding-box,
+    repeating-linear-gradient(0deg, transparent, transparent 23px, var(--border) 23px, var(--border) 24px);
+  padding: 12px;
+}
+.canvas-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.canvas-hint {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.canvas-scroll {
+  overflow: auto;
+  max-height: 460px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.canvas-svg {
+  display: block;
+}
+.canvas-block {
+  cursor: pointer;
+}
+.canvas-rect {
+  fill: var(--bg-elevated);
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  transition: stroke 0.14s, fill 0.14s;
+}
+.canvas-block:hover .canvas-rect {
+  stroke: var(--gold-line);
+}
+.canvas-block.selected .canvas-rect {
+  stroke: var(--gold);
+  stroke-width: 1.8;
+  fill: var(--gold-soft);
+}
+.canvas-block.pending .canvas-rect {
+  stroke: var(--teal);
+  stroke-width: 1.8;
+  stroke-dasharray: 5 3;
+}
+.canvas-block.disabled .canvas-rect {
+  opacity: 0.5;
+  stroke-dasharray: 4 3;
+}
+.canvas-entry-bar {
+  fill: var(--gold);
+}
+.canvas-block-id {
+  font-family: var(--font-head);
+  font-size: 13px;
+  font-weight: 600;
+  fill: var(--text);
+}
+.canvas-block-role {
+  font-size: 11px;
+  fill: var(--text-muted);
+}
+.canvas-block-meta {
+  font-size: 10px;
+  fill: var(--text-faint);
+  font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+}
+.canvas-tag {
+  font-family: var(--font-head);
+  font-size: 8.5px;
+  letter-spacing: 0.8px;
+  fill: var(--gold-text);
+}
+.canvas-tag.off {
+  fill: var(--danger);
+}
+.canvas-when {
+  font-size: 10px;
+  fill: var(--teal);
+  font-style: italic;
+}
+.canvas-edge-x {
+  fill: var(--bg);
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.12s;
+}
+.canvas-edge:hover .canvas-edge-x {
+  opacity: 1;
+  stroke: var(--danger);
+}
+.canvas-legend {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.canvas-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.legend-line {
+  width: 20px;
+  height: 0;
+  border-top: 2px solid var(--gold);
+}
+.legend-line.ho {
+  border-top: 2px dashed var(--teal);
+}
+
+/* ---- Agent chips (per-agent toggle row under the canvas) ---- */
+.agent-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.agent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 3px 6px 3px 12px;
+  background: var(--panel);
+}
+.agent-chip.sel {
+  border-color: var(--gold);
+  background: var(--gold-soft);
+}
+.agent-chip.off {
+  opacity: 0.6;
+}
+.agent-chip-name {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+.switch.sm {
+  margin: 0;
+}
+.switch.sm .switch-track {
+  width: 30px;
+  height: 16px;
+}
+.switch.sm .switch-thumb {
+  width: 11px;
+  height: 11px;
+}
+.switch.sm.on .switch-thumb {
+  transform: translateX(14px);
+}
+
+/* ---- Level 3 agent editor ---- */
+.agent-editor,
+.grants-panel,
+.buildrun-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 16px;
+  margin-top: 14px;
+}
+.agent-editor-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.agent-editor-title {
+  font-family: var(--font-head);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+.chk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.chk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px 10px;
+  background: var(--bg-elevated);
+  cursor: pointer;
+}
+.chk input {
+  width: auto;
+  margin: 0;
+  cursor: pointer;
+}
+
+/* ---- Grants chips ---- */
+.grant-block {
+  margin-bottom: 12px;
+  min-width: 220px;
+}
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.chip-x {
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 0 0 6px;
+}
+.chip-x:hover {
+  color: var(--danger);
+}
