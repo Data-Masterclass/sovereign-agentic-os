@@ -139,6 +139,26 @@ STACKIT calculator and keep it under the **€1000 cost-alert hard-stop**; the n
 still pauses to ~0 off-hours via `make stackit-sleep`. The **user provisions**
 (`m3i.16`) — we never provision STACKIT.
 
+### Node disk vs RAM vs data storage (don't conflate them)
+
+Three things scale for different reasons — keep them separate:
+
+- **Node RAM — 128 GB (`m3i.16`).** Ran ~2–4% this deploy; plenty. Scales with
+  concurrency, not data.
+- **Node disk — `node_volume_size_gb`, default 200 GB (was 80).** Holds container
+  **images + local model weights** (all Layer 1–4 images ~40–60 GB + the in-box
+  model: Ministral ~3 GB, a Magistral 24B would add ~15 GB) + image-churn
+  headroom. 80 GB filled → **disk-pressure** → node **cordoned** → pods
+  unschedulable. **FIXED capacity — it does NOT grow with the dataset.**
+- **Data storage — object storage + PVCs.** Real DATA lives here, never on the
+  node disk: the **Iceberg lakehouse on object storage** (in-cluster MinIO for the
+  demo → **STACKIT Object Storage / S3** for TB-scale), plus PVCs for OpenSearch
+  (indices+embeddings), Postgres (metadata), ClickHouse (traces), MLflow
+  (artifacts). **Grow this with the dataset — not the node disk.**
+
+Full table + rationale: the **"Sizing & capacity"** section of
+`docs/Sovereign-Agentic-OS-Guide.md`.
+
 ## `values.stackit-managed.yaml` wiring (Terraform output → overlay)
 
 `render-values.sh` substitutes (endpoints/registry/DNS — never secrets):

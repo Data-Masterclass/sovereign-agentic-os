@@ -835,6 +835,31 @@ choice (`values.stackit-managed.yaml`), and the heavier layers (Science, Termina
 up. **Scale the node pool to zero between sessions** (storage + IP persist at ~€16–20/mo). LLM token
 spend is separate and **capped in LiteLLM**.
 
+## Sizing & capacity
+
+Three different resources get confused under one word, "size." They scale for different reasons, so it
+helps to keep them separate. The verified single-node deploy runs on a STACKIT **`m3i.16`** worker —
+**16 vCPU / 128 GB RAM** — and in practice RAM ran at only **~2–4%**: memory is plentiful. The
+resource that actually bit us was the **node disk**, and it bites for a reason that has nothing to do
+with how much data you have.
+
+| Resource | This deploy | Holds | How it scales |
+| --- | --- | --- | --- |
+| **Node RAM** | 128 GB (`m3i.16`, 16 vCPU) | Running pods — Trino's JVM heap, OpenSearch, the in-box model | With **concurrency / workload**, not data. Ran ~2–4% here. |
+| **Node disk** | **200 GB** (was 80) | **Container images + local model weights** — all Layer 1–4 images (~40–60 GB) + the in-box model (Ministral ~3 GB; a Magistral 24B would add ~15 GB) + image-churn headroom | **FIXED.** It does **not** grow with your dataset. Size it once for images + models. |
+| **Data storage** | Object storage + PVCs | The **Iceberg lakehouse on object storage** (in-cluster MinIO for the demo → **STACKIT Object Storage / S3** for real scale → **TBs**), plus PVCs for **OpenSearch** (indices + embeddings), **Postgres** (metadata), **ClickHouse** (traces), **MLflow** (artifacts) | **Independently**, with the dataset. "More data" lands here. |
+
+The one gotcha worth internalizing: **don't confuse node RAM (128 GB) with the node disk** (the small
+volume that fills). The original 80 GB disk filled with images during deploy → **disk-pressure** →
+the node was **cordoned** → pods could no longer schedule. The fix is a **200 GB** node disk
+(`node_volume_size_gb`, now the Terraform default), sized for images + model weights with churn
+headroom — **not** for data.
+
+And the corollary that keeps cost honest: **real data never touches the node disk.** It lives on
+separate, independently-scalable storage. When the dataset grows into the terabytes you grow the
+**object storage and the PVCs** — the node volume stays exactly where it is. More data ≠ a bigger
+node disk.
+
 ## Security model
 
 The platform ships **secure by default**. Four guarantees hold throughout:
@@ -923,7 +948,7 @@ Grouped by layer — see `docs/components/<id>.md` for the full per-component gu
 
 ## Version & changelog
 
-- **Chart 0.2.8 · app `0.2.0-alpha.9`.** This build: generated `{{DATE}}` from commit `{{GIT_COMMIT}}`.
+- **Chart 0.2.10 · app `0.2.0-alpha.11`.** This build: generated `{{DATE}}` from commit `{{GIT_COMMIT}}`.
 - **0.2.x** — the **OS UI v1.0**: every sidebar tab a real surface, brand-themed, light/dark, with the
   operational console embedded at Platform → Components; Layers 1–3 in place under the
   secure-by-default baseline; Science (L4) opt-in. This release's **UI rework**: **Home** is now the

@@ -52,7 +52,12 @@ node_machine_type   = "m3i.16"
 node_pool_min       = 1
 node_pool_max       = 1            # one AZ ⇒ max=1 (SKE needs max ≥ #AZs)
 availability_zones  = ["eu01-1"]   # single AZ — a 1-node pool cannot span AZs
-node_volume_size_gb = 50
+# Node disk holds container IMAGES + local MODEL weights (all L1–4 images
+# ~40–60 GB + in-box model), NOT user data. 80 GB filled → disk-pressure →
+# node cordoned → pods unschedulable; 200 GB is the verified floor. FIXED
+# capacity — it does NOT grow with the dataset (real data lives on object
+# storage + PVCs). Don't confuse this disk with node RAM (m3i.16 = 128 GB).
+node_volume_size_gb = 200
 
 # --- PostgreSQL Flex (MODE B only — ignored when enable_managed_backends=false) -
 postgres_version  = "16"

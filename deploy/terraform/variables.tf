@@ -121,9 +121,23 @@ variable "node_pool_max" {
 }
 
 variable "node_volume_size_gb" {
-  description = "Per-node root/data volume size in GB."
+  description = <<-EOT
+    Per-node root/data volume size in GB. DEFAULT 200.
+
+    This disk holds CONTAINER IMAGES + LOCAL MODEL WEIGHTS, not user data: all
+    Layer 1–4 images (~40–60 GB) + the in-box model (Ministral ~3 GB; a Magistral
+    24B would add ~15 GB) + image-churn headroom. 80 GB filled during deploy →
+    disk-pressure → the node was cordoned → pods couldn't schedule; 200 GB is the
+    verified floor.
+
+    It is FIXED capacity — it does NOT grow with the dataset. Real DATA lives on
+    separate, independently-scalable storage (the Iceberg lakehouse on object
+    storage, plus PVCs for OpenSearch / Postgres / ClickHouse / MLflow), so "more
+    data" means bigger object storage / PVCs, NOT a bigger node volume. Do not
+    confuse this disk with node RAM (m3i.16 = 128 GB).
+  EOT
   type        = number
-  default     = 50
+  default     = 200
 }
 
 variable "node_volume_type" {

@@ -13,6 +13,32 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [0.2.0-alpha.11] — 2026-06-30
+
+Headline: **documented STACKIT sizing & capacity recommendations** learned from
+the live deploy — the node disk holds container images + local model weights and
+is fixed; real data scales independently on object storage / PVCs.
+
+### Changed
+
+- **Node disk default 200 GB.** `node_volume_size_gb` (Terraform) now defaults to
+  200 (was 50), with a comment explaining the disk holds container IMAGES + local
+  MODEL weights (all Layer 1–4 images ~40–60 GB + the in-box model), NOT user
+  data. 80 GB filled during deploy → disk-pressure → node cordoned → pods
+  unschedulable; 200 GB is the verified floor. Mirrored in
+  `terraform.tfvars.example`.
+
+### Documentation
+
+- **Sizing & capacity guidance.** New "Sizing & capacity" subsection in the OS
+  guide (+ regenerated PDF) and a deploy README note: a small RAM / node-disk /
+  data-storage table clarifying what each is for and how it scales. Key facts:
+  STACKIT `m3i.16` = 16 vCPU / 128 GB RAM (ran ~2–4%); the node disk is FIXED and
+  does NOT grow with the dataset; real DATA lives on independently-scalable
+  storage (Iceberg lakehouse on object storage — in-cluster MinIO for the demo →
+  STACKIT Object Storage / S3 for TB-scale — plus PVCs for OpenSearch, Postgres,
+  ClickHouse, MLflow). Don't confuse node RAM (128 GB) with node disk.
+
 ## [0.2.0-alpha.10] — 2026-06-30
 
 Headline: **the live platform** — every tab reworked to Apple-grade simplicity,
