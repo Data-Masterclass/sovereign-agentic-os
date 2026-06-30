@@ -3,99 +3,48 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { authorize, trace } from '@/lib/agent-governed';
-import { CHURN, ACME_FEATURES, predictTool, type ChurnFeatures } from '@/lib/science';
+import { config } from '@/lib/config';
+import { servePredict } from '@/lib/science/serve';
+import type { ChurnFeatures } from '@/lib/science';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * The deployed churn model as a GOVERNED `predict` MCP tool (Science golden path
- * §6–7). A deployed model is governed exactly like any other agent tool: every
- * call is OPA-authorized (allow / deny / requires_approval) and Langfuse-traced
- * over the SAME spine the Sales Assistant uses for `metrics`/`retrieve`. The
- * actual scoring runs against the KServe InferenceService when present and falls
- * back to the deterministic seed when Layer-4 is off (`ml.enabled=false`).
+ * The deployed churn model as a governed `predict` MCP tool — the AGENT front
+ * door (Science golden path §6–7). One of two doors onto the SAME KServe
+ * endpoint; the OTHER is the REST API at `./rest`. Both run identical governance
+ * via `servePredict`: tier scope (Personal→Domain→Marketplace) AND the OPA
+ * `predict` grant, then a Langfuse trace. Promoting/certifying the model widens
+ * who can call — no separate publish step.
  *
- *   POST { account?, features? }  ->  { decision, score, band, traceId, ... }
+ *   POST { account?, features?, principal? }  ->  { decision, score, band, traceId, ... }
  */
 export async function POST(req: Request) {
+  if (!config.mlEnabled) {
+    return NextResponse.json({ error: 'Science (Layer 4) is off — set ml.enabled=true to enable the predict service' }, { status: 404 });
+  }
   let user;
   try {
     user = await requireUser();
   } catch (e) {
-    return NextResponse.json(
-      { error: (e as Error).message },
-      { status: (e as { status?: number }).status ?? 401 },
-    );
+    return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
   }
 
-  let body: { account?: string; features?: Partial<ChurnFeatures>; principal?: string } = {};
+  let body: { account?: string; features?: Partial<ChurnFeatures>; principal?: string; domain?: string } = {};
   try {
     body = await req.json();
   } catch {
     /* empty body => score the reference ACME account */
   }
 
-  const account = (body.account ?? 'ACME').toString();
-  // Merge any supplied features over the reference seed (online features would
-  // come from Featureform/Valkey in-cluster; here we accept overrides or seed).
-  const features: ChurnFeatures = { ...ACME_FEATURES, ...(body.features ?? {}) } as ChurnFeatures;
-
-  // The agent identity that owns the model-as-tool. Defaults to the Sales
-  // Assistant which is granted `predict`; an explicit principal is honoured.
-  const principal = (body.principal ?? 'sales-assistant').toString();
-  const authz = await authorize(principal, 'predict');
-
-  if (authz.effect === 'deny') {
-    const tr = await trace({
-      principal,
-      tool: 'predict',
-      input: { account, features },
-      output: { denied: authz.reason },
-      decision: 'deny',
-    });
-    return NextResponse.json(
-      { tool: 'predict', principal, decision: 'deny', policy: authz.policy, reason: authz.reason, traceId: tr.id },
-      { status: 403 },
-    );
-  }
-
-  if (authz.effect === 'requires_approval') {
-    const tr = await trace({
-      principal,
-      tool: 'predict',
-      input: { account, features },
-      output: { held: authz.reason },
-      decision: 'requires_approval',
-    });
-    return NextResponse.json(
-      { tool: 'predict', principal, decision: 'requires_approval', policy: authz.policy, reason: authz.reason, traceId: tr.id },
-      { status: 202 },
-    );
-  }
-
-  // allow -> run the model and trace the prediction.
-  try {
-    const r = await predictTool(account, features);
-    const tr = await trace({
-      principal,
-      tool: 'predict',
-      input: { account, model: CHURN.model, features },
-      output: { score: r.score, band: r.band, source: r.source },
-      decision: 'allow',
-      costUsd: 0.0002,
-    });
-    return NextResponse.json({
-      tool: 'predict',
-      principal,
-      model: CHURN.model,
-      requestedBy: user.id,
-      decision: 'allow',
-      policy: authz.policy,
-      traceId: tr.id,
-      ...r,
-    });
-  } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 502 });
-  }
+  // The MCP door's caller is an AGENT (defaults to the Sales Assistant, granted predict).
+  const result = await servePredict({
+    account: body.account,
+    features: body.features,
+    principal: (body.principal ?? 'sales-assistant').toString(),
+    domain: (body.domain ?? 'sales').toString(),
+    isAgent: true,
+    requestedBy: user.id,
+  });
+  return NextResponse.json(result.body, { status: result.status });
 }

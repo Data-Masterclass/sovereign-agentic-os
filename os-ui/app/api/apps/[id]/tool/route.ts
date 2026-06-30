@@ -5,7 +5,8 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { getAppForUser } from '@/lib/apps';
 import { getConnectionByApp } from '@/lib/app-registry';
-import { authorizeAppTool, trace } from '@/lib/agent-governed';
+import { authorizeAppTool, authorizeConnectionCall, trace } from '@/lib/agent-governed';
+import { enqueue } from '@/lib/approvals';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,9 +51,36 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const conn = getConnectionByApp(app.id);
   const tool = String(body?.tool ?? '');
   const principal = app.mcpPrincipal;
-  const known = (conn?.tools ?? app.mcpTools).some((t) => t.name === tool);
+  const toolDef = (conn?.tools ?? app.mcpTools).find((t) => t.name === tool);
+  const known = Boolean(toolDef);
 
-  const authz = await authorizeAppTool(principal, tool);
+  // Honor the auto-MCP capability profile (reads-on / writes-off preset compiled
+  // to OPA). A read tool is allowed; a write tool is HELD for human approval and
+  // queued in the Governance inbox — never silently executed. Falls back to the
+  // app-registry grant when no compiled profile is present (older in-memory app).
+  const profile = authorizeConnectionCall(principal, tool, body.args);
+  const authz =
+    profile.reason.startsWith('unknown connection principal')
+      ? await authorizeAppTool(principal, tool)
+      : { effect: profile.effect, policy: 'app-grant' as const, reason: profile.reason };
+
+  if (authz.effect === 'requires_approval') {
+    enqueue({
+      kind: 'connection_write',
+      title: `Approval needed: ${tool}`,
+      detail: `Write to app MCP '${app.name}' (${principal}) requested via the app tool surface.`,
+      agent: principal,
+      domain: app.domain,
+      requestedBy: user.id,
+      tool,
+      payload: { appId: app.id, args: body.args ?? {} },
+    });
+    const tr = await trace({ principal, tool, input: body.args ?? {}, output: { held: true, reason: authz.reason }, decision: 'requires_approval' });
+    return NextResponse.json(
+      { tool, principal, decision: 'requires_approval', policy: authz.policy, reason: authz.reason, held: true, traceId: tr.id },
+      { status: 202 },
+    );
+  }
   if (authz.effect !== 'allow') {
     const tr = await trace({ principal, tool, input: body, output: { denied: authz.reason }, decision: 'deny' });
     return NextResponse.json(

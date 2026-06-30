@@ -5,6 +5,7 @@
 
 import { useState } from 'react';
 import { useApi } from '@/lib/useApi';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 
 /**
  * Level 1 — the systems list (landing). Grouped Mine / My domain / Marketplace,
@@ -103,7 +104,7 @@ export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }
 
   return (
     <div className="systems-list">
-      <div className="card" style={{ marginBottom: 18 }}>
+      <div className="card" style={{ marginBottom: 18 }} {...anchorAttr(ANCHORS.agents.define)}>
         <h3 style={{ marginTop: 0 }}>New agent system</h3>
         <p className="hint" style={{ marginTop: 0 }}>A solo agent is just a system of one. It lands under Mine with a starter graph.</p>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>

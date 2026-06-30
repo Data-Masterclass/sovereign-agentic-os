@@ -42,7 +42,7 @@ export default function ConnectionsPage() {
 
   return (
     <>
-      <PageHeader title="Connections" crumb="registry · build connectors — live status + agent" />
+      <PageHeader title="Connections" crumb="registry · build connectors — live status + agent" tutorial="connections" />
       <div className="content">
         <p className="lead">
           Every backend this domain is wired to, plus the external sources you can register.

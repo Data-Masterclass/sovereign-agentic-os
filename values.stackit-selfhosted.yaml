@@ -37,6 +37,12 @@ global:
   # cluster's default StorageClass if you'd rather not pin a name.
   storageClass: ""
   imagePullPolicy: IfNotPresent
+  # Bespoke images are pulled from ghcr.io/aborek (NOT kind-loaded) on a real SKE
+  # cluster, so a registry pull secret is required. `registry-pull-secret` is
+  # materialised in-cluster (e.g. by External Secrets / `make secrets`); the chart
+  # adds it to every bespoke workload's pod spec via this global list.
+  imagePullSecrets:
+    - name: registry-pull-secret
 
 # Cilium enforces FQDN-aware default-deny egress on SKE (security.md). Bundled
 # mode keeps the same secure baseline as kind — just actually enforced here.
@@ -80,6 +86,119 @@ modelServer:
 # and out of scope for the self-hosted demo. Flip on only on a sized node pool.
 ml:
   enabled: false
+
+# =============================================================================
+# Bespoke images -> ghcr.io/aborek/sovereign-os (NOT kind-loaded on a real SKE
+# cluster). The chart renders bespoke images as `{{ .image.repository }}:{{ .image.tag }}`
+# with NO global registry prefix, so the chart default `sovereign-os/<name>` is
+# kind-local and unpullable on STACKIT. Override every bespoke component's
+# `image.repository` to the published ghcr path at the pushed tag. Tag refs (no
+# @sha256) — this self-hosted overlay does not pin by digest. Backends stay
+# BUNDLED, so NO managed-service (Postgres Flex / OpenSearch / object-store) wiring
+# lands here — images + the global pull secret only.
+# (The managed overlay values.stackit-managed.yaml carries the digest-pinned copies.)
+# =============================================================================
+osUI:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/os-ui
+    tag: "0.1.0"
+
+agentRuntime:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/agent-runtime
+    tag: "0.1.0"
+
+# Bundled local mock model is the LiteLLM backend in self-hosted mode (enabled by
+# the chart default + values.selfcontained.yaml) — pull its image from ghcr too.
+mockModel:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/mock-model
+    tag: "0.1.1"
+
+sampleAgent:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/sample-agent
+    tag: "0.1.0"
+
+poetAgent:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/poet-agent
+    tag: "0.1.0"
+
+haystack:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/haystack-retriever
+    tag: "0.1.0"
+
+dbt:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/dbt
+    tag: "0.2.0"
+
+egressProxy:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/egress-proxy
+    tag: "0.1.0"
+
+webFetch:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/web-fetch
+    tag: "0.1.0"
+
+queryTool:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/query-tool
+    tag: "0.3.0"
+
+sandbox:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/sandbox-duckdb
+    tag: "0.1.0"
+
+superset:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/superset
+    tag: "6.1.0"
+
+# dagster (chart default enabled:true) stays DISABLED here: the
+# sovereign-os/dagster image build failed in the current push run, so there is no
+# ghcr tag to pull. Re-enable once the image is rebuilt + pushed.
+dagster:
+  enabled: false
+
+# Layer 4 (Science / ML) — OFF above (ml.enabled=false). Images pinned so enabling
+# an individual component pulls from ghcr immediately.
+mlflow:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/mlflow
+    tag: "2.19.0"
+
+mlAgent:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/ml-agent
+    tag: "0.1.0"
+
+# Terminal + Workbench are OFF by default (enabled:false in values.yaml). Images
+# pinned here so opt-in brings up the correct, pushed images immediately.
+terminal:
+  broker:
+    image:
+      repository: ghcr.io/aborek/sovereign-os/terminal-broker
+      tag: "0.1.0"
+  sandbox:
+    image:
+      repository: ghcr.io/aborek/sovereign-os/sandbox-shell
+      tag: "0.1.0"
+
+workbench:
+  broker:
+    image:
+      repository: ghcr.io/aborek/sovereign-os/workbench-broker
+      tag: "0.1.0"
+  workspace:
+    image:
+      repository: ghcr.io/aborek/sovereign-os/code-server-workbench
+      tag: "0.1.0"
 
 # -----------------------------------------------------------------------------
 # Ingress + TLS — public consoles for the 7 tools. Hostnames resolve to the

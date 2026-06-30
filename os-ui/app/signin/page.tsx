@@ -3,10 +3,9 @@
  */
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-
-type RosterUser = { id: string; name: string; domain: string; role: string };
+import Link from 'next/link';
 
 function SignInForm() {
   const router = useRouter();
@@ -15,16 +14,8 @@ function SignInForm() {
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [roster, setRoster] = useState<RosterUser[]>([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    fetch('/api/auth/me', { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((b) => setRoster(b.roster ?? []))
-      .catch(() => {});
-  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -57,15 +48,30 @@ function SignInForm() {
           Sovereign <span className="accent">Agentic</span> OS
         </div>
         <div className="signin-sub">Sign in to your domain workspace</div>
+        <div className="signin-firstrun">
+          First run? Sign in with the bootstrap admin to begin setup.
+        </div>
 
         <form onSubmit={submit} className="signin-form">
           <label>
             Username
-            <input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus placeholder="e.g. amir" />
+            <input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoFocus
+              autoComplete="username"
+              placeholder="username"
+            />
           </label>
           <label>
             Password
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••" />
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              placeholder="••••••"
+            />
           </label>
           {error ? <div className="error">{error}</div> : null}
           <button className="btn" type="submit" disabled={busy || !username || !password}>
@@ -73,31 +79,9 @@ function SignInForm() {
           </button>
         </form>
 
-        {roster.length > 0 ? (
-          <div className="signin-roster">
-            <div className="hint" style={{ marginTop: 0 }}>Teaching roster — click to prefill:</div>
-            <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-              {roster.map((u) => (
-                <button
-                  key={u.id}
-                  type="button"
-                  className="chip"
-                  style={{ cursor: 'pointer', background: 'transparent' }}
-                  onClick={() => {
-                    setUsername(u.id);
-                    setPassword(u.domain === 'platform' ? 'admin' : u.domain);
-                  }}
-                  title={`${u.domain} · ${u.role}`}
-                >
-                  {u.id} · {u.domain}/{u.role}
-                </button>
-              ))}
-            </div>
-            <div className="hint" style={{ fontSize: 11 }}>
-              Passwords mirror the domain (sales/finance), platform admin = “admin”. Seeded; replace via OS_USERS / Ory.
-            </div>
-          </div>
-        ) : null}
+        <div className="auth-foot">
+          <Link href="/recover">Locked out? Recover access</Link>
+        </div>
       </div>
     </div>
   );

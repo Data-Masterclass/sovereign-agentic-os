@@ -1,68 +1,80 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ */
 import Link from 'next/link';
-import PageHeader from '@/components/PageHeader';
-import StackStatus from '@/components/StackStatus';
+import { currentUser } from '@/lib/auth';
+import { homeFeed } from '@/lib/home/feed';
+import HomeLauncher from '@/components/home/HomeLauncher';
+import Cockpit from '@/components/home/Cockpit';
 
-const CAPABILITIES = [
-  { k: 'Agent core', v: 'LangGraph', note: 'retrieve → generate → trace' },
-  { k: 'Gateway', v: 'LiteLLM', note: 'one governed model + MCP endpoint' },
-  { k: 'Retrieval', v: 'OpenSearch', note: 'hybrid vector + lexical' },
-  { k: 'Lakehouse', v: 'DuckDB / Iceberg', note: 'governed query tool' },
-  { k: 'Policy', v: 'OPA', note: 'default-deny tool authz' },
-  { k: 'Observability', v: 'Langfuse v3', note: 'every action traced' },
-];
+export const dynamic = 'force-dynamic';
 
-// The five executable golden paths (os-application.md §6). Each deep-links into
-// the tab that actually runs it against the live backend.
-const GOLDEN = [
-  { icon: '✦', label: 'Ask an agent', desc: 'See & build LangGraph multi-agent systems', href: '/agents', run: 'LangGraph + LiteLLM' },
-  { icon: '▤', label: 'Query the lakehouse', desc: 'Talk to your data + run SQL over Iceberg', href: '/data', run: 'DuckDB / Iceberg' },
-  { icon: '▦', label: 'Build a dashboard', desc: 'Compose charts on Cube metrics (Superset)', href: '/dashboards', run: 'Superset + Cube' },
-  { icon: '⌘', label: 'Ship software', desc: 'Create a repo → CI → deploy with Forgejo', href: '/software', run: 'Forgejo + Argo CD' },
-  { icon: '∿', label: 'Train a model', desc: 'Features → train → deploy via the ML agent', href: '/science', run: 'Featureform / MLflow / KServe' },
-];
+/**
+ * Home — the welcoming launcher + cockpit (home-golden-path.md). Server-rendered
+ * from the OPA/RLS-scoped home-feed adapter: an illustrated golden-path launcher
+ * (centerpiece) surrounded by personalized cockpit modules whose content +
+ * ordering shift by the viewer's persona. Home orients + routes; it never
+ * recomputes a tab's numbers and never bypasses governance.
+ */
+export default async function HomePage() {
+  const user = await currentUser();
 
-export default function HomePage() {
-  return (
-    <>
-      <PageHeader title="Home" crumb="data-masterclass · domain overview" />
-      <div className="content">
-        <p className="lead">
-          Your governed space on the Sovereign Agentic OS. Create, store, use, and
-          document your data, knowledge, dashboards, and agents — under central
-          governance, without touching Kubernetes or YAML.
-        </p>
-
-        <StackStatus />
-
-        <div className="section-title">Capabilities</div>
-        <div className="grid">
-          {CAPABILITIES.map((s) => (
-            <div className="card" key={s.k}>
-              <h3>{s.k}</h3>
-              <div className="big">{s.v}</div>
-              <div className="muted">{s.note}</div>
-            </div>
-          ))}
-        </div>
-
-        <div className="section-title">Golden paths</div>
-        <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-          Each path is executable — it deep-links into the tab that runs it against the live backend.
-        </p>
-        <div style={{ display: 'grid', gap: 12 }}>
-          {GOLDEN.map((g) => (
-            <Link className="golden" href={g.href} key={g.label}>
-              <span className="ico">{g.icon}</span>
-              <div>
-                <div style={{ fontWeight: 600 }}>{g.label}</div>
-                <div className="muted">{g.desc}</div>
-              </div>
-              <span className="chip" style={{ marginLeft: 'auto' }}>{g.run}</span>
-              <span className="arr">→</span>
-            </Link>
-          ))}
+  // Middleware guards this route, but stay graceful if the session just expired.
+  if (!user) {
+    return (
+      <div className="home">
+        <div className="content">
+          <div className="stub-page">
+            Your session has ended. <Link href="/signin">Sign in</Link> to open your domain.
+          </div>
         </div>
       </div>
-    </>
+    );
+  }
+
+  const feed = await homeFeed(user);
+  const firstName = user.name.split(' ')[0] || user.name;
+
+  return (
+    <div className="home">
+      {/* Warm, editorial hero — Fraunces display, not the OS topbar chrome. */}
+      <header className="home-hero">
+        <div className="home-hero-text">
+          <div className="home-eyebrow">{feed.domain} · domain home</div>
+          <h1 className="home-greeting">
+            Welcome back, <span className="home-name">{firstName}</span>.
+          </h1>
+          <p className="home-sub">
+            Your governed space on the Sovereign Agentic OS. Pick a golden path to create something, or
+            see what needs you below.
+          </p>
+        </div>
+        <div className="home-persona" title="Your role shapes what Home emphasizes.">
+          <span className="home-persona-stance">{feed.personaStance}</span>
+          <span className="home-persona-role">{feed.personaLabel}</span>
+        </div>
+      </header>
+
+      <div className="content home-content">
+        <div className="home-sec-head">
+          <h2 className="home-sec-title">Golden paths</h2>
+          <p className="home-sec-sub">
+            Ten ways to build. Each card explains itself, launches its flow, and links a hands-on
+            tutorial. Paths your role can't act on yet are dimmed — still yours to explore.
+          </p>
+        </div>
+
+        <HomeLauncher cards={feed.launcher} />
+
+        <div className="home-sec-head" style={{ marginTop: 36 }}>
+          <h2 className="home-sec-title">Your cockpit</h2>
+          <p className="home-sec-sub">
+            What's moving and what needs you — scoped to you, ordered for a {feed.personaLabel.toLowerCase()}.
+          </p>
+        </div>
+
+        <Cockpit feed={feed} />
+      </div>
+    </div>
   );
 }

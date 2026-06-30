@@ -46,7 +46,31 @@ STACKIT managed) · `values.example.yaml` (the `mode: bundled|external` contract
 > stack status), Agents, Knowledge, Structured Data, Software (CI), Monitoring, Governance,
 > Dashboards, Gateway, Orchestration, Science, Metrics, Unstructured Data, Connections,
 > Marketplace, Strategy/Big Bets, Settings, and About/Licenses. Styled to the Sovereign
-> Agentic brand. Per-domain spaces + identity (Ory) are the next build (`../stackit/build-ui.md`).
+> Agentic brand. It ships with **real, self-hosted authentication** (scrypt-hashed
+> passwords, signed sessions, roles) — see **First-run sign-in** below. A future swap to
+> Ory keeps the same `currentUser`/`requireUser` seam.
+
+### First-run sign-in (OS UI)
+
+The OS UI ships with **no real or demo users** — only a secure first-run bootstrap:
+
+1. **Bootstrap.** On the very first run the identity store is empty, so a single default
+   admin exists: **`admin` / `admin`**. Open the OS UI and sign in with it.
+2. **Forced setup.** You are immediately required to set a **real username + email + a
+   strong password** (min 12 chars, mixed character classes; weak passwords are rejected).
+   The instant you submit, the `admin/admin` login is **disabled**.
+3. **Email verification.** Setup returns a verification link (in a real deploy this is
+   emailed; on local-kind it is shown so you can click it). Verifying your email
+   **permanently deletes** the bootstrap admin — `admin/admin` is gone for good.
+4. **Recovery key.** As an admin, go to **Users → Account recovery** and **Generate a
+   master recovery key**. It is shown and downloaded **once**; the server stores only a
+   hash. If you are ever locked out, use it at **`/recover`** to reset any account's
+   password. **Lose it and it cannot be recovered** — store it offline.
+
+Passwords are never stored in plaintext, never logged, and never returned to the browser.
+The session secret is auto-generated into the `os-ui-session` Kubernetes Secret (never the
+in-code dev fallback). Operators can pre-provision real users via `osUI.usersSeed` (a JSON
+array; plaintext passwords there are hashed on ingest) — but the default ships none.
 >
 > **Local only.** Real STACKIT provisioning stays gated on the SA key + cost sign-off
 > (`../stackit/stackit.md`).

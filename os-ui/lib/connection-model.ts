@@ -18,7 +18,13 @@
 
 import type { Visibility } from '@/lib/artifact-model';
 
-export type ConnectionType = 'API' | 'MCP' | 'Database' | 'SaaS';
+export type ConnectionType = 'API' | 'MCP' | 'Database' | 'SaaS' | 'Drive';
+
+/** The adapter family that implements a connection type (see lib/connection-adapters). */
+export type ConnectorKind = 'drive' | 'database' | 'api' | 'mcp' | 'saas';
+
+/** How the connection authenticates: per-user OAuth (personal) or service creds (shared). */
+export type AuthKind = 'oauth' | 'service';
 
 /**
  * Per-operation capability mode (least-privilege by default). Default for a blank
@@ -83,10 +89,20 @@ export type ConnectionGrant = {
 
 export type SecretRef = { name: string; key: string };
 
+/** Per-connection health/status (auth & reachability). */
+export type ConnectionHealth = 'healthy' | 'needs-reconnect' | 'untested';
+
+/** How the connection is also used as a DATA SOURCE (in addition to an agent tool). */
+export type DataUsage = 'bronze' | 'files' | null;
+
 export type Connection = {
   id: string;
   name: string;
   type: ConnectionType;
+  /** The adapter family that backs this connection. */
+  connector: ConnectorKind;
+  /** Per-user OAuth (personal) or service credentials (shared). */
+  auth: AuthKind;
   template: ConnectionTemplateKey;
   /** Endpoint metadata (URL / MCP server) — never the secret. */
   endpoint: string;
@@ -109,6 +125,10 @@ export type Connection = {
   tools: ConnectionTool[];
   /** Per-agent grants (restrict-only). */
   grants: ConnectionGrant[];
+  /** Auth/reachability health (silent refresh; Reconnect on hard failure). */
+  health: ConnectionHealth;
+  /** Whether the connection is also registered as a data source, and where. */
+  dataUsage: DataUsage;
   createdAt: string;
   updatedAt: string;
 };
@@ -116,17 +136,25 @@ export type Connection = {
 // ----------------------------------------------------------- Capability presets --
 
 export type ConnectionTemplateKey =
+  | 'gdrive'
+  | 'onedrive'
   | 'notion-mcp'
   | 'salesforce-api'
   | 'generic-mcp'
   | 'generic-api'
   | 'database'
+  | 'mysql'
+  | 'slack'
   | 'saas';
 
 export type ConnectionTemplate = {
   key: ConnectionTemplateKey;
   label: string;
   type: ConnectionType;
+  /** The adapter family that backs this template. */
+  connector: ConnectorKind;
+  /** Per-user OAuth (personal-connectable by ANY user) or service creds (Builder/Admin). */
+  auth: AuthKind;
   /** Example endpoint placeholder shown in the UI. */
   endpointHint: string;
   /** Secrets Manager key the credential is stored under. */
@@ -139,11 +167,42 @@ export type ConnectionTemplate = {
   tools: ConnectionTool[];
 };
 
+/** Read tools that pull a data source into Bronze / Files (the "sync" usage). */
+const DRIVE_TOOLS: ConnectionTool[] = [
+  { name: 'list_files', description: 'List files in the selected folder/drive (read).', write: false, mode: 'Read' },
+  { name: 'search_files', description: 'Search the drive (read).', write: false, mode: 'Read' },
+  { name: 'read_file', description: 'Read one file (read).', write: false, mode: 'Read' },
+  { name: 'upload_file', description: 'Upload a file (write).', write: true, mode: 'Off' },
+  { name: 'delete_file', description: 'Delete a file (write).', write: true, mode: 'Blocked' },
+];
+
 export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
+  {
+    key: 'gdrive',
+    label: 'Google Drive (personal)',
+    type: 'Drive',
+    connector: 'drive',
+    auth: 'oauth',
+    endpointHint: 'https://www.googleapis.com/drive/v3',
+    secretKey: 'oauth-token',
+    tools: DRIVE_TOOLS.map((t) => ({ ...t })),
+  },
+  {
+    key: 'onedrive',
+    label: 'OneDrive (personal)',
+    type: 'Drive',
+    connector: 'drive',
+    auth: 'oauth',
+    endpointHint: 'https://graph.microsoft.com/v1.0/me/drive',
+    secretKey: 'oauth-token',
+    tools: DRIVE_TOOLS.map((t) => ({ ...t })),
+  },
   {
     key: 'notion-mcp',
     label: 'Notion (MCP server)',
     type: 'MCP',
+    connector: 'mcp',
+    auth: 'service',
     endpointHint: 'https://mcp.notion.com/sse',
     secretKey: 'mcp-token',
     tools: [
@@ -163,6 +222,8 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
     key: 'salesforce-api',
     label: 'Salesforce (REST API)',
     type: 'API',
+    connector: 'api',
+    auth: 'service',
     endpointHint: 'https://yourorg.my.salesforce.com',
     secretKey: 'oauth-token',
     tools: [
@@ -183,6 +244,8 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
     key: 'generic-mcp',
     label: 'Generic MCP server',
     type: 'MCP',
+    connector: 'mcp',
+    auth: 'service',
     endpointHint: 'https://mcp.example.com/sse',
     secretKey: 'mcp-token',
     tools: [
@@ -196,6 +259,8 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
     key: 'generic-api',
     label: 'Generic REST / GraphQL API',
     type: 'API',
+    connector: 'api',
+    auth: 'service',
     endpointHint: 'https://api.example.com',
     secretKey: 'bearer-token',
     tools: [
@@ -207,8 +272,10 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
   },
   {
     key: 'database',
-    label: 'Database (Postgres, etc.)',
+    label: 'PostgreSQL database',
     type: 'Database',
+    connector: 'database',
+    auth: 'service',
     endpointHint: 'postgres://db.example.com:5432/app',
     secretKey: 'db-password',
     tools: [
@@ -218,9 +285,40 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
     ],
   },
   {
+    key: 'mysql',
+    label: 'MySQL / MariaDB database',
+    type: 'Database',
+    connector: 'database',
+    auth: 'service',
+    endpointHint: 'mysql://db.example.com:3306/app',
+    secretKey: 'db-password',
+    tools: [
+      { name: 'query', description: 'Governed read query (read).', write: false, mode: 'Read', limits: { dataScope: 'allowlisted tables' } },
+      { name: 'write_row', description: 'Insert/update a row (write).', write: true, mode: 'Off' },
+      { name: 'drop_table', description: 'Drop a table (write).', write: true, mode: 'Blocked' },
+    ],
+  },
+  {
+    key: 'slack',
+    label: 'Slack (SaaS)',
+    type: 'SaaS',
+    connector: 'saas',
+    auth: 'oauth',
+    endpointHint: 'https://slack.com/api',
+    secretKey: 'oauth-token',
+    tools: [
+      { name: 'read_messages', description: 'Read channel messages (read).', write: false, mode: 'Read' },
+      { name: 'list_channels', description: 'List channels (read).', write: false, mode: 'Read' },
+      { name: 'post_message', description: 'Post a message (write).', write: true, mode: 'Write-approval', limits: { rateLimitPerMin: 10 } },
+      { name: 'delete_message', description: 'Delete a message (write).', write: true, mode: 'Blocked' },
+    ],
+  },
+  {
     key: 'saas',
     label: 'Packaged SaaS integration',
     type: 'SaaS',
+    connector: 'saas',
+    auth: 'service',
     endpointHint: 'https://app.example-saas.com/api',
     secretKey: 'api-key',
     tools: [
@@ -231,8 +329,13 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
   },
 ];
 
+/** Templates a NON-Builder (any participant) may create — personal OAuth only. */
+export function isPersonalConnectable(tpl: ConnectionTemplate): boolean {
+  return tpl.auth === 'oauth';
+}
+
 export function templateByKey(key: string): ConnectionTemplate | undefined {
   return CONNECTION_TEMPLATES.find((t) => t.key === key);
 }
 
-export const CONNECTION_TYPES: ConnectionType[] = ['API', 'MCP', 'Database', 'SaaS'];
+export const CONNECTION_TYPES: ConnectionType[] = ['Drive', 'Database', 'API', 'MCP', 'SaaS'];

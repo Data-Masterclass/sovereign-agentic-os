@@ -11,7 +11,16 @@
  * everything downstream only ever sees the `SessionClaims` shape.
  */
 
-export type Role = 'participant' | 'builder' | 'admin';
+/**
+ * Domain role, lowest→highest. `participant` is shown as "User" in the UI; the
+ * wire value stays `participant` for backward compatibility with existing
+ * sessions, seeds and OPA grants. `creator` sits between User and Builder
+ * (Governance golden path §5: User · Creator · Builder · Admin).
+ */
+export type Role = 'participant' | 'creator' | 'builder' | 'admin';
+
+/** Every role, lowest→highest privilege. Single source for selects + ranking. */
+export const ROLES: readonly Role[] = ['participant', 'creator', 'builder', 'admin'] as const;
 
 export type SessionClaims = {
   /** Stable user id (login handle). */

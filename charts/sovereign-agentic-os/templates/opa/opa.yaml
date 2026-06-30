@@ -81,6 +81,11 @@ data:
   # we seed the Sales worked example so the governance proof runs on kind.
   governance.json: |
     {{ dict "governance" ($opa.governance | default dict) | toJson }}
+  # FOURTH policy doc — internal cross-domain Marketplace import authorization
+  # (package `marketplace`). The default-deny gate for "import = a governed grant":
+  # open products auto-grant, approval-required imports are held for Governance.
+  marketplace.rego: |
+{{ .Files.Get "policies/marketplace.rego" | indent 4 }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -100,7 +105,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/policy: {{ printf "%s-%s-%s" ($opa.grants | toJson) (($opa.governance | default dict) | toJson) (.Files.Get "policies/trino.rego") | sha256sum }}
+        checksum/policy: {{ printf "%s-%s-%s-%s" ($opa.grants | toJson) (($opa.governance | default dict) | toJson) (.Files.Get "policies/trino.rego") (.Files.Get "policies/marketplace.rego") | sha256sum }}
       labels:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa") | nindent 8 }}
@@ -127,6 +132,7 @@ spec:
             - "/policies/data.json"
             - "/policies/trino.rego"
             - "/policies/governance.json"
+            - "/policies/marketplace.rego"
           ports:
             - { name: http, containerPort: 8181 }
           readinessProbe:

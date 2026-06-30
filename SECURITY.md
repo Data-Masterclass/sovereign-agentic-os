@@ -74,6 +74,24 @@ We follow **coordinated disclosure**:
 We will not pursue legal action against good-faith security research that follows
 this policy. There is no paid bug-bounty program at this stage.
 
+## OS UI authentication
+
+The OS UI uses a self-hosted identity store with the following guarantees:
+
+- **No shipped credentials.** The build seeds no real or demo users. First run
+  creates a single bootstrap admin (`admin`/`admin`) that is **forced** to set a
+  real email + strong password on first login; the default credential is disabled
+  on setup and the bootstrap account is **auto-deleted** on email verification. No
+  usable default credential survives first-run.
+- **Passwords** are stored only as salted **scrypt** hashes — never plaintext,
+  never logged, never returned in any API response.
+- **Sessions** are HMAC-SHA256-signed cookies. The signing secret is generated
+  into the `os-ui-session` Secret on install; the in-code `dev-only-insecure-...`
+  fallback is for local `next dev` only and must never be the deployed value.
+- **Account recovery** uses a high-entropy master key shown/downloaded once; the
+  server stores only its hash. Login and recovery endpoints are rate-limited and
+  email-verification tokens are single-use + expiring.
+
 ## Scope notes
 
 - **Secrets are external** to this repository by design (see `README.md` →

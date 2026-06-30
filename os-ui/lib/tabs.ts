@@ -25,6 +25,7 @@ export const TAB_GROUPS: TabGroup[] = [
   {
     tabs: [
       { label: 'Home', icon: '◇', href: '/' },
+      { label: 'Platform Admin', icon: '❖', href: '/platform', role: 'Administrator' },
       { label: 'Strategy', icon: '▲', href: '/strategy' },
       { label: 'Big Bets', icon: '◆', href: '/big-bets' },
       { label: 'Dashboards', icon: '▦', href: '/dashboards' },

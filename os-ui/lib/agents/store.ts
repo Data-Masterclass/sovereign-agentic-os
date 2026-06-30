@@ -25,7 +25,9 @@ import {
  * routes are the server boundary that authenticates + scopes callers.
  */
 
-export type Role = 'participant' | 'builder' | 'admin';
+// Single source of truth for roles (now User/Creator/Builder/Admin). Re-exported
+// so existing `store.Role` consumers keep working after Governance widened it.
+export type Role = import('../session.ts').Role;
 export type Principal = { id: string; domains: string[]; role: Role };
 
 export type SystemRecord = {

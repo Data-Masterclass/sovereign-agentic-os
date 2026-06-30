@@ -106,6 +106,21 @@ spec:
             # surface reads their status + scales them 0<->1 here via the k8s API.
             - name: NAMESPACE
               value: {{ .Release.Namespace | quote }}
+            # Session-signing secret (HMAC-SHA256 for the auth cookie). Sourced
+            # from the generated `os-ui-session` Secret — NEVER the in-code
+            # dev fallback, which would let anyone forge an admin session.
+            - name: OS_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: os-ui-session
+                  key: OS_SESSION_SECRET
+            {{- with .Values.osUI.usersSeed }}
+            # Optional operator pre-seed of REAL users (JSON array). Not shipped;
+            # plaintext passwords here are hashed on ingest. Empty = first-run
+            # bootstrap admin only (admin/admin, forced-change on first login).
+            - name: OS_USERS
+              value: {{ . | quote }}
+            {{- end }}
             # In-cluster backend Service URLs (overridable per environment).
             - name: SAMPLE_AGENT_URL
               value: {{ $u.sampleAgentUrl | quote }}
@@ -126,6 +141,28 @@ spec:
               value: {{ $u.opensearchUrl | quote }}
             - name: KNOWLEDGE_INDEX
               value: {{ $u.knowledgeIndex | quote }}
+            # ---- Files tab (unstructured context products). The `files` hybrid
+            # index + the SHARED embedding model. FILES_EMBED_DIM is sourced from
+            # the SINGLE retrieval.knnDimension so the knn_vector mapping and the
+            # query vectors always match — NEVER hardcoded here.
+            - name: FILES_INDEX
+              value: {{ $u.filesIndex | default "files" | quote }}
+            - name: FILES_EMBED_MODEL
+              value: {{ $u.filesEmbedModel | default .Values.sampleAgent.embedModel | quote }}
+            - name: FILES_EMBED_DIM
+              value: {{ .Values.retrieval.knnDimension | quote }}
+            {{- with $u.doclingUrl }}
+            - name: DOCLING_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $u.transcribeUrl }}
+            - name: TRANSCRIBE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $u.ocrUrl }}
+            - name: OCR_URL
+              value: {{ . | quote }}
+            {{- end }}
             - name: FORGEJO_URL
               value: {{ $u.forgejoUrl | quote }}
             - name: FORGEJO_USER
@@ -136,6 +173,17 @@ spec:
               value: {{ $u.opaUrl | quote }}
             - name: DAGSTER_URL
               value: {{ $u.dagsterUrl | quote }}
+            # Monitoring tab — READ-ONLY artifact/ML-health lens backends (lens 5).
+            # The artifact-health adapter probes these server-side and degrades to
+            # offline-mock when a service is absent (Science/KServe are opt-in), so
+            # these defaults are safe; override per environment. Monitoring is the
+            # observe plane — it never writes to any of these.
+            - name: MLFLOW_URL
+              value: {{ $u.mlflowUrl | default "http://mlflow:5000" | quote }}
+            - name: KSERVE_URL
+              value: {{ $u.kserveUrl | default "http://kserve:80" | quote }}
+            - name: OPENMETADATA_API_URL
+              value: {{ $u.openmetadataApiUrl | default "http://openmetadata:8585" | quote }}
             {{- if .Values.terminal.enabled }}
             # In-UI Terminal. The UI mints a short-lived token (signed with the
             # SAME secret the broker verifies) for authorised roles, then the

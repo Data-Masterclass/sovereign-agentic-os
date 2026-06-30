@@ -6,6 +6,17 @@ import { requireUser } from '@/lib/auth';
 import { decide, getApproval, listApprovals } from '@/lib/approvals';
 import { curateFact, proposeFact } from '@/lib/agent-memory';
 import { trace } from '@/lib/agent-governed';
+import {
+  applyApprovedPromotion,
+  applyApprovedCertification,
+  type PromotionRequest,
+  type CertificationRequest,
+} from '@/lib/data/store';
+import { applyApprovedFilePromotion, type FilePromotionRequest } from '@/lib/files/store';
+import { reindexById } from '@/lib/files/pipeline-server';
+import { listLineage } from '@/lib/files/lineage';
+import { pushLineage } from '@/lib/files/catalog';
+import { onApprovalDecided } from '@/lib/marketplace';
 
 export const dynamic = 'force-dynamic';
 
@@ -55,12 +66,49 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `Already ${existing.status}` }, { status: 409 });
   }
 
+  // A dataset promotion APPLIES the tier move (dataset→asset, into Trino) and is
+  // gated by role + the transparency gate. Apply it BEFORE recording the decision
+  // so a blocked gate leaves the request pending (no faked "approved").
+  let applied: string | null = null;
+  const principal = { id: user.id, domains: user.domains, role: user.role };
+  if (decision === 'approve' && existing.kind === 'dataset_promote') {
+    try {
+      const asset = applyApprovedPromotion(existing.payload as unknown as PromotionRequest, principal);
+      applied = `Promoted “${asset.name}” to a ${asset.visibility} data asset (${asset.tier}) in Trino.`;
+    } catch (e) {
+      return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 400 });
+    }
+  } else if (decision === 'approve' && existing.kind === 'dataset_certify') {
+    try {
+      const product = applyApprovedCertification(existing.payload as unknown as CertificationRequest, principal);
+      applied = `Certified “${product.name}” as a ${product.certification?.level} data product and listed it in the marketplace.`;
+    } catch (e) {
+      return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 400 });
+    }
+  }
+  // A FILE promotion: move dataset→asset, re-govern the object-store prefix + DLS,
+  // and mirror the lineage to OpenMetadata (best-effort). Applied before recording
+  // the decision so a blocked gate leaves the request pending.
+  if (decision === 'approve' && existing.kind === 'file_promote') {
+    try {
+      const asset = applyApprovedFilePromotion(existing.payload as unknown as FilePromotionRequest, {
+        id: user.id, domains: user.domains, role: user.role,
+      });
+      applied = `Shared “${asset.name}” with the ${asset.domain} domain (${asset.visibility} asset). It is now searchable for domain members only.`;
+      await reindexById(asset.id); // re-index so the hybrid index's DLS metadata follows the new tier/grants
+      const latest = listLineage(asset.id)[0];
+      if (latest) void pushLineage(latest);
+    } catch (e) {
+      return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 400 });
+    }
+  }
+
   const updated = decide(id, decision, user.id);
   if (!updated) return NextResponse.json({ error: 'Could not decide' }, { status: 500 });
 
   // On approval, APPLY the held write + record provenance (agent + human).
-  let applied: string | null = null;
-  if (decision === 'approve') {
+  // dataset_promote + dataset_certify + file_promote are already applied above.
+  if (decision === 'approve' && updated.kind !== 'dataset_promote' && updated.kind !== 'dataset_certify' && updated.kind !== 'file_promote') {
     if (updated.kind === 'connection_write') {
       applied = `CRM write applied to ${String(updated.payload.account ?? 'account')} (${String(updated.payload.field ?? 'field')}=${String(updated.payload.value ?? '')}).`;
       // Record the now-confirmed renewal date as a durable semantic fact.
@@ -77,6 +125,12 @@ export async function POST(req: Request) {
     } else {
       applied = 'Promotion applied.';
     }
+  }
+
+  // Marketplace imports gated by approval: flip the pending grant active/revoked.
+  if (updated.kind === 'marketplace_import') {
+    const grant = await onApprovalDecided(updated.id, decision);
+    if (grant) applied = decision === 'approve' ? `Import grant activated for ${grant.granteeDomain}.` : 'Import request rejected.';
   }
 
   await trace({

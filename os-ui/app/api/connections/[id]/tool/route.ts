@@ -24,7 +24,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
   }
   const { id } = await ctx.params;
-  let body: { tool?: string; args?: Record<string, unknown>; asAgent?: string };
+  let body: { tool?: string; args?: Record<string, unknown>; asAgent?: string; autonomous?: boolean; reason?: string };
   try {
     body = await req.json();
   } catch {
@@ -37,8 +37,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       tool: String(body.tool),
       args: body.args ?? {},
       asAgent: body.asAgent ? String(body.asAgent) : undefined,
+      autonomous: Boolean(body.autonomous),
+      reason: body.reason ? String(body.reason) : undefined,
     });
-    const status = out.decision === 'allow' ? 200 : out.decision === 'requires_approval' ? 202 : 403;
+    // allow→200, held/proposed→202, deny/block→403.
+    const status = out.decision === 'allow' ? 200 : out.decision === 'requires_approval' || out.decision === 'propose' ? 202 : 403;
     return NextResponse.json(out, { status });
   } catch (e) {
     const status = (e as { status?: number })?.status ?? 500;

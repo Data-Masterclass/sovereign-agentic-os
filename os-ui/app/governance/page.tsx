@@ -1,80 +1,53 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ */
 'use client';
 
+import { useState } from 'react';
 import PageHeader from '@/components/PageHeader';
-import ApprovalQueue from '@/components/ApprovalQueue';
-import { useApi } from '@/lib/useApi';
+import ApprovalsInbox from '@/components/governance/ApprovalsInbox';
+import PoliciesView from '@/components/governance/PoliciesView';
+import AuditLog from '@/components/governance/AuditLog';
+import CostLimits from '@/components/governance/CostLimits';
+import UsersAccess from '@/components/governance/UsersAccess';
 
-type Cell = { principal: string; decisions: Record<string, boolean> };
-type Data = {
-  principals: string[];
-  tools: string[];
-  grants: Record<string, string[]>;
-  matrix: Cell[];
-};
+type Section = 'inbox' | 'policies' | 'audit' | 'cost' | 'users';
+
+const SECTIONS: { id: Section; label: string }[] = [
+  { id: 'inbox', label: 'Inbox' },
+  { id: 'policies', label: 'Policies' },
+  { id: 'audit', label: 'Audit' },
+  { id: 'cost', label: 'Cost & limits' },
+  { id: 'users', label: 'Users & access' },
+];
 
 export default function GovernancePage() {
-  const { data, loading, error, reload } = useApi<Data>('/api/policy');
+  const [section, setSection] = useState<Section>('inbox');
 
   return (
     <>
-      <PageHeader title="Governance" crumb="approval queue + default-deny tool authorization — OPA" />
+      <PageHeader
+        title="Governance"
+        crumb="control plane · approve · policy · audit · cost · access"
+      />
       <div className="content">
-        <ApprovalQueue />
-
-        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <p className="lead" style={{ marginBottom: 0 }}>
-            Open Policy Agent makes the default-deny decision at the tool boundary: a
-            principal may invoke a tool only if it is explicitly granted. Each cell below
-            is live-verified against the OPA decision API — internet tools
-            (<code>web_fetch</code>) are denied unless granted.
-          </p>
-          <button className="btn ghost" onClick={reload} disabled={loading}>
-            {loading ? <span className="spin" /> : 'Refresh'}
-          </button>
+        <div className="tabstrip" style={{ marginBottom: 24 }}>
+          {SECTIONS.map((s) => (
+            <button
+              key={s.id}
+              className={section === s.id ? 'active' : ''}
+              onClick={() => setSection(s.id)}
+            >
+              {s.label}
+            </button>
+          ))}
         </div>
 
-        {error ? <div className="error" style={{ marginTop: 20 }}>{error}</div> : null}
-
-        {data ? (
-          <>
-            <div className="section-title">Grants matrix · principal × tool</div>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Principal</th>
-                    {data.tools.map((t) => (
-                      <th key={t} className="mono" style={{ textTransform: 'none' }}>{t}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.matrix.map((row) => (
-                    <tr key={row.principal}>
-                      <td className="mono" style={{ fontWeight: 600 }}>{row.principal}</td>
-                      {data.tools.map((t) => (
-                        <td key={t} style={{ textAlign: 'center' }}>
-                          {row.decisions[t] ? (
-                            <span className="badge ok">allow</span>
-                          ) : (
-                            <span className="badge err">deny</span>
-                          )}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="hint">
-              Source: OPA <code>grants</code> data, each cell re-checked via{' '}
-              <code>POST /v1/data/agentic/authz/allow</code>. Add a tool under a principal
-              in <code>opa.grants</code> to extend access.
-            </div>
-          </>
-        ) : loading ? (
-          <div className="stub-page" style={{ marginTop: 20 }}>Loading policy…</div>
-        ) : null}
+        {section === 'inbox' && <ApprovalsInbox />}
+        {section === 'policies' && <PoliciesView />}
+        {section === 'audit' && <AuditLog />}
+        {section === 'cost' && <CostLimits />}
+        {section === 'users' && <UsersAccess />}
       </div>
     </>
   );

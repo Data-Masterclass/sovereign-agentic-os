@@ -8,6 +8,7 @@ import PageHeader from '@/components/PageHeader';
 import SalesAssistant from '@/components/SalesAssistant';
 import AgentSystems from '@/components/agents/AgentSystems';
 import { useApi } from '@/lib/useApi';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 
 type Agent = {
   key: string;
@@ -26,7 +27,7 @@ export default function AgentsPage() {
 
   return (
     <>
-      <PageHeader title="Agents" crumb="LangGraph multi-agent systems — author, build & run" />
+      <PageHeader title="Agents" crumb="LangGraph multi-agent systems — author, build & run" tutorial="agents" />
       <div className="content">
         <p className="lead">
           Author agent systems against their real artifacts — drag the canvas, edit
@@ -35,13 +36,13 @@ export default function AgentsPage() {
         </p>
 
         <div className="tabstrip">
-          <button className={tab === 'systems' ? 'active' : ''} onClick={() => setTab('systems')}>
+          <button className={tab === 'systems' ? 'active' : ''} onClick={() => setTab('systems')} {...anchorAttr(ANCHORS.agents.sandbox)}>
             Systems
           </button>
-          <button className={tab === 'sales' ? 'active' : ''} onClick={() => setTab('sales')}>
+          <button className={tab === 'sales' ? 'active' : ''} onClick={() => setTab('sales')} {...anchorAttr(ANCHORS.agents.tools)}>
             Sales Assistant
           </button>
-          <button className={tab === 'running' ? 'active' : ''} onClick={() => setTab('running')}>
+          <button className={tab === 'running' ? 'active' : ''} onClick={() => setTab('running')} {...anchorAttr(ANCHORS.agents.run)}>
             Running agents
           </button>
         </div>

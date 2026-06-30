@@ -111,7 +111,8 @@ front door for business users) and the **Admin Console** (operate the stack — 
 > (Science/ML)** available opt-in/off-by-default, under a secure-by-default baseline. The **OS UI is
 > v1.0** — every sidebar tab is a real surface (incl. Science, Metrics, Marketplace, and
 > About/Licenses), styled to the Sovereign Agentic brand with a light/dark theme (light default), and
-> the Admin Console embedded under **Platform → Components**. Marketplace, Strategy and Big Bets are
+> the Admin Console embedded under **Platform → Components**. **Strategy** is operational (pillars,
+> RLS-scoped value roll-up, targets, and a live adoption scoreboard); Marketplace and Big Bets are
 > seeded v1 workspaces, and the agent/connector codegen flows are drafts for review. The core is
 > **Apache-2.0 licensed**; bundled components keep their own licenses (see `THIRD-PARTY-LICENSES.md` +
 > `licenses/`). Per-domain spaces and identity (Ory) are the next build.
@@ -296,19 +297,26 @@ credentials and keys never reach the browser. The tabs and their wiring:
 | Surface | What it shows / does | Backend |
 |---|---|---|
 | **Home** | A live stack-status strip (probes ~8 backends) + **executable golden-path cards** that deep-link to where each path runs (Agents, Data, Dashboards, Software, Science) | `/api/status` |
+| **Strategy** | Strategic **pillars** (shared tenant + optional domain) each tracking a **governed business-value metric** distributed **top-down** to its Big Bets → components (RLS-scoped, reconciling), with **annual + quarterly targets vs monthly actuals** and a **live adoption scoreboard** (promoted/certified by domain) | `/api/strategy/*` |
+| **Home** | The welcoming **launcher + cockpit**: an **illustrated golden-path launcher** (one card per path — explainer · role-aware deep-link action · "How it works" tutorial; paths the role can't act on are explained-but-dimmed) surrounded by **OPA/RLS-scoped cockpit modules** (What needs me · My WIP · Domain pulse · Health & cost · Recent activity · ask-the-assistant), reordered by persona (User/Creator/Builder/Admin). A **read + route** surface — it reuses Governance/registry/Strategy/Monitoring, never recomputes, and the ask box **scaffolds governed drafts** (promote/certify stay human, Langfuse-traced). *Strategy + Monitoring feeds are mock-stubbed pending those branches.* | `/api/home/feed`, `/api/home/ask` |
+| **Home** | A live stack-status strip (probes ~8 backends) + the **illustrated golden-path launcher** — ten cards (Data · Knowledge · Connections · Agents · Software · Science · Metrics · Dashboards · Big Bets · Marketplace), each with a role-aware launch action **and** a **"How it works"** link that opens that path's tutorial | `/api/status` |
 | **Strategy** | Strategic pillars + an agentic-transformation readiness heatmap — *seeded v1* | — |
 | **Big Bets** | Strategic AI bets (thesis · target value · confidence · backing artifacts) — *seeded v1* | — |
+| **Strategy** | Strategic pillars + an agentic-transformation readiness heatmap — *seeded v1* | — |
+| **Big Bets** | **Initiative roadmaps over real components** — a bet is a *goal + roadmap* with a PM-grade problem statement, linked up to a Strategy pillar + its governed metric and down to components referenced across every tab. A **planner** proposes a breakdown + dated roadmap and, on approval, **scaffolds each via its tab's governed flow** (never self-promotes); **status auto-derives** from each artifact's real lifecycle; a **Gantt** rolls up on-track/at-risk/blocked; a **composition map** (lineage + consume-edges) doubles as the **value-attribution graph** that distributes the pillar metric pillar→bet→component with upstream credit, reconciling back up. OPA-scoped, RLS-scoped, audited. *(kind: live OPA/Langfuse; cross-tab sources offline-mock pending the per-tab branches.)* | `/api/big-bets/*`, OPA, Langfuse |
 | **Dashboards** | Launch into Superset | — |
 | **Agents** | A **three-level agent IDE** (Systems → canvas → agent editor): build agent systems three equivalent ways — visual **canvas**, **Monaco** text, or an **agent-system helper** chat, all editing the same Forgejo-versioned `system.yaml` — then **Build (= execute + verify)**, run/schedule/toggle, fork-to-own, with a per-agent model picker and grants/capability governance. *Build/Run execute against the live agent-runtime when a cluster is reachable (every tool call governed via LiteLLM→OPA→Langfuse), falling back to an in-process mock only offline.* | `/api/agents/*`, LiteLLM |
 | **Software** | Lists repos + recent CI runs **and creates a real Forgejo repo** (starter app → push → CI → Argo deploy) | Forgejo API |
 | **Science** | **Layer-4 launchpad** — health + links for MLflow / JupyterHub / Featureform / KServe (opt-in) | health probes |
-| **Knowledge** | A **knowledge agent** authors a 3-category `.md` (workflow steps · rules & decisions · tacit context) and **ingests** it; plus lexical search | OpenSearch, LiteLLM |
+| **Knowledge** | The domain's **operating manual**: general domain knowledge (the pinned base context for every domain agent) + **workflow tiles**, one per business process. Each workflow is a single versioned `workflow.md` edited three equivalent ways — an **actor-colored swimlane**, **Monaco markdown**, or a derived **Mermaid** diagram — with per-step actor/I-O/**links** (gaps → jump-to-build), decision **rules** (soft default, mark-as-hard → **OPA guardrails**), and **tacit** capture (paste/upload/record-stub → knowledge-agent-compressed). A **context layer** (unit-chunk → `sovereign-embed` → OpenSearch; **adaptive hybrid** knn+BM25 retrieve → rerank by trust/freshness/authority → **OPA + DLS** scoped → token-budgeted **context pack**; Langfuse pinned-vs-retrieved trace) feeds the agents. **Creators draft, Builders publish**; publishable to the marketplace; workflow→**agent scaffold** handover. | OpenSearch, LiteLLM, OPA, Langfuse |
 | **Data** | **Talk-to-your-data RAG chat** (moved here from Agents), **SQL query**, a **catalog**, and a per-product **dbt agent** (draft) | sample-agent, query-tool, OpenMetadata, LiteLLM |
 | **Metrics** | Cube semantic-layer query (`daily_revenue`) | Cube |
-| **Files** | Document library + **upload/paste → LLM classify & describe** → curate to Knowledge | OpenSearch, LiteLLM |
+| **Files** | A **governed drive**: upload/connect (Drive/OneDrive) → folders + tags → auto-index (parse · embed · hybrid index) → **search & cite**; promote/certify like Data (OpenSearch DLS); **`files_retrieve`** for agents; **"Use as"** → Knowledge / Data | OpenSearch, LiteLLM, Docling, Dagster, OpenMetadata |
 | **Connections** | A **connections agent** drafts connector configs + a connector catalog (build is a *draft*) | LiteLLM |
-| **Marketplace** | Seeded catalog of installable components/agents/templates/datasets — *seeded v1* | — |
+| **Marketplace** | **Internal cross-domain consume surface** — discover Admin-certified products of every type; **import = a governed grant** (read-in-place under your own identity + per-viewer RLS) / fork / template / instance; approval-gated imports route to Governance; lineage-aware deprecate | OpenMetadata, Cube, OPA, OpenSearch, Langfuse, Approvals |
 | **Monitoring** | Recent agent traces | Langfuse public API |
+| **Governance** | The **control plane** — five sections: **Approvals inbox** (one queue of deploy-review · autonomous-out-of-policy · access/import · egress · promote/certify; **Approve executes the governed effect** + audit + optional standing policy), **Policies** (consolidated read-only plane + Admin override), **Audit** (hash-chained who/when/why + Langfuse), **Cost & limits** (caps/quotas + over-cap enforcement), **Users & access** (role-per-domain → OPA; Ory-backed, never raw credentials) | OPA, Langfuse, LiteLLM, Ory |
+| **Monitoring** | The **read/observe plane** — five OPA-scoped lenses (runs · pipelines · cost vs caps · system+self-heal · all-tab artifacts), attention-first, with **drill-into-trace** + run→pipeline→system→artifact correlation | Langfuse, Dagster, LiteLLM, k8s API, KServe/MLflow, OpenMetadata |
 | **Governance** | The OPA grants matrix (principal × tool, default-deny), each cell re-verified live | OPA |
 | **Settings** | Deployment identity + enabled components, and **Appearance** (light/dark toggle, per-device) | — |
 | **Components** (Platform) | The **Admin Console embedded in-app** — live status for all ~32 components by layer, on/off toggles, address/login/docs drawer; proxied server-side | admin-console |
@@ -318,8 +326,14 @@ credentials and keys never reach the browser. The tabs and their wiring:
 | **About / Licenses** (Platform) | Bundled open-source components grouped by SPDX license | — |
 
 The live data surfaces (status, RAG, query, classify, knowledge-ingest, repo-create, gateway,
-policy, traces, metrics, Components) run against the cluster; **Marketplace, Strategy and Big Bets
-are seeded v1** workspaces, and the agent-builder / dbt-product / connections / software-builder
+policy, traces, metrics, Components, **Strategy**) run against the cluster — Strategy's value
+roll-up reads the **governed Cube metric** and its adoption scoreboard derives **live from the
+registry + OpenMetadata**; **Marketplace and Big Bets are seeded v1** workspaces, and the
+agent-builder / dbt-product / connections / software-builder chats produce **draft specs for
+review**, not live deploys. Every backend URL is an `osUI.*` value,
+policy, traces, metrics, Components) run against the cluster; **Big Bets** is operational (registry +
+the six adapters + planner, OPA/Langfuse live, cross-tab artifact sources offline-mock for kind);
+**Marketplace and Strategy are seeded v1** workspaces, and the agent-builder / dbt-product / connections / software-builder
 chats produce **draft specs for review**, not live deploys. Every backend URL is an `osUI.*` value,
 so a surface can be pointed at a different endpoint (e.g. an Ingress host) per environment.
 
@@ -334,6 +348,19 @@ Console inside the OS UI. It proxies the in-cluster `admin-console` service **se
 browser never holds the Kubernetes token, and offers the same capabilities: live status for all ~32
 components grouped by layer, **on/off toggles** (scale 0↔1; "core" items aren't toggleable), and
 each component's **address + login + docs** in a drawer.
+
+**Tutorials — illustrated, hands-on guides per golden path.** Every golden path ships **one
+tutorial**, authored once and reached two ways that resolve the **same** registry entry (they never
+drift): the Home card's **"How it works"** link and the tab header's **"Tutorial"** link. A tutorial
+**opens as an overlay in place** (your route + scroll are restored on close) and follows one template:
+**Hook → 3–5 illustrated steps → "Walk me through it" → "You did it"** (with next-path cross-links).
+"Walk me through it" runs **lightweight coach-marks over the real tab**, one step at a time, locating
+controls by **stable `data-tutorial-anchor` ids** (so the highlight can't desync as the UI
+re-renders). It runs in two modes: **Practice** on the tab's existing personal/sandbox lane —
+**no governed writes**, nothing persists to real products — then **graduate** to do it **for real**,
+where OPA/RLS governs every step. Framing is **role-aware** (Creator "create", Builder also
+"review/promote", User "use"); the core path is identical. Content is **authored in-repo**
+(`os-ui/lib/tutorials/`) with a cohesive custom illustration set — not auto-generated.
 
 ## Admin Console — operate the stack
 
@@ -451,9 +478,9 @@ how you actually load data, build agents, do ML, build software, and connect to 
 and how each is governed.
 
 > **Scope:** this is the end-to-end model the OS is built around. Layers 1–3 are in place; **Science
-> (Layer 4) is opt-in and off by default**; some surfaces (per-domain spaces, identity, the
-> cross-domain Marketplace, and parts of the Governance approval UI) are on the near-term roadmap —
-> see *Version & changelog*.
+> (Layer 4) is opt-in and off by default**; some surfaces (per-domain spaces, identity, and parts of
+> the Governance approval UI) are on the near-term roadmap — see *Version & changelog*. The
+> **internal cross-domain Marketplace** (consume surface) is now built — see *Marketplace* below.
 
 ## One model for everything
 
@@ -476,12 +503,91 @@ Marketplace.
 
 ## Data
 
+The **Data** tab opens on **tiles, one per dataset** — name, owner, freshness, a quality badge and
+**Bronze / Silver / Gold** dots. Double-click a tile and the dataset opens as a **three-step pipeline**:
+it is one logical dataset with three versions of itself.
+
+- **Bronze — "Bring it in."** Upload a file, or pull a slice of a governed product (it arrives already
+  masked to what you're allowed to see). Preview the rows, then confirm.
+- **Silver — "Clean it up + set the key."** Fix types, remove duplicates, set the ID.
+- **Gold — "Make it ready."** Harmonize to the shared shape and add data-quality monitoring.
+
+Each step is **guided and previewed before it commits**. If a layer isn't needed you can **pass
+through** it. A **"Show the code"** toggle reveals the real artifact (a dlt pipeline, a dbt model, a
+Cube model), and the **data agent** can do any step from chat — three ways to shape one file.
+
+Sharing is **role-gated**, like a review/merge. You start with a private **Dataset** (in your own fast
+DuckDB workbench). Share it and a **Builder promotes** it to a governed **Data asset** in Trino; an
+**Administrator certifies** it to a **Data product** listed in the **Marketplace**, where other domains
+import it. Nothing enters the governed store without **documentation + passing tests** — the
+**transparency gate** turns green only when every artifact is documented and in the lineage graph.
+
+Define a metric on Gold (you only **name the measure**; the rest is scaffolded), build a **dashboard**
+on it, and the **data agent** answers questions over your domain's data, the products you've imported,
+and your own private datasets — never anyone else's. Because the agent reads the **same** governed
+tables and metrics as the dashboards, the numbers never diverge. Two tiers stay separate underneath:
+**Supabase** holds operational/app state; **Iceberg** on object storage holds the analytical products,
+with **central Trino** the one governed engine over the lake. *(Engine-room detail: `os-ui/lib/data`.)*
+
+## Files
+
+The **Files** tab is a **calm governed drive** for any **unstructured** file — documents, images, video,
+audio, archives. You **upload** (drag-drop, any type) or **connect a source** (Google Drive / OneDrive,
+adding a folder or the whole drive), **organise** with folders + tags, **preview** in place, and
+**search** across names, tags and content. Everything else is hidden: each file is **auto-indexed**
+(parsed by type — Docling for docs, transcription for audio/video, OCR/caption for images — then
+embedded and put in a hybrid **OpenSearch** index) so agents can **retrieve and cite** it; a status chip
+just shows *Processing → **Searchable ✓***. Files are **governed exactly like Data** — the same tiers
+(**private dataset → domain asset → marketplace product**), the same roles (**Creator** uploads, a
+**Builder** promotes, an **Admin** certifies) and the same **policy compiler**, here compiled to
+**OpenSearch document-level security**: a non-member is denied by the *filter*, not by UI logic. Sensitive
+or huge files can be **stored-but-not-indexed** (and `restricted` files always are). Connected drives
+**re-govern** under our tiers (not the source's ACLs), sync **copy-into-store or index-in-place** per
+source, and refresh **overnight then incrementally** (by content hash, so nothing is re-embedded
+needlessly). Agents reach files through the governed **`files_retrieve`** tool — hybrid retrieval, DLS-
+scoped to the **delegated user**, reranked by **trust + freshness + authority**, returning cited
+text/transcript/caption passages (the original opens on demand). Finally, **"Use as"** distils a file
+into **Knowledge** (a tacit note) or **Data** (a guided Bronze dataset import), with lineage recorded in
+OpenMetadata. *(In this pre-release every backend runs **live when the service is reachable** and falls
+back to a deterministic in-process mock for local `kind`, behind one interface.)*
 In **Data → New data product** you **load** (file/connection/Supabase snapshot), **transform**
 (dbt models + tests), **document** (cataloged in OpenMetadata with lineage), define **metrics** (Cube),
 and build **dashboards** (Superset). Two tiers stay separate: **Supabase** holds operational/app state;
 **Iceberg** on object storage holds the analytical data products. **Central Trino** is the governed
 engine over the lake (dbt-trino builds the marts; Cube, Superset and the agent `query` tool all read
 through it). Agents read the *same* marts + metrics as the dashboards, so the numbers never diverge.
+Defining a metric on a Gold product **hands off** into the **Metrics** tab (below), where the full
+"define · explore · govern" experience lives.
+
+## Metrics
+
+The **Metrics** tab is the **KPI semantic layer**. On a Gold data product's auto-cube (the Data tab
+scaffolds the cube's dimensions from the dbt manifest via `cube_dbt`), you **define a measure** —
+"Revenue = sum(net_amount)" — three equivalent ways that produce the **same artifact**: a friendly
+**form**, the **metrics agent** ("define revenue on sales"), or hand-edited **Cube YAML**. Each metric
+has one **canonical member** (e.g. `Sales.revenue`) that the **explorer**, **Dashboards** and the agent
+**`metrics`** tool all resolve — so the numbers are the same everywhere, by construction. The **metric
+explorer** slices a metric by dimensions with **no SQL** and **per-viewer row-level security** (Cube's
+security context — two viewers see different rows); analysts can **drop to SQL/Trino**. Metrics are
+governed products on the **same tiers** as data — **Personal → Domain (Builder) → Marketplace (Admin)**
+— and promotion runs a **consistency check** (documented + resolves on its member). Lineage
+(mart → measure → view) reaches OpenMetadata via a dbt **exposure**. *(Build executes against live Cube
+when the cluster is reachable, else an honest offline-mock — labelled either way; a ✓ always means a
+real apply + verify.)*
+
+## Dashboards
+
+The **Dashboards** tab is **governed BI on metrics**. Dashboards are **tiles** (Mine / Domain /
+Marketplace); **double-click** opens one inline via the **Superset Embedded SDK** and a server-minted
+**guest token that carries the viewer's RLS in the token** — so a shared dashboard still shows only the
+viewer's rows. You build a dashboard **two ways at once (dual-mode)**: **drag-and-drop** charts in
+Superset, or ask the **dashboard agent** ("build me a Sales overview", which drives Superset's
+REST/MCP) — both edit the **same** dashboard, on **governed metrics** from the Metrics tab (ad-hoc can
+hit Trino). Set **alerts** (a threshold on a metric → **notify** by email/Slack/in-app **and** trigger a
+governed **agent run**, traced in Langfuse) and **scheduled reports** (a dashboard snapshot on a
+cadence). Same governance as everything else — **Personal → Domain → Marketplace**, per-viewer RLS,
+OM lineage (metric → chart → dashboard) — and because charts resolve the **same Cube metric** the agents
+use, **the BI layer and the agents never disagree**.
 
 ## Agents
 
@@ -508,30 +614,168 @@ overspend, or deletes require **approval** by a Builder/Admin. Inside a domain, 
 
 ## Science (ML) — opt-in, Layer 4
 
-In the **Science** tab (off by default) you take **traditional ML** end to end: explore a data product
-in a notebook (JupyterHub), build reusable **features** (Featureform), **train + track** experiments
-(MLflow), register and compare **models**, and — after a Builder **certifies + approves go-live** —
-**deploy** to **KServe**. The deployed model becomes a governed `predict` tool agents can call. GPU is
-optional and cost-gated. This is classic ML, not LLMs.
+In the **Science** tab (off by default, `ml.enabled` per domain) you take **traditional ML** end to end,
+**preview-first** (the guided **New model** flow + an ML agent drive the no-code common path; JupyterHub
+notebooks are the escape hatch for power users). Explore a data product, build reusable **features**
+(Featureform — offline on Iceberg, online in Valkey), **train + track** experiments (MLflow, repeatable
+as a **Dagster** job), register and compare **models**, and — after a Builder **certifies + approves
+go-live** — **deploy** to **KServe**. This is classic ML (regression, classification, forecasting,
+clustering), **not LLMs**.
 
-## Software
+**Model-as-service, tier-gated.** A deployed model is exposed **two ways from one KServe endpoint** — a
+governed **REST `predict` API** (Software apps / external) **and** a governed **`predict` MCP tool**
+(agents) — both through **OPA + LiteLLM**, capped and **Langfuse-traced**. There is **no separate
+publish step**: who may call follows the **same visibility ladder** as every artifact — **Personal**
+(owner only) → **Domain** (a Builder promotes; the whole domain may call) → **Marketplace** (an Admin
+certifies; cross-domain). Promoting/certifying **automatically widens callable scope** via the policy
+compiler → OPA, so the REST and MCP doors can never diverge. **Certify + go-live are always a Builder/
+Admin — never the agent:** the **ML agent** is guided AutoML (propose → features → train → deploy to
+**Staging**) under two modes (in-tab inline approval / autonomous safety presets + GPU quota), but it
+never self-certifies or self-promotes. At certify the owner sets the Marketplace **consumption mode** —
+**read-in-place** (call the shared `predict` without copying, default) or **fork-allowed**
+(fork-to-retrain). Science also keeps its own **model-monitoring** view (metric history, drift charts,
+version compare, **retrain trigger**) reading the **same** MLflow/KServe/Dagster signals as Monitoring.
+GPU is optional, CPU-default and cost-gated.
+
+## Software — build governed apps
 
 In the **Software** tab, **New software** opens a **chat dedicated to that one app**. You build it in
-plain language (it scaffolds a Next.js + Supabase app, commits to its own repo, deploys via CI →
-Argo CD). All of the app's **design decisions, data descriptions and documentation live under that
-app**. Data and files it creates are **Personal** to you by default. Crucially, building the app
-**auto-creates an MCP connection** for it — instantly available in **Connections** and usable as a
-**tool by your agents**. Promote it to Shared (Builder/Admin) or the Marketplace (Admin) as usual.
+plain language with the in-app **OpenCode** assistant beside a self-hosted **Monaco** editor over the
+app's own Forgejo repo (one of four templates: web app — Next.js + Supabase — service, script, or
+dashboard). All of the app's **design decisions, data descriptions and documentation live under that
+app**, versioned in git; data and files it creates are **Personal** to you by default.
+
+You iterate in a **private preview** — a sandbox you run yourself, no review. Going **live on a domain
+subdomain is Builder-reviewed**: requesting a deploy opens a **review card** carrying the **security
+scan** (SAST · dependencies · secret-scan), the **governed resources** the app declares, its
+**cost/resource footprint** (~$/mo), and the **change diff**. Only a **Builder/Admin in the app's
+domain** can approve (a creator cannot self-approve), and a **leaked secret or high/critical finding
+blocks the go-live**. Once approved, the exact scope is recorded as the app's **envelope**: routine
+in-envelope updates **auto-deploy**, while anything that **broadens scope** (a new write tool,
+connection, data or knowledge grant, or a higher footprint) re-opens the review.
+
+Building the app **auto-creates its MCP** from the app's **OpenAPI** spec: every read operation is
+enabled, every **write is held for approval** (**reads-on / writes-off**), and that capability profile
+is compiled into the **same OPA Connection gate** every other connection uses — so an app tool is
+governed identically (reads allow, writes require approval, anything undeclared is denied) and is
+instantly usable as a **tool by your agents**. The metadata convention (`app.yaml`, `/.app/` docs, the
+OpenAPI spec) is **re-parsed on every commit**, so whatever is committed shows up in the app; an
+imported or legacy repo is still wrapped as a governed app, deriving what it can and prompting for the
+rest.
+
+Apps **consume governed resources** — a granted Connection, Data product, Knowledge, or another app's
+MCP — always as a **reference, never raw credentials** (external creds stay in the Connection; app
+secrets in External Secrets). **Use as Data** snapshots the app's operational data into a Bronze
+dataset for the Data golden path. Lifecycle is governed too: **archive** disables the app + its MCP but
+**retains** its data (restorable); **delete** is **lineage-aware** and is blocked while another app
+still depends on it. Promote it to Shared (Builder/Admin) or the Marketplace (Admin) as usual.
+
+There are **four authoring front doors** — the in-app build chat, the **Platform MCP**, a direct
+**git push**, and a **git import** of an external repo — and they all converge on the *same* governed
+commit → metadata-parse → auto-MCP → review pipeline. The **Platform MCP** is the governance invariant
+this build rests on: it gives **full capability parity with the UI**, governed **identically** under the
+caller's **delegated identity** — a **front door, never a back door**. It cannot bypass roles, the
+deploy review, OPA, secrets/egress, or the audit trail, because every MCP tool delegates to the exact
+same governed function the UI calls.
 
 ## Connections
 
-In the **Connections** tab, a **Builder or Administrator** adds an **API, MCP server, database or
-SaaS** integration by entering credentials — which go **only** into the secrets store; the agent or app
-never sees the token. The connection's operations are wrapped as **governed tools**, and you choose a
-**capability profile per tool**: **Off / Read / Write-with-approval / Write-bounded / Blocked**, with
-scope, rate and cost limits. **Reads on, writes off by default** — write-back is opt-in and limited
-(e.g. "update opportunity ≤ €X"). New connections are **Personal**, then Shared (Builder/Admin) or
-Marketplace (Admin only).
+A **Connection** is a governed bridge to an outside system — `credentials + endpoint + a set of
+governed tools`, never a raw pipe. The **secret lives only in the secrets store**; the agent or app
+never sees the token — you grant **use**, never the credential. **One connection is used two ways**: as
+an **agent tool** and as a **data source** (a database both answers a `query` tool **and** lands in the
+Bronze lake; a drive both serves files **and** indexes into Files).
+
+**Who connects.** **Any user** can connect their **own personal account** — e.g. *my* Google Drive or
+OneDrive — via per-user **OAuth**; it stays private to them. **Builders/Administrators** create
+**shared** connections with service credentials. The ladder is **Personal → Shared (Builder/Admin) →
+Marketplace (Admin)**; the Marketplace shares the **template** (consumers bring their own credentials),
+so no secret leaves the owner.
+
+**The launch set** — Google Drive / OneDrive, PostgreSQL / MySQL, any REST API (import an **OpenAPI**
+spec → governed tools), an external **MCP server**, and SaaS (Notion, Slack) — all sit behind one
+**adapter interface** (`connect · test · tool-generation · capability→OPA · sync`), so a new integration
+is just a new adapter. Each works **live when deployed** and falls back to a labelled mock in a local
+cluster.
+
+**Capability profile per tool.** Pick a mode — **Off / Read / Write-approval / Write-bounded /
+Blocked** — plus scope, rate, cost and argument limits. **Reads on, writes off by default.** The profile
+**compiles to an OPA policy**; agents see only the enabled, in-scope tools, and a grant to an agent can
+only **restrict**, never broaden.
+
+**Write-back has two modes.** With a **human present** (in-tab assistants), a write pauses **inline**
+with a full preview — the action, the **before/after diff**, who asked and why — for the owner or a
+Builder to approve; **"approve & remember"** turns it into a bounded standing policy so identical calls
+stop prompting. For **autonomous agents** (no human at run time), a Builder pre-sets a **safety preset**
+(**Read-only → Read+propose → Read+bounded-writes → Full-in-scope**); anything out of policy is
+**blocked, logged and queued** for review in the Governance tab — never an inline prompt.
+
+**Egress is default-deny.** Connections may only reach **Admin-approved** endpoints; a Builder
+**requests** a new endpoint and an Admin **approves** it, and all outbound traffic is logged. Per-connection
+**health** is shown, with silent OAuth refresh and a **Reconnect** prompt on hard failure.
+
+## Monitoring
+
+The **Monitoring** tab is the **read/observe plane**: one place to **see health, watch spend, and trace
+any run** across the platform. It is **read-only** — it shows what's happening and surfaces operational
+alerts; it does **not** set policy or caps (that's **Governance**) and does **not** watch business KPIs
+(that's **Dashboards**). The clean split is *observe (Monitoring) · decide (Governance) · the business
+(Dashboards)*.
+
+**Five lenses**, each scoped by the viewer's **Ory→OPA** identity: (1) **agent & run observability**
+(Langfuse), (2) **data-pipeline health** (Dagster runs + dbt tests/freshness), (3) **cost & usage**
+(LiteLLM spend by model/agent/domain **vs the Governance caps** — Monitoring *watches* the spend,
+Governance *sets* the cap), (4) **system & cluster health + self-heal** (k8s workload status read live
+via the OS-UI ServiceAccount; Prometheus/Alertmanager/Argo/SKE auto-repair surfaced), and (5)
+**artifacts across all tabs incl. ML** (MLflow/KServe serving, drift, latency, tied to OpenMetadata
+lineage). The overview is **attention-first** — the few red/amber items lead, not a wall of green.
+
+**Drill-into-trace is the core promise:** any run/agent/pipeline/model opens its full Langfuse trace
+(steps · tool calls · the context pack · inputs/outputs) **+ logs**. A **correlation** spine ties a
+signal back through **run → pipeline → system → artifact** and cross-links to its **Governance** audit
+entry and the **cost cap** it spends against. **Scope:** a **User** sees only their own runs/cost/
+artifacts, a **Builder** their domain, an **Admin** the tenant + cluster — and a User **cannot** open
+another user's trace (enforced server-side before any step or log is returned). Operational alerts are
+**system/run health only** (self-heal-or-notify); business-KPI alerts live in Dashboards. Each adapter
+reads **live** where the backend is up and falls back to an honest **offline mock** otherwise (no AGPL
+Grafana in the bundle; STACKIT Observability is the Mode-B overlay). See `os-ui/lib/monitoring/README.md`.
+
+## Marketplace — internal cross-domain consume
+
+The **Marketplace** is the *Consume* counterpart to every Build tab's **certify** step: one place to
+discover and reuse **Admin-certified products of every type** across the tenant's domains (data
+products · metrics · knowledge · files · apps · dashboards · connections · agents). It is the
+**internal** tenant marketplace — distinct from listing the OS on STACKIT's external marketplace.
+
+**Discovery.** Anyone may **browse**: search and filter by **type · domain · tag**. Each listing shows
+the **certification badge · owner · domain · description · lineage · quality/freshness · usage &
+ratings · a preview/sample** — so a consumer can judge trust before importing.
+
+**Import = a governed grant.** The unifying idea: the owner's certified artifact stays the **source of
+truth** and is consumed **under the consumer's identity + row-level security**. Per type:
+
+| Product | Import |
+|---|---|
+| data · metric · knowledge · files · dashboard | **read-in-place** via a policy-compiler **grant** (Trino+OPA / **Cube RLS** / OpenSearch DLS), **per-viewer RLS** — two domains see **different rows** — plus optional **fork-to-adapt** |
+| app | **deploy your own instance** | 
+| connection | **template** — bring your own credentials |
+| agent | **fork-to-own** — an editable copy |
+
+**Governance.** Open products **auto-grant** (RLS still scopes the rows); imports that touch the
+owner's live creds/compute (a connection template, a shared app instance) — or that the owner marks
+approval-required — surface as **import requests in the Governance inbox**, routed to the owner's
+domain. Clearing the request activates the grant. The **owner sees usage** (who imported, in which
+mode); everything is **audited** (OpenSearch + Langfuse).
+
+**Lifecycle.** An **Admin certifies** a product in its own tab → it's **listed** here.
+**Deprecate/decertify is lineage-aware**: importers are **warned** and the listing is flagged, but
+an in-use product's grants are **kept** — it can't be silently removed.
+
+**Under the hood.** OpenMetadata `/data-marketplace` (data/metrics discovery + lineage) + the OS
+artifact registry (everything else) + the policy compiler (OPA `marketplace` package) + Cube/DLS +
+Langfuse + the Approvals queue. The adapters run **live-or-offline-mock** (authoritative with no
+cluster), so the whole flow works on local `kind`. Module + API reference:
+`os-ui/lib/marketplace/README.md`.
 
 ## The governance spine
 
@@ -541,6 +785,45 @@ guardrails** set by Administrators (default-deny egress, no plaintext secrets to
 cross-domain data without a grant, model allowlist) that domains cannot override, and **domain policy**
 set by Builders within those guardrails. High-stakes actions queue for approval in the **Governance**
 tab.
+
+The **Governance control plane** consolidates this: every side-effectful, role-gated action across the
+platform (a Software deploy-review, an autonomous out-of-policy action, an access/import request, a new
+egress endpoint, a promote/certify) surfaces as a **card** in one async **Approvals inbox**. The key
+principle — **an approval *is* an action**: on Approve the platform **executes the governed effect**
+(Argo deploy · policy-compiler grant · egress allowlist · promote/certify · run the queued action) **and**
+writes audit + (optionally) a **standing policy** ("approve & remember"). Scope follows role: **Users** see
+their own requests, **Builders** their domain's queues/policy/audit/memberships, **Admins** the whole
+tenant. Roles are **User · Creator · Builder · Admin**, assigned **per domain** and **compiled to OPA** so a
+role change takes effect everywhere; identities are backed by **Ory** (the tab never handles raw
+credentials). Inline (attended) write-approvals stay in the run; only the **async** items queue here.
+See `os-ui/lib/governance/README.md`.
+## Platform Admin — the tenant control room
+
+A **tenant-scoped, Admin-only** area at `/platform`, **above** the per-domain workspace. It is where the
+tenant's **structure and platform operation** are authored — and it stops short of anything per-domain,
+which stays in Governance/Monitoring. The boundary is deliberate: **Platform Admin configures, Governance
+enforces & sees, Monitoring watches — cross-link, never duplicate.**
+
+Ten sections: **Overview** (admin cockpit — component health, spend vs envelope, users/domains, open
+alerts), **Domains** (create / rename / archive / transfer; per-domain optional-layer toggles
+`ml.enabled` / `spark.enabled`; templates), **Users & Access** (org-wide invite / deactivate via Ory —
+no password is ever seen; tenant Admin + initial memberships; in-domain role changes stay in Governance),
+**Cost & Billing** (the tenant envelope + STACKIT premium cap; operational sub-caps stay in Governance,
+live spend in Monitoring), **Models & Providers** (the LiteLLM catalog — defaults per task, per-model
+enable/caps; provider keys **via the secrets manager, never raw**), **Components & System** (the Admin
+Console — versions, enable/disable, self-heal status, node/pool view), **Security & Egress** (the
+Admin-curated egress allowlist, secrets-manager status, data residency, OPA policy-bundle version, audit
+retention), **Backups & Restore** (schedules, last status, an admin-triggered **guarded** restore),
+**Plugins** (curate/install MCPs/skills/tools + external STACKIT marketplace registration), and
+**Settings** (SSO/identity via Ory, branding, defaults, localization EN→DE).
+
+The coupling that makes it sovereign-safe: identity, models and egress set here **compile through the
+policy compiler → OPA**, the same default-deny decision engine every tab enforces — so configuring a right
+here is not a governance bypass. Four invariants hold throughout: **never surface a raw secret** (Ory +
+the secrets manager; keys stored as a reference + fingerprint), **guarded + confirmed + audited** restore
+and destructive toggles, **no prod provisioning from the UI** (toggles only scale already-provisioned
+workloads), and **multi-tenant isolation** (one tenant's admin never sees another). Every action lands in
+the shared **Audit** record Governance surfaces.
 
 \newpage
 

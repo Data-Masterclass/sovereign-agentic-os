@@ -5,10 +5,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
-import AgentChat from '@/components/AgentChat';
-import ArtifactPanel from '@/components/ArtifactPanel';
-import NewDataProduct from '@/components/NewDataProduct';
 import SandboxLane from '@/components/SandboxLane';
+import DataTab from '@/components/data/DataTab';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 
 type QueryResult = {
   engine: string;
@@ -29,10 +28,13 @@ const ASK_EXAMPLES = [
   'What gives observability and tracing?',
 ];
 
-type View = 'new' | 'mydata' | 'datasets' | 'transform' | 'catalog' | 'ask' | 'products' | 'query';
+// Datasets (tiles → Bronze/Silver/Gold) is the primary surface; Query and "Talk to
+// your data" are kept as secondary tabs (locked decision), with My data (sandbox)
+// and the read-only Catalog alongside.
+type View = 'datasets' | 'mydata' | 'catalog' | 'ask' | 'query';
 
 export default function DataPage() {
-  const [view, setView] = useState<View>('new');
+  const [view, setView] = useState<View>('datasets');
 
   // ---- catalog ----
   const [catalog, setCatalog] = useState<Catalog | null>(null);
@@ -112,73 +114,27 @@ export default function DataPage() {
     },
     [sql, running],
   );
-  function preview(fqn: string) {
+  const preview = useCallback((fqn: string) => {
     const bare = fqn.includes('.') ? fqn.split('.').pop()! : fqn;
     setView('query');
     run(`select * from ${bare} limit 50`);
-  }
-
-  // ---- data products ----
-  const [product, setProduct] = useState<string>('');
+  }, [run]);
 
   return (
     <>
-      <PageHeader title="Data" crumb="catalog · talk to your data · data products · query" />
+      <PageHeader title="Data" crumb="datasets · my data · catalog · talk to your data · query" tutorial="data" />
       <div className="content">
-        <p className="lead">
-          All structured data in the platform: browse the catalog, talk to your data, define
-          data products with dbt transformations, and query the lakehouse directly.
-        </p>
-
         <div className="tabstrip">
-          <button className={view === 'new' ? 'active' : ''} onClick={() => setView('new')}>+ New data product</button>
-          <button className={view === 'mydata' ? 'active' : ''} onClick={() => setView('mydata')}>My data</button>
           <button className={view === 'datasets' ? 'active' : ''} onClick={() => setView('datasets')}>Datasets</button>
-          <button className={view === 'transform' ? 'active' : ''} onClick={() => setView('transform')}>Transform (dbt)</button>
-          <button className={view === 'catalog' ? 'active' : ''} onClick={() => setView('catalog')}>Catalog</button>
+          <button className={view === 'mydata' ? 'active' : ''} onClick={() => setView('mydata')} {...anchorAttr(ANCHORS.data.sandbox)}>My data</button>
+          <button className={view === 'catalog' ? 'active' : ''} onClick={() => setView('catalog')} {...anchorAttr(ANCHORS.data.document)}>Catalog</button>
           <button className={view === 'ask' ? 'active' : ''} onClick={() => setView('ask')}>Talk to your data</button>
-          <button className={view === 'products' ? 'active' : ''} onClick={() => setView('products')}>Data products</button>
-          <button className={view === 'query' ? 'active' : ''} onClick={() => setView('query')}>Query</button>
+          <button className={view === 'query' ? 'active' : ''} onClick={() => setView('query')} {...anchorAttr(ANCHORS.data.query)}>Query</button>
         </div>
 
-        {view === 'new' ? <NewDataProduct onDone={() => setView('datasets')} /> : null}
+        {view === 'datasets' ? <DataTab /> : null}
 
         {view === 'mydata' ? <SandboxLane /> : null}
-
-        {view === 'datasets' ? (
-          <ArtifactPanel
-            type="dataset"
-            createLabel="Load dataset"
-            specFields={[{ key: 'table', label: 'Source table / file', placeholder: 'raw_orders' }]}
-            renderSpec={(a) => (a.spec?.table ? <div className="muted mono" style={{ fontSize: 11 }}>table: {String(a.spec.table)}</div> : null)}
-            intro={
-              <p className="hint" style={{ marginTop: 0 }}>
-                Load data as a dataset artifact (Personal). Document it, then a builder promotes it to
-                Shared and an admin certifies it to the Marketplace. The full upload pipeline is
-                <strong> scaffolded in v1</strong> — the artifact captures the dataset metadata.
-              </p>
-            }
-          />
-        ) : null}
-
-        {view === 'transform' ? (
-          <ArtifactPanel
-            type="transformation"
-            createLabel="Create dbt model"
-            specFields={[
-              { key: 'sql', label: 'dbt model SQL', textarea: true, mono: true, placeholder: 'select day, sum(amount) as revenue\nfrom {{ ref("stg_orders") }}\ngroup by 1' },
-              { key: 'materialization', label: 'Materialization', placeholder: 'table | view | incremental' },
-            ]}
-            renderSpec={(a) => (a.spec?.sql ? <pre className="codeblock" style={{ marginTop: 8 }}>{String(a.spec.sql)}</pre> : null)}
-            intro={
-              <p className="hint" style={{ marginTop: 0 }}>
-                Author a dbt-core transformation as an artifact. Running it against the dbt backend
-                (Dagster-materialized) is <strong>scaffolded in v1</strong>; the model SQL + grain are
-                captured for review, promotion, and reuse.
-              </p>
-            }
-          />
-        ) : null}
 
         {view === 'catalog' ? (
           <>
@@ -274,49 +230,6 @@ export default function DataPage() {
                 </>
               ) : null}
             </div>
-          </>
-        ) : null}
-
-        {view === 'products' ? (
-          <>
-            <div className="section-title">Data products</div>
-            <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-              A data product packages tables, transformations, and quality rules at a chosen
-              visibility. Pick a base table, then the per-product agent helps define the dbt
-              model. Publishing a data product is <strong>scaffolded in v1</strong> — the agent
-              produces the dbt model + tests as a draft to review.
-            </p>
-            <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-              {(catalog?.assets ?? []).map((a) => (
-                <button key={a.fqn} type="button"
-                  className={`chip${product === a.name ? '' : ''}`}
-                  style={{ cursor: 'pointer', background: product === a.name ? undefined : 'transparent' }}
-                  onClick={() => setProduct(a.name)}>
-                  {a.name}
-                </button>
-              ))}
-              {(!catalog || catalog.assets.length === 0) ? (
-                <span className="hint" style={{ marginTop: 0 }}>No base tables in the catalog yet.</span>
-              ) : null}
-            </div>
-            <AgentChat
-              key={product || 'data-product'}
-              agent="data-product"
-              label="data product agent"
-              placeholder={
-                product
-                  ? `Define a dbt transformation for the "${product}" data product…`
-                  : 'Pick a base table above, then describe the transformation you want…'
-              }
-              starters={
-                product
-                  ? [
-                      `Create a staging model that cleans ${product}.`,
-                      `Build a daily aggregate mart from ${product} with dbt tests.`,
-                    ]
-                  : ['What is a data product and how do I define one?']
-              }
-            />
           </>
         ) : null}
 

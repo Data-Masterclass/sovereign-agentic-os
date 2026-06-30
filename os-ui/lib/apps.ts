@@ -20,6 +20,15 @@ import {
   type AppTool,
 } from '@/lib/app-registry';
 import { trace } from '@/lib/agent-governed';
+import type {
+  AppStatus,
+  DeployState,
+  DeployEnvelope,
+  AppManifest,
+  ConsumedResource,
+} from '@/lib/software/model';
+import { generateAndCompile } from '@/lib/software/auto-mcp';
+import { parseAppManifest, renderAppYaml, defaultOpenApi } from '@/lib/software/metadata';
 
 /**
  * App registry — the home of record for every application built in the Software
@@ -82,13 +91,40 @@ export type App = {
   connectionId: string | null;
   mcpPrincipal: string;
   mcpTools: AppTool[];
+  /** Whether the auto-MCP capability profile (reads-on/writes-off) is compiled to OPA. */
+  mcpProfileCompiled: boolean;
+  /** active | archived (archive disables + retains; delete is lineage-aware). */
+  status: AppStatus;
+  /** The deploy state machine + the Builder-approved envelope. */
+  deploy: {
+    state: DeployState;
+    previewUrl: string | null;
+    /** The exact scope a Builder signed off on; null until first approval. */
+    approved: DeployEnvelope | null;
+    /** The open review card id when state === 'review'. */
+    reviewCardId: string | null;
+  };
+  /** Parsed app.yaml / OpenAPI convention (metadata fidelity). */
+  manifest: AppManifest;
+  /** Governed resources the app actually consumes at run time (no raw creds). */
+  consumes: ConsumedResource[];
+  /** Whether "Use as Data" has snapshotted app data into a Bronze dataset. */
+  usedAsData: boolean;
   createdAt: string;
   updatedAt: string;
 };
 
 // ----------------------------------------------------------------- Templates --
 
-export type AppTemplateKey = 'nextjs-supabase' | 'service' | 'script';
+export type AppTemplateKey = 'nextjs-supabase' | 'service' | 'script' | 'dashboard';
+
+/** Runtime kind per template (drives the per-template/per-runtime adapter). */
+export const TEMPLATE_RUNTIME: Record<AppTemplateKey, 'web' | 'service' | 'script' | 'dashboard'> = {
+  'nextjs-supabase': 'web',
+  service: 'service',
+  script: 'script',
+  dashboard: 'dashboard',
+};
 
 type Template = {
   key: AppTemplateKey;
@@ -199,6 +235,23 @@ function nextjsSupabaseTemplate(): Template {
           '        - name: ' + slug + '\n          image: ' + config.harborRegistry + '/' + slug + ':latest\n' +
           '          ports: [ { containerPort: 8080 } ]\n',
       },
+      // The metadata convention (parsed on every commit → app page + auto-MCP).
+      {
+        path: 'app.yaml',
+        content: renderAppYaml({
+          name,
+          owner: config.forgejoRepoOwner,
+          description: `${name} — built in the Software tab.`,
+          connections: [],
+          data: [],
+          knowledge: [],
+        }),
+      },
+      { path: 'openapi.yaml', content: defaultOpenApi(slug) },
+      {
+        path: '.app/decisions.md',
+        content: `# ${name} — design decisions\n\nCaptured under the app and versioned in git.\n`,
+      },
     ],
   };
 }
@@ -216,16 +269,29 @@ function genericTemplate(key: AppTemplateKey, label: string): Template {
   };
 }
 
+function dashboardTemplate(): Template {
+  const base = genericTemplate('dashboard', 'Dashboard-as-app');
+  return {
+    ...base,
+    tools: (slug) => [
+      { name: `${slug.replace(/-/g, '_')}_metrics`, description: 'Read the dashboard metrics (read).', write: false },
+      { name: `${slug.replace(/-/g, '_')}_refresh`, description: 'Refresh the dashboard data (write).', write: true },
+    ],
+  };
+}
+
 const TEMPLATES: Record<AppTemplateKey, Template> = {
   'nextjs-supabase': nextjsSupabaseTemplate(),
-  service: genericTemplate('service', 'Service'),
-  script: genericTemplate('script', 'Script'),
+  service: genericTemplate('service', 'Service / API'),
+  script: genericTemplate('script', 'Script / scheduled job'),
+  dashboard: dashboardTemplate(),
 };
 
 export const APP_TEMPLATES: { key: AppTemplateKey; label: string }[] = [
-  { key: 'nextjs-supabase', label: 'Next.js + Supabase app' },
-  { key: 'service', label: 'Service' },
-  { key: 'script', label: 'Script' },
+  { key: 'nextjs-supabase', label: 'Web app (Next.js + Supabase)' },
+  { key: 'service', label: 'Service / API' },
+  { key: 'script', label: 'Script / scheduled job' },
+  { key: 'dashboard', label: 'Dashboard-as-app' },
 ];
 
 // ----------------------------------------------------------------- Registry ---
@@ -540,6 +606,9 @@ export async function saveAppFile(
 // ----------------------------------------------------------------- MCP wiring --
 
 function rehydrateConnection(app: App): void {
+  // Re-arm the auto-MCP capability profile in OPA (reads-on/writes-off) so the
+  // governed gate works after a restart, not just the static app-registry grant.
+  generateAndCompile(app.mcpPrincipal, { tools: app.mcpTools });
   if (getConnectionByApp(app.id)) return;
   registerConnection({
     id: app.connectionId ?? id('conn'),
@@ -622,9 +691,13 @@ export async function createApp(
     /* artifact store best-effort */
   }
 
-  // 4. Auto-generate the MCP + register it as a Connection + agent tool.
+  // 4. Auto-generate the MCP + register it as a Connection + agent tool, AND
+  //    compile its reads-on/writes-off capability profile into OPA (the same
+  //    governed gate every Connection uses) so an app MCP tool is governed
+  //    identically — reads allow, writes held for approval, nothing else exposed.
   const mcpPrincipal = `app-${slug}`;
   const mcpTools = tpl.tools(slug);
+  generateAndCompile(mcpPrincipal, { tools: mcpTools });
   const connectionId = id('conn');
   const conn: AppConnection = {
     id: connectionId,
@@ -662,6 +735,16 @@ export async function createApp(
     connectionId,
     mcpPrincipal,
     mcpTools,
+    mcpProfileCompiled: true,
+    status: 'active',
+    deploy: { state: 'building', previewUrl: null, approved: null, reviewCardId: null },
+    manifest: parseAppManifest(tpl.files(name, slug), {
+      name,
+      owner: user.id,
+      description,
+    }),
+    consumes: [],
+    usedAsData: dataArtifactId !== null,
     createdAt: t,
     updatedAt: t,
   };
@@ -784,4 +867,53 @@ export async function promoteApp(appId: string, user: CurrentUser): Promise<App>
   return a;
 }
 
+// ------------------------------------------------------- Server accessors -----
+//
+// The governed software modules (review / lifecycle / server / platform-mcp)
+// orchestrate the deploy gate, lifecycle and front doors. They enforce their OWN
+// role + lineage gates, then read/persist the app through these accessors. Kept
+// internal (no user-visibility filter) precisely because the CALLER is the
+// security boundary for these governed flows — never expose them to a route
+// without a role/owner check first.
+
+/** Raw app fetch by id (no visibility filter) — for governed server orchestration. */
+export async function getAppByIdInternal(appId: string): Promise<App | null> {
+  const map = await getCache();
+  return map.get(appId) ?? null;
+}
+
+/** Every app in the store (no visibility filter) — for the lineage check. */
+export async function listAllAppsInternal(): Promise<App[]> {
+  const map = await getCache();
+  return [...map.values()];
+}
+
+/** Remove an app from the store entirely (lineage-checked delete only). */
+export async function removeAppInternal(appId: string): Promise<void> {
+  const map = await getCache();
+  map.delete(appId);
+  if (osHealthy) void osFetch(`/${config.appsIndex}/_doc/${appId}?refresh=true`, { method: 'DELETE' });
+}
+
+/** Persist a mutated app back to the cache + the durable mirror. */
+export async function persistApp(app: App): Promise<App> {
+  const map = await getCache();
+  app.updatedAt = now();
+  map.set(app.id, app);
+  writeThrough(app);
+  return app;
+}
+
+/** The template's seeded files (for the security scan + diff over a fresh app). */
+export function templateFiles(template: AppTemplateKey, name: string, slug: string): { path: string; content: string }[] {
+  const tpl = TEMPLATES[template] ?? TEMPLATES['nextjs-supabase'];
+  return tpl.files(name, slug);
+}
+
+/** Mint a prefixed id (shared shape with the rest of the registry). */
+export function newId(prefix: string): string {
+  return id(prefix);
+}
+
+export { withStatus };
 export type { Artifact };

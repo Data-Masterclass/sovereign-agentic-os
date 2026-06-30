@@ -2,12 +2,26 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { currentUser, roster } from '@/lib/auth';
+import { currentUser } from '@/lib/auth';
+import { getPublicUser } from '@/lib/users';
 
 export const dynamic = 'force-dynamic';
 
-/** The signed-in user (or null) plus the seeded roster (for the sign-in helper). */
+/**
+ * The signed-in user (or null) plus the account flags that drive the first-run
+ * gates: `mustChangeCredentials` (force the bootstrap setup) and `onboarded`
+ * (show the first-login wizard once). No roster is exposed here — that was a
+ * credential-disclosure footgun; the user list is admin-only via /api/users.
+ */
 export async function GET() {
   const user = await currentUser();
-  return NextResponse.json({ user, roster: await roster() });
+  if (!user) return NextResponse.json({ user: null });
+  const flags = await getPublicUser(user.id);
+  return NextResponse.json({
+    user,
+    mustChangeCredentials: Boolean(flags?.mustChangeCredentials),
+    onboarded: Boolean(flags?.onboarded),
+    emailVerified: Boolean(flags?.emailVerified),
+    email: flags?.email ?? null,
+  });
 }

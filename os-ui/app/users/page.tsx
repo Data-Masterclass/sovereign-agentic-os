@@ -9,7 +9,7 @@ import { useUser } from '@/lib/useUser';
 import type { Role } from '@/lib/session';
 
 type PublicUser = { id: string; name: string; domains: string[]; role: Role };
-const ROLES: Role[] = ['participant', 'builder', 'admin'];
+const ROLES: Role[] = ['participant', 'creator', 'builder', 'admin'];
 
 export default function UsersPage() {
   const { user, isAdmin, loading: meLoading } = useUser();
@@ -24,6 +24,46 @@ export default function UsersPage() {
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<Role>('participant');
   const [domainText, setDomainText] = useState('');
+
+  // master recovery key
+  const [recoveryConfigured, setRecoveryConfigured] = useState<boolean | null>(null);
+  const [recoveryKey, setRecoveryKey] = useState('');
+
+  const loadRecovery = useCallback(async () => {
+    try {
+      const res = await fetch('/api/auth/recovery', { cache: 'no-store' });
+      if (res.ok) setRecoveryConfigured(Boolean((await res.json()).configured));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const generateRecovery = useCallback(async () => {
+    setBusy('recovery');
+    setError('');
+    try {
+      const res = await fetch('/api/auth/recovery', { method: 'POST' });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error ?? 'Could not generate a recovery key');
+        return;
+      }
+      setRecoveryKey(body.key);
+      setRecoveryConfigured(true);
+      // Download the recovery file exactly once.
+      const blob = new Blob([body.file], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = body.filename ?? 'sovereign-os-recovery-key.txt';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setBusy('');
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setError('');
@@ -41,8 +81,11 @@ export default function UsersPage() {
   }, []);
 
   useEffect(() => {
-    if (isAdmin) load();
-  }, [isAdmin, load]);
+    if (isAdmin) {
+      load();
+      loadRecovery();
+    }
+  }, [isAdmin, load, loadRecovery]);
 
   const create = useCallback(async () => {
     if (!id.trim() || !password.trim() || !domainText.trim()) return;
@@ -122,6 +165,40 @@ export default function UsersPage() {
           <em>builder</em> can also promote to Shared, and an <em>admin</em> can certify to the
           Marketplace and manage users. Seeded/credential store now — replaceable by Ory later.
         </p>
+
+        <div className="section-title">Account recovery</div>
+        <div className="card" style={{ marginBottom: 18 }}>
+          <p style={{ marginTop: 0 }}>
+            Generate a <strong>master recovery key</strong> and store it offline. If an admin is ever
+            locked out, the key resets any account&apos;s password on the{' '}
+            <a href="/recover">recovery page</a>. The server keeps only a hash — the key is shown and
+            downloaded <strong>once</strong>. Lose it and it cannot be recovered.
+          </p>
+          <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button className="btn" onClick={generateRecovery} disabled={busy === 'recovery'}>
+              {busy === 'recovery' ? <span className="spin" /> : recoveryConfigured ? 'Rotate recovery key' : 'Generate recovery key'}
+            </button>
+            {recoveryConfigured === true && !recoveryKey ? (
+              <span className="chip">A recovery key is configured</span>
+            ) : null}
+            {recoveryConfigured === false ? (
+              <span className="chip" style={{ color: 'var(--warn, #b45309)' }}>No recovery key yet</span>
+            ) : null}
+          </div>
+          {recoveryKey ? (
+            <div className="card" style={{ marginTop: 12, background: 'var(--surface-2, #f6f6f7)' }}>
+              <div className="hint" style={{ marginTop: 0 }}>
+                Your master recovery key (downloaded as a file — this is the only time it is shown):
+              </div>
+              <code style={{ display: 'block', fontSize: 15, letterSpacing: 1, marginTop: 6, wordBreak: 'break-all' }}>
+                {recoveryKey}
+              </code>
+              <div className="hint" style={{ fontSize: 11 }}>
+                Store it offline (password manager / printed in a safe). Anyone with this key can regain admin access.
+              </div>
+            </div>
+          ) : null}
+        </div>
 
         <div className="section-title">Create user</div>
         <div className="card" style={{ marginBottom: 18 }}>

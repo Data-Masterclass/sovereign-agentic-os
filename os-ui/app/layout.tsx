@@ -1,7 +1,9 @@
 import type { Metadata } from 'next';
 import './globals.css';
-import { rubik, oswald, marcellus } from './fonts';
+import { rubik, oswald, marcellus, fraunces } from './fonts';
 import Sidebar from '@/components/Sidebar';
+import TutorialProvider from '@/components/tutorials/TutorialProvider';
+import AuthGate from '@/components/AuthGate';
 
 export const metadata: Metadata = {
   title: 'Sovereign Agentic OS by datamasterclass.com',
@@ -21,7 +23,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${rubik.variable} ${oswald.variable} ${marcellus.variable}`}
+      className={`${rubik.variable} ${oswald.variable} ${marcellus.variable} ${fraunces.variable}`}
       suppressHydrationWarning
     >
       <body>
@@ -33,10 +35,13 @@ export default function RootLayout({
               "(function(){try{if(localStorage.getItem('soa-theme')==='dark'){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();",
           }}
         />
-        <div className="shell">
-          <Sidebar />
-          <div className="main">{children}</div>
-        </div>
+        <TutorialProvider>
+          <div className="shell">
+            <Sidebar />
+            <div className="main">{children}</div>
+          </div>
+        </TutorialProvider>
+        <AuthGate />
       </body>
     </html>
   );

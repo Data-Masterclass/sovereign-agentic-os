@@ -110,6 +110,40 @@ export default function SoftwarePage() {
     }
   }
 
+  // import-a-repo front door (git bridge)
+  const [importName, setImportName] = useState('');
+  const [importUrl, setImportUrl] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState('');
+  const [importedId, setImportedId] = useState('');
+
+  async function importRepo() {
+    if (!importUrl.trim() || importing) return;
+    setImporting(true);
+    setImportMsg('');
+    setImportedId('');
+    try {
+      const res = await fetch('/api/apps/import', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: importName, repoUrl: importUrl }),
+      });
+      const body = await res.json();
+      if (!res.ok) setImportMsg(body.error ?? 'Could not import repo');
+      else {
+        setImportedId(body.app.id);
+        setImportMsg(body.missing?.length ? `Imported. Complete: ${body.missing.join(', ')}` : 'Imported.');
+        setImportName('');
+        setImportUrl('');
+        reloadApps();
+      }
+    } catch (e) {
+      setImportMsg((e as Error).message);
+    } finally {
+      setImporting(false);
+    }
+  }
+
   // new-software form
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -146,7 +180,7 @@ export default function SoftwarePage() {
 
   return (
     <>
-      <PageHeader title="Software" crumb="create → CI → deploy — Forgejo + Actions + Argo CD" />
+      <PageHeader title="Software" crumb="create → CI → deploy — Forgejo + Actions + Argo CD" tutorial="software" />
       <div className="content">
         <p className="lead">
           Create, test, and deploy software on the sovereign Git path. New repos are created in
@@ -187,6 +221,29 @@ export default function SoftwarePage() {
                 <div style={{ marginTop: 8 }}>
                   <Link className="btn" href={`/software/${newAppId}`}>Open the app →</Link>
                 </div>
+              </div>
+            ) : null}
+
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginTop: 22 }}>
+              <div className="section-title" style={{ margin: 0 }}>Import a repo</div>
+              <Link className="btn ghost" href="/software/reviews">Deploy reviews →</Link>
+            </div>
+            <p className="hint" style={{ marginTop: 6, marginBottom: 12 }}>
+              The git bridge: paste a GitHub/GitLab repo URL; we mirror it in and wrap it as a governed
+              app. Its <span className="mono">app.yaml</span>/OpenAPI populate the app page + auto-MCP;
+              anything missing is flagged.
+            </p>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <input type="text" value={importName} onChange={(e) => setImportName(e.target.value)} placeholder="App name (optional)" style={{ flex: 1, minWidth: 140 }} />
+              <input type="text" value={importUrl} onChange={(e) => setImportUrl(e.target.value)} placeholder="https://github.com/org/repo" style={{ flex: 2, minWidth: 220 }} />
+              <button className="btn ghost" onClick={importRepo} disabled={importing || !importUrl.trim()}>
+                {importing ? <span className="spin" /> : 'Import'}
+              </button>
+            </div>
+            {importMsg ? (
+              <div className="answer" style={{ marginTop: 12 }}>
+                {importMsg}
+                {importedId ? <> <Link className="btn ghost" href={`/software/${importedId}`} style={{ marginLeft: 8 }}>Open →</Link></> : null}
               </div>
             ) : null}
 

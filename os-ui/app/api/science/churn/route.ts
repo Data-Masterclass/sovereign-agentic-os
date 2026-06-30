@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
+import { config } from '@/lib/config';
 import { churnSlice } from '@/lib/science';
 
 export const dynamic = 'force-dynamic';
@@ -13,6 +14,9 @@ export const dynamic = 'force-dynamic';
  * `ml.enabled=false` and no cluster. No secrets leave the server.
  */
 export async function GET() {
+  if (!config.mlEnabled) {
+    return NextResponse.json({ error: 'Science (Layer 4) is off — ml.enabled=false' }, { status: 404 });
+  }
   const slice = await churnSlice();
   return NextResponse.json(slice);
 }

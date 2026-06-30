@@ -16,6 +16,7 @@ export async function middleware(req: NextRequest) {
   // Always-public paths.
   if (
     pathname.startsWith('/signin') ||
+    pathname.startsWith('/recover') ||
     pathname.startsWith('/api/auth') ||
     pathname.startsWith('/_next') ||
     pathname === '/icon.svg' ||

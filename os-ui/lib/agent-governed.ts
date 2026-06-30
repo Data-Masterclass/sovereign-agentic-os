@@ -4,6 +4,13 @@
 import 'server-only';
 import { config } from '@/lib/config';
 import { grantsFor as appGrantsFor } from '@/lib/app-registry';
+import {
+  compileConnectionProfile,
+  decide,
+  exposedTools,
+  type OpaConnectionBundle,
+  type CapMode,
+} from '@/lib/capability-compiler';
 
 /**
  * Governed agent-tool spine (Agent golden path §1, §7). Every tool an agent
@@ -26,6 +33,9 @@ import { grantsFor as appGrantsFor } from '@/lib/app-registry';
 export type ToolName =
   | 'metrics'
   | 'retrieve'
+  // Governed hybrid retrieval over the Files tab's `files` index (Files golden
+  // path §5). DLS-scoped to what the delegated user may see; cites the file.
+  | 'files_retrieve'
   | 'connection_crm_read'
   | 'connection_crm_write'
   | 'write_file'
@@ -58,6 +68,7 @@ const LOCAL_GRANTS: Record<string, ToolName[]> = {
   'sales-assistant': [
     'metrics',
     'retrieve',
+    'files_retrieve', // governed hybrid retrieval over the Files index (Files §5)
     'connection_crm_read',
     'connection_crm_write',
     'write_file',
@@ -66,9 +77,13 @@ const LOCAL_GRANTS: Record<string, ToolName[]> = {
   ],
   // The deployed churn model's own principal (the `predict` MCP tool identity).
   'churn-model': ['predict'],
+  // The "Churn Risk" Software app — the REST `predict` front-door caller
+  // (Software golden path §7). Granted predict like any other governed tool, so
+  // the same OPA gate applies whether the caller is an app (REST) or an agent (MCP).
+  'churn-risk-app': ['predict'],
   // Domain principals (the data spine's grant unit) keep read tools.
-  sales: ['metrics', 'retrieve', 'connection_crm_read', 'write_file'],
-  finance: ['metrics', 'retrieve'],
+  sales: ['metrics', 'retrieve', 'files_retrieve', 'connection_crm_read', 'write_file'],
+  finance: ['metrics', 'retrieve', 'files_retrieve'],
 };
 
 /** High-stakes tools that are paused for human approval even when granted (§7). */
@@ -151,7 +166,7 @@ export async function authorizeAppTool(principal: string, tool: string): Promise
  * with no live OPA. Only enabled, in-scope tools are exposed; a grant to a
  * specific agent can FURTHER RESTRICT (never broaden).
  */
-export type ConnMode = 'Off' | 'Read' | 'Write-approval' | 'Write-bounded' | 'Blocked';
+export type ConnMode = CapMode;
 
 export type ConnToolPolicy = {
   name: string;
@@ -162,60 +177,62 @@ export type ConnToolPolicy = {
   dataScope?: string;
 };
 
-// connection principal -> (tool name -> policy). The dynamic per-connection OPA data.
-const CONNECTION_PROFILES = new Map<string, Map<string, ConnToolPolicy>>();
-// agent principal -> (connection principal -> allowed tool names). Restrict-only.
-const CONNECTION_AGENT_RESTRICTIONS = new Map<string, Map<string, Set<string>>>();
+/**
+ * THE ONE RULE: a connection's compiled OPA data bundle. We store the bundle the
+ * `lib/capability-compiler.ts` produces and evaluate calls with the SAME
+ * `decide()` a live OPA would run against it — so the offline mirror and the
+ * online policy cannot drift. The per-agent grant lives inside the bundle.
+ */
+const CONNECTION_BUNDLES = new Map<string, OpaConnectionBundle>();
 
 /** Compile + register (or replace) a connection's capability profile. */
 export function registerConnectionProfile(principal: string, tools: ConnToolPolicy[]): void {
-  const m = new Map<string, ConnToolPolicy>();
-  for (const t of tools) m.set(t.name, t);
-  CONNECTION_PROFILES.set(principal, m);
+  CONNECTION_BUNDLES.set(
+    principal,
+    compileConnectionProfile(
+      principal,
+      tools.map((t) => ({ name: t.name, mode: t.mode, write: t.write, maxAmount: t.maxAmount, dataScope: t.dataScope })),
+    ),
+  );
 }
 
 export function unregisterConnectionProfile(principal: string): void {
-  CONNECTION_PROFILES.delete(principal);
+  CONNECTION_BUNDLES.delete(principal);
+}
+
+/** The compiled bundle for a principal (for pushing to OPA / inspection). */
+export function connectionBundle(principal: string): OpaConnectionBundle | null {
+  return CONNECTION_BUNDLES.get(principal) ?? null;
 }
 
 /** Tool names actually exposed to an agent (enabled + in-scope; not Off/Blocked). */
 export function exposedConnectionTools(principal: string): string[] {
-  const m = CONNECTION_PROFILES.get(principal);
-  if (!m) return [];
-  return [...m.values()]
-    .filter((p) => p.mode === 'Read' || p.mode === 'Write-approval' || p.mode === 'Write-bounded')
-    .map((p) => p.name);
+  const b = CONNECTION_BUNDLES.get(principal);
+  return b ? exposedTools(b) : [];
 }
 
 /**
  * Grant a connection to a specific agent, FURTHER RESTRICTED to `allowedTools`
- * (e.g. read-only). The intersection with the profile is enforced at call time,
- * so a grant can only narrow, never broaden, the connection's own policy.
+ * (e.g. read-only). The grant is compiled into the bundle, so the intersection is
+ * enforced by the same `decide()` — a grant can only narrow, never broaden.
  */
 export function restrictConnectionForAgent(
   agentPrincipal: string,
   connectionPrincipal: string,
   allowedTools: string[],
 ): void {
-  let byConn = CONNECTION_AGENT_RESTRICTIONS.get(agentPrincipal);
-  if (!byConn) {
-    byConn = new Map<string, Set<string>>();
-    CONNECTION_AGENT_RESTRICTIONS.set(agentPrincipal, byConn);
-  }
-  byConn.set(connectionPrincipal, new Set(allowedTools));
+  const b = CONNECTION_BUNDLES.get(connectionPrincipal);
+  if (!b) return;
+  b.grants[agentPrincipal] = [...allowedTools];
 }
 
 export type ConnAuthz = { effect: Effect; reason: string; mode?: ConnMode };
 
 /**
- * The governed gate for a connection tool call. Honors the compiled capability
- * profile and any per-agent restriction:
- *   • unknown / Off  -> deny (not exposed)
- *   • Blocked        -> deny (forbidden; needs Admin override)
- *   • Read           -> allow
- *   • Write-approval -> requires_approval (held in the Governance queue)
- *   • Write-bounded  -> allow within the limit, deny outside it
- * When `asAgent` is set, the tool must also be inside that agent's grant.
+ * The governed gate for a connection tool call — delegates to the compiler's
+ * `decide()` (the one rule). Off/Blocked deny, Read allow, Write-approval holds,
+ * Write-bounded allows within the limit and denies outside it; an `asAgent` grant
+ * further restricts.
  */
 export function authorizeConnectionCall(
   connectionPrincipal: string,
@@ -223,47 +240,10 @@ export function authorizeConnectionCall(
   args?: Record<string, unknown>,
   asAgent?: string,
 ): ConnAuthz {
-  const profile = CONNECTION_PROFILES.get(connectionPrincipal);
-  if (!profile) return { effect: 'deny', reason: `unknown connection principal ${connectionPrincipal}` };
-  const pol = profile.get(tool);
-  if (!pol) return { effect: 'deny', reason: `tool ${tool} is not exposed by this connection` };
-
-  // A grant to a specific agent further restricts (never broadens).
-  if (asAgent) {
-    const allowed = CONNECTION_AGENT_RESTRICTIONS.get(asAgent)?.get(connectionPrincipal);
-    if (allowed && !allowed.has(tool)) {
-      return {
-        effect: 'deny',
-        reason: `agent ${asAgent} is granted a narrower scope; ${tool} is not in the grant`,
-        mode: pol.mode,
-      };
-    }
-  }
-
-  switch (pol.mode) {
-    case 'Off':
-      return { effect: 'deny', reason: `${tool} is Off — not exposed`, mode: 'Off' };
-    case 'Blocked':
-      return { effect: 'deny', reason: `${tool} is Blocked — forbidden (needs an Admin override)`, mode: 'Blocked' };
-    case 'Read':
-      return { effect: 'allow', reason: 'read — granted', mode: 'Read' };
-    case 'Write-approval':
-      return { effect: 'requires_approval', reason: `${tool} is a write — held for human approval`, mode: 'Write-approval' };
-    case 'Write-bounded': {
-      const amount = Number((args ?? {}).amount);
-      if (pol.maxAmount !== undefined) {
-        if (!Number.isFinite(amount)) {
-          return { effect: 'deny', reason: `bounded write requires a numeric amount ≤ ${pol.maxAmount}`, mode: 'Write-bounded' };
-        }
-        if (amount > pol.maxAmount) {
-          return { effect: 'deny', reason: `amount ${amount} exceeds the bound (≤ ${pol.maxAmount})`, mode: 'Write-bounded' };
-        }
-      }
-      return { effect: 'allow', reason: `within bound${pol.maxAmount !== undefined ? ` (≤ ${pol.maxAmount})` : ''}`, mode: 'Write-bounded' };
-    }
-    default:
-      return { effect: 'deny', reason: 'unknown mode' };
-  }
+  const b = CONNECTION_BUNDLES.get(connectionPrincipal);
+  if (!b) return { effect: 'deny', reason: `unknown connection principal ${connectionPrincipal}` };
+  const d = decide(b, tool, args ?? {}, asAgent);
+  return { effect: d.effect, reason: d.reason, mode: d.mode };
 }
 
 // ------------------------------------------------------------- Langfuse trace --

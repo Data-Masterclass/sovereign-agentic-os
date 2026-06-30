@@ -58,6 +58,9 @@ llm:
 # No self-hosted inference in Mode B — STACKIT AI Model Serving is the backend.
 mockModel:
   enabled: false
+  image:
+    repository: ghcr.io/aborek/sovereign-os/mock-model
+    tag: "0.1.1@sha256:fee2cf404759e43ee64b3cf4c169475cb5b96136ee848afa852248caad1369eb"
 modelServer:
   enabled: false
 
@@ -178,8 +181,8 @@ openmetadata:
 # =============================================================================
 osUI:
   image:
-    repository: REPLACE-REGISTRY/sovereign-os/os-ui
-    tag: "0.1.0@sha256:REPLACE-OS-UI-DIGEST"
+    repository: ghcr.io/aborek/sovereign-os/os-ui
+    tag: "0.1.0@sha256:5719957f3a78e1f54f28b0a90eaa686a1a244c4b9beab1f903cf1d231996bd36"
   # Server-side search now hits managed OpenSearch (was in-cluster opensearch:9200).
   opensearchUrl: "https://REPLACE-opensearch-host:9200"
   # Browser-reachable consoles -> the public Ingress hosts (was localhost port-forwards).
@@ -189,40 +192,50 @@ osUI:
   argocdUrl: "https://argocd.REPLACE-DNS-NAME"
   openmetadataUrl: "https://openmetadata.REPLACE-DNS-NAME"
 
+agentRuntime:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/agent-runtime
+    tag: "0.1.0@sha256:85cb9c3109beebf447422a0dbbbf05435f31cf38a73d705cc1dd185d1cae0eab"
+
 sampleAgent:
   image:
-    repository: REPLACE-REGISTRY/sovereign-os/sample-agent
-    tag: "0.1.0@sha256:REPLACE-SAMPLE-AGENT-DIGEST"
+    repository: ghcr.io/aborek/sovereign-os/sample-agent
+    tag: "0.1.0@sha256:b70d3d77c33e9f305d7b72584b01d9109e91cba293dbd440126e31840afeb605"
 
 poetAgent:
   image:
-    repository: REPLACE-REGISTRY/sovereign-os/poet-agent
-    tag: "0.1.0@sha256:REPLACE-POET-AGENT-DIGEST"
+    repository: ghcr.io/aborek/sovereign-os/poet-agent
+    tag: "0.1.0@sha256:751abeaa9ea0352a984a5f291b9d0a1117c2b0e0abd6b4979fad4be46a48b745"
 
 haystack:
   image:
-    repository: REPLACE-REGISTRY/sovereign-os/haystack-retriever
-    tag: "0.1.0@sha256:REPLACE-HAYSTACK-DIGEST"
+    repository: ghcr.io/aborek/sovereign-os/haystack-retriever
+    tag: "0.1.0@sha256:ccf7485eab8b54e738645b274824181c6f95991e54afc74885238c7ca18b948a"
 
 dbt:
   image:
-    repository: REPLACE-REGISTRY/sovereign-os/dbt
-    tag: "0.1.0@sha256:REPLACE-DBT-DIGEST"
+    repository: ghcr.io/aborek/sovereign-os/dbt
+    tag: "0.2.0@sha256:dcec728155d4ff03f7b999753cb5ec00fd84e37d2cf8be3641a0ee426ae915d5"
 
 egressProxy:
   image:
-    repository: REPLACE-REGISTRY/sovereign-os/egress-proxy
-    tag: "0.1.0@sha256:REPLACE-EGRESS-PROXY-DIGEST"
+    repository: ghcr.io/aborek/sovereign-os/egress-proxy
+    tag: "0.1.0@sha256:8426ee9d0cfe297e6fe961bab6a3a9854e1b97cb6ae713158e826f84f456f9ee"
 
 webFetch:
   image:
-    repository: REPLACE-REGISTRY/sovereign-os/web-fetch
-    tag: "0.1.0@sha256:REPLACE-WEB-FETCH-DIGEST"
+    repository: ghcr.io/aborek/sovereign-os/web-fetch
+    tag: "0.1.0@sha256:1487d74ff0d7e7327793525701720479df21eecf1ce6bb0b11b228deae08686d"
 
 queryTool:
   image:
-    repository: REPLACE-REGISTRY/sovereign-os/query-tool
-    tag: "0.2.0@sha256:REPLACE-QUERY-TOOL-DIGEST"
+    repository: ghcr.io/aborek/sovereign-os/query-tool
+    tag: "0.3.0@sha256:310342ad0f383c1f38ad276c5833cb174ac057b5d7790a3cef4dcc80f2527db3"
+
+sandbox:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/sandbox-duckdb
+    tag: "0.1.0@sha256:6dbf74e5811b95dbfbd0bd731f667594cf48ed5b478683424e4ab9d18f5993c9"
 
 # Admin Console is DEPRECATED — its functionality is now native to the OS UI
 # (Platform -> Components). Off by default in the chart; no image needed. Set
@@ -231,13 +244,13 @@ queryTool:
 adminConsole:
   enabled: false
   image:
-    repository: REPLACE-REGISTRY/sovereign-os/admin-console
-    tag: "0.1.0@sha256:REPLACE-ADMIN-CONSOLE-DIGEST"
+    repository: ghcr.io/aborek/sovereign-os/admin-console
+    tag: "0.1.0"  # admin-console not in pushed set; image tag only (disabled)
 
 superset:
   image:
-    repository: REPLACE-REGISTRY/sovereign-os/superset
-    tag: "6.1.0@sha256:REPLACE-SUPERSET-DIGEST"
+    repository: ghcr.io/aborek/sovereign-os/superset
+    tag: "6.1.0@sha256:23801ec48b4792ce10893f48a53173f04a4ea320735c3351e35a0052ee95d9b6"
   # Superset metadata DB on managed PostgreSQL (was in-cluster pg-rw). user/name +
   # the superset DB password (External Secrets) are otherwise unchanged. The
   # bespoke superset-bootstrap Job resolves its host via soa.pgHost automatically.
@@ -252,22 +265,56 @@ superset:
 # deployment's grpc args/env). Pin it at go-live by editing that single
 # `repository`/`tag` in values.yaml, or keep it on the registry tag.
 dagster:
+  # DISABLED in Mode B: the sovereign-os/dagster:0.2.0 image build failed in
+  # the current push run. Re-enable once the image is rebuilt and pushed.
+  # When re-enabling, fill REPLACE-DAGSTER-DIGEST via publish-images.sh --push.
+  enabled: false
   # Run/event/schedule storage on managed PostgreSQL (was in-cluster pg-rw). The
   # `dagster-postgresql` Secret + username/database are unchanged (values.yaml).
   postgresql:
     postgresqlHost: "REPLACE-postgres-flex-host"
   dagsterWebserver:
     image:
-      repository: REPLACE-REGISTRY/sovereign-os/dagster
+      repository: ghcr.io/aborek/sovereign-os/dagster
       tag: "0.2.0@sha256:REPLACE-DAGSTER-DIGEST"
   dagsterDaemon:
     image:
-      repository: REPLACE-REGISTRY/sovereign-os/dagster
+      repository: ghcr.io/aborek/sovereign-os/dagster
       tag: "0.2.0@sha256:REPLACE-DAGSTER-DIGEST"
 
-# Layer 4 (Science / ML) stays OFF by default (ml.enabled=false). When enabled,
-# wire sovereign-os/mlflow + sovereign-os/ml-agent the same way (publish-images.sh
-# includes them).
+# Layer 4 (Science / ML) — OFF by default (ml.enabled=false). Images are pinned
+# here so enabling individual components pulls from ghcr.io/aborek immediately.
+mlflow:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/mlflow
+    tag: "2.19.0@sha256:78e1f25d1354fc737d0f1625f28bd42d6aa3ec9cdb70871dcbd441de9bc72160"
+
+mlAgent:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/ml-agent
+    tag: "0.1.0@sha256:d2aad748d399b62fd1f91692b851af5901d7e80399baa595bc6f18b1a9974dad"
+
+# Terminal + Workbench are OFF by default (enabled:false in values.yaml). Images
+# pinned here so opt-in brings up the correct, pushed images immediately.
+terminal:
+  broker:
+    image:
+      repository: ghcr.io/aborek/sovereign-os/terminal-broker
+      tag: "0.1.0@sha256:13a14b611179ebdcd8c6896e791b78f1bf03043ed015483b87fff8f812d51fb4"
+  sandbox:
+    image:
+      repository: ghcr.io/aborek/sovereign-os/sandbox-shell
+      tag: "0.1.0@sha256:e73ae868850996e2602006fbfdaa4006f70d642332589032b9b559c21f0f07d0"
+
+workbench:
+  broker:
+    image:
+      repository: ghcr.io/aborek/sovereign-os/workbench-broker
+      tag: "0.1.0@sha256:1a21b6cff50947fa293bb6acbc6af4a5df02c9b85c485264379c8a3efa99a43c"
+  workspace:
+    image:
+      repository: ghcr.io/aborek/sovereign-os/code-server-workbench
+      tag: "0.1.0@sha256:b15791d5d03d84cf08dfac3e160115befd944bea43fbeb244a6ba189ada5bd7f"
 
 # =============================================================================
 # Ingress + TLS — hostnames resolve to the ingress LB (DNS zone from terraform);
@@ -288,3 +335,13 @@ ingress:
 
 # Cache/analytics (Valkey/ClickHouse) stay bundled — no managed STACKIT
 # equivalent (stackit.md). Flip enabled:false + external here if that changes.
+
+# Trino -> Polaris REST catalog OAuth2 secret (required by the template in
+# non-local profile). This secret (key: POLARIS_OAUTH_CREDENTIAL) is populated
+# by External Secrets from STACKIT Secrets Manager. vendedCredentials=true when
+# STACKIT Object Storage vends S3 creds via Polaris credential vending.
+trino:
+  catalog:
+    iceberg:
+      oauth2SecretName: polaris-trino-oauth   # External Secrets -> Secrets Manager
+      vendedCredentials: true                 # STACKIT Object Storage vends creds

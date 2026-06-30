@@ -29,7 +29,7 @@ export async function POST(req: Request) {
   try {
     await requireAdmin();
     const body = await req.json();
-    const role = (['participant', 'builder', 'admin'].includes(body?.role) ? body.role : 'participant') as Role;
+    const role = (['participant', 'creator', 'builder', 'admin'].includes(body?.role) ? body.role : 'participant') as Role;
     const domains = Array.isArray(body?.domains) ? body.domains.map(String).filter(Boolean) : [];
     const user = await createUser({
       id: String(body?.id ?? ''),

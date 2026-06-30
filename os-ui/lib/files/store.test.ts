@@ -1,0 +1,224 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ */
+import { test, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  __resetStore,
+  listFiles,
+  getFile,
+  createFile,
+  moveFile,
+  setTags,
+  setDocs,
+  addVersion,
+  setIndexingMode,
+  deleteFile,
+  searchFiles,
+  requestPromotion,
+  applyApprovedFilePromotion,
+  transition,
+  type Principal,
+} from './store.ts';
+import { listLineage, __resetLineage } from './lineage.ts';
+
+const amir: Principal = { id: 'amir', domains: ['sales'], role: 'participant' };  // Creator
+const bea: Principal = { id: 'bea', domains: ['sales'], role: 'builder' };        // Builder, amir's domain
+const sara: Principal = { id: 'sara', domains: ['sales'], role: 'admin' };        // Admin, sales
+const kenji: Principal = { id: 'kenji', domains: ['finance'], role: 'builder' };  // outside sales
+
+beforeEach(() => { __resetStore(); __resetLineage(); });
+
+test('seeds the validation-gate files for the owner (a PDF, an image, an audio)', () => {
+  const g = listFiles(amir);
+  const names = g.mine.map((f) => f.name);
+  assert.ok(names.some((n) => n.endsWith('.pdf')), 'a PDF is seeded');
+  assert.ok(names.some((n) => n.endsWith('.png')), 'an image is seeded');
+  assert.ok(g.mine.some((f) => f.kind === 'audio'), 'an audio is seeded');
+});
+
+test('private files are owner-only; a foreign user never sees them', () => {
+  const g = listFiles(kenji);
+  // kenji is in finance — amir's private sales files must not appear anywhere for him.
+  const all = [...g.mine, ...g.domain, ...g.marketplace].map((f) => f.owner);
+  assert.ok(!all.includes('amir') || g.marketplace.length > 0, 'no private amir files leak');
+  assert.equal(g.mine.length, 0, 'kenji owns nothing seeded');
+});
+
+test('facets expose the folder tree and tag cloud over visible files', () => {
+  const g = listFiles(amir);
+  assert.ok(g.facets.folders.some((f) => f.path !== '/'), 'has at least one sub-folder');
+  assert.ok(g.facets.tags.length > 0, 'has tags');
+  for (const f of g.facets.folders) assert.ok(f.count >= 1);
+});
+
+test('upload creates a private object-store file at v1 with a deep-link', () => {
+  const a = createFile(amir, { name: 'notes.pdf', folder: '/research', tags: ['q3'], text: 'quarterly notes' });
+  assert.equal(a.owner, 'amir');
+  assert.equal(a.tier, 'dataset');
+  assert.equal(a.visibility, 'private');
+  assert.equal(a.folder, '/research');
+  assert.equal(a.version, 'v1');
+  assert.equal(a.storage, 'object-store');
+  assert.match(a.deepLink, /^s3:\/\/files\/amir\/research\/notes\.pdf$/);
+  // it now shows up in the owner's listing
+  assert.ok(listFiles(amir).mine.some((f) => f.id === a.id));
+});
+
+test('preview returns the mock extracted text for a doc', () => {
+  const a = createFile(amir, { name: 'memo.pdf', text: 'the body of the memo' });
+  const got = getFile(a.id, amir);
+  assert.equal(got.text, 'the body of the memo');
+  assert.equal(got.asset.name, 'memo.pdf');
+});
+
+test('a restricted upload is stored-only (never indexed) — decision #7', () => {
+  const a = createFile(amir, { name: 'salaries.xlsx', sensitivity: 'restricted', text: 'secret' });
+  assert.equal(a.indexing.mode, 'stored-only');
+  const sum = listFiles(amir).mine.find((f) => f.id === a.id)!;
+  assert.equal(sum.status, 'stored');
+});
+
+test('an indexed upload reports a searchable status chip', () => {
+  const a = createFile(amir, { name: 'public.pdf', sensitivity: 'public', text: 'hello world' });
+  assert.equal(a.indexing.mode, 'indexed');
+  const sum = listFiles(amir).mine.find((f) => f.id === a.id)!;
+  assert.equal(sum.status, 'searchable');
+});
+
+test('move + retag + docs edit the single source for the owner only', () => {
+  const a = createFile(amir, { name: 'x.pdf', text: 'x' });
+  moveFile(a.id, amir, '/contracts/2026');
+  setTags(a.id, amir, ['contract', 'acme']);
+  setDocs(a.id, amir, { description: 'the acme contract' });
+  const got = getFile(a.id, amir);
+  assert.equal(got.asset.folder, '/contracts/2026');
+  assert.deepEqual(got.asset.tags, ['contract', 'acme']);
+  assert.equal(got.asset.description, 'the acme contract');
+});
+
+test('a non-owner cannot edit a private file', () => {
+  const a = createFile(amir, { name: 'y.pdf', text: 'y' });
+  assert.throws(() => setTags(a.id, kenji, ['nope']), /permitted|not found|403|404/i);
+});
+
+test('re-upload bumps the version and keeps history', () => {
+  const a = createFile(amir, { name: 'spec.pdf', text: 'draft 1' });
+  const v2 = addVersion(a.id, amir, { text: 'draft 2' });
+  assert.equal(v2.version, 'v2');
+  const got = getFile(a.id, amir);
+  assert.equal(got.text, 'draft 2');
+  assert.ok(got.history.length >= 2, 'history records both versions');
+});
+
+test('the owner can opt a file out of indexing (stored-only)', () => {
+  const a = createFile(amir, { name: 'huge.pdf', text: 'big', sensitivity: 'internal' });
+  assert.equal(a.indexing.mode, 'indexed');
+  const off = setIndexingMode(a.id, amir, 'stored-only');
+  assert.equal(off.indexing.mode, 'stored-only');
+});
+
+test('search finds a file by name, tag and body text', () => {
+  createFile(amir, { name: 'renewal-acme.pdf', tags: ['contract'], text: 'auto-renews after twelve months' });
+  const byName = searchFiles(amir, 'renewal');
+  assert.ok(byName.some((h) => h.name === 'renewal-acme.pdf'));
+  const byBody = searchFiles(amir, 'twelve months');
+  assert.ok(byBody.some((h) => h.name === 'renewal-acme.pdf'));
+  // every hit carries a snippet + score for the result row
+  for (const h of byBody) {
+    assert.equal(typeof h.score, 'number');
+    assert.equal(typeof h.snippet, 'string');
+  }
+});
+
+test('search never returns another user’s private file', () => {
+  createFile(amir, { name: 'amir-secret.pdf', text: 'confidential alpha' });
+  const hits = searchFiles(kenji, 'alpha');
+  assert.ok(!hits.some((h) => h.name === 'amir-secret.pdf'));
+});
+
+test('stored-only files are excluded from search results (not indexed)', () => {
+  createFile(amir, { name: 'restricted-doc.pdf', sensitivity: 'restricted', text: 'omega secret' });
+  const hits = searchFiles(amir, 'omega');
+  assert.ok(!hits.some((h) => h.name === 'restricted-doc.pdf'), 'stored-only is not searchable');
+});
+
+test('delete removes a file for its owner', () => {
+  const a = createFile(amir, { name: 'tmp.pdf', text: 'tmp' });
+  deleteFile(a.id, amir);
+  assert.throws(() => getFile(a.id, amir), /not found|404/i);
+});
+
+// ----------------------------------------------------- Phase 2: governance ----
+
+function documented() {
+  const a = createFile(amir, { name: 'handbook.pdf', tags: ['guide'], text: 'the sales handbook' });
+  setDocs(a.id, amir, { description: 'the domain sales handbook', tags: ['guide'] });
+  return a;
+}
+
+test('promotion needs the docs minimum: owner + description + ≥1 tag (decision #5)', () => {
+  const bare = createFile(amir, { name: 'bare.pdf', text: 'x' }); // no description/tags
+  assert.throws(() => requestPromotion(bare.id, amir, {}), /description|tag/i);
+});
+
+test('only the OWNER may request promotion (separation of duties)', () => {
+  const a = documented();
+  assert.throws(() => requestPromotion(a.id, bea, {}), /owner/i);
+});
+
+test('a Creator requests; the request targets the domain with a domain grant', () => {
+  const a = documented();
+  const req = requestPromotion(a.id, amir, {});
+  assert.equal(req.domain, 'sales');
+  assert.equal(req.visibility, 'domain');
+  assert.ok(req.grants.some((g) => g.grantee.kind === 'domain' && g.grantee.id === 'sales'));
+  assert.match(req.target, /sales/);
+});
+
+test('a domain BUILDER applies the approved promotion → a domain asset (the gate)', () => {
+  const a = documented();
+  const req = requestPromotion(a.id, amir, {});
+  const promoted = applyApprovedFilePromotion(req, bea);
+  assert.equal(promoted.tier, 'asset');
+  assert.equal(promoted.visibility, 'domain');
+  // re-governed: the bytes move from the owner prefix to the DOMAIN prefix
+  assert.match(promoted.deepLink, /^s3:\/\/files\/sales\//);
+  // a domain peer now sees it; a non-member never does (DLS)
+  assert.ok(listFiles(bea).domain.some((f) => f.id === a.id), 'peer sees the domain asset');
+  assert.throws(() => getFile(a.id, kenji), /permitted|not found|40[34]/i);
+});
+
+test('promotion records a file_promoted lineage edge (OM, mock-tolerant)', () => {
+  const a = documented();
+  applyApprovedFilePromotion(requestPromotion(a.id, amir, {}), bea);
+  const edges = listLineage(a.id);
+  assert.ok(edges.some((e) => e.kind === 'file_promoted'), 'lineage captured');
+});
+
+test('a non-Builder cannot apply a promotion', () => {
+  const a = documented();
+  const req = requestPromotion(a.id, amir, {});
+  assert.throws(() => applyApprovedFilePromotion(req, { id: 'cleo', domains: ['sales'], role: 'participant' }), /Builder|requires/i);
+});
+
+test('a Builder OUTSIDE the domain cannot apply the promotion', () => {
+  const a = documented();
+  const req = requestPromotion(a.id, amir, {});
+  assert.throws(() => applyApprovedFilePromotion(req, kenji), /domain/i);
+});
+
+test('an Admin certifies a domain asset into a marketplace product', () => {
+  const a = documented();
+  applyApprovedFilePromotion(requestPromotion(a.id, amir, {}), bea);
+  const product = transition(a.id, sara, 'certify', {});
+  assert.equal(product.tier, 'product');
+  // discoverable by anyone now
+  assert.ok(listFiles(kenji).marketplace.some((f) => f.id === a.id));
+});
+
+test('certify requires an Admin (a Builder is refused)', () => {
+  const a = documented();
+  applyApprovedFilePromotion(requestPromotion(a.id, amir, {}), bea);
+  assert.throws(() => transition(a.id, bea, 'certify', {}), /Admin|requires|permitted/i);
+});

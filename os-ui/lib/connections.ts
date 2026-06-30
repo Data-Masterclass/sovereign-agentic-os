@@ -12,7 +12,9 @@ import {
   type ConnectionTemplateKey,
   type CapabilityMode,
   type CapabilityLimits,
+  type DataUsage,
   templateByKey,
+  isPersonalConnectable,
 } from '@/lib/connection-model';
 import { putSecret, secretFingerprint, getSecretServerSide, isEgressAllowed } from '@/lib/secrets';
 import {
@@ -25,6 +27,16 @@ import {
   type ConnToolPolicy,
 } from '@/lib/agent-governed';
 import { enqueue } from '@/lib/approvals';
+import { adapterFor } from '@/lib/connection-adapters';
+import {
+  buildPreview,
+  matchStandingPolicy,
+  rememberPolicy,
+  resolveAutonomous,
+  effectivePreset,
+} from '@/lib/governance';
+import { registerBronzeSource, indexToFiles } from '@/lib/data-handoff';
+import { logEgress } from '@/lib/egress-requests';
 
 /**
  * Connections registry — the home of record for every MANUALLY-credentialed
@@ -160,39 +172,60 @@ function assertBuilderOrAdmin(user: CurrentUser): void {
 
 export async function createConnection(
   user: CurrentUser,
-  input: { name: string; template: ConnectionTemplateKey; endpoint: string; credential: string; domain?: string },
+  input: { name: string; template: ConnectionTemplateKey; endpoint: string; credential: string; domain?: string; openApiSpec?: unknown },
 ): Promise<Connection> {
-  // Create is restricted to Builder/Admin (participants/Creators consume only).
-  assertBuilderOrAdmin(user);
   const tpl = templateByKey(input.template);
   if (!tpl) throw withStatus(new Error('Unknown connection template'), 400);
 
+  // WHO CONNECTS (golden path): any user may connect a PERSONAL (per-user OAuth)
+  // account; SHARED (service-credential) connections require a Builder/Admin.
+  if (!isPersonalConnectable(tpl)) {
+    assertBuilderOrAdmin(user);
+  }
+
   const map = await getCache();
   const name = (input.name ?? '').trim() || tpl.label;
-  const slug = slugify(name);
+  const slug = slugify(`${name}-${user.id}`);
   const domain = input.domain && user.domains.includes(input.domain) ? input.domain : user.domains[0];
   const principal = `conn-${slug}`;
   const endpoint = (input.endpoint ?? '').trim() || tpl.endpointHint;
+  const adapter = adapterFor(tpl.connector);
 
-  // THE ONE RULE: write the credential to Secrets Manager; keep only a ref.
-  const secretName = `connection-${slug}`;
-  const secretRef = putSecret(secretName, tpl.secretKey, String(input.credential ?? ''));
-  const secretSet = Boolean(input.credential);
-
-  // Egress guardrail: an external endpoint must be on the allowlist (Admin guardrail).
+  // Egress guardrail: an external endpoint must be on the allowlist (Admin
+  // guardrail; or an Admin-approved request). Checked BEFORE any credential use.
   const egress = isEgressAllowed(endpoint);
   if (egress.external && !egress.allowed) {
     throw withStatus(
-      new Error(`Endpoint host "${egress.host}" is not on the egress allowlist — an Administrator must allow it first`),
+      new Error(`Endpoint host "${egress.host}" is not on the egress allowlist — request access and an Administrator must approve it first`),
       403,
     );
   }
+
+  // 1. AUTH (adapter): per-user OAuth mints a token (mock offline / live exchange);
+  //    service creds use the value the Builder supplied. THE ONE RULE: the secret
+  //    is written to Secrets Manager and the record keeps ONLY a ref.
+  let secretValue = String(input.credential ?? '');
+  if (tpl.auth === 'oauth') {
+    const authRes = await adapter.auth({ template: tpl, endpoint, credentialPresent: false, authCode: 'mock-consent-grant' });
+    if (!authRes.ok || !authRes.data?.secretValue) throw withStatus(new Error('OAuth did not complete'), 502);
+    secretValue = authRes.data.secretValue;
+  }
+  const secretName = `connection-${slug}`;
+  const secretRef = putSecret(secretName, tpl.secretKey, secretValue);
+  const secretSet = Boolean(secretValue);
+
+  // 2. TOOL-GENERATION (adapter): OpenAPI/MCP schema → governed tools, or the safe
+  //    static preset. Live when a schema client is injected; offline preset in kind.
+  const gen = await adapter.generateTools({ template: tpl, endpoint, credentialPresent: secretSet, openApiSpec: input.openApiSpec });
+  const tools = (gen.ok && gen.data ? gen.data : tpl.tools).map((tool) => ({ ...tool, limits: tool.limits ? { ...tool.limits } : undefined }));
 
   const t = now();
   const c: Connection = {
     id: id('conn'),
     name,
     type: tpl.type,
+    connector: tpl.connector,
+    auth: tpl.auth,
     template: tpl.key,
     endpoint,
     principal,
@@ -204,23 +237,24 @@ export async function createConnection(
     secretSet,
     secretFingerprint: secretSet ? secretFingerprint(secretRef) : '',
     egress,
-    // Start from the safe preset profile (reads on, writes opt-in, deletes Blocked).
-    tools: tpl.tools.map((tool) => ({ ...tool, limits: tool.limits ? { ...tool.limits } : undefined })),
+    tools,
     grants: [],
+    health: 'untested',
+    dataUsage: null,
     createdAt: t,
     updatedAt: t,
   };
 
   map.set(c.id, c);
-  compileProfile(c); // compile the capability profile into the OPA mirror
+  compileProfile(c); // 3. CAPABILITY → OPA: compile the profile into the bundle/mirror
   writeThrough(c);
 
   // Audit creation through the SAME Langfuse spine — note: NO secret in the trace.
   void trace({
     principal,
     tool: 'generate',
-    input: { action: 'create_connection', name, type: tpl.type, endpoint, secretRef },
-    output: { connectionId: c.id, exposed: exposedConnectionTools(principal), egress },
+    input: { action: 'create_connection', name, type: tpl.type, auth: tpl.auth, endpoint, secretRef },
+    output: { connectionId: c.id, exposed: exposedConnectionTools(principal), egress, toolsFrom: gen.mode },
     decision: 'allow',
   });
 
@@ -310,6 +344,7 @@ export async function testConnection(connId: string, user: CurrentUser): Promise
   }
 
   c.mode = mode;
+  c.health = 'healthy'; // silent OAuth refresh keeps it healthy; hard failure → needs-reconnect
   c.updatedAt = now();
   map.set(c.id, c);
   writeThrough(c);
@@ -406,15 +441,27 @@ export async function grantToAgent(
 
 // ----------------------------------------------------------- Governed tool call --
 
+export type WritePreviewDTO = {
+  action: string;
+  args: Record<string, unknown>;
+  diff: { field: string; before: unknown; after: unknown }[];
+  who: string;
+  reason: string;
+};
+
 export type ToolCallResult = {
   tool: string;
   principal: string;
-  decision: 'allow' | 'deny' | 'requires_approval';
+  decision: 'allow' | 'deny' | 'requires_approval' | 'propose' | 'block';
   reason: string;
   mode?: string;
   traceId: string;
   result?: unknown;
   approvalId?: string;
+  /** Full preview shown inline for a Mode-A Write-approval pause. */
+  preview?: WritePreviewDTO;
+  /** True when an autonomous (Mode B) out-of-policy action was queued for review. */
+  queuedForReview?: boolean;
 };
 
 /**
@@ -426,7 +473,7 @@ export type ToolCallResult = {
 export async function callConnectionTool(
   connId: string,
   user: CurrentUser,
-  input: { tool: string; args?: Record<string, unknown>; asAgent?: string },
+  input: { tool: string; args?: Record<string, unknown>; asAgent?: string; autonomous?: boolean; reason?: string },
 ): Promise<ToolCallResult> {
   const map = await getCache();
   const c = map.get(connId);
@@ -434,27 +481,42 @@ export async function callConnectionTool(
 
   const tool = String(input.tool ?? '');
   const args = input.args ?? {};
+  const reason = input.reason ?? 'tool call';
   const authz = authorizeConnectionCall(c.principal, tool, args, input.asAgent);
 
+  // Hard deny (Off / Blocked / over-bound / out-of-grant) — same in both modes.
   if (authz.effect === 'deny') {
-    const tr = await trace({
-      principal: c.principal,
-      tool,
-      input: { args, asAgent: input.asAgent },
-      output: { denied: authz.reason },
-      decision: 'deny',
-    });
+    const tr = await trace({ principal: c.principal, tool, input: { args, asAgent: input.asAgent }, output: { denied: authz.reason }, decision: 'deny' });
+    if (input.autonomous && input.asAgent) {
+      // Mode B: out-of-policy → block + log + async Governance-inbox review (no inline prompt).
+      const approval = queueAutonomousReview(c, tool, args, input.asAgent, user.id, authz.reason, tr.id);
+      return { tool, principal: c.principal, decision: 'block', reason: authz.reason, mode: authz.mode, traceId: tr.id, approvalId: approval.id, queuedForReview: true };
+    }
     return { tool, principal: c.principal, decision: 'deny', reason: authz.reason, mode: authz.mode, traceId: tr.id };
   }
 
+  // ----- AUTONOMOUS (Mode B): pre-authorized via the agent's safety preset -----
+  if (input.autonomous && input.asAgent) {
+    const preset = effectivePreset(input.asAgent, c.domain, c.principal, tool);
+    const a = resolveAutonomous(preset, { effect: authz.effect, reason: authz.reason, mode: authz.mode }, (authz.mode ?? 'Read'), Boolean(c.tools.find((x) => x.name === tool)?.write));
+    if (a.effect === 'allow') {
+      return runAllow(c, tool, args, input.asAgent, `autonomous(${preset}): ${a.reason}`, authz.mode);
+    }
+    // propose or block → never run; log + queue for async review (no inline prompt).
+    const tr = await trace({ principal: c.principal, tool, input: { args, asAgent: input.asAgent }, output: { [a.effect]: a.reason }, decision: a.effect === 'propose' ? 'requires_approval' : 'deny' });
+    const approval = queueAutonomousReview(c, tool, args, input.asAgent, user.id, `${preset}: ${a.reason}`, tr.id);
+    return { tool, principal: c.principal, decision: a.effect, reason: a.reason, mode: authz.mode, traceId: tr.id, approvalId: approval.id, queuedForReview: a.queue };
+  }
+
+  // ----- IN-TAB ASSISTANT (Mode A): human present at run time -----
   if (authz.effect === 'requires_approval') {
-    const tr = await trace({
-      principal: c.principal,
-      tool,
-      input: { args, asAgent: input.asAgent },
-      output: { held: authz.reason },
-      decision: 'requires_approval',
-    });
+    // "Approve & remember" standing policy auto-allows identical calls (no prompt).
+    if (matchStandingPolicy(c.principal, tool, args)) {
+      return runAllow(c, tool, args, input.asAgent, 'standing policy (approve & remember) — auto-allowed', authz.mode);
+    }
+    const before = readBefore(c, tool, args);
+    const preview = buildPreview({ action: tool, args, before, who: user.id, reason });
+    const tr = await trace({ principal: c.principal, tool, input: { args, asAgent: input.asAgent }, output: { held: authz.reason }, decision: 'requires_approval' });
     const approval = enqueue({
       kind: 'connection_write',
       title: `${c.name}: ${tool}`,
@@ -463,32 +525,109 @@ export async function callConnectionTool(
       domain: c.domain,
       requestedBy: user.id,
       tool,
-      payload: { connectionId: c.id, account: args.account ?? args.id ?? '', field: tool, value: args.amount ?? args.value ?? '' },
+      payload: { connectionId: c.id, preview, account: args.account ?? args.id ?? '', field: tool, value: args.amount ?? args.value ?? '' },
       traceId: tr.id,
     });
-    return {
-      tool,
-      principal: c.principal,
-      decision: 'requires_approval',
-      reason: authz.reason,
-      mode: authz.mode,
-      traceId: tr.id,
-      approvalId: approval.id,
-    };
+    return { tool, principal: c.principal, decision: 'requires_approval', reason: authz.reason, mode: authz.mode, traceId: tr.id, approvalId: approval.id, preview };
   }
 
-  // allow — inject the secret SERVER-SIDE (never logged) and run the (seed) tool.
+  // allow (Read / Write-bounded within limit)
+  return runAllow(c, tool, args, input.asAgent, authz.reason, authz.mode);
+}
+
+/** Execute an allowed call: inject the secret SERVER-SIDE (never logged), trace + log egress. */
+async function runAllow(
+  c: Connection,
+  tool: string,
+  args: Record<string, unknown>,
+  asAgent: string | undefined,
+  reason: string,
+  mode?: string,
+): Promise<ToolCallResult> {
   const secret = getSecretServerSide(c.secretRef);
   const result = executeMock(c, tool, args, Boolean(secret));
+  if (c.egress.external) logEgress({ host: c.egress.host, connectionId: c.id, tool }); // monitored egress
   const tr = await trace({
     principal: c.principal,
     tool,
-    input: { args, asAgent: input.asAgent }, // NOTE: no secret here
+    input: { args, asAgent }, // NOTE: no secret here
     output: result,
     decision: 'allow',
     costUsd: 0.0003,
   });
-  return { tool, principal: c.principal, decision: 'allow', reason: authz.reason, mode: authz.mode, traceId: tr.id, result };
+  return { tool, principal: c.principal, decision: 'allow', reason, mode, traceId: tr.id, result };
+}
+
+/** A before-snapshot for the approval diff (seed-backed offline). */
+function readBefore(c: Connection, tool: string, args: Record<string, unknown>): Record<string, unknown> {
+  const cur = executeMock(c, tool.replace(/^update_/, 'read_'), args, true) as Record<string, unknown>;
+  const obj = (cur.opportunity ?? cur.account ?? cur.page ?? {}) as Record<string, unknown>;
+  return obj;
+}
+
+/** Mode B: queue an out-of-policy autonomous action for async Governance-inbox review. */
+function queueAutonomousReview(c: Connection, tool: string, args: Record<string, unknown>, agent: string, requestedBy: string, reason: string, traceId: string) {
+  return enqueue({
+    kind: 'connection_write',
+    title: `Autonomous review: ${c.name} · ${tool}`,
+    detail: `Out-of-policy autonomous action blocked and queued. ${reason}. ${tool}(${JSON.stringify(args)})`,
+    agent,
+    domain: c.domain,
+    requestedBy,
+    tool,
+    payload: { connectionId: c.id, autonomous: true, account: args.account ?? args.id ?? '', field: tool, value: args.amount ?? args.value ?? '' },
+    traceId,
+  });
+}
+
+/**
+ * Register the connection as a DATA SOURCE — the second usage. Database/API/SaaS →
+ * dlt → Bronze; Drive → Files index. Runs the adapter's `sync` op; the connection
+ * stays a governed agent tool at the same time (one object, two usages).
+ */
+export async function enableDataUsage(connId: string, user: CurrentUser, usage: DataUsage): Promise<Connection> {
+  const map = await getCache();
+  const c = map.get(connId);
+  if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
+  const adapter = adapterFor(c.connector);
+  const sync = await adapter.sync({ template: templateByKey(c.template)!, endpoint: c.endpoint, credentialPresent: c.secretSet });
+  const target = usage ?? (sync.data?.target === 'files' ? 'files' : 'bronze');
+  if (target === 'files') {
+    indexToFiles({ connectionId: c.id, name: c.name, items: sync.data?.records ?? 0, indexedBy: user.id });
+    c.dataUsage = 'files';
+  } else {
+    registerBronzeSource({ connectionId: c.id, name: c.name, connector: c.connector, rows: sync.data?.records ?? 0, registeredBy: user.id });
+    c.dataUsage = 'bronze';
+  }
+  c.updatedAt = now();
+  map.set(c.id, c);
+  writeThrough(c);
+  void trace({ principal: c.principal, tool: 'generate', input: { action: 'enable_data_usage', usage: target, by: user.id }, output: { mode: sync.mode, records: sync.data?.records }, decision: 'allow' });
+  return c;
+}
+
+/**
+ * "Approve & remember" (Mode A): approve a held write AND create a bounded standing
+ * policy so identical calls stop prompting. The bound is carried from the call.
+ */
+export async function approveAndRemember(
+  connId: string,
+  user: CurrentUser,
+  input: { tool: string; args?: Record<string, unknown> },
+): Promise<{ standingPolicyId: string; result: ToolCallResult }> {
+  const map = await getCache();
+  const c = map.get(connId);
+  if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
+  const isOwner = c.owner === user.id;
+  const isDomainAdmin = (user.role === 'admin' || user.role === 'builder') && user.domains.includes(c.domain);
+  if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Only the owner or a domain Builder/Admin can approve & remember'), 403);
+  const args = input.args ?? {};
+  const toolDef = c.tools.find((t) => t.name === input.tool);
+  const pol = rememberPolicy({ principal: c.principal, tool: input.tool, maxAmount: toolDef?.limits?.maxAmount, createdBy: user.id });
+  // Now the call auto-allows under the standing policy.
+  const result = await callConnectionTool(connId, user, { tool: input.tool, args, reason: 'approved & remembered' });
+  void trace({ principal: c.principal, tool: 'generate', input: { action: 'approve_and_remember', tool: input.tool, by: user.id }, output: { standingPolicyId: pol.id }, decision: 'allow' });
+  return { standingPolicyId: pol.id, result };
 }
 
 /** Deterministic seed responses so the slice is demonstrable with no live endpoint. */
@@ -505,6 +644,17 @@ function executeMock(c: Connection, tool: string, args: Record<string, unknown>,
       return { ...base, opportunity: { id: String(args.id ?? 'OPP-1'), account: 'ACME', amount: 42000, stage: 'Renewal' } };
     case 'update_opportunity_amount':
       return { ...base, updated: { id: String(args.id ?? 'OPP-1'), amount: Number(args.amount ?? 0) } };
+    case 'list_files':
+    case 'search_files':
+      return { ...base, files: [{ id: 'f1', name: 'Q3 plan.docx' }, { id: 'f2', name: 'budget.xlsx' }, { id: 'f3', name: 'notes.md' }] };
+    case 'read_file':
+      return { ...base, file: { id: String(args.id ?? 'f1'), name: 'Q3 plan.docx', text: '…' } };
+    case 'query':
+      return { ...base, columns: ['id', 'amount'], rows: [[1, 42000], [2, 13500]] };
+    case 'read_messages':
+      return { ...base, messages: [{ user: 'ada', text: 'shipping today' }] };
+    case 'post_message':
+      return { ...base, posted: { channel: String(args.channel ?? 'general'), text: String(args.text ?? '') } };
     default:
       return { ...base, ok: true, tool, args };
   }

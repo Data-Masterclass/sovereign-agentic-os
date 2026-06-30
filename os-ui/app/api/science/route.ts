@@ -90,7 +90,13 @@ async function ping(s: Svc) {
 }
 
 export async function GET() {
+  // Layer-4 ENABLEMENT gate: when ml.enabled=false the Science capability is off
+  // (not in the cohort-1 path). The page renders a disabled surface; we still
+  // report it explicitly so the UI can explain how an Admin enables it.
+  if (!config.mlEnabled) {
+    return NextResponse.json({ mlEnabled: false, services: [], up: 0, total: 0 });
+  }
   const services = await Promise.all(SERVICES.map(ping));
   const up = services.filter((s) => s.up).length;
-  return NextResponse.json({ services, up, total: services.length });
+  return NextResponse.json({ mlEnabled: true, services, up, total: services.length });
 }

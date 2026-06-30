@@ -63,6 +63,14 @@ table_entitled(meta) if {
 	domain_member(d)
 }
 
+# A named individual granted cross-domain (Data tab "shared with specific people").
+# The policy compiler emits `shared_with_users` from per-user grants; this minimal
+# clause honours them alongside the domain-based entitlement above.
+table_entitled(meta) if {
+	some u in meta.shared_with_users
+	u == user
+}
+
 domain_member(domain) if {
 	some d in principal.domains
 	d == domain

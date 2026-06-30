@@ -22,10 +22,14 @@ export async function GET() {
       key: t.key,
       label: t.label,
       type: t.type,
+      connector: t.connector,
+      auth: t.auth,
       endpointHint: t.endpointHint,
     }));
     const canCreate = user.role === 'builder' || user.role === 'admin';
-    return NextResponse.json({ user, connections, templates, canCreate });
+    // ANY user may create a PERSONAL (per-user OAuth) connection; SHARED needs Builder/Admin.
+    const canCreatePersonal = true;
+    return NextResponse.json({ user, connections, templates, canCreate, canCreatePersonal });
   } catch (e) {
     return fail(e);
   }
@@ -50,6 +54,7 @@ export async function POST(req: Request) {
       endpoint: String(body?.endpoint ?? ''),
       credential: String(body?.credential ?? ''),
       domain: body?.domain ? String(body.domain) : undefined,
+      openApiSpec: body?.openApiSpec,
     });
     return NextResponse.json({ connection: conn }, { status: 201 });
   } catch (e) {

@@ -104,14 +104,19 @@ export type CubeQuery = {
 
 export type CubeResult = { rows: Record<string, unknown>[]; annotation: Record<string, unknown> };
 
-export async function cubeLoad(query: CubeQuery): Promise<CubeResult> {
+export async function cubeLoad(
+  query: CubeQuery,
+  opts: { securityContext?: Record<string, unknown> } = {},
+): Promise<CubeResult> {
+  // R3 (data-policy-compiler.md): when an agent/dashboard resolves a metric, the
+  // per-user securityContext propagates to Cube so its row-level security applies —
+  // never a shared service identity. Cube reads it from the request token; locally
+  // (no JWT signer) it is passed as a header a dev Cube can map, and is a no-op otherwise.
+  const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json' };
+  if (opts.securityContext) headers['x-cube-security-context'] = JSON.stringify(opts.securityContext);
   const res = await withTimeout(
     `${config.cubeUrl}/cubejs-api/v1/load`,
-    {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify({ query }),
-    },
+    { method: 'POST', headers, body: JSON.stringify({ query }) },
     8000,
   );
   if (!res) throw new Error('Could not reach Cube');

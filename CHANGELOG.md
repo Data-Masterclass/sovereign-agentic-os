@@ -13,6 +13,38 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [0.2.0-alpha.9] — 2026-06-30
+
+Headline: **the full platform** — every workspace tab is now integrated and real
+authentication replaces the mock/fake-user auth. On top of the alpha.8 Agents
+tab + governed Trino + live agent-runtime + local reasoning tier, this release
+brings up all sixteen tabs as one consolidated, OPA-governed surface, secured by
+real scrypt-hashed credentials and a secure first-run bootstrap. **636 tests.**
+
+### Added
+
+- **All 16 tabs integrated.** The OS UI is now the full platform — **Data,
+  Files, Knowledge, Connections, Software, Metrics, Dashboards, Science,
+  Marketplace, Monitoring, Governance, Strategy, Big Bets, Home, Tutorials,**
+  and **Platform Admin** — consolidated onto `main` on top of the alpha.8
+  **Agents** tab, governed **Trino** query engine, **live agent-runtime**, and
+  **local reasoning** tier. Cross-tab seams are **OPA-governed**: every
+  cross-surface read/write is routed through policy, so a capability granted in
+  one tab does not silently leak into another.
+- **Real authentication.** The mock/fake-user auth is **replaced** with real
+  credentials: **scrypt-hashed** passwords, a **secure first-run admin
+  bootstrap** (one-time bootstrap token → **forced email + password** on first
+  sign-in → the bootstrap credential **auto-deletes**), **master-key recovery**
+  for locked-out admins, and an **onboarding wizard** for first-run setup. No
+  fake user, no default password.
+
+### Changed
+
+- **Mock auth → real auth across the OS UI.** Sign-in, session, and the
+  auth/me/login/logout routes now authenticate against real, hashed credentials
+  with the secure bootstrap/recovery flow above, replacing the alpha.1
+  teaching-mode mock user.
+
 ## [0.2.0-alpha.8] — 2026-06-29
 
 Headline: the **consolidation release** — agents now **execute for real**. This

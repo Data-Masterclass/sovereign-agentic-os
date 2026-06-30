@@ -1,94 +1,82 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ */
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import PageHeader from '@/components/PageHeader';
+import { useApi } from '@/lib/useApi';
+import type { HealthItem, Overview } from '@/lib/monitoring';
+import AttentionStrip from '@/components/monitoring/AttentionStrip';
+import LensCard from '@/components/monitoring/LensCard';
+import AlertsRow from '@/components/monitoring/AlertsRow';
+import TraceDrawer from '@/components/monitoring/TraceDrawer';
+import { scopeLabel } from '@/components/monitoring/health';
+import '../monitoring.css';
 
-type Trace = {
-  id: string;
-  name: string | null;
-  input: string;
-  output: string;
-  timestamp: string | null;
-  tags: string[];
-};
-
-function fmt(ts: string | null): string {
-  if (!ts) return '';
-  const d = new Date(ts);
-  return Number.isNaN(d.getTime()) ? ts : d.toLocaleString();
-}
-
+/**
+ * Monitoring — the READ/OBSERVE plane. Attention-first: the few things that need
+ * a human lead; the five lenses follow; greens recede. Everything is read-only —
+ * no button here mutates. Run items drill into the Langfuse trace drawer.
+ */
 export default function MonitoringPage() {
-  const [traces, setTraces] = useState<Trace[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const res = await fetch('/api/traces', { cache: 'no-store' });
-      const data = await res.json();
-      if (!res.ok) setError(data.error ?? 'Failed to load traces');
-      else setTraces(data.traces ?? []);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { data, loading, error, reload } = useApi<Overview>('/api/monitoring');
+  const [selected, setSelected] = useState<HealthItem | null>(null);
 
   return (
     <>
-      <PageHeader title="Monitoring" crumb="recent agent traces — Langfuse" />
+      <PageHeader title="Monitoring" crumb="health · spend · traces — the read plane" />
       <div className="content">
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <p className="lead" style={{ marginBottom: 0 }}>
-            What your agents did, scoped to this domain&apos;s Langfuse project. The
-            project key stays server-side.
+            What your agents, pipelines and systems are doing — scoped to your identity.
+            Monitoring shows health, watches spend, and traces runs; it never sets policy
+            or caps (that is Governance).
           </p>
-          <button className="btn ghost" onClick={load} disabled={loading}>
+          <button className="btn ghost" onClick={reload} disabled={loading}>
             {loading ? <span className="spin" /> : 'Refresh'}
           </button>
         </div>
 
-        <div style={{ marginTop: 20 }}>
-          {error ? <div className="error">{error}</div> : null}
-          {!error && !loading && traces.length === 0 ? (
-            <div className="stub-page">No traces yet. Ask the agent on the Agents tab.</div>
-          ) : null}
-          {traces.length > 0 ? (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Input</th>
-                    <th>Output</th>
-                    <th>Tags</th>
-                    <th>Timestamp</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {traces.map((t) => (
-                    <tr key={t.id}>
-                      <td style={{ fontWeight: 600 }}>{t.name ?? '—'}</td>
-                      <td style={{ whiteSpace: 'normal', maxWidth: 280 }}>{t.input}</td>
-                      <td style={{ whiteSpace: 'normal', maxWidth: 280 }}>{t.output}</td>
-                      <td>{t.tags.join(', ')}</td>
-                      <td>{fmt(t.timestamp)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        {data && (
+          <div className="row" style={{ marginTop: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span className="pill">
+              <span className="live" />
+              {scopeLabel(data.scope)}
+            </span>
+            {data.scope.via === 'identity' && (
+              <span className="muted" style={{ fontSize: 12 }}>
+                OPA offline — scope mirrored from identity.
+              </span>
+            )}
+          </div>
+        )}
+
+        {error ? <div className="error" style={{ marginTop: 20 }}>{error}</div> : null}
+
+        {!data && loading ? (
+          <div className="stub-page" style={{ marginTop: 20 }}>Loading the read plane…</div>
+        ) : null}
+
+        {data && (
+          <>
+            <div className="section-title">Needs attention</div>
+            <AttentionStrip items={data.attention} onOpen={setSelected} />
+
+            <div className="section-title">Five lenses</div>
+            <div className="mon-lens-grid">
+              {data.lenses.map((lens) => (
+                <LensCard key={lens.id} lens={lens} onOpen={setSelected} />
+              ))}
             </div>
-          ) : null}
-        </div>
+
+            <div className="section-title">Operational alerts</div>
+            <AlertsRow alerts={data.alerts} />
+          </>
+        )}
       </div>
+
+      {selected && <TraceDrawer item={selected} onClose={() => setSelected(null)} />}
     </>
   );
 }

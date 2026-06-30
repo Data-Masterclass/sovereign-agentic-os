@@ -16,31 +16,91 @@ import { config } from '@/lib/config';
  * write-through so a real deploy is durable.
  */
 
-export type ApprovalKind = 'connection_write' | 'knowledge_certify' | 'file_promote';
+/**
+ * The unified Governance approval queue. The first kinds are the original
+ * agent write-backs (held by the governed-tool spine: connection writes,
+ * knowledge certify, file/dataset promotion + certification, app deploy,
+ * marketplace import); the rest are the async Governance sources consolidated by
+ * the control plane (governance-golden-path.md §1): a Software deploy-review, an
+ * autonomous out-of-policy action, an access/import request, an egress endpoint
+ * request, a promote/certify. Inline (attended) write-approvals stay in the run
+ * and do NOT land here.
+ */
+export type ApprovalKind =
+  | 'connection_write'
+  | 'knowledge_certify'
+  | 'file_promote'
+  | 'dataset_promote'
+  | 'dataset_certify'
+  | 'app_deploy'
+  | 'marketplace_import'
+  | 'deploy_review'
+  | 'autonomous_out_of_policy'
+  | 'access_request'
+  | 'egress_request'
+  | 'promote_certify';
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
+
+/** Who must clear the item. Egress + tenant defaults are Admin-only. */
+export type ApproverRole = 'builder' | 'admin';
+/** Visibility/decision scope: own request, a domain, or the whole tenant. */
+export type ApprovalScope = 'own' | 'domain' | 'tenant';
+
+/** The full card preview the inbox renders (what · who · why · impact). */
+export type ApprovalPreview = {
+  what: string;
+  who: string;
+  why: string;
+  impact: string;
+  /** Software deploy-review extras (scan · resources · cost · diff). */
+  scan?: string;
+  resources?: string;
+  cost?: string;
+  diff?: string;
+};
 
 export type Approval = {
   id: string;
   kind: ApprovalKind;
   title: string;
   detail: string;
-  /** The agent identity (LiteLLM key) that requested the write. */
+  /** The agent identity (LiteLLM key) or actor that requested the action. */
   agent: string;
   domain: string;
-  /** Who initiated the run (human in the loop). */
+  /** Who initiated the run / raised the request (human in the loop). */
   requestedBy: string;
-  /** The tool the agent tried to call (for the audit trail). */
+  /** The tool/effect the action maps to (for the audit trail). */
   tool: string;
-  /** Opaque payload that will be applied on approval (e.g. the CRM patch). */
+  /** Opaque payload applied on approval (e.g. CRM patch, endpoint, grant). */
   payload: Record<string, unknown>;
+  /** Min role to clear it (default builder; egress/tenant → admin). */
+  approverRole: ApproverRole;
+  /** Decision scope (default domain). `tenant` items are Admin-only. */
+  scope: ApprovalScope;
+  /** Whether "approve & remember" (→ standing policy) is offered. */
+  rememberable: boolean;
+  /** Originating surface, for the audit narrative ("Software", "Agents", …). */
+  source: string;
+  preview?: ApprovalPreview;
   traceId?: string;
   status: ApprovalStatus;
   decidedBy?: string;
   decidedAt?: string;
+  /** What the approval actually did (set once the effect runs). */
+  effect?: { applied: string; live: boolean; standingPolicyId?: string };
   createdAt: string;
 };
 
-const queue = new Map<string, Approval>();
+// Pinned to globalThis so the queue is a TRUE singleton across separately
+// bundled Next.js route handlers (the marketplace import route enqueues; the
+// governance route reads) and survives dev HMR.
+const QUEUE_KEY = Symbol.for('soa.approvals.queue');
+function queueMap(): Map<string, Approval> {
+  const g = globalThis as unknown as Record<symbol, Map<string, Approval> | undefined>;
+  if (!g[QUEUE_KEY]) g[QUEUE_KEY] = new Map<string, Approval>();
+  return g[QUEUE_KEY]!;
+}
+const queue = { get: (k: string) => queueMap().get(k), set: (k: string, v: Approval) => queueMap().set(k, v), values: () => queueMap().values(), clear: () => queueMap().clear() };
 
 function now(): string {
   return new Date().toISOString();
@@ -76,6 +136,11 @@ export function enqueue(input: {
   requestedBy: string;
   tool: string;
   payload?: Record<string, unknown>;
+  approverRole?: ApproverRole;
+  scope?: ApprovalScope;
+  rememberable?: boolean;
+  source?: string;
+  preview?: ApprovalPreview;
   traceId?: string;
 }): Approval {
   const a: Approval = {
@@ -88,6 +153,11 @@ export function enqueue(input: {
     requestedBy: input.requestedBy,
     tool: input.tool,
     payload: input.payload ?? {},
+    approverRole: input.approverRole ?? 'builder',
+    scope: input.scope ?? 'domain',
+    rememberable: input.rememberable ?? false,
+    source: input.source ?? 'Governance',
+    preview: input.preview,
     traceId: input.traceId,
     status: 'pending',
     createdAt: now(),
@@ -111,7 +181,9 @@ export function getApproval(approvalId: string): Approval | null {
 /** A Builder/Admin clears a held action. Returns the updated record. */
 export function decide(approvalId: string, decision: 'approve' | 'reject', by: string): Approval | null {
   const a = queue.get(approvalId);
-  if (!a || a.status !== 'pending') return a ?? null;
+  // Return null unless we ACTUALLY transition a pending item — so a racing
+  // second approver can't re-run the governed effect on an already-decided item.
+  if (!a || a.status !== 'pending') return null;
   a.status = decision === 'approve' ? 'approved' : 'rejected';
   a.decidedBy = by;
   a.decidedAt = now();
@@ -122,4 +194,22 @@ export function decide(approvalId: string, decision: 'approve' | 'reject', by: s
 
 export function pendingCount(domain?: string): number {
   return listApprovals({ domain, status: 'pending' }).length;
+}
+
+/** Stamp what the approval actually did (the executed effect), for the card + audit. */
+export function recordEffect(
+  approvalId: string,
+  effect: { applied: string; live: boolean; standingPolicyId?: string },
+): Approval | null {
+  const a = queue.get(approvalId);
+  if (!a) return null;
+  a.effect = effect;
+  queue.set(a.id, a);
+  void writeThrough(a);
+  return a;
+}
+
+/** Test-only: drop the in-process queue so each test starts clean. */
+export function __resetApprovals(): void {
+  queue.clear();
 }

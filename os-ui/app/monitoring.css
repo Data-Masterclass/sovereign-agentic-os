@@ -1,0 +1,422 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * Monitoring-only additions. Everything else reuses app/globals.css. Kept small
+ * and on-brand: health dots, lens grid, attention strip, SVG sparkline, the
+ * correlation stepper. Reds lead; greens recede.
+ */
+
+/* ---- Health dots (red / amber / green / unknown) ---- */
+.mon-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+  display: inline-block;
+  background: var(--text-faint);
+}
+.mon-dot.h-red {
+  background: var(--danger);
+  box-shadow: 0 0 8px rgba(229, 104, 95, 0.55);
+}
+.mon-dot.h-amber {
+  background: var(--gold);
+  box-shadow: 0 0 8px var(--gold-line);
+}
+.mon-dot.h-green {
+  background: var(--teal);
+}
+.mon-dot.h-unknown {
+  background: var(--text-faint);
+}
+
+/* ---- Attention strip (the few things that need a human) ---- */
+.mon-attn-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  margin-top: 6px;
+}
+.mon-attn {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-faint);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  text-align: left;
+  width: 100%;
+  cursor: default;
+  transition: border-color 0.14s, box-shadow 0.14s;
+}
+.mon-attn.h-red {
+  border-left-color: var(--danger);
+}
+.mon-attn.h-amber {
+  border-left-color: var(--gold);
+}
+.mon-attn.clickable {
+  cursor: pointer;
+}
+.mon-attn.clickable:hover {
+  border-color: var(--gold-line);
+  box-shadow: 0 10px 30px -18px rgba(0, 0, 0, 0.8);
+}
+.mon-attn-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mon-attn-title {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--text);
+}
+.mon-attn-detail {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.mon-allclear {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 13.5px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-top: 6px;
+}
+
+/* ---- Lens grid ---- */
+.mon-lens-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+}
+.mon-lens-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 4px;
+}
+.mon-lens-label {
+  font-family: var(--font-head);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--text);
+  font-size: 13.5px;
+}
+.mon-counts {
+  margin-left: auto;
+  display: flex;
+  gap: 9px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.mon-counts b {
+  font-weight: 600;
+}
+.mon-counts .c-red {
+  color: var(--danger);
+}
+.mon-counts .c-amber {
+  color: var(--gold-text);
+}
+.mon-counts .c-green {
+  color: var(--teal);
+}
+
+/* ---- Lens item rows ---- */
+.mon-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+}
+.mon-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 8px;
+  border-radius: 8px;
+  text-align: left;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: inherit;
+}
+button.mon-item {
+  cursor: pointer;
+  transition: background 0.12s;
+}
+button.mon-item:hover {
+  background: var(--bg-elevated);
+}
+.mon-item .mon-dot {
+  margin-top: 4px;
+}
+.mon-item-body {
+  flex: 1;
+  min-width: 0;
+}
+.mon-item-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.mon-item-detail {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  margin-top: 1px;
+}
+.mon-tag {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0 5px;
+  font-family: var(--font-head);
+}
+.mon-drill {
+  font-size: 10px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  align-self: center;
+}
+
+/* ---- Cost sparkline ---- */
+.mon-spark {
+  margin-top: 8px;
+}
+.mon-spark svg {
+  display: block;
+  width: 100%;
+  height: 44px;
+}
+.mon-spark-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.mon-spark-foot .pct-amber {
+  color: var(--gold-text);
+  font-weight: 600;
+}
+.mon-spark-foot .pct-red {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* ---- Alerts ---- */
+.mon-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow: hidden;
+}
+.mon-alert {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 15px;
+  border-bottom: 1px solid var(--border);
+}
+.mon-alert:last-child {
+  border-bottom: none;
+}
+.mon-alert-icon {
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
+  flex: none;
+}
+.mon-alert-icon.sev-critical {
+  color: var(--danger);
+}
+.mon-alert-icon.sev-warning {
+  color: var(--gold-text);
+}
+.mon-alert-body {
+  flex: 1;
+  min-width: 0;
+}
+.mon-alert-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.mon-alert-detail {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+.mon-disp {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.mon-disp.healed {
+  color: var(--teal);
+}
+
+/* ---- Trace drawer internals ---- */
+.mon-sub {
+  font-family: var(--font-head);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--gold-text);
+  margin: 22px 0 9px;
+}
+.mon-sub:first-child {
+  margin-top: 0;
+}
+.mon-ctx {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mon-ctx li {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 11px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+.mon-step {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: var(--panel);
+}
+.mon-step.err {
+  border-color: rgba(229, 104, 95, 0.4);
+}
+.mon-step-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.mon-step-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+.mon-step-meta {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.mon-io {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.mon-io .lbl {
+  color: var(--text-faint);
+  font-family: var(--font-head);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  margin-right: 6px;
+}
+.mon-io .val {
+  color: var(--text-muted);
+}
+.mon-logs {
+  background: #0c0b0d;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 11px 13px;
+  font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+/* ---- Correlation stepper ---- */
+.mon-chain {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  flex-wrap: wrap;
+}
+.mon-hop {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 9px 12px;
+  background: var(--panel);
+  min-width: 150px;
+}
+.mon-hop-lens {
+  font-family: var(--font-head);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-faint);
+}
+.mon-hop-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.mon-hop-arrow {
+  align-self: center;
+  color: var(--text-faint);
+  padding: 0 8px;
+  font-size: 14px;
+}
+.mon-xlinks {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.mon-xlink {
+  font-size: 12px;
+  background: var(--gold-soft);
+  border: 1px solid var(--gold-line);
+  color: var(--gold-text);
+  border-radius: 999px;
+  padding: 4px 12px;
+  text-decoration: none;
+  transition: filter 0.12s;
+}
+.mon-xlink:hover {
+  filter: brightness(1.1);
+}

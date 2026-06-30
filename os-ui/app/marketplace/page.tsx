@@ -1,149 +1,201 @@
 /* SPDX-License-Identifier: Apache-2.0
- * Copyright 2026 Borek Data Ventures UG
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
-import { MARKETPLACE, KINDS } from '@/lib/marketplace';
-import { type Artifact, ARTIFACT_TYPES, TYPE_LABELS, type ArtifactType } from '@/lib/artifact-model';
+import ListingCard from '@/components/marketplace/ListingCard';
+import type { Listing } from '@/components/marketplace/ListingCard';
+import ListingDrawer from '@/components/marketplace/ListingDrawer';
+import MyImports from '@/components/marketplace/MyImports';
+import MarketplaceDataProducts from '@/components/data/MarketplaceDataProducts';
 
-type MarketData = { items: Artifact[]; added: string[] };
+type User = { id: string; domains: string[]; role: 'participant' | 'builder' | 'admin' };
+type ApiData = { user: User; source: 'live' | 'offline-mock'; items: Listing[] };
+
+const PRODUCT_TYPES: [string, string][] = [
+  ['dataset', 'Data product'],
+  ['transformation', 'Transformation'],
+  ['metric', 'Metric'],
+  ['dashboard', 'Dashboard'],
+  ['agent', 'Agent'],
+  ['knowledge', 'Knowledge'],
+  ['connection', 'Connection'],
+  ['file', 'Files'],
+  ['app', 'App'],
+];
 
 export default function MarketplacePage() {
-  const [data, setData] = useState<MarketData | null>(null);
+  const [data, setData] = useState<ApiData | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [busyId, setBusyId] = useState('');
-  const [typeFilter, setTypeFilter] = useState<'All' | ArtifactType>('All');
+
+  const [q, setQ] = useState('');
+  const [activeQ, setActiveQ] = useState('');
+  const [type, setType] = useState('');
+  const [domain, setDomain] = useState('');
+  const [tag, setTag] = useState('');
+  const [showImports, setShowImports] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  // Debounce search query by 320 ms
+  useEffect(() => {
+    const t = setTimeout(() => setActiveQ(q), 320);
+    return () => clearTimeout(t);
+  }, [q]);
 
   const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
     try {
-      const res = await fetch('/api/artifacts/marketplace', { cache: 'no-store' });
+      const p = new URLSearchParams();
+      if (activeQ) p.set('q', activeQ);
+      if (type) p.set('type', type);
+      if (domain) p.set('domain', domain);
+      if (tag) p.set('tag', tag);
+      const res = await fetch(`/api/marketplace?${p}`, { cache: 'no-store' });
       const body = await res.json();
       if (!res.ok) setError(body.error ?? 'Failed to load');
-      else setData({ items: body.items ?? [], added: body.added ?? [] });
+      else setData(body as ApiData);
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setLoading(false);
     }
-  }, []);
+  }, [activeQ, type, domain, tag]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
-  const add = useCallback(
-    async (a: Artifact) => {
-      setBusyId(a.id);
-      setError('');
-      try {
-        const res = await fetch(`/api/artifacts/${a.id}/add`, { method: 'POST' });
-        if (!res.ok) {
-          const b = await res.json().catch(() => ({}));
-          setError(b.error ?? 'Add failed');
-        } else await load();
-      } finally {
-        setBusyId('');
-      }
-    },
-    [load],
+  // Derive filter options from whatever the API returned
+  const domains = useMemo(
+    () => [...new Set((data?.items ?? []).map((i) => i.ownerDomain))].sort(),
+    [data],
   );
-
-  const shown = useMemo(
-    () => (data ? (typeFilter === 'All' ? data.items : data.items.filter((i) => i.type === typeFilter)) : []),
-    [data, typeFilter],
+  const tags = useMemo(
+    () => [...new Set((data?.items ?? []).flatMap((i) => i.tags))].sort(),
+    [data],
   );
+  const userDomains = data?.user.domains ?? [];
+  const items = data?.items ?? [];
 
   return (
     <>
-      <PageHeader title="Marketplace" crumb="certified, cross-domain artifacts — add into your workspace" />
+      <PageHeader
+        title="Marketplace"
+        crumb="discover & import certified products across domains"
+        tutorial="marketplace"
+      />
       <div className="content">
         <p className="lead">
-          The cross-domain catalog of <strong>Certified</strong> artifacts — datasets, dbt
-          transformations, metrics, dashboards, agents, and knowledge — published by any
-          domain. Add one to drop a copy into your own workspace, where it appears with a{' '}
-          <span className="badge vis-certified">Certified</span> badge. Certifying is admin-only.
+          Cross-domain catalog of Admin-<strong>certified</strong> products of every type.{' '}
+          <strong>Import = a governed grant</strong>: the owner stays the source of truth;
+          you consume it under your own identity with row-level security.
+          Browsing is open; importing is governed.
         </p>
 
-        <div className="tabstrip">
-          <button className={typeFilter === 'All' ? 'active' : ''} onClick={() => setTypeFilter('All')}>All</button>
-          {ARTIFACT_TYPES.map((t) => (
-            <button key={t} className={typeFilter === t ? 'active' : ''} onClick={() => setTypeFilter(t)}>
-              {TYPE_LABELS[t]}
+        {/* Controls row */}
+        <div
+          className="row"
+          style={{ flexWrap: 'wrap', alignItems: 'center', gap: 10, margin: '18px 0 4px' }}
+        >
+          <input
+            type="text"
+            placeholder="Search products…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            style={{ width: 220, flex: 'none' }}
+          />
+          <select value={domain} onChange={(e) => setDomain(e.target.value)}>
+            <option value="">All domains</option>
+            {domains.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <select value={tag} onChange={(e) => setTag(e.target.value)}>
+            <option value="">All tags</option>
+            {tags.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+
+          {/* Right side: source pill + view toggle */}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
+            {data && (
+              <span className="pill">
+                {data.source === 'live' && <span className="live" />}
+                {data.source}
+              </span>
+            )}
+            <button
+              className="btn ghost"
+              onClick={() => setShowImports((v) => !v)}
+            >
+              {showImports ? 'Browse' : 'My imports'}
             </button>
-          ))}
+          </div>
         </div>
 
-        {error ? <div className="error">{error}</div> : null}
-
-        {!data ? (
-          <div className="stub-page">Loading the certified catalog…</div>
-        ) : shown.length === 0 ? (
-          <div className="stub-page">No certified artifacts{typeFilter !== 'All' ? ` of type ${TYPE_LABELS[typeFilter]}` : ''} yet. An admin certifies a Shared artifact to publish it here.</div>
-        ) : (
-          <div className="grid">
-            {shown.map((a) => {
-              const added = data.added.includes(a.id);
-              return (
-                <div className="card launch-card" key={a.id}>
-                  <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-                    <h3 style={{ margin: 0 }}>{a.name}</h3>
-                    <span className="badge vis-certified">Certified</span>
-                  </div>
-                  <div className="muted" style={{ marginTop: 6, fontSize: 11.5 }}>
-                    {TYPE_LABELS[a.type]} · from <strong>{a.domain}</strong>
-                  </div>
-                  <div className="muted" style={{ marginTop: 8, flex: 1, whiteSpace: 'normal' }}>{a.description}</div>
-                  {a.tags.length ? (
-                    <div className="sources" style={{ marginTop: 10 }}>
-                      {a.tags.map((t) => <span className="chip" key={t}>{t}</span>)}
-                    </div>
-                  ) : null}
-                  <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
-                    {added ? (
-                      <span className="badge ok">✓ In your workspace</span>
-                    ) : (
-                      <button className="btn" disabled={busyId === a.id} onClick={() => add(a)}>
-                        {busyId === a.id ? <span className="spin" /> : 'Add to workspace'}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+        {/* Type tabstrip — hidden in My Imports view */}
+        {!showImports && (
+          <div className="tabstrip">
+            <button className={!type ? 'active' : ''} onClick={() => setType('')}>
+              All
+            </button>
+            {PRODUCT_TYPES.map(([k, label]) => (
+              <button
+                key={k}
+                className={type === k ? 'active' : ''}
+                onClick={() => setType(k)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         )}
 
-        {/* Platform components catalog (static, infra-level) kept as a secondary view. */}
-        <div className="section-title" style={{ marginTop: 32 }}>Platform components</div>
-        <p className="hint" style={{ marginTop: 0 }}>
-          Infrastructure building blocks wired into this deployment (enable/publish governed in the Admin Console).
-        </p>
-        {KINDS.map((kind) => {
-          const comps = MARKETPLACE.filter((m) => m.kind === kind);
-          if (comps.length === 0) return null;
-          return (
-            <div key={kind}>
-              <div className="section-title">{kind}s<span className="count-pill">{comps.length}</span></div>
-              <div className="grid">
-                {comps.map((m) => (
-                  <div className="card launch-card" key={m.id}>
-                    <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-                      <h3 style={{ margin: 0 }}>{m.name}</h3>
-                      <span className={`badge ${m.installed ? 'ok' : 'muted'}`}>{m.installed ? 'installed' : 'available'}</span>
-                    </div>
-                    <div className="muted" style={{ marginTop: 6, fontSize: 11.5 }}>{m.publisher}</div>
-                    <div className="muted" style={{ marginTop: 8, flex: 1 }}>{m.summary}</div>
-                    <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
-                      {m.href ? <Link className="btn ghost" href={m.href}>{m.installed ? 'Open →' : 'Learn more →'}</Link> : <button className="btn ghost" disabled>Learn more</button>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        })}
+        {/* Certified data products from the Data tab (governed, importable). */}
+        <MarketplaceDataProducts />
+
+        {error && (
+          <div className="error" style={{ margin: '16px 0' }}>{error}</div>
+        )}
+
+        {/* Main content area */}
+        {showImports ? (
+          <MyImports />
+        ) : loading ? (
+          <div className="stub-page" style={{ marginTop: 20 }}>
+            <span className="spin" style={{ marginRight: 10 }} />
+            Loading catalog…
+          </div>
+        ) : items.length === 0 ? (
+          <div className="stub-page" style={{ marginTop: 20 }}>
+            No certified products found
+            {type
+              ? ` of type "${PRODUCT_TYPES.find(([k]) => k === type)?.[1] ?? type}"`
+              : ''}
+            .
+          </div>
+        ) : (
+          <div className="grid" style={{ marginTop: 18 }}>
+            {items.map((l) => (
+              <ListingCard
+                key={l.id}
+                listing={l}
+                onOpen={() => setOpenId(l.id)}
+                ownDomain={userDomains.includes(l.ownerDomain)}
+              />
+            ))}
+          </div>
+        )}
       </div>
+
+      {openId && (
+        <ListingDrawer
+          listingId={openId}
+          viewerDomains={userDomains}
+          isAdmin={data?.user.role === 'admin'}
+          onClose={() => setOpenId(null)}
+          onChanged={load}
+        />
+      )}
     </>
   );
 }

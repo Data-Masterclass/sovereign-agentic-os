@@ -200,6 +200,17 @@ export async function getArtifact(artId: string): Promise<Artifact | null> {
   return map.get(artId) ?? null;
 }
 
+/**
+ * The full artifact set, unscoped — for AGGREGATE derivations only (e.g. the
+ * Strategy adoption scoreboard counts promoted/certified artifacts by domain).
+ * Returns metadata for counting; callers must not leak per-artifact detail
+ * across domains. RLS for per-item access stays in `listForUser`.
+ */
+export async function allArtifacts(): Promise<Artifact[]> {
+  const map = await getCache();
+  return [...map.values()];
+}
+
 export async function createArtifact(
   user: CurrentUser,
   input: { type: ArtifactType; name: string; description?: string; tags?: string[]; spec?: Record<string, unknown>; domain?: string },

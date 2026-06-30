@@ -4,6 +4,7 @@
 import 'server-only';
 import { createHash } from 'crypto';
 import { config } from '@/lib/config';
+import { isHostApproved } from '@/lib/egress-requests';
 
 /**
  * Mock STACKIT Secrets Manager + External Secrets (Connections golden path §2,
@@ -116,7 +117,8 @@ export function isEgressAllowed(endpoint: string): { external: boolean; host: st
   const external = isExternal(endpoint);
   if (!external) return { external: false, host, allowed: true };
   const list = allowlist();
-  const allowed = list.some((d) => host === d || host.endsWith(`.${d}`));
+  // Allowed if on the static Admin allowlist OR an Admin-approved egress request.
+  const allowed = list.some((d) => host === d || host.endsWith(`.${d}`)) || isHostApproved(host);
   return { external: true, host, allowed };
 }
 

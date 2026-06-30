@@ -46,3 +46,19 @@ export const marcellus = localFont({
   variable: '--f-sub',
   fallback: ['Georgia', 'Times New Roman', 'serif'],
 });
+
+/**
+ * Fraunces (display) — the warm, fun, editorial face for the **Home** front
+ * door only (home-golden-path.md §Taste: warm cream + Fraunces display). Scoped
+ * to the Home hero/launcher via the `--f-display` variable + the `.home` class;
+ * the rest of the OS keeps Oswald. Self-hosted woff2 (latin, variable 400–600)
+ * so the build + in-cluster runtime stay fully offline — no CDN, no build fetch.
+ */
+export const fraunces = localFont({
+  src: './fonts/fraunces-latin.woff2',
+  weight: '400 600',
+  style: 'normal',
+  display: 'swap',
+  variable: '--f-display',
+  fallback: ['Georgia', 'Times New Roman', 'serif'],
+});

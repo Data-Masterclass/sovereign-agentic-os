@@ -1763,6 +1763,18 @@ osUI:
   langfuseUrl:    "http://agentic-os-langfuse-web:3000"
   opensearchUrl:  "http://opensearch:9200"
   knowledgeIndex: "knowledge"
+  # Files tab (unstructured context products). The hybrid `files` index + the
+  # SHARED embedding model (matches sampleAgent.embedModel). The k-NN DIMENSION is
+  # NOT set here — the os-ui template wires FILES_EMBED_DIM from the single
+  # `retrieval.knnDimension` so the index mapping + query vectors always match.
+  filesIndex:      "files"
+  filesEmbedModel: "sovereign-embed"
+  # Ingest-by-type services (Phase 3). Empty = off → the os-ui live adapters fall
+  # back to the deterministic mock. Point these at Docling / a Whisper ASR / an
+  # OCR-caption service to enable real parsing on a deploy.
+  doclingUrl:    ""
+  transcribeUrl: ""
+  ocrUrl:        ""
   forgejoUrl:     "http://forgejo-http:3000"
   forgejoUser:    "gitea_admin"
   litellmUrl:     "http://agentic-os-litellm:4000"
@@ -1792,6 +1804,19 @@ osUI:
   litellmSecret:
     name: litellm-credentials     # keys incl. masterkey
     key: masterkey
+  # Auth session-signing secret (HMAC-SHA256 for the login cookie). Leave EMPTY:
+  # the chart generates a strong random value into the `os-ui-session` Secret on
+  # first install and preserves it across `helm upgrade`. Set a value (or wire an
+  # ExternalSecret) to pin/rotate it explicitly. REQUIRED for GitOps (Argo CD /
+  # Flux): their `helm template` render can't read the existing Secret, so an
+  # empty value would regenerate the key each sync and log everyone out. NEVER
+  # commit a real value.
+  sessionSecret: ""
+  # Optional operator pre-seed of REAL users as a JSON array, e.g.
+  #   '[{"id":"ada","name":"Ada","password":"<strong>","domains":["sales"],"role":"admin"}]'
+  # Not shipped by default (empty) → the secure first-run bootstrap admin is the
+  # only account. Plaintext passwords supplied here are hashed on ingest.
+  usersSeed: ""
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits:   { cpu: 500m, memory: 512Mi }

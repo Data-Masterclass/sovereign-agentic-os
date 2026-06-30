@@ -72,6 +72,13 @@ export const config = {
   // Security plugin is disabled locally (no auth); on STACKIT enable security+TLS.
   opensearchUrl: base(env('OPENSEARCH_URL', 'http://opensearch:9200')),
   knowledgeIndex: env('KNOWLEDGE_INDEX', 'knowledge'),
+  // Knowledge context layer (Knowledge tab). The `sovereign-embed` LiteLLM model
+  // (mock-model on kind) emits deterministic 384-dim vectors; the dim MUST match
+  // opensearch.knnDimension (chart `retrieval.knnDimension`). When LiteLLM is
+  // unreachable the index/retrieve pipeline falls back to a deterministic local
+  // hash embedding of the SAME dim, so cosine ranking still works offline.
+  embedModel: env('KNOWLEDGE_EMBED_MODEL', 'sovereign-embed'),
+  embedDim: Number(env('KNOWLEDGE_EMBED_DIM', '384')) || 384,
   // Artifact-metadata index (workspace lifecycle store). Best-effort durable
   // mirror of the artifact registry; the OS UI degrades to an in-process store
   // when OpenSearch is unreachable so the teaching flows work offline.
@@ -79,6 +86,24 @@ export const config = {
   // App registry index (Software golden path). Best-effort durable mirror of the
   // in-process app store; the OS UI degrades to in-memory when OpenSearch is off.
   appsIndex: env('APPS_INDEX', 'os-apps'),
+
+  // ---- Files tab (unstructured context products). The `files` hybrid index, the
+  // shared embedding model + its k-NN dimension, and the ingest-by-type services.
+  // The OS UI degrades to a deterministic in-process mock for every one of these
+  // when the service is unreachable (kind), so the golden path runs offline. ----
+  filesIndex: env('FILES_INDEX', 'files'),
+  // The SHARED embedding model fronted by LiteLLM (kind: sovereign-embed@384;
+  // STACKIT: bge-m3@1024 via TEI-through-LiteLLM). NEVER hardcode the dim — the
+  // helm template wires FILES_EMBED_DIM from `retrieval.knnDimension` (the single
+  // source), so changing the model + dim reindexes consistently.
+  filesEmbedModel: env('FILES_EMBED_MODEL', 'sovereign-embed'),
+  filesEmbedDim: Number(env('FILES_EMBED_DIM', '384')),
+  // Ingest-by-type services (Phase 3). Docling (docs), a transcriber (audio/video),
+  // an OCR/caption service (images). In-cluster Service defaults; the live adapters
+  // fall back to the deterministic mock when these are absent.
+  doclingUrl: base(env('DOCLING_URL', 'http://docling:5001')),
+  transcribeUrl: base(env('TRANSCRIBE_URL', 'http://whisper:9000')),
+  ocrUrl: base(env('OCR_URL', 'http://ocr-caption:8000')),
 
   // ---- Identity (pragmatic, Ory-replaceable). OS_USERS is a JSON array of
   // seeded users { id, name, password, domain, role }. OS_SESSION_SECRET signs
@@ -165,6 +190,13 @@ export const config = {
   // locally (~2.5 GB JVM) — the Data/Unstructured surfaces probe it and degrade
   // to the query-tool catalog / OpenSearch index when it's unreachable.
   openmetadataApiUrl: base(env('OPENMETADATA_API_URL', 'http://openmetadata:8585')),
+
+  // ---- Layer-4 (Science / ML) ENABLEMENT. Off by default; an Admin enables
+  // Science per domain (`ml.enabled=true`) + sets GPU quotas. When OFF, the
+  // Science tab + its APIs short-circuit to a disabled surface (the capability
+  // is not in the cohort-1 path). When ON, the flow is demonstrable even with no
+  // live backend (deterministic seed). Distinct from backend REACHABILITY below.
+  mlEnabled: env('ML_ENABLED', 'false').toLowerCase() === 'true',
 
   // ---- Layer-4 (Science / ML) backends. Off by default; the Science surface
   // pings these server-side and degrades gracefully when a service is absent.

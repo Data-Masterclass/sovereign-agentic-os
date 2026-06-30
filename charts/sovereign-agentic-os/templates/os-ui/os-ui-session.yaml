@@ -1,0 +1,38 @@
+{{- if .Values.osUI.enabled }}
+{{- /*
+  OS-UI session-signing secret. The app signs its session cookie with HMAC-SHA256
+  using OS_SESSION_SECRET (lib/session.ts). If this is left at the in-code
+  `dev-only-insecure-...` fallback, ANYONE can forge a valid admin session — so a
+  real value MUST be present on every deploy.
+
+  Resolution order (no secret is ever committed to git):
+    1. An explicit `osUI.sessionSecret` (operator-provided / ExternalSecret), else
+    2. the value already stored in this Secret (preserved across `helm upgrade`
+       via `lookup`), else
+    3. a freshly generated 48-char random value on first install.
+
+  GITOPS CAVEAT: `lookup` only works for `helm install/upgrade` against a live
+  cluster. Argo CD / Flux and any `helm template`-based renderer return an empty
+  lookup, so step 2 can't preserve the value and step 3 would mint a NEW secret
+  on every sync — rotating the HMAC key and logging everyone out. For those
+  pipelines, set `osUI.sessionSecret` explicitly (an ExternalSecret is ideal).
+*/}}
+{{- $name := "os-ui-session" }}
+{{- $existing := (lookup "v1" "Secret" .Release.Namespace $name) }}
+{{- $current := "" }}
+{{- if $existing }}{{ $current = (index $existing.data "OS_SESSION_SECRET" | b64dec) }}{{- end }}
+{{- $secret := .Values.osUI.sessionSecret | default $current | default (randAlphaNum 48) }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui") | nindent 4 }}
+  annotations:
+    "helm.sh/resource-policy": keep
+type: Opaque
+stringData:
+  OS_SESSION_SECRET: {{ $secret | quote }}
+{{- end }}
