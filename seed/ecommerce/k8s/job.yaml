@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Data Masterclass
+#
+# Northpeak e-commerce seed — in-cluster runner. Reaches the os-ui Service over
+# the cluster network (governed API), authenticating as the seeded cast. It does
+# NOT touch the Kubernetes API, Helm, or any backend directly — every artifact is
+# created through os-ui's governed routes, so OPA/RLS/audit apply.
+#
+# Prereqs (see README):
+#   1. OS_USERS seeded with the cast (osUI.usersSeed) — so the identities exist.
+#   2. ConfigMap `northpeak-seed` built from the script files:
+#        kubectl -n agentic-os create configmap northpeak-seed \
+#          --from-file=seed.mjs=seed/ecommerce/seed.mjs \
+#          --from-file=client.mjs=seed/ecommerce/lib/client.mjs \
+#          --from-file=narrative.mjs=seed/ecommerce/lib/narrative.mjs
+#   3. Secret `northpeak-seed-credentials` with the cast passwords:
+#        kubectl -n agentic-os create secret generic northpeak-seed-credentials \
+#          --from-file=SEED_CREDENTIALS=seed/ecommerce/users.secret.json
+#
+# Run:  kubectl -n agentic-os apply -f seed/ecommerce/k8s/job.yaml
+#       kubectl -n agentic-os logs -f job/northpeak-seed
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: northpeak-seed
+  namespace: agentic-os
+  labels:
+    app.kubernetes.io/part-of: sovereign-agentic-os
+    app.kubernetes.io/component: ecommerce-seed
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: ecommerce-seed
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: seed
+          image: node:22.13.1-alpine3.21 # same base as the os-ui image
+          imagePullPolicy: IfNotPresent
+          workingDir: /seed
+          command: ["node", "seed.mjs"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          env:
+            - name: OS_UI_URL
+              value: "http://os-ui:3000"
+            - name: SEED_CREDENTIALS
+              valueFrom:
+                secretKeyRef:
+                  name: northpeak-seed-credentials
+                  key: SEED_CREDENTIALS
+          volumeMounts:
+            - { name: scripts, mountPath: /seed }
+          resources:
+            requests: { cpu: "50m", memory: "96Mi" }
+            limits: { cpu: "500m", memory: "256Mi" }
+      volumes:
+        - name: scripts
+          configMap:
+            name: northpeak-seed
+            items:
+              - { key: seed.mjs, path: seed.mjs }
+              - { key: client.mjs, path: lib/client.mjs }
+              - { key: narrative.mjs, path: lib/narrative.mjs }

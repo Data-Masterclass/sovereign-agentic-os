@@ -468,7 +468,7 @@ function ConnectionCard({
     const t = draft.find((x) => x.name === toolName);
     const args: Record<string, unknown> = t?.mode === 'Write-bounded'
       ? { id: 'OPP-1', amount: t.limits?.maxAmount ?? 1000 }
-      : { id: 'ACME' };
+      : { id: 'acct-1' };
     const body: Record<string, unknown> = { tool: toolName, args };
     if (opts?.asAgent) { body.asAgent = opts.asAgent; body.autonomous = opts.autonomous ?? false; }
     const r = await doPost(`/api/connections/${c.id}/tool`, body);

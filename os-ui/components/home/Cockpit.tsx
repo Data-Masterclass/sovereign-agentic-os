@@ -60,7 +60,7 @@ export default function Cockpit({ feed }: { feed: HomeFeed }) {
     ),
     wip: (
       <section className="cm" key="wip">
-        <ModuleHead title="My work in progress" href="/data" link="Workspace" />
+        <ModuleHead title="Personal work in progress" href="/data" link="Workspace" />
         {feed.wip.length === 0 ? (
           <Empty>No drafts in flight. Start one from a launcher card above.</Empty>
         ) : (

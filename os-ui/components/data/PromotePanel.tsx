@@ -132,7 +132,7 @@ export default function PromotePanel({
         <div className="row" style={{ marginTop: 14, gap: 8, alignItems: 'center' }}>
           <label className="muted" style={{ fontSize: 12.5 }}>Share with</label>
           <select value={visibility} onChange={(e) => setVisibility(e.target.value as 'domain' | 'shared')}>
-            <option value="domain">my domain</option>
+            <option value="domain">{domain} domain</option>
             <option value="shared">named people too</option>
           </select>
           <button className="btn" onClick={requestPromotion} disabled={!gate?.ok || busy === 'request'} title={gate?.ok ? '' : 'Complete the documentation first'}>

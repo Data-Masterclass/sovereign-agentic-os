@@ -7,6 +7,8 @@ import {
   _resetModels,
   upsertModel,
   getModel,
+  listModels,
+  listModelsForUser,
   compilePredictPolicy,
   inCallableScope,
   authorizePredict,
@@ -45,6 +47,20 @@ function personalModel(): ServiceModel {
   };
 }
 
+// The store ships EMPTY now; tests that exercise the churn worked-example
+// register it themselves (Personal tier, Production stage) right after reset.
+function churnModel(): ServiceModel {
+  return {
+    id: 'svc_churn_model', model: 'churn_model', name: 'Churn model', owner: 'sara', domain: 'sales',
+    tier: 'Personal', stage: 'Production', frontDoors: ['rest', 'mcp'],
+    versions: [{ version: 'v2', stage: 'Production', auc: 0.871, certified: true, runId: 'mlf-run-2a9c' }],
+  };
+}
+function resetWithChurn(): void {
+  _resetModels();
+  upsertModel(churnModel());
+}
+
 // ---------------------------------------------------- policy compiler (tier ladder)
 
 test('compiled policy widens callable scope as the tier rises (no separate publish step)', () => {
@@ -70,10 +86,39 @@ test('inCallableScope honours principal / domain / cross-domain', () => {
   assert.ok(!inCallableScope(policy, { principal: 'p', domain: 'marketing', isAgent: false })); // outside
 });
 
+// ------------------------------------------------ RLS: listModelsForUser entitlement boundary
+
+test('listModelsForUser is RLS-scoped — no other-domain or other-user Personal leak', () => {
+  _resetModels();
+  const m = (over: Partial<ServiceModel>): ServiceModel => ({ ...personalModel(), ...over });
+  upsertModel(m({ id: 'svc_p', model: 'p_model', name: 'A Personal sales', owner: 'sara', domain: 'sales', tier: 'Personal' }));
+  upsertModel(m({ id: 'svc_d', model: 'd_model', name: 'B Domain sales', owner: 'sara', domain: 'sales', tier: 'Domain' }));
+  upsertModel(m({ id: 'svc_dm', model: 'dm_model', name: 'C Domain marketing', owner: 'mara', domain: 'marketing', tier: 'Domain' }));
+  upsertModel(m({ id: 'svc_mp', model: 'mp_model', name: 'D Marketplace', owner: 'sara', domain: 'sales', tier: 'Marketplace' }));
+
+  // Owner in sales: own Personal + sales Domain + Marketplace; NOT marketing's Domain model.
+  assert.deepEqual(
+    new Set(listModelsForUser({ id: 'sara', domains: ['sales'] }).map((x) => x.model)),
+    new Set(['p_model', 'd_model', 'mp_model']),
+  );
+  // A different sales user: sales Domain + Marketplace, but NOT sara's Personal model.
+  assert.deepEqual(
+    new Set(listModelsForUser({ id: 'bob', domains: ['sales'] }).map((x) => x.model)),
+    new Set(['d_model', 'mp_model']),
+  );
+  // A marketing user: only marketing's Domain + Marketplace — no sales Personal/Domain leak.
+  assert.deepEqual(
+    new Set(listModelsForUser({ id: 'mara', domains: ['marketing'] }).map((x) => x.model)),
+    new Set(['dm_model', 'mp_model']),
+  );
+  // The unscoped variant still returns the whole registry (system/aggregate use only).
+  assert.equal(listModels().length, 4);
+});
+
 // ------------------------------------------------ dual front doors (no REST/MCP drift)
 
 test('REST and MCP evaluate the SAME compiled policy — same decision, different door', async () => {
-  _resetModels(); // churn_model seeded at Personal; promote so the Sales domain may call
+  resetWithChurn(); // churn_model registered at Personal; promote so the Sales domain may call
   promoteModel('churn_model', builder('sales'));
   const rest: Caller = { principal: 'churn-risk-app', domain: 'sales', isAgent: false };
   const mcp: Caller = { principal: 'sales-assistant', domain: 'sales', isAgent: true };
@@ -87,7 +132,7 @@ test('REST and MCP evaluate the SAME compiled policy — same decision, differen
 });
 
 test('tier scope denies an out-of-domain caller even when OPA grants the predict tool', async () => {
-  _resetModels();
+  resetWithChurn();
   const outsider: Caller = { principal: 'mkt-app', domain: 'marketing', isAgent: false };
   const d = await authorizePredict('churn_model', outsider, grantPredict);
   assert.equal(d.decision, 'deny');
@@ -95,7 +140,7 @@ test('tier scope denies an out-of-domain caller even when OPA grants the predict
 });
 
 test('certifying to Marketplace widens callable scope to a second domain automatically', async () => {
-  _resetModels();
+  resetWithChurn();
   const outsider: Caller = { principal: 'mkt-app', domain: 'marketing', isAgent: true };
   assert.equal((await authorizePredict('churn_model', outsider, grantPredict)).decision, 'deny');
   promoteModel('churn_model', builder('sales')); // Domain — marketing still out of scope
@@ -105,7 +150,7 @@ test('certifying to Marketplace widens callable scope to a second domain automat
 });
 
 test('predict honours the OPA tool decision (deny / requires_approval) inside scope', async () => {
-  _resetModels();
+  resetWithChurn();
   promoteModel('churn_model', builder('sales')); // Domain — sales-assistant is in scope
   const inDomain: Caller = { principal: 'sales-assistant', domain: 'sales', isAgent: true };
   assert.equal((await authorizePredict('churn_model', inDomain, denyPredict)).decision, 'deny');
@@ -126,7 +171,7 @@ test('promote Personal→Domain needs a Builder; an agent can NEVER self-promote
 });
 
 test('certify Domain→Marketplace needs an Admin; agent blocked; sets consumption mode', () => {
-  _resetModels();
+  resetWithChurn();
   promoteModel('churn_model', builder('sales')); // Personal → Domain, ready to certify
   assert.throws(() => certifyModel('churn_model', agentActor('sales'), 'fork-allowed'), /agent cannot certify/i);
   assert.throws(() => certifyModel('churn_model', builder('sales'), 'read-in-place'), /Admin/i);
@@ -184,7 +229,7 @@ test('two-mode step governance: in-tab approves writes inline, autonomous bounds
 // ------------------------------------------------ marketplace consumption at certify
 
 test('read-in-place import grants predict without copying the model', () => {
-  _resetModels();
+  resetWithChurn();
   promoteModel('churn_model', builder('sales'));
   certifyModel('churn_model', admin('sales'), 'read-in-place');
   const r = importModel('churn_model', { id: 'mara', domain: 'marketing' });
@@ -194,7 +239,7 @@ test('read-in-place import grants predict without copying the model', () => {
 });
 
 test('fork-allowed import drops a governed fork in the consumer domain', () => {
-  _resetModels();
+  resetWithChurn();
   promoteModel('churn_model', builder('sales'));
   certifyModel('churn_model', admin('sales'), 'fork-allowed');
   const r = importModel('churn_model', { id: 'mara', domain: 'marketing' });
@@ -206,6 +251,6 @@ test('fork-allowed import drops a governed fork in the consumer domain', () => {
 });
 
 test('cannot import a model that is not yet certified to the Marketplace', () => {
-  _resetModels(); // churn at Domain, not Marketplace
+  resetWithChurn(); // churn at Personal, not Marketplace
   assert.throws(() => importModel('churn_model', { id: 'm', domain: 'marketing' }), /not certified/i);
 });

@@ -86,34 +86,10 @@ function id(tab: Tab): string {
 }
 
 function ensureSeeded(): void {
+  // A fresh tenant starts EMPTY. Linkable artifacts come only from real
+  // governed components created across the tabs (e.g. the Northpeak seed).
   if (seeded) return;
   seeded = true;
-  // A handful of pre-existing, governed, already-shared artifacts so "link an
-  // existing component" and the composition map have real upstream to attach to.
-  put({
-    id: 'data_handbook',
-    tab: 'data',
-    title: 'Customer 360 data product',
-    domain: 'sales',
-    visibility: 'certified',
-    lifecycle: 'certified',
-    consumes: [],
-    bigBetIds: [],
-    usage30d: 240,
-    omFqn: 'iceberg.sales.customer_360',
-  });
-  put({
-    id: 'conn_salesforce',
-    tab: 'connection',
-    title: 'Salesforce connection',
-    domain: 'sales',
-    visibility: 'shared',
-    lifecycle: 'tested-governed',
-    consumes: [],
-    bigBetIds: [],
-    usage30d: 90,
-    omFqn: 'connection.sales.salesforce',
-  });
 }
 
 function put(a: Artifact): Artifact {
@@ -255,30 +231,24 @@ const pillars = new Map<string, Pillar>();
 let strategySeeded = false;
 
 function ensureStrategy(): void {
+  // A fresh tenant starts EMPTY. Strategy metrics and pillars are defined only
+  // through the platform's own governed flows (e.g. the Northpeak seed).
   if (strategySeeded) return;
   strategySeeded = true;
-  metrics.set('metric_nrr', {
-    id: 'metric_nrr',
-    name: 'Net Revenue Retention',
-    cubeMeasure: 'mart_retention.nrr_eur',
-    unit: '€',
-    baseline: 1_200_000,
-    current: 1_560_000,
-    // RLS: two viewers see their entitled slice of the same governed number.
-    rls: { sara: 1_560_000, kenji: 980_000 },
-  });
-  pillars.set('pillar_retention', {
-    id: 'pillar_retention',
-    name: 'Retention',
-    scope: 'tenant',
-    metricId: 'metric_nrr',
-  });
 }
 
 export function __resetStrategy(): void {
   metrics.clear();
   pillars.clear();
   strategySeeded = false;
+}
+
+/** Test hook: register a strategy metric and/or pillar. Production seeds these
+ *  through the governed Strategy flows; this lets tests inject fixtures. */
+export function __seedStrategy(metric?: BusinessMetric, pillar?: Pillar): void {
+  ensureStrategy();
+  if (metric) metrics.set(metric.id, metric);
+  if (pillar) pillars.set(pillar.id, pillar);
 }
 
 export function getPillar(pillarId: string): Pillar | null {

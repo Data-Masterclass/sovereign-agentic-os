@@ -639,9 +639,9 @@ function executeMock(c: Connection, tool: string, args: Record<string, unknown>,
     case 'notion_get_page':
       return { ...base, page: { id: String(args.id ?? 'pg_demo'), title: 'Q3 Planning', blocks: 12 } };
     case 'read_account':
-      return { ...base, account: { id: String(args.id ?? 'ACME'), name: 'ACME', owner: 'Sales', arr: 48000 } };
+      return { ...base, account: { id: String(args.id ?? 'acct-1'), name: 'Sample Account', owner: 'Sales', arr: 48000 } };
     case 'read_opportunity':
-      return { ...base, opportunity: { id: String(args.id ?? 'OPP-1'), account: 'ACME', amount: 42000, stage: 'Renewal' } };
+      return { ...base, opportunity: { id: String(args.id ?? 'OPP-1'), account: 'Sample Account', amount: 42000, stage: 'Renewal' } };
     case 'update_opportunity_amount':
       return { ...base, updated: { id: String(args.id ?? 'OPP-1'), amount: Number(args.amount ?? 0) } };
     case 'list_files':

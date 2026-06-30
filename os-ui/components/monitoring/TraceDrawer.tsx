@@ -94,7 +94,6 @@ export default function TraceDrawer({
     ? ([
         ['runs', corr.run],
         ['pipelines', corr.pipeline],
-        ['system', corr.system],
         ['artifacts', corr.artifact],
       ].filter(([, v]) => Boolean(v)) as [LensId, HealthItem][]).map(([lens, it]) => ({
         lens,

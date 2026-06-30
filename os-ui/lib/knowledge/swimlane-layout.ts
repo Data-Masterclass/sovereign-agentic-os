@@ -10,18 +10,20 @@ import { type Workflow, type WorkflowStep, type ActorType } from './schema.ts';
  * renderer over `workflow.md`.
  *
  * A workflow is FLAT (no nesting). Each step is tagged with an actor
- * (Human / Software / Agent). We render actor-colored horizontal LANES, one per
- * actor type that appears, and place steps left-to-right in sequence inside their
- * actor's lane. Sequential connectors join step i → step i+1.
+ * (Human / Software / Agent). We render actor-colored vertical LANES (columns),
+ * one per actor type that appears, and place steps top-to-bottom in sequence
+ * inside their actor's column. Sequential connectors join step i → step i+1
+ * vertically. A vertical flow fits the viewport width (one column per actor)
+ * and scrolls down as steps accumulate — no horizontal overflow.
  */
 
 export type LaneType = ActorType;
 
 export type Lane = {
   actor: LaneType;
-  y: number;
-  height: number;
-  /** Lane row index (0-based, in display order). */
+  x: number;
+  width: number;
+  /** Lane column index (0-based, in display order). */
   index: number;
 };
 
@@ -68,15 +70,15 @@ const LANE_ORDER: ActorType[] = ['Human', 'Software', 'Agent'];
 
 const BLOCK_W = 168;
 const BLOCK_H = 82;
-const GAP_X = 56;
-const LANE_PAD_Y = 16;
-const LANE_LABEL_W = 96;
+const GAP_Y = 44;
+const LANE_PAD_X = 16;
+const LANE_LABEL_H = 30;
 const PAD = 20;
 
 /**
- * Lay out a workflow's steps as actor swimlanes. `gapFor` reports how many of a
- * step's links point at a missing entity (injected so the layout stays pure and
- * the resolver can be mocked).
+ * Lay out a workflow's steps as actor swimlanes (vertical columns). `gapFor`
+ * reports how many of a step's links point at a missing entity (injected so the
+ * layout stays pure and the resolver can be mocked).
  */
 export function layoutSwimlanes(
   workflow: Workflow,
@@ -88,32 +90,32 @@ export function layoutSwimlanes(
   const present = LANE_ORDER.filter((actor) => workflow.steps.some((s) => s.actor === actor));
   const laneActors = present.length > 0 ? present : (['Human'] as ActorType[]);
 
-  const laneHeight = BLOCK_H + LANE_PAD_Y * 2;
+  const laneWidth = BLOCK_W + LANE_PAD_X * 2;
   const lanes: Lane[] = laneActors.map((actor, index) => ({
     actor,
     index,
-    y: PAD + index * laneHeight,
-    height: laneHeight,
+    x: PAD + index * laneWidth,
+    width: laneWidth,
   }));
-  const laneY = new Map<ActorType, Lane>();
-  for (const l of lanes) laneY.set(l.actor, l);
+  const laneX = new Map<ActorType, Lane>();
+  for (const l of lanes) laneX.set(l.actor, l);
 
   const stepCount = workflow.steps.length;
-  const contentW = LANE_LABEL_W + stepCount * BLOCK_W + Math.max(0, stepCount - 1) * GAP_X;
-  const width = PAD * 2 + Math.max(contentW, LANE_LABEL_W + BLOCK_W);
-  const height = PAD * 2 + lanes.length * laneHeight;
+  const contentH = LANE_LABEL_H + stepCount * BLOCK_H + Math.max(0, stepCount - 1) * GAP_Y;
+  const width = PAD * 2 + lanes.length * laneWidth;
+  const height = PAD * 2 + Math.max(contentH, LANE_LABEL_H + BLOCK_H);
 
   const blockById = new Map<string, StepBlock>();
   const blocks: StepBlock[] = workflow.steps.map((s, seq) => {
-    const lane = laneY.get(s.actor) ?? lanes[0];
+    const lane = laneX.get(s.actor) ?? lanes[0];
     const block: StepBlock = {
       id: s.id,
       title: s.title,
       actor: s.actor,
       actorName: s.actor_name,
       seq,
-      x: PAD + LANE_LABEL_W + seq * (BLOCK_W + GAP_X),
-      y: lane.y + LANE_PAD_Y,
+      x: lane.x + LANE_PAD_X,
+      y: PAD + LANE_LABEL_H + seq * (BLOCK_H + GAP_Y),
       w: BLOCK_W,
       h: BLOCK_H,
       inputs: s.inputs.length,
@@ -127,7 +129,7 @@ export function layoutSwimlanes(
     return block;
   });
 
-  // Sequential connectors: step i → step i+1.
+  // Sequential connectors: step i → step i+1 (top-to-bottom).
   const edges: StepEdge[] = [];
   for (let i = 0; i < blocks.length - 1; i++) {
     const a = blocks[i];
@@ -135,10 +137,10 @@ export function layoutSwimlanes(
     edges.push({
       from: a.id,
       to: b.id,
-      x1: a.x + a.w,
-      y1: a.y + a.h / 2,
-      x2: b.x,
-      y2: b.y + b.h / 2,
+      x1: a.x + a.w / 2,
+      y1: a.y + a.h,
+      x2: b.x + b.w / 2,
+      y2: b.y,
     });
   }
 

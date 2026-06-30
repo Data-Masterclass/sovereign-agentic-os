@@ -1,0 +1,372 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * Cockpit — SCOPED styles for the `/cockpit` route only (imported by
+ * app/cockpit/page.tsx). Everything lives under `.cockpit-page` so it can't leak
+ * into the rest of the OS and stays out of globals.css (which a parallel agent
+ * is editing). It reuses the shared brand tokens + the existing `.cm` module
+ * cards (defined globally), and re-declares the warm "Home-family" tokens those
+ * cards rely on so the modules render correctly off the Home route.
+ *
+ * Taste guardrails: warm cream canvas + Fraunces display + the gold/teal brand
+ * accents; generous whitespace; restrained, purposeful motion; NO Inter, NO
+ * purple, NO centered-hero cliché, NO cards-in-cards. Apple-grade calm.
+ * ========================================================================== */
+
+.cockpit-page {
+  --display: var(--f-display), 'Fraunces', Georgia, 'Times New Roman', serif;
+  --cream: #f7f1e3;
+  --tile: #fffdf8;
+  --warm-border: #ece1ca;
+  --warm-border-strong: #e0d2b3;
+  background: var(--cream);
+  min-height: 100vh;
+}
+[data-theme='dark'] .cockpit-page {
+  --cream: #14110c;
+  --tile: #1b1710;
+  --warm-border: #2b2418;
+  --warm-border-strong: #38301f;
+}
+
+/* ---- Hero — editorial, asymmetric (mirrors Home's, distinct copy) ---------- */
+.ci-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+  padding: 40px 40px 26px;
+  background:
+    radial-gradient(700px 280px at 86% -45%, rgba(200, 162, 74, 0.18), transparent 70%),
+    radial-gradient(560px 260px at 4% 135%, rgba(31, 143, 136, 0.09), transparent 70%);
+  border-bottom: 1px solid var(--warm-border);
+}
+.ci-eyebrow {
+  font-family: var(--font-sub);
+  font-size: 12px;
+  letter-spacing: 2.4px;
+  text-transform: uppercase;
+  color: var(--gold-text);
+  margin-bottom: 8px;
+}
+.ci-greeting {
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: clamp(28px, 4vw, 44px);
+  line-height: 1.05;
+  letter-spacing: -0.4px;
+  text-wrap: balance;
+  color: var(--text);
+  margin: 0;
+}
+.ci-name {
+  font-style: italic;
+  color: var(--gold-deep);
+}
+[data-theme='dark'] .ci-name { color: var(--gold-light); }
+.ci-sub {
+  margin: 12px 0 0;
+  max-width: 560px;
+  font-size: 15px;
+  line-height: 1.6;
+  text-wrap: pretty;
+  color: var(--text-muted);
+}
+.ci-persona {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 12px 18px;
+  border: 1px solid var(--gold-line);
+  border-radius: 14px;
+  background: var(--gold-soft);
+}
+.ci-persona-stance {
+  font-family: var(--display);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--gold-deep);
+  line-height: 1;
+}
+[data-theme='dark'] .ci-persona-stance { color: var(--gold-light); }
+.ci-persona-role {
+  font-family: var(--font-head);
+  font-size: 10px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.ci-shell {
+  max-width: 1180px;
+  padding: 24px 40px 64px;
+}
+
+/* ---- Headline pulse strip — four glanceable, clickable stats -------------- */
+.ci-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 30px;
+}
+.ci-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 18px 18px 16px;
+  text-decoration: none;
+  border: 1px solid var(--warm-border);
+  border-radius: var(--radius-lg);
+  background: var(--tile);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+/* State carries via a meaningful surface tint + value color — not a side stripe.
+   "Needs you" and an over-cap spend are the only states worth a louder surface. */
+.ci-stat.tone-act {
+  background: var(--gold-soft);
+  border-color: var(--gold-line);
+}
+.ci-stat.tone-hot {
+  background: rgba(192, 57, 43, 0.07);
+  border-color: rgba(192, 57, 43, 0.28);
+}
+.ci-stat:hover {
+  transform: translateY(-2px);
+  border-color: var(--warm-border-strong);
+  box-shadow: 0 14px 30px -22px rgba(60, 45, 12, 0.5);
+}
+.ci-stat.tone-act:hover { border-color: var(--gold); }
+.ci-stat-value {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 32px;
+  line-height: 1;
+  letter-spacing: -0.5px;
+  color: var(--text);
+}
+.ci-stat.tone-act .ci-stat-value { color: var(--gold-deep); }
+[data-theme='dark'] .ci-stat.tone-act .ci-stat-value { color: var(--gold-light); }
+.ci-stat.tone-hot .ci-stat-value { color: var(--danger); }
+.ci-stat-label {
+  margin-top: 8px;
+  font-family: var(--font-head);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.ci-stat-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ---- Section heads -------------------------------------------------------- */
+.ci-sec-head { margin: 30px 0 16px; }
+.ci-sec-title {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 23px;
+  letter-spacing: -0.2px;
+  color: var(--text);
+  margin: 0;
+}
+.ci-sec-sub {
+  margin: 6px 0 0;
+  max-width: 640px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+/* ---- Module grid (reuses the global .cm cards) — a touch more life -------- */
+.cockpit-page .cockpit-grid { margin-top: 2px; }
+.cockpit-page .cm {
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.cockpit-page .cm:hover {
+  transform: translateY(-2px);
+  border-color: var(--warm-border-strong);
+  box-shadow: 0 16px 34px -26px rgba(60, 45, 12, 0.55);
+}
+
+/* ---- Top-items board ------------------------------------------------------ */
+.ci-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+.ci-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--warm-border);
+  border-radius: var(--radius-lg);
+  background: var(--tile);
+  padding: 16px 16px 12px;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.ci-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--warm-border-strong);
+  box-shadow: 0 16px 34px -26px rgba(60, 45, 12, 0.55);
+}
+.ci-card-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-bottom: 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--warm-border);
+}
+.ci-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--gold-text);
+  background: var(--gold-soft);
+  border: 1px solid var(--gold-line);
+}
+.ci-card-title {
+  flex: 1;
+  font-family: var(--font-head);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--text);
+  margin: 0;
+}
+.ci-card-count {
+  font-family: var(--font-head);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--cream);
+  border: 1px solid var(--warm-border);
+  border-radius: 999px;
+  padding: 1px 9px;
+}
+.ci-list { list-style: none; margin: 0; padding: 0; }
+.ci-row + .ci-row { border-top: 1px solid var(--warm-border); }
+.ci-row-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 6px;
+  margin: 0 -6px;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: background 0.15s ease;
+}
+.ci-row-link:hover { background: var(--cream); }
+.ci-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-faint);
+}
+.ci-dot.personal { background: var(--gold); }
+.ci-dot.shared { background: var(--teal); box-shadow: 0 0 7px rgba(31, 143, 136, 0.45); }
+.ci-dot.certified { background: var(--gold-deep); box-shadow: 0 0 7px var(--gold-line); }
+.ci-dot.active { background: var(--teal); box-shadow: 0 0 7px rgba(31, 143, 136, 0.45); }
+.ci-dot.shipped { background: var(--gold-deep); }
+.ci-dot.draft { background: var(--text-faint); }
+.ci-row-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.ci-row-name {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ci-row-meta {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+.ci-row-go {
+  font-size: 14px;
+  color: var(--gold-text);
+  opacity: 0;
+  transform: translateX(-3px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.ci-row-link:hover .ci-row-go { opacity: 1; transform: translateX(0); }
+.ci-more {
+  margin-top: 8px;
+  padding: 7px 6px 2px;
+  font-family: var(--font-head);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--gold-text);
+  text-decoration: none;
+  border-top: 1px solid var(--warm-border);
+}
+.ci-more:hover { text-decoration: underline; }
+.ci-more-all { color: var(--text-faint); }
+
+/* ---- Honest empty state (fresh tenant) ------------------------------------ */
+.ci-empty {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 30px 28px;
+  border: 1px dashed var(--warm-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--tile);
+}
+.ci-empty-mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  font-size: 20px;
+  color: var(--gold-text);
+  background: var(--gold-soft);
+  border: 1px solid var(--gold-line);
+}
+.ci-empty-title {
+  font-family: var(--display);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+.ci-empty-sub {
+  margin: 4px 0 0;
+  max-width: 560px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+/* ---- Responsive ----------------------------------------------------------- */
+@media (max-width: 900px) {
+  .ci-stats { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 720px) {
+  .ci-hero { padding: 26px 18px 20px; }
+  .ci-shell { padding: 18px 16px 48px; }
+}
+
+/* Respect reduced-motion: keep the calm, drop the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .ci-stat,
+  .ci-card,
+  .cockpit-page .cm,
+  .ci-row-go { transition: none; }
+  .ci-stat:hover,
+  .ci-card:hover,
+  .cockpit-page .cm:hover { transform: none; }
+}

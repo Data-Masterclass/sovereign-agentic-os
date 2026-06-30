@@ -94,40 +94,11 @@ function fail(message: string, status: number): never {
 
 // ------------------------------------------------------------------- seeding --
 
-/** The canonical "Orders" worked example (data-architecture-model.md §Worked
- *  example). Seeded as a private Silver DATASET owned by amir (sales) — the
- *  starting point a Builder later promotes and an Admin certifies. */
-function ordersYaml(): string {
-  const versions = emptyVersions();
-  versions.bronze = { built: true, passThrough: false, quality: 'passing', updatedAt: now(), artifact: 'bronze/orders.dlt.yml' };
-  versions.silver = { built: true, passThrough: false, quality: 'passing', updatedAt: now(), artifact: 'silver/stg_orders.sql' };
-  const d: Dataset = {
-    version: '1',
-    id: 'ds_orders',
-    name: 'Orders',
-    owner: 'amir',
-    domain: 'sales',
-    tier: 'dataset',
-    visibility: 'private',
-    description: 'Raw and cleaned sales orders — the worked example.',
-    versions,
-    grants: [],
-    measures: [],
-    columns: [
-      { name: 'order_id', description: 'Surrogate key for the order.' },
-      { name: 'order_date', description: 'Date the order was placed.' },
-      { name: 'region', description: 'Sales region the order belongs to.' },
-      { name: 'net_amount', description: 'Order value net of tax, in EUR.' },
-    ],
-  };
-  return serializeDataset(d);
-}
-
+/** A fresh tenant starts EMPTY. Content is created only through the platform's
+ *  own governed flows (e.g. the Northpeak e-commerce seed), never baked in. */
 function ensureSeeded(): void {
   if (seeded) return;
   seeded = true;
-  const orders: DatasetRecord = { id: 'ds_orders', owner: 'amir', domain: 'sales', yaml: ordersYaml(), updatedAt: now() };
-  store.set(orders.id, orders);
 }
 
 /** Test hook: wipe the in-process store + reseed. */

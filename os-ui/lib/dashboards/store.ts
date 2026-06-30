@@ -17,22 +17,9 @@ export type Principal = { id: string; domains: string[]; role: Role };
 
 type Stored = DashboardRecord & { domain: string };
 
-const SEED: Stored[] = [
-  {
-    id: 'sales-overview',
-    owner: 'amir',
-    domain: 'sales',
-    tier: 'domain',
-    spec: {
-      name: 'Sales Overview',
-      view: 'Sales',
-      charts: [
-        { name: 'Revenue', vizType: 'big_number_total', metric: 'Sales.revenue' },
-        { name: 'Revenue by region', vizType: 'bar', metric: 'Sales.revenue', dimensions: ['Sales.region'] },
-      ],
-    },
-  },
-];
+// A fresh tenant starts EMPTY. Dashboards are created only through the
+// platform's own governed flows (e.g. the Northpeak e-commerce seed).
+const SEED: Stored[] = [];
 
 let dashboards: Stored[] = [];
 

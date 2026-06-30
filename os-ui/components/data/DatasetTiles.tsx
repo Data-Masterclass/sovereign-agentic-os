@@ -165,9 +165,9 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
 
       {groups ? (
         <>
-          <Group title="My datasets" tiles={groups.mine} onOpen={onOpen} />
-          <Group title="Shared in my domain" tiles={groups.domain} onOpen={onOpen} />
-          <Group title="Marketplace products" tiles={groups.marketplace} onOpen={onOpen} onImport={importProduct} />
+          <Group title="Data" tiles={groups.mine} onOpen={onOpen} />
+          <Group title="Shared Data" tiles={groups.domain} onOpen={onOpen} />
+          <Group title="Marketplace Data" tiles={groups.marketplace} onOpen={onOpen} onImport={importProduct} />
         </>
       ) : !err ? <div className="stub-page" style={{ marginTop: 20 }}>Loading datasets…</div> : null}
     </>

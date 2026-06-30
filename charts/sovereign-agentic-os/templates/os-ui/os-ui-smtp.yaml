@@ -1,0 +1,40 @@
+{{- if and .Values.osUI.enabled .Values.osUI.smtp.enabled }}
+{{- /*
+  OS-UI SMTP password Secret. The OS UI sends transactional mail (email
+  verification today; user invites later) via its built-in SMTP client
+  (os-ui/lib/mailer.ts), reading SMTP_PASS from this Secret so the credential is
+  NEVER in plaintext env or committed to git.
+
+  Resolution order (no secret is ever committed):
+    1. an explicit `osUI.smtp.password` (operator-provided / ExternalSecret), else
+    2. the value already stored in this Secret (preserved across `helm upgrade`
+       via `lookup`), else
+    3. an empty string — a valid configuration for an UNAUTHENTICATED relay.
+
+  The operator supplies the real password out-of-band, e.g.
+    kubectl -n <ns> create secret generic os-ui-smtp \
+      --from-literal=SMTP_PASS='<your-smtp-password>'
+  or via a gitignored values.private.yaml (`osUI.smtp.password`) / an
+  ExternalSecret. GITOPS CAVEAT: `lookup` is empty under `helm template` (Argo CD
+  / Flux), so for those pipelines set the value explicitly (an ExternalSecret is
+  ideal) rather than relying on step 2.
+*/}}
+{{- $name := "os-ui-smtp" }}
+{{- $existing := (lookup "v1" "Secret" .Release.Namespace $name) }}
+{{- $current := "" }}
+{{- if $existing }}{{ $current = (index $existing.data "SMTP_PASS" | default "" | b64dec) }}{{- end }}
+{{- $pass := .Values.osUI.smtp.password | default $current | default "" }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui") | nindent 4 }}
+  annotations:
+    "helm.sh/resource-policy": keep
+type: Opaque
+stringData:
+  SMTP_PASS: {{ $pass | quote }}
+{{- end }}

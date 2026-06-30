@@ -107,7 +107,7 @@ export default function SandboxLane() {
   return (
     <>
       <div className="section-title">
-        My data <span className="badge vis-personal">Personal</span>
+        Personal data <span className="badge vis-personal">Personal</span>
         {prefix ? <span className="count-pill ok">{prefix}</span> : null}
       </div>
       <p className="hint" style={{ marginTop: 0 }}>

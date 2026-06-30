@@ -121,6 +121,59 @@ spec:
             - name: OS_USERS
               value: {{ . | quote }}
             {{- end }}
+            # ---- Outbound email (OPTIONAL — os-ui/lib/mailer.ts pluggable mailer,
+            # transports selected Graph > SMTP > none). With NEITHER block enabled
+            # the platform works fully without email (the first-run admin
+            # auto-verifies, later accounts are active at once). Secrets come from
+            # k8s Secrets — never plaintext here.
+            {{- if .Values.osUI.graph.enabled }}
+            # Transport 1 — Microsoft Graph sendMail (recommended for M365).
+            # GRAPH_CLIENT_SECRET comes from the os-ui-graph Secret.
+            - name: GRAPH_TENANT_ID
+              value: {{ .Values.osUI.graph.tenantId | quote }}
+            - name: GRAPH_CLIENT_ID
+              value: {{ .Values.osUI.graph.clientId | quote }}
+            - name: GRAPH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: os-ui-graph
+                  key: GRAPH_CLIENT_SECRET
+                  optional: true
+            - name: MAIL_FROM
+              value: {{ .Values.osUI.graph.mailFrom | default "support@datamasterclass.com" | quote }}
+            {{- end }}
+            {{- if .Values.osUI.smtp.enabled }}
+            # Transport 2 — generic SMTP relay (fallback). SMTP_PASS comes from the
+            # os-ui-smtp Secret.
+            - name: SMTP_HOST
+              value: {{ .Values.osUI.smtp.host | quote }}
+            - name: SMTP_PORT
+              value: {{ .Values.osUI.smtp.port | quote }}
+            - name: SMTP_SECURE
+              value: {{ .Values.osUI.smtp.secure | quote }}
+            {{- with .Values.osUI.smtp.user }}
+            - name: SMTP_USER
+              value: {{ . | quote }}
+            {{- end }}
+            - name: SMTP_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: os-ui-smtp
+                  key: SMTP_PASS
+                  optional: true
+            - name: SMTP_FROM
+              value: {{ .Values.osUI.smtp.from | default "support@datamasterclass.com" | quote }}
+            {{- end }}
+            {{- with (toString .Values.osUI.emailVerification) }}
+            # Coerced via toString so a YAML/`--set` boolean false is honoured too.
+            - name: OS_EMAIL_VERIFICATION
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.osUI.publicUrl }}
+            # Absolute base for emailed verification links (else same-origin path).
+            - name: OS_PUBLIC_URL
+              value: {{ . | quote }}
+            {{- end }}
             # In-cluster backend Service URLs (overridable per environment).
             - name: SAMPLE_AGENT_URL
               value: {{ $u.sampleAgentUrl | quote }}
@@ -184,6 +237,13 @@ spec:
               value: {{ $u.kserveUrl | default "http://kserve:80" | quote }}
             - name: OPENMETADATA_API_URL
               value: {{ $u.openmetadataApiUrl | default "http://openmetadata:8585" | quote }}
+            {{- if .Values.ml.enabled }}
+            # Layer 4 (Science). Gates the Science/ML surfaces in the UI
+            # (lib/config.ts reads ML_ENABLED). On when the Science plane
+            # (MLflow/KServe/Featureform/Trino/Cube) is deployed via ml.enabled.
+            - name: ML_ENABLED
+              value: "true"
+            {{- end }}
             {{- if .Values.terminal.enabled }}
             # In-UI Terminal. The UI mints a short-lived token (signed with the
             # SAME secret the broker verifies) for authorised roles, then the
@@ -250,6 +310,9 @@ spec:
                 secretKeyRef:
                   name: {{ $u.forgejoSecret.name | quote }}
                   key: {{ $u.forgejoSecret.key | quote }}
+                  # Optional so os-ui boots when Forgejo is disabled (secret absent);
+                  # the Software tab's git features degrade gracefully without it.
+                  optional: true
             - name: LITELLM_MASTER_KEY
               valueFrom:
                 secretKeyRef:

@@ -272,7 +272,7 @@ const MOCK_TRACE_DETAILS: Record<string, TraceDetail> = {
     ts: ago(180),
     contextPack: [
       'knowledge:discount-policy (certified) — renewals 5–10% off list',
-      'file:acme-contract.pdf — renewal terms, CPI cap',
+      'file:contract.pdf — renewal terms, CPI cap',
       'metric request: daily_revenue.total_revenue · Q2 2026',
     ],
     steps: [

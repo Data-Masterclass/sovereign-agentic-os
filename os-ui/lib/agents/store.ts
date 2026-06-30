@@ -113,47 +113,6 @@ function starterYaml(name: string, domain: string, visibility: Visibility): stri
   return serializeSystem(sys);
 }
 
-function researchDeskYaml(): string {
-  const sys: System = {
-    version: '1',
-    system: { name: 'Research Desk', domain: 'sales', visibility: 'Marketplace' },
-    entrypoint: 'supervisor',
-    state: { channels: { messages: 'add_messages' } },
-    grants: { data: [], knowledge: ['handbook'], tools: ['retrieve', 'write_file'], connections: [] },
-    routing: { overrides: {} },
-    agents: [
-      {
-        id: 'supervisor',
-        role: 'Routes research and writing',
-        agent_md: '# Supervisor\n\nRoute the request to the researcher, then the writer.',
-        memory_md: '# Memory\n',
-        members: ['researcher', 'writer'],
-      },
-      {
-        id: 'researcher',
-        role: 'Finds and cites facts',
-        agent_md: '# Researcher\n\nRetrieve grounded passages and summarise with citations.',
-        memory_md: '',
-        tools: ['retrieve'],
-      },
-      {
-        id: 'writer',
-        role: 'Drafts the deliverable',
-        agent_md: '# Writer\n\nWrite the final document from the researcher’s notes.',
-        memory_md: '',
-        tools: ['write_file'],
-        model: 'ministral-3',
-      },
-    ],
-    edges: [
-      { from: 'supervisor', to: 'researcher', type: 'supervise' },
-      { from: 'supervisor', to: 'writer', type: 'supervise' },
-      { from: 'researcher', to: 'writer', type: 'handoff', when: 'research complete' },
-    ],
-  };
-  return serializeSystem(sys);
-}
-
 function record(partial: Omit<SystemRecord, 'updatedAt' | 'lastActivity' | 'running' | 'schedule' | 'disabledAgents' | 'origin'> & Partial<SystemRecord>): SystemRecord {
   return {
     running: false,
@@ -167,26 +126,10 @@ function record(partial: Omit<SystemRecord, 'updatedAt' | 'lastActivity' | 'runn
 }
 
 function ensureSeeded(): void {
+  // A fresh tenant starts EMPTY. Agent systems are authored only through the
+  // platform's own governed flows (e.g. the Northpeak e-commerce seed).
   if (seeded) return;
   seeded = true;
-  const market = record({
-    id: 'sys_research_desk',
-    name: 'Research Desk',
-    domain: 'sales',
-    owner: 'sara',
-    visibility: 'Marketplace',
-    yaml: researchDeskYaml(),
-  });
-  store.set(market.id, market);
-  const shared = record({
-    id: 'sys_support_triage',
-    name: 'Support Triage',
-    domain: 'sales',
-    owner: 'sara',
-    visibility: 'Shared',
-    yaml: starterYaml('Support Triage', 'sales', 'Shared'),
-  });
-  store.set(shared.id, shared);
 }
 
 /** Test hook: wipe the in-process store + reseed. */

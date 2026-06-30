@@ -86,6 +86,24 @@ spec:
                 secretKeyRef: { name: langfuse-init, key: LANGFUSE_INIT_PROJECT_SECRET_KEY }
           ports:
             - { name: http, containerPort: 8000 }
+          # The agent (app.py main()) runs a blocking wait_for_gateway() warmup —
+          # up to 60 retries * 3s = 180s of LiteLLM calls — BEFORE it binds the
+          # HTTP server, so /health does not answer until warmup finishes (or
+          # gives up). When a dependency is not yet ready (model-server still
+          # loading the model, or the litellm virtual key not yet registered),
+          # warmup keeps failing and the previous probe layout let livenessProbe
+          # (initialDelay 30s + 3*20s ~= 90s) kill the pod before the server ever
+          # bound -> permanent CrashLoop. A startupProbe gives the slow start a
+          # generous budget (5s * 45 = 225s > the 180s warmup ceiling) and holds
+          # liveness/readiness off until the server is actually listening; once
+          # warmup gives up it binds regardless, so this breaks the loop even if
+          # the dependency is still coming up. (Proper fix = bind first / warm up
+          # in a background thread, which needs an image rebuild — see report.)
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 45
           readinessProbe:
             httpGet: { path: /health, port: http }
             initialDelaySeconds: 5

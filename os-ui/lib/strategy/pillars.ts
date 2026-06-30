@@ -9,6 +9,10 @@ import {
   type PillarScope,
   type MetricLink,
   type TargetSet,
+  type ValueMetric,
+  type ValueMode,
+  monthKey,
+  emptyValueMetric,
   canCreatePillar,
   canEditPillar,
   canViewPillar,
@@ -120,24 +124,9 @@ export const METRIC_CATALOGUE: MetricLink[] = [
 ];
 
 function seed(): Pillar[] {
-  const t = now();
-  return [
-    {
-      id: 'seed_pillar_retention',
-      name: 'Retention',
-      description:
-        'Keep more of the revenue we win: reduce churn and win lapsed customers back, ' +
-        'so net revenue retention climbs across the company.',
-      scope: 'tenant',
-      domain: 'tenant',
-      owner: 'admin',
-      metrics: [NRR_METRIC],
-      betIds: ['seed_bet_reduce_churn', 'seed_bet_winback'],
-      targets: undefined,
-      createdAt: t,
-      updatedAt: t,
-    },
-  ];
+  // A fresh tenant starts EMPTY. Strategy pillars are created only through the
+  // platform's own governed flows (e.g. the Northpeak e-commerce seed).
+  return [];
 }
 
 async function getCache(): Promise<Map<string, Pillar>> {
@@ -195,6 +184,8 @@ export async function createPillar(
     scope: PillarScope;
     domain?: string;
     metrics?: MetricLink[];
+    /** Describe the value metric up front (name + one-liner); mode starts 'describe'. */
+    valueMetric?: { name: string; description: string };
   },
 ): Promise<Pillar> {
   const scope = input.scope === 'tenant' ? 'tenant' : 'domain';
@@ -220,6 +211,9 @@ export async function createPillar(
     domain,
     owner: user.id,
     metrics: input.metrics ?? [],
+    valueMetric: input.valueMetric
+      ? emptyValueMetric(input.valueMetric.name?.trim(), input.valueMetric.description?.trim())
+      : undefined,
     betIds: [],
     targets: undefined,
     createdAt: t,
@@ -284,6 +278,70 @@ export async function setTargets(user: CurrentUser, pid: string, targets: Target
     pillarId: p.id,
     pillarName: p.name,
     detail: { annualValue: targets.valueGenerated.annual, activeBuilders: targets.activeBuilders.annual },
+  });
+  return p;
+}
+
+/**
+ * Set (or update) the pillar's value metric: its name, one-line description, and
+ * how its number is kept — described-only, a governed Cube metric (Metrics tab),
+ * or manual monthly entries. Switching to/from manual preserves existing entries.
+ */
+export async function setValueMetric(
+  user: CurrentUser,
+  pid: string,
+  patch: { name?: string; description?: string; mode?: ValueMode },
+): Promise<Pillar> {
+  const { map, p } = await requireEditable(user, pid);
+  const current: ValueMetric = p.valueMetric ?? emptyValueMetric();
+  p.valueMetric = {
+    name: patch.name !== undefined ? patch.name.trim() : current.name,
+    description: patch.description !== undefined ? patch.description.trim() : current.description,
+    mode: patch.mode ?? current.mode,
+    entries: current.entries,
+  };
+  p.updatedAt = now();
+  map.set(p.id, p);
+  writeThrough(p);
+  await auditStrategy({
+    action: 'value-metric.set',
+    actor: user.id,
+    domain: p.domain,
+    pillarId: p.id,
+    pillarName: p.name,
+    detail: { name: p.valueMetric.name, mode: p.valueMetric.mode },
+  });
+  return p;
+}
+
+/**
+ * Record a manual monthly value for the pillar (mode='manual'). The newest entry
+ * is the headline total; the series feeds the value-history chart. Re-entering a
+ * month replaces it. Switches the metric to manual mode if it was not already.
+ */
+export async function addValueEntry(
+  user: CurrentUser,
+  pid: string,
+  input: { value: number; month?: string },
+): Promise<Pillar> {
+  const { map, p } = await requireEditable(user, pid);
+  if (!Number.isFinite(input.value)) throw withStatus(new Error('A numeric value is required'), 400);
+  const month = (input.month && /^\d{4}-\d{2}$/.test(input.month)) ? input.month : monthKey();
+  const vm: ValueMetric = p.valueMetric ?? emptyValueMetric();
+  const entries = vm.entries.filter((e) => e.month !== month);
+  entries.push({ month, value: Math.round(input.value), at: now(), by: user.id });
+  entries.sort((a, b) => a.month.localeCompare(b.month));
+  p.valueMetric = { ...vm, mode: 'manual', entries };
+  p.updatedAt = now();
+  map.set(p.id, p);
+  writeThrough(p);
+  await auditStrategy({
+    action: 'value-entry.add',
+    actor: user.id,
+    domain: p.domain,
+    pillarId: p.id,
+    pillarName: p.name,
+    detail: { month, value: Math.round(input.value) },
   });
   return p;
 }

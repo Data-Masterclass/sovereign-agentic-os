@@ -13,10 +13,11 @@ export const dynamic = 'force-dynamic';
 /**
  * Forced first-run setup. Only callable by the signed-in bootstrap admin (the
  * `admin/admin` row, flagged mustChangeCredentials). Sets a real username, email
- * and STRONG password (strength enforced server-side), neutralises the default
- * credential, and signs the operator straight in as the new real admin. Returns
- * a single-use verify link (in a real deploy this is emailed; here it is shown
- * so the kind/local flow can complete the email-verification step).
+ * and STRONG password (strength enforced server-side), DELETES the default
+ * `admin/admin` identity, AUTO-VERIFIES the account (the operator holding the
+ * bootstrap credential is trusted — no mailer needed) and signs the operator
+ * straight in as the new real admin. The instance is immediately usable; no
+ * email step can dead-end a fresh clone.
  */
 export async function POST(req: Request) {
   const me = await currentUser();
@@ -49,7 +50,7 @@ export async function POST(req: Request) {
 
   try {
     const passwordHashReady = await hashPassword(password);
-    const { user, verifyToken } = await setupAdmin({
+    const { user } = await setupAdmin({
       bootstrapId: me.id,
       username,
       name: name || undefined,
@@ -62,8 +63,7 @@ export async function POST(req: Request) {
       { id: user.id, name: user.name, domains: user.domains, role: user.role },
       config.sessionSecret,
     );
-    const verifyUrl = `/api/auth/verify?token=${encodeURIComponent(verifyToken)}`;
-    const res = NextResponse.json({ user, verifyUrl });
+    const res = NextResponse.json({ user });
     res.cookies.set(SESSION_COOKIE, token, {
       httpOnly: true,
       sameSite: 'lax',

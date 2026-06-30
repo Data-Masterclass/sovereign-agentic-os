@@ -1,0 +1,293 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG
+ * =============================================================================
+ * guide.css — print stylesheet for the Sovereign Agentic OS end-user guide.
+ * Rendered by scripts/build-docs.sh (pandoc -> HTML -> headless-Chrome PDF).
+ *
+ * Design: a dramatic dark brand cover + a calm, light editorial interior.
+ * Brand-true (gold #c8a24a on near-black), Apple-grade restraint: generous
+ * whitespace, a serif/sans pairing, one accent colour, clear hierarchy.
+ * Fonts are the self-hosted brand faces (offline; embedded by pandoc):
+ *   Fraunces  — cover display      Marcellus — section headings (serif)
+ *   Oswald    — eyebrows/labels     Rubik     — body, tables, lists
+ * ============================================================================= */
+
+/* ---- self-hosted brand fonts (latin subset, embedded at build time) -------- */
+@font-face { font-family: 'Fraunces';  src: url('fonts/fraunces-latin.woff2')  format('woff2'); font-weight: 400 600; font-display: swap; }
+@font-face { font-family: 'Marcellus'; src: url('fonts/marcellus-latin.woff2') format('woff2'); font-weight: 400;     font-display: swap; }
+@font-face { font-family: 'Oswald';    src: url('fonts/oswald-latin.woff2')    format('woff2'); font-weight: 400 700; font-display: swap; }
+@font-face { font-family: 'Rubik';     src: url('fonts/rubik-latin.woff2')     format('woff2'); font-weight: 300 700; font-display: swap; }
+
+:root {
+  --ink:        #221d17;   /* warm near-black body text          */
+  --ink-strong: #14110c;   /* headings                           */
+  --muted:      #6f655a;   /* captions, footer, secondary        */
+  --gold:       #c8a24a;   /* brand accent — rules, marks        */
+  --gold-text:  #8a6516;   /* deep, legible gold for accent text */
+  --gold-deep:  #a07a2c;
+  --hair:       #e9e2d5;   /* warm hairline                      */
+  --paper:      #ffffff;
+  --soft:       #faf5e9;   /* warm callout / code wash           */
+  --soft-2:     #fbf9f4;   /* table zebra                        */
+  --cover-bg:   #0c0b0d;   /* brand near-black                   */
+  --cover-fg:   #f3ecdd;   /* warm cream on the cover            */
+  --cover-mut:  #b6aa92;
+  --cover-gold: #e7cd86;
+
+  --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+  --f-serif:   'Marcellus', Georgia, 'Times New Roman', serif;
+  --f-sans:    'Rubik', -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
+  --f-cond:    'Oswald', 'Rubik', system-ui, sans-serif;
+  --f-mono:    'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+/* ---- page geometry --------------------------------------------------------- */
+@page        { size: A4; margin: 20mm 20mm 17mm 20mm; }
+@page :first  { margin: 0; }           /* cover: no margin => Chrome omits the footer here */
+
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body {
+  font-family: var(--f-sans);
+  font-size: 10.4pt;
+  line-height: 1.62;
+  color: var(--ink);
+  margin: 0;
+  font-feature-settings: 'kern' 1, 'liga' 1;
+  text-rendering: optimizeLegibility;
+}
+
+/* =============================================================================
+ * COVER  (pandoc emits #title-block-header from the YAML front-matter)
+ * ============================================================================= */
+#title-block-header {
+  break-after: page;
+  background: var(--cover-bg);
+  color: var(--cover-fg);
+  box-sizing: border-box;
+  min-height: 297mm;
+  padding: 34mm 26mm 24mm;
+  display: flex;
+  flex-direction: column;
+}
+#title-block-header::before {                 /* eyebrow + hairline rule */
+  content: 'Sovereign · Governed · Self-hostable';
+  font-family: var(--f-cond);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: .42em;
+  font-size: 9pt;
+  color: var(--cover-gold);
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(231,205,134,.34);
+}
+#title-block-header .title {
+  font-family: var(--f-display);
+  font-weight: 600;
+  font-size: 52pt;
+  line-height: 1.02;
+  letter-spacing: -.012em;
+  color: #fff;
+  margin: auto 0 0;                            /* push title toward vertical centre */
+  padding-top: 26vh;
+}
+#title-block-header .subtitle {
+  font-family: var(--f-serif);
+  font-size: 15pt;
+  line-height: 1.4;
+  color: var(--cover-gold);
+  margin: 16px 0 0;
+  max-width: 78%;
+}
+#title-block-header .author,
+#title-block-header .date {
+  font-family: var(--f-sans);
+  font-size: 9.5pt;
+  line-height: 1.5;
+  color: var(--cover-mut);
+  margin: 0;
+}
+#title-block-header .author { margin-top: auto; padding-top: 22px;
+  border-top: 1px solid rgba(231,205,134,.22); }
+#title-block-header .date { margin-top: 4px; }
+
+/* =============================================================================
+ * TABLE OF CONTENTS  (pandoc nav#TOC)
+ * ============================================================================= */
+nav#TOC {
+  break-after: page;
+  padding-top: 4mm;
+}
+nav#TOC::before {
+  content: 'Contents';
+  display: block;
+  font-family: var(--f-serif);
+  font-size: 24pt;
+  color: var(--ink-strong);
+  margin-bottom: 4px;
+}
+nav#TOC::after {                                /* gold rule under the title */
+  content: '';
+  display: block;
+  width: 46px;
+  height: 2px;
+  background: var(--gold);
+  margin: 0 0 22px;
+}
+nav#TOC ul { list-style: none; padding-left: 0; margin: 0; }
+nav#TOC > ul > li {
+  margin: 0;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--hair);
+}
+nav#TOC > ul > li > a {
+  font-family: var(--f-serif);
+  font-size: 12.5pt;
+  color: var(--ink-strong);
+}
+nav#TOC ul ul { padding-left: 18px; margin: 5px 0 1px; }
+nav#TOC ul ul li { padding: 2.5px 0; }
+nav#TOC ul ul a {
+  font-family: var(--f-sans);
+  font-size: 9.6pt;
+  color: var(--muted);
+}
+nav#TOC a { text-decoration: none; }
+
+/* =============================================================================
+ * HEADINGS
+ * ============================================================================= */
+h1, h2, h3, h4 { color: var(--ink-strong); font-weight: 400; }
+
+h1 {
+  font-family: var(--f-serif);
+  font-size: 25pt;
+  line-height: 1.1;
+  letter-spacing: -.01em;
+  margin: 0 0 18px;
+  padding-bottom: 11px;
+  border-bottom: 2px solid var(--gold);
+  break-before: page;
+  break-after: avoid;
+}
+h1:first-of-type,                               /* cover & first real section */
+nav#TOC + h1 { break-before: avoid; }
+
+h2 {
+  font-family: var(--f-serif);
+  font-size: 15.5pt;
+  line-height: 1.25;
+  margin: 1.7em 0 .5em;
+  break-after: avoid;
+}
+h3 {
+  font-family: var(--f-cond);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  font-size: 10.2pt;
+  color: var(--gold-text);
+  margin: 1.5em 0 .45em;
+  break-after: avoid;
+}
+h4 {
+  font-family: var(--f-sans);
+  font-weight: 600;
+  font-size: 10.4pt;
+  margin: 1.2em 0 .35em;
+  break-after: avoid;
+}
+h2 + p, h3 + p, h4 + p { margin-top: 0; }
+
+/* =============================================================================
+ * BODY
+ * ============================================================================= */
+p { margin: .62em 0; orphans: 2; widows: 2; }
+strong { font-weight: 600; color: var(--ink-strong); }
+em { font-style: italic; }
+a { color: var(--gold-text); text-decoration: none; }
+
+ul, ol { margin: .55em 0; padding-left: 1.35em; }
+li { margin: .26em 0; padding-left: .15em; }
+li::marker { color: var(--gold-deep); }
+
+hr {
+  border: 0;
+  height: 1px;
+  background: var(--hair);
+  margin: 2em auto;
+  width: 100%;
+}
+
+/* ---- callouts (blockquote) ------------------------------------------------- */
+blockquote {
+  margin: 1.1em 0;
+  padding: 12px 18px;
+  background: var(--soft);
+  border-left: 3px solid var(--gold);
+  border-radius: 0 7px 7px 0;
+  color: #4d4438;
+  break-inside: avoid;
+}
+blockquote p { margin: .3em 0; font-size: 9.9pt; }
+blockquote strong { color: var(--gold-deep); }
+
+/* ---- code ------------------------------------------------------------------ */
+code {
+  font-family: var(--f-mono);
+  font-size: 8.9pt;
+  background: var(--soft);
+  color: #5d4a1f;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid #f0e6cf;
+}
+pre {
+  background: #fbf9f3;
+  border: 1px solid var(--hair);
+  border-left: 3px solid var(--gold);
+  border-radius: 7px;
+  padding: 13px 16px;
+  margin: 1.1em 0;
+  font-size: 8.7pt;
+  line-height: 1.5;
+  color: #2b2620;
+  overflow-x: auto;
+  break-inside: avoid;
+}
+pre code { background: none; border: 0; padding: 0; color: inherit; font-size: 8.7pt; }
+
+/* ---- tables ---------------------------------------------------------------- */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1.2em 0;
+  font-size: 9pt;
+  break-inside: avoid;
+}
+caption { caption-side: top; text-align: left; color: var(--muted);
+  font-size: 8.6pt; padding-bottom: 5px; }
+thead th {
+  font-family: var(--f-cond);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  font-size: 8.4pt;
+  color: var(--ink-strong);
+  text-align: left;
+  padding: 7px 11px;
+  border-bottom: 1.5px solid var(--gold);
+  vertical-align: bottom;
+}
+tbody td {
+  padding: 6px 11px;
+  border-bottom: 1px solid var(--hair);
+  vertical-align: top;
+  line-height: 1.45;
+}
+tbody tr:nth-child(even) { background: var(--soft-2); }
+tbody tr:last-child td { border-bottom: 1px solid var(--hair); }
+
+/* ---- misc ------------------------------------------------------------------ */
+img { max-width: 100%; }
+sup { font-size: .75em; }
+::selection { background: rgba(200,162,74,.22); }

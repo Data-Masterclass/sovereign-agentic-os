@@ -5,16 +5,15 @@ import Link from 'next/link';
 import { currentUser } from '@/lib/auth';
 import { homeFeed } from '@/lib/home/feed';
 import HomeLauncher from '@/components/home/HomeLauncher';
-import Cockpit from '@/components/home/Cockpit';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * Home — the welcoming launcher + cockpit (home-golden-path.md). Server-rendered
- * from the OPA/RLS-scoped home-feed adapter: an illustrated golden-path launcher
- * (centerpiece) surrounded by personalized cockpit modules whose content +
- * ordering shift by the viewer's persona. Home orients + routes; it never
- * recomputes a tab's numbers and never bypasses governance.
+ * Home — the welcoming golden-path launcher (home-golden-path.md). Server-rendered
+ * from the OPA/RLS-scoped home-feed adapter: an illustrated launcher whose copy
+ * + dimming shift by the viewer's persona. Home is the front door — it orients
+ * and routes into the ten paths; the live "what's moving / what needs me" view
+ * lives one click away in the Cockpit (`/cockpit`).
  */
 export default async function HomePage() {
   const user = await currentUser();
@@ -45,8 +44,9 @@ export default async function HomePage() {
             Welcome back, <span className="home-name">{firstName}</span>.
           </h1>
           <p className="home-sub">
-            Your governed space on the Sovereign Agentic OS. Pick a golden path to create something, or
-            see what needs you below.
+            Your governed space on the Sovereign Agentic OS. Pick a golden path to create something —
+            or open your <Link href="/cockpit" className="home-sub-link">Cockpit</Link> to see what's
+            moving and what needs you.
           </p>
         </div>
         <div className="home-persona" title="Your role shapes what Home emphasizes.">
@@ -66,14 +66,18 @@ export default async function HomePage() {
 
         <HomeLauncher cards={feed.launcher} />
 
-        <div className="home-sec-head" style={{ marginTop: 36 }}>
-          <h2 className="home-sec-title">Your cockpit</h2>
-          <p className="home-sec-sub">
-            What's moving and what needs you — scoped to you, ordered for a {feed.personaLabel.toLowerCase()}.
-          </p>
-        </div>
-
-        <Cockpit feed={feed} />
+        <Link href="/cockpit" className="home-cockpit-cta">
+          <span className="home-cockpit-cta-text">
+            <span className="home-cockpit-cta-kicker">Your cockpit</span>
+            <span className="home-cockpit-cta-line">
+              What's moving and what needs you — scoped to you, ordered for a{' '}
+              {feed.personaLabel.toLowerCase()}.
+            </span>
+          </span>
+          <span className="home-cockpit-cta-go" aria-hidden="true">
+            Open ◉
+          </span>
+        </Link>
       </div>
     </div>
   );

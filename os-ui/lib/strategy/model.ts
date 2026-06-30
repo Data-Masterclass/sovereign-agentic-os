@@ -50,6 +50,29 @@ export const KIND_LABEL: Record<ArtifactKind, string> = {
 };
 
 /**
+ * Where a component of each kind lives — the tab route a component's "Edit"
+ * button deep-links to (jump straight to the artifact in its own tab). ML models
+ * live under Science. `?focus=<id>` is appended so a tab can scroll to it.
+ */
+export const KIND_ROUTE: Record<ArtifactKind, string> = {
+  data: '/data',
+  metric: '/metrics',
+  dashboard: '/dashboards',
+  agent: '/agents',
+  software: '/software',
+  ml: '/science',
+};
+
+/** The three states a big-bet component rolls up to (mirrors Big Bets). */
+export type ComponentBuildStatus = 'planned' | 'in-progress' | 'ready';
+
+export const BUILD_STATUS_LABEL: Record<ComponentBuildStatus, string> = {
+  planned: 'Planned',
+  'in-progress': 'In progress',
+  ready: 'Ready',
+};
+
+/**
  * How realized value is read off the business metric (decided, per pillar):
  *   • uplift   — gain over a captured baseline (default)
  *   • absolute — the metric's absolute value
@@ -72,6 +95,47 @@ export type MetricLink = {
   /** Offline-seed total used when Cube is unreachable (deterministic demo). */
   seedTotal: number;
 };
+
+// -------------------------------------------------- Value metric (describe) ----
+//
+// A pillar's value metric is FIRST just described (a name + a sentence). The
+// company then chooses how its number is kept:
+//   • 'describe' — described only; no number flows yet (honest empty state).
+//   • 'governed' — set up as a real governed Cube metric in the Metrics tab; the
+//                  value flows back automatically (the `metrics[0]` link).
+//   • 'manual'   — the company enters the new value each month, right here in
+//                  Strategy. Those entries feed the total value + the history.
+
+export type ValueMode = 'describe' | 'governed' | 'manual';
+
+/** One manual monthly value entry (newest wins for the headline total). */
+export type ValueEntry = {
+  /** Year-month key, e.g. `2026-06`. */
+  month: string;
+  /** The value as of that month (same unit as the metric). */
+  value: number;
+  at: string;
+  by: string;
+};
+
+/** A pillar's described value metric + how its number is kept. */
+export type ValueMetric = {
+  name: string;
+  description: string;
+  mode: ValueMode;
+  /** Manual monthly entries (mode='manual'); oldest → newest. */
+  entries: ValueEntry[];
+};
+
+export function emptyValueMetric(name = '', description = ''): ValueMetric {
+  return { name, description, mode: 'describe', entries: [] };
+}
+
+/** The latest manual value (the headline total when mode='manual'), or 0. */
+export function latestManualValue(vm: ValueMetric | undefined): number {
+  if (!vm || vm.entries.length === 0) return 0;
+  return vm.entries[vm.entries.length - 1].value;
+}
 
 // -------------------------------------------------------------- Targets --------
 
@@ -128,6 +192,11 @@ export type Pillar = {
   owner: string;
   /** The pillar's business value metric(s) — governed Cube metrics. */
   metrics: MetricLink[];
+  /**
+   * The pillar's described value metric + manual monthly entries. When absent
+   * (legacy), the pillar falls back to its first governed `metrics[0]` link.
+   */
+  valueMetric?: ValueMetric;
   /** Contributing Big Bet ids (references; bets live in the Big Bets tab). */
   betIds: string[];
   /** Annual + quarterly targets; absent until a Builder/Admin sets them. */
@@ -244,13 +313,29 @@ export function reconciles(sum: number, total: number): boolean {
 // extracted here so it is unit-testable and the server adapter (value-rollup.ts)
 // stays a thin "resolve the governed total, then distribute" wrapper.
 
+/** A bet's component (structural input) — weight plus optional roadmap fields. */
+export type DistributableComponent = {
+  id: string;
+  name: string;
+  kind: ArtifactKind;
+  weight: number;
+  /** Build state (mirrors Big Bets) — drives the Planned/In progress/Ready counts. */
+  status?: ComponentBuildStatus;
+  /** Planned-ready / due date (ISO yyyy-mm-dd) — drives the roadmap timeline. */
+  dueDate?: string;
+  /** The real artifact id this component references — for the Edit→tab deep-link. */
+  artifactId?: string;
+};
+
 /** A bet's share of a pillar, plus its component weights (structural input). */
 export type DistributableBet = {
   id: string;
   name: string;
   domain: string;
   sharePct: number; // fraction of the pillar total (0..1)
-  components: { id: string; name: string; kind: ArtifactKind; weight: number }[];
+  /** Bet go-live date (ISO yyyy-mm-dd) — the roadmap axis end marker. */
+  goLive?: string;
+  components: DistributableComponent[];
 };
 
 export type DistributedComponent = {
@@ -259,6 +344,9 @@ export type DistributedComponent = {
   kind: ArtifactKind;
   value: number | null; // masked to null when viewer not entitled to the bet's domain
   entitled: boolean;
+  status: ComponentBuildStatus;
+  dueDate: string | null;
+  artifactId: string | null;
 };
 
 export type DistributedBet = {
@@ -269,6 +357,7 @@ export type DistributedBet = {
   sharePct: number | null;
   value: number | null;
   entitled: boolean;
+  goLive: string | null;
   components: DistributedComponent[];
 };
 
@@ -317,7 +406,18 @@ export function distributeValue(
         value = i === arr.length - 1 ? betValueFull - allocated : eur(betValueFull * c.weight);
         allocated += value;
       }
-      return { id: c.id, name: c.name, kind: c.kind, value, entitled };
+      return {
+        id: c.id,
+        name: c.name,
+        kind: c.kind,
+        value,
+        entitled,
+        status: c.status ?? 'planned',
+        // Roadmap/edit fields are structural (not a € value) — shown to any
+        // pillar viewer so the plan is legible; only the € value is RLS-masked.
+        dueDate: c.dueDate ?? null,
+        artifactId: c.artifactId ?? null,
+      };
     });
     return {
       id: bet.id,
@@ -328,6 +428,7 @@ export function distributeValue(
       sharePct: entitled ? bet.sharePct : null,
       value: entitled ? betValueFull : null,
       entitled,
+      goLive: bet.goLive ?? null,
       components,
     };
   });

@@ -547,7 +547,7 @@ function FrontDoors({ model }: { model: ModelWithPolicy }) {
       const res = await fetch(path, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ account: 'ACME' }),
+        body: JSON.stringify({ account: 'sample-account' }),
       });
       const j = await res.json();
       if (!res.ok && res.status !== 202 && res.status !== 403) {
@@ -778,6 +778,7 @@ function DriftChart({ series, threshold }: { series: DriftPoint[]; threshold: nu
 /* --------------------------------------------------------- G. marketplace */
 
 function Marketplace({ model, reload }: { model: ModelWithPolicy; reload: () => void }) {
+  const { user } = useUser();
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ mode: string } | null>(null);
   const [err, setErr] = useState('');
@@ -828,7 +829,7 @@ function Marketplace({ model, reload }: { model: ModelWithPolicy; reload: () => 
             </div>
             <div className="row" style={{ marginTop: 12, gap: 10, alignItems: 'center' }}>
               <button className="btn sm" onClick={importToDomain} disabled={busy}>
-                {busy ? <span className="spin" /> : 'Import to my domain'}
+                {busy ? <span className="spin" /> : `Import to ${user?.domains[0] ? `${user.domains[0]} domain` : 'your domain'}`}
               </button>
               {result ? (
                 <span className={`badge ${result.mode === 'fork-allowed' ? 'warn' : 'ok'}`}>
@@ -841,7 +842,7 @@ function Marketplace({ model, reload }: { model: ModelWithPolicy; reload: () => 
         ) : (
           <div className="muted">
             Once an Admin certifies this model into the Marketplace, its consumption mode (read-in-place
-            or fork-allowed) and an “Import to my domain” action appear here.
+            or fork-allowed) and an “Import to your domain” action appear here.
           </div>
         )}
       </div>

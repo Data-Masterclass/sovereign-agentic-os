@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir \
       "dagster-k8s==0.29.11" \
       "dagster-dbt==0.29.11" \
       "dbt-core>=1.8,<1.10" \
-      "dbt-postgres>=1.8,<1.10"
+      "dbt-trino>=1.8,<1.10"
 
 RUN mkdir -p /opt/dagster/app /opt/dagster/dagster_home /opt/dbt
 

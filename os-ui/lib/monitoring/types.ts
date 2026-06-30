@@ -15,10 +15,17 @@
 /** Health roll-up. `unknown` = source unreachable AND no mock (kept honest). */
 export type Health = 'red' | 'amber' | 'green' | 'unknown';
 
-/** The five lenses (monitoring-golden-path.md §"five lenses"). */
+/**
+ * The lens vocabulary. `system` (infra/cluster health) is part of the type
+ * because the correlation engine + Platform→Components still reason about it,
+ * but it is NOT one of the lenses Monitoring renders: Monitoring is the user's
+ * artifact-observability plane (agents/runs · pipelines · spend · drift). The
+ * `system` lens moved to Platform Admin → Components (the infrastructure home).
+ */
 export type LensId = 'runs' | 'pipelines' | 'cost' | 'system' | 'artifacts';
 
-export const LENS_IDS: LensId[] = ['runs', 'pipelines', 'cost', 'system', 'artifacts'];
+/** The lenses Monitoring renders (system/infra deliberately excluded). */
+export const LENS_IDS: LensId[] = ['runs', 'pipelines', 'cost', 'artifacts'];
 
 export const LENS_LABEL: Record<LensId, string> = {
   runs: 'Agent & run observability',

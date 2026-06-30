@@ -115,6 +115,20 @@ export const config = {
   ),
   usersSeed: env('OS_USERS', ''),
 
+  // ---- Outbound email (OPTIONAL). Transactional mail (email verification today;
+  // user invites later) goes through a small, dependency-free PLUGGABLE mailer
+  // (lib/mailer.ts) with two transports, selected by config (Graph > SMTP > none):
+  //   • Graph (recommended for M365, avoids SMTP-AUTH deprecation): set
+  //     GRAPH_TENANT_ID + GRAPH_CLIENT_ID + GRAPH_CLIENT_SECRET (+ MAIL_FROM).
+  //   • SMTP (generic fallback): set SMTP_HOST (+ PORT/USER/PASS/FROM/SECURE).
+  // The mailer reads these LIVE from the environment (testable without a reload).
+  // With NEITHER configured the platform works fully without email: the first-run
+  // bootstrap admin auto-verifies and later accounts are active immediately.
+  // Secrets (GRAPH_CLIENT_SECRET, SMTP_PASS) come from k8s Secrets, never
+  // committed. MAIL_FROM/SMTP_FROM default to support@datamasterclass.com.
+  // OS_EMAIL_VERIFICATION=false force-disables verification even with a mailer.
+  // OS_PUBLIC_URL sets the absolute base used in emailed links. See lib/mailer.ts.
+
   // Forgejo (Software / Delivery): GET {FORGEJO_URL}/api/v1/...  (HTTP basic auth)
   forgejoUrl: base(env('FORGEJO_URL', 'http://forgejo-http:3000')),
   forgejoUser: env('FORGEJO_USER', 'gitea_admin'),

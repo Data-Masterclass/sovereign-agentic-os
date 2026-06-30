@@ -9,8 +9,8 @@ import type { Gap } from '@/lib/knowledge/gaps';
 
 /**
  * The hand-rolled SVG swimlane — a VIEW of `workflow.md` (clone of SystemCanvas).
- * Actor-colored horizontal lanes (Human / Software / Agent); steps flow left→right
- * in sequence inside their actor's lane; sequential connectors join them. A thin
+ * Actor-colored vertical lanes (Human / Software / Agent); steps flow top→bottom
+ * in sequence inside their actor's column; sequential connectors join them. A thin
  * renderer over the pure `layoutSwimlanes`; selecting a step opens the inspector.
  * No heavy graph dependency (air-gap clean).
  *
@@ -70,21 +70,27 @@ export default function SwimlaneCanvas({
               </marker>
             </defs>
 
-            {/* Lane backgrounds + labels */}
+            {/* Lane backgrounds + labels (one vertical column per actor) */}
             {layout.lanes.map((lane) => (
               <g key={lane.actor} className="swim-lane">
                 <rect
-                  x={4}
-                  y={lane.y}
-                  width={layout.width - 8}
-                  height={lane.height}
+                  x={lane.x + 4}
+                  y={4}
+                  width={lane.width - 8}
+                  height={layout.height - 8}
                   rx={8}
                   fill={ACTOR_FILL[lane.actor]}
                   fillOpacity={0.05}
                   stroke={ACTOR_FILL[lane.actor]}
                   strokeOpacity={0.18}
                 />
-                <text x={16} y={lane.y + 18} className="swim-lane-label" fill={ACTOR_FILL[lane.actor]}>
+                <text
+                  x={lane.x + lane.width / 2}
+                  y={22}
+                  textAnchor="middle"
+                  className="swim-lane-label"
+                  fill={ACTOR_FILL[lane.actor]}
+                >
                   {lane.actor.toUpperCase()}
                 </text>
               </g>
@@ -173,7 +179,7 @@ const SwimStyles = `
 .swim-legend { display: flex; gap: 14px; font-size: 11px; color: var(--text-muted); }
 .swim-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .swim-dot { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
-.swim-scroll { overflow-x: auto; }
+.swim-scroll { overflow-y: auto; overflow-x: auto; max-height: 72vh; }
 .swim-empty { padding: 28px; text-align: center; font-size: 13px; }
 .swim-svg { display: block; }
 .swim-lane-label {

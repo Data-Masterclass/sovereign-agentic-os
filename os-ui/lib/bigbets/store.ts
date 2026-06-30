@@ -120,6 +120,7 @@ function requireEdit(betId: string, user: Principal): BigBet {
 export type CreateBetInput = {
   name: string;
   problem: ProblemStatement;
+  solution?: string;
   pillarId: string;
   metricId: string;
   targetValue: number;
@@ -146,6 +147,7 @@ export function createBet(user: Principal, input: CreateBetInput): BigBet {
     id: id('bet'),
     name: input.name.trim(),
     problem: input.problem,
+    solution: input.solution?.trim() || undefined,
     domain,
     crossDomain,
     owner: user.id,
@@ -182,7 +184,7 @@ export function getBet(betId: string, user: Principal): BigBet {
 export function updateBet(
   betId: string,
   user: Principal,
-  patch: Partial<Pick<BigBet, 'name' | 'problem' | 'targetValue' | 'goLive' | 'valueBasis' | 'allocation' | 'ownerDeclaredValue' | 'members' | 'status'>>,
+  patch: Partial<Pick<BigBet, 'name' | 'problem' | 'solution' | 'targetValue' | 'goLive' | 'valueBasis' | 'allocation' | 'ownerDeclaredValue' | 'members' | 'status'>>,
 ): BigBet {
   const bet = requireEdit(betId, user);
   Object.assign(bet, patch);

@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { createBet, listBets } from '@/lib/bigbets/store';
+import { deriveBetName } from '@/lib/bigbets/model';
 import { principal } from '@/lib/bigbets/server';
 import { deriveBet, completion } from '@/lib/bigbets/status';
 import { rollup } from '@/lib/bigbets/roadmap';
@@ -32,6 +33,7 @@ export async function GET() {
         crossDomain: bet.crossDomain,
         pillarId: bet.pillarId,
         problem: bet.problem,
+        solution: bet.solution ?? '',
         goLive: bet.goLive,
         status: bet.status,
         components: bet.components.length,
@@ -48,18 +50,41 @@ export async function GET() {
   }
 }
 
-/** POST → create a Big Bet (Builder/Admin own; Creator drafts). */
+/**
+ * POST → create a Big Bet (Builder/Admin own; Creator drafts).
+ *
+ * The create form's shape: an Owner, one free-form Problem Statement, an optional
+ * Solution Idea, the value target, and a planned go-live. The bet's display name
+ * is DERIVED from the problem statement (no separate name field). Older callers
+ * that still send `{ name, problem: { who, need, … } }` keep working.
+ */
 export async function POST(req: Request) {
   try {
     const user = await requireUser();
     const b = await req.json().catch(() => ({}));
-    if (!b?.name?.trim()) return NextResponse.json({ error: 'A bet name is required.' }, { status: 400 });
-    if (!b?.problem?.who || !b?.problem?.need) {
-      return NextResponse.json({ error: 'A problem statement (who / need / obstacle / impact) is required.' }, { status: 400 });
+
+    // Accept either the new shape (problem = string statement) or the legacy
+    // object shape (problem = { who, need, obstacle, impact }).
+    const legacy = b?.problem && typeof b.problem === 'object';
+    const owner: string = String(b?.owner ?? (legacy ? b.problem.who : '') ?? '').trim();
+    const statement: string = String((legacy ? b?.problem?.need : b?.problem) ?? '').trim();
+    const solution: string = String(b?.solution ?? (legacy ? b?.problem?.impact : '') ?? '').trim();
+
+    if (!statement) {
+      return NextResponse.json({ error: 'A problem statement is required.' }, { status: 400 });
     }
+
+    const name = String(b?.name ?? '').trim() || deriveBetName(statement);
+
     const bet = createBet(principal(user), {
-      name: b.name,
-      problem: { who: b.problem.who, need: b.problem.need, obstacle: b.problem.obstacle ?? '', impact: b.problem.impact ?? '' },
+      name,
+      problem: {
+        who: owner,
+        need: statement,
+        obstacle: legacy ? String(b?.problem?.obstacle ?? '') : '',
+        impact: legacy ? String(b?.problem?.impact ?? '') : '',
+      },
+      solution: solution || undefined,
       pillarId: b.pillarId ?? 'pillar_retention',
       metricId: b.metricId ?? 'metric_nrr',
       targetValue: Number(b.targetValue) || 0,

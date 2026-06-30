@@ -84,7 +84,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ tool, principal, decision: 'allow', policy: authz.policy, traceId: tr.id, ...r });
     }
     if (tool === 'retrieve') {
-      const query = (body.query ?? '').toString().trim() || `${SALES.account} renewal`;
+      const query = (body.query ?? '').toString().trim() || 'renewal terms';
       const passages = await retrieveTool(query);
       const tr = await trace({ principal, tool, input: { query }, output: passages, decision: 'allow', costUsd: 0.0006 });
       return NextResponse.json({ tool, principal, decision: 'allow', policy: authz.policy, traceId: tr.id, passages });

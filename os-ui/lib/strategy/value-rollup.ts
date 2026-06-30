@@ -7,7 +7,10 @@ import {
   type Pillar,
   type MetricLink,
   type DistributedBet,
+  type ValueMode,
+  type ValueEntry,
   distributeValue,
+  latestManualValue,
   eur,
 } from '@/lib/strategy/model';
 import { defaultBetShareSource, type BetShareSource } from '@/lib/strategy/bets-bridge';
@@ -36,10 +39,14 @@ export type BetValue = DistributedBet;
 export type PillarRollup = {
   pillarId: string;
   metricTitle: string;
+  /** One-line description of the value metric (from the pillar's `valueMetric`). */
+  metricDescription: string;
+  /** How the value is kept: described-only, governed (Metrics tab), or manual. */
+  mode: ValueMode;
   /** The pillar's realized value total (governed metric, basis-adjusted). */
   total: number;
   /** Where the total came from. */
-  source: 'cube' | 'seed-offline';
+  source: 'cube' | 'seed-offline' | 'manual';
   basis: MetricLink['basis'];
   bets: BetValue[];
   /** Σ of ALL bet values (server-side, un-masked) — used for the reconcile check. */
@@ -91,38 +98,68 @@ export async function rollupForPillar(
   user: { domains: string[]; role: 'participant' | 'creator' | 'builder' | 'admin' } = EMPTY_USER_DOMAINS,
   source: BetShareSource = defaultBetShareSource,
 ): Promise<PillarRollup> {
+  const vm = pillar.valueMetric;
   const metric = pillar.metrics[0];
-  if (!metric) {
-    return {
-      pillarId: pillar.id,
-      metricTitle: '—',
-      total: 0,
-      source: 'seed-offline',
-      basis: 'absolute',
-      bets: [],
-      decomposedTotal: 0,
-      reconciled: true,
-      visibleTotal: 0,
-      maskedTotal: 0,
-    };
+  // Resolve the headline total + where it came from, per value mode.
+  let total = 0;
+  let totalSource: PillarRollup['source'] = 'manual';
+  let metricTitle = vm?.name || metric?.title || '—';
+  const mode: ValueMode = vm?.mode ?? (metric ? 'governed' : 'describe');
+  const basis: MetricLink['basis'] = metric?.basis ?? 'absolute';
+
+  if (mode === 'manual') {
+    total = eur(latestManualValue(vm));
+    totalSource = 'manual';
+    metricTitle = vm?.name || 'Manual value';
+  } else if (mode === 'governed' && metric) {
+    const r = await resolveTotal(metric);
+    total = eur(applyBasis(r.raw, metric));
+    totalSource = r.source;
+    metricTitle = vm?.name || metric.title;
+  } else {
+    // 'describe' (or governed-but-no-link): described only — no number flows yet.
+    total = 0;
+    totalSource = 'manual';
   }
 
-  const { raw, source: totalSource } = await resolveTotal(metric);
-  const total = eur(applyBasis(raw, metric));
-
+  // Distribute even a zero total so the bet/component structure still renders.
   const shares = await source.forPillar(pillar.id);
   const dist = distributeValue(total, shares, user);
 
   return {
     pillarId: pillar.id,
-    metricTitle: metric.title,
+    metricTitle,
+    metricDescription: vm?.description ?? '',
+    mode,
     total,
     source: totalSource,
-    basis: metric.basis,
+    basis,
     bets: dist.bets,
     decomposedTotal: dist.decomposedTotal,
     reconciled: dist.reconciled,
     visibleTotal: dist.visibleTotal,
     maskedTotal: dist.maskedTotal,
   };
+}
+
+/**
+ * The value metric's history — its value over time, for the evolving chart.
+ * Manual pillars use their monthly entries directly; governed/legacy pillars use
+ * the monthly actuals snapshots' realized value. Oldest → newest.
+ */
+export function valueHistory(
+  pillar: Pillar,
+  snapshots: { month: string; valueGenerated: number }[] = [],
+): { month: string; value: number }[] {
+  const vm = pillar.valueMetric;
+  if (vm?.mode === 'manual') {
+    return vm.entries
+      .slice()
+      .sort((a: ValueEntry, b: ValueEntry) => a.month.localeCompare(b.month))
+      .map((e) => ({ month: e.month, value: e.value }));
+  }
+  return snapshots
+    .slice()
+    .sort((a, b) => a.month.localeCompare(b.month))
+    .map((s) => ({ month: s.month, value: s.valueGenerated }));
 }

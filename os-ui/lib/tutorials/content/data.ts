@@ -99,7 +99,7 @@ const data: TutorialDef = {
   ],
 
   sandbox: {
-    lane: 'My data — personal lane',
+    lane: 'Personal data',
     anchor: ANCHORS.data.sandbox,
     note: 'Your personal lane is private and ungoverned — upload, clean, and explore freely without affecting any shared domain data.',
   },

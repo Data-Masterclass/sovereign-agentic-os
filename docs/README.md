@@ -36,9 +36,9 @@ The build is engine-flexible and picks the first that works (override with `PDF_
 
 | `PDF_ENGINE` | Tooling | Notes |
 |---|---|---|
-| `eisvogel` | `pandoc/extra` + Eisvogel LaTeX template | Best output; **amd64 only** (used when the image is already cached). |
-| `plain` | `pandoc/latex` + xelatex | LaTeX, no template; **amd64 only**. |
-| `chrome` | `pandoc/core` (arm64-native) → HTML → headless Chrome print | **Default on Apple Silicon.** Native, fast, offline; styled via a built-in print stylesheet (title page, TOC, blue-headed tables, syntax-highlighted code). |
+| `chrome` | `pandoc/core` (arm64-native) → HTML → headless Chrome (CDP) | **Default, product-grade output.** Native, fast, fully offline. Styled by the committed Apple-grade print stylesheet `docs/assets/guide.css` (dark brand cover, TOC, self-hosted brand fonts under `docs/assets/fonts/`, restrained gold accent). Printed via the zero-dependency CDP driver `scripts/lib/html-to-pdf.mjs` (Node ≥ 22), which adds a running footer with page numbers. Falls back to Chrome's CLI print if Node/CDP is unavailable. |
+| `eisvogel` | `pandoc/extra` + Eisvogel LaTeX template | Fallback; **amd64 only** (used when the image is already cached). |
+| `plain` | `pandoc/latex` + xelatex | Fallback LaTeX, no template; **amd64 only**. |
 | `npx` | `md-to-pdf` via `npx` | Last-resort fallback (needs Node + network). |
 
 The build date and commit are stamped from `git log -1` into the `{{DATE}}` / `{{GIT_COMMIT}}`

@@ -122,11 +122,11 @@ export default function DataPage() {
 
   return (
     <>
-      <PageHeader title="Data" crumb="datasets · my data · catalog · talk to your data · query" tutorial="data" />
+      <PageHeader title="Data" crumb="datasets · personal data · catalog · talk to your data · query" tutorial="data" />
       <div className="content">
         <div className="tabstrip">
           <button className={view === 'datasets' ? 'active' : ''} onClick={() => setView('datasets')}>Datasets</button>
-          <button className={view === 'mydata' ? 'active' : ''} onClick={() => setView('mydata')} {...anchorAttr(ANCHORS.data.sandbox)}>My data</button>
+          <button className={view === 'mydata' ? 'active' : ''} onClick={() => setView('mydata')} {...anchorAttr(ANCHORS.data.sandbox)}>Personal data</button>
           <button className={view === 'catalog' ? 'active' : ''} onClick={() => setView('catalog')} {...anchorAttr(ANCHORS.data.document)}>Catalog</button>
           <button className={view === 'ask' ? 'active' : ''} onClick={() => setView('ask')}>Talk to your data</button>
           <button className={view === 'query' ? 'active' : ''} onClick={() => setView('query')} {...anchorAttr(ANCHORS.data.query)}>Query</button>

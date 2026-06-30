@@ -54,6 +54,10 @@ spec:
               for i in $(seq 1 60); do curl -sf "$FORGEJO/api/v1/version" >/dev/null 2>&1 && break || sleep 3; done
               TOK=$(curl -s -u "$ADMIN_USER:$ADMIN_PASS" "$FORGEJO/api/v1/admin/runners/registration-token" | sed 's/.*"token":"\([^"]*\)".*/\1/')
               echo "got token (len ${#TOK})"
+              # Never write an empty token (Forgejo not ready / bad creds): fail so the
+              # Job retries (backoffLimit) until a real token is returned. The runner's
+              # wait-loop treats an empty /token/token as "not ready" anyway.
+              [ -n "$TOK" ] || { echo "empty token — will retry"; exit 1; }
               cat <<EOF | curl -s -k -X POST "https://kubernetes.default.svc/api/v1/namespaces/{{ .Release.Namespace }}/secrets" \
                 -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
                 -H "Content-Type: application/json" -d @- -o /dev/null -w "create secret -> %{http_code}\n" || true
@@ -171,8 +175,14 @@ spec:
               value: tcp://localhost:2375
             - name: FORGEJO_INSTANCE
               value: "http://forgejo-http:3000"
-            - name: RUNNER_REGISTRATION_TOKEN
-              valueFrom: { secretKeyRef: { name: ci-runner-token, key: token } }
+            # The registration token is read from the auto-refreshing mounted
+            # ci-runner-token Secret (below), NOT a hard secretKeyRef. A hard
+            # secretKeyRef made the container CreateContainerConfigError until the
+            # secret existed, which kept the Deployment un-Healthy, which prevented
+            # the PostSync token Job (that creates the secret) from ever running —
+            # a deadlock. Reading from an optional volume breaks it: the pod starts,
+            # the Deployment goes Healthy, PostSync creates the secret, the volume
+            # refreshes, and the wait-loop below registers — no restart needed.
             - name: RUNNER_NAME
               value: sovereign-ci
             # The job-container image: act_runner runs each `runs-on: docker` job
@@ -195,14 +205,22 @@ spec:
                 echo "runner label changed; clearing stale registration"; rm -f .runner
               fi
               if [ ! -f .runner ]; then
+                # Wait for the registration token (created by the PostSync token Job
+                # into the ci-runner-token Secret, mounted at /token and auto-refreshed
+                # by the kubelet). forgejo-runner daemon REQUIRES a registration, so we
+                # block here rather than crash-looping: the pod stays Running until the
+                # token lands, then registers exactly once.
+                echo "waiting for /token/token (ci-runner-token Secret via PostSync Job)..."
+                while [ ! -s /token/token ]; do sleep 5; done
                 forgejo-runner register --no-interactive \
-                  --instance "$FORGEJO_INSTANCE" --token "$RUNNER_REGISTRATION_TOKEN" \
+                  --instance "$FORGEJO_INSTANCE" --token "$(cat /token/token)" \
                   --name "$RUNNER_NAME" --labels "$RUNNER_LABELS" || echo "register failed (may already exist)"
               fi
               exec forgejo-runner daemon --config /config/config.yaml
           volumeMounts:
             - { name: runner-data, mountPath: /data }
             - { name: runner-config, mountPath: /config, readOnly: true }
+            - { name: runner-token, mountPath: /token, readOnly: true }
           resources:
             requests: { cpu: 50m, memory: 128Mi }
             limits: { cpu: "1", memory: 512Mi }
@@ -215,6 +233,13 @@ spec:
         - name: runner-config
           configMap:
             name: ci-runner-config
+        # optional: the secret is created at runtime by the PostSync token Job, so it
+        # may be absent at pod start. The kubelet populates/refreshes the mount once
+        # the Job creates it; the runner's wait-loop above reacts to that.
+        - name: runner-token
+          secret:
+            secretName: ci-runner-token
+            optional: true
 ---
 {{- /*
   act_runner config. The crux: container.network=host makes each job container

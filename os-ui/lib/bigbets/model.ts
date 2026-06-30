@@ -111,13 +111,29 @@ export type Artifact = {
 
 // ----------------------------------------------------- the registry objects ---
 
-/** PM-grade problem statement: who / need / obstacle / impact — no presupposed solution. */
+/**
+ * Problem statement. `need` carries the single free-form problem statement the
+ * create form captures; `who` carries the bet's business Owner. `obstacle` and
+ * `impact` are legacy sub-fields kept for back-compat (older bets + the value
+ * model tests) — the current UI no longer collects them.
+ */
 export type ProblemStatement = {
   who: string;
   need: string;
   obstacle: string;
   impact: string;
 };
+
+/**
+ * Derive a short, human bet name from its problem statement — used when the
+ * create form no longer collects a separate name (the problem statement is the
+ * identity). Trims to the first sentence/line, capped to ~70 chars.
+ */
+export function deriveBetName(statement: string, fallback = 'Untitled big bet'): string {
+  const first = (statement || '').trim().split(/[\n.!?]/)[0]?.trim() ?? '';
+  if (!first) return fallback;
+  return first.length > 70 ? `${first.slice(0, 67).trimEnd()}…` : first;
+}
 
 /** Selectable realized-value basis (default uplift-over-baseline). */
 export type ValueBasis = 'uplift' | 'absolute' | 'owner-declared';
@@ -162,6 +178,8 @@ export type BigBet = {
   /** Cross-domain bets are Admin-owned; each component keeps its own domain's controls. */
   crossDomain: boolean;
   owner: string;
+  /** Free-form solution idea (how the bet intends to realize the value). */
+  solution?: string;
   /** Members who may SEE not-yet-shared component detail (OPA). Owner is always a member. */
   members: string[];
   /** Up-link to the Strategy value model. */
@@ -175,7 +193,7 @@ export type BigBet = {
   /** Owner-declared realized value (used only when basis = owner-declared). */
   ownerDeclaredValue?: number;
   goLive: string;
-  status: 'draft' | 'active' | 'shipped';
+  status: 'draft' | 'active' | 'shipped' | 'archived';
   components: ComponentRef[];
   createdBy: string;
   createdAt: string;

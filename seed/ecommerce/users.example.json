@@ -1,0 +1,51 @@
+[
+  {
+    "id": "nova-admin",
+    "name": "Nova (Store Admin)",
+    "password": "<GENERATED — see gen-credentials.mjs; never commit a real one>",
+    "domains": ["platform", "sales", "marketing", "ops"],
+    "role": "admin"
+  },
+  {
+    "id": "sasha-sales",
+    "name": "Sasha (Sales Builder)",
+    "password": "<GENERATED>",
+    "domains": ["sales"],
+    "role": "builder"
+  },
+  {
+    "id": "morgan-mktg",
+    "name": "Morgan (Marketing Builder)",
+    "password": "<GENERATED>",
+    "domains": ["marketing"],
+    "role": "builder"
+  },
+  {
+    "id": "omar-ops",
+    "name": "Omar (Ops Builder)",
+    "password": "<GENERATED>",
+    "domains": ["ops"],
+    "role": "builder"
+  },
+  {
+    "id": "riley-sales",
+    "name": "Riley (Sales Creator)",
+    "password": "<GENERATED>",
+    "domains": ["sales"],
+    "role": "creator"
+  },
+  {
+    "id": "kai-mktg",
+    "name": "Kai (Marketing Creator)",
+    "password": "<GENERATED>",
+    "domains": ["marketing"],
+    "role": "creator"
+  },
+  {
+    "id": "devi-ops",
+    "name": "Devi (Ops Creator)",
+    "password": "<GENERATED>",
+    "domains": ["ops"],
+    "role": "creator"
+  }
+]

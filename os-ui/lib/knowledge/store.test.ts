@@ -22,14 +22,25 @@ const builder = { id: 'bea', domains: ['sales'], role: 'builder' as const };
 const admin = { id: 'sara', domains: ['sales', 'finance'], role: 'admin' as const };
 const outsider = { id: 'kenji', domains: ['finance'], role: 'builder' as const };
 
-test('seeded data: amir sees Bank Submission under Mine', () => {
+test('a fresh tenant has no workflows', () => {
   __resetStore();
+  const groups = listWorkflows(participant);
+  assert.equal(groups.mine.length, 0);
+  assert.equal(groups.domain.length, 0);
+  assert.equal(groups.marketplace.length, 0);
+});
+
+test('a created draft appears under Mine for its owner', () => {
+  __resetStore();
+  createWorkflow(participant, { title: 'Bank Submission', domain: 'sales' });
   const groups = listWorkflows(participant);
   assert.ok(groups.mine.some((w) => w.title === 'Bank Submission'));
 });
 
-test('seeded data: published Customer Onboarding visible to domain members', () => {
+test('a published workflow is visible to its domain', () => {
   __resetStore();
+  const rec = createWorkflow(builder, { title: 'Customer Onboarding', domain: 'sales' });
+  publishWorkflow(rec.id, builder);
   const groups = listWorkflows(builder);
   const all = [...groups.mine, ...groups.domain, ...groups.marketplace];
   assert.ok(all.some((w) => w.title === 'Customer Onboarding'), 'Customer Onboarding should be visible');
@@ -37,6 +48,7 @@ test('seeded data: published Customer Onboarding visible to domain members', () 
 
 test('outsider from another domain cannot see Personal drafts', () => {
   __resetStore();
+  createWorkflow(participant, { title: 'Bank Submission', domain: 'sales' });
   const groups = listWorkflows(outsider);
   const all = [...groups.mine, ...groups.domain, ...groups.marketplace];
   assert.ok(!all.some((w) => w.title === 'Bank Submission'), 'Bank Submission should not be visible to outsider');
@@ -83,9 +95,8 @@ test('updateWorkflow rejects a stale sha', () => {
 
 test('participant CANNOT publish (publish gate)', () => {
   __resetStore();
-  const groups = listWorkflows(participant);
-  const draft = groups.mine.find((w) => w.status === 'draft');
-  assert.ok(draft, 'expected a draft workflow');
+  const draft = createWorkflow(participant, { title: 'Draft', domain: 'sales' });
+  assert.equal(draft.status, 'draft');
   assert.throws(() => publishWorkflow(draft.id, participant), /builder|admin/i);
 });
 
@@ -130,12 +141,13 @@ test('cannot delete a live workflow', () => {
   assert.throws(() => deleteWorkflow(rec.id, builder), /unpublish/i);
 });
 
-test('getDomainKnowledge returns seeded sales sections', () => {
+test('getDomainKnowledge returns the empty domain-knowledge template (4 sections)', () => {
   __resetStore();
   const dk = getDomainKnowledge('sales');
   assert.equal(dk.domain, 'sales');
   assert.equal(dk.sections.length, 4);
-  assert.ok(dk.sections.find((s) => s.id === 'overview')?.content.length ?? 0 > 0);
+  // The section TEMPLATE is structural; a fresh tenant has no content yet.
+  assert.equal(dk.sections.find((s) => s.id === 'overview')?.content, '');
 });
 
 test('updateDomainKnowledge patches section content', () => {

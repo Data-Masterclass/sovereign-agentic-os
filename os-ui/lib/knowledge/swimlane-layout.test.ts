@@ -49,19 +49,19 @@ test('one lane per actor type present, in fixed order', () => {
   assert.deepEqual(layout.lanes.map((l) => l.actor), ['Human', 'Software', 'Agent']);
 });
 
-test('each step placed in its actor lane y', () => {
+test('each step placed in its actor lane column x', () => {
   const w = parseWorkflow(WF);
   const layout = layoutSwimlanes(w);
   const humanLane = layout.lanes.find((l) => l.actor === 'Human')!;
   const prepare = layout.blocks.find((b) => b.id === 'prepare')!;
-  assert.ok(prepare.y >= humanLane.y && prepare.y < humanLane.y + humanLane.height);
+  assert.ok(prepare.x >= humanLane.x && prepare.x < humanLane.x + humanLane.width);
 });
 
-test('steps ordered left-to-right by sequence', () => {
+test('steps ordered top-to-bottom by sequence', () => {
   const w = parseWorkflow(WF);
   const layout = layoutSwimlanes(w);
-  const xs = layout.blocks.map((b) => b.x);
-  for (let i = 1; i < xs.length; i++) assert.ok(xs[i] > xs[i - 1], 'x should increase by seq');
+  const ys = layout.blocks.map((b) => b.y);
+  for (let i = 1; i < ys.length; i++) assert.ok(ys[i] > ys[i - 1], 'y should increase by seq');
 });
 
 test('sequential connectors join consecutive steps', () => {

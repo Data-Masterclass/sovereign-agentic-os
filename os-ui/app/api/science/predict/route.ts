@@ -34,10 +34,10 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch {
-    /* empty body => score the reference ACME account */
+    /* empty body => score with the default (neutral) feature vector */
   }
 
-  // The MCP door's caller is an AGENT (defaults to the Sales Assistant, granted predict).
+  // The MCP door's caller is an AGENT (defaults to the governed agent principal, granted predict).
   const result = await servePredict({
     account: body.account,
     features: body.features,

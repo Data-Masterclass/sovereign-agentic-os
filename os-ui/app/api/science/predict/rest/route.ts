@@ -35,7 +35,7 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch {
-    /* empty body => score the reference ACME account */
+    /* empty body => score with the default (neutral) feature vector */
   }
 
   // The REST door's caller is a SOFTWARE app (defaults to the Churn Risk app, granted predict).

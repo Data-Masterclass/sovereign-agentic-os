@@ -18,7 +18,7 @@ export type Problem = { who: string; need: string; obstacle: string; impact: str
 
 export type BetSummary = {
   id: string; name: string; domain: string; owner: string; crossDomain: boolean;
-  pillarId: string; problem: Problem; goLive: string; status: string;
+  pillarId: string; problem: Problem; solution: string; goLive: string; status: string;
   components: number; completion: { done: number; total: number; pct: number };
   signal: Readiness; goLiveRealistic: boolean; targetValue: number; realized: number;
 };
@@ -61,7 +61,7 @@ export type BetView = {
     id: string; name: string; domain: string; crossDomain: boolean; owner: string;
     members: string[]; pillarId: string; metricId: string; targetValue: number;
     valueBasis: ValueBasis; allocation: AllocationMethod; goLive: string; status: string;
-    problem: Problem; components: ComponentRef[];
+    problem: Problem; solution?: string; components: ComponentRef[];
   };
   pillar: { id: string; name: string } | null;
   metric: { id: string; name: string } | null;
@@ -122,10 +122,15 @@ export function fmtDate(iso: string): string {
   return new Date(t).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-/** Weave the four-part problem statement into one readable line. */
+/**
+ * The bet's problem statement as one line. `need` now carries the single
+ * free-form statement the create form captures; legacy bets that only have the
+ * old who/obstacle/impact sub-fields fall back to a woven sentence.
+ */
 export function problemLine(p: Problem): string {
-  if (!p?.who && !p?.need) return 'No problem statement yet.';
-  let s = `${p.who || 'A team'} needs ${p.need || 'an outcome'}`;
+  if (p?.need) return p.need;
+  if (!p?.who) return 'No problem statement yet.';
+  let s = `${p.who} needs an outcome`;
   if (p.obstacle) s += `, but ${p.obstacle}`;
   if (p.impact) s += ` — ${p.impact}`;
   return s + (s.endsWith('.') ? '' : '.');

@@ -4,8 +4,9 @@
 import 'server-only';
 import { config } from '@/lib/config';
 import type { Role } from '@/lib/session';
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { hashPassword, verifyPassword, isHashed } from '@/lib/password';
+import { emailVerificationEnabled, sendVerificationEmail } from '@/lib/mailer';
 
 /**
  * User directory — a pragmatic, self-hosted identity store (the seam Ory would
@@ -16,15 +17,27 @@ import { hashPassword, verifyPassword, isHashed } from '@/lib/password';
  *  - The shipped build seeds NO real/fake users. On an empty store a single
  *    first-run bootstrap admin (`admin`/`admin`) is created, flagged
  *    `mustChangeCredentials` + `bootstrap`. The forced setup (setupAdmin) gives
- *    it a real email + strong password and DISABLES the default credential; on
- *    email verification the bootstrap tombstone is auto-deleted. So `admin/admin`
- *    is never usable past first-run.
+ *    it a real email + strong password, auto-verifies it (the operator who holds
+ *    the bootstrap credential is trusted — NO email round-trip is required) and
+ *    deletes the default `admin/admin` identity RIGHT THEN. So `admin/admin` is
+ *    never usable past first-run, with no reliance on a mailer.
  *  - A single high-entropy master recovery key (hash only, server-side) can reset
  *    a locked-out account.
  *
+ * Email verification is OPTIONAL and gated on a configured mailer (lib/mailer.ts):
+ *  - No SMTP configured (the default) → accounts are active immediately; the flow
+ *    NEVER dead-ends on a "check your email" that can never arrive.
+ *  - SMTP configured (operator opt-in) → later/invited accounts get a real
+ *    verification email; the single-use token's hash is stored on the user row so
+ *    verification survives a restart / a second replica. Verification is
+ *    non-blocking either way: an unverified account can still sign in — verifying
+ *    only confirms the address.
+ *
  * Persistence mirrors the artifact store: an authoritative in-process cache (so
  * it works with no cluster) plus a best-effort OpenSearch mirror ("os-users")
- * for durability in a real deploy. Only hashes ever reach the mirror.
+ * for durability in a real deploy. Only hashes ever reach the mirror, and every
+ * runtime mutation (setup, create, verify, recovery) write-throughs, so
+ * runtime-created accounts survive a pod restart when OpenSearch is reachable.
  */
 
 export type StoredUser = {
@@ -44,6 +57,10 @@ export type StoredUser = {
   onboarded?: boolean;
   /** Disabled rows cannot authenticate (e.g. the neutralised bootstrap admin). */
   disabled?: boolean;
+  /** SHA-256 of the pending single-use email-verification token (never the raw). */
+  pendingVerifyHash?: string;
+  /** Expiry (epoch ms) of the pending verification token. */
+  pendingVerifyExpires?: number;
   createdAt?: number;
   updatedAt?: number;
 };
@@ -66,18 +83,11 @@ const BOOTSTRAP_TOMBSTONE_ID = '__bootstrap_tombstone__';
 const RESERVED_IDS = new Set([META_ID, BOOTSTRAP_TOMBSTONE_ID]);
 const VERIFY_TTL_MS = 1000 * 60 * 60 * 24; // 24h single-use verification window
 
-type PendingVerify = { tokenHash: string; userId: string; expiresAt: number };
-type Meta = { recoveryHash?: string; initialized?: boolean; pendingVerify?: PendingVerify };
+type Meta = { recoveryHash?: string; initialized?: boolean };
 
 let cache: Map<string, StoredUser> | null = null;
 let meta: Meta = {};
 let osHealthy = false;
-
-// Single-use email-verification tokens (in-memory fast path). Keyed by a
-// SHA-256 of the token so the raw token is never held in memory either. The
-// authoritative copy is mirrored into `meta.pendingVerify` so verification
-// survives a process restart / a second replica.
-const verifyTokens = new Map<string, { userId: string; expiresAt: number }>();
 
 // A constant, valid scrypt hash used to equalise authentication timing for
 // unknown handles (so response time does not reveal whether an account exists).
@@ -90,6 +100,28 @@ function sha256(s: string): string {
 
 function isReserved(id: string): boolean {
   return RESERVED_IDS.has(id) || id.startsWith('__');
+}
+
+/**
+ * Mint a single-use, expiring verification token and stamp its HASH onto the
+ * user row (durable via the OpenSearch mirror → survives a restart / 2nd
+ * replica). The raw token is returned ONCE for the caller to email; it is never
+ * stored. Format `<id>.<hex>` so verification can locate the row by prefix and
+ * then constant-time-compare the hash.
+ */
+function mintVerifyToken(u: StoredUser): string {
+  const token = `${u.id}.${sha256(`${u.id}:${Date.now()}:${Math.random()}`)}`;
+  u.pendingVerifyHash = sha256(token);
+  u.pendingVerifyExpires = Date.now() + VERIFY_TTL_MS;
+  return token;
+}
+
+/** Absolute verify URL when OS_PUBLIC_URL is set (needed for emailed links);
+ * otherwise a same-origin relative path (fine for in-app surfacing). */
+function verifyLink(token: string): string {
+  const base = (process.env.OS_PUBLIC_URL ?? '').replace(/\/+$/, '');
+  const path = `/api/auth/verify?token=${encodeURIComponent(token)}`;
+  return base ? `${base}${path}` : path;
 }
 
 /** id-exact match first, then a unique email match — never an ambiguous find. */
@@ -203,7 +235,7 @@ async function getCache(): Promise<Map<string, StoredUser>> {
       for (const h of data?.hits?.hits ?? []) {
         const src = h._source;
         if (src.id === META_ID) {
-          meta = { recoveryHash: src.recoveryHash, initialized: src.initialized, pendingVerify: src.pendingVerify };
+          meta = { recoveryHash: src.recoveryHash, initialized: src.initialized };
           continue;
         }
         map.set(src.id, src);
@@ -299,19 +331,31 @@ export async function createUser(input: {
   if (!input.password) throw err('A password is required', 400);
   if (!input.domains?.length) throw err('At least one domain is required', 400);
   if (input.email && emailTaken(map, input.email)) throw err('That email is already in use', 409);
+  const email = input.email?.trim() || undefined;
+  // Email verification is OPTIONAL and gated on a configured mailer. With no
+  // mailer (the default) a new account is ACTIVE immediately (emailVerified=true
+  // when an email is on file) so the flow never dead-ends. With a mailer the
+  // account starts unverified and we send a real verification email — but it can
+  // still sign in meanwhile, so verification is confirmation, not a gate.
+  const verify = Boolean(email) && emailVerificationEnabled();
   const u: StoredUser = {
     id,
     name: input.name?.trim() || id,
     password: await hashPassword(input.password),
     domains: input.domains,
     role: input.role,
-    email: input.email?.trim() || undefined,
-    emailVerified: input.email ? false : undefined,
+    email,
+    emailVerified: email ? !verify : undefined,
     onboarded: false,
     createdAt: Date.now(),
   };
+  let token: string | null = null;
+  if (verify) token = mintVerifyToken(u);
   map.set(id, u);
   writeThrough(u);
+  // Fire-and-forget: a delivery failure must not fail account creation (the
+  // account is usable regardless). No secret is ever logged by the mailer.
+  if (verify && token && email) void sendVerificationEmail(email, verifyLink(token));
   return publicOf(u);
 }
 
@@ -360,9 +404,14 @@ export async function knownDomains(): Promise<string[]> {
 /**
  * Forced first-login setup of the bootstrap admin. Creates the REAL admin
  * account (chosen username, real email, strong password — strength is enforced
- * by the caller), neutralises the default `admin/admin` credential immediately,
- * and returns a single-use email-verification token (raw, shown once). The
- * bootstrap tombstone is deleted when that token is verified.
+ * by the caller) and AUTO-VERIFIES it: the operator who holds the bootstrap
+ * credential is trusted, so no email round-trip is required and the account is
+ * active immediately. The default `admin/admin` identity is DELETED right then —
+ * with no reliance on a mailer, this is what makes clone-and-run work offline.
+ *
+ * (When a mailer is configured the new admin is still auto-verified — bootstrap
+ * is the one path we never gate on email; per-user invite verification is the
+ * SMTP-on path, handled in createUser.)
  */
 export async function setupAdmin(input: {
   bootstrapId: string;
@@ -370,7 +419,7 @@ export async function setupAdmin(input: {
   name?: string;
   email: string;
   passwordHashReady: string; // already a scrypt hash (caller hashed it)
-}): Promise<{ user: PublicUser; verifyToken: string }> {
+}): Promise<{ user: PublicUser }> {
   const map = await getCache();
   const boot = map.get(input.bootstrapId);
   if (!boot || !boot.bootstrap) throw err('Setup is not available', 409);
@@ -385,20 +434,16 @@ export async function setupAdmin(input: {
   // A different existing user already holds this id.
   if (newId !== input.bootstrapId && map.has(newId)) throw err('That username already exists', 409);
 
-  // Move the bootstrap row to a disabled tombstone so `admin/admin` cannot log in
-  // anymore (default credential neutralised the instant setup completes). It is
-  // physically deleted on email verification.
+  // Delete the default `admin/admin` identity immediately — it is gone the
+  // instant setup completes (no disabled tombstone left lingering, no mailer
+  // dependency). The re-seed guard is `meta.initialized` (already true), so this
+  // can never silently resurrect. Any stale tombstone from an older build is
+  // swept too.
   map.delete(input.bootstrapId);
-  const tombstone: StoredUser = {
-    ...boot,
-    id: BOOTSTRAP_TOMBSTONE_ID,
-    disabled: true,
-    mustChangeCredentials: false,
-    password: await hashPassword(`disabled-${Date.now()}-${Math.random()}`),
-    updatedAt: Date.now(),
-  };
-  map.set(BOOTSTRAP_TOMBSTONE_ID, tombstone);
-  writeThrough(tombstone);
+  if (map.has(BOOTSTRAP_TOMBSTONE_ID)) {
+    map.delete(BOOTSTRAP_TOMBSTONE_ID);
+    if (osHealthy) void osFetch(`/os-users/_doc/${BOOTSTRAP_TOMBSTONE_ID}?refresh=true`, { method: 'DELETE' });
+  }
   // Drop the old bootstrap doc from the mirror — but ONLY when the operator chose
   // a different username. If they kept `admin`, the new admin's PUT below targets
   // the SAME doc id, so a DELETE here would race and could wipe the real account.
@@ -413,7 +458,7 @@ export async function setupAdmin(input: {
     domains: boot.domains,
     role: 'admin',
     email,
-    emailVerified: false,
+    emailVerified: true, // trusted bootstrap operator → active immediately
     mustChangeCredentials: false,
     onboarded: false,
     createdAt: Date.now(),
@@ -421,45 +466,34 @@ export async function setupAdmin(input: {
   map.set(newId, real);
   writeThrough(real);
 
-  // Mint a single-use, expiring verification token (store only its hash). Held
-  // both in-memory (fast) and in durable meta (survives a restart / 2nd replica).
-  const token = `${newId}.${sha256(`${newId}:${Date.now()}:${Math.random()}`)}`;
-  const tokenHash = sha256(token);
-  const expiresAt = Date.now() + VERIFY_TTL_MS;
-  verifyTokens.set(tokenHash, { userId: newId, expiresAt });
-  meta.pendingVerify = { tokenHash, userId: newId, expiresAt };
-  persistMeta();
-
-  return { user: publicOf(real), verifyToken: token };
+  return { user: publicOf(real) };
 }
 
 /**
- * Consume an email-verification token: marks the account verified and deletes
- * the bootstrap tombstone. Single-use + expiring. Returns the verified user id.
+ * Consume a single-use, expiring email-verification token (the SMTP-on invite
+ * path). Locates the row by the token's `<id>.` prefix, constant-time-compares
+ * the stored hash, marks the account verified and clears the pending fields
+ * (single-use). Durable: the hash lives on the user row, so a restart between
+ * issue and click still verifies. Returns the verified user id.
  */
 export async function verifyEmailToken(token: string): Promise<{ ok: boolean; userId?: string }> {
-  const key = sha256(token);
   const map = await getCache();
-  let entry = verifyTokens.get(key);
-  if (entry) verifyTokens.delete(key); // single-use (in-memory)
-  // Durable fallback so a restart between setup and the click still verifies.
-  if (!entry && meta.pendingVerify?.tokenHash === key) {
-    entry = { userId: meta.pendingVerify.userId, expiresAt: meta.pendingVerify.expiresAt };
-  }
-  if (!entry) return { ok: false };
-  if (Date.now() > entry.expiresAt) return { ok: false };
-  const u = map.get(entry.userId);
-  if (!u) return { ok: false };
+  const id = token.split('.')[0]?.trim().toLowerCase();
+  if (!id) return { ok: false };
+  const u = map.get(id);
+  if (!u || isReserved(u.id) || !u.pendingVerifyHash || !u.pendingVerifyExpires) return { ok: false };
+  if (Date.now() > u.pendingVerifyExpires) return { ok: false };
+  // Constant-time compare (both are fixed-length sha256 hex).
+  const a = Buffer.from(sha256(token));
+  const b = Buffer.from(u.pendingVerifyHash);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return { ok: false };
   u.emailVerified = true;
+  u.pendingVerifyHash = undefined; // single-use
+  u.pendingVerifyExpires = undefined;
   u.updatedAt = Date.now();
   map.set(u.id, u);
   writeThrough(u);
-  // Single-use: clear the durable pending-verify record.
-  if (meta.pendingVerify?.tokenHash === key) {
-    meta.pendingVerify = undefined;
-    persistMeta();
-  }
-  // Auto-delete the neutralised bootstrap tombstone — default identity is gone.
+  // Defensive: sweep any stale bootstrap tombstone from an older build.
   if (map.has(BOOTSTRAP_TOMBSTONE_ID)) {
     map.delete(BOOTSTRAP_TOMBSTONE_ID);
     if (osHealthy) void osFetch(`/os-users/_doc/${BOOTSTRAP_TOMBSTONE_ID}?refresh=true`, { method: 'DELETE' });

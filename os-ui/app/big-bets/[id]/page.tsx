@@ -4,7 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
 import {
@@ -15,10 +15,16 @@ import Roadmap from './Roadmap';
 import Components from './Components';
 import Planner from './Planner';
 import ValuePanel from './ValuePanel';
-import Composition from './Composition';
 
+/**
+ * The bet detail — consistent with Strategy's BetDetail. One column, four
+ * sections in delivery order: Value → Roadmap → Components → Audit, plus an
+ * Archive action. (No Composition box; the value model already shows upstream
+ * credit in its distribution table.)
+ */
 export default function BetDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const id = params.id;
   const [basis, setBasis] = useState<ValueBasis | ''>('');
   const [allocation, setAllocation] = useState<AllocationMethod | ''>('');
@@ -26,6 +32,7 @@ export default function BetDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showAudit, setShowAudit] = useState(false);
+  const [archiving, setArchiving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -46,6 +53,28 @@ export default function BetDetailPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  const archive = async () => {
+    if (!view || archiving) return;
+    if (!confirm(`Archive “${view.bet.name}”? It moves out of the active portfolio; nothing is deleted.`)) return;
+    setArchiving(true);
+    try {
+      const res = await fetch(`/api/big-bets/${id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ status: 'archived' }),
+        cache: 'no-store',
+      });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        throw new Error(b.error ?? `Request failed (${res.status})`);
+      }
+      router.push('/big-bets');
+    } catch (e) {
+      setError((e as Error).message);
+      setArchiving(false);
+    }
+  };
+
   return (
     <>
       <PageHeader title={view ? view.bet.name : 'Big Bet'} crumb="initiative roadmap over real components" />
@@ -62,17 +91,9 @@ export default function BetDetailPage() {
           <>
             <HeaderBand view={view} />
 
-            <div className="section-title">Roadmap</div>
-            <div className="card"><Roadmap view={view} /></div>
-
-            <div className="section-title">Components</div>
-            <Components view={view} onMutate={load} />
-
-            <div className="section-title">Planner</div>
-            <div className="card"><Planner betId={view.bet.id} onMutate={load} /></div>
-
+            {/* 1 — Value */}
             <div className="section-title">Value</div>
-            <div className="card">
+            <div className="card bb-value-card">
               <ValuePanel
                 view={view}
                 basis={basis || view.value.realized.basis}
@@ -82,9 +103,16 @@ export default function BetDetailPage() {
               />
             </div>
 
-            <div className="section-title">Composition</div>
-            <div className="card"><Composition view={view} /></div>
+            {/* 2 — Roadmap */}
+            <div className="section-title">Roadmap</div>
+            <div className="card"><Roadmap view={view} /></div>
 
+            {/* 3 — Components (with the planner that scaffolds them) */}
+            <div className="section-title">Components</div>
+            <Components view={view} onMutate={load} />
+            <div className="card" style={{ marginTop: 12 }}><Planner betId={view.bet.id} onMutate={load} /></div>
+
+            {/* 4 — Audit */}
             <div className="section-title">
               Audit
               <button className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={() => setShowAudit((v) => !v)}>
@@ -108,9 +136,16 @@ export default function BetDetailPage() {
               </div>
             ) : null}
 
-            <div className="hint" style={{ marginTop: 20 }}>
-              Source: <span className="mono">{view.sourceMode}</span>. The bet shows delivery;{' '}
-              <Link href="/monitoring" style={{ color: 'var(--teal)' }}>Monitoring</Link> shows runtime health.
+            <div className="row" style={{ marginTop: 20, justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+              <div className="hint" style={{ margin: 0 }}>
+                Source: <span className="mono">{view.sourceMode}</span>. The bet shows delivery;{' '}
+                <Link href="/monitoring" style={{ color: 'var(--teal)' }}>Monitoring</Link> shows runtime health.
+              </div>
+              {view.canEdit && view.bet.status !== 'archived' ? (
+                <button className="btn ghost sm" onClick={archive} disabled={archiving} style={{ color: 'var(--danger)' }}>
+                  {archiving ? <span className="spin" /> : 'Archive bet'}
+                </button>
+              ) : null}
             </div>
           </>
         ) : null}
@@ -122,19 +157,25 @@ export default function BetDetailPage() {
 function HeaderBand({ view }: { view: BetView }) {
   const b = view.bet;
   const r = view.roadmap;
+  const archived = b.status === 'archived';
   return (
     <div className="card" style={{ marginTop: 14 }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 280 }}>
           <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <SignalBadge signal={r.signal} />
+            {archived ? <span className="chip">archived</span> : <SignalBadge signal={r.signal} />}
             <span className="chip">{b.domain}</span>
             {b.crossDomain ? <span className="chip">cross-domain</span> : null}
-            <span className="muted" style={{ fontSize: 11.5 }}>owner {b.owner}</span>
+            <span className="muted" style={{ fontSize: 11.5 }}>owner {b.problem.who || b.owner}</span>
           </div>
-          <p className="muted" style={{ marginTop: 10, marginBottom: 0, maxWidth: 640, lineHeight: 1.55 }}>
+          <p style={{ marginTop: 10, marginBottom: 0, maxWidth: 640, lineHeight: 1.55, color: 'var(--text)' }}>
             {problemLine(b.problem)}
           </p>
+          {b.solution ? (
+            <p className="muted" style={{ marginTop: 8, marginBottom: 0, maxWidth: 640, lineHeight: 1.55 }}>
+              <span style={{ fontWeight: 600, color: 'var(--text)' }}>Solution · </span>{b.solution}
+            </p>
+          ) : null}
           <div className="muted" style={{ fontSize: 11.5, marginTop: 10 }}>
             {view.pillar ? <>pillar <strong>{view.pillar.name}</strong></> : 'no pillar'}
             {view.metric ? <> → metric <strong>{view.metric.name}</strong></> : null}

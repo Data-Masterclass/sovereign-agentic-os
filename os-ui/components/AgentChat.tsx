@@ -24,6 +24,7 @@ export default function AgentChat({
   label = 'agent',
   endpoint = '/api/agent-chat',
   initialMessages = [],
+  variant = 'default',
 }: {
   agent: string;
   placeholder?: string;
@@ -31,6 +32,8 @@ export default function AgentChat({
   onAssistant?: (content: string) => void;
   minHeight?: number;
   label?: string;
+  /** `claude` renders the calm, Claude-like conversation surface (Software build chat). */
+  variant?: 'default' | 'claude';
   /**
    * Where to POST the conversation. Defaults to the shared `/api/agent-chat`
    * task-scoped gateway; a per-app build chat passes its own `/api/apps/{id}/chat`
@@ -83,7 +86,7 @@ export default function AgentChat({
   );
 
   return (
-    <div className="chat">
+    <div className={`chat${variant === 'claude' ? ' claude' : ''}`}>
       <div className="chat-log" style={{ minHeight }} ref={scrollRef}>
         {messages.length === 0 ? (
           <div className="chat-empty">

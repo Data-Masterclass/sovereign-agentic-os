@@ -29,12 +29,28 @@ const kenji: Principal = { id: 'kenji', domains: ['finance'], role: 'builder' };
 
 beforeEach(() => { __resetStore(); __resetLineage(); });
 
-test('seeds the validation-gate files for the owner (a PDF, an image, an audio)', () => {
+/**
+ * The store ships EMPTY now. Build the validation-gate corpus (a PDF, an image
+ * and an audio for the owner, across a couple of folders/tags) via the public
+ * upload API so the facet + scope tests have real material.
+ */
+function seedFiles(): void {
+  createFile(amir, { name: 'contract.pdf', folder: '/contracts', tags: ['renewal', 'contract'], text: 'A master agreement with renewal terms.' });
+  createFile(amir, { name: 'logo.png', folder: '/brand', tags: ['brand', 'logo'], text: 'Caption: the company wordmark.' });
+  createFile(amir, { name: 'standup-2026-06.m4a', folder: '/recordings', tags: ['standup'], text: 'Transcript: the team reviewed the renewal.' });
+}
+
+test('a fresh tenant has no files', () => {
+  assert.equal(listFiles(amir).mine.length, 0);
+});
+
+test('the validation-gate files surface for the owner (a PDF, an image, an audio)', () => {
+  seedFiles();
   const g = listFiles(amir);
   const names = g.mine.map((f) => f.name);
-  assert.ok(names.some((n) => n.endsWith('.pdf')), 'a PDF is seeded');
-  assert.ok(names.some((n) => n.endsWith('.png')), 'an image is seeded');
-  assert.ok(g.mine.some((f) => f.kind === 'audio'), 'an audio is seeded');
+  assert.ok(names.some((n) => n.endsWith('.pdf')), 'a PDF is present');
+  assert.ok(names.some((n) => n.endsWith('.png')), 'an image is present');
+  assert.ok(g.mine.some((f) => f.kind === 'audio'), 'an audio is present');
 });
 
 test('private files are owner-only; a foreign user never sees them', () => {
@@ -46,6 +62,7 @@ test('private files are owner-only; a foreign user never sees them', () => {
 });
 
 test('facets expose the folder tree and tag cloud over visible files', () => {
+  seedFiles();
   const g = listFiles(amir);
   assert.ok(g.facets.folders.some((f) => f.path !== '/'), 'has at least one sub-folder');
   assert.ok(g.facets.tags.length > 0, 'has tags');

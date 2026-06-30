@@ -162,6 +162,7 @@ export async function requestDeploy(
   // Routine update within the approved envelope + a clean scan → auto-deploy.
   if (app.deploy.state === 'live' && !broadened && scan.passed) {
     app.deploy.reviewCardId = null;
+    app.deploy.releases += 1; // a routine update ships a new release/version.
     await persistApp(app);
     void trace({
       principal: app.mcpPrincipal,
@@ -257,6 +258,7 @@ export async function decideDeploy(
     app.deploy.state = 'live';
     app.deploy.approved = card.requested;
     app.deploy.reviewCardId = null;
+    app.deploy.releases += 1; // approved go-live ships a new release/version.
     app.pipeline.live = 'ok';
   } else {
     card.decision = 'denied';

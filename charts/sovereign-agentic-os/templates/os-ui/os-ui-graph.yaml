@@ -1,0 +1,41 @@
+{{- if and .Values.osUI.enabled .Values.osUI.graph.enabled }}
+{{- /*
+  OS-UI Microsoft Graph client-secret Secret. When the operator opts into the
+  Graph mail transport (recommended for Microsoft 365 — avoids SMTP basic-auth,
+  which M365 is deprecating), the OS UI sends transactional mail via Graph
+  `sendMail` (os-ui/lib/mailer.ts), reading GRAPH_CLIENT_SECRET from this Secret
+  so the credential is NEVER in plaintext env or committed to git.
+
+  Resolution order (no secret is ever committed):
+    1. an explicit `osUI.graph.clientSecret` (operator-provided / ExternalSecret), else
+    2. the value already stored in this Secret (preserved across `helm upgrade`
+       via `lookup`), else
+    3. an empty string — Graph mail simply stays inert until a secret is supplied.
+
+  The operator supplies the real secret out-of-band, e.g.
+    kubectl -n <ns> create secret generic os-ui-graph \
+      --from-literal=GRAPH_CLIENT_SECRET='<entra-app-client-secret>'
+  or via a gitignored values.private.yaml (`osUI.graph.clientSecret`) / an
+  ExternalSecret. GITOPS CAVEAT: `lookup` is empty under `helm template` (Argo CD
+  / Flux), so for those pipelines set the value explicitly (an ExternalSecret is
+  ideal) rather than relying on step 2.
+*/}}
+{{- $name := "os-ui-graph" }}
+{{- $existing := (lookup "v1" "Secret" .Release.Namespace $name) }}
+{{- $current := "" }}
+{{- if $existing }}{{ $current = (index $existing.data "GRAPH_CLIENT_SECRET" | default "" | b64dec) }}{{- end }}
+{{- $secret := .Values.osUI.graph.clientSecret | default $current | default "" }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui") | nindent 4 }}
+  annotations:
+    "helm.sh/resource-policy": keep
+type: Opaque
+stringData:
+  GRAPH_CLIENT_SECRET: {{ $secret | quote }}
+{{- end }}

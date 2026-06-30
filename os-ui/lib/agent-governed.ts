@@ -64,7 +64,9 @@ export type Authz = { effect: Effect; policy: Policy; reason: string };
  * `opa.requiresApproval` in the chart).
  */
 const LOCAL_GRANTS: Record<string, ToolName[]> = {
-  // The Sales Assistant's scoped LiteLLM key / Ory identity.
+  // The canonical governed-agent principal (a scoped LiteLLM key / Ory identity).
+  // It is the default MCP `predict`/tools caller used by the Science + Agents
+  // governance demos — NOT a worked-example agent.
   'sales-assistant': [
     'metrics',
     'retrieve',
@@ -301,29 +303,25 @@ export async function trace(event: TraceEvent): Promise<TraceRecord> {
   return rec;
 }
 
-// --------------------------------------------------- Sales worked-example facts --
+// ------------------------------------------- Governed metrics/retrieve facts --
 
 /**
- * Canonical Sales Assistant facts (golden path §10). The `metrics` tool reads the
- * SAME Cube `daily_revenue` measure the Sales dashboard (`/api/metrics`) uses, so
- * the email's number can't drift from the dashboard's. When Cube is off we fall
- * back to a deterministic seed (the same figures the local Cube would serve) and
- * say so, rather than failing the teaching flow.
+ * Neutral reference facts for the governed `metrics`/`retrieve` tool doors (the
+ * agent-side mirror of the data spine). The `metrics` tool reads the SAME Cube
+ * `daily_revenue` measure the Sales dashboard (`/api/metrics`) uses, so a tool
+ * answer can't drift from the dashboard's. When Cube is off we fall back to a
+ * deterministic seed and say so, rather than failing the offline-mock flow. No
+ * customer/worked-example content is baked in here.
  */
 export const SALES = {
   principal: 'sales-assistant',
   domain: 'sales',
-  model: config.litellmChatModel,
-  cube: 'daily_revenue',
   revenueMeasure: 'daily_revenue.total_revenue',
   ordersMeasure: 'daily_revenue.total_orders',
   dateDim: 'daily_revenue.order_date',
   lastQuarter: { label: 'Q1 2026', start: '2026-01-01', end: '2026-03-31' },
-  account: 'ACME',
   // Deterministic offline seed = what the local Cube serves for Q1 2026.
   seed: { revenue: 48250, orders: 19 },
-  // Allowed discount bands from the Discount Policy knowledge base (§10.3).
-  discountBands: { renewal: '5–10%', multiYear: 'up to 15%' },
 } as const;
 
 export type MetricsResult = { value: number; source: 'cube' | 'seed-offline'; measure: string };
@@ -367,16 +365,11 @@ export type Passage = { source: string; title: string; text: string; certified: 
 
 /**
  * The governed `retrieve` (RAG) tool: lexical search over the domain OpenSearch
- * index, with a curated offline fallback so the Sales Assistant always has its
- * contract + discount-policy passages on a laptop.
+ * index, with a curated offline fallback so the tool door still returns a
+ * governed, certified passage on a laptop with no live OpenSearch. No
+ * customer/worked-example content is baked in.
  */
 const RETRIEVE_SEED: Passage[] = [
-  {
-    source: 'file:acme-contract.pdf',
-    title: 'ACME master agreement — renewal terms',
-    text: 'Initial term 12 months, auto-renews unless cancelled 30 days prior. Renewal price uplift capped at CPI. Account owner signature required.',
-    certified: false,
-  },
   {
     source: 'knowledge:discount-policy',
     title: 'Discount Policy (Certified)',
@@ -418,7 +411,7 @@ export async function retrieveTool(query: string): Promise<Passage[]> {
   // Offline curated passages — keep only the ones that match the query loosely.
   const q = query.toLowerCase();
   const matched = RETRIEVE_SEED.filter(
-    (p) => q.length === 0 || p.title.toLowerCase().includes('') || /contract|renew|discount|policy|acme|term/.test(q),
+    (p) => q.length === 0 || /contract|renew|discount|policy|term/.test(q),
   );
   return matched.length > 0 ? matched : RETRIEVE_SEED;
 }

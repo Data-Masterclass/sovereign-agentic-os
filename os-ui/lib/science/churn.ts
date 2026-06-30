@@ -56,12 +56,13 @@ export const CHURN = {
 export type FeatureName = (typeof CHURN.features)[number];
 export type ChurnFeatures = Record<FeatureName, number>;
 
-/** A representative at-risk account the Sales Assistant flags (offline seed). */
-export const ACME_FEATURES: ChurnFeatures = {
-  recency_days: 95, // last order 95 days ago (lapsing)
-  order_frequency: 2, // only 2 orders/year
-  monetary_value: 4200,
-  tenure_months: 14,
+/** Neutral all-zero feature vector used as the default predict input until the
+ *  caller supplies real features. No demo account is baked in. */
+export const DEFAULT_FEATURES: ChurnFeatures = {
+  recency_days: 0,
+  order_frequency: 0,
+  monetary_value: 0,
+  tenure_months: 0,
 };
 
 // --------------------------------------------------- The governed predict tool ---
@@ -175,19 +176,11 @@ export type ChurnSlice = {
   sample: { account: string; features: ChurnFeatures };
 };
 
-/** Offline-seed Featureform `features` artifact (the RFM feature set). */
-const FEATURE_SEED: FeatureRow[] = [
-  { name: 'recency_days', entity: 'customer', offline: 'iceberg:sales.customer_360', online: 'valkey' },
-  { name: 'order_frequency', entity: 'customer', offline: 'iceberg:sales.customer_360', online: 'valkey' },
-  { name: 'monetary_value', entity: 'customer', offline: 'iceberg:sales.customer_360', online: 'valkey' },
-  { name: 'tenure_months', entity: 'customer', offline: 'iceberg:sales.customer_360', online: 'valkey' },
-];
+/** A fresh tenant has no offline-seeded feature rows or model versions — these
+ *  come from the live Featureform/MLflow backends (or the Northpeak seed). */
+const FEATURE_SEED: FeatureRow[] = [];
 
-/** Offline-seed MLflow registry: v1 (archived) vs v2 (Production, certified). */
-const VERSION_SEED: ModelVersion[] = [
-  { version: 'v2', stage: 'Production', auc: 0.871, certified: true, runId: 'mlf-run-2a9c' },
-  { version: 'v1', stage: 'Archived', auc: 0.842, certified: false, runId: 'mlf-run-17fe' },
-];
+const VERSION_SEED: ModelVersion[] = [];
 
 export async function churnSlice(): Promise<ChurnSlice> {
   // Probe the three Layer-4 backends in parallel (graceful: absent => seed).
@@ -283,6 +276,6 @@ export async function churnSlice(): Promise<ChurnSlice> {
     registryLive: mlf,
     features: FEATURE_SEED,
     versions: VERSION_SEED,
-    sample: { account: 'ACME', features: ACME_FEATURES },
+    sample: { account: '', features: DEFAULT_FEATURES },
   };
 }

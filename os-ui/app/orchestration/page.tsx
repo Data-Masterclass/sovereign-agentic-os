@@ -44,13 +44,22 @@ export default function OrchestrationPage() {
           </button>
         </div>
 
-        {error ? <div className="error" style={{ marginTop: 20 }}>{error}</div> : null}
+        {error && !data ? (
+          <div className="stub-page" style={{ marginTop: 20 }}>
+            <strong>Orchestration isn&apos;t reachable yet.</strong>
+            <div className="muted" style={{ marginTop: 8, fontSize: 13 }}>
+              Dagster runs the data tier (dbt assets + ingestion). It isn&apos;t deployed or reachable in
+              this environment, so there are no assets or runs to show yet. It comes online when the
+              orchestration layer is enabled in a release — then assets and runs appear here automatically.
+            </div>
+          </div>
+        ) : null}
 
         {data ? (
           <>
             <div className="section-title">Assets</div>
             {data.assetsError ? (
-              <div className="error">{data.assetsError}</div>
+              <div className="stub-page">Assets unavailable — Dagster&apos;s GraphQL API isn&apos;t reachable right now.</div>
             ) : data.assets.length === 0 ? (
               <div className="stub-page">No assets.</div>
             ) : (
@@ -66,7 +75,7 @@ export default function OrchestrationPage() {
 
             <div className="section-title">Recent runs</div>
             {data.runsError ? (
-              <div className="error">{data.runsError}</div>
+              <div className="stub-page">Runs unavailable — Dagster&apos;s GraphQL API isn&apos;t reachable right now.</div>
             ) : data.runs.length === 0 ? (
               <div className="stub-page">
                 No runs yet — materialize an asset in Dagster to create one.

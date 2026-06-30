@@ -41,12 +41,9 @@ async function reachable(url: string): Promise<boolean> {
 
 // -------------------------------------------------------------- 1. features ---
 
-const FEATURE_SEED: FeatureRow[] = CHURN.features.map((name) => ({
-  name,
-  entity: 'customer',
-  offline: `iceberg:${CHURN.dataProduct}`,
-  online: 'valkey',
-}));
+// A fresh tenant has no offline-seeded feature rows — the live Featureform
+// backend (or the Northpeak seed) supplies them.
+const FEATURE_SEED: FeatureRow[] = [];
 
 export const featuresAdapter = {
   name: 'Featureform',
@@ -81,10 +78,9 @@ export const trainTrackAdapter = {
 
 // -------------------------------------------------------------- 3. registry ---
 
-const VERSION_SEED: ModelVersion[] = [
-  { version: 'v2', stage: 'Production', auc: 0.871, certified: true, runId: 'mlf-run-2a9c' },
-  { version: 'v1', stage: 'Archived', auc: 0.842, certified: false, runId: 'mlf-run-17fe' },
-];
+// A fresh tenant has no offline-seeded model versions — the live MLflow
+// registry (or the Northpeak seed) supplies them.
+const VERSION_SEED: ModelVersion[] = [];
 
 export const registryAdapter = {
   name: 'MLflow registry',
@@ -124,12 +120,9 @@ export type DriftPoint = { week: string; auc: number; psi: number; predictions: 
  * never jitters between renders; the live path reads MLflow/KServe telemetry.
  */
 function driftSeed(): DriftPoint[] {
-  const base = 0.871;
-  return Array.from({ length: 8 }, (_, i) => {
-    const psi = Number((0.02 + i * 0.03).toFixed(3)); // 0.02 → 0.23 (crosses 0.2 at wk7)
-    const auc = Number((base - i * 0.006).toFixed(3)); // 0.871 → 0.829
-    return { week: `W-${8 - i}`, auc, psi, predictions: 1200 + i * 130 };
-  });
+  // A fresh tenant has no drift history — the live MLflow/KServe telemetry
+  // supplies the series once the model is serving.
+  return [];
 }
 
 export const PSI_RETRAIN_THRESHOLD = 0.2;
@@ -153,14 +146,16 @@ export const monitoringAdapter = {
     latestAuc: number;
   }> {
     const series = driftSeed();
+    // A fresh tenant has no drift history yet — report an honest empty state
+    // rather than dereferencing a missing latest point (would 500 the surface).
     const latest = series[series.length - 1];
     return {
       live: await this.probe(),
       series,
       threshold: PSI_RETRAIN_THRESHOLD,
-      retrainDue: latest.psi >= PSI_RETRAIN_THRESHOLD,
-      latestPsi: latest.psi,
-      latestAuc: latest.auc,
+      retrainDue: latest ? latest.psi >= PSI_RETRAIN_THRESHOLD : false,
+      latestPsi: latest?.psi ?? 0,
+      latestAuc: latest?.auc ?? 0,
     };
   },
   /** Trigger a Dagster retrain run (live) or stage one offline. Caller governs it. */

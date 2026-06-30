@@ -9,10 +9,13 @@ import {
   recentActivity,
   cockpitOrder,
   hasAuthored,
+  topItems,
   type Viewer,
   type ApprovalInput,
   type ArtifactInput,
   type AppInput,
+  type TopBetInput,
+  type TopPillarInput,
 } from './scope.ts';
 
 const amir: Viewer = { id: 'amir', domains: ['sales'], role: 'participant' };
@@ -95,4 +98,69 @@ test('cockpit ordering differs by persona — Creator leads with drafts, Builder
   assert.equal(cockpitOrder('builder')[1], 'pulse');
   assert.notDeepEqual(cockpitOrder('creator'), cockpitOrder('builder'));
   assert.notDeepEqual(cockpitOrder('user'), cockpitOrder('admin'));
+});
+
+// ---- Top items per artifact (the scannable board) --------------------------
+
+// A richer fixture: many artifact types + 5 datasets (to prove the per-type cap)
+// + apps, bets, pillars. All rows here are ones the viewer is entitled to see.
+const boardArtifacts: ArtifactInput[] = [
+  ...['d1', 'd2', 'd3', 'd4', 'd5'].map((id, i) => ({
+    id, type: 'dataset', name: `Dataset ${id}`, owner: 'amir', domain: 'sales',
+    visibility: 'Personal' as const, origin: 'authored' as const,
+    updatedAt: `2026-06-2${i}T00:00:00Z`,
+  })),
+  { id: 'm1', type: 'metric', name: 'Sales NRR', owner: 'bea', domain: 'sales', visibility: 'Shared', origin: 'authored', updatedAt: '2026-06-24T00:00:00Z' },
+  { id: 'dash1', type: 'dashboard', name: 'Pipeline', owner: 'amir', domain: 'sales', visibility: 'Shared', origin: 'authored', updatedAt: '2026-06-23T00:00:00Z' },
+  { id: 'k1', type: 'knowledge', name: 'Playbook', owner: 'amir', domain: 'sales', visibility: 'Certified', origin: 'certified-copy', updatedAt: '2026-06-22T00:00:00Z' },
+];
+const boardApps: AppInput[] = [
+  { id: 'app1', name: 'Quote tool', owner: 'amir', domain: 'sales', visibility: 'Personal', updatedAt: '2026-06-26T00:00:00Z' },
+];
+const boardBets: TopBetInput[] = [
+  { id: 'bet1', name: 'Reduce churn', domain: 'sales', status: 'active', updatedAt: '2026-06-25T00:00:00Z' },
+];
+const boardPillars: TopPillarInput[] = [
+  { id: 'p1', name: 'Grow revenue', scope: 'tenant', updatedAt: '2026-06-20T00:00:00Z' },
+];
+
+test('top items groups by type and omits empty types (honest empty state)', () => {
+  const groups = topItems(amir, boardArtifacts, boardApps, boardBets, boardPillars);
+  const keys = groups.map((g) => g.key);
+  assert.deepEqual(keys.includes('dataset'), true);
+  assert.deepEqual(keys.includes('metric'), true);
+  assert.deepEqual(keys.includes('software'), true);
+  assert.deepEqual(keys.includes('big-bets'), true);
+  assert.deepEqual(keys.includes('strategy'), true);
+  // No agents/files/connections/transformations in the fixture → no empty cards.
+  assert.equal(keys.includes('agent'), false);
+  assert.equal(keys.includes('connection'), false);
+});
+
+test('top items caps each type but keeps the true total in count (for "+N more")', () => {
+  const groups = topItems(amir, boardArtifacts, boardApps, boardBets, boardPillars);
+  const datasets = groups.find((g) => g.key === 'dataset')!;
+  assert.equal(datasets.items.length, 4, 'shows at most 4');
+  assert.equal(datasets.count, 5, 'but reports all 5 available');
+  // Most-recent first (d5 updated 2026-06-24 is newest of the five).
+  assert.equal(datasets.items[0].id, 'd5');
+});
+
+test('top items: an empty registry yields no groups (a fresh tenant shows nothing tastefully)', () => {
+  assert.deepEqual(topItems(kenji, [], [], [], []), []);
+});
+
+test('top items only ever surface the pre-scoped rows passed in (RLS boundary held upstream)', () => {
+  // The shaper is pure over its inputs — the feed adapter fetches with the
+  // viewer's identity (listForUser/listBets/listPillars), so a row the viewer
+  // cannot see is never passed here. Proof: pass only sales rows → every emitted
+  // id traces back to an input row, nothing is invented.
+  const groups = topItems(amir, boardArtifacts, boardApps, boardBets, boardPillars);
+  const inputIds = new Set([
+    ...boardArtifacts.map((a) => a.id),
+    ...boardApps.map((a) => a.id),
+    ...boardBets.map((b) => b.id),
+    ...boardPillars.map((p) => p.id),
+  ]);
+  for (const g of groups) for (const it of g.items) assert.ok(inputIds.has(it.id), `${it.id} came from input`);
 });

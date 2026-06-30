@@ -146,3 +146,34 @@ pod `spec:`. Args: dict "ctx" $ "tier" "<infra|app>".
 priorityClassName: {{ index .ctx.Values.priorityClasses .tier "name" }}
 {{- end -}}
 {{- end -}}
+
+{{/*
+OVERRIDE of the Forgejo/gitea subchart's `gitea.images.pullSecrets` helper.
+Templates share one namespace across parent + subcharts, and a parent-chart
+definition wins, so this normalises the subchart's pull-secret rendering.
+
+WHY: the upstream gitea helper assumes `global.imagePullSecrets` entries are
+plain STRINGS and wraps each as `(dict "name" .)`. This umbrella sets
+`global.imagePullSecrets: [{name: registry-pull-secret}]` (map form — the
+convention every other consumer here expects), so the upstream helper double-
+wraps it into `{name: {name: registry-pull-secret}}` → an invalid pod spec that
+kept the Forgejo pod from starting. This version accepts BOTH a string and a
+`{name: ...}` map, so the map form renders correctly as `- name: <secret>`.
+(Forgejo's image is public, so the secret is harmless-but-valid; the fix is just
+to stop emitting a malformed reference.) Keep in sync with the upstream helper's
+output shape on any `forgejo` subchart bump.
+*/}}
+{{- define "gitea.images.pullSecrets" -}}
+{{- $pullSecrets := .Values.imagePullSecrets -}}
+{{- range .Values.global.imagePullSecrets -}}
+  {{- if kindIs "string" . -}}
+    {{- $pullSecrets = append $pullSecrets (dict "name" .) -}}
+  {{- else -}}
+    {{- $pullSecrets = append $pullSecrets . -}}
+  {{- end -}}
+{{- end -}}
+{{- if (not (empty $pullSecrets)) }}
+imagePullSecrets:
+{{ toYaml $pullSecrets }}
+{{- end }}
+{{- end -}}

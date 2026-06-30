@@ -37,14 +37,8 @@ function fail(message: string, status: number): Error {
 const store = new Map<string, Plugin>();
 
 function seed(): void {
-  if (store.size > 0) return;
-  const rows: Plugin[] = [
-    { id: 'notion-mcp', name: 'Notion MCP', kind: 'mcp', publisher: 'notion.com', signed: true, scanned: true, status: 'installed', allowedDomains: ['sales'], summary: 'Read/write Notion pages via the governed MCP.' },
-    { id: 'salesforce-mcp', name: 'Salesforce MCP', kind: 'mcp', publisher: 'salesforce.com', signed: true, scanned: true, status: 'approved', allowedDomains: ['sales'], summary: 'CRM read + guarded write (approval-gated).' },
-    { id: 'web-fetch', name: 'Governed web_fetch', kind: 'tool', publisher: 'sovereign-os', signed: true, scanned: true, status: 'approved', allowedDomains: ['sales', 'finance'], summary: 'OPA-gated, proxied, sanitized web fetch.' },
-    { id: 'forecast-skill', name: 'Forecasting skill', kind: 'skill', publisher: 'community', signed: false, scanned: false, status: 'available', allowedDomains: [], summary: 'Time-series forecasting helper (unsigned — review before install).' },
-  ];
-  for (const p of rows) store.set(p.id, p);
+  // A fresh tenant starts EMPTY — admins install plugins from the marketplace.
+  // No demo plugins are baked in.
 }
 
 export function listPlugins(): Plugin[] {
@@ -103,4 +97,10 @@ export function registerMarketplace(input: { listingName?: string; partnerId: st
 export function _reset(): void {
   store.clear();
   registration = { registered: false, listingName: 'Sovereign Agentic OS — Data Masterclass', partnerId: '', status: 'unregistered' };
+}
+
+/** Test hook: register plugins so the install/approve gates can be exercised.
+ *  Production curates plugins via the marketplace, not a baked-in seed. */
+export function __seedPlugins(rows: Plugin[]): void {
+  for (const p of rows) store.set(p.id, p);
 }

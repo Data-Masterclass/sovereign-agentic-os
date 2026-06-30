@@ -78,80 +78,6 @@ function fail(message: string, status: number): never {
 
 // --------------------------------------------------------------- seeding -----
 
-const BANK_SUBMISSION_MD = `---
-id: bank-submission
-title: Bank Submission
-domain: sales
-visibility: Personal
-status: draft
-version: "1"
-rules:
-  - id: r1
-    text: Quality over customer convenience
-    hard: false
-    scope: workflow
-  - id: r2
-    text: Error rate must be below 0.1%
-    hard: true
-    scope: step
-    step_id: verify-submission
----
-
-\`\`\`step
-id: prepare-documents
-title: Prepare Documents
-actor: Human
-actor_name: Loan Officer
-inputs:
-  - Customer application form
-  - Identity documents
-outputs:
-  - Document package
-links:
-  - type: data
-    ref: sales.gold.customer_applications
-    label: Customer Applications
-rules:
-  - id: sr1
-    text: All required fields must be completed before proceeding
-    hard: false
-\`\`\`
-
-> tacit: Loan officers often miss the income verification date in section 4. Always double-check before assembly.
-
-\`\`\`step
-id: submit-to-bank
-title: Submit to Bank Portal
-actor: Software
-actor_name: BankPortal
-links:
-  - type: app
-    ref: app://bank-portal
-    label: Bank Portal
-rules:
-  - id: sr2
-    text: Submission must include the signed checklist
-    hard: false
-\`\`\`
-
-\`\`\`step
-id: verify-submission
-title: Verify Submission
-actor: Agent
-actor_name: Verification Agent
-outputs:
-  - Submission receipt
-links:
-  - type: agent
-    ref: sys_verify_agent
-    label: Verification Agent
-rules:
-  - id: sr3
-    text: Error rate must be below 0.1%
-    hard: true
-\`\`\`
-`;
-
 function makeRecord(
   partial: Omit<WorkflowRecord, 'updatedAt' | 'publishedAt' | 'publishedBy' | 'tacit' | 'certifiedAt' | 'certifiedBy'> & Partial<WorkflowRecord>,
 ): WorkflowRecord {
@@ -172,62 +98,12 @@ const workflows = new Map<string, WorkflowRecord>();
 const domainKnowledge = new Map<string, DomainKnowledge>();
 let seeded = false;
 
+/** A fresh tenant starts EMPTY. Workflows and domain knowledge are authored
+ *  only through the platform's own governed flows (e.g. the Northpeak
+ *  e-commerce seed), never baked in. */
 function ensureSeeded(): void {
   if (seeded) return;
   seeded = true;
-
-  // Seed: "Bank submission" draft (sales, owned by amir — a participant)
-  const bankId = 'wf_bank-submission';
-  const bankW = makeRecord({
-    id: bankId,
-    domain: 'sales',
-    owner: 'amir',
-    md: BANK_SUBMISSION_MD,
-    tacit:
-      '# Tacit knowledge — Bank Submission\n\n' +
-      '## What the manuals don\'t say\n' +
-      '- The bank\'s portal silently truncates notes over 500 characters — keep the cover note short.\n' +
-      '- Friday submissions after 14:00 CET land in the next-week batch; aim for Thursday.\n' +
-      '- A rejected package almost always traces back to a missing income-verification date (section 4).\n\n' +
-      '## Relationship notes\n' +
-      '- Our contact at the bank prefers a heads-up email before any package over €2M.\n',
-    title: 'Bank Submission',
-    visibility: 'Personal',
-    status: 'draft',
-  });
-  workflows.set(bankId, bankW);
-
-  // Seed: a published shared workflow (published by bea — a builder)
-  const onboardId = 'wf_customer-onboarding';
-  const onboardMd = BANK_SUBMISSION_MD
-    .replace('id: bank-submission', 'id: customer-onboarding')
-    .replace('title: Bank Submission', 'title: Customer Onboarding')
-    .replace('visibility: Personal', 'visibility: Shared')
-    .replace('status: draft', 'status: live');
-  const onboardW = makeRecord({
-    id: onboardId,
-    domain: 'sales',
-    owner: 'bea',
-    md: onboardMd,
-    title: 'Customer Onboarding',
-    visibility: 'Shared',
-    status: 'live',
-    publishedAt: now(),
-    publishedBy: 'bea',
-  });
-  workflows.set(onboardId, onboardW);
-
-  // Seed domain knowledge for 'sales'
-  const dk = emptyDomainKnowledge('sales');
-  dk.sections[0].content =
-    'The Sales domain manages customer acquisition, contract management, and account renewal. All agreements are subject to the standard pricing and discount policy.';
-  dk.sections[1].content =
-    '**Data Product:** A certified, shared dataset in the marketplace.\n**Builder:** A user who can publish workflows and promote data assets.\n**Tacit Knowledge:** Unwritten domain expertise captured from practitioners.';
-  dk.sections[2].content =
-    '- Grow annual recurring revenue by 15% YoY\n- Reduce submission error rate to below 0.1%\n- Achieve 48h SLA on bank submissions';
-  dk.sections[3].content =
-    'Sales operates in 12 markets across Europe. The main banking partner is Deutsche Bank AG. Submission windows close every Friday at 16:00 CET.';
-  domainKnowledge.set('sales', dk);
 }
 
 /** Test hook: wipe and reseed. */

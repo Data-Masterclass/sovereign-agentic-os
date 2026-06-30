@@ -13,6 +13,54 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [0.2.0-alpha.10] — 2026-06-30
+
+Headline: **the live platform** — every tab reworked to Apple-grade simplicity,
+real Microsoft Graph + SMTP mailer, the full Layer 1–4 stack deployed and
+green on STACKIT, a reworked Apple-grade user guide + PDF, and the Northpeak
+e-commerce seed running live across all tabs.
+
+### Added
+
+- **Home / Cockpit split.** Home is now a welcoming entry point; Cockpit is the
+  at-a-glance operational overview. Navigation restructured to match.
+- **Microsoft Graph + SMTP pluggable mailer.** Microsoft Graph is the preferred
+  delivery path (OAuth 2.0 client-credentials); SMTP is the automatic fallback.
+  Auth onboarding works without email (SMTP optional, verification skipped when
+  unconfigured).
+- **Full Layer 1–4 self-hosted overlay for STACKIT.** Everything-on deploy
+  brings up Trino, Cube, Dagster (dbt-trino adapter), Workbench, Terminal,
+  Forgejo, MLflow, KServe, ml-agent, and JupyterHub in one overlay.
+  Five re-upgrade issues resolved; Layer 4 gated on `ml.enabled`.
+- **Northpeak e-commerce seed (aligned).** Fictional Northpeak case-study seed
+  updated to match the reworked Big Bets and Strategy APIs; runs live across
+  all 16 tabs for the capstone teaching demo.
+- **Reworked Apple-grade user guide + PDF.** Full guide rewritten with Apple
+  design philosophy — complexity hidden behind elegant surfaces, every section
+  covers a real tab end-to-end.
+
+### Changed
+
+- **Strategy tab → 3 sections.** Pillars as centerpiece; full-screen bet detail
+  replaces the old drawer pattern. Big Bets reworked: create / portfolio /
+  detail flow.
+- **Agents tab → one page.** Collapsed to a single operational view; Mine
+  relabelled **Personal**, My Domain relabelled dynamically to the tenant name.
+- **Software tab → chat-centric one-pager.** Four-step flow: one page → create
+  → build → monitor, with Forgejo and Claude-chat wired in.
+- **Platform-section scoping.** Platform internals (governance, infra config,
+  admin) moved to the Platform tab; user-facing tabs stay focused on work.
+- **Knowledge tab → vertical workflow flow.** Ingest → enrich → retrieve →
+  publish flow replaces the flat layout; nav reorder puts Knowledge in context.
+- **Data and Personal labels.** "Data" label clarifies data-plane tabs; personal
+  workspace relabelled for consistency across the UI.
+- **Graceful degradation.** `FORGEJO_PASSWORD` is now optional; os-ui boots
+  cleanly when Forgejo is disabled or unconfigured.
+- **Sales Assistant removed.** ACME worked-example removed; `listModels()` is
+  now RLS-scoped.
+- **ml-agent startupProbe + Harbor image fix.** Blocking warmup no longer kills
+  liveness; Harbor image reference corrected to a pullable tag.
+
 ## [0.2.0-alpha.9] — 2026-06-30
 
 Headline: **the full platform** — every workspace tab is now integrated and real

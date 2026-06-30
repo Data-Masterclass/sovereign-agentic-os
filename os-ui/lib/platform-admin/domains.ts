@@ -57,21 +57,8 @@ function slug(s: string): string {
 const store = new Map<string, Domain>();
 
 function seed(): void {
-  if (store.size > 0) return;
-  for (const d of [
-    { id: 'sales', name: 'Sales', owner: 'sara' },
-    { id: 'finance', name: 'Finance', owner: 'maria' },
-  ]) {
-    store.set(d.id, {
-      id: d.id,
-      name: d.name,
-      owner: d.owner,
-      archived: false,
-      layers: { ml: false, spark: false },
-      template: 'analytics',
-      createdAt: '2026-01-01T00:00:00.000Z',
-    });
-  }
+  // A fresh tenant starts EMPTY — admins create their own domains. No demo
+  // domains are baked in.
 }
 
 export function listDomains(): Domain[] {

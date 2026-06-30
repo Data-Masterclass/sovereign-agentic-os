@@ -89,7 +89,7 @@ const agents: TutorialDef = {
   ],
 
   sandbox: {
-    lane: 'My agents — personal drafts',
+    lane: 'Personal agent drafts',
     anchor: ANCHORS.agents.sandbox,
     note: 'Agent drafts are private to you and make no governed writes — build, test, and iterate here freely before a Builder publishes to the domain.',
   },

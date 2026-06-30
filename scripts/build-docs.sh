@@ -77,8 +77,9 @@ build_plain() {     # pandoc/latex -> xelatex, no template
     -V linkcolor:'[HTML]{0B5394}' -V toccolor:'[HTML]{0B5394}'
 }
 
-build_chrome() {    # md -> HTML (pandoc/core, arm64-native) -> Chrome print-to-PDF
+build_chrome() {    # md -> HTML (pandoc/core, arm64-native) -> Chrome print-to-PDF (CDP)
   c "Engine: pandoc/core HTML + headless Chrome…"
+  command -v docker >/dev/null 2>&1 || { c "No docker for the HTML render step."; return 1; }
   # Locate a Chrome/Chromium binary first (no point rendering HTML otherwise).
   local CHROME=""
   for cand in "google-chrome" "chromium" "chromium-browser" \
@@ -90,61 +91,35 @@ build_chrome() {    # md -> HTML (pandoc/core, arm64-native) -> Chrome print-to-
   [ -n "$CHROME" ] || { c "No Chrome/Chromium found for the HTML print path."; return 1; }
 
   # \newpage is a LaTeX directive; strip standalone occurrences for the HTML path
-  # (page breaks are driven by the print stylesheet's h1 { page-break-before }).
+  # (page breaks are driven by the stylesheet's `h1 { break-before: page }`).
   local HWORK="$DOCS/.guide.html.md"
   sed '/^\\newpage$/d' "$WORK" > "$HWORK"
 
-  # A print stylesheet: title page, comfortable typography, bordered tables,
-  # page-break before each top-level section, repeating table headers.
-  local CSS="$DOCS/.guide.css"
-  cat > "$CSS" <<'CSSEOF'
-@page { size: A4; margin: 22mm 18mm; }
-html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-body { font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
-  font-size: 10.5pt; line-height: 1.5; color: #1b1f24; max-width: 100%; margin: 0; }
-#title-block-header { text-align: center; page-break-after: always;
-  padding-top: 28vh; border-bottom: none; }
-#title-block-header .title { font-size: 30pt; font-weight: 800; color: #0d1b2a;
-  border-bottom: 3px solid #1F6FEB; padding-bottom: 12px; display: inline-block; }
-#title-block-header .subtitle { font-size: 13pt; color: #3a4654; margin-top: 18px; }
-#title-block-header .author, #title-block-header .date { font-size: 10.5pt; color: #5a6673; }
-nav#TOC { page-break-after: always; }
-nav#TOC > ul { list-style: none; padding-left: 0; }
-nav#TOC ul ul { padding-left: 1.4em; }
-nav#TOC a { text-decoration: none; color: #0B5394; }
-h1 { font-size: 19pt; color: #0d1b2a; border-bottom: 2px solid #1F6FEB;
-  padding-bottom: 5px; margin-top: 0; page-break-before: always; page-break-after: avoid; }
-h1:first-of-type { page-break-before: avoid; }
-nav#TOC + h1 { page-break-before: avoid; }
-h2 { font-size: 14pt; color: #11335c; margin-top: 1.4em; page-break-after: avoid; }
-h3 { font-size: 11.5pt; color: #1F6FEB; margin-top: 1.1em; page-break-after: avoid; }
-a { color: #1F6FEB; }
-code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9pt;
-  background: #f2f4f7; padding: 1px 4px; border-radius: 3px; }
-pre { background: #0d1b2a; color: #e6edf3; padding: 12px 14px; border-radius: 6px;
-  font-size: 8.6pt; line-height: 1.45; overflow-x: auto; page-break-inside: avoid; }
-pre code { background: none; color: inherit; padding: 0; }
-table { border-collapse: collapse; width: 100%; font-size: 9pt; margin: 12px 0;
-  page-break-inside: avoid; }
-th, td { border: 1px solid #d0d7de; padding: 5px 8px; text-align: left;
-  vertical-align: top; }
-thead th { background: #1F6FEB; color: #fff; }
-tbody tr:nth-child(even) { background: #f6f8fa; }
-blockquote { border-left: 4px solid #1F6FEB; background: #eef4fc; margin: 12px 0;
-  padding: 8px 14px; color: #2b3a4a; }
-hr { border: none; border-top: 1px solid #d0d7de; margin: 1.6em 0; }
-img { max-width: 100%; }
-CSSEOF
-
+  # The Apple-grade print design is the committed, reviewable stylesheet
+  # docs/assets/guide.css (self-hosted brand fonts under docs/assets/fonts/).
+  # pandoc embeds the CSS + fonts so guide.html is fully offline; +yaml_metadata_block
+  # turns the front-matter into the cover (#title-block-header).
   pdoc pandoc/core "$(basename "$HWORK")" -o guide.html \
-    --from gfm --toc --toc-depth=2 --number-sections \
-    --standalone --embed-resources --css "$(basename "$CSS")"
+    --from gfm+yaml_metadata_block --toc --toc-depth=2 --number-sections \
+    --standalone --embed-resources --resource-path /data --css assets/guide.css
 
-  "$CHROME" --headless=new --disable-gpu --no-pdf-header-footer \
-    --print-to-pdf="$OUT" "file://$DOCS/guide.html" >/dev/null 2>&1 \
-    || "$CHROME" --headless --disable-gpu --no-pdf-header-footer \
-       --print-to-pdf="$OUT" "file://$DOCS/guide.html"
-  rm -f "$DOCS/guide.html" "$HWORK" "$CSS"
+  # Short version label for the running footer (parsed from the front-matter).
+  local VER; VER="$(sed -n 's/^date: *"\(Chart [0-9.]*\).*/\1/p' "$SRC" | head -1)"
+
+  # Print via the zero-dependency Node CDP driver — gives a clean cover plus a real
+  # running footer with page numbers (Chrome's CLI print cannot). Falls back to the
+  # CLI print path (no custom footer) if Node/CDP is unavailable.
+  if command -v node >/dev/null 2>&1 \
+     && node "$ROOT/scripts/lib/html-to-pdf.mjs" "$DOCS/guide.html" "$OUT" "$CHROME" --version "$VER"; then
+    :
+  else
+    c "Node CDP driver unavailable; using Chrome CLI print (no custom footer)…"
+    "$CHROME" --headless=new --disable-gpu --no-pdf-header-footer \
+      --print-to-pdf="$OUT" "file://$DOCS/guide.html" >/dev/null 2>&1 \
+      || "$CHROME" --headless --disable-gpu --no-pdf-header-footer \
+         --print-to-pdf="$OUT" "file://$DOCS/guide.html"
+  fi
+  rm -f "$DOCS/guide.html" "$HWORK"
   [ -f "$OUT" ]
 }
 
@@ -155,18 +130,15 @@ build_npx() {       # last-resort: md-to-pdf via npx (needs node + network)
 
 # --- 2. pick an engine -------------------------------------------------------
 run_auto() {
+  # The canonical, product-grade output is the native HTML + headless-Chrome path
+  # (docs/assets/guide.css): the Apple-grade cover/typography only render there, it
+  # is fast + offline on any arch (incl. Apple Silicon), and pandoc/core is amd64+arm64.
+  build_chrome && return 0
   if command -v docker >/dev/null 2>&1; then
-    # Best output: pandoc + LaTeX (Eisvogel template). Those images are amd64-only,
-    # so only use them when already cached (otherwise emulation/pull is slow/fails).
+    # Fallbacks: pandoc + LaTeX. amd64-only images, so only when already cached.
+    c "Chrome path unavailable; trying cached pandoc LaTeX images…"
     if have_image pandoc/extra; then build_eisvogel && return 0; fi
     if have_image pandoc/latex; then build_plain && return 0; fi
-    # Native, fast, offline on any arch (incl. Apple Silicon): pandoc/core + Chrome.
-    c "No cached LaTeX image; using the native HTML + Chrome path…"
-    build_chrome && return 0
-    # Last resort within docker: pull the amd64 LaTeX images (emulated).
-    c "Chrome path unavailable; trying to pull pandoc LaTeX images…"
-    build_eisvogel && return 0
-    build_plain && return 0
   fi
   command -v npx >/dev/null 2>&1 && build_npx && return 0
   return 1

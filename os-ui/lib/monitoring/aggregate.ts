@@ -6,7 +6,6 @@ import type { CurrentUser } from '@/lib/auth';
 import { collectRuns } from './adapters/run-trace';
 import { collectPipelines } from './adapters/pipeline-health';
 import { collectCost } from './adapters/cost';
-import { collectSystem } from './adapters/system-health';
 import { collectArtifacts } from './adapters/artifact-health';
 import { filterScope, scopeForUser } from './scope';
 import { pickAttention, summarize } from './rollup';
@@ -24,16 +23,20 @@ import { LENS_IDS, type Alert, type HealthItem, type LensSummary, type Overview,
  * Business/KPI alerts are excluded by construction — they live in Dashboards.
  */
 
-/** Collect all five lenses (unscoped) in parallel. Used by overview + correlate. */
+/**
+ * Collect the user-facing lenses (runs · pipelines · cost · artifacts) in
+ * parallel — the signals Monitoring renders + correlates. System/infra health is
+ * deliberately NOT here: it belongs to Platform→Components, which collects it via
+ * `collectSystem` directly (so the same adapter is reused, never duplicated).
+ */
 export async function collectAll(): Promise<HealthItem[]> {
-  const [runs, pipelines, cost, system, artifacts] = await Promise.all([
+  const [runs, pipelines, cost, artifacts] = await Promise.all([
     collectRuns(),
     collectPipelines(),
     collectCost(),
-    collectSystem(),
     collectArtifacts(),
   ]);
-  return [...runs, ...pipelines, ...cost, ...system, ...artifacts];
+  return [...runs, ...pipelines, ...cost, ...artifacts];
 }
 
 /** The scoped, attention-first overview the UI renders in one fetch. */

@@ -4,6 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useUser } from '@/lib/useUser';
 import {
   type MetricGroups,
   type MetricSummary,
@@ -110,6 +111,8 @@ export default function MetricsRegistry({
   onExplore: (m: MetricSummary) => void;
   onGovern: (m: MetricSummary) => void;
 }) {
+  const { user } = useUser();
+  const domainLabel = user?.domains[0] ? `${user.domains[0]} domain` : 'your domain';
   const [groups, setGroups] = useState<MetricGroups | null>(null);
   const [err, setErr] = useState('');
 
@@ -144,8 +147,8 @@ export default function MetricsRegistry({
 
       {groups ? (
         <>
-          <Group title="Mine" metrics={groups.mine} selectedId={selectedId} onSelect={onSelect} onExplore={onExplore} onGovern={onGovern} />
-          <Group title="Shared in my domain" metrics={groups.domain} selectedId={selectedId} onSelect={onSelect} onExplore={onExplore} onGovern={onGovern} />
+          <Group title="Personal" metrics={groups.mine} selectedId={selectedId} onSelect={onSelect} onExplore={onExplore} onGovern={onGovern} />
+          <Group title={`Shared in ${domainLabel}`} metrics={groups.domain} selectedId={selectedId} onSelect={onSelect} onExplore={onExplore} onGovern={onGovern} />
           <Group title="Marketplace" metrics={groups.marketplace} selectedId={selectedId} onSelect={onSelect} onExplore={onExplore} onGovern={onGovern} />
         </>
       ) : !err ? <div className="stub-page" style={{ marginTop: 20 }}>Loading metrics…</div> : null}

@@ -5,10 +5,27 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { realizedValue, distribute, pillarRollup } from './value.ts';
 import { buildComposition } from './composition.ts';
-import { __resetSources, __resetStrategy, sourceFor } from './sources.ts';
+import { __resetSources, __resetStrategy, __seedStrategy, sourceFor } from './sources.ts';
 import { type Actor, type BigBet } from './model.ts';
 
 const builder: Actor = { id: 'sara', domains: ['sales'], role: 'builder', kind: 'human' };
+
+// The strategy up-link ships EMPTY now; tests inject the NRR metric fixture the
+// retention bet measures against (RLS: sara sees the full slice, kenji less).
+function seedNrr(): void {
+  __seedStrategy(
+    {
+      id: 'metric_nrr',
+      name: 'Net Revenue Retention',
+      cubeMeasure: 'mart_retention.nrr_eur',
+      unit: '€',
+      baseline: 1_200_000,
+      current: 1_560_000,
+      rls: { sara: 1_560_000, kenji: 980_000 },
+    },
+    { id: 'pillar_retention', name: 'Retention', scope: 'tenant', metricId: 'metric_nrr' },
+  );
+}
 
 function churnBet(over: Partial<BigBet> = {}): BigBet {
   return {
@@ -36,6 +53,7 @@ function churnBet(over: Partial<BigBet> = {}): BigBet {
 
 test('realized value follows the selectable basis (uplift default, absolute, owner-declared)', () => {
   __resetStrategy();
+  seedNrr();
   const uplift = realizedValue(churnBet({ valueBasis: 'uplift' }), 'sara');
   assert.equal(uplift.realized, 360_000); // 1.56M current − 1.2M baseline
 
@@ -50,6 +68,7 @@ test('realized value follows the selectable basis (uplift default, absolute, own
 
 test('value is RLS-scoped — two viewers see their own governed slice', () => {
   __resetStrategy();
+  seedNrr();
   const sara = realizedValue(churnBet({ valueBasis: 'absolute' }), 'sara');
   const kenji = realizedValue(churnBet({ valueBasis: 'absolute' }), 'kenji');
   assert.equal(sara.realized, 1_560_000);

@@ -29,9 +29,10 @@ export default function MonitoringPage() {
       <div className="content">
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <p className="lead" style={{ marginBottom: 0 }}>
-            What your agents, pipelines and systems are doing — scoped to your identity.
-            Monitoring shows health, watches spend, and traces runs; it never sets policy
-            or caps (that is Governance).
+            What your agents, pipelines and artifacts are doing — scoped to your identity.
+            Monitoring traces runs, watches spend, and surfaces pipeline + model drift; it never
+            sets policy or caps (that is Governance), and infrastructure health lives in
+            Platform → Components.
           </p>
           <button className="btn ghost" onClick={reload} disabled={loading}>
             {loading ? <span className="spin" /> : 'Refresh'}
@@ -63,7 +64,7 @@ export default function MonitoringPage() {
             <div className="section-title">Needs attention</div>
             <AttentionStrip items={data.attention} onOpen={setSelected} />
 
-            <div className="section-title">Five lenses</div>
+            <div className="section-title">Lenses</div>
             <div className="mon-lens-grid">
               {data.lenses.map((lens) => (
                 <LensCard key={lens.id} lens={lens} onOpen={setSelected} />

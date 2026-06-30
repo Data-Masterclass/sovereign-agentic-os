@@ -139,41 +139,9 @@ type Seed = {
   tier?: FileAsset['tier'];
 };
 
-/** The validation-gate corpus (handover): a PDF, an image and an audio for the
- *  owner, plus a domain-shared asset and a marketplace product so the governed
- *  scopes are demonstrable. Deterministic so tests + the demo are stable. */
-const SEEDS: Seed[] = [
-  {
-    id: 'as_acme_contract', name: 'acme-contract.pdf', owner: 'amir', domain: 'sales',
-    folder: '/contracts', tags: ['acme', 'renewal', 'contract'], sensitivity: 'confidential',
-    text: 'ACME master agreement. Initial term 12 months, auto-renews unless cancelled 30 days prior. Renewal price uplift capped at CPI.',
-    bytes: 184_320,
-  },
-  {
-    id: 'as_logo', name: 'logo.png', owner: 'amir', domain: 'sales',
-    folder: '/brand', tags: ['brand', 'logo'], sensitivity: 'public',
-    text: 'Caption: the company wordmark in teal on a transparent background.',
-    bytes: 38_204,
-  },
-  {
-    id: 'as_standup', name: 'standup-2026-06.m4a', owner: 'amir', domain: 'sales',
-    folder: '/recordings', tags: ['standup', 'sales'], sensitivity: 'internal',
-    text: 'Transcript: team reviewed the ACME renewal, agreed a 10 percent discount within policy, and scheduled the signature for Friday.',
-    bytes: 2_201_600,
-  },
-  {
-    id: 'as_playbook', name: 'sales-playbook.pdf', owner: 'noor', domain: 'sales',
-    folder: '/playbooks', tags: ['playbook', 'enablement'], sensitivity: 'internal',
-    text: 'Sales playbook: discovery, qualification, negotiation. Standard renewals may offer 5 to 10 percent off list.',
-    bytes: 524_288, tier: 'asset',
-  },
-  {
-    id: 'as_market_report', name: 'market-report-2026.pdf', owner: 'lena', domain: 'research',
-    folder: '/reports', tags: ['market', 'research'], sensitivity: 'public',
-    text: 'Market report 2026: the sovereign data platform segment grew 34 percent year over year.',
-    bytes: 901_120, tier: 'product',
-  },
-];
+/** A fresh tenant starts EMPTY. Files are created only through the platform's
+ *  own governed ingest flows (e.g. the Northpeak e-commerce seed), never baked in. */
+const SEEDS: Seed[] = [];
 
 function ensureSeeded(): void {
   if (seeded) return;

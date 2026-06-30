@@ -20,6 +20,8 @@ export type StrategyAuditAction =
   | 'pillar.link-bet'
   | 'pillar.unlink-bet'
   | 'targets.set'
+  | 'value-metric.set'
+  | 'value-entry.add'
   | 'actuals.snapshot';
 
 export type StrategyAuditEvent = {

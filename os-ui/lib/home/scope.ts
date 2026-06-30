@@ -218,3 +218,151 @@ export function cockpitOrder(persona: HomePersona): ModuleKey[] {
       return ['needs', 'health', 'pulse', 'recent', 'wip', 'ask'];
   }
 }
+
+// ---- Top items per artifact (the scannable "what's notable" board) -----------
+
+/**
+ * "Top items per artifact" — a scannable board of the viewer's most-notable
+ * entries per registry type (datasets, metrics, dashboards, agents, knowledge,
+ * files, connections, software, big bets, strategy pillars), each deep-linking
+ * into its owning tab. PURE: it shapes ONLY the pre-scoped rows the feed adapter
+ * already fetched with the viewer's identity (listForUser / listAppsForUser /
+ * listBets / listPillars), so the same RLS boundary holds — nothing cross-domain
+ * and no other user's Personal item can appear. Empty types are omitted (honest
+ * empty state); each group keeps a `count` so the UI can say "+N more".
+ */
+export type TopItem = {
+  id: string;
+  name: string;
+  /** Short type-specific descriptor (visibility · domain, status, scope, …). */
+  meta: string;
+  href: string;
+  /** A small visual key for the row dot ('shared' | 'certified' | 'personal' | status). */
+  tone: string;
+};
+
+export type TopGroup = {
+  key: string;
+  /** Plural, human label ("Datasets", "Big Bets", "Strategy pillars"). */
+  label: string;
+  /** Single-glyph marker, matching the sidebar's visual language. */
+  icon: string;
+  /** Owning tab. */
+  tab: string;
+  /** Total available to the viewer in this type (may exceed `items.length`). */
+  count: number;
+  items: TopItem[];
+};
+
+export type TopBetInput = { id: string; name: string; domain: string; status: string; updatedAt: string };
+export type TopPillarInput = { id: string; name: string; scope: string; domain?: string; updatedAt: string };
+
+/** Per-artifact-type display config + canonical board order. */
+const TOP_TYPES: { type: string; key: string; label: string; icon: string; tab: string }[] = [
+  { type: 'dataset', key: 'dataset', label: 'Datasets', icon: '▤', tab: '/data' },
+  { type: 'transformation', key: 'transformation', label: 'Transformations', icon: '⑂', tab: '/data' },
+  { type: 'metric', key: 'metric', label: 'Metrics', icon: '∑', tab: '/metrics' },
+  { type: 'dashboard', key: 'dashboard', label: 'Dashboards', icon: '▦', tab: '/dashboards' },
+  { type: 'agent', key: 'agent', label: 'Agents', icon: '✦', tab: '/agents' },
+  { type: 'knowledge', key: 'knowledge', label: 'Knowledge', icon: '❦', tab: '/knowledge' },
+  { type: 'file', key: 'file', label: 'Files', icon: '❏', tab: '/unstructured' },
+  { type: 'connection', key: 'connection', label: 'Connections', icon: '⇄', tab: '/connections' },
+];
+
+const TOP_PER_GROUP = 4;
+
+function visTone(v: ArtifactInput['visibility'], origin: ArtifactInput['origin']): string {
+  if (origin === 'certified-copy' || v === 'Certified') return 'certified';
+  if (v === 'Shared') return 'shared';
+  return 'personal';
+}
+
+export function topItems(
+  viewer: Viewer,
+  artifacts: ArtifactInput[],
+  apps: AppInput[],
+  bets: TopBetInput[],
+  pillars: TopPillarInput[],
+): TopGroup[] {
+  const groups: TopGroup[] = [];
+  const byRecent = (a: { updatedAt: string }, b: { updatedAt: string }) => b.updatedAt.localeCompare(a.updatedAt);
+
+  // Registry artifact types — already RLS-scoped by listForUser upstream.
+  for (const cfg of TOP_TYPES) {
+    const rows = artifacts.filter((a) => a.type === cfg.type).sort(byRecent);
+    if (rows.length === 0) continue;
+    groups.push({
+      key: cfg.key,
+      label: cfg.label,
+      icon: cfg.icon,
+      tab: cfg.tab,
+      count: rows.length,
+      items: rows.slice(0, TOP_PER_GROUP).map((a) => ({
+        id: a.id,
+        name: a.name,
+        meta: `${a.visibility}${viewer.domains.length > 1 ? ` · ${a.domain}` : ''}`,
+        href: TAB_FOR_TYPE[a.type] ?? cfg.tab,
+        tone: visTone(a.visibility, a.origin),
+      })),
+    });
+  }
+
+  // Software (apps) — owner/in-domain/certified scoped by listAppsForUser.
+  const appRows = [...apps].sort(byRecent);
+  if (appRows.length > 0) {
+    groups.push({
+      key: 'software',
+      label: 'Software',
+      icon: '⌘',
+      tab: '/software',
+      count: appRows.length,
+      items: appRows.slice(0, TOP_PER_GROUP).map((a) => ({
+        id: a.id,
+        name: a.name,
+        meta: `${a.visibility}${viewer.domains.length > 1 ? ` · ${a.domain}` : ''}`,
+        href: '/software',
+        tone: visTone(a.visibility, 'authored'),
+      })),
+    });
+  }
+
+  // Big Bets — scoped by listBets (canView). Tone tracks lifecycle status.
+  const betRows = [...bets].sort(byRecent);
+  if (betRows.length > 0) {
+    groups.push({
+      key: 'big-bets',
+      label: 'Big Bets',
+      icon: '◆',
+      tab: '/big-bets',
+      count: betRows.length,
+      items: betRows.slice(0, TOP_PER_GROUP).map((b) => ({
+        id: b.id,
+        name: b.name,
+        meta: `${b.status}${viewer.domains.length > 1 ? ` · ${b.domain}` : ''}`,
+        href: `/big-bets/${b.id}`,
+        tone: b.status,
+      })),
+    });
+  }
+
+  // Strategy pillars — scoped by listPillars (tenant + viewer-domain only).
+  const pillarRows = [...pillars].sort(byRecent);
+  if (pillarRows.length > 0) {
+    groups.push({
+      key: 'strategy',
+      label: 'Strategy pillars',
+      icon: '▲',
+      tab: '/strategy',
+      count: pillarRows.length,
+      items: pillarRows.slice(0, TOP_PER_GROUP).map((p) => ({
+        id: p.id,
+        name: p.name,
+        meta: p.scope === 'tenant' ? 'Tenant-wide' : `Domain${p.domain ? ` · ${p.domain}` : ''}`,
+        href: '/strategy',
+        tone: p.scope === 'tenant' ? 'certified' : 'shared',
+      })),
+    });
+  }
+
+  return groups;
+}

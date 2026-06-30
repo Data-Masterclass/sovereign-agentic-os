@@ -1,0 +1,3 @@
+# Generated demo credentials — NEVER commit. Re-create with gen-credentials.mjs.
+users.secret.json
+os-users.seed.json

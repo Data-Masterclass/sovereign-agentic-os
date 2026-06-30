@@ -5,6 +5,13 @@ import type { Approval } from '../approvals.ts';
 import type { AuditAction } from './audit.ts';
 import { addAccessGrant, addEgressEndpoint, isEgressAllowed } from './policy-view.ts';
 import { writeGrantsToOpa } from './roles.ts';
+import {
+  applyApprovedPromotion,
+  certify as certifyDataset,
+  type Principal,
+  type PromotionRequest,
+  type CertificationRequest,
+} from '../data/store.ts';
 
 /**
  * The approval-IS-an-action executor (governance-golden-path.md key principle).
@@ -102,6 +109,43 @@ export async function applyEffect(a: Approval, approver: string): Promise<Effect
           subject: action,
           reason: `Out-of-policy action approved once by ${approver}`,
           detail: { action, agent: a.agent },
+        },
+      };
+    }
+    case 'dataset_promote': {
+      // Approval IS the action: actually move the dataset → asset (governed tier),
+      // so Cube/metrics can read the Gold mart. The route already enforced that the
+      // approver was an in-scope Builder, so synthesise that Principal here.
+      const req = a.payload as unknown as PromotionRequest;
+      const approverP: Principal = { id: approver, role: 'builder', domains: [a.domain] };
+      const ds = applyApprovedPromotion(req, approverP);
+      return {
+        ok: true,
+        applied: `Promoted “${ds.name}” → data asset (governed; Cube can read the Gold mart).`,
+        live: true,
+        audit: {
+          action: 'approve',
+          subject: ds.name,
+          reason: `Dataset promotion approved by ${approver}`,
+          detail: { datasetId: ds.id, tier: ds.tier },
+        },
+      };
+    }
+    case 'dataset_certify': {
+      // Approval IS the action: certify the asset → data product (marketplace-listed).
+      // The route already enforced an in-scope Admin approver.
+      const req = a.payload as unknown as CertificationRequest;
+      const approverP: Principal = { id: approver, role: 'admin', domains: [a.domain] };
+      const ds = certifyDataset(req.datasetId, approverP, { level: req.level, visibility: req.visibility });
+      return {
+        ok: true,
+        applied: `Certified “${ds.name}” → data product (listed in the marketplace).`,
+        live: true,
+        audit: {
+          action: 'approve',
+          subject: ds.name,
+          reason: `Dataset certification approved by ${approver}`,
+          detail: { datasetId: ds.id, tier: ds.tier },
         },
       };
     }

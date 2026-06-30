@@ -60,23 +60,9 @@ function withStatus(err: Error, status: number): Error {
  * Stage (MLflow lifecycle) and tier (who-may-call) are orthogonal.
  */
 function seedModels(): ServiceModel[] {
-  return [
-    {
-      id: 'svc_churn_model',
-      model: 'churn_model',
-      name: 'Churn model',
-      owner: 'sara',
-      domain: 'sales',
-      tier: 'Personal', // owner-only until a Builder promotes it (widens callable scope).
-      stage: 'Production',
-      consumptionMode: undefined,
-      frontDoors: ['rest', 'mcp'],
-      versions: [
-        { version: 'v2', stage: 'Production', auc: 0.871, certified: true, runId: 'mlf-run-2a9c' },
-        { version: 'v1', stage: 'Archived', auc: 0.842, certified: false, runId: 'mlf-run-17fe' },
-      ],
-    },
-  ];
+  // A fresh tenant starts EMPTY. Models are registered only through the
+  // platform's own promote/certify flows (e.g. the Northpeak e-commerce seed).
+  return [];
 }
 
 let registry: Map<string, ServiceModel> | null = null;
@@ -89,8 +75,40 @@ function store(): Map<string, ServiceModel> {
   return registry;
 }
 
+/**
+ * UNSCOPED full registry — for SYSTEM / governed contexts only (the model's own
+ * serve path, aggregate counts). It returns every domain's models including other
+ * users' Personal-tier ones, so it must NEVER back a per-viewer tab. UI/tab
+ * callers MUST use `listModelsForUser` so RLS is applied.
+ */
 export function listModels(): ServiceModel[] {
   return [...store().values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** The viewer identity for model RLS — id + the domains they belong to. */
+export type ModelViewer = { id: string; domains: string[] };
+
+/**
+ * RLS predicate mirroring `lib/artifacts.visibleToUser` for the model tier ladder:
+ *   • Personal    → owner only (never leak another user's Personal model)
+ *   • Domain      → members of the owning domain only (no cross-domain leak)
+ *   • Marketplace → published cross-domain (discovery; any domain may see + import)
+ */
+function modelVisibleToUser(m: ServiceModel, viewer: ModelViewer): boolean {
+  if (m.tier === 'Marketplace') return true;
+  if (m.tier === 'Personal') return m.owner === viewer.id;
+  return viewer.domains.includes(m.domain);
+}
+
+/**
+ * RLS-scoped model list for a viewer — the SAFE variant for any tab/cockpit
+ * surface. Returns the viewer's own Personal models + the Domain models of the
+ * domains they belong to + Marketplace-published models, and nothing else.
+ */
+export function listModelsForUser(viewer: ModelViewer): ServiceModel[] {
+  return [...store().values()]
+    .filter((m) => modelVisibleToUser(m, viewer))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function getModel(model: string): ServiceModel | null {

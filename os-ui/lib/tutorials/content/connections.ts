@@ -89,7 +89,7 @@ const connections: TutorialDef = {
   ],
 
   sandbox: {
-    lane: 'My connections — personal',
+    lane: 'Personal connections',
     anchor: ANCHORS.connections.sandbox,
     note: 'Personal connections are private to you and cannot be used by the domain until a Builder explicitly promotes them to shared.',
   },

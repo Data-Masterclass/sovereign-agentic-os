@@ -28,7 +28,7 @@ import { deriveBet } from './status.ts';
 import { rollup } from './roadmap.ts';
 import { buildComposition } from './composition.ts';
 import { realizedValue, distribute } from './value.ts';
-import { __resetSources, __resetStrategy, resolveArtifact, sourceFor, isReady } from './sources.ts';
+import { __resetSources, __resetStrategy, __seedStrategy, resolveArtifact, sourceFor, isReady } from './sources.ts';
 import { type Actor, type Principal } from './model.ts';
 
 const sara: Actor = { id: 'sara', domains: ['sales'], role: 'builder', kind: 'human' };
@@ -39,6 +39,20 @@ function reset() {
   __resetBets();
   __resetSources();
   __resetStrategy();
+  // The strategy up-link ships EMPTY now; inject the NRR metric + Retention
+  // pillar the churn bet measures against (RLS: sara full slice, kenji less).
+  __seedStrategy(
+    {
+      id: 'metric_nrr',
+      name: 'Net Revenue Retention',
+      cubeMeasure: 'mart_retention.nrr_eur',
+      unit: '€',
+      baseline: 1_200_000,
+      current: 1_560_000,
+      rls: { sara: 1_560_000, kenji: 980_000 },
+    },
+    { id: 'pillar_retention', name: 'Retention', scope: 'tenant', metricId: 'metric_nrr' },
+  );
 }
 
 function newChurnBet() {

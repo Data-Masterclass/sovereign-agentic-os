@@ -342,11 +342,13 @@ clickhouse:
   # Infra tier — wave 0, high-priority (wired in templates/clickhouse/clickhouse.yaml).
   resources:
     # ClickHouse keeps mark/uncompressed caches resident; request reflects real
-    # steady-state (~0.8–1Gi). The limit is cgroup-aware (CH caps max_server_memory_usage
-    # to ~90% of it). A 2Gi limit OOMKilled (exit 137) on boot/migrations — ClickHouse's
-    # resident caches + Langfuse schema migrations exceed 2Gi; 3Gi gives headroom.
-    requests: { cpu: 200m, memory: 1Gi }
-    limits: { cpu: "2", memory: 3Gi }
+    # steady-state. The limit is cgroup-aware (CH caps max_server_memory_usage to
+    # ~90% of it). 2Gi then 3Gi both OOMKilled (exit 137) on boot/migrations under
+    # the everything-on deploy — ClickHouse's resident caches + Langfuse v3 schema
+    # migrations + concurrent ingestion exceed 3Gi. 6Gi limit / 2Gi request gives
+    # the headroom to stay green through boot and steady state.
+    requests: { cpu: 200m, memory: 2Gi }
+    limits: { cpu: "2", memory: 6Gi }
   local:
     password: clickhouse-local-dev
 
@@ -1700,9 +1702,18 @@ softwareDelivery:
 harbor:
   enabled: false
   image:
-    repository: registry
+    # Pull the OCI distribution registry from AWS's public ECR mirror of the
+    # Docker official-images library. Anonymous docker.io pulls hit the Hub
+    # rate-limit / egress block on the cluster, and the earlier digest pin
+    # (sha256:cc63…) resolved to a manifest that does NOT exist on Docker Hub
+    # ("not found" — verified live), so mirror.gcr.io (content-addressed against
+    # that same missing digest) also 404'd -> ImagePullBackOff. public.ecr.aws is
+    # reachable from the cluster, un-rate-limited, and serves the 2.8.3 tag, so we
+    # use a plain tag (no digest pin) — the template renders the digest only when
+    # one is set, so leaving it empty is intentional.
+    repository: public.ecr.aws/docker/library/registry
     tag: "2.8.3"
-    digest: sha256:cc6393207bf9d3e032c4d9277834c1695117532c9f7e8c64e7b7adcdc7993365
+    digest: ""
   persistence:
     enabled: true
     size: 5Gi
@@ -1817,6 +1828,46 @@ osUI:
   # Not shipped by default (empty) → the secure first-run bootstrap admin is the
   # only account. Plaintext passwords supplied here are hashed on ingest.
   usersSeed: ""
+  # ---- Outbound email (OPTIONAL). Transactional mail (email verification today;
+  # user invites later) via the OS UI's built-in, dependency-free PLUGGABLE mailer
+  # (os-ui/lib/mailer.ts) with TWO transports, selected by config (Graph > SMTP >
+  # none). BOTH are OFF by default → the platform works FULLY without email: the
+  # first-run admin auto-verifies (no mailer needed) and later accounts are active
+  # immediately, so a fresh clone never dead-ends. Secrets are supplied OUT-OF-BAND
+  # into the matching Secret (or a gitignored values.private.yaml / an
+  # ExternalSecret) — NEVER commit them. Default sender = support@datamasterclass.com.
+  #
+  # Transport 1 — Microsoft Graph (RECOMMENDED for Microsoft 365: avoids SMTP
+  # basic-auth, which M365 is deprecating). Register an Entra app, grant it the
+  # Graph Application permission `Mail.Send` (+ admin consent), and recommend an
+  # Exchange Application Access Policy restricting it to send only as MAIL_FROM.
+  # The CLIENT SECRET goes into the `os-ui-graph` Secret (key GRAPH_CLIENT_SECRET).
+  graph:
+    enabled: false
+    tenantId: ""      # Entra tenant (directory) id
+    clientId: ""      # Entra app (client) id
+    # Client secret. Leave EMPTY here; provide it out-of-band into the os-ui-graph
+    # Secret (preserved across helm upgrade). Never commit a real value.
+    clientSecret: ""
+    mailFrom: "support@datamasterclass.com"   # sending mailbox / From address
+  # Transport 2 — generic SMTP relay (fallback when not on M365). The PASSWORD goes
+  # into the `os-ui-smtp` Secret (key SMTP_PASS).
+  smtp:
+    enabled: false
+    host: ""          # e.g. smtp.eu.mailgun.org — presence enables real sends
+    port: 587         # 587 STARTTLS (default) or 465 implicit TLS
+    secure: false     # true → implicit TLS (port 465)
+    user: ""          # AUTH LOGIN username (optional → unauthenticated relay)
+    # AUTH LOGIN password. Leave EMPTY here; provide it out-of-band into the
+    # os-ui-smtp Secret (preserved across helm upgrade). Never commit a real value.
+    password: ""
+    from: "support@datamasterclass.com"
+  # Set "false" to disable email verification even when a mailer IS configured.
+  # Empty/unset = verification ON whenever a mailer (Graph or SMTP) is configured.
+  emailVerification: ""
+  # Absolute external base URL used in emailed verification links
+  # (e.g. https://os.example.com). Empty → a same-origin relative link.
+  publicUrl: ""
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits:   { cpu: 500m, memory: 512Mi }

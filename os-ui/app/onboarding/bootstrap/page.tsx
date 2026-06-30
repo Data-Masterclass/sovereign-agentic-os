@@ -63,7 +63,6 @@ export default function BootstrapPage() {
   const [error, setError] = useState('');
   const [reasons, setReasons] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const [verifyUrl, setVerifyUrl] = useState<string | null>(null);
 
   const { unmet } = getStrength(password, username);
   const passwordsMatch = password === confirm;
@@ -87,12 +86,16 @@ export default function BootstrapPage() {
       if (!res.ok) {
         setError(body.error ?? 'Setup failed');
         setReasons(body.reasons ?? []);
+        setBusy(false);
       } else {
-        setVerifyUrl(body.verifyUrl as string);
+        // Account is created, active and signed in. Go straight into the app —
+        // no email verification step (the bootstrap operator is trusted; the
+        // default admin/admin is already gone). Full reload so AuthGate re-reads
+        // the new session and runs onboarding.
+        window.location.href = '/';
       }
     } catch (err) {
       setError((err as Error).message);
-    } finally {
       setBusy(false);
     }
   }
@@ -104,30 +107,14 @@ export default function BootstrapPage() {
           Sovereign <span className="accent">Agentic</span> OS
         </div>
 
-        {verifyUrl ? (
-          <div className="auth-verify-panel" style={{ marginTop: 24 }}>
-            <span className="auth-verify-icon">✉</span>
-            <div className="auth-verify-title">Almost done — verify your email</div>
-            <div className="auth-verify-desc">
-              In a live deployment a verification email is sent to your address. Here, verify
-              directly to finish.
-            </div>
-            <a href={verifyUrl} className="btn" style={{ display: 'inline-block' }}>
-              Verify email now
-            </a>
-            <div className="auth-verify-note">
-              Verifying your email permanently deletes the default admin/admin account.
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="signin-sub" style={{ marginTop: 8 }}>Secure your deployment</div>
-            <p style={{ margin: '12px 0 0', fontSize: 13, color: '#b0a99c', lineHeight: 1.6 }}>
-              You're signed in with the temporary bootstrap admin. Set a real admin account to
-              continue — the default admin/admin login is disabled the moment you finish.
-            </p>
+        <div className="signin-sub" style={{ marginTop: 8 }}>Secure your deployment</div>
+        <p style={{ margin: '12px 0 0', fontSize: 13, color: '#b0a99c', lineHeight: 1.6 }}>
+          You're signed in with the temporary bootstrap admin. Set a real admin account to
+          continue — the default admin/admin login is deleted the moment you finish, and your
+          account is active right away.
+        </p>
 
-            <form onSubmit={submit} className="signin-form" style={{ marginTop: 20 }}>
+        <form onSubmit={submit} className="signin-form" style={{ marginTop: 20 }}>
               <label>
                 Username
                 <input
@@ -205,12 +192,10 @@ export default function BootstrapPage() {
                 </div>
               )}
 
-              <button className="btn" type="submit" disabled={!canSubmit}>
-                {busy ? <span className="spin" /> : 'Create admin & continue'}
-              </button>
-            </form>
-          </>
-        )}
+          <button className="btn" type="submit" disabled={!canSubmit}>
+            {busy ? <span className="spin" /> : 'Create admin & continue'}
+          </button>
+        </form>
       </div>
     </div>
   );

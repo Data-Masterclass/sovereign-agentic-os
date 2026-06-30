@@ -54,107 +54,11 @@ export type MockProduct = {
 
 /** The worked-example catalog (marketplace-golden-path.md §"Worked example"). */
 function seed(): MockProduct[] {
-  return [
-    {
-      id: 'mkt_revenue',
-      type: 'metric',
-      name: 'Revenue',
-      description: 'Certified company metric: revenue by day from the Cube semantic layer. Read in place under your own identity — RLS scopes you to your domain’s rows.',
-      owner: 'sara',
-      ownerDomain: 'sales',
-      tags: ['cube', 'revenue', 'certified'],
-      registry: 'openmetadata',
-      quality: 0.98,
-      freshness: 0.95,
-      previewColumns: ['domain', 'day', 'revenue'],
-      previewRows: [
-        ['sales', '2026-06-28', '12,000'],
-        ['sales', '2026-06-29', '13,500'],
-        ['marketing', '2026-06-28', '4,200'],
-        ['marketing', '2026-06-29', '5,100'],
-        ['finance', '2026-06-29', '9,900'],
-      ],
-      previewSpec: { cube: 'daily_revenue', measures: ['DailyRevenue.amount'], dimensions: ['DailyRevenue.day'] },
-      upstream: [
-        { id: 'tbl_orders', name: 'stg_orders', type: 'dataset', relation: 'upstream', domain: 'sales' },
-      ],
-    },
-    {
-      id: 'mkt_sales_overview',
-      type: 'dashboard',
-      name: 'Sales Overview',
-      description: 'Certified Superset dashboard on the governed Revenue metric. Embed it — it runs on the metric with YOUR row-level security.',
-      owner: 'sara',
-      ownerDomain: 'sales',
-      tags: ['superset', 'overview', 'certified'],
-      registry: 'os-registry',
-      quality: 0.93,
-      freshness: 0.88,
-      previewText: 'Panels: Revenue by day · Top customers · Pipeline by stage. Each panel re-runs under the embedding viewer’s Cube securityContext.',
-      previewSpec: { panels: ['revenue_by_day', 'top_customers', 'pipeline'], metric: 'daily_revenue' },
-      upstream: [
-        { id: 'mkt_revenue', name: 'Revenue', type: 'metric', relation: 'upstream', domain: 'sales' },
-      ],
-    },
-    {
-      id: 'mkt_bank_submission',
-      type: 'knowledge',
-      name: 'Bank submission',
-      description: 'Certified knowledge product: the process + rules for bank submissions. Read it via your agents (RLS), or fork-to-adapt the workflow to your domain.',
-      owner: 'bea',
-      ownerDomain: 'sales',
-      tags: ['process', 'compliance', 'certified'],
-      registry: 'os-registry',
-      quality: 0.9,
-      freshness: 0.8,
-      previewText: '§1 Eligibility · §2 Required documents · §3 Submission workflow · §4 Approval thresholds. Indexed for retrieval with Document-Level Security.',
-      previewSpec: { index: 'knowledge', docs: 14 },
-    },
-    {
-      id: 'mkt_salesforce_tpl',
-      type: 'connection',
-      name: 'Salesforce',
-      description: 'Certified connection template to Salesforce. Import it to create your own connection — bring your own credentials (stored in the secrets store, never the browser).',
-      owner: 'sara',
-      ownerDomain: 'sales',
-      tags: ['crm', 'template', 'certified'],
-      registry: 'os-registry',
-      quality: 0.95,
-      freshness: 0.9,
-      previewText: 'Template: host, OAuth client, default objects (Account, Opportunity). Credentials are NOT shared — each importer binds their own.',
-      previewSpec: { connector: 'salesforce', objects: ['Account', 'Opportunity'], capability: 'crm.read' },
-      accessPolicyOverride: 'approval',
-    },
-    {
-      id: 'mkt_domain_rag',
-      type: 'agent',
-      name: 'Domain RAG Agent',
-      description: 'Certified LangGraph retrieve→generate→trace agent. Fork it to own an editable copy governed in your domain.',
-      owner: 'admin',
-      ownerDomain: 'platform',
-      tags: ['langgraph', 'rag', 'certified'],
-      registry: 'os-registry',
-      quality: 0.92,
-      freshness: 0.85,
-      previewSpec: { graph: ['retrieve', 'generate', 'trace'], tools: ['knowledge_search'] },
-    },
-    {
-      id: 'mkt_lead_scorer',
-      type: 'app',
-      name: 'Lead Scorer',
-      description: 'Certified Software app. Deploy your own instance (your Supabase + connections); a shared instance is available for trusted cases.',
-      owner: 'admin',
-      ownerDomain: 'platform',
-      tags: ['software', 'nextjs', 'certified'],
-      registry: 'os-registry',
-      quality: 0.88,
-      freshness: 0.82,
-      previewText: 'A Next.js app that scores leads from your CRM connection. Deploying provisions an isolated instance in your namespace.',
-      previewSpec: { template: 'nextjs-app', needs: ['connection:crm'] },
-      accessPolicyOverride: 'approval',
-    },
-  ];
+  // A fresh tenant starts EMPTY. Marketplace listings are published only
+  // through the platform's own governed certify flows (e.g. the Northpeak seed).
+  return [];
 }
+
 
 let catalog: MockProduct[] | null = null;
 export function mockCatalog(): MockProduct[] {

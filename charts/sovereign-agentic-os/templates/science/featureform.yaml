@@ -33,8 +33,17 @@ spec:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "featureform") | nindent 8 }}
     spec:
+      # The upstream featureformcom/featureform image runs as root with a
+      # non-numeric USER (root), so the cluster-default runAsNonRoot:true makes the
+      # kubelet refuse it ("CreateContainerConfigError: image has non-numeric user
+      # (root)"). Pin to numeric uid 0 and disable the non-root guard for THIS
+      # component only — every other bespoke workload keeps the hardened helper
+      # default. seccomp baseline is retained. (Override only what the image needs.)
       securityContext:
-        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsNonRoot: false
+        runAsUser: 0
+        seccompProfile:
+          type: {{ .Values.global.podSecurity.seccompProfile }}
       containers:
         - name: featureform
           image: "{{ $f.image.repository }}:{{ $f.image.tag }}"

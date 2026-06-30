@@ -75,9 +75,8 @@ export const REGISTRY: Component[] = [
   { id: 'sample-agent', name: 'Sample RAG agent', layer: 'Layer 1 — Agent core', kind: 'deploy',
     workload: 'sample-agent', svc: 'sample-agent', port: 8000, ui: false, login: 'none',
     toggle: true, summary: 'LangGraph agent: retrieve (OpenSearch) -> generate (LiteLLM) -> trace.' },
-  { id: 'poet-agent', name: 'Poet agent', layer: 'Layer 1 — Agent core', kind: 'deploy',
-    workload: 'poet-agent', svc: 'poet-agent', port: 8000, ui: false, login: 'none',
-    toggle: true, summary: 'Second LangGraph agent: writes a poem file each run.' },
+  // NB: demo agents (poet/composer, domain RAG, …) are NOT platform components —
+  // they live in the Agents tab. This registry is infrastructure/platform only.
   // Layer 2 — context
   { id: 'opa', name: 'OPA (policy)', layer: 'Layer 2 — Context', kind: 'deploy', workload: 'opa',
     svc: 'opa', port: 8181, ui: false, login: 'none', toggle: true,

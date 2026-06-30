@@ -34,11 +34,11 @@ export type { AdoptionBoard, DomainAdoption, TierCounts };
  * Compute the live adoption board across all domains. Optionally restrict to a
  * single domain (for a domain pillar's scoreboard).
  */
-export async function adoptionBoard(domainFilter?: string): Promise<AdoptionBoard> {
+export async function adoptionBoard(domainFilter?: string, viewerId?: string): Promise<AdoptionBoard> {
   const [arts, users] = await Promise.all([allArtifacts(), listUsers()]);
   const roleById = new Map<string, Role>(users.map((u) => [u.id, u.role]));
   const cutoff = Date.now() - ACTIVE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
-  return tallyAdoption(arts, roleById, { windowDays: ACTIVE_WINDOW_DAYS, cutoff, domainFilter });
+  return tallyAdoption(arts, roleById, { windowDays: ACTIVE_WINDOW_DAYS, cutoff, domainFilter, viewerId });
 }
 
 /**

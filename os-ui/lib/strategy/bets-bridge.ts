@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { ArtifactKind } from '@/lib/strategy/model';
+import type { ArtifactKind, ComponentBuildStatus } from '@/lib/strategy/model';
 
 /**
  * Pillar ↔ Big-Bet share interface — the CROSS-TAB seam with the Big Bets tab.
@@ -33,6 +33,8 @@ export type BetShare = {
   domain: string;
   /** Fraction of the pillar metric total this bet realizes (0..1). */
   sharePct: number;
+  /** Bet go-live date (ISO yyyy-mm-dd) — the roadmap axis end marker. */
+  goLive?: string;
   /** Component breakdown; weights are fractions of the bet (sum to 1). */
   components: BetComponentShare[];
 };
@@ -43,6 +45,12 @@ export type BetComponentShare = {
   kind: ArtifactKind;
   /** Fraction of the bet's value this component carries (0..1). */
   weight: number;
+  /** Build state — drives the Planned/In progress/Ready counts in the detail view. */
+  status?: ComponentBuildStatus;
+  /** Planned-ready / due date (ISO yyyy-mm-dd) for the roadmap timeline. */
+  dueDate?: string;
+  /** The real artifact id this references — for the component's Edit→tab deep-link. */
+  artifactId?: string;
 };
 
 /** The source Strategy reads bet shares from (stub now, registry later). */
@@ -67,11 +75,12 @@ const STUB: Record<string, BetShare[]> = {
       name: 'Reduce churn',
       domain: 'sales',
       sharePct: 0.6,
+      goLive: '2026-09-30',
       components: [
-        { id: 'seed_dp_churn', name: 'Churn data product', kind: 'data', weight: 0.25 },
-        { id: 'seed_ml_churn', name: 'Churn model', kind: 'ml', weight: 0.35 },
-        { id: 'seed_dash_churn', name: 'Churn Risk dashboard', kind: 'dashboard', weight: 0.2 },
-        { id: 'seed_agent_retention', name: 'Sales retention agent', kind: 'agent', weight: 0.2 },
+        { id: 'seed_dp_churn', name: 'Churn data product', kind: 'data', weight: 0.25, status: 'ready', dueDate: '2026-05-15', artifactId: 'data_churn_mart' },
+        { id: 'seed_ml_churn', name: 'Churn model', kind: 'ml', weight: 0.35, status: 'in-progress', dueDate: '2026-07-31', artifactId: 'ml_churn_v2' },
+        { id: 'seed_dash_churn', name: 'Churn Risk dashboard', kind: 'dashboard', weight: 0.2, status: 'in-progress', dueDate: '2026-08-15', artifactId: 'dash_churn_risk' },
+        { id: 'seed_agent_retention', name: 'Sales retention agent', kind: 'agent', weight: 0.2, status: 'planned', dueDate: '2026-09-20', artifactId: 'agent_retention' },
       ],
     },
     {
@@ -79,10 +88,11 @@ const STUB: Record<string, BetShare[]> = {
       name: 'Win-back campaign',
       domain: 'marketing',
       sharePct: 0.4,
+      goLive: '2026-10-31',
       components: [
-        { id: 'seed_dp_winback', name: 'Lapsed-customer data product', kind: 'data', weight: 0.4 },
-        { id: 'seed_dash_winback', name: 'Win-back dashboard', kind: 'dashboard', weight: 0.3 },
-        { id: 'seed_agent_winback', name: 'Win-back outreach agent', kind: 'agent', weight: 0.3 },
+        { id: 'seed_dp_winback', name: 'Lapsed-customer data product', kind: 'data', weight: 0.4, status: 'ready', dueDate: '2026-06-01', artifactId: 'data_lapsed' },
+        { id: 'seed_dash_winback', name: 'Win-back dashboard', kind: 'dashboard', weight: 0.3, status: 'planned', dueDate: '2026-09-10', artifactId: 'dash_winback' },
+        { id: 'seed_agent_winback', name: 'Win-back outreach agent', kind: 'agent', weight: 0.3, status: 'planned', dueDate: '2026-10-05', artifactId: 'agent_winback' },
       ],
     },
   ],

@@ -21,7 +21,7 @@ export const dynamic = 'force-dynamic';
  * end-to-end "agent calls the app" flow is demonstrable with no live Supabase.
  */
 const SEED_RENEWALS = [
-  { id: 'r1', account: 'ACME', product: 'Platform — Enterprise', amount: 48000, renews_on: '2026-09-30', status: 'upcoming' },
+  { id: 'r1', account: 'Northwind', product: 'Platform — Enterprise', amount: 48000, renews_on: '2026-09-30', status: 'upcoming' },
   { id: 'r2', account: 'Globex', product: 'Platform — Team', amount: 12000, renews_on: '2026-07-15', status: 'upcoming' },
 ];
 

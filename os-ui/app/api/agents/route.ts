@@ -24,14 +24,6 @@ type AgentDef = {
 
 const AGENTS: AgentDef[] = [
   {
-    key: 'sales-assistant',
-    name: 'Sales Assistant (supervisor)',
-    role: 'supervisor → data-analyst (metrics) · librarian (retrieve) · crm-liaison (write, approval-gated) — the Agent golden-path slice',
-    runtime: 'LangGraph',
-    url: 'in-os://sales-assistant',
-    optional: false,
-  },
-  {
     key: 'sample-agent',
     name: 'Sample RAG agent',
     role: 'retrieve → generate → trace (talk-to-your-data backbone, under Data)',
@@ -58,8 +50,8 @@ const AGENTS: AgentDef[] = [
 ];
 
 async function probe(a: AgentDef) {
-  // The Sales Assistant supervisor runs inside the OS UI process (governed
-  // tools via lib/agent-governed), so it has no separate /health to probe.
+  // An in-OS supervisor runs inside the OS UI process (governed tools via
+  // lib/agent-governed), so it has no separate /health to probe.
   if (a.url.startsWith('in-os://')) {
     return { key: a.key, name: a.name, role: a.role, runtime: a.runtime, optional: a.optional, up: true, detail: 'in-OS supervisor' };
   }

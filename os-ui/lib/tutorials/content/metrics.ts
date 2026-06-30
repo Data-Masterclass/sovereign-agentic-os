@@ -68,7 +68,7 @@ const metrics: TutorialDef = {
     },
   ],
   sandbox: {
-    lane: 'My metrics - personal definitions lane',
+    lane: 'Personal metric definitions',
     anchor: ANCHORS.metrics.sandbox,
     note: 'Draft and preview metrics on sample cubes; nothing is promoted or certified until you graduate.',
   },

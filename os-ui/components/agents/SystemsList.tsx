@@ -5,6 +5,7 @@
 
 import { useState } from 'react';
 import { useApi } from '@/lib/useApi';
+import { useUser } from '@/lib/useUser';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 
 /**
@@ -26,6 +27,8 @@ const visClass = (v: string) => (v === 'Shared' ? 'vis-shared' : v === 'Marketpl
 
 export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }) {
   const { data, loading, error, reload } = useApi<Groups>('/api/agents/systems');
+  const { user } = useUser();
+  const domainLabel = user?.domains[0] ? `${user.domains[0]} domain` : 'your domain';
   const [name, setName] = useState('');
   const [creating, setCreating] = useState(false);
   const [actErr, setActErr] = useState('');
@@ -106,7 +109,7 @@ export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }
     <div className="systems-list">
       <div className="card" style={{ marginBottom: 18 }} {...anchorAttr(ANCHORS.agents.define)}>
         <h3 style={{ marginTop: 0 }}>New agent system</h3>
-        <p className="hint" style={{ marginTop: 0 }}>A solo agent is just a system of one. It lands under Mine with a starter graph.</p>
+        <p className="hint" style={{ marginTop: 0 }}>A solo agent is just a system of one. It lands under Personal with a starter graph.</p>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
           <input
             type="text"
@@ -131,8 +134,8 @@ export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }
       {error ? <div className="error">{error}</div> : null}
       {data ? (
         <>
-          {group('Mine', 'systems you own', data.mine, 'open')}
-          {group('My domain', 'shared with your domain', data.domain, 'open')}
+          {group('Personal', 'agent systems you own', data.mine, 'open')}
+          {group(domainLabel, `shared in ${domainLabel}`, data.domain, 'open')}
           {group('Marketplace', 'install a copy you own', data.marketplace, 'install')}
         </>
       ) : loading ? (

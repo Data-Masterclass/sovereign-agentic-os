@@ -13,7 +13,7 @@ import { _reset as resetModels, registerProviderKey, listProviderKeys, setEnable
 import { billingView, offlineSpend } from './billing.ts';
 import { _reset as resetBackups, restore, restorePhrase } from './backups.ts';
 import { _resetAudit as resetAudit, listAudit } from './audit.ts';
-import { _reset as resetPlugins, installPlugin, approvePlugin } from './plugins.ts';
+import { _reset as resetPlugins, __seedPlugins, installPlugin, approvePlugin } from './plugins.ts';
 
 // ---------------------------------------------------------------- isolation --
 test('multi-tenant isolation: own tenant resolves, any other id is 403', () => {
@@ -167,8 +167,14 @@ test('backups: restore is GUARDED (412 without confirm) and AUDITED on success',
 // ------------------------------------------------------------------ plugins --
 test('plugins: unsigned plugin cannot be installed; approve requires install', () => {
   resetPlugins();
+  // The store ships EMPTY now; register the plugins the gate test exercises.
+  __seedPlugins([
+    { id: 'forecast-skill', name: 'Forecasting skill', kind: 'skill', publisher: 'community', signed: false, scanned: false, status: 'available', allowedDomains: [], summary: 'Unsigned — review before install.' },
+    { id: 'notion-mcp', name: 'Notion MCP', kind: 'mcp', publisher: 'notion.com', signed: true, scanned: true, status: 'available', allowedDomains: [], summary: 'Read/write Notion pages via the governed MCP.' },
+  ]);
   assert.throws(() => installPlugin('forecast-skill'), (e: { status?: number }) => e.status === 409); // unsigned/unscanned
   assert.throws(() => approvePlugin('forecast-skill', ['sales']), (e: { status?: number }) => e.status === 409);
+  installPlugin('notion-mcp'); // signed + scanned → installable, then approvable
   const p = approvePlugin('notion-mcp', ['sales', 'finance']);
   assert.deepEqual(p.allowedDomains, ['sales', 'finance']);
 });

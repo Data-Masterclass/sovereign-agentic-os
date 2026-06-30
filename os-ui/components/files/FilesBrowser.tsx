@@ -4,6 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useUser } from '@/lib/useUser';
 import FilePreview from './FilePreview';
 
 type Summary = {
@@ -17,7 +18,6 @@ type Groups = { mine: Summary[]; domain: Summary[]; marketplace: Summary[]; face
 type Hit = { id: string; name: string; folder: string; tags: string[]; kind: Summary['kind']; score: number; snippet: string };
 
 type Scope = 'mine' | 'domain' | 'marketplace';
-const SCOPE_LABEL: Record<Scope, string> = { mine: 'My files', domain: 'Shared in my domain', marketplace: 'Marketplace' };
 const KIND_LABEL: Record<Summary['kind'], string> = { doc: 'DOC', image: 'IMG', audio: 'AUD', video: 'VID', table: 'TAB', archive: 'ZIP', other: 'FILE' };
 
 function bytesLabel(n: number): string {
@@ -49,6 +49,13 @@ function FileCard({ f, on, onOpen }: { f: Summary; on: boolean; onOpen: () => vo
 }
 
 export default function FilesBrowser() {
+  const { user } = useUser();
+  const domainLabel = user?.domains[0] ? `${user.domains[0]} domain` : 'your domain';
+  const scopeLabel: Record<Scope, string> = {
+    mine: 'Personal files',
+    domain: `Shared in ${domainLabel}`,
+    marketplace: 'Marketplace',
+  };
   const [scope, setScope] = useState<Scope>('mine');
   const [groups, setGroups] = useState<Groups | null>(null);
   const [err, setErr] = useState('');
@@ -122,7 +129,7 @@ export default function FilesBrowser() {
           {(['mine', 'domain', 'marketplace'] as Scope[]).map((s) => (
             <button key={s} className={scope === s ? 'on' : ''}
               onClick={() => { setScope(s); setFolder(null); setTag(null); setSelected(null); }}>
-              {SCOPE_LABEL[s]}{groups ? ` (${groups[s].length})` : ''}
+              {scopeLabel[s]}{groups ? ` (${groups[s].length})` : ''}
             </button>
           ))}
         </div>

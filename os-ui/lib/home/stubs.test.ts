@@ -17,15 +17,21 @@ test('no-drift: the stub is the SINGLE source — same input, identical output',
   assert.deepEqual(healthCostStub('amir', 'sales'), healthCostStub('amir', 'sales'));
 });
 
-test('feeds are scoped: different domain / viewer → distinct figures', () => {
-  assert.notDeepEqual(domainPulseStub('sales'), domainPulseStub('finance'));
-  assert.notDeepEqual(healthCostStub('amir', 'sales'), healthCostStub('maria', 'finance'));
+test('a fresh tenant has an EMPTY cockpit — no fabricated activity', () => {
+  // The stubs return an honest empty state until real Strategy/Monitoring
+  // artifacts exist; the scope-distinct figures only appear once seeded.
+  const p = domainPulseStub('sales');
+  assert.equal(p.valuePct, 0);
+  assert.equal(p.bets.length, 0);
+  assert.equal(p.activeCreators, 0);
+  const h = healthCostStub('amir', 'sales');
+  assert.equal(h.redItems.length, 0);
+  assert.equal(h.spendUsd, 0);
 });
 
 test('pulse + health stay within sane bounds', () => {
   const p = domainPulseStub('sales');
   assert.ok(p.valuePct >= 0 && p.valuePct <= 100);
-  assert.ok(p.bets.length > 0);
   const h = healthCostStub('amir', 'sales');
   assert.ok(h.spendUsd >= 0 && h.spendUsd <= h.capUsd);
   assert.ok(h.spendPct >= 0 && h.spendPct <= 1);

@@ -24,17 +24,38 @@ const kenji: Principal = { id: 'kenji', domains: ['finance'], role: 'participant
 
 beforeEach(() => __resetStore());
 
-test('seeds the Orders worked example as a private dataset for amir', () => {
+/**
+ * The store ships EMPTY now (no baked-in demo). Tests that exercise the
+ * worked-example governance flow build an "Orders" dataset (private, owned by
+ * amir, bronze+silver materialised) through the public API and use its id.
+ */
+function seedOrders(): string {
+  const d = createDataset(amir, { name: 'Orders' });
+  buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'bronze/orders.dlt.yml' });
+  buildVersion(d.id, amir, 'silver', { quality: 'passing', artifact: 'silver/stg_orders.sql' });
+  return d.id;
+}
+
+test('a fresh tenant has no datasets', () => {
+  assert.equal(listDatasets(amir).mine.length, 0);
+  assert.equal(listDatasets(amir).domain.length, 0);
+  assert.equal(listDatasets(amir).marketplace.length, 0);
+});
+
+test('the built Orders example is a private dataset for amir', () => {
+  const id = seedOrders();
   const groups = listDatasets(amir);
   assert.equal(groups.mine.length, 1);
   assert.equal(groups.mine[0].name, 'Orders');
+  assert.equal(groups.mine[0].id, id);
   assert.deepEqual(groups.mine[0].dots, { bronze: true, silver: true, gold: false });
 });
 
 test('private dataset is owner-only — another user cannot see or open it', () => {
+  const id = seedOrders();
   assert.equal(listDatasets(kenji).mine.length, 0);
   assert.equal(listDatasets(kenji).domain.length, 0);
-  assert.throws(() => getDataset('ds_orders', kenji), (e: DatasetError) => e.status === 403);
+  assert.throws(() => getDataset(id, kenji), (e: DatasetError) => e.status === 403);
 });
 
 test('create + build versions; tile dots and quality reflect the furthest layer', () => {
@@ -48,13 +69,11 @@ test('create + build versions; tile dots and quality reflect the furthest layer'
 });
 
 test('Creator cannot promote; Builder promotes dataset -> asset (into Trino)', () => {
+  const id = seedOrders();
   // amir (Creator) is blocked
-  assert.throws(() => transition('ds_orders', amir, 'promote'), (e: DatasetError) => e.status === 403);
-  // bea (Builder, same domain, admin-or-owner edit rule) — give her edit via admin? No:
-  // promotion edit-rights: bea is not owner nor admin, so she cannot edit amir's dataset.
-  // The realistic flow: an admin/owner promotes. Use sara (admin) to exercise the gate move,
-  // and separately prove the ROLE gate via canTransition-backed path below.
-  const promoted = transition('ds_orders', sara, 'promote', { visibility: 'domain' });
+  assert.throws(() => transition(id, amir, 'promote'), (e: DatasetError) => e.status === 403);
+  // The realistic flow: an admin/owner promotes.
+  const promoted = transition(id, sara, 'promote', { visibility: 'domain' });
   assert.equal(promoted.tier, 'asset');
   assert.equal(promoted.visibility, 'domain');
 });
@@ -69,60 +88,66 @@ test('Builder role gate: a builder may promote, but only data they can edit', ()
 });
 
 test('only Admin certifies asset -> product; product is marketplace-discoverable', () => {
-  transition('ds_orders', sara, 'promote', { visibility: 'domain' });
-  const product = transition('ds_orders', sara, 'certify', { visibility: 'shared' });
+  const id = seedOrders();
+  transition(id, sara, 'promote', { visibility: 'domain' });
+  const product = transition(id, sara, 'certify', { visibility: 'shared' });
   assert.equal(product.tier, 'product');
   // Now a finance user sees it in the marketplace group.
-  assert.equal(listDatasets(kenji).marketplace.some((x) => x.id === 'ds_orders'), true);
+  assert.equal(listDatasets(kenji).marketplace.some((x) => x.id === id), true);
 });
 
 test('promoted asset is visible to domain peers, denied cross-domain without a grant', () => {
-  transition('ds_orders', sara, 'promote', { visibility: 'domain' });
-  const beaSees = listDatasets(bea).domain.some((x) => x.id === 'ds_orders'); // sales peer
+  const id = seedOrders();
+  transition(id, sara, 'promote', { visibility: 'domain' });
+  const beaSees = listDatasets(bea).domain.some((x) => x.id === id); // sales peer
   assert.equal(beaSees, true);
-  assert.throws(() => getDataset('ds_orders', kenji), (e: DatasetError) => e.status === 403); // finance, no grant
+  assert.throws(() => getDataset(id, kenji), (e: DatasetError) => e.status === 403); // finance, no grant
 });
 
 test('a named cross-domain individual grant lets that user view the asset', () => {
-  transition('ds_orders', sara, 'promote', {
+  const id = seedOrders();
+  transition(id, sara, 'promote', {
     visibility: 'domain',
     grants: [{ grantee: { kind: 'user', id: 'kenji' }, scope: { rows: [], columns: { mask: [], hide: [] } }, cardinality: 'low', action: 'read' }],
   });
-  assert.doesNotThrow(() => getDataset('ds_orders', kenji));
+  assert.doesNotThrow(() => getDataset(id, kenji));
 });
 
 test('define a metric requires a built Gold version on a GOVERNED asset/product', () => {
+  const id = seedOrders();
   // (1) no Gold yet → blocked on Gold
   assert.throws(
-    () => defineMeasure('ds_orders', amir, { name: 'revenue', type: 'sum', sql: 'net_amount' }),
+    () => defineMeasure(id, amir, { name: 'revenue', type: 'sum', sql: 'net_amount' }),
     /Gold/,
   );
-  buildVersion('ds_orders', amir, 'gold', { quality: 'passing', artifact: 'gold/mart_orders.sql' });
+  buildVersion(id, amir, 'gold', { quality: 'passing', artifact: 'gold/mart_orders.sql' });
   // (2) Gold built but still a private dataset → blocked (Cube reads the Trino mart)
   assert.throws(
-    () => defineMeasure('ds_orders', amir, { name: 'revenue', type: 'sum', sql: 'net_amount' }),
+    () => defineMeasure(id, amir, { name: 'revenue', type: 'sum', sql: 'net_amount' }),
     /governed/i,
   );
   // (3) promote to a governed asset → the metric is allowed; artifacts regenerate
-  transition('ds_orders', sara, 'promote', { visibility: 'domain' });
-  const d = defineMeasure('ds_orders', sara, { name: 'revenue', type: 'sum', sql: 'net_amount' });
+  transition(id, sara, 'promote', { visibility: 'domain' });
+  const d = defineMeasure(id, sara, { name: 'revenue', type: 'sum', sql: 'net_amount' });
   assert.equal(d.measures[0].name, 'revenue');
 });
 
 test('files: dataset.yaml is editable, native artifacts are Build-materialised', () => {
-  const { files } = listFiles('ds_orders', amir);
+  const id = seedOrders();
+  const { files } = listFiles(id, amir);
   assert.ok(files.includes('dataset.yaml'));
   assert.ok(files.includes('silver/stg_orders.sql'));
   // hand-editing a native file is refused (Build owns it)
   assert.throws(
-    () => writeFile('ds_orders', amir, { path: 'silver/stg_orders.sql', content: 'x', sha: '' }),
+    () => writeFile(id, amir, { path: 'silver/stg_orders.sql', content: 'x', sha: '' }),
     (e: DatasetError) => e.status === 403,
   );
 });
 
 test('unshare drops grants and returns the asset to a private dataset', () => {
-  transition('ds_orders', sara, 'promote', { visibility: 'domain' });
-  const back = transition('ds_orders', sara, 'unshare');
+  const id = seedOrders();
+  transition(id, sara, 'promote', { visibility: 'domain' });
+  const back = transition(id, sara, 'unshare');
   assert.equal(back.tier, 'dataset');
   assert.equal(back.visibility, 'private');
   assert.equal(back.grants.length, 0);

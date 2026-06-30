@@ -4,7 +4,7 @@
 import 'server-only';
 import { trace } from '@/lib/agent-governed';
 import { authorizePredict } from './model-service.ts';
-import { predictTool, CHURN, ACME_FEATURES, type ChurnFeatures } from './churn.ts';
+import { predictTool, CHURN, DEFAULT_FEATURES, type ChurnFeatures } from './churn.ts';
 
 /**
  * The governed `predict` service body, shared by BOTH front doors:
@@ -30,8 +30,8 @@ export async function servePredict(opts: {
   isAgent: boolean;
   requestedBy?: string;
 }): Promise<ServeResult> {
-  const account = (opts.account ?? 'ACME').toString();
-  const features: ChurnFeatures = { ...ACME_FEATURES, ...(opts.features ?? {}) } as ChurnFeatures;
+  const account = (opts.account ?? '').toString();
+  const features: ChurnFeatures = { ...DEFAULT_FEATURES, ...(opts.features ?? {}) } as ChurnFeatures;
   const caller = { principal: opts.principal, domain: opts.domain, isAgent: opts.isAgent };
 
   const authz = await authorizePredict(CHURN.model, caller);

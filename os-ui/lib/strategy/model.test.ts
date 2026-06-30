@@ -14,8 +14,11 @@ import {
   currentQuarter,
   monthKey,
   emptyTargetSet,
+  emptyValueMetric,
+  latestManualValue,
   euro,
   type DistributableBet,
+  type ValueMetric,
 } from './model.ts';
 
 // The worked-example "Retention" decomposition: a €600k realized total split
@@ -175,4 +178,46 @@ test('euro formats compactly', () => {
   assert.equal(euro(600_000), '€600k');
   assert.equal(euro(2_400_000), '€2.4M');
   assert.equal(euro(null), '—');
+});
+
+test('emptyValueMetric starts described-only with no entries', () => {
+  const vm = emptyValueMetric('NRR', 'Keep more of the revenue we win');
+  assert.equal(vm.name, 'NRR');
+  assert.equal(vm.mode, 'describe');
+  assert.deepEqual(vm.entries, []);
+});
+
+test('latestManualValue returns the newest monthly entry (or 0)', () => {
+  assert.equal(latestManualValue(undefined), 0);
+  const vm: ValueMetric = {
+    name: 'NRR', description: '', mode: 'manual',
+    entries: [
+      { month: '2026-04', value: 500_000, at: '', by: 'u1' },
+      { month: '2026-05', value: 560_000, at: '', by: 'u1' },
+      { month: '2026-06', value: 610_000, at: '', by: 'u1' },
+    ],
+  };
+  assert.equal(latestManualValue(vm), 610_000);
+});
+
+test('distributeValue threads component status/dueDate/artifactId (defaults to planned)', () => {
+  const admin = { domains: ['platform'], role: 'admin' as const };
+  const bets: DistributableBet[] = [
+    {
+      id: 'b', name: 'Reduce churn', domain: 'sales', sharePct: 1, goLive: '2026-09-30',
+      components: [
+        { id: 'c1', name: 'Churn model', kind: 'ml', weight: 0.5, status: 'in-progress', dueDate: '2026-07-31', artifactId: 'ml_churn' },
+        { id: 'c2', name: 'Risk dashboard', kind: 'dashboard', weight: 0.5 },
+      ],
+    },
+  ];
+  const d = distributeValue(800_000, bets, admin);
+  assert.equal(d.bets[0].goLive, '2026-09-30');
+  assert.equal(d.bets[0].components[0].status, 'in-progress');
+  assert.equal(d.bets[0].components[0].dueDate, '2026-07-31');
+  assert.equal(d.bets[0].components[0].artifactId, 'ml_churn');
+  // Unspecified component defaults to 'planned' with null roadmap fields.
+  assert.equal(d.bets[0].components[1].status, 'planned');
+  assert.equal(d.bets[0].components[1].dueDate, null);
+  assert.equal(d.bets[0].components[1].artifactId, null);
 });

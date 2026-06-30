@@ -6,7 +6,7 @@ import { requireUser } from '@/lib/auth';
 import { config } from '@/lib/config';
 import { trace } from '@/lib/agent-governed';
 import {
-  listModels,
+  listModelsForUser,
   getModel,
   compilePredictPolicy,
   promoteModel,
@@ -37,13 +37,21 @@ function actorFrom(user: { id: string; role: string; domains: string[] }): Actor
 }
 
 /**
- * Model-as-service state for the Science tab: every deployed model with its
- * compiled callable-scope policy (proving promotion/certification widens reach),
- * the 5 adapter liveness probes, and the churn drift series for the monitoring
- * view. Off (and empty) when `ml.enabled=false`.
+ * Model-as-service state for the Science tab: the deployed models the VIEWER is
+ * entitled to (RLS-scoped via `listModelsForUser` — their Personal models + their
+ * domains' Domain models + Marketplace-published models, never another domain's or
+ * another user's Personal model), each with its compiled callable-scope policy
+ * (proving promotion/certification widens reach), the 5 adapter liveness probes,
+ * and the churn drift series for the monitoring view. Off when `ml.enabled=false`.
  */
 export async function GET() {
   if (!config.mlEnabled) return disabled();
+  let user;
+  try {
+    user = await requireUser();
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
+  }
   const [features, train, registry, deploy, mon, drift] = await Promise.all([
     featuresAdapter.probe(),
     trainTrackAdapter.probe(),
@@ -52,7 +60,7 @@ export async function GET() {
     monitoringAdapter.probe(),
     monitoringAdapter.drift(),
   ]);
-  const models = listModels().map((m) => ({ ...m, policy: compilePredictPolicy(m) }));
+  const models = listModelsForUser({ id: user.id, domains: user.domains }).map((m) => ({ ...m, policy: compilePredictPolicy(m) }));
   return NextResponse.json({
     mlEnabled: true,
     gpuEnabled: false, // CPU default; GPU behind Builder/Admin approval + quota

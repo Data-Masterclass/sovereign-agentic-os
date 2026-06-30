@@ -12,9 +12,6 @@ import GovernedConnections from '@/components/GovernedConnections';
 import { useApi } from '@/lib/useApi';
 import { CONNECTORS, CONNECTOR_CATEGORIES } from '@/lib/connectors';
 
-type Service = { key: string; label: string; up: boolean; detail: string };
-type Status = { services: Service[]; up: number; total: number };
-
 type AppTool = { name: string; description: string; write: boolean };
 type AppConn = {
   id: string;
@@ -36,22 +33,23 @@ const STARTERS = [
 ];
 
 export default function ConnectionsPage() {
-  const { data, loading, error, reload } = useApi<Status>('/api/status');
   const { data: appConns } = useApi<AppConns>('/api/connections/apps');
   const [tab, setTab] = useState<'mine' | 'registry' | 'governed' | 'build'>('mine');
 
   return (
     <>
-      <PageHeader title="Connections" crumb="registry · build connectors — live status + agent" tutorial="connections" />
+      <PageHeader title="Connections" crumb="external systems · build connectors — registry + agent" tutorial="connections" />
       <div className="content">
         <p className="lead">
-          Every backend this domain is wired to, plus the external sources you can register.
-          Credentials go to the secrets store and are never exposed — you share <em>use</em>,
-          never the secret, under policy. The connections agent drafts new connectors for you.
+          The external systems this domain brings in — databases, APIs and SaaS — registered as governed
+          connections that expose <strong>APIs or MCPs as tools</strong> for your agents and software.
+          Credentials go to the secrets store and are never exposed — you share <em>use</em>, never the
+          secret, under policy. The connections agent drafts new connectors for you. (Internal platform
+          services live in <Link href="/platform/components">Platform → Components</Link>.)
         </p>
 
         <div className="tabstrip">
-          <button className={tab === 'mine' ? 'active' : ''} onClick={() => setTab('mine')}>My connections</button>
+          <button className={tab === 'mine' ? 'active' : ''} onClick={() => setTab('mine')}>Personal connections</button>
           <button className={tab === 'registry' ? 'active' : ''} onClick={() => setTab('registry')}>Registry</button>
           <button className={tab === 'governed' ? 'active' : ''} onClick={() => setTab('governed')}>Governed connections</button>
           <button className={tab === 'build' ? 'active' : ''} onClick={() => setTab('build')}>Build a connector</button>
@@ -82,38 +80,6 @@ export default function ConnectionsPage() {
           <GovernedConnections />
         ) : tab === 'registry' ? (
           <>
-            <div className="section-title">
-              Platform services
-              {data ? (
-                <span className={`count-pill${data.up === data.total ? ' ok' : ' warn'}`}>{data.up}/{data.total} connected</span>
-              ) : null}
-              <button className="btn ghost" style={{ marginLeft: 'auto', padding: '4px 12px' }} onClick={reload} disabled={loading}>
-                {loading ? <span className="spin" /> : 'Refresh'}
-              </button>
-            </div>
-            {error ? <div className="error">{error}</div> : null}
-            {data ? (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr><th>Connection</th><th>Service</th><th>Status</th><th>Detail</th></tr>
-                  </thead>
-                  <tbody>
-                    {data.services.map((s) => (
-                      <tr key={s.key}>
-                        <td style={{ fontWeight: 600 }}>{s.label}</td>
-                        <td className="mono">{s.key}</td>
-                        <td><span className={`badge ${s.up ? 'ok' : 'err'}`}>{s.up ? 'connected' : 'down'}</span></td>
-                        <td className="muted">{s.detail}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : loading ? (
-              <div className="stub-page">Checking connections…</div>
-            ) : null}
-
             <div className="section-title">App MCP connections (auto-generated)</div>
             <p className="hint" style={{ marginTop: 0, marginBottom: 14 }}>
               Every app you build in the Software tab auto-generates an MCP, registered here as a

@@ -4,7 +4,10 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { listPillars, createPillar } from '@/lib/strategy/pillars';
-import { canCreatePillar, type PillarScope } from '@/lib/strategy/model';
+import { rollupForPillar, valueHistory } from '@/lib/strategy/value-rollup';
+import { snapshotHistory } from '@/lib/strategy/snapshots';
+import { recentStrategyAudit } from '@/lib/strategy/audit';
+import { canCreatePillar, canEditPillar, type PillarScope } from '@/lib/strategy/model';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,11 +16,28 @@ function fail(e: unknown) {
   return NextResponse.json({ error: (e as Error).message }, { status });
 }
 
-/** RLS-scoped pillar list: tenant pillars + the caller's domain pillars. */
+/**
+ * RLS-scoped pillar list: tenant pillars + the caller's domain pillars. Each
+ * pillar is returned as a CARD enriched with its RLS-scoped value roll-up (total
+ * + bets + components, masked to the caller's entitled domains) and its value
+ * history, so the pillars-centric page renders everything from one fetch.
+ */
 export async function GET() {
   try {
     const user = await requireUser();
-    const items = await listPillars(user);
+    const pillars = await listPillars(user);
+    const items = await Promise.all(
+      pillars.map(async (pillar) => {
+        const rollup = await rollupForPillar(pillar, user);
+        return {
+          pillar,
+          rollup,
+          history: valueHistory(pillar, snapshotHistory(pillar.id)),
+          audit: recentStrategyAudit(pillar.id, 6),
+          canEdit: canEditPillar(user, pillar),
+        };
+      }),
+    );
     return NextResponse.json({
       user,
       items,
@@ -36,12 +56,16 @@ export async function POST(req: Request) {
     const user = await requireUser();
     const body = await req.json().catch(() => ({} as Record<string, unknown>));
     const scope = (body?.scope === 'tenant' ? 'tenant' : 'domain') as PillarScope;
+    const vm = body?.valueMetric as { name?: unknown; description?: unknown } | undefined;
     const item = await createPillar(user, {
       name: String(body?.name ?? ''),
       description: body?.description ? String(body.description) : '',
       scope,
       domain: body?.domain ? String(body.domain) : undefined,
       metrics: Array.isArray(body?.metrics) ? body.metrics : [],
+      valueMetric: vm && (vm.name || vm.description)
+        ? { name: String(vm.name ?? ''), description: String(vm.description ?? '') }
+        : undefined,
     });
     return NextResponse.json({ item }, { status: 201 });
   } catch (e) {

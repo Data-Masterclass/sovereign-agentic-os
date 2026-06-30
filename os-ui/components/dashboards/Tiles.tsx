@@ -38,7 +38,7 @@ export default function Tiles({
 
   const groups: { title: string; sub: string; items: DashboardSummary[] }[] = data
     ? [
-        { title: 'Mine', sub: 'dashboards you own', items: data.mine },
+        { title: 'Personal', sub: 'dashboards you own', items: data.mine },
         { title: 'Domain', sub: 'shared in your domain', items: data.domain },
         { title: 'Marketplace', sub: 'certified across the org', items: data.marketplace },
       ]

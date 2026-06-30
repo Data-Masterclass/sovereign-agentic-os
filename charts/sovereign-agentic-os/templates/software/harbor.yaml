@@ -35,7 +35,7 @@ spec:
         runAsUser: 1000
       containers:
         - name: registry
-          image: "{{ $h.image.repository }}:{{ $h.image.tag }}@{{ $h.image.digest }}"
+          image: "{{ $h.image.repository }}:{{ $h.image.tag }}{{ if $h.image.digest }}@{{ $h.image.digest }}{{ end }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           securityContext:
             {{- include "soa.containerSecurityContext" . | nindent 12 }}

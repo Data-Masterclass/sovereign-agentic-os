@@ -103,6 +103,8 @@ export type App = {
     approved: DeployEnvelope | null;
     /** The open review card id when state === 'review'. */
     reviewCardId: string | null;
+    /** Count of successful go-lives — the published release/version number (v{n}). */
+    releases: number;
   };
   /** Parsed app.yaml / OpenAPI convention (metadata fidelity). */
   manifest: AppManifest;
@@ -737,7 +739,7 @@ export async function createApp(
     mcpTools,
     mcpProfileCompiled: true,
     status: 'active',
-    deploy: { state: 'building', previewUrl: null, approved: null, reviewCardId: null },
+    deploy: { state: 'building', previewUrl: null, approved: null, reviewCardId: null, releases: 0 },
     manifest: parseAppManifest(tpl.files(name, slug), {
       name,
       owner: user.id,

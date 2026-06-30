@@ -25,17 +25,17 @@ export const TAB_GROUPS: TabGroup[] = [
   {
     tabs: [
       { label: 'Home', icon: '◇', href: '/' },
-      { label: 'Platform Admin', icon: '❖', href: '/platform', role: 'Administrator' },
+      { label: 'Cockpit', icon: '◉', href: '/cockpit' },
       { label: 'Strategy', icon: '▲', href: '/strategy' },
       { label: 'Big Bets', icon: '◆', href: '/big-bets' },
-      { label: 'Dashboards', icon: '▦', href: '/dashboards' },
       { label: 'Agents', icon: '✦', href: '/agents' },
       { label: 'Software', icon: '⌘', href: '/software' },
       { label: 'Science', icon: '∿', href: '/science' },
       { label: 'Knowledge', icon: '❦', href: '/knowledge' },
+      { label: 'Files', icon: '❏', href: '/unstructured' },
       { label: 'Data', icon: '▤', href: '/data' },
       { label: 'Metrics', icon: '∑', href: '/metrics' },
-      { label: 'Files', icon: '❏', href: '/unstructured' },
+      { label: 'Dashboards', icon: '▦', href: '/dashboards' },
       { label: 'Connections', icon: '⇄', href: '/connections' },
       { label: 'Marketplace', icon: '⊞', href: '/marketplace' },
       { label: 'Monitoring', icon: '◷', href: '/monitoring' },
@@ -46,6 +46,7 @@ export const TAB_GROUPS: TabGroup[] = [
   {
     heading: 'Platform',
     tabs: [
+      { label: 'Admin', icon: '❖', href: '/platform', role: 'Administrator' },
       { label: 'Users', icon: '☖', href: '/users', role: 'Administrator' },
       { label: 'Components', icon: '▥', href: '/components', role: 'Builder / Administrator' },
       { label: 'Gateway', icon: '⌁', href: '/gateway' },

@@ -22,7 +22,7 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const requested = searchParams.get('domain') ?? undefined;
     const domain = requested && entitledToDomain(user, requested) ? requested : undefined;
-    const board = await adoptionBoard(domain);
+    const board = await adoptionBoard(domain, user.id);
     const domains = board.domains.filter((d) => entitledToDomain(user, d.domain));
     return NextResponse.json({ ...board, domains });
   } catch (e) {
