@@ -203,6 +203,14 @@ objectStorage:
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "1", memory: 768Mi }
+  # Data volume. Off by default — the kind stand-in uses an emptyDir (a laptop
+  # tenant is torn down anyway). Turn ON for any DURABLE deploy (STACKIT) so the
+  # Iceberg data files survive a pod roll; otherwise a MinIO restart wipes the
+  # lakehouse. RWO PVC + the Deployment's Recreate strategy (never two writers).
+  # storageClass falls back to global.storageClass (soa.storageClass).
+  persistence:
+    enabled: false
+    size: 20Gi
   # Dev-only credentials, used ONLY when global.profile == local. Not a real secret:
   # the local stand-in has no production value. Overridable via values.local.yaml.
   local:
@@ -650,6 +658,12 @@ litellmAgentKey:
   # overall max_budget still applies); set true only with LITELLM_LICENSE present.
   enterprise: false
   maxBudget: 5            # overall USD spend cap on this key
+  # Auto-reset window for maxBudget (LiteLLM key `budget_duration`, e.g. "7d" =
+  # weekly). Empty => no reset (a one-shot cap). The self-hosted OSS default routes
+  # are free, so the base leaves this empty; values.private.yaml sets "7d" (with a
+  # larger maxBudget) for the STACKIT-consuming live deploy — a weekly pool that
+  # auto-resets and returns a graceful budget error (429) once exhausted.
+  budgetDuration: ""
   models:                 # only these models are callable with this key
     - sovereign-default   # Ministral 3 3B (self-hosted default chat)
     - sovereign-mock      # back-compat alias -> same self-hosted default
@@ -675,6 +689,60 @@ litellmAgentKey:
   maxParallelRequests: 8
   local:
     value: "sk-agents-local-dev"
+
+# -----------------------------------------------------------------------------
+# WireGuard listener — DURABLE in-cluster tunnel endpoint so the in-cluster
+# LiteLLM can reach an EXTERNAL Ollama model (e.g. a Mac Mini's qwen3:14b) that
+# dials IN over WireGuard. First-class chart component (survives redeploys /
+# node-rolls — the previous one-off `kubectl apply` manifest got wiped, which was
+# the whole bug). See templates/wireguard/wireguard.yaml for the topology + the
+# NAT-forwarder routing rationale.
+#
+# OFF by default (OSS / local-kind stays off). Turned ON in the STACKIT overlay
+# (values.stackit-selfhosted.yaml), which also supplies the Mac peer pubkey.
+#
+# The tunnel PRIVATE key is NEVER in this file or any committed template — the
+# operator creates the Secret out-of-band (see docs/component note + the deploy
+# README). Only the private key is secret; everything below is non-secret config.
+# -----------------------------------------------------------------------------
+wireguard:
+  enabled: false
+  image:
+    # linuxserver/wireguard (GPLv2): kernel datapath when the module is present,
+    # userspace (wireguard-go) fallback via /dev/net/tun when it is not — so the
+    # interface comes up without a hard kernel-module dependency.
+    # VERIFY/PIN before go-live: check the current tag (and prefer a digest) at
+    # https://hub.docker.com/r/linuxserver/wireguard/tags
+    repository: linuxserver/wireguard
+    tag: "1.0.20250521"
+  # Tunnel interface on the cluster side (the LISTENER). Pin ListenPort 51820.
+  address: "10.10.0.1/24"
+  listenPort: 51820
+  # The Mac peer that dials in. peerPublicKey is REQUIRED when enabled (set in the
+  # overlay). No Endpoint here — the Mac initiates; the cluster only listens.
+  peerPublicKey: ""
+  peerAllowedIPs: "10.10.0.2/32"
+  # The external Ollama reachable over the tunnel. The pod DNATs cluster TCP
+  # :port -> targetIP:port, fronted by the `wireguard-ollama` ClusterIP Service.
+  ollama:
+    targetIP: "10.10.0.2"
+    port: 11434
+  # Operator-created Secret holding ONLY the StackIT WireGuard PRIVATE key.
+  # Created out-of-band (NOT part of the Helm release) so `helm upgrade` never
+  # templates or wipes it: `kubectl create secret generic wireguard-stackit
+  # --from-file=privatekey=<path>` (see deploy README).
+  secretName: "wireguard-stackit"
+  secretKey: "privatekey"
+  # UDP LoadBalancer the Mac dials. On STACKIT/yawol the port is opened
+  # automatically by the LoadBalancer Service (no separate firewall rule); set
+  # loadBalancerSourceRanges to the Mac's egress /32 to lock the source.
+  service:
+    annotations: {}
+    loadBalancerSourceRanges: []   # [] = any source (approved default); lock later
+    externalTrafficPolicy: "Local" # preserve the Mac's source IP (single node)
+  resources:
+    requests: { cpu: "50m", memory: 64Mi }
+    limits: { cpu: "500m", memory: 128Mi }
 
 # -----------------------------------------------------------------------------
 # LiteLLM — model/MCP gateway (wrapped upstream subchart, alias `litellm`).
@@ -791,6 +859,19 @@ litellm:
           model: openai/ministral-3:3b-instruct-2512-q4_K_M
           api_base: http://model-server:11434/v1
           api_key: "sk-local-unused"
+      # --- External self-hosted over WireGuard (Mac Mini's Ollama qwen3:14b) ----
+      # `local-qwen` reaches a Mac Mini's Ollama at 10.10.0.2:11434 THROUGH the
+      # durable in-cluster WireGuard tunnel (wireguard.enabled). LiteLLM targets
+      # the NAT-forwarder Service `wireguard-ollama` (the pod DNATs it out the
+      # tunnel to 10.10.0.2:11434) — the tunnel subnet is NOT routable elsewhere in
+      # the cluster, so this Service name is the reachable address. DEFINED even
+      # when wireguard is OFF: like the STACKIT routes, it simply errors if called
+      # while the tunnel is down (never a boot failure). Free (self-hosted); no cap.
+      - model_name: local-qwen
+        litellm_params:
+          model: openai/qwen3:14b            # == the Mac's Ollama model tag
+          api_base: http://wireguard-ollama:11434/v1   # NAT forwarder -> 10.10.0.2:11434
+          api_key: "sk-local-unused"         # self-hosted; ignored, not a secret
       # --- Self-hosted REASONING (Magistral Small 24B, Apache-2.0, in-box) -----
       # `sovereign-reasoning` is the SOVEREIGN reasoning default (the routing.ts
       # reasoning tier points here). Served by the llama.cpp `magistral-reasoning`
@@ -993,8 +1074,15 @@ agentRuntime:
   enabled: true
   image:
     repository: sovereign-os/agent-runtime   # built locally, loaded into kind
-    tag: "0.1.0"
+    tag: "0.1.1"   # 0.1.1 = plan(reasoning)->execute(27B) two-tier hand-off
   chatModel: sovereign-mock
+  # Two-tier model strategy (stack-decisions): EVERY agent PLANS with the reasoning
+  # tier, then HANDS OFF execution to the execution tier. These are LiteLLM
+  # model_names — self-hosted by default (reasoning=Magistral, execution=Ministral);
+  # values.private.yaml repoints those same names to STACKIT (reasoning=Qwen3-VL,
+  # execution=Qwen3.6-27B) on the live deploy without touching the OSS default here.
+  reasoningModel: sovereign-reasoning   # PLAN phase of every agent
+  executionModel: sovereign-default     # EXECUTE phase of every agent
   # Shared runtime <-> OS UI token. Local dev throwaway; on STACKIT it comes from
   # External Secrets (ESO), never committed.
   token: "agent-runtime-local-dev-token"
@@ -1399,7 +1487,30 @@ polaris:
     repository: apache/polaris
     tag: "1.0.1-incubating"
     digest: sha256:91d94987a2641220091c612900db30dbb596b45c3379115dbe08c4dd3b0855f9
-  persistenceType: in-memory      # local; relational-jdbc (CNPG) for STACKIT
+  # Admin/bootstrap tool image (same Polaris release). ONLY used when
+  # persistenceType == relational-jdbc: an initContainer runs `bootstrap` to
+  # create `polaris_schema` + the realm's root principal in the JDBC metastore.
+  adminImage:
+    repository: apache/polaris-admin-tool
+    tag: "1.0.1-incubating"
+    digest: ""                    # optional pin; tag-only is fine for the admin tool
+  # Image for the catalog-registration Job (templates/lakehouse/polaris-bootstrap.yaml):
+  # a tiny curl + POSIX-shell image (the OAuth token is parsed with sed, no jq). It
+  # registers the `lakehouse` catalog via the Polaris management API once Polaris is
+  # up. Runs for BOTH profiles (in-memory local also needs the catalog for the seed).
+  bootstrapImage:
+    repository: curlimages/curl
+    tag: "8.11.1"
+    digest: ""                    # optional pin; tag-only is fine
+  persistenceType: in-memory      # local; relational-jdbc (durable) for STACKIT
+  # Durable metastore (persistenceType: relational-jdbc). Catalog metadata —
+  # warehouse/namespace/table registrations — is stored in the bundled `polaris`
+  # Postgres DB (postgres.extraDatabases, on pg-rw) instead of in memory, so a pod
+  # restart NO LONGER loses the `lakehouse` warehouse. In-memory stays the local
+  # default (a laptop tenant is torn down anyway; a restart re-bootstraps).
+  jdbc:
+    database: polaris
+    secretName: postgres-polaris-credentials
   realm: default-realm
   secretName: polaris-credentials  # local: chart-created; STACKIT: external
   s3:

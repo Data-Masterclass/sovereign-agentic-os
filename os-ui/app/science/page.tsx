@@ -5,8 +5,14 @@
 
 import { useCallback, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
+import McpConnect from '@/components/McpConnect';
 import { useApi } from '@/lib/useApi';
 import { useUser } from '@/lib/useUser';
+import { useToolWindow } from '@/components/ToolWindowProvider';
+
+// Layer-4 tools embeddable same-origin (lib/tool-proxy.ts). JupyterHub needs
+// WebSockets (kernels) and KServe has no human UI, so those keep native links.
+const EMBEDDABLE_SCIENCE: Record<string, string> = { mlflow: 'MLflow', featureform: 'Featureform' };
 import type {
   ServiceModel,
   CompiledPredictPolicy,
@@ -105,6 +111,7 @@ export default function SciencePage() {
     <>
       <PageHeader title="Science" crumb="Layer 4 — model-as-a-service (ML, not LLMs)" tutorial="science" />
       <div className="content">
+        <McpConnect tab="science" />
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <p className="lead" style={{ marginBottom: 0 }}>
             Traditional ML / data science as a <strong>governed service</strong>: explore in
@@ -164,6 +171,7 @@ function DisabledSurface() {
 /* ------------------------------------------------------ B. Layer-4 health grid */
 
 function ServicesGrid({ data }: { data: GateData }) {
+  const { openTool } = useToolWindow();
   return (
     <>
       <div className="section-title">
@@ -185,15 +193,25 @@ function ServicesGrid({ data }: { data: GateData }) {
             <div className="muted" style={{ marginTop: 8 }}>{s.blurb}</div>
             <div className="codeblock">{s.forward}</div>
             <div className="row" style={{ marginTop: 10, justifyContent: 'flex-end' }}>
-              <a
-                className="btn ghost"
-                href={s.consoleUrl}
-                target="_blank"
-                rel="noreferrer"
-                style={s.up ? undefined : { opacity: 0.6 }}
-              >
-                Open {s.label} →
-              </a>
+              {EMBEDDABLE_SCIENCE[s.key] ? (
+                <button
+                  className="btn"
+                  onClick={() => openTool(s.key, EMBEDDABLE_SCIENCE[s.key])}
+                  style={s.up ? undefined : { opacity: 0.6 }}
+                >
+                  Open {s.label}
+                </button>
+              ) : (
+                <a
+                  className="btn ghost"
+                  href={s.consoleUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={s.up ? undefined : { opacity: 0.6 }}
+                >
+                  Open {s.label} →
+                </a>
+              )}
             </div>
           </div>
         ))}

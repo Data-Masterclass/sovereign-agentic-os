@@ -1,10 +1,14 @@
 {{- if .Values.polaris.enabled }}
 {{- /*
   Apache Polaris — the Iceberg REST catalog (Layer 3 lakehouse). Iceberg tables
-  live on object storage (SeaweedFS locally / STACKIT Object Storage in prod).
-  Local persistence is in-memory (a stand-in); production uses relational-jdbc
-  against a CNPG `polaris` DB. The catalog + a sample table are created by the
-  bootstrap Job (templates/lakehouse/polaris-bootstrap.yaml).
+  live on object storage (MinIO locally / STACKIT Object Storage in prod).
+  Local persistence is in-memory (a stand-in that re-bootstraps on restart);
+  durable deploys set persistenceType: relational-jdbc against the bundled
+  `polaris` Postgres DB (pg-rw) so warehouse/namespace/table registrations survive
+  a pod restart. For relational-jdbc, the `bootstrap` initContainer below runs the
+  admin tool once to create the schema + realm root before the server starts.
+  The `lakehouse` CATALOG entity itself is registered post-start by the
+  polaris-catalog-init Job (templates/lakehouse/polaris-bootstrap.yaml).
 */}}
 {{- $pl := .Values.polaris }}
 {{- if eq .Values.global.profile "local" }}
@@ -50,6 +54,39 @@ spec:
         {{- include "soa.podSecurityContext" . | nindent 8 }}
         runAsUser: 10000        # image's 'polaris' user (numeric, for runAsNonRoot)
         runAsGroup: 10001
+      {{- if eq $pl.persistenceType "relational-jdbc" }}
+      initContainers:
+        # Bootstrap the JDBC metastore: create `polaris_schema` + the realm's root
+        # principal in the `polaris` Postgres DB. Polaris does NOT self-create the
+        # schema for relational-jdbc, so this MUST run before the server. Idempotent
+        # — re-bootstrapping an existing realm is a no-op — so it is safe on every
+        # pod start; it also retries until pg-rw is reachable (initdb wave 0).
+        - name: bootstrap
+          image: "{{ $pl.adminImage.repository }}:{{ $pl.adminImage.tag }}{{ if $pl.adminImage.digest }}@{{ $pl.adminImage.digest }}{{ end }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          # POLARIS_BOOTSTRAP_CREDENTIALS is already "realm,clientId,clientSecret" —
+          # exactly the `-c` format the admin tool expects.
+          args: ["bootstrap", "-r", "$(POLARIS_REALM)", "-c", "$(POLARIS_BOOTSTRAP_CREDENTIALS)"]
+          env:
+            - name: POLARIS_PERSISTENCE_TYPE
+              value: {{ $pl.persistenceType | quote }}
+            - name: POLARIS_REALM
+              value: {{ $pl.realm | quote }}
+            - name: POLARIS_BOOTSTRAP_CREDENTIALS
+              valueFrom: { secretKeyRef: { name: {{ $pl.secretName }}, key: POLARIS_BOOTSTRAP_CREDENTIALS } }
+            - name: QUARKUS_DATASOURCE_DB_KIND
+              value: postgresql
+            - name: QUARKUS_DATASOURCE_JDBC_URL
+              value: "jdbc:postgresql://{{ include "soa.pgHost" . }}:5432/{{ $pl.jdbc.database }}"
+            - name: QUARKUS_DATASOURCE_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ $pl.jdbc.secretName }}, key: username } }
+            - name: QUARKUS_DATASOURCE_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $pl.jdbc.secretName }}, key: password } }
+          resources:
+            {{- toYaml $pl.resources | nindent 12 }}
+      {{- end }}
       containers:
         - name: polaris
           image: "{{ $pl.image.repository }}:{{ $pl.image.tag }}@{{ $pl.image.digest }}"
@@ -59,6 +96,19 @@ spec:
           env:
             - name: POLARIS_PERSISTENCE_TYPE
               value: {{ $pl.persistenceType | quote }}
+            {{- if eq $pl.persistenceType "relational-jdbc" }}
+            # Durable metastore: Quarkus datasource -> the bundled `polaris` Postgres
+            # DB (pg-rw). Catalog metadata survives a Polaris restart. The schema +
+            # realm root are created by the `bootstrap` initContainer below.
+            - name: QUARKUS_DATASOURCE_DB_KIND
+              value: postgresql
+            - name: QUARKUS_DATASOURCE_JDBC_URL
+              value: "jdbc:postgresql://{{ include "soa.pgHost" . }}:5432/{{ $pl.jdbc.database }}"
+            - name: QUARKUS_DATASOURCE_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ $pl.jdbc.secretName }}, key: username } }
+            - name: QUARKUS_DATASOURCE_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $pl.jdbc.secretName }}, key: password } }
+            {{- end }}
             - name: POLARIS_BOOTSTRAP_CREDENTIALS
               valueFrom: { secretKeyRef: { name: {{ $pl.secretName }}, key: POLARIS_BOOTSTRAP_CREDENTIALS } }
             - name: POLARIS_REALM_CONTEXT_REALMS    # Quarkus: polaris.realm-context.realms

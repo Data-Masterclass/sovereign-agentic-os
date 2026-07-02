@@ -31,6 +31,10 @@ import interpreter
 LITELLM_BASE = os.environ.get("LITELLM_BASE_URL", "http://agentic-os-litellm:4000/v1")
 LITELLM_KEY = os.environ.get("LITELLM_API_KEY", "")  # the SCOPED virtual key
 CHAT_MODEL = os.environ.get("CHAT_MODEL", "sovereign-mock")
+# Two-tier model strategy (stack-decisions): every agent PLANS with the reasoning
+# tier, then HANDS OFF to the execution tier. These are LiteLLM model_names.
+REASONING_MODEL = os.environ.get("REASONING_MODEL", "sovereign-reasoning")
+EXECUTION_MODEL = os.environ.get("EXECUTION_MODEL", CHAT_MODEL)
 # The OS UI in-cluster Service is `os-ui` (chart-owned, NOT release-prefixed).
 GOVERNED_TOOL_URL = os.environ.get("GOVERNED_TOOL_URL", "http://os-ui:3000/api/agents/tool")
 AGENT_RUNTIME_TOKEN = os.environ.get("AGENT_RUNTIME_TOKEN", "")
@@ -95,6 +99,8 @@ def do_run(body):
         disabled_agents=disabled,
         model_call=model_call,
         tool_call=tool_call,
+        reasoning_model=REASONING_MODEL,
+        execution_model=EXECUTION_MODEL,
     )
     return 200, result
 
@@ -142,8 +148,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    print("[agent-runtime] starting on :%d (model=%s, litellm=%s, governed=%s)"
-          % (PORT, CHAT_MODEL, LITELLM_BASE, GOVERNED_TOOL_URL))
+    print("[agent-runtime] starting on :%d (plan=%s, execute=%s, litellm=%s, governed=%s)"
+          % (PORT, REASONING_MODEL, EXECUTION_MODEL, LITELLM_BASE, GOVERNED_TOOL_URL))
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 
 

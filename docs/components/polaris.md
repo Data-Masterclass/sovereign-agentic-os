@@ -22,7 +22,10 @@ curl http://localhost:8181/api/catalog/v1/oauth/tokens \
 - On STACKIT (S3 with STS), Polaris vends scoped credentials to clients directly (vended-credentials).
 
 ## FAQ
-**Q: Persistence?** In-memory locally (a restart re-bootstraps); relational-jdbc on CNPG in
-production (survives restarts).
+**Q: Persistence?** In-memory locally (a restart re-bootstraps). Durable deploys (STACKIT) set
+`polaris.persistenceType: relational-jdbc` against the bundled `polaris` Postgres DB on `pg-rw`
+(itself PVC-backed) — catalog metadata (the `lakehouse` warehouse + namespaces + tables) then
+survives a pod restart. A `bootstrap` initContainer (the Polaris admin tool) creates the schema +
+realm root once before the server starts.
 **Q: Why two catalog paths?** See the query-tool doc — the SeaweedFS/MinIO local stand-in has
 no STS for credential vending, so reads/writes use static-cred FileIO via the SQL catalog.

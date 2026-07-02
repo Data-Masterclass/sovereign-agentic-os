@@ -91,6 +91,28 @@ Args: dict "ctx" $ "key" "<ingress host key>" "fallback" "<local url>"
 {{- end -}}
 {{- end -}}
 
+{{/*
+Terminal-broker WebSocket URL for the browser. The terminal is opened with
+`new WebSocket(url)`, so the URL MUST carry a ws/wss scheme AND the broker's
+WS path (soa.consoleUrl is wrong here — it yields `https://<host>` with no
+path). When ingress is enabled and the `terminal` host is set, this returns
+`wss://<host><wsPath>` (public TLS host). When ingress is enabled but no
+`terminal` host is configured, it returns "" so the UI fails loudly rather than
+dialing a dead localhost address. When ingress is disabled (local-kind), it
+falls back to the per-env port-forward default (ws://localhost:8090/terminal).
+Args: dict "ctx" $ "fallback" "<local ws url>"
+*/}}
+{{- define "soa.terminalWsUrl" -}}
+{{- $ing := .ctx.Values.ingress | default dict -}}
+{{- $wsPath := .ctx.Values.terminal.wsPath | default "/terminal" -}}
+{{- if $ing.enabled -}}
+{{- $host := index ($ing.hosts | default dict) "terminal" | default "" -}}
+{{- if $host -}}wss://{{ $host }}{{ $wsPath }}{{- end -}}
+{{- else -}}
+{{- .fallback -}}
+{{- end -}}
+{{- end -}}
+
 {{/* S3/object-storage endpoint: bundled `http://minio:9000`, or the managed endpoint. */}}
 {{- define "soa.s3Endpoint" -}}
 {{- if or (not .Values.objectStorage.enabled) (eq (.Values.objectStorage.mode | default "") "external") -}}

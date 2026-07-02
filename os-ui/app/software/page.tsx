@@ -7,6 +7,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
+import McpConnect from '@/components/McpConnect';
 import { useApi } from '@/lib/useApi';
 
 type Visibility = 'Personal' | 'Shared' | 'Certified';
@@ -26,7 +27,6 @@ type AppItem = {
 type AppsData = {
   user: { id: string; role: string };
   apps: AppItem[];
-  templates: { key: string; label: string }[];
 };
 
 /** A running app's deploy state → a calm status badge. */
@@ -59,11 +59,8 @@ export default function SoftwarePage() {
 
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
-  const [template, setTemplate] = useState('nextjs-supabase');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
-
-  const templates = data?.templates ?? [{ key: 'nextjs-supabase', label: 'Web app (Next.js + Supabase)' }];
 
   async function create() {
     if (!name.trim() || creating) return;
@@ -73,7 +70,7 @@ export default function SoftwarePage() {
       const res = await fetch('/api/apps', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name, template }),
+        body: JSON.stringify({ name }),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -96,6 +93,7 @@ export default function SoftwarePage() {
     <>
       <PageHeader title="Software" crumb="build, chat, deploy — sovereign" tutorial="software" />
       <div className="content sw">
+        <McpConnect tab="software" />
         {/* The big, home-style create launcher. */}
         <div className={`sw-create${open ? ' is-open' : ''}`}>
           {open ? (
@@ -133,12 +131,7 @@ export default function SoftwarePage() {
                   if (e.key === 'Enter') create();
                 }}
               />
-              <div className="row" style={{ marginTop: 10, gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-                <select value={template} onChange={(e) => setTemplate(e.target.value)} style={{ flex: 1, minWidth: 200 }}>
-                  {templates.map((t) => (
-                    <option key={t.key} value={t.key}>{t.label}</option>
-                  ))}
-                </select>
+              <div className="row" style={{ marginTop: 10, gap: 10, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
                 <button type="button" className="btn ghost" onClick={() => { setOpen(false); setError(''); }} disabled={creating}>
                   Cancel
                 </button>
@@ -147,8 +140,9 @@ export default function SoftwarePage() {
                 </button>
               </div>
               <p className="sw-create-note">
-                A sovereign Forgejo repo is created in-cluster. If git isn&apos;t ready yet, you can still
-                build — the app runs in honest offline mode until the cluster is up.
+                No need to pick an app type — describe it in chat and the build agent infers whether
+                it needs a UI, an API, or both from what it actually builds. A sovereign Forgejo repo
+                is created in-cluster; if git isn&apos;t ready yet you can still build in honest offline mode.
               </p>
               {error ? <div className="error" style={{ marginTop: 10 }}>{error}</div> : null}
             </div>

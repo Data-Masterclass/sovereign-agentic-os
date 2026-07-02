@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
+import McpConnect from '@/components/McpConnect';
 import AgentChat from '@/components/AgentChat';
 import WorkflowTile from '@/components/knowledge/WorkflowTile';
 import WorkflowView from '@/components/knowledge/WorkflowView';
@@ -180,6 +181,7 @@ export default function KnowledgePage() {
     <>
       <PageHeader title="Knowledge" crumb="domain operating manual · workflows · context" tutorial="knowledge" />
       <div className="content">
+        <McpConnect tab="knowledge" />
 
         {/* ── Tab navigation ── */}
         <div className="tabstrip">

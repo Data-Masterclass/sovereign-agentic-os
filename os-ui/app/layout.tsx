@@ -3,6 +3,7 @@ import './globals.css';
 import { rubik, oswald, marcellus, fraunces } from './fonts';
 import Sidebar from '@/components/Sidebar';
 import TutorialProvider from '@/components/tutorials/TutorialProvider';
+import { ToolWindowProvider } from '@/components/ToolWindowProvider';
 import AuthGate from '@/components/AuthGate';
 
 export const metadata: Metadata = {
@@ -36,10 +37,12 @@ export default function RootLayout({
           }}
         />
         <TutorialProvider>
-          <div className="shell">
-            <Sidebar />
-            <div className="main">{children}</div>
-          </div>
+          <ToolWindowProvider>
+            <div className="shell">
+              <Sidebar />
+              <div className="main">{children}</div>
+            </div>
+          </ToolWindowProvider>
         </TutorialProvider>
         <AuthGate />
       </body>

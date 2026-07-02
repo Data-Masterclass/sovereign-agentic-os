@@ -3,13 +3,15 @@
  */
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
 import AgentChat from '@/components/AgentChat';
 import CodePanel from '@/components/CodePanel';
+import { useToolWindow } from '@/components/ToolWindowProvider';
 import { useApi } from '@/lib/useApi';
+import { getUrlParam, patchUrl } from '@/lib/url-params';
 
 type Visibility = 'Personal' | 'Shared' | 'Certified';
 type Tool = { name: string; description: string; write: boolean };
@@ -40,6 +42,7 @@ type App = {
     releases: number;
   };
   manifest: { connections: string[]; data: string[]; knowledge: string[]; hasOpenApi: boolean; missing: string[] };
+  surface: { ui: boolean; api: boolean };
   consumes: { kind: string; ref: string; label: string; scope: string }[];
   usedAsData: boolean;
   dataArtifactId: string | null;
@@ -75,14 +78,11 @@ function promoteLabel(v: Visibility): string | null {
   if (v === 'Shared') return 'Promote to Marketplace';
   return null;
 }
-/** Web/dashboard apps have a browsable UI; service/script apps are headless (API). */
-function hasUi(template: string): boolean {
-  return template === 'nextjs-supabase' || template === 'dashboard';
-}
 
 export default function AppPage() {
   const params = useParams<{ id: string }>();
   const search = useSearchParams();
+  const { openTool } = useToolWindow();
   const id = params?.id;
   const { data, loading, error, reload } = useApi<Data>(`/api/apps/${id ?? ''}`);
 
@@ -90,8 +90,25 @@ export default function AppPage() {
   const [busy, setBusy] = useState(false);
   const [deployMsg, setDeployMsg] = useState('');
   const [showApi, setShowApi] = useState(false);
-  const [buildTab, setBuildTab] = useState<'chat' | 'code'>('chat');
+  const [buildTab, setBuildTab] = useState<'chat' | 'code'>(search?.get('build') === 'code' ? 'code' : 'chat');
   const [manage, setManage] = useState(false);
+
+  // Persist which surface is open (Edit mode + Chat/Code tab) in the URL so a
+  // reload restores the open build assistant instead of the default Monitor view.
+  useEffect(() => {
+    patchUrl({
+      mode: mode === 'edit' ? 'edit' : null,
+      build: mode === 'edit' && buildTab === 'code' ? 'code' : null,
+    });
+  }, [mode, buildTab]);
+  useEffect(() => {
+    const sync = () => {
+      setMode(getUrlParam('mode') === 'edit' ? 'edit' : 'monitor');
+      setBuildTab(getUrlParam('build') === 'code' ? 'code' : 'chat');
+    };
+    window.addEventListener('popstate', sync);
+    return () => window.removeEventListener('popstate', sync);
+  }, []);
 
   const [msg, setMsg] = useState('');
   const [toolOut, setToolOut] = useState('');
@@ -200,6 +217,9 @@ export default function AppPage() {
 
   const app = data.app;
   const conn = data.connection;
+  // Drive the monitor off the DETECTED surface (inferred from what was built),
+  // never an upfront kind. Default to both if an old record has no surface yet.
+  const surface = app.surface ?? { ui: true, api: true };
   const dep = deployBadge(app.deploy.state);
   const version = app.deploy.releases > 0 ? `v${app.deploy.releases}` : 'Unpublished';
   const canEditCode = data.user.role === 'builder' || data.user.role === 'admin';
@@ -239,17 +259,20 @@ export default function AppPage() {
                     <div className="sw-monitor-sub mono">{app.subdomain}</div>
                   </div>
                 </div>
-                {hasUi(app.template) ? (
-                  app.deploy.state === 'live' ? (
-                    <a className="btn" href={liveUrl} target="_blank" rel="noreferrer">Open app UI ↗</a>
-                  ) : (
-                    <button className="btn" disabled title="Publish a release to go live">Open app UI ↗</button>
-                  )
-                ) : (
-                  <button className="btn ghost" onClick={() => setShowApi((v) => !v)}>
-                    {showApi ? 'Hide API details' : 'Show API details'}
-                  </button>
-                )}
+                <div className="row" style={{ gap: 8, alignItems: 'center', flexShrink: 0 }}>
+                  {surface.ui ? (
+                    app.deploy.state === 'live' ? (
+                      <a className="btn" href={liveUrl} target="_blank" rel="noreferrer">Open app UI ↗</a>
+                    ) : (
+                      <button className="btn" disabled title="Publish a release to go live">Open app UI ↗</button>
+                    )
+                  ) : null}
+                  {surface.api ? (
+                    <button className={surface.ui ? 'btn ghost' : 'btn'} onClick={() => setShowApi((v) => !v)}>
+                      {showApi ? 'Hide API details' : 'API details'}
+                    </button>
+                  ) : null}
+                </div>
               </div>
 
               <div className="sw-health">
@@ -260,7 +283,7 @@ export default function AppPage() {
                 ))}
               </div>
 
-              {(!hasUi(app.template) && showApi) ? (
+              {(surface.api && showApi) ? (
                 <div className="sw-api">
                   <div className="hint" style={{ marginTop: 0, marginBottom: 8 }}>
                     Headless app — its capabilities are exposed as governed MCP tools (principal{' '}
@@ -313,7 +336,14 @@ export default function AppPage() {
               <div className="row" style={{ marginTop: 10, gap: 12, alignItems: 'center' }}>
                 <button className="btn" onClick={() => setMode('edit')}>Edit this app →</button>
                 <Link className="sw-quiet-link" href="/software/reviews">Deploy reviews →</Link>
-                <a className="sw-quiet-link" href={app.repo.htmlUrl} target="_blank" rel="noreferrer">Forgejo repo →</a>
+                {app.repo.fullName ? (
+                  <button type="button" className="sw-quiet-link" onClick={() => openTool('forgejo', `${app.name} · repo`, app.repo.fullName)}>
+                    Forgejo repo →
+                  </button>
+                ) : null}
+                {app.repo.htmlUrl ? (
+                  <a className="sw-quiet-link" href={app.repo.htmlUrl} target="_blank" rel="noreferrer">Native ↗</a>
+                ) : null}
               </div>
             </div>
 

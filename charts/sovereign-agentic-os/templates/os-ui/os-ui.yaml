@@ -114,6 +114,15 @@ spec:
                 secretKeyRef:
                   name: os-ui-session
                   key: OS_SESSION_SECRET
+            # Signs the per-user bearer token for the remote MCP endpoint
+            # (/api/mcp). Sourced from the same os-ui-session Secret so it works
+            # out of the box; repoint to its own Secret/key later to rotate MCP
+            # tokens independently of session cookies.
+            - name: OS_MCP_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: os-ui-session
+                  key: OS_SESSION_SECRET
             {{- with .Values.osUI.usersSeed }}
             # Optional operator pre-seed of REAL users (JSON array). Not shipped;
             # plaintext passwords here are hashed on ingest. Empty = first-run
@@ -169,8 +178,11 @@ spec:
             - name: OS_EMAIL_VERIFICATION
               value: {{ . | quote }}
             {{- end }}
-            {{- with .Values.osUI.publicUrl }}
-            # Absolute base for emailed verification links (else same-origin path).
+            {{- $publicUrl := .Values.osUI.publicUrl | default (include "soa.consoleUrl" (dict "ctx" . "key" "osUI" "fallback" "")) }}
+            {{- with $publicUrl }}
+            # Absolute base for emailed verification links AND the remote MCP
+            # endpoint URL (/api/mcp). Defaults to the os-ui ingress host; set
+            # osUI.publicUrl to override.
             - name: OS_PUBLIC_URL
               value: {{ . | quote }}
             {{- end }}
@@ -237,6 +249,19 @@ spec:
               value: {{ $u.kserveUrl | default "http://kserve:80" | quote }}
             - name: OPENMETADATA_API_URL
               value: {{ $u.openmetadataApiUrl | default "http://openmetadata:8585" | quote }}
+            # Same-origin tool proxy (/tools/<key> → in-cluster Service, served by
+            # the os-ui pod; see lib/tool-proxy.ts). These two upstreams have no
+            # sibling env var elsewhere, so set them explicitly + overridable. The
+            # rest (MLflow/Featureform/Cube/Forgejo/Dagster/OpenMetadata) reuse the
+            # backend URLs already wired above. Server-only; never sent to browsers.
+            - name: SUPERSET_INTERNAL_URL
+              value: {{ $u.supersetInternalUrl | default "http://agentic-os-superset:8088" | quote }}
+            - name: OPENSEARCH_DASHBOARDS_INTERNAL_URL
+              value: {{ $u.opensearchDashboardsInternalUrl | default "http://opensearch-dashboards:5601" | quote }}
+            - name: CUBE_URL
+              value: {{ $u.cubeUrl | default "http://cube:4000" | quote }}
+            - name: FEATUREFORM_URL
+              value: {{ $u.featureformUrl | default "http://featureform:7878" | quote }}
             {{- if .Values.ml.enabled }}
             # Layer 4 (Science). Gates the Science/ML surfaces in the UI
             # (lib/config.ts reads ML_ENABLED). On when the Science plane
@@ -252,8 +277,14 @@ spec:
               value: "true"
             - name: TERMINAL_ALLOWED_ROLES
               value: {{ join "," .Values.terminal.allowedRoles | quote }}
+            # Browser opens `new WebSocket(TERMINAL_BROKER_WS?t=<token>)`, so this
+            # MUST be a ws/wss URL WITH the broker's WS path — soa.terminalWsUrl
+            # yields wss://<terminal-host><wsPath> on a deploy (needs the
+            # `terminal` ingress host + a DNS/cert + the terminal ingress route),
+            # "" when ingress is on but no host is set (UI errors clearly instead
+            # of dialing localhost), or the local port-forward fallback on kind.
             - name: TERMINAL_BROKER_WS
-              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "terminal" "fallback" (.Values.terminal.brokerWsUrl | default "ws://localhost:8090/terminal")) | quote }}
+              value: {{ include "soa.terminalWsUrl" (dict "ctx" . "fallback" (.Values.terminal.brokerWsUrl | default "ws://localhost:8090/terminal")) | quote }}
             - name: TERMINAL_BROKER_SECRET
               valueFrom:
                 secretKeyRef:

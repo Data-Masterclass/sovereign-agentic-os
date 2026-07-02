@@ -99,7 +99,9 @@ spec:
               # 500s if it is set). Include the per-model STACKIT cost cap ONLY when
               # litellmAgentKey.enterprise is true; otherwise rely on the overall
               # max_budget cap (OSS) — the self-hosted default routes are free anyway.
-              PAYLOAD='{"key":"'"$VIRTUAL_KEY"'","key_alias":"{{ $k.alias }}","models":{{ $k.models | toJson }},"max_budget":{{ $k.maxBudget }},{{ if $k.enterprise }}"model_max_budget":{{ $k.modelMaxBudget | toJson }},{{ end }}"rpm_limit":{{ $k.rpmLimit }},"tpm_limit":{{ $k.tpmLimit }},"max_parallel_requests":{{ $k.maxParallelRequests }}}'
+              # budget_duration (e.g. "7d") makes max_budget an auto-resetting
+              # window (weekly pool); omitted when empty so the cap is one-shot.
+              PAYLOAD='{"key":"'"$VIRTUAL_KEY"'","key_alias":"{{ $k.alias }}","models":{{ $k.models | toJson }},"max_budget":{{ $k.maxBudget }},{{ if $k.budgetDuration }}"budget_duration":"{{ $k.budgetDuration }}",{{ end }}{{ if $k.enterprise }}"model_max_budget":{{ $k.modelMaxBudget | toJson }},{{ end }}"rpm_limit":{{ $k.rpmLimit }},"tpm_limit":{{ $k.tpmLimit }},"max_parallel_requests":{{ $k.maxParallelRequests }}}'
               curl -fsS -X POST "$B/key/generate" \
                 -H "Authorization: Bearer $MASTER_KEY" \
                 -H "Content-Type: application/json" \

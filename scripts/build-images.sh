@@ -12,7 +12,7 @@ cd "$ROOT"
 IMAGES="
 mock-model:0.1.1
 sample-agent:0.1.0
-agent-runtime:0.1.0
+agent-runtime:0.1.1
 poet-agent:0.1.0
 haystack-retriever:0.1.0
 dbt:0.2.0

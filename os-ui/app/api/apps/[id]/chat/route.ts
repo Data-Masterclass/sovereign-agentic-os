@@ -5,46 +5,53 @@ import { NextResponse } from 'next/server';
 import { config } from '@/lib/config';
 import { requireUser } from '@/lib/auth';
 import { getAppForUser, saveChat } from '@/lib/apps';
+import { runTabAgent, renderAssistantText } from '@/lib/assistant/runtime';
 
 export const dynamic = 'force-dynamic';
 
 type Msg = { role: 'user' | 'assistant'; content: string };
 
 /**
- * The per-app BUILD CHAT (Software golden path §2). This is the dedicated chat
- * for ONE application — the OpenCode coding agent, routed via LiteLLM. It reuses
- * the same governed gateway as `/api/agent-chat`, but the system prompt is built
- * SERVER-SIDE from THIS app's full context (design decisions, data model, docs,
- * repo) so the assistant builds coherently and remembers the app's history. The
- * running conversation is persisted under the app (home of record).
+ * The per-app BUILD CHAT (Software golden path §2) — now genuinely AGENTIC. It
+ * runs the shared PLAN → ACT → deploy(gated) harness scoped to the `software` MCP
+ * tools: it plans with the reasoning tier, then acts with the exec tier, calling
+ * the SAME governed pipeline the UI + MCP use — `commit` (scaffold + commit to
+ * Forgejo → auto-MCP → CI scan), `start_preview`, and `request_deploy` (which
+ * opens the Builder review gate; it never goes live on its own). THIS app's full
+ * context (design decisions, data model, docs, repo, and its appId) is injected
+ * so the agent builds coherently; the running conversation is persisted under the
+ * app (home of record).
  */
-function systemPrompt(app: {
-  name: string;
-  template: string;
-  subdomain: string;
-  repo: { fullName: string };
-  designDecisions: string;
-  dataDescriptions: string;
-  docs: string;
-}): string {
+function appContext(
+  app: {
+    id: string;
+    name: string;
+    template: string;
+    subdomain: string;
+    repo: { fullName: string };
+    designDecisions: string;
+    dataDescriptions: string;
+    docs: string;
+  },
+): string {
   return [
-    `You are the build assistant for the "${app.name}" application — OpenCode, the`,
-    'coding agent behind this one app, routed via the governed LiteLLM gateway.',
-    'You scaffold and evolve a Next.js + Supabase app and commit to its own Forgejo',
-    `repo (${app.repo.fullName}); it ships via Forgejo Actions -> Harbor -> Argo CD`,
-    `to ${app.subdomain}. You hold THIS app's full context below. When you make a`,
-    'design decision or change the data model, state it explicitly so it can be',
-    'captured under the app. Be concrete and runnable; note that codegen + deploy',
-    'is a draft for review, not a live deployment.',
+    `You are the build assistant for the "${app.name}" application (appId: ${app.id}).`,
+    'It is a Next.js + Supabase app that lives in its own Forgejo repo',
+    `(${app.repo.fullName}) and ships via Forgejo Actions → Harbor → Argo CD to`,
+    `${app.subdomain}. To build: generate the files, then call \`commit\` with THIS`,
+    `appId (${app.id}) to write them (re-parsed on every commit), \`start_preview\``,
+    'for the private sandbox, and `request_deploy` to open the Builder review gate.',
+    'When you make a design decision or change the data model, state it explicitly',
+    'so it can be captured under the app.',
     '',
     '## Design decisions',
-    app.designDecisions,
+    app.designDecisions || '(none yet)',
     '',
     '## Data descriptions',
-    app.dataDescriptions,
+    app.dataDescriptions || '(none yet)',
     '',
     '## Docs',
-    app.docs,
+    app.docs || '(none yet)',
   ].join('\n');
 }
 
@@ -78,38 +85,21 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     .map((m) => ({ role: m.role, content: m.content.trim() }));
   if (clean.length === 0) return NextResponse.json({ error: 'No message to send' }, { status: 400 });
 
-  const payload = {
-    model: config.litellmChatModel,
-    messages: [{ role: 'system', content: systemPrompt(app) }, ...clean],
-    temperature: 0.2,
-  };
-
   let content = '';
-  let model = config.litellmChatModel;
+  const model = config.litellmExecModel;
   try {
-    const res = await fetch(`${config.litellmUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${config.litellmMasterKey}`,
-        'content-type': 'application/json',
-        accept: 'application/json',
-      },
-      body: JSON.stringify(payload),
-      cache: 'no-store',
+    const result = await runTabAgent({
+      user,
+      tab: 'software',
+      messages: clean,
+      extraContext: appContext(app),
     });
-    const text = await res.text();
-    if (res.ok) {
-      const data = JSON.parse(text) as Record<string, unknown>;
-      const choices = (data?.choices ?? []) as Array<Record<string, unknown>>;
-      const message = (choices[0]?.message ?? {}) as Record<string, unknown>;
-      content = String(message?.content ?? '').trim();
-      model = String(data?.model ?? model);
-    } else {
-      content = `(build assistant offline — LiteLLM ${res.status}. Your message is saved under the app; design decisions and the data model are captured on this page.)`;
-    }
-  } catch {
+    content = renderAssistantText(result);
+  } catch (e) {
     content =
-      '(build assistant offline — LiteLLM unreachable. Your message is saved under the app; the design decisions and data model are captured on this page.)';
+      (e as Error).name === 'AbortError'
+        ? '(the build assistant is still warming up — the model did not respond in time. Your message is saved; send it again in a few seconds.)'
+        : '(build assistant offline — LiteLLM unreachable. Your message is saved under the app; the design decisions and data model are captured on this page.)';
   }
 
   // Persist the running conversation under the app (home of record).

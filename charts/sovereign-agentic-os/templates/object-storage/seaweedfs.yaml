@@ -81,7 +81,33 @@ spec:
             - { name: data, mountPath: /data }
       volumes:
         - name: data
+        {{- if $os.persistence.enabled }}
+          # Durable Iceberg data files. RWO PVC — safe with the Recreate strategy
+          # above (the old pod is torn down before the new one binds the volume).
+          persistentVolumeClaim:
+            claimName: minio-data
+        {{- else }}
           emptyDir: {}
+        {{- end }}
+{{- if $os.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-data
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "infra") | nindent 4 }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "object-storage") | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- include "soa.storageClass" . | nindent 2 }}
+  resources:
+    requests:
+      storage: {{ $os.persistence.size | quote }}
+{{- end }}
 ---
 apiVersion: v1
 kind: Service

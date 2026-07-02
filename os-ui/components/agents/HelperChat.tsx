@@ -3,7 +3,7 @@
  */
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 /**
  * The agent-system helper (Task 8) — dual-mode #2. It turns a natural-language
@@ -14,7 +14,7 @@ import { useCallback, useState } from 'react';
  * system grants (the compiler enforces narrow-only regardless).
  */
 
-type Turn = { instruction: string; summary?: string; error?: string };
+type Turn = { instruction: string; summary?: string; error?: string; stopped?: boolean };
 
 const STARTERS = [
   'add a research sub-agent that hands off to the writer',
@@ -25,6 +25,9 @@ export default function HelperChat({ systemId, canEdit, onApplied }: { systemId:
   const [log, setLog] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const stop = useCallback(() => abortRef.current?.abort(), []);
 
   const send = useCallback(
     async (text: string) => {
@@ -34,22 +37,39 @@ export default function HelperChat({ systemId, canEdit, onApplied }: { systemId:
       setInput('');
       const idx = log.length;
       setLog((l) => [...l, { instruction }]);
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
       try {
         const res = await fetch(`/api/agents/systems/${systemId}/assistant`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ instruction }),
+          signal: ctrl.signal,
         });
-        const body = await res.json();
+        // Read defensively: a wedged model can return a non-JSON body, and
+        // res.json() would throw "The string did not match the expected pattern."
+        const raw = await res.text();
+        let body: { error?: string; summary?: string } = {};
+        try {
+          body = raw ? JSON.parse(raw) : {};
+        } catch {
+          body = {};
+        }
         if (!res.ok) {
           setLog((l) => l.map((t, i) => (i === idx ? { ...t, error: body.error ?? 'The helper could not apply that.' } : t)));
         } else {
-          setLog((l) => l.map((t, i) => (i === idx ? { ...t, summary: body.summary } : t)));
+          setLog((l) => l.map((t, i) => (i === idx ? { ...t, summary: body.summary ?? 'Applied.' } : t)));
           await onApplied();
         }
       } catch (e) {
-        setLog((l) => l.map((t, i) => (i === idx ? { ...t, error: (e as Error).message } : t)));
+        // A user-initiated Stop is a quiet cancel, not an error.
+        if ((e as Error).name === 'AbortError') {
+          setLog((l) => l.map((t, i) => (i === idx ? { ...t, stopped: true } : t)));
+        } else {
+          setLog((l) => l.map((t, i) => (i === idx ? { ...t, error: (e as Error).message } : t)));
+        }
       } finally {
+        abortRef.current = null;
         setBusy(false);
       }
     },
@@ -78,8 +98,19 @@ export default function HelperChat({ systemId, canEdit, onApplied }: { systemId:
                   <div className="bubble-role">agent-system helper</div>
                   <div className="bubble-body b-off">✗ {t.error}</div>
                 </div>
+              ) : t.stopped ? (
+                <div className="bubble assistant" style={{ marginTop: 8 }}>
+                  <div className="bubble-role">agent-system helper</div>
+                  <div className="bubble-body muted">Stopped.</div>
+                </div>
               ) : (
-                <div className="bubble assistant" style={{ marginTop: 8 }}><div className="bubble-role">agent-system helper</div><div className="bubble-body"><span className="spin" /></div></div>
+                <div className="bubble assistant" style={{ marginTop: 8 }}>
+                  <div className="bubble-role">agent-system helper</div>
+                  <div className="bubble-body row" style={{ gap: 8, alignItems: 'center' }}>
+                    <span className="spin" />
+                    <button type="button" className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={stop}>Stop</button>
+                  </div>
+                </div>
               )}
             </div>
           ))
@@ -105,7 +136,11 @@ export default function HelperChat({ systemId, canEdit, onApplied }: { systemId:
         />
         <div className="row" style={{ marginTop: 10, justifyContent: 'space-between', alignItems: 'center' }}>
           <div className="hint" style={{ marginTop: 0 }}>⌘/Ctrl + Enter to send. Deterministic edits, governed like every agent.</div>
-          <button className="btn sm" type="submit" disabled={busy || !input.trim() || !canEdit}>{busy ? <span className="spin" /> : 'Apply'}</button>
+          {busy ? (
+            <button className="btn ghost sm" type="button" onClick={stop}>Stop</button>
+          ) : (
+            <button className="btn sm" type="submit" disabled={!input.trim() || !canEdit}>Apply</button>
+          )}
         </div>
       </form>
     </div>

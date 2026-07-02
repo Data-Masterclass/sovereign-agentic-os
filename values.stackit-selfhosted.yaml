@@ -69,6 +69,15 @@ openmetadata:
 modelServer:
   image:
     tag: "latest"
+  # CPU headroom for Ministral 3 3B on the m3i.16 node (16 vCPU / 128 GB). Ollama
+  # sizes its thread pool to the cgroup CPU limit, so the chart's 4-core cap left
+  # 12 cores idle and made single replies take 25s+. requests stay MODEST (2 cores
+  # reserved — the node only commits ~48% of CPU) while limits let one reply BURST
+  # to 12 of the idle cores and hand them straight back. CPU is compressible, so
+  # this shares gracefully with every other service; it does not block them.
+  resources:
+    requests: { cpu: "2", memory: 4Gi }
+    limits: { cpu: "12", memory: 6Gi }
   # Self-hosted SOVEREIGN reasoning tier (Magistral Small 24B) — kept OFF until
   # the GGUF is staged on the PVC. The in-box Ministral via Ollama is the default.
   # Flip to true + provide Magistral-Small-2506-Q4_K_M.gguf at /models to enable.
@@ -78,6 +87,37 @@ modelServer:
       enabled: true
       size: 20Gi
     # nodeSelector: { topology.kubernetes.io/node-pool: m3i-16 }   # set to the real label
+
+# WireGuard listener — ON for STACKIT so the in-cluster LiteLLM can reach the Mac
+# Mini's Ollama (qwen3:14b) over the tunnel. First-class, durable chart component
+# (survives redeploys/node-rolls). The Mac dials IN to the UDP LoadBalancer this
+# provisions; StackIT assigns a NEW public IP (NOT the old 192.214.171.34 one-off).
+#
+# OPERATOR PREREQUISITE (out-of-band, ONCE — the key must never be committed):
+#   kubectl -n agentic-os create secret generic wireguard-stackit \
+#     --from-file=privatekey=<path-to>/wg-stackit.privatekey
+# The Secret is NOT part of the Helm release, so `helm upgrade` never wipes it.
+wireguard:
+  enabled: true
+  # The Mac Mini's WireGuard PUBLIC key (the peer that dials in). Non-secret.
+  peerPublicKey: "xeK9BKCZ3TYioNmHX1XOY/G9O6h8Hivqoq8ZcOyGqjM="
+  # Tunnel: cluster listener 10.10.0.1/24, ListenPort 51820 (pinned); the Mac gets
+  # 10.10.0.2/32 and serves Ollama qwen3:14b at 10.10.0.2:11434.
+  address: "10.10.0.1/24"
+  listenPort: 51820
+  peerAllowedIPs: "10.10.0.2/32"
+  ollama:
+    targetIP: "10.10.0.2"
+    port: 11434
+  service:
+    # yawol opens the Service port on the LB automatically — no extra firewall
+    # rule / no terraform change (there is no security-group resource in
+    # deploy/terraform; the CCM manages LB ingress). To restrict inbound to the
+    # Mac only, set loadBalancerSourceRanges to its egress /32 once known:
+    #   loadBalancerSourceRanges: ["<mac-egress-ip>/32"]
+    loadBalancerSourceRanges: []   # any-source (approved default for now)
+    externalTrafficPolicy: "Local"
+    annotations: {}
 
 # Layer 4 (Science / ML) — FULLY ENABLED for the everything-on deploy. `ml.enabled`
 # is the master gate; each component additionally needs its own `<component>.enabled`
@@ -111,7 +151,7 @@ osUI:
     # 0.1.3 = governance effects.ts fix (approved dataset_promote/certify now moves
     # the tier) + demo-data cleanup. Built/pushed by the orchestrator after the
     # feat/ecommerce-seed merge + cleanup land. Bumped from 0.1.1.
-    tag: "0.1.3"
+    tag: "0.1.4"
   # ---- Microsoft 365 mailer — WIRED but creds deferred to the operator. ----
   # Both transports are turned on so the os-ui mailer env is READY; the actual
   # secrets stay UNSET (the os-ui-graph / os-ui-smtp Secrets are referenced
@@ -149,7 +189,10 @@ osUI:
 agentRuntime:
   image:
     repository: ghcr.io/aborek/sovereign-os/agent-runtime
-    tag: "0.1.0"
+    # 0.1.1 = plan(reasoning tier)->execute(27B tier) two-tier hand-off in the IR
+    # interpreter. MUST be rebuilt + pushed (scripts/build-images.sh / make
+    # stackit-images ARGS=--push) before the helm upgrade or the pod ImagePullErrors.
+    tag: "0.1.1"
 
 # Bundled local mock model is the LiteLLM backend in self-hosted mode (enabled by
 # the chart default + values.selfcontained.yaml) — pull its image from ghcr too.
@@ -278,6 +321,28 @@ forgejo:
 # -----------------------------------------------------------------------------
 trino:
   enabled: true
+
+# -----------------------------------------------------------------------------
+# DURABLE LAKEHOUSE — root-cause fix for the vanishing case-study data. Unlike a
+# kind box (torn down anyway, so the chart default stays ephemeral), the SKE
+# deploy is long-lived and a pod roll MUST NOT wipe the lakehouse. Two backends
+# hold the case-study data and BOTH must persist:
+#   1. MinIO  — the Iceberg DATA files (Parquet/manifests). PVC-backed here.
+#   2. Polaris — the catalog METADATA (the `lakehouse` warehouse + namespaces +
+#      tables). Switched from in-memory to a Postgres-backed metastore so the
+#      warehouse registration survives a restart — otherwise Trino/query-tool
+#      returns "Unable to find warehouse lakehouse" even with MinIO persistent.
+# The `polaris` DB already exists on the bundled pg-rw (postgres.extraDatabases),
+# which is itself PVC-backed (plain StatefulSet). A bootstrap initContainer seeds
+# the schema + realm on first boot.
+# -----------------------------------------------------------------------------
+objectStorage:
+  persistence:
+    enabled: true
+    size: 20Gi
+
+polaris:
+  persistenceType: relational-jdbc
 
 # cube: ENABLED — the semantic layer over Trino's Iceberg Gold marts (Metrics tab
 # resolves/explores through it). Depends on Trino (now ON above).

@@ -61,6 +61,11 @@ spec:
             # Keep models resident so the first request isn't a cold load.
             - name: OLLAMA_KEEP_ALIVE
               value: "-1"
+            # Disable flash-attention: on this CPU node the newer Ollama engine's
+            # warmup ("empty run") wedges on the AMX/flash-attn path and never
+            # reports the server as available. FA gives no benefit on CPU anyway.
+            - name: OLLAMA_FLASH_ATTENTION
+              value: "0"
             - name: OLLAMA_MODEL
               value: {{ $m.model | quote }}
           command: ["/bin/sh", "-c"]

@@ -1,0 +1,242 @@
+{{- if .Values.wireguard.enabled }}
+{{- /*
+  DURABLE WireGuard listener — a first-class chart component (the previous attempt
+  was a one-off `kubectl apply` manifest that got wiped on the next redeploy /
+  node-roll; templating it here is the fix). Purpose: give the IN-CLUSTER LiteLLM
+  a stable, offline path to a Mac Mini's Ollama model over a WireGuard tunnel.
+
+  TOPOLOGY (the Mac dials IN; the cluster LISTENS):
+    - This pod runs the tunnel endpoint: interface 10.10.0.1/24, ListenPort 51820.
+    - A LoadBalancer Service (UDP/51820) gives STACKIT a public IP the Mac dials.
+    - The Mac peer connects and gets 10.10.0.2/32; its Ollama is at
+      10.10.0.2:11434 (qwen3:14b, bound 0.0.0.0:11434).
+
+  REACHABILITY FROM LITELLM (routing approach = NAT forwarder, the least-privileged
+  option — no cluster-wide/host route programming):
+    - This pod does DNAT: TCP :11434 arriving on the pod  ->  10.10.0.2:11434 out
+      the wg0 tunnel, with MASQUERADE so replies come back through conntrack.
+    - A ClusterIP Service `wireguard-ollama` (TCP/11434) fronts the pod, so LiteLLM
+      simply targets `http://wireguard-ollama:11434/v1` — no route to the tunnel
+      subnet is needed anywhere else in the cluster. Everything privileged stays
+      INSIDE this pod (NET_ADMIN only), which is why it survives redeploys cleanly.
+
+  IMAGE / DATAPATH: linuxserver/wireguard. It uses the kernel WireGuard datapath
+  when the module is available and transparently falls back to userspace
+  (wireguard-go/boringtun via /dev/net/tun) when it is not — so the interface
+  comes up regardless of the node kernel state (no hard kernel-module dependency).
+  We grant NET_ADMIN + /dev/net/tun and nothing else (no SYS_MODULE, no host
+  /lib/modules), keeping it least-privilege and portable across node-rolls.
+
+  SECRET BOUNDARY: only the StackIT PRIVATE key is sensitive and it comes from an
+  operator-created Secret (`wireguard.secretName`) that lives OUTSIDE the Helm
+  release (so `helm upgrade` never templates or wipes it). Everything non-secret
+  (address, ListenPort 51820, the Mac peer pubkey, AllowedIPs, the DNAT rules) is
+  in the ConfigMap below so it is version-controlled and re-applied every deploy.
+  An initContainer assembles the final wg0.conf = [Interface] + PrivateKey + body.
+*/}}
+{{- $w := .Values.wireguard }}
+{{- $peerKey := required "wireguard.peerPublicKey is required when wireguard.enabled=true (the Mac's WireGuard public key)" $w.peerPublicKey }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wireguard-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "wireguard") | nindent 4 }}
+data:
+  # NON-SECRET wg0.conf body (everything except [Interface] + PrivateKey, which the
+  # initContainer prepends from the Secret). PostUp wires IP forwarding + a DNAT
+  # forwarder so cluster TCP :11434 reaches the Mac's Ollama at 10.10.0.2:11434.
+  wg0.conf.body: |
+    Address = {{ $w.address }}
+    ListenPort = {{ $w.listenPort }}
+    PostUp = sysctl -w net.ipv4.ip_forward=1
+    PostUp = iptables -t nat -A PREROUTING -p tcp --dport {{ $w.ollama.port }} -j DNAT --to-destination {{ $w.ollama.targetIP }}:{{ $w.ollama.port }}
+    PostUp = iptables -t nat -A POSTROUTING -o wg0 -j MASQUERADE
+    PostUp = iptables -A FORWARD -d {{ $w.ollama.targetIP }} -j ACCEPT
+    PostUp = iptables -A FORWARD -s {{ $w.ollama.targetIP }} -j ACCEPT
+    PostDown = iptables -t nat -D PREROUTING -p tcp --dport {{ $w.ollama.port }} -j DNAT --to-destination {{ $w.ollama.targetIP }}:{{ $w.ollama.port }}
+    PostDown = iptables -t nat -D POSTROUTING -o wg0 -j MASQUERADE
+    PostDown = iptables -D FORWARD -d {{ $w.ollama.targetIP }} -j ACCEPT
+    PostDown = iptables -D FORWARD -s {{ $w.ollama.targetIP }} -j ACCEPT
+
+    [Peer]
+    # The Mac Mini (dials in; no Endpoint here — the cluster is the listener).
+    PublicKey = {{ $peerKey }}
+    AllowedIPs = {{ $w.peerAllowedIPs }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wireguard
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "middleware") | nindent 4 }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "wireguard") | nindent 4 }}
+spec:
+  # Single replica: it owns one tunnel endpoint / one 10.10.0.1 address. Recreate
+  # (not RollingUpdate) so two pods never fight over the same LB/tunnel identity.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "wireguard") | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Roll the pod when the non-secret config changes (peer/port/DNAT edits).
+        checksum/config: {{ toYaml $w | sha256sum | trunc 16 }}
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "wireguard") | nindent 8 }}
+    spec:
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "app") | nindent 6 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # WireGuard + wg-quick + iptables need root in the pod netns. This is the ONE
+      # bespoke pod that intentionally runs privileged-of-network (NET_ADMIN), which
+      # is exactly why it is isolated here rather than bolted onto another workload.
+      securityContext:
+        runAsNonRoot: false
+        runAsUser: 0
+        seccompProfile:
+          type: {{ .Values.global.podSecurity.seccompProfile }}
+      initContainers:
+        # Assemble the final wg0.conf: [Interface] header + PrivateKey (from the
+        # out-of-band Secret) + the non-secret body (from the ConfigMap). Keeps the
+        # private key out of every committed file and out of the Helm release.
+        - name: assemble-conf
+          image: "{{ $w.image.repository }}:{{ $w.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              umask 077
+              {
+                echo "[Interface]"
+                echo "PrivateKey = $(cat /wg-secret/{{ $w.secretKey }})"
+                cat /wg-body/wg0.conf.body
+              } > /wg-run/wg0.conf
+              echo "assembled /config/wg_confs/wg0.conf ($(wc -l < /wg-run/wg0.conf) lines)"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - { name: wg-secret, mountPath: /wg-secret, readOnly: true }
+            - { name: wg-body, mountPath: /wg-body, readOnly: true }
+            - { name: wg-run, mountPath: /wg-run }
+      containers:
+        - name: wireguard
+          image: "{{ $w.image.repository }}:{{ $w.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            # NET_ADMIN only (no privileged, no SYS_MODULE). readOnlyRootFilesystem
+            # off: wg-quick/iptables write runtime state under /run and /config.
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              add: ["NET_ADMIN"]
+              drop: ["ALL"]
+          env:
+            - { name: PUID, value: "0" }
+            - { name: PGID, value: "0" }
+            - { name: TZ, value: "Etc/UTC" }
+          ports:
+            - { name: wg, containerPort: {{ $w.listenPort }}, protocol: UDP }
+            - { name: ollama, containerPort: {{ $w.ollama.port }}, protocol: TCP }
+          readinessProbe:
+            # Ready once the tunnel interface is up (peer configured). `wg show`
+            # returns non-zero until wg0 exists.
+            exec:
+              command: ["/bin/sh", "-c", "wg show wg0 >/dev/null 2>&1"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "wg show wg0 >/dev/null 2>&1"]
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          resources:
+            {{- toYaml $w.resources | nindent 12 }}
+          volumeMounts:
+            - { name: wg-run, mountPath: /config/wg_confs }
+            - { name: dev-tun, mountPath: /dev/net/tun }
+      volumes:
+        - name: wg-secret
+          secret:
+            secretName: {{ $w.secretName | quote }}
+        - name: wg-body
+          configMap:
+            name: wireguard-config
+        - name: wg-run
+          emptyDir: {}
+        # TUN device for the userspace datapath fallback (no host kernel-module
+        # dependency). Present on every Linux node at /dev/net/tun.
+        - name: dev-tun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
+---
+# LoadBalancer the Mac dials IN to (UDP/51820). STACKIT/yawol assigns a NEW public
+# IP and auto-opens this port on the LB (no separate firewall rule — see values +
+# deploy/terraform note). Lock the source with `service.loadBalancerSourceRanges`
+# to the Mac's egress /32 once known.
+apiVersion: v1
+kind: Service
+metadata:
+  name: wireguard
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "wireguard") | nindent 4 }}
+  {{- with $w.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: LoadBalancer
+  # Preserve the client (Mac) source IP and avoid an extra hop (single node).
+  externalTrafficPolicy: {{ $w.service.externalTrafficPolicy | default "Local" }}
+  {{- with $w.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "wireguard") | nindent 4 }}
+  ports:
+    - name: wg
+      protocol: UDP
+      port: {{ $w.listenPort }}
+      targetPort: wg
+---
+# ClusterIP the IN-CLUSTER LiteLLM targets (TCP/11434). The pod DNATs this to the
+# Mac's Ollama at {{ $w.ollama.targetIP }}:{{ $w.ollama.port }} over the tunnel, so
+# LiteLLM uses `http://wireguard-ollama:{{ $w.ollama.port }}/v1` (no tunnel route
+# needed outside this pod).
+apiVersion: v1
+kind: Service
+metadata:
+  name: wireguard-ollama
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "wireguard") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "wireguard") | nindent 4 }}
+  ports:
+    - name: ollama
+      protocol: TCP
+      port: {{ $w.ollama.port }}
+      targetPort: ollama
+{{- end }}

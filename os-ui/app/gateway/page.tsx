@@ -1,6 +1,7 @@
 'use client';
 
 import PageHeader from '@/components/PageHeader';
+import McpConnect from '@/components/McpConnect';
 import { useApi } from '@/lib/useApi';
 
 type Model = { id: string; ownedBy: string };
@@ -31,6 +32,8 @@ export default function GatewayPage() {
         </div>
 
         {error ? <div className="error" style={{ marginTop: 20 }}>{error}</div> : null}
+
+        <McpConnect />
 
         {data ? (
           <>

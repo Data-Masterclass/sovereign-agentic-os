@@ -314,6 +314,54 @@ h3 {
   letter-spacing: 0.2px;
 }
 
+/* Embedded-tool overlay (components/ToolWindow.tsx). Full-bleed, opaque black
+   surround with the OS top bar; the iframe (a same-origin /tools/<key> proxy)
+   fills the rest. Quiet fade + lift on open/close. */
+.toolwin {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  background: #0c0b0d;
+  opacity: 0;
+  transform: translateY(10px) scale(0.996);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  will-change: opacity, transform;
+}
+.toolwin.open {
+  opacity: 1;
+  transform: none;
+}
+.toolwin-bar {
+  flex: 0 0 auto;
+  position: static; /* override .topbar sticky inside the fixed overlay */
+}
+.toolwin-close {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.toolwin-close:hover {
+  color: var(--text);
+  border-color: var(--gold-line);
+  background: rgba(255, 255, 255, 0.05);
+}
+.toolwin-frame {
+  flex: 1 1 auto;
+  width: 100%;
+  border: 0;
+  background: #fff;
+}
+
 .pill {
   font-size: 11px;
   color: var(--text-muted);

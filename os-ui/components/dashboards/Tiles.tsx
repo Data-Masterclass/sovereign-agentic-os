@@ -95,6 +95,7 @@ export default function Tiles({
       <ToolEmbed
         url={supersetUrl}
         title="Superset"
+        toolKey="superset"
         note="The Sales Overview dashboard is built on the Cube Revenue metric — the same numbers the Sales agent returns."
       />
       <div className="hint">

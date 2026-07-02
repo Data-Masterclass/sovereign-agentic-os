@@ -50,13 +50,15 @@ def supervisor_worker_ir():
 
 
 class FakeModel:
-    """Records every (node_id, system_prompt, user_prompt) the walk asks for."""
+    """Records every (node_id, system_prompt, user_prompt, model) the walk asks
+    for. The walk now makes TWO calls per node (plan → execute), so the recorded
+    `model` per call lets tests assert the tier hand-off."""
 
     def __init__(self):
         self.calls = []
 
-    def __call__(self, n, system_prompt, user_prompt):
-        self.calls.append((n["id"], system_prompt, user_prompt))
+    def __call__(self, n, system_prompt, user_prompt, model):
+        self.calls.append((n["id"], system_prompt, user_prompt, model))
         return "model-output-for-" + n["id"]
 
 
@@ -129,19 +131,65 @@ def test_allow_deny_approval_effects():
     assert by_tool["connection_crm_write"]["ran"] is False
 
 
-# --- gate 4: model called once per visited node, system prompt is DATA-safe -
+# --- gate 4: model called TWICE per visited node (plan → execute), DATA-safe ---
 def test_model_called_per_node_with_data_defense():
     ir = supervisor_worker_ir()
     model = FakeModel()
     res = run(ir, model_call=model)
-    assert len(model.calls) == len(res["path"]) == 2
-    for _id, system_prompt, _user in model.calls:
+    # Two calls per visited node now: a PLAN call then an EXECUTE call.
+    assert len(model.calls) == 2 * len(res["path"]) == 4
+    for _id, system_prompt, _user, _model in model.calls:
         assert "DATA" in system_prompt
         assert "instruction" in system_prompt.lower()
-    # the worker's persona (AGENT.md + MEMORY.md) is threaded into its prompt
-    worker_prompt = next(sp for nid, sp, _ in model.calls if nid == "worker")
-    assert "You do the work." in worker_prompt
-    assert "prior notes" in worker_prompt
+    # the worker's persona (AGENT.md + MEMORY.md) is threaded into BOTH its prompts
+    worker_prompts = [sp for nid, sp, _u, _m in model.calls if nid == "worker"]
+    assert len(worker_prompts) == 2
+    for sp in worker_prompts:
+        assert "You do the work." in sp
+        assert "prior notes" in sp
+
+
+# --- gate 4b: plan uses the REASONING tier, execute uses the EXECUTION tier ----
+def single_node_ir(model=None):
+    return {
+        "entrypoint": "a",
+        "startEdge": {"from": "START", "to": "a"},
+        "nodes": [node("a", ["retrieve"], prompt="Do the job.", model=model)],
+        "memberEdges": [], "conditionalEdges": [], "commands": [], "channels": {},
+    }
+
+
+def test_plan_uses_reasoning_execute_uses_execution():
+    model = FakeModel()
+    interpreter.run_ir(
+        single_node_ir(), prompt="ship it", recursion_limit=25, timeout_ms=60000,
+        disabled_agents=[], model_call=model, tool_call=fake_tool_factory({}),
+        reasoning_model="qwen-vl-reasoning", execution_model="qwen-27b",
+    )
+    assert len(model.calls) == 2
+    (plan_id, plan_sys, plan_user, plan_model) = model.calls[0]
+    (exec_id, exec_sys, exec_user, exec_model) = model.calls[1]
+    # phase 1 = PLAN on the reasoning tier; phase 2 = EXECUTE on the execution tier
+    assert plan_model == "qwen-vl-reasoning"
+    assert exec_model == "qwen-27b"
+    assert "PLAN" in plan_sys  # the planning directive is present on the plan call
+    # the plan output is handed off into the execution prompt
+    assert "model-output-for-a" in exec_user
+    assert "ship it" in exec_user
+
+
+def test_per_agent_model_overrides_execution_only():
+    """A per-agent model override changes the EXECUTION tier; planning stays on the
+    uniform reasoning tier so every agent still plans with the reasoning model."""
+    model = FakeModel()
+    interpreter.run_ir(
+        single_node_ir(model="custom-exec"), prompt="go", recursion_limit=25,
+        timeout_ms=60000, disabled_agents=[], model_call=model,
+        tool_call=fake_tool_factory({}),
+        reasoning_model="qwen-vl-reasoning", execution_model="qwen-27b",
+    )
+    assert model.calls[0][3] == "qwen-vl-reasoning"   # plan: uniform reasoning tier
+    assert model.calls[1][3] == "custom-exec"         # execute: per-agent override
 
 
 # --- gate 5: recursionLimit caps visits; disabledAgents skips a node --------

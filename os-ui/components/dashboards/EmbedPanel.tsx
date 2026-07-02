@@ -94,7 +94,7 @@ export default function EmbedPanel({ dashboard, supersetUrl }: { dashboard: Dash
                 Live: the Superset <strong>Embedded SDK</strong> mounts the iframe with this guest token
                 (~{embed.expiresInSeconds}s ttl + refresh).
               </div>
-              <ToolEmbed url={supersetUrl} title="Superset (embedded dashboard)" />
+              <ToolEmbed url={supersetUrl} title="Superset (embedded dashboard)" toolKey="superset" />
             </div>
           ) : (
             <div className="hint" style={{ marginTop: 10 }}>

@@ -1,0 +1,148 @@
+{{- if .Values.polaris.enabled }}
+{{- /*
+  Polaris catalog registration. The realm `bootstrap` (initContainer in polaris.yaml)
+  creates the realm/schema/root principal, but NOT the CATALOG entity. Trino connects
+  with `iceberg.rest-catalog.warehouse=lakehouse`, so that catalog must exist or every
+  query returns "Unable to find warehouse lakehouse" and the seed's Data phase fails.
+
+  This one-shot Helm hook waits for Polaris to be ready, gets an OAuth2
+  client-credentials token (root principal), and idempotently registers the
+  `lakehouse` catalog via the management API — a NO-OP if it already exists (safe on
+  every upgrade). It runs for BOTH profiles: in-memory local re-bootstraps the realm
+  on restart AND needs the catalog re-created (so the local seed works); relational-jdbc
+  keeps both across restarts, and this Job simply short-circuits when the catalog is
+  already there.
+
+  Storage: MinIO/STACKIT Object Storage has no STS, so credentials are STATIC
+  (s3.access-key-id/secret in `properties`, from the same object-storage Secret the
+  chart wires for MinIO); roleArn is a required-by-schema placeholder that is never
+  used for STS (vended-credentials is off — Trino reads with its own static creds).
+*/}}
+{{- $pl := .Values.polaris }}
+{{- $cat := $pl.catalog.name }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: polaris-catalog-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "polaris-init") | nindent 4 }}
+  annotations:
+    # Runs AFTER Polaris + the bucket-init Job (weight 5) — a higher weight runs later.
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "polaris-init") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: catalog-init
+          image: "{{ $pl.bootstrapImage.repository }}:{{ $pl.bootstrapImage.tag }}{{ if $pl.bootstrapImage.digest }}@{{ $pl.bootstrapImage.digest }}{{ end }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          env:
+            {{- if eq .Values.global.profile "local" }}
+            # Root principal (same creds as POLARIS_BOOTSTRAP_CREDENTIALS), templated
+            # like trino-catalog-credentials does for the OAuth client.
+            - name: CLIENT_ID
+              value: {{ $pl.local.rootClientId | quote }}
+            - name: CLIENT_SECRET
+              value: {{ $pl.local.rootClientSecret | quote }}
+            {{- else }}
+            # Non-local: parse clientId/clientSecret out of "realm,clientId,clientSecret".
+            - name: BOOTSTRAP_CREDS
+              valueFrom: { secretKeyRef: { name: {{ $pl.secretName }}, key: POLARIS_BOOTSTRAP_CREDENTIALS } }
+            {{- end }}
+            # Static S3 creds for the catalog's FileIO (no STS on MinIO/Object Storage).
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_ACCESS_KEY_ID } }
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_SECRET_ACCESS_KEY } }
+            - name: CATALOG
+              value: {{ $cat | quote }}
+            - name: BASE_LOCATION
+              value: {{ $pl.catalog.baseLocation | quote }}
+            - name: S3_ENDPOINT
+              value: {{ include "soa.s3Endpoint" . | quote }}
+            - name: S3_REGION
+              value: {{ $pl.s3.region | quote }}
+            - name: POLARIS_CATALOG_API
+              value: "http://polaris:8181"
+            - name: POLARIS_MGMT
+              value: "http://polaris:8182"
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              : "${CLIENT_ID:=$(printf '%s' "${BOOTSTRAP_CREDS:-}" | cut -d, -f2)}"
+              : "${CLIENT_SECRET:=$(printf '%s' "${BOOTSTRAP_CREDS:-}" | cut -d, -f3)}"
+
+              echo "waiting for Polaris to be ready ..."
+              for i in $(seq 1 60); do
+                if curl -fsS "$POLARIS_MGMT/q/health/ready" >/dev/null 2>&1; then
+                  echo "Polaris is ready"; break
+                fi
+                sleep 5
+              done
+
+              echo "obtaining OAuth2 token ..."
+              TOKEN=$(curl -fsS -X POST "$POLARIS_CATALOG_API/api/catalog/v1/oauth/tokens" \
+                -d grant_type=client_credentials \
+                -d "client_id=$CLIENT_ID" \
+                -d "client_secret=$CLIENT_SECRET" \
+                -d scope=PRINCIPAL_ROLE:ALL \
+                | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
+              if [ -z "$TOKEN" ]; then echo "ERROR: could not obtain Polaris token"; exit 1; fi
+
+              # Idempotent: skip if the catalog already exists.
+              code=$(curl -s -o /dev/null -w '%{http_code}' \
+                -H "Authorization: Bearer $TOKEN" \
+                "$POLARIS_CATALOG_API/api/management/v1/catalogs/$CATALOG")
+              if [ "$code" = "200" ]; then
+                echo "catalog $CATALOG already exists — nothing to do"; exit 0
+              fi
+
+              echo "registering catalog $CATALOG -> $BASE_LOCATION"
+              curl -fsS -X POST \
+                -H "Authorization: Bearer $TOKEN" \
+                -H "Content-Type: application/json" \
+                "$POLARIS_CATALOG_API/api/management/v1/catalogs" \
+                -d '{
+                  "catalog": {
+                    "name": "'"$CATALOG"'",
+                    "type": "INTERNAL",
+                    "properties": {
+                      "default-base-location": "'"$BASE_LOCATION"'",
+                      "s3.endpoint": "'"$S3_ENDPOINT"'",
+                      "s3.path-style-access": "true",
+                      "s3.region": "'"$S3_REGION"'",
+                      "s3.access-key-id": "'"$AWS_ACCESS_KEY_ID"'",
+                      "s3.secret-access-key": "'"$AWS_SECRET_ACCESS_KEY"'"
+                    },
+                    "storageConfigInfo": {
+                      "storageType": "S3",
+                      "roleArn": "arn:aws:iam::000000000000:role/polaris-lakehouse",
+                      "allowedLocations": ["'"$BASE_LOCATION"'", "'"$BASE_LOCATION"'/*"]
+                    }
+                  }
+                }'
+              echo "catalog $CATALOG registered"
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+{{- end }}

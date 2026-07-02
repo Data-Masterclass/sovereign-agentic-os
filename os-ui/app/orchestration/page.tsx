@@ -2,6 +2,7 @@
 
 import PageHeader from '@/components/PageHeader';
 import { useApi } from '@/lib/useApi';
+import { useToolWindow } from '@/components/ToolWindowProvider';
 
 type Run = { runId: string; status: string; pipeline: string; startTime: number | null };
 type Data = {
@@ -28,6 +29,7 @@ function statusClass(s: string): string {
 
 export default function OrchestrationPage() {
   const { data, loading, error, reload } = useApi<Data>('/api/orchestration');
+  const { openTool } = useToolWindow();
 
   return (
     <>
@@ -109,17 +111,16 @@ export default function OrchestrationPage() {
             <div className="card row" style={{ alignItems: 'center', gap: 14, maxWidth: 480 }}>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600 }}>Dagster</div>
-                <div className="muted mono">{data.consoleUrl || 'internal — not publicly exposed; use the port-forward'}</div>
+                <div className="muted mono">same-origin · /tools/dagster · live-tail needs the WS ingress rule</div>
               </div>
+              <button className="btn" onClick={() => openTool('dagster', 'Dagster')}>
+                Open Dagster
+              </button>
               {data.consoleUrl ? (
                 <a className="btn ghost" href={data.consoleUrl} target="_blank" rel="noreferrer">
-                  Open →
+                  Native ↗
                 </a>
-              ) : (
-                <span className="btn ghost" aria-disabled="true" title="Internal — reach via port-forward" style={{ opacity: 0.5, cursor: 'default' }}>
-                  Internal
-                </span>
-              )}
+              ) : null}
             </div>
           </>
         ) : loading ? (

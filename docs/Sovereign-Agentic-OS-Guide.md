@@ -2,7 +2,7 @@
 title: "Sovereign Agentic OS"
 subtitle: "The product guide — install it, run it, and put every governed workflow to work."
 author: "Orchestrated by Data Masterclass · datamasterclass.com · www.sovereign-agentic.com"
-date: "Chart 0.2.8 (app 0.2.0-alpha.9) · generated {{DATE}} from commit {{GIT_COMMIT}}"
+date: "Chart 0.2.10 (app 0.2.0-alpha.11) · generated {{DATE}} from commit {{GIT_COMMIT}}"
 titlepage: true
 titlepage-rule-color: "c8a24a"
 toc: true
@@ -174,6 +174,17 @@ Three planes stay deliberately separate, and cross-link rather than duplicate:
 - **Monitoring** — *observes the artifacts* (runs, spend, traces, drift). **Components** watches the
   infrastructure (service + cluster health). And **Dashboards** watch the business KPIs.
 
+## Every assistant acts, not just chats
+
+Each tab's built-in assistant is **agentic**, not a chat box. It runs one loop: **PLAN** with the
+reasoning tier, then **ACT** in a bounded tool-calling loop with the execution tier — calling that
+tab's governed tools, which are the *same* OPA-authorized, Langfuse-traced functions the UI uses
+(never a privileged path) — then **verifies**, and for anything side-effectful **stops at a human
+gate**. The Software build assistant is the fullest example: it scaffolds a repo, writes and commits
+code, previews the app, and assembles a **deploy review card** through `lib/software` — it never
+self-approves a go-live. Which models fill the two phases is set once at the gateway (see *Models &
+the LLM gateway*).
+
 \newpage
 
 # Getting started
@@ -221,6 +232,14 @@ operational console is **embedded inside the OS UI** at **Platform → Component
 in-cluster Kubernetes API and the baked-in component docs natively, so there is no separate
 admin-console service to port-forward. Locally there is no login; on a real deployment you sign in
 with your Ory identity.
+
+On a real deployment the back-end tools no longer need their own port-forward or login: they load
+**same-origin, inside the OS UI**, proxied by the Node server at **`/tools/<tool>`**. The server
+turns your OS session into whatever the upstream tool needs — **Level-1 header SSO** injects your
+identity (`X-Forwarded-User`, plus a tool-specific alias like Forgejo's `X-WEBAUTH-USER`) mapped
+through your per-domain role, and the tool **auto-provisions** the matching account on first request.
+Credentials never reach the browser, and the proxy pins `frame-ancestors 'self'` so only the OS
+shell can embed the tool. (The port-forward table below is the local-dev path.)
 
 The handful of back-end consoles you may want first (the full table is in the Reference):
 
@@ -763,8 +782,9 @@ beside this infra view).
 
 > The remaining Platform entries — **Users**, **Gateway** (the LiteLLM model/MCP gateway),
 > **Orchestration** (Dagster), **Workbench** and **Terminal** (Builder/Admin developer surfaces),
-> **Consoles** (a launchpad for the full external tool UIs), and **About / Licenses** — are thin
-> windows onto their in-cluster services and the license set.
+> **Consoles** (a launchpad for the full external tool UIs, now embedded **same-origin** through the OS
+> UI at `/tools/<tool>` with Level-1 SSO), and **About / Licenses** — are thin windows onto their
+> in-cluster services and the license set.
 
 ## Tutorials — learn any path in place
 
@@ -860,6 +880,16 @@ separate, independently-scalable storage. When the dataset grows into the teraby
 **object storage and the PVCs** — the node volume stays exactly where it is. More data ≠ a bigger
 node disk.
 
+## Durable lakehouse
+
+On a long-lived deployment the lakehouse must survive pod restarts and node-rolls. Two backends
+hold the data and both are now persistent: **MinIO** keeps the Iceberg data files on a **PVC**, and
+**Polaris** keeps its catalog metadata in a **relational-JDBC metastore** (the bundled, PVC-backed
+Postgres) instead of in-memory — so the `lakehouse` warehouse registration is not lost on restart
+(otherwise Trino and the `query` tool report *"Unable to find warehouse lakehouse"* even with MinIO
+persisted). A **`polaris-catalog-init` Job** registers the `lakehouse` catalog on deploy, so queries
+resolve it with no manual step. (On a throwaway `kind` box the default stays ephemeral by design.)
+
 ## Security model
 
 The platform ships **secure by default**. Four guarantees hold throughout:
@@ -886,6 +916,38 @@ Every agent action — model calls, tool calls, retrievals — is **traced in La
 and latency; outbound requests are logged at the egress proxy; telemetry/phone-home is disabled for a
 sovereign, offline posture.
 
+## Models & the LLM gateway
+
+Every model call goes through **LiteLLM** — the one gateway that enforces the model allowlist,
+per-key spend caps, tracing and graceful back-pressure. The self-hosted default routes are **free**;
+a live STACKIT deployment fronts two pay-per-token open-weight **Qwen** tiers on **STACKIT AI Model
+Serving**, matching the assistants' two phases:
+
+- **Reasoning / planning** — `Qwen/Qwen3-VL-235B-A22B-Instruct-FP8` (LiteLLM `sovereign-reasoning`),
+  the PLAN phase of every assistant.
+- **Execution / default** — `Qwen/Qwen3.6-27B` (`sovereign-default`), tool-calling and general chat.
+
+Qwen "thinking" is disabled (`chat_template_kwargs.enable_thinking=false`) so replies come back
+direct. The local **Ministral** model stays as an **offline fallback** — it currently wedges on this
+CPU node's llama.cpp warmup, so STACKIT Qwen is the live default. All STACKIT usage draws on one
+shared **€250/week** budget (LiteLLM `budget_duration: 7d`): once it is exhausted the gateway returns
+a **graceful budget error (HTTP 429)** rather than failing hard, and the pool auto-resets weekly.
+
+**WireGuard (optional, off by default).** A first-class, durable in-cluster tunnel component (a UDP
+LoadBalancer) lets LiteLLM reach an **external** Ollama model — e.g. a Mac-Mini `qwen3:14b` on the
+`local-qwen` route — over a private link. Being part of the chart, it survives redeploys and
+node-rolls; enable it only when you want to bridge to an outside model.
+
+## Use the OS from Claude or ChatGPT (MCP)
+
+The platform exposes itself as **governed MCP servers** you can import into Claude, ChatGPT or any
+MCP client. One **overarching** authenticated remote server at **`/api/mcp`** (Streamable-HTTP, a
+per-user token, role-scoped) surfaces the OS's cross-tab tools; alongside it, **per-tab** servers at
+**`/api/mcp/<tab>`** (`software`, `data`, `science`, `knowledge`, `agents`) each ship a token-minimal
+`CONTEXT.md`, so a client gets just that tab's tools and just enough context. Every MCP tool
+delegates to the **same governed library function the UI calls**, under the caller's delegated
+identity — OPA policy, role gates and Langfuse audit apply unchanged, and there is no privileged path.
+
 ## Memory and the build-and-toggle defaults
 
 The full L1+L2+L3 set is sized for a large STACKIT node. To fit a 14 GB local VM, a few heavy
@@ -901,12 +963,12 @@ Grouped by layer — see `docs/components/<id>.md` for the full per-component gu
 
 | Layer | Components |
 |---|---|
-| **L1 — Agent core** | LiteLLM (model + MCP gateway) · model-server (self-hosted Ministral 3 / Magistral 24B) · mock-model (offline embeddings + fallback) · OpenSearch (retrieval) · Langfuse (tracing) · query-tool (Trino MCP) · sample & poet agents |
+| **L1 — Agent core** | LiteLLM (model + MCP gateway, per-key budget cap) · model-server (self-hosted Ministral 3 / Magistral 24B; two-tier STACKIT Qwen reasoning/execution on the live deploy) · mock-model (offline embeddings + fallback) · OpenSearch (retrieval) · Langfuse (tracing) · query-tool (Trino MCP) · sample & poet agents |
 | **L2 — Foundations** | OPA · Docling · Haystack · Dagster · dbt · Cube · OpenMetadata |
-| **Infra** | Postgres (CloudNativePG) · ClickHouse · Valkey · MinIO (local object-storage stand-in) · Polaris (Iceberg catalog) |
+| **Infra** | Postgres (CloudNativePG) · ClickHouse · Valkey · MinIO (object storage, PVC-backed) · Polaris (Iceberg catalog, durable relational-JDBC metastore) |
 | **L3 — Self-service** | central Trino · Superset · Forgejo (sovereign git) · Argo CD · CI runner/build · OpenSearch Dashboards · Workbench · Terminal |
 | **L4 — Science** | JupyterHub · MLflow · Featureform · KServe (all opt-in) |
-| **Security & platform** | egress-proxy · web_fetch · OS UI (with the embedded Components console) |
+| **Security & platform** | egress-proxy · web_fetch · WireGuard tunnel (optional) · OS UI (embedded Components console · same-origin tool proxy + Level-1 SSO · remote & per-tab MCP servers) |
 
 ## Full demo-login table (profile `local`)
 
@@ -949,6 +1011,18 @@ Grouped by layer — see `docs/components/<id>.md` for the full per-component gu
 ## Version & changelog
 
 - **Chart 0.2.10 · app `0.2.0-alpha.11`.** This build: generated `{{DATE}}` from commit `{{GIT_COMMIT}}`.
+- **This build (os-ui 0.1.4).** Every tab assistant is now **agentic** — PLAN (reasoning tier) →
+  act/codegen (execution tier, tool-calling) → verify → **gated deploy** — not just chat; the
+  Software build assistant genuinely scaffolds → commits → previews → requests deploy. The OS is
+  importable into **Claude/ChatGPT as governed MCP**: one authenticated remote server at `/api/mcp`
+  plus per-tab servers at `/api/mcp/<tab>`, each re-using the UI's governed functions. Back-end tools
+  now embed **same-origin** through the OS UI (`/tools/<tool>`) with **Level-1 header SSO** that
+  auto-provisions per-role accounts. The **lakehouse is durable** — MinIO on a PVC, Polaris on a
+  relational-JDBC (Postgres) metastore, and a `polaris-catalog-init` Job that registers the
+  `lakehouse` catalog on deploy. On STACKIT, LiteLLM serves a **two-tier Qwen** stack
+  (`sovereign-reasoning` = Qwen3-VL-235B, `sovereign-default` = Qwen3.6-27B; thinking disabled) under
+  a shared **€250/week** budget cap with graceful 429, local Ministral kept as offline fallback; an
+  optional durable **WireGuard** tunnel can bridge LiteLLM to an external Ollama model.
 - **0.2.x** — the **OS UI v1.0**: every sidebar tab a real surface, brand-themed, light/dark, with the
   operational console embedded at Platform → Components; Layers 1–3 in place under the
   secure-by-default baseline; Science (L4) opt-in. This release's **UI rework**: **Home** is now the

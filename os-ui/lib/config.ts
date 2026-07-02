@@ -114,6 +114,13 @@ export const config = {
     'dev-only-insecure-session-secret-change-me-in-prod',
   ),
   usersSeed: env('OS_USERS', ''),
+  // Signs the per-user bearer token for the remote MCP endpoint (/api/mcp).
+  // Server-only. Falls back to the session secret so the endpoint works out of
+  // the box; set OS_MCP_TOKEN_SECRET in prod to rotate MCP tokens independently.
+  mcpTokenSecret: env(
+    'OS_MCP_TOKEN_SECRET',
+    env('OS_SESSION_SECRET', 'dev-only-insecure-session-secret-change-me-in-prod'),
+  ),
 
   // ---- Outbound email (OPTIONAL). Transactional mail (email verification today;
   // user invites later) goes through a small, dependency-free PLUGGABLE mailer
@@ -150,6 +157,12 @@ export const config = {
   // Chat model fronted by LiteLLM that the task-scoped agent chat windows call
   // (POST {LITELLM_URL}/v1/chat/completions). Offline default = the mock model.
   litellmChatModel: env('LITELLM_CHAT_MODEL', 'sovereign-mock'),
+  // Two-tier models for the agentic assistant harness (lib/assistant). PLAN once
+  // with the reasoning tier, then ACT (tool-calling) with the cheap-first light
+  // tier — both self-hosted STACKIT Qwen with thinking disabled. Offline these
+  // fall back to the mock chat model so the loop still runs on a laptop.
+  litellmReasoningModel: env('LITELLM_REASONING_MODEL', env('LITELLM_CHAT_MODEL', 'sovereign-reasoning')),
+  litellmExecModel: env('LITELLM_EXEC_MODEL', env('LITELLM_CHAT_MODEL', 'sovereign-default')),
 
   // OPA (Policy): POST {OPA_URL}/v1/data/agentic/authz/allow and
   // GET {OPA_URL}/v1/data/grants for the principal -> tools grant map.
@@ -235,6 +248,10 @@ export const config = {
   // public host) yields "" and the UI hides the "Open" link instead of linking
   // to a dead localhost address on a real deployment. -------------------------
   supersetUrl: base(consoleEnv('SUPERSET_URL', 'http://localhost:8088')),
+  // Internal (in-cluster) Superset Service — the target of the same-origin
+  // /tools/superset reverse proxy (lib/tool-proxy.ts). Server-only; the browser
+  // never sees it. Distinct from supersetUrl (the optional native console link).
+  supersetInternalUrl: base(env('SUPERSET_INTERNAL_URL', 'http://agentic-os-superset:8088')),
   langfuseConsoleUrl: base(consoleEnv('LANGFUSE_CONSOLE_URL', 'http://localhost:3000')),
   forgejoConsoleUrl: base(consoleEnv('FORGEJO_CONSOLE_URL', 'http://localhost:3001')),
   argocdUrl: base(consoleEnv('ARGOCD_URL', 'http://localhost:8080')),
@@ -242,6 +259,11 @@ export const config = {
   dagsterConsoleUrl: base(consoleEnv('DAGSTER_CONSOLE_URL', 'http://localhost:3070')),
   opensearchDashboardsUrl: base(
     consoleEnv('OPENSEARCH_DASHBOARDS_URL', 'http://localhost:5601'),
+  ),
+  // Internal (in-cluster) OpenSearch Dashboards Service — target of the
+  // same-origin /tools/opensearch reverse proxy. Server-only.
+  opensearchDashboardsInternalUrl: base(
+    env('OPENSEARCH_DASHBOARDS_INTERNAL_URL', 'http://opensearch-dashboards:5601'),
   ),
   cubeConsoleUrl: base(consoleEnv('CUBE_CONSOLE_URL', 'http://localhost:4001')),
 

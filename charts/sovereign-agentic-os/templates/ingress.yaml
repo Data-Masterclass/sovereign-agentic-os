@@ -15,6 +15,13 @@
 {{- $ctx := . }}
 {{- $ing := .Values.ingress }}
 {{- /* host key -> in-cluster Service + port (release name `agentic-os`). */}}
+{{- /* Long-lived WebSocket/proxy timeouts for the terminal + workbench brokers
+       (idle shells / code-server keep the connection open well past the 60s
+       ingress-nginx default). Merged per-route into the Ingress annotations. */}}
+{{- $wsAnno := dict
+  "nginx.ingress.kubernetes.io/proxy-read-timeout" "3600"
+  "nginx.ingress.kubernetes.io/proxy-send-timeout" "3600"
+}}
 {{- $routes := dict
   "osUI"         (dict "service" "os-ui" "port" 3000)
   "litellm"      (dict "service" "agentic-os-litellm" "port" 4000)
@@ -23,6 +30,8 @@
   "forgejo"      (dict "service" "forgejo-http" "port" 3000)
   "argocd"       (dict "service" "argocd-server" "port" 80)
   "openmetadata" (dict "service" "openmetadata" "port" 8585)
+  "terminal"     (dict "service" "terminal-broker" "port" 8080 "annotations" $wsAnno)
+  "workbench"    (dict "service" "workbench-broker" "port" 8080 "annotations" $wsAnno)
 }}
 {{- range $key, $route := $routes }}
 {{- $host := index ($ing.hosts | default dict) $key }}
@@ -40,6 +49,9 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: {{ $ing.tlsIssuer | quote }}
     {{- with $ing.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with $route.annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:

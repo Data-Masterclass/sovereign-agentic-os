@@ -3,8 +3,16 @@
  */
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/config';
+import { contextForAgentKey, tabForAgentKey } from '@/lib/tabs/context';
+import { currentUser } from '@/lib/auth';
+import { runTabAgent, renderAssistantText } from '@/lib/assistant/runtime';
 
 export const dynamic = 'force-dynamic';
+
+// Ceiling on the LiteLLM round-trip: a slow model gets room to answer, but a
+// wedged one returns a clear 504 instead of hanging the request (and the client
+// spinner) forever. Override via LLM_CHAT_TIMEOUT_MS.
+const CHAT_TIMEOUT_MS = Number(process.env.LLM_CHAT_TIMEOUT_MS ?? '') || 90_000;
 
 /**
  * Task-scoped agent chat -> LiteLLM. Every "agent" surface in the OS UI (the
@@ -111,19 +119,60 @@ export async function POST(req: Request) {
         m.content.trim().length > 0,
     )
     .slice(-20)
-    .map((m) => ({ role: m.role, content: m.content.trim() }));
+    .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content.trim() }));
 
   if (clean.length === 0) {
     return NextResponse.json({ error: 'No message to send' }, { status: 400 });
   }
 
-  const system = SYSTEM_PROMPTS[agent] ?? FALLBACK_PROMPT;
+  // AGENTIC PATH: when this helper's key maps to a tab with an MCP tool surface,
+  // run the shared PLAN → ACT harness under the user's delegated identity so the
+  // helper actually CALLS its tab's governed tools (query data, predict, search
+  // knowledge, list systems, build software) instead of only chatting. Every tool
+  // call routes through the same governed dispatch (OPA + role gate + Langfuse).
+  const tab = tabForAgentKey(agent);
+  if (tab) {
+    const user = await currentUser();
+    if (!user) {
+      return NextResponse.json({ error: 'Sign in to use this assistant.' }, { status: 401 });
+    }
+    try {
+      const result = await runTabAgent({ user, tab, messages: clean });
+      return NextResponse.json({
+        role: 'assistant',
+        content: renderAssistantText(result),
+        model: config.litellmExecModel,
+      });
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') {
+        return NextResponse.json(
+          { error: 'The model did not respond in time — it may still be warming up. Try again in a few seconds.' },
+          { status: 504 },
+        );
+      }
+      return NextResponse.json(
+        { error: `The assistant could not complete the request: ${(e as Error).message}` },
+        { status: 502 },
+      );
+    }
+  }
+
+  // PLAIN PATH (keys with no tool surface, e.g. connections): ground the helper in
+  // its tab's CONTEXT.md (tools, golden path, constraints) so answers match the
+  // real, governed environment the user builds in.
+  const base = SYSTEM_PROMPTS[agent] ?? FALLBACK_PROMPT;
+  const tabContext = contextForAgentKey(agent);
+  const system = tabContext
+    ? `${base}\n\n--- TAB BUILD CONTEXT (authoritative environment reference) ---\n${tabContext}`
+    : base;
   const payload = {
     model: config.litellmChatModel,
     messages: [{ role: 'system', content: system }, ...clean],
     temperature: 0.2,
   };
 
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), CHAT_TIMEOUT_MS);
   try {
     const res = await fetch(`${config.litellmUrl}/v1/chat/completions`, {
       method: 'POST',
@@ -134,6 +183,7 @@ export async function POST(req: Request) {
       },
       body: JSON.stringify(payload),
       cache: 'no-store',
+      signal: ctrl.signal,
     });
     const text = await res.text();
     if (!res.ok) {
@@ -160,9 +210,17 @@ export async function POST(req: Request) {
       model: String(data?.model ?? config.litellmChatModel),
     });
   } catch (e) {
+    if ((e as Error).name === 'AbortError') {
+      return NextResponse.json(
+        { error: 'The model did not respond in time — it may still be warming up. Try again in a few seconds.' },
+        { status: 504 },
+      );
+    }
     return NextResponse.json(
       { error: `Could not reach LiteLLM: ${(e as Error).message}` },
       { status: 502 },
     );
+  } finally {
+    clearTimeout(timer);
   }
 }

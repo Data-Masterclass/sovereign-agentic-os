@@ -4,6 +4,7 @@
 'use client';
 
 import PageHeader from '@/components/PageHeader';
+import McpConnect from '@/components/McpConnect';
 import AgentSystems from '@/components/agents/AgentSystems';
 import { useApi } from '@/lib/useApi';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
@@ -26,6 +27,7 @@ export default function AgentsPage() {
     <>
       <PageHeader title="Agents" crumb="LangGraph agent systems — author, build & run" tutorial="agents" />
       <div className="content">
+        <McpConnect tab="agents" />
         <p className="lead">
           Author agent systems against their real artifacts — drag the canvas, edit
           <span className="mono"> system.yaml</span>, or ask the agent assistant — then Build to

@@ -3,9 +3,10 @@
  */
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import SystemsList from './SystemsList';
 import SystemView from './SystemView';
+import { getUrlParam, patchUrl } from '@/lib/url-params';
 
 /**
  * The Agents tab's three-level experience (Approach A): Systems list (Level 1) →
@@ -16,9 +17,28 @@ import SystemView from './SystemView';
 export default function AgentSystems() {
   const [openId, setOpenId] = useState<string | null>(null);
 
+  // Persist the open system in the URL (?system=<id>) so a reload restores the
+  // canvas + helper chat instead of dropping back to the list. Push on open so
+  // browser Back returns to the list; mirror back/forward via popstate.
+  useEffect(() => {
+    const sync = () => setOpenId(getUrlParam('system'));
+    sync();
+    window.addEventListener('popstate', sync);
+    return () => window.removeEventListener('popstate', sync);
+  }, []);
+
+  const open = useCallback((id: string) => {
+    setOpenId(id);
+    patchUrl({ system: id }, { push: true });
+  }, []);
+  const back = useCallback(() => {
+    setOpenId(null);
+    patchUrl({ system: null });
+  }, []);
+
   return openId ? (
-    <SystemView systemId={openId} onBack={() => setOpenId(null)} />
+    <SystemView systemId={openId} onBack={back} />
   ) : (
-    <SystemsList onOpen={(id) => setOpenId(id)} />
+    <SystemsList onOpen={open} />
   );
 }

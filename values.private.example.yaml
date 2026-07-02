@@ -44,6 +44,15 @@ litellm:
           model: openai/ministral-3:3b-instruct-2512-q4_K_M
           api_base: http://model-server:11434/v1
           api_key: "sk-local-unused"
+      # External Mac-Mini Ollama (qwen3:14b) over the WireGuard tunnel, reached via
+      # the in-cluster NAT forwarder Service. MUST be copied verbatim into the live
+      # (gitignored) values.private.yaml too — since this list REPLACES the base
+      # model_list wholesale, omitting it drops the `local-qwen` route entirely.
+      - model_name: local-qwen
+        litellm_params:
+          model: openai/qwen3:14b
+          api_base: http://wireguard-ollama:11434/v1   # NAT forwarder -> 10.10.0.2:11434
+          api_key: "sk-local-unused"
       - model_name: sovereign-embed
         litellm_params:
           model: openai/mock-embed

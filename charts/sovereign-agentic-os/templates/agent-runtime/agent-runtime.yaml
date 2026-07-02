@@ -39,6 +39,9 @@ data:
   PORT: "8000"
   LITELLM_BASE_URL: "http://agentic-os-litellm:4000/v1"
   CHAT_MODEL: {{ $r.chatModel | quote }}
+  # Two-tier hand-off: PLAN on the reasoning tier, EXECUTE on the execution tier.
+  REASONING_MODEL: {{ $r.reasoningModel | quote }}
+  EXECUTION_MODEL: {{ $r.executionModel | quote }}
   # The OS UI in-cluster Service ("os-ui", http port 3000) governed-tool endpoint.
   GOVERNED_TOOL_URL: "http://os-ui:3000/api/agents/tool"
 ---

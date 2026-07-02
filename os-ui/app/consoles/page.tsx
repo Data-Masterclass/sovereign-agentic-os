@@ -1,4 +1,5 @@
 import PageHeader from '@/components/PageHeader';
+import OpenToolButton from '@/components/OpenToolButton';
 import { config } from '@/lib/config';
 
 // Server component: the launchpad for the full external tool consoles. These
@@ -19,6 +20,8 @@ type Console = {
   url: string;
   forward: string;
   login?: string;
+  /** Registry key (lib/tool-proxy.ts) → opens same-origin in the overlay. */
+  toolKey?: string;
 };
 
 const CONSOLES: Console[] = [
@@ -37,6 +40,7 @@ const CONSOLES: Console[] = [
     url: config.supersetUrl,
     forward: 'kubectl -n agentic-os port-forward svc/agentic-os-superset 8088:8088',
     login: 'admin / superset-admin-local-dev',
+    toolKey: 'superset',
   },
   {
     name: 'Argo CD',
@@ -53,6 +57,7 @@ const CONSOLES: Console[] = [
     url: config.openmetadataUrl,
     forward: 'kubectl -n agentic-os port-forward svc/openmetadata 8585:8585',
     login: 'admin@open-metadata.org / admin',
+    toolKey: 'openmetadata',
   },
   {
     name: 'Dagster',
@@ -60,6 +65,7 @@ const CONSOLES: Console[] = [
     blurb: 'Orchestrator UI — materialize dbt assets, inspect run logs.',
     url: config.dagsterConsoleUrl,
     forward: 'kubectl -n agentic-os port-forward svc/agentic-os-dagster-webserver 3070:80',
+    toolKey: 'dagster',
   },
   {
     name: 'Forgejo',
@@ -68,6 +74,7 @@ const CONSOLES: Console[] = [
     url: config.forgejoConsoleUrl,
     forward: 'kubectl -n agentic-os port-forward svc/forgejo-http 3001:3000',
     login: 'gitea_admin / forgejo-admin-local-dev',
+    toolKey: 'forgejo',
   },
 ];
 
@@ -90,7 +97,16 @@ export default function ConsolesPage() {
                   <span className="ico" style={{ fontSize: 18, color: 'var(--teal)' }}>{c.glyph}</span>
                   <h3 style={{ margin: 0 }}>{c.name}</h3>
                 </div>
-                {c.url ? (
+                {c.toolKey ? (
+                  <div className="row" style={{ gap: 8 }}>
+                    <OpenToolButton toolKey={c.toolKey} title={c.name} className="btn" />
+                    {c.url ? (
+                      <a className="btn ghost" href={c.url} target="_blank" rel="noreferrer">
+                        Native ↗
+                      </a>
+                    ) : null}
+                  </div>
+                ) : c.url ? (
                   <a className="btn ghost" href={c.url} target="_blank" rel="noreferrer">
                     Open →
                   </a>

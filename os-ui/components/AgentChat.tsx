@@ -4,6 +4,7 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
+import { parseAgentChatResponse, stripThinking } from '@/lib/agent-chat-response';
 
 export type ChatMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -44,38 +45,59 @@ export default function AgentChat({
   /** Seed the window with prior turns (e.g. an app's saved build-chat history). */
   initialMessages?: ChatMessage[];
 }) {
-  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  // Persisted history can carry raw model output — strip any leaked reasoning
+  // scaffolding before it is ever displayed (belt-and-suspenders with the server).
+  const [messages, setMessages] = useState<ChatMessage[]>(() =>
+    initialMessages.map((m) =>
+      m.role === 'assistant' ? { ...m, content: stripThinking(m.content) } : m,
+    ),
+  );
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [stopped, setStopped] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const stop = useCallback(() => abortRef.current?.abort(), []);
 
   const send = useCallback(
     async (text: string) => {
       const content = text.trim();
       if (!content || loading) return;
       setError('');
+      setStopped(false);
       const next: ChatMessage[] = [...messages, { role: 'user', content }];
       setMessages(next);
       setInput('');
       setLoading(true);
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
       try {
         const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ agent, messages: next }),
+          signal: ctrl.signal,
         });
-        const data = await res.json();
-        if (!res.ok) {
-          setError(data.error ?? 'Request failed');
+        // Read as TEXT and parse defensively: a dead/errored model can return a
+        // non-JSON body, and res.json() would throw the raw DOMException "The
+        // string did not match the expected pattern." straight into the chat.
+        const raw = await res.text();
+        const parsed = parseAgentChatResponse(res.ok, res.status, raw);
+        if ('error' in parsed) {
+          setError(parsed.error);
         } else {
-          const reply = String(data.content ?? '');
-          setMessages((m) => [...m, { role: 'assistant', content: reply }]);
-          onAssistant?.(reply);
+          setMessages((m) => [...m, { role: 'assistant', content: parsed.content }]);
+          onAssistant?.(parsed.content);
         }
       } catch (e) {
-        setError((e as Error).message);
+        // A user-initiated Stop aborts the fetch — that's not an error, just a
+        // quiet return to the ready state.
+        if ((e as Error).name === 'AbortError') setStopped(true);
+        else setError((e as Error).message);
       } finally {
+        abortRef.current = null;
         setLoading(false);
         requestAnimationFrame(() => {
           scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -104,14 +126,28 @@ export default function AgentChat({
         {loading ? (
           <div className="bubble assistant">
             <div className="bubble-role">{label}</div>
-            <div className="bubble-body">
+            <div className="bubble-body row" style={{ gap: 8, alignItems: 'center' }}>
               <span className="spin" />
+              <span className="muted" style={{ fontSize: 12 }}>
+                Thinking… the model can take a moment on the first message while it warms up.
+              </span>
+              <button
+                type="button"
+                className="btn ghost sm"
+                style={{ marginLeft: 'auto' }}
+                onClick={stop}
+              >
+                Stop
+              </button>
             </div>
           </div>
         ) : null}
       </div>
 
       {error ? <div className="error" style={{ marginTop: 10 }}>{error}</div> : null}
+      {stopped ? (
+        <div className="muted" style={{ marginTop: 10, fontSize: 12 }}>Stopped.</div>
+      ) : null}
 
       {starters.length > 0 && messages.length === 0 ? (
         <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
@@ -150,9 +186,11 @@ export default function AgentChat({
         />
         <div className="row" style={{ marginTop: 10, justifyContent: 'space-between', alignItems: 'center' }}>
           <div className="hint" style={{ marginTop: 0 }}>⌘/Ctrl + Enter to send.</div>
-          <button className="btn" type="submit" disabled={loading || !input.trim()}>
-            {loading ? <span className="spin" /> : 'Send'}
-          </button>
+          {loading ? (
+            <button className="btn ghost" type="button" onClick={stop}>Stop</button>
+          ) : (
+            <button className="btn" type="submit" disabled={!input.trim()}>Send</button>
+          )}
         </div>
       </form>
     </div>

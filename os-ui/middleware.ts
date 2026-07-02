@@ -25,8 +25,12 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // API routes guard themselves (return 401 JSON), so let them pass.
-  if (pathname.startsWith('/api/')) return NextResponse.next();
+  // API routes AND the same-origin tool proxy guard themselves (return 401
+  // JSON via requireUser()), so let them pass rather than redirecting — an
+  // unauthenticated iframe should see a clean 401, not an HTML /signin page.
+  if (pathname.startsWith('/api/') || pathname.startsWith('/tools/')) {
+    return NextResponse.next();
+  }
 
   const token = req.cookies.get(SESSION_COOKIE)?.value;
   const claims = await verifySession(token, appConfig.sessionSecret);
