@@ -75,6 +75,18 @@ test('full-in-scope runs profile-allowed writes; out-of-policy (Blocked) is bloc
   assert.ok(r.queue);
 });
 
+test('cross-instance: standing policies and presets visible through globalThis symbols', () => {
+  _clearStandingPolicies();
+  _clearPresets();
+  rememberPolicy({ principal: 'conn-x', tool: 'write_x', maxAmount: 100, createdBy: 'admin' });
+  setDomainDefaultPreset('sales', 'read-bounded');
+  const standing = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.governance.standing2')] as { standing: Map<string, unknown> };
+  assert.ok(standing && standing.standing.size === 1, 'standing policy visible in globalThis');
+  const pst = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.governance.presets')] as { domainDefault: Map<string, unknown> };
+  assert.ok(pst && pst.domainDefault.get('sales') === 'read-bounded', 'preset visible in globalThis');
+  assert.ok(matchStandingPolicy('conn-x', 'write_x', { amount: 50 }));
+});
+
 test('effectivePreset: per-tool > per-agent > domain default > read-only', () => {
   _clearPresets();
   assert.equal(effectivePreset('ag', 'sales', 'conn', 'tool'), 'read-only');

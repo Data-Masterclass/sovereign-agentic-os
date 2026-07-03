@@ -44,7 +44,14 @@ export type Snapshot = ActualSet & {
 
 // In-process snapshot store keyed by pillarId → month → snapshot. Authoritative
 // locally (mirrors the registry's offline cache); a real deploy can mirror it.
-const store = new Map<string, Map<string, Snapshot>>();
+// Pinned to globalThis so every route-handler module instance shares the same Map.
+type SnapshotsState = { store: Map<string, Map<string, Snapshot>> };
+const SNAPS_KEY = Symbol.for('soa.strategy.snapshots');
+function snapshotsState(): SnapshotsState {
+  const g = globalThis as unknown as Record<symbol, SnapshotsState | undefined>;
+  if (!g[SNAPS_KEY]) g[SNAPS_KEY] = { store: new Map() };
+  return g[SNAPS_KEY]!;
+}
 
 /** Compute the live actuals for a pillar (the number a snapshot captures). */
 export async function liveActuals(pillar: Pillar): Promise<ActualSet> {
@@ -70,8 +77,9 @@ export async function recordSnapshot(user: CurrentUser, pillar: Pillar): Promise
   const actuals = await liveActuals(pillar);
   const month = monthKey();
   const snap: Snapshot = { pillarId: pillar.id, month, at: new Date().toISOString(), ...actuals };
-  let byMonth = store.get(pillar.id);
-  if (!byMonth) { byMonth = new Map(); store.set(pillar.id, byMonth); }
+  const snapStore = snapshotsState().store;
+  let byMonth = snapStore.get(pillar.id);
+  if (!byMonth) { byMonth = new Map(); snapStore.set(pillar.id, byMonth); }
   byMonth.set(month, snap);
   await auditStrategy({
     action: 'actuals.snapshot',
@@ -86,7 +94,7 @@ export async function recordSnapshot(user: CurrentUser, pillar: Pillar): Promise
 
 /** Snapshot history for a pillar, oldest → newest. */
 export function snapshotHistory(pillarId: string): Snapshot[] {
-  const byMonth = store.get(pillarId);
+  const byMonth = snapshotsState().store.get(pillarId);
   if (!byMonth) return [];
   return [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month));
 }
@@ -180,5 +188,5 @@ export async function targetsVsActuals(pillar: Pillar): Promise<TargetsVsActuals
 
 /** Test seam: clear snapshot history. */
 export function __resetSnapshotsForTests(): void {
-  store.clear();
+  snapshotsState().store.clear();
 }

@@ -6,6 +6,8 @@ import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/auth';
 import { authorize } from '@/lib/governed';
 import { assertTenantAccess, currentTenantId, type Tenant } from '@/lib/platform-admin/tenant';
+import { ensureHydrated as ensureDomainsHydrated } from '@/lib/platform-admin/domains';
+import { knownDomains } from '@/lib/users';
 import type { CurrentUser } from '@/lib/auth';
 
 /**
@@ -27,6 +29,9 @@ export type AdminCtx = { user: CurrentUser; tenant: Tenant; opa: 'opa-allow' | '
 
 export async function adminCtx(): Promise<AdminCtx> {
   const user = await requireAdmin(); // authoritative: 401/403
+  // Reflect the tenant's REAL domains: hydrate the registry (durable mirror +
+  // derive-from-users) once before any admin read, so Admin → Domains is never 0.
+  await ensureDomainsHydrated(knownDomains);
   const decision = await authorize(`user:${user.id}`, 'admin'); // defense-in-depth, non-fatal
   const tenant = assertTenantAccess(currentTenantId());
   return { user, tenant, opa: decision.policy };

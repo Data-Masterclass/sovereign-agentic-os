@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { listSystems, createSystem } from '@/lib/agents/store';
+import { isTemplateKey } from '@/lib/agents/templates';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,10 +30,13 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
     const name = typeof body.name === 'string' ? body.name : '';
     if (!name.trim()) return NextResponse.json({ error: 'A system name is required.' }, { status: 400 });
+    // Security: visibility is NOT accepted from the client — a new system is
+    // always Personal. Sharing/publishing is the governed `promoteSystem` ladder.
     const rec = createSystem(user, {
       name,
       domain: typeof body.domain === 'string' ? body.domain : undefined,
-      visibility: body.visibility === 'Shared' || body.visibility === 'Marketplace' ? body.visibility : undefined,
+      // A server-authored template only (validated key) — never client yaml.
+      template: isTemplateKey(body.template) ? body.template : undefined,
     });
     return NextResponse.json({ id: rec.id });
   } catch (e) {

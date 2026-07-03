@@ -10,6 +10,7 @@ import {
   type ArtifactOrigin,
 } from '@/lib/artifact-model';
 import { canPromote } from '@/lib/session';
+import { roleRank } from '@/lib/governance/roles';
 import type { CurrentUser } from '@/lib/auth';
 
 /**
@@ -24,8 +25,13 @@ import type { CurrentUser } from '@/lib/auth';
  * scoping rules below are the security boundary regardless of backing store.
  */
 
-let cache: Map<string, Artifact> | null = null;
-let osHealthy = false;
+type ArtifactCacheState = { cache: Map<string, Artifact> | null; osHealthy: boolean };
+const ARTIFACT_STATE_KEY = Symbol.for('soa.artifacts.cache');
+function artifactCacheState(): ArtifactCacheState {
+  const g = globalThis as unknown as Record<symbol, ArtifactCacheState | undefined>;
+  if (!g[ARTIFACT_STATE_KEY]) g[ARTIFACT_STATE_KEY] = { cache: null, osHealthy: false };
+  return g[ARTIFACT_STATE_KEY]!;
+}
 
 function now(): string {
   return new Date().toISOString();
@@ -82,7 +88,7 @@ async function ensureIndex(): Promise<void> {
 }
 
 function writeThrough(a: Artifact): void {
-  if (!osHealthy) return;
+  if (!artifactCacheState().osHealthy) return;
   // Fire-and-forget durable mirror; never block the request on it.
   void osFetch(`/${config.artifactsIndex}/_doc/${a.id}?refresh=true`, {
     method: 'PUT',
@@ -91,13 +97,21 @@ function writeThrough(a: Artifact): void {
 }
 
 function deleteThrough(artId: string): void {
-  if (!osHealthy) return;
+  if (!artifactCacheState().osHealthy) return;
   void osFetch(`/${config.artifactsIndex}/_doc/${artId}?refresh=true`, { method: 'DELETE' });
 }
 
 // ------------------------------------------------------------------- Seeding --
 
-function seed(): Artifact[] {
+/**
+ * Demo artifacts for the WORKED EXAMPLE only. A fresh cohort tenant must start
+ * EMPTY — these Certified rows would otherwise populate the cross-domain
+ * Marketplace with importable items on an empty index. So the seed is OFF by
+ * default and only returns rows when `SEED_DEMO_ARTIFACTS=1` (a dev/teaching
+ * flag). Exported for the test that pins this "empty by default" invariant.
+ */
+export function seed(): Artifact[] {
+  if (process.env.SEED_DEMO_ARTIFACTS !== '1') return [];
   const t = now();
   const mk = (a: Partial<Artifact> & Pick<Artifact, 'id' | 'type' | 'name' | 'owner' | 'domain' | 'visibility'>): Artifact => ({
     description: '',
@@ -124,12 +138,13 @@ function seed(): Artifact[] {
 }
 
 async function getCache(): Promise<Map<string, Artifact>> {
-  if (cache) return cache;
+  const s = artifactCacheState();
+  if (s.cache) return s.cache;
   const map = new Map<string, Artifact>();
   // Try to hydrate from OpenSearch; fall back to the in-memory seed.
   const ping = await osFetch(`/${config.artifactsIndex}/_count`);
   if (ping && ping.ok) {
-    osHealthy = true;
+    s.osHealthy = true;
     await ensureIndex();
     const res = await osFetch(`/${config.artifactsIndex}/_search?size=1000`, {
       method: 'POST',
@@ -147,10 +162,10 @@ async function getCache(): Promise<Map<string, Artifact>> {
       }
     }
   } else {
-    osHealthy = false;
+    s.osHealthy = false;
     for (const a of seed()) map.set(a.id, a);
   }
-  cache = map;
+  s.cache = map;
   return map;
 }
 
@@ -265,6 +280,12 @@ export async function promoteArtifact(artId: string, user: CurrentUser): Promise
 
 /** Add a Certified Marketplace artifact into the caller's own workspace. */
 export async function addFromMarketplace(artId: string, user: CurrentUser): Promise<Artifact> {
+  // Security: importing a cross-domain Certified item into your workspace is a
+  // Builder+ action. A participant/creator must request it through Governance;
+  // they cannot self-import (checked BEFORE any lookup so the answer is uniform).
+  if (roleRank(user.role) < roleRank('builder')) {
+    throw withStatus(new Error('Importing from the Marketplace requires a Builder or Admin — request access via Governance'), 403);
+  }
   const map = await getCache();
   const src = map.get(artId);
   if (!src || src.visibility !== 'Certified' || src.origin !== 'authored') {
@@ -327,6 +348,12 @@ export async function deleteArtifact(artId: string, user: CurrentUser): Promise<
 function withStatus(err: Error, status: number): Error {
   (err as Error & { status?: number }).status = status;
   return err;
+}
+
+export function __resetArtifactsCache(): void {
+  const s = artifactCacheState();
+  s.cache = null;
+  s.osHealthy = false;
 }
 
 export type { Artifact, ArtifactType, Visibility, ArtifactOrigin };

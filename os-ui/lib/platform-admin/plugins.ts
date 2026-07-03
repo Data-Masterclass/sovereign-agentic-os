@@ -34,7 +34,12 @@ function fail(message: string, status: number): Error {
   return e;
 }
 
-const store = new Map<string, Plugin>();
+const PLUGINS_KEY = Symbol.for('soa.platform.plugins');
+function pluginsStore(): Map<string, Plugin> {
+  const g = globalThis as unknown as Record<symbol, Map<string, Plugin> | undefined>;
+  if (!g[PLUGINS_KEY]) g[PLUGINS_KEY] = new Map();
+  return g[PLUGINS_KEY]!;
+}
 
 function seed(): void {
   // A fresh tenant starts EMPTY — admins install plugins from the marketplace.
@@ -43,12 +48,12 @@ function seed(): void {
 
 export function listPlugins(): Plugin[] {
   seed();
-  return [...store.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return [...pluginsStore().values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function installPlugin(id: string): Plugin {
   seed();
-  const p = store.get(id);
+  const p = pluginsStore().get(id);
   if (!p) throw fail('Unknown plugin', 404);
   if (!p.signed || !p.scanned) throw fail('Plugin must be signed AND scanned before install', 409);
   if (p.status === 'available') p.status = 'installed';
@@ -57,7 +62,7 @@ export function installPlugin(id: string): Plugin {
 
 export function approvePlugin(id: string, domains: string[]): Plugin {
   seed();
-  const p = store.get(id);
+  const p = pluginsStore().get(id);
   if (!p) throw fail('Unknown plugin', 404);
   if (p.status === 'available') throw fail('Install the plugin before approving it for domains', 409);
   p.status = 'approved';
@@ -95,12 +100,12 @@ export function registerMarketplace(input: { listingName?: string; partnerId: st
 }
 
 export function _reset(): void {
-  store.clear();
+  pluginsStore().clear();
   registration = { registered: false, listingName: 'Sovereign Agentic OS — Data Masterclass', partnerId: '', status: 'unregistered' };
 }
 
 /** Test hook: register plugins so the install/approve gates can be exercised.
  *  Production curates plugins via the marketplace, not a baked-in seed. */
 export function __seedPlugins(rows: Plugin[]): void {
-  for (const p of rows) store.set(p.id, p);
+  for (const p of rows) pluginsStore().set(p.id, p);
 }

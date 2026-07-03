@@ -129,7 +129,7 @@ export default function RefinePanel({
           {busy === 'author' ? <span className="spin" /> : `Build ${stage.copy.title.split(' ')[0]} version`}
         </button>
       </div>
-      <p className="hint" style={{ textAlign: 'right' }}>Tests run on Build / Promote — no checkmark until they pass.</p>
+      <p className="hint" style={{ textAlign: 'right' }}>The dbt data-quality tests run when this builds into Trino at deploy — no green check until they pass.</p>
 
       <div className="passthrough-note">
         <strong>Already {stage.layer === 'silver' ? 'clean and keyed' : 'business-ready'}?</strong>{' '}

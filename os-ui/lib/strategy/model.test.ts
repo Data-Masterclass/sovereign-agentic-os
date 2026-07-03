@@ -115,7 +115,7 @@ test('RLS: two viewers of the same pillar see different, correctly-scoped totals
 });
 
 test('entitledToDomain: tenant is public; platform admin is tenant-wide', () => {
-  const sales = { domains: ['sales'], role: 'participant' as const };
+  const sales = { domains: ['sales'], role: 'creator' as const };
   assert.equal(entitledToDomain(sales, 'tenant'), true);
   assert.equal(entitledToDomain(sales, 'sales'), true);
   assert.equal(entitledToDomain(sales, 'marketing'), false);
@@ -131,7 +131,7 @@ test('reconciles tolerates integer-cent rounding but rejects real drift', () => 
 test('role gate: Creators view but cannot edit; Builder edits own domain; Admin owns tenant', () => {
   const tenantPillar = { scope: 'tenant' as const, domain: 'tenant' };
   const salesPillar = { scope: 'domain' as const, domain: 'sales' };
-  const creator = { domains: ['sales'], role: 'participant' as const };
+  const creator = { domains: ['sales'], role: 'creator' as const };
   const builder = { domains: ['sales'], role: 'builder' as const };
   const admin = { domains: ['platform', 'sales'], role: 'admin' as const };
 

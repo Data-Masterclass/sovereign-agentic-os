@@ -17,7 +17,7 @@ import {
   sha,
 } from './store.ts';
 
-const participant = { id: 'amir', domains: ['sales'], role: 'participant' as const };
+const participant = { id: 'amir', domains: ['sales'], role: 'creator' as const };
 const builder = { id: 'bea', domains: ['sales'], role: 'builder' as const };
 const admin = { id: 'sara', domains: ['sales', 'finance'], role: 'admin' as const };
 const outsider = { id: 'kenji', domains: ['finance'], role: 'builder' as const };
@@ -165,4 +165,12 @@ test('outsider cannot update domain knowledge', () => {
     () => updateDomainKnowledge('sales', outsider, { sections: [{ id: 'overview', content: 'x' }] }),
     /permitted/i,
   );
+});
+
+test('cross-instance: workflow writes are visible through globalThis symbol', () => {
+  __resetStore();
+  const rec = createWorkflow(participant, { title: 'CI Workflow', domain: 'sales' });
+  const raw = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.knowledge.store')] as { workflows: Map<string, unknown> };
+  assert.ok(raw && raw.workflows.has(rec.id), 'record visible in globalThis state');
+  assert.equal(listWorkflows(participant).mine.length, 1);
 });

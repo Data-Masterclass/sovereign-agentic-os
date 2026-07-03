@@ -38,9 +38,6 @@ export const config = {
   // sample-agent (LangGraph RAG): GET {SAMPLE_AGENT_URL}/ask?q=...
   sampleAgentUrl: base(env('SAMPLE_AGENT_URL', 'http://sample-agent:8000')),
 
-  // poet-agent (LangGraph compose→save): GET {POET_AGENT_URL}/write?topic=...
-  poetAgentUrl: base(env('POET_AGENT_URL', 'http://poet-agent:8000')),
-
   // agent-runtime (shared LangGraph IR interpreter, Agents tab live execution):
   // POST {AGENT_RUNTIME_URL}/reload  {systemId, ir}  — register a compiled graph;
   // POST {AGENT_RUNTIME_URL}/run     {systemId, prompt, ...guards} — one invocation.
@@ -86,6 +83,14 @@ export const config = {
   // App registry index (Software golden path). Best-effort durable mirror of the
   // in-process app store; the OS UI degrades to in-memory when OpenSearch is off.
   appsIndex: env('APPS_INDEX', 'os-apps'),
+  // Dataset registry index (Data tab). Best-effort durable mirror of the
+  // in-process dataset store so seeded datasets/metrics survive an os-ui restart;
+  // degrades to in-memory when OpenSearch is off.
+  datasetsIndex: env('DATASETS_INDEX', 'os-datasets'),
+  // Domain registry index (Platform-Admin). Durable mirror of the domain store;
+  // when it is empty (or OpenSearch is off) the domains are DERIVED from the
+  // tenant's users so Admin → Domains reflects the real tenant, never 0.
+  domainsIndex: env('DOMAINS_INDEX', 'os-domains'),
 
   // ---- Files tab (unstructured context products). The `files` hybrid index, the
   // shared embedding model + its k-NN dimension, and the ingest-by-type services.
@@ -150,6 +155,14 @@ export const config = {
   harborEnabled: env('HARBOR_ENABLED', '') === 'true',
   harborRegistry: env('HARBOR_REGISTRY', 'forgejo-http:3000/gitea_admin'),
 
+  // Hermes autonomous runtime (Layer 1, opt-in). GATED OFF by default — the chart
+  // sets HERMES_ENABLED=true only when `hermes.enabled` is on (never in base/kind).
+  // When off the Agent tab still SHOWS the runtime option (documented) but the
+  // gateway is not provisioned. The gateway (when on) reaches models ONLY via
+  // LiteLLM and tools ONLY via the governed /api/mcp surface.
+  hermesEnabled: env('HERMES_ENABLED', '') === 'true',
+  hermesGatewayUrl: base(env('HERMES_GATEWAY_URL', 'http://hermes-gateway:8080')),
+
   // LiteLLM gateway (Models & Tools): GET {LITELLM_URL}/v1/models +
   // {LITELLM_URL}/v1/mcp/tools  (Bearer master key).
   litellmUrl: base(env('LITELLM_URL', 'http://agentic-os-litellm:4000')),
@@ -167,6 +180,12 @@ export const config = {
   // OPA (Policy): POST {OPA_URL}/v1/data/agentic/authz/allow and
   // GET {OPA_URL}/v1/data/grants for the principal -> tools grant map.
   opaUrl: base(env('OPA_URL', 'http://opa:8181')),
+  // Data-authz FAIL MODE. Default DENY-by-default: if OPA is unreachable/errors
+  // the governed data spine (`lib/governed.ts`) DENIES — consistent with the
+  // agent spine. Set OPA_FAIL_OPEN=true ONLY for the offline-mock teaching flow
+  // on a laptop with no OPA; a LIVE cluster must leave this unset so an OPA
+  // outage cannot silently open every metrics/query authz.
+  opaFailOpen: env('OPA_FAIL_OPEN', '').toLowerCase() === 'true',
 
   // Platform / Components surface — namespace the stack workloads live in. The
   // OS UI server reads their status + scales them 0<->1 NATIVELY via the

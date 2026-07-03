@@ -55,12 +55,68 @@ spec:
         runAsUser: 10000        # image's 'polaris' user (numeric, for runAsNonRoot)
         runAsGroup: 10001
       {{- if eq $pl.persistenceType "relational-jdbc" }}
+      # Bootstrap the JDBC metastore ONCE per realm: create `polaris_schema` + the
+      # realm's root principal in the `polaris` Postgres DB. Polaris does NOT
+      # self-create the schema for relational-jdbc, so this MUST run before the server.
+      # The admin tool's `bootstrap` is NOT idempotent (1.0.1 has no --if-not-exists):
+      # re-running it on an already-bootstrapped realm exits non-zero
+      # ("Bootstrap encountered errors during operation"), which would CrashLoop the
+      # pod on every restart/redeploy. So we GATE it: `bootstrap-check` looks for the
+      # realm's root-principal row in Postgres and writes a sentinel; the `bootstrap`
+      # container runs the admin tool only when that row is absent. Both initContainers
+      # re-run on every pod start AND every Argo sync (Helm hooks / a post-install-only
+      # trick do NOT give run-once semantics under GitOps), so gating — not hooks — is
+      # what makes this safe: an already-bootstrapped realm is a no-op and the server
+      # starts normally.
       initContainers:
-        # Bootstrap the JDBC metastore: create `polaris_schema` + the realm's root
-        # principal in the `polaris` Postgres DB. Polaris does NOT self-create the
-        # schema for relational-jdbc, so this MUST run before the server. Idempotent
-        # — re-bootstrapping an existing realm is a no-op — so it is safe on every
-        # pod start; it also retries until pg-rw is reachable (initdb wave 0).
+        # 1) Detect whether the realm is already bootstrapped. `to_regclass` returns
+        #    NULL (no error) on a fresh DB where `polaris_schema` does not exist yet, so
+        #    the query is safe pre-bootstrap. Waits for pg-rw first (fresh-install race).
+        - name: bootstrap-check
+          image: "{{ .Values.postgres.plainImage.repository }}:{{ .Values.postgres.plainImage.tag }}{{ if .Values.postgres.plainImage.digest }}@{{ .Values.postgres.plainImage.digest }}{{ end }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              export PGPASSWORD="$PG_PASSWORD"
+              echo "waiting for Postgres ($PG_HOST/$PG_DB) ..."
+              ok=
+              for i in $(seq 1 60); do
+                if psql -h "$PG_HOST" -U "$PG_USER" -d "$PG_DB" -tAc 'select 1' >/dev/null 2>&1; then ok=1; break; fi
+                sleep 2
+              done
+              if [ -z "$ok" ]; then echo "ERROR: Postgres not reachable"; exit 1; fi
+              cnt=$(psql -h "$PG_HOST" -U "$PG_USER" -d "$PG_DB" -tAc \
+                "select case when to_regclass('polaris_schema.principal_authentication_data') is null then 0 else (select count(*) from polaris_schema.principal_authentication_data where realm_id = '$POLARIS_REALM') end")
+              cnt=$(printf '%s' "$cnt" | tr -d '[:space:]')
+              if [ "${cnt:-0}" -gt 0 ]; then
+                echo "realm '$POLARIS_REALM' already bootstrapped ($cnt root-principal row(s)) -- skipping bootstrap"
+                : > /bootstrap-state/done
+              else
+                echo "realm '$POLARIS_REALM' not bootstrapped -- bootstrap will run"
+                : > /bootstrap-state/needed
+              fi
+          env:
+            - name: PG_HOST
+              value: {{ include "soa.pgHost" . | quote }}
+            - name: PG_DB
+              value: {{ $pl.jdbc.database | quote }}
+            - name: PG_USER
+              valueFrom: { secretKeyRef: { name: {{ $pl.jdbc.secretName }}, key: username } }
+            - name: PG_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $pl.jdbc.secretName }}, key: password } }
+            - name: POLARIS_REALM
+              value: {{ $pl.realm | quote }}
+          volumeMounts:
+            - { name: bootstrap-state, mountPath: /bootstrap-state }
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+        # 2) Bootstrap ONLY when step 1 said the realm is missing. On skip this exits 0
+        #    immediately, so the server starts even after a restart/redeploy.
         - name: bootstrap
           image: "{{ $pl.adminImage.repository }}:{{ $pl.adminImage.tag }}{{ if $pl.adminImage.digest }}@{{ $pl.adminImage.digest }}{{ end }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
@@ -68,7 +124,16 @@ spec:
             {{- include "soa.containerSecurityContext" . | nindent 12 }}
           # POLARIS_BOOTSTRAP_CREDENTIALS is already "realm,clientId,clientSecret" —
           # exactly the `-c` format the admin tool expects.
-          args: ["bootstrap", "-r", "$(POLARIS_REALM)", "-c", "$(POLARIS_BOOTSTRAP_CREDENTIALS)"]
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              if [ -f /bootstrap-state/done ]; then
+                echo "realm '$POLARIS_REALM' already bootstrapped -- skipping admin-tool"
+                exit 0
+              fi
+              echo "bootstrapping realm '$POLARIS_REALM' ..."
+              exec /opt/jboss/container/java/run/run-java.sh bootstrap -r "$POLARIS_REALM" -c "$POLARIS_BOOTSTRAP_CREDENTIALS"
           env:
             - name: POLARIS_PERSISTENCE_TYPE
               value: {{ $pl.persistenceType | quote }}
@@ -84,8 +149,13 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ $pl.jdbc.secretName }}, key: username } }
             - name: QUARKUS_DATASOURCE_PASSWORD
               valueFrom: { secretKeyRef: { name: {{ $pl.jdbc.secretName }}, key: password } }
+          volumeMounts:
+            - { name: bootstrap-state, mountPath: /bootstrap-state }
           resources:
             {{- toYaml $pl.resources | nindent 12 }}
+      volumes:
+        - name: bootstrap-state
+          emptyDir: {}
       {{- end }}
       containers:
         - name: polaris
@@ -122,6 +192,25 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_ACCESS_KEY_ID } }
             - name: AWS_SECRET_ACCESS_KEY
               valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_SECRET_ACCESS_KEY } }
+            # MinIO / STACKIT Object Storage have NO AWS STS endpoint, so Polaris cannot
+            # mint sub-scoped (AssumeRole) credentials for its OWN write/commit FileIO — the
+            # create-table COMMIT failed with "Failed to get subscoped credentials ... Sts,
+            # Status Code: 403". This feature flag makes Polaris skip credential-subscoping
+            # entirely (FileIOUtil.refreshAccessConfig returns an empty AccessConfig instead of
+            # calling STS), so the write FileIO uses the static AWS_* creds above (AWS SDK
+            # APPLICATION_DEFAULT chain). Because the skipped sub-scoping also stops injecting
+            # the S3 endpoint + path-style, those are re-supplied to new tables via the
+            # `table-default.s3.*` catalog properties (see polaris-bootstrap.yaml).
+            #
+            # The flag MUST be passed as a JVM system property, NOT the env-var form
+            # POLARIS_FEATURES_SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION: Quarkus/SmallRye maps
+            # feature flags under the dynamic map key polaris.features."<NAME>", and the
+            # relaxed-env-name back-mapping for a *quoted* map key silently no-ops (the env
+            # var is accepted but never bound), so sub-scoping was still attempted -> STS 403.
+            # JAVA_OPTS_APPEND sets the property unambiguously on the JVM (run-java.sh appends
+            # it), matching the exact config path polaris.features."SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION".
+            - name: JAVA_OPTS_APPEND
+              value: '-Dpolaris.features."SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION"=true'
           ports:
             - { name: catalog, containerPort: 8181 }
             - { name: mgmt, containerPort: 8182 }

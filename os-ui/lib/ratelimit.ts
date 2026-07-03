@@ -12,7 +12,12 @@ import 'server-only';
  */
 
 type Bucket = { count: number; resetAt: number };
-const buckets = new Map<string, Bucket>();
+const BKTS_KEY = Symbol.for('soa.ratelimit.buckets');
+function bkts(): Map<string, Bucket> {
+  const g = globalThis as unknown as Record<symbol, Map<string, Bucket> | undefined>;
+  if (!g[BKTS_KEY]) g[BKTS_KEY] = new Map();
+  return g[BKTS_KEY]!;
+}
 
 export type RateResult = { ok: boolean; retryAfter: number };
 
@@ -22,9 +27,9 @@ export type RateResult = { ok: boolean; retryAfter: number };
  */
 export function rateLimit(key: string, limit: number, windowMs: number): RateResult {
   const now = Date.now();
-  const b = buckets.get(key);
+  const b = bkts().get(key);
   if (!b || now >= b.resetAt) {
-    buckets.set(key, { count: 1, resetAt: now + windowMs });
+    bkts().set(key, { count: 1, resetAt: now + windowMs });
     return { ok: true, retryAfter: 0 };
   }
   b.count++;
@@ -36,7 +41,7 @@ export function rateLimit(key: string, limit: number, windowMs: number): RateRes
 
 /** Clear a key's window after a successful auth so good users aren't penalised. */
 export function rateLimitReset(key: string): void {
-  buckets.delete(key);
+  bkts().delete(key);
 }
 
 /**

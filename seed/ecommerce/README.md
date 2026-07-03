@@ -27,17 +27,21 @@ Customer Health dashboard under the Retention pillar.
 
 ## The cast (governed demo identities)
 
-| id | role | domains |
-| --- | --- | --- |
-| `nova-admin` | admin | platform, sales, marketing, ops |
-| `sasha-sales` | builder | sales |
-| `morgan-mktg` | builder | marketing |
-| `omar-ops` | builder | ops |
-| `riley-sales` | creator | sales |
-| `kai-mktg` | creator | marketing |
-| `devi-ops` | creator | ops |
+Each user signs in **by email** (the human login label); the `id` is the internal
+principal (owner / OPA / DLS key) — both resolve the same account.
 
-`users.example.json` shows the shape. **Passwords are never committed** —
+| id | email (sign-in) | role | domains |
+| --- | --- | --- | --- |
+| `nova-admin` | nova@northpeak.demo | admin | platform, sales, marketing, ops |
+| `sasha-sales` | sasha@northpeak.demo | builder | sales |
+| `morgan-mktg` | morgan@northpeak.demo | builder | marketing |
+| `omar-ops` | omar@northpeak.demo | builder | ops |
+| `riley-sales` | riley@northpeak.demo | creator | sales |
+| `kai-mktg` | kai@northpeak.demo | creator | marketing |
+| `devi-ops` | devi@northpeak.demo | creator | ops |
+
+`users.example.json` shows the shape (`id` · `email` · `password` · `domains` ·
+`role`; a valid `email` is required). **Passwords are never committed** —
 `gen-credentials.mjs` generates them into two gitignored files:
 `users.secret.json` (the seed's `SEED_CREDENTIALS`) and `os-users.seed.json`
 (the `OS_USERS` / `osUI.usersSeed` value).

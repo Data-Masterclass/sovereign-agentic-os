@@ -26,6 +26,7 @@ import {
 import { transparencyGate, gateReason } from './transparency.ts';
 import { CUBE_ARTIFACT, EXPOSURE_ARTIFACT, scaffoldCubeYaml, scaffoldExposureYaml } from './metrics.ts';
 import { assetTarget, productTarget } from './store-fqn.ts';
+import { config } from '../config.ts';
 
 // Re-export the FQN helpers so existing consumers keep importing them from the store.
 export { assetTarget, productTarget } from './store-fqn.ts';
@@ -71,11 +72,114 @@ export type DatasetSummary = {
   storage: ReturnType<typeof storageFor>;
 };
 
-const store = new Map<string, DatasetRecord>();
-let seeded = false;
+type DataStoreState = { store: Map<string, DatasetRecord>; seeded: boolean; osHealthy: boolean; hydration: Promise<void> | null };
+const DS_KEY = Symbol.for('soa.data.store');
+function ds(): DataStoreState {
+  const g = globalThis as unknown as Record<symbol, DataStoreState | undefined>;
+  if (!g[DS_KEY]) g[DS_KEY] = { store: new Map(), seeded: false, osHealthy: false, hydration: null };
+  return g[DS_KEY]!;
+}
 
 function now(): string {
   return new Date().toISOString();
+}
+
+// ---------------------------------------------------- durable mirror (best-effort) --
+/**
+ * Durability mirrors the artifact/app/user stores: this in-process Map is the
+ * authoritative fast cache (works with NO cluster), plus a best-effort OpenSearch
+ * mirror ("os-datasets") so the seeded Northpeak datasets/metrics SURVIVE an os-ui
+ * restart (metrics/store derives read-only from here, so it becomes durable too).
+ * Hydration is awaited ONCE at the app-tier seam (lib/data/server.ts); writes are
+ * mirrored fire-and-forget. Every backend path is graceful — an unreachable
+ * OpenSearch NEVER fails a request; the store simply stays in-memory.
+ *
+ * NOTE: kept free of `server-only`/Next imports (only `config` + global `fetch`) so
+ * the store stays directly unit-testable.
+ */
+
+async function osFetch(path: string, init?: RequestInit): Promise<Response | null> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 2500);
+  try {
+    return await fetch(`${config.opensearchUrl}${path}`, {
+      ...init,
+      signal: ctrl.signal,
+      cache: 'no-store',
+      headers: { 'content-type': 'application/json', accept: 'application/json', ...(init?.headers ?? {}) },
+    });
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function ensureIndex(): Promise<void> {
+  const head = await osFetch(`/${config.datasetsIndex}`, { method: 'HEAD' });
+  if (head && head.status === 404) {
+    await osFetch(`/${config.datasetsIndex}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        mappings: {
+          properties: {
+            id: { type: 'keyword' },
+            owner: { type: 'keyword' },
+            domain: { type: 'keyword' },
+            updatedAt: { type: 'date' },
+            // The single-source yaml + tool-native bodies are STORED (in _source)
+            // but not indexed: `artifacts` has arbitrary file-path keys, which
+            // would otherwise explode the mapping.
+            yaml: { type: 'text', index: false },
+            artifacts: { type: 'object', enabled: false },
+          },
+        },
+      }),
+    });
+  }
+}
+
+function writeThrough(rec: DatasetRecord): void {
+  if (!ds().osHealthy) return;
+  void osFetch(`/${config.datasetsIndex}/_doc/${rec.id}?refresh=true`, {
+    method: 'PUT',
+    body: JSON.stringify(rec),
+  });
+}
+
+/**
+ * Hydrate the in-process cache from the durable mirror, once per process. Awaited
+ * at the server boundary (requirePrincipal) BEFORE any read, so a restarted os-ui
+ * serves the persisted datasets. Idempotent + graceful (offline → in-memory only).
+ */
+export async function ensureHydrated(): Promise<void> {
+  const s = ds();
+  if (!s.hydration) s.hydration = hydrate();
+  return s.hydration;
+}
+
+async function hydrate(): Promise<void> {
+  const s = ds();
+  const ping = await osFetch(`/${config.datasetsIndex}/_count`);
+  if (ping && ping.ok) {
+    s.osHealthy = true;
+    await ensureIndex();
+    const res = await osFetch(`/${config.datasetsIndex}/_search?size=1000`, {
+      method: 'POST',
+      body: JSON.stringify({ query: { match_all: {} } }),
+    });
+    if (res && res.ok) {
+      const data = (await res.json()) as { hits?: { hits?: { _source: DatasetRecord }[] } };
+      for (const h of data?.hits?.hits ?? []) {
+        const rec = h._source;
+        // Don't clobber records created in-process before hydration completed.
+        if (rec && rec.id && !s.store.has(rec.id)) s.store.set(rec.id, rec);
+      }
+    }
+  } else {
+    s.osHealthy = false;
+  }
+  s.seeded = true;
 }
 
 function newId(): string {
@@ -97,21 +201,25 @@ function fail(message: string, status: number): never {
 /** A fresh tenant starts EMPTY. Content is created only through the platform's
  *  own governed flows (e.g. the Northpeak e-commerce seed), never baked in. */
 function ensureSeeded(): void {
-  if (seeded) return;
-  seeded = true;
+  if (ds().seeded) return;
+  ds().seeded = true;
 }
 
-/** Test hook: wipe the in-process store + reseed. */
+/** Test hook: wipe the in-process store + reseed (and forget the durable mirror
+ *  state, so a fresh hydration can run — mirrors an os-ui restart). */
 export function __resetStore(): void {
-  store.clear();
-  seeded = false;
+  const s = ds();
+  s.store.clear();
+  s.seeded = false;
+  s.osHealthy = false;
+  s.hydration = null;
 }
 
 // ------------------------------------------------------------------- scoping --
 
 function get(id: string): DatasetRecord {
   ensureSeeded();
-  const rec = store.get(id);
+  const rec = ds().store.get(id);
   if (!rec) fail('Dataset not found', 404);
   return rec;
 }
@@ -150,6 +258,7 @@ function persist(rec: DatasetRecord, d: Dataset): DatasetRecord {
   rec.owner = d.owner;
   rec.domain = d.domain;
   rec.updatedAt = now();
+  writeThrough(rec); // best-effort durable mirror
   return rec;
 }
 
@@ -188,7 +297,7 @@ export function listDatasets(user: Principal): DatasetGroups {
   const mine: DatasetSummary[] = [];
   const domain: DatasetSummary[] = [];
   const marketplace: DatasetSummary[] = [];
-  for (const rec of store.values()) {
+  for (const rec of ds().store.values()) {
     const d = parseDataset(rec.yaml);
     if (d.owner === user.id) mine.push(summarise(d));
     else if (d.tier === 'product') marketplace.push(summarise(d));
@@ -222,7 +331,8 @@ export function createDataset(user: Principal, input: { name: string; domain?: s
     columns: [],
   };
   const rec: DatasetRecord = { id: d.id, owner: d.owner, domain: d.domain, yaml: serializeDataset(d), updatedAt: now() };
-  store.set(rec.id, rec);
+  ds().store.set(rec.id, rec);
+  writeThrough(rec); // best-effort durable mirror
   return d;
 }
 
@@ -490,6 +600,13 @@ export function applyApprovedCertification(req: CertificationRequest, approver: 
  * into the OPA allow + Cube access for that domain. Idempotent per domain.
  */
 export function importProduct(id: string, importer: Principal): Dataset {
+  // Security: importing a cross-domain data product grants the WHOLE importing
+  // domain read access, so it is a Builder+ action. A participant/creator is
+  // blocked (403) and must ask a domain Builder/Admin — this is the real control
+  // (middleware lets every /api/* through to self-guard).
+  if (importer.role !== 'builder' && importer.role !== 'admin') {
+    fail('Importing a data product requires a Builder or Admin — ask a domain Builder to import it', 403);
+  }
   const rec = get(id);
   const d = parseDataset(rec.yaml);
   if (d.tier !== 'product') fail('Only a certified data product can be imported', 409);
@@ -511,7 +628,7 @@ export function importProduct(id: string, importer: Principal): Dataset {
 export function listImported(user: Principal): DatasetSummary[] {
   ensureSeeded();
   const out: DatasetSummary[] = [];
-  for (const rec of store.values()) {
+  for (const rec of ds().store.values()) {
     const d = parseDataset(rec.yaml);
     if (d.tier === 'product' && user.domains.some((dm) => d.imports?.includes(dm))) out.push(summarise(d));
   }

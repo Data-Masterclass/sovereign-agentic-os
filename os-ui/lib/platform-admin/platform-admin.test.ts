@@ -7,13 +7,13 @@ import assert from 'node:assert/strict';
 import { assertTenantAccess, currentTenantId, getTenant, updateTenant } from './tenant.ts';
 import { assertGuarded, confirmationPhrase, GuardError } from './guard.ts';
 import { compile, type CompileInput } from './policy-compiler.ts';
-import { _reset as resetDomains, createDomain, setLayer, setArchived, listDomains, compilerView } from './domains.ts';
-import { _reset as resetSec, addAllowlist, removeAllowlist, decideRequest, listRequests } from './security.ts';
+import { _reset as resetDomains, createDomain, setLayer, setArchived, listDomains, compilerView, ensureHydrated as ensureDomainsHydrated, hydrateDomains } from './domains.ts';
+import { _reset as resetSec, addAllowlist, removeAllowlist, decideRequest, listRequests, listAllowlist } from './security.ts';
 import { _reset as resetModels, registerProviderKey, listProviderKeys, setEnabled, setDefault, setCap, getDefaults } from './models.ts';
 import { billingView, offlineSpend } from './billing.ts';
 import { _reset as resetBackups, restore, restorePhrase } from './backups.ts';
 import { _resetAudit as resetAudit, listAudit } from './audit.ts';
-import { _reset as resetPlugins, __seedPlugins, installPlugin, approvePlugin } from './plugins.ts';
+import { _reset as resetPlugins, __seedPlugins, installPlugin, approvePlugin, listPlugins } from './plugins.ts';
 
 // ---------------------------------------------------------------- isolation --
 test('multi-tenant isolation: own tenant resolves, any other id is 403', () => {
@@ -45,7 +45,7 @@ test('policy compiler: role + active-user + domain-layer → OPA grants', () => 
     tenant: 'data-masterclass',
     users: [
       { id: 'sara', role: 'admin', domains: ['sales'] },
-      { id: 'amir', role: 'participant', domains: ['sales'] },
+      { id: 'amir', role: 'creator', domains: ['sales'] },
       { id: 'ghost', role: 'builder', domains: ['sales'], active: false },
     ],
     domains: [{ id: 'sales', layers: { ml: true, spark: false } }],
@@ -67,7 +67,7 @@ test('policy compiler: role + active-user + domain-layer → OPA grants', () => 
 
 test('policy compiler: archived domain drops its grants', () => {
   const out = compile({
-    tenant: 't', users: [{ id: 'u', role: 'participant', domains: ['old'] }],
+    tenant: 't', users: [{ id: 'u', role: 'creator', domains: ['old'] }],
     domains: [{ id: 'old', archived: true, layers: { ml: true, spark: false } }],
     egressAllowlist: [],
   });
@@ -95,6 +95,70 @@ test('domains: duplicate create is 409', () => {
   assert.throws(() => createDomain({ name: 'Ops', owner: 'b' }), (e: { status?: number }) => e.status === 409);
 });
 
+// A minimal fake OpenSearch (see data/store.test.ts) whose docs survive a
+// `resetDomains()`, so we can simulate an os-ui restart persisting admin edits.
+function fakeOpenSearch() {
+  const docs = new Map<string, unknown>();
+  const orig = globalThis.fetch;
+  const json = (body: unknown) =>
+    new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const u = String(input);
+    const method = init?.method ?? 'GET';
+    if (u.endsWith('/_count')) return json({ count: docs.size });
+    if (method === 'HEAD') return new Response(null, { status: 200 });
+    if (u.includes('/_search')) return json({ hits: { hits: [...docs.values()].map((_source) => ({ _source })) } });
+    if (u.includes('/_doc/')) {
+      const id = decodeURIComponent(u.split('/_doc/')[1].split('?')[0]);
+      if (method === 'DELETE') docs.delete(id); else docs.set(id, JSON.parse(String(init?.body ?? '{}')));
+      return json({ result: 'ok' });
+    }
+    return json({});
+  }) as typeof fetch;
+  return { docs, restore: () => { globalThis.fetch = orig; } };
+}
+
+test('domains: listDomains yields the user-derived domains when the store is empty (offline)', async () => {
+  resetDomains();
+  const orig = globalThis.fetch;
+  globalThis.fetch = (async () => { throw new Error('backend down'); }) as typeof fetch; // OpenSearch unreachable
+  try {
+    // The tenant's real domains come from its users (knownDomains); injected here.
+    await ensureDomainsHydrated(async () => ['platform', 'sales', 'marketing', 'ops']);
+    const ids = listDomains().map((d) => d.id);
+    assert.deepEqual(ids, ['marketing', 'ops', 'platform', 'sales']); // sorted, all present
+    assert.ok(listDomains().every((d) => !d.archived));
+    assert.equal(listDomains().find((d) => d.id === 'sales')?.template, 'blank');
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test('domains: derivation never clobbers an admin edit, and edits persist across a restart', async () => {
+  resetDomains();
+  const os = fakeOpenSearch();
+  try {
+    await ensureDomainsHydrated(async () => ['platform', 'sales']);
+    setArchived('sales', true); // admin edit → mirrored
+    await new Promise((r) => setTimeout(r, 0));
+    // Simulate a restart: wipe the in-process cache, keep the backend.
+    resetDomains();
+    await ensureDomainsHydrated(async () => ['platform', 'sales']);
+    const sales = listDomains().find((d) => d.id === 'sales');
+    assert.equal(sales?.archived, true, 'the archive edit was durable, not re-derived as active');
+  } finally {
+    os.restore();
+  }
+});
+
+test('domains: hydrateDomains is pure and only fills MISSING domains', () => {
+  resetDomains();
+  createDomain({ name: 'Sales', owner: 'sara', template: 'science' }); // pre-existing, edited
+  const created = hydrateDomains(['sales', 'platform']); // sales already there
+  assert.deepEqual(created, ['platform']); // only the missing one is added
+  assert.equal(listDomains().find((d) => d.id === 'sales')?.layers.ml, true); // untouched
+});
+
 // ----------------------------------------------------------------- security --
 test('security: allowlist add/remove + approve request joins allowlist', () => {
   resetSec();
@@ -109,6 +173,23 @@ test('security: allowlist add/remove + approve request joins allowlist', () => {
 test('security: bad host is rejected', () => {
   resetSec();
   assert.throws(() => addAllowlist('not-a-host'), (e: { status?: number }) => e.status === 400);
+});
+
+test('globalThis pin: egress allowlist + requests are shared singletons (security.ts)', () => {
+  resetSec();
+  addAllowlist('api.acme.io');
+  // The allowlist is pinned to globalThis — a separately-bundled route resolving
+  // Symbol.for('soa.platform-admin.egress-allow') sees the SAME Set.
+  const allowPinned = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.platform-admin.egress-allow')] as Set<string>;
+  assert.ok(allowPinned instanceof Set, 'allow is pinned as a Set on globalThis');
+  assert.ok(allowPinned.has('api.acme.io'), 'added host is visible via the globalThis pin');
+  assert.ok(listAllowlist().includes('api.acme.io'), 'listAllowlist() reads the same pinned Set');
+
+  // The requests map is pinned to its own symbol key and seeded once.
+  const reqPinned = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.platform-admin.egress-requests')] as Map<string, unknown>;
+  assert.ok(reqPinned instanceof Map, 'requests is pinned as a Map on globalThis');
+  assert.ok(reqPinned.has('egr_demo'), 'the seed request is visible via the globalThis pin');
+  assert.equal(listRequests().length, reqPinned.size, 'listRequests() reads the same pinned Map');
 });
 
 // ------------------------------------------------------------------- models --
@@ -177,4 +258,19 @@ test('plugins: unsigned plugin cannot be installed; approve requires install', (
   installPlugin('notion-mcp'); // signed + scanned → installable, then approvable
   const p = approvePlugin('notion-mcp', ['sales', 'finance']);
   assert.deepEqual(p.allowedDomains, ['sales', 'finance']);
+});
+
+test('globalThis pin: create survives a fresh pluginsStore() call', () => {
+  resetPlugins();
+  __seedPlugins([
+    { id: 'pin-plugin', name: 'Pin Plugin', kind: 'mcp', publisher: 'test', signed: true, scanned: true, status: 'available', allowedDomains: [], summary: 'pin test' },
+  ]);
+
+  // Confirm entry is visible via the globalThis symbol directly.
+  const pinned = (globalThis as any)[Symbol.for('soa.platform.plugins')] as Map<string, unknown>;
+  assert.ok(pinned instanceof Map, 'globalThis pin is a Map');
+  assert.ok(pinned.has('pin-plugin'), 'plugin id visible via globalThis pin');
+
+  // listPlugins() calls pluginsStore() afresh — must still return the entry.
+  assert.equal(listPlugins().length, 1);
 });

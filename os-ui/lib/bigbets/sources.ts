@@ -141,7 +141,7 @@ class MockSource implements ComponentSource {
     ensureSeeded();
     // The tab's GOVERNED create flow only needs Creator+ — both humans and the
     // planner may scaffold a DRAFT. Promotion is gated separately in advance().
-    if (input.by.role === 'participant') {
+    if (input.by.role === 'creator') {
       throw new BetError('Scaffolding requires a Creator, Builder or Admin', 403);
     }
     return put({

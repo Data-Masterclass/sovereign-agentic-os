@@ -5,7 +5,6 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
-import McpConnect from '@/components/McpConnect';
 import AgentChat from '@/components/AgentChat';
 import WorkflowTile from '@/components/knowledge/WorkflowTile';
 import WorkflowView from '@/components/knowledge/WorkflowView';
@@ -75,6 +74,8 @@ export default function KnowledgePage() {
     try {
       const res = await fetch('/api/knowledge/domain', { cache: 'no-store' });
       if (res.ok) setDomainKnowledge(await res.json());
+    } catch {
+      /* leave domainKnowledge null → the "Could not load" surface renders */
     } finally {
       setDkLoading(false);
     }
@@ -97,10 +98,12 @@ export default function KnowledgePage() {
   useEffect(() => {
     void loadDomainKnowledge();
     void loadWorkflows();
-    // Load user role from existing /api/auth endpoint.
+    // Load user role from existing /api/auth endpoint. `/api/auth/me` nests the
+    // profile under `.user`, so read that (else role stays undefined and the
+    // Builder-only affordances never light up).
     fetch('/api/auth/me', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => d && setUser(d))
+      .then((d) => d?.user && setUser(d.user))
       .catch(() => null);
   }, [loadDomainKnowledge, loadWorkflows]);
 
@@ -127,7 +130,11 @@ export default function KnowledgePage() {
         setEditingSection(null);
         setDkMsg('Saved.');
         setTimeout(() => setDkMsg(''), 2000);
+      } else {
+        setDkMsg('Could not save — please retry.');
       }
+    } catch {
+      setDkMsg('Could not save — please retry.');
     } finally {
       setDkSaving(false);
     }
@@ -179,9 +186,8 @@ export default function KnowledgePage() {
 
   return (
     <>
-      <PageHeader title="Knowledge" crumb="domain operating manual · workflows · context" tutorial="knowledge" />
+      <PageHeader title="Knowledge" crumb="domain operating manual · workflows · context" tutorial="knowledge" mcpTab="knowledge" />
       <div className="content">
-        <McpConnect tab="knowledge" />
 
         {/* ── Tab navigation ── */}
         <div className="tabstrip">
@@ -263,7 +269,9 @@ export default function KnowledgePage() {
                 ))}
 
                 {dkMsg && (
-                  <div className="hint" style={{ marginTop: 8, color: 'var(--teal)' }}>{dkMsg}</div>
+                  dkMsg === 'Saved.'
+                    ? <div className="hint" style={{ marginTop: 8, color: 'var(--teal)' }}>{dkMsg}</div>
+                    : <div className="error" style={{ marginTop: 8 }}>{dkMsg}</div>
                 )}
 
                 {/* Knowledge agent for drafting ── */}

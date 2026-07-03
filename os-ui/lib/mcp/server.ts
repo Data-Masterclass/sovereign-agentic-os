@@ -11,6 +11,7 @@ import { servePredict } from '@/lib/science/serve';
 import type { ChurnFeatures } from '@/lib/science';
 import { retrieveKnowledge } from '@/lib/knowledge/retrieve';
 import { listSystems } from '@/lib/agents/store';
+import { ALL_WRITE_TOOLS } from '@/lib/mcp/write-tools';
 
 /**
  * THE SOVEREIGN AGENTIC OS — remote MCP server (JSON-RPC 2.0 core).
@@ -35,11 +36,15 @@ export const MCP_SERVER_INFO = {
   version: config.osVersion,
 } as const;
 
-type JsonSchema = {
+export type JsonSchema = {
   type: 'object';
   properties: Record<string, unknown>;
   required?: string[];
   additionalProperties?: boolean;
+  /** Short schema-level note for the AI consumer. */
+  description?: string;
+  /** ≥1 worked example per write tool — an AI reads these to call correctly. */
+  examples?: unknown[];
 };
 
 /**
@@ -47,11 +52,18 @@ type JsonSchema = {
  * the ONE registry below (`/api/mcp/<tab>`) — a scoped lens, never a second
  * governance path. The overarching `/api/mcp` endpoint still serves them all.
  */
-export const MCP_TABS = ['software', 'data', 'science', 'knowledge', 'agents'] as const;
+export const MCP_TABS = ['software', 'data', 'science', 'knowledge', 'agents', 'files', 'metrics', 'dashboards', 'bigbets'] as const;
 export type McpTab = (typeof MCP_TABS)[number];
 export function isMcpTab(x: string): x is McpTab {
   return (MCP_TABS as readonly string[]).includes(x);
 }
+
+/**
+ * `meta` is NOT a real tab (no route, no header button) — it tags the cross-cutting
+ * discovery tools (`whoami`, `list_capabilities`) so they surface in EVERY per-tab
+ * view AND the overarching endpoint. Kept out of {@link MCP_TABS} on purpose.
+ */
+export type ToolTab = McpTab | 'meta';
 
 export type McpTool = {
   name: string;
@@ -59,7 +71,7 @@ export type McpTool = {
   /** Lowest role that may SEE + CALL this tool (the governed fn still re-gates). */
   minRole: Role;
   /** The OS tab this tool lives under (used to build the per-tab MCP view). */
-  tab: McpTab;
+  tab: ToolTab;
   inputSchema: JsonSchema;
   call: (user: CurrentUser, args: Record<string, unknown>) => Promise<unknown>;
 };
@@ -155,7 +167,7 @@ const PLATFORM_SCHEMAS: Record<string, JsonSchema> = {
 const platformTools: McpTool[] = PLATFORM_MCP_TOOLS.map((t) => ({
   name: t.name,
   description: t.description,
-  minRole: ELEVATED.has(t.name) ? 'builder' : 'participant',
+  minRole: ELEVATED.has(t.name) ? 'builder' : 'creator',
   tab: 'software',
   inputSchema: PLATFORM_SCHEMAS[t.name] ?? APP_ID_ONLY,
   call: (user, args) => callPlatformMcp(user, t.name, args),
@@ -167,7 +179,7 @@ const crossTools: McpTool[] = [
     name: 'query_data',
     description:
       'Run a read-only SQL query over the governed Iceberg marts (Trino). OPA-authorized on your domain and Langfuse-audited, exactly like the UI data tool.',
-    minRole: 'participant',
+    minRole: 'creator',
     tab: 'data',
     inputSchema: {
       type: 'object',
@@ -189,7 +201,7 @@ const crossTools: McpTool[] = [
     name: 'science_predict',
     description:
       'Score the deployed churn model through the governed predict door (tier scope + OPA `predict` grant, then a Langfuse trace).',
-    minRole: 'participant',
+    minRole: 'creator',
     tab: 'science',
     inputSchema: {
       type: 'object',
@@ -204,7 +216,7 @@ const crossTools: McpTool[] = [
         account: str(args.account) || undefined,
         features: (args.features as Partial<ChurnFeatures>) || undefined,
         principal: 'sales-assistant',
-        domain: user.domains[0] ?? 'sales',
+        domains: user.domains,
         isAgent: true,
         requestedBy: user.id,
       });
@@ -219,7 +231,7 @@ const knowledgeTools: McpTool[] = [
     name: 'search_knowledge',
     description:
       'Governed hybrid knowledge retrieval (dense + lexical, reranked) with provenance for citations. Runs the same OPA `retrieve` gate + document-level grant filter as the Knowledge tab — you only ever see units you are entitled to.',
-    minRole: 'participant',
+    minRole: 'creator',
     tab: 'knowledge',
     inputSchema: {
       type: 'object',
@@ -248,10 +260,68 @@ const agentTools: McpTool[] = [
     name: 'list_agent_systems',
     description:
       'List the agent systems you can see (yours, domain-shared, marketplace). Read-only and scoped to your identity — the same visibility rule as the Agents tab.',
-    minRole: 'participant',
+    minRole: 'creator',
     tab: 'agents',
     inputSchema: { type: 'object', properties: {} },
     call: async (user) => listSystems({ id: user.id, domains: user.domains, role: user.role }),
+  },
+];
+
+// --- Discovery (meta) tools — make the OS legible to an AI consumer ------------
+/** A plain-language read of what a role can / cannot do (the creator lockdown). */
+function capabilitySummary(role: Role): { can: string[]; cannot: string[] } {
+  const builder = roleCanUse(role, 'builder');
+  const admin = roleCanUse(role, 'admin');
+  return {
+    can: [
+      'create datasets, files, knowledge workflows, metrics, dashboards, big bets and agent systems in your own domain(s)',
+      'build, document and query your own work',
+      ...(builder ? ['promote/publish your work to a SHARED domain asset (dataset/file/workflow/agent)'] : []),
+      ...(admin ? ['certify to the cross-domain marketplace', 'own a cross-domain big bet'] : []),
+    ],
+    cannot: [
+      ...(!builder ? ['promote/publish to a shared domain asset — that is Builder+ (ask a Builder, or keep it Personal)'] : []),
+      ...(!admin ? ['certify to the marketplace — that is Admin-only'] : []),
+    ],
+  };
+}
+
+const discoveryTools: McpTool[] = [
+  {
+    name: 'whoami',
+    tab: 'meta',
+    minRole: 'creator',
+    description:
+      'Return the caller’s delegated identity (id, name, role, domains) and a plain-language read of what this role can and cannot do. Every write tool runs AS this user — start here.',
+    inputSchema: { type: 'object', properties: {}, examples: [{}] },
+    call: async (user) => ({
+      id: user.id,
+      name: user.name,
+      role: user.role,
+      domains: user.domains,
+      ...capabilitySummary(user.role),
+    }),
+  },
+  {
+    name: 'list_capabilities',
+    tab: 'meta',
+    minRole: 'creator',
+    description:
+      'List every OS tool with its tab + role gate, split into what THIS caller can call now vs. what is gated to a higher role (and why). The map an AI reads before building a case study across tabs.',
+    inputSchema: { type: 'object', properties: {}, examples: [{}] },
+    call: async (user) => {
+      const rows = ALL_MCP_TOOLS.map((t) => ({
+        name: t.name,
+        tab: t.tab,
+        minRole: t.minRole,
+        description: t.description,
+      }));
+      const available = rows.filter((r) => roleCanUse(user.role, r.minRole));
+      const gated = rows
+        .filter((r) => !roleCanUse(user.role, r.minRole))
+        .map((r) => ({ ...r, reason: `requires ${r.minRole}; you are ${user.role}` }));
+      return { role: user.role, availableCount: available.length, available, gated };
+    },
   },
 ];
 
@@ -260,11 +330,17 @@ export const ALL_MCP_TOOLS: McpTool[] = [
   ...crossTools,
   ...knowledgeTools,
   ...agentTools,
+  ...ALL_WRITE_TOOLS,
+  ...discoveryTools,
 ];
 
-/** The subset of the registry that lives under one tab (the per-tab MCP view). */
+/**
+ * The subset of the registry that lives under one tab (the per-tab MCP view). The
+ * cross-cutting `meta` discovery tools are ALWAYS included so `whoami` /
+ * `list_capabilities` work on every per-tab endpoint too.
+ */
 export function toolsForTab(tab: McpTab): McpTool[] {
-  return ALL_MCP_TOOLS.filter((t) => t.tab === tab);
+  return ALL_MCP_TOOLS.filter((t) => t.tab === tab || t.tab === 'meta');
 }
 
 /** The role-scoped, wire-shaped tool list for `tools/list` (no internals leak). */
@@ -356,28 +432,66 @@ export async function handleRpc(
       const name = str(params.name);
       const args = (params.arguments as Record<string, unknown>) ?? {};
       const tool = tools.find((t) => t.name === name);
-      // Re-check the visibility floor on every call — never trust the client.
-      if (!tool || !roleCanUse(user.role, tool.minRole)) {
-        return rpcError(id, -32602, `Tool not available: ${name || '(none)'}`);
+      // An unknown / out-of-scope tool stays a JSON-RPC error (don't even hint at
+      // tools this endpoint doesn't serve).
+      if (!tool) return rpcError(id, -32602, `Tool not available: ${name || '(none)'}`);
+      // Re-check the role floor on every call — never trust the client. A denial is a
+      // TYPED forbidden content block (the client named this tool, so this is a hint,
+      // not a leak): the AI learns exactly what role it needs.
+      if (!roleCanUse(user.role, tool.minRole)) {
+        return toolError(id, {
+          code: 'forbidden',
+          reason: `${tool.name} requires ${tool.minRole}; you are ${user.role}`,
+          hint: `Ask a ${tool.minRole} to run it, or keep your work Personal.`,
+        });
       }
       try {
         const result = await tool.call(user, args);
         return ok(id, { content: [{ type: 'text', text: safeText(result) }] });
       } catch (e) {
-        // Governance denials + execution failures surface as an MCP tool error
-        // (isError result) — a clean, model-readable error, NEVER a crash.
-        const status = (e as { status?: number }).status;
-        const message = (e as Error).message || 'Tool execution failed';
-        return ok(id, {
-          content: [{ type: 'text', text: `Error${status ? ` (${status})` : ''}: ${message}` }],
-          isError: true,
-        });
+        // Governance denials + execution failures surface as a TYPED MCP tool error
+        // (isError + structuredContent) — model-readable, actionable, NEVER a crash.
+        return toolError(id, structuredError(e));
       }
     }
 
     default:
       return rpcError(id, -32601, `Method not found: ${method ?? '(none)'}`);
   }
+}
+
+/** A structured, model-readable tool error: `{ error: { code, reason, hint } }`. */
+export type ToolError = { code: string; reason: string; hint: string };
+
+function toolError(id: string | number | null | undefined, error: ToolError): JsonRpcResponse {
+  return ok(id, {
+    content: [{ type: 'text', text: JSON.stringify({ error }) }],
+    structuredContent: { error },
+    isError: true,
+  });
+}
+
+/** Map a thrown error (its HTTP-ish `status`) to a typed code + an actionable hint. */
+export function structuredError(e: unknown): ToolError {
+  const status = (e as { status?: number }).status;
+  const reason = (e as Error).message || 'Tool execution failed';
+  const code =
+    status === 403 ? 'forbidden'
+      : status === 404 ? 'not_found'
+        : status === 409 ? 'conflict'
+          : status === 400 ? 'bad_request'
+            : 'error';
+  const hint =
+    code === 'forbidden'
+      ? 'This needs a higher role or a domain you belong to — ask a Builder/Admin, or keep it Personal.'
+      : code === 'not_found'
+        ? 'Check the id — call list_capabilities or the tab’s list tool first.'
+        : code === 'conflict'
+          ? 'Already in that state — this call is idempotent, so no further action is needed.'
+          : code === 'bad_request'
+            ? 'Check your arguments against the tool’s inputSchema (each carries an example).'
+            : 'Unexpected failure — retry, or inspect `reason`.';
+  return { code, reason, hint };
 }
 
 function safeText(result: unknown): string {

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { type AgentSpec, type EdgeType, type System, SystemError } from './system-schema.ts';
+import { type AgentSpec, type EdgeType, type NodePosition, type System, SystemError } from './system-schema.ts';
 
 /**
  * Pure, immutable `system.yaml` mutations for the hand-rolled SVG canvas (Task 3,
@@ -37,7 +37,7 @@ export function addAgent(input: System, opts: { id: string; role?: string }): Sy
     id,
     role: opts.role?.trim() || 'A sub-agent',
     agent_md: `# ${id}\n\nA ${opts.role?.trim() || 'sub'}-agent in the Sovereign Agentic OS.\nUse only your granted, governed tools.`,
-    memory_md: '',
+    memory_md: `# Memory\n\n(Durable facts ${id} should always know.)`,
   };
   sys.agents.push(agent);
   return sys;
@@ -139,6 +139,29 @@ export function setAgentTools(input: System, id: string, tools: string[] | null)
   const narrowed = sys.grants.tools.filter((t) => tools.includes(t));
   if (narrowed.length === sys.grants.tools.length) delete a.tools;
   else a.tools = narrowed;
+  return sys;
+}
+
+/**
+ * Persist hand-arranged canvas positions into the presentation-only `ui.positions`
+ * block. Positions are rounded (clean YAML), merged over any existing map, and
+ * pruned to declared agents so a removed agent leaves no stale coordinate. Passing
+ * an empty map clears the block. NEVER affects compile/run — it only survives
+ * reload/fork.
+ */
+export function setNodePositions(input: System, positions: Record<string, NodePosition>): System {
+  const sys = structuredClone(input);
+  const ids = new Set(sys.agents.map((a) => a.id));
+  const merged: Record<string, NodePosition> = {};
+  // keep existing, then apply incoming — both pruned to live agents
+  for (const [id, p] of Object.entries(sys.ui?.positions ?? {})) if (ids.has(id)) merged[id] = p;
+  for (const [id, p] of Object.entries(positions)) {
+    if (ids.has(id) && Number.isFinite(p.x) && Number.isFinite(p.y)) {
+      merged[id] = { x: Math.round(p.x), y: Math.round(p.y) };
+    }
+  }
+  if (Object.keys(merged).length > 0) sys.ui = { ...(sys.ui ?? {}), positions: merged };
+  else if (sys.ui) delete sys.ui;
   return sys;
 }
 

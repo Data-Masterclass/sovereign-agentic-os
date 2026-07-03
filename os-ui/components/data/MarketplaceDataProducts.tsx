@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useUser } from '@/lib/useUser';
 
 type Tile = { id: string; name: string; owner: string; domain: string; quality: string };
 
@@ -14,6 +15,10 @@ type Tile = { id: string; name: string; owner: string; domain: string; quality: 
  * the same products, importable from here; "Open" jumps to the Data tab.
  */
 export default function MarketplaceDataProducts() {
+  const { user } = useUser();
+  // Importing grants the whole domain read access → store gates to Builder/Admin.
+  // Only surface Import to those roles so we never show a control the server 403s.
+  const canImport = user?.role === 'builder' || user?.role === 'admin';
   const [items, setItems] = useState<Tile[] | null>(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState('');
@@ -63,9 +68,13 @@ export default function MarketplaceDataProducts() {
               <div className="muted" style={{ marginTop: 6, fontSize: 11.5 }}>data product · from <strong>{p.domain}</strong> · {p.owner}</div>
               <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end', gap: 8 }}>
                 <Link className="btn ghost" href="/data">Open →</Link>
-                <button className="btn" disabled={busy === p.id} onClick={() => importProduct(p.id)}>
-                  {busy === p.id ? <span className="spin" /> : 'Import'}
-                </button>
+                {canImport ? (
+                  <button className="btn" disabled={busy === p.id} onClick={() => importProduct(p.id)}>
+                    {busy === p.id ? <span className="spin" /> : 'Import'}
+                  </button>
+                ) : (
+                  <span className="hint" style={{ margin: 0 }} title="Importing shares the product with your whole domain">Ask a Builder to import</span>
+                )}
               </div>
             </div>
           ))}

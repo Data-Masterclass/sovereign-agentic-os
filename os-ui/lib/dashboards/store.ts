@@ -21,12 +21,17 @@ type Stored = DashboardRecord & { domain: string };
 // platform's own governed flows (e.g. the Northpeak e-commerce seed).
 const SEED: Stored[] = [];
 
-let dashboards: Stored[] = [];
+type DashState = { dashboards: Stored[] };
+const DASH_KEY = Symbol.for('soa.dashboards.store');
+function dashState(): DashState {
+  const g = globalThis as unknown as Record<symbol, DashState | undefined>;
+  if (!g[DASH_KEY]) g[DASH_KEY] = { dashboards: SEED.map((d) => ({ ...d, spec: { ...d.spec, charts: [...d.spec.charts] } })) };
+  return g[DASH_KEY]!;
+}
 
 export function __resetDashboards(): void {
-  dashboards = SEED.map((d) => ({ ...d, spec: { ...d.spec, charts: [...d.spec.charts] } }));
+  dashState().dashboards = SEED.map((d) => ({ ...d, spec: { ...d.spec, charts: [...d.spec.charts] } }));
 }
-__resetDashboards();
 
 export type DashboardSummary = { id: string; name: string; view: string; tier: DashTier; owner: string; charts: number };
 
@@ -41,7 +46,7 @@ export function listDashboards(user: Principal): DashboardGroups {
   const mine: DashboardSummary[] = [];
   const domain: DashboardSummary[] = [];
   const marketplace: DashboardSummary[] = [];
-  for (const d of dashboards) {
+  for (const d of dashState().dashboards) {
     if (d.tier === 'marketplace') marketplace.push(summarise(d));
     else if (d.owner === user.id) mine.push(summarise(d));
     else if (d.tier === 'domain' && user.domains.includes(d.domain)) domain.push(summarise(d));
@@ -50,7 +55,7 @@ export function listDashboards(user: Principal): DashboardGroups {
 }
 
 export function getDashboard(id: string, user: Principal): Stored {
-  const d = dashboards.find((x) => x.id === id);
+  const d = dashState().dashboards.find((x) => x.id === id);
   if (!d) throw status(`dashboard '${id}' not found`, 404);
   const visible = d.tier === 'marketplace' || d.owner === user.id || (d.tier === 'domain' && user.domains.includes(d.domain));
   if (!visible) throw status('not authorized to view this dashboard', 403);
@@ -59,14 +64,14 @@ export function getDashboard(id: string, user: Principal): Stored {
 
 /** Create (or replace) a dashboard the user owns — both build modes land here. */
 export function saveDashboard(user: Principal, id: string, spec: DashboardSpec): Stored {
-  const existing = dashboards.find((x) => x.id === id);
+  const existing = dashState().dashboards.find((x) => x.id === id);
   if (existing) {
     if (existing.owner !== user.id) throw status('only the owner can edit this dashboard', 403);
     existing.spec = spec;
     return existing;
   }
   const rec = { ...dashboardRecord(id, spec, user.id, 'personal'), domain: user.domains[0] ?? 'sales' };
-  dashboards.push(rec);
+  dashState().dashboards.push(rec);
   return rec;
 }
 

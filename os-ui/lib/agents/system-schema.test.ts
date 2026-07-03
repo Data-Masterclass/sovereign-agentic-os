@@ -82,3 +82,43 @@ test('round-trips through serialize -> parse', () => {
   assert.deepEqual(again.agents.map((a) => a.id), ['supervisor', 'researcher']);
   assert.equal(again.entrypoint, 'supervisor');
 });
+
+test('ui.positions round-trips and is pruned to declared agents', () => {
+  const sys = parseSystem(`
+entrypoint: a
+grants: { tools: [], connections: [] }
+agents:
+  - { id: a, role: r, agent_md: "", memory_md: "" }
+  - { id: b, role: r, agent_md: "", memory_md: "" }
+ui:
+  positions:
+    a: { x: 10, y: 20 }
+    b: { x: 30, y: 40 }
+    ghost: { x: 99, y: 99 }
+`);
+  // ghost has no agent → pruned on parse.
+  assert.deepEqual(sys.ui?.positions, { a: { x: 10, y: 20 }, b: { x: 30, y: 40 } });
+  // survives a serialize→parse round-trip.
+  const again = parseSystem(serializeSystem(sys));
+  assert.deepEqual(again.ui?.positions, { a: { x: 10, y: 20 }, b: { x: 30, y: 40 } });
+});
+
+test('no ui block is emitted when there are no positions (byte-stable legacy files)', () => {
+  const sys = parseSystem(`
+entrypoint: a
+grants: { tools: [], connections: [] }
+agents: [{ id: a, role: r, agent_md: "", memory_md: "" }]
+`);
+  assert.equal(sys.ui, undefined);
+  assert.ok(!/\bui:/.test(serializeSystem(sys)), 'serialized file has no ui: key');
+});
+
+test('malformed ui positions are ignored (non-numeric / non-record)', () => {
+  const sys = parseSystem(`
+entrypoint: a
+grants: { tools: [], connections: [] }
+agents: [{ id: a, role: r, agent_md: "", memory_md: "" }]
+ui: { positions: { a: { x: "nope", y: 5 } } }
+`);
+  assert.equal(sys.ui, undefined); // no valid positions → no ui block
+});

@@ -26,7 +26,7 @@ function fakeTool(over: Partial<Tool>): Tool {
     protocol: 'http',
     frame: 'strip',
     basePath: '/tools/x',
-    minRole: 'participant',
+    minRole: 'creator',
     embeddable: true,
     sso: { mode: 'none' },
     ...over,
@@ -48,7 +48,7 @@ test('registry keys are self-consistent (key + basePath)', () => {
 
 test('role gate: minRole is enforced by rank, not equality', () => {
   // participant < creator < builder < admin
-  assert.equal(roleAllowed('participant', 'participant'), true);
+  assert.equal(roleAllowed('creator', 'creator'), true);
   assert.equal(roleAllowed('admin', 'builder'), true); // higher role passes a lower bar
   assert.equal(roleAllowed('creator', 'builder'), false); // lower role blocked
   assert.equal(roleAllowed('builder', 'builder'), true);
@@ -125,7 +125,7 @@ test('header SSO injects identity + mapped role, plus the forwarded chain', () =
     basePath: '/tools/superset',
     sso: {
       mode: 'header',
-      roleMap: { admin: 'Admin', builder: 'Alpha', creator: 'Gamma', participant: 'Gamma' },
+      roleMap: { admin: 'Admin', builder: 'Alpha', 'creator': 'Gamma' },
     },
   });
   const h = buildUpstreamHeaders({

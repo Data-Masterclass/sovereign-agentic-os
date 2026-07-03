@@ -31,3 +31,11 @@ test('caps list is scoped (Builder sees own domain + key/tenant)', () => {
   assert.ok(salesView.some((c) => c.subject === 'sales'));
   assert.ok(!salesView.some((c) => c.subject === 'finance'));
 });
+
+test('globalThis pin: costState is shared across all references to the same symbol', () => {
+  __resetCost();
+  setCap({ scope: 'tenant', subject: 'tenant', limit: 500, createdBy: 'sara' });
+  const pinned = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.governance.cost')] as { caps: Map<string, unknown> };
+  assert.ok(pinned, 'state must be present on globalThis');
+  assert.equal(pinned.caps.size, 1, 'cap written via setCap must appear in globalThis state');
+});

@@ -11,7 +11,7 @@ import ListingDrawer from '@/components/marketplace/ListingDrawer';
 import MyImports from '@/components/marketplace/MyImports';
 import MarketplaceDataProducts from '@/components/data/MarketplaceDataProducts';
 
-type User = { id: string; domains: string[]; role: 'participant' | 'builder' | 'admin' };
+type User = { id: string; domains: string[]; role: 'creator' | 'builder' | 'admin' };
 type ApiData = { user: User; source: 'live' | 'offline-mock'; items: Listing[] };
 
 const PRODUCT_TYPES: [string, string][] = [
@@ -150,8 +150,8 @@ export default function MarketplacePage() {
           </div>
         )}
 
-        {/* Certified data products from the Data tab (governed, importable). */}
-        <MarketplaceDataProducts />
+        {/* Certified data products from the Data tab — only in Browse view. */}
+        {!showImports && <MarketplaceDataProducts />}
 
         {error && (
           <div className="error" style={{ margin: '16px 0' }}>{error}</div>

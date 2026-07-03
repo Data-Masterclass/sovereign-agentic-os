@@ -30,9 +30,9 @@ export async function POST(req: Request) {
   try {
     const { user, tenant } = await adminCtx();
     const body = await req.json();
-    const role = (['participant', 'builder', 'admin'].includes(body?.role) ? body.role : 'participant') as Role;
+    const role = (['creator', 'builder', 'admin'].includes(body?.role) ? body.role : 'creator') as Role;
     const domains = Array.isArray(body?.domains) ? body.domains.map(String).filter(Boolean) : [];
-    const invited = await inviteUser({ id: String(body?.id ?? ''), name: body?.name ? String(body.name) : undefined, domains, role });
+    const invited = await inviteUser({ id: String(body?.id ?? ''), name: body?.name ? String(body.name) : undefined, email: body?.email ? String(body.email) : undefined, domains, role });
     audit({ tenant: tenant.id, actor: user.id, role: user.role, action: 'user.invite', target: `user:${invited.id}`, detail: `Invited ${invited.id} as ${role} into ${domains.join(', ')} (via Ory; no password seen)` });
     const { publish } = await recompile();
     return NextResponse.json({ user: invited, publish }, { status: 201 });

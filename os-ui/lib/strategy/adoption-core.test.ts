@@ -21,7 +21,7 @@ function art(p: Partial<Artifact> & Pick<Artifact, 'id' | 'type' | 'owner' | 'do
 }
 
 const ROLES = new Map<string, Role>([
-  ['amir', 'participant'],
+  ['amir', 'creator'],
   ['sara', 'admin'],
   ['bea', 'builder'],
   ['maria', 'admin'],

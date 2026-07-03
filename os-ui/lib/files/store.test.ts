@@ -22,7 +22,7 @@ import {
 } from './store.ts';
 import { listLineage, __resetLineage } from './lineage.ts';
 
-const amir: Principal = { id: 'amir', domains: ['sales'], role: 'participant' };  // Creator
+const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' };  // Creator
 const bea: Principal = { id: 'bea', domains: ['sales'], role: 'builder' };        // Builder, amir's domain
 const sara: Principal = { id: 'sara', domains: ['sales'], role: 'admin' };        // Admin, sales
 const kenji: Principal = { id: 'kenji', domains: ['finance'], role: 'builder' };  // outside sales
@@ -101,6 +101,13 @@ test('an indexed upload reports a searchable status chip', () => {
   assert.equal(a.indexing.mode, 'indexed');
   const sum = listFiles(amir).mine.find((f) => f.id === a.id)!;
   assert.equal(sum.status, 'searchable');
+});
+
+test('a no-text upload (binary the mock cannot parse) is stored, not falsely searchable', () => {
+  const a = createFile(amir, { name: 'scan.pdf', sensitivity: 'public', bytes: 4096 });
+  assert.equal(a.indexing.mode, 'stored-only', 'nothing to index → held, not indexed');
+  const sum = listFiles(amir).mine.find((f) => f.id === a.id)!;
+  assert.equal(sum.status, 'stored');
 });
 
 test('move + retag + docs edit the single source for the owner only', () => {
@@ -216,7 +223,7 @@ test('promotion records a file_promoted lineage edge (OM, mock-tolerant)', () =>
 test('a non-Builder cannot apply a promotion', () => {
   const a = documented();
   const req = requestPromotion(a.id, amir, {});
-  assert.throws(() => applyApprovedFilePromotion(req, { id: 'cleo', domains: ['sales'], role: 'participant' }), /Builder|requires/i);
+  assert.throws(() => applyApprovedFilePromotion(req, { id: 'cleo', domains: ['sales'], role: 'creator' }), /Builder|requires/i);
 });
 
 test('a Builder OUTSIDE the domain cannot apply the promotion', () => {
@@ -232,6 +239,14 @@ test('an Admin certifies a domain asset into a marketplace product', () => {
   assert.equal(product.tier, 'product');
   // discoverable by anyone now
   assert.ok(listFiles(kenji).marketplace.some((f) => f.id === a.id));
+});
+
+test('cross-instance: writes are visible through globalThis symbol', () => {
+  __resetStore();
+  const a = createFile(amir, { name: 'ci-test.pdf', text: 'hello' });
+  const raw = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.files.store')] as { store: Map<string, unknown> };
+  assert.ok(raw && raw.store.has(a.id), 'record visible in globalThis state');
+  assert.equal(listFiles(amir).mine.length, 1);
 });
 
 test('certify requires an Admin (a Builder is refused)', () => {

@@ -94,30 +94,35 @@ function makeRecord(
 
 // --------------------------------------------------------- in-process state --
 
-const workflows = new Map<string, WorkflowRecord>();
-const domainKnowledge = new Map<string, DomainKnowledge>();
-let seeded = false;
+type KnowledgeStoreState = { workflows: Map<string, WorkflowRecord>; domainKnowledge: Map<string, DomainKnowledge>; seeded: boolean };
+const KS_KEY = Symbol.for('soa.knowledge.store');
+function ks(): KnowledgeStoreState {
+  const g = globalThis as unknown as Record<symbol, KnowledgeStoreState | undefined>;
+  if (!g[KS_KEY]) g[KS_KEY] = { workflows: new Map(), domainKnowledge: new Map(), seeded: false };
+  return g[KS_KEY]!;
+}
 
 /** A fresh tenant starts EMPTY. Workflows and domain knowledge are authored
  *  only through the platform's own governed flows (e.g. the Northpeak
  *  e-commerce seed), never baked in. */
 function ensureSeeded(): void {
-  if (seeded) return;
-  seeded = true;
+  if (ks().seeded) return;
+  ks().seeded = true;
 }
 
 /** Test hook: wipe and reseed. */
 export function __resetStore(): void {
-  workflows.clear();
-  domainKnowledge.clear();
-  seeded = false;
+  const s = ks();
+  s.workflows.clear();
+  s.domainKnowledge.clear();
+  s.seeded = false;
 }
 
 // --------------------------------------------------------------- scoping -----
 
 function get(id: string): WorkflowRecord {
   ensureSeeded();
-  const rec = workflows.get(id);
+  const rec = ks().workflows.get(id);
   if (!rec) fail('Workflow not found', 404);
   return rec;
 }
@@ -168,7 +173,7 @@ export function listWorkflows(user: Principal): WorkflowGroups {
   const domain: WorkflowSummary[] = [];
   const marketplace: WorkflowSummary[] = [];
 
-  for (const rec of workflows.values()) {
+  for (const rec of ks().workflows.values()) {
     if (rec.owner === user.id) {
       mine.push(summarise(rec));
     } else if (rec.visibility === 'Marketplace') {
@@ -229,7 +234,7 @@ export function createWorkflow(
     visibility: 'Personal',
     status: 'draft',
   });
-  workflows.set(id, rec);
+  ks().workflows.set(id, rec);
   return rec;
 }
 
@@ -269,7 +274,7 @@ export function updateWorkflow(
 export function deleteWorkflow(id: string, user: Principal): void {
   const rec = requireEdit(id, user);
   if (rec.status === 'live') fail('Cannot delete a published workflow — unpublish it first', 400);
-  workflows.delete(id);
+  ks().workflows.delete(id);
 }
 
 /**
@@ -325,7 +330,7 @@ export function certifyWorkflow(id: string, user: Principal): WorkflowRecord {
 
 export function getDomainKnowledge(domain: string): DomainKnowledge {
   ensureSeeded();
-  return domainKnowledge.get(domain) ?? emptyDomainKnowledge(domain);
+  return ks().domainKnowledge.get(domain) ?? emptyDomainKnowledge(domain);
 }
 
 export type DomainKnowledgePatch = {
@@ -339,7 +344,7 @@ export function updateDomainKnowledge(
 ): DomainKnowledge {
   if (!user.domains.includes(domain)) fail('Not permitted to edit knowledge for this domain', 403);
   ensureSeeded();
-  const dk = domainKnowledge.get(domain) ?? emptyDomainKnowledge(domain);
+  const dk = ks().domainKnowledge.get(domain) ?? emptyDomainKnowledge(domain);
 
   if (patch.sections) {
     for (const s of patch.sections) {
@@ -349,7 +354,7 @@ export function updateDomainKnowledge(
   }
 
   dk.updatedAt = now();
-  domainKnowledge.set(domain, dk);
+  ks().domainKnowledge.set(domain, dk);
   return dk;
 }
 

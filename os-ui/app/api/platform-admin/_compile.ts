@@ -3,11 +3,12 @@
  */
 import 'server-only';
 import { compileAndPublish, type CompiledPolicy, type PublishResult } from '@/lib/platform-admin/policy-compiler';
-import { compilerView as domainView } from '@/lib/platform-admin/domains';
+import { compilerView as domainView, ensureHydrated as ensureDomainsHydrated } from '@/lib/platform-admin/domains';
 import { listAllowlist } from '@/lib/platform-admin/security';
 import { enabledMap } from '@/lib/platform-admin/models';
 import { compileUsers } from '@/lib/platform-admin/tenant-users';
 import { currentTenantId } from '@/lib/platform-admin/tenant';
+import { knownDomains } from '@/lib/users';
 
 /**
  * Gather the one identity/structure source and compile it to OPA. Called after
@@ -16,6 +17,9 @@ import { currentTenantId } from '@/lib/platform-admin/tenant';
  * show the compiled result + publish status even offline.
  */
 export async function recompile(): Promise<{ compiled: CompiledPolicy; publish: PublishResult }> {
+  // Ensure the domain registry reflects the tenant's real domains before it feeds
+  // the compiler (so grants are compiled for the derived domains, not an empty set).
+  await ensureDomainsHydrated(knownDomains);
   const users = await compileUsers();
   return compileAndPublish({
     tenant: currentTenantId(),

@@ -101,9 +101,16 @@ const STUB: Record<string, BetShare[]> = {
 /**
  * Bet shares keyed dynamically: pillars created at runtime link bets by id via
  * `linkBetStub`, so the gate can link two bets to a fresh pillar and see the
- * roll-up. In-process only (mirrors the registry's offline cache).
+ * roll-up. Pinned to globalThis so every route-handler module instance shares
+ * the same Map (same pattern as lib/marketplace/store.ts).
  */
-const linked = new Map<string, BetShare[]>();
+type BetsBridgeState = { linked: Map<string, BetShare[]> };
+const BRIDGE_KEY = Symbol.for('soa.strategy.bets-bridge');
+function bridgeState(): BetsBridgeState {
+  const g = globalThis as unknown as Record<symbol, BetsBridgeState | undefined>;
+  if (!g[BRIDGE_KEY]) g[BRIDGE_KEY] = { linked: new Map() };
+  return g[BRIDGE_KEY]!;
+}
 
 /**
  * Register a stub bet share against a pillar (used when a Builder/Admin links a
@@ -111,6 +118,7 @@ const linked = new Map<string, BetShare[]>();
  * (pillarId, bet.id); re-normalises shares so they always sum to 1.
  */
 export function linkBetStub(pillarId: string, bet: BetShare): void {
+  const { linked } = bridgeState();
   const list = linked.get(pillarId) ?? [];
   const next = [...list.filter((b) => b.id !== bet.id), bet];
   normaliseShares(next);
@@ -118,6 +126,7 @@ export function linkBetStub(pillarId: string, bet: BetShare): void {
 }
 
 export function unlinkBetStub(pillarId: string, betId: string): void {
+  const { linked } = bridgeState();
   const list = linked.get(pillarId);
   if (!list) return;
   const next = list.filter((b) => b.id !== betId);
@@ -134,7 +143,7 @@ function normaliseShares(bets: BetShare[]): void {
 
 export const defaultBetShareSource: BetShareSource = {
   async forPillar(pillarId: string): Promise<BetShare[]> {
-    const dyn = linked.get(pillarId);
+    const dyn = bridgeState().linked.get(pillarId);
     if (dyn && dyn.length) return dyn;
     return STUB[pillarId] ?? [];
   },

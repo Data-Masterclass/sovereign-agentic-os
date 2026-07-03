@@ -75,6 +75,8 @@ export type PublicUser = {
   mustChangeCredentials?: boolean;
   bootstrap?: boolean;
   onboarded?: boolean;
+  /** Soft-deleted: account exists but cannot sign in. Restorable. */
+  disabled?: boolean;
 };
 
 const META_ID = '__meta__';
@@ -85,17 +87,21 @@ const VERIFY_TTL_MS = 1000 * 60 * 60 * 24; // 24h single-use verification window
 
 type Meta = { recoveryHash?: string; initialized?: boolean };
 
-let cache: Map<string, StoredUser> | null = null;
-let meta: Meta = {};
-let osHealthy = false;
-
-// A constant, valid scrypt hash used to equalise authentication timing for
-// unknown handles (so response time does not reveal whether an account exists).
-// Lazily computed once; the plaintext behind it is irrelevant and never matched.
-let dummyHash: string | null = null;
+type UsersCacheState = { cache: Map<string, StoredUser> | null; meta: Meta; osHealthy: boolean; dummyHash: string | null };
+const USERS_STATE_KEY = Symbol.for('soa.users.cache');
+function usersState(): UsersCacheState {
+  const g = globalThis as unknown as Record<symbol, UsersCacheState | undefined>;
+  if (!g[USERS_STATE_KEY]) g[USERS_STATE_KEY] = { cache: null, meta: {}, osHealthy: false, dummyHash: null };
+  return g[USERS_STATE_KEY]!;
+}
 
 function sha256(s: string): string {
   return createHash('sha256').update(s).digest('hex');
+}
+
+/** Shared email-shape check (the sign-in label must be a real address). */
+function isValidEmail(s: string): boolean {
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s.trim());
 }
 
 function isReserved(id: string): boolean {
@@ -167,6 +173,12 @@ async function loadSeed(): Promise<StoredUser[]> {
       for (const u of parsed as Record<string, unknown>[]) {
         const id = String(u.id ?? '').trim().toLowerCase();
         if (!id || isReserved(id)) continue;
+        // Every seed user carries a valid email — its human sign-in label
+        // (login-by-email). Where the entry only gives an email-shaped id, that
+        // doubles as the email. An entry with no usable email is skipped rather
+        // than seeded loginless.
+        const email = (String(u.email ?? '').trim() || (isValidEmail(id) ? id : '')).toLowerCase();
+        if (!isValidEmail(email)) continue;
         const rawPw = String(u.password ?? '');
         out.push({
           id,
@@ -177,7 +189,10 @@ async function loadSeed(): Promise<StoredUser[]> {
             : u.domain
               ? [String(u.domain)]
               : ['default'],
-          role: (['participant', 'creator', 'builder', 'admin'].includes(String(u.role)) ? u.role : 'participant') as Role,
+          // Migrate legacy roles on read: creator/participant (and any unknown) → the
+          // base role `creator`; builder/admin pass through unchanged.
+          role: (['builder', 'admin'].includes(String(u.role)) ? u.role : 'creator') as Role,
+          email,
           emailVerified: true,
           onboarded: false,
           createdAt: Date.now(),
@@ -209,21 +224,23 @@ async function osFetch(path: string, init?: RequestInit): Promise<Response | nul
 }
 
 function writeThrough(u: StoredUser): void {
-  if (!osHealthy) return;
+  if (!usersState().osHealthy) return;
   void osFetch(`/os-users/_doc/${u.id}?refresh=true`, { method: 'PUT', body: JSON.stringify(u) });
 }
 
 function persistMeta(): void {
-  if (!osHealthy) return;
-  void osFetch(`/os-users/_doc/${META_ID}?refresh=true`, { method: 'PUT', body: JSON.stringify({ id: META_ID, ...meta }) });
+  const s = usersState();
+  if (!s.osHealthy) return;
+  void osFetch(`/os-users/_doc/${META_ID}?refresh=true`, { method: 'PUT', body: JSON.stringify({ id: META_ID, ...s.meta }) });
 }
 
 async function getCache(): Promise<Map<string, StoredUser>> {
-  if (cache) return cache;
+  const s = usersState();
+  if (s.cache) return s.cache;
   const map = new Map<string, StoredUser>();
   const ping = await osFetch('/os-users/_count');
   if (ping && ping.ok) {
-    osHealthy = true;
+    s.osHealthy = true;
     const res = await osFetch('/os-users/_search?size=1000', {
       method: 'POST',
       body: JSON.stringify({ query: { match_all: {} } }),
@@ -235,31 +252,35 @@ async function getCache(): Promise<Map<string, StoredUser>> {
       for (const h of data?.hits?.hits ?? []) {
         const src = h._source;
         if (src.id === META_ID) {
-          meta = { recoveryHash: src.recoveryHash, initialized: src.initialized };
+          s.meta = { recoveryHash: src.recoveryHash, initialized: src.initialized };
           continue;
+        }
+        // Migrate legacy roles on read: agentic-leader + participant → creator.
+        if ((src.role as string) === 'agentic-leader' || (src.role as string) === 'participant') {
+          src.role = 'creator';
         }
         map.set(src.id, src);
       }
     }
     // Seed the first-run bootstrap admin ONLY on a never-initialised store. Once
-    // a deployment has been set up (meta.initialized), an empty user map means
+    // a deployment has been set up (s.meta.initialized), an empty user map means
     // every account was removed — we must NOT silently resurrect admin/admin;
     // recovery is via the master key. This closes the default-credential
     // resurrection path.
-    if (map.size === 0 && !meta.initialized) {
+    if (map.size === 0 && !s.meta.initialized) {
       for (const u of await loadSeed()) { map.set(u.id, u); writeThrough(u); }
-      meta.initialized = true;
+      s.meta.initialized = true;
       persistMeta();
     }
   } else {
-    osHealthy = false;
+    s.osHealthy = false;
     // Offline/in-memory mode (no durability): seed only when nothing is loaded.
-    if (map.size === 0 && !meta.initialized) {
+    if (map.size === 0 && !s.meta.initialized) {
       for (const u of await loadSeed()) map.set(u.id, u);
-      meta.initialized = true;
+      s.meta.initialized = true;
     }
   }
-  cache = map;
+  s.cache = map;
   return map;
 }
 
@@ -274,6 +295,7 @@ function publicOf(u: StoredUser): PublicUser {
     mustChangeCredentials: u.mustChangeCredentials,
     bootstrap: u.bootstrap,
     onboarded: u.onboarded,
+    disabled: u.disabled,
   };
 }
 
@@ -294,8 +316,9 @@ export async function authenticate(username: string, password: string): Promise<
   if (!u || u.disabled) {
     // Run a dummy verify so an unknown/disabled handle takes the same time as a
     // real one — no response-time oracle for account enumeration.
-    if (!dummyHash) dummyHash = await hashPassword('timing-equaliser');
-    await verifyPassword(password, dummyHash);
+    const s = usersState();
+    if (!s.dummyHash) s.dummyHash = await hashPassword('timing-equaliser');
+    await verifyPassword(password, s.dummyHash!);
     return null;
   }
   const ok = await verifyPassword(password, u.password);
@@ -330,14 +353,21 @@ export async function createUser(input: {
   if (map.has(id)) throw err('That username already exists', 409);
   if (!input.password) throw err('A password is required', 400);
   if (!input.domains?.length) throw err('At least one domain is required', 400);
-  if (input.email && emailTaken(map, input.email)) throw err('That email is already in use', 409);
-  const email = input.email?.trim() || undefined;
+  // Email is REQUIRED and validated — it is the human-facing sign-in label
+  // (login-by-email). `id` stays the internal principal/owner/DLS key. Where a
+  // caller only carries one handle (the invite UIs whose field is labelled
+  // "email / login"), an email-shaped id doubles as the email so those flows keep
+  // working without a second field.
+  const email = (input.email?.trim() || (isValidEmail(id) ? id : '')).toLowerCase();
+  if (!email) throw err('A valid email is required', 400);
+  if (!isValidEmail(email)) throw err('Enter a valid email address', 400);
+  if (emailTaken(map, email)) throw err('That email is already in use', 409);
   // Email verification is OPTIONAL and gated on a configured mailer. With no
-  // mailer (the default) a new account is ACTIVE immediately (emailVerified=true
-  // when an email is on file) so the flow never dead-ends. With a mailer the
-  // account starts unverified and we send a real verification email — but it can
-  // still sign in meanwhile, so verification is confirmation, not a gate.
-  const verify = Boolean(email) && emailVerificationEnabled();
+  // mailer (the default) a new account is ACTIVE immediately (emailVerified=true)
+  // so the flow never dead-ends. With a mailer the account starts unverified and
+  // we send a real verification email — but it can still sign in meanwhile, so
+  // verification is confirmation, not a gate.
+  const verify = emailVerificationEnabled();
   const u: StoredUser = {
     id,
     name: input.name?.trim() || id,
@@ -345,7 +375,7 @@ export async function createUser(input: {
     domains: input.domains,
     role: input.role,
     email,
-    emailVerified: email ? !verify : undefined,
+    emailVerified: !verify,
     onboarded: false,
     createdAt: Date.now(),
   };
@@ -361,16 +391,54 @@ export async function createUser(input: {
 
 export async function updateUser(
   id: string,
-  patch: { name?: string; password?: string; domains?: string[]; role?: Role },
+  patch: { name?: string; email?: string; password?: string; domains?: string[]; role?: Role },
 ): Promise<PublicUser> {
   const map = await getCache();
   if (isReserved(id)) throw err('User not found', 404);
   const u = map.get(id);
   if (!u) throw err('User not found', 404);
   if (patch.name !== undefined) u.name = patch.name.trim() || u.id;
+  if (patch.email !== undefined) {
+    const e = patch.email.trim().toLowerCase();
+    if (e && !isValidEmail(e)) throw err('Enter a valid email address', 400);
+    if (e && emailTaken(map, e, id)) throw err('That email is already in use', 409);
+    u.email = e || undefined;
+    // If the email changed, clear the verified flag so it can be re-verified.
+    if (u.email && u.email !== e) u.emailVerified = false;
+  }
   if (patch.password) u.password = await hashPassword(patch.password);
   if (patch.domains?.length) u.domains = patch.domains;
   if (patch.role) u.role = patch.role;
+  u.updatedAt = Date.now();
+  map.set(id, u);
+  writeThrough(u);
+  return publicOf(u);
+}
+
+/** Soft-delete: mark disabled so the account cannot sign in. Restorable. */
+export async function archiveUser(id: string): Promise<PublicUser> {
+  const map = await getCache();
+  if (isReserved(id)) throw err('User not found', 404);
+  const u = map.get(id);
+  if (!u) throw err('User not found', 404);
+  if (u.role === 'admin') {
+    const activeAdmins = visible(map).filter((x) => x.role === 'admin' && !x.disabled);
+    if (activeAdmins.length <= 1) throw err('Cannot archive the last active admin', 400);
+  }
+  u.disabled = true;
+  u.updatedAt = Date.now();
+  map.set(id, u);
+  writeThrough(u);
+  return publicOf(u);
+}
+
+/** Restore a previously archived user — clears the disabled flag. */
+export async function restoreUser(id: string): Promise<PublicUser> {
+  const map = await getCache();
+  if (isReserved(id)) throw err('User not found', 404);
+  const u = map.get(id);
+  if (!u) throw err('User not found', 404);
+  u.disabled = false;
   u.updatedAt = Date.now();
   map.set(id, u);
   writeThrough(u);
@@ -388,7 +456,7 @@ export async function deleteUser(id: string): Promise<void> {
     if (admins.length <= 1) throw err('Cannot delete the last admin', 400);
   }
   map.delete(id);
-  if (osHealthy) void osFetch(`/os-users/_doc/${id}?refresh=true`, { method: 'DELETE' });
+  if (usersState().osHealthy) void osFetch(`/os-users/_doc/${id}?refresh=true`, { method: 'DELETE' });
 }
 
 /** Distinct domains across all users — drives domain pickers. */
@@ -429,7 +497,7 @@ export async function setupAdmin(input: {
   if (!newId) throw err('A username is required', 400);
   if (isReserved(newId)) throw err('That username is reserved', 400);
   const email = input.email.trim();
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw err('Enter a valid email address', 400);
+  if (!isValidEmail(email)) throw err('Enter a valid email address', 400);
   if (emailTaken(map, email, input.bootstrapId)) throw err('That email is already in use', 409);
   // A different existing user already holds this id.
   if (newId !== input.bootstrapId && map.has(newId)) throw err('That username already exists', 409);
@@ -442,12 +510,12 @@ export async function setupAdmin(input: {
   map.delete(input.bootstrapId);
   if (map.has(BOOTSTRAP_TOMBSTONE_ID)) {
     map.delete(BOOTSTRAP_TOMBSTONE_ID);
-    if (osHealthy) void osFetch(`/os-users/_doc/${BOOTSTRAP_TOMBSTONE_ID}?refresh=true`, { method: 'DELETE' });
+    if (usersState().osHealthy) void osFetch(`/os-users/_doc/${BOOTSTRAP_TOMBSTONE_ID}?refresh=true`, { method: 'DELETE' });
   }
   // Drop the old bootstrap doc from the mirror — but ONLY when the operator chose
   // a different username. If they kept `admin`, the new admin's PUT below targets
   // the SAME doc id, so a DELETE here would race and could wipe the real account.
-  if (osHealthy && newId !== input.bootstrapId) {
+  if (usersState().osHealthy && newId !== input.bootstrapId) {
     void osFetch(`/os-users/_doc/${input.bootstrapId}?refresh=true`, { method: 'DELETE' });
   }
 
@@ -496,7 +564,7 @@ export async function verifyEmailToken(token: string): Promise<{ ok: boolean; us
   // Defensive: sweep any stale bootstrap tombstone from an older build.
   if (map.has(BOOTSTRAP_TOMBSTONE_ID)) {
     map.delete(BOOTSTRAP_TOMBSTONE_ID);
-    if (osHealthy) void osFetch(`/os-users/_doc/${BOOTSTRAP_TOMBSTONE_ID}?refresh=true`, { method: 'DELETE' });
+    if (usersState().osHealthy) void osFetch(`/os-users/_doc/${BOOTSTRAP_TOMBSTONE_ID}?refresh=true`, { method: 'DELETE' });
   }
   return { ok: true, userId: u.id };
 }
@@ -516,19 +584,20 @@ export async function markOnboarded(id: string): Promise<void> {
 /** Store ONLY the hash of a freshly generated master key. */
 export async function setRecoveryKey(plaintextKey: string): Promise<void> {
   await getCache();
-  meta.recoveryHash = await hashPassword(plaintextKey);
+  usersState().meta.recoveryHash = await hashPassword(plaintextKey);
   persistMeta();
 }
 
 export async function recoveryConfigured(): Promise<boolean> {
   await getCache();
-  return Boolean(meta.recoveryHash);
+  return Boolean(usersState().meta.recoveryHash);
 }
 
 export async function verifyRecoveryKey(plaintextKey: string): Promise<boolean> {
   await getCache();
-  if (!meta.recoveryHash) return false;
-  return verifyPassword(plaintextKey, meta.recoveryHash);
+  const { recoveryHash } = usersState().meta;
+  if (!recoveryHash) return false;
+  return verifyPassword(plaintextKey, recoveryHash);
 }
 
 /**
@@ -554,4 +623,12 @@ export async function resetPasswordWithRecovery(
   map.set(u.id, u);
   writeThrough(u);
   return publicOf(u);
+}
+
+export function __resetUsers(): void {
+  const s = usersState();
+  s.cache = null;
+  s.meta = {};
+  s.osHealthy = false;
+  s.dummyHash = null;
 }

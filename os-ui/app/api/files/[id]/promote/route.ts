@@ -51,7 +51,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     const user = await requirePrincipal();
     const { id } = await ctx.params;
     const status = promotionStatus(id, user); // view-scope guard + the docs gate
-    const pending = listApprovals().find(
+    // Only a still-PENDING request should render as "awaiting approval"; a decided
+    // (approved/rejected) one stays in the queue, so an unfiltered lookup would
+    // lock the owner out of ever re-requesting after a rejection.
+    const pending = listApprovals({ status: 'pending' }).find(
       (a) => a.kind === 'file_promote' && a.payload?.fileId === id,
     );
     return NextResponse.json({ tier: status.tier, gate: status.gate, request: pending ?? null });

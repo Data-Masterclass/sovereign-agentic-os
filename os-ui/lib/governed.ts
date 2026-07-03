@@ -11,9 +11,10 @@ import { config } from '@/lib/config';
  * Three concerns:
  *
  *   1. OPA authorization (default-deny). We ask the live decision API whether the
- *      principal may call the tool. If OPA is unreachable (off locally) we fail
- *      OPEN with an explicit `policy: 'opa-unreachable'` marker so the teaching
- *      flow still runs but the report is honest about it.
+ *      principal may call the tool. If OPA is unreachable/errors we FAIL CLOSED
+ *      (deny) with an explicit `policy: 'opa-unreachable'` marker — consistent
+ *      with the agent spine — so an OPA outage cannot silently open data authz.
+ *      The offline-mock teaching flow can opt into fail-open with OPA_FAIL_OPEN=true.
  *   2. Execution against the SAME governed backends the BI layer uses — Cube for
  *      metrics, the query-tool for ad-hoc SQL over the Iceberg marts.
  *   3. Best-effort Langfuse trace so every tool call is auditable in Monitoring.
@@ -38,20 +39,23 @@ async function withTimeout(url: string, init: RequestInit, ms = 2500): Promise<R
   }
 }
 
-/** Ask OPA whether `principal` may call `tool`. Fail-open + marked when OPA is off. */
+/** Ask OPA whether `principal` may call `tool`. Fail-CLOSED (deny) + marked when
+ *  OPA is unreachable/errors, unless OPA_FAIL_OPEN is explicitly set for the
+ *  offline-mock teaching flow. Aligns with the agent spine's default-deny. */
 export async function authorize(principal: string, tool: string): Promise<Authz> {
+  const unreachable: Authz = { allowed: config.opaFailOpen, policy: 'opa-unreachable' };
   const res = await withTimeout(`${config.opaUrl}/v1/data/agentic/authz/allow`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ input: { principal, tool } }),
   });
-  if (!res) return { allowed: true, policy: 'opa-unreachable' };
+  if (!res) return unreachable;
   try {
     const data = (await res.json()) as { result?: unknown };
     const allowed = Boolean(data?.result);
     return { allowed, policy: allowed ? 'opa-allow' : 'opa-deny' };
   } catch {
-    return { allowed: true, policy: 'opa-unreachable' };
+    return unreachable;
   }
 }
 

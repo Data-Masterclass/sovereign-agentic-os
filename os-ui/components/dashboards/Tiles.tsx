@@ -96,7 +96,7 @@ export default function Tiles({
         url={supersetUrl}
         title="Superset"
         toolKey="superset"
-        note="The Sales Overview dashboard is built on the Cube Revenue metric — the same numbers the Sales agent returns."
+        note="Dashboards are built on Cube metrics — so a chart returns the same number the agent's metrics tool does."
       />
       <div className="hint">
         Set <code>SUPERSET_URL</code> to your Superset address (default <code>http://localhost:8088</code>).

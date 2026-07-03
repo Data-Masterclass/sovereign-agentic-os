@@ -6,9 +6,9 @@ import assert from 'node:assert/strict';
 import { type KnowledgeUnit, type Provenance } from './chunk.ts';
 import { canSee, applyDls, lexicalScore, hybridScore, freshness, rerank } from './retrieve-core.ts';
 
-const amir = { id: 'amir', domains: ['sales'], role: 'participant' as const };
+const amir = { id: 'amir', domains: ['sales'], role: 'creator' as const };
 const beaBuilder = { id: 'bea', domains: ['sales'], role: 'builder' as const };
-const kenji = { id: 'kenji', domains: ['finance'], role: 'participant' as const };
+const kenji = { id: 'kenji', domains: ['finance'], role: 'creator' as const };
 
 function prov(over: Partial<Provenance>): Provenance {
   return {

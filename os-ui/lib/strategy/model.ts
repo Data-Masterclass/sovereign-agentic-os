@@ -243,7 +243,7 @@ export function canEditPillar(
   user: { domains: string[]; role: Role },
   pillar: Pick<Pillar, 'scope' | 'domain'>,
 ): boolean {
-  if (user.role === 'participant') return false;
+  if (user.role === 'creator') return false;
   if (pillar.scope === 'tenant') {
     // Tenant-wide pillars are Admin-owned.
     return user.role === 'admin';

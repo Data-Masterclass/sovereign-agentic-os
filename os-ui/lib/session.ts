@@ -12,15 +12,19 @@
  */
 
 /**
- * Domain role, lowest→highest. `participant` is shown as "User" in the UI; the
- * wire value stays `participant` for backward compatibility with existing
- * sessions, seeds and OPA grants. `creator` sits between User and Builder
- * (Governance golden path §5: User · Creator · Builder · Admin).
+ * Domain role, lowest→highest privilege:
+ *  - `creator` (0): Base role — create + run own data/agents/apps, consume shared.
+ *    Cannot promote to Shared, approve, or reach admin.
+ *  - `builder` (1): Domain steward — creator rights plus review/approve, promote
+ *    to Shared, manage own domain's members.
+ *  - `admin` (2): Tenant-wide control — users, policy, certification, cost caps.
+ * (Governance golden path §5.) Former `participant` and `agentic-leader` roles are
+ * removed; any legacy/unknown role normalises to `creator`.
  */
-export type Role = 'participant' | 'creator' | 'builder' | 'admin';
+export type Role = 'creator' | 'builder' | 'admin';
 
 /** Every role, lowest→highest privilege. Single source for selects + ranking. */
-export const ROLES: readonly Role[] = ['participant', 'creator', 'builder', 'admin'] as const;
+export const ROLES: readonly Role[] = ['creator', 'builder', 'admin'] as const;
 
 export type SessionClaims = {
   /** Stable user id (login handle). */

@@ -26,7 +26,7 @@ function art(p: Partial<Artifact> & Pick<Artifact, 'id' | 'type' | 'owner' | 'do
 }
 
 const USERS: { id: string; role: Role }[] = [
-  { id: 'amir', role: 'participant' },
+  { id: 'amir', role: 'creator' },
   { id: 'sara', role: 'creator' },
   { id: 'bea', role: 'builder' },
   { id: 'cas', role: 'builder' },
@@ -71,7 +71,7 @@ test('self service counts DISTINCT creators per area across all tiers (draft+)',
   assert.equal(sc.selfService.software, 1); // cas
   assert.equal(sc.selfService.totalUsers, 5);
   assert.equal(sc.selfService.builders, 2); // bea + cas
-  assert.equal(sc.selfService.creators, 1); // sara
+  assert.equal(sc.selfService.creators, 2); // amir + sara (both base-role creators)
 });
 
 test('foundations count only promoted + certified (tier ≥ promoted), by type', () => {

@@ -70,7 +70,13 @@ export type StandingPolicy = {
   createdAt: string;
 };
 
-const STANDING = new Map<string, StandingPolicy>();
+type GovernanceStandingState = { standing: Map<string, StandingPolicy> };
+const GOV_STANDING_KEY = Symbol.for('soa.governance.standing2');
+function govStanding(): GovernanceStandingState {
+  const g = globalThis as unknown as Record<symbol, GovernanceStandingState | undefined>;
+  if (!g[GOV_STANDING_KEY]) g[GOV_STANDING_KEY] = { standing: new Map() };
+  return g[GOV_STANDING_KEY]!;
+}
 
 function pid(): string {
   return `pol_${Math.random().toString(36).slice(2, 9)}${Date.now().toString(36).slice(-4)}`;
@@ -94,14 +100,14 @@ export function rememberPolicy(input: {
     createdAt: new Date().toISOString(),
   };
   // One standing policy per (principal, tool): replace any prior.
-  for (const [k, v] of STANDING) if (v.principal === p.principal && v.tool === p.tool) STANDING.delete(k);
-  STANDING.set(p.id, p);
+  for (const [k, v] of govStanding().standing) if (v.principal === p.principal && v.tool === p.tool) govStanding().standing.delete(k);
+  govStanding().standing.set(p.id, p);
   return p;
 }
 
 /** Does a standing policy already cover this call (so it auto-allows, no prompt)? */
 export function matchStandingPolicy(principal: string, tool: string, args: Record<string, unknown> = {}): StandingPolicy | null {
-  for (const p of STANDING.values()) {
+  for (const p of govStanding().standing.values()) {
     if (p.principal !== principal || p.tool !== tool) continue;
     if (p.maxAmount === undefined) return p;
     const amount = Number(args[p.boundArg]);
@@ -111,14 +117,14 @@ export function matchStandingPolicy(principal: string, tool: string, args: Recor
 }
 
 export function listStandingPolicies(principal?: string): StandingPolicy[] {
-  return [...STANDING.values()].filter((p) => (principal ? p.principal === principal : true));
+  return [...govStanding().standing.values()].filter((p) => (principal ? p.principal === principal : true));
 }
 export function revokeStandingPolicy(id: string): boolean {
-  return STANDING.delete(id);
+  return govStanding().standing.delete(id);
 }
 /** Test seam. */
 export function _clearStandingPolicies(): void {
-  STANDING.clear();
+  govStanding().standing.clear();
 }
 
 // =================================================================== Mode B =====
@@ -185,31 +191,37 @@ export function resolveAutonomous(
  * agent inherits the (Admin-set) domain default; a Builder may override per agent
  * and fine-tune per tool. Returns the effective preset for one tool.
  */
-const DOMAIN_DEFAULT_PRESET = new Map<string, SafetyPreset>();
-const AGENT_PRESET = new Map<string, SafetyPreset>(); // agent principal -> preset
-const AGENT_TOOL_PRESET = new Map<string, SafetyPreset>(); // `${agent}:${conn}:${tool}` -> preset
+type GovernancePresetState = { domainDefault: Map<string, SafetyPreset>; agentPreset: Map<string, SafetyPreset>; agentToolPreset: Map<string, SafetyPreset> };
+const GOV_PRESETS_KEY = Symbol.for('soa.governance.presets');
+function presets(): GovernancePresetState {
+  const g = globalThis as unknown as Record<symbol, GovernancePresetState | undefined>;
+  if (!g[GOV_PRESETS_KEY]) g[GOV_PRESETS_KEY] = { domainDefault: new Map(), agentPreset: new Map(), agentToolPreset: new Map() };
+  return g[GOV_PRESETS_KEY]!;
+}
 
 export function setDomainDefaultPreset(domain: string, preset: SafetyPreset): void {
-  DOMAIN_DEFAULT_PRESET.set(domain, preset);
+  presets().domainDefault.set(domain, preset);
 }
 export function setAgentPreset(agent: string, preset: SafetyPreset): void {
-  AGENT_PRESET.set(agent, preset);
+  presets().agentPreset.set(agent, preset);
 }
 export function setAgentToolPreset(agent: string, connection: string, tool: string, preset: SafetyPreset): void {
-  AGENT_TOOL_PRESET.set(`${agent}:${connection}:${tool}`, preset);
+  presets().agentToolPreset.set(`${agent}:${connection}:${tool}`, preset);
 }
 export function _clearPresets(): void {
-  DOMAIN_DEFAULT_PRESET.clear();
-  AGENT_PRESET.clear();
-  AGENT_TOOL_PRESET.clear();
+  const p = presets();
+  p.domainDefault.clear();
+  p.agentPreset.clear();
+  p.agentToolPreset.clear();
 }
 
 /** Effective preset: per-tool fine-tune → per-agent → domain default → read-only. */
 export function effectivePreset(agent: string, domain: string, connection: string, tool: string): SafetyPreset {
+  const p = presets();
   return (
-    AGENT_TOOL_PRESET.get(`${agent}:${connection}:${tool}`) ??
-    AGENT_PRESET.get(agent) ??
-    DOMAIN_DEFAULT_PRESET.get(domain) ??
+    p.agentToolPreset.get(`${agent}:${connection}:${tool}`) ??
+    p.agentPreset.get(agent) ??
+    p.domainDefault.get(domain) ??
     'read-only'
   );
 }

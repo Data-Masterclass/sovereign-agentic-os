@@ -30,7 +30,7 @@ async function withTimeout(url: string, init: RequestInit, ms = 5000): Promise<R
 }
 
 export function realSuperset(): SupersetClient {
-  const base = config.supersetUrl;
+  const base = config.supersetInternalUrl;
   return {
     async importBundle(name, _bundle) {
       const res = await withTimeout(`${base}/api/v1/dashboard/import/`, {
@@ -81,7 +81,7 @@ export function realSuperset(): SupersetClient {
 }
 
 export function realEmbed(): EmbedClient {
-  const base = config.supersetUrl;
+  const base = config.supersetInternalUrl;
   return {
     async mint(req: GuestTokenRequest) {
       // POST /api/v1/security/guest_token/ with a service account; the token PAYLOAD
@@ -109,6 +109,6 @@ export function makeRealDashboardClients(): DashboardLiveDeps {
 
 /** Superset reachable? The switch between the LIVE path and the offline-mock. */
 export async function liveDashboardsReachable(): Promise<boolean> {
-  const res = await withTimeout(`${config.supersetUrl}/health`, { method: 'GET' }, 2500);
+  const res = await withTimeout(`${config.supersetInternalUrl}/health`, { method: 'GET' }, 2500);
   return Boolean(res && res.ok);
 }

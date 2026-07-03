@@ -9,7 +9,7 @@ import { startPreview, requestDeploy, decideDeploy, scopeBroadened } from './rev
 import { consumeResource } from './lifecycle.ts';
 import { commitToApp } from './server.ts';
 
-const creator: CurrentUser = { id: 'alice', name: 'Alice', domains: ['sales'], role: 'participant' };
+const creator: CurrentUser = { id: 'alice', name: 'Alice', domains: ['sales'], role: 'creator' };
 const builder: CurrentUser = { id: 'bob', name: 'Bob', domains: ['sales'], role: 'builder' };
 const otherDomainBuilder: CurrentUser = { id: 'eve', name: 'Eve', domains: ['hr'], role: 'builder' };
 
@@ -96,4 +96,20 @@ test('scopeBroadened: subset is routine, superset re-reviews', () => {
   assert.equal(scopeBroadened(base, { ...base, connections: ['a', 'b'] }), true);
   assert.equal(scopeBroadened(base, { ...base, footprint: { cpu: '1', memory: '1', estMonthlyUsd: 9 } }), true);
   assert.equal(scopeBroadened(null, base), true); // first deploy
+});
+
+test('globalThis pin: create survives a fresh cards() call', async () => {
+  const app = await createApp(creator, { name: 'Pin Test App', template: 'nextjs-supabase' });
+  const res = await requestDeploy(app.id, creator);
+  assert.equal(res.kind, 'review');
+  if (res.kind !== 'review') return;
+
+  // Confirm card is visible via the globalThis symbol directly.
+  const pinned = (globalThis as any)[Symbol.for('soa.software.review')] as Map<string, unknown>;
+  assert.ok(pinned instanceof Map, 'globalThis pin is a Map');
+  assert.ok(pinned.has(res.card.id), 'card id visible via globalThis pin');
+
+  // getReviewCard() calls cards() afresh — must still return the card.
+  const { getReviewCard } = await import('./review.ts');
+  assert.ok(getReviewCard(res.card.id) !== null);
 });

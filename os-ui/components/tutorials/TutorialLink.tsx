@@ -4,13 +4,14 @@
 'use client';
 
 import type { GoldenPathKey } from '@/lib/tutorials/types';
+import { getTutorial } from '@/lib/tutorials/registry';
 import { useTutorial } from './TutorialProvider';
 
 /**
- * The single tutorial trigger, used by BOTH entry points so they resolve the
- * same registry entry:
- *   - Home card  -> variant="card"   ("How it works")
- *   - Tab header -> variant="header" ("Tutorial")
+ * The single tutorial trigger, used by all three entry points:
+ *   - Home card      -> variant="card"       ("How it works")
+ *   - Tab header     -> variant="header"     ("Tutorial", legacy topbar style)
+ *   - ActionBar      -> variant="action-bar" (uses TutorialDef.buttonLabel, bigger)
  */
 export default function TutorialLink({
   tutorial,
@@ -18,11 +19,20 @@ export default function TutorialLink({
   label,
 }: {
   tutorial: GoldenPathKey;
-  variant?: 'card' | 'header';
+  variant?: 'card' | 'header' | 'action-bar';
   label?: string;
 }) {
   const { open } = useTutorial();
-  const text = label ?? (variant === 'header' ? 'Tutorial' : 'How it works');
+
+  const def = getTutorial(tutorial);
+  const defaultText =
+    variant === 'action-bar'
+      ? (def?.buttonLabel ?? 'Tutorial')
+      : variant === 'header'
+        ? 'Tutorial'
+        : 'How it works';
+  const text = label ?? defaultText;
+
   return (
     <button
       type="button"

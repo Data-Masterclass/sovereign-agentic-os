@@ -19,7 +19,12 @@ import { isHostApproved } from '@/lib/egress-requests';
  */
 
 // "name/key" -> raw secret value. Module-scoped, server-only; never serialized.
-const VAULT = new Map<string, string>();
+const VAULT_KEY = Symbol.for('soa.secrets.vault');
+function vault(): Map<string, string> {
+  const g = globalThis as unknown as Record<symbol, Map<string, string> | undefined>;
+  if (!g[VAULT_KEY]) g[VAULT_KEY] = new Map();
+  return g[VAULT_KEY]!;
+}
 
 export type SecretRef = { name: string; key: string };
 
@@ -30,12 +35,12 @@ function refKey(ref: SecretRef): string {
 /** Write a credential to Secrets Manager. Returns ONLY a reference. */
 export function putSecret(name: string, key: string, value: string): SecretRef {
   const ref = { name, key };
-  VAULT.set(refKey(ref), value);
+  vault().set(refKey(ref), value);
   return ref;
 }
 
 export function hasSecret(ref: SecretRef): boolean {
-  return VAULT.has(refKey(ref));
+  return vault().has(refKey(ref));
 }
 
 /**
@@ -44,7 +49,7 @@ export function hasSecret(ref: SecretRef): boolean {
  * never appears in the record or logs".
  */
 export function secretFingerprint(ref: SecretRef): string {
-  const v = VAULT.get(refKey(ref));
+  const v = vault().get(refKey(ref));
   if (!v) return '';
   return `sha256:${createHash('sha256').update(v).digest('hex').slice(0, 12)}`;
 }
@@ -55,11 +60,11 @@ export function secretFingerprint(ref: SecretRef): string {
  * must never return this value to the client or put it in a trace.
  */
 export function getSecretServerSide(ref: SecretRef): string | null {
-  return VAULT.get(refKey(ref)) ?? null;
+  return vault().get(refKey(ref)) ?? null;
 }
 
 export function deleteSecret(ref: SecretRef): void {
-  VAULT.delete(refKey(ref));
+  vault().delete(refKey(ref));
 }
 
 // ------------------------------------------------------------- Egress allowlist --

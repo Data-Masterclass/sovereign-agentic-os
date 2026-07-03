@@ -28,7 +28,7 @@ import { type DashboardBuildContext } from '../dashboards/build/live.ts';
  */
 
 const FORM: MetricForm = { name: 'Revenue', aggregation: 'sum', column: 'net_amount', dimensions: ['region'] };
-function viewer(id: string, region: string, role: 'participant' | 'builder' | 'admin' = 'participant') {
+function viewer(id: string, region: string, role: 'creator' | 'builder' | 'admin' = 'creator') {
   return delegate(claimsFromUser({ id, domains: ['sales'], role, attributes: { region } }), 'domain');
 }
 
@@ -70,7 +70,7 @@ test('GATE 4 — govern: Builder promotes, Admin certifies, a non-Builder cannot
   const d = goldSales();
   const rec = metricRecord(d, d.measures[0], 'amir', 'personal');
   const resolve = async () => 42000;
-  assert.equal((await governMetric(rec, 'promote', { id: 'amir', role: 'participant' }, resolve)).ok, false);
+  assert.equal((await governMetric(rec, 'promote', { id: 'amir', role: 'creator' }, resolve)).ok, false);
   const promoted = await governMetric(rec, 'promote', { id: 'bea', role: 'builder' }, resolve);
   assert.ok(promoted.ok && promoted.record.tier === 'domain');
   assert.equal((await governMetric(promoted.record, 'certify', { id: 'bea', role: 'builder' }, resolve)).ok, false);

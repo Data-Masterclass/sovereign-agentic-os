@@ -9,6 +9,8 @@ import {
   parseSystem,
   serializeSystem,
 } from './system-schema.ts';
+import { canPromote } from '../session.ts';
+import { type TemplateKey, templateYaml } from './templates.ts';
 
 /**
  * The agent-system store — the MOCK Forgejo repo behind the Agents tab (kind-only,
@@ -65,8 +67,23 @@ export type RepoFile = { path: string; content: string; sha: string };
 
 export const WHITELIST_HINT = 'only system.yaml, AGENT.md and MEMORY.md are editable';
 
-const store = new Map<string, SystemRecord>();
-let seeded = false;
+/**
+ * State container pinned to `globalThis` so it is a TRUE singleton. The Next.js
+ * App Router bundles each route handler separately, which otherwise gives every
+ * route its own copy of this module — and its own empty `store` Map. A system
+ * created via `POST /api/agents/systems` (one route bundle) would then be invisible
+ * to `GET /api/agents/systems/[id]/files` (another route bundle), so AGENT.md /
+ * MEMORY.md would 404 and never load. Pinning to globalThis makes the record
+ * written by one route visible to every other route — and survives dev HMR. (Same
+ * reason `lib/marketplace/store.ts` and `lib/approvals.ts` pin their state.)
+ */
+type AgentsState = { store: Map<string, SystemRecord>; seeded: boolean };
+const STATE_KEY = Symbol.for('soa.agents.store');
+function state(): AgentsState {
+  const g = globalThis as unknown as Record<symbol, AgentsState | undefined>;
+  if (!g[STATE_KEY]) g[STATE_KEY] = { store: new Map(), seeded: false };
+  return g[STATE_KEY]!;
+}
 
 // --------------------------------------------------------------------- utils --
 
@@ -95,6 +112,8 @@ function starterYaml(name: string, domain: string, visibility: Visibility): stri
   const sys: System = {
     version: '1',
     system: { name, domain, visibility },
+    runtime: 'langgraph',
+    safetyPreset: 'read-only',
     entrypoint: 'assistant',
     state: { channels: { messages: 'add_messages' } },
     grants: { data: [], knowledge: [], tools: ['retrieve'], connections: [] },
@@ -128,21 +147,23 @@ function record(partial: Omit<SystemRecord, 'updatedAt' | 'lastActivity' | 'runn
 function ensureSeeded(): void {
   // A fresh tenant starts EMPTY. Agent systems are authored only through the
   // platform's own governed flows (e.g. the Northpeak e-commerce seed).
-  if (seeded) return;
-  seeded = true;
+  const s = state();
+  if (s.seeded) return;
+  s.seeded = true;
 }
 
 /** Test hook: wipe the in-process store + reseed. */
 export function __resetStore(): void {
-  store.clear();
-  seeded = false;
+  const s = state();
+  s.store.clear();
+  s.seeded = false;
 }
 
 // ------------------------------------------------------------------- scoping --
 
 function get(systemId: string): SystemRecord {
   ensureSeeded();
-  const rec = store.get(systemId);
+  const rec = state().store.get(systemId);
   if (!rec) fail('System not found', 404);
   return rec;
 }
@@ -201,7 +222,7 @@ export function listSystems(user: Principal): SystemGroups {
   const mine: SystemSummary[] = [];
   const domain: SystemSummary[] = [];
   const marketplace: SystemSummary[] = [];
-  for (const rec of store.values()) {
+  for (const rec of state().store.values()) {
     if (rec.owner === user.id) mine.push(summarise(rec));
     else if (rec.visibility === 'Shared' && user.domains.includes(rec.domain)) domain.push(summarise(rec));
     else if (rec.visibility === 'Marketplace') marketplace.push(summarise(rec));
@@ -228,31 +249,98 @@ export function getSystemForEdit(systemId: string, user: Principal): SystemView 
   return { ...rec, system: parseSystem(rec.yaml) };
 }
 
+/**
+ * Run-scope authorization — DISTINCT from edit-scope. A domain-Shared system may be
+ * RUN (executed) by any Creator+ that belongs to its domain, WITHOUT the right to
+ * edit its files or rebuild it. This is the governed "consume a shared agent" path:
+ * a course participant (Creator) runs the domain's ready-made Campaign Evaluation
+ * Agent but can never mutate it. Owner and in-domain Admin keep full rights (they
+ * can also edit ⇒ they can run). Personal systems stay owner-only. Marketplace
+ * execution stays edit-scoped (the governed path there is install-to-own/fork), so
+ * this widens NOTHING for Marketplace. File WRITES and Build still use
+ * {@link getSystemForEdit}, keeping a crisp boundary: run ≠ edit.
+ */
+function canRun(rec: SystemRecord, user: Principal): boolean {
+  if (canEdit(rec, user)) return true;
+  if (rec.visibility === 'Shared' && user.domains.includes(rec.domain)) {
+    // Any in-domain member (creator+) may RUN a Shared agent; the base
+    // role carries `run.attended`. WRITE/Build still route through edit-scope.
+    return true;
+  }
+  return false;
+}
+
+export function getSystemForRun(systemId: string, user: Principal): SystemView {
+  const rec = get(systemId);
+  if (!canRun(rec, user)) fail('Not permitted to run this system', 403);
+  return { ...rec, system: parseSystem(rec.yaml) };
+}
+
 // ------------------------------------------------------------- create / fork --
 
 export function createSystem(
   user: Principal,
-  input: { name: string; domain?: string; visibility?: Visibility; yaml?: string },
+  input: { name: string; domain?: string; yaml?: string; template?: TemplateKey },
 ): SystemRecord {
   ensureSeeded();
   const domain = input.domain && user.domains.includes(input.domain) ? input.domain : user.domains[0] ?? 'platform';
-  const visibility = input.visibility ?? 'Personal';
+  // Security: a newly created system is ALWAYS Personal (owner-only). Making it
+  // domain-Shared or Marketplace is a governed PROMOTION (`promoteSystem`) that
+  // enforces the role ladder — never a client-supplied field at create time.
+  const visibility: Visibility = 'Personal';
+  const name = input.name.trim() || 'Untitled system';
+  // Starter yaml: an explicit yaml (fork), else a server-authored TEMPLATE (never
+  // client yaml), else the default blank assistant.
+  const yaml = input.yaml ?? (input.template ? templateYaml(input.template, name, domain, visibility) : starterYaml(name, domain, visibility));
   const rec = record({
     id: id('sys'),
-    name: input.name.trim() || 'Untitled system',
+    name,
     domain,
     owner: user.id,
     visibility,
-    yaml: input.yaml ?? starterYaml(input.name.trim() || 'Untitled system', domain, visibility),
+    yaml,
   });
-  store.set(rec.id, rec);
+  state().store.set(rec.id, rec);
   return rec;
 }
 
-/** Marketplace install = fork into an independent copy the installer owns. */
+/**
+ * Promotion ladder for an agent system — the mirror of `promoteArtifact`:
+ *   Personal ──(Builder+)──▶ Shared ──(Admin)──▶ Marketplace
+ * The actor must belong to the system's domain (Admin spans the tenant via
+ * `canEdit`). Forked (installed) copies cannot be re-published. Same-visibility
+ * or already-Marketplace calls are rejected. Enforcement is server-side here, so
+ * the ladder holds regardless of any client input.
+ */
+export function promoteSystem(systemId: string, user: Principal): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  if (rec.origin === 'forked') fail('An installed (forked) system cannot be re-published', 400);
+  if (rec.visibility === 'Personal') {
+    if (!canPromote(user.role, 'Personal')) fail('Promoting to Shared requires a Builder or Admin', 403);
+    rec.visibility = 'Shared';
+  } else if (rec.visibility === 'Shared') {
+    if (!canPromote(user.role, 'Shared')) fail('Publishing to the Marketplace requires an Admin', 403);
+    rec.visibility = 'Marketplace';
+  } else {
+    fail('This system is already published to the Marketplace', 400);
+  }
+  rec.updatedAt = now();
+  return rec;
+}
+
+/**
+ * Marketplace install = fork into an independent copy the installer owns.
+ * Installing an agent template is a **Builder+** action, mirroring the promotion
+ * ladder: a User (participant) or Creator has no Marketplace surface, so they may
+ * not pull a public template into a domain either. The gate lives here (the store
+ * is the security boundary) so it holds regardless of the client.
+ */
 export function forkSystem(systemId: string, user: Principal): SystemRecord {
   const src = get(systemId);
   if (src.visibility !== 'Marketplace') fail('Only Marketplace systems can be installed', 400);
+  if (user.role !== 'builder' && user.role !== 'admin') {
+    fail('Installing a Marketplace agent template requires a Builder or Admin', 403);
+  }
   const rec = record({
     id: id('sys'),
     name: src.name,
@@ -263,7 +351,7 @@ export function forkSystem(systemId: string, user: Principal): SystemRecord {
     sourceId: src.id,
     yaml: src.yaml,
   });
-  store.set(rec.id, rec);
+  state().store.set(rec.id, rec);
   return rec;
 }
 
@@ -365,7 +453,7 @@ export function toggleAgent(systemId: string, user: Principal, agentId: string, 
 }
 
 export function recordActivity(systemId: string): void {
-  const rec = store.get(systemId);
+  const rec = state().store.get(systemId);
   if (rec) rec.lastActivity = now();
 }
 
@@ -379,7 +467,7 @@ export function systemForScheduler(
   systemId: string,
 ): { yaml: string; domain: string; disabledAgents: string[] } | null {
   ensureSeeded();
-  const rec = store.get(systemId);
+  const rec = state().store.get(systemId);
   if (!rec) return null;
   return { yaml: rec.yaml, domain: rec.domain, disabledAgents: rec.disabledAgents };
 }

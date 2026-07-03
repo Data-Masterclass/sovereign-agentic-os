@@ -1,0 +1,79 @@
+{{- if and .Values.hermes.enabled .Values.hermes.model.vllm.enabled }}
+{{- /*
+  Hermes 4.3 tool-calling model, self-served via vLLM (OpenAI-compatible /v1) and
+  registered with LiteLLM as `hermes-4-3-*` (hermes plan §5). GATED behind BOTH
+  `hermes.enabled` AND `model.vllm.enabled` — the latter is off by default because
+  the 36B/70B tiers need the GPU pool; the 14B CPU tier can also run here on a GPU
+  for speed. Template-only on kind (no GPU): this renders for review but is not
+  scheduled until a GPU node pool exists.
+
+  LICENSE: Hermes 4 weights are Llama-3.1-based → Llama 3.1 Community License
+  (source-available; self-hosted internal use). We do NOT bundle/redistribute the
+  weights — vLLM pulls them at runtime into the model cache on the GPU node.
+*/}}
+{{- $v := .Values.hermes.model.vllm }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hermes-vllm
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "middleware") | nindent 4 }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "hermes-vllm") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "hermes-vllm") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "hermes-vllm") | nindent 8 }}
+    spec:
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "app") | nindent 6 }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: vllm
+          image: "vllm/vllm-openai:latest"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          args:
+            - "--model"
+            - {{ $v.model | quote }}
+            - "--port"
+            - "8000"
+            # Hermes 4.3 uses the <tool_call> standard; enable structured/tool parsing.
+            - "--enable-auto-tool-choice"
+            - "--tool-call-parser"
+            - "hermes"
+          ports:
+            - { name: http, containerPort: 8000 }
+          resources:
+            limits:
+              nvidia.com/gpu: {{ $v.gpu }}
+            requests:
+              cpu: "2"
+              memory: 8Gi
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hermes-vllm
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "hermes-vllm") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "hermes-vllm") | nindent 4 }}
+  ports:
+    - { name: http, port: 8000, targetPort: http }
+{{- end }}

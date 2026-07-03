@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/auth';
-import { deleteUser, updateUser } from '@/lib/users';
+import { archiveUser, deleteUser, restoreUser, updateUser } from '@/lib/users';
 import type { Role } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
@@ -18,11 +18,23 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     await requireAdmin();
     const { id } = await ctx.params;
     const body = await req.json();
+    if ('password' in (body as object)) {
+      return NextResponse.json({ error: 'This endpoint does not handle passwords' }, { status: 400 });
+    }
+    // archive / restore shortcuts
+    if (body?.archive) {
+      const u = await archiveUser(id);
+      return NextResponse.json({ user: u });
+    }
+    if (body?.restore) {
+      const u = await restoreUser(id);
+      return NextResponse.json({ user: u });
+    }
     const user = await updateUser(id, {
       name: body?.name !== undefined ? String(body.name) : undefined,
-      password: body?.password ? String(body.password) : undefined,
+      email: body?.email !== undefined ? String(body.email) : undefined,
       domains: Array.isArray(body?.domains) ? body.domains.map(String).filter(Boolean) : undefined,
-      role: ['participant', 'builder', 'admin'].includes(body?.role) ? (body.role as Role) : undefined,
+      role: ['creator', 'builder', 'admin'].includes(body?.role) ? (body.role as Role) : undefined,
     });
     return NextResponse.json({ user });
   } catch (e) {

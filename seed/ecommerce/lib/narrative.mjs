@@ -25,14 +25,16 @@ export const STORE = {
  * exercised end to end. Passwords are NOT here — they are generated into a
  * gitignored credentials file by gen-credentials.mjs and supplied at run time.
  */
+// `id` is the internal principal (owner/OPA/DLS key); `email` is the human
+// sign-in label (login-by-email). Both resolve the same account.
 export const CAST = [
-  { id: 'nova-admin', name: 'Nova (Store Admin)', role: 'admin', domains: ['platform', 'sales', 'marketing', 'ops'] },
-  { id: 'sasha-sales', name: 'Sasha (Sales Builder)', role: 'builder', domains: ['sales'] },
-  { id: 'morgan-mktg', name: 'Morgan (Marketing Builder)', role: 'builder', domains: ['marketing'] },
-  { id: 'omar-ops', name: 'Omar (Ops Builder)', role: 'builder', domains: ['ops'] },
-  { id: 'riley-sales', name: 'Riley (Sales Creator)', role: 'creator', domains: ['sales'] },
-  { id: 'kai-mktg', name: 'Kai (Marketing Creator)', role: 'creator', domains: ['marketing'] },
-  { id: 'devi-ops', name: 'Devi (Ops Creator)', role: 'creator', domains: ['ops'] },
+  { id: 'nova-admin', name: 'Nova (Store Admin)', email: 'nova@northpeak.demo', role: 'admin', domains: ['platform', 'sales', 'marketing', 'ops'] },
+  { id: 'sasha-sales', name: 'Sasha (Sales Builder)', email: 'sasha@northpeak.demo', role: 'builder', domains: ['sales'] },
+  { id: 'morgan-mktg', name: 'Morgan (Marketing Builder)', email: 'morgan@northpeak.demo', role: 'builder', domains: ['marketing'] },
+  { id: 'omar-ops', name: 'Omar (Ops Builder)', email: 'omar@northpeak.demo', role: 'builder', domains: ['ops'] },
+  { id: 'riley-sales', name: 'Riley (Sales Creator)', email: 'riley@northpeak.demo', role: 'creator', domains: ['sales'] },
+  { id: 'kai-mktg', name: 'Kai (Marketing Creator)', email: 'kai@northpeak.demo', role: 'creator', domains: ['marketing'] },
+  { id: 'devi-ops', name: 'Devi (Ops Creator)', email: 'devi@northpeak.demo', role: 'creator', domains: ['ops'] },
 ];
 
 /** Connections — a mock store Postgres, a Drive, and an MCP. */

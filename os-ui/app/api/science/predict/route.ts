@@ -30,19 +30,23 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
   }
 
-  let body: { account?: string; features?: Partial<ChurnFeatures>; principal?: string; domain?: string } = {};
+  // Only the prediction inputs come from the body. Identity (principal + domain)
+  // is NEVER client-supplied — it is bound to the fixed front-door service
+  // principal and the caller's SESSION domains, so a user cannot forge either.
+  let body: { account?: string; features?: Partial<ChurnFeatures> } = {};
   try {
     body = await req.json();
   } catch {
     /* empty body => score with the default (neutral) feature vector */
   }
 
-  // The MCP door's caller is an AGENT (defaults to the governed agent principal, granted predict).
+  // The MCP door's caller is the governed agent principal (granted predict); the
+  // callable-scope check uses the human caller's own domains from the session.
   const result = await servePredict({
     account: body.account,
     features: body.features,
-    principal: (body.principal ?? 'sales-assistant').toString(),
-    domain: (body.domain ?? 'sales').toString(),
+    principal: 'sales-assistant',
+    domains: user.domains,
     isAgent: true,
     requestedBy: user.id,
   });

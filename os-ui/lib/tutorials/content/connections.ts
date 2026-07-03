@@ -9,6 +9,7 @@ const connections: TutorialDef = {
   route: '/connections',
   title: 'Connections',
   tagline: 'Connect the outside world — safely, with least-privilege and a full audit trail.',
+  buttonLabel: 'Connections Tutorial',
 
   hook: {
     illustration: 'connect',

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
  */
-import { test } from 'node:test';
+import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { hashPassword } from './password.ts';
 import {
@@ -13,6 +13,7 @@ import {
   sendVerificationEmail,
   type OutgoingMail,
 } from './mailer.ts';
+import { __resetUsers } from './users.ts';
 
 /**
  * Self-hosted onboarding security: the bootstrap admin must become active with
@@ -76,6 +77,9 @@ function resetMailerEnv(): void {
     delete process.env[k];
   }
 }
+
+// Clear the globalThis-pinned users state before every test so tests don't bleed.
+beforeEach(() => __resetUsers());
 
 // Fresh module instance == a process restart (in-memory cache is gone; only the
 // stubbed OpenSearch mirror survives).
@@ -183,7 +187,7 @@ test('no mailer: a new account is active immediately (no email round-trip, no de
     id: 'bob',
     password: STRONG,
     domains: ['sales'],
-    role: 'participant',
+    role: 'creator',
     email: 'bob@example.com',
   });
   assert.equal(created.emailVerified, true, 'active without an email round-trip');
@@ -209,7 +213,7 @@ test('mailer on: invited account gets a verification email and the token verifie
     id: 'carol',
     password: STRONG,
     domains: ['sales'],
-    role: 'participant',
+    role: 'creator',
     email: 'carol@example.com',
   });
   assert.equal(created.emailVerified, false, 'starts unverified when a mailer is on');

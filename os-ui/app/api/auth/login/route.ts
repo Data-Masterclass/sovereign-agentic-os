@@ -38,7 +38,7 @@ export async function POST(req: Request) {
 
   const claims = await authenticate(username, password);
   if (!claims) {
-    return NextResponse.json({ error: 'Invalid username or password' }, { status: 401 });
+    return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
   }
 
   rateLimitReset(key);

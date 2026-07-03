@@ -24,7 +24,7 @@
  */
 import { config } from '../config.ts';
 
-export type Role = 'participant' | 'creator' | 'builder' | 'admin';
+export type Role = 'creator' | 'builder' | 'admin';
 
 export type CompileUser = { id: string; role: Role; domains: string[]; active?: boolean };
 export type CompileDomain = { id: string; archived?: boolean; layers?: { ml?: boolean; spark?: boolean } };
@@ -53,11 +53,8 @@ export type CompiledPolicy = {
 };
 
 const BASE_BY_ROLE: Record<Role, string[]> = {
-  // participant ("User"): read governed data via the two governed tools.
-  participant: ['metrics', 'query'],
-  // creator: sits between User and Builder. Least-privilege base at integration
-  // time (= participant) — the precise creator grant-set is a Governance policy
-  // decision flagged for human review before publish.
+  // creator (base role): read governed data via the two governed tools.
+  // The precise grant-set is a Governance policy decision flagged for human review before publish.
   creator: ['metrics', 'query'],
   // builder: + promote to Shared, request external connection writes, workbench.
   builder: ['metrics', 'query', 'promote', 'connection_write_request', 'workbench'],

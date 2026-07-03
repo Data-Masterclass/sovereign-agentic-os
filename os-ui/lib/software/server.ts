@@ -6,11 +6,12 @@ import { config } from '@/lib/config';
 import {
   getAppByIdInternal,
   persistApp,
+  templateFiles,
   withStatus,
   type App,
 } from '@/lib/apps';
 import { generateAndCompile } from './auto-mcp.ts';
-import { parseAppManifest, parseOpenApi } from './metadata.ts';
+import { parseAppManifest, parseOpenApi, detectSurface } from './metadata.ts';
 import type { PipelineBackend, AuthorInput, AuthorResult, FrontDoorKey } from './adapters.ts';
 import type { AdapterStep, RunMode, ScaffoldFile } from './model.ts';
 
@@ -142,6 +143,19 @@ export function getSnapshot(appId: string): ScaffoldFile[] | null {
   return REPO_SNAPSHOT.get(appId) ?? null;
 }
 
+/**
+ * A commit is a CHANGESET, not the whole tree. Merge the changed files over the
+ * app's current tree (its prior snapshot, or the template seed on the first
+ * commit) so the metadata parse + surface detection + security scan/diff see the
+ * WHOLE repo — a partial `git push` must not make the untouched app.yaml/openapi/
+ * .app files "disappear", nor hide the rest of the repo from the scanner.
+ */
+function mergeTree(prior: ScaffoldFile[], incoming: ScaffoldFile[]): ScaffoldFile[] {
+  const byPath = new Map(prior.map((f) => [f.path, f]));
+  for (const f of incoming) byPath.set(f.path, f);
+  return [...byPath.values()];
+}
+
 // ----------------------------------------------------- Commit (convergence) ----
 
 /**
@@ -159,20 +173,26 @@ export async function commitToApp(
   const app = await getAppByIdInternal(appId);
   if (!app) throw withStatus(new Error('App not found'), 404);
   const backend = await pickBackend();
+  // Push only the changeset (correct for live Forgejo); parse against the full tree.
   const step = await backend.commit(app.slug, files, message);
+  const prior = getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
+  const tree = mergeTree(prior, files);
 
-  // Metadata fidelity: parse the convention on every commit.
-  const manifest = parseAppManifest(files, { name: app.name, owner: app.owner, description: app.description });
+  // Metadata fidelity: parse the convention over the WHOLE tree on every commit.
+  const manifest = parseAppManifest(tree, { name: app.name, owner: app.owner, description: app.description });
   app.manifest = manifest;
+  // Surface fidelity: re-detect the UI/API surface from the whole committed tree
+  // so the monitor view adapts to what the agent actually built.
+  app.surface = detectSurface(tree);
   // Recompile the auto-MCP from the committed OpenAPI when present.
-  const openapi = parseOpenApi(files);
+  const openapi = parseOpenApi(tree);
   if (openapi) {
     const tools = generateAndCompile(app.mcpPrincipal, { openapi });
     app.mcpTools = tools.map((t) => ({ name: t.name, description: t.description, write: t.write }));
     app.mcpProfileCompiled = true;
   }
   app.chat.push({ role: 'assistant', content: `Committed: ${message} (${step.mode})`, at: new Date().toISOString() });
-  snapshotFiles(app.id, files);
+  snapshotFiles(app.id, tree);
   await persistApp(app);
   return { app, step };
 }

@@ -110,6 +110,12 @@ export interface TutorialDef {
   title: string;
   /** One-liner echoing the Home card. */
   tagline: string;
+  /**
+   * Label for the tab-header tutorial button (the action-bar "✦ …" button).
+   * Course-facing copy — shown in the top-left ActionBar on the tab.
+   * E.g. "Build Agents Tutorial", "Data Products Tutorial".
+   */
+  buttonLabel: string;
   /** Hook panel — "what you'll make" + the payoff. */
   hook: Panel;
   /** 3–5 illustrated step panels mirroring the golden-path doc. */

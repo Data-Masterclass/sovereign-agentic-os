@@ -46,16 +46,16 @@ function fail(message: string, status: number): Error {
   return e;
 }
 
-const catalog = new Map<string, Model>();
-const defaults: Record<ModelTask, string> = {
-  chat: 'ministral-8b',
-  reasoning: 'magistral-small',
-  embedding: 'bge-m3',
-};
-const keys = new Map<string, ProviderKey>();
+type ModelsState = { catalog: Map<string, Model>; keys: Map<string, ProviderKey>; defaults: Record<ModelTask, string> };
+const MODELS_KEY = Symbol.for('soa.platform.models');
+function modelsState(): ModelsState {
+  const g = globalThis as unknown as Record<symbol, ModelsState | undefined>;
+  if (!g[MODELS_KEY]) g[MODELS_KEY] = { catalog: new Map(), keys: new Map(), defaults: { chat: 'ministral-8b', reasoning: 'magistral-small', embedding: 'bge-m3' } };
+  return g[MODELS_KEY]!;
+}
 
 function seed(): void {
-  if (catalog.size > 0) return;
+  if (modelsState().catalog.size > 0) return;
   const rows: Model[] = [
     { id: 'magistral-small', label: 'Magistral Small (reasoning)', provider: 'self-hosted', task: 'reasoning', tier: 'sovereign', route: 'self-hosted', enabled: true, capEUR: null },
     { id: 'ministral-8b', label: 'Ministral 8B (chat)', provider: 'self-hosted', task: 'chat', tier: 'sovereign', route: 'self-hosted', enabled: true, capEUR: null },
@@ -64,34 +64,34 @@ function seed(): void {
     { id: 'stackit-llama-70b', label: 'STACKIT Llama 3.3 70B (premium)', provider: 'stackit', task: 'chat', tier: 'premium', route: 'stackit', enabled: false, capEUR: 200 },
     { id: 'stackit-mistral-large', label: 'STACKIT Mistral Large (premium)', provider: 'stackit', task: 'reasoning', tier: 'premium', route: 'stackit', enabled: false, capEUR: 200 },
   ];
-  for (const m of rows) catalog.set(m.id, m);
+  for (const m of rows) modelsState().catalog.set(m.id, m);
 }
 
 export function listModels(): Model[] {
   seed();
-  return [...catalog.values()];
+  return [...modelsState().catalog.values()];
 }
 
 export function getDefaults(): Record<ModelTask, string> {
   seed();
-  return { ...defaults };
+  return { ...modelsState().defaults };
 }
 
 export function setDefault(task: ModelTask, modelId: string): Record<ModelTask, string> {
   seed();
-  const m = catalog.get(modelId);
+  const m = modelsState().catalog.get(modelId);
   if (!m) throw fail('Unknown model', 404);
   if (m.task !== task) throw fail(`Model ${modelId} is not a ${task} model`, 400);
   if (!m.enabled) throw fail('Cannot set a disabled model as default', 409);
-  defaults[task] = modelId;
-  return { ...defaults };
+  modelsState().defaults[task] = modelId;
+  return { ...modelsState().defaults };
 }
 
 export function setEnabled(modelId: string, enabled: boolean): Model {
   seed();
-  const m = catalog.get(modelId);
+  const m = modelsState().catalog.get(modelId);
   if (!m) throw fail('Unknown model', 404);
-  if (!enabled && Object.values(defaults).includes(modelId)) {
+  if (!enabled && Object.values(modelsState().defaults).includes(modelId)) {
     throw fail('Cannot disable a model that is a current default', 409);
   }
   m.enabled = enabled;
@@ -100,7 +100,7 @@ export function setEnabled(modelId: string, enabled: boolean): Model {
 
 export function setCap(modelId: string, capEUR: number | null): Model {
   seed();
-  const m = catalog.get(modelId);
+  const m = modelsState().catalog.get(modelId);
   if (!m) throw fail('Unknown model', 404);
   if (capEUR !== null && (!Number.isFinite(capEUR) || capEUR < 0)) throw fail('Cap must be ≥ 0', 400);
   m.capEUR = capEUR;
@@ -128,13 +128,13 @@ export function registerProviderKey(input: {
     addedBy: input.addedBy,
     addedAt: new Date().toISOString(),
   };
-  keys.set(pk.provider, pk);
+  modelsState().keys.set(pk.provider, pk);
   return pk;
 }
 
 /** Provider keys for display — refs + fingerprints only; never a raw value. */
 export function listProviderKeys(): ProviderKey[] {
-  return [...keys.values()].sort((a, b) => a.provider.localeCompare(b.provider));
+  return [...modelsState().keys.values()].sort((a, b) => a.provider.localeCompare(b.provider));
 }
 
 /** model id → enabled, for the policy compiler. */
@@ -143,9 +143,9 @@ export function enabledMap(): Record<string, boolean> {
 }
 
 export function _reset(): void {
-  catalog.clear();
-  keys.clear();
-  defaults.chat = 'ministral-8b';
-  defaults.reasoning = 'magistral-small';
-  defaults.embedding = 'bge-m3';
+  modelsState().catalog.clear();
+  modelsState().keys.clear();
+  modelsState().defaults.chat = 'ministral-8b';
+  modelsState().defaults.reasoning = 'magistral-small';
+  modelsState().defaults.embedding = 'bge-m3';
 }

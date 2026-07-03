@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/config';
+import { requireAdmin } from '@/lib/auth';
+import { errorResponse } from '@/lib/data/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +28,14 @@ async function decide(principal: string, tool: string): Promise<boolean> {
 }
 
 export async function GET() {
+  // The full grants/authorization matrix + every principal (participant email)
+  // is a whole-tenant recon surface — admin-only. Non-admins get 403.
+  try {
+    await requireAdmin();
+  } catch (e) {
+    return errorResponse(e);
+  }
+
   let grants: Record<string, string[]> = {};
   try {
     const res = await fetch(`${config.opaUrl}/v1/data/grants`, { cache: 'no-store' });

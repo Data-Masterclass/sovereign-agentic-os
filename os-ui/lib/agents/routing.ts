@@ -4,15 +4,17 @@
 /**
  * Model routing — by activity (LOCKED). The workspace default table maps each
  * activity to a LiteLLM tier, inherited by systems/agents with per-agent
- * overrides. Targets (stack-decisions Model strategy):
+ * overrides. The tier model_names are the REAL sovereign gateway aliases (verified
+ * against the live LiteLLM proxy_config.model_list — see values.stackit-managed.yaml):
  *
- *   • light     → self-hosted Ministral 3 (Apache-2.0, in-box) — chat, coding,
- *                 tool-selection, light analysis.
- *   • reasoning → self-hosted Magistral Small 24B (`sovereign-reasoning`,
- *                 Apache-2.0, in-box, core-capped, zero per-token) — the SOVEREIGN
- *                 default for planning/deep reasoning. STACKIT Qwen is the explicit
- *                 fast alternative (`sovereign-reasoning-fast`) AND the fallback.
- *   • vision    → STACKIT Qwen3-VL — the rare vision/video need + failover.
+ *   • light     → `sovereign-default` — chat, coding, tool-selection, light work.
+ *   • reasoning → `sovereign-reasoning` — planning / deep reasoning. `sovereign-
+ *                 reasoning-fast` is the explicit fast alternative AND fallback.
+ *   • vision    → `sovereign-vision` — the rare vision/video need + failover.
+ *
+ * ALL of these are sovereign (in-box / STACKIT-EU) → provenance `internal`. There
+ * is NO `ministral-*` or `stackit-*` model_name on the live gateway — a per-agent
+ * pin MUST be one of these real aliases or Build/run 404s at the gateway.
  *
  * PURE module: editing the table writes LiteLLM routing config (the LiteLLM build
  * adapter), but no endpoint is ever hardcoded in the UI — a per-agent model is a
@@ -25,25 +27,94 @@ export type Tier = 'light' | 'reasoning' | 'vision';
 
 export const ACTIVITIES: Activity[] = ['planning', 'coding', 'text-writing', 'tool-selection', 'vision', 'video'];
 
-/** Tier → default LiteLLM model_name (the install default; overridable). */
+/** Tier → default LiteLLM model_name (a REAL live gateway alias; overridable). */
 export const TIER_MODELS: Record<Tier, string> = {
-  light: 'ministral-3',
-  reasoning: 'sovereign-reasoning',   // self-hosted Magistral 24B (local default)
-  vision: 'stackit-qwen3-vl',
+  light: 'sovereign-default',
+  reasoning: 'sovereign-reasoning',
+  vision: 'sovereign-vision',
 };
 
 /**
- * The explicit per-agent "Reasoning target" choice (the picker affordance) — the
- * three LiteLLM model_names that make the reasoning tier selectable, in order:
- * the in-box sovereign default, the fast STACKIT alternative (also the fallback),
- * and the lightest in-box option. These are real LiteLLM model_names (they appear
- * live from /model/info); selecting one writes the agent's per-agent model override.
+ * Provenance = where a model actually runs. `internal` = in-box on the sovereign
+ * cluster (no data leaves; zero per-token); `external` = a hosted API (e.g.
+ * STACKIT) that the gateway calls out to. The per-agent picker shows this as a
+ * badge so a non-technical builder can see, at a glance, whether their agent's
+ * thinking stays in-house.
  */
-export type ReasoningTarget = { model: string; label: string; hint: string };
-export const REASONING_TARGETS: ReasoningTarget[] = [
-  { model: 'sovereign-reasoning', label: 'Local-sovereign · Magistral 24B', hint: 'In-box, zero per-token, slower (latency-tolerant)' },
-  { model: 'sovereign-default', label: 'Light · Ministral 3', hint: 'In-box small model, fastest, cheapest' },
+export type Provenance = 'internal' | 'external';
+
+/** One catalog row: the real LiteLLM model_name + human-facing metadata. */
+export type ModelInfo = {
+  model_name: string;
+  /** Human display name, e.g. "Magistral Small 24B". */
+  display: string;
+  /** Parameter size for context, e.g. "24B" (optional). */
+  params?: string;
+  tier: Tier;
+  provenance: Provenance;
+};
+
+/**
+ * The single source of truth for how a LiteLLM `model_name` is presented. Replaces
+ * the old `REASONING_TARGETS` (which wrote a phantom `sovereign-default`). The
+ * models API enriches its live `/model/info` list against this catalog; anything
+ * not listed falls back to prefix heuristics ({@link provenanceOf} / {@link tierOf}).
+ */
+export const MODEL_CATALOG: Record<string, ModelInfo> = {
+  'sovereign-default': { model_name: 'sovereign-default', display: 'Sovereign Default', tier: 'light', provenance: 'internal' },
+  'sovereign-reasoning': { model_name: 'sovereign-reasoning', display: 'Sovereign Reasoning', tier: 'reasoning', provenance: 'internal' },
+  'sovereign-reasoning-fast': { model_name: 'sovereign-reasoning-fast', display: 'Sovereign Reasoning (fast)', tier: 'reasoning', provenance: 'internal' },
+  'sovereign-vision': { model_name: 'sovereign-vision', display: 'Sovereign Vision', tier: 'vision', provenance: 'internal' },
+  'sovereign-premium': { model_name: 'sovereign-premium', display: 'Sovereign Premium', tier: 'reasoning', provenance: 'internal' },
+};
+
+/** Classify a model_name as in-box (internal) or hosted (external). */
+export function provenanceOf(model: string): Provenance {
+  const known = MODEL_CATALOG[model];
+  if (known) return known.provenance;
+  const m = model.toLowerCase();
+  if (m.startsWith('stackit') || m.includes('stackit')) return 'external';
+  if (m.startsWith('ministral') || m.startsWith('sovereign') || m.startsWith('magistral')) return 'internal';
+  // Unknown provider: assume hosted (safer to over-warn than to imply in-box).
+  return 'external';
+}
+
+/** Resolve display metadata for any model_name (catalog first, heuristics after). */
+export function modelInfo(model: string): ModelInfo {
+  return (
+    MODEL_CATALOG[model] ?? {
+      model_name: model,
+      display: model,
+      tier: tierOf(model),
+      provenance: provenanceOf(model),
+    }
+  );
+}
+
+/**
+ * The per-agent thinking control — LOCKED as a 3-state toggle.
+ *   • Auto (default)  → no per-agent pin; the workspace activity routing decides
+ *                        (cheap-first). This is the recommended default.
+ *   • Reasoning       → pin the in-box Magistral 24B for planning / deep thinking.
+ *   • Execution       → pin the in-box Ministral 3 for fast tool-running work.
+ * `model === null` clears the pin (Auto); the others write a real LiteLLM
+ * model_name via setAgentModel.
+ */
+export type ModelMode = 'auto' | 'reasoning' | 'execution';
+export const MODEL_MODES: { mode: ModelMode; label: string; model: string | null; hint: string }[] = [
+  { mode: 'auto', label: 'Auto', model: null, hint: 'Picks the right model for each task — cheap-first. Recommended.' },
+  { mode: 'reasoning', label: 'Reasoning', model: TIER_MODELS.reasoning, hint: 'Deep thinking and planning. Slower, most capable.' },
+  { mode: 'execution', label: 'Execution', model: TIER_MODELS.light, hint: 'Fast tool-running and short, direct tasks.' },
 ];
+
+/** Which toggle state an agent's current `model` pin corresponds to. */
+export function modeForModel(model: string | null | undefined): ModelMode {
+  if (!model) return 'auto';
+  if (model === TIER_MODELS.light) return 'execution';
+  // Any pinned reasoning/vision-tier model reads as Reasoning; other light pins
+  // (exotic small models chosen via Advanced) read as Execution.
+  return tierOf(model) === 'light' ? 'execution' : 'reasoning';
+}
 
 /** Default activity → tier mapping. Cheap-first: only reasoning/vision escalate. */
 const DEFAULT_TIERS: Record<Activity, Tier> = {

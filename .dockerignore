@@ -1,0 +1,5 @@
+# Build artifacts never belong in the image context (the Dockerfile runs its own
+# clean `npm ci`). Excluding nested node_modules also stops iCloud/Finder " 2"
+# duplicate dirs from poisoning the TypeScript @types auto-include.
+**/node_modules
+**/.next

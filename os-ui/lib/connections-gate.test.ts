@@ -74,6 +74,24 @@ test('GATE: Write-bounded allowed in-limit, denied out; Write-approval pauses; a
   assert.ok(matchStandingPolicy('conn-sf', 'create_case', {}));
 });
 
+test('GATE: approve-once ceiling — an inline approver can never execute Off/Blocked/over-bound', () => {
+  // `approveOnce` (lib/connections.ts, Mode A) re-authorizes with this exact decision
+  // before executing, and only runs when the effect is NOT 'deny'. So the capability
+  // profile stays the ceiling: approving cannot broaden it.
+  const b = compileConnectionProfile('conn-sf', [
+    { name: 'read_opportunity', mode: 'Read', write: false },
+    { name: 'update_opportunity_amount', mode: 'Write-bounded', write: true, maxAmount: 50000 },
+    { name: 'create_case', mode: 'Write-approval', write: true },
+    { name: 'mass_update', mode: 'Off', write: true },
+    { name: 'delete_record', mode: 'Blocked', write: true },
+  ]);
+  assert.equal(decide(b, 'mass_update').effect, 'deny'); // Off — refused even by an approver
+  assert.equal(decide(b, 'delete_record').effect, 'deny'); // Blocked — refused even by an approver
+  assert.equal(decide(b, 'update_opportunity_amount', { amount: 60000 }).effect, 'deny'); // over-bound
+  // Genuinely held (requires_approval) → an approver may resume and run it once.
+  assert.equal(decide(b, 'create_case').effect, 'requires_approval');
+});
+
 test('GATE: a Builder attaches the MCP to ONE agent — another agent cannot see it', () => {
   const b = bundleFor('generic-mcp', [{ agent: 'agent-one', tools: ['search', 'fetch'] }]);
   assert.equal(decide(b, 'search', {}, 'agent-one').effect, 'allow');

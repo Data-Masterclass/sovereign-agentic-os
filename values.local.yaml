@@ -40,3 +40,8 @@ osdashboards:
 # etc.). Validated + committed earlier; product default keeps it on for STACKIT.
 openmetadata:
   enabled: false
+
+# In-cluster mail (maddy MTA) is a STACKIT-only surface (needs real DNS + a
+# static egress IP/PTR to deliver). Explicitly OFF for kind — renders 0 objects.
+mail:
+  enabled: false

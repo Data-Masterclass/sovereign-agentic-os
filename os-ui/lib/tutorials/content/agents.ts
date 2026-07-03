@@ -9,6 +9,7 @@ const agents: TutorialDef = {
   route: '/agents',
   title: 'Agents',
   tagline: 'Build an AI agent that uses your data, knowledge, and connections — governed from the start.',
+  buttonLabel: 'Build Agents Tutorial',
 
   hook: {
     illustration: 'agent',
@@ -76,6 +77,13 @@ const agents: TutorialDef = {
       sandboxAnchor: ANCHORS.agents.sandbox,
       title: 'Test it',
       body: 'Chat in the preview pane. Inspect the trace: tools called, cost, sources cited. Adjust the AGENT.md or tool grants until the behaviour is right.',
+      route: '/agents',
+    },
+    {
+      anchor: ANCHORS.agents.tools,
+      sandboxAnchor: ANCHORS.agents.sandbox,
+      title: 'Choose a runtime',
+      body: 'Pick Structured (LangGraph) for step-by-step, human-in-the-loop pipelines — or Autonomous (Hermes) for long-running tasks that keep memory between sessions. Both runtimes use the same OPA-governed tool plane; neither can bypass your grants.',
       route: '/agents',
     },
     {

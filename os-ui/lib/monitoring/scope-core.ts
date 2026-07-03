@@ -11,7 +11,7 @@ import type { Scope, ScopeLevel } from './types.ts';
  */
 
 export const ROLE_LEVEL: Record<string, ScopeLevel> = {
-  participant: 'user',
+  'creator': 'user',
   builder: 'builder',
   admin: 'admin',
 };

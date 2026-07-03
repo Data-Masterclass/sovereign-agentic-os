@@ -45,6 +45,7 @@ export const PRODUCT_TYPE_LABELS: Record<ProductType, string> = {
   knowledge: 'Knowledge',
   connection: 'Connection',
   file: 'Files',
+  skill: 'Skill',
   app: 'App',
 };
 
@@ -244,7 +245,7 @@ export type AdapterSource = 'live' | 'offline-mock';
 export type Viewer = {
   id: string;
   domains: string[];
-  role: 'participant' | 'creator' | 'builder' | 'admin';
+  role: 'creator' | 'builder' | 'admin';
   /** The active domain the consumer imports into (defaults to domains[0]). */
   activeDomain?: string;
 };

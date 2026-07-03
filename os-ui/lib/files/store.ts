@@ -108,8 +108,13 @@ export type SearchHit = {
   snippet: string;
 };
 
-const store = new Map<string, FileRecord>();
-let seeded = false;
+type FilesStoreState = { store: Map<string, FileRecord>; seeded: boolean };
+const FS_KEY = Symbol.for('soa.files.store');
+function fs(): FilesStoreState {
+  const g = globalThis as unknown as Record<symbol, FilesStoreState | undefined>;
+  if (!g[FS_KEY]) g[FS_KEY] = { store: new Map(), seeded: false };
+  return g[FS_KEY]!;
+}
 
 function now(): string {
   return new Date().toISOString();
@@ -144,8 +149,8 @@ type Seed = {
 const SEEDS: Seed[] = [];
 
 function ensureSeeded(): void {
-  if (seeded) return;
-  seeded = true;
+  if (fs().seeded) return;
+  fs().seeded = true;
   for (const s of SEEDS) {
     const at = now();
     const a: FileAsset = emptyAsset({
@@ -166,14 +171,15 @@ function ensureSeeded(): void {
       history: [{ version: 'v1', hash: contentHash(s.text), at, bytes: s.bytes }],
       updatedAt: at,
     };
-    store.set(rec.id, rec);
+    fs().store.set(rec.id, rec);
   }
 }
 
 /** Test hook: wipe + reseed. */
 export function __resetStore(): void {
-  store.clear();
-  seeded = false;
+  const s = fs();
+  s.store.clear();
+  s.seeded = false;
 }
 
 /** Which retrieval representations a kind yields (mock map; the real ingest
@@ -194,7 +200,7 @@ function representationsFor(kind: FileKind, mode: IndexingMode): string[] {
 
 function get(id: string): FileRecord {
   ensureSeeded();
-  const rec = store.get(id);
+  const rec = fs().store.get(id);
   if (!rec) fail('File not found', 404);
   return rec;
 }
@@ -265,7 +271,7 @@ export function listFiles(user: Principal): FileGroups {
   const mine: FileSummary[] = [];
   const domain: FileSummary[] = [];
   const marketplace: FileSummary[] = [];
-  for (const rec of store.values()) {
+  for (const rec of fs().store.values()) {
     const a = parseAsset(rec.yaml);
     if (a.owner === user.id) mine.push(summarise(a, rec));
     else if (a.tier === 'product') marketplace.push(summarise(a, rec));
@@ -314,9 +320,13 @@ export function createFile(user: Principal, input: UploadInput): FileAsset {
     folder: input.folder, tags: input.tags, sensitivity: input.sensitivity,
     storage: input.storage, provenanceSource: input.provenanceSource, sourceUri: input.sourceUri, at,
   });
-  a.indexing.mode = indexingModeFor(a.sensitivity, input.indexing);
-  a.indexing.representations = representationsFor(a.kind, a.indexing.mode);
   const text = input.text ?? '';
+  a.indexing.mode = indexingModeFor(a.sensitivity, input.indexing);
+  // Honesty: an upload with no extractable text (e.g. a binary the mock parser
+  // can't read yet) indexes zero chunks, so it is HELD, not searchable. Reflect
+  // that as `stored-only` instead of falsely reporting "Searchable ✓".
+  if (a.indexing.mode === 'indexed' && !text.trim()) a.indexing.mode = 'stored-only';
+  a.indexing.representations = representationsFor(a.kind, a.indexing.mode);
   const bytes = input.bytes ?? text.length;
   const rec: FileRecord = {
     id: a.id, owner: a.owner, domain: a.domain, yaml: serializeAsset(a),
@@ -324,7 +334,7 @@ export function createFile(user: Principal, input: UploadInput): FileAsset {
     history: [{ version: 'v1', hash: contentHash(text), at, bytes }],
     updatedAt: at,
   };
-  store.set(rec.id, rec);
+  fs().store.set(rec.id, rec);
   return a;
 }
 
@@ -398,7 +408,7 @@ export function deleteFile(id: string, user: Principal): void {
   const rec = get(id);
   const a = parseAsset(rec.yaml);
   if (!canEdit(a, user)) fail('Not permitted to delete this file', 403);
-  store.delete(id);
+  fs().store.delete(id);
 }
 
 // -------------------------------------------------------------------- search --
@@ -425,7 +435,7 @@ export function searchFiles(user: Principal, query: string): SearchHit[] {
   if (!q) return [];
   const qTokens = new Set(tokens(q));
   const hits: SearchHit[] = [];
-  for (const rec of store.values()) {
+  for (const rec of fs().store.values()) {
     const a = parseAsset(rec.yaml);
     if (!canView(a, user)) continue;
     if (a.indexing.mode === 'stored-only') continue; // not indexed → not searchable
@@ -579,12 +589,12 @@ export function promotionStatus(id: string, user: Principal): { tier: FileAsset[
  *  the trusted server pipeline, never a user request. */
 export function listAllForIndex(): { asset: FileAsset; text: string }[] {
   ensureSeeded();
-  return [...store.values()].map((rec) => ({ asset: parseAsset(rec.yaml), text: rec.text }));
+  return [...fs().store.values()].map((rec) => ({ asset: parseAsset(rec.yaml), text: rec.text }));
 }
 
 /** One file's body for re-indexing after an edit (server-internal). */
 export function bodyForIndex(id: string): { asset: FileAsset; text: string } | null {
   ensureSeeded();
-  const rec = store.get(id);
+  const rec = fs().store.get(id);
   return rec ? { asset: parseAsset(rec.yaml), text: rec.text } : null;
 }

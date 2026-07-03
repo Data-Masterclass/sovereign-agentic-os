@@ -274,6 +274,12 @@ class RegistryPublishAdapter implements PublishAdapter {
 
 class GovernedImportAdapter implements ImportAdapter {
   async import(listingId: string, viewer: Viewer, requestedMode?: ImportMode): Promise<ImportResult> {
+    // Security: only a Builder+ may import a product into their domain (it grants
+    // the whole domain access). A participant/creator is blocked (403) and must
+    // route the import through a domain Builder/Admin — the API's real control.
+    if (viewer.role !== 'builder' && viewer.role !== 'admin') {
+      throw withStatus(new Error('Importing from the Marketplace requires a Builder or Admin — ask a domain Builder to import it'), 403);
+    }
     const all = await allListings();
     const listing = all.find((l) => l.id === listingId);
     if (!listing) throw withStatus(new Error('Listing not found'), 404);

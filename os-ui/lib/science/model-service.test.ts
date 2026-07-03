@@ -81,9 +81,9 @@ test('inCallableScope honours principal / domain / cross-domain', () => {
   _resetModels();
   const m = upsertModel({ ...personalModel(), tier: 'Domain' });
   const policy = compilePredictPolicy(m);
-  assert.ok(inCallableScope(policy, { principal: 'sara', domain: 'x', isAgent: false })); // owner principal
-  assert.ok(inCallableScope(policy, { principal: 'p', domain: 'sales', isAgent: true })); // domain member
-  assert.ok(!inCallableScope(policy, { principal: 'p', domain: 'marketing', isAgent: false })); // outside
+  assert.ok(inCallableScope(policy, { principal: 'sara', domains: ['x'], isAgent: false })); // owner principal
+  assert.ok(inCallableScope(policy, { principal: 'p', domains: ['sales'], isAgent: true })); // domain member
+  assert.ok(!inCallableScope(policy, { principal: 'p', domains: ['marketing'], isAgent: false })); // outside
 });
 
 // ------------------------------------------------ RLS: listModelsForUser entitlement boundary
@@ -120,8 +120,8 @@ test('listModelsForUser is RLS-scoped — no other-domain or other-user Personal
 test('REST and MCP evaluate the SAME compiled policy — same decision, different door', async () => {
   resetWithChurn(); // churn_model registered at Personal; promote so the Sales domain may call
   promoteModel('churn_model', builder('sales'));
-  const rest: Caller = { principal: 'churn-risk-app', domain: 'sales', isAgent: false };
-  const mcp: Caller = { principal: 'sales-assistant', domain: 'sales', isAgent: true };
+  const rest: Caller = { principal: 'churn-risk-app', domains: ['sales'], isAgent: false };
+  const mcp: Caller = { principal: 'sales-assistant', domains: ['sales'], isAgent: true };
   const a = await authorizePredict('churn_model', rest, grantPredict);
   const b = await authorizePredict('churn_model', mcp, grantPredict);
   assert.equal(a.decision, 'allow');
@@ -133,15 +133,29 @@ test('REST and MCP evaluate the SAME compiled policy — same decision, differen
 
 test('tier scope denies an out-of-domain caller even when OPA grants the predict tool', async () => {
   resetWithChurn();
-  const outsider: Caller = { principal: 'mkt-app', domain: 'marketing', isAgent: false };
+  const outsider: Caller = { principal: 'mkt-app', domains: ['marketing'], isAgent: false };
   const d = await authorizePredict('churn_model', outsider, grantPredict);
   assert.equal(d.decision, 'deny');
   assert.equal(d.toolPolicy, 'tier-scope-deny'); // tier blocked it, not the tool grant
 });
 
+test('SECURITY: tier scope uses SESSION domains — a marketing caller cannot reach a Sales model even with a granted principal; multi-domain membership is honored', async () => {
+  resetWithChurn();
+  promoteModel('churn_model', builder('sales')); // Domain(sales)
+  // Even carrying the granted `sales-assistant` principal, a caller whose SESSION
+  // domains are ['marketing'] is denied by tier scope — no body-forged domain helps.
+  const outsider: Caller = { principal: 'sales-assistant', domains: ['marketing'], isAgent: true };
+  const d = await authorizePredict('churn_model', outsider, grantPredict);
+  assert.equal(d.decision, 'deny');
+  assert.equal(d.toolPolicy, 'tier-scope-deny');
+  // A user who belongs to BOTH marketing and sales is in scope (any-domain match).
+  const dual: Caller = { principal: 'sales-assistant', domains: ['marketing', 'sales'], isAgent: true };
+  assert.equal((await authorizePredict('churn_model', dual, grantPredict)).decision, 'allow');
+});
+
 test('certifying to Marketplace widens callable scope to a second domain automatically', async () => {
   resetWithChurn();
-  const outsider: Caller = { principal: 'mkt-app', domain: 'marketing', isAgent: true };
+  const outsider: Caller = { principal: 'mkt-app', domains: ['marketing'], isAgent: true };
   assert.equal((await authorizePredict('churn_model', outsider, grantPredict)).decision, 'deny');
   promoteModel('churn_model', builder('sales')); // Domain — marketing still out of scope
   assert.equal((await authorizePredict('churn_model', outsider, grantPredict)).decision, 'deny');
@@ -152,7 +166,7 @@ test('certifying to Marketplace widens callable scope to a second domain automat
 test('predict honours the OPA tool decision (deny / requires_approval) inside scope', async () => {
   resetWithChurn();
   promoteModel('churn_model', builder('sales')); // Domain — sales-assistant is in scope
-  const inDomain: Caller = { principal: 'sales-assistant', domain: 'sales', isAgent: true };
+  const inDomain: Caller = { principal: 'sales-assistant', domains: ['sales'], isAgent: true };
   assert.equal((await authorizePredict('churn_model', inDomain, denyPredict)).decision, 'deny');
   assert.equal((await authorizePredict('churn_model', inDomain, approvalPredict)).decision, 'requires_approval');
 });

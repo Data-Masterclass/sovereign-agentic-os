@@ -24,10 +24,13 @@ import { claimsFromUser } from './identity.ts';
 import { assertSandboxScoped } from '../sandbox.ts';
 import type { Dataset } from './dataset-schema.ts';
 
-const amir: Principal = { id: 'amir', domains: ['sales'], role: 'participant' }; // Creator
+const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' }; // Creator
 const bea: Principal = { id: 'bea', domains: ['sales'], role: 'builder' };
 const sara: Principal = { id: 'sara', domains: ['sales'], role: 'admin' };
-const kenji: Principal = { id: 'kenji', domains: ['finance'], role: 'participant' };
+const kenji: Principal = { id: 'kenji', domains: ['finance'], role: 'creator' };
+// Importing a product is a Builder+ action; a finance Builder onboards it, then
+// kenji (participant) reads the imported product like any domain peer.
+const finBuilder: Principal = { id: 'fatima', domains: ['finance'], role: 'builder' };
 
 beforeEach(() => __resetStore());
 
@@ -84,8 +87,8 @@ test('Orders: ingest → Silver dataset → promote → Gold asset → certify �
   assert.ok(lin.edges.some((e) => e.from === 'v:gold' && e.to === 'm:revenue'));
   assert.equal(lin.transparency.ok, true);
 
-  // 6. Another domain imports it → conformance still green
-  importProduct(d0.id, kenji);
+  // 6. Another domain imports it (Builder+) → conformance still green
+  importProduct(d0.id, finBuilder);
   assert.equal(runConformance([getDataset(d0.id, kenji)], MOCK_ROSTER).ok, true);
 });
 
@@ -98,7 +101,7 @@ test('Orders both ways: the data agent reads exactly the governed product the UI
   applyApprovedPromotion(requestPromotion(d0.id, amir, { visibility: 'domain' }), bea);
   buildVersion(d0.id, sara, 'gold', { quality: 'passing', artifact: 'g' });
   const product = certify(d0.id, sara, { level: 'gold', visibility: 'shared' });
-  importProduct(d0.id, kenji); // finance imports it
+  importProduct(d0.id, finBuilder); // finance imports it (Builder+)
   defineMeasure(d0.id, sara, { name: 'revenue', type: 'sum', sql: 'net_amount' });
 
   const governed = getDataset(d0.id, sara);
@@ -123,12 +126,12 @@ test('Orders both ways: the data agent reads exactly the governed product the UI
   }
 
   // amir (sales, owner-domain) — the domain tool returns rows over the SAME FQN.
-  const amirClaims = claimsFromUser({ id: 'amir', domains: ['sales'], role: 'participant' });
+  const amirClaims = claimsFromUser({ id: 'amir', domains: ['sales'], role: 'creator' });
   const amirRes = await runAgentTool(amirClaims, { scope: 'domain', kind: 'query', sql: `select * from ${fqn}` }, execFor());
   assert.equal(amirRes.rows!.length, 1); // sees rows
 
   // kenji (finance) imported it → marketplace scope sees rows (the import grant).
-  const kenjiClaims = claimsFromUser({ id: 'kenji', domains: ['finance'], role: 'participant' });
+  const kenjiClaims = claimsFromUser({ id: 'kenji', domains: ['finance'], role: 'creator' });
   const kenjiRes = await runAgentTool(kenjiClaims, { scope: 'marketplace', kind: 'query', sql: `select * from ${fqn}` }, execFor());
   assert.equal(kenjiRes.rows!.length, 1); // imported → entitled
 
@@ -136,7 +139,7 @@ test('Orders both ways: the data agent reads exactly the governed product the UI
   const denied = evaluateOpa(compiled.opa, { user: 'zoe', domains: ['marketing'] }, fqn).entitled;
   assert.equal(denied, false);
   const zoeRes = await runAgentTool(
-    claimsFromUser({ id: 'zoe', domains: ['marketing'], role: 'participant' }),
+    claimsFromUser({ id: 'zoe', domains: ['marketing'], role: 'creator' }),
     { scope: 'marketplace', kind: 'query', sql: `select * from ${fqn}` },
     execFor(),
   );

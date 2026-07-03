@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import { commitSystem } from './commitSystem';
 import type { Capability, System } from '@/lib/agents/system-schema';
+import { modelInfo, type ModelInfo } from '@/lib/agents/routing';
 
 /**
  * System-level grants + the activity→model routing table (Tasks 5 & 6). Grants are
@@ -38,7 +39,7 @@ export default function GrantsRouting({
   systemId: string;
   system: System;
   canEdit: boolean;
-  models: string[];
+  models: ModelInfo[];
   routing: RoutingData | null;
   onChanged: () => void | Promise<void>;
 }) {
@@ -219,12 +220,13 @@ export default function GrantsRouting({
         </div>
       </div>
 
-      <div className="section-title">Model routing — by activity</div>
+      <div className="section-title">Workspace default routing</div>
       <p className="hint" style={{ marginTop: 0 }}>
-        Workspace default (cheap-first): light → Ministral, reasoning → in-box Magistral (sovereign,
-        STACKIT Qwen as fast fallback), vision → STACKIT Qwen. A per-activity override writes this
-        system’s LiteLLM routing config (applied on Build). No endpoint in the UI — models come live
-        from LiteLLM.
+        The <strong>Auto</strong> fallback every agent uses when it isn’t pinned to a specific model.
+        Cheap-first: light work → Ministral, reasoning → in-box Magistral, vision → Qwen. An individual
+        agent can override this from its own <strong>How this agent thinks</strong> toggle
+        (Auto / Reasoning / Execution). A per-activity override here writes the system’s LiteLLM routing
+        config, applied on Build.
       </p>
       <div className="table-wrap">
         <table>
@@ -233,11 +235,17 @@ export default function GrantsRouting({
             {routing ? routing.activities.map((a) => {
               const row = routing.table[a];
               const override = system.routing.overrides[a];
+              const rowInfo = modelInfo(row.model);
               return (
                 <tr key={a}>
                   <td>{a}</td>
                   <td><span className={`badge ${row.tier === 'light' ? 'ok' : 'warn'}`}>{row.tier}</span></td>
-                  <td className="mono" style={{ fontSize: 12 }}>{row.model}</td>
+                  <td style={{ fontSize: 12 }}>
+                    <span className="model-name">{rowInfo.display}</span>{' '}
+                    <span className={`badge ${rowInfo.provenance === 'internal' ? 'ok' : 'warn'}`}>
+                      {rowInfo.provenance === 'internal' ? 'in-box' : 'hosted'}
+                    </span>
+                  </td>
                   <td>
                     {canEdit ? (
                       <select
@@ -247,10 +255,14 @@ export default function GrantsRouting({
                           if (e.target.value) s.routing.overrides[a] = e.target.value;
                           else delete s.routing.overrides[a];
                         })}
-                        style={{ minWidth: 220 }}
+                        style={{ minWidth: 240 }}
                       >
                         <option value="">— default —</option>
-                        {models.map((m) => <option key={m} value={m}>{m}</option>)}
+                        {models.map((m) => (
+                          <option key={m.model_name} value={m.model_name}>
+                            {m.display} — {m.provenance === 'internal' ? 'in-box' : 'hosted'}
+                          </option>
+                        ))}
                       </select>
                     ) : (
                       <span className="mono" style={{ fontSize: 12 }}>{override ?? '—'}</span>

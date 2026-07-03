@@ -37,7 +37,7 @@ export async function collectRuns(): Promise<HealthItem[]> {
     lens: 'runs',
     title: `${r.principal} — ${r.tool}`,
     health: runHealth(r),
-    detail: `${r.decision ?? 'run'}${r.costUsd ? ` · $${r.costUsd.toFixed(3)}` : ''}${r.landed ? '' : ' · (not in Langfuse)'}`,
+    detail: `${r.runtime === 'hermes' ? 'hermes · ' : ''}${r.decision ?? 'run'}${r.costUsd ? ` · $${r.costUsd.toFixed(3)}` : ''}${r.landed ? '' : ' · (not in Langfuse)'}`,
     owner: r.principal,
     domain: principalDomain(r.principal),
     ts: r.timestamp,

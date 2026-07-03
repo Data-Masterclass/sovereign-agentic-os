@@ -9,6 +9,7 @@ const software: TutorialDef = {
   route: '/software',
   title: 'Software',
   tagline: 'Build a governed web app by chat — it ships with a git repo, a review gate, and a free MCP connection.',
+  buttonLabel: 'Ship Software Tutorial',
 
   hook: {
     illustration: 'build',

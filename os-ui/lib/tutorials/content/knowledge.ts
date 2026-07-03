@@ -9,6 +9,7 @@ const knowledge: TutorialDef = {
   route: '/knowledge',
   title: 'Knowledge',
   tagline: "Capture how your domain works — so every agent and team member starts from the same playbook.",
+  buttonLabel: 'Knowledge Tutorial',
 
   hook: {
     illustration: 'knowledge',

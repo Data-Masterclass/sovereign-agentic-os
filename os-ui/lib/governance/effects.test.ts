@@ -12,6 +12,13 @@ import {
   isRevoked,
   overrideRevoke,
 } from './policy-view.ts';
+import {
+  __resetStore as __resetFiles,
+  createFile,
+  setDocs,
+  requestPromotion,
+  getFile,
+} from '../files/store.ts';
 
 function appr(p: Partial<Approval> & Pick<Approval, 'kind'>): Approval {
   return {
@@ -53,6 +60,29 @@ test('approve IS an action: an access request GRANTS access so the consumer can 
   // The grant is now in the consolidated plane → the consumer can query.
   const plane = consolidatedPlane([], ['sales']);
   assert.ok(plane.some((g) => g.principal === 'user:amir' && g.tool === 'query' && g.source === 'access-grant'));
+});
+
+test('approve IS an action: a file_promote approval actually shares the file to the domain', async () => {
+  __resetFiles();
+  const owner = { id: 'kai', domains: ['cohort'], role: 'creator' as const };
+  const peer = { id: 'pat', domains: ['cohort'], role: 'creator' as const };
+  const f = createFile(owner, { name: 'campaign_master.csv', folder: 'campaign-data', tags: ['data'], text: 'a,b\n1,2\n' });
+  setDocs(f.id, owner, { description: 'campaign row data', tags: ['data'] });
+  const req = requestPromotion(f.id, owner, { visibility: 'domain' });
+  // Before approval the peer cannot see the private file.
+  assert.throws(() => getFile(f.id, peer), /not|permit|found|denied/i);
+  // Approve → the effect must MOVE the file to a domain asset (not a no-op mock).
+  const r = await applyEffect(
+    appr({ kind: 'file_promote', domain: 'cohort', payload: req as unknown as Record<string, unknown> }),
+    'cohort-instructor',
+  );
+  assert.equal(r.ok, true);
+  assert.equal(r.live, true);
+  assert.match(r.applied, /campaign_master\.csv/);
+  // The peer can now read the shared file (domain visibility).
+  const seen = getFile(f.id, peer);
+  assert.equal(seen.asset.tier, 'asset');
+  assert.equal(seen.asset.visibility, 'domain');
 });
 
 test('approve IS an action: an egress request allowlists the endpoint', async () => {

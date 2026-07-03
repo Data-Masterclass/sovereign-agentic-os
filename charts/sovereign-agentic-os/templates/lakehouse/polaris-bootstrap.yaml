@@ -17,6 +17,12 @@
   (s3.access-key-id/secret in `properties`, from the same object-storage Secret the
   chart wires for MinIO); roleArn is a required-by-schema placeholder that is never
   used for STS (vended-credentials is off — Trino reads with its own static creds).
+  Polaris ALSO skips STS for its own write/commit FileIO via the
+  SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION feature flag (see polaris.yaml). That flag
+  makes Polaris return an empty sub-scoped AccessConfig, so the S3 endpoint + path-style
+  it would have injected are instead pushed onto every NEW table through the
+  `table-default.s3.*` properties below; Iceberg's S3FileIO reads those from the table
+  metadata, and the static creds come from Polaris's AWS_* env (SDK default chain).
 */}}
 {{- $pl := .Values.polaris }}
 {{- $cat := $pl.catalog.name }}
@@ -110,6 +116,18 @@ spec:
               if [ -z "$TOKEN" ]; then echo "ERROR: could not obtain Polaris token"; exit 1; fi
 
               # Idempotent: skip if the catalog already exists.
+              # NOTE (table-default.s3.*): this Job ONLY sets catalog properties at
+              # CREATE time. On a cluster where `lakehouse` was already registered by an
+              # earlier chart version (no table-default.s3.* props), this short-circuit
+              # means the new table-defaults are NEVER applied to the existing catalog —
+              # so writes still 403 because new tables get no s3.endpoint/path-style. To
+              # apply them to an already-registered catalog you MUST drop + re-register it
+              # (DELETE then POST — only safe when it holds no tables you need), or
+              # PUT-update its properties:
+              #   PUT $POLARIS_CATALOG_API/api/management/v1/catalogs/$CATALOG
+              #   {"currentEntityVersion":<n>,"properties":{...,"table-default.s3.endpoint":...,
+              #    "table-default.s3.path-style-access":"true","table-default.s3.region":...}}
+              # (existing tables keep their old metadata; re-point only affects NEW tables.)
               code=$(curl -s -o /dev/null -w '%{http_code}' \
                 -H "Authorization: Bearer $TOKEN" \
                 "$POLARIS_CATALOG_API/api/management/v1/catalogs/$CATALOG")
@@ -132,7 +150,10 @@ spec:
                       "s3.path-style-access": "true",
                       "s3.region": "'"$S3_REGION"'",
                       "s3.access-key-id": "'"$AWS_ACCESS_KEY_ID"'",
-                      "s3.secret-access-key": "'"$AWS_SECRET_ACCESS_KEY"'"
+                      "s3.secret-access-key": "'"$AWS_SECRET_ACCESS_KEY"'",
+                      "table-default.s3.endpoint": "'"$S3_ENDPOINT"'",
+                      "table-default.s3.path-style-access": "true",
+                      "table-default.s3.region": "'"$S3_REGION"'"
                     },
                     "storageConfigInfo": {
                       "storageType": "S3",

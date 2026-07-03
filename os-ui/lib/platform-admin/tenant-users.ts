@@ -26,12 +26,18 @@ import type { Role } from '@/lib/session';
  */
 
 type Status = 'active' | 'invited' | 'deactivated';
-const statusMap = new Map<string, Status>();
+type TenantUsersState = { statusMap: Map<string, Status> };
+const TENANT_USERS_KEY = Symbol.for('soa.platform.tenantUsers');
+function tenantUsersState(): TenantUsersState {
+  const g = globalThis as unknown as Record<symbol, TenantUsersState | undefined>;
+  if (!g[TENANT_USERS_KEY]) g[TENANT_USERS_KEY] = { statusMap: new Map() };
+  return g[TENANT_USERS_KEY]!;
+}
 
 export type AccessUser = PublicUser & { status: Status; active: boolean };
 
 function statusOf(id: string): Status {
-  return statusMap.get(id) ?? 'active';
+  return tenantUsersState().statusMap.get(id) ?? 'active';
 }
 
 function randomSecret(): string {
@@ -52,17 +58,19 @@ export async function listAccess(): Promise<AccessUser[]> {
 export async function inviteUser(input: {
   id: string;
   name?: string;
+  email?: string;
   domains: string[];
   role: Role;
 }): Promise<PublicUser> {
   const user = await createUser({
     id: input.id,
     name: input.name,
+    email: input.email,
     password: randomSecret(),
     domains: input.domains,
     role: input.role,
   });
-  statusMap.set(user.id, 'invited');
+  tenantUsersState().statusMap.set(user.id, 'invited');
   return user; // PublicUser — password is omitted by the directory
 }
 
@@ -74,7 +82,7 @@ export async function deactivateUser(id: string): Promise<AccessUser> {
     (e as Error & { status?: number }).status = 404;
     throw e;
   }
-  statusMap.set(id, 'deactivated');
+  tenantUsersState().statusMap.set(id, 'deactivated');
   return { ...u, status: 'deactivated', active: false };
 }
 
@@ -86,13 +94,13 @@ export async function reactivateUser(id: string): Promise<AccessUser> {
     (e as Error & { status?: number }).status = 404;
     throw e;
   }
-  statusMap.set(id, 'active');
+  tenantUsersState().statusMap.set(id, 'active');
   return { ...u, status: 'active', active: true };
 }
 
 /** Assign / revoke the tenant Admin role (org-wide). */
 export async function setTenantAdmin(id: string, isAdmin: boolean): Promise<PublicUser> {
-  return updateUser(id, { role: isAdmin ? 'admin' : 'participant' });
+  return updateUser(id, { role: isAdmin ? 'admin' : 'creator' });
 }
 
 /** Set a user's INITIAL domain memberships (org-wide). In-domain role changes
@@ -109,7 +117,7 @@ export async function setMemberships(id: string, domains: string[]): Promise<Pub
 
 export async function offboardUser(id: string): Promise<void> {
   await deleteUser(id);
-  statusMap.delete(id);
+  tenantUsersState().statusMap.delete(id);
 }
 
 /** Compiler input: only ACTIVE users grant rights. */

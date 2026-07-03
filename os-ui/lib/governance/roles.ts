@@ -22,19 +22,19 @@ import { config } from '../config.ts';
 export type Scope = 'own' | 'domain' | 'tenant';
 export type Actor = { id: string; domains: string[]; role: Role };
 
-/** Lowest→highest privilege. `participant` is shown as "User". */
-const RANK: Record<Role, number> = { participant: 0, creator: 1, builder: 2, admin: 3 };
+/** Lowest→highest privilege. `creator` is the base role (rank 0). */
+const RANK: Record<Role, number> = { creator: 0, builder: 1, admin: 2 };
 const LABEL: Record<Role, string> = {
-  participant: 'User',
   creator: 'Creator',
   builder: 'Builder',
   admin: 'Admin',
 };
 
 export function roleRank(role: Role): number {
+  // Unknown/malformed roles compile to creator (rank 0 — the base role).
   return RANK[role] ?? 0;
 }
-/** Human label for a role (User · Creator · Builder · Admin). */
+/** Human label for a role (Agentic Leader Program · Builder · Admin). */
 export function roleLabel(role: Role): string {
   return LABEL[role] ?? role;
 }
@@ -44,7 +44,6 @@ export function roleLabel(role: Role): string {
  * the OPA tool grants below and drive the consolidated Policies view.
  */
 export const ROLE_RIGHTS: Record<Role, string[]> = {
-  participant: ['read.own', 'request.access', 'request.import'],
   creator: ['read.own', 'request.access', 'request.import', 'create.artifact', 'run.attended'],
   builder: [
     'read.own',

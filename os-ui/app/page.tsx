@@ -31,7 +31,18 @@ export default async function HomePage() {
     );
   }
 
-  const feed = await homeFeed(user);
+  const feed = await homeFeed(user).catch(() => null);
+  if (!feed) {
+    return (
+      <div className="home">
+        <div className="content">
+          <div className="stub-page">
+            Could not load your home feed. The platform may be starting up — try refreshing in a moment.
+          </div>
+        </div>
+      </div>
+    );
+  }
   const firstName = user.name.split(' ')[0] || user.name;
 
   return (

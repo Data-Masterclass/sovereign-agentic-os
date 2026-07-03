@@ -36,6 +36,10 @@ const TITLES: Record<McpTab, string> = {
   science: 'Science',
   knowledge: 'Knowledge',
   agents: 'Agents',
+  files: 'Files',
+  metrics: 'Metrics',
+  dashboards: 'Dashboards',
+  bigbets: 'Big Bets',
 };
 export function tabTitle(tab: McpTab): string {
   return TITLES[tab];

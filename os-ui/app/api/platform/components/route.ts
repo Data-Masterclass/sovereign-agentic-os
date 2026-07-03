@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
+import { requireAdmin } from '@/lib/auth';
 import { listComponentsWithStatus } from '@/lib/platform';
 
 export const dynamic = 'force-dynamic';
@@ -20,9 +21,15 @@ export const runtime = 'nodejs';
  */
 export async function GET() {
   try {
+    await requireAdmin();
     const components = await listComponentsWithStatus();
     return NextResponse.json({ components });
   } catch (e) {
+    // Honor an auth status (401/403) from requireAdmin; otherwise it's a 502.
+    const status = (e as { status?: number })?.status;
+    if (status === 401 || status === 403) {
+      return NextResponse.json({ error: (e as Error).message }, { status });
+    }
     return NextResponse.json(
       { error: `Could not read component status: ${(e as Error).message}` },
       { status: 502 },

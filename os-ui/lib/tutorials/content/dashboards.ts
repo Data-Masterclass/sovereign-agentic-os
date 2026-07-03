@@ -9,6 +9,7 @@ const dashboards: TutorialDef = {
   route: '/dashboards',
   title: 'Dashboards',
   tagline: 'Build governed BI that never disagrees with your agents.',
+  buttonLabel: 'Dashboards Tutorial',
   hook: {
     illustration: 'dashboard',
     title: 'Build a dashboard that never disagrees',

@@ -14,19 +14,19 @@ import {
   type Actor,
 } from './roles.ts';
 
-const user: Actor = { id: 'amir', domains: ['sales'], role: 'participant' };
+const user: Actor = { id: 'amir', domains: ['sales'], role: 'creator' };
 const builder: Actor = { id: 'bea', domains: ['sales'], role: 'builder' };
 const finBuilder: Actor = { id: 'kenji', domains: ['finance'], role: 'builder' };
 const admin: Actor = { id: 'sara', domains: ['sales', 'finance', 'platform'], role: 'admin' };
 
-test('roles rank lowest→highest and label to User/Creator/Builder/Admin', () => {
-  assert.ok(roleRank('participant') < roleRank('creator'));
+test('roles rank lowest→highest and label to Creator/Builder/Admin', () => {
   assert.ok(roleRank('creator') < roleRank('builder'));
   assert.ok(roleRank('builder') < roleRank('admin'));
-  assert.equal(roleLabel('participant'), 'User');
   assert.equal(roleLabel('creator'), 'Creator');
   assert.equal(roleLabel('builder'), 'Builder');
   assert.equal(roleLabel('admin'), 'Admin');
+  // An unknown/malformed role normalises to the base role's rank (0).
+  assert.equal(roleRank('bogus' as unknown as Actor['role']), roleRank('creator'));
 });
 
 test('a role compiles to OPA tools (the role→OPA mapping)', () => {
@@ -34,7 +34,7 @@ test('a role compiles to OPA tools (the role→OPA mapping)', () => {
   // Admin unlocks override + user admin; a plain User does not.
   assert.ok(rightsToTools('admin').includes('policy_override'));
   assert.ok(rightsToTools('admin').includes('user_admin'));
-  assert.ok(!rightsToTools('participant').includes('policy_override'));
+  assert.ok(!rightsToTools('creator').includes('policy_override'));
   // Builder can approve + deploy but not override policy.
   assert.ok(rightsToTools('builder').includes('approve'));
   assert.ok(rightsToTools('builder').includes('deploy'));

@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/config';
+import { requireUser } from '@/lib/auth';
+import { errorResponse } from '@/lib/data/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,6 +42,11 @@ async function gql(query: string): Promise<Record<string, unknown>> {
  * the console link so the surface degrades gracefully.
  */
 export async function GET() {
+  try {
+    await requireUser();
+  } catch (e) {
+    return errorResponse(e);
+  }
   let assets: string[] = [];
   let runs: {
     runId: string;

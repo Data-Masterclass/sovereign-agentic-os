@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { canSee, filterScope, assertInScope, deriveScope } from './scope-core.ts';
 import { allMockItems, SALES_OWNER, OTHER_OWNER } from './mock.ts';
 
-const userSales = deriveScope('participant', SALES_OWNER, ['sales']);
+const userSales = deriveScope('creator', SALES_OWNER, ['sales']);
 const builderSales = deriveScope('builder', 'b_sales', ['sales']);
 const builderFinance = deriveScope('builder', 'b_fin', ['finance']);
 const admin = deriveScope('admin', 'a_root', ['sales', 'finance', 'platform']);

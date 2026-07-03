@@ -68,7 +68,9 @@ export default function Alerts({ metrics, loading }: { metrics: MetricGroups | n
     <div className="agent-editor" style={{ marginTop: 18 }}>
       <div className="agent-editor-title">Metric alert</div>
       <p className="hint" style={{ marginTop: 4 }}>
-        Fires on the same governed number a viewer sees — notifies, and optionally triggers a traced agent run.
+        A threshold on a governed metric member — notifies, and optionally triggers a traced agent run.
+        Enter a <strong>current value</strong> to evaluate the rule now; at deploy the threshold reads the
+        live Cube metric.
       </p>
 
       <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginTop: 12 }}>
@@ -93,7 +95,7 @@ export default function Alerts({ metrics, loading }: { metrics: MetricGroups | n
           <input type="text" value={threshold} onChange={(e) => setThreshold(e.target.value)} inputMode="decimal" />
         </label>
         <label>
-          <span className="comp-label">Current value</span>
+          <span className="comp-label">Current value (sample)</span>
           <input type="text" value={value} onChange={(e) => setValue(e.target.value)} inputMode="decimal" />
         </label>
       </div>

@@ -17,17 +17,79 @@ metadata:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "cube") | nindent 4 }}
 data:
+  # The Northpeak metrics cube — the Metrics tab resolves members
+  # `northpeakcommerce.<measure>` here (os-ui lib/metrics/model.ts `measureMember`:
+  # dataset "northpeak-commerce" → Cube view "northpeakcommerce"). Binds to the
+  # physical gold mart the northpeak-marts-init Job materializes at
+  # iceberg.sales.gold_northpeak_commerce (sql_table = <schema>.<table>, catalog
+  # from CUBEJS_DB_PRESTO_CATALOG=iceberg). Measure/dimension names match exactly
+  # what os-ui requests: revenue/aov/conversion/churnrate + region/product/order_date.
+  northpeakcommerce.yml: |
+    cubes:
+      - name: northpeakcommerce
+        sql_table: sales.gold_northpeak_commerce
+        measures:
+          - name: revenue
+            title: Revenue
+            type: sum
+            sql: net_amount
+          - name: conversion
+            title: Conversion
+            type: avg
+            sql: converted
+          # Helper base measures (hidden) so AOV + churn rate are exact ratios.
+          - name: orders
+            type: sum
+            sql: converted
+            public: false
+          - name: gross
+            type: sum
+            sql: order_total
+            public: false
+          - name: customers
+            type: count_distinct
+            sql: customer_id
+            public: false
+          - name: churned_customers
+            type: count_distinct
+            sql: "CASE WHEN {CUBE}.is_churned = 1 THEN {CUBE}.customer_id END"
+            public: false
+          - name: aov
+            title: AOV
+            type: number
+            sql: "{gross} / NULLIF({orders}, 0)"
+          - name: churnrate
+            title: Churn Rate
+            type: number
+            sql: "{churned_customers} * 1.0 / NULLIF({customers}, 0)"
+        dimensions:
+          - name: order_id
+            sql: order_id
+            type: string
+            primary_key: true
+          - name: region
+            sql: region
+            type: string
+          - name: product
+            sql: product
+            type: string
+          - name: order_date
+            sql: order_date
+            type: time
+  # Demo cubes REPOINTED at the real Northpeak gold mart (were analytics.* which
+  # never existed → 0 rows). Names/measures kept so the Live Cube preview
+  # (daily_revenue.*) and the Data-tab parity/sales-agent demos (mart_sales.*) resolve.
   daily_revenue.yml: |
     cubes:
       - name: daily_revenue
-        sql_table: analytics.daily_revenue
+        sql_table: sales.gold_northpeak_commerce
         measures:
           - name: total_revenue
             type: sum
-            sql: revenue
+            sql: net_amount
           - name: total_orders
             type: sum
-            sql: orders
+            sql: converted
           - name: count
             type: count
         dimensions:
@@ -37,7 +99,7 @@ data:
   mart_sales.yml: |
     cubes:
       - name: mart_sales
-        sql_table: analytics.mart_sales
+        sql_table: sales.gold_northpeak_commerce
         measures:
           - name: revenue
             title: Revenue

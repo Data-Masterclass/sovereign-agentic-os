@@ -1,0 +1,44 @@
+{{- if .Values.hermes.enabled }}
+{{- /*
+  Sandbox RuntimeClasses for Hermes code execution (hermes plan §9). Code runs
+  under a REAL kernel-isolated runtime, NEVER host-local. Two RuntimeClasses are
+  templated so `helm template` renders them for review:
+
+    • Kata (kata-qemu) — per-pod microVM (guest kernel via KVM). The DEFAULT on
+      SKE node pools that expose nested KVM (see the preflight Job below).
+    • gVisor (runsc)   — user-space syscall isolation. The FALLBACK where nested
+      KVM is unavailable (e.g. kind), and the kind default.
+
+  RuntimeClass is a cluster-scoped object; on kind, gVisor requires the runsc
+  handler installed on the node — these render for SKE and are documented as
+  NOT-applied on a vanilla kind (validate code execution with gVisor once runsc
+  is present, or template-only otherwise). `lib/hermes/sandbox.ts` selects which
+  one a pod uses (kind→gvisor; SKE→kata if the preflight finds /dev/kvm).
+*/}}
+{{- $s := .Values.hermes.sandbox }}
+{{- if $s.kata.render }}
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: kata-qemu
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    hermes.sovereign-os/sandbox: "kata"
+# The microVM handler (Kata Containers, QEMU/Cloud-Hypervisor VMM). Requires
+# nested KVM on the node; picked only when the preflight confirms /dev/kvm.
+handler: {{ $s.kata.handler | quote }}
+---
+{{- end }}
+{{- if $s.gvisor.render }}
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    hermes.sovereign-os/sandbox: "gvisor"
+# The user-space syscall-isolation handler (gVisor runsc). No nested-virt needed;
+# the fallback (and the kind default).
+handler: {{ $s.gvisor.handler | quote }}
+{{- end }}
+{{- end }}

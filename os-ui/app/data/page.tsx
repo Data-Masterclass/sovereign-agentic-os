@@ -5,7 +5,6 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
-import McpConnect from '@/components/McpConnect';
 import SandboxLane from '@/components/SandboxLane';
 import DataTab from '@/components/data/DataTab';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
@@ -123,9 +122,8 @@ export default function DataPage() {
 
   return (
     <>
-      <PageHeader title="Data" crumb="datasets · personal data · catalog · talk to your data · query" tutorial="data" />
+      <PageHeader title="Data" crumb="datasets · personal data · catalog · talk to your data · query" tutorial="data" mcpTab="data" />
       <div className="content">
-        <McpConnect tab="data" />
         <div className="tabstrip">
           <button className={view === 'datasets' ? 'active' : ''} onClick={() => setView('datasets')}>Datasets</button>
           <button className={view === 'mydata' ? 'active' : ''} onClick={() => setView('mydata')} {...anchorAttr(ANCHORS.data.sandbox)}>Personal data</button>

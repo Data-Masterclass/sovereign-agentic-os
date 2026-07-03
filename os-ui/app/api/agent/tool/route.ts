@@ -85,7 +85,9 @@ export async function POST(req: Request) {
     }
     if (tool === 'retrieve') {
       const query = (body.query ?? '').toString().trim() || 'renewal terms';
-      const passages = await retrieveTool(query);
+      // DLS is scoped to the SESSION user (id/domains/role), so the retrieve tool
+      // can only ever return knowledge units this human may see.
+      const passages = await retrieveTool(query, { id: user.id, domains: user.domains, role: user.role });
       const tr = await trace({ principal, tool, input: { query }, output: passages, decision: 'allow', costUsd: 0.0006 });
       return NextResponse.json({ tool, principal, decision: 'allow', policy: authz.policy, traceId: tr.id, passages });
     }

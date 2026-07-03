@@ -5,7 +5,6 @@
 
 import { useCallback, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
-import McpConnect from '@/components/McpConnect';
 import { useApi } from '@/lib/useApi';
 import { useUser } from '@/lib/useUser';
 import { useToolWindow } from '@/components/ToolWindowProvider';
@@ -83,6 +82,7 @@ type PredictResult = {
   policy: string;
   model?: string;
   principal?: string;
+  requestedBy?: string;
   account?: string;
   score?: number;
   band?: 'low' | 'medium' | 'high';
@@ -109,9 +109,8 @@ export default function SciencePage() {
 
   return (
     <>
-      <PageHeader title="Science" crumb="Layer 4 — model-as-a-service (ML, not LLMs)" tutorial="science" />
+      <PageHeader title="Science" crumb="Layer 4 — model-as-a-service (ML, not LLMs)" tutorial="science" mcpTab="science" />
       <div className="content">
-        <McpConnect tab="science" />
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <p className="lead" style={{ marginBottom: 0 }}>
             Traditional ML / data science as a <strong>governed service</strong>: explore in
@@ -300,14 +299,22 @@ function ChurnSlice() {
             </tr>
           </thead>
           <tbody>
-            {data.features.map((f) => (
-              <tr key={f.name}>
-                <td><code>{f.name}</code></td>
-                <td>{f.entity}</td>
-                <td className="muted">{f.offline}</td>
-                <td className="muted">{f.online}</td>
+            {data.features.length === 0 ? (
+              <tr>
+                <td className="muted" colSpan={4}>
+                  No features registered yet — the guided flow defines them in Featureform.
+                </td>
               </tr>
-            ))}
+            ) : (
+              data.features.map((f) => (
+                <tr key={f.name}>
+                  <td><code>{f.name}</code></td>
+                  <td>{f.entity}</td>
+                  <td className="muted">{f.offline}</td>
+                  <td className="muted">{f.online}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
@@ -336,7 +343,21 @@ function ModelService() {
       </>
     );
   }
-  if (!model) return null;
+  if (!model) {
+    // A fresh tenant has an empty model registry. Say so explicitly (rather than
+    // rendering nothing) so the tier ladder / front doors / monitoring don't just
+    // vanish without explanation.
+    return (
+      <>
+        <div className="section-title" style={{ marginTop: 28 }}>Model as a service</div>
+        <div className="stub-page" style={{ marginTop: 8 }}>
+          No deployed models yet. Register one through the guided <strong>New model</strong> path
+          above (or a platform seed); the tier ladder, both <code>predict</code> front doors, drift
+          monitoring, and marketplace consumption appear here once a model exists.
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -639,6 +660,8 @@ function DoorCard({
             '{',
             `  decision:  "${result.decision}",`,
             `  frontDoor: "${result.frontDoor}",`,
+            `  principal: "${result.principal ?? ''}",`,
+            result.requestedBy ? `  requestedBy: "${result.requestedBy}",  // your session` : '  requestedBy: null,  // your session',
             `  tier:      "${result.tier}",`,
             `  policy:    "${result.policy}",`,
             typeof result.score === 'number'

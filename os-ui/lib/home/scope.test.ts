@@ -18,9 +18,9 @@ import {
   type TopPillarInput,
 } from './scope.ts';
 
-const amir: Viewer = { id: 'amir', domains: ['sales'], role: 'participant' };
+const amir: Viewer = { id: 'amir', domains: ['sales'], role: 'creator' };
 const bea: Viewer = { id: 'bea', domains: ['sales'], role: 'builder' };
-const kenji: Viewer = { id: 'kenji', domains: ['finance'], role: 'participant' };
+const kenji: Viewer = { id: 'kenji', domains: ['finance'], role: 'creator' };
 
 // A sales approval Amir requested + a sales approval someone else requested.
 const approvals: ApprovalInput[] = [

@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/config';
+import { requireUser } from '@/lib/auth';
+import { errorResponse } from '@/lib/data/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,9 +15,15 @@ function bearer(): string {
 /**
  * Models & Tools (Gateway) -> LiteLLM. Server-side (Bearer master key stays on
  * the server) we list the available models and the registered MCP tools the
- * agents can call through the one governed endpoint.
+ * agents can call through the one governed endpoint. Requires a session (401 for
+ * anon) — the model/tool catalog is config recon, not a public surface.
  */
 export async function GET() {
+  try {
+    await requireUser();
+  } catch (e) {
+    return errorResponse(e);
+  }
   let models: Model[] = [];
   let tools: Tool[] = [];
   let modelsError = '';

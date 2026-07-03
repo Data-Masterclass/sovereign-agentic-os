@@ -19,8 +19,8 @@ test('the catalog has all ten golden paths, each fully described', () => {
 });
 
 test('persona derives from role + authoring activity (User vs Creator)', () => {
-  assert.equal(personaFor('participant', false), 'user');
-  assert.equal(personaFor('participant', true), 'creator');
+  assert.equal(personaFor('creator', false), 'user');
+  assert.equal(personaFor('creator', true), 'creator');
   assert.equal(personaFor('builder', false), 'builder');
   assert.equal(personaFor('admin', false), 'admin');
 });

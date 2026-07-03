@@ -18,7 +18,7 @@ import { type KnowledgeUnit, type Provenance } from './chunk.ts';
  * OPA gate; it calls these for the filtering + ranking so the logic is testable.
  */
 
-export type Principal = { id: string; domains: string[]; role: 'participant' | 'creator' | 'builder' | 'admin' };
+export type Principal = { id: string; domains: string[]; role: 'creator' | 'builder' | 'admin' };
 
 /** DLS grant: can this principal see a unit with this provenance? (query-time). */
 export function canSee(prov: Provenance, principal: Principal): boolean {

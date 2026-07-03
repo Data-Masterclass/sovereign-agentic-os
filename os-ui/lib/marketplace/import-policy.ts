@@ -31,6 +31,8 @@ const MODES: Record<ProductType, ImportMode[]> = {
   app: ['deploy-instance'],
   connection: ['template'],
   agent: ['fork'],
+  // A Hermes skill is a portable, reviewable artifact — fork-to-own on install.
+  skill: ['fork'],
 };
 
 export function importModesFor(type: ProductType): {

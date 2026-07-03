@@ -9,6 +9,7 @@ const metrics: TutorialDef = {
   route: '/metrics',
   title: 'Metrics',
   tagline: 'Define a KPI once; everyone reads the same number.',
+  buttonLabel: 'Metrics Tutorial',
   hook: {
     illustration: 'metric',
     title: 'Define a KPI everyone agrees on',

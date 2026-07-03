@@ -97,7 +97,7 @@ test('bad shape throws an AssetError (the store never holds garbage)', () => {
 
 test('the reused lifecycle still gates files: Creator cannot promote, Builder can', () => {
   // sanity that the imported governance is wired (no separate Files lifecycle).
-  assert.equal(canTransition('participant', 'dataset', 'promote').ok, false);
+  assert.equal(canTransition('creator', 'dataset', 'promote').ok, false);
   assert.equal(canTransition('builder', 'dataset', 'promote').ok, true);
   assert.equal(tierAfter('dataset', 'promote'), 'asset');
   assert.equal(visibilityFor('asset', 'public'), 'shared');

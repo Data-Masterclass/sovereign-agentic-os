@@ -91,9 +91,9 @@ export default function StrategyPage() {
         {resp ? (
           <section className="strat-section">
             <div className="strat-section-head">
-              <h2 className="strat-section-title">Big Bets</h2>
+              <h2 className="strat-section-title">Strategic Pillars</h2>
               <p className="strat-section-sub">
-                Your strategic pillars and the big bets that deliver each one&apos;s business value.
+                Your strategic priorities and the big bets that deliver each one&apos;s value.
               </p>
             </div>
             {resp.items.length === 0 && !canCreate ? (
@@ -427,7 +427,12 @@ function LinkBet({ pillarId, linkedIds, onChanged }: { pillarId: string; linkedI
   }
   return (
     <div className="strat-link-bet">
-      {cat.length === 0 ? <span className="muted" style={{ fontSize: 11.5 }}>No bets available to link.</span> : null}
+      {cat.length === 0 ? (
+        <span className="muted" style={{ fontSize: 11.5 }}>
+          No big bets yet.{' '}
+          <Link href="/big-bets" style={{ color: 'var(--teal)' }}>Create one →</Link>
+        </span>
+      ) : null}
       {cat.map((b) => {
         const on = linkedIds.includes(b.id);
         return (

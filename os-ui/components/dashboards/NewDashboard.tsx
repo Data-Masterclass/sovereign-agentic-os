@@ -63,6 +63,10 @@ export default function NewDashboard({
 
   const palette = flatMetrics(metrics);
   const view = viewOf(charts);
+  // A dashboard binds to ONE Cube view (supersetBundle does SELECT * FROM "<view>"), so
+  // charts drawn from two different views would silently drop the other view's members.
+  const views = Array.from(new Set(charts.map((c) => (c.metric.includes('.') ? c.metric.slice(0, c.metric.indexOf('.')) : c.metric)).filter(Boolean)));
+  const multiView = views.length > 1;
 
   const addChart = (m: MetricSummary) =>
     setCharts((cs) => [...cs, { name: m.name, vizType: 'big_number_total', metric: m.member }]);
@@ -85,6 +89,7 @@ export default function NewDashboard({
     const trimmed = name.trim();
     if (!trimmed) return setError('Give the dashboard a name.');
     if (charts.length === 0) return setError('Add at least one chart on a governed metric.');
+    if (multiView) return setError(`A dashboard binds to one Cube view — these charts span ${views.join(', ')}. Keep charts from a single view.`);
     setBuilding(true);
     try {
       const res = await postJson<BuildResponse>('/api/dashboards/build', {
@@ -188,9 +193,16 @@ export default function NewDashboard({
           </div>
         )}
 
+        {multiView ? (
+          <div className="hint" style={{ marginTop: 12, color: 'var(--warn-text, inherit)' }}>
+            These charts span more than one Cube view (<strong>{views.join(', ')}</strong>). A dashboard binds to a
+            single view — keep charts from one view.
+          </div>
+        ) : null}
+
         <div className="row" style={{ marginTop: 16, justifyContent: 'space-between', alignItems: 'center' }}>
           <span className={`badge ${mode === 'agent' ? 'warn' : 'muted'}`}>mode: {mode}</span>
-          <button className="btn" onClick={build} disabled={building || charts.length === 0 || !name.trim()}>
+          <button className="btn" onClick={build} disabled={building || charts.length === 0 || !name.trim() || multiView}>
             {building ? <span className="spin" /> : 'Build dashboard'}
           </button>
         </div>

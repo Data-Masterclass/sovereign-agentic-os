@@ -34,9 +34,13 @@ export type EgressLogEntry = {
   at: string;
 };
 
-const REQUESTS = new Map<string, EgressRequest>();
-const APPROVED = new Set<string>(); // approved hostnames (lowercased)
-const LOG: EgressLogEntry[] = [];
+type EgressState = { requests: Map<string, EgressRequest>; approved: Set<string>; log: EgressLogEntry[] };
+const EGRESS_KEY = Symbol.for('soa.egress.requests');
+function egressState(): EgressState {
+  const g = globalThis as unknown as Record<symbol, EgressState | undefined>;
+  if (!g[EGRESS_KEY]) g[EGRESS_KEY] = { requests: new Map(), approved: new Set(), log: [] };
+  return g[EGRESS_KEY]!;
+}
 const LOG_MAX = 200;
 
 function rid(): string {
@@ -58,30 +62,30 @@ export function requestEgress(input: { host: string; domain: string; reason: str
     status: 'pending',
     createdAt: new Date().toISOString(),
   };
-  REQUESTS.set(r.id, r);
+  egressState().requests.set(r.id, r);
   return r;
 }
 
 /** An Admin decides a request; approving adds the host to the allowlist. */
 export function decideEgress(id: string, decision: 'approve' | 'reject', by: string): EgressRequest | null {
-  const r = REQUESTS.get(id);
+  const r = egressState().requests.get(id);
   if (!r || r.status !== 'pending') return r ?? null;
   r.status = decision === 'approve' ? 'approved' : 'rejected';
   r.decidedBy = by;
   r.decidedAt = new Date().toISOString();
-  if (r.status === 'approved') APPROVED.add(r.host);
-  REQUESTS.set(r.id, r);
+  if (r.status === 'approved') egressState().approved.add(r.host);
+  egressState().requests.set(r.id, r);
   return r;
 }
 
 /** Is this host Admin-approved for egress (in addition to the static allowlist)? */
 export function isHostApproved(host: string): boolean {
   const h = norm(host);
-  return APPROVED.has(h) || [...APPROVED].some((d) => h === d || h.endsWith(`.${d}`));
+  return egressState().approved.has(h) || [...egressState().approved].some((d) => h === d || h.endsWith(`.${d}`));
 }
 
 export function listEgressRequests(opts: { domain?: string; status?: EgressStatus } = {}): EgressRequest[] {
-  return [...REQUESTS.values()]
+  return [...egressState().requests.values()]
     .filter((r) => (opts.domain ? r.domain === opts.domain : true))
     .filter((r) => (opts.status ? r.status === opts.status : true))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -89,14 +93,14 @@ export function listEgressRequests(opts: { domain?: string; status?: EgressStatu
 
 /** Record an outbound call (monitored egress). */
 export function logEgress(entry: { host: string; connectionId?: string; tool?: string }): void {
-  LOG.push({ ...entry, host: norm(entry.host), at: new Date().toISOString() });
-  if (LOG.length > LOG_MAX) LOG.splice(0, LOG.length - LOG_MAX);
+  egressState().log.push({ ...entry, host: norm(entry.host), at: new Date().toISOString() });
+  if (egressState().log.length > LOG_MAX) egressState().log.splice(0, egressState().log.length - LOG_MAX);
 }
 export function egressLog(limit = 50): EgressLogEntry[] {
-  return LOG.slice(-limit).reverse();
+  return egressState().log.slice(-limit).reverse();
 }
 export function _clearEgress(): void {
-  REQUESTS.clear();
-  APPROVED.clear();
-  LOG.length = 0;
+  egressState().requests.clear();
+  egressState().approved.clear();
+  egressState().log.length = 0;
 }

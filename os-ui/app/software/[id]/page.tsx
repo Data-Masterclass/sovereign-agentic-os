@@ -225,6 +225,11 @@ export default function AppPage() {
   const canEditCode = data.user.role === 'builder' || data.user.role === 'admin';
   const canPromoteUI = promoteLabel(app.visibility);
   const liveUrl = `https://${app.subdomain}`;
+  // A deploy is already awaiting a Builder — block re-requesting (it would open a
+  // duplicate review card and orphan the pending one). Point to the review inbox.
+  const inReview = app.deploy.state === 'review';
+  const publishDisabled = busy || inReview;
+  const publishLabel = inReview ? 'Awaiting review' : app.deploy.releases > 0 ? 'Publish next release' : 'Publish release';
 
   return (
     <>
@@ -322,8 +327,8 @@ export default function AppPage() {
                 </div>
                 <div className="row" style={{ gap: 8, alignItems: 'center', flexShrink: 0 }}>
                   <button className="btn ghost" onClick={() => deployAction('preview')} disabled={busy}>Preview</button>
-                  <button className="btn" onClick={() => deployAction()} disabled={busy}>
-                    {app.deploy.releases > 0 ? 'Publish next release' : 'Publish release'}
+                  <button className="btn" onClick={() => deployAction()} disabled={publishDisabled} title={inReview ? 'A deploy is awaiting a Builder in Deploy reviews' : undefined}>
+                    {publishLabel}
                   </button>
                 </div>
               </div>
@@ -415,8 +420,8 @@ export default function AppPage() {
                   <button className={buildTab === 'code' ? 'active' : ''} onClick={() => setBuildTab('code')}>Code</button>
                 </div>
               ) : <span className="sw-edit-hint">Tell the agent what to build. It writes code, commits to Forgejo, and you publish a release.</span>}
-              <button className="btn" onClick={() => deployAction()} disabled={busy}>
-                {app.deploy.releases > 0 ? 'Publish next release' : 'Publish release'}
+              <button className="btn" onClick={() => deployAction()} disabled={publishDisabled} title={inReview ? 'A deploy is awaiting a Builder in Deploy reviews' : undefined}>
+                {publishLabel}
               </button>
             </div>
 

@@ -34,7 +34,7 @@ export default function DashboardsTab({ supersetUrl }: { supersetUrl: string }) 
 
   return (
     <>
-      <PageHeader title="Dashboards" crumb="open · build · alert · report · govern — on governed metrics" tutorial="dashboards" />
+      <PageHeader title="Dashboards" crumb="open · build · alert · report · govern — on governed metrics" tutorial="dashboards" mcpTab="dashboards" />
       <div className="content">
         <p className="lead">
           Compose dashboards over your <strong>governed metrics</strong>. Open a tile — it embeds with

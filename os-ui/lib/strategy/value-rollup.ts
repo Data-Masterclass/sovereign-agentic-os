@@ -59,7 +59,7 @@ export type PillarRollup = {
   maskedTotal: number;
 };
 
-const EMPTY_USER_DOMAINS = { domains: [] as string[], role: 'participant' as const };
+const EMPTY_USER_DOMAINS = { domains: [] as string[], role: 'creator' as const };
 
 /** Resolve a metric's raw total from Cube, falling back to the deterministic seed. */
 async function resolveTotal(
@@ -95,7 +95,7 @@ function applyBasis(raw: number, metric: MetricLink): number {
  */
 export async function rollupForPillar(
   pillar: Pillar,
-  user: { domains: string[]; role: 'participant' | 'creator' | 'builder' | 'admin' } = EMPTY_USER_DOMAINS,
+  user: { domains: string[]; role: 'creator' | 'builder' | 'admin' } = EMPTY_USER_DOMAINS,
   source: BetShareSource = defaultBetShareSource,
 ): Promise<PillarRollup> {
   const vm = pillar.valueMetric;

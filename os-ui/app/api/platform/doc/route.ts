@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
+import { requireAdmin } from '@/lib/auth';
 import { readComponentDoc } from '@/lib/componentDocs';
 
 export const dynamic = 'force-dynamic';
@@ -16,6 +17,12 @@ export const runtime = 'nodejs';
  * directory. Rendered into the Components surface's side panel.
  */
 export async function GET(req: Request) {
+  try {
+    await requireAdmin();
+  } catch (e) {
+    const status = (e as { status?: number })?.status ?? 401;
+    return NextResponse.json({ error: (e as Error).message }, { status });
+  }
   const url = new URL(req.url);
   const raw = (url.searchParams.get('id') ?? '').trim();
   const id = raw.replace(/[^a-zA-Z0-9_-]/g, '');

@@ -36,7 +36,7 @@ export default function BigBetsPage() {
 
   return (
     <>
-      <PageHeader title="Big Bets" crumb="initiative roadmaps over real components" tutorial="big-bets" />
+      <PageHeader title="Big Bets" crumb="initiative roadmaps over real components" tutorial="big-bets" mcpTab="bigbets" />
       <div className="content">
         <p className="lead">
           Each Big Bet is an initiative with a sharp problem statement, a value target traced to a
@@ -53,32 +53,36 @@ export default function BigBetsPage() {
           <button className="btn" onClick={() => setCreating(true)}>New Big Bet</button>
         </div>
 
-        {error ? <div className="error" style={{ marginTop: 12 }}>{error}</div> : null}
-        {loading && !data ? <div className="stub-page">Loading bets…</div> : null}
-        {data && bets.length === 0 && !loading ? (
-          <div className="hint" style={{ marginTop: 16 }}>
-            No big bets yet. Start one — name the owner, point it at a pillar, state the problem and your
-            solution idea, set a value target and a go-live, then build the roadmap from real components.
-          </div>
-        ) : null}
+        {creating ? (
+          <CreatePanel pillars={pillars} onClose={() => setCreating(false)} />
+        ) : (
+          <>
+            {error ? <div className="error" style={{ marginTop: 12 }}>{error}</div> : null}
+            {loading && !data ? <div className="stub-page">Loading bets…</div> : null}
+            {data && bets.length === 0 && !loading ? (
+              <div className="hint" style={{ marginTop: 16 }}>
+                No big bets yet. Start one — name the owner, point it at a pillar, state the problem and your
+                solution idea, set a value target and a go-live, then build the roadmap from real components.
+              </div>
+            ) : null}
 
-        <div className="bb-portfolio">
-          {groups.map((g) => (
-            <section key={g.key} className="bb-group">
-              <div className="bb-group-head">
-                <h3 className="bb-group-title">{g.name}</h3>
-                <span className="count-pill">{g.bets.length}</span>
-                {g.metricName ? <span className="bb-group-metric">{g.metricName}</span> : null}
-              </div>
-              <div className="bb-group-bets">
-                {g.bets.map((b) => <BetCard key={b.id} b={b} />)}
-              </div>
-            </section>
-          ))}
-        </div>
+            <div className="bb-portfolio">
+              {groups.map((g) => (
+                <section key={g.key} className="bb-group">
+                  <div className="bb-group-head">
+                    <h3 className="bb-group-title">{g.name}</h3>
+                    <span className="count-pill">{g.bets.length}</span>
+                    {g.metricName ? <span className="bb-group-metric">{g.metricName}</span> : null}
+                  </div>
+                  <div className="bb-group-bets">
+                    {g.bets.map((b) => <BetCard key={b.id} b={b} />)}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </>
+        )}
       </div>
-
-      {creating ? <CreateDrawer pillars={pillars} onClose={() => setCreating(false)} /> : null}
     </>
   );
 }
@@ -156,7 +160,7 @@ function BetCard({ b }: { b: BetSummary }) {
 
 const EMPTY = { owner: '', pillarId: '', metricId: '', problem: '', solution: '', targetValue: '', goLive: '' };
 
-function CreateDrawer({ pillars, onClose }: { pillars: Pillar[]; onClose: () => void }) {
+function CreatePanel({ pillars, onClose }: { pillars: Pillar[]; onClose: () => void }) {
   const router = useRouter();
   const [f, setF] = useState({ ...EMPTY });
   const [busy, setBusy] = useState(false);
@@ -199,88 +203,84 @@ function CreateDrawer({ pillars, onClose }: { pillars: Pillar[]; onClose: () => 
     : 'Value target';
 
   return (
-    <div className="drawer-backdrop" onClick={onClose}>
-      <div className="drawer" onClick={(e) => e.stopPropagation()}>
-        <div className="drawer-head">
-          <h2>New Big Bet</h2>
-          <button className="drawer-x" onClick={onClose} aria-label="Close">×</button>
-        </div>
-        <div className="drawer-body">
-          <Field label="Owner">
-            <input
-              type="text"
-              value={f.owner}
-              onChange={(e) => set('owner', e.target.value)}
-              placeholder="e.g. Retention team"
-            />
-          </Field>
+    <div className="card" style={{ marginTop: 20, maxWidth: 680 }}>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <h2 style={{ margin: 0, fontSize: 17, fontWeight: 650 }}>New Big Bet</h2>
+        <button className="btn ghost sm" onClick={onClose} aria-label="Cancel" disabled={busy}>Cancel</button>
+      </div>
 
-          <Field label="Strategic Pillar">
-            {pillar ? (
-              <div className="bb-pillar-chip">
-                <span className="bb-pillar-chip-name">{pillar.name}</span>
-                {pillar.metric ? <span className="bb-pillar-chip-metric">→ {pillar.metric.name}</span> : null}
-                <button type="button" className="bb-pillar-chip-edit" onClick={() => onPillar('')}>Edit</button>
-              </div>
-            ) : (
-              <select
-                className="bb-pillar-select"
-                value={f.pillarId}
-                onChange={(e) => onPillar(e.target.value)}
-                style={{ width: '100%' }}
-              >
-                <option value="">Choose a strategic pillar…</option>
-                {pillars.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}{p.metric ? ` → ${p.metric.name}` : ''}
-                  </option>
-                ))}
-              </select>
-            )}
-          </Field>
+      <Field label="Owner">
+        <input
+          type="text"
+          value={f.owner}
+          onChange={(e) => set('owner', e.target.value)}
+          placeholder="e.g. Retention team"
+        />
+      </Field>
 
-          <Field label="Problem Statement" required>
-            <textarea
-              value={f.problem}
-              rows={3}
-              onChange={(e) => set('problem', e.target.value)}
-              placeholder="The problem this bet solves — who is affected and what it costs the business."
-            />
-          </Field>
-
-          <Field label="Solution Idea">
-            <textarea
-              value={f.solution}
-              rows={3}
-              onChange={(e) => set('solution', e.target.value)}
-              placeholder="How you intend to realize the value — the shape of the solution."
-            />
-          </Field>
-
-          <div style={{ display: 'grid', gap: 12, gridTemplateColumns: '1fr 1fr', marginTop: 18 }}>
-            <Field label={valueLabel}>
-              <input
-                type="number"
-                value={f.targetValue}
-                onChange={(e) => set('targetValue', e.target.value)}
-                placeholder="1200000"
-                style={{ width: '100%' }}
-              />
-            </Field>
-            <Field label="Planned Go-Live">
-              <input type="date" value={f.goLive} onChange={(e) => set('goLive', e.target.value)} style={{ width: '100%' }} />
-            </Field>
+      <Field label="Strategic Pillar">
+        {pillar ? (
+          <div className="bb-pillar-chip">
+            <span className="bb-pillar-chip-name">{pillar.name}</span>
+            {pillar.metric ? <span className="bb-pillar-chip-metric">→ {pillar.metric.name}</span> : null}
+            <button type="button" className="bb-pillar-chip-edit" onClick={() => onPillar('')}>Edit</button>
           </div>
+        ) : (
+          <select
+            className="bb-pillar-select"
+            value={f.pillarId}
+            onChange={(e) => onPillar(e.target.value)}
+            style={{ width: '100%' }}
+          >
+            <option value="">Choose a strategic pillar…</option>
+            {pillars.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}{p.metric ? ` → ${p.metric.name}` : ''}
+              </option>
+            ))}
+          </select>
+        )}
+      </Field>
 
-          {err ? <div className="error" style={{ marginTop: 16 }}>{err}</div> : null}
+      <Field label="Problem Statement" required>
+        <textarea
+          value={f.problem}
+          rows={3}
+          onChange={(e) => set('problem', e.target.value)}
+          placeholder="e.g. Sales reps spend 3 hours/week manually updating CRM — costing $400k/year in lost selling time."
+        />
+      </Field>
 
-          <div className="row" style={{ marginTop: 24, justifyContent: 'flex-end', gap: 10 }}>
-            <button className="btn ghost" onClick={onClose} disabled={busy}>Cancel</button>
-            <button className="btn" onClick={submit} disabled={!valid || busy}>
-              {busy ? <span className="spin" /> : 'Create Big Bet'}
-            </button>
-          </div>
-        </div>
+      <Field label="Solution Idea">
+        <textarea
+          value={f.solution}
+          rows={3}
+          onChange={(e) => set('solution', e.target.value)}
+          placeholder="How you intend to realize the value — the shape of the solution."
+        />
+      </Field>
+
+      <div style={{ display: 'grid', gap: 12, gridTemplateColumns: '1fr 1fr', marginTop: 18 }}>
+        <Field label={valueLabel}>
+          <input
+            type="number"
+            value={f.targetValue}
+            onChange={(e) => set('targetValue', e.target.value)}
+            placeholder="1200000"
+            style={{ width: '100%' }}
+          />
+        </Field>
+        <Field label="Planned Go-Live">
+          <input type="date" value={f.goLive} onChange={(e) => set('goLive', e.target.value)} style={{ width: '100%' }} />
+        </Field>
+      </div>
+
+      {err ? <div className="error" style={{ marginTop: 16 }}>{err}</div> : null}
+
+      <div className="row" style={{ marginTop: 24, justifyContent: 'flex-end' }}>
+        <button className="btn" onClick={submit} disabled={!valid || busy}>
+          {busy ? <span className="spin" /> : 'Create Big Bet'}
+        </button>
       </div>
     </div>
   );

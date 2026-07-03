@@ -97,8 +97,8 @@ function buildIndex() {
   return embedUnits([...bank, ...finance]);
 }
 
-const salesUser = { id: 'amir', domains: ['sales'], role: 'participant' as const };
-const financeUser = { id: 'kenji', domains: ['finance'], role: 'participant' as const };
+const salesUser = { id: 'amir', domains: ['sales'], role: 'creator' as const };
+const financeUser = { id: 'kenji', domains: ['finance'], role: 'creator' as const };
 
 test('GOLDEN Q&A: grounded-answer rate is 100% on the golden set', () => {
   const units = buildIndex();

@@ -40,8 +40,21 @@ export type MemoryFact = {
   createdAt: string;
 };
 
-const threads = new Map<string, Thread>();
-const facts = new Map<string, MemoryFact>();
+/**
+ * State pinned to `globalThis` — the Next App Router bundles each route handler
+ * separately, so a module-scoped Map would give every route its own empty copy
+ * (a fact proposed by one route would be invisible to another). Pinning makes the
+ * working-memory + long-term stores true singletons and survives dev HMR.
+ */
+type MemoryState = { threads: Map<string, Thread>; facts: Map<string, MemoryFact> };
+const STATE_KEY = Symbol.for('soa.agent-memory.state');
+function state(): MemoryState {
+  const g = globalThis as unknown as Record<symbol, MemoryState | undefined>;
+  if (!g[STATE_KEY]) g[STATE_KEY] = { threads: new Map(), facts: new Map() };
+  return g[STATE_KEY]!;
+}
+const threads = state().threads;
+const facts = state().facts;
 
 function now(): string {
   return new Date().toISOString();

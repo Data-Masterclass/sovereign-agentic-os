@@ -31,19 +31,23 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
   }
 
-  let body: { account?: string; features?: Partial<ChurnFeatures>; principal?: string; domain?: string } = {};
+  // Only the prediction inputs come from the body. Identity (principal + domain)
+  // is NEVER client-supplied — it is bound to the fixed front-door service
+  // principal and the caller's SESSION domains, so a user cannot forge either.
+  let body: { account?: string; features?: Partial<ChurnFeatures> } = {};
   try {
     body = await req.json();
   } catch {
     /* empty body => score with the default (neutral) feature vector */
   }
 
-  // The REST door's caller is a SOFTWARE app (defaults to the Churn Risk app, granted predict).
+  // The REST door's caller is the Churn Risk software app (granted predict); the
+  // callable-scope check uses the human caller's own domains from the session.
   const result = await servePredict({
     account: body.account,
     features: body.features,
-    principal: (body.principal ?? 'churn-risk-app').toString(),
-    domain: (body.domain ?? 'sales').toString(),
+    principal: 'churn-risk-app',
+    domains: user.domains,
     isAgent: false,
     requestedBy: user.id,
   });

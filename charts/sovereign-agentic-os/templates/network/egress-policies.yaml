@@ -157,4 +157,44 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: os-ui
+{{- if .Values.hermes.enabled }}
+---
+# 7) Hermes gateway lockdown (mirrors the agent-runtime lockdown; gated on
+# `hermes.enabled`). The Hermes autonomous runtime is EXCLUDED from the blanket
+# intra-namespace allow the same way the agent-runtime is (see policy 3 — add
+# `hermes-gateway` to its NotIn list when enabling on a Cilium cluster), and its
+# ONLY egress is: the LiteLLM model gateway (models never leave the gateway) and
+# the OS UI governed MCP surface (tools ALWAYS via /api/mcp → OPA). No provider
+# internet, no other pod. Raw web is possible only through the egress proxy's
+# allowlist, never directly — the no-bypass invariant, enforced at the network.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-hermes-gateway-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: hermes-gateway
+  policyTypes:
+    - Egress
+  egress:
+    # The LiteLLM model gateway (Hermes's ONLY model path — subchart label).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: litellm
+    # The OS UI governed MCP endpoint (component label `os-ui`).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui
+    # The egress proxy — the ONLY sanctioned path to any allowlisted website.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: egress-proxy
+{{- end }}
 {{- end }}

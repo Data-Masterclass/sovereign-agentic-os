@@ -19,7 +19,7 @@
 
 // ----------------------------------------------------------------- identity ---
 
-export type Role = 'participant' | 'creator' | 'builder' | 'admin';
+export type Role = 'creator' | 'builder' | 'admin';
 export type Principal = { id: string; domains: string[]; role: Role };
 
 /**

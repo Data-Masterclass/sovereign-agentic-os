@@ -3,6 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/config';
+import { requireUser } from '@/lib/auth';
+import { errorResponse } from '@/lib/data/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,11 +42,13 @@ async function fromOpenMetadata(): Promise<Asset[] | null> {
   }
 }
 
-async function fromQueryTool(): Promise<Asset[]> {
+async function fromQueryTool(principal: string): Promise<Asset[]> {
   const res = await fetch(`${config.queryToolUrl}/query`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
-    body: JSON.stringify({ sql: 'show tables' }),
+    // Forward the principal so Trino's OPA plugin scopes the table list to the
+    // caller's domain schema (no cross-domain catalog recon).
+    body: JSON.stringify({ sql: 'show tables', principal }),
     cache: 'no-store',
   });
   const text = await res.text();
@@ -59,12 +63,19 @@ async function fromQueryTool(): Promise<Asset[]> {
 }
 
 export async function GET() {
+  let principal;
+  try {
+    const u = await requireUser();
+    principal = u.domains[0] ?? u.id;
+  } catch (e) {
+    return errorResponse(e);
+  }
   const om = await fromOpenMetadata();
   if (om) {
     return NextResponse.json({ source: 'openmetadata', assets: om });
   }
   try {
-    const assets = await fromQueryTool();
+    const assets = await fromQueryTool(principal);
     return NextResponse.json({
       source: 'query-tool',
       note: 'OpenMetadata is off or unreachable — showing the query-tool catalog.',

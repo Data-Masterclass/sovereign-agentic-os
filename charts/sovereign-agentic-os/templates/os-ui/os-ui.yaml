@@ -172,6 +172,14 @@ spec:
                   optional: true
             - name: SMTP_FROM
               value: {{ .Values.osUI.smtp.from | default "support@datamasterclass.com" | quote }}
+            {{- if and .Values.mail.enabled .Values.mail.tls.osUITrust }}
+            # In-cluster maddy presents a self-signed submission cert (SAN=`mail`),
+            # which is not in the system trust store. Point Node at the mounted
+            # cert so the SMTP client's STARTTLS handshake to `mail` validates
+            # (rather than failing closed on an untrusted certificate).
+            - name: NODE_EXTRA_CA_CERTS
+              value: /etc/os-ui/mail-ca/tls.crt
+            {{- end }}
             {{- end }}
             {{- with (toString .Values.osUI.emailVerification) }}
             # Coerced via toString so a YAML/`--set` boolean false is honoured too.
@@ -362,6 +370,21 @@ spec:
             periodSeconds: 20
           resources:
             {{- toYaml $u.resources | nindent 12 }}
+          {{- if and .Values.mail.enabled .Values.mail.tls.osUITrust }}
+          volumeMounts:
+            - name: mail-ca
+              mountPath: /etc/os-ui/mail-ca
+              readOnly: true
+          {{- end }}
+      {{- if and .Values.mail.enabled .Values.mail.tls.osUITrust }}
+      volumes:
+        # The in-cluster maddy submission cert, trusted via NODE_EXTRA_CA_CERTS.
+        - name: mail-ca
+          secret:
+            secretName: {{ .Values.mail.tls.secretName }}
+            items:
+              - { key: tls.crt, path: tls.crt }
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service

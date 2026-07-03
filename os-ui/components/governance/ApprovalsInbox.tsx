@@ -146,6 +146,13 @@ export default function ApprovalsInbox() {
 
       {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
 
+      {items === null && !error && (
+        <div className="stub-page">
+          <span className="spin" style={{ marginRight: 10 }} />
+          Loading approvals…
+        </div>
+      )}
+
       {items !== null && items.length === 0 && (
         <div className="stub-page">
           Queue is empty. Use &ldquo;Seed demo queue&rdquo; to populate with sample requests.

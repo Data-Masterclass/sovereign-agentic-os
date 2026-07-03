@@ -8,7 +8,7 @@ import { toolsForTab } from '@/lib/mcp/server';
 import { runTabAgent, parseLlmMessage, renderAssistantText } from './runtime.ts';
 import type { LlmCall } from './agentic.ts';
 
-const participant: CurrentUser = { id: 'u-part', name: 'Pat', domains: ['sales'], role: 'participant' };
+const participant: CurrentUser = { id: 'u-part', name: 'Pat', domains: ['sales'], role: 'creator' };
 
 test('parseLlmMessage extracts content and native tool_calls (arguments JSON-decoded)', () => {
   const c = parseLlmMessage({

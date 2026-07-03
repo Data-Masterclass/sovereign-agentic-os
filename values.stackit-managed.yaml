@@ -202,11 +202,6 @@ sampleAgent:
     repository: ghcr.io/aborek/sovereign-os/sample-agent
     tag: "0.1.0@sha256:b70d3d77c33e9f305d7b72584b01d9109e91cba293dbd440126e31840afeb605"
 
-poetAgent:
-  image:
-    repository: ghcr.io/aborek/sovereign-os/poet-agent
-    tag: "0.1.0@sha256:751abeaa9ea0352a984a5f291b9d0a1117c2b0e0abd6b4979fad4be46a48b745"
-
 haystack:
   image:
     repository: ghcr.io/aborek/sovereign-os/haystack-retriever

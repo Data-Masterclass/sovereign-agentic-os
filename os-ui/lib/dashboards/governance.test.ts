@@ -15,7 +15,7 @@ function rec() {
 
 test('Builder promotes Personal → Domain; a participant cannot', () => {
   assert.equal(governDashboard(rec(), 'promote', { id: 'bea', role: 'builder' }).record.tier, 'domain');
-  const denied = governDashboard(rec(), 'promote', { id: 'amir', role: 'participant' });
+  const denied = governDashboard(rec(), 'promote', { id: 'amir', role: 'creator' });
   assert.equal(denied.ok, false);
   assert.match(denied.reason ?? '', /Builder/);
 });
@@ -30,7 +30,7 @@ test('Admin certifies Domain → Marketplace; a Builder cannot', () => {
 
 test('role predicates match data + metrics', () => {
   assert.equal(canPromote('builder'), true);
-  assert.equal(canPromote('participant'), false);
+  assert.equal(canPromote('creator'), false);
   assert.equal(canCertify('admin'), true);
   assert.equal(canCertify('builder'), false);
 });

@@ -23,7 +23,12 @@ export type StandingPolicy = {
   fromApproval: string;
 };
 
-const store = new Map<string, StandingPolicy>();
+const STANDING_KEY = Symbol.for('soa.governance.standing');
+function standingStore(): Map<string, StandingPolicy> {
+  const g = globalThis as unknown as Record<symbol, Map<string, StandingPolicy> | undefined>;
+  if (!g[STANDING_KEY]) g[STANDING_KEY] = new Map();
+  return g[STANDING_KEY]!;
+}
 
 /** Stable shape-key so a later identical request matches a remembered rule. */
 export function matchKey(kind: ApprovalKind, payload: Record<string, unknown>): string {
@@ -50,21 +55,21 @@ export function remember(input: {
     createdAt: new Date().toISOString(),
     fromApproval: input.fromApproval,
   };
-  store.set(match, p); // keyed by shape so re-remembering is idempotent
+  standingStore().set(match, p); // keyed by shape so re-remembering is idempotent
   return p;
 }
 
 /** Is there a standing policy that auto-allows this request shape? */
 export function isRemembered(kind: ApprovalKind, payload: Record<string, unknown>): boolean {
-  return store.has(matchKey(kind, payload));
+  return standingStore().has(matchKey(kind, payload));
 }
 
 export function listStanding(domains?: string[]): StandingPolicy[] {
-  return [...store.values()]
+  return [...standingStore().values()]
     .filter((p) => (domains ? domains.includes(p.domain) : true))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 export function __resetStanding(): void {
-  store.clear();
+  standingStore().clear();
 }

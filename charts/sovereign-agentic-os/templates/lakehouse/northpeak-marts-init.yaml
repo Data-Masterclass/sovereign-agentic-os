@@ -1,0 +1,243 @@
+{{- if .Values.marts.enabled }}
+{{- /*
+  Northpeak gold-mart materialization. The Metrics tab resolves live numbers from a
+  PHYSICAL Iceberg table `iceberg.sales.gold_northpeak_commerce` (the `northpeakcommerce`
+  Cube binds to `sales.gold_northpeak_commerce`; see templates/cube/cube.yaml + os-ui
+  lib/metrics/model.ts `measureMember`, where dataset "northpeak-commerce" → view
+  "northpeakcommerce"). The os-ui Data build adapters are probe-only and never write a
+  table, so this one-shot Helm hook materializes the mart directly THROUGH central Trino
+  (governed engine: OPA row/column rules + Polaris/MinIO storage still apply). It writes
+  a session-grained gold mart with realistic Northpeak numbers (revenue, AOV, conversion,
+  churn) broken out by region / product / month.
+
+  Idempotent + repeatable: it waits for Trino, skips if the table already has rows (set
+  MARTS_FORCE=true to rebuild), otherwise DROP+CTAS. Runs AFTER polaris-catalog-init
+  (weight 10) so the `lakehouse` warehouse exists — this Job is weight 20. Talks ONLY to
+  Trino's HTTP protocol (no S3 creds needed here — Trino owns storage credentials).
+*/}}
+{{- $m := .Values.marts }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: northpeak-marts-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "marts-init") | nindent 4 }}
+data:
+  materialize.mjs: |
+    // Materialize the Northpeak gold mart via the Trino REST client protocol
+    // (POST /v1/statement, then follow nextUri). Node 22 global fetch; no deps.
+    const TRINO = process.env.TRINO_URL || 'http://trino:8080';
+    const USER = process.env.TRINO_USER || 'northpeak-marts';
+    const CATALOG = process.env.TRINO_CATALOG || 'iceberg';
+    const SCHEMA = process.env.TRINO_SCHEMA || 'sales';
+    const TABLE = process.env.TRINO_TABLE || 'gold_northpeak_commerce';
+    const ROWS = Number(process.env.MARTS_ROWS || '150000');
+    const CONV = Number(process.env.MARTS_CONVERSION || '0.032');
+    const CHURN = Number(process.env.MARTS_CHURN || '0.18');
+    const FQN = `${CATALOG}.${SCHEMA}.${TABLE}`;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    async function waitForTrino() {
+      for (let i = 0; i < 120; i++) {
+        try {
+          const r = await fetch(`${TRINO}/v1/info`);
+          if (r.ok) { const j = await r.json(); if (j.starting === false) { console.log('Trino ready'); return; } }
+        } catch {}
+        await sleep(5000);
+      }
+      throw new Error('Trino did not become ready');
+    }
+
+    async function runSql(sql, schema) {
+      const headers = { 'X-Trino-User': USER, 'X-Trino-Catalog': CATALOG, 'Content-Type': 'text/plain' };
+      if (schema) headers['X-Trino-Schema'] = schema;
+      const post = await fetch(`${TRINO}/v1/statement`, { method: 'POST', headers, body: sql });
+      if (!post.ok) throw new Error(`POST /v1/statement ${post.status}: ${await post.text()}`);
+      let j = await post.json();
+      const rows = [];
+      while (true) {
+        if (j.error) throw new Error(`Trino: ${j.error.message || JSON.stringify(j.error)}`);
+        if (Array.isArray(j.data)) rows.push(...j.data);
+        if (!j.nextUri) break;
+        let r;
+        for (let a = 0; ; a++) {
+          r = await fetch(j.nextUri, { headers: { 'X-Trino-User': USER } });
+          if (r.status === 503) { if (a > 600) throw new Error('Trino busy (503) too long'); await sleep(200); continue; }
+          break;
+        }
+        if (!r.ok) throw new Error(`GET nextUri ${r.status}: ${await r.text()}`);
+        j = await r.json();
+      }
+      return rows;
+    }
+
+    // Session-grained gold mart. ~CONV of sessions convert to a paid order (net_amount
+    // & order_total > 0); the rest are abandoned sessions (0). Decorrelated pseudo-random
+    // via distinct prime multipliers so region/product/month/price/churn vary independently.
+    const CTAS = `
+      CREATE TABLE ${FQN} AS
+      WITH s AS (SELECT row_number() OVER () AS n FROM UNNEST(sequence(1, 10000)) AS a(x) CROSS JOIN UNNEST(sequence(1, CAST(ceil(${ROWS} / 10000.0) AS bigint))) AS b(y) LIMIT ${ROWS}),
+      base AS (
+        SELECT n,
+          CAST(mod(n, 3) AS integer) AS region_ix,
+          CAST(mod(n * 3, 5) AS integer) AS prod_ix,
+          CAST(mod(n * 5, 6) AS integer) AS month_ix,
+          mod(n * 2654435761, 100000) / 100000.0 AS u_conv,
+          mod(n * 40503, 100000) / 100000.0 AS u_price,
+          mod(n * 94379, 100000) / 100000.0 AS u_churn,
+          1 + CAST(mod(n * 524287, 4200) AS integer) AS cust_seq
+        FROM s
+      ),
+      enriched AS (
+        SELECT n,
+          element_at(ARRAY['eu-central','eu-west','nordics'], region_ix + 1) AS region,
+          element_at(ARRAY['Ridgeline 3-Season Jacket','Summit 2P Tent','Trailhead GTX Boots','Cascade 45L Backpack','Basecamp Down Quilt'], prod_ix + 1) AS product,
+          element_at(ARRAY[189.0, 329.0, 159.0, 139.0, 249.0], prod_ix + 1) AS list_price,
+          date_add('month', month_ix, DATE '2026-01-01') AS order_date,
+          u_conv, u_price, u_churn, cust_seq
+        FROM base
+      )
+      SELECT
+        'NP-ORD-' || CAST(n AS varchar) AS order_id,
+        'NP-CUST-' || CAST(cust_seq AS varchar) AS customer_id,
+        region,
+        product,
+        CAST(CASE WHEN u_conv < ${CONV} THEN CAST(list_price AS double) * (0.90 + u_price * 0.10) ELSE 0 END AS DECIMAL(10,2)) AS net_amount,
+        CAST(CASE WHEN u_conv < ${CONV} THEN CAST(list_price AS double) ELSE 0 END AS DECIMAL(10,2)) AS order_total,
+        CASE WHEN u_conv < ${CONV} THEN 1 ELSE 0 END AS converted,
+        order_date,
+        CASE WHEN u_churn < ${CHURN} THEN 1 ELSE 0 END AS is_churned
+      FROM enriched`;
+
+    (async () => {
+      await waitForTrino();
+      console.log(`ensuring schema ${CATALOG}.${SCHEMA}`);
+      await runSql(`CREATE SCHEMA IF NOT EXISTS ${CATALOG}.${SCHEMA}`);
+      if (process.env.MARTS_FORCE !== 'true') {
+        try {
+          const r = await runSql(`SELECT count(*) FROM ${FQN}`);
+          const c = r.length ? Number(r[0][0]) : 0;
+          if (c > 0) { console.log(`${FQN} already has ${c} rows — skipping (MARTS_FORCE=true to rebuild)`); return; }
+        } catch { /* table missing → build */ }
+      }
+      console.log(`building ${FQN} (${ROWS} sessions, conversion ${CONV}, churn ${CHURN}) ...`);
+      await runSql(`DROP TABLE IF EXISTS ${FQN}`);
+      await runSql(CTAS);
+      const stats = await runSql(
+        `SELECT count(*) AS sessions, sum(converted) AS orders, round(sum(net_amount),2) AS revenue, ` +
+        `round(sum(order_total)/nullif(sum(converted),0),2) AS aov, round(avg(converted),4) AS conversion, ` +
+        `round(count(distinct case when is_churned=1 then customer_id end)*1.0/nullif(count(distinct customer_id),0),4) AS churnrate ` +
+        `FROM ${FQN}`);
+      console.log('materialized gold mart:', JSON.stringify(stats[0]));
+    })().catch((e) => { console.error('marts-init failed:', e.message); process.exit(1); });
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: northpeak-marts-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "marts-init") | nindent 4 }}
+  annotations:
+    # Runs AFTER polaris-catalog-init (weight 10) so the lakehouse warehouse exists.
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "20"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ $m.backoffLimit }}
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "marts-init") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      initContainers:
+        # Guarantee the Iceberg warehouse bucket exists BEFORE the CTAS. Trino writes
+        # tables to s3://<bucket>/wh/<schema>/... and, on create, does a native-S3
+        # location check; if that bucket is missing Trino fails with NoSuchBucket:
+        # "Failed checking new table's location". The bucket is normally made by the
+        # one-shot object-storage bucket-init hook (weight 5), but that is a
+        # self-deleting hook: if MinIO's data volume is re-provisioned (fresh PVC on a
+        # node/disk roll) or this Job is re-run in isolation, the bucket can be absent.
+        # This idempotent `mb` makes the write path self-healing — same aws-cli image,
+        # object-storage creds and S3 endpoint the bucket-init hook uses.
+        - name: ensure-bucket
+          image: "{{ .Values.objectStorage.awsCli.repository }}@{{ .Values.objectStorage.awsCli.digest }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_ACCESS_KEY_ID } }
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_SECRET_ACCESS_KEY } }
+            - name: AWS_DEFAULT_REGION
+              value: {{ .Values.objectStorage.region | quote }}
+            - name: ENDPOINT
+              value: {{ include "soa.s3Endpoint" . | quote }}
+            # Warehouse root (s3://<bucket>/<prefix>); the bucket is the first path segment.
+            - name: BASE_LOCATION
+              value: {{ .Values.polaris.catalog.baseLocation | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              BUCKET=$(printf '%s' "$BASE_LOCATION" | sed -e 's#^s3://##' -e 's#/.*##')
+              echo "waiting for S3 endpoint $ENDPOINT ..."
+              for i in $(seq 1 60); do
+                if aws --endpoint-url "$ENDPOINT" s3 ls >/dev/null 2>&1; then break; fi
+                sleep 3
+              done
+              if aws --endpoint-url "$ENDPOINT" s3 ls "s3://$BUCKET" >/dev/null 2>&1; then
+                echo "warehouse bucket $BUCKET already exists"
+              else
+                echo "creating warehouse bucket $BUCKET"
+                aws --endpoint-url "$ENDPOINT" s3 mb "s3://$BUCKET"
+              fi
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+      containers:
+        - name: marts-init
+          image: "{{ $m.image.repository }}:{{ $m.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          workingDir: /work
+          command: ["node", "/work/materialize.mjs"]
+          env:
+            - { name: HOME, value: /tmp }
+            - { name: TRINO_URL, value: {{ printf "http://%s:%v" $m.trino.host $m.trino.port | quote }} }
+            - { name: TRINO_USER, value: {{ $m.trino.user | quote }} }
+            - { name: TRINO_CATALOG, value: {{ $m.trino.catalog | quote }} }
+            - { name: TRINO_SCHEMA, value: {{ $m.schema | quote }} }
+            - { name: TRINO_TABLE, value: {{ $m.table | quote }} }
+            - { name: MARTS_ROWS, value: {{ $m.rows | quote }} }
+            - { name: MARTS_CONVERSION, value: {{ $m.conversion | quote }} }
+            - { name: MARTS_CHURN, value: {{ $m.churnRate | quote }} }
+            - { name: MARTS_FORCE, value: {{ $m.force | quote }} }
+          volumeMounts:
+            - { name: script, mountPath: /work, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+      volumes:
+        - name: script
+          configMap:
+            name: northpeak-marts-init
+        - name: tmp
+          emptyDir: {}
+{{- end }}

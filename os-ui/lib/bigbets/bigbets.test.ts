@@ -184,15 +184,18 @@ test('gate: owner override is recorded BESIDE the derived state, audited', async
   assert.ok(auditLog(bet.id).some((e) => e.action === 'component.override'));
 });
 
-test('governance: a participant cannot create a bet; a creator drafts', () => {
+test('governance: an creator drafts a bet; a builder activates it', () => {
   reset();
-  assert.throws(() => createBet({ id: 'p', domains: ['sales'], role: 'participant' }, {
-    name: 'X', problem: { who: 'a', need: 'b', obstacle: 'c', impact: 'd' }, pillarId: 'pillar_retention', metricId: 'metric_nrr', targetValue: 1, goLive: '2026-09-01',
-  }), /Creator/);
+  // Base role (creator) may create — but only as a DRAFT.
   const draft = createBet({ id: 'cara', domains: ['sales'], role: 'creator' }, {
     name: 'Draft bet', problem: { who: 'a', need: 'b', obstacle: 'c', impact: 'd' }, pillarId: 'pillar_retention', metricId: 'metric_nrr', targetValue: 1, goLive: '2026-09-01',
   });
   assert.equal(draft.status, 'draft');
+  // A Builder creates it ACTIVE.
+  const active = createBet({ id: 'bea', domains: ['sales'], role: 'builder' }, {
+    name: 'Active bet', problem: { who: 'a', need: 'b', obstacle: 'c', impact: 'd' }, pillarId: 'pillar_retention', metricId: 'metric_nrr', targetValue: 1, goLive: '2026-09-01',
+  });
+  assert.equal(active.status, 'active');
 });
 
 test('scoping: list only returns bets the user may view', () => {

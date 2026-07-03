@@ -9,6 +9,7 @@ const science: TutorialDef = {
   route: '/science',
   title: 'Science',
   tagline: 'Turn a data product into a deployed, governed model.',
+  buttonLabel: 'Science Tutorial',
   hook: {
     illustration: 'model',
     title: 'Ship a model your whole stack can trust',

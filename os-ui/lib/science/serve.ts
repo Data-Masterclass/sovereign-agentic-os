@@ -26,13 +26,14 @@ export async function servePredict(opts: {
   account?: string;
   features?: Partial<ChurnFeatures>;
   principal: string;
-  domain: string;
+  /** The caller's domain(s) — DERIVED FROM THE SESSION, never the request body. */
+  domains: string[];
   isAgent: boolean;
   requestedBy?: string;
 }): Promise<ServeResult> {
   const account = (opts.account ?? '').toString();
   const features: ChurnFeatures = { ...DEFAULT_FEATURES, ...(opts.features ?? {}) } as ChurnFeatures;
-  const caller = { principal: opts.principal, domain: opts.domain, isAgent: opts.isAgent };
+  const caller = { principal: opts.principal, domains: opts.domains, isAgent: opts.isAgent };
 
   const authz = await authorizePredict(CHURN.model, caller);
   const common = {

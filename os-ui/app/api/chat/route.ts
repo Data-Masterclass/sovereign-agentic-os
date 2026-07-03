@@ -1,14 +1,22 @@
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/config';
+import { requireUser } from '@/lib/auth';
+import { errorResponse } from '@/lib/data/server';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * Chat -> sample-agent. The browser POSTs { question }; we call the in-cluster
  * sample-agent's GET /ask?q= server-side and return its grounded answer +
- * retrieved source titles. No backend address ever reaches the browser.
+ * retrieved source titles. No backend address ever reaches the browser. Requires
+ * a session (401 for anon) so the agent/LLM resource is not anonymously abused.
  */
 export async function POST(req: Request) {
+  try {
+    await requireUser();
+  } catch (e) {
+    return errorResponse(e);
+  }
   let question = '';
   try {
     const body = await req.json();

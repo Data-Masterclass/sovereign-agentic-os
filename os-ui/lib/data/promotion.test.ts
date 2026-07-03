@@ -16,9 +16,9 @@ import {
 } from './store.ts';
 import { DatasetError } from './dataset-schema.ts';
 
-const amir: Principal = { id: 'amir', domains: ['sales'], role: 'participant' }; // Creator
+const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' }; // Creator
 const bea: Principal = { id: 'bea', domains: ['sales'], role: 'builder' };
-const kenji: Principal = { id: 'kenji', domains: ['finance'], role: 'participant' };
+const kenji: Principal = { id: 'kenji', domains: ['finance'], role: 'creator' };
 const maria: Principal = { id: 'maria', domains: ['finance'], role: 'admin' };
 
 beforeEach(() => __resetStore());

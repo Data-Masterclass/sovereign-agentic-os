@@ -9,7 +9,7 @@ import { authorizeConnectionCall } from '@/lib/agent-governed';
 import { archiveApp, unarchiveApp, deleteApp, useAsData, consumeResource, dependentsOf } from './lifecycle.ts';
 import { getAppByIdInternal } from '@/lib/apps';
 
-const owner: CurrentUser = { id: 'carol', name: 'Carol', domains: ['ops'], role: 'participant' };
+const owner: CurrentUser = { id: 'carol', name: 'Carol', domains: ['ops'], role: 'creator' };
 
 async function expectStatus(p: Promise<unknown>, status: number, re?: RegExp) {
   await assert.rejects(p, (e: Error & { status?: number }) => {

@@ -8,7 +8,7 @@ import MonacoFile from './MonacoFile';
 import { commitSystem } from './commitSystem';
 import { type System } from '@/lib/agents/system-schema';
 import { setAgentModel, setAgentTools } from '@/lib/agents/canvas-edit';
-import { REASONING_TARGETS } from '@/lib/agents/routing';
+import { MODEL_MODES, modeForModel, modelInfo, type ModelInfo, type ModelMode } from '@/lib/agents/routing';
 
 /**
  * Level 3 — the agent editor (one agent's native inputs): AGENT.md (behaviour),
@@ -28,6 +28,8 @@ export default function AgentEditor({
   canEdit,
   models,
   modelsSource,
+  isEntrypoint,
+  onSetEntrypoint,
   onChanged,
   onClose,
 }: {
@@ -35,8 +37,10 @@ export default function AgentEditor({
   system: System;
   agentId: string;
   canEdit: boolean;
-  models: string[];
+  models: ModelInfo[];
   modelsSource: 'litellm' | 'offline' | null;
+  isEntrypoint?: boolean;
+  onSetEntrypoint?: () => void;
   onChanged: () => void | Promise<void>;
   onClose: () => void;
 }) {
@@ -96,7 +100,11 @@ export default function AgentEditor({
           <div className="muted" style={{ fontSize: 12 }}>{agent.role}</div>
         </div>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-          {agent.id === system.entrypoint ? <span className="badge warn">entrypoint</span> : null}
+          {(isEntrypoint ?? agent.id === system.entrypoint) ? (
+            <span className="badge warn">START</span>
+          ) : onSetEntrypoint ? (
+            <button className="btn ghost sm" title="Make this the entrypoint (START)" onClick={onSetEntrypoint}>Make START</button>
+          ) : null}
           {(agent.members?.length ?? 0) > 0 ? <span className="badge">supervisor</span> : null}
           <button className="btn ghost sm" onClick={onClose}>Close</button>
         </div>
@@ -145,48 +153,78 @@ export default function AgentEditor({
             </div>
           )}
 
-          <div className="section-title">Reasoning target</div>
-          <p className="hint" style={{ marginTop: 0 }}>How this agent thinks. We handle the routing and fallback for you.</p>
-          <div className="rt-seg" role="group" aria-label="Reasoning target">
-            {REASONING_TARGETS.map((t) => {
-              const active = agent.model === t.model;
-              return (
-                <button
-                  key={t.model}
-                  type="button"
-                  className={`rt-seg-opt${active ? ' active' : ''}`}
-                  aria-pressed={active}
-                  disabled={!canEdit || busy}
-                  onClick={() => { if (!active) changeModel(t.model); }}
-                >
-                  {t.label.split(' · ')[0]}
-                </button>
-              );
-            })}
-          </div>
-          <p className="hint rt-seg-hint" style={{ marginTop: 6 }}>
-            {REASONING_TARGETS.find((t) => t.model === agent.model)?.hint
-              ?? 'On activity routing — reasoning defaults to the in-box sovereign model.'}
-          </p>
-
-          <div className="section-title">Model routing</div>
+          <div className="section-title">How this agent thinks</div>
           <p className="hint" style={{ marginTop: 0 }}>
-            Per-agent model is a LiteLLM <span className="mono">model_name</span> (no endpoint in the UI).
-            Leave on activity routing for cheap-first (Ministral light · local Magistral reasoning).
-            {modelsSource === 'offline' ? ' LiteLLM is unreachable — showing the install tier defaults.' : ''}
+            Choose the thinking mode — we handle the model routing and fallback for you.
           </p>
-          <select
-            value={agent.model ?? ''}
-            disabled={!canEdit || busy}
-            onChange={(e) => changeModel(e.target.value)}
-            style={{ minWidth: 260 }}
-          >
-            <option value="">Activity routing (workspace default)</option>
-            {models.map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-            {agent.model && !models.includes(agent.model) ? <option value={agent.model}>{agent.model} (current)</option> : null}
-          </select>
+          {(() => {
+            const activeMode: ModelMode = modeForModel(agent.model);
+            const activeChoice = MODEL_MODES.find((m) => m.mode === activeMode)!;
+            // The real model behind the active choice: Auto has no pin (workspace
+            // routing decides), the pins resolve to a real LiteLLM model_name.
+            const shown = activeChoice.model ? modelInfo(activeChoice.model) : null;
+            return (
+              <>
+                <div className="rt-seg" role="group" aria-label="Thinking mode">
+                  {MODEL_MODES.map((m) => {
+                    const active = m.mode === activeMode;
+                    return (
+                      <button
+                        key={m.mode}
+                        type="button"
+                        className={`rt-seg-opt${active ? ' active' : ''}`}
+                        aria-pressed={active}
+                        disabled={!canEdit || busy}
+                        onClick={() => { if (!active) changeModel(m.model ?? ''); }}
+                      >
+                        {m.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="model-facet" style={{ marginTop: 8 }}>
+                  {shown ? (
+                    <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+                      <span className="model-name mono">{shown.display}</span>
+                      {shown.params && shown.params !== '—' ? <span className="badge muted">{shown.params}</span> : null}
+                      <ProvenanceBadge provenance={shown.provenance} />
+                    </div>
+                  ) : (
+                    <div className="muted" style={{ fontSize: 12.5 }}>
+                      Workspace routing decides per task — cheap-first (Ministral for light work, in-box
+                      Magistral for reasoning).
+                    </div>
+                  )}
+                  <p className="hint rt-seg-hint" style={{ marginTop: 6 }}>{activeChoice.hint}</p>
+                </div>
+
+                <details className="model-advanced" style={{ marginTop: 10 }}>
+                  <summary>Advanced: pin an exact model</summary>
+                  <p className="hint" style={{ marginTop: 8 }}>
+                    Pin a specific LiteLLM <span className="mono">model_name</span> (no endpoint in the UI).
+                    Leave on <strong>Auto</strong> for cheap-first workspace routing.
+                    {modelsSource === 'offline' ? ' LiteLLM is unreachable — showing the install catalog.' : ''}
+                  </p>
+                  <select
+                    value={agent.model ?? ''}
+                    disabled={!canEdit || busy}
+                    onChange={(e) => changeModel(e.target.value)}
+                    style={{ minWidth: 280 }}
+                  >
+                    <option value="">Auto — workspace activity routing</option>
+                    {models.map((m) => (
+                      <option key={m.model_name} value={m.model_name}>
+                        {m.display} — {m.provenance === 'internal' ? 'in-box' : 'hosted'} ({m.model_name})
+                      </option>
+                    ))}
+                    {agent.model && !models.some((m) => m.model_name === agent.model) ? (
+                      <option value={agent.model}>{agent.model} (current)</option>
+                    ) : null}
+                  </select>
+                </details>
+              </>
+            );
+          })()}
         </div>
       ) : null}
 
@@ -201,5 +239,14 @@ export default function AgentEditor({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** In-box (sovereign) vs hosted (external API) badge for a model. */
+function ProvenanceBadge({ provenance }: { provenance: 'internal' | 'external' }) {
+  return provenance === 'internal' ? (
+    <span className="badge ok" title="Runs in-box on the sovereign cluster — no data leaves.">in-box · sovereign</span>
+  ) : (
+    <span className="badge warn" title="Runs on a hosted API — the call leaves the box.">hosted · external</span>
   );
 }

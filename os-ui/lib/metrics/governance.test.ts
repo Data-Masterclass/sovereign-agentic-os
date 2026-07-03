@@ -22,7 +22,7 @@ test('Builder promotes Personal → Domain (consistency gate passes)', async () 
 });
 
 test('a non-Builder CANNOT promote (separation of duties, shared with data)', async () => {
-  const r = await governMetric(rec(), 'promote', { id: 'amir', role: 'participant' }, resolve);
+  const r = await governMetric(rec(), 'promote', { id: 'amir', role: 'creator' }, resolve);
   assert.equal(r.ok, false);
   assert.match(r.reason ?? '', /Builder/);
 });
@@ -44,7 +44,7 @@ test('promotion is blocked when the metric is inconsistent (does not resolve)', 
 });
 
 test('role predicates drive the UI buttons', () => {
-  assert.equal(canPromote('participant'), false);
+  assert.equal(canPromote('creator'), false);
   assert.equal(canPromote('builder'), true);
   assert.equal(canCertify('builder'), false);
   assert.equal(canCertify('admin'), true);

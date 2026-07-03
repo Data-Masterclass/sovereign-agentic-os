@@ -1,0 +1,132 @@
+{{- if .Values.hermes.enabled }}
+{{- /*
+  Hermes gateway — the AUTONOMOUS Layer-1 runtime (Nous Research Hermes Agent,
+  MIT), a peer of the LangGraph agent-runtime. GATED on `hermes.enabled` (off in
+  base + kind). NO-BYPASS FLOORS, enforced here + by the egress NetworkPolicy:
+    • models ONLY via LiteLLM (LITELLM_BASE_URL; no provider API keys in env),
+    • tools ONLY via the governed Platform MCP (/api/mcp) with the profile's Ory
+      OAuth bearer → OPA-gated, Langfuse-traced, RLS-scoped,
+    • code runs under a REAL RuntimeClass (sandbox.runtimeClass: kata/gvisor),
+    • allow_lazy_installs=false; SSRF on; egress allowlist + website_blocklist;
+      secrets MOUNTED from the manager, never plaintext ~/.hermes/.env.
+*/}}
+{{- $h := .Values.hermes }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hermes-gateway-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "hermes-gateway") | nindent 4 }}
+data:
+  PORT: "8080"
+  # The model plane: OpenAI-compatible base URL is ALWAYS LiteLLM. Direct provider
+  # keys are intentionally ABSENT from env, so the gateway cannot call off-gateway.
+  HERMES_LITELLM_BASE_URL: {{ $h.model.litellmBaseUrl | quote }}
+  HERMES_MODEL: {{ $h.model.name | quote }}
+  # The ONE governed tool surface (per-user Ory OAuth is injected at runtime).
+  HERMES_MCP_URL: "http://os-ui:3000/api/mcp"
+  # Profile scope (one profile per user+domain) + safety preset (→ provisioner).
+  HERMES_PROFILE_USER: {{ $h.profile.user | quote }}
+  HERMES_PROFILE_DOMAIN: {{ $h.profile.domain | quote }}
+  HERMES_SAFETY_PRESET: {{ $h.profile.safetyPreset | quote }}
+  # Sandbox + hardening floors.
+  HERMES_SANDBOX_BACKEND: {{ $h.sandbox.backend | quote }}
+  HERMES_SANDBOX_RUNTIME_CLASS: {{ $h.sandbox.runtimeClass | quote }}
+  HERMES_ALLOW_LAZY_INSTALLS: {{ $h.security.allowLazyInstalls | quote }}
+  HERMES_SSRF_PROTECTION: {{ $h.security.ssrfProtection | quote }}
+  HERMES_EGRESS_ALLOWLIST: {{ join "," $h.security.egressAllowlist | quote }}
+  HERMES_WEBSITE_BLOCKLIST: {{ join "," $h.security.websiteBlocklist | quote }}
+  HERMES_MESSAGING_ENABLED: {{ $h.messaging.enabled | quote }}
+  # Never a shared root agent; admin-enforced scope.
+  GATEWAY_ALLOW_ALL_USERS: "false"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hermes-gateway
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "apps") | nindent 4 }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "hermes-gateway") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "hermes-gateway") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "hermes-gateway") | nindent 8 }}
+    spec:
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "app") | nindent 6 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: hermes-gateway
+          image: "{{ $h.image.repository }}:{{ $h.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          envFrom:
+            - configMapRef:
+                name: hermes-gateway-config
+          env:
+            # Scoped LiteLLM virtual key — REUSED from the secrets manager (ESO on
+            # SKE; local Secret on kind). This is the ONLY model credential.
+            - name: HERMES_LITELLM_API_KEY
+              valueFrom: { secretKeyRef: { name: {{ $h.model.apiKeyRef | quote }}, key: apiKey } }
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml $h.resources | nindent 12 }}
+          volumeMounts:
+            # Memory + skills on a per-user, backed-up, DELETABLE volume.
+            {{- if $h.memory.enabled }}
+            - { name: hermes-memory, mountPath: /var/lib/hermes }
+            {{- end }}
+            # Writable scratch (root FS is read-only); the sandbox itself runs in
+            # a separate kernel-isolated pod under sandbox.runtimeClass.
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        {{- if $h.memory.enabled }}
+        - name: hermes-memory
+          persistentVolumeClaim:
+            claimName: hermes-memory
+        {{- end }}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hermes-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "hermes-gateway") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "hermes-gateway") | nindent 4 }}
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+{{- end }}

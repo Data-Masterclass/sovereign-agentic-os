@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/auth';
 import { handleRpc, listToolsForRole, type JsonRpcResponse } from './server.ts';
 
-const creator: CurrentUser = { id: 'dan', name: 'Dan', domains: ['sales'], role: 'participant' };
+const creator: CurrentUser = { id: 'dan', name: 'Dan', domains: ['sales'], role: 'creator' };
 const builder: CurrentUser = { id: 'ben', name: 'Ben', domains: ['sales'], role: 'builder' };
 const admin: CurrentUser = { id: 'ada', name: 'Ada', domains: ['sales'], role: 'admin' };
 
@@ -71,15 +71,30 @@ test('tools/call: routes to the governed function under the caller identity', as
   assert.match(text, /"id"/); // the created app came back through the governed path
 });
 
-test('tools/call: a hidden tool is refused with a JSON-RPC error (never trusts the client)', async () => {
+test('tools/call: an unknown tool is refused with a JSON-RPC error (never trusts the client)', async () => {
   const res = await handleRpc(creator, {
     jsonrpc: '2.0',
     id: 4,
     method: 'tools/call',
-    params: { name: 'promote', arguments: { appId: 'whatever' } },
+    params: { name: 'no_such_tool', arguments: {} },
   });
   assert.ok(res && 'error' in res);
   assert.equal((res as JsonRpcResponse).error?.code, -32602);
+});
+
+test('tools/call: a role-gated tool a creator may not use returns a TYPED forbidden (not a leak, not a crash)', async () => {
+  const res = await handleRpc(creator, {
+    jsonrpc: '2.0',
+    id: 41,
+    method: 'tools/call',
+    params: { name: 'promote', arguments: { appId: 'whatever' } },
+  });
+  const r = result(res);
+  assert.equal(r.isError, true);
+  const err = (r.structuredContent as { error: { code: string; reason: string; hint: string } }).error;
+  assert.equal(err.code, 'forbidden');
+  assert.match(err.reason, /requires builder/i);
+  assert.ok(err.hint.length > 0, 'a forbidden error carries an actionable hint');
 });
 
 test('tools/call: a GOVERNANCE denial maps to an MCP tool error (isError), not a crash', async () => {
@@ -114,7 +129,9 @@ test('tools/call: a GOVERNANCE denial maps to an MCP tool error (isError), not a
     }),
   );
   assert.equal(secondPromote.isError, true); // Shared → Certified needs an Admin
-  assert.match((secondPromote.content as { text: string }[])[0].text, /Administrator|\(403\)/);
+  const err = (secondPromote.structuredContent as { error: { code: string; reason: string } }).error;
+  assert.equal(err.code, 'forbidden'); // typed, not an opaque string
+  assert.match(err.reason, /Admin/i);
 });
 
 test('unknown method: returns JSON-RPC method-not-found', async () => {

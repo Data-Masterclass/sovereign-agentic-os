@@ -3,6 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/config';
+import { requireUser } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,14 +33,6 @@ const AGENTS: AgentDef[] = [
     optional: false,
   },
   {
-    key: 'poet-agent',
-    name: 'Poet agent',
-    role: 'compose → save (writes output to a file each run)',
-    runtime: 'LangGraph',
-    url: `${config.poetAgentUrl}/health`,
-    optional: false,
-  },
-  {
     key: 'ml-agent',
     name: 'ML agent',
     role: 'features → train → deploy (Science / Layer-4 pipeline driver)',
@@ -49,7 +42,23 @@ const AGENTS: AgentDef[] = [
   },
 ];
 
+// The Hermes autonomous runtime — a SECOND Layer-1 engine next to LangGraph,
+// gated OFF by default (chart `hermes.enabled`). Listed always so the Agent tab
+// shows BOTH runtimes; when off it reports 'gated off' rather than probing.
+const HERMES_AGENT: AgentDef = {
+  key: 'hermes-gateway',
+  name: 'Hermes autonomous runtime',
+  role: 'long-running autonomy + persistent memory + self-improving skills (models via LiteLLM, tools via governed MCP)',
+  runtime: 'Hermes (autonomous)',
+  url: `${config.hermesGatewayUrl}/health`,
+  optional: true,
+};
+
 async function probe(a: AgentDef) {
+  // Hermes is gated off by default: don't probe, report the gate honestly.
+  if (a.key === 'hermes-gateway' && !config.hermesEnabled) {
+    return { key: a.key, name: a.name, role: a.role, runtime: a.runtime, optional: true, up: false, detail: 'gated off (hermes.enabled=false)' };
+  }
   // An in-OS supervisor runs inside the OS UI process (governed tools via
   // lib/agent-governed), so it has no separate /health to probe.
   if (a.url.startsWith('in-os://')) {
@@ -88,7 +97,16 @@ async function probe(a: AgentDef) {
 }
 
 export async function GET() {
-  const agents = await Promise.all(AGENTS.map(probe));
+  // No anon access to the agent/health topology; any signed-in user may read it.
+  try {
+    await requireUser();
+  } catch (e) {
+    return NextResponse.json(
+      { error: (e as Error).message },
+      { status: (e as { status?: number }).status ?? 401 },
+    );
+  }
+  const agents = await Promise.all([...AGENTS, HERMES_AGENT].map(probe));
   const up = agents.filter((a) => a.up).length;
   return NextResponse.json({ agents, up, total: agents.length });
 }

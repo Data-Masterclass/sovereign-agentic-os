@@ -4,14 +4,16 @@
 'use client';
 
 import { Suspense, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
 function SignInForm() {
-  const router = useRouter();
   const params = useSearchParams();
   const next = params.get('next') || '/';
 
+  // The sign-in field is the user's EMAIL (login-by-email). The value is still
+  // posted as `username` to the login route, where the directory resolves it
+  // against email OR the internal id — so an operator id still works too.
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -31,8 +33,10 @@ function SignInForm() {
       if (!res.ok) {
         setError(body.error ?? 'Sign-in failed');
       } else {
-        router.replace(next);
-        router.refresh();
+        // FULL-PAGE navigation (not router.push) so Next's client router cache is
+        // discarded and the app re-renders fresh under the NEW session — no stale
+        // identity/domains or 404s carried over from the previous user's bundle.
+        window.location.assign(next);
       }
     } catch (err) {
       setError((err as Error).message);
@@ -54,13 +58,14 @@ function SignInForm() {
 
         <form onSubmit={submit} className="signin-form">
           <label>
-            Username
+            Email
             <input
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               autoFocus
-              autoComplete="username"
-              placeholder="username"
+              autoComplete="email"
+              inputMode="email"
+              placeholder="you@company.com"
             />
           </label>
           <label>

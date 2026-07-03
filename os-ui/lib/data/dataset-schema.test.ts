@@ -41,7 +41,7 @@ test('hard storage line: datasets -> DuckDB; assets/products -> Trino', () => {
 
 test('role gates: Creator cannot promote; Builder promotes; only Admin certifies', () => {
   // participant === Creator persona
-  assert.equal(canTransition('participant', 'dataset', 'promote').ok, false);
+  assert.equal(canTransition('creator', 'dataset', 'promote').ok, false);
   assert.equal(canTransition('builder', 'dataset', 'promote').ok, true);
   assert.equal(canTransition('admin', 'dataset', 'promote').ok, true);
 
@@ -53,7 +53,7 @@ test('transitions must be legal single steps on the lifecycle line', () => {
   // cannot certify straight from a dataset
   assert.equal(canTransition('admin', 'dataset', 'certify').ok, false);
   // reverse moves are gated like the forward move they undo
-  assert.equal(canTransition('participant', 'asset', 'unshare').ok, false);
+  assert.equal(canTransition('creator', 'asset', 'unshare').ok, false);
   assert.equal(canTransition('builder', 'asset', 'unshare').ok, true);
   assert.equal(canTransition('builder', 'product', 'decertify').ok, false);
   assert.equal(canTransition('admin', 'product', 'decertify').ok, true);

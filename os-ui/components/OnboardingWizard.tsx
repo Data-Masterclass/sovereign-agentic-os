@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-type Role = 'participant' | 'creator' | 'builder' | 'admin';
+type Role = 'creator' | 'builder' | 'admin';
 
 interface OnboardingWizardProps {
   user: { id: string; name: string; role: Role; domains: string[] };
@@ -13,8 +13,7 @@ interface OnboardingWizardProps {
 }
 
 const ROLE_BLURB: Record<Role, string> = {
-  participant: 'As a participant you can author Personal artifacts in your workspace.',
-  creator: 'As a creator you can author Personal artifacts and shape your own workspace.',
+  'creator': 'As an Agentic Leader you build and run your own agents, apps and artifacts, and use everything shared into your domain.',
   builder: 'As a builder you can author Personal artifacts and promote your best work to Shared.',
   admin: 'As an admin you can certify artifacts to the Marketplace and manage users across domains.',
 };

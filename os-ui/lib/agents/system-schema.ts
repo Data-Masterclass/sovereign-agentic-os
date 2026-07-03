@@ -17,6 +17,20 @@ import yaml from 'js-yaml';
 
 export type Visibility = 'Personal' | 'Shared' | 'Marketplace';
 export type EdgeType = 'supervise' | 'handoff';
+/**
+ * The execution engine for a system. `langgraph` = structured, governed,
+ * human-in-the-loop graphs (the default). `hermes` = the autonomous Hermes
+ * runtime (long-running, persistent memory + self-improving skills). BOTH consume
+ * the same governed Platform-MCP plane (OPA/LiteLLM/egress) — Hermes gets no side
+ * door (hermes-agent-integration-plan.md). Gated OFF by default in the chart.
+ */
+export type Runtime = 'langgraph' | 'hermes';
+/**
+ * Safety preset (shared by both runtimes' UI). For `hermes` it maps to the
+ * profile provisioner's approvals.mode + tools.include; for `langgraph` it drives
+ * the same two-mode write-back governance.
+ */
+export type SafetyPreset = 'read-only' | 'read-propose' | 'read-bounded' | 'full-in-scope';
 /** Connection capability profile (mirrors lib/agent-governed `ConnMode`). */
 export type Capability = 'Off' | 'Read' | 'Write-approval' | 'Write-bounded' | 'Blocked';
 
@@ -49,6 +63,10 @@ export type Schedule = { kind: 'manual' | 'cron' | 'event'; cron?: string; event
 export type System = {
   version: string;
   system: { name: string; domain: string; visibility: Visibility };
+  /** Execution engine (default `langgraph`). `hermes` = autonomous runtime. */
+  runtime: Runtime;
+  /** Write-back safety preset (default `read-only`, the safest). */
+  safetyPreset: SafetyPreset;
   entrypoint: string;
   state: { channels: Record<string, string> };
   grants: Grants;
@@ -56,7 +74,17 @@ export type System = {
   agents: AgentSpec[];
   edges: Edge[];
   schedule?: Schedule;
+  /**
+   * Presentation-only hints for the graph builder — IGNORED by the compiler and
+   * the runtime. `ui.positions` stores each agent's saved x/y on the React Flow
+   * canvas so a hand-arranged graph survives reload/fork. Serialized only when
+   * present so existing files stay byte-stable; positions for unknown agents are
+   * pruned on parse.
+   */
+  ui?: { positions?: Record<string, NodePosition> };
 };
+
+export type NodePosition = { x: number; y: number };
 
 /** Validation error carrying an HTTP-friendly status so routes can surface 400s. */
 export class SystemError extends Error {
@@ -69,6 +97,8 @@ export class SystemError extends Error {
 }
 
 const VISIBILITIES: Visibility[] = ['Personal', 'Shared', 'Marketplace'];
+const RUNTIMES: Runtime[] = ['langgraph', 'hermes'];
+const SAFETY_PRESETS: SafetyPreset[] = ['read-only', 'read-propose', 'read-bounded', 'full-in-scope'];
 const EDGE_TYPES: EdgeType[] = ['supervise', 'handoff'];
 const CAPABILITIES: Capability[] = ['Off', 'Read', 'Write-approval', 'Write-bounded', 'Blocked'];
 
@@ -162,6 +192,24 @@ function parseSchedule(v: unknown): Schedule | undefined {
   return s;
 }
 
+/**
+ * Parse the presentation-only `ui.positions` map, pruned to declared agents (a
+ * position for an agent that no longer exists is dropped). Presentation data
+ * NEVER affects compile/run — it only survives reload/fork.
+ */
+function parseUi(v: unknown, agentIds: Set<string>): System['ui'] {
+  if (!isRecord(v)) return undefined;
+  if (!isRecord(v.positions)) return undefined;
+  const positions: Record<string, NodePosition> = {};
+  for (const [id, p] of Object.entries(v.positions)) {
+    if (!agentIds.has(id)) continue; // prune unknown-agent positions
+    if (isRecord(p) && typeof p.x === 'number' && typeof p.y === 'number' && Number.isFinite(p.x) && Number.isFinite(p.y)) {
+      positions[id] = { x: p.x, y: p.y };
+    }
+  }
+  return Object.keys(positions).length > 0 ? { positions } : undefined;
+}
+
 /** Parse + normalize `system.yaml` (string) or an already-decoded object. */
 export function parseSystem(input: string | Record<string, unknown>): System {
   let doc: unknown;
@@ -187,6 +235,18 @@ export function parseSystem(input: string | Record<string, unknown>): System {
 
   const routingRaw = isRecord(doc.routing) ? doc.routing : {};
 
+  const runtime = (doc.runtime ?? 'langgraph') as Runtime;
+  if (!RUNTIMES.includes(runtime)) {
+    throw new SystemError(`system.yaml: runtime '${String(doc.runtime)}' is invalid (expected ${RUNTIMES.join('|')})`);
+  }
+  const safetyPreset = (doc.safety_preset ?? 'read-only') as SafetyPreset;
+  if (!SAFETY_PRESETS.includes(safetyPreset)) {
+    throw new SystemError(`system.yaml: safety_preset '${String(doc.safety_preset)}' is invalid (expected ${SAFETY_PRESETS.join('|')})`);
+  }
+
+  const agents = parseAgents(doc.agents);
+  const ui = parseUi(doc.ui, new Set(agents.map((a) => a.id)));
+
   return {
     version: doc.version !== undefined ? String(doc.version) : '1',
     system: {
@@ -194,13 +254,16 @@ export function parseSystem(input: string | Record<string, unknown>): System {
       domain: typeof sysMeta.domain === 'string' ? sysMeta.domain : '',
       visibility,
     },
+    runtime,
+    safetyPreset,
     entrypoint: typeof doc.entrypoint === 'string' ? doc.entrypoint : '',
     state: { channels },
     grants: parseGrants(doc.grants),
     routing: { overrides: strMap(routingRaw.overrides) },
-    agents: parseAgents(doc.agents),
+    agents,
     edges: parseEdges(doc.edges),
     schedule: parseSchedule(doc.schedule),
+    ...(ui ? { ui } : {}),
   };
 }
 
@@ -214,9 +277,18 @@ export function serializeSystem(sys: System): string {
     state: sys.state,
     grants: sys.grants,
   };
+  // Only emit runtime/safety when they differ from the safe defaults — keeps
+  // existing LangGraph systems' files byte-stable.
+  if (sys.runtime && sys.runtime !== 'langgraph') doc.runtime = sys.runtime;
+  if (sys.safetyPreset && sys.safetyPreset !== 'read-only') doc.safety_preset = sys.safetyPreset;
   if (Object.keys(sys.routing.overrides).length > 0) doc.routing = sys.routing;
   doc.agents = sys.agents;
   if (sys.edges.length > 0) doc.edges = sys.edges;
   if (sys.schedule) doc.schedule = sys.schedule;
+  // Presentation-only; emit ONLY when positions exist so existing files stay
+  // byte-stable and the compiler/runtime never sees ui state.
+  if (sys.ui?.positions && Object.keys(sys.ui.positions).length > 0) {
+    doc.ui = { positions: sys.ui.positions };
+  }
   return yaml.dump(doc, { lineWidth: 100, noRefs: true });
 }

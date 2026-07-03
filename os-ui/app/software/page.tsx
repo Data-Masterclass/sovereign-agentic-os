@@ -7,8 +7,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
-import McpConnect from '@/components/McpConnect';
 import { useApi } from '@/lib/useApi';
+import TeamPanel from './TeamPanel';
 
 type Visibility = 'Personal' | 'Shared' | 'Certified';
 type AppItem = {
@@ -91,9 +91,8 @@ export default function SoftwarePage() {
 
   return (
     <>
-      <PageHeader title="Software" crumb="build, chat, deploy — sovereign" tutorial="software" />
+      <PageHeader title="Software" crumb="build, chat, deploy — sovereign" tutorial="software" mcpTab="software" />
       <div className="content sw">
-        <McpConnect tab="software" />
         {/* The big, home-style create launcher. */}
         <div className={`sw-create${open ? ' is-open' : ''}`}>
           {open ? (
@@ -147,6 +146,11 @@ export default function SoftwarePage() {
               {error ? <div className="error" style={{ marginTop: 10 }}>{error}</div> : null}
             </div>
           ) : null}
+        </div>
+
+        {/* The governed 6-agent Software Delivery Team launcher. */}
+        <div style={{ marginTop: 18 }}>
+          <TeamPanel onBuilt={reload} />
         </div>
 
         {/* Running apps. */}

@@ -3,6 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/config';
+import { requireUser } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -81,13 +82,24 @@ async function forgejoWrite(
  *          manifest for Argo CD. Credentials stay server-side (HTTP basic auth).
  */
 export async function GET() {
+  // Requires a session: this listing carries private repo names/descriptions.
+  let user;
+  try {
+    user = await requireUser();
+  } catch (e) {
+    return NextResponse.json(
+      { error: (e as Error).message },
+      { status: (e as { status?: number }).status ?? 401 },
+    );
+  }
+
   const owner = config.forgejoRepoOwner;
   const demo = config.forgejoDemoRepo;
   try {
     const search = (await forgejo('/repos/search?limit=30')) as {
       data?: Record<string, unknown>[];
     };
-    const repos: Repo[] = (search.data ?? []).map((r) => ({
+    const all: Repo[] = (search.data ?? []).map((r) => ({
       name: String(r.name ?? ''),
       fullName: String(r.full_name ?? ''),
       description: String(r.description ?? ''),
@@ -95,6 +107,9 @@ export async function GET() {
       defaultBranch: String(r.default_branch ?? 'main'),
       updatedAt: (r.updated_at as string) ?? null,
     }));
+    // Visibility scope: private repos (personal, not domain-shared) are admin-
+    // only. Every authenticated caller sees the non-private (shared) repos.
+    const repos = user.role === 'admin' ? all : all.filter((r) => !r.private);
 
     let runs: Run[] = [];
     let runsError = '';

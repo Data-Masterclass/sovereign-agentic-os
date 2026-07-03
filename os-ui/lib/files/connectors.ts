@@ -101,10 +101,15 @@ export type SyncResult = {
 
 // ----------------------------------------------------------- sync-state store --
 
-const sources = new Map<string, ConnectorSource>();
+const CONN_SOURCES_KEY = Symbol.for('soa.files.connectors');
+function connSources(): Map<string, ConnectorSource> {
+  const g = globalThis as unknown as Record<symbol, Map<string, ConnectorSource> | undefined>;
+  if (!g[CONN_SOURCES_KEY]) g[CONN_SOURCES_KEY] = new Map();
+  return g[CONN_SOURCES_KEY]!;
+}
 
 export function __resetConnectors(): void {
-  sources.clear();
+  connSources().clear();
 }
 
 function id(): string {
@@ -129,24 +134,24 @@ export function addSource(input: {
     initialDone: false,
     createdAt: new Date().toISOString(),
   };
-  sources.set(src.id, src);
+  connSources().set(src.id, src);
   return src;
 }
 
 export function listSources(owner?: string): ConnectorSource[] {
-  return [...sources.values()]
+  return [...connSources().values()]
     .filter((s) => (owner ? s.owner === owner : true))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 export function getSource(sourceId: string): ConnectorSource | null {
-  return sources.get(sourceId) ?? null;
+  return connSources().get(sourceId) ?? null;
 }
 
 export function removeSource(sourceId: string, owner: string): boolean {
-  const s = sources.get(sourceId);
+  const s = connSources().get(sourceId);
   if (!s || s.owner !== owner) return false;
-  return sources.delete(sourceId);
+  return connSources().delete(sourceId);
 }
 
 /** The cadence the NEXT run uses: the first pass is the batched OVERNIGHT job; after
@@ -175,7 +180,7 @@ export async function runSync(source: ConnectorSource, client: ConnectorClient, 
   }
   source.cursor = cursor;
   source.initialDone = true;
-  sources.set(source.id, source);
+  connSources().set(source.id, source);
   return { sourceId: source.id, cadence, clientMode: client.mode, added, updated, unchanged, cursor };
 }
 

@@ -2,6 +2,7 @@
   {
     "id": "nova-admin",
     "name": "Nova (Store Admin)",
+    "email": "nova@northpeak.demo",
     "password": "<GENERATED — see gen-credentials.mjs; never commit a real one>",
     "domains": ["platform", "sales", "marketing", "ops"],
     "role": "admin"
@@ -9,6 +10,7 @@
   {
     "id": "sasha-sales",
     "name": "Sasha (Sales Builder)",
+    "email": "sasha@northpeak.demo",
     "password": "<GENERATED>",
     "domains": ["sales"],
     "role": "builder"
@@ -16,6 +18,7 @@
   {
     "id": "morgan-mktg",
     "name": "Morgan (Marketing Builder)",
+    "email": "morgan@northpeak.demo",
     "password": "<GENERATED>",
     "domains": ["marketing"],
     "role": "builder"
@@ -23,6 +26,7 @@
   {
     "id": "omar-ops",
     "name": "Omar (Ops Builder)",
+    "email": "omar@northpeak.demo",
     "password": "<GENERATED>",
     "domains": ["ops"],
     "role": "builder"
@@ -30,6 +34,7 @@
   {
     "id": "riley-sales",
     "name": "Riley (Sales Creator)",
+    "email": "riley@northpeak.demo",
     "password": "<GENERATED>",
     "domains": ["sales"],
     "role": "creator"
@@ -37,6 +42,7 @@
   {
     "id": "kai-mktg",
     "name": "Kai (Marketing Creator)",
+    "email": "kai@northpeak.demo",
     "password": "<GENERATED>",
     "domains": ["marketing"],
     "role": "creator"
@@ -44,6 +50,7 @@
   {
     "id": "devi-ops",
     "name": "Devi (Ops Creator)",
+    "email": "devi@northpeak.demo",
     "password": "<GENERATED>",
     "domains": ["ops"],
     "role": "creator"

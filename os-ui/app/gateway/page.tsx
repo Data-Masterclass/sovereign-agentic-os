@@ -31,7 +31,16 @@ export default function GatewayPage() {
           </button>
         </div>
 
-        {error ? <div className="error" style={{ marginTop: 20 }}>{error}</div> : null}
+        {error ? (
+          <div className="error" style={{ marginTop: 20 }}>
+            {error}
+            <span className="muted" style={{ display: 'block', marginTop: 6, fontSize: 12 }}>
+              LiteLLM may be unreachable. Port-forward:{' '}
+              <code>kubectl -n agentic-os port-forward svc/agentic-os-litellm 4000:4000</code>
+              , then Refresh.
+            </span>
+          </div>
+        ) : null}
 
         <McpConnect />
 

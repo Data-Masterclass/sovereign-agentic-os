@@ -1,0 +1,36 @@
+{{- if and .Values.hermes.enabled .Values.hermes.memory.enabled }}
+{{- /*
+  Hermes memory + skills volume (hermes plan §6). Per-user, PERSISTENT, BACKED UP
+  (Velero-annotated per backup-strategy.md) and DELETABLE (Honcho user-modeling is
+  personal data → GDPR/RLS erasure via lib/hermes/skills.ts deletionPlan). One
+  claim per gateway profile here (Phase 0/1, single test user); a fleet uses one
+  per (user, domain).
+*/}}
+{{- $m := .Values.hermes.memory }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hermes-memory
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "hermes-gateway") | nindent 4 }}
+    # Velero backup selector — memory/skills are backed up in-region (sovereign).
+    {{- if $m.backup }}
+    backup.sovereign-os/velero: "true"
+    {{- end }}
+  annotations:
+    # Personal data → deletable on request (GDPR); the volume is reclaimable.
+    hermes.sovereign-os/deletable: "true"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ $m.storageSize | quote }}
+  {{- if $m.storageClass }}
+  storageClassName: {{ $m.storageClass | quote }}
+  {{- else }}
+  {{- include "soa.storageClass" . | nindent 2 }}
+  {{- end }}
+{{- end }}

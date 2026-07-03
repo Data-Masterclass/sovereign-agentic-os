@@ -69,7 +69,6 @@
 #     forgejo                  256Mi
 #     query-tool               256Mi
 #     sample-agent             128Mi
-#     poet-agent               128Mi
 #     os-ui                    128Mi
 #     opa                       32Mi
 #                            --------
@@ -1094,21 +1093,80 @@ agentRuntime:
   schedules: []
 
 # -----------------------------------------------------------------------------
-# Poet agent — a second LangGraph agent that writes a poem file each run
-# (compose via LiteLLM -> save to a PVC), traced in Langfuse. Pull poems with
-# scripts/get-poems.sh.
+# Hermes — the AUTONOMOUS Layer-1 runtime (Nous Research Hermes Agent, MIT),
+# next to LangGraph. GATED OFF BY DEFAULT (off in base + kind; prepared for SKE)
+# so it ships in the release without auto-provisioning prod. When enabled, its
+# no-bypass floors are non-negotiable (hermes-agent-integration-plan.md):
+#   • models ONLY via LiteLLM (direct provider keys disabled),
+#   • tools ONLY via the governed Platform MCP (/api/mcp) — OPA-gated, Langfuse-
+#     traced; RLS holds via the profile's Ory identity,
+#   • code runs under a REAL kernel-isolated sandbox (Kata microVM on SKE with
+#     nested KVM, else gVisor — NEVER host-local/off/YOLO),
+#   • egress allowlist + website_blocklist + SSRF fail-closed; lazy-installs off;
+#     secrets from the manager (mounted), never plaintext ~/.hermes/.env.
 # -----------------------------------------------------------------------------
-poetAgent:
-  enabled: true
+hermes:
+  enabled: false            # OFF in base + kind. Set true ONLY on SKE (gated).
   image:
-    repository: sovereign-os/poet-agent     # built locally, loaded into kind
+    repository: sovereign-os/hermes-gateway   # built/mirrored; Hermes Agent (MIT)
     tag: "0.1.0"
-  chatModel: sovereign-mock
-  defaultTopic: "the sovereign cloud"
-  storageSize: 1Gi
+  # The single test/user profile for Phase 0/1 (one profile per user+domain).
+  profile:
+    user: "platform-admin"
+    domain: "platform"
+    # Safety preset → provisioner mapping (lib/hermes/provisioner.ts):
+    #   read-only | read-propose | read-bounded | full-in-scope
+    safetyPreset: "read-only"
+  # Model plane — Hermes 4.3 tool-calling brain served via vLLM BEHIND LiteLLM.
+  # These are LiteLLM model_names (never a provider endpoint). 14B is CPU-feasible;
+  # 36B/70B need the GPU pool and stay gated (vllm.enabled=false) by default.
+  model:
+    litellmBaseUrl: "http://agentic-os-litellm:4000/v1"
+    name: "hermes-4-3-14b"        # CPU tier default (see lib/hermes/model.ts)
+    apiKeyRef: "agent-litellm-key"  # scoped LiteLLM virtual key (secret ref)
+    # Hermes 4 weights are Llama-3.1-based → Llama 3.1 Community License
+    # (source-available, self-hosted internal use). We do NOT bundle weights.
+    vllm:
+      enabled: false             # GPU-pool self-serve of the weights (gated off)
+      model: "NousResearch/Hermes-4-3-14B-FP8"
+      gpu: 1
+  # Sandbox — RuntimeClass selection (lib/hermes/sandbox.ts). kind → gvisor.
+  sandbox:
+    backend: container           # NEVER 'off'/'host'/'yolo'
+    # Which RuntimeClass objects to render. On SKE the preflight decides Kata-vs-
+    # gVisor; templated here so `helm template` renders both for review.
+    runtimeClass: "gvisor"       # kind default (no nested KVM)
+    kata:
+      render: true               # template the Kata (kata-qemu) RuntimeClass (SKE)
+      handler: "kata-qemu"
+    gvisor:
+      render: true               # template the gVisor (runsc) RuntimeClass
+      handler: "runsc"
+    preflight:
+      enabled: true              # render the SKE nested-KVM (/dev/kvm) preflight Job
+  # Governance floors baked into the gateway config.
+  security:
+    allowLazyInstalls: false     # pin/mirror deps — never lazy-install
+    ssrfProtection: true
+    egressAllowlist:             # the ONLY hosts the profile may reach
+      - agentic-os-litellm
+      - os-ui
+      - egress-proxy
+    websiteBlocklist:            # extends the always-on hardline floor
+      - 169.254.169.254
+      - metadata.google.internal
+  # Memory + skills persistence — per-user, backed up (Velero), DELETABLE (GDPR).
+  memory:
+    enabled: true
+    storageSize: 2Gi
+    storageClass: ""             # "" => soa.storageClass (kind: standard)
+    backup: true                 # Velero-annotated (backup-strategy.md)
+  # Messaging front-ends OFF by default (Phase 3); never GATEWAY_ALLOW_ALL_USERS.
+  messaging:
+    enabled: false
   resources:
-    requests: { cpu: 50m, memory: 128Mi }
-    limits: { cpu: 500m, memory: 512Mi }
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
 
 # =============================================================================
 # Layer 2 (Context / Foundations) — added incrementally, validated one at a time.
@@ -1353,6 +1411,32 @@ cube:
     limits: { cpu: "1", memory: 768Mi }
   local:
     apiSecret: cube-local-dev-secret
+
+# -----------------------------------------------------------------------------
+# Northpeak gold-mart materialization (templates/lakehouse/northpeak-marts-init.yaml).
+# A one-shot, idempotent Helm hook that materializes the PHYSICAL Iceberg gold table
+# `iceberg.sales.gold_northpeak_commerce` THROUGH central Trino so the Metrics tab
+# resolves real numbers (the os-ui Data build adapters are probe-only and write no
+# table). Session-grained realistic data broken out by region / product / month.
+# -----------------------------------------------------------------------------
+marts:
+  enabled: true
+  # Node 22 (global fetch) drives the Trino REST protocol — same base as os-ui/seed.
+  image:
+    repository: node
+    tag: "22.13.1-alpine3.21"
+  trino:
+    host: trino
+    port: 8080
+    user: northpeak-marts
+    catalog: iceberg
+  schema: sales
+  table: gold_northpeak_commerce
+  rows: 150000          # session rows; ~conversion of these become paid orders
+  conversion: 0.032     # session→order conversion (avg(converted))
+  churnRate: 0.18       # fraction of customers with no order in 90 days
+  force: false          # true → DROP + rebuild even if the table already has rows
+  backoffLimit: 6
 
 # -----------------------------------------------------------------------------
 # OpenMetadata — catalog/lineage (subchart). External CNPG `openmetadata` DB +
@@ -1982,6 +2066,63 @@ osUI:
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits:   { cpu: 500m, memory: 512Mi }
+
+# -----------------------------------------------------------------------------
+# In-cluster transactional mail (maddy MTA). OFF by default — base + kind render
+# ZERO mail objects. Enabled in values.stackit-selfhosted.yaml, where os-ui's
+# SMTP transport is pointed at the in-cluster `mail` Service so the OS sends its
+# OWN verification/invite mail from noreply@sovereign-agentic.com (no AWS SES /
+# no third-party ESP). See templates/mail/maddy.yaml for the open-relay guards.
+# -----------------------------------------------------------------------------
+mail:
+  enabled: false
+  image:
+    repository: foxcpp/maddy
+    tag: "0.9.5"           # 0.9 series (Alpine-based, MIT). Pin `digest` in prod.
+    digest: ""             # OPERATOR: set the sha256 digest to pin (recommended).
+  # Public identity of the sender. hostname is what maddy announces in EHLO / uses
+  # for its self-signed submission cert; primaryDomain is the DKIM/From domain.
+  hostname: mail.sovereign-agentic.com
+  primaryDomain: sovereign-agentic.com
+  # Outbound path: `direct` = deliver straight to each recipient's MX on :25
+  # (needs a static egress IP + PTR + outbound :25 allowed); `smarthost` = relay
+  # through a permitted provider (use when the cloud blocks :25 — e.g. STACKIT).
+  outbound: direct
+  smarthost:
+    scheme: tls            # tls (implicit, :465) | starttls (:587)
+    host: ""               # e.g. smtp.eu.mailgun.org — required for smarthost mode
+    port: 465
+    # Credentials come from a mail-smarthost Secret (SMARTHOST_USER/SMARTHOST_PASS):
+    #   kubectl -n <ns> create secret generic mail-smarthost \
+    #     --from-literal=SMARTHOST_USER='<user>' --from-literal=SMARTHOST_PASS='<pass>'
+  submission:
+    auth:
+      # Optional SASL gate on the 587 submission endpoint (defence in depth — the
+      # ClusterIP-only Service + sender-domain lock already close the relay for
+      # in-cluster use). When true, provide a mail-auth Secret with a `passwd`
+      # key: one line `noreply@sovereign-agentic.com <maddy-hash>` (generate the
+      # hash with `docker run --rm foxcpp/maddy:0.9.5 maddy hash`).
+      enabled: false
+  tls:
+    # kubernetes.io/tls Secret holding the submission cert (tls.crt/tls.key). The
+    # cert is a self-signed cert whose SAN includes the in-cluster Service name
+    # `mail` (operator-generated once — see the go-live steps).
+    secretName: mail-tls
+    # Mount that cert into os-ui as NODE_EXTRA_CA_CERTS so its SMTP client trusts
+    # the STARTTLS handshake to `mail` (self-signed → not in the system trust).
+    osUITrust: true
+  dkim:
+    selector: default      # DNS: <selector>._domainkey.<primaryDomain>
+    # Secret holding the DKIM RSA private key (key: dkim.key, PKCS#1 or PKCS#8).
+    # Optional: if absent, maddy generates a key on first boot and writes the
+    # public-key .dns record beside it on the PVC for the operator to publish.
+    secretName: mail-dkim
+  persistence:
+    size: 1Gi              # state + queue + mtasts cache
+    storageClass: ""       # "" → cluster default
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits:   { cpu: 250m, memory: 256Mi }
 
 # -----------------------------------------------------------------------------
 # In-UI Terminal — the sandboxed shell behind the OS UI "Terminal" tab.

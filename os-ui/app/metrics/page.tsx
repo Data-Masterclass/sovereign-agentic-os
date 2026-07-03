@@ -30,7 +30,7 @@ export default function MetricsPage() {
 
   return (
     <>
-      <PageHeader title="Metrics" crumb="registry · define · explore · govern — one definition of every number" tutorial="metrics" />
+      <PageHeader title="Metrics" crumb="registry · define · explore · govern — one definition of every number" tutorial="metrics" mcpTab="metrics" />
       <div className="content">
         <div className="tabstrip">
           <button className={view === 'registry' ? 'active' : ''} onClick={() => setView('registry')}>Registry</button>

@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { currentUser } from '@/lib/auth';
-import { createUser, deleteUser, knownDomains, listUsers, updateUser } from '@/lib/users';
+import { archiveUser, createUser, deleteUser, knownDomains, listUsers, restoreUser, updateUser } from '@/lib/users';
 import { ROLES, type Role } from '@/lib/session';
 import { canManageRole, compileRoleToGrants, roleLabel } from '@/lib/governance/roles';
 import { record as audit } from '@/lib/governance/audit';
@@ -62,7 +62,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
   const id = String(body?.id ?? '').trim().toLowerCase();
-  const role = (ROLES.includes(body?.role as Role) ? body!.role : 'participant') as Role;
+  const role = (ROLES.includes(body?.role as Role) ? body!.role : 'creator') as Role;
   const domains = Array.isArray(body?.domains) ? body!.domains.map(String).filter(Boolean) : [];
   if (!id) return NextResponse.json({ error: 'A username is required' }, { status: 400 });
   if (domains.length === 0) return NextResponse.json({ error: 'At least one domain is required' }, { status: 400 });
@@ -78,7 +78,7 @@ export async function POST(req: Request) {
     // server-only placeholder the tab never sees. Swap createUser for the Ory
     // identity API later; role + memberships (below) stay in the app tier.
     const oryPlaceholder = `ory:${crypto.randomUUID()}`;
-    const created = await createUser({ id, name: body?.name ? String(body.name) : undefined, password: oryPlaceholder, domains, role });
+    const created = await createUser({ id, name: body?.name ? String(body.name) : undefined, email: (body as { email?: string })?.email ? String((body as { email?: string }).email) : undefined, password: oryPlaceholder, domains, role });
     const grant = await compileRoleToGrants({ id: created.id, role: created.role });
     audit({
       actor: user.id,
@@ -94,14 +94,89 @@ export async function POST(req: Request) {
   }
 }
 
-/** Change a role / memberships, or deactivate. Recompiles OPA + audits. */
+/** Edit profile, change role/memberships, archive (soft-delete), or restore. Recompiles OPA + audits. */
 export async function PATCH(req: Request) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
   if (user.role !== 'admin' && user.role !== 'builder') {
     return NextResponse.json({ error: 'Managing users needs a Builder or Admin' }, { status: 403 });
   }
-  let body: { id?: string; role?: string; domains?: unknown; deactivate?: boolean };
+  let body: { id?: string; name?: string; email?: string; role?: string; domains?: unknown; deactivate?: boolean; restore?: boolean };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+  if ('password' in (body as object)) {
+    return NextResponse.json({ error: 'This tab never handles passwords — Ory owns credentials' }, { status: 400 });
+  }
+  const id = String(body?.id ?? '').trim().toLowerCase();
+  if (!id) return NextResponse.json({ error: 'A user id is required' }, { status: 400 });
+  const all = await listUsers();
+  const target = all.find((u) => u.id === id);
+  if (!target) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+  if (!inActorScope(user, target.domains)) {
+    return NextResponse.json({ error: 'That user is outside your domain scope' }, { status: 403 });
+  }
+
+  // Archive (soft-delete) — sets disabled=true; user can be restored later.
+  if (body?.deactivate) {
+    try {
+      await archiveUser(id);
+      audit({ actor: user.id, action: 'role.change', subject: id, domain: target.domains[0] ?? 'tenant', reason: `Archived ${id} (account disabled, restorable)`, detail: { archived: true } });
+      return NextResponse.json({ archived: id });
+    } catch (e) {
+      return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 500 });
+    }
+  }
+
+  // Restore a previously archived user.
+  if (body?.restore) {
+    try {
+      const restored = await restoreUser(id);
+      audit({ actor: user.id, action: 'role.change', subject: id, domain: target.domains[0] ?? 'tenant', reason: `Restored ${id} (account re-enabled)`, detail: { restored: true } });
+      return NextResponse.json({ user: { ...restored, roleLabel: roleLabel(restored.role) } });
+    } catch (e) {
+      return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 500 });
+    }
+  }
+
+  // Update profile fields (name, email) and/or role/domains.
+  const role = (ROLES.includes(body?.role as Role) ? body!.role : target.role) as Role;
+  const domains = Array.isArray(body?.domains) && (body.domains as unknown[]).length
+    ? (body.domains as unknown[]).map(String).filter(Boolean)
+    : target.domains;
+  if (!inActorScope(user, domains) || domains.some((d) => !canManageRole(asActor(user), role, d))) {
+    return NextResponse.json({ error: `You may not assign ${roleLabel(role)} in those domains` }, { status: 403 });
+  }
+  try {
+    const patch: { name?: string; email?: string; role: Role; domains: string[] } = { role, domains };
+    if (body?.name !== undefined) patch.name = String(body.name);
+    if (body?.email !== undefined) patch.email = String(body.email);
+    const updated = await updateUser(id, patch);
+    const grant = await compileRoleToGrants({ id: updated.id, role: updated.role });
+    audit({
+      actor: user.id,
+      action: 'role.change',
+      subject: updated.id,
+      domain: domains[0],
+      reason: `Updated ${updated.id}: role=${roleLabel(role)}, domains=${domains.join(', ')}`,
+      detail: { role, domains, principal: grant.principal, tools: grant.tools, opaLive: grant.live },
+    });
+    return NextResponse.json({ user: { ...updated, roleLabel: roleLabel(updated.role) }, grant });
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 500 });
+  }
+}
+
+/** Permanently delete a user (hard delete). Requires Archive first via UI convention; direct API call is guarded by admin-only. */
+export async function DELETE(req: Request) {
+  const user = await currentUser();
+  if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  if (user.role !== 'admin') {
+    return NextResponse.json({ error: 'Only admins can permanently delete users' }, { status: 403 });
+  }
+  let body: { id?: string };
   try {
     body = await req.json();
   } catch {
@@ -109,35 +184,11 @@ export async function PATCH(req: Request) {
   }
   const id = String(body?.id ?? '').trim().toLowerCase();
   if (!id) return NextResponse.json({ error: 'A user id is required' }, { status: 400 });
-  const target = (await listUsers()).find((u) => u.id === id);
-  if (!target) return NextResponse.json({ error: 'User not found' }, { status: 404 });
-  if (!inActorScope(user, target.domains)) {
-    return NextResponse.json({ error: 'That user is outside your domain scope' }, { status: 403 });
-  }
-
-  if (body?.deactivate) {
-    await deleteUser(id);
-    audit({ actor: user.id, action: 'role.change', subject: id, domain: target.domains[0] ?? 'tenant', reason: `Deactivated ${id}`, detail: { deactivated: true } });
-    return NextResponse.json({ deactivated: id });
-  }
-
-  const role = (ROLES.includes(body?.role as Role) ? body!.role : target.role) as Role;
-  const domains = Array.isArray(body?.domains) && body.domains.length ? body.domains.map(String).filter(Boolean) : target.domains;
-  if (!inActorScope(user, domains) || domains.some((d) => !canManageRole(asActor(user), role, d))) {
-    return NextResponse.json({ error: `You may not assign ${roleLabel(role)} in those domains` }, { status: 403 });
-  }
+  if (id === user.id) return NextResponse.json({ error: 'You cannot delete your own account' }, { status: 400 });
   try {
-    const updated = await updateUser(id, { role, domains });
-    const grant = await compileRoleToGrants({ id: updated.id, role: updated.role });
-    audit({
-      actor: user.id,
-      action: 'role.change',
-      subject: updated.id,
-      domain: domains[0],
-      reason: `Set ${updated.id} → ${roleLabel(role)} in ${domains.join(', ')}; recompiled to OPA`,
-      detail: { role, domains, principal: grant.principal, tools: grant.tools, opaLive: grant.live },
-    });
-    return NextResponse.json({ user: { ...updated, roleLabel: roleLabel(updated.role) }, grant });
+    await deleteUser(id);
+    audit({ actor: user.id, action: 'role.change', subject: id, domain: 'tenant', reason: `Permanently deleted ${id}`, detail: { permanentlyDeleted: true } });
+    return NextResponse.json({ deleted: id });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 500 });
   }

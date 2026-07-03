@@ -14,6 +14,7 @@ import {
 import { trace } from '@/lib/agent-governed';
 import { enqueue, decide as decideApproval, listApprovals } from '@/lib/approvals';
 import { securityScan } from './scan.ts';
+import { detectSurface } from './metadata.ts';
 import { getSnapshot } from './server.ts';
 import type {
   DeployEnvelope,
@@ -42,7 +43,12 @@ import type {
  * (authoritative locally) and also land in the Governance approval inbox.
  */
 
-const CARDS = new Map<string, ReviewCard>();
+const CARDS_KEY = Symbol.for('soa.software.review');
+function cards(): Map<string, ReviewCard> {
+  const g = globalThis as unknown as Record<symbol, Map<string, ReviewCard> | undefined>;
+  if (!g[CARDS_KEY]) g[CARDS_KEY] = new Map();
+  return g[CARDS_KEY]!;
+}
 
 // Per-runtime cost/resource footprint surfaced on the card (rough monthly USD).
 const FOOTPRINT: Record<App['template'], ResourceFootprint> = {
@@ -153,6 +159,11 @@ export async function requestDeploy(
   }
   if (app.status === 'archived') throw withStatus(new Error('Archived apps cannot deploy'), 409);
 
+  // Detect the app's UI/API surface at deploy from the code + manifest the agent
+  // wrote (the deploy manifest reveals whether it binds a web server vs only an
+  // API), so the monitor view is honest to what actually ships.
+  app.surface = detectSurface(appFiles(app));
+
   const requested = requestedEnvelope(app);
   const broadened = scopeBroadened(app.deploy.approved, requested);
   // The security scan runs on EVERY deploy request (CI scans every push). A
@@ -188,7 +199,7 @@ export async function requestDeploy(
     diff: diffFromFiles(appFiles(app), opts.changedFiles),
     decision: 'pending',
   };
-  CARDS.set(card.id, card);
+  cards().set(card.id, card);
 
   app.deploy.state = 'review';
   app.deploy.reviewCardId = card.id;
@@ -235,7 +246,7 @@ export async function decideDeploy(
   decision: 'approve' | 'deny',
   note?: string,
 ): Promise<{ app: App; card: ReviewCard }> {
-  const card = CARDS.get(cardId);
+  const card = cards().get(cardId);
   if (!card) throw withStatus(new Error('Review card not found'), 404);
   if (card.decision !== 'pending') throw withStatus(new Error('This review is already decided'), 409);
 
@@ -268,7 +279,7 @@ export async function decideDeploy(
   card.decidedBy = user.id;
   card.decidedAt = new Date().toISOString();
   card.note = note;
-  CARDS.set(card.id, card);
+  cards().set(card.id, card);
   await persistApp(app);
 
   // Reflect the decision into the Governance inbox record.
@@ -294,11 +305,11 @@ function listGovernanceForCard(cardId: string): string[] {
 // ------------------------------------------------------------- Readers ---------
 
 export function getReviewCard(cardId: string): ReviewCard | null {
-  return CARDS.get(cardId) ?? null;
+  return cards().get(cardId) ?? null;
 }
 
 export function listReviewCards(opts: { domain?: string; pendingOnly?: boolean } = {}): ReviewCard[] {
-  return [...CARDS.values()]
+  return [...cards().values()]
     .filter((c) => (opts.domain ? c.domain === opts.domain : true))
     .filter((c) => (opts.pendingOnly ? c.decision === 'pending' : true))
     .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));

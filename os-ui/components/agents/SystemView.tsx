@@ -4,16 +4,26 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { useApi } from '@/lib/useApi';
-import SystemCanvas from './SystemCanvas';
 import AgentEditor from './AgentEditor';
 import GrantsRouting from './GrantsRouting';
 import BuildRunPanel from './BuildRunPanel';
 import HelperChat from './HelperChat';
 import MonacoFile from './MonacoFile';
+import RuntimeSelector from './RuntimeSelector';
 import { commitSystem } from './commitSystem';
-import { addAgent, addHandoffEdge, addSuperviseEdge, removeEdge } from '@/lib/agents/canvas-edit';
+import { addAgent, addHandoffEdge, addSuperviseEdge, removeAgent, removeEdge, setEntrypoint, setNodePositions } from '@/lib/agents/canvas-edit';
 import type { Schedule, System } from '@/lib/agents/system-schema';
+import type { ModelInfo } from '@/lib/agents/routing';
+
+// React Flow + Monaco are heavy, client-only, and SSR-tolerant only when lazy —
+// load the canvas ssr:false (same pattern as MonacoFile) so the standalone build
+// stays clean and offline. Its CSS is imported locally inside the component.
+const GraphCanvas = dynamic(() => import('./GraphCanvas'), {
+  ssr: false,
+  loading: () => <div className="gc-loading"><span className="spin" /> Loading canvas…</div>,
+});
 
 /**
  * Level 2 — the system canvas + the three interchangeable editors over the one
@@ -39,9 +49,10 @@ type SystemViewData = {
   compileError: string | null;
   canEdit: boolean;
   role: string;
+  hermesEnabled: boolean;
 };
 
-type ModelsData = { models: string[]; source: 'litellm' | 'offline' };
+type ModelsData = { models: ModelInfo[]; source: 'litellm' | 'offline' };
 type RoutingData = { activities: string[]; tiers: Record<string, string>; table: Record<string, { tier: string; model: string }> };
 
 type Panel = 'yaml' | 'grants' | 'build' | 'helper';
@@ -57,12 +68,17 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [actErr, setActErr] = useState('');
-  const [newAgentId, setNewAgentId] = useState('');
   const [acting, setActing] = useState(false);
   // Re-entry guard: state is async, so gate concurrent edits through a ref. This
   // serializes mutations so each one builds its diff from the freshly-reloaded
   // source — no stale-base lost update on rapid canvas/chip edits.
   const actingRef = useRef(false);
+  // Bounded undo/redo over committed System snapshots. A structural edit pushes the
+  // pre-edit doc; undo re-commits it. Position drags skip history (skipHistory) so
+  // undo means "undo a real change", not "un-nudge a node".
+  const currentSysRef = useRef<System | null>(null);
+  const undoRef = useRef<System[]>([]);
+  const redoRef = useRef<System[]>([]);
 
   const reloadAll = useCallback(async () => {
     await reload();
@@ -71,13 +87,20 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
 
   const models = modelsData?.models ?? [];
 
-  const mutate = useCallback(
-    async (next: System) => {
+  const commit = useCallback(
+    async (next: System, opts?: { skipHistory?: boolean; snapshot?: System | null }) => {
       if (actingRef.current) return;
       actingRef.current = true;
       setActing(true);
       setActErr('');
       try {
+        if (!opts?.skipHistory) {
+          const snap = opts?.snapshot ?? currentSysRef.current;
+          if (snap) {
+            undoRef.current = [...undoRef.current.slice(-29), snap];
+            redoRef.current = [];
+          }
+        }
         await commitSystem(systemId, next);
         await reloadAll();
       } catch (e) {
@@ -89,6 +112,36 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
     },
     [systemId, reloadAll],
   );
+
+  // Back-compat alias: existing callers pass a full next System (structural edit).
+  const mutate = useCallback((next: System) => commit(next), [commit]);
+
+  const undo = useCallback(() => {
+    const prev = undoRef.current.pop();
+    if (!prev || !currentSysRef.current) return;
+    redoRef.current = [...redoRef.current.slice(-29), currentSysRef.current];
+    void commit(prev, { skipHistory: true });
+  }, [commit]);
+
+  const redo = useCallback(() => {
+    const next = redoRef.current.pop();
+    if (!next || !currentSysRef.current) return;
+    undoRef.current = [...undoRef.current.slice(-29), currentSysRef.current];
+    void commit(next, { skipHistory: true });
+  }, [commit]);
+
+  // Keyboard undo/redo — ignored while typing in a field or the Monaco editor.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable || t.closest('.monaco-editor'))) return;
+      e.preventDefault();
+      if (e.shiftKey) redo(); else undo();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [undo, redo]);
 
   const post = useCallback(
     async (path: string, body?: unknown) => {
@@ -125,10 +178,33 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
   if (!data) return null;
 
   const sys = data.system;
+  currentSysRef.current = sys; // keep the undo/redo baseline in sync with the source
+  // Promotion ladder (Level 1 spec): Personal ─(Builder+)─▶ Shared ─(Admin)─▶
+  // Marketplace. The gate is enforced server-side in promoteSystem; here we only
+  // SHOW the affordance to an eligible owner/admin so a click never 403s. Forked
+  // (installed) copies and already-Marketplace systems have no next rung.
+  const canPromote =
+    data.canEdit &&
+    data.origin !== 'forked' &&
+    ((data.visibility === 'Personal' && (data.role === 'builder' || data.role === 'admin')) ||
+      (data.visibility === 'Shared' && data.role === 'admin'));
+  const promoteLabel = data.visibility === 'Personal' ? 'Promote to Shared' : 'Publish to Marketplace';
+  const editable = data.canEdit && !acting;
   const onConnect = (from: string, to: string) => {
     const fromAgent = sys.agents.find((a) => a.id === from);
     const isSupervisor = from === sys.entrypoint || (fromAgent?.members?.length ?? 0) > 0;
     void mutate(isSupervisor ? addSuperviseEdge(sys, from, to) : addHandoffEdge(sys, from, to));
+  };
+  // Guided add: auto-name the next agent and open its drawer immediately. The FIRST
+  // agent auto-becomes the START (entrypoint) so a fresh system compiles at once.
+  const addAgentGuided = () => {
+    const ids = new Set(sys.agents.map((a) => a.id));
+    let n = sys.agents.length + 1;
+    let id = `agent${n}`;
+    while (ids.has(id)) { n += 1; id = `agent${n}`; }
+    let next = addAgent(sys, { id });
+    if (!next.entrypoint) next = setEntrypoint(next, id);
+    void commit(next, { snapshot: sys }).then(() => setSelectedAgent(id));
   };
 
   return (
@@ -151,6 +227,11 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
             <button className="btn sm" onClick={() => post('run', { prompt: 'Test invocation' })} disabled={!data.canEdit || acting}>Run</button>
           )}
           <ScheduleControl schedule={data.schedule} canEdit={data.canEdit && !acting} onSet={(s) => post('schedule', s)} />
+          {canPromote ? (
+            <button className="btn ghost sm" onClick={() => post('promote')} disabled={acting} title={`Governed publish step — ${promoteLabel}`}>
+              {promoteLabel}
+            </button>
+          ) : null}
         </div>
       </div>
       <div className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
@@ -158,88 +239,131 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
         {data.lastActivity ? <> · last activity {new Date(data.lastActivity).toLocaleString()}</> : null}
       </div>
 
+      <RuntimeSelector
+        system={sys}
+        canEdit={data.canEdit && !acting}
+        hermesEnabled={data.hermesEnabled}
+        onChange={(next) => mutate(next)}
+      />
+
       {actErr ? <div className="error" style={{ marginBottom: 12 }}>{actErr}</div> : null}
 
-      <SystemCanvas
+      <BuildChecklist system={sys} compileError={data.compileError} disabledAgents={data.disabledAgents} />
+
+      <GraphCanvas
         system={sys}
         disabledAgents={data.disabledAgents}
         selectedId={selectedAgent}
-        canEdit={data.canEdit && !acting}
+        canEdit={editable}
         compileError={data.compileError}
-        onSelectAgent={(id) => { setSelectedAgent(id); }}
+        syncKey={reloadKey}
+        onSelectAgent={(id) => setSelectedAgent(id)}
         onConnect={onConnect}
         onRemoveEdge={(from, to, type) => mutate(removeEdge(sys, { from, to, type }))}
+        onRemoveAgent={(id) => { if (selectedAgent === id) setSelectedAgent(null); void mutate(removeAgent(sys, id)); }}
+        onMoveNodes={(positions) => commit(setNodePositions(sys, positions), { skipHistory: true })}
+        onAddAgent={addAgentGuided}
+        onUndo={undo}
+        onRedo={redo}
+        canUndo={undoRef.current.length > 0}
+        canRedo={redoRef.current.length > 0}
       />
 
-      <div className="agent-chips">
-        {sys.agents.map((a) => {
-          const off = data.disabledAgents.includes(a.id);
-          return (
-            <div key={a.id} className={`agent-chip${off ? ' off' : ''}${selectedAgent === a.id ? ' sel' : ''}`}>
-              <button className="agent-chip-name" onClick={() => setSelectedAgent(a.id)}>
-                {a.id}{a.id === sys.entrypoint ? ' ★' : ''}
-              </button>
-              {data.canEdit && a.id !== sys.entrypoint ? (
-                <button
-                  className={`switch sm${off ? '' : ' on'}`}
-                  title={off ? 'Enable in the running system' : 'Disable in the running system'}
-                  disabled={acting}
-                  onClick={() => post('toggle', { agentId: a.id, on: off })}
-                >
-                  <span className="switch-track"><span className="switch-thumb" /></span>
+      {sys.agents.length > 0 ? (
+        <div className="agent-chips">
+          <span className="agent-chips-label">In the running system:</span>
+          {sys.agents.map((a) => {
+            const off = data.disabledAgents.includes(a.id);
+            return (
+              <div key={a.id} className={`agent-chip${off ? ' off' : ''}${selectedAgent === a.id ? ' sel' : ''}`}>
+                <button className="agent-chip-name" onClick={() => setSelectedAgent(a.id)}>
+                  {a.id}{a.id === sys.entrypoint ? ' ★' : ''}
                 </button>
-              ) : null}
-            </div>
-          );
-        })}
-        {data.canEdit ? (
-          <form
-            className="row"
-            style={{ gap: 6, alignItems: 'center' }}
-            onSubmit={(e) => { e.preventDefault(); if (newAgentId.trim()) { void mutate(addAgent(sys, { id: newAgentId.trim() })); setNewAgentId(''); } }}
-          >
-            <input type="text" value={newAgentId} onChange={(e) => setNewAgentId(e.target.value)} placeholder="new agent id" style={{ width: 130 }} />
-            <button className="btn ghost sm" type="submit" disabled={!newAgentId.trim() || acting}>+ Agent</button>
-          </form>
+                {data.canEdit && a.id !== sys.entrypoint ? (
+                  <button
+                    className={`switch sm${off ? '' : ' on'}`}
+                    title={off ? 'Enable in the running system' : 'Disable in the running system'}
+                    disabled={acting}
+                    onClick={() => post('toggle', { agentId: a.id, on: off })}
+                  >
+                    <span className="switch-track"><span className="switch-thumb" /></span>
+                  </button>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+
+      <div className="tabstrip" style={{ marginTop: 18 }}>
+        <button className={panel === 'yaml' ? 'active' : ''} onClick={() => setPanel('yaml')}>system.yaml</button>
+        <button className={panel === 'grants' ? 'active' : ''} onClick={() => setPanel('grants')}>Grants &amp; routing</button>
+        <button className={panel === 'build' ? 'active' : ''} onClick={() => setPanel('build')}>Build &amp; run</button>
+        <button className={panel === 'helper' ? 'active' : ''} onClick={() => setPanel('helper')}>Agent-system helper</button>
+      </div>
+
+      <div style={{ marginTop: 14 }}>
+        {panel === 'yaml' ? (
+          <MonacoFile systemId={systemId} path="system.yaml" canEdit={data.canEdit} height={420} reloadSignal={reloadKey} onSaved={reloadAll} />
+        ) : null}
+        {panel === 'grants' ? (
+          <GrantsRouting systemId={systemId} system={sys} canEdit={data.canEdit} models={models} routing={routingData} onChanged={reloadAll} />
+        ) : null}
+        {panel === 'build' ? (
+          <BuildRunPanel systemId={systemId} running={data.running} canEdit={data.canEdit} onStateChange={reloadAll} />
+        ) : null}
+        {panel === 'helper' ? (
+          <HelperChat systemId={systemId} canEdit={data.canEdit} onApplied={reloadAll} />
         ) : null}
       </div>
 
+      {/* Right slide-in config drawer — the canvas + tabs stay visible behind it. */}
       {selectedAgent ? (
-        <AgentEditor
-          systemId={systemId}
-          system={sys}
-          agentId={selectedAgent}
-          canEdit={data.canEdit}
-          models={models}
-          modelsSource={modelsData?.source ?? null}
-          onChanged={reloadAll}
-          onClose={() => setSelectedAgent(null)}
-        />
-      ) : (
-        <>
-          <div className="tabstrip" style={{ marginTop: 18 }}>
-            <button className={panel === 'yaml' ? 'active' : ''} onClick={() => setPanel('yaml')}>system.yaml</button>
-            <button className={panel === 'grants' ? 'active' : ''} onClick={() => setPanel('grants')}>Grants &amp; routing</button>
-            <button className={panel === 'build' ? 'active' : ''} onClick={() => setPanel('build')}>Build &amp; run</button>
-            <button className={panel === 'helper' ? 'active' : ''} onClick={() => setPanel('helper')}>Agent-system helper</button>
-          </div>
+        <div className="agent-drawer-scrim" onClick={() => setSelectedAgent(null)}>
+          <aside className="agent-drawer" onClick={(e) => e.stopPropagation()}>
+            <AgentEditor
+              systemId={systemId}
+              system={sys}
+              agentId={selectedAgent}
+              canEdit={data.canEdit}
+              models={models}
+              modelsSource={modelsData?.source ?? null}
+              isEntrypoint={selectedAgent === sys.entrypoint}
+              onSetEntrypoint={editable ? () => void commit(setEntrypoint(sys, selectedAgent), { snapshot: sys }) : undefined}
+              onChanged={reloadAll}
+              onClose={() => setSelectedAgent(null)}
+            />
+          </aside>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
-          <div style={{ marginTop: 14 }}>
-            {panel === 'yaml' ? (
-              <MonacoFile systemId={systemId} path="system.yaml" canEdit={data.canEdit} height={420} reloadSignal={reloadKey} onSaved={reloadAll} />
-            ) : null}
-            {panel === 'grants' ? (
-              <GrantsRouting systemId={systemId} system={sys} canEdit={data.canEdit} models={models} routing={routingData} onChanged={reloadAll} />
-            ) : null}
-            {panel === 'build' ? (
-              <BuildRunPanel systemId={systemId} running={data.running} canEdit={data.canEdit} onStateChange={reloadAll} />
-            ) : null}
-            {panel === 'helper' ? (
-              <HelperChat systemId={systemId} canEdit={data.canEdit} onApplied={reloadAll} />
-            ) : null}
-          </div>
-        </>
-      )}
+/**
+ * A Dify-style pre-build checklist. Green when the graph compiles; otherwise it
+ * surfaces the exact blocker (from the server-side compile) as a to-fix item so a
+ * non-technical builder knows what to do before Run/Build.
+ */
+function BuildChecklist({ system, compileError, disabledAgents }: { system: System; compileError: string | null; disabledAgents: string[] }) {
+  const items: { ok: boolean; text: string }[] = [];
+  items.push({ ok: system.agents.length > 0, text: system.agents.length > 0 ? `${system.agents.length} agent${system.agents.length === 1 ? '' : 's'}` : 'Add at least one agent' });
+  items.push({ ok: !!system.entrypoint, text: system.entrypoint ? `START · ${system.entrypoint}` : 'Set a START agent' });
+  const activeCount = system.agents.filter((a) => !disabledAgents.includes(a.id)).length;
+  if (disabledAgents.length > 0) items.push({ ok: activeCount > 0, text: `${activeCount} active in run` });
+  if (compileError) items.push({ ok: false, text: compileError });
+  const ready = !compileError && system.agents.length > 0 && !!system.entrypoint;
+  return (
+    <div className={`gc-checklist${ready ? ' ready' : ''}`}>
+      <span className={`gc-check-dot ${ready ? 'ok' : 'warn'}`} />
+      <span className="gc-check-title">{ready ? 'Ready to build' : 'Before you build'}</span>
+      <span className="gc-check-items">
+        {items.map((it, i) => (
+          <span key={i} className={`gc-check-item ${it.ok ? 'ok' : 'todo'}`}>
+            {it.ok ? '✓' : '•'} {it.text}
+          </span>
+        ))}
+      </span>
     </div>
   );
 }

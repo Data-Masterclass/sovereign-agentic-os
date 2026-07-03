@@ -60,7 +60,7 @@ function osSystem(tab: McpTab, extraContext?: string): string {
 }
 
 /** The role-scoped tool schemas for a tab, shaped for the harness. */
-function tabToolSpecs(user: CurrentUser, tab: McpTab): ToolSpec[] {
+export function tabToolSpecs(user: CurrentUser, tab: McpTab): ToolSpec[] {
   return listToolsForRole(user.role, toolsForTab(tab)).map((t) => ({
     name: t.name,
     description: t.description,
@@ -74,7 +74,7 @@ function tabToolSpecs(user: CurrentUser, tab: McpTab): ToolSpec[] {
  * the underlying governed function (OPA + Langfuse) is the real authority, so
  * this never bypasses governance.
  */
-function tabToolExecutor(user: CurrentUser, tab: McpTab): ToolExecutor {
+export function tabToolExecutor(user: CurrentUser, tab: McpTab): ToolExecutor {
   const tools = toolsForTab(tab);
   return async (name, args) => {
     const res = await handleRpc(
@@ -99,7 +99,7 @@ const LLM_TIMEOUT_MS = Number(process.env.LLM_CHAT_TIMEOUT_MS ?? '') || 90_000;
  * function-calling (HTTP 400 mentioning tools/functions), throws
  * `ToolCallingUnsupportedError` so the loop falls back to the ReAct protocol.
  */
-function liteLlmCaller(): LlmCall {
+export function liteLlmCaller(): LlmCall {
   return async (req) => {
     const body: Record<string, unknown> = {
       model: req.model,

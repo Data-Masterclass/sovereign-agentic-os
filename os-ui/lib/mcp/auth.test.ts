@@ -28,6 +28,7 @@ test('auth: a valid token resolves to the LIVE delegated identity, then drives t
     password: 'pw-strong-123',
     domains: ['sales'],
     role: 'admin',
+    email: 'mcp-client@example.com',
   }).catch(() => {});
   const token = signMcpToken('mcp-client');
 

@@ -12,6 +12,7 @@ import {
   type PromotionRequest,
   type CertificationRequest,
 } from '../data/store.ts';
+import { applyApprovedFilePromotion, type FilePromotionRequest } from '../files/store.ts';
 
 /**
  * The approval-IS-an-action executor (governance-golden-path.md key principle).
@@ -164,12 +165,30 @@ export async function applyEffect(a: Approval, approver: string): Promise<Effect
         },
       };
     }
+    case 'file_promote': {
+      // Approval IS the action: actually move the file dataset→asset and re-govern
+      // it (bytes move to the domain prefix, DLS grants set) so the domain can read
+      // it. The route already enforced an in-scope Builder/Admin approver.
+      const req = a.payload as unknown as FilePromotionRequest;
+      const approverP: Principal = { id: approver, role: 'builder', domains: [a.domain] };
+      const file = applyApprovedFilePromotion(req, approverP);
+      return {
+        ok: true,
+        applied: `Shared “${file.name}” → domain asset (readable by the ${a.domain} domain).`,
+        live: true,
+        audit: {
+          action: 'approve',
+          subject: file.name,
+          reason: `File promotion approved by ${approver}`,
+          detail: { fileId: file.id, tier: file.tier, visibility: file.visibility },
+        },
+      };
+    }
     // Legacy agent write-backs — consolidated here for the control plane. The
     // rich apply (CRM patch / curate fact) stays in the Agents route; here we
     // record that the held action was cleared.
     case 'connection_write':
     case 'knowledge_certify':
-    case 'file_promote':
     default: {
       return {
         ok: true,

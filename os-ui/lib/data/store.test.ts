@@ -5,22 +5,25 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   __resetStore,
+  ensureHydrated,
   listDatasets,
   getDataset,
   createDataset,
   buildVersion,
   defineMeasure,
   transition,
+  importProduct,
   listFiles,
   writeFile,
   type Principal,
 } from './store.ts';
 import { DatasetError } from './dataset-schema.ts';
 
-const amir: Principal = { id: 'amir', domains: ['sales'], role: 'participant' }; // Creator
+const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' }; // Creator
 const bea: Principal = { id: 'bea', domains: ['sales'], role: 'builder' };
 const sara: Principal = { id: 'sara', domains: ['sales'], role: 'admin' };
-const kenji: Principal = { id: 'kenji', domains: ['finance'], role: 'participant' };
+const kenji: Principal = { id: 'kenji', domains: ['finance'], role: 'creator' };
+const finBuilder: Principal = { id: 'fatima', domains: ['finance'], role: 'builder' };
 
 beforeEach(() => __resetStore());
 
@@ -35,6 +38,17 @@ function seedOrders(): string {
   buildVersion(d.id, amir, 'silver', { quality: 'passing', artifact: 'silver/stg_orders.sql' });
   return d.id;
 }
+
+test('SECURITY: a participant/creator cannot import a cross-domain data product', () => {
+  const id = seedOrders();
+  transition(id, sara, 'promote', { visibility: 'domain' });
+  transition(id, sara, 'certify', { visibility: 'shared' }); // → tier 'product' (sales)
+  // kenji (finance, participant) may not self-import — it grants his whole domain.
+  assert.throws(() => importProduct(id, kenji), (e: DatasetError) => e.status === 403);
+  // A finance Builder may.
+  const product = importProduct(id, finBuilder);
+  assert.ok(product.imports?.includes('finance'));
+});
 
 test('a fresh tenant has no datasets', () => {
   assert.equal(listDatasets(amir).mine.length, 0);
@@ -151,4 +165,74 @@ test('unshare drops grants and returns the asset to a private dataset', () => {
   assert.equal(back.tier, 'dataset');
   assert.equal(back.visibility, 'private');
   assert.equal(back.grants.length, 0);
+});
+
+// --------------------------------------------------------- durable mirror ----
+// A minimal in-memory fake of the OpenSearch REST surface the store speaks to,
+// installed over global.fetch. `docs` survives an in-process `__resetStore()`,
+// so we can simulate an os-ui restart hydrating from the durable backend.
+function fakeOpenSearch() {
+  const docs = new Map<string, unknown>();
+  const orig = globalThis.fetch;
+  const json = (body: unknown) =>
+    new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const u = String(input);
+    const method = init?.method ?? 'GET';
+    if (u.endsWith('/_count')) return json({ count: docs.size });
+    if (method === 'HEAD') return new Response(null, { status: 200 });
+    if (u.includes('/_search')) {
+      return json({ hits: { hits: [...docs.values()].map((_source) => ({ _source })) } });
+    }
+    if (u.includes('/_doc/')) {
+      const id = decodeURIComponent(u.split('/_doc/')[1].split('?')[0]);
+      if (method === 'DELETE') docs.delete(id);
+      else docs.set(id, JSON.parse(String(init?.body ?? '{}')));
+      return json({ result: 'ok' });
+    }
+    return json({});
+  }) as typeof fetch;
+  return { docs, restore: () => { globalThis.fetch = orig; } };
+}
+
+test('the data store mirrors writes to the backend and hydrates from it after a restart', async () => {
+  const os = fakeOpenSearch();
+  try {
+    await ensureHydrated();
+    const id = seedOrders(); // create + build → mirrored fire-and-forget
+    // Fire-and-forget writes settle on the next tick.
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(os.docs.size, 1, 'the write was mirrored to the durable backend');
+
+    // Simulate an os-ui restart: wipe the in-process cache, keep the backend.
+    __resetStore();
+    assert.equal(listDatasets(amir).mine.length, 0, 'in-process cache is empty after restart');
+    await ensureHydrated(); // rehydrate from the durable mirror
+    const groups = listDatasets(amir);
+    assert.equal(groups.mine.length, 1, 'the seeded dataset survived the restart');
+    assert.equal(groups.mine[0].id, id);
+  } finally {
+    os.restore();
+  }
+});
+
+test('cross-instance: writes are visible through globalThis symbol', () => {
+  __resetStore();
+  const d = createDataset(amir, { name: 'CrossInstance' });
+  const raw = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.data.store')] as { store: Map<string, unknown> };
+  assert.ok(raw && raw.store.has(d.id), 'record visible in globalThis state');
+  assert.equal(listDatasets(amir).mine.length, 1);
+});
+
+test('the data store degrades gracefully when the backend is unavailable (never throws)', async () => {
+  const orig = globalThis.fetch;
+  globalThis.fetch = (async () => { throw new Error('backend down'); }) as typeof fetch;
+  try {
+    await ensureHydrated(); // must not throw
+    const id = seedOrders(); // in-memory only
+    assert.equal(listDatasets(amir).mine.length, 1, 'still works fully in-process');
+    assert.equal(listDatasets(amir).mine[0].id, id);
+  } finally {
+    globalThis.fetch = orig;
+  }
 });

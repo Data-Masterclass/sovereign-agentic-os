@@ -116,7 +116,7 @@ export const TOOLS: Record<string, Tool> = {
     protocol: 'http',
     frame: 'strip',
     basePath: '/tools/forgejo',
-    minRole: 'participant',
+    minRole: 'creator',
     embeddable: true,
     sso: {
       mode: 'header',
@@ -132,11 +132,11 @@ export const TOOLS: Record<string, Tool> = {
     protocol: 'http',
     frame: 'strip',
     basePath: '/tools/superset',
-    minRole: 'participant',
+    minRole: 'creator',
     embeddable: true,
     sso: {
       mode: 'header',
-      roleMap: { admin: 'Admin', builder: 'Alpha', creator: 'Gamma', participant: 'Gamma' },
+      roleMap: { admin: 'Admin', builder: 'Alpha', 'creator': 'Gamma' },
     },
     note: 'AUTH_REMOTE_USER + auto-user-registration; role via X-Forwarded-Roles.',
   },
@@ -151,7 +151,7 @@ export const TOOLS: Record<string, Tool> = {
     embeddable: true,
     sso: {
       mode: 'header',
-      roleMap: { admin: 'all_access', builder: 'read', creator: 'read', participant: 'read' },
+      roleMap: { admin: 'all_access', builder: 'read', 'creator': 'read' },
     },
     note: 'Proxy/JWT header auth; admin → all_access, else read.',
   },
@@ -166,7 +166,7 @@ export const TOOLS: Record<string, Tool> = {
     embeddable: true,
     sso: {
       mode: 'header',
-      roleMap: { admin: 'Admin', builder: 'DataConsumer', creator: 'DataConsumer', participant: 'DataConsumer' },
+      roleMap: { admin: 'Admin', builder: 'DataConsumer', 'creator': 'DataConsumer' },
     },
     note: 'Header/JWT auth; off by default locally (~2.5 GB JVM).',
   },

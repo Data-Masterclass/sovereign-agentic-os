@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { TAB_GROUPS, type Tab } from '@/lib/tabs';
 import { useUser } from '@/lib/useUser';
 // Static import so the brand mark is emitted into .next/static (served in the
@@ -10,13 +10,14 @@ import lotus from './lotus.svg';
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const router = useRouter();
   const { user } = useUser();
 
   async function signOut() {
     await fetch('/api/auth/logout', { method: 'POST' });
-    router.replace('/signin');
-    router.refresh();
+    // FULL-PAGE navigation so Next's client router cache (which still holds the
+    // signed-out user's RSC payloads) is discarded — the logout route already
+    // cleared the cookie, so /signin renders clean with no stale identity.
+    window.location.assign('/signin');
   }
 
   // Hide role-gated tabs from users who can't act on them, so participants

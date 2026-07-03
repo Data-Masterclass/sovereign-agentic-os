@@ -6,7 +6,7 @@ import { requireUser } from '@/lib/auth';
 import { getWorkflow, getDomainKnowledge } from '@/lib/knowledge/store';
 import { chunkWorkflow, chunkDomain } from '@/lib/knowledge/chunk';
 import { indexWorkflow, indexDomain } from '@/lib/knowledge/index-pipeline';
-import { unitCount } from '@/lib/knowledge/index-store';
+import { hasWorkflowUnits } from '@/lib/knowledge/index-store';
 import { retrieveKnowledge } from '@/lib/knowledge/retrieve';
 import { buildContextPack } from '@/lib/knowledge/context-pack';
 import { traceContext } from '@/lib/knowledge/knowledge-trace';
@@ -38,8 +38,11 @@ export async function POST(req: Request, { params }: Params) {
     const view = getWorkflow(id, user);
     const dk = getDomainKnowledge(view.domain);
 
-    // Ensure the workflow + domain are indexed (idempotent, incremental).
-    if (unitCount() === 0) {
+    // Ensure THIS workflow (+ its domain) is indexed before we retrieve its tail.
+    // Gating on a global count skipped indexing for every draft after the first,
+    // silently emptying their retrieved tail; gate per-workflow instead
+    // (idempotent, incremental — upsert replaces the scope's units).
+    if (!hasWorkflowUnits(id)) {
       await indexWorkflow(view.workflow, { owner: view.owner, tacit: view.tacit, updatedAt: view.updatedAt });
       await indexDomain(dk);
     }

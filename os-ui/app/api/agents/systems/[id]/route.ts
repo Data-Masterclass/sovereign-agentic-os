@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { getSystem } from '@/lib/agents/store';
 import { compile } from '@/lib/agents/langgraph-compile';
+import { config } from '@/lib/config';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,6 +48,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       compileError,
       canEdit,
       role: user.role,
+      // Whether the Hermes autonomous runtime is provisioned in this deployment.
+      // The runtime option is always SHOWN (per plan); when false, selecting it is
+      // documented as gated-off (no gateway provisioned in base/kind).
+      hermesEnabled: config.hermesEnabled,
     });
   } catch (e) {
     return fail(e);

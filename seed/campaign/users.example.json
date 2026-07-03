@@ -1,0 +1,26 @@
+[
+  {
+    "id": "alp-instructor",
+    "name": "ALP Instructor",
+    "email": "alp-instructor@datamasterclass.com",
+    "password": "<GENERATED — see gen-credentials.mjs; never commit a real one>",
+    "domains": ["agentic-leader-q3-2026"],
+    "role": "builder"
+  },
+  {
+    "id": "first.participant@example.com",
+    "name": "First Participant",
+    "email": "first.participant@example.com",
+    "password": "Agentic!Leader2026",
+    "domains": ["agentic-leader-q3-2026"],
+    "role": "agentic-leader"
+  },
+  {
+    "id": "second.participant@example.com",
+    "name": "Second Participant",
+    "email": "second.participant@example.com",
+    "password": "Agentic!Leader2026",
+    "domains": ["agentic-leader-q3-2026"],
+    "role": "agentic-leader"
+  }
+]

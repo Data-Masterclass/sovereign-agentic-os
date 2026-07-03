@@ -22,11 +22,14 @@ import {
 } from './store.ts';
 import { DatasetError } from './dataset-schema.ts';
 
-const amir: Principal = { id: 'amir', domains: ['sales'], role: 'participant' };
+const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' };
 const bea: Principal = { id: 'bea', domains: ['sales'], role: 'builder' };
 const sara: Principal = { id: 'sara', domains: ['sales'], role: 'admin' };
 const maria: Principal = { id: 'maria', domains: ['finance'], role: 'admin' };
-const kenji: Principal = { id: 'kenji', domains: ['finance'], role: 'participant' };
+const kenji: Principal = { id: 'kenji', domains: ['finance'], role: 'creator' };
+// Importing a product is a Builder+ action (it grants the whole domain); a
+// finance Builder performs the import, while kenji (participant) still READS it.
+const finBuilder: Principal = { id: 'fatima', domains: ['finance'], role: 'builder' };
 
 beforeEach(() => __resetStore());
 
@@ -73,10 +76,10 @@ test('request → approve certification (Admin approves a Builder/owner request)
 test('import/subscribe records the domain + adds a read grant (idempotent)', () => {
   const id = salesAsset();
   certify(id, sara, {});
-  const p1 = importProduct(id, kenji); // finance imports
+  const p1 = importProduct(id, finBuilder); // finance imports (Builder+)
   assert.ok(p1.imports?.includes('finance'));
   assert.ok(p1.grants.some((g) => g.grantee.kind === 'domain' && g.grantee.id === 'finance'));
-  const p2 = importProduct(id, kenji); // again — no duplication
+  const p2 = importProduct(id, finBuilder); // again — no duplication
   assert.equal(p2.imports?.filter((x) => x === 'finance').length, 1);
   assert.equal(listImported(kenji).some((x) => x.id === id), true);
 });
@@ -90,7 +93,7 @@ test('the owning domain cannot import its own product', () => {
 test('lineage-aware: a product with importers cannot be decertified', () => {
   const id = salesAsset();
   certify(id, sara, {});
-  importProduct(id, kenji);
+  importProduct(id, finBuilder);
   assert.throws(() => transition(id, sara, 'decertify'), (e: DatasetError) => e.status === 409);
 });
 

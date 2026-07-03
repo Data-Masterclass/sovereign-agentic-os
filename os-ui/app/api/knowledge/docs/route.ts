@@ -3,20 +3,26 @@
  */
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/config';
+import { requireUser } from '@/lib/auth';
+import { errorResponse } from '@/lib/data/server';
+import { dlsFilter } from '@/lib/knowledge/retrieve';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * Unstructured Data ingest + knowledge listing -> OpenSearch.
  *
- *  GET  -> list the current documents in the knowledge index (newest first),
- *          excluding the embedding vector from `_source`.
- *  POST -> ingest a pasted document ({ title, text }) into the same index so
- *          the agents' RAG can retrieve it. (Files run through Docling first;
- *          its parsed markdown lands here the same way.)
+ *  GET  -> list the documents in the knowledge index the CALLER may see (DLS grant
+ *          filter pushed down — the same filter `retrieveKnowledge` uses), newest
+ *          first, excluding the embedding vector. A student never sees another
+ *          domain's or student's docs.
+ *  POST -> ingest a pasted document ({ title, text }) into the same index, STAMPED
+ *          with the caller's owner/domain and Personal visibility so it is DLS-
+ *          scoped from the start. (Files run through Docling first; its parsed
+ *          markdown lands here the same way.)
  *
- * All OpenSearch access stays server-side; the index URL never reaches the
- * browser.
+ * Both require a session (401 for anon). All OpenSearch access stays server-side;
+ * the index URL never reaches the browser.
  */
 
 const base = () => `${config.opensearchUrl}/${config.knowledgeIndex}`;
@@ -24,13 +30,22 @@ const base = () => `${config.opensearchUrl}/${config.knowledgeIndex}`;
 type Doc = { id: string; title: string; excerpt: string; source: string; ingestedAt: string | null };
 
 export async function GET() {
+  let principal;
+  try {
+    const u = await requireUser();
+    principal = { id: u.id, domains: u.domains, role: u.role };
+  } catch (e) {
+    return errorResponse(e);
+  }
   const body = {
     size: 50,
     _source: { excludes: ['embedding'] },
     // `unmapped_type` so the sort tolerates the field being absent until the
     // first ingest creates it (the seeded knowledge docs have no ingested_at).
     sort: [{ ingested_at: { order: 'desc', missing: '_last', unmapped_type: 'date' } }],
-    query: { match_all: {} },
+    // DLS grant filter: only units the caller may see (owner / same-domain Shared /
+    // Marketplace / builder-admin same-domain Personal). Same filter as retrieval.
+    query: { bool: { must: [{ match_all: {} }], filter: [dlsFilter(principal)] } },
   };
   try {
     const res = await fetch(`${base()}/_search`, {
@@ -71,6 +86,12 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  let u;
+  try {
+    u = await requireUser();
+  } catch (e) {
+    return errorResponse(e);
+  }
   let title = '';
   let text = '';
   try {
@@ -89,6 +110,12 @@ export async function POST(req: Request) {
     text,
     source: 'os-ui-ingest',
     ingested_at: new Date().toISOString(),
+    // DLS labels from the SESSION (never the request body) so the doc is scoped to
+    // the ingesting user's domain from the first read. Personal by default — a
+    // Builder promotes it later; the campaign seed ingests as the instructor.
+    owner: u.id,
+    domain: u.domains[0] ?? '',
+    visibility: 'Personal',
   };
 
   try {

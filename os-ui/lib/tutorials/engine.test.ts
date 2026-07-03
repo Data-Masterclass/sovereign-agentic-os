@@ -48,7 +48,7 @@ const fixture: TutorialDef = {
 };
 
 test('session role maps to framing role', () => {
-  assert.equal(framingForRole('participant'), 'creator');
+  assert.equal(framingForRole('creator'), 'creator');
   assert.equal(framingForRole('builder'), 'builder');
   assert.equal(framingForRole('admin'), 'builder');
   assert.equal(framingForRole(undefined), 'user');

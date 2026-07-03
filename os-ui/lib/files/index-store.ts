@@ -47,27 +47,32 @@ export type Hit = {
 };
 
 // chunkId -> doc (the in-process authoritative index).
-const index = new Map<string, ChunkDoc>();
+const FILE_INDEX_KEY = Symbol.for('soa.files.index');
+function fileIndex(): Map<string, ChunkDoc> {
+  const g = globalThis as unknown as Record<symbol, Map<string, ChunkDoc> | undefined>;
+  if (!g[FILE_INDEX_KEY]) g[FILE_INDEX_KEY] = new Map();
+  return g[FILE_INDEX_KEY]!;
+}
 
 export function __resetIndex(): void {
-  index.clear();
+  fileIndex().clear();
 }
 
 /** Replace ALL of a file's chunks (a re-index). Returns the count indexed. */
 export function indexFile(docs: ChunkDoc[], fileId: string): number {
   removeFromIndex(fileId);
-  for (const d of docs) index.set(d.chunkId, d);
+  for (const d of docs) fileIndex().set(d.chunkId, d);
   return docs.length;
 }
 
 export function removeFromIndex(fileId: string): void {
-  for (const [k, d] of index) if (d.fileId === fileId) index.delete(k);
+  for (const [k, d] of fileIndex()) if (d.fileId === fileId) fileIndex().delete(k);
 }
 
 /** The hashes already indexed for a file — the content-hash cache (skip re-embeds). */
 export function indexedHashes(fileId: string): Set<string> {
   const hashes = new Set<string>();
-  for (const d of index.values()) if (d.fileId === fileId) hashes.add(d.hash);
+  for (const d of fileIndex().values()) if (d.fileId === fileId) hashes.add(d.hash);
   return hashes;
 }
 
@@ -75,12 +80,12 @@ export function indexedHashes(fileId: string): Set<string> {
  *  an unchanged chunk instead of re-embedding it (content-hash caching, A3). */
 export function priorVectorsByHash(fileId: string): Map<string, number[]> {
   const m = new Map<string, number[]>();
-  for (const d of index.values()) if (d.fileId === fileId) m.set(d.hash, d.vector);
+  for (const d of fileIndex().values()) if (d.fileId === fileId) m.set(d.hash, d.vector);
   return m;
 }
 
 export function indexSize(): number {
-  return index.size;
+  return fileIndex().size;
 }
 
 function tokens(s: string): string[] {
@@ -103,7 +108,7 @@ export function hybridQuery(opts: {
   const q = opts.queryText.trim().toLowerCase();
   const qTokens = new Set(tokens(q));
   const hits: Hit[] = [];
-  for (const d of index.values()) {
+  for (const d of fileIndex().values()) {
     if (!evaluateDls(opts.filter, d.meta)) continue; // DLS: only what the reader may see
     const semantic = cosine(opts.queryVector, d.vector);
     const hay = `${d.meta.name} ${d.text}`.toLowerCase();

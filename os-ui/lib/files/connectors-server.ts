@@ -35,7 +35,7 @@ export function __resetConnectorLedger(): void {
 }
 
 function principalFor(source: ConnectorSource): Principal {
-  return { id: source.owner, domains: [source.domain], role: 'participant' };
+  return { id: source.owner, domains: [source.domain], role: 'creator' };
 }
 
 function makeStoreSink(source: ConnectorSource): SyncSink {

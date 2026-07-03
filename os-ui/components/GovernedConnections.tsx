@@ -378,7 +378,7 @@ function EgressSection() {
                   <td className="mono">{r.host}</td>
                   <td className="muted">{r.reason}</td>
                   <td>
-                    <span className={`badge ${r.status === 'approved' ? 'ok' : r.status === 'denied' ? 'err' : 'muted'}`}>
+                    <span className={`badge ${r.status === 'approved' ? 'ok' : r.status === 'rejected' ? 'err' : 'muted'}`}>
                       {r.status}
                     </span>
                   </td>
@@ -409,6 +409,11 @@ function ConnectionCard({
     tool: string; args: Record<string, unknown>; preview: ApprovalPreview;
   } | null>(null);
   const [dataUsage, setDataUsage] = useState<'bronze' | 'files' | null>(c.dataUsage);
+  // Attach to a specific agent (grant, restrict-only)
+  const [grantAgent, setGrantAgent] = useState('sales-assistant');
+  const [grantScope, setGrantScope] = useState<'read-only' | 'full'>('read-only');
+  const [grantBusy, setGrantBusy] = useState(false);
+  const [grantMsg, setGrantMsg] = useState('');
   // Autonomous preset
   const [agentPrincipal, setAgentPrincipal] = useState('sales-assistant');
   const [autonomousPreset, setAutonomousPreset] = useState<AutonomousPreset>('read-only');
@@ -487,10 +492,20 @@ function ConnectionCard({
   async function approveOnce() {
     if (!approvalState) return;
     const { tool, args } = approvalState;
-    const r = await doPost(`/api/connections/${c.id}/tool`, { tool, args });
+    const r = await doPost(`/api/connections/${c.id}/approve`, { tool, args });
     const d = r.data;
     setApprovalState(null);
-    setMsg(`⏸ ${tool}: queued for Governance — ${(d.reason ?? d.decision) as string}`);
+    setMsg(r.ok
+      ? `✓ ${tool}: approved inline and executed once — ${(d.reason ?? '') as string}`
+      : `✗ ${(d.error ?? d.reason) as string}`);
+    if (r.ok) onChange();
+  }
+
+  function denyApproval() {
+    if (!approvalState) return;
+    const { tool } = approvalState;
+    setApprovalState(null);
+    setMsg(`✗ ${tool}: denied — not executed`);
   }
 
   async function approveRemember() {
@@ -501,6 +516,21 @@ function ConnectionCard({
     setMsg(r.ok
       ? '✓ Standing policy created — identical calls now auto-run'
       : `✗ ${r.data.error as string}`);
+  }
+
+  async function attachAgent() {
+    if (!grantAgent.trim() || grantBusy) return;
+    setGrantBusy(true);
+    setGrantMsg('');
+    const r = await postJSON(`/api/connections/${c.id}/grant`, {
+      agent: grantAgent.trim(),
+      scope: grantScope,
+    });
+    setGrantMsg(r.ok
+      ? `✓ Attached to ${grantAgent.trim()} (${grantScope}) — other agents don't see this connection`
+      : `✗ ${r.data.error as string}`);
+    setGrantBusy(false);
+    if (r.ok) onChange();
   }
 
   async function setPreset() {
@@ -628,6 +658,9 @@ function ConnectionCard({
             </div>
           ) : null}
           <div className="row" style={{ marginTop: 10, gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn ghost" onClick={denyApproval} disabled={busy !== ''}>
+              Deny
+            </button>
             <button className="btn ghost" onClick={approveOnce} disabled={busy !== ''}>
               Approve once
             </button>
@@ -699,6 +732,48 @@ function ConnectionCard({
               </div>
             ) : null}
           </div>
+
+          {/* Attach to a specific agent (grant, restrict-only) — Builder/Admin only */}
+          {canManage ? (
+            <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+              <div
+                className="mono"
+                style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-faint)', marginBottom: 8 }}
+              >
+                Attach to an agent
+              </div>
+              <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
+                Grant this connection to one agent — it only ever sees the connections a Builder
+                explicitly attaches. <strong>Read-only</strong> exposes just the Read tools even when
+                the connection allows writes; a grant can only narrow, never broaden.
+              </p>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <input
+                  type="text"
+                  value={grantAgent}
+                  onChange={(e) => setGrantAgent(e.target.value)}
+                  placeholder="Agent principal (e.g. sales-assistant)"
+                  style={{ flex: '2 1 140px' }}
+                />
+                <select
+                  value={grantScope}
+                  onChange={(e) => setGrantScope(e.target.value as 'read-only' | 'full')}
+                  style={{ flex: '1 1 120px' }}
+                >
+                  <option value="read-only">read-only</option>
+                  <option value="full">full (exposed tools)</option>
+                </select>
+                <button className="btn ghost" onClick={attachAgent} disabled={grantBusy || !grantAgent.trim()}>
+                  {grantBusy ? <span className="spin" /> : 'Attach'}
+                </button>
+              </div>
+              {grantMsg ? (
+                <div className={grantMsg.startsWith('✓') ? 'answer' : 'error'} style={{ marginTop: 8 }}>
+                  {grantMsg}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           {/* Autonomous safety preset — Builder/Admin only */}
           {canManage ? (

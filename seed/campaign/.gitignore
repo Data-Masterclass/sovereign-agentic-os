@@ -1,0 +1,4 @@
+# Generated cohort credentials — NEVER commit. Re-create with gen-credentials.mjs.
+os-users.seed.json
+roster.private.csv
+users.secret.json

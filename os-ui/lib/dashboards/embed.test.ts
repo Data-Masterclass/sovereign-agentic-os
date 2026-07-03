@@ -7,7 +7,7 @@ import { claimsFromUser, delegate } from '../data/identity.ts';
 import { guestTokenRequest, rlsFromSecurityContext, GUEST_TOKEN_TTL_SECONDS } from './embed.ts';
 
 function tokenFor(id: string, region: string) {
-  return delegate(claimsFromUser({ id, domains: ['sales'], role: 'participant', attributes: { region } }), 'domain');
+  return delegate(claimsFromUser({ id, domains: ['sales'], role: 'creator', attributes: { region } }), 'domain');
 }
 
 test('R3 — the guest token carries the VIEWER\'s RLS; two viewers get different clauses', () => {

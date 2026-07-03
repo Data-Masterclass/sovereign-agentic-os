@@ -14,7 +14,9 @@ import {
   setAgentModel,
   setAgentTools,
   setEntrypoint,
+  setNodePositions,
 } from './canvas-edit.ts';
+import { MODEL_MODES, modeForModel } from './routing.ts';
 
 function base() {
   return parseSystem(
@@ -39,6 +41,10 @@ test('addAgent appends a narrowed ReAct agent and the system still compiles', ()
   assert.equal(w.agent_md.includes('writer'), true);
   // A fresh agent inherits (no narrowing) — undefined tools, never broader.
   assert.equal(w.tools, undefined);
+  // WP1 papercut: a new agent gets a friendly MEMORY.md starter, not '' (which
+  // loaded as a bare empty editor and read as "nothing here").
+  assert.ok(w.memory_md.length > 0, 'new agent has a non-empty MEMORY.md starter');
+  assert.match(w.memory_md, /Memory/);
   assert.doesNotThrow(() => compile(sys));
 });
 
@@ -126,6 +132,31 @@ test('setAgentModel sets and clears the per-agent override', () => {
   assert.equal(set.agents.find((a) => a.id === 'researcher')!.model, 'stackit-qwen3-vl-reasoning');
   const cleared = setAgentModel(set, 'researcher', '');
   assert.equal(cleared.agents.find((a) => a.id === 'researcher')!.model, undefined);
+});
+
+test('the Auto/Reasoning/Execution toggle writes the right pin (and Auto clears it) round-trip', () => {
+  // The AgentEditor toggle calls setAgentModel(sys, id, mode.model ?? '') and then
+  // modeForModel reads the pin back to light up the active segment. Prove the loop.
+  for (const m of MODEL_MODES) {
+    const next = setAgentModel(base(), 'researcher', m.model ?? '');
+    const pinned = next.agents.find((a) => a.id === 'researcher')!.model;
+    if (m.mode === 'auto') assert.equal(pinned, undefined, 'Auto clears the pin');
+    else assert.equal(pinned, m.model, `${m.mode} pins ${m.model}`);
+    assert.equal(modeForModel(pinned ?? null), m.mode, `${m.mode} reads back to itself`);
+  }
+});
+
+test('setNodePositions saves rounded positions, merges, and prunes removed agents', () => {
+  let sys = setNodePositions(base(), { supervisor: { x: 12.6, y: 40.2 } });
+  assert.deepEqual(sys.ui?.positions?.supervisor, { x: 13, y: 40 }); // rounded
+  // merge: a second call keeps the first and adds the new one.
+  sys = setNodePositions(sys, { researcher: { x: 100, y: 200 } });
+  assert.deepEqual(Object.keys(sys.ui!.positions!).sort(), ['researcher', 'supervisor']);
+  // removing an agent then re-saving prunes its stale position.
+  sys = removeAgent(sys, 'researcher');
+  sys = setNodePositions(sys, {});
+  assert.equal(sys.ui?.positions?.researcher, undefined);
+  assert.deepEqual(sys.ui?.positions, { supervisor: { x: 13, y: 40 } });
 });
 
 test('mutations round-trip cleanly through serialize -> parse', () => {

@@ -3,14 +3,37 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { getSystemForEdit, setRunning } from '@/lib/agents/store';
+import { getSystemForRun, setRunning, recordActivity } from '@/lib/agents/store';
 import { runSystem } from '@/lib/agents/build/server';
+import { isAgenticSoftwareTeam, runAgenticTeam } from '@/lib/agents/build/agentic-graph-server';
 
 export const dynamic = 'force-dynamic';
+
+type ChatMsg = { role: 'user' | 'assistant'; content: string };
 
 function fail(e: unknown) {
   const status = (e as { status?: number })?.status ?? 500;
   return NextResponse.json({ error: (e as Error).message }, { status });
+}
+
+/** A turn's conversation from the request body (`messages`, else `prompt`). */
+function runMessages(body: Record<string, unknown>, prompt: string): ChatMsg[] {
+  const raw = Array.isArray(body.messages) ? (body.messages as ChatMsg[]) : [];
+  const clean = raw
+    .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
+    .slice(-20)
+    .map((m) => ({ role: m.role, content: m.content.trim() }));
+  return clean.length > 0 ? clean : [{ role: 'user', content: prompt }];
+}
+
+/** Flip the persistent running flag for editors; record activity for run-only. */
+function markRun(id: string, user: Parameters<typeof setRunning>[1]): boolean {
+  try {
+    return setRunning(id, user, true).running;
+  } catch {
+    recordActivity(id);
+    return false;
+  }
 }
 
 /**
@@ -29,17 +52,49 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       return NextResponse.json({ running: rec.running });
     }
 
-    // Edit-level authorization BEFORE any side effect: a Run traces + enqueues
-    // Governance approvals, so a viewer must be rejected before runSystem.
-    const view = getSystemForEdit(id, user);
+    // Run-scope authorization BEFORE any side effect: an owner/in-domain admin, OR
+    // a Creator+ consuming a domain-Shared system (the governed "run the ready-made
+    // agent" path). A mere viewer / out-of-domain / participant is rejected here.
+    const view = getSystemForRun(id, user);
     const prompt = typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : 'Test invocation';
+
+    // A software-MCP LangGraph team runs LIVE, in-process, as the signed-in user:
+    // each node runs the PLAN→ACT harness with its pinned model and executes tools
+    // via handleRpc(user, …) — genuinely building + requesting deploys, never a
+    // system principal. Everything else keeps the runtime/mock `runSystem` path.
+    if (isAgenticSoftwareTeam(view.system)) {
+      const team = await runAgenticTeam({
+        user,
+        yaml: view.yaml,
+        messages: runMessages(body, prompt),
+        disabledAgents: view.disabledAgents,
+      });
+      const running = markRun(id, user);
+      return NextResponse.json({
+        running,
+        mode: 'live',
+        team: true,
+        path: team.path,
+        finalText: team.finalText,
+        // Per-node summary: model + tool steps (no raw model text — keep it tight).
+        nodes: team.runs.map((r) => ({
+          node: r.node,
+          model: r.model,
+          steps: r.result.steps.map((s) => ({ tool: s.tool, isError: s.isError })),
+        })),
+      });
+    }
+
     const report = await runSystem(id, view.yaml, {
       prompt,
       requestedBy: user.id,
       disabledAgents: view.disabledAgents,
     });
-    setRunning(id, user, true);
-    return NextResponse.json({ running: true, ...report });
+    // Flip the PERSISTENT running flag only for editors (owner / in-domain admin);
+    // a run-scoped consumer performs a transient invocation and must NOT mutate the
+    // shared record's state — record activity instead.
+    const running = markRun(id, user);
+    return NextResponse.json({ running, ...report });
   } catch (e) {
     return fail(e);
   }

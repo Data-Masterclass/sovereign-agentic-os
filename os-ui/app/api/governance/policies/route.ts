@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { currentUser } from '@/lib/auth';
 import { listUsers } from '@/lib/users';
-import { consolidatedPlane, listEgress, overrideRevoke, policySources, readOpaGrants } from '@/lib/governance/policy-view';
+import { canViewPolicyPlane, consolidatedPlane, listEgress, overrideRevoke, policySources, readOpaGrants } from '@/lib/governance/policy-view';
 import { listStanding } from '@/lib/governance/standing';
 import { record as audit } from '@/lib/governance/audit';
 
@@ -19,6 +19,11 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  // Gate on the policy.view right (Builder+), not mere authentication — a
+  // User/Creator must not read the whole tenant's grant plane.
+  if (!canViewPolicyPlane(user.role)) {
+    return NextResponse.json({ error: 'Viewing the policy plane requires the policy.view right (Builder or Admin)' }, { status: 403 });
+  }
   const scope = user.role === 'admin' ? undefined : user.domains;
   const users = await listUsers();
   const plane = consolidatedPlane(users, scope);

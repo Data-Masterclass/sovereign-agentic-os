@@ -135,7 +135,7 @@ export default function SettingsPage() {
             <label className="hint" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               New-user role
               <select value={s.defaults.newUserRole} onChange={(e) => set('defaults', { ...s.defaults, newUserRole: e.target.value })}>
-                <option value="participant">participant</option>
+                <option value="creator">creator</option>
                 <option value="builder">builder</option>
               </select>
             </label>

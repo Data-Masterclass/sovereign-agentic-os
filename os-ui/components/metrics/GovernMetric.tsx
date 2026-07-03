@@ -45,8 +45,10 @@ export default function GovernMetric({
         body: JSON.stringify({ metricId: metric.id, transition }),
       });
       const data = await res.json();
-      // 200 → moved; 403 → denied with a reason + the same consistency rows.
-      if (res.status >= 500) { setErr(data.error ?? 'Governance failed'); return; }
+      // 200 → moved; 403 → denied with a reason + the same consistency rows. Any other
+      // non-OK shape (400 bad input, 404 not found, 5xx) has no `consistency` field —
+      // surface it as a plain error so the render never dereferences a missing gate.
+      if (!res.ok && !data.consistency) { setErr(data.error ?? 'Governance failed'); return; }
       setResult(data);
       if (data.ok) onGoverned();
     } catch (e) { setErr((e as Error).message); } finally { setBusy(''); }
@@ -85,6 +87,11 @@ export default function GovernMetric({
           <p className="hint" style={{ marginTop: 10 }}>
             You are signed in as <strong>{role}</strong>. Builders promote; admins certify.
           </p>
+        ) : role && canPromote && !canCertify ? (
+          <p className="hint" style={{ marginTop: 10 }}>
+            You are signed in as <strong>{role}</strong> — you can promote to the domain. Certifying to
+            the Marketplace needs an Admin.
+          </p>
         ) : null}
       </div>
 
@@ -93,7 +100,7 @@ export default function GovernMetric({
       {result ? (
         <>
           <div className="section-title">
-            {result.ok ? 'Promoted' : 'Gate not passed'}
+            {result.ok ? (result.tier === 'marketplace' ? 'Certified' : 'Promoted') : 'Gate not passed'}
             {result.ok && result.tier ? <span className={`badge ${TIER_BADGE[result.tier]}`}>{TIER_WORD[result.tier]}</span> : null}
           </div>
           {!result.ok && result.reason ? (

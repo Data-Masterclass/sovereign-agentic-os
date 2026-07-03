@@ -34,10 +34,21 @@ import {
  * OpenSearch write-through ("os-strategy-pillars") for durability on a real
  * deploy. The governance rules below are the security boundary regardless of
  * backing store.
+ *
+ * State is pinned to `globalThis` via Symbol.for so it is a TRUE singleton across
+ * all Next.js route-handler module instances — a pillar created via
+ * `POST /api/strategy/pillars` is immediately visible to `GET /api/strategy/pillars`
+ * (or any Big Bet route that reads pillars). Same pattern as `lib/marketplace/store.ts`
+ * and `lib/agents/store.ts`.
  */
 
-let cache: Map<string, Pillar> | null = null;
-let osHealthy = false;
+type PillarsState = { cache: Map<string, Pillar> | null; osHealthy: boolean };
+const STATE_KEY = Symbol.for('soa.strategy.pillars');
+function state(): PillarsState {
+  const g = globalThis as unknown as Record<symbol, PillarsState | undefined>;
+  if (!g[STATE_KEY]) g[STATE_KEY] = { cache: null, osHealthy: false };
+  return g[STATE_KEY]!;
+}
 
 function now(): string {
   return new Date().toISOString();
@@ -72,11 +83,11 @@ async function osFetch(path: string, init?: RequestInit): Promise<Response | nul
 }
 
 function writeThrough(p: Pillar): void {
-  if (!osHealthy) return;
+  if (!state().osHealthy) return;
   void osFetch(`/${INDEX}/_doc/${p.id}?refresh=true`, { method: 'PUT', body: JSON.stringify(p) });
 }
 function deleteThrough(pid: string): void {
-  if (!osHealthy) return;
+  if (!state().osHealthy) return;
   void osFetch(`/${INDEX}/_doc/${pid}?refresh=true`, { method: 'DELETE' });
 }
 
@@ -130,11 +141,12 @@ function seed(): Pillar[] {
 }
 
 async function getCache(): Promise<Map<string, Pillar>> {
-  if (cache) return cache;
+  const s = state();
+  if (s.cache) return s.cache;
   const map = new Map<string, Pillar>();
   const ping = await osFetch(`/${INDEX}/_count`);
   if (ping && ping.ok) {
-    osHealthy = true;
+    s.osHealthy = true;
     const res = await osFetch(`/${INDEX}/_search?size=1000`, {
       method: 'POST',
       body: JSON.stringify({ query: { match_all: {} } }),
@@ -145,10 +157,10 @@ async function getCache(): Promise<Map<string, Pillar>> {
     }
     if (map.size === 0) for (const p of seed()) { map.set(p.id, p); writeThrough(p); }
   } else {
-    osHealthy = false;
+    s.osHealthy = false;
     for (const p of seed()) map.set(p.id, p);
   }
-  cache = map;
+  s.cache = map;
   return map;
 }
 
@@ -385,6 +397,7 @@ export async function unlinkBet(user: CurrentUser, pid: string, betId: string): 
 
 /** Test seam: drop the in-process cache so a fresh seed loads. */
 export function __resetForTests(): void {
-  cache = null;
-  osHealthy = false;
+  const s = state();
+  s.cache = null;
+  s.osHealthy = false;
 }

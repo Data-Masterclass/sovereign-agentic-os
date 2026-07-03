@@ -197,7 +197,9 @@ export default function FilesBrowser() {
             </>
           ) : (
             <>
-              {filtered.length === 0 ? (
+              {groups === null ? (
+                <div className="stub-page"><span className="spin" /> Loading your drive…</div>
+              ) : filtered.length === 0 ? (
                 <div className="stub-page">
                   {scope === 'mine'
                     ? 'No files here yet. Drag a file in, or use Upload — any type works.'

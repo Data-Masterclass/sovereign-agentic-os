@@ -71,7 +71,9 @@ export default function BronzePanel({
     try {
       const res = await fetch(`/api/data/datasets/${datasetId}/version`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ layer: 'bronze', quality: 'passing' }),
+        // Raw, just-loaded data: no dbt tests have run, so quality is honestly unknown
+        // (not a green "healthy"). Silver/Gold carry the same discipline — no faked ✓.
+        body: JSON.stringify({ layer: 'bronze', quality: 'unknown' }),
       });
       const data = await res.json();
       if (!res.ok) { setErr(data.error ?? 'Could not save Bronze'); return; }

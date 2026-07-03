@@ -18,6 +18,18 @@
 
 export type RunMode = 'live' | 'offline-mock';
 
+// -------------------------------------------------------------- App surface ----
+
+/**
+ * The DETECTED surface of an app (2026-07 golden path): what it actually exposes
+ * once built, inferred from the committed code + deploy manifest — NOT chosen up
+ * front. An app that serves a frontend / HTML has a `ui`; one that exposes API
+ * endpoints or an MCP tool surface has an `api`; an app can have both. The
+ * monitor view drives its "Open app UI ↗" / "API details" affordances off this,
+ * so the create flow never has to ask "what kind of app".
+ */
+export type AppSurface = { ui: boolean; api: boolean };
+
 // ----------------------------------------------------------- Deploy lifecycle --
 
 /**

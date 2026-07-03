@@ -25,10 +25,11 @@ import type {
   DeployState,
   DeployEnvelope,
   AppManifest,
+  AppSurface,
   ConsumedResource,
 } from '@/lib/software/model';
 import { generateAndCompile } from '@/lib/software/auto-mcp';
-import { parseAppManifest, renderAppYaml, defaultOpenApi } from '@/lib/software/metadata';
+import { parseAppManifest, renderAppYaml, defaultOpenApi, detectSurface } from '@/lib/software/metadata';
 
 /**
  * App registry — the home of record for every application built in the Software
@@ -108,6 +109,8 @@ export type App = {
   };
   /** Parsed app.yaml / OpenAPI convention (metadata fidelity). */
   manifest: AppManifest;
+  /** Detected UI/API surface (inferred from what was built; drives the monitor). */
+  surface: AppSurface;
   /** Governed resources the app actually consumes at run time (no raw creds). */
   consumes: ConsumedResource[];
   /** Whether "Use as Data" has snapshotted app data into a Bronze dataset. */
@@ -298,8 +301,13 @@ export const APP_TEMPLATES: { key: AppTemplateKey; label: string }[] = [
 
 // ----------------------------------------------------------------- Registry ---
 
-let cache: Map<string, App> | null = null;
-let osHealthy = false;
+type AppCacheState = { cache: Map<string, App> | null; osHealthy: boolean };
+const APP_STATE_KEY = Symbol.for('soa.apps.cache');
+function appCacheState(): AppCacheState {
+  const g = globalThis as unknown as Record<symbol, AppCacheState | undefined>;
+  if (!g[APP_STATE_KEY]) g[APP_STATE_KEY] = { cache: null, osHealthy: false };
+  return g[APP_STATE_KEY]!;
+}
 
 function now(): string {
   return new Date().toISOString();
@@ -341,16 +349,17 @@ async function osFetch(path: string, init?: RequestInit): Promise<Response | nul
 }
 
 function writeThrough(a: App): void {
-  if (!osHealthy) return;
+  if (!appCacheState().osHealthy) return;
   void osFetch(`/${config.appsIndex}/_doc/${a.id}?refresh=true`, { method: 'PUT', body: JSON.stringify(a) });
 }
 
 async function getCache(): Promise<Map<string, App>> {
-  if (cache) return cache;
+  const s = appCacheState();
+  if (s.cache) return s.cache;
   const map = new Map<string, App>();
   const ping = await osFetch(`/${config.appsIndex}/_count`);
   if (ping && ping.ok) {
-    osHealthy = true;
+    s.osHealthy = true;
     const res = await osFetch(`/${config.appsIndex}/_search?size=500`, {
       method: 'POST',
       body: JSON.stringify({ query: { match_all: {} } }),
@@ -359,15 +368,18 @@ async function getCache(): Promise<Map<string, App>> {
       const data = (await res.json()) as { hits?: { hits?: { _source: App }[] } };
       for (const h of data?.hits?.hits ?? []) {
         const app = h._source;
+        // Back-compat: apps persisted before surface-detection get one inferred
+        // from their scaffold so the monitor drives off surface, never `template`.
+        if (!app.surface) app.surface = detectSurface(templateFiles(app.template, app.name, app.slug));
         map.set(app.id, app);
         // Re-hydrate the in-process MCP grant so agents can call it after a restart.
         if (app.connectionId) rehydrateConnection(app);
       }
     }
   } else {
-    osHealthy = false;
+    s.osHealthy = false;
   }
-  cache = map;
+  s.cache = map;
   return map;
 }
 
@@ -745,6 +757,9 @@ export async function createApp(
       owner: user.id,
       description,
     }),
+    // The scaffold's surface, detected from the seed files. Re-detected on every
+    // commit + at deploy as the agent builds, so it stays honest to the code.
+    surface: detectSurface(tpl.files(name, slug)),
     consumes: [],
     usedAsData: dataArtifactId !== null,
     createdAt: t,
@@ -894,7 +909,7 @@ export async function listAllAppsInternal(): Promise<App[]> {
 export async function removeAppInternal(appId: string): Promise<void> {
   const map = await getCache();
   map.delete(appId);
-  if (osHealthy) void osFetch(`/${config.appsIndex}/_doc/${appId}?refresh=true`, { method: 'DELETE' });
+  if (appCacheState().osHealthy) void osFetch(`/${config.appsIndex}/_doc/${appId}?refresh=true`, { method: 'DELETE' });
 }
 
 /** Persist a mutated app back to the cache + the durable mirror. */
@@ -915,6 +930,12 @@ export function templateFiles(template: AppTemplateKey, name: string, slug: stri
 /** Mint a prefixed id (shared shape with the rest of the registry). */
 export function newId(prefix: string): string {
   return id(prefix);
+}
+
+export function __resetAppsCache(): void {
+  const s = appCacheState();
+  s.cache = null;
+  s.osHealthy = false;
 }
 
 export { withStatus };

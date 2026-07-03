@@ -30,14 +30,14 @@ import type {
 
 /**
  * Map the app's session role → the tutorial framing role.
- *   participant → creator (a learner who builds drafts)
+ *   creator → creator (a learner who builds drafts)
  *   builder     → builder  (also reviews / promotes in-domain)
  *   admin       → builder  (sees the review/promote framing too)
  * `undefined` (signed-out / unknown) → user (use/consume framing).
  */
 export function framingForRole(role: Role | undefined | null): FramingRole {
   switch (role) {
-    case 'participant':
+    case 'creator':
       return 'creator';
     case 'builder':
     case 'admin':

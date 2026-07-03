@@ -67,6 +67,17 @@ test('emits actor classDefs + class assignments', () => {
   assert.ok(/class prepare human/.test(out));
 });
 
+test('node labels break lines with <br/>, never a raw newline', () => {
+  const out = renderMermaid(parseWorkflow(WF));
+  // The actor line must be separated with a Mermaid-safe <br/>, and no raw
+  // newline may appear inside a quoted node label (which would break parsing).
+  assert.ok(out.includes('Prepare<br/>(Human: Officer)'), 'actor tag joined with <br/>');
+  for (const line of out.split('\n')) {
+    const quoted = line.match(/"([^"]*)"/);
+    if (quoted) assert.ok(!quoted[1].includes('\n'), 'no raw newline inside a label');
+  }
+});
+
 test('empty workflow renders a placeholder node', () => {
   const out = renderMermaid(parseWorkflow(`---
 id: e

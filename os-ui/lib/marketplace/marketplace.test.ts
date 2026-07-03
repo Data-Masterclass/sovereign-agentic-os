@@ -20,7 +20,19 @@ import {
 } from './import-policy.ts';
 import { compileRls, rowMatches, applyRls, rlsEngineLabel } from './rls.ts';
 import { importersOf, planDeprecation, canHardRemove, importerLineage } from './lineage.ts';
+import { mockCatalog } from './store.ts';
 import type { Grant } from './types.ts';
+
+// ---------------------------------------------------------------- store pin --
+
+test('globalThis pin: the mock catalog is a shared singleton across route bundles', () => {
+  const a = mockCatalog();
+  const pinned = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.marketplace.catalog')];
+  assert.equal(a, pinned, 'mockCatalog() returns the globalThis-pinned array');
+  // A second resolution (as a separately-bundled route handler would do) must
+  // see the SAME instance, not a fresh empty copy.
+  assert.equal(mockCatalog(), a, 'second mockCatalog() call returns the same array');
+});
 
 // --------------------------------------------------------- per-type import policy
 

@@ -3,6 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/config';
+import { requireUser } from '@/lib/auth';
+import { errorResponse } from '@/lib/data/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -90,6 +92,11 @@ async function ping(s: Svc) {
 }
 
 export async function GET() {
+  try {
+    await requireUser();
+  } catch (e) {
+    return errorResponse(e);
+  }
   // Layer-4 ENABLEMENT gate: when ml.enabled=false the Science capability is off
   // (not in the cohort-1 path). The page renders a disabled surface; we still
   // report it explicitly so the UI can explain how an Admin enables it.

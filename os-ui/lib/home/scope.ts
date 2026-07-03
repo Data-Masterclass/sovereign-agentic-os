@@ -18,7 +18,7 @@
 
 import type { HomePersona } from './launcher.ts';
 
-export type Viewer = { id: string; domains: string[]; role: 'participant' | 'creator' | 'builder' | 'admin' };
+export type Viewer = { id: string; domains: string[]; role: 'creator' | 'builder' | 'admin' };
 
 // ---- Minimal structural inputs (decoupled from the server-only stores) -------
 

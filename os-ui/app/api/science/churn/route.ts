@@ -4,6 +4,8 @@
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/config';
 import { churnSlice } from '@/lib/science';
+import { requireUser } from '@/lib/auth';
+import { errorResponse } from '@/lib/data/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,6 +16,11 @@ export const dynamic = 'force-dynamic';
  * `ml.enabled=false` and no cluster. No secrets leave the server.
  */
 export async function GET() {
+  try {
+    await requireUser();
+  } catch (e) {
+    return errorResponse(e);
+  }
   if (!config.mlEnabled) {
     return NextResponse.json({ error: 'Science (Layer 4) is off — ml.enabled=false' }, { status: 404 });
   }

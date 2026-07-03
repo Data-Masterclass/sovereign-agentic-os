@@ -9,7 +9,7 @@
  *
  *   node seed/ecommerce/gen-credentials.mjs
  *     → users.secret.json   { "nova-admin": "<pw>", ... }     (SEED_CREDENTIALS input)
- *     → os-users.seed.json  [ { id, name, password, domains, role }, ... ]  (OS_USERS value)
+ *     → os-users.seed.json  [ { id, name, email, password, domains, role }, ... ]  (OS_USERS value)
  *
  * Wire-up (live run, never on a tracked file):
  *   - Put the os-users.seed.json array into values as osUI.usersSeed (or the
@@ -34,7 +34,7 @@ const seed = [];
 for (const c of CAST) {
   const password = strongPassword();
   creds[c.id] = password;
-  seed.push({ id: c.id, name: c.name, password, domains: c.domains, role: c.role });
+  seed.push({ id: c.id, name: c.name, email: c.email, password, domains: c.domains, role: c.role });
 }
 
 writeFileSync(join(here, 'users.secret.json'), JSON.stringify(creds, null, 2) + '\n', { mode: 0o600 });

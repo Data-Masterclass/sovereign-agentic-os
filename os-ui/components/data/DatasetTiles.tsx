@@ -4,6 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useUser } from '@/lib/useUser';
 
 /** Mirrors lib/data/store `DatasetSummary`. */
 type Tile = {
@@ -46,9 +47,12 @@ function Dots({ dots }: { dots: Tile['dots'] }) {
 }
 
 function TileCard({ t, onOpen, onImport }: { t: Tile; onOpen: (id: string) => void; onImport?: (id: string) => void }) {
+  // A role="button" DIV (not a <button>) so the optional Import control can be a real
+  // nested <button> without invalid button-in-button nesting.
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       className="card tile"
       onDoubleClick={() => onOpen(t.id)}
       onKeyDown={(e) => { if (e.key === 'Enter') onOpen(t.id); }}
@@ -70,12 +74,12 @@ function TileCard({ t, onOpen, onImport }: { t: Tile; onOpen: (id: string) => vo
         <Dots dots={t.dots} />
       </div>
       {onImport ? (
-        <span className="tile-action btn ghost sm" role="button" tabIndex={-1}
+        <button type="button" className="tile-action btn ghost sm"
           onClick={(e) => { e.stopPropagation(); onImport(t.id); }}>
           Import
-        </span>
+        </button>
       ) : null}
-    </button>
+    </div>
   );
 }
 
@@ -92,6 +96,11 @@ function Group({ title, tiles, onOpen, onImport }: { title: string; tiles: Tile[
 }
 
 export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void }) {
+  const { user } = useUser();
+  // Importing a marketplace product grants the WHOLE domain read access, so the store
+  // gates it to Builder/Admin (store.importProduct 403s others). Only surface Import to
+  // those roles — no dead control (mirrors CertifyPanel's "no dead controls").
+  const canImport = user?.role === 'builder' || user?.role === 'admin';
   const [groups, setGroups] = useState<Groups | null>(null);
   const [err, setErr] = useState('');
   const [creating, setCreating] = useState(false);
@@ -165,9 +174,9 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
 
       {groups ? (
         <>
-          <Group title="Data" tiles={groups.mine} onOpen={onOpen} />
+          <Group title="My data" tiles={groups.mine} onOpen={onOpen} />
           <Group title="Shared Data" tiles={groups.domain} onOpen={onOpen} />
-          <Group title="Marketplace Data" tiles={groups.marketplace} onOpen={onOpen} onImport={importProduct} />
+          <Group title="Marketplace Data" tiles={groups.marketplace} onOpen={onOpen} onImport={canImport ? importProduct : undefined} />
         </>
       ) : !err ? <div className="stub-page" style={{ marginTop: 20 }}>Loading datasets…</div> : null}
     </>

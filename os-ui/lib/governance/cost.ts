@@ -28,9 +28,13 @@ export type Cap = {
   createdAt: string;
 };
 
-const caps = new Map<string, Cap>();
-/** Best-effort running spend, so over-cap can be demonstrated offline. */
-const spend = new Map<string, number>();
+type CostState = { caps: Map<string, Cap>; spend: Map<string, number> };
+const COST_KEY = Symbol.for('soa.governance.cost');
+function costState(): CostState {
+  const g = globalThis as unknown as Record<symbol, CostState | undefined>;
+  if (!g[COST_KEY]) g[COST_KEY] = { caps: new Map(), spend: new Map() };
+  return g[COST_KEY]!;
+}
 
 function key(scope: CapScope, subject: string, modelClass?: string): string {
   return `${scope}:${subject}:${modelClass ?? '*'}`;
@@ -55,12 +59,12 @@ export function setCap(input: {
     createdBy: input.createdBy,
     createdAt: new Date().toISOString(),
   };
-  caps.set(k, cap);
+  costState().caps.set(k, cap);
   return cap;
 }
 
 export function listCaps(domains?: string[]): Cap[] {
-  return [...caps.values()]
+  return [...costState().caps.values()]
     .filter((c) =>
       domains ? c.scope === 'tenant' || (c.scope === 'domain' && domains.includes(c.subject)) || c.scope === 'key' : true,
     )
@@ -70,7 +74,7 @@ export function listCaps(domains?: string[]): Cap[] {
 /** Record spend against a subject (test/demo helper; live = LiteLLM usage). */
 export function addSpend(scope: CapScope, subject: string, amount: number, modelClass?: string): void {
   const k = key(scope, subject, modelClass);
-  spend.set(k, (spend.get(k) ?? 0) + amount);
+  costState().spend.set(k, (costState().spend.get(k) ?? 0) + amount);
 }
 
 export type CapCheck = { allowed: boolean; reason: string; cap?: Cap; projected: number };
@@ -86,9 +90,9 @@ export function checkCap(input: {
   modelClass?: string;
 }): CapCheck {
   const k = key(input.scope, input.subject, input.modelClass);
-  const cap = caps.get(k) ?? caps.get(key(input.scope, input.subject));
+  const cap = costState().caps.get(k) ?? costState().caps.get(key(input.scope, input.subject));
   if (!cap) return { allowed: true, reason: 'no cap set', projected: input.amount };
-  const current = spend.get(k) ?? spend.get(key(input.scope, input.subject)) ?? 0;
+  const current = costState().spend.get(k) ?? costState().spend.get(key(input.scope, input.subject)) ?? 0;
   const projected = current + input.amount;
   if (projected > cap.limit) {
     return {
@@ -102,6 +106,6 @@ export function checkCap(input: {
 }
 
 export function __resetCost(): void {
-  caps.clear();
-  spend.clear();
+  costState().caps.clear();
+  costState().spend.clear();
 }

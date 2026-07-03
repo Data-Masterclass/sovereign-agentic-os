@@ -11,6 +11,8 @@ import {
   type OpaConnectionBundle,
   type CapMode,
 } from '@/lib/capability-compiler';
+import { type Principal as DlsPrincipal, canSee } from '@/lib/knowledge/retrieve-core';
+import type { Provenance } from '@/lib/knowledge/chunk';
 
 /**
  * Governed agent-tool spine (Agent golden path §1, §7). Every tool an agent
@@ -185,11 +187,16 @@ export type ConnToolPolicy = {
  * `decide()` a live OPA would run against it — so the offline mirror and the
  * online policy cannot drift. The per-agent grant lives inside the bundle.
  */
-const CONNECTION_BUNDLES = new Map<string, OpaConnectionBundle>();
+const BUNDLES_KEY = Symbol.for('soa.agentGoverned.bundles');
+function bundles(): Map<string, OpaConnectionBundle> {
+  const g = globalThis as unknown as Record<symbol, Map<string, OpaConnectionBundle> | undefined>;
+  if (!g[BUNDLES_KEY]) g[BUNDLES_KEY] = new Map();
+  return g[BUNDLES_KEY]!;
+}
 
 /** Compile + register (or replace) a connection's capability profile. */
 export function registerConnectionProfile(principal: string, tools: ConnToolPolicy[]): void {
-  CONNECTION_BUNDLES.set(
+  bundles().set(
     principal,
     compileConnectionProfile(
       principal,
@@ -199,17 +206,17 @@ export function registerConnectionProfile(principal: string, tools: ConnToolPoli
 }
 
 export function unregisterConnectionProfile(principal: string): void {
-  CONNECTION_BUNDLES.delete(principal);
+  bundles().delete(principal);
 }
 
 /** The compiled bundle for a principal (for pushing to OPA / inspection). */
 export function connectionBundle(principal: string): OpaConnectionBundle | null {
-  return CONNECTION_BUNDLES.get(principal) ?? null;
+  return bundles().get(principal) ?? null;
 }
 
 /** Tool names actually exposed to an agent (enabled + in-scope; not Off/Blocked). */
 export function exposedConnectionTools(principal: string): string[] {
-  const b = CONNECTION_BUNDLES.get(principal);
+  const b = bundles().get(principal);
   return b ? exposedTools(b) : [];
 }
 
@@ -223,7 +230,7 @@ export function restrictConnectionForAgent(
   connectionPrincipal: string,
   allowedTools: string[],
 ): void {
-  const b = CONNECTION_BUNDLES.get(connectionPrincipal);
+  const b = bundles().get(connectionPrincipal);
   if (!b) return;
   b.grants[agentPrincipal] = [...allowedTools];
 }
@@ -242,7 +249,7 @@ export function authorizeConnectionCall(
   args?: Record<string, unknown>,
   asAgent?: string,
 ): ConnAuthz {
-  const b = CONNECTION_BUNDLES.get(connectionPrincipal);
+  const b = bundles().get(connectionPrincipal);
   if (!b) return { effect: 'deny', reason: `unknown connection principal ${connectionPrincipal}` };
   const d = decide(b, tool, args ?? {}, asAgent);
   return { effect: d.effect, reason: d.reason, mode: d.mode };
@@ -257,6 +264,9 @@ export type TraceEvent = {
   output: unknown;
   decision?: Effect;
   costUsd?: number;
+  /** Which runtime produced this step — so Monitoring can surface a Hermes run
+   *  distinctly from a LangGraph run (both trace through the SAME governed door). */
+  runtime?: 'langgraph' | 'hermes';
 };
 
 export type TraceRecord = TraceEvent & { id: string; timestamp: string; landed: boolean };
@@ -284,10 +294,10 @@ export async function trace(event: TraceEvent): Promise<TraceRecord> {
         body: {
           id,
           name: `agent.${event.tool}`,
-          metadata: { principal: event.principal, tool: event.tool, decision: event.decision, costUsd: event.costUsd },
+          metadata: { principal: event.principal, tool: event.tool, decision: event.decision, costUsd: event.costUsd, runtime: event.runtime ?? 'langgraph' },
           input: event.input,
           output: event.output,
-          tags: ['agent-golden-path', `tool:${event.tool}`, ...(event.decision ? [`decision:${event.decision}`] : [])],
+          tags: ['agent-golden-path', `tool:${event.tool}`, `runtime:${event.runtime ?? 'langgraph'}`, ...(event.decision ? [`decision:${event.decision}`] : [])],
         },
       },
     ],
@@ -363,6 +373,35 @@ export async function metricsTool(measure: string): Promise<MetricsResult> {
 
 export type Passage = { source: string; title: string; text: string; certified: boolean };
 
+export type { DlsPrincipal };
+
+/**
+ * DLS grant-filter clauses pushed down to OpenSearch — the same query-time grant
+ * filter `lib/knowledge/retrieve.ts` uses, so a `retrieve` tool call can only ever
+ * MATCH units the principal may see. Re-checked per-hit below (belt-and-suspenders).
+ */
+function dlsFilter(principal: DlsPrincipal): Record<string, unknown> {
+  const visible: Record<string, unknown>[] = [
+    { term: { visibility: 'Marketplace' } },
+    { bool: { must: [{ term: { visibility: 'Shared' } }, { terms: { domain: principal.domains } }] } },
+    { term: { owner: principal.id } },
+  ];
+  if (principal.role === 'builder' || principal.role === 'admin') {
+    visible.push({ bool: { must: [{ term: { visibility: 'Personal' } }, { terms: { domain: principal.domains } }] } });
+  }
+  return { bool: { should: visible, minimum_should_match: 1 } };
+}
+
+/** Per-hit DLS re-check on the raw `_source` (default-deny when unlabeled). */
+function srcVisible(src: Record<string, unknown>, principal: DlsPrincipal): boolean {
+  const prov = {
+    domain: String(src.domain ?? ''),
+    owner: String(src.owner ?? ''),
+    visibility: String(src.visibility ?? 'Personal'),
+  } as unknown as Provenance;
+  return canSee(prov, principal);
+}
+
 /**
  * The governed `retrieve` (RAG) tool: lexical search over the domain OpenSearch
  * index, with a curated offline fallback so the tool door still returns a
@@ -378,11 +417,17 @@ const RETRIEVE_SEED: Passage[] = [
   },
 ];
 
-export async function retrieveTool(query: string): Promise<Passage[]> {
+export async function retrieveTool(query: string, principal: DlsPrincipal): Promise<Passage[]> {
   const body = {
     size: 4,
     _source: { excludes: ['embedding'] },
-    query: { multi_match: { query, fields: ['title^2', 'text'], type: 'best_fields', fuzziness: 'AUTO' } },
+    // DLS grant filter pushed down: only units this principal may see can match.
+    query: {
+      bool: {
+        must: [{ multi_match: { query, fields: ['title^2', 'text'], type: 'best_fields', fuzziness: 'AUTO' } }],
+        filter: [dlsFilter(principal)],
+      },
+    },
   };
   const res = await withTimeout(`${config.opensearchUrl}/${config.knowledgeIndex}/_search`, {
     method: 'POST',
@@ -394,24 +439,28 @@ export async function retrieveTool(query: string): Promise<Passage[]> {
       const data = JSON.parse(await res.text());
       const hits = Array.isArray(data?.hits?.hits) ? data.hits.hits : [];
       if (hits.length > 0) {
-        return hits.map((h: Record<string, unknown>) => {
-          const src = (h._source ?? {}) as Record<string, unknown>;
-          return {
-            source: `knowledge:${String(h._id ?? '')}`,
-            title: String(src.title ?? '(untitled)'),
-            text: String(src.text ?? src.content ?? ''),
-            certified: Boolean(src.certified),
-          };
-        });
+        return hits
+          // Belt-and-suspenders: re-check DLS per hit in code (default-deny).
+          .filter((h: Record<string, unknown>) => srcVisible((h._source ?? {}) as Record<string, unknown>, principal))
+          .map((h: Record<string, unknown>) => {
+            const src = (h._source ?? {}) as Record<string, unknown>;
+            return {
+              source: `knowledge:${String(h._id ?? '')}`,
+              title: String(src.title ?? '(untitled)'),
+              text: String(src.text ?? src.content ?? ''),
+              certified: Boolean(src.certified),
+            };
+          });
       }
     } catch {
       /* fall through to seed */
     }
   }
-  // Offline curated passages — keep only the ones that match the query loosely.
+  // Offline curated passages — certified/Marketplace, so DLS-visible to everyone;
+  // still filtered per-unit so the invariant holds on the offline path too.
   const q = query.toLowerCase();
   const matched = RETRIEVE_SEED.filter(
-    (p) => q.length === 0 || /contract|renew|discount|policy|term/.test(q),
+    (p) => (q.length === 0 || /contract|renew|discount|policy|term/.test(q)) && srcVisible({ visibility: 'Marketplace' }, principal),
   );
-  return matched.length > 0 ? matched : RETRIEVE_SEED;
+  return matched.length > 0 ? matched : RETRIEVE_SEED.filter(() => srcVisible({ visibility: 'Marketplace' }, principal));
 }

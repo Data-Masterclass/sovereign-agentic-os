@@ -60,10 +60,14 @@ function seed(): MockProduct[] {
 }
 
 
-let catalog: MockProduct[] | null = null;
+// Pinned to globalThis (same reason as the live state below): the App Router
+// bundles route handlers separately, so a module-scoped `let` would give each
+// route its own catalog copy. One shared instance keeps listings consistent.
+const CATALOG_KEY = Symbol.for('soa.marketplace.catalog');
 export function mockCatalog(): MockProduct[] {
-  if (!catalog) catalog = seed();
-  return catalog;
+  const g = globalThis as unknown as Record<symbol, MockProduct[] | undefined>;
+  if (!g[CATALOG_KEY]) g[CATALOG_KEY] = seed();
+  return g[CATALOG_KEY]!;
 }
 
 export function mockProduct(id: string): MockProduct | undefined {

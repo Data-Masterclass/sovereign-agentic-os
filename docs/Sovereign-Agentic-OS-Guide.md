@@ -144,17 +144,18 @@ that turns green only when an artifact is documented and in the lineage graph. T
 product the creator-only scope is always labelled **"Personal"** (never "Mine" or "My"), and a
 domain is named directly — **"<domain> domain"**, not "My Domain".
 
-## Four roles, assigned per domain
+## Three roles, assigned per domain
 
 | Role | What they do |
 |---|---|
-| **User** | consumes — reads dashboards, asks agents, imports certified products |
-| **Creator** | builds drafts — datasets, workflows, agents, apps (Personal by default) |
-| **Builder** | certifies and shares in-domain; approves go-lives, deploys and write-backs |
-| **Administrator** | sets tenant guardrails; promotes to the Marketplace; runs Admin (Platform) |
+| **Creator** | the base role — creates and runs their **own** artifacts (datasets, workflows, agents, apps — Personal by default) and consumes anything shared or certified. Cannot promote, approve, or reach admin. |
+| **Builder** | the domain steward — everything a Creator can, plus review/approve, promote to **Shared**, and manage the domain's members |
+| **Administrator** | tenant-wide — users, policy, certification to the **Marketplace**, cost caps; runs Admin (Platform) |
 
-Roles are assigned **per domain** and **compiled to OPA**, so a role change takes effect everywhere
-at once. Identities are backed by **Ory** — the UI never handles a raw password.
+The ladder is exactly **creator < builder < admin**. Earlier releases had two more roles —
+*participant* (view-only) and *agentic-leader* — both are **removed**: agentic-leaders migrated to
+**Creator**, and any legacy or unknown role normalises to Creator. Roles are assigned **per domain**
+and **compiled to OPA**, so a role change takes effect everywhere at once.
 
 ## The governance spine
 
@@ -278,9 +279,11 @@ team is a deliberate, audited sequence — this is the secure first-run path:
 4. **Create your domains.** In **Admin → Domains**, create a domain per team or business area, and
    toggle its optional layers (for example, turn Science on for a domain that needs ML).
 5. **Invite real users.** In **Admin → Users & Access** (or **Governance → Users & access**), invite
-   people via Ory — you send an invitation, never a password — and give each a **role per domain**.
+   people **by email — the email is the username** — pick their **domain memberships** (a
+   multi-select), and give each a **role per domain**; the role picker explains what each role can
+   do. If a mailer is configured the invitee gets a verification email; you never send a password.
 6. **Roles take effect everywhere.** Each assignment **compiles to OPA**, so a person who is a
-   *Builder* in one domain and a *User* in another sees exactly the right controls in every tab,
+   *Builder* in one domain and a *Creator* in another sees exactly the right controls in every tab,
    immediately.
 7. **Set the guardrails.** Still in Admin, set the **model allowlist and defaults**, the **egress
    allowlist**, and the **cost envelope**. These compile through the same policy engine the tabs
@@ -315,6 +318,11 @@ to**. They are in **sidebar order** — the business tabs first, then a short **
 the operational consoles. Most flows run live against the cluster and fall back to a labelled
 offline mock on `kind` — a ✓ always means a real apply and verify.
 
+Every page also carries a **top-left ActionBar** under its title: a **Tutorial** button on every tab
+that has a golden-path tutorial, and — on the tabs that expose an MCP endpoint — a
+**"Connect your AI Tool via MCP"** button that opens a drawer with your per-user token and one-click
+import instructions for Claude/ChatGPT (see *Use the OS from Claude or ChatGPT* in the Reference).
+
 ## Home — the golden-path launcher
 
 **What it's for.** The warm front door after you pick a domain. Home **only orients and routes**: an
@@ -333,7 +341,7 @@ carries the cockpit modules.
 4. Use the **"Your cockpit"** call-to-action to open the live cockpit when you want to see what's
    moving and what needs you.
 
-**Roles.** All four — the launcher copy and dimming reorder by persona.
+**Roles.** All three — the launcher copy and dimming reorder by persona.
 **Connects to.** Routes into all ten path tabs; hands off to **Cockpit** for the live view.
 
 ## Cockpit — what's moving, what needs you
@@ -355,7 +363,7 @@ numbers and never bypasses governance.
 5. Use **Ask anything** to get an answer or scaffold a Personal draft (promotion stays human and
    traced).
 
-**Roles.** All four — the modules and ordering shift by persona; everything is OPA/RLS-scoped.
+**Roles.** All three — the modules and ordering shift by persona; everything is OPA/RLS-scoped.
 **Connects to.** Reads Governance, the artifact registry, Strategy and Monitoring; routes into every
 tab. *(Domain pulse and Health & cost read live feeds, mock-stubbed on `kind` and labelled as such.)*
 
@@ -421,26 +429,64 @@ are composed, governed and run, plus a strip of the **deployed agent systems** c
 There are no sub-tabs. Every model and tool call goes through the gateway — no agent ever touches a
 raw resource.
 
-**The golden path.**
+**The golden path.** The tab is a **master–detail** surface: a rail of your agent systems on the
+left, the selected system's full detail on the right.
 
-1. Author an agent system three equivalent ways — a drag-and-connect **canvas**, **Monaco** editing
-   of `system.yaml`, or the **agent-system assistant** chat — all editing the same Forgejo-versioned
-   file.
+1. Author an agent system three equivalent ways — a **React-Flow drag-and-drop graph builder**
+   (drag agents onto the canvas, connect the edges), **Monaco** editing of `system.yaml`, or the
+   **agent-system assistant** chat — all editing the same versioned file. Each agent's `AGENT.md`
+   and `MEMORY.md` open and persist reliably alongside the graph.
 2. Grant the **resources** (data products, knowledge, files, connections) and **tools** the system
    may use; a validation gate must pass first.
-3. Press **Build** — *Build = execute + verify*: it runs the compiled system and checks it, every
-   call routed through **LiteLLM → OPA → Langfuse**. Pick a LiteLLM model per agent.
-4. **Run / schedule / toggle** the system, or **fork-to-own** a copy. By default agents are
+3. Pick models with the single **Auto / Reasoning / Execution** toggle — it shows the **real
+   gateway model names** (`sovereign-reasoning`, `sovereign-default`, …) with an
+   **internal/external** badge per model; *Auto* routes each activity to the right tier, and a
+   per-agent override writes the system's LiteLLM routing.
+4. Press **Build** — *Build = execute + verify*: it runs the compiled system and checks it, every
+   call routed through **LiteLLM → OPA → Langfuse**.
+5. **Run / schedule / toggle** the system, or **fork-to-own** a copy. By default agents are
    *propose-don't-commit* — a write pauses for approval and enqueues in **Governance**.
-5. Below, the **Deployed agent systems** strip shows what's running (the seeded Sales/Finance
-   assistants; the **poem agent** is a fun demo, not infrastructure).
 6. Certify a finished agent to list it in the Marketplace.
+
+> **What is no longer here.** The Agents tab shows only **user-authored agent systems**. The
+> platform's backend service agents — the **Domain RAG agent**, the **ML pipeline agent** and the
+> **Hermes autonomous runtime** — are *system agents* now surfaced with live health on the
+> **Platform** tab, not mixed into your authoring list; the old poet demo agent is removed
+> entirely. When you select the Hermes runtime, an inline guidance strip explains exactly what
+> **Run** will do in the current environment.
 
 **Roles.** Creators and Builders author; promotion and held write-backs are human-gated.
 **Connects to.** **Knowledge** (attach-as-context, scaffold-from-workflow — both live), **Connections**
 (a connection becomes a tool), **Governance**, **Monitoring**, **Marketplace**.
 *(Build/Run execute against the live agent-runtime when a cluster is reachable, else an in-process
 mock — labelled either way.)*
+
+**Two runtimes, one governed plane.** Each system picks a **runtime** next to the safety preset:
+**LangGraph** (the default — structured, replayable, human-in-the-loop graphs) or the autonomous
+**Hermes** runtime for long-running work that compounds — **persistent memory + self-improving
+skills**, running unattended. They are complementary, not competing, and share **one governed plane**:
+Hermes reaches models **only through LiteLLM** (direct provider keys disabled, so it cannot call a
+model off-gateway) and tools **only through the same Platform MCP** every other client uses — so
+**OPA still gates every call** (allow / deny / requires-approval), Langfuse traces it, and RLS scopes
+it to the profile's identity. There is no side door.
+
+- **Model tier.** Hermes uses **Hermes 4.3** as its tool-calling brain, served via **vLLM behind
+  LiteLLM** — the 14B tier is CPU-feasible; the stronger 36B/70B tiers sit behind the optional GPU
+  pool. Magistral stays the general-reasoning default. *(Hermes 4 weights are Llama-3.1-based →
+  Llama 3.1 Community License; fine for self-hosted use, not redistributed.)*
+- **Safety presets** map straight to the profile: **read-only** (reads only, no unattended writes),
+  **read + propose** (writes drafted for a human), **read + bounded writes** (bounded writes auto-run,
+  approval-writes queue), **full in-scope** (everything the profile exposes, still OPA-gated).
+  Out-of-scope tool calls are **OPA-denied and queued to the Governance inbox** — never a silent bypass.
+- **Sandbox.** Code runs under a **real kernel-isolated runtime** — a **Kata microVM** where the node
+  has nested KVM (an SKE preflight decides), else **gVisor** — **never** host-local. A blocklisted
+  egress or a hardline command is refused (SSRF fail-closed, egress allowlist, website blocklist).
+- **Skills & memory.** A skill Hermes creates surfaces as a **reviewable, uncertified artifact**
+  (owner / domain / visibility) — the human promotion ladder still applies; nothing auto-certifies.
+  Memory + skills persist to a **per-user, backed-up, deletable** volume (GDPR erasure honoured).
+- **Gated off by default.** Hermes ships in the release but is **off in base and kind** (`hermes.enabled`),
+  prepared for SKE — the runtime option is shown in the Agent tab regardless; the gateway provisions
+  only where it is turned on. Hermes⇄LangGraph interop and messaging front-ends are later phases.
 
 ## Software — build governed apps, sovereign
 
@@ -468,6 +514,17 @@ in-cluster** on create; there are **no GitHub, no accounts, no tokens**, and you
 Committing the app **auto-creates its MCP** from its OpenAPI spec (**reads on, writes held for
 approval**), governed by the same OPA gate every connection uses — so the app is instantly usable as
 a tool by your agents.
+
+**The Software Delivery Team.** Beside the solo build chat, the tab offers a full **six-agent
+LangGraph system** that takes a brief through the whole lifecycle: an **orchestrator** (delivery
+lead) routes the work through **planner → builder → tester → deployer**, and a **communication**
+agent reports back. Model routing matches the two gateway tiers — the **builder** codes on
+`sovereign-default` (the execution tier); the other five reason on `sovereign-reasoning`. A
+**per-user graph executor** runs every node's tool calls **as the signed-in user** — the team's
+grants are exactly the Software tab's governed write surface (create, commit, preview, request
+deploy), and `decide_deploy` is deliberately **not** granted, so the team can assemble a deploy
+review but a **human Builder** still decides the go-live. The same `system.yaml` is seeded as a
+domain-**Shared** system in the Agents tab, so every Creator can *run* the team (never edit it).
 
 **Roles.** Any owner previews; a Builder/Admin-in-domain approves go-live; an Administrator certifies
 to the Marketplace.
@@ -595,6 +652,13 @@ resolves to the **same number** in the explorer, in dashboards, and in the agent
 5. Inspect quietly in **Live Cube**. The metric now feeds Dashboards and agents identically — and can
    be the governed value metric behind a Strategy pillar.
 
+> **Live demo data (Northpeak Commerce).** The Metrics tab resolves real numbers on the seeded
+> deployment: the Gold Iceberg table `iceberg.sales.gold_northpeak_commerce` — materialized from
+> the Bronze/Silver pipeline by a Trino CTAS job — backs the `northpeakcommerce` Cube model. It
+> exposes `revenue`, `aov` (average order value), `conversion_rate` and `churn_rate`, sliceable by
+> `region`, `product` and `date`. Open **Live Cube** and slice without SQL to see it working end
+> to end.
+
 **Roles.** Creators define; Builders promote; Administrators certify.
 **Connects to.** **Data** (the base cube), **Dashboards** and **Agents** (consume the member),
 **Strategy** (pillar metrics), **Marketplace**.
@@ -700,8 +764,8 @@ not set policy or caps (that's Governance), it does not watch business KPIs (tha
 5. Follow the **correlation spine** — run ↔ pipeline ↔ artifact — and cross-link to the Governance
    audit entry and the cost cap it spends against.
 
-**Roles.** A User sees only their own runs/cost; a Builder their domain; an Administrator the tenant.
-A User cannot open another user's trace (enforced server-side).
+**Roles.** A Creator sees only their own runs/cost; a Builder their domain; an Administrator the
+tenant. A Creator cannot open another user's trace (enforced server-side).
 **Connects to.** Reads from every tab; reads Governance caps; defers KPI alerts to Dashboards,
 cap-setting to Governance, and infra health to Components.
 
@@ -719,12 +783,15 @@ behind a decision* — but it doesn't author tenant structure (that's Admin).
 2. Read the consolidated **Policies** plane; an Administrator can override (revoke a grant).
 3. Search the hash-chained **Audit** (who / when / why) and verify chain integrity.
 4. Set a **cap** in **Cost & limits** — over-cap is enforced.
-5. Manage **Users & access** — invite via Ory (raw passwords are rejected) and assign role-per-domain,
-   compiled to OPA.
+5. Manage **Users & access** — invite **by email** (the email is the username; a raw password is
+   never sent), pick **domain memberships** in a multi-select, and assign a role — the picker
+   describes each role. Existing users can be **edited**, and retired ones walk a safe lifecycle:
+   **archive → restore → permanently delete**, each behind an explicit confirmation dialog; the last
+   active admin can never be archived or deleted. Everything compiles to OPA.
 6. Use **"Approve & remember"** to turn a decision into an editable standing policy.
 
-**Roles.** Users see and act on their own requests; Builders their domain's queues, policy, audit and
-memberships; Administrators the whole tenant.
+**Roles.** Creators see and act on their own requests; Builders their domain's queues, policy, audit
+and memberships; Administrators the whole tenant.
 **Connects to.** Software, Connections, Data/Files, Agents/Science and Marketplace all raise cards
 here; **Admin** compiles the identity Governance reflects; **Monitoring** watches.
 
@@ -748,7 +815,8 @@ through to OPA. Labelled **Admin** in the sidebar (the conceptual "Platform Admi
 2. Work the **open admin alerts**, then jump via the quick links.
 3. **Domains** — create, rename, archive or transfer; toggle a domain's optional layers (this scales
    already-provisioned workloads 0↔1; the UI never provisions cloud resources).
-4. **Users & Access** — invite via Ory (the credential is never returned) and set roles.
+4. **Users & Access** — invite by email (email = username; the credential is never returned), set
+   domain memberships and roles; archive/restore/delete run behind confirmations.
 5. **Models & Providers / Security & Egress / Cost & Billing / Backups & Restore** — configure;
    provider keys are stored as a **reference + fingerprint**, never raw.
 6. Destructive actions (restore, disable) require a **typed-confirmation guard** and are audited;
@@ -780,6 +848,31 @@ affects).
 **Connects to.** **Admin** (structure + layer toggles), **Monitoring** (artifact observability sits
 beside this infra view).
 
+### MCPs & APIs — the governed tool-registry
+
+**What it's for.** A read-only, **Administrator-scoped** registry of every MCP server and API the
+platform exposes or brokers — divided into four groups.
+
+1. **Sovereign OS MCPs/APIs.** The platform's own governed servers: the authenticated remote at
+   `/api/mcp` (cross-tab, one per-user token) and per-tab servers at `/api/mcp/<tab>`
+   (`software · data · science · knowledge · agents · files · metrics · dashboards · bigbets`), each
+   scoping tools and a minimal `CONTEXT.md` to that tab's governed library functions. Every tool
+   delegates to the same function the UI calls — OPA, role gates and Langfuse audit apply unchanged.
+2. **Stack-tool MCPs.** Component-wrapped servers that ship with the platform — for example the
+   LiteLLM MCP gateway and the governed `query` tool (central Trino over Iceberg, OPA-authorized).
+3. **Shared app/connection MCPs.** Domain- and marketplace-tier MCPs: the auto-generated server
+   minted from every certified Software app (from its OpenAPI spec), plus shared Connection MCPs.
+4. **Personal (unshared) MCPs.** Personal Software apps and personal Connections not yet promoted.
+
+Every entry shows a **"Import into Claude"** and **"Import into ChatGPT"** deep-link for one-click
+registration in an external client. The registry is **read-only here** — to govern tool capability
+profiles go to **Connections**; to promote an app's MCP go to **Software**.
+
+**Roles.** Administrators only (full-tenant view); individual import links are surfaced in
+**Connections** and **Marketplace** for non-admins.
+**Connects to.** **Connections** (capability profiles), **Software** (auto-MCP per app),
+**Marketplace** (certified MCPs importable cross-domain).
+
 > The remaining Platform entries — **Users**, **Gateway** (the LiteLLM model/MCP gateway),
 > **Orchestration** (Dagster), **Workbench** and **Terminal** (Builder/Admin developer surfaces),
 > **Consoles** (a launchpad for the full external tool UIs, now embedded **same-origin** through the OS
@@ -804,7 +897,7 @@ they never drift.
 5. **Graduate** to do it for real, where OPA and RLS govern every step.
 6. Finish on **"You did it"**, with cross-links to the next paths.
 
-**Roles.** Framing is role-aware (Creator "create", Builder also "review/promote", User "use"); the
+**Roles.** Framing is role-aware (Creator "create and run", Builder also "review/promote"); the
 core path is identical and OPA/RLS are never bypassed.
 **Connects to.** **Home** (the launcher gallery) and each path tab via its anchors. *(Anchors are
 wired incrementally — Data and Agents today; a tab without anchors degrades gracefully to an "open
@@ -890,6 +983,24 @@ Postgres) instead of in-memory — so the `lakehouse` warehouse registration is 
 persisted). A **`polaris-catalog-init` Job** registers the `lakehouse` catalog on deploy, so queries
 resolve it with no manual step. (On a throwaway `kind` box the default stays ephemeral by design.)
 
+## Durable state — registries and domain config
+
+Persistence extends beyond the Iceberg lakehouse. Two more platform stores survive pod restarts and
+node-rolls:
+
+- **Data and Metrics artifact registries** — metadata for datasets and governed metrics mirrors to
+  **OpenSearch** and hydrates on boot, so promoted artifacts are restored without re-seeding after a
+  restart.
+- **Platform-admin Domain registry** — **Admin → Domains** derives the tenant's real domains from
+  actual user assignments (e.g. `platform / sales / marketing / ops` from the demo seed), persists
+  that mapping to OpenSearch, and replays it on startup. The domain list is always grounded in
+  real users, not hard-coded stubs.
+
+Both require the **OpenSearch PVC** (`openSearch.persistence.enabled: true`) — the default on
+STACKIT and disabled locally by default to save RAM. Without it, registries rebuild from seed data
+on each restart: the system still works, but any admin-created domains or promoted artifacts must
+be re-seeded.
+
 ## Security model
 
 The platform ships **secure by default**. Four guarantees hold throughout:
@@ -916,6 +1027,20 @@ Every agent action — model calls, tool calls, retrievals — is **traced in La
 and latency; outbound requests are logged at the egress proxy; telemetry/phone-home is disabled for a
 sovereign, offline posture.
 
+**Hardened in this release.** Four fixes tightened the OS UI's own surface:
+
+- **Every data-proxy API route requires a session.** Routes like `/api/query` used to be reachable
+  un-authenticated; they now return **401 for anonymous callers** and scope results to the caller's
+  domains via document-level security — one user can never read another domain's rows.
+- **Policy checks fail closed.** If OPA is unreachable or errors, the governed-tool gate **denies**
+  (with an explicit `opa-unreachable` marker) rather than waving the call through; fail-open exists
+  only as an explicit opt-in (`OPA_FAIL_OPEN=true`) for the offline-mock teaching flow.
+- **In-process stores are true singletons.** Every registry is pinned to `globalThis`, so Next.js
+  route bundles can no longer each instantiate their own copy of a store (the bug that made
+  `AGENT.md`/`MEMORY.md` intermittently 404).
+- **Login/logout cache-busting.** Identity changes invalidate cached pages, so a signed-out browser
+  never serves a stale, previously-authenticated view.
+
 ## Models & the LLM gateway
 
 Every model call goes through **LiteLLM** — the one gateway that enforces the model allowlist,
@@ -941,12 +1066,51 @@ node-rolls; enable it only when you want to bridge to an outside model.
 ## Use the OS from Claude or ChatGPT (MCP)
 
 The platform exposes itself as **governed MCP servers** you can import into Claude, ChatGPT or any
-MCP client. One **overarching** authenticated remote server at **`/api/mcp`** (Streamable-HTTP, a
-per-user token, role-scoped) surfaces the OS's cross-tab tools; alongside it, **per-tab** servers at
-**`/api/mcp/<tab>`** (`software`, `data`, `science`, `knowledge`, `agents`) each ship a token-minimal
-`CONTEXT.md`, so a client gets just that tab's tools and just enough context. Every MCP tool
-delegates to the **same governed library function the UI calls**, under the caller's delegated
-identity — OPA policy, role gates and Langfuse audit apply unchanged, and there is no privileged path.
+MCP client — reachable from any tab's **"Connect your AI Tool via MCP"** button. One **overarching**
+authenticated remote server at **`/api/mcp`** (Streamable-HTTP, a per-user token, role-scoped)
+surfaces the OS's cross-tab tools; alongside it, **per-tab** servers at **`/api/mcp/<tab>`**
+(`software`, `data`, `science`, `knowledge`, `agents`, `files`, `metrics`, `dashboards`, `bigbets`)
+each ship a token-minimal `CONTEXT.md`, so a client gets just that tab's tools and just enough
+context.
+
+**MCP is a full build surface, not a read-only window.** Beside the read/query tools, each tab now
+exposes its **governed write tools**, so an external AI client can do real, governed work:
+
+- **Data** — `create_dataset` · `add_dataset_version` · `document_dataset` · `promote_dataset`
+- **Knowledge** — `author_knowledge` · `publish_knowledge` · `index_knowledge`
+- **Files** — `upload_file` · `promote_file`
+- **Metrics** — `define_metric` · **Dashboards** — `create_dashboard` · **Big Bets** — `create_big_bet`
+- **Agents** — `create_agent_system` · `commit_agent_files` · `build_agent_system`
+- **Software** — the existing app lifecycle (create · commit · preview · request deploy)
+
+Two **discovery tools** ship on every endpoint — `whoami` (who am I, which domains, what my role
+allows) and `list_capabilities` — and every failure returns a **typed, model-readable error**
+`{ code, reason, hint }` so a client can self-correct instead of guessing.
+
+Every tool runs **as the signed-in user**: the per-user token carries your identity, the **role
+floor is re-checked from the session on every call** (never trusted from the request body), OPA
+authorizes it, and document-level security scopes what you see. Promotion-class actions —
+`promote_*`, `publish_knowledge`, and the Software deploy decision — stay **Builder/Admin-gated**,
+exactly as in the UI. Every MCP tool delegates to the **same governed library function the UI
+calls** — OPA policy, role gates and Langfuse audit apply unchanged, and there is no privileged
+path.
+
+## The live teaching cohort
+
+The live STACKIT deployment doubles as the classroom for the **Agentic Leader Program (Q3 2026)**,
+and its setup is a worked example of the whole operating model:
+
+- **Two domains.** `agentic-leader-q3-2026` hosts the cohort — the instructor as **Builder** plus
+  **36 participants as Creators** (each signs in with their **email as username**) — and a separate
+  `test` domain keeps instructor dry-runs out of the cohort's space. The user roster and all
+  credentials live only in the gitignored private values overlay, never in the repository.
+- **The Campaign-Optimization exercise.** The Northpeak Commerce case study is seeded
+  **domain-Shared** into `agentic-leader-q3-2026` through the platform's **own governed endpoints**
+  (`deploy/apply-campaign-exercise.sh`) — campaign datasets, three knowledge documents, sample
+  campaign files, a ready-made **Campaign Evaluation Agent**, and a **Campaign App**. Because the
+  materials are Shared, every participant can *use and run* them — but as Creators they cannot edit
+  the shared artifacts or promote their own work without a Builder, so the exercise teaches the
+  promotion ladder by living inside it.
 
 ## Memory and the build-and-toggle defaults
 
@@ -963,7 +1127,7 @@ Grouped by layer — see `docs/components/<id>.md` for the full per-component gu
 
 | Layer | Components |
 |---|---|
-| **L1 — Agent core** | LiteLLM (model + MCP gateway, per-key budget cap) · model-server (self-hosted Ministral 3 / Magistral 24B; two-tier STACKIT Qwen reasoning/execution on the live deploy) · mock-model (offline embeddings + fallback) · OpenSearch (retrieval) · Langfuse (tracing) · query-tool (Trino MCP) · sample & poet agents |
+| **L1 — Agent core** | LiteLLM (model + MCP gateway, per-key budget cap) · model-server (self-hosted Ministral 3 / Magistral 24B; two-tier STACKIT Qwen reasoning/execution on the live deploy) · mock-model (offline embeddings + fallback) · OpenSearch (retrieval) · Langfuse (tracing) · query-tool (Trino MCP) · system agents (Domain RAG · ML pipeline · Hermes runtime) |
 | **L2 — Foundations** | OPA · Docling · Haystack · Dagster · dbt · Cube · OpenMetadata |
 | **Infra** | Postgres (CloudNativePG) · ClickHouse · Valkey · MinIO (object storage, PVC-backed) · Polaris (Iceberg catalog, durable relational-JDBC metastore) |
 | **L3 — Self-service** | central Trino · Superset · Forgejo (sovereign git) · Argo CD · CI runner/build · OpenSearch Dashboards · Workbench · Terminal |
@@ -1011,7 +1175,30 @@ Grouped by layer — see `docs/components/<id>.md` for the full per-component gu
 ## Version & changelog
 
 - **Chart 0.2.10 · app `0.2.0-alpha.11`.** This build: generated `{{DATE}}` from commit `{{GIT_COMMIT}}`.
-- **This build (os-ui 0.1.4).** Every tab assistant is now **agentic** — PLAN (reasoning tier) →
+- **This build (os-ui 0.1.16).** The **role model is now exactly three roles** —
+  `creator < builder < admin` (*participant* and *agentic-leader* removed; agentic-leaders migrated
+  to Creator) — and **Users admin** was overhauled: invite by email (email = username), multi-select
+  domain membership, role descriptions, edit, and archive → restore → permanently-delete behind
+  confirmations. **MCP became a full build surface**: per-tab governed **write tools** on every
+  endpoint (data create/version/document/promote · knowledge author/publish/index · files
+  upload/promote · define_metric · create_dashboard · create_big_bet · agent create/commit/build ·
+  the Software lifecycle), plus `whoami` + `list_capabilities` discovery and typed
+  `{code, reason, hint}` errors — every call as the signed-in user (per-user token, OPA/DLS,
+  session-checked role floor), promotion/publish/deploy still Builder/Admin-gated. The **Software
+  Delivery Team** shipped — a six-agent LangGraph system (orchestrator · planner · builder · tester ·
+  deployer · communication; builder on `sovereign-default`, the rest on `sovereign-reasoning`) run by
+  a per-user graph executor, with `decide_deploy` withheld so go-live stays a human Builder decision.
+  The **Agents tab was rebuilt**: React-Flow drag-and-drop graph builder, master-detail rail, one
+  Auto/Reasoning/Execution model toggle with real `sovereign-*` names and internal/external badges,
+  reliable AGENT.md/MEMORY.md (globalThis store fix); the poet demo is gone and the backend service
+  agents (Domain RAG · ML pipeline · Hermes) moved to the Platform tab as system agents, with guided
+  Hermes runtime cards. **Security lockdown 2**: session-required + DLS-scoped data-proxy routes
+  (`/api/query` et al.), fail-closed OPA in `governed.ts`, all in-process stores globalThis-pinned,
+  login/logout cache-busting. Every tab header gained the **top-left ActionBar** (Tutorial +
+  "Connect your AI Tool via MCP"). The live tenant now runs the **Agentic Leader Q3-2026 cohort**
+  (36 Creators + instructor-Builder in `agentic-leader-q3-2026`, plus a `test` domain) with the
+  **Campaign-Optimization (Northpeak) exercise seeded domain-Shared** through the governed endpoints.
+- **os-ui 0.1.4.** Every tab assistant is now **agentic** — PLAN (reasoning tier) →
   act/codegen (execution tier, tool-calling) → verify → **gated deploy** — not just chat; the
   Software build assistant genuinely scaffolds → commits → previews → requests deploy. The OS is
   importable into **Claude/ChatGPT as governed MCP**: one authenticated remote server at `/api/mcp`
@@ -1022,7 +1209,12 @@ Grouped by layer — see `docs/components/<id>.md` for the full per-component gu
   `lakehouse` catalog on deploy. On STACKIT, LiteLLM serves a **two-tier Qwen** stack
   (`sovereign-reasoning` = Qwen3-VL-235B, `sovereign-default` = Qwen3.6-27B; thinking disabled) under
   a shared **€250/week** budget cap with graceful 429, local Ministral kept as offline fallback; an
-  optional durable **WireGuard** tunnel can bridge LiteLLM to an external Ollama model.
+  optional durable **WireGuard** tunnel can bridge LiteLLM to an external Ollama model. New in
+  this guide pass: **Platform → MCPs & APIs** (four-group governed tool-registry with per-entry
+  Claude/ChatGPT import links); **Northpeak Commerce live metrics** — `iceberg.sales.gold_northpeak_commerce`
+  materialized via Trino CTAS backs the `northpeakcommerce` Cube model (four measures × three
+  dimensions, sliceable without SQL); **durable state** for the Data/Metrics registries and
+  Admin→Domains (OpenSearch mirroring + boot hydration; requires OpenSearch PVC).
 - **0.2.x** — the **OS UI v1.0**: every sidebar tab a real surface, brand-themed, light/dark, with the
   operational console embedded at Platform → Components; Layers 1–3 in place under the
   secure-by-default baseline; Science (L4) opt-in. This release's **UI rework**: **Home** is now the

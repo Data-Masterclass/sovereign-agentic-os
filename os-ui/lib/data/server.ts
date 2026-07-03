@@ -4,7 +4,7 @@
 import 'server-only';
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import type { Principal } from '@/lib/data/store';
+import { ensureHydrated, type Principal } from '@/lib/data/store';
 
 /**
  * Server boundary for the Data tab routes: turn the signed-in user into the
@@ -13,6 +13,10 @@ import type { Principal } from '@/lib/data/store';
  */
 export async function requirePrincipal(): Promise<Principal> {
   const u = await requireUser();
+  // Hydrate the dataset cache from the durable mirror once per process, before any
+  // read/write — so a restarted os-ui serves the persisted datasets (and the
+  // Data/Metrics tabs are not wiped). Idempotent + graceful when OpenSearch is off.
+  await ensureHydrated();
   return { id: u.id, domains: u.domains, role: u.role };
 }
 

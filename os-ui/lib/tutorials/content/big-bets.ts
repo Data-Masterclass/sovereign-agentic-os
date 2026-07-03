@@ -9,6 +9,7 @@ const bigBets: TutorialDef = {
   route: '/big-bets',
   title: 'Big Bets',
   tagline: 'Plan a high-value initiative over the real components that deliver it.',
+  buttonLabel: 'Big Bets Tutorial',
   hook: {
     illustration: 'bet',
     title: 'Turn a goal into a delivery plan',

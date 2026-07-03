@@ -37,8 +37,13 @@ export type FilesIndex = {
   indexedAt: string;
 };
 
-const BRONZE = new Map<string, BronzeSource>(); // connectionId -> source
-const FILES = new Map<string, FilesIndex>(); // connectionId -> index
+type HandoffState = { bronze: Map<string, BronzeSource>; files: Map<string, FilesIndex> };
+const HANDOFF_KEY = Symbol.for('soa.dataHandoff.state');
+function handoff(): HandoffState {
+  const g = globalThis as unknown as Record<symbol, HandoffState | undefined>;
+  if (!g[HANDOFF_KEY]) g[HANDOFF_KEY] = { bronze: new Map(), files: new Map() };
+  return g[HANDOFF_KEY]!;
+}
 
 function rid(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}${Date.now().toString(36).slice(-4)}`;
@@ -55,7 +60,7 @@ export function registerBronzeSource(input: {
   rows?: number;
   registeredBy: string;
 }): BronzeSource {
-  const existing = BRONZE.get(input.connectionId);
+  const existing = handoff().bronze.get(input.connectionId);
   const src: BronzeSource = {
     id: existing?.id ?? rid('bronze'),
     connectionId: input.connectionId,
@@ -66,13 +71,13 @@ export function registerBronzeSource(input: {
     registeredBy: input.registeredBy,
     registeredAt: new Date().toISOString(),
   };
-  BRONZE.set(input.connectionId, src);
+  handoff().bronze.set(input.connectionId, src);
   return src;
 }
 
 /** Index a Drive connection into Files. Returns the record. */
 export function indexToFiles(input: { connectionId: string; name: string; items?: number; indexedBy: string }): FilesIndex {
-  const existing = FILES.get(input.connectionId);
+  const existing = handoff().files.get(input.connectionId);
   const idx: FilesIndex = {
     id: existing?.id ?? rid('files'),
     connectionId: input.connectionId,
@@ -81,20 +86,20 @@ export function indexToFiles(input: { connectionId: string; name: string; items?
     indexedBy: input.indexedBy,
     indexedAt: new Date().toISOString(),
   };
-  FILES.set(input.connectionId, idx);
+  handoff().files.set(input.connectionId, idx);
   return idx;
 }
 
 export function bronzeFor(connectionId: string): BronzeSource | null {
-  return BRONZE.get(connectionId) ?? null;
+  return handoff().bronze.get(connectionId) ?? null;
 }
 export function filesFor(connectionId: string): FilesIndex | null {
-  return FILES.get(connectionId) ?? null;
+  return handoff().files.get(connectionId) ?? null;
 }
 export function listBronzeSources(): BronzeSource[] {
-  return [...BRONZE.values()];
+  return [...handoff().bronze.values()];
 }
 export function _clearHandoffs(): void {
-  BRONZE.clear();
-  FILES.clear();
+  handoff().bronze.clear();
+  handoff().files.clear();
 }

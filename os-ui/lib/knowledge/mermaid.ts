@@ -56,7 +56,9 @@ export function renderMermaid(workflow: Workflow): string {
   workflow.steps.forEach((s, i) => {
     const hardMark = s.rules.some((r) => r.hard) ? ' 🔒' : '';
     const actorTag = s.actor_name ? `${s.actor}: ${s.actor_name}` : s.actor;
-    const label = `${s.title}${hardMark}\n(${actorTag})`;
+    // Mermaid needs `<br/>` for a line break inside a quoted label; a raw newline
+    // inside `["…"]` breaks the parser.
+    const label = `${s.title}${hardMark}<br/>(${actorTag})`;
     lines.push(`  ${ids[i]}${nodeShape(s.actor, label)}`);
   });
 

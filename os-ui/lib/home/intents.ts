@@ -70,6 +70,7 @@ const TAB_FOR_TYPE: Record<ArtifactType, string> = {
   knowledge: '/knowledge',
   connection: '/connections',
   file: '/unstructured',
+  skill: '/agents',
 };
 
 export function classifyAsk(prompt: string): AskIntent {

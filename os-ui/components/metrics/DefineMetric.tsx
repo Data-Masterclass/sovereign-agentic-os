@@ -148,9 +148,9 @@ export default function DefineMetric({ onDefined }: { onDefined: () => void }) {
   return (
     <>
       <p className="lead" style={{ marginTop: 4 }}>
-        Define a measure once — by <strong>form</strong>, by <strong>agent</strong>, or in
-        <strong> Cube YAML</strong>. All three are doors to one artifact: the API proves they
-        converge before it persists, so the definition can never fork.
+        Define a measure once — by <strong>form</strong> or by <strong>agent</strong>. Both resolve to one
+        artifact; the API proves they converge before it persists, so the definition can never fork. The
+        generated <strong>Cube YAML</strong> is shown for review.
       </p>
 
       <div className="guided-panel">
@@ -218,7 +218,7 @@ export default function DefineMetric({ onDefined }: { onDefined: () => void }) {
 
       {result ? (
         <>
-          <div className="section-title">Convergence · form == agent == yaml</div>
+          <div className="section-title">Convergence · form and agent resolve to one measure</div>
           <ChecksList rows={result.convergence.rows} />
 
           <div className="section-title">Build · apply → verify</div>

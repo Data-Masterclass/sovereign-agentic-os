@@ -22,7 +22,7 @@ export default function FilesPage() {
   const [bump, setBump] = useState(0);
   return (
     <>
-      <PageHeader title="Files" crumb="a governed drive · folders · tags · search" />
+      <PageHeader title="Files" crumb="a governed drive · folders · tags · search" mcpTab="files" />
       <div className="content">
         <div className="tabstrip">
           <button className={view === 'browser' ? 'active' : ''} onClick={() => setView('browser')}>Files</button>

@@ -8,7 +8,7 @@ import { callPlatformMcp, platformMcpToolNames } from './platform-mcp.ts';
 import type { App } from '@/lib/apps';
 import type { DeployRequestResult } from './review.ts';
 
-const creator: CurrentUser = { id: 'dan', name: 'Dan', domains: ['sales'], role: 'participant' };
+const creator: CurrentUser = { id: 'dan', name: 'Dan', domains: ['sales'], role: 'creator' };
 const builder: CurrentUser = { id: 'ben', name: 'Ben', domains: ['sales'], role: 'builder' };
 
 async function expectStatus(p: Promise<unknown>, status: number) {

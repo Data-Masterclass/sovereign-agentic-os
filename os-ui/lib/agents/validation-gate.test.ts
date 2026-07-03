@@ -102,6 +102,8 @@ test('GATE B — the agent-system helper builds the same kind of system from cha
   const seed: System = {
     version: '1',
     system: { name: 'Gate B', domain: 'sales', visibility: 'Personal' },
+    runtime: 'langgraph',
+    safetyPreset: 'read-only',
     entrypoint: 'supervisor',
     state: { channels: { messages: 'add_messages' } },
     grants: { data: [], knowledge: [], tools: ['retrieve'], connections: [] },
@@ -131,14 +133,13 @@ test('GATE B — the agent-system helper builds the same kind of system from cha
   await assertBuildsAndVerifies(rec.id);
 });
 
-test('routing hits Ministral (light) and local Magistral (reasoning default)', () => {
+test('routing hits the sovereign light + reasoning defaults (real gateway aliases)', () => {
   const backends = newMockBackends();
   const light = routeProbe('coding', backends.litellm.routing);
   const reasoning = routeProbe('planning', backends.litellm.routing);
   assert.equal(light.tier, 'light');
-  assert.match(light.model, /ministral/i);
+  assert.equal(light.model, 'sovereign-default'); // the REAL live light alias
   assert.equal(reasoning.tier, 'reasoning');
-  // Reasoning now defaults to the local sovereign model (Magistral); STACKIT Qwen is the fast option + fallback.
   assert.match(reasoning.model, /sovereign-reasoning/i);
 });
 

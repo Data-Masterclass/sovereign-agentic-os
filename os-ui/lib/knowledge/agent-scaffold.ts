@@ -135,6 +135,8 @@ export function scaffoldSystem(
   const system: System = {
     version: '1',
     system: { name: opts.name ?? `${workflow.title} agent`, domain: workflow.domain, visibility: 'Personal' },
+    runtime: 'langgraph',
+    safetyPreset: 'read-only',
     entrypoint,
     state: { channels: { messages: 'add_messages' } },
     // The whole workflow is attached as governed context via grants.knowledge.

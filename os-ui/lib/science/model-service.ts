@@ -159,7 +159,9 @@ export function compilePredictPolicy(m: ServiceModel): CompiledPredictPolicy {
  */
 export function inCallableScope(policy: CompiledPredictPolicy, caller: Caller): boolean {
   if (policy.allowedPrincipals.includes(caller.principal)) return true;
-  if (policy.allowedDomains.includes(caller.domain)) return true;
+  // The caller must actually BELONG to an allowed domain (session-derived) — a
+  // body-supplied domain can no longer forge reach into another domain's model.
+  if (policy.allowedDomains.some((d) => caller.domains.includes(d))) return true;
   if (policy.crossDomain) return true;
   return false;
 }
@@ -225,7 +227,7 @@ export async function authorizePredict(
       decision: 'deny',
       frontDoor,
       reason:
-        `${caller.principal} (domain ${caller.domain}) is outside the ${m.tier} callable scope of ${model}` +
+        `${caller.principal} (domains ${caller.domains.join(', ') || 'none'}) is outside the ${m.tier} callable scope of ${model}` +
         ` — promote/certify the model to widen who can call it`,
       policy,
       toolPolicy: 'tier-scope-deny',

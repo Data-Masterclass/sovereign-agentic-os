@@ -27,7 +27,7 @@ function rlsCube(): CubeExecutor {
 }
 
 function tokenFor(id: string, region: string) {
-  return delegate(claimsFromUser({ id, domains: ['sales'], role: 'participant', attributes: { region } }), 'domain');
+  return delegate(claimsFromUser({ id, domains: ['sales'], role: 'creator', attributes: { region } }), 'domain');
 }
 
 test('explorer builds a Cube query for the canonical member + slice', () => {

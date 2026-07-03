@@ -60,8 +60,13 @@ import { logEgress } from '@/lib/egress-requests';
  *     a real deploy injects the secret server-side and routes via the egress proxy.
  */
 
-let cache: Map<string, Connection> | null = null;
-let osHealthy = false;
+type ConnCacheState = { cache: Map<string, Connection> | null; osHealthy: boolean };
+const CONN_STATE_KEY = Symbol.for('soa.connections.cache');
+function connState(): ConnCacheState {
+  const g = globalThis as unknown as Record<symbol, ConnCacheState | undefined>;
+  if (!g[CONN_STATE_KEY]) g[CONN_STATE_KEY] = { cache: null, osHealthy: false };
+  return g[CONN_STATE_KEY]!;
+}
 
 function now(): string {
   return new Date().toISOString();
@@ -99,7 +104,7 @@ async function osFetch(path: string, init?: RequestInit): Promise<Response | nul
 }
 
 function writeThrough(c: Connection): void {
-  if (!osHealthy) return;
+  if (!connState().osHealthy) return;
   void osFetch(`/os-connections/_doc/${c.id}?refresh=true`, { method: 'PUT', body: JSON.stringify(c) });
 }
 
@@ -116,11 +121,12 @@ function compileProfile(c: Connection): void {
 }
 
 async function getCache(): Promise<Map<string, Connection>> {
-  if (cache) return cache;
+  const s = connState();
+  if (s.cache) return s.cache;
   const map = new Map<string, Connection>();
   const ping = await osFetch('/os-connections/_count');
   if (ping && ping.ok) {
-    osHealthy = true;
+    s.osHealthy = true;
     const res = await osFetch('/os-connections/_search?size=500', {
       method: 'POST',
       body: JSON.stringify({ query: { match_all: {} } }),
@@ -134,9 +140,9 @@ async function getCache(): Promise<Map<string, Connection>> {
       }
     }
   } else {
-    osHealthy = false;
+    s.osHealthy = false;
   }
-  cache = map;
+  s.cache = map;
   return map;
 }
 
@@ -607,6 +613,38 @@ export async function enableDataUsage(connId: string, user: CurrentUser, usage: 
 }
 
 /**
+ * "Approve once" (Mode A): the connection owner or a domain Builder/Admin approves a
+ * held Write-approval call INLINE and resumes the run — executing it exactly once,
+ * WITHOUT creating a standing policy. Re-authorizes against the compiled capability
+ * profile first, so an Off / Blocked / over-bound call can NEVER be executed via this
+ * path (the profile is still the ceiling); only a genuinely held (requires_approval)
+ * or already-allowed call runs. Consistent with "approve & remember", which also runs.
+ */
+export async function approveOnce(
+  connId: string,
+  user: CurrentUser,
+  input: { tool: string; args?: Record<string, unknown> },
+): Promise<ToolCallResult> {
+  const map = await getCache();
+  const c = map.get(connId);
+  if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
+  const isOwner = c.owner === user.id;
+  const isDomainBuilderAdmin = (user.role === 'admin' || user.role === 'builder') && user.domains.includes(c.domain);
+  if (!isOwner && !isDomainBuilderAdmin) throw withStatus(new Error('Only the owner or a domain Builder/Admin can approve this write'), 403);
+  const tool = String(input.tool ?? '');
+  const args = input.args ?? {};
+  const authz = authorizeConnectionCall(c.principal, tool, args);
+  if (authz.effect === 'deny') {
+    // The capability profile still rules: a Blocked / Off / over-bound call is refused
+    // even by an approver — approving cannot broaden the profile.
+    const tr = await trace({ principal: c.principal, tool, input: { args, approvedBy: user.id }, output: { denied: authz.reason }, decision: 'deny' });
+    return { tool, principal: c.principal, decision: 'deny', reason: authz.reason, mode: authz.mode, traceId: tr.id };
+  }
+  // requires_approval or allow → the present approver resumes the run: execute once.
+  return runAllow(c, tool, args, undefined, `approved inline (once) by ${user.id}`, authz.mode);
+}
+
+/**
  * "Approve & remember" (Mode A): approve a held write AND create a bounded standing
  * policy so identical calls stop prompting. The bound is carried from the call.
  */
@@ -669,7 +707,13 @@ export async function deleteConnection(connId: string, user: CurrentUser): Promi
   if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to delete this connection'), 403);
   unregisterConnectionProfile(c.principal);
   map.delete(connId);
-  if (osHealthy) void osFetch(`/os-connections/_doc/${connId}?refresh=true`, { method: 'DELETE' });
+  if (connState().osHealthy) void osFetch(`/os-connections/_doc/${connId}?refresh=true`, { method: 'DELETE' });
+}
+
+export function __resetConnections(): void {
+  const s = connState();
+  s.cache = null;
+  s.osHealthy = false;
 }
 
 export type { Connection };

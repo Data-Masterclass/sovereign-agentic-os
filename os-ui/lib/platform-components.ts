@@ -38,16 +38,6 @@ export const MARKETPLACE: MarketplaceItem[] = [
     href: '/agents',
   },
   {
-    id: 'poet-agent',
-    name: 'Composer Agent',
-    kind: 'Agent',
-    publisher: 'Data Masterclass',
-    installed: true,
-    summary:
-      'A second LangGraph blueprint (compose → save) showing multi-agent patterns and tool publishing.',
-    tags: ['langgraph', 'blueprint'],
-  },
-  {
     id: 'compliance-agent',
     name: 'Compliance Monitor',
     kind: 'Agent',

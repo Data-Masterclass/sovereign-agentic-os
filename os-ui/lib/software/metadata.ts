@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import yaml from 'js-yaml';
-import type { AppManifest, OpenApiSpec, ScaffoldFile } from './model.ts';
+import type { AppManifest, AppSurface, OpenApiSpec, ScaffoldFile } from './model.ts';
 
 /**
  * Metadata fidelity (Software golden path — "commits always show up in the app").
@@ -122,6 +122,56 @@ export function parseAppManifest(
   if (!findFile(files, '.app/decisions.md')) missing.push('.app/decisions.md');
 
   return { name, owner, description, connections, data, knowledge, hasOpenApi, missing };
+}
+
+/**
+ * Detect the app's SURFACE from what was actually built (Software golden path —
+ * surface inference). Pure over the repo files + deploy manifest, so it runs in
+ * the commit hook and in-process at deploy. The create flow no longer asks "what
+ * kind of app"; the agent writes the code and this reads it back:
+ *
+ *   • `ui`  — the app serves a frontend / HTML (a web framework in package.json,
+ *             an .html file, a page/route component, or a static `public/` tree).
+ *   • `api` — the app exposes API endpoints / an MCP tool surface (an OpenAPI
+ *             spec, an `api/` or `routes/` tree, or a Python service entrypoint).
+ *
+ * A repo can have both (e.g. Next.js + OpenAPI). When nothing is detected the app
+ * is treated as a headless API — every app at minimum exposes its governed MCP
+ * tools — so the monitor always has one honest affordance to show.
+ */
+export function detectSurface(files: ScaffoldFile[]): AppSurface {
+  const hasPath = (re: RegExp) => files.some((f) => re.test(f.path));
+
+  let webDep = false;
+  const pkg = findFile(files, 'package.json');
+  if (pkg) {
+    try {
+      const j = JSON.parse(pkg.content) as {
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+      };
+      const deps = { ...(j.dependencies ?? {}), ...(j.devDependencies ?? {}) };
+      webDep = ['next', 'react', 'react-dom', 'vue', 'nuxt', 'svelte', 'astro', 'vite', '@remix-run/react']
+        .some((d) => d in deps);
+    } catch {
+      /* unparseable package.json — fall back to path signals below */
+    }
+  }
+  const frontendFile =
+    hasPath(/\.html?$/i) ||
+    hasPath(/(^|\/)public\//) ||
+    hasPath(/(^|\/)(app|pages|src)\/.*(page|index|app)\.(t|j)sx?$/i);
+  const ui = webDep || frontendFile;
+
+  const api =
+    parseOpenApi(files) !== null ||
+    hasPath(/(^|\/)api\//) ||
+    hasPath(/(^|\/)routes?\//) ||
+    hasPath(/(^|\/)(main|server|app)\.py$/);
+
+  // Nothing detected → headless API (the auto-MCP tool surface always exists).
+  if (!ui && !api) return { ui: false, api: true };
+  return { ui, api };
 }
 
 /** Default OpenAPI spec seeded for a fresh app so the auto-MCP has tools day one. */

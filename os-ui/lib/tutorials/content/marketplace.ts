@@ -9,6 +9,7 @@ const marketplace: TutorialDef = {
   route: '/marketplace',
   title: 'Marketplace',
   tagline: 'Discover and reuse certified products from every domain.',
+  buttonLabel: 'Marketplace Tutorial',
   hook: {
     illustration: 'marketplace',
     title: 'Reuse what other teams already built',

@@ -17,6 +17,7 @@ const SECTIONS: { label: string; href: string }[] = [
   { label: 'Security & Egress', href: '/platform/security' },
   { label: 'Backups & Restore', href: '/platform/backups' },
   { label: 'Plugins', href: '/platform/plugins' },
+  { label: 'MCPs & APIs', href: '/platform/mcp-apis' },
   { label: 'Settings', href: '/platform/settings' },
 ];
 

@@ -33,9 +33,19 @@ import {
 } from './model.ts';
 import { resolveArtifact, sourceFor } from './sources.ts';
 
-const bets = new Map<string, BigBet>();
-const audit: AuditEvent[] = [];
-let seq = 0;
+/**
+ * State pinned to `globalThis` so it is a TRUE singleton across all Next.js
+ * route-handler module instances — a bet created via `POST /api/big-bets` is
+ * immediately visible to `GET /api/big-bets` (and to the pillar-dropdown query).
+ * Same pattern as `lib/marketplace/store.ts` and `lib/agents/store.ts`.
+ */
+type BetsState = { bets: Map<string, BigBet>; audit: AuditEvent[]; seq: number };
+const STATE_KEY = Symbol.for('soa.bigbets.store');
+function state(): BetsState {
+  const g = globalThis as unknown as Record<symbol, BetsState | undefined>;
+  if (!g[STATE_KEY]) g[STATE_KEY] = { bets: new Map(), audit: [], seq: 0 };
+  return g[STATE_KEY]!;
+}
 
 function now(): string {
   return new Date().toISOString();
@@ -44,22 +54,25 @@ function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 function id(prefix: string): string {
-  seq += 1;
-  return `${prefix}_${(Date.now().toString(36) + seq.toString(36)).slice(-8)}`;
+  const s = state();
+  s.seq += 1;
+  return `${prefix}_${(Date.now().toString(36) + s.seq.toString(36)).slice(-8)}`;
 }
 
 function log(actor: string, action: string, betId?: string, detail?: Record<string, unknown>): void {
-  audit.unshift({ id: id('aud'), at: now(), actor, action, betId, detail });
+  state().audit.unshift({ id: id('aud'), at: now(), actor, action, betId, detail });
 }
 
 /** Test hook: wipe the registry + audit. */
 export function __resetBets(): void {
-  bets.clear();
-  audit.length = 0;
-  seq = 0;
+  const s = state();
+  s.bets.clear();
+  s.audit.length = 0;
+  s.seq = 0;
 }
 
 export function auditLog(betId?: string): AuditEvent[] {
+  const { audit } = state();
   return betId ? audit.filter((e) => e.betId === betId) : [...audit];
 }
 
@@ -102,14 +115,14 @@ export function canViewComponentDetail(bet: BigBet, ref: ComponentRef, user: Pri
 }
 
 function requireView(betId: string, user: Principal): BigBet {
-  const bet = bets.get(betId);
+  const bet = state().bets.get(betId);
   if (!bet) throw new BetError('Big Bet not found', 404);
   if (!canView(bet, user)) throw new BetError('Not permitted to view this bet', 403);
   return bet;
 }
 
 function requireEdit(betId: string, user: Principal): BigBet {
-  const bet = bets.get(betId);
+  const bet = state().bets.get(betId);
   if (!bet) throw new BetError('Big Bet not found', 404);
   if (!canEdit(bet, user)) throw new BetError('Not permitted to edit this bet', 403);
   return bet;
@@ -164,7 +177,7 @@ export function createBet(user: Principal, input: CreateBetInput): BigBet {
     createdAt: now(),
     updatedAt: now(),
   };
-  bets.set(bet.id, bet);
+  state().bets.set(bet.id, bet);
   log(user.id, 'bet.create', bet.id, { name: bet.name, pillarId: bet.pillarId });
   return bet;
 }
@@ -172,7 +185,7 @@ export function createBet(user: Principal, input: CreateBetInput): BigBet {
 // ------------------------------------------------------------------- read ----
 
 export function listBets(user: Principal): BigBet[] {
-  return [...bets.values()].filter((b) => canView(b, user)).sort((a, b) => a.name.localeCompare(b.name));
+  return [...state().bets.values()].filter((b) => canView(b, user)).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function getBet(betId: string, user: Principal): BigBet {
@@ -344,8 +357,8 @@ export function advanceComponent(betId: string, user: Actor, refId: string, to: 
 
 /** Internal: fetch without scope (planner + value roll-up across bets). */
 export function _getBetRaw(betId: string): BigBet | null {
-  return bets.get(betId) ?? null;
+  return state().bets.get(betId) ?? null;
 }
 export function _allBets(): BigBet[] {
-  return [...bets.values()];
+  return [...state().bets.values()];
 }

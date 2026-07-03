@@ -6,6 +6,16 @@ import type { Role } from '../session.ts';
 import { ROLE_RIGHTS, rightsToTools } from './roles.ts';
 
 /**
+ * May this role SEE the consolidated policy plane? Gated on the `policy.view`
+ * right (Builder = own domain, Admin = tenant) — NOT mere authentication. A
+ * User/Creator has no policy.view right, so they are denied (403). This is the
+ * real control; the sidebar's role hint is cosmetic.
+ */
+export function canViewPolicyPlane(role: Role): boolean {
+  return (ROLE_RIGHTS[role] ?? []).some((r) => r.startsWith('policy.view'));
+}
+
+/**
  * Policies view (governance-golden-path.md §2) — a consolidated, READ-ONLY view
  * of the whole policy plane, with Admin OVERRIDE. Editing lives in each tab; here
  * you SEE who-can-do-what end-to-end: capability profiles + agent safety presets
@@ -29,9 +39,13 @@ export type GrantRow = {
 };
 
 // Dynamic plane state (access grants + egress allowlist + revocations).
-const accessGrants: GrantRow[] = [];
-const egressAllowlist = new Map<string, { endpoint: string; domain: string; approvedBy: string }>();
-const overrides = new Set<string>(); // `${principal}|${tool}` revoked by an Admin
+type PolicyViewState = { accessGrants: GrantRow[]; egressAllowlist: Map<string, { endpoint: string; domain: string; approvedBy: string }>; overrides: Set<string> };
+const PV_KEY = Symbol.for('soa.governance.policyView');
+function pvState(): PolicyViewState {
+  const g = globalThis as unknown as Record<symbol, PolicyViewState | undefined>;
+  if (!g[PV_KEY]) g[PV_KEY] = { accessGrants: [], egressAllowlist: new Map(), overrides: new Set() };
+  return g[PV_KEY]!;
+}
 
 function revokeKey(principal: string, tool: string): string {
   return `${principal}|${tool}`;
@@ -52,40 +66,42 @@ export function addAccessGrant(input: {
     compiledTo: input.compiledTo ?? 'OPA',
   };
   // de-dup
-  if (!accessGrants.some((g) => g.principal === row.principal && g.tool === row.tool)) {
-    accessGrants.push(row);
+  const pv = pvState();
+  if (!pv.accessGrants.some((g) => g.principal === row.principal && g.tool === row.tool)) {
+    pv.accessGrants.push(row);
   }
-  overrides.delete(revokeKey(row.principal, row.tool)); // a fresh grant un-revokes
+  pv.overrides.delete(revokeKey(row.principal, row.tool)); // a fresh grant un-revokes
   return row;
 }
 
 /** Approval effect: allowlist an egress endpoint for a domain. */
 export function addEgressEndpoint(endpoint: string, domain: string, approvedBy: string): void {
-  egressAllowlist.set(endpoint, { endpoint, domain, approvedBy });
+  pvState().egressAllowlist.set(endpoint, { endpoint, domain, approvedBy });
 }
 
 export function isEgressAllowed(endpoint: string): boolean {
-  return egressAllowlist.has(endpoint);
+  return pvState().egressAllowlist.has(endpoint);
 }
 
 export function listEgress(domains?: string[]): { endpoint: string; domain: string; approvedBy: string }[] {
-  return [...egressAllowlist.values()].filter((e) => (domains ? domains.includes(e.domain) : true));
+  return [...pvState().egressAllowlist.values()].filter((e) => (domains ? domains.includes(e.domain) : true));
 }
 
 /** Admin override: revoke a grant from the plane. Returns whether a row matched. */
 export function overrideRevoke(principal: string, tool: string): boolean {
-  overrides.add(revokeKey(principal, tool));
-  const before = accessGrants.length;
-  for (let i = accessGrants.length - 1; i >= 0; i--) {
-    if (accessGrants[i].principal === principal && accessGrants[i].tool === tool) {
-      accessGrants.splice(i, 1);
+  const pv = pvState();
+  pv.overrides.add(revokeKey(principal, tool));
+  const before = pv.accessGrants.length;
+  for (let i = pv.accessGrants.length - 1; i >= 0; i--) {
+    if (pv.accessGrants[i].principal === principal && pv.accessGrants[i].tool === tool) {
+      pv.accessGrants.splice(i, 1);
     }
   }
-  return before !== accessGrants.length || true; // override always recorded
+  return before !== pv.accessGrants.length || true; // override always recorded
 }
 
 export function isRevoked(principal: string, tool: string): boolean {
-  return overrides.has(revokeKey(principal, tool));
+  return pvState().overrides.has(revokeKey(principal, tool));
 }
 
 /**
@@ -107,12 +123,13 @@ export function consolidatedPlane(
       rows.push({ principal, tool, source: 'role', domain, compiledTo: 'OPA' });
     }
   }
-  for (const g of accessGrants) {
+  const pv = pvState();
+  for (const g of pv.accessGrants) {
     if (domains && !domains.includes(g.domain)) continue;
     if (isRevoked(g.principal, g.tool)) continue;
     rows.push(g);
   }
-  for (const e of egressAllowlist.values()) {
+  for (const e of pv.egressAllowlist.values()) {
     if (domains && !domains.includes(e.domain)) continue;
     rows.push({ principal: `domain:${e.domain}`, tool: `egress:${e.endpoint}`, source: 'egress', domain: e.domain, compiledTo: 'OPA' });
   }
@@ -122,8 +139,7 @@ export function consolidatedPlane(
 /** The capability-profile / safety-preset / domain-default catalogue (read-only). */
 export function policySources(): { name: string; authoredIn: string; compiledTo: string; rights: string[] }[] {
   return [
-    { name: 'User (capability profile)', authoredIn: 'Connections', compiledTo: 'OPA', rights: ROLE_RIGHTS.participant },
-    { name: 'Creator (capability profile)', authoredIn: 'Connections', compiledTo: 'OPA', rights: ROLE_RIGHTS.creator },
+    { name: 'Creator (capability profile)', authoredIn: 'Connections', compiledTo: 'OPA', rights: ROLE_RIGHTS['creator'] },
     { name: 'Builder (capability profile)', authoredIn: 'Connections', compiledTo: 'OPA/Cube', rights: ROLE_RIGHTS.builder },
     { name: 'Admin (capability profile)', authoredIn: 'Connections', compiledTo: 'OPA/Cube/DLS', rights: ROLE_RIGHTS.admin },
   ];
@@ -148,7 +164,8 @@ export async function readOpaGrants(): Promise<Record<string, string[]> | null> 
 }
 
 export function __resetPlane(): void {
-  accessGrants.length = 0;
-  egressAllowlist.clear();
-  overrides.clear();
+  const pv = pvState();
+  pv.accessGrants.length = 0;
+  pv.egressAllowlist.clear();
+  pv.overrides.clear();
 }

@@ -56,8 +56,9 @@ async function withTimeout(url: string, init: RequestInit, ms = 4000): Promise<R
   }
 }
 
-/** Build the DLS grant filter clauses (the query-time grant filter pushed to OS). */
-function dlsFilter(principal: Principal): Record<string, unknown> {
+/** Build the DLS grant filter clauses (the query-time grant filter pushed to OS).
+ *  Exported so the knowledge-docs listing route pushes down the IDENTICAL filter. */
+export function dlsFilter(principal: Principal): Record<string, unknown> {
   const visible: Record<string, unknown>[] = [
     { term: { visibility: 'Marketplace' } },
     { bool: { must: [{ term: { visibility: 'Shared' } }, { terms: { domain: principal.domains } }] } },

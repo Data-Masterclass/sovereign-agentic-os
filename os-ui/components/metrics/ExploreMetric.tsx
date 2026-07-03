@@ -126,6 +126,11 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
           <div className="section-title">
             Result · {result.rows.length} row{result.rows.length === 1 ? '' : 's'}
           </div>
+          {byTime && result.mode === 'offline-mock' ? (
+            <p className="hint" style={{ marginTop: 0 }}>
+              Offline mock returns totals only — the time-series slice resolves against live Cube.
+            </p>
+          ) : null}
           {result.rows.length === 0 ? (
             <div className="stub-page">No rows for this viewer.</div>
           ) : (

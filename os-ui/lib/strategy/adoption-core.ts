@@ -102,8 +102,8 @@ export function tallyAdoption(
     }
 
     if (isActive(a, opts.cutoff)) {
-      const role = roleById.get(a.owner) ?? 'participant';
-      const set = role === 'participant' ? activeCreatorSet : activeBuilderSet;
+      const role = roleById.get(a.owner) ?? 'creator';
+      const set = role === 'creator' ? activeCreatorSet : activeBuilderSet;
       let s = set.get(a.domain);
       if (!s) { s = new Set(); set.set(a.domain, s); }
       s.add(a.owner);

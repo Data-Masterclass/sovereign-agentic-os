@@ -14,7 +14,7 @@
 export type Settings = {
   sso: { enabled: boolean; provider: string; issuerUrl: string; scim: boolean };
   branding: { displayName: string; accent: string; whiteLabel: boolean };
-  defaults: { domainTemplate: string; newUserRole: 'participant' | 'builder' };
+  defaults: { domainTemplate: string; newUserRole: 'creator' | 'builder' };
   localization: { locale: 'en' | 'de'; available: ('en' | 'de')[] };
   notifications: { email: string; backupFailure: boolean; costThreshold: boolean };
 };
@@ -22,7 +22,7 @@ export type Settings = {
 let settings: Settings = {
   sso: { enabled: false, provider: 'ory', issuerUrl: '', scim: false },
   branding: { displayName: 'Sovereign Agentic OS', accent: '#2aa39b', whiteLabel: false },
-  defaults: { domainTemplate: 'analytics', newUserRole: 'participant' },
+  defaults: { domainTemplate: 'analytics', newUserRole: 'creator' },
   localization: { locale: 'en', available: ['en', 'de'] },
   notifications: { email: 'admin@datamasterclass.com', backupFailure: true, costThreshold: true },
 };
@@ -56,7 +56,7 @@ export function _reset(): void {
   settings = {
     sso: { enabled: false, provider: 'ory', issuerUrl: '', scim: false },
     branding: { displayName: 'Sovereign Agentic OS', accent: '#2aa39b', whiteLabel: false },
-    defaults: { domainTemplate: 'analytics', newUserRole: 'participant' },
+    defaults: { domainTemplate: 'analytics', newUserRole: 'creator' },
     localization: { locale: 'en', available: ['en', 'de'] },
     notifications: { email: 'admin@datamasterclass.com', backupFailure: true, costThreshold: true },
   };

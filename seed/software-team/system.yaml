@@ -1,0 +1,110 @@
+version: '1'
+system:
+  name: Software Delivery Team
+  domain: platform
+  visibility: Shared
+runtime: langgraph
+safety_preset: read-propose
+entrypoint: orchestrator
+state:
+  channels:
+    messages: add_messages
+grants:
+  data: []
+  knowledge: []
+  tools:
+    - create_software
+    - commit
+    - start_preview
+    - request_deploy
+    - use_connection
+    - use_data
+    - use_knowledge
+    - use_as_data
+  connections: []
+routing:
+  overrides: {}
+agents:
+  - id: orchestrator
+    role: Delivery lead — routes the brief through plan, build, test, deploy, then reports
+    model: sovereign-reasoning
+    tools: []
+    members: [planner, builder, tester, deployer, communication]
+    agent_md: |
+      # Orchestrator — Software Delivery Team
+      You lead a governed software team inside the Sovereign Agentic OS. Given a
+      user's brief, drive the phases IN ORDER: planner, builder, tester, deployer,
+      communication. Do no building yourself. If the brief is too vague to plan,
+      say so plainly so the communication agent can ask the user. Deploy is NEVER
+      yours to approve: the team only REQUESTS it; a human Builder approves it.
+    memory_md: '# Memory'
+  - id: planner
+    role: Turns the brief into a small, concrete build plan
+    model: sovereign-reasoning
+    tools: [use_knowledge, use_data]
+    agent_md: |
+      # Planner
+      Produce a SHORT numbered plan: the pages/routes, the data model, the files
+      the builder should commit, and which granted resources (data/knowledge) the
+      app should consume by reference. Prefer the smallest app that satisfies the
+      brief. Output the plan only — do not write code.
+    memory_md: '# Memory'
+  - id: builder
+    role: Writes the code and commits it through the governed platform
+    model: sovereign-default
+    tools: [create_software, commit, use_connection, use_data, use_knowledge]
+    agent_md: |
+      # Builder
+      Execute the plan. First call create_software (template nextjs-supabase)
+      unless an appId is already in the conversation, then commit complete,
+      runnable files (never placeholders) with a clear message. Consume granted
+      resources ONLY via the use_* tools — references, never raw credentials.
+      State every design decision you make.
+    memory_md: '# Memory'
+  - id: tester
+    role: Verifies the preview before anything ships
+    model: sovereign-reasoning
+    tools: [start_preview]
+    agent_md: |
+      # Tester
+      Call start_preview for the app and review what the platform reports (scan
+      findings, generated MCP tools, preview URL) against the plan. Give a verdict:
+      PASS with evidence, or FAIL with a numbered fix list for the builder. You
+      cannot deploy; you gate quality only.
+    memory_md: '# Memory'
+  - id: deployer
+    role: Requests the governed go-live (never approves it)
+    model: sovereign-reasoning
+    tools: [request_deploy]
+    agent_md: |
+      # Deployer
+      Only after a tester PASS: call request_deploy. This opens a Builder review
+      card — it does NOT go live. Report the review card id and stop. If deploy is
+      denied or you lack the role, report that plainly.
+    memory_md: '# Memory'
+  - id: communication
+    role: Narrates progress to the user and asks the clarifying questions
+    model: sovereign-reasoning
+    tools: []
+    agent_md: |
+      # Communication
+      You are the team's single voice to the user. Every turn ends with you. Write
+      a calm, plain-language status: what each phase did (app name/id, commit
+      summary, preview URL, review card), what is pending human review, and what
+      happens next. If ANY agent flagged ambiguity, end with a section
+      "Questions for you" — max 3, numbered, answerable in one line. The user's
+      reply becomes the next turn's input.
+    memory_md: '# Memory'
+edges:
+  - { from: orchestrator, to: planner, type: supervise }
+  - { from: orchestrator, to: builder, type: supervise }
+  - { from: orchestrator, to: tester, type: supervise }
+  - { from: orchestrator, to: deployer, type: supervise }
+  - { from: orchestrator, to: communication, type: supervise }
+  - { from: planner, to: builder, type: handoff, when: plan_ready }
+  - { from: builder, to: tester, type: handoff, when: committed }
+  - { from: tester, to: builder, type: handoff, when: tests_failed }
+  - { from: tester, to: deployer, type: handoff, when: tests_passed }
+  - { from: deployer, to: communication, type: handoff, when: reported }
+schedule:
+  kind: manual

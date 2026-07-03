@@ -9,9 +9,11 @@ import {
   retrieveTool,
   SALES,
   type ToolName,
+  type DlsPrincipal,
 } from '@/lib/agent-governed';
 import { principalFor, type GovernedToolResponse } from '@/lib/agents/build/runtime-contract';
 import { runtimeTokenOk } from '@/lib/agents/build/runtime-auth';
+import { systemForScheduler } from '@/lib/agents/store';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,12 +35,18 @@ export const dynamic = 'force-dynamic';
  * (`metrics`/`retrieve`, which degrade offline); a governed stub otherwise — the
  * point of the endpoint is authorize + trace, not the tool's payload.
  */
-async function runSideEffect(tool: string, args: Record<string, unknown>): Promise<unknown> {
+async function runSideEffect(
+  tool: string,
+  args: Record<string, unknown>,
+  dls: DlsPrincipal,
+): Promise<unknown> {
   if (tool === 'metrics') {
     return metricsTool(typeof args.measure === 'string' ? args.measure : SALES.revenueMeasure);
   }
   if (tool === 'retrieve') {
-    return retrieveTool(typeof args.prompt === 'string' ? args.prompt : '');
+    // DLS is scoped to the SYSTEM's own domain (default-deny outside it), so a
+    // system can never retrieve another domain's private knowledge.
+    return retrieveTool(typeof args.prompt === 'string' ? args.prompt : '', dls);
   }
   return { ok: true, tool, note: 'governed tool invoked' };
 }
@@ -78,7 +86,11 @@ export async function POST(req: Request) {
     return NextResponse.json(res);
   }
 
-  const output = await runSideEffect(tool, args);
+  // The DLS identity for retrieval is the SYSTEM's own domain (participant-level
+  // reach: Shared-in-domain + Marketplace), never a client-supplied one.
+  const sysMeta = systemForScheduler(systemId);
+  const dls: DlsPrincipal = { id: principal, domains: sysMeta ? [sysMeta.domain] : [], role: 'creator' };
+  const output = await runSideEffect(tool, args, dls);
   await trace({
     principal: `${principal}:${node ?? 'run'}`,
     tool,

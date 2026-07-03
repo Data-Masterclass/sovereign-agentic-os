@@ -41,10 +41,24 @@ export type AppConnection = {
   createdAt: string;
 };
 
+/**
+ * State pinned to `globalThis` — the Next App Router bundles each route handler
+ * separately, so a module-scoped Map would give every route its own empty copy: a
+ * connection registered by the app-create route would be invisible to the
+ * Connections / agent-governed routes. Pinning makes the registry a true singleton
+ * and survives dev HMR. (Same reason marketplace/approvals/agents stores pin.)
+ */
+type RegistryState = { grants: Map<string, Set<string>>; conns: Map<string, AppConnection> };
+const STATE_KEY = Symbol.for('soa.app-registry.state');
+function state(): RegistryState {
+  const g = globalThis as unknown as Record<symbol, RegistryState | undefined>;
+  if (!g[STATE_KEY]) g[STATE_KEY] = { grants: new Map(), conns: new Map() };
+  return g[STATE_KEY]!;
+}
 // principal -> granted tool names. The dynamic equivalent of opa.grants.
-const GRANTS = new Map<string, Set<string>>();
+const GRANTS = state().grants;
 // connection id -> connection.
-const CONNS = new Map<string, AppConnection>();
+const CONNS = state().conns;
 
 /** Register (or replace) an app's auto-generated MCP connection + its grant. */
 export function registerConnection(conn: AppConnection): AppConnection {

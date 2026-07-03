@@ -25,7 +25,10 @@ export type ArtifactType =
   | 'agent'
   | 'knowledge'
   | 'connection'
-  | 'file';
+  | 'file'
+  // A Hermes-created skill (agentskills.io) surfaces as a reviewable artifact —
+  // owner/domain/visibility, NOT auto-certified (Hermes integration plan §6).
+  | 'skill';
 
 export type Visibility = 'Personal' | 'Shared' | 'Certified';
 
@@ -58,6 +61,7 @@ export const ARTIFACT_TYPES: ArtifactType[] = [
   'knowledge',
   'connection',
   'file',
+  'skill',
 ];
 
 export const VISIBILITIES: Visibility[] = ['Personal', 'Shared', 'Certified'];
@@ -71,6 +75,7 @@ export const TYPE_LABELS: Record<ArtifactType, string> = {
   knowledge: 'Knowledge Doc',
   connection: 'Connection',
   file: 'File',
+  skill: 'Skill',
 };
 
 /** The next lifecycle stage an admin can promote to, or null if already top. */

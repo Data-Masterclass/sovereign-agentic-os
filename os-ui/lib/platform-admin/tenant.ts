@@ -48,7 +48,13 @@ function seed(): Tenant {
   };
 }
 
-const TENANTS = new Map<string, Tenant>([[config.deploymentTenant, seed()]]);
+type TenantState = { tenants: Map<string, Tenant> };
+const TENANT_KEY = Symbol.for('soa.platform.tenants');
+function tenantState(): TenantState {
+  const g = globalThis as unknown as Record<symbol, TenantState | undefined>;
+  if (!g[TENANT_KEY]) g[TENANT_KEY] = { tenants: new Map([[config.deploymentTenant, seed()]]) };
+  return g[TENANT_KEY]!;
+}
 
 function fail(message: string, status: number): Error {
   const e = new Error(message);
@@ -69,7 +75,7 @@ export function currentTenantId(): string {
 export function assertTenantAccess(tenantId: string): Tenant {
   const own = currentTenantId();
   if (tenantId !== own) throw fail('Cross-tenant access denied', 403);
-  const t = TENANTS.get(own);
+  const t = tenantState().tenants.get(own);
   if (!t) throw fail('Tenant not found', 404);
   return t;
 }
@@ -86,6 +92,6 @@ export function updateTenant(patch: Partial<Omit<Tenant, 'id' | 'createdAt'>>): 
     id: t.id,
     createdAt: t.createdAt,
   };
-  TENANTS.set(t.id, next);
+  tenantState().tenants.set(t.id, next);
   return next;
 }

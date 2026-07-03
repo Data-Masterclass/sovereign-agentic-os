@@ -67,7 +67,12 @@ export type ServiceModel = {
 export type Caller = {
   /** OPA principal (LiteLLM key / Ory identity) — e.g. `sales-assistant`, `churn-risk-app`. */
   principal: string;
-  domain: string;
+  /**
+   * The caller's domain(s) — DERIVED FROM THE SESSION, never the request body.
+   * Tier scope is satisfied when ANY of these is in the model's callable scope,
+   * so a user in domain X can never claim domain Y to reach Y's model.
+   */
+  domains: string[];
   /** True when the caller is an agent (MCP front door); false for a Software app (REST). */
   isAgent: boolean;
 };

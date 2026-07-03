@@ -111,7 +111,7 @@ export default function McpConnect({ tab }: { tab?: string } = {}) {
             <label style={{ display: 'grid', gap: 4 }}>
               <span className="muted" style={{ fontSize: 11.5 }}>Endpoint URL</span>
               <div className="row" style={{ gap: 8 }}>
-                <input className="mono" readOnly value={endpoint} style={{ flex: 1 }} onFocus={(e) => e.currentTarget.select()} />
+                <input className="mono" readOnly value={endpoint} style={{ flex: 1, color: '#1a1813', background: '#ffffff' }} onFocus={(e) => e.currentTarget.select()} />
                 <CopyButton text={endpoint} />
               </div>
             </label>
@@ -125,7 +125,7 @@ export default function McpConnect({ tab }: { tab?: string } = {}) {
                   className="mono"
                   readOnly
                   value={reveal ? token : masked}
-                  style={{ flex: 1 }}
+                  style={{ flex: 1, color: '#1a1813', background: '#ffffff' }}
                   onFocus={(e) => reveal && e.currentTarget.select()}
                 />
                 <button className="btn ghost" onClick={() => setReveal((v) => !v)}>{reveal ? 'Hide' : 'Reveal'}</button>
@@ -136,7 +136,7 @@ export default function McpConnect({ tab }: { tab?: string } = {}) {
 
           <div className="section-title" style={{ marginTop: 18 }}>Claude Code</div>
           <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
-            <pre className="mono" style={{ flex: 1, whiteSpace: 'pre-wrap', margin: 0, fontSize: 12 }}>{claudeCode}</pre>
+            <pre className="mono" style={{ flex: 1, whiteSpace: 'pre-wrap', margin: 0, fontSize: 12, color: '#1a1813', background: '#ffffff' }}>{claudeCode}</pre>
             <CopyButton text={claudeCode} />
           </div>
 
@@ -146,7 +146,7 @@ export default function McpConnect({ tab }: { tab?: string } = {}) {
             then restart Claude. The <span className="mono">mcp-remote</span> bridge carries the bearer header.
           </p>
           <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
-            <pre className="mono" style={{ flex: 1, whiteSpace: 'pre-wrap', margin: 0, fontSize: 12 }}>{desktopJson}</pre>
+            <pre className="mono" style={{ flex: 1, whiteSpace: 'pre-wrap', margin: 0, fontSize: 12, color: '#1a1813', background: '#ffffff' }}>{desktopJson}</pre>
             <CopyButton text={desktopJson} />
           </div>
 

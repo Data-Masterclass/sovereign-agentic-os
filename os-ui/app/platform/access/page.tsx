@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
 
-type Role = 'participant' | 'builder' | 'admin';
+type Role = 'creator' | 'builder' | 'admin';
 type Status = 'active' | 'invited' | 'deactivated';
 type AccessUser = {
   id: string;
@@ -17,7 +17,7 @@ type AccessUser = {
   active: boolean;
 };
 type Sso = { enabled: boolean; provider: string; issuerUrl: string; scim: boolean };
-const ROLES: Role[] = ['participant', 'builder', 'admin'];
+const ROLES: Role[] = ['creator', 'builder', 'admin'];
 const STATUS_BADGE: Record<Status, string> = { active: 'ok', invited: 'muted', deactivated: 'err' };
 
 export default function AccessPage() {
@@ -29,7 +29,7 @@ export default function AccessPage() {
 
   const [id, setId] = useState('');
   const [name, setName] = useState('');
-  const [role, setRole] = useState<Role>('participant');
+  const [role, setRole] = useState<Role>('creator');
   const [domainText, setDomainText] = useState('');
 
   const load = useCallback(async () => {
@@ -65,7 +65,7 @@ export default function AccessPage() {
       });
       const body = await res.json();
       if (!res.ok) setError(body.error ?? 'Invite failed');
-      else { setId(''); setName(''); setDomainText(''); setRole('participant'); await load(); }
+      else { setId(''); setName(''); setDomainText(''); setRole('creator'); await load(); }
     } finally {
       setBusy('');
     }

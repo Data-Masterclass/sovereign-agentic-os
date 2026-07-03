@@ -6,7 +6,7 @@
 import { useState } from 'react';
 import { useApi } from '@/lib/useApi';
 import { useUser } from '@/lib/useUser';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
+import NewSystemPanel from './NewSystemPanel';
 
 /**
  * Level 1 — the systems list (landing). Grouped Mine / My domain / Marketplace,
@@ -29,30 +29,10 @@ export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }
   const { data, loading, error, reload } = useApi<Groups>('/api/agents/systems');
   const { user } = useUser();
   const domainLabel = user?.domains[0] ? `${user.domains[0]} domain` : 'your domain';
-  const [name, setName] = useState('');
-  const [creating, setCreating] = useState(false);
+  // Installing a Marketplace template is a Builder+ action (mirrors the promotion
+  // ladder). Show the gate up front instead of letting the click 403.
+  const canInstall = user?.role === 'builder' || user?.role === 'admin';
   const [actErr, setActErr] = useState('');
-
-  const create = async () => {
-    if (!name.trim() || creating) return;
-    setCreating(true);
-    setActErr('');
-    try {
-      const res = await fetch('/api/agents/systems', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? 'Could not create the system');
-      setName('');
-      onOpen(body.id);
-    } catch (e) {
-      setActErr((e as Error).message);
-    } finally {
-      setCreating(false);
-    }
-  };
 
   const fork = async (id: string) => {
     setActErr('');
@@ -83,7 +63,11 @@ export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }
       </div>
       <div className="comp-actions" style={{ marginTop: 12 }}>
         {kind === 'install' ? (
-          <button className="btn sm" onClick={() => fork(s.id)}>Install (fork-to-own)</button>
+          canInstall ? (
+            <button className="btn sm" onClick={() => fork(s.id)}>Install (fork-to-own)</button>
+          ) : (
+            <button className="btn sm" disabled title="Installing a template needs a Builder or Admin">Builder+ to install</button>
+          )
         ) : (
           <button className="btn sm" onClick={() => onOpen(s.id)}>Open</button>
         )}
@@ -107,20 +91,8 @@ export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }
 
   return (
     <div className="systems-list">
-      <div className="card" style={{ marginBottom: 18 }} {...anchorAttr(ANCHORS.agents.define)}>
-        <h3 style={{ marginTop: 0 }}>New agent system</h3>
-        <p className="hint" style={{ marginTop: 0 }}>A solo agent is just a system of one. It lands under Personal with a starter graph.</p>
-        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') create(); }}
-            placeholder="e.g. Renewals desk"
-            style={{ flex: 1 }}
-          />
-          <button className="btn" onClick={create} disabled={creating || !name.trim()}>{creating ? <span className="spin" /> : 'Create'}</button>
-        </div>
+      <div style={{ marginBottom: 18 }}>
+        <NewSystemPanel onCreated={onOpen} />
       </div>
 
       {actErr ? <div className="error" style={{ marginBottom: 12 }}>{actErr}</div> : null}

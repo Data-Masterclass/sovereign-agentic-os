@@ -9,6 +9,7 @@ const data: TutorialDef = {
   route: '/data',
   title: 'Data',
   tagline: 'Turn a raw file into a trusted data product your whole domain can use.',
+  buttonLabel: 'Data Products Tutorial',
 
   hook: {
     illustration: 'load',

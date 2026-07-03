@@ -86,9 +86,13 @@ export default function PlatformOverview() {
                 ['Domains', '/platform/domains', 'Create & toggle optional layers'],
                 ['Users & Access', '/platform/access', 'Invite via Ory · tenant Admin'],
                 ['Models & Providers', '/platform/models', 'Defaults · caps · provider keys'],
+                ['Components & System', '/platform/components', 'Up/down · versions · self-heal'],
                 ['Security & Egress', '/platform/security', 'Allowlist · OPA bundle · residency'],
                 ['Backups & Restore', '/platform/backups', 'Status · guarded restore'],
+                ['Plugins', '/platform/plugins', 'Curate & install MCPs / skills'],
+                ['MCPs & APIs', '/platform/mcp-apis', 'Registered MCP servers & API keys'],
                 ['Cost & Billing', '/platform/billing', 'Envelope · premium cap'],
+                ['Settings', '/platform/settings', 'SSO · branding · tenant defaults'],
               ].map(([label, href, sub]) => (
                 <Link key={href} href={href} className="golden">
                   <span className="ico">❖</span>
