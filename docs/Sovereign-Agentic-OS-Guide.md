@@ -2,7 +2,7 @@
 title: "Sovereign Agentic OS"
 subtitle: "The product guide — install it, run it, and put every governed workflow to work."
 author: "Orchestrated by Data Masterclass · datamasterclass.com · www.sovereign-agentic.com"
-date: "Chart 0.2.10 (app 0.2.0-alpha.11) · generated {{DATE}} from commit {{GIT_COMMIT}}"
+date: "Chart 0.2.11 (app 0.2.0-alpha.11 · os-ui 0.1.32) · generated {{DATE}} from commit {{GIT_COMMIT}}"
 titlepage: true
 titlepage-rule-color: "c8a24a"
 toc: true
@@ -129,33 +129,40 @@ metric, a connection, a dashboard — it is an **artifact** with the same four a
 > underneath (a dbt model, a Cube metric, a Forgejo repo, a KServe service), preview-first,
 > cataloged and audited.
 
-## The promotion ladder
+## The sharing ladder
 
-Visibility widens one rung at a time, and each rung is **role-gated**:
+Visibility widens one rung at a time, and each rung is strictly **two-step** —
+the person who *triggers* the move is never the person who *approves* it:
 
-| Visibility | Meaning | Who can promote |
-|---|---|---|
-| **Personal** | the creator only — the default for drafts and app-created data | — |
-| **Shared (domain)** | usable across the owning domain | **Builder** or **Administrator** |
-| **Marketplace (certified)** | discoverable and importable by other domains | **Administrator** only |
+| Visibility | Meaning | Who triggers | Who approves |
+|---|---|---|---|
+| **Personal** | the creator only — the default for drafts and app-created data | — | — |
+| **Shared (domain)** | usable across the owning domain | **the owner** of the artifact (and only the owner) files a promotion request | a **Builder or above of that domain** (Builder, Domain admin or Administrator) |
+| **Marketplace (certified)** | discoverable and importable by other domains | a **Builder / Domain admin of the owning domain** — the domain vouches for its artifact | the **platform Administrator** — the platform accepts it |
+
+Approving **is** the action: on approve the platform executes the governed
+effect — for datasets, a physical publish; the tier flips only when it
+verifies — and writes the audit.
 
 Nothing enters the governed store without **documentation + passing checks** — a transparency gate
 that turns green only when an artifact is documented and in the lineage graph. Throughout the
 product the creator-only scope is always labelled **"Personal"** (never "Mine" or "My"), and a
 domain is named directly — **"<domain> domain"**, not "My Domain".
 
-## Three roles, assigned per domain
+## Four roles, assigned per domain
 
 | Role | What they do |
 |---|---|
-| **Creator** | the base role — creates and runs their **own** artifacts (datasets, workflows, agents, apps — Personal by default) and consumes anything shared or certified. Cannot promote, approve, or reach admin. |
-| **Builder** | the domain steward — everything a Creator can, plus review/approve, promote to **Shared**, and manage the domain's members |
-| **Administrator** | tenant-wide — users, policy, certification to the **Marketplace**, cost caps; runs Admin (Platform) |
+| **Creator** | the base role — creates and runs their **own** artifacts (datasets, workflows, agents, apps — Personal by default) and consumes anything shared or certified. Cannot promote, approve, or reach admin; files promotion requests. |
+| **Builder** | the domain approver — everything a Creator can, plus review/approve domain promotions, deploys, knowledge and connections. An approver, **not** a people-admin. |
+| **Domain admin** | everything a Builder can, plus administering the users of their **own domain(s) only** — invite, edit, reset credentials, deactivate/reactivate, and assign roles **up to Builder**. Never mints another Domain admin or an Administrator, and never reaches the Platform group. |
+| **Administrator** | tenant-wide — users (the only role that appoints **Domain admins**), policy, certification to the **Marketplace**, cost caps; runs Admin (Platform) |
 
-The ladder is exactly **creator < builder < admin**. Earlier releases had two more roles —
-*participant* (view-only) and *agentic-leader* — both are **removed**: agentic-leaders migrated to
-**Creator**, and any legacy or unknown role normalises to Creator. Roles are assigned **per domain**
-and **compiled to OPA**, so a role change takes effect everywhere at once.
+The ladder is exactly **creator < builder < domain_admin < admin**. Earlier releases had two more
+roles — *participant* (view-only) and *agentic-leader* — both are **removed**: agentic-leaders
+migrated to **Creator**, and any legacy or unknown role normalises to Creator; nobody is ever
+auto-promoted to Domain admin. Roles are assigned **per domain** and **compiled to OPA**, so a role
+change takes effect everywhere at once.
 
 ## The governance spine
 
@@ -273,6 +280,12 @@ team is a deliberate, audited sequence — this is the secure first-run path:
      Use this for any generic mail relay.
    With neither configured the platform simply runs without email; the bootstrap admin already
    auto-verified, and later accounts can be verified out of band.
+
+   > **Honest status on the live STACKIT tenant:** outbound mail is currently **not
+   > delivering**. An in-cluster sovereign sender (maddy, DKIM-signing) is built, but STACKIT
+   > blocks outbound port 25 and the smarthost relay + sender-domain DNS records are still
+   > pending — so on that deployment accounts are verified out of band. The Graph and SMTP
+   > transports above work wherever those services are reachable.
 3. **Open Admin.** As that Administrator, go to **Platform → Admin** (`/platform`, hard-gated to
    admins). The **Overview** cockpit shows component health, spend versus the tenant envelope, users
    and domains.
@@ -341,7 +354,7 @@ carries the cockpit modules.
 4. Use the **"Your cockpit"** call-to-action to open the live cockpit when you want to see what's
    moving and what needs you.
 
-**Roles.** All three — the launcher copy and dimming reorder by persona.
+**Roles.** Every role — the launcher copy and dimming reorder by persona.
 **Connects to.** Routes into all ten path tabs; hands off to **Cockpit** for the live view.
 
 ## Cockpit — what's moving, what needs you
@@ -363,7 +376,7 @@ numbers and never bypasses governance.
 5. Use **Ask anything** to get an answer or scaffold a Personal draft (promotion stays human and
    traced).
 
-**Roles.** All three — the modules and ordering shift by persona; everything is OPA/RLS-scoped.
+**Roles.** Every role — the modules and ordering shift by persona; everything is OPA/RLS-scoped.
 **Connects to.** Reads Governance, the artifact registry, Strategy and Monitoring; routes into every
 tab. *(Domain pulse and Health & cost read live feeds, mock-stubbed on `kind` and labelled as such.)*
 
@@ -395,7 +408,7 @@ with a go-live marker) **→ Components** (each one a box that deep-links to *Ed
 Audit** (a subtle governance footer). There is **no Composition** view.
 
 **Roles.** Administrators define **company** (tenant) pillars; Builders define **domain** pillars;
-Creators and Users view.
+Creators view.
 **Connects to.** **Big Bets** (each bet links up to a pillar), **Metrics** (the governed Cube metric
 a pillar can track), every Build tab (the foundation counts), **Monitoring**.
 
@@ -427,7 +440,9 @@ health). *(Cross-tab component sources are offline-mock on `kind`, honestly labe
 **What it's for.** **One page** where a domain's **agent systems** (instructions + tools + memory)
 are composed, governed and run, plus a strip of the **deployed agent systems** currently running.
 There are no sub-tabs. Every model and tool call goes through the gateway — no agent ever touches a
-raw resource.
+raw resource. An agent system's tool calls dispatch through the **same governed MCP toolset** an
+external client uses, under its **owner's identity** — so an agent can never see or do more than
+its owner, and a `requires_approval` effect queues to Governance instead of executing.
 
 **The golden path.** The tab is a **master–detail** surface: a rail of your agent systems on the
 left, the selected system's full detail on the right.
@@ -551,7 +566,10 @@ default; GPU is optional and cost-gated.
    fork-allowed.
 5. A deployed model exposes **two front doors from one KServe endpoint** — a governed REST `predict`
    API and a governed `predict` MCP tool — both through OPA + LiteLLM, capped and traced.
-6. Watch **drift** (PSI vs. AUC) and trigger a **retrain**. The ML agent proposes only — it is
+6. Watch **drift** (PSI vs. AUC). *Honest status:* the drift series fills from live MLflow/KServe
+   telemetry once a model is serving — a fresh tenant shows an empty panel, never fabricated
+   history — and the **retrain** trigger is a **v1 scaffold**: it stages the Dagster job reference,
+   but the retrain pipeline itself is not wired yet. The ML agent proposes only — it is
    hard-blocked from certify and go-live.
 
 **Roles.** Administrators enable + certify; Builders promote/go-live; Creators build/train; the agent
@@ -621,16 +639,26 @@ non-technical users. The tiles are grouped **Data** (your Personal datasets) · 
    - **Silver** — clean it up: fix types, drop duplicates, set the key.
    - **Gold** — make it ready: harmonize to the shared shape and add quality checks.
 2. Press **Build** on a stage — it runs that stage's adapters (apply **+ verify**); the row turns ✓
-   only when both pass. Toggle **"Show the code"** to see the real artifact.
-3. Work privately in your **Data** tier (a fast DuckDB sandbox); promoted data lives in Trino/Iceberg.
+   only when both pass. Toggle **"Show the code"** to see the real artifact. On a live cluster the
+   chain is **physical end to end**: an upload lands as a real Iceberg table in your **own per-user
+   schema** (`iceberg.personal_<you>.bronze_…`), Silver and the Gold **join** build real tables the
+   same way, and everything is queried through governed Trino under your identity.
+3. Personal work stays governed per-user: your Bronze/Silver/Gold tables live in your per-user
+   Iceberg schema, and the separate Query **sandbox lane** (DuckDB) sits *behind* the same Trino
+   governance boundary — it only ever sees your own uploads or an already-masked extract.
 4. Browse structured assets in **Catalog** (OpenMetadata) and **Preview** any into Query.
-5. Ask questions in **Talk to your data** — a RAG agent over your domain's data (LangGraph +
-   OpenSearch + LiteLLM, Langfuse-traced) — or run SQL in **Query**.
-6. Share like a review: **request promotion** (Creator) → a **Builder** promotes the dataset to
-   **Shared Data** → an **Administrator** certifies it to **Marketplace Data** (a product).
+5. Ask questions in **Talk to your data** — governed **NL→SQL**: the model is shown only the
+   datasets *you* can see, generates exactly one read-only SELECT (validated before it runs),
+   executes through governed Trino under your row filters and masks, and answers grounded only in
+   the returned rows — or run SQL yourself in **Query**.
+6. Share like a review, on the sharing ladder: the **owner** requests promotion → a **Builder+ of
+   the domain approves**, and the approval **runs the physical publish** (the tier flips only when
+   it verifies) → certification to **Marketplace Data** is filed by the domain (Builder/Domain
+   admin) and approved by an **Administrator**.
 
-**Roles.** Creators create datasets; Builders promote to Shared Data; Administrators certify to
-Marketplace Data (approvals run through Governance).
+**Roles.** Creators create datasets; owners request promotion; Builders (and Domain admins) approve
+to Shared Data; Administrators approve certification to Marketplace Data (approvals run through
+Governance).
 **Connects to.** **Metrics** (the Gold auto-cube), **Dashboards**, **Knowledge/Files** ("Use as"),
 **Marketplace**, **Governance**.
 
@@ -742,7 +770,8 @@ reuse **Administrator-certified products of every type** across the tenant's dom
 6. Track grants in **My imports**, rate 1–5; Administrators **deprecate** lineage-aware (importers
    are warned; in-use grants are kept).
 
-**Roles.** Administrators certify (upstream) and deprecate; anyone discovers and imports.
+**Roles.** Certification is filed by the owning domain (Builder/Domain admin) and approved by an
+Administrator (upstream), who also deprecates; anyone discovers and imports.
 **Connects to.** Every Build tab's certify step, **Governance** (import approvals), **Monitoring**.
 
 ## Monitoring — artifact observability
@@ -772,7 +801,10 @@ cap-setting to Governance, and infra health to Components.
 ## Governance — the control plane
 
 **What it's for.** Consolidate, decide, record. Governance *enforces* policy and *executes the effect
-behind a decision* — but it doesn't author tenant structure (that's Admin).
+behind a decision* — but it doesn't author tenant structure (that's Admin). Its sidebar tab sits at
+the **top of the Platform group**, visible from **Builder rank up** — Builders, **Domain admins** and
+Administrators, the people who approve. Creators don't need the tab: their own request status is
+shown **in context** (the Promote / Certify panels on the artifact itself).
 
 **The golden path.**
 
@@ -785,13 +817,17 @@ behind a decision* — but it doesn't author tenant structure (that's Admin).
 4. Set a **cap** in **Cost & limits** — over-cap is enforced.
 5. Manage **Users & access** — invite **by email** (the email is the username; a raw password is
    never sent), pick **domain memberships** in a multi-select, and assign a role — the picker
-   describes each role. Existing users can be **edited**, and retired ones walk a safe lifecycle:
+   describes each role. A **Domain admin** works this surface for their **own domain(s) only**:
+   invite, edit, deactivate/reactivate, and assign roles **up to Builder** — never another Domain
+   admin or an Administrator (only the platform Administrator appoints Domain admins).
+   Existing users can be **edited**, and retired ones walk a safe lifecycle:
    **archive → restore → permanently delete**, each behind an explicit confirmation dialog; the last
    active admin can never be archived or deleted. Everything compiles to OPA.
 6. Use **"Approve & remember"** to turn a decision into an editable standing policy.
 
-**Roles.** Creators see and act on their own requests; Builders their domain's queues, policy, audit
-and memberships; Administrators the whole tenant.
+**Roles.** Creators see and act on their own requests; Builders their domain's queues, policy and
+audit; Domain admins additionally their own domains' users and memberships; Administrators the
+whole tenant.
 **Connects to.** Software, Connections, Data/Files, Agents/Science and Marketplace all raise cards
 here; **Admin** compiles the identity Governance reflects; **Monitoring** watches.
 
@@ -799,8 +835,9 @@ here; **Admin** compiles the identity Governance reflects; **Monitoring** watche
 
 ## The Platform section
 
-The sidebar closes with a small **Platform** group of operational consoles — most gated to Builders
-or Administrators.
+The sidebar closes with a small **Platform** group of operational consoles. **Governance** is
+visible from Builder rank up; the remaining entries (**Admin**, **Components**, **Terminal**,
+**About / Licenses**) are Administrator-only.
 
 ### Admin — the tenant control room
 
@@ -826,32 +863,38 @@ through to OPA. Labelled **Admin** in the sidebar (the conceptual "Platform Admi
 **Connects to.** **Governance** (enforces and shows the compiled plane), **Components** + **Monitoring**
 (watch live health and spend), and every tab (via the OPA grants the compiler emits).
 
-### Components — platform services & system health
+### Components — the one operator surface
 
-**What it's for.** The operational console for the **stack itself**, embedded in the OS UI — the home
-of everything that moved out of Monitoring and Connections. It lists **every platform service** with
-**live system/cluster health**, lets you switch toggleable workloads on/off (scale 0↔1), and surfaces
-each one's address, login, docs, and its place in the **dependency/impact chain** (what a toggle
-affects).
+**What it's for.** The operational console for the **stack itself**, embedded in the OS UI — and,
+after the nav consolidation, the **single** operator surface: the old **Gateway**, **Orchestration**
+and **Consoles** tabs folded into it (their routes redirect here). One calm list of **every platform
+service** with live health, **version**, and each service's actions on its own row.
 
 **The golden path.**
 
-1. Open **Platform → Components**; services are grouped **by layer** (L1 core, L2 foundations, infra,
-   L3 self-service, L4 science, security & platform), each with a live status dot.
-2. Read a service's **summary, address (port-forward + URL), login and docs**; core services are
-   marked always-on and cannot be switched off.
-3. **Toggle** an optional workload on/off (scale 0↔1) — the dependency/impact view shows what else is
-   affected. The routes read the in-cluster Kubernetes API and the baked-in component docs natively;
-   the browser never touches a Kubernetes credential.
+1. Open **Platform → Components**; services are grouped **by layer** (infra, L1 core, L2 foundations,
+   L3 self-service, L4 science, security & platform), each with a live status dot + version.
+2. **Open a tool's console straight from its row** — same-origin at `/tools/<tool>` with Level-1 SSO
+   where wired (Superset, OpenMetadata, Dagster via **Open Dagster**, Forgejo, MLflow, …), or the
+   native console URL where configured (Langfuse, Argo CD, …). URLs come from the runtime env; a tool
+   that isn't publicly exposed honestly shows no link. Dagster OSS ships no login of its own, so its
+   public ingress sits behind an **operator basic-auth** gate (an htpasswd secret on the ingress).
+3. **Expand a row** for the quiet details: address (port-forward + URL), login, docs — and on the
+   **LiteLLM row**, the **model gateway diagnostics** (the model catalog + registered MCP tools that
+   used to be the Gateway tab).
+4. **Toggle** an optional workload on/off (scale 0↔1); core services are marked always-on. The routes
+   read the in-cluster Kubernetes API and the baked-in component docs natively; the browser never
+   touches a Kubernetes credential.
 
-**Roles.** Builders/Administrators.
+**Roles.** Administrators.
 **Connects to.** **Admin** (structure + layer toggles), **Monitoring** (artifact observability sits
 beside this infra view).
 
 ### MCPs & APIs — the governed tool-registry
 
 **What it's for.** A read-only, **Administrator-scoped** registry of every MCP server and API the
-platform exposes or brokers — divided into four groups.
+platform exposes or brokers — a page **inside Admin** (`/platform` → *MCPs & APIs*), divided into
+four groups.
 
 1. **Sovereign OS MCPs/APIs.** The platform's own governed servers: the authenticated remote at
    `/api/mcp` (cross-tab, one per-user token) and per-tab servers at `/api/mcp/<tab>`
@@ -873,11 +916,13 @@ profiles go to **Connections**; to promote an app's MCP go to **Software**.
 **Connects to.** **Connections** (capability profiles), **Software** (auto-MCP per app),
 **Marketplace** (certified MCPs importable cross-domain).
 
-> The remaining Platform entries — **Users**, **Gateway** (the LiteLLM model/MCP gateway),
-> **Orchestration** (Dagster), **Workbench** and **Terminal** (Builder/Admin developer surfaces),
-> **Consoles** (a launchpad for the full external tool UIs, now embedded **same-origin** through the OS
-> UI at `/tools/<tool>` with Level-1 SSO), and **About / Licenses** — are thin windows onto their
-> in-cluster services and the license set.
+> The remaining Platform entries are **Terminal** (the Admin developer surface — it
+> **auto-connects on open** and **re-attaches to your live session** when you navigate away and
+> back, so a running shell survives the trip) and **About / Licenses**. The former **Users**,
+> **Gateway**, **Orchestration**, **Consoles** and **Workbench** tabs were consolidated: Users & Access lives in **Admin**, and the gateway,
+> orchestrator and console launchers merged into **Components** (the tool UIs stay embedded
+> **same-origin** at `/tools/<tool>` with Level-1 SSO); the old routes redirect. **Tutorials** moved
+> up into the main tab group, just above Settings — it's for everyone, not only operators.
 
 ## Tutorials — learn any path in place
 
@@ -912,10 +957,10 @@ this tab" card.)*
 Locally everything is self-contained. On **STACKIT** (or any cloud) the platform runs the **full
 Layer 1–4 stack** — the **Data engine** (central Trino over the Iceberg lakehouse), the **metrics
 layer** (Cube), **Science / ML** (MLflow + KServe + Featureform + JupyterHub), **Orchestration**
-(Dagster), the developer **Workbench** and **Terminal**, and sovereign git via in-cluster **Forgejo +
+(Dagster), the developer **Terminal**, and sovereign git via in-cluster **Forgejo +
 Argo CD** — alongside L1 (LangGraph/LiteLLM/OpenSearch/Langfuse) and L2 (OPA/Docling/Haystack/dbt/
 OpenMetadata). It is the **same chart**; switching a backend to a managed service is only a values
-choice (`values.stackit-managed.yaml`), and the heavier layers (Science, Terminal, Workbench) ship
+choice (`values.stackit-managed.yaml`), and the heavier layers (Science, Terminal) ship
 **pinned and provisioned but off by default**, enabled per domain when needed.
 
 1. **Prerequisites.** A STACKIT organization + project in **EU01 / Deutschland Süd**, and a
@@ -933,7 +978,7 @@ choice (`values.stackit-managed.yaml`), and the heavier layers (Science, Termina
    to STACKIT, the LLM to **STACKIT AI Model Serving** (`llm.mode: external`, `provider: stackit`),
    Trino → the Polaris REST catalog (OAuth2), plus ingress hostnames (Forgejo, Superset, the OS UI),
    the egress allowlist and per-domain quotas. You can mix freely — managed Postgres but bundled
-   OpenSearch, for example — and turn Science / Terminal / Workbench on per domain.
+   OpenSearch, for example — and turn Science / Terminal on per domain.
 5. **Deploy and verify:**
 
    ```bash
@@ -981,25 +1026,52 @@ hold the data and both are now persistent: **MinIO** keeps the Iceberg data file
 Postgres) instead of in-memory — so the `lakehouse` warehouse registration is not lost on restart
 (otherwise Trino and the `query` tool report *"Unable to find warehouse lakehouse"* even with MinIO
 persisted). A **`polaris-catalog-init` Job** registers the `lakehouse` catalog on deploy, so queries
-resolve it with no manual step. (On a throwaway `kind` box the default stays ephemeral by design.)
+resolve it with no manual step. The catalog is pinned to **Polaris 1.1.0-incubating** — the version
+the live Iceberg **write** path (the Data tab's physical Bronze/Silver/Gold builds) was verified
+against. (On a throwaway `kind` box the default stays ephemeral by design.)
 
-## Durable state — registries and domain config
+## Durable state — every store mirrors, one core
 
-Persistence extends beyond the Iceberg lakehouse. Two more platform stores survive pod restarts and
-node-rolls:
+Persistence extends beyond the Iceberg lakehouse. **Every user-facing in-process store** in the OS
+UI — approvals, audit, artifacts, apps, agent systems (incl. `AGENT.md`/`MEMORY.md`), datasets,
+knowledge, files, dashboards, big bets, users, domains, marketplace grants, pillars, preferences,
+role config — mirrors to **OpenSearch** through **one shared core, `lib/os-mirror.ts`**:
+fire-and-forget write-through on every change plus hydration on boot, so **artifacts survive
+redeploys and node-rolls** with no re-seeding.
 
-- **Data and Metrics artifact registries** — metadata for datasets and governed metrics mirrors to
-  **OpenSearch** and hydrates on boot, so promoted artifacts are restored without re-seeding after a
-  restart.
-- **Platform-admin Domain registry** — **Admin → Domains** derives the tenant's real domains from
-  actual user assignments (e.g. `platform / sales / marketing / ops` from the demo seed), persists
-  that mapping to OpenSearch, and replays it on startup. The domain list is always grounded in
-  real users, not hard-coded stubs.
+The single shared core is deliberate: the earlier copy-pasted per-store pattern had a bootstrap bug
+(a missing index read as "mirror down forever"), which is exactly how artifacts were once lost on a
+deploy. The core fixes the semantics once for everyone — a missing index is **created**, an
+unreachable OpenSearch never breaks a request (the store simply stays in-memory), and an unhealthy
+mirror lazily re-probes and self-heals.
 
-Both require the **OpenSearch PVC** (`openSearch.persistence.enabled: true`) — the default on
-STACKIT and disabled locally by default to save RAM. Without it, registries rebuild from seed data
-on each restart: the system still works, but any admin-created domains or promoted artifacts must
-be re-seeded.
+This requires the **OpenSearch PVC** (`openSearch.persistence.enabled: true`; migration for a live
+cluster: `deploy/opensearch-pvc-migration.sh`) — the default on STACKIT, disabled locally by
+default to save RAM. Without it the mirror itself dies with the pod and stores rebuild from seed
+data on restart. One honest residual gap: the in-process store stays authoritative, so writes made
+in the moments before a pod roll can be lost if their mirror write hadn't landed — see
+`docs/backups.md` for what protects the mirror itself.
+
+## Backups & restore
+
+Durable is not the same as backed up — a PVC still dies with its disk. The STACKIT deploy adds a
+three-tier backup system (full detail: `docs/backups.md`; drills: `docs/runbooks/restore-drill.md`):
+
+- **Nightly Postgres dumps** — a chart CronJob (`backup.pgDump`, on by default in
+  `values.stackit-selfhosted.yaml`) dumps *every* database (Langfuse, LiteLLM, Dagster, Superset,
+  OpenMetadata, Polaris, MLflow, Featureform, warehouse) to the lakehouse bucket, 14-day retention.
+  This — not a file copy of the running database — is the consistent Postgres restore path.
+- **Nightly Velero volume backups** — Velero + kopia (`deploy/velero/`) copies every stateful
+  volume (MinIO lakehouse, OpenSearch mirrors, Forgejo repos, Harbor registry, …) **off-cluster**
+  to a dedicated STACKIT Object Storage bucket, 30-day retention. Re-downloadable model weights
+  are excluded by design.
+- **The pre-upgrade gate** — every `helm upgrade` or stateful roll starts with
+  `deploy/pre-upgrade-backup.sh`: a fresh dump plus an ad-hoc Velero backup, awaited before any
+  change touches the platform.
+
+Restore is practiced, not assumed: the restore-drill runbook restores each tier into a scratch
+namespace and verifies it, and lists honestly what is *not* protected (in-process-only writes
+before their next mirror, terraform state and operator-side secrets, scratch namespaces).
 
 ## Security model
 
@@ -1073,19 +1145,39 @@ surfaces the OS's cross-tab tools; alongside it, **per-tab** servers at **`/api/
 each ship a token-minimal `CONTEXT.md`, so a client gets just that tab's tools and just enough
 context.
 
-**MCP is a full build surface, not a read-only window.** Beside the read/query tools, each tab now
-exposes its **governed write tools**, so an external AI client can do real, governed work:
+**MCP is a full build surface, not a read-only window.** Around fifty-five governed tools ship
+across the cross-tab server and the per-tab lenses — reads, writes, and **read-back parity**
+(everything a client can build, it can `list_*`/`get_*` back and verify):
 
-- **Data** — `create_dataset` · `add_dataset_version` · `document_dataset` · `promote_dataset`
-- **Knowledge** — `author_knowledge` · `publish_knowledge` · `index_knowledge`
-- **Files** — `upload_file` · `promote_file`
-- **Metrics** — `define_metric` · **Dashboards** — `create_dashboard` · **Big Bets** — `create_big_bet`
-- **Agents** — `create_agent_system` · `commit_agent_files` · `build_agent_system`
-- **Software** — the existing app lifecycle (create · commit · preview · request deploy)
+- **Data** — the **physical pipeline**: `create_dataset` · `ingest_dataset` (upload → a real
+  Bronze Iceberg table) · `transform_silver` · `build_gold_join` · `profile_dataset` ·
+  `add_dataset_version` · `document_dataset`, plus `query_data` (governed SQL)
+- **The sharing ladder as tools** — `request_promotion` (the owner files; datasets & files) and
+  `approve_promotion` (Builder+ in the domain applies; for datasets the approval **runs the
+  physical publish**)
+- **Knowledge** — `author_knowledge` · `publish_knowledge` · `index_knowledge` · `search_knowledge`
+- **Files** — `upload_file` · `search_files` · `list_files`/`get_file`
+- **Metrics** — `define_metric` · `query_metric` (resolve a governed metric to numbers, under RLS)
+- **Dashboards** — `create_dashboard` · **Big Bets** — `create_big_bet` · `update_big_bet` ·
+  `attach_component`
+- **Agents** — `create_agent_system` · `commit_agent_files` · `build_agent_system` ·
+  `run_agent_system`
+- **Science** — `list_models` · `get_model` · `science_predict`
+- **Connections** — `list`/`get`/`create`/`test_connection` + templates
+- **Software** — the full app lifecycle (create · commit · preview · request deploy — the deploy
+  *decision* stays Builder-gated)
 
 Two **discovery tools** ship on every endpoint — `whoami` (who am I, which domains, what my role
 allows) and `list_capabilities` — and every failure returns a **typed, model-readable error**
 `{ code, reason, hint }` so a client can self-correct instead of guessing.
+
+The same front door serves the platform's **own agents**: an Agent-tab system's tool calls dispatch
+through this identical governed toolset under its owner's identity — there is no separate,
+privileged internal registry.
+
+> **Not yet exposed via MCP** (designed, not built): Strategy, the Marketplace, the Governance
+> approvals queue, Monitoring, Platform-Admin, and the Science lifecycle beyond reads + predict
+> (promote/certify/drift/retrain). The list above is the real, shipped surface.
 
 Every tool runs **as the signed-in user**: the per-user token carries your identity, the **role
 floor is re-checked from the session on every call** (never trusted from the request body), OPA
@@ -1130,7 +1222,7 @@ Grouped by layer — see `docs/components/<id>.md` for the full per-component gu
 | **L1 — Agent core** | LiteLLM (model + MCP gateway, per-key budget cap) · model-server (self-hosted Ministral 3 / Magistral 24B; two-tier STACKIT Qwen reasoning/execution on the live deploy) · mock-model (offline embeddings + fallback) · OpenSearch (retrieval) · Langfuse (tracing) · query-tool (Trino MCP) · system agents (Domain RAG · ML pipeline · Hermes runtime) |
 | **L2 — Foundations** | OPA · Docling · Haystack · Dagster · dbt · Cube · OpenMetadata |
 | **Infra** | Postgres (CloudNativePG) · ClickHouse · Valkey · MinIO (object storage, PVC-backed) · Polaris (Iceberg catalog, durable relational-JDBC metastore) |
-| **L3 — Self-service** | central Trino · Superset · Forgejo (sovereign git) · Argo CD · CI runner/build · OpenSearch Dashboards · Workbench · Terminal |
+| **L3 — Self-service** | central Trino · Superset · Forgejo (sovereign git) · Argo CD · CI runner/build · OpenSearch Dashboards · Workbench (workload only — retired from the nav) · Terminal |
 | **L4 — Science** | JupyterHub · MLflow · Featureform · KServe (all opt-in) |
 | **Security & platform** | egress-proxy · web_fetch · WireGuard tunnel (optional) · OS UI (embedded Components console · same-origin tool proxy + Level-1 SSO · remote & per-tab MCP servers) |
 
@@ -1169,13 +1261,39 @@ Grouped by layer — see `docs/components/<id>.md` for the full per-component gu
 - **No verification/invite email is sent** → no mailer is configured. The bootstrap admin
   **auto-verifies**, so you can start without one; to enable email, set the Microsoft Graph
   app-registration (`Mail.Send`) **or** the `SMTP_*` variables (sender `support@datamasterclass.com`).
+  Note: on the live STACKIT tenant outbound delivery is currently **not operational** (provider
+  port-25 block; relay + DNS pending) — see *Getting started*.
 - **Do I have to use STACKIT?** No — any Kubernetes works; the chart is portable. STACKIT is the
   sovereign EU default. You can build and validate everything on local `kind` with no cloud key.
 
 ## Version & changelog
 
-- **Chart 0.2.10 · app `0.2.0-alpha.11`.** This build: generated `{{DATE}}` from commit `{{GIT_COMMIT}}`.
-- **This build (os-ui 0.1.16).** The **role model is now exactly three roles** —
+- **Chart 0.2.11 · app `0.2.0-alpha.11` · os-ui `0.1.32`.** This build: generated `{{DATE}}` from commit `{{GIT_COMMIT}}`.
+- **This build (os-ui 0.1.32): the role model grew to four ranks** — `creator < builder <
+  domain_admin < admin`. The new **Domain admin** carries everything a Builder can **plus**
+  administering the users of their own domain(s) only (invite, edit, deactivate, roles up to
+  Builder — never another Domain admin or an Administrator; only the platform Administrator
+  appoints Domain admins). Builders are approvers, **not** people-admins. Governance stays
+  Builder-rank-and-up; the rest of the Platform group stays Administrator-only; nobody is
+  auto-promoted on upgrade. **Durability shipped**: every user-facing in-process store now mirrors
+  to OpenSearch through the one shared `lib/os-mirror.ts` core (write-through + boot hydration,
+  self-healing index bootstrap) — artifacts survive redeploys; requires the OpenSearch PVC. **The
+  Data golden path went physical end to end** (Data M1): upload → a real Bronze Iceberg table in a
+  per-user schema → Explore → Silver → Gold join → **publish-on-approval** (the approval runs the
+  physical publish) → Cube → **Talk to your data v2** (governed NL→SQL: canView-scoped context,
+  one validated read-only SELECT, executed under the caller's row filters), on Polaris
+  1.1.0-incubating. **MCP Waves A + B**: the physical pipeline tools, the
+  `request_promotion`/`approve_promotion` split, `query_metric`, `run_agent_system`, Science
+  reads (`list_models`/`get_model`), Big Bet updates, Connections tools and read-back parity
+  (`list_*`/`get_*` for every buildable artifact) — and internal Agent-tab systems now dispatch
+  through the **same governed toolset** under their owner's identity. **Nav consolidation**:
+  Tutorials in the main tab group; Governance atop the Platform group (Builder+); Workbench
+  retired from the nav (the workload remains chart-optional). **Console UX**: Terminal
+  auto-connects and re-attaches to a live session; Dagster's public ingress gained operator
+  basic-auth. **Backups**: the Tier 0–2 system (nightly pg-dump CronJob · nightly Velero
+  off-cluster volume backups · the pre-upgrade backup gate) with honest gap documentation in
+  `docs/backups.md` and drills in `docs/runbooks/`.
+- **Earlier (os-ui 0.1.16).** The role model was consolidated to three roles —
   `creator < builder < admin` (*participant* and *agentic-leader* removed; agentic-leaders migrated
   to Creator) — and **Users admin** was overhauled: invite by email (email = username), multi-select
   domain membership, role descriptions, edit, and archive → restore → permanently-delete behind

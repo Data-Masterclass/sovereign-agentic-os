@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
-import { listDashboards } from '@/lib/dashboards/store';
+import { listDashboards, ensureHydrated } from '@/lib/dashboards/store';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +15,7 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET() {
   try {
+    await ensureHydrated();
     const user = await requirePrincipal();
     return NextResponse.json(listDashboards(user));
   } catch (e) {

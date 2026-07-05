@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { listPillars, createPillar } from '@/lib/strategy/pillars';
 import { rollupForPillar, valueHistory } from '@/lib/strategy/value-rollup';
-import { snapshotHistory } from '@/lib/strategy/snapshots';
+import { snapshotHistory, ensureHydrated } from '@/lib/strategy/snapshots';
 import { recentStrategyAudit } from '@/lib/strategy/audit';
 import { canCreatePillar, canEditPillar, type PillarScope } from '@/lib/strategy/model';
 
@@ -24,6 +24,7 @@ function fail(e: unknown) {
  */
 export async function GET() {
   try {
+    await ensureHydrated();
     const user = await requireUser();
     const pillars = await listPillars(user);
     const items = await Promise.all(

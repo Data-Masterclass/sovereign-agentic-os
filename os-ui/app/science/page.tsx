@@ -12,6 +12,7 @@ import { useToolWindow } from '@/components/ToolWindowProvider';
 // Layer-4 tools embeddable same-origin (lib/tool-proxy.ts). JupyterHub needs
 // WebSockets (kernels) and KServe has no human UI, so those keep native links.
 const EMBEDDABLE_SCIENCE: Record<string, string> = { mlflow: 'MLflow', featureform: 'Featureform' };
+import { roleAtLeast } from '@/lib/session';
 import type {
   ServiceModel,
   CompiledPredictPolicy,
@@ -234,7 +235,7 @@ function ChurnSlice() {
   if (loading || !data) {
     return (
       <>
-        <div className="section-title">New model — guided golden path</div>
+        <div className="section-title">Model lifecycle — the golden path</div>
         <div className="stub-page" style={{ marginTop: 8 }}>Loading the churn golden path…</div>
       </>
     );
@@ -243,13 +244,15 @@ function ChurnSlice() {
   return (
     <>
       <div className="section-title">
-        New model — guided golden path
+        Model lifecycle — the golden path
         <span className="count-pill">{data.model}</span>
       </div>
       <p className="muted" style={{ marginTop: -4 }}>
-        A guided, preview-first path takes a governed data product (<code>{data.dataProduct}</code>)
-        to a deployed, governed model — no blank notebook to start. JupyterHub stays as the escape
-        hatch for power users who want raw cells.
+        Every model ships through these stages — shown here on a live worked example: the{' '}
+        <code>{data.model}</code> model, built from the governed data product{' '}
+        <code>{data.dataProduct}</code>. Not a tutorial (that&rsquo;s in Tutorials → Science) and not a
+        wizard — it&rsquo;s the real path with the real stage status, so you always know where a model
+        stands and who acts next. JupyterHub stays the escape hatch for raw notebooks.
       </p>
       <div className="row" style={{ flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
         {GUIDE.map((g, i) => (
@@ -381,7 +384,7 @@ function TierLadder({
   gpuEnabled: boolean;
 }) {
   const { user } = useUser();
-  const isBuilder = user?.role === 'builder' || user?.role === 'admin';
+  const isBuilder = !!user && roleAtLeast(user.role, 'builder');
   const isAdmin = user?.role === 'admin';
 
   const [busy, setBusy] = useState('');

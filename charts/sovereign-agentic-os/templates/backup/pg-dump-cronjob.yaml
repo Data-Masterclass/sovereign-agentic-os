@@ -1,0 +1,159 @@
+{{- if and .Values.backup.pgDump.enabled .Values.postgres.enabled }}
+{{- /*
+  Nightly logical Postgres backup (see values.yaml `backup.pgDump`).
+
+  Two phases in one Job pod, sequenced by init -> main container:
+    1. init `dump` (the postgres image — has pg_dump/pg_dumpall/psql): discovers
+       EVERY non-template database from pg_catalog (so new extraDatabases are
+       picked up with no chart change), dumps each one with pg_dump -Fc plus
+       the cluster globals (roles/passwords) with pg_dumpall --globals-only,
+       into a shared emptyDir. Verifies every file is non-empty and writes a
+       MANIFEST (db list + sizes).
+    2. main `upload` (aws-cli, same pinned image as bucket-init): uploads the
+       folder to s3://<bucket>/<prefix>/<UTC-stamp>/, verifies the uploaded
+       object count matches the local file count, then prunes runs older than
+       retentionDays. Any failure leaves the CronJob run Failed (visible via
+       kubectl -n {{ .Release.Namespace }} get jobs).
+
+  Credentials: the SAME Secrets the chart already uses — postgres.secretName
+  (the bootstrap superuser, so every database is dumpable) and
+  objectStorage.secretName (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY).
+*/}}
+{{- $pg := .Values.postgres }}
+{{- $os := .Values.objectStorage }}
+{{- $b := .Values.backup.pgDump }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pg-dump
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "pg-dump") | nindent 4 }}
+spec:
+  schedule: {{ $b.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      # Keep the last runs listable for a day, then let k8s clean them up.
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            {{- include "soa.selectorLabels" (dict "ctx" . "component" "pg-dump") | nindent 12 }}
+          annotations:
+            # The dump IS the Postgres backup; never fs-backup this scratch pod.
+            backup.velero.io/backup-volumes-excludes: dumps
+        spec:
+          restartPolicy: Never
+          securityContext:
+            {{- include "soa.podSecurityContext" . | nindent 12 }}
+            runAsUser: 999
+            runAsGroup: 999
+            fsGroup: 999
+          volumes:
+            - name: dumps
+              emptyDir:
+                sizeLimit: 2Gi
+          initContainers:
+            - name: dump
+              image: "{{ $pg.plainImage.repository }}:{{ $pg.plainImage.tag }}{{ if $pg.plainImage.digest }}@{{ $pg.plainImage.digest }}{{ end }}"
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "soa.containerSecurityContext" . | nindent 16 }}
+              env:
+                - name: PGHOST
+                  value: {{ include "soa.pgHost" . | quote }}
+                - name: PGPORT
+                  value: "5432"
+                - name: PGUSER
+                  valueFrom: { secretKeyRef: { name: {{ $pg.secretName }}, key: username } }
+                - name: PGPASSWORD
+                  valueFrom: { secretKeyRef: { name: {{ $pg.secretName }}, key: password } }
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  OUT=/dumps
+                  echo "waiting for $PGHOST:$PGPORT ..."
+                  for i in $(seq 1 30); do
+                    pg_isready -q && break
+                    [ "$i" = 30 ] && { echo "FATAL: postgres not ready"; exit 1; }
+                    sleep 2
+                  done
+                  DBS=$(psql -d postgres -Atc \
+                    "SELECT datname FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres' ORDER BY 1")
+                  [ -n "$DBS" ] || { echo "FATAL: no databases found"; exit 1; }
+                  echo "dumping globals (roles) ..."
+                  pg_dumpall --globals-only > "$OUT/globals.sql"
+                  for db in $DBS; do
+                    echo "dumping $db ..."
+                    pg_dump -Fc -d "$db" -f "$OUT/$db.dump"
+                  done
+                  # Verify: every dump non-empty, then manifest for the uploader.
+                  for f in "$OUT"/*; do
+                    [ -s "$f" ] || { echo "FATAL: empty dump $f"; exit 1; }
+                  done
+                  ( cd "$OUT" && ls -l ) | tee "$OUT/MANIFEST"
+                  echo "dump phase OK ($(echo "$DBS" | wc -w) databases)"
+              resources:
+                {{- toYaml $b.resources | nindent 16 }}
+              volumeMounts:
+                - { name: dumps, mountPath: /dumps }
+          containers:
+            - name: upload
+              image: "{{ $os.awsCli.repository }}@{{ $os.awsCli.digest }}"
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "soa.containerSecurityContext" . | nindent 16 }}
+              env:
+                # aws-cli wants a writable HOME for its config/cache (runs as 999).
+                - name: HOME
+                  value: /tmp
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom: { secretKeyRef: { name: {{ $os.secretName }}, key: AWS_ACCESS_KEY_ID } }
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom: { secretKeyRef: { name: {{ $os.secretName }}, key: AWS_SECRET_ACCESS_KEY } }
+                - name: AWS_DEFAULT_REGION
+                  value: {{ $os.region | quote }}
+                - name: ENDPOINT
+                  value: {{ include "soa.s3Endpoint" . | quote }}
+                - name: BUCKET
+                  value: {{ $b.bucket | quote }}
+                - name: PREFIX
+                  value: {{ $b.prefix | quote }}
+                - name: RETENTION_DAYS
+                  value: {{ $b.retentionDays | quote }}
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  s3() { aws --endpoint-url "$ENDPOINT" "$@"; }
+                  STAMP=$(date -u +%Y-%m-%dT%H-%M-%SZ)
+                  DEST="s3://$BUCKET/$PREFIX/$STAMP"
+                  echo "uploading to $DEST ..."
+                  s3 s3 cp --recursive --no-progress /dumps "$DEST/"
+                  # Verify: uploaded object count == local file count.
+                  want=$(ls -1 /dumps | wc -l)
+                  got=$(s3 s3 ls "$DEST/" | wc -l)
+                  [ "$got" -eq "$want" ] || { echo "FATAL: uploaded $got/$want files"; exit 1; }
+                  echo "upload verified ($got files)"
+                  # Retention: prune whole runs older than RETENTION_DAYS.
+                  CUTOFF=$(date -u -d "-${RETENTION_DAYS} days" +%Y-%m-%dT%H:%M:%S)
+                  OLD=$(s3 s3api list-objects-v2 --bucket "$BUCKET" --prefix "$PREFIX/" \
+                        --query "Contents[?LastModified<'${CUTOFF}'].Key" --output text || true)
+                  if [ -n "$OLD" ] && [ "$OLD" != "None" ]; then
+                    for key in $OLD; do
+                      echo "pruning old backup object $key"
+                      s3 s3 rm "s3://$BUCKET/$key"
+                    done
+                  fi
+                  echo "pg-dump backup complete: $DEST"
+              resources:
+                {{- toYaml $b.resources | nindent 16 }}
+              volumeMounts:
+                - { name: dumps, mountPath: /dumps }
+{{- end }}

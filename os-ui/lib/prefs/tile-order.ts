@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
+import { osMirror } from '@/lib/os-mirror';
 export { applyTileOrder, TILE_ORDER_SURFACES, ORDER_LIMIT } from './tile-order-pure';
 export type { TileOrderSurface } from './tile-order-pure';
 import { type TileOrderSurface, ORDER_LIMIT } from './tile-order-pure';
@@ -18,36 +18,18 @@ import { type TileOrderSurface, ORDER_LIMIT } from './tile-order-pure';
  * here, so this module stays free of Next.js request context.
  */
 
-type PrefsState = { cache: Map<string, string[]> | null; osHealthy: boolean };
+type PrefsState = { cache: Map<string, string[]> | null };
 const STATE_KEY = Symbol.for('soa.prefs.tileOrder');
 function state(): PrefsState {
   const g = globalThis as unknown as Record<symbol, PrefsState | undefined>;
-  if (!g[STATE_KEY]) g[STATE_KEY] = { cache: null, osHealthy: false };
+  if (!g[STATE_KEY]) g[STATE_KEY] = { cache: null };
   return g[STATE_KEY]!;
 }
 
 const INDEX = 'os-user-prefs';
-
-async function osFetch(path: string, init?: RequestInit): Promise<Response | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2500);
-  try {
-    return await fetch(`${config.opensearchUrl}${path}`, {
-      ...init,
-      signal: ctrl.signal,
-      cache: 'no-store',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'application/json',
-        ...(init?.headers ?? {}),
-      },
-    });
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
+// Shared durable-mirror core (probe → bootstrap-on-404 → hydrate/write-through):
+// lib/os-mirror.ts. A missing index is CREATED, never mistaken for a dead mirror.
+const mirror = osMirror({ index: INDEX });
 
 function prefKey(userId: string, surface: string): string {
   return `${userId}::${surface}`;
@@ -60,33 +42,17 @@ async function getCache(): Promise<Map<string, string[]>> {
   const s = state();
   if (s.cache) return s.cache;
   const map = new Map<string, string[]>();
-  const ping = await osFetch(`/${INDEX}/_count`);
-  if (ping && ping.ok) {
-    s.osHealthy = true;
-    const res = await osFetch(`/${INDEX}/_search?size=2000`, {
-      method: 'POST',
-      body: JSON.stringify({ query: { match_all: {} } }),
-    });
-    if (res && res.ok) {
-      type Doc = { userId: string; surface: string; order: string[] };
-      const data = (await res.json()) as { hits?: { hits?: { _source: Doc }[] } };
-      for (const h of data?.hits?.hits ?? []) {
-        map.set(prefKey(h._source.userId, h._source.surface), h._source.order);
-      }
-    }
-  } else {
-    s.osHealthy = false;
+  type Doc = { userId: string; surface: string; order: string[] };
+  const docs = (await mirror.hydrate(2000)) ?? []; // null → mirror down → in-memory only
+  for (const d of docs as Doc[]) {
+    map.set(prefKey(d.userId, d.surface), d.order);
   }
   s.cache = map;
   return map;
 }
 
 function writeThrough(userId: string, surface: string, order: string[]): void {
-  if (!state().osHealthy) return;
-  void osFetch(`/${INDEX}/_doc/${docId(userId, surface)}?refresh=true`, {
-    method: 'PUT',
-    body: JSON.stringify({ userId, surface, order, updatedAt: new Date().toISOString() }),
-  });
+  mirror.writeThrough(docId(userId, surface), { userId, surface, order, updatedAt: new Date().toISOString() });
 }
 
 /** Get the saved tile order for a user + surface (returns [] if none saved). */
@@ -111,5 +77,5 @@ export async function setTileOrder(
 export function __resetForTests(): void {
   const s = state();
   s.cache = null;
-  s.osHealthy = false;
+  mirror.__reset();
 }

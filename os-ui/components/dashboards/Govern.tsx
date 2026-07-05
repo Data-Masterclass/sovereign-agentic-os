@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { postJson, TIER_LABEL } from './shared';
 import type { DashboardSummary, DashTier, GovernResponse } from './shared';
+import { roleAtLeast } from '@/lib/session';
 
 /**
  * Govern — promote (Builder → Domain) / certify (Admin → Marketplace) the selected
@@ -34,7 +35,7 @@ export default function Govern({
   }
 
   const role = user?.role;
-  const canPromote = role === 'builder' || role === 'admin';
+  const canPromote = !!role && roleAtLeast(role, 'builder');
   const canCertify = role === 'admin';
 
   const govern = async (transition: 'promote' | 'certify') => {

@@ -37,6 +37,9 @@ metadata:
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
     soa.dev/purpose: domain-workbench
+{{- /* Pull-secret copies so the kubelet can pull the (private) code-server
+       image for the broker-created pods. See soa.replicatedPullSecrets. */}}
+{{- include "soa.replicatedPullSecrets" (dict "ctx" . "namespace" $wbNs) }}
 ---
 # Restricted ServiceAccount the code-server pods run as. Token is NOT automounted
 # (belt-and-braces with the pod spec) and it is bound to NO Role/ClusterRole.
@@ -196,6 +199,10 @@ spec:
               value: {{ $w.serviceAccount | default "workbench-nobody" | quote }}
             - name: CODE_SERVER_PORT
               value: {{ $w.workspace.port | default 8080 | quote }}
+            # Pull secrets the broker attaches to every code-server Deployment
+            # it creates (names replicated into the workbench namespace above).
+            - name: IMAGE_PULL_SECRETS
+              value: {{ include "soa.pullSecretNames" . | quote }}
             - name: ALLOWED_ROLES
               value: {{ join "," $w.allowedRoles | quote }}
             - name: IDLE_TIMEOUT_SECONDS

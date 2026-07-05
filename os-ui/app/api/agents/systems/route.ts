@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { listSystems, createSystem } from '@/lib/agents/store';
+import { listSystems, createSystem, ensureHydrated } from '@/lib/agents/store';
 import { isTemplateKey } from '@/lib/agents/templates';
 
 export const dynamic = 'force-dynamic';
@@ -16,6 +16,7 @@ function fail(e: unknown) {
 /** GET → the caller's systems grouped Mine / My domain / Marketplace. */
 export async function GET() {
   try {
+    await ensureHydrated();
     const user = await requireUser();
     return NextResponse.json(listSystems(user));
   } catch (e) {
@@ -26,6 +27,7 @@ export async function GET() {
 /** POST → create a new system (lands under Mine). */
 export async function POST(req: Request) {
   try {
+    await ensureHydrated();
     const user = await requireUser();
     const body = await req.json().catch(() => ({}));
     const name = typeof body.name === 'string' ? body.name : '';

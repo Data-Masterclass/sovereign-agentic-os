@@ -1,0 +1,417 @@
+# =============================================================================
+# values.stackit-selfhosted.yaml — Mode A: self-hosted on STACKIT SKE.
+# =============================================================================
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+# SPDX-License-Identifier: Apache-2.0
+#
+# Thin overlay LAYERED ON TOP of values.selfcontained.yaml — apply BOTH, in order:
+#
+#   helm ... -f values.selfcontained.yaml -f values.stackit-selfhosted.yaml
+#
+# values.selfcontained.yaml keeps EVERY stateful backend bundled in-cluster
+# (Postgres via CloudNativePG, OpenSearch, ClickHouse, Valkey, object storage via
+# MinIO; LiteLLM -> bundled local mock model). NOTHING managed/external. So the
+# whole deployment pauses with the SKE node pool (`stackit off` / `make sleep`) —
+# there is NO 24/7 managed-service bill. Terraform for Mode A provisions ONLY the
+# SKE cluster + DNS (enable_managed_backends=false).
+#
+# This overlay only changes what differs between a 14 GB kind box and a real SKE
+# node pool:
+#   1. global.storageClass -> SKE's CSI StorageClass (kind's "standard" is wrong).
+#   2. ingress -> ON, public TLS hosts for the 7 tools (cert-manager + nginx).
+#   3. re-enable the heavy Layer-2 components that values.selfcontained.yaml turns
+#      off for the small kind node (SKE nodes have the RAM for the full L1–L3 set).
+#
+# WIRING: `agentic.datamasterclass.com` is filled by deploy/scripts/render-values.sh from
+# `terraform output dns_name` (MODE=selfhosted). No secret VALUES land here.
+# =============================================================================
+
+global:
+  profile: local
+  # SKE in-cluster CSI StorageClass for ALL bundled PVCs (Postgres/OpenSearch/
+  # ClickHouse/Valkey/MinIO). kind's "standard" (rancher local-path) does not
+  # exist on SKE, so it MUST be overridden here.
+  #
+  # VERIFY before go-live: `kubectl get storageclass` on the SKE cluster and use
+  # the actual name (or the one marked `(default)`). Set to "" to fall back to the
+  # cluster's default StorageClass if you'd rather not pin a name.
+  storageClass: ""
+  imagePullPolicy: IfNotPresent
+  # Bespoke images are pulled from ghcr.io/aborek (NOT kind-loaded) on a real SKE
+  # cluster, so a registry pull secret is required. `registry-pull-secret` is
+  # materialised in-cluster (e.g. by External Secrets / `make secrets`); the chart
+  # adds it to every bespoke workload's pod spec via this global list.
+  imagePullSecrets:
+    - name: registry-pull-secret
+
+# Cilium enforces FQDN-aware default-deny egress on SKE (security.md). Bundled
+# mode keeps the same secure baseline as kind — just actually enforced here.
+networkPolicies:
+  defaultDeny: true
+
+# -----------------------------------------------------------------------------
+# Heavy Layer-2 components: OFF in values.selfcontained.yaml so the full L1–L3
+# slice fits a single ~14 GB kind node. SKE worker nodes have the headroom, so
+# re-enable them here for the complete self-hosted experience.
+# (Size the node pool for the full set — see deploy/terraform/terraform.tfvars.example.)
+# -----------------------------------------------------------------------------
+docling:
+  enabled: true
+osdashboards:
+  enabled: true
+openmetadata:
+  enabled: true
+
+# -----------------------------------------------------------------------------
+# Ollama (model-server) — upgrade to latest so ministral-3 loads correctly.
+# Pinned 0.6.8 in the chart default is too old for ministral-3 on this node.
+# -----------------------------------------------------------------------------
+modelServer:
+  image:
+    tag: "latest"
+  # CPU headroom for Ministral 3 3B on the m3i.16 node (16 vCPU / 128 GB). Ollama
+  # sizes its thread pool to the cgroup CPU limit, so the chart's 4-core cap left
+  # 12 cores idle and made single replies take 25s+. requests stay MODEST (2 cores
+  # reserved — the node only commits ~48% of CPU) while limits let one reply BURST
+  # to 12 of the idle cores and hand them straight back. CPU is compressible, so
+  # this shares gracefully with every other service; it does not block them.
+  resources:
+    requests: { cpu: "2", memory: 4Gi }
+    limits: { cpu: "12", memory: 6Gi }
+  # Self-hosted SOVEREIGN reasoning tier (Magistral Small 24B) — kept OFF until
+  # the GGUF is staged on the PVC. The in-box Ministral via Ollama is the default.
+  # Flip to true + provide Magistral-Small-2506-Q4_K_M.gguf at /models to enable.
+  reasoning:
+    enabled: false
+    persistence:
+      enabled: true
+      size: 20Gi
+    # nodeSelector: { topology.kubernetes.io/node-pool: m3i-16 }   # set to the real label
+
+# Layer 4 (Science / ML) — FULLY ENABLED for the everything-on deploy. `ml.enabled`
+# is the master gate; each component additionally needs its own `<component>.enabled`
+# (mlflow/kserve/mlAgent/featureform/jupyterhub/dagsterRetrain — all set below). The
+# churn model is sklearn served via MLflow (registry/artifacts) + KServe (inference);
+# Featureform is the feature store, JupyterHub the notebooks/Workbench notebooks tier,
+# dagsterRetrain the monthly churn-retrain definition. ONLY modelServer.reasoning stays
+# OFF (no GGUF staged — in-box Ministral is the reasoning default; see above).
+#
+# PREREQUISITE for KServe: the KServe controller CRDs are NOT installed on the
+# cluster yet (cert-manager IS). `helm upgrade` with kserve.enabled=true FAILS
+# until the controller is bootstrapped — see the deploy recipe / report. cert-manager
+# is already present (no need to reinstall it).
+ml:
+  enabled: true
+
+# =============================================================================
+# Bespoke images -> ghcr.io/aborek/sovereign-os (NOT kind-loaded on a real SKE
+# cluster). The chart renders bespoke images as `{{ .image.repository }}:{{ .image.tag }}`
+# with NO global registry prefix, so the chart default `sovereign-os/<name>` is
+# kind-local and unpullable on STACKIT. Override every bespoke component's
+# `image.repository` to the published ghcr path at the pushed tag. Tag refs (no
+# @sha256) — this self-hosted overlay does not pin by digest. Backends stay
+# BUNDLED, so NO managed-service (Postgres Flex / OpenSearch / object-store) wiring
+# lands here — images + the global pull secret only.
+# (The managed overlay values.stackit-managed.yaml carries the digest-pinned copies.)
+# =============================================================================
+osUI:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/os-ui
+    # 0.1.3 = governance effects.ts fix (approved dataset_promote/certify now moves
+    # the tier) + demo-data cleanup. Built/pushed by the orchestrator after the
+    # feat/ecommerce-seed merge + cleanup land. Bumped from 0.1.1.
+    tag: "0.1.3"
+  # ---- Microsoft 365 mailer — WIRED but creds deferred to the operator. ----
+  # Both transports are turned on so the os-ui mailer env is READY; the actual
+  # secrets stay UNSET (the os-ui-graph / os-ui-smtp Secrets are referenced
+  # optional:true, so os-ui boots fine without them). Until the operator supplies
+  # creds, the first-run bootstrap admin AND the seeded demo cast
+  # (values.private.yaml usersSeed) are marked email-verified on ingest — so NO
+  # login is blocked and the deploy never depends on outbound mail.
+  #
+  # OPERATOR — switch real sending on post-deploy with EITHER path, then
+  # `kubectl -n agentic-os rollout restart deploy/os-ui`:
+  #   Graph (recommended for M365): set graph.tenantId / graph.clientId below (in
+  #     values.private.yaml), then create the client secret —
+  #       kubectl -n agentic-os create secret generic os-ui-graph \
+  #         --from-literal=GRAPH_CLIENT_SECRET='<entra-app-client-secret>'
+  #   SMTP (STARTTLS/587): create the mailbox password —
+  #       kubectl -n agentic-os create secret generic os-ui-smtp \
+  #         --from-literal=SMTP_PASS='<support@datamasterclass.com password>'
+  # With a mailer configured, email verification turns ON automatically
+  # (emailVerification left empty = the documented default).
+  graph:
+    enabled: true
+    tenantId: ""      # OPERATOR: paste the Entra tenant (directory) id
+    clientId: ""      # OPERATOR: paste the Entra app (client) id
+    mailFrom: "support@datamasterclass.com"   # MAIL_FROM / Graph sender
+    # clientSecret stays UNSET → supply via the os-ui-graph Secret (above).
+  smtp:
+    enabled: true
+    host: "smtp.office365.com"
+    port: 587
+    secure: false     # 587 = STARTTLS (implicit TLS only on 465)
+    user: "support@datamasterclass.com"       # SMTP AUTH login
+    from: "support@datamasterclass.com"       # SMTP_FROM
+    # password stays UNSET → supply via the os-ui-smtp Secret (above).
+
+agentRuntime:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/agent-runtime
+    # 0.1.1 = plan(reasoning tier)->execute(27B tier) two-tier hand-off in the IR
+    # interpreter. MUST be rebuilt + pushed (scripts/build-images.sh / make
+    # stackit-images ARGS=--push) before the helm upgrade or the pod ImagePullErrors.
+    tag: "0.1.1"
+
+# Bundled local mock model is the LiteLLM backend in self-hosted mode (enabled by
+# the chart default + values.selfcontained.yaml) — pull its image from ghcr too.
+mockModel:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/mock-model
+    tag: "0.1.1"
+
+sampleAgent:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/sample-agent
+    tag: "0.1.0"
+
+poetAgent:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/poet-agent
+    tag: "0.1.0"
+
+haystack:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/haystack-retriever
+    tag: "0.1.0"
+
+dbt:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/dbt
+    tag: "0.2.0"
+
+egressProxy:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/egress-proxy
+    tag: "0.1.0"
+
+webFetch:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/web-fetch
+    tag: "0.1.0"
+
+queryTool:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/query-tool
+    tag: "0.3.0"
+
+sandbox:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/sandbox-duckdb
+    tag: "0.1.0"
+
+superset:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/superset
+    tag: "6.1.0"
+
+# dagster (Orchestration tab) — ENABLED. The webserver, daemon and the
+# example-user-code deployment all run the bespoke arm64 sovereign-os/dagster
+# image; point every one at the published ghcr path (the orchestrator rebuilds +
+# pushes sovereign-os/dagster:0.2.0 alongside os-ui:0.1.3). Sizing is the chart's
+# wave-2 default (web 100m/256Mi, daemon 100m/256Mi, user-code 50m/384Mi) — fine
+# on the m3i.16 node. External CNPG `dagster` DB is wired by the chart default.
+dagster:
+  enabled: true
+  # The Dagster subchart does NOT consume the umbrella's global.imagePullSecrets:
+  # the webserver/daemon templates read the parent chart's own `.Values.imagePullSecrets`
+  # and the user-deployments subchart reads ITS OWN `.Values.imagePullSecrets`
+  # ($.Values.imagePullSecrets in charts/dagster-user-deployments/templates/deployment-user.yaml).
+  # All three pull the private ghcr.io/aborek/sovereign-os/dagster image, so the
+  # registry-pull-secret must be set in both places explicitly (otherwise the pods
+  # ErrImagePull on a real SKE node — the user-code Deployment had to be live-patched).
+  imagePullSecrets:
+    - name: registry-pull-secret
+  dagsterWebserver:
+    image:
+      repository: ghcr.io/aborek/sovereign-os/dagster
+      tag: "0.2.0"
+  dagsterDaemon:
+    image:
+      repository: ghcr.io/aborek/sovereign-os/dagster
+      tag: "0.2.0"
+  dagster-user-deployments:
+    enabled: true
+    imagePullSecrets:
+      - name: registry-pull-secret
+    deployments:
+      - name: example-user-code
+        annotations:
+          argocd.argoproj.io/sync-wave: "2"
+        image:
+          repository: ghcr.io/aborek/sovereign-os/dagster
+          tag: "0.2.0"
+          pullPolicy: IfNotPresent
+        dagsterApiGrpcArgs:
+          - "--python-file"
+          - "/opt/dagster/app/repo.py"
+        port: 3030
+        env:
+          - { name: TRINO_HOST, value: trino }
+          - { name: TRINO_PORT, value: "8080" }
+          - { name: TRINO_USER, value: dbt-sales }
+          - { name: TRINO_CATALOG, value: iceberg }
+          - { name: TRINO_SCHEMA, value: analytics }
+        resources:
+          requests: { cpu: 50m, memory: 384Mi }
+          limits: { cpu: "1", memory: 1Gi }
+
+# forgejo (Software tab — sovereign git) — ENABLED. The imagePullSecrets
+# double-wrap that broke first boot is fixed in the chart: the umbrella overrides
+# the gitea `gitea.images.pullSecrets` helper (templates/_helpers.tpl) so the
+# map-form global.imagePullSecrets renders as a valid `- name: registry-pull-secret`
+# instead of the malformed `name: {name: …}`. Forgejo's image
+# (code.forgejo.org/forgejo/forgejo:11-rootless) is public, so the (now valid)
+# secret reference is harmless. sqlite + 2Gi PVC, chart-default sizing.
+forgejo:
+  enabled: true
+
+# -----------------------------------------------------------------------------
+# Lakehouse query path: Trino (central governed engine) + Cube (semantic layer).
+# values.selfcontained.yaml turns Trino OFF for the tiny kind node; the m3i.16
+# (16 vCPU / 128 GB) has the headroom, so re-enable the governed query path here.
+# Polaris (Iceberg REST catalog) is chart-default ON and unchanged. In `local`
+# profile the chart self-creates the Trino<->Polaris OAuth secret
+# (trino-catalog-credentials) + the Polaris bootstrap secret (polaris-credentials)
+# from polaris.local.rootClientId/rootClientSecret — overridden to a strong value
+# in the gitignored values.private.yaml (never the public dev default).
+# Trino heap stays the chart's m3i.16-sized default (jvm.maxHeap 6G; query.maxMemory
+# 4GB; requests 1 CPU / 2Gi, limits 4 CPU / 8Gi) — comfortable on a 107Gi node.
+# -----------------------------------------------------------------------------
+trino:
+  enabled: true
+
+# cube: ENABLED — the semantic layer over Trino's Iceberg Gold marts (Metrics tab
+# resolves/explores through it). Depends on Trino (now ON above).
+cube:
+  enabled: true
+
+# litellm: remove the db-migrate initContainer (it OOMKilled on the live cluster;
+# the DB is already migrated). Setting extraInitContainers: [] overrides the list
+# in values.yaml so the init container is not re-added on upgrade.
+litellm:
+  extraInitContainers: []
+
+# Layer 4 (Science / ML) — ENABLED (ml.enabled=true above). Each component is
+# gated by `ml.enabled AND <component>.enabled`; images pulled from ghcr.
+mlflow:
+  enabled: true
+  image:
+    repository: ghcr.io/aborek/sovereign-os/mlflow
+    tag: "2.19.0"
+
+mlAgent:
+  enabled: true
+  image:
+    repository: ghcr.io/aborek/sovereign-os/ml-agent
+    tag: "0.1.0"
+
+# KServe — serves the sklearn churn model (RawDeployment, no Knative). Ships ONLY
+# the InferenceService CR; the controller + CRDs must be bootstrapped on the cluster
+# FIRST (cert-manager is already present). The sample InferenceService points at
+# s3://mlflow/models/sample-sklearn — its predictor stays NotReady until the seed's
+# science step logs/registers a model there (expected; science predict degrades to
+# honest-mock until then). No bespoke image (upstream KServe sklearn runtime).
+kserve:
+  enabled: true
+
+# Terminal (the OS UI "/terminal" route) — ENABLED. The terminal-broker is the
+# only k8s-credentialed pod (manages ephemeral sandbox Pods in a dedicated
+# namespace); each session is a locked-down throwaway pod. The os-ui template
+# gates TERMINAL_ENABLED on this and reads the shared HMAC from the chart-created
+# `terminal-broker` Secret. Strong brokerSecret is set in (gitignored)
+# values.private.yaml — NOT the insecure in-chart default.
+terminal:
+  enabled: true
+  broker:
+    image:
+      repository: ghcr.io/aborek/sovereign-os/terminal-broker
+      tag: "0.1.0"
+  sandbox:
+    image:
+      repository: ghcr.io/aborek/sovereign-os/sandbox-shell
+      tag: "0.1.0"
+
+# Workbench (the OS UI "Workbench" tab — persistent per-builder code-server) —
+# ENABLED. The workbench-broker spawns a long-lived, domain-scoped editor pod per
+# builder on demand (PVC-backed). os-ui gates WORKBENCH_ENABLED on this + reads
+# the `workbench-broker` Secret. Strong brokerSecret in values.private.yaml.
+workbench:
+  enabled: true
+  broker:
+    image:
+      repository: ghcr.io/aborek/sovereign-os/workbench-broker
+      tag: "0.1.0"
+  workspace:
+    image:
+      repository: ghcr.io/aborek/sovereign-os/code-server-workbench
+      tag: "0.1.0"
+
+# -----------------------------------------------------------------------------
+# Remaining Layer-3 + Layer-4 components — ENABLED for the everything-on deploy.
+# -----------------------------------------------------------------------------
+# Harbor — production image registry for the Software golden path (per-app builds:
+# Forgejo Actions -> Harbor -> Argo CD). Public `registry:2.8.3` stand-in image,
+# chart-default sizing (50m/128Mi).
+harbor:
+  enabled: true
+
+# JupyterHub (Workbench notebooks / Science) — hub is modest (chart default
+# 100m/384Mi + proxy 50m/64Mi); singleuser notebook pods spawn ON DEMAND
+# (DummyAuthenticator locally; quay scipy-notebook image, ~512M-2G per notebook).
+# Gated by ml.enabled (true) AND jupyterhub.enabled.
+jupyterhub:
+  enabled: true
+
+# Featureform (Science feature store, MPL-2.0) — offline=Iceberg/Trino,
+# online=Valkey. Upstream multi-arch image (featureformcom/featureform). Gated by
+# ml.enabled AND featureform.enabled. Chart-default sizing (100m/384Mi).
+featureform:
+  enabled: true
+
+# Dagster churn-retrain (Science step 8) — ships the monthly retrain definition as
+# a ConfigMap the Dagster user-code loads (cron owned by Dagster). Cheap (ConfigMap
+# only; no extra pod). Gated by ml.enabled AND dagsterRetrain.enabled.
+dagsterRetrain:
+  enabled: true
+
+# NOTE: the OS UI Microsoft 365 mailer (graph + smtp) is wired in the `osUI:` block
+# near the top of this file (kept with the os-ui image override to avoid a duplicate
+# top-level key).
+
+# -----------------------------------------------------------------------------
+# Ingress + TLS — public consoles for the 7 tools. Hostnames resolve to the
+# ingress-nginx LoadBalancer (its public IP is written into the STACKIT DNS zone
+# by `make dns`); cert-manager issues Let's Encrypt certs. `agentic.datamasterclass.com` is
+# substituted with `terraform output dns_name` by render-values.sh.
+# Same 7 keys the chart's templates/ingress.yaml routes to in-cluster Services.
+# -----------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: nginx
+  tlsIssuer: letsencrypt-prod
+  hosts:
+    osUI: "os.agentic.datamasterclass.com"
+    # Bare zone apex also serves the OS UI so it no longer 404s next to os.<zone>.
+    osUIApex: "agentic.datamasterclass.com"
+    litellm: "litellm.agentic.datamasterclass.com"
+    langfuse: "langfuse.agentic.datamasterclass.com"
+    openmetadata: "openmetadata.agentic.datamasterclass.com"
+    superset: "superset.agentic.datamasterclass.com"
+    forgejo: "forgejo.agentic.datamasterclass.com"
+    argocd: "argocd.agentic.datamasterclass.com"
+
+# NOTE: NO objectStorage/postgres/opensearch/llm `external:` blocks here on
+# purpose — every backend stays BUNDLED (the values.selfcontained.yaml +
+# chart defaults). Adding an `external:` block would re-introduce a managed
+# dependency and defeat the pause-with-the-node-pool cost model.

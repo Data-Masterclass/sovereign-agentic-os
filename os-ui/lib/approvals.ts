@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
+import { osMirror } from '@/lib/os-mirror';
 
 /**
  * The Governance approval queue (golden path §6.5, §7). When a governed tool call
@@ -104,11 +104,15 @@ export type ApprovalEffect = {
 // Pinned to globalThis so the queue is a TRUE singleton across separately
 // bundled Next.js route handlers (the marketplace import route enqueues; the
 // governance route reads) and survives dev HMR.
+type ApprovalsState = { queue: Map<string, Approval>; hydration: Promise<void> | null };
 const QUEUE_KEY = Symbol.for('soa.approvals.queue');
-function queueMap(): Map<string, Approval> {
-  const g = globalThis as unknown as Record<symbol, Map<string, Approval> | undefined>;
-  if (!g[QUEUE_KEY]) g[QUEUE_KEY] = new Map<string, Approval>();
+function approvalsState(): ApprovalsState {
+  const g = globalThis as unknown as Record<symbol, ApprovalsState | undefined>;
+  if (!g[QUEUE_KEY]) g[QUEUE_KEY] = { queue: new Map(), hydration: null };
   return g[QUEUE_KEY]!;
+}
+function queueMap(): Map<string, Approval> {
+  return approvalsState().queue;
 }
 const queue = { get: (k: string) => queueMap().get(k), set: (k: string, v: Approval) => queueMap().set(k, v), values: () => queueMap().values(), clear: () => queueMap().clear() };
 
@@ -119,22 +123,27 @@ function id(): string {
   return `apr_${Math.random().toString(36).slice(2, 9)}${Date.now().toString(36).slice(-4)}`;
 }
 
-async function writeThrough(a: Approval): Promise<void> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2000);
-  try {
-    await fetch(`${config.opensearchUrl}/os-approvals/_doc/${a.id}?refresh=true`, {
-      method: 'PUT',
-      signal: ctrl.signal,
-      cache: 'no-store',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(a),
-    });
-  } catch {
-    /* best-effort durable mirror */
-  } finally {
-    clearTimeout(timer);
+// Shared durable-mirror core (lib/os-mirror.ts): first write probes the cluster
+// and CREATES the index when missing, so approvals stay durable on a fresh deploy.
+const mirror = osMirror({ index: 'os-approvals' });
+
+export async function ensureHydrated(): Promise<void> {
+  const s = approvalsState();
+  if (!s.hydration) s.hydration = hydrate();
+  return s.hydration;
+}
+
+async function hydrate(): Promise<void> {
+  const s = approvalsState();
+  const docs = (await mirror.hydrate(2000)) ?? [];
+  for (const a of docs as Approval[]) {
+    // Don't clobber any approval created in-process before hydration completed.
+    if (a && a.id && !s.queue.has(a.id)) s.queue.set(a.id, a);
   }
+}
+
+async function writeThrough(a: Approval): Promise<void> {
+  mirror.writeThrough(a.id, a); // best-effort durable mirror
 }
 
 export function enqueue(input: {
@@ -221,5 +230,8 @@ export function recordEffect(
 
 /** Test-only: drop the in-process queue so each test starts clean. */
 export function __resetApprovals(): void {
-  queue.clear();
+  const s = approvalsState();
+  s.queue.clear();
+  s.hydration = null;
+  mirror.__reset();
 }

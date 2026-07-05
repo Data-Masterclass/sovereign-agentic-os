@@ -16,6 +16,7 @@ import { commitSystem } from './commitSystem';
 import { addAgent, addHandoffEdge, addSuperviseEdge, removeAgent, removeEdge, setEntrypoint, setNodePositions } from '@/lib/agents/canvas-edit';
 import type { Schedule, System } from '@/lib/agents/system-schema';
 import type { ModelInfo } from '@/lib/agents/routing';
+import { roleAtLeast, type Role } from '@/lib/session';
 
 // React Flow + Monaco are heavy, client-only, and SSR-tolerant only when lazy —
 // load the canvas ssr:false (same pattern as MonacoFile) so the standalone build
@@ -48,7 +49,7 @@ type SystemViewData = {
   ir: unknown;
   compileError: string | null;
   canEdit: boolean;
-  role: string;
+  role: Role;
   hermesEnabled: boolean;
 };
 
@@ -186,7 +187,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
   const canPromote =
     data.canEdit &&
     data.origin !== 'forked' &&
-    ((data.visibility === 'Personal' && (data.role === 'builder' || data.role === 'admin')) ||
+    ((data.visibility === 'Personal' && roleAtLeast(data.role, 'builder')) ||
       (data.visibility === 'Shared' && data.role === 'admin'));
   const promoteLabel = data.visibility === 'Personal' ? 'Promote to Shared' : 'Publish to Marketplace';
   const editable = data.canEdit && !acting;

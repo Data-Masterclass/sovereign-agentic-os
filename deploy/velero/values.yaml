@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# Velero (chart 8.1.0 — same pin as deploy/argocd/apps/05-velero.yaml) for the
+# Mode-A self-hosted deploy: kopia/node-agent FILE-LEVEL backup of pod volumes
+# to the STACKIT `-velero-backups` bucket (deploy/terraform/backup.tf).
+# Installed by deploy/velero/install.sh, which supplies the bucket/endpoint
+# (--set) and the velero-credentials Secret from the terraform outputs.
+#
+# Volume policy is OPT-OUT: defaultVolumesToFsBackup=true backs up EVERY pod
+# volume (PVCs + emptyDirs) so new stateful components are protected by
+# default; the chart annotates the known exceptions with
+# `backup.velero.io/backup-volumes-excludes`:
+#   - pg `data`         -> pg_dump CronJob is the consistent Postgres path
+#   - model volumes     -> re-downloadable (ollama, magistral 20Gi)
+# Everything is file-level (kopia) — no CSI VolumeSnapshotClass exists on this
+# SKE setup, so snapshots stay disabled.
+
+initContainers:
+  - name: velero-plugin-for-aws
+    image: velero/velero-plugin-for-aws:v1.11.0
+    volumeMounts:
+      - mountPath: /target
+        name: plugins
+
+# S3 keys land in this Secret (created by install.sh from `tofu output`).
+credentials:
+  useSecret: true
+  existingSecret: velero-credentials
+
+# kopia node-agent on every node — required for fs-backup.
+deployNodeAgent: true
+
+snapshotsEnabled: false
+
+configuration:
+  uploaderType: kopia
+  defaultVolumesToFsBackup: true
+  backupStorageLocation:
+    - name: default
+      provider: aws
+      bucket: OVERRIDDEN-BY-INSTALL-SH        # --set from tofu output
+      config:
+        region: eu01
+        s3ForcePathStyle: "true"
+        s3Url: OVERRIDDEN-BY-INSTALL-SH       # --set from tofu output
+  volumeSnapshotLocation: []
+
+# Daily 03:00 UTC, 30-day retention, whole agentic-os namespace.
+# (pg-dump CronJob runs 02:30 UTC, so the dump that Velero carries off-cluster
+# via the minio-data volume is at most 30 minutes old.)
+schedules:
+  daily-agentic-os:
+    disabled: false
+    schedule: "0 3 * * *"
+    useOwnerReferencesInBackup: false
+    template:
+      ttl: 720h
+      includedNamespaces:
+        - agentic-os
+      defaultVolumesToFsBackup: true
+
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits: { cpu: "1", memory: 1Gi }
+
+nodeAgent:
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+metrics:
+  enabled: true

@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { currentUser } from '@/lib/auth';
 import { listUsers } from '@/lib/users';
 import { canViewPolicyPlane, consolidatedPlane, listEgress, overrideRevoke, policySources, readOpaGrants } from '@/lib/governance/policy-view';
-import { listStanding } from '@/lib/governance/standing';
+import { listStanding, ensureHydrated } from '@/lib/governance/standing';
 import { record as audit } from '@/lib/governance/audit';
 
 export const dynamic = 'force-dynamic';
@@ -17,6 +17,7 @@ export const dynamic = 'force-dynamic';
  * which is audited.
  */
 export async function GET() {
+  await ensureHydrated();
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
   // Gate on the policy.view right (Builder+), not mere authentication — a
@@ -39,6 +40,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  await ensureHydrated();
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
   if (user.role !== 'admin') {

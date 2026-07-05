@@ -5,6 +5,7 @@
 
 import { useCallback, useState } from 'react';
 import { useUser } from '@/lib/useUser';
+import { roleAtLeast } from '@/lib/session';
 import {
   type GovernResult,
   type MetricSummary,
@@ -32,7 +33,7 @@ export default function GovernMetric({
   const [result, setResult] = useState<GovernResult | null>(null);
 
   const role = user?.role;
-  const canPromote = role === 'builder' || role === 'admin';
+  const canPromote = !!role && roleAtLeast(role, 'builder');
   const canCertify = role === 'admin';
 
   const govern = useCallback(async (transition: 'promote' | 'certify') => {

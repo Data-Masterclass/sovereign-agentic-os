@@ -13,6 +13,9 @@ import type { Scope, ScopeLevel } from './types.ts';
 export const ROLE_LEVEL: Record<string, ScopeLevel> = {
   'creator': 'user',
   builder: 'builder',
+  // A domain admin's monitoring scope is domain-wide (like a builder) — never
+  // cluster/tenant-wide, which stays admin-only.
+  domain_admin: 'builder',
   admin: 'admin',
 };
 

@@ -3,14 +3,16 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { requestEgress, listEgressRequests, egressLog } from '@/lib/egress-requests';
+import { requestEgress, listEgressRequests, egressLog, ensureHydrated } from '@/lib/egress-requests';
 import { egressHost } from '@/lib/secrets';
+import { roleAtLeast } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
 /** List egress requests for the caller's domains + the recent outbound log. */
 export async function GET() {
   try {
+    await ensureHydrated();
     const user = await requireUser();
     const requests = user.domains.flatMap((d) => listEgressRequests({ domain: d }));
     return NextResponse.json({ user, requests, log: egressLog(50) });
@@ -26,8 +28,9 @@ export async function GET() {
  */
 export async function POST(req: Request) {
   try {
+    await ensureHydrated();
     const user = await requireUser();
-    if (user.role !== 'builder' && user.role !== 'admin') {
+    if (!roleAtLeast(user.role, 'builder')) {
       return NextResponse.json({ error: 'Requesting egress requires a Builder or Administrator' }, { status: 403 });
     }
     const body = await req.json();

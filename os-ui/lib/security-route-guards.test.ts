@@ -31,11 +31,34 @@ test('GAP 2: the agents-systems create route no longer accepts a client visibili
   assert.match(read('app/api/agents/systems/[id]/promote/route.ts'), /promoteSystem/);
 });
 
-test('GAP 3: marketplace import paths gate on Builder+', () => {
-  assert.match(read('lib/marketplace/adapters.ts'), /role !== 'builder' && [^\n]*role !== 'admin'/, 'GovernedImportAdapter.import gates Builder+');
+test('GAP 3: marketplace import paths gate on Builder+ (rank-based — domain_admin inherits)', () => {
+  assert.match(read('lib/marketplace/adapters.ts'), /!roleAtLeast\(viewer\.role, 'builder'\)/, 'GovernedImportAdapter.import gates Builder+');
   assert.match(read('lib/artifacts.ts'), /roleRank\(user\.role\) < roleRank\('builder'\)/, 'addFromMarketplace gates Builder+');
-  assert.match(read('lib/data/store.ts'), /importer\.role !== 'builder'/, 'importProduct gates Builder+');
+  assert.match(read('lib/data/store.ts'), /!roleAtLeast\(importer\.role, 'builder'\)/, 'importProduct gates Builder+');
   assert.match(read('lib/tabs.ts'), /Marketplace'[^\n]*role: 'Builder/, 'Marketplace tab carries a role hint');
+});
+
+test('GAP 7 (4-rank migration): the governance users route enforces the domain_admin scoping predicates server-side', () => {
+  const src = read('app/api/governance/users/route.ts');
+  // Floor: user administration is Domain admin+ (builders are NOT people-admins).
+  assert.match(src, /canAdministerUsers/, 'floor gate wired');
+  // Subset rule: target domains ⊆ actor domains, on list AND every mutation.
+  assert.match(src, /userAdminInScope/, 'subset rule wired');
+  // No-lateral/no-upward: a domain_admin never touches an admin/domain_admin.
+  assert.match(src, /canTouchUser|canTouchTarget/, 'target-protection wired');
+  // Role-assignment ceiling: canManageRole caps a domain_admin at builder.
+  assert.match(src, /canManageRole/, 'role ceiling wired');
+  // Hard delete stays platform-admin-only.
+  assert.match(src, /user\.role !== 'admin'/, 'DELETE stays admin-only');
+  // Every mutation audits the actor.
+  assert.match(src, /actor: user\.id/, 'mutations audited with the actor');
+});
+
+test('GAP 8 (4-rank migration): the Platform-group user routes stay requireAdmin (tab gating from 0.1.31 not reopened)', () => {
+  for (const p of ['app/api/users/route.ts', 'app/api/users/[id]/route.ts']) {
+    assert.match(read(p), /requireAdmin/, `${p} must stay admin-only`);
+  }
+  assert.match(read('app/api/platform-admin/access/route.ts'), /adminCtx/, 'platform-admin access stays adminCtx-gated');
 });
 
 test('GAP 4: science predict routes bind identity to the session, never the body', () => {
@@ -176,42 +199,49 @@ test('ROLE-PERMS: the role-permissions API is admin-only on both verbs', () => {
 // Platform-group page gates (sidebar tab → server enforces the same rule).
 // ---------------------------------------------------------------------------
 
-test('PLATFORM-GATE 1: /users, /components, /gateway, /orchestration have server-side admin layout', () => {
-  for (const p of [
-    'app/users/layout.tsx',
-    'app/components/layout.tsx',
-    'app/gateway/layout.tsx',
-    'app/orchestration/layout.tsx',
-  ]) {
-    const src = read(p);
-    assert.match(src, /currentUser/, `${p} must call currentUser`);
-    assert.match(src, /role !== 'admin'/, `${p} must gate non-admins`);
-  }
+test('PLATFORM-GATE 1: /components has a server-side admin layout', () => {
+  const src = read('app/components/layout.tsx');
+  assert.match(src, /currentUser/, 'app/components/layout.tsx must call currentUser');
+  assert.match(src, /role !== 'admin'/, 'app/components/layout.tsx must gate non-admins');
 });
 
-test('PLATFORM-GATE 2: /workbench and /terminal are admin-only at the page level', () => {
-  for (const p of ['app/workbench/page.tsx', 'app/terminal/page.tsx']) {
-    const src = read(p);
-    assert.match(src, /role !== 'admin'/, `${p} must have admin-only gate`);
-  }
+test('PLATFORM-GATE 2: /terminal is admin-only at the page level', () => {
+  const src = read('app/terminal/page.tsx');
+  assert.match(src, /role !== 'admin'/, 'app/terminal/page.tsx must have admin-only gate');
 });
 
-test('PLATFORM-GATE 3: /consoles and /about have server-side admin gate in the page', () => {
-  for (const p of ['app/consoles/page.tsx', 'app/about/page.tsx']) {
-    const src = read(p);
-    assert.match(src, /currentUser/, `${p} must call currentUser`);
-    assert.match(src, /role !== 'admin'/, `${p} must gate non-admins`);
-  }
+test('PLATFORM-GATE 3: /about has a server-side admin gate in the page', () => {
+  const src = read('app/about/page.tsx');
+  assert.match(src, /currentUser/, 'app/about/page.tsx must call currentUser');
+  assert.match(src, /role !== 'admin'/, 'app/about/page.tsx must gate non-admins');
 });
 
-test('PLATFORM-GATE 4: sidebar tab minRole=admin is set on every Platform tab except Tutorials', () => {
+test('PLATFORM-GATE 4: consolidated Platform tabs — Governance is builder+, the rest admin', () => {
   const src = read('lib/tabs.ts');
-  // All admin-only Platform entries carry minRole: 'admin'.
-  for (const label of ['Admin', 'Users', 'Components', 'Gateway', 'Orchestration', 'Workbench', 'Terminal', 'Consoles', 'About / Licenses']) {
+  for (const label of ['Admin', 'Components', 'Terminal', 'About / Licenses']) {
     assert.match(src, new RegExp(`label: '${label.replace('/', '\\/')}[^']*'[^}]*minRole: 'admin'`, 's'),
       `Platform tab "${label}" must declare minRole: 'admin'`);
   }
-  // Tutorials must NOT carry minRole (visible to all roles — students need it).
+  // Governance: builders approve promotions here — admin-gating it would break
+  // the sharing ladder.
+  assert.match(src, /label: 'Governance'[^}]*minRole: 'builder'/s,
+    "Governance must declare minRole: 'builder'");
+  // Tutorials (OS group) must NOT carry minRole (visible to all — students need it).
   const tutBlock = src.match(/label: 'Tutorials'[^}]*/s)?.[0] ?? '';
   assert.doesNotMatch(tutBlock, /minRole/, "Tutorials must not declare minRole (all-roles visible)");
+});
+
+test('PLATFORM-GATE 5: removed tab routes are redirect stubs, not content (no 404s for old links)', () => {
+  const targets: Record<string, string> = {
+    'app/users/page.tsx': '/platform',
+    'app/gateway/page.tsx': '/components',
+    'app/orchestration/page.tsx': '/components',
+    'app/consoles/page.tsx': '/components',
+    'app/workbench/page.tsx': '/components',
+  };
+  for (const [p, target] of Object.entries(targets)) {
+    const src = read(p);
+    assert.match(src, /from 'next\/navigation'/, `${p} must use next/navigation redirect`);
+    assert.match(src, new RegExp(`redirect\\('${target}'\\)`), `${p} must redirect to ${target}`);
+  }
 });

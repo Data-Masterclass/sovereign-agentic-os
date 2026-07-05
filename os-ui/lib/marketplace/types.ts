@@ -245,7 +245,7 @@ export type AdapterSource = 'live' | 'offline-mock';
 export type Viewer = {
   id: string;
   domains: string[];
-  role: 'creator' | 'builder' | 'admin';
+  role: 'creator' | 'builder' | 'domain_admin' | 'admin';
   /** The active domain the consumer imports into (defaults to domains[0]). */
   activeDomain?: string;
 };

@@ -112,7 +112,7 @@ export type LauncherCard = {
  */
 export function personaFor(role: Role, hasAuthored: boolean): HomePersona {
   if (role === 'admin') return 'admin';
-  if (role === 'builder') return 'builder';
+  if (role === 'builder' || role === 'domain_admin') return 'builder'; // both steward a domain
   return hasAuthored ? 'creator' : 'user';
 }
 

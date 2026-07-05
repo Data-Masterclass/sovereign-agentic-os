@@ -97,7 +97,7 @@ export default function McpConnect({ tab }: { tab?: string } = {}) {
             Import this endpoint to drive <em>only this tab&rsquo;s</em> tools from your assistant —
             a scoped view of the OS MCP. Every call runs under <em>your</em> identity through the
             same governed path as the UI (OPA policy, audit, role gates); tools are scoped to your
-            role. For the whole OS, use the endpoint on the Gateway tab.
+            role. For the whole OS, use the MCP button in the top bar of any page.
           </>
         ) : (
           <>

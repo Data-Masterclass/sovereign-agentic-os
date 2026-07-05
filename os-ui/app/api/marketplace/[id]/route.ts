@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { listingAdapter, type Viewer } from '@/lib/marketplace';
+import { ensureHydrated } from '@/lib/marketplace/store';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +16,7 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
+    await ensureHydrated();
     const user = await requireUser();
     const { id } = await ctx.params;
     const as = new URL(req.url).searchParams.get('as') ?? undefined;

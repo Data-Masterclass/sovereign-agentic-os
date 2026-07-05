@@ -38,6 +38,13 @@ test('initialize: declares resources + prompts capabilities and ALWAYS carries o
   assert.equal(typeof r.instructions, 'string');
   assert.match(r.instructions as string, /SOVEREIGN AGENTIC OS/);
   assert.match(r.instructions as string, /whoami/);
+  // Role-text drift tripwire: the orientation must describe ALL 4 roles honestly.
+  const text = r.instructions as string;
+  assert.match(text, /ROLES \(4/, 'orientation announces 4 roles');
+  for (const role of ['creator', 'builder', 'domain_admin', 'admin']) {
+    assert.ok(text.includes(`- ${role} —`), `orientation describes the ${role} role`);
+  }
+  assert.match(text, /never domain_admin\/admin/, 'states the domain_admin ceiling (cannot mint domain_admin/admin)');
 });
 
 test('resources/list: exposes the 12 guides + the 10 my/* inventories, annotated for the assistant', async () => {

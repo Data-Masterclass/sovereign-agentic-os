@@ -144,6 +144,30 @@ networkPolicies:
   defaultDeny: true
 
 # -----------------------------------------------------------------------------
+# Backups (templates/backup/). pgDump is the nightly logical dump of EVERY
+# database in the bundled Postgres (pg-rw) to the S3 backend (soa.s3Endpoint —
+# bundled MinIO or the external endpoint), one timestamped folder per run:
+#   s3://<bucket>/<prefix>/<UTC-stamp>/{globals.sql,<db>.dump,MANIFEST}
+# pg_dump gives a CONSISTENT snapshot per database (unlike a file-level copy of
+# a running PGDATA), so this — not Velero's file backup — is the Postgres
+# restore path. Retention is enforced by the job itself (delete runs older
+# than retentionDays). OFF by default (a laptop kind tenant is disposable);
+# durable deploys turn it on (values.stackit-selfhosted.yaml).
+# NOTE: when the dump lands on the bundled MinIO it shares the minio-data PVC —
+# off-cluster safety comes from Velero backing that PVC up (deploy/velero/).
+# -----------------------------------------------------------------------------
+backup:
+  pgDump:
+    enabled: false
+    schedule: "30 2 * * *"     # nightly, 02:30 UTC
+    retentionDays: 14
+    bucket: lakehouse          # existing bucket (objectStorage.buckets)
+    prefix: backups/pg
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: 500m, memory: 256Mi }
+
+# -----------------------------------------------------------------------------
 # Ingress + TLS — OFF by default (Mode A is port-forward only). When enabled
 # (Mode B / STACKIT, see values.stackit-managed.yaml) the chart emits one Ingress
 # per public tool whose `hosts.<key>` is set (templates/ingress.yaml): a
@@ -352,6 +376,16 @@ clickhouse:
     tag: "24.8"
     digest: sha256:1ffa82edee000a42c09313bd9f1293d94c570aee74babc1b3ca9983a35fa597b
   # Infra tier — wave 0, high-priority (wired in templates/clickhouse/clickhouse.yaml).
+  #
+  # DURABILITY / SSA: change these values ONLY here (chart), never with an
+  # out-of-band `kubectl set|patch|edit`. Helm 4 applies server-side; a manual
+  # edit registers a foreign field-manager on
+  # `.spec.template.spec.containers[clickhouse].resources.limits.memory`, and the
+  # NEXT `helm upgrade` then dies with an SSA "conflict occurred while applying
+  # object ... clickhouse". Recover once with `helm upgrade --force-conflicts`
+  # (transfers ownership back to Helm; the live value already equals the value
+  # below, so it is a metadata-only, zero-restart change). This comment is the
+  # standing rule that keeps that conflict from coming back.
   resources:
     # ClickHouse keeps mark/uncompressed caches resident; request reflects real
     # steady-state. The limit is cgroup-aware (CH caps max_server_memory_usage to

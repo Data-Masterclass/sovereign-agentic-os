@@ -15,6 +15,7 @@ import { removeConnection } from '@/lib/app-registry';
 import { unregisterConnectionProfile, trace } from '@/lib/agent-governed';
 import { generateAndCompile } from './auto-mcp.ts';
 import type { ConsumedResource } from './model.ts';
+import { roleAtLeast } from '@/lib/session';
 
 /**
  * App lifecycle + resource consumption (Software golden path §F).
@@ -179,7 +180,7 @@ export async function consumeResource(
 ): Promise<App> {
   const app = await getAppByIdInternal(appId);
   if (!app) throw withStatus(new Error('App not found'), 404);
-  if (app.owner !== user.id && user.role !== 'builder' && user.role !== 'admin') {
+  if (app.owner !== user.id && !roleAtLeast(user.role, 'builder')) {
     throw withStatus(new Error('Only the owner or a Builder can grant the app a resource'), 403);
   }
   // Never accept an inline secret — only a reference.

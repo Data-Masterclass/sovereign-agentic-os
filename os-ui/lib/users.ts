@@ -3,7 +3,8 @@
  */
 import 'server-only';
 import { config } from '@/lib/config';
-import type { Role } from '@/lib/session';
+import { osMirror } from '@/lib/os-mirror';
+import { ROLES, type Role } from '@/lib/session';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { hashPassword, verifyPassword, isHashed } from '@/lib/password';
 import { emailVerificationEnabled, sendVerificationEmail } from '@/lib/mailer';
@@ -87,11 +88,11 @@ const VERIFY_TTL_MS = 1000 * 60 * 60 * 24; // 24h single-use verification window
 
 type Meta = { recoveryHash?: string; initialized?: boolean };
 
-type UsersCacheState = { cache: Map<string, StoredUser> | null; meta: Meta; osHealthy: boolean; dummyHash: string | null };
+type UsersCacheState = { cache: Map<string, StoredUser> | null; meta: Meta; dummyHash: string | null };
 const USERS_STATE_KEY = Symbol.for('soa.users.cache');
 function usersState(): UsersCacheState {
   const g = globalThis as unknown as Record<symbol, UsersCacheState | undefined>;
-  if (!g[USERS_STATE_KEY]) g[USERS_STATE_KEY] = { cache: null, meta: {}, osHealthy: false, dummyHash: null };
+  if (!g[USERS_STATE_KEY]) g[USERS_STATE_KEY] = { cache: null, meta: {}, dummyHash: null };
   return g[USERS_STATE_KEY]!;
 }
 
@@ -189,9 +190,10 @@ async function loadSeed(): Promise<StoredUser[]> {
             : u.domain
               ? [String(u.domain)]
               : ['default'],
-          // Migrate legacy roles on read: creator/participant (and any unknown) → the
-          // base role `creator`; builder/admin pass through unchanged.
-          role: (['builder', 'admin'].includes(String(u.role)) ? u.role : 'creator') as Role,
+          // Migrate legacy roles on read: participant (and any unknown) → the base
+          // role `creator`; builder/domain_admin/admin pass through unchanged.
+          // domain_admin here is an operator's EXPLICIT seed — never inferred.
+          role: (['builder', 'domain_admin', 'admin'].includes(String(u.role)) ? u.role : 'creator') as Role,
           email,
           emailVerified: true,
           onboarded: false,
@@ -206,61 +208,37 @@ async function loadSeed(): Promise<StoredUser[]> {
   return [await bootstrapAdmin()];
 }
 
-async function osFetch(path: string, init?: RequestInit): Promise<Response | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2500);
-  try {
-    return await fetch(`${config.opensearchUrl}${path}`, {
-      ...init,
-      signal: ctrl.signal,
-      cache: 'no-store',
-      headers: { 'content-type': 'application/json', accept: 'application/json', ...(init?.headers ?? {}) },
-    });
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
+// Shared durable-mirror core (probe → bootstrap-on-404 → hydrate/write-through):
+// lib/os-mirror.ts. A missing index is CREATED, never mistaken for a dead mirror.
+const mirror = osMirror({ index: 'os-users' });
 
 function writeThrough(u: StoredUser): void {
-  if (!usersState().osHealthy) return;
-  void osFetch(`/os-users/_doc/${u.id}?refresh=true`, { method: 'PUT', body: JSON.stringify(u) });
+  mirror.writeThrough(u.id, u);
 }
 
 function persistMeta(): void {
   const s = usersState();
-  if (!s.osHealthy) return;
-  void osFetch(`/os-users/_doc/${META_ID}?refresh=true`, { method: 'PUT', body: JSON.stringify({ id: META_ID, ...s.meta }) });
+  mirror.writeThrough(META_ID, { id: META_ID, ...s.meta });
 }
 
 async function getCache(): Promise<Map<string, StoredUser>> {
   const s = usersState();
   if (s.cache) return s.cache;
   const map = new Map<string, StoredUser>();
-  const ping = await osFetch('/os-users/_count');
-  if (ping && ping.ok) {
-    s.osHealthy = true;
-    const res = await osFetch('/os-users/_search?size=1000', {
-      method: 'POST',
-      body: JSON.stringify({ query: { match_all: {} } }),
-    });
-    if (res && res.ok) {
-      const data = (await res.json()) as {
-        hits?: { hits?: { _source: StoredUser & Meta }[] };
-      };
-      for (const h of data?.hits?.hits ?? []) {
-        const src = h._source;
-        if (src.id === META_ID) {
-          s.meta = { recoveryHash: src.recoveryHash, initialized: src.initialized };
-          continue;
-        }
-        // Migrate legacy roles on read: agentic-leader + participant → creator.
-        if ((src.role as string) === 'agentic-leader' || (src.role as string) === 'participant') {
-          src.role = 'creator';
-        }
-        map.set(src.id, src);
+  const docs = await mirror.hydrate(1000);
+  if (docs !== null) {
+    for (const src of docs as (StoredUser & Meta)[]) {
+      if (src.id === META_ID) {
+        s.meta = { recoveryHash: src.recoveryHash, initialized: src.initialized };
+        continue;
       }
+      // Migrate legacy roles on read: anything outside the 4 canonical roles
+      // (agentic-leader, participant, …) → creator. Nobody is ever auto-promoted
+      // — domain_admin is only ever assigned explicitly by a platform admin.
+      if (!ROLES.includes(src.role as Role)) {
+        src.role = 'creator';
+      }
+      map.set(src.id, src);
     }
     // Seed the first-run bootstrap admin ONLY on a never-initialised store. Once
     // a deployment has been set up (s.meta.initialized), an empty user map means
@@ -273,8 +251,8 @@ async function getCache(): Promise<Map<string, StoredUser>> {
       persistMeta();
     }
   } else {
-    s.osHealthy = false;
-    // Offline/in-memory mode (no durability): seed only when nothing is loaded.
+    // Mirror unreachable → offline/in-memory mode (no durability): seed only
+    // when nothing is loaded.
     if (map.size === 0 && !s.meta.initialized) {
       for (const u of await loadSeed()) map.set(u.id, u);
       s.meta.initialized = true;
@@ -456,7 +434,7 @@ export async function deleteUser(id: string): Promise<void> {
     if (admins.length <= 1) throw err('Cannot delete the last admin', 400);
   }
   map.delete(id);
-  if (usersState().osHealthy) void osFetch(`/os-users/_doc/${id}?refresh=true`, { method: 'DELETE' });
+  mirror.deleteThrough(id);
 }
 
 /** Distinct domains across all users — drives domain pickers. */
@@ -510,13 +488,13 @@ export async function setupAdmin(input: {
   map.delete(input.bootstrapId);
   if (map.has(BOOTSTRAP_TOMBSTONE_ID)) {
     map.delete(BOOTSTRAP_TOMBSTONE_ID);
-    if (usersState().osHealthy) void osFetch(`/os-users/_doc/${BOOTSTRAP_TOMBSTONE_ID}?refresh=true`, { method: 'DELETE' });
+    mirror.deleteThrough(BOOTSTRAP_TOMBSTONE_ID);
   }
   // Drop the old bootstrap doc from the mirror — but ONLY when the operator chose
   // a different username. If they kept `admin`, the new admin's PUT below targets
   // the SAME doc id, so a DELETE here would race and could wipe the real account.
-  if (usersState().osHealthy && newId !== input.bootstrapId) {
-    void osFetch(`/os-users/_doc/${input.bootstrapId}?refresh=true`, { method: 'DELETE' });
+  if (newId !== input.bootstrapId) {
+    mirror.deleteThrough(input.bootstrapId);
   }
 
   const real: StoredUser = {
@@ -564,7 +542,7 @@ export async function verifyEmailToken(token: string): Promise<{ ok: boolean; us
   // Defensive: sweep any stale bootstrap tombstone from an older build.
   if (map.has(BOOTSTRAP_TOMBSTONE_ID)) {
     map.delete(BOOTSTRAP_TOMBSTONE_ID);
-    if (usersState().osHealthy) void osFetch(`/os-users/_doc/${BOOTSTRAP_TOMBSTONE_ID}?refresh=true`, { method: 'DELETE' });
+    mirror.deleteThrough(BOOTSTRAP_TOMBSTONE_ID);
   }
   return { ok: true, userId: u.id };
 }
@@ -629,6 +607,6 @@ export function __resetUsers(): void {
   const s = usersState();
   s.cache = null;
   s.meta = {};
-  s.osHealthy = false;
   s.dummyHash = null;
+  mirror.__reset();
 }

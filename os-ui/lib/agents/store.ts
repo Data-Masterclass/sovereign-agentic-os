@@ -9,8 +9,9 @@ import {
   parseSystem,
   serializeSystem,
 } from './system-schema.ts';
-import { canPromote } from '../session.ts';
+import { canPromote, roleAtLeast } from '../session.ts';
 import { type TemplateKey, templateYaml } from './templates.ts';
+import { osMirror } from '../os-mirror.ts';
 
 /**
  * The agent-system store — the MOCK Forgejo repo behind the Agents tab (kind-only,
@@ -77,12 +78,55 @@ export const WHITELIST_HINT = 'only system.yaml, AGENT.md and MEMORY.md are edit
  * written by one route visible to every other route — and survives dev HMR. (Same
  * reason `lib/marketplace/store.ts` and `lib/approvals.ts` pin their state.)
  */
-type AgentsState = { store: Map<string, SystemRecord>; seeded: boolean };
+type AgentsState = { store: Map<string, SystemRecord>; seeded: boolean; hydration: Promise<void> | null };
 const STATE_KEY = Symbol.for('soa.agents.store');
 function state(): AgentsState {
   const g = globalThis as unknown as Record<symbol, AgentsState | undefined>;
-  if (!g[STATE_KEY]) g[STATE_KEY] = { store: new Map(), seeded: false };
+  if (!g[STATE_KEY]) g[STATE_KEY] = { store: new Map(), seeded: false, hydration: null };
   return g[STATE_KEY]!;
+}
+
+// ---------------------------------------------------- durable mirror (best-effort) --
+const mirror = osMirror({
+  index: 'os-agent-systems',
+  createBody: {
+    mappings: {
+      properties: {
+        id: { type: 'keyword' },
+        owner: { type: 'keyword' },
+        domain: { type: 'keyword' },
+        visibility: { type: 'keyword' },
+        origin: { type: 'keyword' },
+        sourceId: { type: 'keyword' },
+        updatedAt: { type: 'date' },
+        lastActivity: { type: 'date' },
+        name: { type: 'keyword' },
+        running: { type: 'boolean' },
+        yaml: { type: 'text', index: false },
+        schedule: { type: 'object', enabled: false },
+        disabledAgents: { type: 'keyword' },
+      },
+    },
+  },
+});
+
+function writeThrough(rec: SystemRecord): void {
+  mirror.writeThrough(rec.id, rec);
+}
+
+export async function ensureHydrated(): Promise<void> {
+  const s = state();
+  if (!s.hydration) s.hydration = hydrate();
+  return s.hydration;
+}
+
+async function hydrate(): Promise<void> {
+  const s = state();
+  const docs = (await mirror.hydrate(2000)) ?? [];
+  for (const rec of docs as SystemRecord[]) {
+    if (rec && rec.id && !s.store.has(rec.id)) s.store.set(rec.id, rec);
+  }
+  s.seeded = true;
 }
 
 // --------------------------------------------------------------------- utils --
@@ -157,6 +201,8 @@ export function __resetStore(): void {
   const s = state();
   s.store.clear();
   s.seeded = false;
+  s.hydration = null;
+  mirror.__reset();
 }
 
 // ------------------------------------------------------------------- scoping --
@@ -301,6 +347,7 @@ export function createSystem(
     yaml,
   });
   state().store.set(rec.id, rec);
+  writeThrough(rec);
   return rec;
 }
 
@@ -325,6 +372,7 @@ export function promoteSystem(systemId: string, user: Principal): SystemRecord {
     fail('This system is already published to the Marketplace', 400);
   }
   rec.updatedAt = now();
+  writeThrough(rec);
   return rec;
 }
 
@@ -338,7 +386,7 @@ export function promoteSystem(systemId: string, user: Principal): SystemRecord {
 export function forkSystem(systemId: string, user: Principal): SystemRecord {
   const src = get(systemId);
   if (src.visibility !== 'Marketplace') fail('Only Marketplace systems can be installed', 400);
-  if (user.role !== 'builder' && user.role !== 'admin') {
+  if (!roleAtLeast(user.role, 'builder')) {
     fail('Installing a Marketplace agent template requires a Builder or Admin', 403);
   }
   const rec = record({
@@ -352,6 +400,7 @@ export function forkSystem(systemId: string, user: Principal): SystemRecord {
     yaml: src.yaml,
   });
   state().store.set(rec.id, rec);
+  writeThrough(rec);
   return rec;
 }
 
@@ -419,6 +468,7 @@ export function writeFile(
   }
 
   rec.updatedAt = now();
+  writeThrough(rec);
   const newContent = project(rec, path);
   return { path, content: newContent, sha: sha(newContent) };
 }
@@ -430,6 +480,7 @@ export function setRunning(systemId: string, user: Principal, running: boolean):
   rec.running = running;
   rec.updatedAt = now();
   if (running) rec.lastActivity = now();
+  writeThrough(rec);
   return rec;
 }
 
@@ -437,6 +488,7 @@ export function setSchedule(systemId: string, user: Principal, schedule: Schedul
   const rec = requireEdit(systemId, user);
   rec.schedule = schedule;
   rec.updatedAt = now();
+  writeThrough(rec);
   return rec;
 }
 
@@ -449,12 +501,14 @@ export function toggleAgent(systemId: string, user: Principal, agentId: string, 
   else set.add(agentId);
   rec.disabledAgents = [...set];
   rec.updatedAt = now();
+  writeThrough(rec);
   return rec;
 }
 
 export function recordActivity(systemId: string): void {
   const rec = state().store.get(systemId);
   if (rec) rec.lastActivity = now();
+  if (rec) writeThrough(rec);
 }
 
 /**

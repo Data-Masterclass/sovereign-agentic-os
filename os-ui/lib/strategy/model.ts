@@ -22,7 +22,7 @@
  * `adoption.ts`; persistence + governance in `pillars.ts`.
  */
 
-import type { Role } from '@/lib/session';
+import { roleAtLeast, type Role } from '@/lib/session';
 
 // ---------------------------------------------------------------- Scope --------
 
@@ -248,8 +248,8 @@ export function canEditPillar(
     // Tenant-wide pillars are Admin-owned.
     return user.role === 'admin';
   }
-  // Domain pillar: a Builder/Admin who belongs to that domain.
-  return (user.role === 'builder' || user.role === 'admin') && user.domains.includes(pillar.domain);
+  // Domain pillar: a Builder+ who belongs to that domain.
+  return roleAtLeast(user.role, 'builder') && user.domains.includes(pillar.domain);
 }
 
 /** Whether a user may create a pillar of the given scope. */

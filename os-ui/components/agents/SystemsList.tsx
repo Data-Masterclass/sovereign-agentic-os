@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { useApi } from '@/lib/useApi';
 import { useUser } from '@/lib/useUser';
 import NewSystemPanel from './NewSystemPanel';
+import { roleAtLeast } from '@/lib/session';
 
 /**
  * Level 1 — the systems list (landing). Grouped Mine / My domain / Marketplace,
@@ -31,7 +32,7 @@ export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }
   const domainLabel = user?.domains[0] ? `${user.domains[0]} domain` : 'your domain';
   // Installing a Marketplace template is a Builder+ action (mirrors the promotion
   // ladder). Show the gate up front instead of letting the click 403.
-  const canInstall = user?.role === 'builder' || user?.role === 'admin';
+  const canInstall = !!user && roleAtLeast(user.role, 'builder');
   const [actErr, setActErr] = useState('');
 
   const fork = async (id: string) => {

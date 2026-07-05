@@ -8,7 +8,7 @@ import { listAccess, inviteUser } from '@/lib/platform-admin/tenant-users';
 import { listDomains } from '@/lib/platform-admin/domains';
 import { getSettings } from '@/lib/platform-admin/settings';
 import { audit } from '@/lib/platform-admin/audit';
-import type { Role } from '@/lib/session';
+import { ROLES, type Role } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,7 +30,7 @@ export async function POST(req: Request) {
   try {
     const { user, tenant } = await adminCtx();
     const body = await req.json();
-    const role = (['creator', 'builder', 'admin'].includes(body?.role) ? body.role : 'creator') as Role;
+    const role = (ROLES.includes(body?.role) ? body.role : 'creator') as Role;
     const domains = Array.isArray(body?.domains) ? body.domains.map(String).filter(Boolean) : [];
     const invited = await inviteUser({ id: String(body?.id ?? ''), name: body?.name ? String(body.name) : undefined, email: body?.email ? String(body.email) : undefined, domains, role });
     audit({ tenant: tenant.id, actor: user.id, role: user.role, action: 'user.invite', target: `user:${invited.id}`, detail: `Invited ${invited.id} as ${role} into ${domains.join(', ')} (via Ory; no password seen)` });

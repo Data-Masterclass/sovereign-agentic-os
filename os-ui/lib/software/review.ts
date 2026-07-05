@@ -16,6 +16,7 @@ import { enqueue, decide as decideApproval, listApprovals } from '@/lib/approval
 import { securityScan } from './scan.ts';
 import { detectSurface } from './metadata.ts';
 import { getSnapshot } from './server.ts';
+import { roleAtLeast } from '@/lib/session';
 import type {
   DeployEnvelope,
   DiffSummary,
@@ -59,7 +60,7 @@ const FOOTPRINT: Record<App['template'], ResourceFootprint> = {
 };
 
 function isBuilder(user: CurrentUser): boolean {
-  return user.role === 'builder' || user.role === 'admin';
+  return roleAtLeast(user.role, 'builder');
 }
 
 /** The exact governed scope a deploy is asking for (the envelope under review). */

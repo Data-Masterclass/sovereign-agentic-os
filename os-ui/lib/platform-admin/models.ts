@@ -15,6 +15,8 @@
  * unit-testable.
  */
 
+import { osMirror } from '../os-mirror.ts';
+
 export type ModelTask = 'chat' | 'reasoning' | 'embedding';
 export type ModelTier = 'sovereign' | 'premium';
 export type ModelRoute = 'self-hosted' | 'stackit';
@@ -46,12 +48,70 @@ function fail(message: string, status: number): Error {
   return e;
 }
 
-type ModelsState = { catalog: Map<string, Model>; keys: Map<string, ProviderKey>; defaults: Record<ModelTask, string> };
+type ModelsState = { catalog: Map<string, Model>; keys: Map<string, ProviderKey>; defaults: Record<ModelTask, string>; hydration: Promise<void> | null };
 const MODELS_KEY = Symbol.for('soa.platform.models');
 function modelsState(): ModelsState {
   const g = globalThis as unknown as Record<symbol, ModelsState | undefined>;
-  if (!g[MODELS_KEY]) g[MODELS_KEY] = { catalog: new Map(), keys: new Map(), defaults: { chat: 'ministral-8b', reasoning: 'magistral-small', embedding: 'bge-m3' } };
+  if (!g[MODELS_KEY]) g[MODELS_KEY] = { catalog: new Map(), keys: new Map(), defaults: { chat: 'ministral-8b', reasoning: 'magistral-small', embedding: 'bge-m3' }, hydration: null };
   return g[MODELS_KEY]!;
+}
+
+// ---------------------------------------------------- durable mirror (best-effort) --
+// SECURITY: only refs + fingerprints are stored; raw key values NEVER appear here.
+const mirror = osMirror({
+  index: 'os-model-config',
+  createBody: {
+    mappings: {
+      properties: {
+        id: { type: 'keyword' },
+        provider: { type: 'keyword' },
+        task: { type: 'keyword' },
+        tier: { type: 'keyword' },
+        route: { type: 'keyword' },
+        enabled: { type: 'boolean' },
+        addedAt: { type: 'date' },
+        // Arbitrary shapes (cap, ref, defaults) stored but not field-indexed.
+        capEUR: { type: 'double' },
+        ref: { type: 'object', enabled: false },
+        fingerprint: { type: 'keyword' },
+      },
+    },
+  },
+});
+
+export async function ensureHydrated(): Promise<void> {
+  const s = modelsState();
+  if (!s.hydration) s.hydration = hydrateModels();
+  return s.hydration;
+}
+
+async function hydrateModels(): Promise<void> {
+  const s = modelsState();
+  // Seed the static catalog first so defaults + enabled flags are known.
+  seed();
+  const docs = (await mirror.hydrate(500)) ?? [];
+  for (const doc of docs as Record<string, unknown>[]) {
+    if (!doc || typeof doc.id !== 'string') continue;
+    const docId = doc.id as string;
+    if (docId === '__defaults__') {
+      // Restore the mutable defaults record.
+      const d = doc as unknown as { chat?: string; reasoning?: string; embedding?: string };
+      if (d.chat) s.defaults.chat = d.chat;
+      if (d.reasoning) s.defaults.reasoning = d.reasoning;
+      if (d.embedding) s.defaults.embedding = d.embedding;
+    } else if (docId.startsWith('key:')) {
+      // Restore provider key (ref+fingerprint; NEVER a raw value).
+      const pk = doc as unknown as ProviderKey;
+      if (pk.provider) s.keys.set(pk.provider, pk);
+    } else {
+      // Restore mutable model fields (enabled, capEUR) — keep seed catalog shape.
+      const m = s.catalog.get(docId);
+      if (m) {
+        if (typeof doc.enabled === 'boolean') m.enabled = doc.enabled;
+        if (doc.capEUR === null || typeof doc.capEUR === 'number') m.capEUR = doc.capEUR as number | null;
+      }
+    }
+  }
 }
 
 function seed(): void {
@@ -84,6 +144,7 @@ export function setDefault(task: ModelTask, modelId: string): Record<ModelTask, 
   if (m.task !== task) throw fail(`Model ${modelId} is not a ${task} model`, 400);
   if (!m.enabled) throw fail('Cannot set a disabled model as default', 409);
   modelsState().defaults[task] = modelId;
+  mirror.writeThrough('__defaults__', { id: '__defaults__', ...modelsState().defaults });
   return { ...modelsState().defaults };
 }
 
@@ -95,6 +156,7 @@ export function setEnabled(modelId: string, enabled: boolean): Model {
     throw fail('Cannot disable a model that is a current default', 409);
   }
   m.enabled = enabled;
+  mirror.writeThrough(m.id, m);
   return m;
 }
 
@@ -104,6 +166,7 @@ export function setCap(modelId: string, capEUR: number | null): Model {
   if (!m) throw fail('Unknown model', 404);
   if (capEUR !== null && (!Number.isFinite(capEUR) || capEUR < 0)) throw fail('Cap must be ≥ 0', 400);
   m.capEUR = capEUR;
+  mirror.writeThrough(m.id, m);
   return m;
 }
 
@@ -129,6 +192,7 @@ export function registerProviderKey(input: {
     addedAt: new Date().toISOString(),
   };
   modelsState().keys.set(pk.provider, pk);
+  mirror.writeThrough(`key:${pk.provider}`, pk);
   return pk;
 }
 
@@ -143,9 +207,12 @@ export function enabledMap(): Record<string, boolean> {
 }
 
 export function _reset(): void {
-  modelsState().catalog.clear();
-  modelsState().keys.clear();
-  modelsState().defaults.chat = 'ministral-8b';
-  modelsState().defaults.reasoning = 'magistral-small';
-  modelsState().defaults.embedding = 'bge-m3';
+  const s = modelsState();
+  s.catalog.clear();
+  s.keys.clear();
+  s.defaults.chat = 'ministral-8b';
+  s.defaults.reasoning = 'magistral-small';
+  s.defaults.embedding = 'bge-m3';
+  s.hydration = null;
+  mirror.__reset();
 }

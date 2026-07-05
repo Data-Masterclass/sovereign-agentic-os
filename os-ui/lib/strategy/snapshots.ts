@@ -18,6 +18,7 @@ import {
 import { rollupForPillar } from '@/lib/strategy/value-rollup';
 import { adoptionActuals } from '@/lib/strategy/adoption';
 import { auditStrategy } from '@/lib/strategy/audit';
+import { osMirror } from '../os-mirror.ts';
 
 /**
  * Monthly actuals snapshots + the target-vs-actual view (annual + quarterly).
@@ -45,12 +46,51 @@ export type Snapshot = ActualSet & {
 // In-process snapshot store keyed by pillarId → month → snapshot. Authoritative
 // locally (mirrors the registry's offline cache); a real deploy can mirror it.
 // Pinned to globalThis so every route-handler module instance shares the same Map.
-type SnapshotsState = { store: Map<string, Map<string, Snapshot>> };
+type SnapshotsState = { store: Map<string, Map<string, Snapshot>>; hydration: Promise<void> | null };
 const SNAPS_KEY = Symbol.for('soa.strategy.snapshots');
 function snapshotsState(): SnapshotsState {
   const g = globalThis as unknown as Record<symbol, SnapshotsState | undefined>;
-  if (!g[SNAPS_KEY]) g[SNAPS_KEY] = { store: new Map() };
+  if (!g[SNAPS_KEY]) g[SNAPS_KEY] = { store: new Map(), hydration: null };
   return g[SNAPS_KEY]!;
+}
+
+// ---------------------------------------------------- durable mirror (best-effort) --
+const mirror = osMirror({
+  index: 'os-strategy-snapshots',
+  createBody: {
+    mappings: {
+      properties: {
+        pillarId: { type: 'keyword' },
+        month: { type: 'keyword' },
+        at: { type: 'date' },
+        valueGenerated: { type: 'double' },
+        activeCreators: { type: 'integer' },
+        activeBuilders: { type: 'integer' },
+        certified: { type: 'object', enabled: false },
+      },
+    },
+  },
+});
+
+function writeThrough(snap: Snapshot): void {
+  mirror.writeThrough(`${snap.pillarId}:${snap.month}`, snap);
+}
+
+export async function ensureHydrated(): Promise<void> {
+  const s = snapshotsState();
+  if (!s.hydration) s.hydration = hydrate();
+  return s.hydration;
+}
+
+async function hydrate(): Promise<void> {
+  const s = snapshotsState();
+  const docs = (await mirror.hydrate(5000)) ?? [];
+  for (const snap of docs as Snapshot[]) {
+    if (!snap || !snap.pillarId || !snap.month) continue;
+    if (!s.store.has(snap.pillarId)) s.store.set(snap.pillarId, new Map());
+    const byMonth = s.store.get(snap.pillarId)!;
+    if (!byMonth.has(snap.month)) byMonth.set(snap.month, snap);
+  }
 }
 
 /** Compute the live actuals for a pillar (the number a snapshot captures). */
@@ -81,6 +121,7 @@ export async function recordSnapshot(user: CurrentUser, pillar: Pillar): Promise
   let byMonth = snapStore.get(pillar.id);
   if (!byMonth) { byMonth = new Map(); snapStore.set(pillar.id, byMonth); }
   byMonth.set(month, snap);
+  writeThrough(snap);
   await auditStrategy({
     action: 'actuals.snapshot',
     actor: user.id,
@@ -188,5 +229,8 @@ export async function targetsVsActuals(pillar: Pillar): Promise<TargetsVsActuals
 
 /** Test seam: clear snapshot history. */
 export function __resetSnapshotsForTests(): void {
-  snapshotsState().store.clear();
+  const s = snapshotsState();
+  s.store.clear();
+  s.hydration = null;
+  mirror.__reset();
 }

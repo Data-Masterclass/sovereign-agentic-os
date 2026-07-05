@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { getConnectionForUser } from '@/lib/connections';
+import { roleAtLeast } from '@/lib/session';
 import {
   SAFETY_PRESETS,
   type SafetyPreset,
@@ -23,7 +24,7 @@ export const dynamic = 'force-dynamic';
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireUser();
-    if (user.role !== 'builder' && user.role !== 'admin') {
+    if (!roleAtLeast(user.role, 'builder')) {
       return NextResponse.json({ error: 'Setting an autonomous safety preset requires a Builder or Administrator' }, { status: 403 });
     }
     const { id } = await ctx.params;

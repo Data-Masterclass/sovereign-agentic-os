@@ -17,6 +17,7 @@ import { reindexById } from '@/lib/files/pipeline-server';
 import { listLineage } from '@/lib/files/lineage';
 import { pushLineage } from '@/lib/files/catalog';
 import { onApprovalDecided } from '@/lib/marketplace';
+import { roleAtLeast } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,7 +49,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
   }
   // Only Builders/Admins clear the queue (§7: Builder is the approval gate).
-  if (user.role !== 'builder' && user.role !== 'admin') {
+  if (!roleAtLeast(user.role, 'builder')) {
     return NextResponse.json({ error: 'Approving governed writes requires a Builder or Administrator' }, { status: 403 });
   }
 

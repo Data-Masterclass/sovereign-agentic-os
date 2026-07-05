@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
+import { osMirror } from '@/lib/os-mirror';
 import type { CurrentUser } from '@/lib/auth';
 import {
   type Pillar,
@@ -42,11 +42,11 @@ import {
  * and `lib/agents/store.ts`.
  */
 
-type PillarsState = { cache: Map<string, Pillar> | null; osHealthy: boolean };
+type PillarsState = { cache: Map<string, Pillar> | null };
 const STATE_KEY = Symbol.for('soa.strategy.pillars');
 function state(): PillarsState {
   const g = globalThis as unknown as Record<symbol, PillarsState | undefined>;
-  if (!g[STATE_KEY]) g[STATE_KEY] = { cache: null, osHealthy: false };
+  if (!g[STATE_KEY]) g[STATE_KEY] = { cache: null };
   return g[STATE_KEY]!;
 }
 
@@ -62,33 +62,17 @@ function withStatus(err: Error, status: number): Error {
 }
 
 // ---------------------------------------------------------------- OpenSearch ---
+// Shared durable-mirror core (probe → bootstrap-on-404 → hydrate/write-through):
+// lib/os-mirror.ts. A missing index is CREATED, never mistaken for a dead mirror.
 
 const INDEX = 'os-strategy-pillars';
-
-async function osFetch(path: string, init?: RequestInit): Promise<Response | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2500);
-  try {
-    return await fetch(`${config.opensearchUrl}${path}`, {
-      ...init,
-      signal: ctrl.signal,
-      cache: 'no-store',
-      headers: { 'content-type': 'application/json', accept: 'application/json', ...(init?.headers ?? {}) },
-    });
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
+const mirror = osMirror({ index: INDEX });
 
 function writeThrough(p: Pillar): void {
-  if (!state().osHealthy) return;
-  void osFetch(`/${INDEX}/_doc/${p.id}?refresh=true`, { method: 'PUT', body: JSON.stringify(p) });
+  mirror.writeThrough(p.id, p);
 }
 function deleteThrough(pid: string): void {
-  if (!state().osHealthy) return;
-  void osFetch(`/${INDEX}/_doc/${pid}?refresh=true`, { method: 'DELETE' });
+  mirror.deleteThrough(pid);
 }
 
 // ------------------------------------------------------------------- Seeding ---
@@ -144,20 +128,12 @@ async function getCache(): Promise<Map<string, Pillar>> {
   const s = state();
   if (s.cache) return s.cache;
   const map = new Map<string, Pillar>();
-  const ping = await osFetch(`/${INDEX}/_count`);
-  if (ping && ping.ok) {
-    s.osHealthy = true;
-    const res = await osFetch(`/${INDEX}/_search?size=1000`, {
-      method: 'POST',
-      body: JSON.stringify({ query: { match_all: {} } }),
-    });
-    if (res && res.ok) {
-      const data = (await res.json()) as { hits?: { hits?: { _source: Pillar }[] } };
-      for (const h of data?.hits?.hits ?? []) map.set(h._source.id, h._source);
-    }
+  const docs = await mirror.hydrate(1000);
+  if (docs !== null) {
+    for (const p of docs as Pillar[]) map.set(p.id, p);
     if (map.size === 0) for (const p of seed()) { map.set(p.id, p); writeThrough(p); }
   } else {
-    s.osHealthy = false;
+    // Mirror unreachable → in-memory only.
     for (const p of seed()) map.set(p.id, p);
   }
   s.cache = map;
@@ -399,5 +375,5 @@ export async function unlinkBet(user: CurrentUser, pid: string, betId: string): 
 export function __resetForTests(): void {
   const s = state();
   s.cache = null;
-  s.osHealthy = false;
+  mirror.__reset();
 }

@@ -36,6 +36,9 @@ spec:
       labels:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "model-server") | nindent 8 }}
+      annotations:
+        # Ollama models are re-downloadable — never Velero-fs-backup them.
+        backup.velero.io/backup-volumes-excludes: models
     spec:
       {{- include "soa.priorityClassName" (dict "ctx" . "tier" "app") | nindent 6 }}
       securityContext:

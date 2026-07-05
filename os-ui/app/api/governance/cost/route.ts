@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { currentUser } from '@/lib/auth';
 import { listCaps, setCap, type CapScope } from '@/lib/governance/cost';
 import { record as audit } from '@/lib/governance/audit';
+import { roleAtLeast } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,13 +18,13 @@ export async function GET() {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
   const scope = user.role === 'admin' ? undefined : user.domains;
-  return NextResponse.json({ caps: listCaps(scope), canSet: user.role === 'builder' || user.role === 'admin' });
+  return NextResponse.json({ caps: listCaps(scope), canSet: roleAtLeast(user.role, 'builder') });
 }
 
 export async function POST(req: Request) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  if (user.role !== 'admin' && user.role !== 'builder') {
+  if (!roleAtLeast(user.role, 'builder')) {
     return NextResponse.json({ error: 'Setting a cap needs a Builder or Admin' }, { status: 403 });
   }
   let body: { scope?: CapScope; subject?: string; limit?: number; period?: 'day' | 'month'; modelClass?: string };
@@ -38,9 +39,10 @@ export async function POST(req: Request) {
   if (!subject || !Number.isFinite(limit) || limit < 0) {
     return NextResponse.json({ error: 'subject + non-negative numeric limit required' }, { status: 400 });
   }
-  // Builders may only cap within their own domain; tenant/key caps are Admin.
-  if (user.role === 'builder' && (scope !== 'domain' || !user.domains.includes(subject))) {
-    return NextResponse.json({ error: 'Builders may only cap their own domain' }, { status: 403 });
+  // Non-admins (Builder / Domain admin) may only cap within their own domain;
+  // tenant/key caps stay (platform) Admin-only.
+  if (user.role !== 'admin' && (scope !== 'domain' || !user.domains.includes(subject))) {
+    return NextResponse.json({ error: 'Builders and Domain admins may only cap their own domain' }, { status: 403 });
   }
   const cap = setCap({ scope, subject, limit, period: body?.period, modelClass: body?.modelClass, createdBy: user.id });
   audit({

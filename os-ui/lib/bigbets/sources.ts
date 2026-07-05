@@ -33,6 +33,7 @@ import {
   type Pillar,
   type Tab,
   BetError,
+  roleAtLeast,
 } from './model.ts';
 
 // The READY tokens (→ derived `completed`). Reaching any of these is a human-only
@@ -180,7 +181,7 @@ class MockSource implements ComponentSource {
       if (by.kind === 'planner') {
         throw new BetError('The planner cannot promote/certify/go-live — a human (Builder/Admin) must', 403);
       }
-      if (by.role !== 'builder' && by.role !== 'admin') {
+      if (!roleAtLeast(by.role, 'builder')) {
         throw new BetError('Promote/certify/go-live requires a Builder or Admin', 403);
       }
       // Promotion shares the artifact to the bet's members' domain (OPA opens up).

@@ -30,6 +30,7 @@ import {
 import { canRead } from './dls.ts';
 import { promotionGate, gateReason } from './promotion.ts';
 import { recordLineage } from './lineage.ts';
+import { osMirror } from '../os-mirror.ts';
 
 /**
  * The file registry — the MOCK store behind the Files tab (kind-only, in-process;
@@ -108,12 +109,53 @@ export type SearchHit = {
   snippet: string;
 };
 
-type FilesStoreState = { store: Map<string, FileRecord>; seeded: boolean };
+type FilesStoreState = { store: Map<string, FileRecord>; seeded: boolean; hydration: Promise<void> | null };
 const FS_KEY = Symbol.for('soa.files.store');
 function fs(): FilesStoreState {
   const g = globalThis as unknown as Record<symbol, FilesStoreState | undefined>;
-  if (!g[FS_KEY]) g[FS_KEY] = { store: new Map(), seeded: false };
+  if (!g[FS_KEY]) g[FS_KEY] = { store: new Map(), seeded: false, hydration: null };
   return g[FS_KEY]!;
+}
+
+// ---------------------------------------------------- durable mirror (best-effort) --
+const fileMirror = osMirror({
+  index: 'os-file-records',
+  createBody: {
+    mappings: {
+      properties: {
+        id: { type: 'keyword' },
+        owner: { type: 'keyword' },
+        domain: { type: 'keyword' },
+        name: { type: 'keyword' },
+        status: { type: 'keyword' },
+        sensitivity: { type: 'keyword' },
+        updatedAt: { type: 'date' },
+        tags: { type: 'keyword' },
+        docs: { type: 'text', index: false },
+        versions: { type: 'object', enabled: false },
+        indexingMode: { type: 'keyword' },
+      },
+    },
+  },
+});
+
+function writeThrough(rec: FileRecord): void {
+  fileMirror.writeThrough(rec.id, rec);
+}
+
+export async function ensureHydrated(): Promise<void> {
+  const s = fs();
+  if (!s.hydration) s.hydration = hydrateFiles();
+  return s.hydration;
+}
+
+async function hydrateFiles(): Promise<void> {
+  const s = fs();
+  const docs = (await fileMirror.hydrate(2000)) ?? [];
+  for (const rec of docs as FileRecord[]) {
+    if (rec && rec.id && !s.store.has(rec.id)) s.store.set(rec.id, rec);
+  }
+  s.seeded = true;
 }
 
 function now(): string {
@@ -180,6 +222,8 @@ export function __resetStore(): void {
   const s = fs();
   s.store.clear();
   s.seeded = false;
+  s.hydration = null;
+  fileMirror.__reset();
 }
 
 /** Which retrieval representations a kind yields (mock map; the real ingest
@@ -234,6 +278,7 @@ function persist(rec: FileRecord, a: FileAsset): FileRecord {
   rec.owner = a.owner;
   rec.domain = a.domain;
   rec.updatedAt = now();
+  writeThrough(rec);
   return rec;
 }
 
@@ -335,6 +380,7 @@ export function createFile(user: Principal, input: UploadInput): FileAsset {
     updatedAt: at,
   };
   fs().store.set(rec.id, rec);
+  writeThrough(rec);
   return a;
 }
 
@@ -408,6 +454,7 @@ export function deleteFile(id: string, user: Principal): void {
   const rec = get(id);
   const a = parseAsset(rec.yaml);
   if (!canEdit(a, user)) fail('Not permitted to delete this file', 403);
+  fileMirror.deleteThrough(id);
   fs().store.delete(id);
 }
 

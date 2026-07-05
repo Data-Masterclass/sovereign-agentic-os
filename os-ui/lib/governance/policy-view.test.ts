@@ -28,15 +28,16 @@ test('SECURITY: only policy.view holders (Builder/Admin) may read the policy pla
 
 // Capability profiles — section placement + data-contract tests.
 // These cover the lib side of the UX fix: the section must never be empty
-// (always 3 static profiles), ordered Creator → Builder → Admin, which
-// ensures PoliciesView renders it at the top and the edit affordance is
+// (always 4 static profiles), ordered Creator → Builder → Domain admin → Admin,
+// which ensures PoliciesView renders it at the top and the edit affordance is
 // meaningful to an admin (non-empty table).
-test('policySources: returns exactly 3 profiles (Creator, Builder, Admin)', () => {
+test('policySources: returns exactly 4 profiles (Creator, Builder, Domain admin, Admin)', () => {
   const sources = policySources();
-  assert.equal(sources.length, 3, 'always 3 profiles so the section is never hidden');
+  assert.equal(sources.length, 4, 'always 4 profiles so the section is never hidden');
   assert.equal(sources[0].name, 'Creator (capability profile)', 'first profile is Creator');
   assert.equal(sources[1].name, 'Builder (capability profile)', 'second profile is Builder');
-  assert.equal(sources[2].name, 'Admin (capability profile)', 'third profile is Admin');
+  assert.equal(sources[2].name, 'Domain admin (capability profile)', 'third profile is Domain admin');
+  assert.equal(sources[3].name, 'Admin (capability profile)', 'fourth profile is Admin');
 });
 
 test('policySources: each profile has a non-empty name, authoredIn, compiledTo and rights', () => {
@@ -48,10 +49,14 @@ test('policySources: each profile has a non-empty name, authoredIn, compiledTo a
   }
 });
 
-test('policySources: admin profile has the most rights (superset of builder and creator)', () => {
-  const [creator, builder, admin] = policySources();
+test('policySources: rights grow with rank (creator ≤ builder ≤ domain admin ≤ admin count-wise)', () => {
+  const [creator, builder, domainAdmin, admin] = policySources();
+  assert.ok(builder.rights.length >= creator.rights.length);
+  assert.ok(domainAdmin.rights.length >= builder.rights.length);
   assert.ok(
-    admin.rights.length >= builder.rights.length && admin.rights.length >= creator.rights.length,
+    admin.rights.length >= domainAdmin.rights.length,
     'admin profile has the most (or equal) rights',
   );
+  // Domain admin carries every builder right (the inheritance invariant).
+  for (const r of builder.rights) assert.ok(domainAdmin.rights.includes(r), `domain admin inherits ${r}`);
 });

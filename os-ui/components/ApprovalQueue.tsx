@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@/lib/useUser';
+import { roleAtLeast } from '@/lib/session';
 
 /**
  * Governance approval queue (golden path §7). Held write-backs — connection
@@ -39,7 +40,7 @@ export default function ApprovalQueue() {
   const [items, setItems] = useState<Approval[] | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
-  const canApprove = user?.role === 'builder' || user?.role === 'admin';
+  const canApprove = !!user && roleAtLeast(user.role, 'builder');
 
   const load = useCallback(async () => {
     setError('');

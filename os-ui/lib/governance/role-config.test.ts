@@ -22,20 +22,35 @@ afterEach(() => __resetRoleConfig());
 test('seed reproduces the current model — same OPA tools, creator stays locked down', () => {
   // Default rights compile to identical tools per role (roles.test.ts baselines).
   assert.deepEqual(rightsToTools('creator'), ['knowledge_write', 'metrics', 'query']);
-  assert.deepEqual(rightsToTools('builder'), ['approve', 'deploy', 'knowledge_write', 'membership_admin', 'metrics', 'query']);
+  // Builder is an approver, NOT a people-admin: no membership_admin / user_admin.
+  assert.deepEqual(rightsToTools('builder'), ['approve', 'deploy', 'knowledge_write', 'metrics', 'query']);
+  // Domain admin = builder's tools + the domain people-admin grants.
+  assert.deepEqual(rightsToTools('domain_admin'), ['approve', 'deploy', 'knowledge_write', 'membership_admin', 'metrics', 'query', 'user_admin']);
   assert.deepEqual(rightsToTools('admin'), ['approve', 'cost_cap', 'deploy', 'egress', 'knowledge_write', 'metrics', 'policy_override', 'query', 'user_admin']);
 
-  // creator + builder compile back to their exact hardcoded ROLE_RIGHTS.
+  // Every role compiles back to its exact hardcoded ROLE_RIGHTS.
   assert.deepEqual(matrixToRights(DEFAULT_MATRIX, 'creator'), [...ROLE_RIGHTS.creator].sort());
   assert.deepEqual(matrixToRights(DEFAULT_MATRIX, 'builder'), [...ROLE_RIGHTS.builder].sort());
+  assert.deepEqual(matrixToRights(DEFAULT_MATRIX, 'domain_admin'), [...ROLE_RIGHTS.domain_admin].sort());
 
   // The creator lockdown: no promote / approve / admin rights by default.
   const creatorRights = matrixToRights(DEFAULT_MATRIX, 'creator');
-  for (const forbidden of ['promote.shared', 'approve.domain', 'approve.tenant', 'manage.users.tenant', 'override.policy', 'promote.certify']) {
+  for (const forbidden of ['promote.shared', 'approve.domain', 'approve.tenant', 'manage.users.tenant', 'manage.users.domain', 'override.policy', 'promote.certify']) {
     assert.ok(!creatorRights.includes(forbidden), `creator must not seed with ${forbidden}`);
   }
   assert.ok(!rightsToTools('creator').includes('policy_override'));
   assert.ok(!rightsToTools('creator').includes('user_admin'));
+});
+
+test('domain_admin seed: builder rights ⊆ domain_admin rights; no tenant/platform rights', () => {
+  const builderRights = matrixToRights(DEFAULT_MATRIX, 'builder');
+  const daRights = matrixToRights(DEFAULT_MATRIX, 'domain_admin');
+  for (const r of builderRights) assert.ok(daRights.includes(r), `domain_admin must carry builder right: ${r}`);
+  assert.ok(daRights.includes('manage.users.domain'), 'domain user administration');
+  assert.ok(daRights.includes('manage.memberships.domain'), 'domain memberships');
+  for (const forbidden of ['manage.users.tenant', 'approve.tenant', 'override.policy', 'cost.cap.set', 'promote.certify', 'policy.view.tenant']) {
+    assert.ok(!daRights.includes(forbidden), `domain_admin must NOT seed with ${forbidden}`);
+  }
 });
 
 test('an admin edit changes the effective right + the compiled OPA tools', async () => {

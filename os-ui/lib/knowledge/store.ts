@@ -11,8 +11,9 @@ import {
   serializeWorkflow,
   emptyDomainKnowledge,
 } from './schema.ts';
-import { canPromote } from '../session.ts';
+import { canPromote, roleAtLeast } from '../session.ts';
 import type { Role } from '../session.ts';
+import { osMirror } from '../os-mirror.ts';
 
 /**
  * Knowledge workflow store — the mock Forgejo repo behind the Knowledge tab
@@ -94,12 +95,53 @@ function makeRecord(
 
 // --------------------------------------------------------- in-process state --
 
-type KnowledgeStoreState = { workflows: Map<string, WorkflowRecord>; domainKnowledge: Map<string, DomainKnowledge>; seeded: boolean };
+type KnowledgeStoreState = { workflows: Map<string, WorkflowRecord>; domainKnowledge: Map<string, DomainKnowledge>; seeded: boolean; hydration: Promise<void> | null };
 const KS_KEY = Symbol.for('soa.knowledge.store');
 function ks(): KnowledgeStoreState {
   const g = globalThis as unknown as Record<symbol, KnowledgeStoreState | undefined>;
-  if (!g[KS_KEY]) g[KS_KEY] = { workflows: new Map(), domainKnowledge: new Map(), seeded: false };
+  if (!g[KS_KEY]) g[KS_KEY] = { workflows: new Map(), domainKnowledge: new Map(), seeded: false, hydration: null };
   return g[KS_KEY]!;
+}
+
+// ---------------------------------------------------- durable mirror (best-effort) --
+const mirror = osMirror({
+  index: 'os-knowledge-records',
+  createBody: {
+    mappings: {
+      properties: {
+        id: { type: 'keyword' },
+        owner: { type: 'keyword' },
+        domain: { type: 'keyword' },
+        title: { type: 'keyword' },
+        visibility: { type: 'keyword' },
+        status: { type: 'keyword' },
+        updatedAt: { type: 'date' },
+        publishedAt: { type: 'date' },
+        certifiedAt: { type: 'date' },
+        md: { type: 'text', index: false },
+        tacit: { type: 'text', index: false },
+      },
+    },
+  },
+});
+
+function writeThrough(rec: WorkflowRecord): void {
+  mirror.writeThrough(rec.id, rec);
+}
+
+export async function ensureHydrated(): Promise<void> {
+  const s = ks();
+  if (!s.hydration) s.hydration = hydrate();
+  return s.hydration;
+}
+
+async function hydrate(): Promise<void> {
+  const s = ks();
+  const docs = (await mirror.hydrate(2000)) ?? [];
+  for (const rec of docs as WorkflowRecord[]) {
+    if (rec && rec.id && !s.workflows.has(rec.id)) s.workflows.set(rec.id, rec);
+  }
+  s.seeded = true;
 }
 
 /** A fresh tenant starts EMPTY. Workflows and domain knowledge are authored
@@ -116,6 +158,8 @@ export function __resetStore(): void {
   s.workflows.clear();
   s.domainKnowledge.clear();
   s.seeded = false;
+  s.hydration = null;
+  mirror.__reset();
 }
 
 // --------------------------------------------------------------- scoping -----
@@ -131,13 +175,13 @@ function canView(rec: WorkflowRecord, user: Principal): boolean {
   if (rec.owner === user.id) return true;
   if (rec.visibility === 'Shared') return user.domains.includes(rec.domain);
   if (rec.visibility === 'Marketplace') return true;
-  // Personal drafts are visible to builders/admins in the same domain.
-  return (user.role === 'builder' || user.role === 'admin') && user.domains.includes(rec.domain);
+  // Personal drafts are visible to Builder+ in the same domain.
+  return roleAtLeast(user.role, 'builder') && user.domains.includes(rec.domain);
 }
 
 function canEdit(rec: WorkflowRecord, user: Principal): boolean {
   if (rec.owner === user.id) return true;
-  return (user.role === 'builder' || user.role === 'admin') && user.domains.includes(rec.domain);
+  return roleAtLeast(user.role, 'builder') && user.domains.includes(rec.domain);
 }
 
 function requireView(id: string, user: Principal): WorkflowRecord {
@@ -181,7 +225,7 @@ export function listWorkflows(user: Principal): WorkflowGroups {
     } else if (rec.visibility === 'Shared' && user.domains.includes(rec.domain)) {
       domain.push(summarise(rec));
     } else if (
-      (user.role === 'builder' || user.role === 'admin') &&
+      roleAtLeast(user.role, 'builder') &&
       user.domains.includes(rec.domain) &&
       rec.visibility === 'Personal'
     ) {
@@ -235,6 +279,7 @@ export function createWorkflow(
     status: 'draft',
   });
   ks().workflows.set(id, rec);
+  writeThrough(rec);
   return rec;
 }
 
@@ -266,6 +311,7 @@ export function updateWorkflow(
     rec.visibility = w.visibility;
     rec.status = w.status;
     rec.updatedAt = now();
+    writeThrough(rec);
   }
 
   return rec;
@@ -274,6 +320,7 @@ export function updateWorkflow(
 export function deleteWorkflow(id: string, user: Principal): void {
   const rec = requireEdit(id, user);
   if (rec.status === 'live') fail('Cannot delete a published workflow — unpublish it first', 400);
+  mirror.deleteThrough(id);
   ks().workflows.delete(id);
 }
 
@@ -299,6 +346,7 @@ export function publishWorkflow(id: string, user: Principal): WorkflowRecord {
   rec.publishedAt = now();
   rec.publishedBy = user.id;
   rec.updatedAt = now();
+  writeThrough(rec);
 
   return rec;
 }
@@ -322,6 +370,7 @@ export function certifyWorkflow(id: string, user: Principal): WorkflowRecord {
   rec.certifiedAt = now();
   rec.certifiedBy = user.id;
   rec.updatedAt = now();
+  writeThrough(rec);
 
   return rec;
 }
@@ -371,5 +420,6 @@ export function updateTacit(id: string, user: Principal, tacit: string): Workflo
   const rec = requireEdit(id, user);
   rec.tacit = tacit;
   rec.updatedAt = now();
+  writeThrough(rec);
   return rec;
 }

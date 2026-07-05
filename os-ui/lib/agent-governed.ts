@@ -12,6 +12,7 @@ import {
   type CapMode,
 } from '@/lib/capability-compiler';
 import { type Principal as DlsPrincipal, canSee } from '@/lib/knowledge/retrieve-core';
+import { roleAtLeast } from '@/lib/session';
 import type { Provenance } from '@/lib/knowledge/chunk';
 
 /**
@@ -386,7 +387,7 @@ function dlsFilter(principal: DlsPrincipal): Record<string, unknown> {
     { bool: { must: [{ term: { visibility: 'Shared' } }, { terms: { domain: principal.domains } }] } },
     { term: { owner: principal.id } },
   ];
-  if (principal.role === 'builder' || principal.role === 'admin') {
+  if (roleAtLeast(principal.role, 'builder')) {
     visible.push({ bool: { must: [{ term: { visibility: 'Personal' } }, { terms: { domain: principal.domains } }] } });
   }
   return { bool: { should: visible, minimum_should_match: 1 } };

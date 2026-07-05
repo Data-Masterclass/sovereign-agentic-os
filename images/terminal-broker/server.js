@@ -44,6 +44,14 @@ const MAX_SESSION_MS = parseInt(process.env.MAX_SESSION_SECONDS || '3600', 10) *
 const POD_READY_TIMEOUT_MS = parseInt(process.env.POD_READY_TIMEOUT_SECONDS || '60', 10) * 1000;
 const ALLOWED_ROLES = (process.env.ALLOWED_ROLES || 'participant,builder,admin').split(',');
 const MAX_SESSIONS = parseInt(process.env.MAX_CONCURRENT_SESSIONS || '30', 10);
+// Pull secrets for the sandbox image (comma-separated Secret names that must
+// exist in SANDBOX_NAMESPACE — the chart replicates the release pull secret
+// there). Without this, a private registry (e.g. ghcr.io) 401s the kubelet's
+// anonymous pull and every sandbox Pod sits in ImagePullBackOff forever.
+const PULL_SECRETS = (process.env.IMAGE_PULL_SECRETS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 // Resource knobs for the sandbox Pod.
 const R = {
   cpuReq: process.env.SANDBOX_CPU_REQUEST || '50m',
@@ -120,6 +128,7 @@ function podManifest(name, owner) {
       // No API token in the sandbox: a student cannot talk to the API server.
       automountServiceAccountToken: false,
       serviceAccountName: SANDBOX_SA,
+      ...(PULL_SECRETS.length ? { imagePullSecrets: PULL_SECRETS.map((name) => ({ name })) } : {}),
       restartPolicy: 'Never',
       enableServiceLinks: false, // no *_SERVICE_HOST env leakage of cluster svcs
       terminationGracePeriodSeconds: 2,
@@ -173,9 +182,25 @@ function podManifest(name, owner) {
   };
 }
 
-async function waitForRunning(name, deadline) {
+// Wait for the sandbox Pod to run — reporting WHAT it is waiting on via
+// onStatus (scheduling / pulling image / …) so the browser shows honest
+// progress, and failing FAST (with the real reason) on unrecoverable container
+// states like ErrImagePull/ImagePullBackOff instead of a mute 60s timeout.
+const FATAL_WAIT_REASONS = new Set([
+  'ErrImagePull',
+  'ImagePullBackOff',
+  'InvalidImageName',
+  'CreateContainerConfigError',
+  'CreateContainerError',
+  'RunContainerError',
+]);
+function waitingReason(pod) {
+  const cs = pod?.status?.containerStatuses?.[0];
+  return cs?.state?.waiting?.reason || '';
+}
+async function waitForRunning(name, deadline, onStatus = () => {}) {
+  let lastReported = '';
   for (;;) {
-    if (Date.now() > deadline) throw new Error('pod did not become Ready in time');
     let pod;
     try {
       pod = await core.readNamespacedPod({ name, namespace: SANDBOX_NAMESPACE });
@@ -184,7 +209,21 @@ async function waitForRunning(name, deadline) {
     }
     const phase = pod?.status?.phase;
     if (phase === 'Running') return;
-    if (phase === 'Failed' || phase === 'Succeeded') throw new Error(`pod entered ${phase}`);
+    if (phase === 'Failed' || phase === 'Succeeded') throw new Error(`sandbox pod entered ${phase}`);
+    const reason = waitingReason(pod);
+    if (FATAL_WAIT_REASONS.has(reason)) {
+      throw new Error(`sandbox pod cannot start: ${reason} (image ${SANDBOX_IMAGE})`);
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`sandbox pod not Ready in time${reason ? ` (last state: ${reason})` : ''}`);
+    }
+    const msg = reason === 'ContainerCreating' || !reason
+      ? (phase === 'Pending' && !pod?.status?.containerStatuses ? 'scheduling sandbox…' : 'starting sandbox container…')
+      : `waiting on sandbox: ${reason}`;
+    if (msg !== lastReported) {
+      lastReported = msg;
+      onStatus(msg);
+    }
     await new Promise((r) => setTimeout(r, 600));
   }
 }
@@ -297,8 +336,8 @@ async function handleSession(ws, claims) {
   try {
     send({ type: 'status', message: 'provisioning sandbox…' });
     await core.createNamespacedPod({ namespace: SANDBOX_NAMESPACE, body: podManifest(podName, sanitize(claims.sub)) });
-    await waitForRunning(podName, Date.now() + POD_READY_TIMEOUT_MS);
-    send({ type: 'status', message: 'sandbox ready' });
+    await waitForRunning(podName, Date.now() + POD_READY_TIMEOUT_MS, (m) => send({ type: 'status', message: m }));
+    send({ type: 'status', message: 'sandbox ready — attaching shell…' });
 
     const stdout = new StreamSink((chunk) => {
       if (ws.readyState === 1) ws.send(chunk); // binary frame = terminal output
@@ -320,6 +359,9 @@ async function handleSession(ws, claims) {
       },
     );
     sess.k8sWs = k8sWs;
+    // Explicit "shell is attached" control frame: the client flips from its
+    // provisioning state to a live terminal (and focuses it) on this signal.
+    send({ type: 'ready' });
 
     ws.on('message', (data, isBinary) => {
       resetIdle();
@@ -347,8 +389,11 @@ async function handleSession(ws, claims) {
       stdin.push(Buffer.isBuffer(data) ? data : Buffer.from(data));
     });
   } catch (e) {
-    log('session provisioning failed', podName, e?.body?.message || e?.message);
-    send({ type: 'error', message: 'failed to start sandbox' });
+    const detail = e?.body?.message || e?.message || 'unknown error';
+    log('session provisioning failed', podName, detail);
+    // Surface the REAL reason (e.g. ImagePullBackOff) — a generic message hides
+    // operator-fixable problems from the person staring at the terminal.
+    send({ type: 'error', message: `failed to start sandbox: ${detail}` });
     await cleanup('provision-error');
   }
 }

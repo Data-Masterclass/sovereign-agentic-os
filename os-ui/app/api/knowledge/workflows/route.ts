@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { listWorkflows, createWorkflow } from '@/lib/knowledge/store';
+import { listWorkflows, createWorkflow, ensureHydrated } from '@/lib/knowledge/store';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,6 +16,7 @@ function fail(e: unknown) {
 export async function GET() {
   try {
     const user = await requireUser();
+    await ensureHydrated();
     return NextResponse.json(listWorkflows(user));
   } catch (e) {
     return fail(e);
@@ -26,6 +27,7 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const user = await requireUser();
+    await ensureHydrated();
     const body = await req.json().catch(() => ({}));
     const title = typeof body.title === 'string' ? body.title.trim() : '';
     if (!title) return NextResponse.json({ error: 'A workflow title is required.' }, { status: 400 });

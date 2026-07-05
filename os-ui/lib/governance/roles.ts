@@ -24,10 +24,11 @@ export type Scope = 'own' | 'domain' | 'tenant';
 export type Actor = { id: string; domains: string[]; role: Role };
 
 /** Lowest→highest privilege. `creator` is the base role (rank 0). */
-const RANK: Record<Role, number> = { creator: 0, builder: 1, admin: 2 };
+const RANK: Record<Role, number> = { creator: 0, builder: 1, domain_admin: 2, admin: 3 };
 const LABEL: Record<Role, string> = {
   creator: 'Creator',
   builder: 'Builder',
+  domain_admin: 'Domain admin',
   admin: 'Admin',
 };
 
@@ -59,7 +60,20 @@ export const ROLE_RIGHTS: Record<Role, string[]> = {
     'approve.domain',
     'deploy.review',
     'promote.shared',
+  ],
+  domain_admin: [
+    'read.own',
+    'request.access',
+    'request.import',
+    'create.artifact',
+    'run.attended',
+    'policy.view.domain',
+    'approve.domain',
+    'deploy.review',
+    'promote.shared',
+    'egress.approve',
     'manage.memberships.domain',
+    'manage.users.domain',
   ],
   admin: [
     'read.own',
@@ -90,6 +104,7 @@ const RIGHT_TO_TOOLS: Record<string, string[]> = {
   'override.policy': ['policy_override'],
   'cost.cap.set': ['cost_cap'],
   'manage.users.tenant': ['user_admin'],
+  'manage.users.domain': ['user_admin'],
   'manage.memberships.domain': ['membership_admin'],
 };
 
@@ -117,19 +132,19 @@ export function hasRole(actor: Actor, min: Role): boolean {
   return roleRank(actor.role) >= roleRank(min);
 }
 
-/** Builder/Admin may act within a domain; Admin spans the tenant. */
+/** Builder+/Domain admin may act within a domain; Admin spans the tenant. */
 export function inScope(actor: Actor, domain: string, scope: Scope): boolean {
   if (actor.role === 'admin') return true;
-  if (scope === 'tenant') return false; // tenant items are Admin-only
+  if (scope === 'tenant') return false; // tenant items are (platform) Admin-only
   if (scope === 'own') return false; // own requests aren't "approved" by self
   return actor.domains.includes(domain);
 }
 
-/** Can `actor` SEE this queue item? Admin = all, Builder = own domain, User = own. */
+/** Can `actor` SEE this queue item? Admin = all, Builder+ = own domain, User = own. */
 export function canSee(actor: Actor, a: Pick<Approval, 'domain' | 'requestedBy'>): boolean {
   if (actor.role === 'admin') return true;
   if (a.requestedBy === actor.id) return true;
-  if (actor.role === 'builder') return actor.domains.includes(a.domain);
+  if (roleRank(actor.role) >= roleRank('builder')) return actor.domains.includes(a.domain);
   return false;
 }
 
@@ -148,13 +163,41 @@ export function canApprove(
 
 /**
  * Can `actor` assign `targetRole` in `domain`? Admin = any role, tenant-wide.
- * Builder = within their own domain, UP TO Builder (never mints an Admin).
+ * Domain admin = within their own domain(s), UP TO Builder — a domain admin can
+ * NEVER mint another domain_admin or an admin (only the platform Admin appoints
+ * domain admins). Builder and below are approvers, NOT people-admins: false.
  */
 export function canManageRole(actor: Actor, targetRole: Role, domain: string): boolean {
   if (actor.role === 'admin') return true;
-  if (actor.role !== 'builder') return false;
+  if (actor.role !== 'domain_admin') return false;
   if (!actor.domains.includes(domain)) return false;
   return roleRank(targetRole) <= roleRank('builder');
+}
+
+// ---- Domain-scoped USER ADMINISTRATION (the domain_admin's people powers) ----
+// Enforced SERVER-SIDE per call by /api/governance/users; kept here (pure) so the
+// scoping matrix is directly unit-testable.
+
+/** Floor: user administration needs a Domain admin (in-domain) or the Admin. */
+export function canAdministerUsers(role: Role): boolean {
+  return roleRank(role) >= roleRank('domain_admin');
+}
+
+/** Subset rule: every one of the target's domains must be the actor's own —
+ * a Domain admin never sees/touches a user who also belongs to a foreign domain. */
+export function userAdminInScope(
+  actor: Pick<Actor, 'role' | 'domains'>,
+  targetDomains: string[],
+): boolean {
+  if (actor.role === 'admin') return true;
+  return targetDomains.every((d) => actor.domains.includes(d));
+}
+
+/** A non-admin actor may never touch an admin or another domain_admin — the
+ * no-lateral/no-upward invariant that makes escalation impossible. */
+export function canTouchUser(actor: Pick<Actor, 'role'>, targetRole: Role): boolean {
+  if (actor.role === 'admin') return true;
+  return roleRank(targetRole) < roleRank('domain_admin');
 }
 
 /**

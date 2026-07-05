@@ -53,6 +53,14 @@ const IDLE_TIMEOUT_MS = parseInt(process.env.IDLE_TIMEOUT_SECONDS || '1800', 10)
 const POD_READY_TIMEOUT_MS = parseInt(process.env.POD_READY_TIMEOUT_SECONDS || '120', 10) * 1000;
 const ALLOWED_ROLES = (process.env.ALLOWED_ROLES || 'builder,admin').split(',');
 const MAX_ACTIVE = parseInt(process.env.MAX_ACTIVE_WORKBENCHES || '12', 10);
+// Pull secrets for the code-server image (comma-separated Secret names that
+// must exist in WB_NAMESPACE — the chart replicates the release pull secret
+// there). Without this, a private registry (e.g. ghcr.io) 401s the kubelet's
+// anonymous pull and every workbench pod sits in ImagePullBackOff forever.
+const PULL_SECRETS = (process.env.IMAGE_PULL_SECRETS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 const PVC_SIZE = process.env.WORKBENCH_PVC_SIZE || '2Gi';
 const PVC_STORAGECLASS = process.env.WORKBENCH_STORAGE_CLASS || ''; // '' => cluster default
 const PROXY_COOKIE = 'soa_wb_proxy';
@@ -79,6 +87,20 @@ const apps = kc.makeApiClient(k8s.AppsV1Api);
 const net = kc.makeApiClient(k8s.NetworkingV1Api);
 
 const proxy = httpProxy.createProxyServer({ ws: true, xfwd: true });
+// The editor is embedded in an iframe on the OS UI origin (os.<zone> framing
+// workbench.<zone>). Strip any frame-blocking headers code-server may emit so
+// the embed cannot be silently refused — access is already gated by the signed
+// proxy cookie + this broker, not by frame policy.
+proxy.on('proxyRes', (proxyRes) => {
+  delete proxyRes.headers['x-frame-options'];
+  const csp = proxyRes.headers['content-security-policy'];
+  if (csp && /frame-ancestors/i.test(csp)) {
+    proxyRes.headers['content-security-policy'] = csp
+      .split(';')
+      .filter((d) => !/^\s*frame-ancestors/i.test(d))
+      .join(';');
+  }
+});
 proxy.on('error', (err, _req, res) => {
   try {
     if (res && res.writeHead && !res.headersSent) res.writeHead(502, { 'content-type': 'text/plain' });
@@ -317,6 +339,7 @@ function deploymentManifest(n, domain) {
         spec: {
           automountServiceAccountToken: false, // no k8s token in the workbench
           serviceAccountName: WB_SA,
+          ...(PULL_SECRETS.length ? { imagePullSecrets: PULL_SECRETS.map((name) => ({ name })) } : {}),
           enableServiceLinks: false,
           terminationGracePeriodSeconds: 5,
           securityContext: {
@@ -404,15 +427,45 @@ async function ensureDeploymentAndService(n, domain) {
   }
 }
 
+// Container states that will NEVER self-heal within the wait window — fail
+// fast with the real reason instead of a mute 120s timeout (an ImagePullBackOff
+// otherwise looks like "loads forever" to the person staring at the tab).
+const FATAL_WAIT_REASONS = new Set([
+  'ErrImagePull',
+  'ImagePullBackOff',
+  'InvalidImageName',
+  'CreateContainerConfigError',
+  'CreateContainerError',
+  'RunContainerError',
+  'CrashLoopBackOff',
+]);
+async function podWaitingReason(n) {
+  try {
+    const pods = await core.listNamespacedPod({
+      namespace: WB_NAMESPACE,
+      labelSelector: `soa.dev/workbench-owner=${n.id}`,
+    });
+    const cs = pods.items?.[0]?.status?.containerStatuses?.[0];
+    return cs?.state?.waiting?.reason || '';
+  } catch {
+    return '';
+  }
+}
 async function waitForEndpoints(n, deadline) {
   for (;;) {
-    if (Date.now() > deadline) throw new Error('workbench did not become Ready in time');
     try {
       const ep = await core.readNamespacedEndpoints({ name: n.svc, namespace: WB_NAMESPACE });
       const ready = (ep.subsets || []).some((s) => (s.addresses || []).length > 0);
       if (ready) return;
     } catch {
       /* not yet */
+    }
+    const reason = await podWaitingReason(n);
+    if (FATAL_WAIT_REASONS.has(reason)) {
+      throw new Error(`workbench pod cannot start: ${reason} (image ${WB_IMAGE})`);
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`workbench not Ready in time${reason ? ` (last state: ${reason})` : ''}`);
     }
     await new Promise((r) => setTimeout(r, 800));
   }
@@ -477,9 +530,12 @@ const server = http.createServer(async (req, res) => {
       });
       res.end(JSON.stringify({ ok: true, domain: claims.domain }));
     } catch (e) {
-      log('reconcile failed', claims.sub, e?.body?.message || e?.message);
+      const detail = e?.body?.message || e?.message || 'unknown error';
+      log('reconcile failed', claims.sub, detail);
+      // Surface the REAL reason (e.g. ImagePullBackOff) — a generic message
+      // hides operator-fixable problems from the person staring at the tab.
       res.writeHead(500, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: 'failed to start workbench' }));
+      res.end(JSON.stringify({ error: `failed to start workbench: ${detail}` }));
     }
     return;
   }

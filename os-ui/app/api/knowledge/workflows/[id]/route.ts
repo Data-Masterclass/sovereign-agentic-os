@@ -6,6 +6,7 @@ import { requireUser } from '@/lib/auth';
 import { getWorkflow, updateWorkflow, deleteWorkflow } from '@/lib/knowledge/store';
 import { findGaps } from '@/lib/knowledge/gaps';
 import { resolveEntityIndex } from '@/lib/knowledge/mock-entities';
+import { roleAtLeast } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,11 +28,8 @@ export async function GET(_req: Request, { params }: Params) {
     return NextResponse.json({
       ...view,
       gaps,
-      canEdit:
-        view.owner === user.id ||
-        user.role === 'builder' ||
-        user.role === 'admin',
-      canPublish: user.role === 'builder' || user.role === 'admin',
+      canEdit: view.owner === user.id || roleAtLeast(user.role, 'builder'),
+      canPublish: roleAtLeast(user.role, 'builder'),
     });
   } catch (e) {
     return fail(e);

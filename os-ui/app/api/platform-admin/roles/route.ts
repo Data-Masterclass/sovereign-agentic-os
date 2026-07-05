@@ -22,8 +22,9 @@ export const dynamic = 'force-dynamic';
 
 const ROLE_BLURB: Record<Role, string> = {
   creator: 'Base role — create & run their own work and consume shared assets. Cannot promote, approve, or reach admin.',
-  builder: 'Domain steward — creator rights plus review/approve, promote to Shared, and manage their domain’s members.',
-  admin: 'Tenant control — everything, plus users, policy, certification, egress and cost caps.',
+  builder: 'Domain approver — creator rights plus review/approve domain promotions, deploys, knowledge and connections. Not a people-admin.',
+  domain_admin: 'Builder rights plus administering users in their own domain(s) — invite, edit, deactivate, assign roles up to Builder. Never mints another domain admin.',
+  admin: 'Tenant control — everything, plus users, policy, certification, egress and cost caps. The only role that assigns Domain admin.',
 };
 
 /** The full matrix + everything the editor needs to render + a live rights/tools read. */

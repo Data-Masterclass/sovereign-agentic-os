@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import yaml from 'js-yaml';
+import { roleAtLeast } from '../session.ts';
 import type { Role } from '../session.ts';
 
 /**
@@ -174,7 +175,7 @@ export function canTransition(role: Role, from: Tier, t: Transition): { ok: bool
   if (needsAdmin && role !== 'admin') {
     return { ok: false, reason: `${t} (${from}→${to}) requires Admin` };
   }
-  if (needsBuilder && role !== 'builder' && role !== 'admin') {
+  if (needsBuilder && !roleAtLeast(role, 'builder')) {
     return { ok: false, reason: `${t} (${from}→${to}) requires Builder` };
   }
   return { ok: true };

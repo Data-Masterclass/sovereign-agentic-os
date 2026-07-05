@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { createBet, listBets } from '@/lib/bigbets/store';
+import { createBet, listBets, ensureHydrated } from '@/lib/bigbets/store';
 import { deriveBetName } from '@/lib/bigbets/model';
 import { principal } from '@/lib/bigbets/server';
 import { deriveBet, completion } from '@/lib/bigbets/status';
@@ -20,6 +20,7 @@ function fail(e: unknown) {
 /** GET → the bets the caller may view, each with a headline rollup + realized value. */
 export async function GET() {
   try {
+    await ensureHydrated();
     const user = await requireUser();
     const p = principal(user);
     const bets = listBets(p).map((bet) => {
@@ -60,6 +61,7 @@ export async function GET() {
  */
 export async function POST(req: Request) {
   try {
+    await ensureHydrated();
     const user = await requireUser();
     const b = await req.json().catch(() => ({}));
 

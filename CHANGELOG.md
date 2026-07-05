@@ -13,6 +13,94 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [os-ui 0.1.32] — 2026-07-05
+
+The deployed **os-ui image** carries its own version line (`osUI.image.tag` in
+`values.stackit-selfhosted.yaml`), independent of the chart/app semver. 0.1.32
+is the durability + 4-role release, live on the STACKIT tenant.
+
+### Added
+
+- **DURABILITY: one shared OpenSearch mirror behind every user-facing store**
+  (`os-ui/lib/os-mirror.ts`). Approvals, audit, artifacts, apps, agent systems
+  (incl. `AGENT.md`/`MEMORY.md`), datasets, knowledge, files, dashboards, big
+  bets, users, domains, marketplace, pillars, prefs and role-config all
+  write-through to OpenSearch and hydrate on boot — **artifacts survive
+  redeploys and node-rolls**. Root cause fixed once, centrally: the old
+  per-store probe treated a missing index (404 on a fresh cluster) as "mirror
+  down forever", so the index was never created and every pod roll wiped state;
+  the shared core creates the index on 404, never throws into a request, and
+  lazily re-probes/self-heals. Requires the OpenSearch PVC
+  (`deploy/opensearch-pvc-migration.sh` migrates a live cluster). See
+  `docs/decisions/0003-durability-os-mirror.md`.
+- **Data M1 — the Data golden path is physical end to end**: upload → a real
+  Bronze Iceberg table in a per-user schema (`iceberg.personal_<uid>`) →
+  Explore → Silver → Gold join → **publish-on-approval** (the Builder's
+  approval runs the physical publish; the tier flips only on ✓) → Cube →
+  **Talk to your data v2** (governed NL→SQL: canView-scoped schema context, one
+  validated read-only SELECT, executed through governed Trino under the
+  caller's row filters/masks, grounded answers). Live Iceberg writes verified
+  on **Polaris 1.1.0-incubating**.
+- **MCP Waves A + B**: the physical pipeline tools (`ingest_dataset`,
+  `transform_silver`, `build_gold_join`, `profile_dataset`), the sharing-ladder
+  split (`request_promotion` owner-filed / `approve_promotion` Builder-applied),
+  `query_metric`, `run_agent_system`, Science reads (`list_models`/`get_model`),
+  Big Bet updates, Connections tools, and read-back parity (`list_*`/`get_*`
+  for every buildable artifact) — ~55 governed tools total. Internal Agent-tab
+  systems dispatch through the **same governed toolset** under their owner's
+  identity (`lib/agents/build/os-tools.ts`) — front door, no back door
+  (`docs/decisions/0005-mcp-front-door-invariant.md`).
+- **Backups Tier 0–2** documented and wired: nightly `pg-dump` CronJob, nightly
+  Velero off-cluster volume backups, and the standing pre-upgrade backup gate
+  (`deploy/pre-upgrade-backup.sh`); honest gap list in `docs/backups.md`,
+  drills in `docs/runbooks/restore-drill.md`
+  (`docs/decisions/0004-backups-tiers.md`).
+- **SECURITY / role model: 4 ranks** — `creator (0) < builder (1) < domain_admin (2) < admin (3)`.
+  The new **`domain_admin`** role carries every Builder capability PLUS (a) user
+  administration scoped to their OWN domain(s) only — invite, edit, deactivate/
+  reactivate, and role assignment **up to builder** (never `domain_admin` or
+  `admin`; only the platform Admin appoints domain admins) — and (b) all
+  domain-scoped governance approvals (incl. within-domain cost caps). Enforced
+  server-side per call in `/api/governance/users` via new pure predicates in
+  `lib/governance/roles.ts` (`canAdministerUsers` floor, `userAdminInScope`
+  domains-subset rule, `canTouchUser` no-lateral/no-upward), every mutation
+  audited with the actor. Builders are approvers, NOT people-admins (user admin
+  moved from builder → domain_admin). Tenant powers (strategy pillars,
+  cross-domain bets, marketplace certification, the whole Platform group, cost
+  caps, role matrix, models, domains) stay platform-admin-only; the Platform
+  Users tab keeps its 0.1.31 admin-only gating. Legacy/unknown stored roles
+  still normalise to `creator`; nobody is auto-promoted. Builder-floor gates
+  across the OS now compare by rank (`roleAtLeast`), so `domain_admin` inherits
+  every Builder surface, incl. the 6 builder-floor MCP tools; `whoami`,
+  `list_capabilities`, the MCP orientation and prompt role-banners describe all
+  4 roles. The `/platform/roles` matrix gains a Domain admin column
+  (`manage @ governance` = memberships + domain user-admin); the admin
+  never-locked-out invariant is unchanged. See
+  `docs/decisions/0001-four-rank-roles.md` and
+  `docs/decisions/0002-sharing-ladder.md`.
+
+### Changed
+
+- **Nav consolidation**: Tutorials moved into the main tab group; **Governance**
+  tops the Platform group at **builder+** (Domain admins included by rank); the
+  remaining Platform entries (Admin, Components, Terminal, About/Licenses) are
+  admin-only; the **Workbench tab is retired** from the sidebar (the workload
+  stays chart-optional; old routes redirect).
+- **Console UX**: the Terminal auto-connects on open and re-attaches to a live
+  session across navigation; Dagster's public ingress now requires operator
+  basic-auth (`ingress.dagsterBasicAuthSecret`) since Dagster OSS ships no
+  login of its own.
+
+### Documentation
+
+- OS guide refreshed to the current architecture (sharing ladder, physical Data
+  path, MCP surface, durability, tab map) + regenerated PDF; new ADRs in
+  `docs/decisions/`; new runbooks `docs/runbooks/helm-upgrade.md` (pre-upgrade
+  backup rule + the ClickHouse SSA `--force-conflicts` recovery) and
+  `docs/runbooks/deploy-os-ui.md` (the image-only update path).
+
 ## [0.2.0-alpha.11] — 2026-06-30
 
 Headline: **documented STACKIT sizing & capacity recommendations** learned from

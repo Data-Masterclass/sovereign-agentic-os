@@ -10,6 +10,7 @@ import {
   type PublicUser,
 } from '@/lib/users';
 import type { Role } from '@/lib/session';
+import { osMirror } from '../os-mirror.ts';
 
 /**
  * Tenant-user adapter (Ory seam) for Platform Admin → Users & Access.
@@ -26,12 +27,52 @@ import type { Role } from '@/lib/session';
  */
 
 type Status = 'active' | 'invited' | 'deactivated';
-type TenantUsersState = { statusMap: Map<string, Status> };
+type TenantUsersState = { statusMap: Map<string, Status>; hydration: Promise<void> | null };
 const TENANT_USERS_KEY = Symbol.for('soa.platform.tenantUsers');
 function tenantUsersState(): TenantUsersState {
   const g = globalThis as unknown as Record<symbol, TenantUsersState | undefined>;
-  if (!g[TENANT_USERS_KEY]) g[TENANT_USERS_KEY] = { statusMap: new Map() };
+  if (!g[TENANT_USERS_KEY]) g[TENANT_USERS_KEY] = { statusMap: new Map(), hydration: null };
   return g[TENANT_USERS_KEY]!;
+}
+
+// ---------------------------------------------------- durable mirror (best-effort) --
+const mirror = osMirror({
+  index: 'os-tenant-user-status',
+  createBody: {
+    mappings: {
+      properties: {
+        id: { type: 'keyword' },
+        status: { type: 'keyword' },
+      },
+    },
+  },
+});
+
+function writeThrough(userId: string, status: Status): void {
+  mirror.writeThrough(userId, { id: userId, status });
+}
+
+export async function ensureHydrated(): Promise<void> {
+  const s = tenantUsersState();
+  if (!s.hydration) s.hydration = hydrate();
+  return s.hydration;
+}
+
+async function hydrate(): Promise<void> {
+  const s = tenantUsersState();
+  const docs = (await mirror.hydrate(2000)) ?? [];
+  for (const doc of docs as { id?: string; status?: Status }[]) {
+    if (doc && doc.id && doc.status && !s.statusMap.has(doc.id)) {
+      s.statusMap.set(doc.id, doc.status);
+    }
+  }
+}
+
+export function _resetTenantUsers(): void {
+  const s = tenantUsersState();
+  s.statusMap.clear();
+  s.hydration = null;
+  mirror.__reset();
 }
 
 export type AccessUser = PublicUser & { status: Status; active: boolean };
@@ -71,6 +112,7 @@ export async function inviteUser(input: {
     role: input.role,
   });
   tenantUsersState().statusMap.set(user.id, 'invited');
+  writeThrough(user.id, 'invited');
   return user; // PublicUser — password is omitted by the directory
 }
 
@@ -83,6 +125,7 @@ export async function deactivateUser(id: string): Promise<AccessUser> {
     throw e;
   }
   tenantUsersState().statusMap.set(id, 'deactivated');
+  writeThrough(id, 'deactivated');
   return { ...u, status: 'deactivated', active: false };
 }
 
@@ -95,6 +138,7 @@ export async function reactivateUser(id: string): Promise<AccessUser> {
     throw e;
   }
   tenantUsersState().statusMap.set(id, 'active');
+  writeThrough(id, 'active');
   return { ...u, status: 'active', active: true };
 }
 
@@ -118,6 +162,7 @@ export async function setMemberships(id: string, domains: string[]): Promise<Pub
 export async function offboardUser(id: string): Promise<void> {
   await deleteUser(id);
   tenantUsersState().statusMap.delete(id);
+  mirror.deleteThrough(id);
 }
 
 /** Compiler input: only ACTIVE users grant rights. */

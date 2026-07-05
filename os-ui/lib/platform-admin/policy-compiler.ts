@@ -24,7 +24,7 @@
  */
 import { config } from '../config.ts';
 
-export type Role = 'creator' | 'builder' | 'admin';
+export type Role = 'creator' | 'builder' | 'domain_admin' | 'admin';
 
 export type CompileUser = { id: string; role: Role; domains: string[]; active?: boolean };
 export type CompileDomain = { id: string; archived?: boolean; layers?: { ml?: boolean; spark?: boolean } };
@@ -58,6 +58,11 @@ const BASE_BY_ROLE: Record<Role, string[]> = {
   creator: ['metrics', 'query'],
   // builder: + promote to Shared, request external connection writes, workbench.
   builder: ['metrics', 'query', 'promote', 'connection_write_request', 'workbench'],
+  // domain_admin: builder's grants + domain-scoped user administration. NO
+  // platform surfaces ('admin', models.manage, egress.curate, backups.restore
+  // stay platform-admin-only) — the route tier re-scopes user_admin to the
+  // caller's own domain(s).
+  domain_admin: ['metrics', 'query', 'promote', 'connection_write_request', 'workbench', 'user_admin', 'membership_admin'],
   // admin: + platform management surfaces (still OPA-gated, default-deny).
   admin: [
     'metrics',

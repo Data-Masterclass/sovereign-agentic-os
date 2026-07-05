@@ -74,6 +74,14 @@ opensearch:
     enabled: true
     size: 8Gi
 
+# Nightly logical dump of EVERY Postgres database to the lakehouse bucket
+# (s3://lakehouse/backups/pg/<stamp>/), 14-day retention — the consistent
+# Postgres backup path (Velero fs-backup deliberately skips live PGDATA).
+# See docs/backups.md.
+backup:
+  pgDump:
+    enabled: true
+
 # -----------------------------------------------------------------------------
 # Ollama (model-server) — upgrade to latest so ministral-3 loads correctly.
 # Pinned 0.6.8 in the chart default is too old for ministral-3 on this node.
@@ -176,6 +184,10 @@ osUI:
     # renamed `creator`->`agentic-leader`, label "Agentic Leader Program"; ladder
     # agentic-leader<builder<admin) + real Q3-2026 cohort seed (id=email) into
     # domain agentic-leader-q3-2026.
+    # 0.1.32 = DURABILITY: mirror-bootstrap fix (404-index no longer kills the mirror)
+    # + every user-facing store persists (agents/dashboards/bets/knowledge/files) —
+    # artifacts survive redeploys. + 4-rank roles, nav consolidation, console UX,
+    # Science relabel, capability profiles, tile ordering, tutorials, MCP Wave B.
     # 0.1.31 = SECURITY: platform tabs admin-only for real (sidebar minRole filter +
     # server walls on 8 previously-ungated pages; Tutorials hub stays public).
     # 0.1.30 = MCP Wave B (9 read-back/operate tools) + per-user drag-drop tile
@@ -210,7 +222,7 @@ osUI:
     # 0.1.11 = Agents-tab builder rebuild: globalThis store fix (AGENT.md/MEMORY.md
     # now load), single Auto/Reasoning/Execution model toggle (real sovereign-*
     # ids), React Flow drag-and-drop graph builder, master-detail rail + templates.
-    tag: "0.1.31"
+    tag: "0.1.32"
   # ---- Mailer: the OS sends its OWN mail via the in-cluster maddy MTA. --------
   # os-ui's SMTP transport is pointed at the in-cluster `mail` Service (587,
   # STARTTLS); maddy DKIM-signs and delivers as noreply@sovereign-agentic.com.
@@ -244,11 +256,21 @@ osUI:
 # and templates/mail/maddy.yaml for the open-relay guards + go-live steps.
 mail:
   enabled: true
-  # outbound: direct is the chart default. STACKIT/cloud commonly BLOCKS outbound
-  # :25 — if a test send to an external MX hangs/fails, flip to smarthost:
-  #   outbound: smarthost
-  #   smarthost: { host: "smtp.eu.mailgun.org", port: 465, scheme: tls }
-  # (+ create the mail-smarthost Secret with SMARTHOST_USER/SMARTHOST_PASS).
+  # VERIFIED 2026-07-05: STACKIT BLOCKS outbound :25 from this cluster. Tested from
+  # in-cluster pods (SNAT egress IP 213.17.17.64): :443 to arbitrary hosts connects
+  # instantly, but :25 to 1.1.1.1/8.8.8.8 times out and to real MX
+  # (gmail-smtp-in.l.google.com) returns ENETUNREACH ("network unreachable") — the
+  # classic OpenStack port-25 null-route. => DIRECT-to-MX WILL NOT DELIVER.
+  # Therefore maddy MUST relay through a smarthost (submission on 587/465, which
+  # STACKIT does NOT block). Do NOT rely on `outbound: direct` below.
+  #
+  # TO GO LIVE (smarthost): copy values.mail.private.example.yaml ->
+  # values.mail.private.yaml (gitignored), pick your EU-sovereign relay host, and
+  # apply it LAST (-f values.mail.private.yaml) so it flips outbound=smarthost.
+  # Relay CREDENTIALS never go in any values file — create the mail-smarthost
+  # Secret out-of-band (SMARTHOST_USER/SMARTHOST_PASS). DKIM signing is unaffected
+  # by the delivery path. `outbound: direct` is kept here only so the base renders;
+  # the private overlay is required for actual delivery.
   outbound: direct
 
 agentRuntime:
@@ -454,10 +476,16 @@ kserve:
 # values.private.yaml — NOT the insecure in-chart default.
 terminal:
   enabled: true
+  # Session lifetimes for the auto-connected, stays-open-while-logged-in shell:
+  # generous idle (4h — the tab keeps the WS open across in-app navigation; the
+  # session should not die under a user who stepped away) + a 12h hard ceiling.
+  # Logout / closing the browser tears the WS down and the pod is reaped at once.
+  idleTimeoutSeconds: 14400
+  maxSessionSeconds: 43200
   broker:
     image:
       repository: ghcr.io/aborek/sovereign-os/terminal-broker
-      tag: "0.1.0"
+      tag: "0.1.1"   # 0.1.1: sandbox imagePullSecrets + honest wait status/fail-fast
   sandbox:
     image:
       repository: ghcr.io/aborek/sovereign-os/sandbox-shell
@@ -540,6 +568,17 @@ ingress:
     # is a cross-origin credentialed fetch).
     terminal: "terminal.agentic.datamasterclass.com"
     workbench: "workbench.agentic.datamasterclass.com"
+    # Dagster console (the "Open Dagster" target on the Orchestration/Components
+    # tab). WITHOUT this the chart renders DAGSTER_CONSOLE_URL as "" on the
+    # os-ui and the UI has no reachable console to open.
+    dagster: "dagster.agentic.datamasterclass.com"
+  # Dagster OSS has NO auth of its own (every other exposed console has a login),
+  # so its Ingress enforces nginx basic-auth from this htpasswd Secret (key
+  # `auth`, release namespace). Create it once:
+  #   htpasswd -Bbn <user> '<password>' | kubectl -n agentic-os \
+  #     create secret generic dagster-basic-auth --from-file=auth=/dev/stdin
+  # ingress-nginx fails CLOSED (503) while the Secret is absent.
+  dagsterBasicAuthSecret: dagster-basic-auth
 
 # NOTE: NO objectStorage/postgres/opensearch/llm `external:` blocks here on
 # purpose — every backend stays BUNDLED (the values.selfcontained.yaml +

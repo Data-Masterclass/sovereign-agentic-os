@@ -3,8 +3,9 @@
  */
 import 'server-only';
 import { config } from '@/lib/config';
+import { osMirror } from '@/lib/os-mirror';
 import type { CurrentUser } from '@/lib/auth';
-import { canPromote } from '@/lib/session';
+import { canPromote, roleAtLeast } from '@/lib/session';
 import type { Visibility } from '@/lib/artifact-model';
 import {
   type Connection,
@@ -60,11 +61,11 @@ import { logEgress } from '@/lib/egress-requests';
  *     a real deploy injects the secret server-side and routes via the egress proxy.
  */
 
-type ConnCacheState = { cache: Map<string, Connection> | null; osHealthy: boolean };
+type ConnCacheState = { cache: Map<string, Connection> | null };
 const CONN_STATE_KEY = Symbol.for('soa.connections.cache');
 function connState(): ConnCacheState {
   const g = globalThis as unknown as Record<symbol, ConnCacheState | undefined>;
-  if (!g[CONN_STATE_KEY]) g[CONN_STATE_KEY] = { cache: null, osHealthy: false };
+  if (!g[CONN_STATE_KEY]) g[CONN_STATE_KEY] = { cache: null };
   return g[CONN_STATE_KEY]!;
 }
 
@@ -85,27 +86,13 @@ function withStatus(err: Error, status: number): Error {
 }
 
 // ---------------------------------------------------------------- OpenSearch ---
+// Shared durable-mirror core (probe → bootstrap-on-404 → hydrate/write-through):
+// lib/os-mirror.ts. A missing index is CREATED, never mistaken for a dead mirror.
 
-async function osFetch(path: string, init?: RequestInit): Promise<Response | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2500);
-  try {
-    return await fetch(`${config.opensearchUrl}${path}`, {
-      ...init,
-      signal: ctrl.signal,
-      cache: 'no-store',
-      headers: { 'content-type': 'application/json', accept: 'application/json', ...(init?.headers ?? {}) },
-    });
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
+const mirror = osMirror({ index: 'os-connections' });
 
 function writeThrough(c: Connection): void {
-  if (!connState().osHealthy) return;
-  void osFetch(`/os-connections/_doc/${c.id}?refresh=true`, { method: 'PUT', body: JSON.stringify(c) });
+  mirror.writeThrough(c.id, c);
 }
 
 /** Compile the capability profile into the offline OPA mirror for a connection. */
@@ -124,23 +111,10 @@ async function getCache(): Promise<Map<string, Connection>> {
   const s = connState();
   if (s.cache) return s.cache;
   const map = new Map<string, Connection>();
-  const ping = await osFetch('/os-connections/_count');
-  if (ping && ping.ok) {
-    s.osHealthy = true;
-    const res = await osFetch('/os-connections/_search?size=500', {
-      method: 'POST',
-      body: JSON.stringify({ query: { match_all: {} } }),
-    });
-    if (res && res.ok) {
-      const data = (await res.json()) as { hits?: { hits?: { _source: Connection }[] } };
-      for (const h of data?.hits?.hits ?? []) {
-        const c = h._source;
-        map.set(c.id, c);
-        compileProfile(c); // re-hydrate the OPA mirror after a restart
-      }
-    }
-  } else {
-    s.osHealthy = false;
+  const docs = (await mirror.hydrate(500)) ?? []; // null → mirror down → in-memory only
+  for (const c of docs as Connection[]) {
+    map.set(c.id, c);
+    compileProfile(c); // re-hydrate the OPA mirror after a restart
   }
   s.cache = map;
   return map;
@@ -169,7 +143,7 @@ export async function getConnectionForUser(connId: string, user: CurrentUser): P
 }
 
 function assertBuilderOrAdmin(user: CurrentUser): void {
-  if (user.role !== 'builder' && user.role !== 'admin') {
+  if (!roleAtLeast(user.role, 'builder')) {
     throw withStatus(new Error('Creating connections requires a Builder or Administrator'), 403);
   }
 }
@@ -284,7 +258,7 @@ export async function updateCapabilities(
   const isOwner = c.owner === user.id;
   const isDomainAdmin = user.role === 'admin' && user.domains.includes(c.domain);
   if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to edit this connection'), 403);
-  if (user.role !== 'builder' && user.role !== 'admin') {
+  if (!roleAtLeast(user.role, 'builder')) {
     throw withStatus(new Error('Editing capabilities requires a Builder or Administrator'), 403);
   }
 
@@ -420,7 +394,7 @@ export async function grantToAgent(
   const isOwner = c.owner === user.id;
   const isDomainAdmin = user.role === 'admin' && user.domains.includes(c.domain);
   if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to grant this connection'), 403);
-  if (user.role !== 'builder' && user.role !== 'admin') {
+  if (!roleAtLeast(user.role, 'builder')) {
     throw withStatus(new Error('Granting a connection requires a Builder or Administrator'), 403);
   }
 
@@ -629,7 +603,7 @@ export async function approveOnce(
   const c = map.get(connId);
   if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
   const isOwner = c.owner === user.id;
-  const isDomainBuilderAdmin = (user.role === 'admin' || user.role === 'builder') && user.domains.includes(c.domain);
+  const isDomainBuilderAdmin = roleAtLeast(user.role, 'builder') && user.domains.includes(c.domain);
   if (!isOwner && !isDomainBuilderAdmin) throw withStatus(new Error('Only the owner or a domain Builder/Admin can approve this write'), 403);
   const tool = String(input.tool ?? '');
   const args = input.args ?? {};
@@ -657,7 +631,7 @@ export async function approveAndRemember(
   const c = map.get(connId);
   if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
   const isOwner = c.owner === user.id;
-  const isDomainAdmin = (user.role === 'admin' || user.role === 'builder') && user.domains.includes(c.domain);
+  const isDomainAdmin = roleAtLeast(user.role, 'builder') && user.domains.includes(c.domain);
   if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Only the owner or a domain Builder/Admin can approve & remember'), 403);
   const args = input.args ?? {};
   const toolDef = c.tools.find((t) => t.name === input.tool);
@@ -707,13 +681,13 @@ export async function deleteConnection(connId: string, user: CurrentUser): Promi
   if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to delete this connection'), 403);
   unregisterConnectionProfile(c.principal);
   map.delete(connId);
-  if (connState().osHealthy) void osFetch(`/os-connections/_doc/${connId}?refresh=true`, { method: 'DELETE' });
+  mirror.deleteThrough(connId);
 }
 
 export function __resetConnections(): void {
   const s = connState();
   s.cache = null;
-  s.osHealthy = false;
+  mirror.__reset();
 }
 
 export type { Connection };

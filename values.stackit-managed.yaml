@@ -332,6 +332,11 @@ ingress:
     # and the consoles cannot reach their brokers from the browser.
     terminal: "terminal.REPLACE-DNS-NAME"
     workbench: "workbench.REPLACE-DNS-NAME"
+    # Dagster console ("Open Dagster" target). Empty DAGSTER_CONSOLE_URL otherwise.
+    dagster: "dagster.REPLACE-DNS-NAME"
+  # Dagster OSS has no auth of its own — its Ingress enforces nginx basic-auth
+  # from this htpasswd Secret (key `auth`, release ns; nginx fails closed if absent).
+  dagsterBasicAuthSecret: dagster-basic-auth
 
 # Cache/analytics (Valkey/ClickHouse) stay bundled — no managed STACKIT
 # equivalent (stackit.md). Flip enabled:false + external here if that changes.

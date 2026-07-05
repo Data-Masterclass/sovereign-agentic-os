@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { config } from '@/lib/config';
+import { roleAtLeast } from '@/lib/session';
 import { authorize } from '@/lib/agent-governed';
 import { type KnowledgeUnit, type Provenance, type UnitType } from './chunk.ts';
 import { embedQuery } from './embed.ts';
@@ -64,7 +65,7 @@ export function dlsFilter(principal: Principal): Record<string, unknown> {
     { bool: { must: [{ term: { visibility: 'Shared' } }, { terms: { domain: principal.domains } }] } },
     { term: { owner: principal.id } },
   ];
-  if (principal.role === 'builder' || principal.role === 'admin') {
+  if (roleAtLeast(principal.role, 'builder')) {
     visible.push({ bool: { must: [{ term: { visibility: 'Personal' } }, { terms: { domain: principal.domains } }] } });
   }
   return { bool: { should: visible, minimum_should_match: 1 } };

@@ -4,7 +4,7 @@
 import 'server-only';
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import type { Principal } from '@/lib/files/store';
+import { ensureHydrated, type Principal } from '@/lib/files/store';
 
 /**
  * Server boundary for the Files tab routes: turn the signed-in user into the
@@ -14,6 +14,10 @@ import type { Principal } from '@/lib/files/store';
  */
 export async function requirePrincipal(): Promise<Principal> {
   const u = await requireUser();
+  // Hydrate the file cache from the durable mirror once per process, before any
+  // read/write — so a restarted os-ui serves the persisted files. Idempotent +
+  // graceful when OpenSearch is off.
+  await ensureHydrated();
   return { id: u.id, domains: u.domains, role: u.role };
 }
 

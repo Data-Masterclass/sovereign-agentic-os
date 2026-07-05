@@ -32,6 +32,7 @@ import {
   BetError,
 } from './model.ts';
 import { resolveArtifact, sourceFor } from './sources.ts';
+import { osMirror } from '../os-mirror.ts';
 
 /**
  * State pinned to `globalThis` so it is a TRUE singleton across all Next.js
@@ -39,12 +40,51 @@ import { resolveArtifact, sourceFor } from './sources.ts';
  * immediately visible to `GET /api/big-bets` (and to the pillar-dropdown query).
  * Same pattern as `lib/marketplace/store.ts` and `lib/agents/store.ts`.
  */
-type BetsState = { bets: Map<string, BigBet>; audit: AuditEvent[]; seq: number };
+type BetsState = { bets: Map<string, BigBet>; audit: AuditEvent[]; seq: number; hydration: Promise<void> | null };
 const STATE_KEY = Symbol.for('soa.bigbets.store');
 function state(): BetsState {
   const g = globalThis as unknown as Record<symbol, BetsState | undefined>;
-  if (!g[STATE_KEY]) g[STATE_KEY] = { bets: new Map(), audit: [], seq: 0 };
+  if (!g[STATE_KEY]) g[STATE_KEY] = { bets: new Map(), audit: [], seq: 0, hydration: null };
   return g[STATE_KEY]!;
+}
+
+// ---------------------------------------------------- durable mirror (best-effort) --
+const mirror = osMirror({
+  index: 'os-bigbets',
+  createBody: {
+    mappings: {
+      properties: {
+        id: { type: 'keyword' },
+        owner: { type: 'keyword' },
+        domain: { type: 'keyword' },
+        name: { type: 'keyword' },
+        status: { type: 'keyword' },
+        pillarId: { type: 'keyword' },
+        goLive: { type: 'date' },
+        updatedAt: { type: 'date' },
+        problem: { type: 'object', enabled: false },
+        components: { type: 'object', enabled: false },
+      },
+    },
+  },
+});
+
+function writeThrough(bet: BigBet): void {
+  mirror.writeThrough(bet.id, bet);
+}
+
+export async function ensureHydrated(): Promise<void> {
+  const s = state();
+  if (!s.hydration) s.hydration = hydrate();
+  return s.hydration;
+}
+
+async function hydrate(): Promise<void> {
+  const s = state();
+  const docs = (await mirror.hydrate(2000)) ?? [];
+  for (const bet of docs as BigBet[]) {
+    if (bet && bet.id && !s.bets.has(bet.id)) s.bets.set(bet.id, bet);
+  }
 }
 
 function now(): string {
@@ -69,6 +109,8 @@ export function __resetBets(): void {
   s.bets.clear();
   s.audit.length = 0;
   s.seq = 0;
+  s.hydration = null;
+  mirror.__reset();
 }
 
 export function auditLog(betId?: string): AuditEvent[] {
@@ -90,11 +132,11 @@ export function canView(bet: BigBet, user: Principal): boolean {
   return !bet.crossDomain && user.domains.includes(bet.domain);
 }
 
-/** Who can EDIT the bet (Builder/Admin owner; Admin for cross-domain). */
+/** Who can EDIT the bet (its owner; Admin for cross-domain). */
 export function canEdit(bet: BigBet, user: Principal): boolean {
   if (user.role === 'admin') return true;
   if (bet.crossDomain) return false; // cross-domain edits are Admin-only
-  return bet.owner === user.id && (user.role === 'builder' || user.role === 'creator');
+  return bet.owner === user.id;
 }
 
 /**
@@ -146,8 +188,8 @@ export type CreateBetInput = {
 };
 
 export function createBet(user: Principal, input: CreateBetInput): BigBet {
-  // Builder/Admin create + own; a Creator may draft.
-  if (!['creator', 'builder', 'admin'].includes(user.role)) {
+  // Builder+ create + own; a Creator may draft.
+  if (!['creator', 'builder', 'domain_admin', 'admin'].includes(user.role)) {
     throw new BetError('Only a Creator (draft), Builder or Admin can create a Big Bet', 403);
   }
   if (!input.name?.trim()) throw new BetError('A bet name is required', 400);
@@ -178,6 +220,7 @@ export function createBet(user: Principal, input: CreateBetInput): BigBet {
     updatedAt: now(),
   };
   state().bets.set(bet.id, bet);
+  writeThrough(bet);
   log(user.id, 'bet.create', bet.id, { name: bet.name, pillarId: bet.pillarId });
   return bet;
 }
@@ -203,6 +246,7 @@ export function updateBet(
   Object.assign(bet, patch);
   if (patch.members) bet.members = [...new Set([bet.owner, ...patch.members])];
   bet.updatedAt = now();
+  writeThrough(bet);
   log(user.id, 'bet.update', betId, { fields: Object.keys(patch) });
   return bet;
 }
@@ -265,6 +309,7 @@ export function addComponent(betId: string, user: Actor, input: AddComponentInpu
   };
   bet.components.push(ref);
   bet.updatedAt = now();
+  writeThrough(bet);
   log(user.id, origin === 'scaffolded' ? 'component.scaffold' : 'component.link', bet.id, {
     tab: input.tab,
     artifactId,
@@ -289,6 +334,7 @@ export function removeComponent(betId: string, user: Principal, refId: string): 
   // Drop dangling dependency edges to the removed ref.
   for (const c of bet.components) c.dependsOn = c.dependsOn.filter((d) => d !== refId);
   bet.updatedAt = now();
+  writeThrough(bet);
   log(user.id, 'component.remove', bet.id, { refId, artifactId: ref.artifactId, note: 'untag only, artifact kept' });
   return bet;
 }
@@ -311,6 +357,7 @@ export function setComponentPlan(
   }
   Object.assign(ref, patch);
   bet.updatedAt = now();
+  writeThrough(bet);
   log(user.id, 'component.plan', bet.id, { refId, fields: Object.keys(patch) });
   return ref;
 }
@@ -335,6 +382,7 @@ export function setOverride(betId: string, user: Principal, refId: string, overr
   const ref = findRef(bet, refId);
   ref.override = override ? { ...override, by: user.id, at: now() } : undefined;
   bet.updatedAt = now();
+  writeThrough(bet);
   log(user.id, 'component.override', bet.id, { refId, note: override?.note ?? '(cleared)' });
   return ref;
 }
@@ -349,6 +397,7 @@ export function advanceComponent(betId: string, user: Actor, refId: string, to: 
   const bet = requireView(betId, user); // view-scope: even a domain Builder can ship
   const ref = findRef(bet, refId);
   sourceFor(ref.tab).advance(ref.artifactId, to, user);
+  writeThrough(bet);
   log(user.id, 'component.advance', bet.id, { refId, to, actorKind: user.kind ?? 'human' });
   return ref;
 }

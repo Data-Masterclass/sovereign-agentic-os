@@ -92,6 +92,56 @@ Args: dict "ctx" $ "key" "<ingress host key>" "fallback" "<local url>"
 {{- end -}}
 
 {{/*
+Comma-separated names of the release's image pull secrets — handed to the
+terminal/workbench brokers (IMAGE_PULL_SECRETS) so the pods they create at
+runtime can pull the private sandbox/code-server images.
+*/}}
+{{- define "soa.pullSecretNames" -}}
+{{- $names := list -}}
+{{- range (.Values.global.imagePullSecrets | default list) -}}
+{{- $names = append $names .name -}}
+{{- end -}}
+{{- join "," $names -}}
+{{- end -}}
+
+{{/*
+Replicate the release-namespace image pull secret(s) into a dynamic workload
+namespace (terminal sandbox / workbench). The brokers create pods in those
+namespaces at RUNTIME; the kubelet there needs the same registry credential or
+private images (ghcr.io) 401 into ImagePullBackOff. Uses `lookup`, so it emits
+the copies on a real install/upgrade against the cluster and is a harmless
+no-op in offline `helm template` / ArgoCD-style rendering — for those flows,
+copy the secret once by hand:
+  kubectl -n <release-ns> get secret <name> -o yaml | \
+    sed 's/namespace: <release-ns>/namespace: <target-ns>/' | kubectl apply -f -
+Args: dict "ctx" $ "namespace" "<target ns>"
+*/}}
+{{- define "soa.replicatedPullSecrets" -}}
+{{- $ctx := .ctx }}
+{{- $ns := .namespace }}
+{{- range ($ctx.Values.global.imagePullSecrets | default list) }}
+{{- $src := lookup "v1" "Secret" $ctx.Release.Namespace .name }}
+{{- if $src }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ctx | nindent 4 }}
+  annotations:
+    soa.dev/replicated-from: {{ $ctx.Release.Namespace }}
+type: {{ $src.type }}
+data:
+{{- range $k, $v := $src.data }}
+  {{ $k }}: {{ $v }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{/*
 Terminal-broker WebSocket URL for the browser. The terminal is opened with
 `new WebSocket(url)`, so the URL MUST carry a ws/wss scheme AND the broker's
 WS path (soa.consoleUrl is wrong here — it yields `https://<host>` with no

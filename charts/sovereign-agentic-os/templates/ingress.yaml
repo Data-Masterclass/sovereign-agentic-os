@@ -40,6 +40,19 @@
       "nginx.ingress.kubernetes.io/cors-allow-methods" "GET, POST, OPTIONS"
     ) $wbAnno }}
 {{- end }}
+{{- /* Dagster OSS ships NO auth of its own (every other exposed console has a
+       login). Its Ingress therefore demands an htpasswd Secret via nginx
+       basic-auth: set `ingress.dagsterBasicAuthSecret` to a Secret name in the
+       release namespace (key `auth`, htpasswd format). If the Secret is missing
+       at request time ingress-nginx FAILS CLOSED (503) — never an open Dagster. */}}
+{{- $dagsterAnno := dict }}
+{{- with $ing.dagsterBasicAuthSecret }}
+{{- $dagsterAnno = dict
+      "nginx.ingress.kubernetes.io/auth-type" "basic"
+      "nginx.ingress.kubernetes.io/auth-secret" .
+      "nginx.ingress.kubernetes.io/auth-realm" "Dagster — operators only"
+}}
+{{- end }}
 {{- $routes := dict
   "osUI"         (dict "service" "os-ui" "port" 3000)
   "litellm"      (dict "service" "agentic-os-litellm" "port" 4000)
@@ -48,6 +61,7 @@
   "forgejo"      (dict "service" "forgejo-http" "port" 3000)
   "argocd"       (dict "service" "argocd-server" "port" 80)
   "openmetadata" (dict "service" "openmetadata" "port" 8585)
+  "dagster"      (dict "service" "agentic-os-dagster-webserver" "port" 80 "annotations" $dagsterAnno)
   "terminal"     (dict "service" "terminal-broker" "port" 8080 "annotations" $wsAnno)
   "workbench"    (dict "service" "workbench-broker" "port" 8080 "annotations" $wbAnno)
 }}

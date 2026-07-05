@@ -170,5 +170,5 @@ export async function buildBetView(
 function canEditFor(bet: BigBet, p: Principal): boolean {
   if (p.role === 'admin') return true;
   if (bet.crossDomain) return false;
-  return bet.owner === p.id && (p.role === 'builder' || p.role === 'creator');
+  return bet.owner === p.id;
 }

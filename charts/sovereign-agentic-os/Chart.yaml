@@ -9,7 +9,7 @@ description: >-
 type: application
 
 # Chart SemVer (the product version). Bump additively per packaging.md.
-version: 0.2.10
+version: 0.2.11
 
 # Informational: the public pre-release this chart corresponds to.
 appVersion: "0.2.0-alpha.11"

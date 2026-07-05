@@ -12,6 +12,7 @@ import {
 import { canPromote } from '@/lib/session';
 import { roleRank } from '@/lib/governance/roles';
 import type { CurrentUser } from '@/lib/auth';
+import { osMirror } from '@/lib/os-mirror';
 
 /**
  * Artifact registry + scoping logic — the server-side enforcement point for the
@@ -25,11 +26,11 @@ import type { CurrentUser } from '@/lib/auth';
  * scoping rules below are the security boundary regardless of backing store.
  */
 
-type ArtifactCacheState = { cache: Map<string, Artifact> | null; osHealthy: boolean };
+type ArtifactCacheState = { cache: Map<string, Artifact> | null };
 const ARTIFACT_STATE_KEY = Symbol.for('soa.artifacts.cache');
 function artifactCacheState(): ArtifactCacheState {
   const g = globalThis as unknown as Record<symbol, ArtifactCacheState | undefined>;
-  if (!g[ARTIFACT_STATE_KEY]) g[ARTIFACT_STATE_KEY] = { cache: null, osHealthy: false };
+  if (!g[ARTIFACT_STATE_KEY]) g[ARTIFACT_STATE_KEY] = { cache: null };
   return g[ARTIFACT_STATE_KEY]!;
 }
 
@@ -42,63 +43,37 @@ function id(prefix: string): string {
 }
 
 // ---------------------------------------------------------------- OpenSearch --
+// Shared durable-mirror core (probe → bootstrap-on-404 → hydrate/write-through):
+// lib/os-mirror.ts. A missing index is CREATED, never mistaken for a dead mirror.
 
-async function osFetch(path: string, init?: RequestInit): Promise<Response | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2500);
-  try {
-    const res = await fetch(`${config.opensearchUrl}${path}`, {
-      ...init,
-      signal: ctrl.signal,
-      cache: 'no-store',
-      headers: { 'content-type': 'application/json', accept: 'application/json', ...(init?.headers ?? {}) },
-    });
-    return res;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function ensureIndex(): Promise<void> {
-  const head = await osFetch(`/${config.artifactsIndex}`, { method: 'HEAD' });
-  if (head && head.status === 404) {
-    await osFetch(`/${config.artifactsIndex}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        mappings: {
-          properties: {
-            type: { type: 'keyword' },
-            owner: { type: 'keyword' },
-            domain: { type: 'keyword' },
-            visibility: { type: 'keyword' },
-            origin: { type: 'keyword' },
-            sourceId: { type: 'keyword' },
-            name: { type: 'text' },
-            description: { type: 'text' },
-            tags: { type: 'keyword' },
-            createdAt: { type: 'date' },
-            updatedAt: { type: 'date' },
-          },
-        },
-      }),
-    });
-  }
-}
+const mirror = osMirror({
+  index: config.artifactsIndex,
+  createBody: {
+    mappings: {
+      properties: {
+        type: { type: 'keyword' },
+        owner: { type: 'keyword' },
+        domain: { type: 'keyword' },
+        visibility: { type: 'keyword' },
+        origin: { type: 'keyword' },
+        sourceId: { type: 'keyword' },
+        name: { type: 'text' },
+        description: { type: 'text' },
+        tags: { type: 'keyword' },
+        createdAt: { type: 'date' },
+        updatedAt: { type: 'date' },
+      },
+    },
+  },
+});
 
 function writeThrough(a: Artifact): void {
-  if (!artifactCacheState().osHealthy) return;
   // Fire-and-forget durable mirror; never block the request on it.
-  void osFetch(`/${config.artifactsIndex}/_doc/${a.id}?refresh=true`, {
-    method: 'PUT',
-    body: JSON.stringify(a),
-  });
+  mirror.writeThrough(a.id, a);
 }
 
 function deleteThrough(artId: string): void {
-  if (!artifactCacheState().osHealthy) return;
-  void osFetch(`/${config.artifactsIndex}/_doc/${artId}?refresh=true`, { method: 'DELETE' });
+  mirror.deleteThrough(artId);
 }
 
 // ------------------------------------------------------------------- Seeding --
@@ -142,19 +117,9 @@ async function getCache(): Promise<Map<string, Artifact>> {
   if (s.cache) return s.cache;
   const map = new Map<string, Artifact>();
   // Try to hydrate from OpenSearch; fall back to the in-memory seed.
-  const ping = await osFetch(`/${config.artifactsIndex}/_count`);
-  if (ping && ping.ok) {
-    s.osHealthy = true;
-    await ensureIndex();
-    const res = await osFetch(`/${config.artifactsIndex}/_search?size=1000`, {
-      method: 'POST',
-      body: JSON.stringify({ query: { match_all: {} } }),
-    });
-    if (res && res.ok) {
-      const data = (await res.json()) as { hits?: { hits?: { _source: Artifact }[] } };
-      const hits = data?.hits?.hits ?? [];
-      for (const h of hits) map.set(h._source.id, h._source);
-    }
+  const docs = await mirror.hydrate(1000);
+  if (docs !== null) {
+    for (const a of docs as Artifact[]) map.set(a.id, a);
     if (map.size === 0) {
       for (const a of seed()) {
         map.set(a.id, a);
@@ -162,7 +127,7 @@ async function getCache(): Promise<Map<string, Artifact>> {
       }
     }
   } else {
-    s.osHealthy = false;
+    // Mirror unreachable → in-memory only.
     for (const a of seed()) map.set(a.id, a);
   }
   s.cache = map;
@@ -353,7 +318,7 @@ function withStatus(err: Error, status: number): Error {
 export function __resetArtifactsCache(): void {
   const s = artifactCacheState();
   s.cache = null;
-  s.osHealthy = false;
+  mirror.__reset();
 }
 
 export type { Artifact, ArtifactType, Visibility, ArtifactOrigin };

@@ -3,13 +3,14 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { listAudit } from '@/lib/platform-admin/audit';
+import { ensureHydrated, listAudit } from '@/lib/platform-admin/audit';
 
 export const dynamic = 'force-dynamic';
 
 /** Platform-Admin slice of the shared audit record (same store Governance reads). */
 export async function GET(req: Request) {
   try {
+    await ensureHydrated();
     await adminCtx();
     const prefix = new URL(req.url).searchParams.get('prefix') ?? undefined;
     return NextResponse.json({ entries: listAudit({ limit: 100, prefix }) });

@@ -69,16 +69,21 @@ export const TUTORIAL_ORDER: GoldenPathKey[] = [
  * Nav tabs that DELIBERATELY have no tutorial — the documented-exclusion list
  * the coverage tripwire (`coverage.test.ts`) checks against. Every canonical OS
  * tab must either have a registry tutorial (matched by route) or an entry here
- * with a reason. Platform-group tabs (Admin, Users, Gateway, Terminal, …) are
- * exempt as a class: they are operator consoles for the admins/builders RUNNING
- * the OS — operators, not students — and are covered by the operator guide, not
- * in-app teaching. If one ever becomes a student surface, give it a tutorial.
+ * with a reason. Platform-group tabs (Governance, Admin, Components, Terminal,
+ * About / Licenses) are exempt as a class: they are operator consoles for the
+ * admins/builders RUNNING the OS — operators, not students — and are covered by
+ * the operator guide, not in-app teaching. (Governance keeps its tutorials even
+ * though its tab moved to the Platform group — the route still exists and the
+ * class exemption only waives the *requirement*, it never forbids coverage.)
+ * If a console ever becomes a student surface, give it a tutorial.
  */
 export const TUTORIAL_EXEMPT_ROUTES: Record<string, string> = {
   '/': 'Home is the tutorial launcher itself — it hosts the golden-path gallery.',
   '/cockpit':
     'Read-only personal overview that aggregates the tabs; every card deep-links into a tab that has its own tutorial.',
   '/settings': 'Read-only deployment configuration; nothing to practice or decide here.',
+  '/tutorials':
+    'The tutorial gallery itself — teaching how to open tutorials would be circular.',
 };
 
 /** Resolve one tutorial. Returns `undefined` for an unknown key. */

@@ -284,20 +284,24 @@ const agentTools: McpTool[] = [
 ];
 
 // --- Discovery (meta) tools — make the OS legible to an AI consumer ------------
-/** A plain-language read of what a role can / cannot do (the creator lockdown). */
+/** A plain-language read of what a role can / cannot do (4 roles: creator <
+ * builder < domain_admin < admin — the creator lockdown stays the floor). */
 function capabilitySummary(role: Role): { can: string[]; cannot: string[] } {
   const builder = roleCanUse(role, 'builder');
+  const domainAdmin = roleCanUse(role, 'domain_admin');
   const admin = roleCanUse(role, 'admin');
   return {
     can: [
       'create datasets, files, knowledge workflows, metrics, dashboards, big bets and agent systems in your own domain(s)',
       'build, document and query your own work',
       ...(builder ? ['promote/publish your work to a SHARED domain asset (dataset/file/workflow/agent)'] : []),
-      ...(admin ? ['certify to the cross-domain marketplace', 'own a cross-domain big bet'] : []),
+      ...(domainAdmin && !admin ? ['administer users in your OWN domain(s): invite, edit, deactivate, assign roles up to builder'] : []),
+      ...(admin ? ['certify to the cross-domain marketplace', 'own a cross-domain big bet', 'administer users tenant-wide (incl. appointing domain admins)'] : []),
     ],
     cannot: [
       ...(!builder ? ['promote/publish to a shared domain asset — that is Builder+ (ask a Builder, or keep it Personal)'] : []),
-      ...(!admin ? ['certify to the marketplace — that is Admin-only'] : []),
+      ...(!domainAdmin ? ['administer users — that is Domain admin+ (in-domain) or Admin (tenant-wide)'] : []),
+      ...(!admin ? ['certify to the marketplace — that is Admin-only', ...(domainAdmin ? ['assign the domain_admin or admin role — only the platform Admin appoints those'] : [])] : []),
     ],
   };
 }

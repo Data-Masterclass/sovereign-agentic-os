@@ -181,7 +181,7 @@ export function buildScorecard(
       analytics: analytics.size,
       ai: ai.size,
       software: software.size,
-      builders: users.filter((u) => u.role === 'builder').length,
+      builders: users.filter((u) => u.role === 'builder' || u.role === 'domain_admin').length,
       creators: users.filter((u) => u.role === 'creator').length,
     },
     foundations,

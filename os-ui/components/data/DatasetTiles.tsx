@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@/lib/useUser';
+import { roleAtLeast } from '@/lib/session';
 
 /** Mirrors lib/data/store `DatasetSummary`. */
 type Tile = {
@@ -100,7 +101,7 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
   // Importing a marketplace product grants the WHOLE domain read access, so the store
   // gates it to Builder/Admin (store.importProduct 403s others). Only surface Import to
   // those roles — no dead control (mirrors CertifyPanel's "no dead controls").
-  const canImport = user?.role === 'builder' || user?.role === 'admin';
+  const canImport = !!user && roleAtLeast(user.role, 'builder');
   const [groups, setGroups] = useState<Groups | null>(null);
   const [err, setErr] = useState('');
   const [creating, setCreating] = useState(false);

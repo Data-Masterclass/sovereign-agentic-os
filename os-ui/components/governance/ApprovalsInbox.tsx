@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
+import { roleAtLeast } from '@/lib/session';
 
 type Preview = {
   what: string;
@@ -55,7 +56,7 @@ export default function ApprovalsInbox() {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
 
-  const isBuilderOrAdmin = user?.role === 'builder' || user?.role === 'admin';
+  const isBuilderOrAdmin = !!user && roleAtLeast(user.role, 'builder');
 
   const load = useCallback(async () => {
     setError('');

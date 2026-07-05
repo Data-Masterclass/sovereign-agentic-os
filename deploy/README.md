@@ -48,7 +48,25 @@ deploy/
     render-values.sh           # fill overlay/Argo REPLACE-… tokens from tf outputs
     publish-images.sh          # build+push bespoke images by digest (dry-run default)
     push-secrets.sh            # write credential values into Secrets Manager (dry-run default)
+  velero/                      # Velero install (Mode A helm path): values + install.sh
+  opensearch-pvc-migration.sh  # one-time: move opensearch-master onto a PVC (Tier 0)
+  pre-upgrade-backup.sh        # STANDING RULE: run before EVERY helm upgrade
 ```
+
+## Backups — the standing rule
+
+**Every `helm upgrade` and every stateful roll starts with:**
+
+```bash
+deploy/pre-upgrade-backup.sh    # fresh pg dump + ad-hoc Velero backup, waits for both
+```
+
+If it fails, fix the backup before touching the platform. The full picture
+(tiers, RPO/RTO, honest gaps, restore drills) is in
+[`docs/backups.md`](../docs/backups.md) and
+[`docs/runbooks/restore-drill.md`](../docs/runbooks/restore-drill.md).
+One-time setup on the live Mode-A cluster: `deploy/opensearch-pvc-migration.sh`
+(Tier 0), the targeted `backup.tf` apply + `deploy/velero/install.sh` (Tier 1).
 
 ## Prerequisites (one-time, go-live)
 

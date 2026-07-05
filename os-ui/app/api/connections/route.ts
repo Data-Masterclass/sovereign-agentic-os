@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { createConnection, listConnectionsForUser } from '@/lib/connections';
 import { CONNECTION_TEMPLATES, type ConnectionTemplateKey } from '@/lib/connection-model';
+import { roleAtLeast } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,7 +27,7 @@ export async function GET() {
       auth: t.auth,
       endpointHint: t.endpointHint,
     }));
-    const canCreate = user.role === 'builder' || user.role === 'admin';
+    const canCreate = roleAtLeast(user.role, 'builder');
     // ANY user may create a PERSONAL (per-user OAuth) connection; SHARED needs Builder/Admin.
     const canCreatePersonal = true;
     return NextResponse.json({ user, connections, templates, canCreate, canCreatePersonal });

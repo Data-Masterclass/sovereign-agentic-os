@@ -63,6 +63,31 @@ test('assertInScope throws 404 for a missing trace', () => {
   );
 });
 
+test('CREATOR per-lens invariant: every lens is own-only, and no cluster signal ever reaches a creator', () => {
+  // "It should always show only the artifacts that you have access to": the ONE
+  // filterScope spine covers every lens (runs · pipelines · cost · artifacts ·
+  // system) — asserted PER LENS so a future lens can't ship unscoped. Cluster
+  // signals (nodes/tenant health) are admin-only regardless of lens. (An
+  // own-scoped, non-cluster system item — e.g. the user's own pod incident in
+  // the correlation chain — is legitimately visible; Monitoring itself never
+  // renders the system lens, see lenses.test.ts.)
+  const all = allMockItems();
+  const visible = filterScope(userSales, all);
+  const lenses = [...new Set(all.map((i) => i.lens))].sort();
+  assert.deepEqual(lenses, ['artifacts', 'cost', 'pipelines', 'runs', 'system'],
+    'the mock corpus must exercise every lens');
+  for (const lens of lenses) {
+    for (const it of visible.filter((i) => i.lens === lens)) {
+      assert.equal(it.owner, SALES_OWNER, `${lens} lens leaked "${it.id}" (owner ${it.owner}) to a creator`);
+    }
+  }
+  assert.equal(
+    visible.some((i) => i.cluster),
+    false,
+    'cluster signals must never be visible to a creator',
+  );
+});
+
 test('filterScope keeps only in-scope items', () => {
   const items = allMockItems();
   const userVisible = filterScope(userSales, items);

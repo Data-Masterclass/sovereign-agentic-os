@@ -1,0 +1,53 @@
+# =============================================================================
+# values.mail.private.example.yaml — SMARTHOST OVERLAY (copy, don't commit).
+# =============================================================================
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+# SPDX-License-Identifier: Apache-2.0
+#
+# WHY THIS EXISTS
+#   STACKIT blocks outbound port 25 (VERIFIED — see values.stackit-selfhosted.yaml
+#   `mail:`), so the in-cluster maddy MTA cannot deliver direct-to-MX. It must
+#   relay every message through a permitted SMTP smarthost on 587/465. This
+#   overlay flips maddy into smarthost mode. Non-secret host/port/scheme live
+#   here; the relay USERNAME/PASSWORD never touch a values file — they go into the
+#   mail-smarthost Secret (see the deploy steps at the bottom).
+#
+# HOW TO USE
+#   cp values.mail.private.example.yaml values.mail.private.yaml   # gitignored
+#   # edit smarthost.host below to your chosen relay, then apply it LAST:
+#   helm upgrade --install agentic-os charts/sovereign-agentic-os \
+#     -n agentic-os --create-namespace \
+#     -f values.stackit-selfhosted.yaml \
+#     -f values.mail.private.yaml            # <-- flips outbound=smarthost
+#
+# RECOMMENDED EU-SOVEREIGN TRANSACTIONAL RELAYS (keeps mail EU-data-resident;
+# pick ONE, create an account yourself, generate SMTP credentials):
+#   • Scaleway Transactional Email (TEM) — French sovereign cloud, EU-resident.
+#       host: smtp.tem.scaleway.com   port: 587 (starttls)   SPF: include:_spf.tem.scaleway.com
+#   • Brevo (ex-Sendinblue, FR) —
+#       host: smtp-relay.brevo.com    port: 587 (starttls)   SPF: include:spf.sendinblue.com
+#   • Mailjet (FR, Sinch) —
+#       host: in-v3.mailjet.com       port: 587 (starttls)   SPF: include:spf.mailjet.com
+#   • Infomaniak (CH) —
+#       host: mail.infomaniak.com     port: 587 (starttls)   SPF: include:spf.infomaniak.ch
+#   Always use the SPF `include:` your relay documents (values above are current
+#   at time of writing — confirm in the relay's own SPF/DNS setup page).
+#
+# FALLBACK if you want to keep sending from your OWN IP (no third-party relay):
+#   run a tiny relay VM on a host that allows port 25 with a clean IP + PTR, OR
+#   ask STACKIT support to unblock :25 for a dedicated static egress IP + PTR.
+#   Then keep outbound=direct and set SPF to  v=spf1 ip4:213.17.17.64/32 ~all
+#   (the cluster's current SNAT egress IP — confirm it is static with STACKIT).
+# =============================================================================
+
+mail:
+  outbound: smarthost
+  smarthost:
+    # EDIT ME — your chosen relay's submission host. Example: Scaleway TEM.
+    host: "smtp.tem.scaleway.com"
+    port: 587
+    scheme: starttls        # starttls (:587) | tls (implicit, :465)
+  # Credentials are NOT here. Create the mail-smarthost Secret out-of-band:
+  #   kubectl -n agentic-os create secret generic mail-smarthost \
+  #     --from-literal=SMARTHOST_USER='<relay-smtp-username>' \
+  #     --from-literal=SMARTHOST_PASS='<relay-smtp-password>'

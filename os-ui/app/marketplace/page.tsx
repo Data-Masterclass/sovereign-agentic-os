@@ -11,7 +11,7 @@ import ListingDrawer from '@/components/marketplace/ListingDrawer';
 import MyImports from '@/components/marketplace/MyImports';
 import MarketplaceDataProducts from '@/components/data/MarketplaceDataProducts';
 
-type User = { id: string; domains: string[]; role: 'creator' | 'builder' | 'admin' };
+type User = { id: string; domains: string[]; role: 'creator' | 'builder' | 'domain_admin' | 'admin' };
 type ApiData = { user: User; source: 'live' | 'offline-mock'; items: Listing[] };
 
 const PRODUCT_TYPES: [string, string][] = [

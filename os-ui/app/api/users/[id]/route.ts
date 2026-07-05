@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/auth';
 import { archiveUser, deleteUser, restoreUser, updateUser } from '@/lib/users';
-import type { Role } from '@/lib/session';
+import { ROLES, type Role } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,7 +34,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       name: body?.name !== undefined ? String(body.name) : undefined,
       email: body?.email !== undefined ? String(body.email) : undefined,
       domains: Array.isArray(body?.domains) ? body.domains.map(String).filter(Boolean) : undefined,
-      role: ['creator', 'builder', 'admin'].includes(body?.role) ? (body.role as Role) : undefined,
+      role: ROLES.includes(body?.role) ? (body.role as Role) : undefined,
     });
     return NextResponse.json({ user });
   } catch (e) {

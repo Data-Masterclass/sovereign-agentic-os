@@ -27,7 +27,8 @@ type UsersData = {
 // Role descriptions shown beneath the role selector.
 const ROLE_DESC: Record<string, string> = {
   creator: 'Create and run your own data, agents and apps; use shared resources. Cannot publish to shared or approve.',
-  builder: 'Creator rights plus review/approve, publish to shared, and manage your domain\'s members and deploys.',
+  builder: 'Creator rights plus review/approve, publish to shared, and approve deploys in your domain. Not a people-admin.',
+  domain_admin: 'Builder rights plus administer users in your own domain(s): invite, edit, deactivate, assign roles up to Builder. Only an Admin appoints this role.',
   admin: 'Full control across all domains: users, policy, certification, cost caps.',
 };
 

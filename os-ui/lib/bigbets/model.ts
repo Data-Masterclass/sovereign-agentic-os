@@ -19,8 +19,11 @@
 
 // ----------------------------------------------------------------- identity ---
 
-export type Role = 'creator' | 'builder' | 'admin';
-export type Principal = { id: string; domains: string[]; role: Role };
+// Single-sourced from the session module (itself pure/edge-safe, so this file
+// stays free of `server-only`/Next imports and unit-testable).
+export { roleAtLeast, type Role } from '../session.ts';
+import type { Role as R } from '../session.ts';
+export type Principal = { id: string; domains: string[]; role: R };
 
 /**
  * The planner runs as a *system* principal. It can scaffold (draft-level

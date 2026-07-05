@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { listingAdapter } from '@/lib/marketplace';
 import { PRODUCT_TYPES, type ProductType, type ListingFilter } from '@/lib/marketplace';
+import { ensureHydrated } from '@/lib/marketplace/store';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,6 +17,7 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET(req: Request) {
   try {
+    await ensureHydrated();
     const user = await requireUser();
     const { searchParams } = new URL(req.url);
     const typeParam = searchParams.get('type') as ProductType | null;

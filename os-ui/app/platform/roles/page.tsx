@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
 
-type Role = 'creator' | 'builder' | 'admin';
+type Role = 'creator' | 'builder' | 'domain_admin' | 'admin';
 type Capability = 'view' | 'create' | 'run' | 'request' | 'approve' | 'manage';
 type Comp = { id: string; label: string; hint: string };
 type Cap = { id: Capability; label: string; glyph: string; hint: string };
@@ -20,7 +20,7 @@ type View = {
   roles: RoleInfo[];
 };
 
-const ROLE_ORDER: Role[] = ['creator', 'builder', 'admin'];
+const ROLE_ORDER: Role[] = ['creator', 'builder', 'domain_admin', 'admin'];
 
 function has(matrix: Matrix, role: Role, comp: string, cap: Capability): boolean {
   return (matrix[role]?.[comp] ?? []).includes(cap);
@@ -141,8 +141,8 @@ export default function RolesPage() {
       <div className="content">
         <p className="lead">
           Set up the <strong>role types</strong> and, for every component and golden path, exactly what each
-          category may do. Seeded from how the OS runs today (<strong>creator · builder · admin</strong>) so
-          nothing changes until you adjust it — every edit recompiles to the same OPA policy the whole platform
+          category may do. Seeded from how the OS runs today (<strong>creator · builder · domain admin · admin</strong>)
+          so nothing changes until you adjust it — every edit recompiles to the same OPA policy the whole platform
           enforces, and is audited.
         </p>
 

@@ -41,14 +41,17 @@ function rank(role: Role): number {
   return ROLES.indexOf(role);
 }
 const isBuilder = (role: Role) => rank(role) >= rank('builder');
+const isDomainAdmin = (role: Role) => rank(role) >= rank('domain_admin');
 const isAdmin = (role: Role) => rank(role) >= rank('admin');
 
-/** A live, role-aware banner rendered from the CALLER's identity. */
+/** A live, role-aware banner rendered from the CALLER's identity (4 roles). */
 function roleBanner(user: CurrentUser): string {
   const gate = isBuilder(user.role)
     ? isAdmin(user.role)
-      ? 'You CAN approve promotions, deploys, AND certify to the marketplace / own cross-domain bets.'
-      : 'You CAN approve Personal→Shared promotions and deploys in your domain(s). You CANNOT certify to the marketplace (Admin only).'
+      ? 'You CAN approve promotions, deploys, AND certify to the marketplace / own cross-domain bets / administer users tenant-wide.'
+      : isDomainAdmin(user.role)
+        ? 'You CAN approve promotions/deploys AND administer users in your own domain(s) (roles up to builder). You CANNOT certify to the marketplace or appoint domain admins (Admin only).'
+        : 'You CAN approve Personal→Shared promotions and deploys in your domain(s). You CANNOT certify to the marketplace (Admin only) or administer users (Domain admin+).'
     : 'You are a CREATOR: you build/run your own work and FILE promotion requests, but you CANNOT promote/publish/approve. At a ⛔ step, hand off to a Builder.';
   return `— YOUR ROLE: ${user.role} in domain(s) [${user.domains.join(', ') || 'none'}]. ${gate} —`;
 }

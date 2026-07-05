@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { currentUser } from '@/lib/auth';
 import { archiveUser, createUser, deleteUser, knownDomains, listUsers, restoreUser, updateUser } from '@/lib/users';
 import { ROLES, type Role } from '@/lib/session';
-import { canManageRole, compileRoleToGrants, roleLabel } from '@/lib/governance/roles';
+import { canAdministerUsers, canManageRole, canTouchUser, compileRoleToGrants, roleLabel, userAdminInScope } from '@/lib/governance/roles';
 import { record as audit } from '@/lib/governance/audit';
 
 export const dynamic = 'force-dynamic';
@@ -14,8 +14,14 @@ export const dynamic = 'force-dynamic';
  * Users & access (§5). Manage WHO is on the platform and WHAT they may do:
  * invite/deactivate, assign a role-per-domain, manage memberships. Roles compile
  * (via roles.ts) into the OPA rights every tab enforces, so changing a role here
- * changes what that person can do everywhere. Admins act tenant-wide; Builders
- * within their OWN domain, UP TO Builder (never minting an Admin).
+ * changes what that person can do everywhere.
+ *
+ * SCOPING (enforced server-side, per call): the platform Admin acts tenant-wide,
+ * unrestricted. A Domain admin may list/invite/edit/deactivate ONLY users whose
+ * domains are a subset of their own, may assign roles UP TO Builder (never
+ * domain_admin or admin — only the platform Admin appoints domain admins), may
+ * never touch an admin or another domain_admin, and may never place a user in a
+ * domain the caller isn't in. Builders and creators have NO user administration.
  *
  * NEVER handle raw credentials: account creation / passwords / SSO use Ory's
  * secure flow. The invite below assigns role + membership and hands the
@@ -26,19 +32,22 @@ function asActor(u: { id: string; domains: string[]; role: Role }) {
   return { id: u.id, domains: u.domains, role: u.role };
 }
 
-function inActorScope(actor: { role: Role; domains: string[] }, targetDomains: string[]): boolean {
-  if (actor.role === 'admin') return true;
-  return targetDomains.every((d) => actor.domains.includes(d));
-}
+// The scoping predicates (floor / subset / no-lateral) live in
+// lib/governance/roles.ts — pure and unit-tested there; this route is the
+// server-side enforcement point for every call.
+const inActorScope = userAdminInScope;
+const canTouchTarget = (actor: { role: Role }, target: { role: Role }) => canTouchUser(actor, target.role);
 
 export async function GET() {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  if (user.role !== 'admin' && user.role !== 'builder') {
-    return NextResponse.json({ error: 'Managing users needs a Builder or Admin' }, { status: 403 });
+  if (!canAdministerUsers(user.role)) {
+    return NextResponse.json({ error: 'Managing users needs a Domain admin or Admin' }, { status: 403 });
   }
   const all = await listUsers();
-  const scoped = user.role === 'admin' ? all : all.filter((u) => u.domains.some((d) => user.domains.includes(d)));
+  // Subset rule: a Domain admin sees ONLY users whose domains ⊆ their own —
+  // never a user who also belongs to a foreign domain.
+  const scoped = user.role === 'admin' ? all : all.filter((u) => inActorScope(user, u.domains));
   const domains = user.role === 'admin' ? await knownDomains() : user.domains;
   return NextResponse.json({
     users: scoped.map((u) => ({ ...u, roleLabel: roleLabel(u.role) })),
@@ -52,8 +61,8 @@ export async function GET() {
 export async function POST(req: Request) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  if (user.role !== 'admin' && user.role !== 'builder') {
-    return NextResponse.json({ error: 'Inviting users needs a Builder or Admin' }, { status: 403 });
+  if (!canAdministerUsers(user.role)) {
+    return NextResponse.json({ error: 'Inviting users needs a Domain admin or Admin' }, { status: 403 });
   }
   let body: { id?: string; name?: string; domains?: unknown; role?: string };
   try {
@@ -98,8 +107,8 @@ export async function POST(req: Request) {
 export async function PATCH(req: Request) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  if (user.role !== 'admin' && user.role !== 'builder') {
-    return NextResponse.json({ error: 'Managing users needs a Builder or Admin' }, { status: 403 });
+  if (!canAdministerUsers(user.role)) {
+    return NextResponse.json({ error: 'Managing users needs a Domain admin or Admin' }, { status: 403 });
   }
   let body: { id?: string; name?: string; email?: string; role?: string; domains?: unknown; deactivate?: boolean; restore?: boolean };
   try {
@@ -117,6 +126,9 @@ export async function PATCH(req: Request) {
   if (!target) return NextResponse.json({ error: 'User not found' }, { status: 404 });
   if (!inActorScope(user, target.domains)) {
     return NextResponse.json({ error: 'That user is outside your domain scope' }, { status: 403 });
+  }
+  if (!canTouchTarget(user, target)) {
+    return NextResponse.json({ error: 'Only the platform Admin can manage admins or domain admins' }, { status: 403 });
   }
 
   // Archive (soft-delete) — sets disabled=true; user can be restored later.

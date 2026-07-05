@@ -8,9 +8,12 @@ import { handleRpc, listToolsForRole, type JsonRpcResponse } from './server.ts';
 
 const creator: CurrentUser = { id: 'dan', name: 'Dan', domains: ['sales'], role: 'creator' };
 const builder: CurrentUser = { id: 'ben', name: 'Ben', domains: ['sales'], role: 'builder' };
+const domainAdmin: CurrentUser = { id: 'dana', name: 'Dana', domains: ['sales'], role: 'domain_admin' };
 const admin: CurrentUser = { id: 'ada', name: 'Ada', domains: ['sales'], role: 'admin' };
 
 const ELEVATED = ['promote', 'decide_deploy', 'delete'];
+/** The 6 builder-floor tools — they MUST stay builder-floor (domain_admin inherits). */
+const BUILDER_FLOOR = ['promote', 'decide_deploy', 'delete', 'publish_knowledge', 'approve_promotion', 'promote_connection'];
 
 function result(res: JsonRpcResponse | null): Record<string, unknown> {
   assert.ok(res && 'result' in res, 'expected a JSON-RPC result');
@@ -48,6 +51,26 @@ test('tools/list: role-scoped — admin sees elevated tools, a creator does NOT'
   const list = listToolsForRole(admin.role);
   for (const t of list) assert.equal(t.inputSchema.type, 'object');
   assert.ok(adminNames.length > creatorNames.length);
+});
+
+test('4-RANK: domain_admin inherits every builder tool — the 6 builder-floor tools stay builder-floor', () => {
+  const builderNames = new Set(listToolsForRole(builder.role).map((t) => t.name));
+  const daNames = new Set(listToolsForRole(domainAdmin.role).map((t) => t.name));
+  for (const t of BUILDER_FLOOR) {
+    assert.ok(builderNames.has(t), `builder keeps builder-floor tool ${t}`);
+    assert.ok(daNames.has(t), `domain_admin inherits builder-floor tool ${t}`);
+  }
+  for (const n of builderNames) assert.ok(daNames.has(n), `domain_admin must see every builder tool (${n})`);
+});
+
+test('4-RANK: whoami describes domain_admin honestly (domain user-admin yes; certify/appoint no)', async () => {
+  const res = await handleRpc(domainAdmin, { jsonrpc: '2.0', id: 41, method: 'tools/call', params: { name: 'whoami', arguments: {} } });
+  const r = result(res);
+  const body = JSON.parse((r.content as { text: string }[])[0].text) as { role: string; can: string[]; cannot: string[] };
+  assert.equal(body.role, 'domain_admin');
+  assert.ok(body.can.some((c) => c.includes('administer users in your OWN domain')), 'says it can administer own-domain users');
+  assert.ok(body.cannot.some((c) => c.includes('certify to the marketplace')), 'says it cannot certify');
+  assert.ok(body.cannot.some((c) => c.includes('domain_admin or admin role')), 'says it cannot mint domain_admin/admin');
 });
 
 test('tools/list over RPC: matches the role-scoped registry', async () => {

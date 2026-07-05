@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { seedGovernanceDemo } from '@/lib/governance/seed';
+import { roleAtLeast } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,7 +20,7 @@ export async function POST(req: Request) {
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
   }
-  if (user.role !== 'builder' && user.role !== 'admin') {
+  if (!roleAtLeast(user.role, 'builder')) {
     return NextResponse.json({ error: 'Seeding the demo queue needs a Builder or Admin' }, { status: 403 });
   }
   let domain = user.domains[0] ?? 'sales';

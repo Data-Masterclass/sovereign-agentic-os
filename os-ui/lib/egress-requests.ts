@@ -13,6 +13,8 @@
  * request→approve→logged flow demonstrable in kind.
  */
 
+import { osMirror } from './os-mirror.ts';
+
 export type EgressStatus = 'pending' | 'approved' | 'rejected';
 
 export type EgressRequest = {
@@ -34,12 +36,53 @@ export type EgressLogEntry = {
   at: string;
 };
 
-type EgressState = { requests: Map<string, EgressRequest>; approved: Set<string>; log: EgressLogEntry[] };
+type EgressState = { requests: Map<string, EgressRequest>; approved: Set<string>; log: EgressLogEntry[]; hydration: Promise<void> | null };
 const EGRESS_KEY = Symbol.for('soa.egress.requests');
 function egressState(): EgressState {
   const g = globalThis as unknown as Record<symbol, EgressState | undefined>;
-  if (!g[EGRESS_KEY]) g[EGRESS_KEY] = { requests: new Map(), approved: new Set(), log: [] };
+  if (!g[EGRESS_KEY]) g[EGRESS_KEY] = { requests: new Map(), approved: new Set(), log: [], hydration: null };
   return g[EGRESS_KEY]!;
+}
+
+// ---------------------------------------------------- durable mirror (best-effort) --
+const mirror = osMirror({
+  index: 'os-egress-requests',
+  createBody: {
+    mappings: {
+      properties: {
+        id: { type: 'keyword' },
+        host: { type: 'keyword' },
+        domain: { type: 'keyword' },
+        requestedBy: { type: 'keyword' },
+        status: { type: 'keyword' },
+        decidedBy: { type: 'keyword' },
+        createdAt: { type: 'date' },
+        decidedAt: { type: 'date' },
+        reason: { type: 'text', index: false },
+      },
+    },
+  },
+});
+
+function writeThrough(r: EgressRequest): void {
+  mirror.writeThrough(r.id, r);
+}
+
+export async function ensureHydrated(): Promise<void> {
+  const s = egressState();
+  if (!s.hydration) s.hydration = hydrateEgress();
+  return s.hydration;
+}
+
+async function hydrateEgress(): Promise<void> {
+  const s = egressState();
+  const docs = (await mirror.hydrate(1000)) ?? [];
+  for (const r of docs as EgressRequest[]) {
+    if (r && r.id && !s.requests.has(r.id)) {
+      s.requests.set(r.id, r);
+      if (r.status === 'approved' && r.host) s.approved.add(r.host);
+    }
+  }
 }
 const LOG_MAX = 200;
 
@@ -63,6 +106,7 @@ export function requestEgress(input: { host: string; domain: string; reason: str
     createdAt: new Date().toISOString(),
   };
   egressState().requests.set(r.id, r);
+  writeThrough(r);
   return r;
 }
 
@@ -75,6 +119,7 @@ export function decideEgress(id: string, decision: 'approve' | 'reject', by: str
   r.decidedAt = new Date().toISOString();
   if (r.status === 'approved') egressState().approved.add(r.host);
   egressState().requests.set(r.id, r);
+  writeThrough(r);
   return r;
 }
 
@@ -100,7 +145,14 @@ export function egressLog(limit = 50): EgressLogEntry[] {
   return egressState().log.slice(-limit).reverse();
 }
 export function _clearEgress(): void {
-  egressState().requests.clear();
-  egressState().approved.clear();
-  egressState().log.length = 0;
+  const s = egressState();
+  s.requests.clear();
+  s.approved.clear();
+  s.log.length = 0;
+  s.hydration = null;
+  mirror.__reset();
+}
+
+export function __resetEgress(): void {
+  _clearEgress();
 }

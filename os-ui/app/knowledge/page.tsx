@@ -10,6 +10,7 @@ import WorkflowTile from '@/components/knowledge/WorkflowTile';
 import WorkflowView from '@/components/knowledge/WorkflowView';
 import type { WorkflowSummary } from '@/lib/knowledge/store';
 import type { DomainKnowledge } from '@/lib/knowledge/schema';
+import { roleAtLeast, type Role } from '@/lib/session';
 
 /**
  * Knowledge tab — the domain's operating manual.
@@ -30,7 +31,7 @@ type WorkflowGroups = {
   marketplace: WorkflowSummary[];
 };
 
-type UserInfo = { role: string; domains: string[] };
+type UserInfo = { role: Role; domains: string[] };
 
 const SECTION_PLACEHOLDERS: Record<string, string> = {
   overview:
@@ -166,7 +167,7 @@ export default function KnowledgePage() {
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
-  const canPublish = user?.role === 'builder' || user?.role === 'admin';
+  const canPublish = !!user && roleAtLeast(user.role, 'builder');
   const allWorkflows = [
     ...(groups?.mine ?? []),
     ...(groups?.domain ?? []),

@@ -17,8 +17,9 @@
  */
 
 import type { HomePersona } from './launcher.ts';
+import { roleAtLeast, type Role } from '../session.ts';
 
-export type Viewer = { id: string; domains: string[]; role: 'creator' | 'builder' | 'admin' };
+export type Viewer = { id: string; domains: string[]; role: Role };
 
 // ---- Minimal structural inputs (decoupled from the server-only stores) -------
 
@@ -97,7 +98,7 @@ const TAB_FOR_TYPE: Record<string, string> = {
 };
 
 function isBuilderish(v: Viewer): boolean {
-  return v.role === 'builder' || v.role === 'admin';
+  return roleAtLeast(v.role, 'builder');
 }
 
 /** Whether the viewer has authored anything (User vs Creator persona signal). */

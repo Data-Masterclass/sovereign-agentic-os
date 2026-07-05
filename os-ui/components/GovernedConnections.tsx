@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { CAPABILITY_MODES, type CapabilityMode } from '@/lib/connection-model';
+import { roleAtLeast, type Role } from '@/lib/session';
 
 /**
  * Governed Connections surface (Connections golden path). A Builder/Admin creates
@@ -55,7 +56,7 @@ type Template = {
   endpointHint: string;
 };
 type Data = {
-  user: { id: string; role: string };
+  user: { id: string; role: Role };
   connections: Conn[];
   templates: Template[];
   canCreate: boolean;
@@ -400,7 +401,7 @@ type AutonomousPreset = typeof AUTONOMOUS_PRESETS[number];
 function ConnectionCard({
   c, role, open, onToggle, onChange,
 }: {
-  c: Conn; role: string; open: boolean; onToggle: () => void; onChange: () => void;
+  c: Conn; role: Role; open: boolean; onToggle: () => void; onChange: () => void;
 }) {
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
@@ -420,7 +421,7 @@ function ConnectionCard({
   const [presetBusy, setPresetBusy] = useState(false);
   const [autonomousMsg, setAutonomousMsg] = useState('');
 
-  const canManage = role === 'builder' || role === 'admin';
+  const canManage = roleAtLeast(role, 'builder');
   const exposed = c.tools.filter((t) => t.mode === 'Read' || t.mode === 'Write-approval' || t.mode === 'Write-bounded');
   const isDrive = c.connector === 'drive' || c.type === 'Drive';
 

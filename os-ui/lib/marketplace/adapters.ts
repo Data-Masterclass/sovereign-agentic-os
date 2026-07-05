@@ -6,6 +6,7 @@ import { config } from '@/lib/config';
 import { listMarketplace, getArtifact, addFromMarketplace, createArtifact } from '@/lib/artifacts';
 import { enqueue } from '@/lib/approvals';
 import type { CurrentUser } from '@/lib/auth';
+import { roleAtLeast } from '@/lib/session';
 import type { Artifact } from '@/lib/artifact-model';
 
 import type {
@@ -277,7 +278,7 @@ class GovernedImportAdapter implements ImportAdapter {
     // Security: only a Builder+ may import a product into their domain (it grants
     // the whole domain access). A participant/creator is blocked (403) and must
     // route the import through a domain Builder/Admin — the API's real control.
-    if (viewer.role !== 'builder' && viewer.role !== 'admin') {
+    if (!roleAtLeast(viewer.role, 'builder')) {
       throw withStatus(new Error('Importing from the Marketplace requires a Builder or Admin — ask a domain Builder to import it'), 403);
     }
     const all = await allListings();

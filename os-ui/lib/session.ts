@@ -14,17 +14,30 @@
 /**
  * Domain role, lowest→highest privilege:
  *  - `creator` (0): Base role — create + run own data/agents/apps, consume shared.
- *    Cannot promote to Shared, approve, or reach admin.
- *  - `builder` (1): Domain steward — creator rights plus review/approve, promote
- *    to Shared, manage own domain's members.
- *  - `admin` (2): Tenant-wide control — users, policy, certification, cost caps.
+ *    Cannot promote to Shared, approve, or reach admin. Files promotion requests.
+ *  - `builder` (1): Domain approver — creator rights plus review/approve domain
+ *    promotions, deploys, knowledge and connections. An approver, NOT a
+ *    people-admin.
+ *  - `domain_admin` (2): Builder rights plus administering users in their OWN
+ *    domain(s) only (invite/edit/deactivate, assign roles up to builder — never
+ *    domain_admin or admin) and all domain-scoped governance approvals. No
+ *    tenant/platform powers.
+ *  - `admin` (3): Platform admin — tenant-wide control: users, policy,
+ *    certification, cost caps, role matrix. The ONLY role that can assign
+ *    `domain_admin`.
  * (Governance golden path §5.) Former `participant` and `agentic-leader` roles are
  * removed; any legacy/unknown role normalises to `creator`.
  */
-export type Role = 'creator' | 'builder' | 'admin';
+export type Role = 'creator' | 'builder' | 'domain_admin' | 'admin';
 
 /** Every role, lowest→highest privilege. Single source for selects + ranking. */
-export const ROLES: readonly Role[] = ['creator', 'builder', 'admin'] as const;
+export const ROLES: readonly Role[] = ['creator', 'builder', 'domain_admin', 'admin'] as const;
+
+/** True when `role` ranks at or above `min` (creator<builder<domain_admin<admin).
+ * Edge-safe + dependency-free — the ONE floor check every gate can share. */
+export function roleAtLeast(role: Role, min: Role): boolean {
+  return ROLES.indexOf(role) >= ROLES.indexOf(min);
+}
 
 export type SessionClaims = {
   /** Stable user id (login handle). */
@@ -40,7 +53,7 @@ export type SessionClaims = {
 
 /** Promote gate: Personal→Shared needs builder+, Shared→Certified needs admin. */
 export function canPromote(role: Role, from: 'Personal' | 'Shared'): boolean {
-  if (from === 'Personal') return role === 'builder' || role === 'admin';
+  if (from === 'Personal') return roleAtLeast(role, 'builder');
   return role === 'admin';
 }
 

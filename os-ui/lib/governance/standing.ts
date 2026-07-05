@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { ApprovalKind } from '../approvals.ts';
+import { osMirror } from '../os-mirror.ts';
 
 /**
  * Standing policies — the "approve & remember" half of an approval (governance-
@@ -23,11 +24,52 @@ export type StandingPolicy = {
   fromApproval: string;
 };
 
+type StandingStoreState = { store: Map<string, StandingPolicy>; hydration: Promise<void> | null };
 const STANDING_KEY = Symbol.for('soa.governance.standing');
-function standingStore(): Map<string, StandingPolicy> {
-  const g = globalThis as unknown as Record<symbol, Map<string, StandingPolicy> | undefined>;
-  if (!g[STANDING_KEY]) g[STANDING_KEY] = new Map();
+function standingState(): StandingStoreState {
+  const g = globalThis as unknown as Record<symbol, StandingStoreState | undefined>;
+  if (!g[STANDING_KEY]) g[STANDING_KEY] = { store: new Map(), hydration: null };
   return g[STANDING_KEY]!;
+}
+function standingStore(): Map<string, StandingPolicy> {
+  return standingState().store;
+}
+
+// ---------------------------------------------------- durable mirror (best-effort) --
+const mirror = osMirror({
+  index: 'os-standing-policies',
+  createBody: {
+    mappings: {
+      properties: {
+        id: { type: 'keyword' },
+        match: { type: 'keyword' },
+        domain: { type: 'keyword' },
+        createdBy: { type: 'keyword' },
+        createdAt: { type: 'date' },
+        action: { type: 'keyword' },
+        decision: { type: 'object', enabled: false },
+      },
+    },
+  },
+});
+
+function writeThrough(policy: StandingPolicy): void {
+  mirror.writeThrough(policy.id, policy);
+}
+
+export async function ensureHydrated(): Promise<void> {
+  const s = standingState();
+  if (!s.hydration) s.hydration = hydrate();
+  return s.hydration;
+}
+
+async function hydrate(): Promise<void> {
+  const s = standingState();
+  const docs = (await mirror.hydrate(1000)) ?? [];
+  for (const p of docs as StandingPolicy[]) {
+    // CRITICAL: key by p.match, not p.id (standing store keyed by match)
+    if (p && p.match && !s.store.has(p.match)) s.store.set(p.match, p);
+  }
 }
 
 /** Stable shape-key so a later identical request matches a remembered rule. */
@@ -56,6 +98,7 @@ export function remember(input: {
     fromApproval: input.fromApproval,
   };
   standingStore().set(match, p); // keyed by shape so re-remembering is idempotent
+  writeThrough(p);
   return p;
 }
 
@@ -71,5 +114,8 @@ export function listStanding(domains?: string[]): StandingPolicy[] {
 }
 
 export function __resetStanding(): void {
-  standingStore().clear();
+  const s = standingState();
+  s.store.clear();
+  s.hydration = null;
+  mirror.__reset();
 }

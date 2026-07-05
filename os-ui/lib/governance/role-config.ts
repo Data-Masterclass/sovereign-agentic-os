@@ -3,7 +3,7 @@
  */
 import type { Role } from '../session.ts';
 import { ROLES } from '../session.ts';
-import { config } from '../config.ts';
+import { osMirror } from '../os-mirror.ts';
 
 /**
  * Role-permissions store — the ADMIN-EDITABLE source for "what each role may do,
@@ -103,7 +103,9 @@ export function cellRights(component: Component, capability: Capability): string
       return ['promote.shared']; // work comps + marketplace: promote to Shared
     case 'manage':
       if (component === 'platform') return ['manage.users.tenant', 'cost.cap.set', 'override.policy'];
-      if (component === 'governance') return ['manage.memberships.domain'];
+      // Governance "manage" = the domain people-admin cell: memberships AND
+      // domain-scoped user administration (the Domain admin's grant).
+      if (component === 'governance') return ['manage.memberships.domain', 'manage.users.domain'];
       if (component === 'marketplace') return ['promote.certify'];
       return [];
     default:
@@ -147,18 +149,30 @@ function buildDefault(): RoleMatrix {
   const creator = workBase();
 
   // builder: creator + promote-to-shared on artifacts, deploy review on software,
-  // and the domain-governance set (view/approve/manage memberships). No egress,
-  // no tenant/platform powers.
+  // and the domain-governance approvals (view/approve). An approver, NOT a
+  // people-admin — no `manage @ governance`, no egress, no tenant/platform powers.
   const builder = workBase();
   for (const c of ['data', 'knowledge', 'files', 'agents', 'software', 'metrics', 'dashboards', 'bigbets'] as Component[]) {
     builder[c] = caps('view', 'create', 'run', 'request', 'approve');
   }
   builder.marketplace = caps('view', 'approve');
-  builder.governance = caps('view', 'approve', 'manage');
+  builder.governance = caps('view', 'approve');
+
+  // domain_admin: everything builder can, PLUS the domain people-admin cell
+  // (`manage @ governance` → memberships + domain user administration) and the
+  // in-domain connections approvals. Still NO tenant/platform powers — every
+  // Platform cell stays empty (admin-only).
+  const domainAdmin = workBase();
+  for (const c of ['data', 'knowledge', 'files', 'agents', 'software', 'metrics', 'dashboards', 'bigbets'] as Component[]) {
+    domainAdmin[c] = caps('view', 'create', 'run', 'request', 'approve');
+  }
+  domainAdmin.connections = caps('view', 'create', 'run', 'request', 'approve');
+  domainAdmin.marketplace = caps('view', 'approve');
+  domainAdmin.governance = caps('view', 'approve', 'manage');
 
   // admin: full authority across every surface. `manage @ governance` is left OFF
-  // by default (it is the domain-memberships grant a Builder owns) so the seeded
-  // admin reproduces today's exact OPA tool-set; an Admin may toggle it on.
+  // by default (it is the domain people-admin grant a Domain admin owns) so the
+  // seeded admin reproduces today's exact OPA tool-set; an Admin may toggle it on.
   const admin = {} as Record<Component, Capability[]>;
   for (const c of COMPONENT_IDS) {
     const applicable = CAPABILITY_IDS.filter((cap) => isApplicable(c, cap));
@@ -166,7 +180,7 @@ function buildDefault(): RoleMatrix {
   }
   admin.governance = admin.governance.filter((cap) => cap !== 'manage');
 
-  return { creator, builder, admin };
+  return { creator, builder, domain_admin: domainAdmin, admin };
 }
 
 /** The safe, hardcoded default matrix — the fallback for deny-by-default. */
@@ -207,36 +221,20 @@ export function isValidMatrix(m: unknown): m is RoleMatrix {
 
 // ---- The pinned cache + best-effort OpenSearch mirror -----------------------
 
-type RoleConfigState = { matrix: RoleMatrix | null; loaded: boolean; osHealthy: boolean };
+type RoleConfigState = { matrix: RoleMatrix | null; loaded: boolean };
 const STATE_KEY = Symbol.for('soa.governance.roleConfig');
 function state(): RoleConfigState {
   const g = globalThis as unknown as Record<symbol, RoleConfigState | undefined>;
-  if (!g[STATE_KEY]) g[STATE_KEY] = { matrix: null, loaded: false, osHealthy: false };
+  if (!g[STATE_KEY]) g[STATE_KEY] = { matrix: null, loaded: false };
   return g[STATE_KEY]!;
 }
 
-const DOC = '/os-role-config/_doc/matrix';
-
-async function osFetch(path: string, init?: RequestInit): Promise<Response | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2500);
-  try {
-    return await fetch(`${config.opensearchUrl}${path}`, {
-      ...init,
-      signal: ctrl.signal,
-      cache: 'no-store',
-      headers: { 'content-type': 'application/json', accept: 'application/json', ...(init?.headers ?? {}) },
-    });
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
+// Shared durable-mirror core (probe → bootstrap-on-404 → hydrate/write-through):
+// lib/os-mirror.ts. A missing index is CREATED, never mistaken for a dead mirror.
+const mirror = osMirror({ index: 'os-role-config' });
 
 function writeThrough(m: RoleMatrix): void {
-  if (!state().osHealthy) return;
-  void osFetch(`${DOC}?refresh=true`, { method: 'PUT', body: JSON.stringify({ id: 'matrix', matrix: m, updatedAt: Date.now() }) });
+  mirror.writeThrough('matrix', { id: 'matrix', matrix: m, updatedAt: Date.now() });
 }
 
 /**
@@ -247,27 +245,18 @@ function writeThrough(m: RoleMatrix): void {
 export async function getMatrix(): Promise<RoleMatrix> {
   const s = state();
   if (s.loaded && s.matrix) return s.matrix;
-  const res = await osFetch(`${DOC}`);
-  if (res && res.ok) {
-    s.osHealthy = true;
-    try {
-      const body = (await res.json()) as { _source?: { matrix?: unknown } };
-      const stored = body?._source?.matrix;
-      if (isValidMatrix(stored)) {
-        s.matrix = cloneMatrix(stored);
-        s.loaded = true;
-        return s.matrix;
-      }
-    } catch {
-      /* fall through to default */
+  if (await mirror.probe()) {
+    const src = (await mirror.getDoc('matrix')) as { matrix?: unknown } | null;
+    if (src && isValidMatrix(src.matrix)) {
+      s.matrix = cloneMatrix(src.matrix);
+      s.loaded = true;
+      return s.matrix;
     }
-  } else if (res && res.status === 404) {
-    // Index/doc not there yet — the mirror is reachable, seed it with the default.
-    s.osHealthy = true;
+    // Doc not there yet (or malformed) — the mirror is reachable, seed the default.
   }
   s.matrix = cloneMatrix(DEFAULT_MATRIX);
   s.loaded = true;
-  if (s.osHealthy) writeThrough(s.matrix);
+  if (mirror.healthy()) writeThrough(s.matrix);
   return s.matrix;
 }
 
@@ -344,5 +333,5 @@ export function __resetRoleConfig(): void {
   const s = state();
   s.matrix = null;
   s.loaded = false;
-  s.osHealthy = false;
+  mirror.__reset();
 }

@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useUser } from '@/lib/useUser';
+import { roleAtLeast } from '@/lib/session';
 
 type Tile = { id: string; name: string; owner: string; domain: string; quality: string };
 
@@ -18,7 +19,7 @@ export default function MarketplaceDataProducts() {
   const { user } = useUser();
   // Importing grants the whole domain read access → store gates to Builder/Admin.
   // Only surface Import to those roles so we never show a control the server 403s.
-  const canImport = user?.role === 'builder' || user?.role === 'admin';
+  const canImport = !!user && roleAtLeast(user.role, 'builder');
   const [items, setItems] = useState<Tile[] | null>(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState('');

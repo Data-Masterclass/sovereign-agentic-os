@@ -123,7 +123,9 @@ export const MARKETPLACE: MarketplaceItem[] = [
     summary:
       'A dbt project skeleton with staging + marts models and tests, wired into Dagster as materializable assets.',
     tags: ['data', 'dbt', 'quality'],
-    href: '/orchestration',
+    // Nav consolidation: /orchestration was folded into /components (admin-only);
+    // students land on the Data tab, where dbt data products live.
+    href: '/data',
   },
   {
     id: 'tpl-superset-dash',

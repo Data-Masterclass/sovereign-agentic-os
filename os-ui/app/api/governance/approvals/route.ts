@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { currentUser } from '@/lib/auth';
-import { decide, getApproval, listApprovals, recordEffect } from '@/lib/approvals';
+import { decide, ensureHydrated, getApproval, listApprovals, recordEffect } from '@/lib/approvals';
 import { canApprove, canSee, roleLabel } from '@/lib/governance/roles';
 import { applyEffect } from '@/lib/governance/effects';
 import { publishPromotionLive } from '@/lib/data/publish-server';
@@ -20,6 +20,7 @@ export const dynamic = 'force-dynamic';
  *     if "approve & remember" — writes a standing policy. An approval IS an action.
  */
 export async function GET() {
+  await ensureHydrated();
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
   const visible = listApprovals().filter((a) => canSee(user, a));

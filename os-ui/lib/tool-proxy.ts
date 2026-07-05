@@ -218,7 +218,7 @@ export function resolveTool(key: string): Tool | undefined {
 
 /* ---------------------------------------------------------------- role gate */
 
-/** True when `role` ranks at or above `minRole` (participant<creator<builder<admin). */
+/** True when `role` ranks at or above `minRole` (creator<builder<domain_admin<admin). */
 export function roleAllowed(role: Role, minRole: Role): boolean {
   return ROLES.indexOf(role) >= ROLES.indexOf(minRole);
 }

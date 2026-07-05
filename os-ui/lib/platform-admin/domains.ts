@@ -18,6 +18,7 @@
  */
 
 import { config } from '../config.ts';
+import { osMirror } from '../os-mirror.ts';
 
 export type DomainLayers = { ml: boolean; spark: boolean };
 
@@ -58,11 +59,11 @@ function slug(s: string): string {
   return s.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
-type DomainsState = { store: Map<string, Domain>; osHealthy: boolean; hydration: Promise<void> | null };
+type DomainsState = { store: Map<string, Domain>; hydration: Promise<void> | null };
 const DOMAINS_KEY = Symbol.for('soa.platform.domains');
 function domainsState(): DomainsState {
   const g = globalThis as unknown as Record<symbol, DomainsState | undefined>;
-  if (!g[DOMAINS_KEY]) g[DOMAINS_KEY] = { store: new Map(), osHealthy: false, hydration: null };
+  if (!g[DOMAINS_KEY]) g[DOMAINS_KEY] = { store: new Map(), hydration: null };
   return g[DOMAINS_KEY]!;
 }
 
@@ -82,48 +83,27 @@ function seed(): void {
  * mirrors freshly-derived domains through so edits persist. Every path is graceful.
  */
 
-async function osFetch(path: string, init?: RequestInit): Promise<Response | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2500);
-  try {
-    return await fetch(`${config.opensearchUrl}${path}`, {
-      ...init,
-      signal: ctrl.signal,
-      cache: 'no-store',
-      headers: { 'content-type': 'application/json', accept: 'application/json', ...(init?.headers ?? {}) },
-    });
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function ensureIndex(): Promise<void> {
-  const head = await osFetch(`/${config.domainsIndex}`, { method: 'HEAD' });
-  if (head && head.status === 404) {
-    await osFetch(`/${config.domainsIndex}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        mappings: {
-          properties: {
-            id: { type: 'keyword' },
-            name: { type: 'text' },
-            owner: { type: 'keyword' },
-            archived: { type: 'boolean' },
-            template: { type: 'keyword' },
-            createdAt: { type: 'date' },
-            layers: { type: 'object', enabled: false },
-          },
-        },
-      }),
-    });
-  }
-}
+// Shared durable-mirror core (probe → bootstrap-on-404 → hydrate/write-through):
+// lib/os-mirror.ts. A missing index is CREATED, never mistaken for a dead mirror.
+const mirror = osMirror({
+  index: config.domainsIndex,
+  createBody: {
+    mappings: {
+      properties: {
+        id: { type: 'keyword' },
+        name: { type: 'text' },
+        owner: { type: 'keyword' },
+        archived: { type: 'boolean' },
+        template: { type: 'keyword' },
+        createdAt: { type: 'date' },
+        layers: { type: 'object', enabled: false },
+      },
+    },
+  },
+});
 
 function writeThrough(d: Domain): void {
-  if (!domainsState().osHealthy) return;
-  void osFetch(`/${config.domainsIndex}/_doc/${d.id}?refresh=true`, { method: 'PUT', body: JSON.stringify(d) });
+  mirror.writeThrough(d.id, d);
 }
 
 /**
@@ -159,23 +139,9 @@ export async function ensureHydrated(deriveDomains: () => Promise<string[]>): Pr
 async function hydrate(deriveDomains: () => Promise<string[]>): Promise<void> {
   const st = domainsState();
   // 1. Load admin-edited domains from the durable mirror, if reachable.
-  const ping = await osFetch(`/${config.domainsIndex}/_count`);
-  if (ping && ping.ok) {
-    st.osHealthy = true;
-    await ensureIndex();
-    const res = await osFetch(`/${config.domainsIndex}/_search?size=1000`, {
-      method: 'POST',
-      body: JSON.stringify({ query: { match_all: {} } }),
-    });
-    if (res && res.ok) {
-      const data = (await res.json()) as { hits?: { hits?: { _source: Domain }[] } };
-      for (const h of data?.hits?.hits ?? []) {
-        const d = h._source;
-        if (d && d.id && !st.store.has(d.id)) st.store.set(d.id, d);
-      }
-    }
-  } else {
-    st.osHealthy = false;
+  const docs = (await mirror.hydrate(1000)) ?? []; // null → mirror down → in-memory only
+  for (const d of docs as Domain[]) {
+    if (d && d.id && !st.store.has(d.id)) st.store.set(d.id, d);
   }
   // 2. Merge in the tenant's real domains (from its users) — never clobbering edits.
   let derived: string[] = [];
@@ -263,6 +229,6 @@ export function compilerView(): { id: string; archived: boolean; layers: DomainL
 export function _reset(): void {
   const s = domainsState();
   s.store.clear();
-  s.osHealthy = false;
   s.hydration = null;
+  mirror.__reset();
 }

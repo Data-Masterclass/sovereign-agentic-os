@@ -12,6 +12,7 @@ import CodePanel from '@/components/CodePanel';
 import { useToolWindow } from '@/components/ToolWindowProvider';
 import { useApi } from '@/lib/useApi';
 import { getUrlParam, patchUrl } from '@/lib/url-params';
+import { roleAtLeast, type Role as SessionRole } from '@/lib/session';
 
 type Visibility = 'Personal' | 'Shared' | 'Certified';
 type Tool = { name: string; description: string; write: boolean };
@@ -48,7 +49,7 @@ type App = {
   dataArtifactId: string | null;
 };
 type Connection = { id: string; name: string; principal: string; visibility: Visibility; tools: Tool[] } | null;
-type Data = { user: { id: string; role: string }; app: App; connection: Connection };
+type Data = { user: { id: string; role: SessionRole }; app: App; connection: Connection };
 
 const STAGES = ['forgejo', 'actions', 'harbor', 'argocd', 'live'] as const;
 const STAGE_LABEL: Record<string, string> = {
@@ -225,7 +226,7 @@ export default function AppPage() {
   const surface = app.surface ?? { ui: true, api: true };
   const dep = deployBadge(app.deploy.state);
   const version = app.deploy.releases > 0 ? `v${app.deploy.releases}` : 'Unpublished';
-  const canEditCode = data.user.role === 'builder' || data.user.role === 'admin';
+  const canEditCode = roleAtLeast(data.user.role, 'builder');
   const canPromoteUI = promoteLabel(app.visibility);
   // A deploy is already awaiting a Builder — block re-requesting (it would open a
   // duplicate review card and orphan the pending one). Point to the review inbox.

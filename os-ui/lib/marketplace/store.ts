@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { config } from '@/lib/config';
+import { osMirror } from '@/lib/os-mirror';
 import type {
   Grant,
   Listing,
@@ -108,13 +109,14 @@ type MarketplaceState = {
   ratings: Map<string, { user: string; stars: number }[]>;
   deprecated: Set<string>;
   audit: AuditEvent[];
+  hydration: Promise<void> | null;
 };
 
 const STATE_KEY = Symbol.for('soa.marketplace.state');
 function state(): MarketplaceState {
   const g = globalThis as unknown as Record<symbol, MarketplaceState | undefined>;
   if (!g[STATE_KEY]) {
-    g[STATE_KEY] = { grants: new Map(), ratings: new Map(), deprecated: new Set(), audit: [] };
+    g[STATE_KEY] = { grants: new Map(), ratings: new Map(), deprecated: new Set(), audit: [], hydration: null };
   }
   return g[STATE_KEY]!;
 }
@@ -127,22 +129,49 @@ function rid(prefix: string): string {
 }
 
 // -------------------------------------------------- OpenSearch write-through --
+// Shared durable-mirror core (lib/os-mirror.ts): first write probes the cluster
+// and CREATES the index when missing, so the mirror works on a fresh deploy.
 
-async function osWrite(index: string, id: string, doc: unknown): Promise<void> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2000);
-  try {
-    await fetch(`${config.opensearchUrl}/${index}/_doc/${id}?refresh=true`, {
-      method: 'PUT',
-      signal: ctrl.signal,
-      cache: 'no-store',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(doc),
-    });
-  } catch {
-    /* best-effort durable mirror */
-  } finally {
-    clearTimeout(timer);
+const grantsMirror = osMirror({ index: 'os-marketplace-grants' });
+const auditMirror = osMirror({ index: 'os-marketplace-audit' });
+const ratingsMirror = osMirror({ index: 'os-marketplace-ratings' });
+const deprecatedMirror = osMirror({ index: 'os-marketplace-deprecated' });
+
+export async function ensureHydrated(): Promise<void> {
+  const s = state();
+  if (!s.hydration) s.hydration = hydrate();
+  return s.hydration;
+}
+
+async function hydrate(): Promise<void> {
+  const s = state();
+  // Hydrate grants
+  const grants = (await grantsMirror.hydrate(2000)) ?? [];
+  for (const g of grants as Grant[]) {
+    if (g && g.id && !s.grants.has(g.id)) s.grants.set(g.id, g);
+  }
+  // Hydrate audit (sort chronologically)
+  const audit = (await auditMirror.hydrate(1000)) ?? [];
+  const sorted = (audit as AuditEvent[])
+    .filter((e) => e && e.id)
+    .sort((a, b) => b.at.localeCompare(a.at)); // newest-first to match unshift order
+  for (const e of sorted) {
+    if (!s.audit.find((a) => a.id === e.id)) s.audit.push(e);
+  }
+  // Hydrate ratings
+  const ratings = (await ratingsMirror.hydrate(5000)) ?? [];
+  for (const r of ratings as { listingId?: string; user?: string; stars?: number }[]) {
+    if (!r || !r.listingId || !r.user) continue;
+    const list = s.ratings.get(r.listingId) ?? [];
+    if (!list.find((x) => x.user === r.user)) {
+      list.push({ user: r.user, stars: r.stars ?? 0 });
+      s.ratings.set(r.listingId, list);
+    }
+  }
+  // Hydrate deprecated
+  const deprecated = (await deprecatedMirror.hydrate(1000)) ?? [];
+  for (const d of deprecated as { id?: string }[]) {
+    if (d && d.id) s.deprecated.add(d.id);
   }
 }
 
@@ -180,7 +209,7 @@ async function langfuseAudit(e: AuditEvent): Promise<void> {
 export function recordAudit(e: Omit<AuditEvent, 'id' | 'at'>): AuditEvent {
   const full: AuditEvent = { ...e, id: rid('aud'), at: now() };
   state().audit.unshift(full);
-  void osWrite('os-marketplace-audit', full.id, full);
+  auditMirror.writeThrough(full.id, full);
   void langfuseAudit(full);
   return full;
 }
@@ -191,7 +220,7 @@ export function listAudit(opts: { listingId?: string } = {}): AuditEvent[] {
 
 export function putGrant(g: Grant): Grant {
   state().grants.set(g.id, g);
-  void osWrite('os-marketplace-grants', g.id, g);
+  grantsMirror.writeThrough(g.id, g);
   return g;
 }
 
@@ -231,7 +260,7 @@ export function rate(listingId: string, user: string, stars: number): void {
   if (existing) existing.stars = stars;
   else list.push({ user, stars: Math.max(1, Math.min(5, stars)) });
   ratings.set(listingId, list);
-  void osWrite('os-marketplace-ratings', `${listingId}:${user}`, { listingId, user, stars });
+  ratingsMirror.writeThrough(`${listingId}:${user}`, { listingId, user, stars });
 }
 
 export function ratingFor(listingId: string): { rating: number; ratingCount: number } {
@@ -247,6 +276,20 @@ export function isDeprecated(listingId: string): boolean {
 
 export function setDeprecated(listingId: string): void {
   state().deprecated.add(listingId);
+  deprecatedMirror.writeThrough(listingId, { id: listingId, deprecated: true });
+}
+
+export function __resetMarketplace(): void {
+  const s = state();
+  s.grants.clear();
+  s.ratings.clear();
+  s.deprecated.clear();
+  s.audit.length = 0;
+  s.hydration = null;
+  grantsMirror.__reset();
+  auditMirror.__reset();
+  ratingsMirror.__reset();
+  deprecatedMirror.__reset();
 }
 
 export type { Grant, Listing };

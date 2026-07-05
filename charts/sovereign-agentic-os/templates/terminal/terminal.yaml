@@ -33,6 +33,9 @@ metadata:
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
     soa.dev/purpose: terminal-sandbox
+{{- /* Pull-secret copies so the kubelet can pull the (private) sandbox image
+       for the broker-created pods. See soa.replicatedPullSecrets. */}}
+{{- include "soa.replicatedPullSecrets" (dict "ctx" . "namespace" $sandboxNs) }}
 ---
 # Restricted ServiceAccount the sandbox Pods run as. Token is NOT automounted
 # (belt-and-braces with the Pod spec's automountServiceAccountToken:false), and
@@ -160,6 +163,10 @@ spec:
               value: {{ $t.sandboxServiceAccount | default "sandbox-nobody" | quote }}
             - name: SANDBOX_SHELL
               value: {{ $t.sandbox.shell | default "/bin/bash" | quote }}
+            # Pull secrets the broker attaches to every sandbox Pod it creates
+            # (names replicated into the sandbox namespace above).
+            - name: IMAGE_PULL_SECRETS
+              value: {{ include "soa.pullSecretNames" . | quote }}
             - name: IDLE_TIMEOUT_SECONDS
               value: {{ $t.idleTimeoutSeconds | default 600 | quote }}
             - name: MAX_SESSION_SECONDS

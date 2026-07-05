@@ -141,6 +141,7 @@ export function policySources(): { name: string; authoredIn: string; compiledTo:
   return [
     { name: 'Creator (capability profile)', authoredIn: 'Connections', compiledTo: 'OPA', rights: ROLE_RIGHTS['creator'] },
     { name: 'Builder (capability profile)', authoredIn: 'Connections', compiledTo: 'OPA/Cube', rights: ROLE_RIGHTS.builder },
+    { name: 'Domain admin (capability profile)', authoredIn: 'Connections', compiledTo: 'OPA/Cube', rights: ROLE_RIGHTS.domain_admin },
     { name: 'Admin (capability profile)', authoredIn: 'Connections', compiledTo: 'OPA/Cube/DLS', rights: ROLE_RIGHTS.admin },
   ];
 }

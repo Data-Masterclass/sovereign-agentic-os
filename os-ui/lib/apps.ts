@@ -4,7 +4,7 @@
 import 'server-only';
 import { config } from '@/lib/config';
 import type { CurrentUser } from '@/lib/auth';
-import { canPromote } from '@/lib/session';
+import { canPromote, roleAtLeast } from '@/lib/session';
 import type { Visibility } from '@/lib/artifact-model';
 import {
   createArtifact,
@@ -30,6 +30,7 @@ import type {
 } from '@/lib/software/model';
 import { generateAndCompile } from '@/lib/software/auto-mcp';
 import { parseAppManifest, renderAppYaml, defaultOpenApi, detectSurface } from '@/lib/software/metadata';
+import { osMirror } from '@/lib/os-mirror';
 
 /**
  * App registry — the home of record for every application built in the Software
@@ -301,11 +302,11 @@ export const APP_TEMPLATES: { key: AppTemplateKey; label: string }[] = [
 
 // ----------------------------------------------------------------- Registry ---
 
-type AppCacheState = { cache: Map<string, App> | null; osHealthy: boolean };
+type AppCacheState = { cache: Map<string, App> | null };
 const APP_STATE_KEY = Symbol.for('soa.apps.cache');
 function appCacheState(): AppCacheState {
   const g = globalThis as unknown as Record<symbol, AppCacheState | undefined>;
-  if (!g[APP_STATE_KEY]) g[APP_STATE_KEY] = { cache: null, osHealthy: false };
+  if (!g[APP_STATE_KEY]) g[APP_STATE_KEY] = { cache: null };
   return g[APP_STATE_KEY]!;
 }
 
@@ -331,53 +332,26 @@ function withStatus(err: Error, status: number): Error {
   return err;
 }
 
-async function osFetch(path: string, init?: RequestInit): Promise<Response | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2500);
-  try {
-    return await fetch(`${config.opensearchUrl}${path}`, {
-      ...init,
-      signal: ctrl.signal,
-      cache: 'no-store',
-      headers: { 'content-type': 'application/json', accept: 'application/json', ...(init?.headers ?? {}) },
-    });
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
+// Shared durable-mirror core (probe → bootstrap-on-404 → hydrate/write-through):
+// lib/os-mirror.ts. A missing index is CREATED, never mistaken for a dead mirror.
+const mirror = osMirror({ index: config.appsIndex });
 
 function writeThrough(a: App): void {
-  if (!appCacheState().osHealthy) return;
-  void osFetch(`/${config.appsIndex}/_doc/${a.id}?refresh=true`, { method: 'PUT', body: JSON.stringify(a) });
+  mirror.writeThrough(a.id, a);
 }
 
 async function getCache(): Promise<Map<string, App>> {
   const s = appCacheState();
   if (s.cache) return s.cache;
   const map = new Map<string, App>();
-  const ping = await osFetch(`/${config.appsIndex}/_count`);
-  if (ping && ping.ok) {
-    s.osHealthy = true;
-    const res = await osFetch(`/${config.appsIndex}/_search?size=500`, {
-      method: 'POST',
-      body: JSON.stringify({ query: { match_all: {} } }),
-    });
-    if (res && res.ok) {
-      const data = (await res.json()) as { hits?: { hits?: { _source: App }[] } };
-      for (const h of data?.hits?.hits ?? []) {
-        const app = h._source;
-        // Back-compat: apps persisted before surface-detection get one inferred
-        // from their scaffold so the monitor drives off surface, never `template`.
-        if (!app.surface) app.surface = detectSurface(templateFiles(app.template, app.name, app.slug));
-        map.set(app.id, app);
-        // Re-hydrate the in-process MCP grant so agents can call it after a restart.
-        if (app.connectionId) rehydrateConnection(app);
-      }
-    }
-  } else {
-    s.osHealthy = false;
+  const docs = (await mirror.hydrate(500)) ?? []; // null → mirror down → in-memory only
+  for (const app of docs as App[]) {
+    // Back-compat: apps persisted before surface-detection get one inferred
+    // from their scaffold so the monitor drives off surface, never `template`.
+    if (!app.surface) app.surface = detectSurface(templateFiles(app.template, app.name, app.slug));
+    map.set(app.id, app);
+    // Re-hydrate the in-process MCP grant so agents can call it after a restart.
+    if (app.connectionId) rehydrateConnection(app);
   }
   s.cache = map;
   return map;
@@ -474,9 +448,9 @@ export type RepoFileMeta = { mode: 'live' | 'offline'; branch: string; files: st
 export type RepoFile = { path: string; content: string; sha: string };
 export type RepoCommit = { path: string; sha: string; commitUrl: string | null };
 
-/** Builders + admins only — the code editor mutates the app's repo. */
+/** Builder+ only — the code editor mutates the app's repo. */
 function ensureBuilder(user: CurrentUser): void {
-  if (user.role !== 'builder' && user.role !== 'admin') {
+  if (!roleAtLeast(user.role, 'builder')) {
     throw withStatus(new Error('The code editor is available to Builders and Administrators.'), 403);
   }
 }
@@ -934,7 +908,7 @@ export async function listAllAppsInternal(): Promise<App[]> {
 export async function removeAppInternal(appId: string): Promise<void> {
   const map = await getCache();
   map.delete(appId);
-  if (appCacheState().osHealthy) void osFetch(`/${config.appsIndex}/_doc/${appId}?refresh=true`, { method: 'DELETE' });
+  mirror.deleteThrough(appId);
 }
 
 /** Persist a mutated app back to the cache + the durable mirror. */
@@ -960,7 +934,7 @@ export function newId(prefix: string): string {
 export function __resetAppsCache(): void {
   const s = appCacheState();
   s.cache = null;
-  s.osHealthy = false;
+  mirror.__reset();
 }
 
 export { withStatus };

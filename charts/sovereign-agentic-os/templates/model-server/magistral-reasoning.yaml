@@ -40,6 +40,9 @@ spec:
       labels:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "magistral-reasoning") | nindent 8 }}
+      annotations:
+        # The 20Gi reasoning model is re-downloadable — never Velero-fs-backup it.
+        backup.velero.io/backup-volumes-excludes: models
     spec:
       {{- include "soa.priorityClassName" (dict "ctx" . "tier" "app") | nindent 6 }}
       {{- with $r.nodeSelector }}

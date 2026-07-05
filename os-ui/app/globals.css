@@ -1244,6 +1244,103 @@ code {
   font-size: 11px;
 }
 
+/* The consolidated Components operator list: one calm bordered list per layer,
+   a row per component (dot · name · version · one-line blurb · badge · actions),
+   details behind an expand — no cards-in-cards. */
+.comp-list {
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+
+.comp-item + .comp-item {
+  border-top: 1px solid var(--border);
+}
+
+.comp-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px 10px 14px;
+}
+
+.comp-expand {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  padding: 4px 0;
+  cursor: pointer;
+}
+
+.comp-item:hover {
+  background: rgba(200, 162, 74, 0.03);
+}
+
+.comp-ver {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.comp-blurb {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.comp-row .badge,
+.comp-row .btn,
+.comp-row .switch,
+.comp-row .chip {
+  flex: none;
+}
+
+.comp-detail {
+  padding: 2px 16px 16px 32px;
+}
+
+.comp-detail .comp-summary {
+  margin-top: 4px;
+}
+
+.comp-chiprow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.comp-chiprow .chip {
+  font-size: 11px;
+}
+
+.comp-toollist {
+  margin: 0;
+  padding: 0 0 0 2px;
+  list-style: none;
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+}
+
+@media (max-width: 860px) {
+  .comp-blurb {
+    display: none;
+  }
+}
+
 /* Reasoning-target segmented control (agent editor) — three-way model choice.
    Reuses the warm gold tokens + snappy transitions of the design system so the
    selected state reads identically in light + dark; the routing/fallback

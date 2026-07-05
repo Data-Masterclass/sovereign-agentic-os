@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { Role } from '../session.ts';
+import { type Role, roleAtLeast } from '../session.ts';
 import {
   type Dataset,
   type DataVisibility,
@@ -28,6 +28,7 @@ import { transparencyGate, gateReason } from './transparency.ts';
 import { CUBE_ARTIFACT, EXPOSURE_ARTIFACT, scaffoldCubeYaml, scaffoldExposureYaml } from './metrics.ts';
 import { assetTarget, productTarget, personalSchema, slug } from './store-fqn.ts';
 import { config } from '../config.ts';
+import { osMirror } from '../os-mirror.ts';
 
 // Re-export the FQN helpers so existing consumers keep importing them from the store.
 export { assetTarget, productTarget } from './store-fqn.ts';
@@ -73,11 +74,11 @@ export type DatasetSummary = {
   storage: ReturnType<typeof storageFor>;
 };
 
-type DataStoreState = { store: Map<string, DatasetRecord>; seeded: boolean; osHealthy: boolean; hydration: Promise<void> | null };
+type DataStoreState = { store: Map<string, DatasetRecord>; seeded: boolean; hydration: Promise<void> | null };
 const DS_KEY = Symbol.for('soa.data.store');
 function ds(): DataStoreState {
   const g = globalThis as unknown as Record<symbol, DataStoreState | undefined>;
-  if (!g[DS_KEY]) g[DS_KEY] = { store: new Map(), seeded: false, osHealthy: false, hydration: null };
+  if (!g[DS_KEY]) g[DS_KEY] = { store: new Map(), seeded: false, hydration: null };
   return g[DS_KEY]!;
 }
 
@@ -95,57 +96,32 @@ function now(): string {
  * mirrored fire-and-forget. Every backend path is graceful — an unreachable
  * OpenSearch NEVER fails a request; the store simply stays in-memory.
  *
- * NOTE: kept free of `server-only`/Next imports (only `config` + global `fetch`) so
- * the store stays directly unit-testable.
+ * The probe/bootstrap/write-through core is the shared `lib/os-mirror.ts` (a
+ * missing index is CREATED on first contact, never mistaken for a dead mirror).
+ * Kept free of `server-only`/Next imports so the store stays unit-testable.
  */
 
-async function osFetch(path: string, init?: RequestInit): Promise<Response | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2500);
-  try {
-    return await fetch(`${config.opensearchUrl}${path}`, {
-      ...init,
-      signal: ctrl.signal,
-      cache: 'no-store',
-      headers: { 'content-type': 'application/json', accept: 'application/json', ...(init?.headers ?? {}) },
-    });
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function ensureIndex(): Promise<void> {
-  const head = await osFetch(`/${config.datasetsIndex}`, { method: 'HEAD' });
-  if (head && head.status === 404) {
-    await osFetch(`/${config.datasetsIndex}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        mappings: {
-          properties: {
-            id: { type: 'keyword' },
-            owner: { type: 'keyword' },
-            domain: { type: 'keyword' },
-            updatedAt: { type: 'date' },
-            // The single-source yaml + tool-native bodies are STORED (in _source)
-            // but not indexed: `artifacts` has arbitrary file-path keys, which
-            // would otherwise explode the mapping.
-            yaml: { type: 'text', index: false },
-            artifacts: { type: 'object', enabled: false },
-          },
-        },
-      }),
-    });
-  }
-}
+const mirror = osMirror({
+  index: config.datasetsIndex,
+  createBody: {
+    mappings: {
+      properties: {
+        id: { type: 'keyword' },
+        owner: { type: 'keyword' },
+        domain: { type: 'keyword' },
+        updatedAt: { type: 'date' },
+        // The single-source yaml + tool-native bodies are STORED (in _source)
+        // but not indexed: `artifacts` has arbitrary file-path keys, which
+        // would otherwise explode the mapping.
+        yaml: { type: 'text', index: false },
+        artifacts: { type: 'object', enabled: false },
+      },
+    },
+  },
+});
 
 function writeThrough(rec: DatasetRecord): void {
-  if (!ds().osHealthy) return;
-  void osFetch(`/${config.datasetsIndex}/_doc/${rec.id}?refresh=true`, {
-    method: 'PUT',
-    body: JSON.stringify(rec),
-  });
+  mirror.writeThrough(rec.id, rec);
 }
 
 /**
@@ -161,24 +137,10 @@ export async function ensureHydrated(): Promise<void> {
 
 async function hydrate(): Promise<void> {
   const s = ds();
-  const ping = await osFetch(`/${config.datasetsIndex}/_count`);
-  if (ping && ping.ok) {
-    s.osHealthy = true;
-    await ensureIndex();
-    const res = await osFetch(`/${config.datasetsIndex}/_search?size=1000`, {
-      method: 'POST',
-      body: JSON.stringify({ query: { match_all: {} } }),
-    });
-    if (res && res.ok) {
-      const data = (await res.json()) as { hits?: { hits?: { _source: DatasetRecord }[] } };
-      for (const h of data?.hits?.hits ?? []) {
-        const rec = h._source;
-        // Don't clobber records created in-process before hydration completed.
-        if (rec && rec.id && !s.store.has(rec.id)) s.store.set(rec.id, rec);
-      }
-    }
-  } else {
-    s.osHealthy = false;
+  const docs = (await mirror.hydrate(1000)) ?? []; // null → mirror down → in-memory only
+  for (const rec of docs as DatasetRecord[]) {
+    // Don't clobber records created in-process before hydration completed.
+    if (rec && rec.id && !s.store.has(rec.id)) s.store.set(rec.id, rec);
   }
   s.seeded = true;
 }
@@ -212,8 +174,8 @@ export function __resetStore(): void {
   const s = ds();
   s.store.clear();
   s.seeded = false;
-  s.osHealthy = false;
   s.hydration = null;
+  mirror.__reset();
 }
 
 // ------------------------------------------------------------------- scoping --
@@ -724,7 +686,7 @@ export function importProduct(id: string, importer: Principal): Dataset {
   // domain read access, so it is a Builder+ action. A participant/creator is
   // blocked (403) and must ask a domain Builder/Admin — this is the real control
   // (middleware lets every /api/* through to self-guard).
-  if (importer.role !== 'builder' && importer.role !== 'admin') {
+  if (!roleAtLeast(importer.role, 'builder')) {
     fail('Importing a data product requires a Builder or Admin — ask a domain Builder to import it', 403);
   }
   const rec = get(id);

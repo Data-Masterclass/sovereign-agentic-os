@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { listReviewCards } from '@/lib/software/review';
+import { roleAtLeast } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,7 +17,7 @@ export async function GET() {
   try {
     const user = await requireUser();
     const cards = user.domains.flatMap((d) => listReviewCards({ domain: d }));
-    const canReview = user.role === 'builder' || user.role === 'admin';
+    const canReview = roleAtLeast(user.role, 'builder');
     return NextResponse.json({ user, cards, canReview });
   } catch (e) {
     const status = (e as { status?: number })?.status ?? 500;

@@ -1,6 +1,6 @@
 {
   "name": "workbench-broker",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Sovereign Agentic OS — domain-builder workbench broker (the only k8s-credentialed component; reconciles + reverse-proxies per-builder code-server)",
   "license": "Apache-2.0",

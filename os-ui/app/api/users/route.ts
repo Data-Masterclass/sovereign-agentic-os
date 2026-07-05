@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/auth';
 import { createUser, knownDomains, listUsers } from '@/lib/users';
-import type { Role } from '@/lib/session';
+import { ROLES, type Role } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,7 +29,7 @@ export async function POST(req: Request) {
   try {
     await requireAdmin();
     const body = await req.json();
-    const role = (['creator', 'builder', 'admin'].includes(body?.role) ? body.role : 'creator') as Role;
+    const role = (ROLES.includes(body?.role) ? body.role : 'creator') as Role;
     const domains = Array.isArray(body?.domains) ? body.domains.map(String).filter(Boolean) : [];
     const user = await createUser({
       id: String(body?.id ?? ''),

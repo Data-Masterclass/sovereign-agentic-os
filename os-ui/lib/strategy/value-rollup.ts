@@ -14,6 +14,7 @@ import {
   eur,
 } from '@/lib/strategy/model';
 import { defaultBetShareSource, type BetShareSource } from '@/lib/strategy/bets-bridge';
+import type { Role } from '@/lib/session';
 
 /**
  * Value roll-up — the RLS-correct, top-down value spine (Opus-owned).
@@ -95,7 +96,7 @@ function applyBasis(raw: number, metric: MetricLink): number {
  */
 export async function rollupForPillar(
   pillar: Pillar,
-  user: { domains: string[]; role: 'creator' | 'builder' | 'admin' } = EMPTY_USER_DOMAINS,
+  user: { domains: string[]; role: Role } = EMPTY_USER_DOMAINS,
   source: BetShareSource = defaultBetShareSource,
 ): Promise<PillarRollup> {
   const vm = pillar.valueMetric;

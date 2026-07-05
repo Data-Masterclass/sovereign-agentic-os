@@ -128,6 +128,11 @@ spec:
       labels:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 8 }}
+      annotations:
+        # Velero fs-backup must SKIP the live PGDATA volume — a file-level copy
+        # of a running Postgres is not consistent. The nightly pg-dump CronJob
+        # (templates/backup/pg-dump-cronjob.yaml) is the Postgres backup path.
+        backup.velero.io/backup-volumes-excludes: data
     spec:
       {{- /* High-priority infra: the kubelet evicts app pods before the DB. */}}
       {{- include "soa.priorityClassName" (dict "ctx" . "tier" "infra") | nindent 6 }}

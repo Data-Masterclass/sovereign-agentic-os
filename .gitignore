@@ -39,3 +39,6 @@ stackit/private-instance-models.md
 
 # agent worktrees
 .claude/
+
+# Tier-0 OpenSearch migration exports (live platform data — never commit)
+.opensearch-migration/

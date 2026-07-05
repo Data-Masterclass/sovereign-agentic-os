@@ -4,12 +4,14 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { myImports, type Viewer } from '@/lib/marketplace';
+import { ensureHydrated } from '@/lib/marketplace/store';
 
 export const dynamic = 'force-dynamic';
 
 /** The caller's imports (their grants) for the "My imports" view. */
 export async function GET() {
   try {
+    await ensureHydrated();
     const user = await requireUser();
     const viewer: Viewer = { id: user.id, domains: user.domains, role: user.role };
     return NextResponse.json({ grants: myImports(viewer) });

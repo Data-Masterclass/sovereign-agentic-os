@@ -13,7 +13,7 @@
  * for durability in a real deploy. Pure imports only (config) so it stays
  * unit-testable.
  */
-import { config } from '../config.ts';
+import { osMirror } from '../os-mirror.ts';
 
 export type AuditResult = 'ok' | 'denied' | 'error';
 
@@ -35,24 +35,47 @@ export type AuditEntry = {
 };
 
 const RING_MAX = 500;
-const ring: AuditEntry[] = [];
+type AuditState = { ring: AuditEntry[]; hydration: Promise<void> | null };
+const AUDIT_KEY = Symbol.for('soa.platform.audit');
+function auditState(): AuditState {
+  const g = globalThis as unknown as Record<symbol, AuditState | undefined>;
+  if (!g[AUDIT_KEY]) g[AUDIT_KEY] = { ring: [], hydration: null };
+  return g[AUDIT_KEY]!;
+}
 
 function id(): string {
   return `aud_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// Shared durable-mirror core (lib/os-mirror.ts): first write probes the cluster
+// and CREATES the index when missing, so the audit trail persists on a fresh deploy.
+const mirror = osMirror({ index: 'os-audit' });
+
+export async function ensureHydrated(): Promise<void> {
+  const s = auditState();
+  if (!s.hydration) s.hydration = hydrate();
+  return s.hydration;
+}
+
+async function hydrate(): Promise<void> {
+  const s = auditState();
+  const docs = (await mirror.hydrate(500)) ?? [];
+  // Sort chronologically (oldest first), then prepend to ring so newest ends up first.
+  const sorted = (docs as AuditEntry[])
+    .filter((e) => e && e.id)
+    .sort((a, b) => a.ts.localeCompare(b.ts));
+  for (const e of sorted) {
+    if (!s.ring.find((r) => r.id === e.id)) {
+      // In-process entries are already at the front (unshift order). Append
+      // historical entries at the back — ring stays newest-first for callers.
+      s.ring.push(e);
+    }
+  }
+  if (s.ring.length > RING_MAX) s.ring.length = RING_MAX;
+}
+
 function writeThrough(entry: AuditEntry): void {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2000);
-  void fetch(`${config.opensearchUrl}/os-audit/_doc/${entry.id}?refresh=true`, {
-    method: 'PUT',
-    signal: ctrl.signal,
-    cache: 'no-store',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(entry),
-  })
-    .catch(() => {})
-    .finally(() => clearTimeout(timer));
+  mirror.writeThrough(entry.id, entry);
 }
 
 /** Record one audited action. Returns the stored entry (id + ts filled). */
@@ -72,8 +95,8 @@ export function audit(input: {
     result: 'ok',
     ...input,
   };
-  ring.unshift(entry);
-  if (ring.length > RING_MAX) ring.length = RING_MAX;
+  auditState().ring.unshift(entry);
+  const r = auditState().ring; if (r.length > RING_MAX) r.length = RING_MAX;
   writeThrough(entry);
   return entry;
 }
@@ -81,11 +104,15 @@ export function audit(input: {
 /** Most-recent-first audit feed, optionally filtered by action prefix. */
 export function listAudit(opts: { limit?: number; prefix?: string } = {}): AuditEntry[] {
   const { limit = 100, prefix } = opts;
+  const ring = auditState().ring;
   const rows = prefix ? ring.filter((e) => e.action.startsWith(prefix)) : ring;
   return rows.slice(0, limit);
 }
 
 /** Test seam: clear the in-process ring. */
 export function _resetAudit(): void {
-  ring.length = 0;
+  const s = auditState();
+  s.ring.length = 0;
+  s.hydration = null;
+  mirror.__reset();
 }

@@ -4,6 +4,7 @@
 import type { Role } from '../session.ts';
 import { type DashTier, type DashboardRecord, dashboardRecord, governDashboard } from './governance.ts';
 import { type DashboardSpec } from './model.ts';
+import { osMirror } from '../os-mirror.ts';
 
 /**
  * A small in-memory dashboard registry (mirrors lib/data/store's shape + discipline:
@@ -21,16 +22,56 @@ type Stored = DashboardRecord & { domain: string };
 // platform's own governed flows (e.g. the Northpeak e-commerce seed).
 const SEED: Stored[] = [];
 
-type DashState = { dashboards: Stored[] };
+type DashState = { dashboards: Stored[]; hydration: Promise<void> | null };
 const DASH_KEY = Symbol.for('soa.dashboards.store');
 function dashState(): DashState {
   const g = globalThis as unknown as Record<symbol, DashState | undefined>;
-  if (!g[DASH_KEY]) g[DASH_KEY] = { dashboards: SEED.map((d) => ({ ...d, spec: { ...d.spec, charts: [...d.spec.charts] } })) };
+  if (!g[DASH_KEY]) g[DASH_KEY] = { dashboards: SEED.map((d) => ({ ...d, spec: { ...d.spec, charts: [...d.spec.charts] } })), hydration: null };
   return g[DASH_KEY]!;
 }
 
+// ---------------------------------------------------- durable mirror (best-effort) --
+const mirror = osMirror({
+  index: 'os-dashboards',
+  createBody: {
+    mappings: {
+      properties: {
+        id: { type: 'keyword' },
+        owner: { type: 'keyword' },
+        domain: { type: 'keyword' },
+        tier: { type: 'keyword' },
+        updatedAt: { type: 'date' },
+        spec: { type: 'object', enabled: false },
+      },
+    },
+  },
+});
+
+function writeThrough(rec: Stored): void {
+  mirror.writeThrough(rec.id, rec);
+}
+
+export async function ensureHydrated(): Promise<void> {
+  const s = dashState();
+  if (!s.hydration) s.hydration = hydrate();
+  return s.hydration;
+}
+
+async function hydrate(): Promise<void> {
+  const s = dashState();
+  const docs = (await mirror.hydrate(1000)) ?? [];
+  for (const rec of docs as Stored[]) {
+    if (rec && rec.id && !s.dashboards.find((d) => d.id === rec.id)) {
+      s.dashboards.push(rec);
+    }
+  }
+}
+
 export function __resetDashboards(): void {
-  dashState().dashboards = SEED.map((d) => ({ ...d, spec: { ...d.spec, charts: [...d.spec.charts] } }));
+  const s = dashState();
+  s.dashboards = SEED.map((d) => ({ ...d, spec: { ...d.spec, charts: [...d.spec.charts] } }));
+  s.hydration = null;
+  mirror.__reset();
 }
 
 export type DashboardSummary = { id: string; name: string; view: string; tier: DashTier; owner: string; charts: number };
@@ -68,10 +109,12 @@ export function saveDashboard(user: Principal, id: string, spec: DashboardSpec):
   if (existing) {
     if (existing.owner !== user.id) throw status('only the owner can edit this dashboard', 403);
     existing.spec = spec;
+    writeThrough(existing);
     return existing;
   }
   const rec = { ...dashboardRecord(id, spec, user.id, 'personal'), domain: user.domains[0] ?? 'sales' };
   dashState().dashboards.push(rec);
+  writeThrough(rec);
   return rec;
 }
 
@@ -81,6 +124,7 @@ export function transitionDashboard(id: string, approver: Principal, transition:
   const res = governDashboard(d, transition, { id: approver.id, role: approver.role });
   if (!res.ok) throw status(res.reason ?? 'transition denied', 403);
   d.tier = res.record.tier;
+  writeThrough(d);
   return d;
 }
 

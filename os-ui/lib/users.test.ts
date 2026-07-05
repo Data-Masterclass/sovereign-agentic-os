@@ -57,9 +57,11 @@ beforeEach(() => __resetUsers());
 
 // ---- Role model invariants --------------------------------------------------
 
-test('ROLES contains exactly creator, builder, admin — no agentic-leader', () => {
+test('ROLES contains exactly creator, builder, domain_admin, admin — no agentic-leader', () => {
   const roles = [...ROLES].sort();
-  assert.deepEqual(roles, ['admin', 'builder', 'creator']);
+  assert.deepEqual(roles, ['admin', 'builder', 'creator', 'domain_admin']);
+  // Order encodes rank: lowest→highest privilege.
+  assert.deepEqual([...ROLES], ['creator', 'builder', 'domain_admin', 'admin']);
 });
 
 test('creator has base rights but lacks promote.shared and manage.users.tenant', () => {
@@ -82,6 +84,17 @@ test('admin has manage.users.tenant and promote.certify', () => {
   const rights = ROLE_RIGHTS['admin'];
   assert.ok(rights.includes('manage.users.tenant'));
   assert.ok(rights.includes('promote.certify'));
+});
+
+test('domain_admin has domain user-admin + every builder right, but never tenant powers', () => {
+  const rights = ROLE_RIGHTS['domain_admin'];
+  for (const r of ROLE_RIGHTS['builder']) assert.ok(rights.includes(r), `inherits builder right ${r}`);
+  assert.ok(rights.includes('manage.users.domain'));
+  assert.ok(rights.includes('manage.memberships.domain'));
+  assert.ok(!rights.includes('manage.users.tenant'));
+  assert.ok(!rights.includes('promote.certify'));
+  assert.ok(!rights.includes('override.policy'));
+  assert.ok(!rights.includes('cost.cap.set'));
 });
 
 // ---- updateUser: name + email -----------------------------------------------
@@ -251,6 +264,27 @@ test('stored agentic-leader role normalizes to creator on read from OpenSearch',
   const found = (await users.listUsers()).find((u) => u.id === 'legacy@example.com');
   assert.ok(found, 'legacy user should be visible');
   assert.equal(found!.role, 'creator', 'agentic-leader normalized to creator');
+
+  activeFetch = null;
+});
+
+test('legacy normalization: any role outside the 4 → creator; a stored domain_admin passes through (never auto-promoted, never demoted)', async () => {
+  const { store, stub } = openSearchStub();
+  activeFetch = stub;
+
+  store.set('__meta__', { id: '__meta__', initialized: true });
+  const base = { password: await hashPassword(STRONG), domains: ['sales'], emailVerified: true, onboarded: false, createdAt: Date.now() };
+  store.set('p@example.com', { id: 'p@example.com', name: 'P', email: 'p@example.com', role: 'participant', ...base } as Record<string, unknown>);
+  store.set('x@example.com', { id: 'x@example.com', name: 'X', email: 'x@example.com', role: 'super-user', ...base } as Record<string, unknown>);
+  store.set('d@example.com', { id: 'd@example.com', name: 'D', email: 'd@example.com', role: 'domain_admin', ...base } as Record<string, unknown>);
+  store.set('a@example.com', { id: 'a@example.com', name: 'A', email: 'a@example.com', role: 'admin', ...base } as Record<string, unknown>);
+
+  const users = await freshUsers();
+  const byId = new Map((await users.listUsers()).map((u) => [u.id, u]));
+  assert.equal(byId.get('p@example.com')!.role, 'creator', 'participant → creator');
+  assert.equal(byId.get('x@example.com')!.role, 'creator', 'unknown role → creator');
+  assert.equal(byId.get('d@example.com')!.role, 'domain_admin', 'an explicitly stored domain_admin stays');
+  assert.equal(byId.get('a@example.com')!.role, 'admin', 'existing admins stay admin');
 
   activeFetch = null;
 });

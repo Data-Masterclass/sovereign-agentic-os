@@ -4,10 +4,13 @@
 /**
  * The OS sidebar tab set. The first group is the canonical OS tab order
  * (os-application.md §4); every tab routes to a real surface in v1.0. The
- * second group ("Platform") holds infrastructure consoles wired to in-cluster
- * services that don't map onto a single business tab (the model/MCP gateway,
- * the orchestrator, the launchpad for the full external tool UIs, and the
- * About / Licenses page).
+ * second group ("Platform") is the operator plane: Governance (builders
+ * approve promotions — the sharing ladder), plus the admin consoles (Admin,
+ * Components, Terminal, About / Licenses). The former Users / Gateway /
+ * Orchestration / Consoles / Workbench tabs were consolidated: Users & Access
+ * lives in Admin (/platform), and the gateway / orchestrator / console
+ * launchers merged into the one Components surface (/components); the old
+ * routes redirect.
  */
 import type { Role } from '@/lib/session';
 
@@ -43,22 +46,17 @@ export const TAB_GROUPS: TabGroup[] = [
       { label: 'Connections', icon: '⇄', href: '/connections' },
       { label: 'Marketplace', icon: '⊞', href: '/marketplace', role: 'Builder / Administrator' },
       { label: 'Monitoring', icon: '◷', href: '/monitoring' },
-      { label: 'Governance', icon: '⚖', href: '/governance', role: 'Builder / Administrator' },
+      { label: 'Tutorials', icon: '◎', href: '/tutorials' },
       { label: 'Settings', icon: '⚙', href: '/settings' },
     ],
   },
   {
     heading: 'Platform',
     tabs: [
+      { label: 'Governance', icon: '⚖', href: '/governance', role: 'Builder / Administrator', minRole: 'builder' },
       { label: 'Admin', icon: '❖', href: '/platform', role: 'Administrator', minRole: 'admin' },
-      { label: 'Users', icon: '☖', href: '/users', role: 'Administrator', minRole: 'admin' },
       { label: 'Components', icon: '▥', href: '/components', role: 'Administrator', minRole: 'admin' },
-      { label: 'Gateway', icon: '⌁', href: '/gateway', role: 'Administrator', minRole: 'admin' },
-      { label: 'Orchestration', icon: '⟲', href: '/orchestration', role: 'Administrator', minRole: 'admin' },
-      { label: 'Workbench', icon: '⬓', href: '/workbench', role: 'Administrator', minRole: 'admin' },
       { label: 'Terminal', icon: '▮', href: '/terminal', role: 'Administrator', minRole: 'admin' },
-      { label: 'Tutorials', icon: '◎', href: '/tutorials' },
-      { label: 'Consoles', icon: '◫', href: '/consoles', role: 'Administrator', minRole: 'admin' },
       { label: 'About / Licenses', icon: '©', href: '/about', role: 'Administrator', minRole: 'admin' },
     ],
   },
@@ -67,8 +65,8 @@ export const TAB_GROUPS: TabGroup[] = [
 // Flat list (kept for any consumer that just wants every tab in order).
 export const TABS: Tab[] = TAB_GROUPS.flatMap((g) => g.tabs);
 
-/** Role rank — creator(0) < builder(1) < admin(2). */
-const ROLE_RANK: Record<Role, number> = { creator: 0, builder: 1, admin: 2 };
+/** Role rank — creator(0) < builder(1) < domain_admin(2) < admin(3). */
+const ROLE_RANK: Record<Role, number> = { creator: 0, builder: 1, domain_admin: 2, admin: 3 };
 
 /**
  * Pure visibility check: can `userRole` see `tab`?

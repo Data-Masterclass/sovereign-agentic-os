@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@/lib/useUser';
+import { roleAtLeast } from '@/lib/session';
 
 type Trust = 'bronze' | 'silver' | 'gold';
 type Certification = { level: Trust; by: string; at: string };
@@ -61,7 +62,7 @@ export default function CertifyPanel({
   const isAdmin = !!user && user.role === 'admin' && user.domains.includes(domain);
   // Unshare needs canEdit (owner or admin-in-domain) AND a Builder+ role — match the
   // store's guard so we never show an action the server will 403 (no dead controls).
-  const canUnshare = isAdmin || (!!user && user.id === owner && user.role === 'builder');
+  const canUnshare = isAdmin || (!!user && user.id === owner && roleAtLeast(user.role, 'builder'));
   const pending = status.request?.status === 'pending';
 
   // -------------------------------------------------- product (already certified) --

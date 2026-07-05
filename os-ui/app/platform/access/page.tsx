@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
 
-type Role = 'creator' | 'builder' | 'admin';
+type Role = 'creator' | 'builder' | 'domain_admin' | 'admin';
 type Status = 'active' | 'invited' | 'deactivated';
 type AccessUser = {
   id: string;
@@ -17,7 +17,7 @@ type AccessUser = {
   active: boolean;
 };
 type Sso = { enabled: boolean; provider: string; issuerUrl: string; scim: boolean };
-const ROLES: Role[] = ['creator', 'builder', 'admin'];
+const ROLES: Role[] = ['creator', 'builder', 'domain_admin', 'admin'];
 const STATUS_BADGE: Record<Status, string> = { active: 'ok', invited: 'muted', deactivated: 'err' };
 
 export default function AccessPage() {
