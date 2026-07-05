@@ -35,6 +35,152 @@ default allow := true
 # Identity carried by the Trino OPA request.
 user := input.context.identity.user
 
+# --- Write-target guard (ADDITIVE floor for the governed /execute write path) ---
+# AUTHORITATIVE write authorization lives in the query-tool (execute_guard.py): it
+# holds the caller's uid + ROLE, enforces the statement allowlist, the role floor
+# (builder for domain schemas) and personal_<uid> OWNERSHIP. The Trino session
+# identity here is only the DOMAIN principal, and `data.trino.allow` is intentionally
+# permissive, so this clause cannot express role/uid — it is a SECOND, coarser floor:
+# a GOVERNED principal (one the policy compiler declares with domains) may only run
+# write DDL against a schema it is entitled to — one of its own domains, or a
+# `personal_*` sandbox schema. This is purely additive: it only ever DENIES, and only
+# for governed principals; unknown/system writers (any principal absent from
+# data.governance.principals — the sales-lane service principals like `northpeak-marts`
+# ARE declared there now) keep the existing default-allow, so it never loosens policy
+# or breaks existing writes.
+write_operations := {
+	"CreateSchema", "DropSchema",
+	"CreateTable", "CreateTableAsSelect", "DropTable",
+	"InsertIntoTable", "DeleteFromTable", "TruncateTable",
+}
+
+is_write_op if input.action.operation in write_operations
+
+# A principal the governance model knows about (has declared domains).
+governed_principal if count(principal.domains) > 0
+
+# Target schema of the write (table ops carry a `table` resource; schema ops a `schema`).
+write_schema := s if {
+	t := input.action.resource.table
+	s := t.schemaName
+}
+
+write_schema := s if {
+	not input.action.resource.table
+	sc := input.action.resource.schema
+	s := sc.schemaName
+}
+
+write_target_entitled if write_schema in principal.domains
+
+write_target_entitled if startswith(write_schema, "personal_")
+
+allow := false if {
+	is_write_op
+	governed_principal
+	not write_target_entitled
+}
+
+# --- Personal-schema isolation (T1.5 — ADDITIVE hard deny, keyed on the principal) --
+# The personal lane (`iceberg.personal_<uid>.*`) is where students upload private
+# files. Those tables have NO `data.governance.tables` entry, so the domain-based row
+# filter below never touches them — WITHOUT this rule ANY authenticated principal could
+# read (or write) another user's personal schema through the governed query path. This
+# is a HARD DENY on the whole schema (not a row filter): a `personal_<x>` schema is
+# private to `<x>` alone.
+#
+# Ownership is decided ENTIRELY from the Trino session user (the accessing principal),
+# so it cannot be spoofed by a request field — the query-tool sets the Trino session
+# `user` to the caller's session-derived principal, and os-ui mints the schema name as
+# `personal_<sanitizeIdent(uid)>` (store-fqn.ts) / `personal_<sanitize>(uid)`
+# (execute_guard.py). We reproduce that SAME sanitization here so the in-rego owner
+# schema is byte-identical to the minted schema (handles a raw email uid too).
+#
+# Purely additive: it ONLY ever DENIES, and ONLY for a `personal_*` schema the caller
+# does not own — non-personal (domain/shared/public) schemas are governed exactly as
+# before, and a system/service writer (marts job, dbt) never targets `personal_*`.
+
+# Sanitize an identity to the same stable form os-ui/query-tool use to mint the schema:
+# lowercase, collapse each run of non-[a-z0-9] to '_', strip leading/trailing '_',
+# empty -> "user". (Mirrors sanitizeIdent / personal_schema exactly.)
+sanitize_ident(v) := s if {
+	trimmed := trim(regex.replace(lower(v), `[^a-z0-9]+`, "_"), "_")
+	trimmed != ""
+	s := trimmed
+}
+
+sanitize_ident(v) := "user" if {
+	trim(regex.replace(lower(v), `[^a-z0-9]+`, "_"), "_") == ""
+}
+
+# The accessing principal owns EXACTLY this one personal schema.
+is_owned_personal(schema) if schema == sprintf("personal_%s", [sanitize_ident(user)])
+
+# --- Promotion release (T8 — publish on approval) -----------------------------------
+# An approved `dataset_promote` must COPY the requester's personal-lane gold/silver
+# table into the governed domain schema, and the publish CTAS runs AS THE APPROVING
+# BUILDER (separation of duties — never the requester). That read would hit the hard
+# deny below, so os-ui pushes a ONE-TIME release right before the publish CTAS and
+# withdraws it immediately after (any straggler is wiped by the next full
+# `data.governance` PUT, which carries no `releases` key):
+#
+#   data.governance.releases["personal_<owner>"] = {"reader": "<approver>", "fqn": ...}
+#
+# The exemption is deliberately NARROW: READ-ONLY (never a write operation), exactly
+# ONE schema, exactly ONE reader. Everything else about the personal lane — including
+# writes by the releasee during the window — stays hard-denied.
+released_to_reader(schema) if {
+	not is_write_op
+	rel := data.governance.releases[schema]
+	rel.reader == user
+}
+
+# Every schema the action references (covers BOTH the schema-visibility entry point and
+# the table-read/write entry points, plus rename `targetResource` and batch
+# `filterResources`, so a personal table can't be reached by any path). A path that is
+# absent from the request simply contributes nothing.
+accessed_schemas contains s if s := input.action.resource.table.schemaName
+
+accessed_schemas contains s if s := input.action.resource.schema.schemaName
+
+accessed_schemas contains s if s := input.action.resource.column.schemaName
+
+accessed_schemas contains s if s := input.action.targetResource.table.schemaName
+
+accessed_schemas contains s if s := input.action.targetResource.schema.schemaName
+
+accessed_schemas contains s if {
+	some fr in input.action.filterResources
+	s := fr.table.schemaName
+}
+
+accessed_schemas contains s if {
+	some fr in input.action.filterResources
+	s := fr.column.schemaName
+}
+
+# HARD DENY: any access (read OR write) to a `personal_*` schema the caller does not
+# own. `not is_owned_personal(...)` fails CLOSED — if the request carries no identity,
+# `user`/`sanitize_ident` are undefined, `is_owned_personal` is false, and access is
+# denied. Composes with the write floor above (both assign `allow := false`).
+allow := false if {
+	some schema in accessed_schemas
+	startswith(schema, "personal_")
+	not is_owned_personal(schema)
+	not released_to_reader(schema)
+}
+
+# Defense-in-depth on the row-filter entry point: even if a future config only wires
+# the row-filters URI, a non-owned personal table yields zero rows. The promotion
+# release exempts here too — otherwise a released publish read would silently copy
+# ZERO rows into the domain table (a wrong-data outcome worse than a denial).
+rowFilters contains {"expression": "false"} if {
+	t := input.action.resource.table
+	startswith(t.schemaName, "personal_")
+	not is_owned_personal(t.schemaName)
+	not released_to_reader(t.schemaName)
+}
+
 # Principal's domain memberships + sensitivity clearances (default: none).
 principal := object.get(data.governance.principals, [user], {"domains": [], "clearances": []})
 

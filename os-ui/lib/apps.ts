@@ -541,6 +541,21 @@ async function forgejoApi(
 export async function listAppFiles(appId: string, user: CurrentUser): Promise<RepoFileMeta> {
   ensureBuilder(user);
   const app = await getAppForUser(appId, user);
+  return repoTree(app);
+}
+
+/**
+ * READ-ONLY tree for anyone who can SEE the app (the MCP read-back counterpart of
+ * the Builder-gated code editor above). The gate is the same visibility rule as
+ * `getAppForUser` — reading the tree mutates nothing, so it does not need the
+ * Builder floor the editor's write path carries.
+ */
+export async function listAppFilesForViewer(appId: string, user: CurrentUser): Promise<RepoFileMeta> {
+  const app = await getAppForUser(appId, user);
+  return repoTree(app);
+}
+
+async function repoTree(app: App): Promise<RepoFileMeta> {
   const { owner, repo } = repoCoords(app);
   const branch = 'main';
   const res = await forgejoApi('GET', `/repos/${owner}/${repo}/git/trees/${branch}?recursive=true&per_page=1000`);
@@ -560,6 +575,16 @@ export async function listAppFiles(appId: string, user: CurrentUser): Promise<Re
 export async function readAppFile(appId: string, user: CurrentUser, path: string): Promise<RepoFile> {
   ensureBuilder(user);
   const app = await getAppForUser(appId, user);
+  return repoRead(app, path);
+}
+
+/** READ-ONLY single-file read for anyone who can SEE the app (view gate only). */
+export async function readAppFileForViewer(appId: string, user: CurrentUser, path: string): Promise<RepoFile> {
+  const app = await getAppForUser(appId, user);
+  return repoRead(app, path);
+}
+
+async function repoRead(app: App, path: string): Promise<RepoFile> {
   const clean = sanitizeRepoPath(path);
   const { owner, repo } = repoCoords(app);
   const res = await forgejoApi('GET', `/repos/${owner}/${repo}/contents/${encodeRepoPath(clean)}?ref=main`);

@@ -64,9 +64,9 @@ test('Orders: ingest → Silver dataset → promote → Gold asset → certify �
   const req = requestPromotion(d0.id, amir, { visibility: 'domain' });
   const asset = applyApprovedPromotion(req, bea);
   assert.equal(asset.tier, 'asset');
-  const promoteBuild = await build(getDataset(d0.id, sara), 'promote'); // dbt-trino → trino → om → policy
+  const promoteBuild = await build(getDataset(d0.id, sara), 'promote'); // policy → dbt-trino → trino (T8)
   assert.equal(promoteBuild.ok, true);
-  assert.deepEqual(promoteBuild.rows.map((r) => r.tool), ['dbt-trino', 'trino', 'om', 'policy']);
+  assert.deepEqual(promoteBuild.rows.map((r) => r.tool), ['policy', 'dbt-trino', 'trino']);
   assert.match(promoteBuild.rows.find((r) => r.tool === 'policy')!.detail, /conformant/);
 
   // 3. Harmonize to Gold (on the asset), then Admin certifies → Gold Data Product

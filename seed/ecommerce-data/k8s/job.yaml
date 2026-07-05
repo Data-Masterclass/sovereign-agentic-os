@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Data Masterclass
+#
+# Northpeak cohort DATA seed — in-cluster runner. Two governed stages in one Job:
+#   1. marts.mjs — materializes the six datasets' bronze/silver/gold Iceberg tables
+#      into `iceberg.northpeak` through the query-tool /execute (guarded CTAS; the
+#      run aborts on the Polaris write probe if the 1.1.0 upgrade is not green);
+#   2. seed.mjs — registry + docs + promotion + metrics + certification + lineage +
+#      dashboards through the os-ui governed API (session-cookie auth, real roles).
+# It touches ONLY those two governed services — never Trino/Polaris/K8s directly.
+#
+# Prereqs (deploy/apply-data-seed.sh does all of this):
+#   1. OS_USERS updated: `northpeak` appended to alp-instructor + aborek domains.
+#   2. ConfigMap northpeak-data-seed from the seed files (client.mjs is REUSED from
+#      the e-commerce seed unchanged):
+#        kubectl -n agentic-os create configmap northpeak-data-seed \
+#          --from-file=marts.mjs=seed/ecommerce-data/marts.mjs \
+#          --from-file=seed.mjs=seed/ecommerce-data/seed.mjs \
+#          --from-file=narrative.mjs=seed/ecommerce-data/narrative.mjs \
+#          --from-file=client.mjs=seed/ecommerce/lib/client.mjs
+#   3. Secret northpeak-data-seed-credentials with SEED_CREDENTIALS
+#      ({"alp-instructor":…,"aborek":…,"<one-learner-email>":…} — composed from the
+#      gitignored values.private.yaml + seed/campaign/users.secret.json).
+#
+# Run:  kubectl -n agentic-os apply -f seed/ecommerce-data/k8s/job.yaml
+#       kubectl -n agentic-os logs -f job/northpeak-data-seed
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: northpeak-data-seed
+  namespace: agentic-os
+  labels:
+    app.kubernetes.io/part-of: sovereign-agentic-os
+    app.kubernetes.io/component: data-seed
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: data-seed
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: seed
+          image: node:22.13.1-alpine3.21 # same base as the os-ui image
+          imagePullPolicy: IfNotPresent
+          # workingDir keeps the source layout so relative imports resolve:
+          #   ./narrative.mjs             → /work/ecommerce-data/narrative.mjs
+          #   ../ecommerce/lib/client.mjs → /work/ecommerce/lib/client.mjs
+          workingDir: /work/ecommerce-data
+          command: ["/bin/sh", "-c", "node marts.mjs && node seed.mjs"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          env:
+            - name: OS_UI_URL
+              value: "http://os-ui:3000"
+            - name: QUERY_TOOL_URL
+              value: "http://query-tool:8000"
+            - name: SEED_CREDENTIALS
+              valueFrom:
+                secretKeyRef:
+                  name: northpeak-data-seed-credentials
+                  key: SEED_CREDENTIALS
+          volumeMounts:
+            - { name: scripts, mountPath: /work }
+          resources:
+            requests: { cpu: "50m", memory: "96Mi" }
+            limits: { cpu: "500m", memory: "256Mi" }
+      volumes:
+        - name: scripts
+          configMap:
+            name: northpeak-data-seed
+            items:
+              - { key: marts.mjs, path: ecommerce-data/marts.mjs }
+              - { key: seed.mjs, path: ecommerce-data/seed.mjs }
+              - { key: narrative.mjs, path: ecommerce-data/narrative.mjs }
+              - { key: client.mjs, path: ecommerce/lib/client.mjs }

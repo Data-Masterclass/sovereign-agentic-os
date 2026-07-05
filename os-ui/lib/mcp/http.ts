@@ -21,13 +21,21 @@ function bearerFrom(req: Request): string | null {
 }
 
 export function mcpUnauthorized(): NextResponse {
+  // The `resource_metadata` pointer (RFC 9728) is what starts Claude's managed-
+  // authorization discovery chain. Absolute when OS_PUBLIC_URL is set (deploy);
+  // relative locally (managed auth is a deploy-only surface).
+  const base = (process.env.OS_PUBLIC_URL ?? '').replace(/\/+$/, '');
+  const wwwAuthenticate =
+    `Bearer realm="Sovereign Agentic OS MCP", ` +
+    `resource_metadata="${base}/.well-known/oauth-protected-resource/api/mcp", ` +
+    `scope="mcp:tools"`;
   return NextResponse.json(
     {
       jsonrpc: '2.0',
       id: null,
       error: { code: -32001, message: 'Unauthorized: present a valid OS MCP bearer token' },
     },
-    { status: 401, headers: { 'WWW-Authenticate': 'Bearer realm="Sovereign Agentic OS MCP"' } },
+    { status: 401, headers: { 'WWW-Authenticate': wwwAuthenticate } },
   );
 }
 

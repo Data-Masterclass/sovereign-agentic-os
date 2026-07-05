@@ -208,6 +208,31 @@ spec:
                   key: token
             - name: QUERY_TOOL_URL
               value: {{ $u.queryToolUrl | quote }}
+            # ---- Data-tab ingest (T3). os-ui streams an uploaded file to MinIO
+            # (uploads/<uid>/) with a SigV4 PUT, then calls the data-runner /ingest —
+            # which writes the physical Iceberg Bronze table. Reuses the SAME
+            # object-storage endpoint + `objectStorage.secretName` Secret the lakehouse
+            # uses (no new broad creds), and the SAME warehouse bucket for uploads/. ----
+            - name: DATA_RUNNER_URL
+              value: {{ $u.dataRunnerUrl | default "http://data-runner:8000" | quote }}
+            - name: S3_ENDPOINT
+              value: {{ include "soa.s3Endpoint" . | quote }}
+            - name: S3_REGION
+              value: {{ .Values.objectStorage.region | default "us-east-1" | quote }}
+            - name: S3_PATH_STYLE
+              value: "true"
+            - name: UPLOADS_BUCKET
+              value: {{ $u.uploadsBucket | default "lakehouse" | quote }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.objectStorage.secretName }}
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.objectStorage.secretName }}
+                  key: AWS_SECRET_ACCESS_KEY
             - name: LANGFUSE_URL
               value: {{ $u.langfuseUrl | quote }}
             - name: OPENSEARCH_URL
@@ -254,9 +279,24 @@ spec:
             - name: MLFLOW_URL
               value: {{ $u.mlflowUrl | default "http://mlflow:5000" | quote }}
             - name: KSERVE_URL
-              value: {{ $u.kserveUrl | default "http://kserve:80" | quote }}
+              # RawDeployment KServe creates a `<isvc-name>-predictor` Service —
+              # there is NO `kserve` Service. Point at the predictor directly so
+              # the Science-tab probe + `/v2/models/*/infer` calls resolve.
+              value: {{ $u.kserveUrl | default (printf "http://%s-predictor:80" .Values.kserve.sampleModel.name) | quote }}
             - name: OPENMETADATA_API_URL
               value: {{ $u.openmetadataApiUrl | default "http://openmetadata:8585" | quote }}
+            # OpenMetadata bot JWT (optional). OM requires a Bearer token; when this
+            # is empty/absent the Catalog SKIPS OpenMetadata honestly instead of
+            # firing a doomed 401. Sourced from the os-ui-openmetadata Secret
+            # (optional — the pod starts fine without it), which the operator fills
+            # out-of-band with a minted ingestion-bot JWT (or via the gitignored
+            # osUI.openmetadataJwt value). Server-only; never sent to the browser.
+            - name: OPENMETADATA_JWT
+              valueFrom:
+                secretKeyRef:
+                  name: os-ui-openmetadata
+                  key: OPENMETADATA_JWT
+                  optional: true
             # Same-origin tool proxy (/tools/<key> → in-cluster Service, served by
             # the os-ui pod; see lib/tool-proxy.ts). These two upstreams have no
             # sibling env var elsewhere, so set them explicitly + overridable. The
@@ -269,7 +309,10 @@ spec:
             - name: CUBE_URL
               value: {{ $u.cubeUrl | default "http://cube:4000" | quote }}
             - name: FEATUREFORM_URL
-              value: {{ $u.featureformUrl | default "http://featureform:7878" | quote }}
+              # Port 80 = Featureform's HTTP dashboard (what the tool-proxy iframes
+              # and the Science-tab probe GETs). 7878 is gRPC-only — plain HTTP
+              # against it resets, which made the tab report Featureform "absent".
+              value: {{ $u.featureformUrl | default "http://featureform:80" | quote }}
             {{- if .Values.ml.enabled }}
             # Layer 4 (Science). Gates the Science/ML surfaces in the UI
             # (lib/config.ts reads ML_ENABLED). On when the Science plane

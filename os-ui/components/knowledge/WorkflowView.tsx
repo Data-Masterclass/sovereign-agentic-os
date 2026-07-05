@@ -188,7 +188,7 @@ export default function WorkflowView({
 
   return (
     <>
-      <PageHeader title="Knowledge" crumb={data.title} tutorial="knowledge" mcpTab="knowledge" />
+      <PageHeader title="Knowledge" crumb={data.title} tutorial="knowledge" />
       <div className="content">
         {/* Header */}
         <div className="k-detail-head">

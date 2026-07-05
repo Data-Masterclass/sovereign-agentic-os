@@ -15,10 +15,13 @@ metadata:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "dbt") | nindent 4 }}
   annotations:
-    # post-install only: the warehouse persists in Postgres, so we don't rebuild
-    # on every upgrade (which would slow every release). Re-run on demand by
-    # deleting this Job and re-applying, or `kubectl create job --from`.
-    "helm.sh/hook": post-install
+    # post-install,post-upgrade: the warehouse storage (MinIO PVC / node-disk) can be
+    # re-provisioned out from under the Polaris catalog, dropping the physical marts
+    # while nothing recreates them — which is exactly what broke the Catalog + the
+    # default query. `dbt build` is idempotent (models create-or-replace their
+    # tables), so re-firing on every upgrade self-heals the warehouse. Sibling of the
+    # marts-init hook (weight 20); this one is weight 15 (runs first).
+    "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "15"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:

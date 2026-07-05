@@ -8,7 +8,18 @@ import { useUser } from '@/lib/useUser';
 
 type ColumnDoc = { name: string; description: string };
 type Gate = { ok: boolean; missing: string[] };
-type Approval = { id: string; status: 'pending' | 'approved' | 'rejected'; detail: string; decidedBy?: string };
+type Approval = {
+  id: string;
+  status: 'pending' | 'approved' | 'rejected';
+  detail: string;
+  decidedBy?: string;
+  /** The executed effect (T8): the PHYSICAL publish outcome behind the approval. */
+  effect?: {
+    applied: string;
+    live: boolean;
+    publish?: { ok: boolean; fqn: string; error?: string; mode?: string; cubeView?: string | null };
+  };
+};
 
 /**
  * Promote → Data Asset (data-architecture-model.md). The documentation form (OM
@@ -150,8 +161,29 @@ export default function PromotePanel({
         </div>
       ) : null}
 
-      {request?.status === 'approved' ? (
-        <div className="gate-check" style={{ marginTop: 14 }}><span className="badge ok">approved</span> Promoted into Trino by {request.decidedBy}.</div>
+      {/* Physical-publish status, honestly: approved+no effect = materializing;
+          effect.publish.ok = live table; effect w/o ok = the real failure. */}
+      {request?.status === 'approved' && !request.effect ? (
+        <div className="gate-check" style={{ marginTop: 14 }}>
+          <span className="badge warn">materializing</span>{' '}
+          <span className="muted">Approved by {request.decidedBy} — publishing the table into Trino…</span>
+        </div>
+      ) : null}
+      {request?.status === 'approved' && request.effect?.publish?.ok ? (
+        <div className="gate-check" style={{ marginTop: 14 }}>
+          <span className="badge ok">live</span> Published by {request.decidedBy} →{' '}
+          <code>{request.effect.publish.fqn}</code>
+          {request.effect.publish.mode === 'live' ? '' : ' (offline-mock)'}
+        </div>
+      ) : null}
+      {request?.status === 'approved' && request.effect && !request.effect.publish?.ok ? (
+        <div className="gate-check" style={{ marginTop: 14 }}>
+          <span className="badge err">publish failed</span>{' '}
+          <span className="muted">
+            {request.effect.publish?.error ?? request.effect.applied} — the dataset stays private (tier unchanged).
+            Fix the issue and request promotion again.
+          </span>
+        </div>
       ) : null}
       {request?.status === 'rejected' ? (
         <div className="gate-check" style={{ marginTop: 14 }}><span className="badge err">rejected</span> by {request.decidedBy}.</div>

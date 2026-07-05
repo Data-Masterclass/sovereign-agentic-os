@@ -1,0 +1,121 @@
+# One-off seed: train + publish the demo churn model the Science tier serves.
+#
+# WHY: the chart's InferenceService (templates/science/kserve.yaml) points at
+# s3://mlflow/models/sample-sklearn, but nothing ever wrote an artifact there —
+# the predictor sat in Init:CrashLoopBackOff (NoSuchBucket) since go-live. This
+# Job trains a tiny sklearn churn scorer INSIDE the exact serving image
+# (seldonio/mlserver:1.5.0, the kserve-mlserver ClusterServingRuntime image), so
+# the pickled model is joblib/sklearn-version-safe by construction, then uploads
+# it (+ model-settings.json naming the model `churn_model`, the name
+# os-ui/lib/science/churn.ts calls at /v2/models/churn_model/infer).
+#
+# Run (idempotent — re-running overwrites the same artifact):
+#   kubectl -n agentic-os apply -f deploy/science-seed-churn-model.yaml
+#   kubectl -n agentic-os wait --for=condition=complete job/science-churn-model-seed --timeout=10m
+#   kubectl -n agentic-os logs job/science-churn-model-seed --all-containers
+# Then restart the predictor so its storage-initializer re-pulls:
+#   kubectl -n agentic-os rollout restart deploy/sample-sklearn-predictor
+#
+# Features (order matters — must match CHURN.features in os-ui/lib/science/churn.ts):
+#   [recency_days, order_frequency, monetary_value, tenure_months]
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: science-churn-model-seed
+  namespace: agentic-os
+  labels:
+    app.kubernetes.io/part-of: sovereign-agentic-os
+    app.kubernetes.io/component: science-seed
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: sovereign-agentic-os
+        app.kubernetes.io/component: science-seed
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: train
+          # SAME image as the kserve-mlserver runtime => identical sklearn/joblib.
+          image: docker.io/seldonio/mlserver:1.5.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          command: ["python", "-c"]
+          args:
+            - |
+              import json, numpy as np, joblib
+              from sklearn.ensemble import GradientBoostingRegressor
+              import sklearn
+              rng = np.random.default_rng(42)
+              n = 4000
+              recency  = rng.uniform(0, 365, n)     # days since last order
+              freq     = rng.uniform(0, 30, n)      # orders / period
+              monetary = rng.uniform(0, 5000, n)    # revenue
+              tenure   = rng.uniform(1, 72, n)      # months as customer
+              X = np.column_stack([recency, freq, monetary, tenure]).astype(np.float32)
+              # Latent churn propensity: dormant, low-frequency, low-value, young
+              # accounts churn more. Bernoulli outcomes -> a regressor learns the
+              # conditional mean, i.e. an approximate churn probability in [0,1].
+              logit = 0.015*recency - 0.22*freq - 0.0009*monetary - 0.04*tenure - 1.0
+              p = 1.0/(1.0 + np.exp(-logit))
+              y = rng.binomial(1, p).astype(np.float64)
+              model = GradientBoostingRegressor(n_estimators=120, max_depth=3, random_state=0)
+              model.fit(X, y)
+              joblib.dump(model, "/artifact/model.joblib")
+              settings = {
+                "name": "churn_model",
+                "implementation": "mlserver_sklearn.SKLearnModel",
+                "parameters": {"uri": "./model.joblib", "version": "v1"},
+              }
+              with open("/artifact/model-settings.json", "w") as f:
+                  json.dump(settings, f, indent=2)
+              hi = model.predict(np.array([[300, 1, 50, 3]], dtype=np.float32))[0]
+              lo = model.predict(np.array([[5, 20, 4000, 60]], dtype=np.float32))[0]
+              print(f"sklearn={sklearn.__version__} risky={hi:.3f} loyal={lo:.3f}")
+              assert hi > lo, "model failed sanity ordering"
+          volumeMounts:
+            - { name: artifact, mountPath: /artifact }
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: "1", memory: 1Gi }
+      containers:
+        - name: upload
+          # Same pinned aws-cli the chart's bucket-init uses (mc/MinIO client is AGPL).
+          image: amazon/aws-cli@sha256:e14216fb361cce909ce199616711ad103182d5937f851cda9bebf25867d7180a
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: object-storage-credentials, key: AWS_ACCESS_KEY_ID } }
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: object-storage-credentials, key: AWS_SECRET_ACCESS_KEY } }
+            - name: AWS_DEFAULT_REGION
+              value: us-east-1
+            - name: ENDPOINT
+              value: http://minio:9000
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              aws --endpoint-url "$ENDPOINT" s3 ls "s3://mlflow" >/dev/null 2>&1 \
+                || aws --endpoint-url "$ENDPOINT" s3 mb "s3://mlflow"
+              aws --endpoint-url "$ENDPOINT" s3 cp --recursive /artifact "s3://mlflow/models/sample-sklearn/"
+              aws --endpoint-url "$ENDPOINT" s3 ls "s3://mlflow/models/sample-sklearn/"
+              echo "churn model artifact published"
+          volumeMounts:
+            - { name: artifact, mountPath: /artifact }
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 256Mi }
+      volumes:
+        - name: artifact
+          emptyDir: {}

@@ -19,7 +19,14 @@ export async function GET() {
     const token = signMcpToken(user.id);
     const origin = (process.env.OS_PUBLIC_URL ?? '').replace(/\/+$/, '');
     const endpoint = `${origin}/api/mcp`;
-    return NextResponse.json({ endpoint, path: '/api/mcp', token, role: user.role });
+    return NextResponse.json({
+      endpoint,
+      path: '/api/mcp',
+      token,
+      role: user.role,
+      id: user.id,
+      name: user.name,
+    });
   } catch (e) {
     const status = (e as { status?: number })?.status ?? 500;
     return NextResponse.json({ error: (e as Error).message }, { status });

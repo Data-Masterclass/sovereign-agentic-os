@@ -52,9 +52,14 @@ test('role gate: minRole is enforced by rank, not equality', () => {
   assert.equal(roleAllowed('admin', 'builder'), true); // higher role passes a lower bar
   assert.equal(roleAllowed('creator', 'builder'), false); // lower role blocked
   assert.equal(roleAllowed('builder', 'builder'), true);
-  // featureform requires builder+ → a creator is denied, a builder allowed.
-  assert.equal(roleAllowed('creator', TOOLS.featureform.minRole), false);
-  assert.equal(roleAllowed('builder', TOOLS.featureform.minRole), true);
+  // A builder-gated tool (OpenSearch) denies a creator but allows a builder.
+  assert.equal(roleAllowed('creator', TOOLS.opensearch.minRole), false);
+  assert.equal(roleAllowed('builder', TOOLS.opensearch.minRole), true);
+  // Featureform is a Science-tab launcher; a creator must be able to open it,
+  // consistent with MLflow (both creator+). Regression guard for the role gate.
+  assert.equal(TOOLS.featureform.minRole, 'creator');
+  assert.equal(TOOLS.mlflow.minRole, 'creator');
+  assert.equal(roleAllowed('creator', TOOLS.featureform.minRole), true);
 });
 
 /* --------------------------------------------------------------- CSP / frame */

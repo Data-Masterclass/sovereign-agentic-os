@@ -30,13 +30,17 @@ function uniqueId(base: string, taken: Set<string>): string {
   return `${base}-${i}`;
 }
 
-/** A small role → suggested-tool map, intersected with the system's grants. */
+/**
+ * A small role → suggested-tool map, intersected with the system's grants.
+ * All names are canonical OS MCP tool names (from ALL_MCP_TOOLS).
+ * Note: `web_fetch` had no MCP equivalent and was removed from research roles.
+ */
 const ROLE_TOOLS: Record<string, string[]> = {
-  research: ['retrieve', 'web_fetch'],
-  researcher: ['retrieve', 'web_fetch'],
-  writer: ['write_file'],
-  analyst: ['metrics', 'query'],
-  data: ['metrics', 'query'],
+  research: ['search_knowledge'],
+  researcher: ['search_knowledge'],
+  writer: ['upload_file'],
+  analyst: ['list_metrics', 'query_data'],
+  data: ['list_metrics', 'query_data'],
 };
 
 export function applyInstruction(input: System, instruction: string): InstructionResult {
@@ -53,7 +57,7 @@ export function applyInstruction(input: System, instruction: string): Instructio
     const newId = uniqueId(slugify(roleWord), taken);
 
     // Narrow-only: intersect suggested tools with the system grants.
-    const suggested = ROLE_TOOLS[roleWord] ?? ['retrieve'];
+    const suggested = ROLE_TOOLS[roleWord] ?? ['search_knowledge'];
     const tools = suggested.filter((t) => system.grants.tools.includes(t));
 
     const agent: AgentSpec = {

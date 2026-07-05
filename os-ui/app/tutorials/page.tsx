@@ -20,7 +20,7 @@ import type { GoldenPathKey } from '@/lib/tutorials/types';
 const GROUPS: { heading: string; keys: GoldenPathKey[] }[] = [
   {
     heading: 'Work with data',
-    keys: ['data', 'knowledge', 'connections', 'metrics', 'dashboards'],
+    keys: ['data', 'knowledge', 'files', 'connections', 'metrics', 'dashboards'],
   },
   {
     heading: 'Build & automate',
@@ -28,7 +28,11 @@ const GROUPS: { heading: string; keys: GoldenPathKey[] }[] = [
   },
   {
     heading: 'Manage & share',
-    keys: ['big-bets', 'marketplace'],
+    keys: ['strategy', 'big-bets', 'marketplace'],
+  },
+  {
+    heading: 'Run it well',
+    keys: ['governance', 'monitoring'],
   },
 ];
 
@@ -36,6 +40,7 @@ const GROUPS: { heading: string; keys: GoldenPathKey[] }[] = [
 const PATH_ICON: Record<GoldenPathKey, string> = {
   data: '▤',
   knowledge: '❦',
+  files: '❏',
   connections: '⇄',
   metrics: '∑',
   dashboards: '▦',
@@ -43,7 +48,10 @@ const PATH_ICON: Record<GoldenPathKey, string> = {
   software: '⌘',
   science: '∿',
   'big-bets': '◆',
+  strategy: '▲',
   marketplace: '⊞',
+  governance: '⚖',
+  monitoring: '◷',
 };
 
 export default function TutorialsPage() {

@@ -5,16 +5,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { getTutorial, listTutorials, TUTORIAL_ORDER, isGoldenPathKey } from './registry.ts';
 import { assertSandboxSafe, walkSteps } from './engine.ts';
+import { ALL_ANCHOR_IDS } from './anchors.ts';
 import type { FramingRole } from './types.ts';
 
 const ROLES: FramingRole[] = ['user', 'creator', 'builder'];
 
 // ---- registry completeness ------------------------------------------------
 
-test('all 10 golden paths are in the registry', () => {
+test('all 14 golden paths are in the registry', () => {
   const expected: string[] = [
-    'data', 'knowledge', 'connections', 'agents', 'software',
-    'science', 'metrics', 'dashboards', 'big-bets', 'marketplace',
+    'data', 'knowledge', 'files', 'connections', 'agents', 'software',
+    'science', 'metrics', 'dashboards', 'big-bets', 'strategy',
+    'marketplace', 'governance', 'monitoring',
   ];
   assert.deepEqual(TUTORIAL_ORDER, expected, 'canonical order must match golden-path docs');
   for (const key of expected) {
@@ -24,9 +26,9 @@ test('all 10 golden paths are in the registry', () => {
   }
 });
 
-test('listTutorials returns all 10 in canonical order', () => {
+test('listTutorials returns all 14 in canonical order', () => {
   const list = listTutorials();
-  assert.equal(list.length, 10);
+  assert.equal(list.length, 14);
   list.forEach((def, i) => {
     assert.equal(def.key, TUTORIAL_ORDER[i]);
   });
@@ -35,9 +37,11 @@ test('listTutorials returns all 10 in canonical order', () => {
 test('isGoldenPathKey accepts valid keys and rejects unknown strings', () => {
   assert.ok(isGoldenPathKey('data'));
   assert.ok(isGoldenPathKey('marketplace'));
-  assert.ok(!isGoldenPathKey('governance'));
+  assert.ok(isGoldenPathKey('strategy'));
+  assert.ok(isGoldenPathKey('governance'));
   assert.ok(!isGoldenPathKey(''));
-  assert.ok(!isGoldenPathKey('monitoring'));
+  assert.ok(!isGoldenPathKey('settings'));
+  assert.ok(!isGoldenPathKey('platform'));
 });
 
 // ---- every tutorial is structurally valid ---------------------------------
@@ -52,6 +56,22 @@ test('every tutorial has a title, tagline, hook, 3-5 steps, walkthrough, sandbox
     assert.ok(def.walkthrough.length > 0, `"${def.key}" has no walk-through steps`);
     assert.ok(def.sandbox?.anchor, `"${def.key}" has no sandbox anchor`);
     assert.ok(def.outro?.next.length, `"${def.key}" has no outro.next cross-links`);
+  }
+});
+
+test('every walkthrough anchor resolves against the declared anchor contract', () => {
+  const declared = new Set(ALL_ANCHOR_IDS);
+  for (const def of listTutorials()) {
+    assert.ok(declared.has(def.sandbox.anchor),
+      `"${def.key}" sandbox anchor "${def.sandbox.anchor}" is not in anchors.ts`);
+    for (const s of def.walkthrough) {
+      assert.ok(declared.has(s.anchor),
+        `"${def.key}" step anchor "${s.anchor}" is not in anchors.ts`);
+      if (s.sandboxAnchor) {
+        assert.ok(declared.has(s.sandboxAnchor),
+          `"${def.key}" sandbox target "${s.sandboxAnchor}" is not in anchors.ts`);
+      }
+    }
   }
 });
 

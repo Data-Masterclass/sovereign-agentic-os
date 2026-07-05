@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
+import { config } from '@/lib/config';
 import { trace as gvTrace } from '@/lib/agent-governed';
 import { enqueue } from '@/lib/approvals';
 import { parseSystem, type System } from '../system-schema.ts';
@@ -10,7 +11,7 @@ import { type Effect, type Gateway } from '../gateway.ts';
 import { runGraph, type RunResult } from './run-graph.ts';
 import { newMockBackends, makeMockAdapters, registerGrants, gatewayFor } from './mocks.ts';
 import { makeLiveAdapters } from './live.ts';
-import { makeRealClients, runtimeReachable } from './live-clients.ts';
+import { makeRealClients, runtimeReachable, traceStoreReachable } from './live-clients.ts';
 import { reloadRequest, runRequest } from './runtime-contract.ts';
 import { orchestrateBuild, type BuildReport } from './orchestrate.ts';
 
@@ -80,6 +81,15 @@ export type RunReport = {
   traces: number;
   held: number;
   mode: BuildMode;
+  /** The run's final output/summary — surfaced inline so the user sees what the
+   *  agent did without depending on the (currently down) Langfuse trace store. */
+  output: string;
+  /** True when the durable Langfuse trace store accepted the run's traces; when
+   *  false the UI shows the in-run steps instead of a dead deep-link. */
+  traceStoreAvailable: boolean;
+  /** Optional deep-link to the full Langfuse trace, present only when the trace
+   *  store is reachable AND a console URL is configured. */
+  traceUrl?: string;
 };
 
 export async function runSystem(
@@ -100,7 +110,23 @@ export async function runSystem(
     );
     const steps = res.steps;
     const held = enqueueHolds(systemId, sys, steps, opts.requestedBy);
-    return { ok: res.reachedEnd, path: res.path, steps, traces: res.traces, held, mode: 'live' };
+    const output = res.output || `Reached ${res.path.join(' → ')} → END (${steps.length} governed tool call(s)).`;
+    const traceStoreAvailable = await traceStoreReachable();
+    const traceUrl =
+      traceStoreAvailable && config.langfuseConsoleUrl
+        ? `${config.langfuseConsoleUrl}/traces`
+        : undefined;
+    return {
+      ok: res.reachedEnd,
+      path: res.path,
+      steps,
+      traces: res.traces,
+      held,
+      mode: 'live',
+      output,
+      traceStoreAvailable,
+      traceUrl,
+    };
   }
 
   // Offline teaching fallback: run the graph in-process through the mock gateway.
@@ -109,7 +135,17 @@ export async function runSystem(
   const gw = bridged(gatewayFor(backends), systemId);
   const res = await runGraph(ir, { gateway: gw, probe: opts.prompt, disabled: opts.disabledAgents });
   const held = enqueueHolds(systemId, sys, res.steps, opts.requestedBy);
-  return { ok: res.reachedEnd, path: res.path, steps: res.steps, traces: res.traces, held, mode: 'offline-mock' };
+  return {
+    ok: res.reachedEnd,
+    path: res.path,
+    steps: res.steps,
+    traces: res.traces,
+    held,
+    mode: 'offline-mock',
+    output: res.output,
+    // Offline teaching path has no durable trace store; the in-run steps ARE the record.
+    traceStoreAvailable: false,
+  };
 }
 
 /**

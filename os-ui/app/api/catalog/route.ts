@@ -5,86 +5,99 @@ import { NextResponse } from 'next/server';
 import { config } from '@/lib/config';
 import { requireUser } from '@/lib/auth';
 import { errorResponse } from '@/lib/data/server';
+import { ensureHydrated, listDatasets, type Principal } from '@/lib/data/store';
+import { queryRun } from '@/lib/governed';
+import {
+  assembleCatalog,
+  registryAssets,
+  type CatalogAsset,
+} from '@/lib/data/catalog';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * Structured-data catalog. Prefers OpenMetadata (the platform catalog + lineage)
- * when it's reachable; OpenMetadata is OFF by default locally (~2.5 GB JVM), so
- * we degrade gracefully to the governed query-tool's Iceberg table list (via
- * Trino `show tables`). The response says which source answered so the UI can be
- * honest about it.
+ * Structured-data catalog — an HONEST UNION of what actually exists, labelled by
+ * source (registry / Trino / OpenMetadata). It NEVER 500s on a missing warehouse:
+ *   • the governed dataset registry is always available (and DLS-scoped to the
+ *     caller by the store, so a creator only sees their own + shared datasets);
+ *   • Trino tables are listed from the caller's OWN domain schema (schema-agnostic
+ *     query-tool), and a missing/empty schema degrades to an honest source status
+ *     ("physical marts not materialized yet") instead of a Trino error;
+ *   • OpenMetadata is included only WITH a bot token — no token means it is skipped
+ *     honestly rather than firing a doomed 401 and silently falling back.
+ * The assembly itself lives in the pure lib/data/catalog module (unit-tested).
  */
 
-type Asset = { name: string; fqn: string; description: string; type: string };
+/** Physical Iceberg tables in the caller's own domain schema (Trino via query-tool). */
+async function fromQueryTool(principal: string): Promise<CatalogAsset[]> {
+  // Forward the principal (Trino's OPA plugin scopes the listing to the caller) AND
+  // the caller's domain as the session schema, so we list the RIGHT catalog.schema
+  // instead of a dead literal. `show tables` is unqualified → resolves in `principal`.
+  const data = await queryRun('show tables', principal, principal);
+  return data.rows.map((r) => {
+    const name = String(r[0]);
+    return {
+      name,
+      fqn: `iceberg.${principal}.${name}`,
+      description: '',
+      type: 'iceberg table',
+      source: 'trino' as const,
+    };
+  });
+}
 
-async function fromOpenMetadata(): Promise<Asset[] | null> {
+/** OpenMetadata catalog entries — ONLY when a bot token is configured. */
+async function fromOpenMetadata(): Promise<{ assets: CatalogAsset[] | null; status: string }> {
+  if (!config.openmetadataJwt) {
+    return { assets: null, status: 'not configured (no OpenMetadata bot token) — skipped' };
+  }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 2500);
   try {
     const res = await fetch(
       `${config.openmetadataApiUrl}/api/v1/tables?limit=50&fields=description`,
-      { cache: 'no-store', signal: ctrl.signal, headers: { accept: 'application/json' } },
+      {
+        cache: 'no-store',
+        signal: ctrl.signal,
+        headers: { accept: 'application/json', authorization: `Bearer ${config.openmetadataJwt}` },
+      },
     );
-    if (!res.ok) return null;
+    if (!res.ok) return { assets: null, status: `OpenMetadata ${res.status} — dropped from the union` };
     const data = (await res.json()) as { data?: Record<string, unknown>[] };
-    if (!Array.isArray(data?.data)) return null;
-    return data.data.map((t) => ({
+    if (!Array.isArray(data?.data)) return { assets: null, status: 'OpenMetadata returned no table list' };
+    const assets: CatalogAsset[] = data.data.map((t) => ({
       name: String(t.name ?? ''),
       fqn: String(t.fullyQualifiedName ?? t.name ?? ''),
       description: String(t.description ?? ''),
       type: 'table',
+      source: 'openmetadata',
     }));
+    return { assets, status: 'OpenMetadata catalog' };
   } catch {
-    return null;
+    return { assets: null, status: 'OpenMetadata unreachable — dropped from the union' };
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function fromQueryTool(principal: string): Promise<Asset[]> {
-  const res = await fetch(`${config.queryToolUrl}/query`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
-    // Forward the principal so Trino's OPA plugin scopes the table list to the
-    // caller's domain schema (no cross-domain catalog recon).
-    body: JSON.stringify({ sql: 'show tables', principal }),
-    cache: 'no-store',
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`query-tool ${res.status}: ${text.slice(0, 160)}`);
-  const data = JSON.parse(text);
-  const schema = String(data?.schema ?? 'analytics');
-  const rows: unknown[][] = Array.isArray(data?.rows) ? data.rows : [];
-  return rows.map((r) => {
-    const name = String(r[0]);
-    return { name, fqn: `${schema}.${name}`, description: '', type: 'iceberg table' };
-  });
-}
-
 export async function GET() {
-  let principal;
+  let user;
   try {
-    const u = await requireUser();
-    principal = u.domains[0] ?? u.id;
+    user = await requireUser();
+    // Hydrate the dataset cache from the durable mirror before listing (same as the
+    // Data-tab server boundary), so a restarted os-ui still catalogues its datasets.
+    await ensureHydrated();
   } catch (e) {
     return errorResponse(e);
   }
-  const om = await fromOpenMetadata();
-  if (om) {
-    return NextResponse.json({ source: 'openmetadata', assets: om });
-  }
-  try {
-    const assets = await fromQueryTool(principal);
-    return NextResponse.json({
-      source: 'query-tool',
-      note: 'OpenMetadata is off or unreachable — showing the query-tool catalog.',
-      assets,
-    });
-  } catch (e) {
-    return NextResponse.json(
-      { error: `No catalog available: ${(e as Error).message}` },
-      { status: 502 },
-    );
-  }
+  const principal = user.domains[0] ?? user.id;
+  const p: Principal = { id: user.id, domains: user.domains, role: user.role };
+
+  const result = await assembleCatalog({
+    schema: principal,
+    registry: registryAssets(listDatasets(p)),
+    trino: () => fromQueryTool(principal),
+    openmetadata: () => fromOpenMetadata(),
+  });
+  return NextResponse.json(result);
 }

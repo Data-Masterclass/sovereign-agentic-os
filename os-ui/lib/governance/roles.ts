@@ -4,6 +4,7 @@
 import type { Role } from '../session.ts';
 import type { Approval } from '../approvals.ts';
 import { config } from '../config.ts';
+import { resolveRoleRights, ensureRoleConfigLoaded } from './role-config.ts';
 
 /**
  * Role → scope → OPA mapping — the Governance identity spine (governance-golden-
@@ -40,8 +41,11 @@ export function roleLabel(role: Role): string {
 }
 
 /**
- * The rights each role carries, lowest→highest (cumulative). These compile to
- * the OPA tool grants below and drive the consolidated Policies view.
+ * The rights each role carries, lowest→highest (cumulative). This is the SAFE,
+ * hardcoded DEFAULT — the fallback the admin-editable role-config store
+ * (`role-config.ts`) seeds from and falls back to (deny-by-default). The
+ * effective, config-resolved rights are read via `resolveRoleRights`; this
+ * constant stays for the static capability-profile display in the Policies view.
  */
 export const ROLE_RIGHTS: Record<Role, string[]> = {
   creator: ['read.own', 'request.access', 'request.import', 'create.artifact', 'run.attended'],
@@ -89,10 +93,15 @@ const RIGHT_TO_TOOLS: Record<string, string[]> = {
   'manage.memberships.domain': ['membership_admin'],
 };
 
-/** Compile a role into the deduped set of OPA tools it grants. */
+/**
+ * Compile a role into the deduped set of OPA tools it grants. Resolves the
+ * role's rights through the admin-editable config store (falling back to the
+ * safe hardcoded default), so an Admin edit in the role-permissions editor
+ * actually changes what the role can do — and recompiles to OPA.
+ */
 export function rightsToTools(role: Role): string[] {
   const tools = new Set<string>();
-  for (const right of ROLE_RIGHTS[role] ?? []) {
+  for (const right of resolveRoleRights(role)) {
     for (const t of RIGHT_TO_TOOLS[right] ?? []) tools.add(t);
   }
   return [...tools].sort();
@@ -181,6 +190,9 @@ export async function writeGrantsToOpa(
 export async function compileRoleToGrants(
   actor: Pick<Actor, 'id' | 'role'>,
 ): Promise<{ live: boolean; principal: string; tools: string[] }> {
+  // Hydrate the pinned role-config from its durable mirror first, so a grant
+  // compiled after a restart reflects any admin edit (not just the seed).
+  await ensureRoleConfigLoaded();
   const principal = principalFor(actor);
   const tools = rightsToTools(actor.role);
   return writeGrantsToOpa(principal, tools);

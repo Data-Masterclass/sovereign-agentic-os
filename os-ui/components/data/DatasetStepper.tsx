@@ -6,10 +6,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import BronzePanel from './BronzePanel';
 import RefinePanel from './RefinePanel';
+import GoldJoinPanel from './GoldJoinPanel';
 import PromotePanel from './PromotePanel';
 import CertifyPanel from './CertifyPanel';
 import MetricsPanel from './MetricsPanel';
 import LineagePanel from './LineagePanel';
+import ExplorePanel from './ExplorePanel';
 
 type Layer = 'bronze' | 'silver' | 'gold';
 type Stage = {
@@ -176,12 +178,29 @@ export default function DatasetStepper({ datasetId, onBack }: { datasetId: strin
             {active.copy.title}<span className="count-pill">{active.layer}</span>
             <span className="hint" style={{ margin: 0 }}>{active.copy.subtitle}</span>
           </div>
-          {active.layer === 'bronze'
-            ? <BronzePanel datasetId={dataset.id} datasetName={dataset.name} onCommitted={(s) => onCommitted(s as Stage[])} />
-            : <RefinePanel datasetId={dataset.id} datasetName={dataset.name}
-                stage={{ layer: active.layer as 'silver' | 'gold', copy: active.copy }}
-                onCommitted={(s) => onCommitted(s as Stage[])} />}
+          {active.layer === 'bronze' ? (
+            <BronzePanel datasetId={dataset.id} datasetName={dataset.name} onCommitted={(s) => onCommitted(s as Stage[])} />
+          ) : active.layer === 'gold' ? (
+            <GoldJoinPanel datasetId={dataset.id} datasetName={dataset.name}
+              owner={dataset.owner} domain={dataset.domain} tier={dataset.tier}
+              columns={dataset.columns.map((c) => c.name)}
+              onCommitted={(s) => onCommitted(s as Stage[])} />
+          ) : (
+            <RefinePanel datasetId={dataset.id} datasetName={dataset.name}
+              owner={dataset.owner} domain={dataset.domain} tier={dataset.tier}
+              columns={dataset.columns.map((c) => c.name)}
+              stage={{ layer: 'silver', copy: active.copy }}
+              onCommitted={(s) => onCommitted(s as Stage[])} />
+          )}
         </div>
+      ) : null}
+
+      {/* Explore — profile the built versions (governed reads: masked to the viewer). */}
+      {stages.some((s) => s.built) ? (
+        <>
+          <div className="section-title" style={{ marginTop: 22 }}>Explore</div>
+          <ExplorePanel datasetId={dataset.id} builtLayers={stages.filter((s) => s.built).map((s) => s.layer)} />
+        </>
       ) : null}
 
       {/* Share → promote (Builder-approved) → certify (Admin) → marketplace. */}

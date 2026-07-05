@@ -12,13 +12,30 @@ import {
   buildVersion,
   setDocs as setDatasetDocs,
   requestPromotion as requestDatasetPromotion,
-  applyApprovedPromotion as applyApprovedDatasetPromotion,
   getDataset,
   defineMeasure,
+  buildGoldJoin as commitGoldJoin,
+  type PromotionRequest,
 } from '@/lib/data/store';
+import { publishPromotionLive } from '@/lib/data/publish-server';
+import { enqueue, getApproval, decide, listApprovals } from '@/lib/approvals';
 import { canBuildStage, canPassThrough, stageArtifact } from '@/lib/data/panels';
 import { scaffoldCubeYaml } from '@/lib/data/metrics';
-import type { Layer, Quality, DataVisibility, Grant, ColumnDoc } from '@/lib/data/dataset-schema';
+import { ingestAndRegisterBronze } from '@/lib/data/ingest';
+import { buildStage } from '@/lib/data/build/server';
+import {
+  silverPlan,
+  goldJoinPlan,
+  goldMeasureToCube,
+  type TransformOp,
+  type ResolvedJoin,
+  type GoldDimension,
+  type GoldMeasure,
+  type JoinType,
+} from '@/lib/data/transform';
+import { assetTarget } from '@/lib/data/store-fqn';
+import type { ExecuteIdentity } from '@/lib/governed';
+import type { Layer, Quality, DataVisibility, Grant, ColumnDoc, DatasetUpstream } from '@/lib/data/dataset-schema';
 import { measureFromForm, measureMember, type MetricForm } from '@/lib/metrics/model';
 import type { MeasureType } from '@/lib/data/metrics';
 
@@ -44,20 +61,31 @@ import {
   setDocs as setFileDocs,
   requestPromotion as requestFilePromotion,
   applyApprovedFilePromotion,
+  type FilePromotionRequest,
 } from '@/lib/files/store';
 import { reindexFile } from '@/lib/files/pipeline-server';
 import type { Sensitivity } from '@/lib/files/asset-schema';
 
-import { saveDashboard } from '@/lib/dashboards/store';
+import { saveDashboard, getDashboard } from '@/lib/dashboards/store';
 import { fromTiles, type ChartSpec } from '@/lib/dashboards/model';
 
-import { createBet, type CreateBetInput } from '@/lib/bigbets/store';
-import { deriveBetName } from '@/lib/bigbets/model';
+import {
+  createBet,
+  getBet,
+  updateBet,
+  addComponent,
+  canEdit as canEditBet,
+  type CreateBetInput,
+} from '@/lib/bigbets/store';
+import { deriveBetName, type BigBet, type ValueBasis } from '@/lib/bigbets/model';
+import { registerLinkedArtifact, type LinkedArtifactInput } from '@/lib/bigbets/sources';
 
 import {
   createSystem,
   writeFile as writeAgentFile,
+  getSystem as getAgentSystem,
   getSystemForEdit,
+  getSystemForRun,
 } from '@/lib/agents/store';
 import { isTemplateKey } from '@/lib/agents/templates';
 import { buildSystem } from '@/lib/agents/build/server';
@@ -259,34 +287,230 @@ export const dataWriteTools: McpTool[] = [
     },
   },
   {
-    name: 'promote_dataset',
+    name: 'ingest_dataset',
     tab: 'data',
-    minRole: 'builder',
+    minRole: 'creator',
     description:
-      'Promote your documented dataset from Personal → a governed DOMAIN asset (into Trino). Builder+ only (the creator lockdown): a creator cannot self-promote. Reuses the SAME request→approve seam as the UI (request as owner, apply as the domain Builder). Idempotency: re-promoting an already-promoted dataset returns a `conflict`.',
+      'Ingest inline CSV/JSON text as the PHYSICAL Bronze of a dataset you can edit — the same pipeline as the Data tab’s "Upload a file": your bytes land in MinIO under uploads/<your-id>/, the data-runner writes the real iceberg.personal_<you>.bronze_<slug> table, and the Bronze version is registered ONLY when apply + a governed verify SELECT both pass (no dot without a queryable landing; offline it degrades to an honestly-labelled offline-mock). Purpose: make the physical golden path AI-drivable end-to-end. Before: create_dataset (or get_dataset to reuse). After: profile_dataset to explore it, then transform_silver. Governance: runs AS YOU — the object key is forced under your own uploads/ prefix from the session identity, and the verify probe is OPA-masked to you. Limit: ~2 MB of in-band text; bigger files → the UI upload (same pipeline, streaming multipart).',
     inputSchema: {
       type: 'object',
       properties: {
-        datasetId: { type: 'string', description: 'Dataset you own and have documented (silver/gold built).' },
-        visibility: { type: 'string', description: 'Requested asset visibility (default domain).' },
-        grants: { type: 'array', description: 'Optional explicit policy grants (else a domain read grant).' },
+        datasetId: { type: 'string', description: 'Target dataset id (from create_dataset / list_datasets).' },
+        content: { type: 'string', description: 'The raw CSV (or JSON) text to ingest — max ~2 MB in-band.' },
+        fileName: { type: 'string', description: 'File name for the object store (default upload.csv; the extension drives parsing).' },
       },
-      required: ['datasetId'],
-      examples: [{ datasetId: 'ds_ab12cd', visibility: 'domain' }],
+      required: ['datasetId', 'content'],
+      examples: [
+        { datasetId: 'ds_ab12cd', fileName: 'orders.csv', content: 'order_id,net_amount\n1001,250.00\n1002,90.50' },
+      ],
     },
     call: async (user, args) => {
       const datasetId = str(args.datasetId).trim();
-      if (!datasetId) fail('promote_dataset needs a `datasetId`', 400);
-      const p = P(user);
-      const req = requestDatasetPromotion(datasetId, p, {
-        visibility: (str(args.visibility) as DataVisibility) || undefined,
-        grants: (args.grants as Grant[]) || undefined,
+      if (!datasetId) fail('ingest_dataset needs a `datasetId`', 400);
+      const content = str(args.content);
+      if (!content.trim()) fail('ingest_dataset needs non-empty `content` (CSV/JSON text)', 400);
+      const bytes = Buffer.byteLength(content, 'utf8');
+      if (bytes > INGEST_MAX_BYTES) {
+        fail(
+          `content is ${(bytes / 1048576).toFixed(1)} MB — the MCP in-band limit is ${INGEST_MAX_BYTES / 1048576} MB. ` +
+            'Upload larger files through the Data tab UI (same governed pipeline, streaming multipart).',
+          400,
+        );
+      }
+      const fileName = str(args.fileName).trim() || 'upload.csv';
+      const r = await ingestAndRegisterBronze(P(user), datasetId, fileName, Buffer.from(content, 'utf8'));
+      if (!r.ok) {
+        // Verify did not pass → Bronze is NOT registered; surface the real reason.
+        fail(`ingest verify failed: ${r.report.error ?? r.report.detail}`, 502);
+      }
+      return {
+        ok: true,
+        mode: r.report.mode,
+        table: r.report.table,
+        rowCount: r.report.rowCount,
+        columns: r.report.columns,
+        preview: r.report.preview,
+        bronzeRegistered: true,
+        datasetId,
+      };
+    },
+  },
+  {
+    name: 'transform_silver',
+    tab: 'data',
+    minRole: 'creator',
+    description:
+      'Clean a dataset’s Bronze into its physical SILVER via guided ops compiled into ONE governed CTAS — the same compiler + Build adapter as the Data tab’s Transform panel. Ops: rename {column,to} · cast {column,type: varchar|integer|bigint|double|boolean|date|timestamp} · trim {column} · normalize {column} (lower+trim) · drop {column} · filter {column, op: =|<>|>|>=|<|<=|not_null|not_blank, value?} · dedupe {keys[]} (empty keys ⇒ DISTINCT). Purpose: step 3 of the physical Data golden path. Before: ingest_dataset (Bronze must be built); profile_dataset to see the columns. After: build_gold_join, or add_dataset_version(gold). Governance: the SQL is compiled server-side from your ops (a client can never send raw SQL), the CTAS targets YOUR OWN schema and executes AS YOU — Trino→OPA masks every read — and the Silver version is registered ONLY on a ✓ apply+verify (an honest ✗ registers nothing).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        datasetId: { type: 'string', description: 'Target dataset id (Bronze must be built).' },
+        columns: { type: 'array', items: { type: 'string' }, description: 'The SOURCE Bronze column names to project (from profile_dataset).' },
+        ops: {
+          type: 'array',
+          description: 'Guided cleaning ops (see the tool description for the op kinds). Empty = plain projection.',
+          items: { type: 'object', properties: { kind: { type: 'string', enum: ['rename', 'cast', 'trim', 'normalize', 'drop', 'filter', 'dedupe'] } }, required: ['kind'] },
+        },
+      },
+      required: ['datasetId', 'columns'],
+      examples: [
+        {
+          datasetId: 'ds_ab12cd',
+          columns: ['order_id', 'net_amount', 'region'],
+          ops: [
+            { kind: 'cast', column: 'net_amount', type: 'double' },
+            { kind: 'filter', column: 'order_id', op: 'not_null' },
+            { kind: 'dedupe', keys: ['order_id'] },
+          ],
+        },
+      ],
+    },
+    call: async (user, args) => {
+      const datasetId = str(args.datasetId).trim();
+      if (!datasetId) fail('transform_silver needs a `datasetId`', 400);
+      const columns = strArr(args.columns);
+      const ops = (Array.isArray(args.ops) ? args.ops : []) as TransformOp[];
+      const dataset = getDataset(datasetId, P(user)); // view-scope guard (403/404)
+      if (!canBuildStage(dataset.versions, 'silver')) {
+        fail('Bring in the Bronze version before cleaning it (run ingest_dataset first)', 400);
+      }
+      const identity = executeIdentity(user);
+      // Compile server-side (TransformError → typed bad_request with the real reason).
+      const plan = silverPlan(dataset, identity, columns, ops);
+      // Personal-lane builds run under the UID so Trino→OPA recognises the caller as
+      // the personal_<uid> owner (same rule as the transform route).
+      if (plan.schema.startsWith('personal_')) identity.principal = user.id;
+      const build = await buildStage(dataset, 'silver', identity.principal, { transformSql: plan.sql, identity });
+      if (!build.ok) {
+        const failed = build.rows.find((r) => r.status === 'fail');
+        fail(`Silver build did not pass (${build.mode}): ${failed?.error ?? 'apply/verify failed'} — nothing was registered`, 502);
+      }
+      // ✓ only: register the Silver version + persist the compiled SQL as its artifact.
+      const updated = buildVersion(datasetId, P(user), 'silver', {
+        quality: 'unknown',
+        artifact: stageArtifact(dataset.name, 'silver'),
+        body: plan.sql,
       });
-      const dataset = applyApprovedDatasetPromotion(req, p);
-      return { promoted: true, target: req.target, dataset };
+      return { ok: true, mode: build.mode, sql: plan.sql, target: plan.target, silverRegistered: true, dots: { bronze: updated.versions.bronze.built, silver: updated.versions.silver.built, gold: updated.versions.gold.built } };
+    },
+  },
+  {
+    name: 'build_gold_join',
+    tab: 'data',
+    minRole: 'creator',
+    description:
+      'Build a dataset’s physical GOLD by JOINING its Silver with other governed datasets you may read — the Data tab’s stage-4 reuse, compiled into ONE governed CTAS. You pass dataset IDS to join (never table names — each is re-resolved through the canView guard), the join keys, projected dimensions and derived measures (sum/avg/count/count_distinct/min/max, or count(*) with agg "count" and no col). Column refs are {ref, column} where ref 0 = your Silver base and 1..n = the joined datasets in order. Purpose: the reuse step of the physical Data golden path — the measures recorded here feed define_metric after promotion. Before: transform_silver (Silver must be built); pick join partners from list_datasets (governed asset/product tiers with a built table). After: document_dataset → request_promotion → define_metric. Governance: the CTAS targets YOUR OWN schema and executes AS YOU (Trino→OPA masks every joined read); a non-visible pick is a typed forbidden; Gold + lineage + measures are recorded ONLY on a ✓ apply+verify.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        datasetId: { type: 'string', description: 'The base dataset (its Silver must be built).' },
+        picks: {
+          type: 'array',
+          description: 'Datasets to join (1..n).',
+          items: {
+            type: 'object',
+            properties: {
+              datasetId: { type: 'string', description: 'A governed dataset id you can READ.' },
+              type: { type: 'string', enum: ['inner', 'left'], description: 'Join type (default inner).' },
+              on: {
+                type: 'array',
+                description: 'Equi-join keys: an earlier table’s column = this table’s column.',
+                items: {
+                  type: 'object',
+                  properties: {
+                    left: { type: 'object', properties: { ref: { type: 'number' }, column: { type: 'string' } }, required: ['ref', 'column'] },
+                    right: { type: 'string' },
+                  },
+                  required: ['left', 'right'],
+                },
+              },
+            },
+            required: ['datasetId', 'on'],
+          },
+        },
+        dimensions: {
+          type: 'array',
+          description: 'Projected columns: {col: {ref, column}, as?}. Grouped when measures are present.',
+          items: { type: 'object', properties: { col: { type: 'object' }, as: { type: 'string' } }, required: ['col'] },
+        },
+        measures: {
+          type: 'array',
+          description: 'Derived measures: {name, agg} for count(*), {name, agg, col} for a column aggregate, or {name, agg, left, op, right} for an expression.',
+          items: { type: 'object', properties: { name: { type: 'string' }, agg: { type: 'string', enum: ['sum', 'avg', 'count', 'count_distinct', 'min', 'max'] } }, required: ['name', 'agg'] },
+        },
+      },
+      required: ['datasetId', 'picks'],
+      examples: [
+        {
+          datasetId: 'ds_ab12cd',
+          picks: [{ datasetId: 'ds_customers', type: 'left', on: [{ left: { ref: 0, column: 'customer_id' }, right: 'customer_id' }] }],
+          dimensions: [{ col: { ref: 1, column: 'region' } }],
+          measures: [{ name: 'revenue', agg: 'sum', col: { ref: 0, column: 'net_amount' } }],
+        },
+      ],
+    },
+    call: async (user, args) => {
+      const datasetId = str(args.datasetId).trim();
+      if (!datasetId) fail('build_gold_join needs a `datasetId`', 400);
+      const p = P(user);
+      const dataset = getDataset(datasetId, p); // view-scope guard on the base
+      if (!canBuildStage(dataset.versions, 'gold')) {
+        fail('Bring in the Silver version before joining it (run transform_silver first)', 400);
+      }
+      const rawPicks = Array.isArray(args.picks) ? (args.picks as Record<string, unknown>[]) : [];
+      if (rawPicks.length === 0) fail('Pick at least one dataset to join (`picks`)', 400);
+
+      const identity = executeIdentity(user);
+      // Resolve each pick through the canView guard — a non-visible id → typed 403/404.
+      const joins: ResolvedJoin[] = [];
+      const upstreams: DatasetUpstream[] = [];
+      for (const pick of rawPicks) {
+        const up = getDataset(str(pick?.datasetId).trim(), p); // throws 403/404
+        const fqn = assetTarget(up);
+        const type: JoinType = pick?.type === 'left' ? 'left' : 'inner';
+        const on = Array.isArray(pick?.on) ? (pick.on as ResolvedJoin['on']) : [];
+        joins.push({ table: fqn, type, on });
+        upstreams.push({ datasetId: up.id, name: up.name, fqn, joinType: type });
+      }
+      const dimensions = (Array.isArray(args.dimensions) ? args.dimensions : []) as GoldDimension[];
+      const measures = (Array.isArray(args.measures) ? args.measures : []) as GoldMeasure[];
+
+      // Compile server-side (TransformError → typed bad_request with the real reason).
+      const plan = goldJoinPlan(dataset, identity, joins, dimensions, measures);
+      if (plan.schema.startsWith('personal_')) identity.principal = user.id;
+      const build = await buildStage(dataset, 'gold', identity.principal, { transformSql: plan.sql, identity });
+      if (!build.ok) {
+        const failed = build.rows.find((r) => r.status === 'fail');
+        fail(`Gold join did not pass (${build.mode}): ${failed?.error ?? 'apply/verify failed'} — nothing was recorded`, 502);
+      }
+      // ✓ only: record the Gold version, the measures (feed the Cube scaffold at
+      // promotion) and the multi-upstream lineage edges (the reuse).
+      const updated = commitGoldJoin(datasetId, p, {
+        measures: measures.map(goldMeasureToCube),
+        upstreams,
+        artifact: stageArtifact(dataset.name, 'gold'),
+        body: plan.sql,
+      });
+      return {
+        ok: true,
+        mode: build.mode,
+        sql: plan.sql,
+        target: plan.target,
+        goldRegistered: true,
+        measures: updated.measures,
+        upstreams: updated.upstreams,
+      };
     },
   },
 ];
+
+/** MCP in-band ingest cap (~2 MB) — bigger files go through the UI's streaming upload. */
+const INGEST_MAX_BYTES = 2 * 1024 * 1024;
+
+/** The governed WRITE identity, derived from the SESSION user (never the args). */
+function executeIdentity(u: CurrentUser): ExecuteIdentity {
+  return { principal: u.domains[0] ?? u.id, uid: u.id, domains: u.domains, role: u.role };
+}
 
 // ============================== KNOWLEDGE ======================================
 export const knowledgeWriteTools: McpTool[] = [
@@ -452,35 +676,128 @@ export const fileWriteTools: McpTool[] = [
       return documented;
     },
   },
+];
+
+// ============================== PROMOTION (split) =============================
+// The GOVERNED separation-of-duties seam, matching the UI: a creator FILES a
+// promotion request (enqueued into the shared approvals queue); a Builder/Admin
+// in the domain APPLIES it. One tool pair spans datasets + files (extraTabs), so
+// both the data and files per-tab lenses expose it.
+export const promotionTools: McpTool[] = [
   {
-    name: 'promote_file',
-    tab: 'files',
-    minRole: 'builder',
+    name: 'request_promotion',
+    tab: 'data',
+    extraTabs: ['files'],
+    minRole: 'creator',
     description:
-      'Promote your documented file Personal → a DOMAIN asset (re-governs the object-store prefix + DLS). Builder+ only (the creator lockdown). Reuses the SAME request→approve seam as the UI. Idempotency: re-promoting returns a `conflict`.',
+      'FILE a promotion request for a documented dataset or file (Personal → a governed domain asset). Path: the promote step of the Data/Files golden paths. Before: document the asset (docs + ≥1 tag are the promotion gate). After: a Builder/Admin in the domain runs `approve_promotion`. Governance: a creator CAN file this (owner-checked); it does NOT promote — it enqueues the governed request. Idempotency: filing while a request is pending returns the existing one.',
     inputSchema: {
       type: 'object',
       properties: {
-        fileId: { type: 'string', description: 'File you own (owner + description + ≥1 tag documented).' },
+        kind: { type: 'string', enum: ['dataset', 'file'], description: 'What to promote.' },
+        id: { type: 'string', description: 'The dataset id or file id you own and have documented.' },
         visibility: { type: 'string', description: 'Requested asset visibility (default domain).' },
-        grants: { type: 'array', description: 'Optional explicit policy grants.' },
+        grants: { type: 'array', description: 'Optional explicit policy grants (else a domain read grant).' },
       },
-      required: ['fileId'],
-      examples: [{ fileId: 'file_ab12cd', visibility: 'domain' }],
+      required: ['kind', 'id'],
+      examples: [{ kind: 'dataset', id: 'ds_ab12cd', visibility: 'domain' }, { kind: 'file', id: 'file_ab12cd' }],
     },
     call: async (user, args) => {
-      const fileId = str(args.fileId).trim();
-      if (!fileId) fail('promote_file needs a `fileId`', 400);
+      const kind = str(args.kind).trim();
+      if (kind !== 'dataset' && kind !== 'file') fail('request_promotion needs `kind` = "dataset" | "file"', 400);
+      const id = str(args.id).trim();
+      if (!id) fail('request_promotion needs an `id`', 400);
       const p = P(user);
-      const req = requestFilePromotion(fileId, p, {
+      const opts = {
         visibility: (str(args.visibility) as DataVisibility) || undefined,
         grants: (args.grants as Grant[]) || undefined,
+      };
+      const approvalKind = kind === 'dataset' ? 'dataset_promote' : 'file_promote';
+      // Don't file a duplicate pending request for the same asset.
+      const targetId = id;
+      const existing = enqueueDedup(approvalKind, targetId);
+      if (existing) return { approvalId: existing.id, kind, target: existing.detail, domain: existing.domain, status: 'pending', already: true };
+
+      if (kind === 'dataset') {
+        const req: PromotionRequest = requestDatasetPromotion(id, p, opts);
+        const approval = enqueue({
+          kind: 'dataset_promote',
+          title: `Promote “${req.datasetName}” to a data asset`,
+          detail: `${user.id} requests promoting ${req.datasetName} into ${req.target} (visibility: ${req.visibility}). A domain Builder must approve.`,
+          agent: user.id,
+          domain: req.domain,
+          requestedBy: user.id,
+          tool: 'data_promote',
+          payload: req as unknown as Record<string, unknown>,
+        });
+        return { approvalId: approval.id, kind, target: req.target, domain: req.domain, status: 'pending' };
+      }
+      const req: FilePromotionRequest = requestFilePromotion(id, p, opts);
+      const approval = enqueue({
+        kind: 'file_promote',
+        title: `Share “${req.fileName}” with the ${req.domain} domain`,
+        detail: `${user.id} requests promoting ${req.fileName} into ${req.target} (visibility: ${req.visibility}). A domain Builder must approve.`,
+        agent: user.id,
+        domain: req.domain,
+        requestedBy: user.id,
+        tool: 'file_promote',
+        payload: req as unknown as Record<string, unknown>,
       });
-      const asset = applyApprovedFilePromotion(req, p);
-      return { promoted: true, target: req.target, asset };
+      return { approvalId: approval.id, kind, target: req.target, domain: req.domain, status: 'pending' };
+    },
+  },
+  {
+    name: 'approve_promotion',
+    tab: 'data',
+    extraTabs: ['files'],
+    minRole: 'builder',
+    description:
+      'APPLY a filed promotion request (dataset or file) — the Builder/Admin half of the split. Path: the approve step of the Data/Files golden paths. Before: a creator filed `request_promotion`. Governance: Builder+ AND in the asset’s domain (both re-checked in-lib); a creator is refused with a typed forbidden. Idempotency: an already-decided request returns a `conflict`.',
+    inputSchema: {
+      type: 'object',
+      properties: { approvalId: { type: 'string', description: 'The approval id from request_promotion.' } },
+      required: ['approvalId'],
+      examples: [{ approvalId: 'apr_ab12cd34' }],
+    },
+    call: async (user, args) => {
+      const approvalId = str(args.approvalId).trim();
+      if (!approvalId) fail('approve_promotion needs an `approvalId`', 400);
+      const approval = getApproval(approvalId);
+      if (!approval) fail('Promotion request not found', 404);
+      if (approval.status !== 'pending') fail(`Already ${approval.status}`, 409);
+      if (approval.kind !== 'dataset_promote' && approval.kind !== 'file_promote') {
+        fail('approve_promotion only applies dataset/file promotions', 400);
+      }
+      const p = P(user);
+      // Apply BEFORE recording the decision so a blocked gate leaves it pending.
+      let applied: unknown;
+      if (approval.kind === 'dataset_promote') {
+        // T8: the promotion is PHYSICAL — the promote adapter-set runs as the
+        // APPROVING Builder (this caller) and the tier flips only on ✓. A failed
+        // materialization surfaces the real error and leaves the request pending.
+        const out = await publishPromotionLive(approval.payload as unknown as PromotionRequest, p);
+        if (!out.ok) fail(`Physical publish failed (tier unchanged): ${out.error}`, 502);
+        applied = out.dataset;
+      } else {
+        applied = applyApprovedFilePromotion(approval.payload as unknown as FilePromotionRequest, p);
+      }
+      decide(approvalId, 'approve', user.id);
+      return { approved: true, kind: approval.kind, approvalId, asset: applied };
     },
   },
 ];
+
+/** Return the existing pending promotion approval for this asset id, or null. */
+function enqueueDedup(kind: 'dataset_promote' | 'file_promote', assetId: string) {
+  // Mirror the UI: avoid a duplicate pending request for the same asset.
+  return (
+    listApprovals({ status: 'pending' }).find((a) => {
+      if (a.kind !== kind) return false;
+      const pid = kind === 'dataset_promote' ? (a.payload?.datasetId as string) : (a.payload?.fileId as string);
+      return pid === assetId;
+    }) ?? null
+  );
+}
 
 // =============================== METRICS ======================================
 export const metricWriteTools: McpTool[] = [
@@ -610,6 +927,144 @@ export const bigbetWriteTools: McpTool[] = [
       return { id: bet.id, name: bet.name, status: bet.status };
     },
   },
+  {
+    name: 'attach_component',
+    tab: 'bigbets',
+    minRole: 'creator',
+    description:
+      'ATTACH a real OS component — a dataset, a dashboard or an agent system — to a Big Bet you may edit. The bet records a REFERENCE (id · planned-ready date · weight), never a copy; progress is then DERIVED from the component’s real lifecycle. Purpose: the operate half of the Big Bets golden path — a bet over real running artifacts, not a slide. Before: create_big_bet (or list_big_bets), and the component must exist — pick it from list_datasets / list_dashboards / list_agent_systems. After: get_big_bet to read the roadmap + derived status back. Governance: runs AS YOU — the bet edit gate is the store’s own (the owner edits; cross-domain bets are Admin-only), and EVERY component id is re-resolved through its own tab’s canView gate FIRST: an id you cannot see is a typed not_found/forbidden, so a forged id can never attach an unseen component. Idempotency: re-attaching the same artifact adds a second roadmap reference — check get_big_bet first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        betId: { type: 'string', description: 'The Big Bet to attach to (from list_big_bets).' },
+        kind: { type: 'string', enum: ['dataset', 'dashboard', 'agent-system'], description: 'What kind of component the id names.' },
+        id: { type: 'string', description: 'The component id — a dataset id, dashboard id or agent-system id YOU can see.' },
+        plannedReady: { type: 'string', description: 'Planned-ready date yyyy-mm-dd (default: +4 weeks).' },
+        start: { type: 'string', description: 'Optional start date yyyy-mm-dd (default: today).' },
+        weight: { type: 'number', description: 'Optional manual allocation weight 0–100 (when the bet allocates manually).' },
+      },
+      required: ['betId', 'kind', 'id'],
+      examples: [{ betId: 'bet_ab12cd34', kind: 'dashboard', id: 'dash_sales_overview_ab12cd', plannedReady: '2026-09-01' }],
+    },
+    call: async (user, args) => {
+      const betId = str(args.betId).trim();
+      if (!betId) fail('attach_component needs a `betId` (from list_big_bets)', 400);
+      const id = str(args.id).trim();
+      if (!id) fail('attach_component needs the component `id`', 400);
+      const kind = str(args.kind);
+      if (!['dataset', 'dashboard', 'agent-system'].includes(kind)) {
+        fail('attach_component needs `kind` = "dataset" | "dashboard" | "agent-system"', 400);
+      }
+      const p = P(user);
+      // Edit gate FIRST (the store's own rule) — no side effect on a forbidden bet.
+      const bet = getBet(betId, p); // view guard (403/404)
+      if (!canEditBet(bet, p)) fail('Not permitted to edit this bet', 403);
+
+      // Re-resolve the component through ITS OWN canView gate — a forged/unseen id
+      // is a typed not_found/forbidden BEFORE anything is attached.
+      let art: LinkedArtifactInput;
+      if (kind === 'dataset') {
+        const d = getDataset(id, p);
+        const anyBuilt = d.versions.bronze.built || d.versions.silver.built || d.versions.gold.built;
+        art = {
+          id: d.id, tab: 'data', title: d.name, domain: d.domain,
+          visibility: d.tier === 'dataset' ? 'personal' : d.tier === 'asset' ? 'shared' : 'marketplace',
+          // Data's ready verb is `certified` — a promoted asset/product has passed it.
+          lifecycle: d.tier !== 'dataset' ? 'certified' : anyBuilt ? 'building' : 'draft',
+        };
+      } else if (kind === 'dashboard') {
+        const d = getDashboard(id, p);
+        art = {
+          id: d.id, tab: 'dashboard', title: d.spec.name, domain: d.domain,
+          visibility: d.tier === 'personal' ? 'personal' : d.tier === 'domain' ? 'shared' : 'marketplace',
+          lifecycle: d.tier === 'personal' ? 'draft' : 'published',
+        };
+      } else {
+        const s = getAgentSystem(id, p);
+        art = {
+          id: s.id, tab: 'agent', title: s.name, domain: s.domain,
+          visibility: s.visibility === 'Personal' ? 'personal' : s.visibility === 'Shared' ? 'shared' : 'marketplace',
+          // Agents' ready verb is `live` — reached only by the governed promote.
+          lifecycle: s.visibility === 'Personal' ? 'draft' : 'live',
+        };
+      }
+      // Record the REFERENCE CARD in the bet's cross-tab registry (the per-tab
+      // store stays the source of truth), then link through the store's own door.
+      registerLinkedArtifact(art);
+      const plannedReady = str(args.plannedReady).trim() || new Date(Date.now() + 28 * 86400000).toISOString().slice(0, 10);
+      const { ref } = addComponent(betId, { ...p, kind: 'human' }, {
+        tab: art.tab,
+        artifactId: art.id,
+        plannedReady,
+        start: str(args.start).trim() || undefined,
+        weight: typeof args.weight === 'number' ? args.weight : undefined,
+      });
+      return { betId, refId: ref.id, artifactId: ref.artifactId, tab: ref.tab, title: art.title, plannedReady: ref.plannedReady, origin: ref.origin };
+    },
+  },
+  {
+    name: 'update_big_bet',
+    tab: 'bigbets',
+    minRole: 'creator',
+    description:
+      'UPDATE a Big Bet you may edit — the solution idea, status (draft | active | shipped | archived), the € target, the go-live date, the value basis, the owner-declared REALIZED value, or the name. Progress itself is DERIVED from the attached components’ real lifecycle and can never be hand-set here — read it back with get_big_bet. Purpose: the iterate half of the Big Bets golden path. Before: create_big_bet / get_big_bet. After: get_big_bet to read the derived state + realized value back. Governance: runs AS YOU through the SAME store gate as the Big Bets tab (the owner edits their bet — a creator their draft; cross-domain bets are Admin-only; no new role floors invented here). An unseen id is a typed not_found/forbidden. Honesty: a `realizedValue` is recorded as the owner-declared value and only counts when the bet’s value basis is `owner-declared` — the response says so when it is not.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        betId: { type: 'string', description: 'The Big Bet to update (from list_big_bets).' },
+        solution: { type: 'string', description: 'The solution idea (how the bet realizes its value).' },
+        status: { type: 'string', enum: ['draft', 'active', 'shipped', 'archived'], description: 'Bet lifecycle status.' },
+        targetValue: { type: 'number', description: 'The € value target.' },
+        realizedValue: { type: 'number', description: 'Owner-declared realized € value (counts under basis owner-declared).' },
+        valueBasis: { type: 'string', enum: ['uplift', 'absolute', 'owner-declared'], description: 'How realized value is resolved (default uplift-over-baseline).' },
+        goLive: { type: 'string', description: 'Planned go-live yyyy-mm-dd.' },
+        name: { type: 'string', description: 'Display name.' },
+      },
+      required: ['betId'],
+      examples: [{ betId: 'bet_ab12cd34', status: 'active', solution: 'Proactive health-score outreach', valueBasis: 'owner-declared', realizedValue: 120000 }],
+    },
+    call: async (user, args) => {
+      const betId = str(args.betId).trim();
+      if (!betId) fail('update_big_bet needs a `betId` (from list_big_bets)', 400);
+      const patch: Partial<Pick<BigBet, 'name' | 'solution' | 'targetValue' | 'goLive' | 'valueBasis' | 'ownerDeclaredValue' | 'status'>> = {};
+      if (typeof args.solution === 'string') patch.solution = args.solution.trim() || undefined;
+      if (typeof args.name === 'string' && args.name.trim()) patch.name = args.name.trim();
+      if (typeof args.targetValue === 'number' && Number.isFinite(args.targetValue)) patch.targetValue = args.targetValue;
+      if (typeof args.realizedValue === 'number' && Number.isFinite(args.realizedValue)) patch.ownerDeclaredValue = args.realizedValue;
+      if (typeof args.goLive === 'string' && args.goLive.trim()) patch.goLive = args.goLive.trim();
+      if (args.status !== undefined) {
+        const status = str(args.status);
+        if (!['draft', 'active', 'shipped', 'archived'].includes(status)) {
+          fail('status must be draft | active | shipped | archived', 400);
+        }
+        patch.status = status as BigBet['status'];
+      }
+      if (args.valueBasis !== undefined) {
+        const basis = str(args.valueBasis);
+        if (!['uplift', 'absolute', 'owner-declared'].includes(basis)) {
+          fail('valueBasis must be uplift | absolute | owner-declared', 400);
+        }
+        patch.valueBasis = basis as ValueBasis;
+      }
+      if (Object.keys(patch).length === 0) {
+        fail('update_big_bet needs at least one field to update (solution, status, targetValue, realizedValue, valueBasis, goLive, name)', 400);
+      }
+      const bet = updateBet(betId, P(user), patch); // the store's own edit gate (403/404)
+      return {
+        id: bet.id,
+        status: bet.status,
+        solution: bet.solution ?? null,
+        targetValue: bet.targetValue,
+        ownerDeclaredValue: bet.ownerDeclaredValue ?? null,
+        valueBasis: bet.valueBasis,
+        goLive: bet.goLive,
+        updatedAt: bet.updatedAt,
+        ...(patch.ownerDeclaredValue !== undefined && bet.valueBasis !== 'owner-declared'
+          ? { note: `realizedValue is recorded as the owner-declared value, but this bet resolves value by "${bet.valueBasis}" — set valueBasis: "owner-declared" for it to count.` }
+          : {}),
+      };
+    },
+  },
 ];
 
 // ================================ AGENTS ======================================
@@ -696,7 +1151,93 @@ export const agentWriteTools: McpTool[] = [
       return buildSystem(systemId, view.yaml);
     },
   },
+  {
+    name: 'run_agent_system',
+    tab: 'agents',
+    minRole: 'creator',
+    description:
+      'RUN an agentic-os team (LangGraph, OS-MCP tool grants) for one turn and return the reply + the per-node governed tool steps — the same in-process, run-as-user executor the Agents tab uses. Purpose: close the Agents golden path (build → RUN) over MCP. Before: list_agent_systems / get_agent_system (and build_agent_system for a ✓ build). After: read the per-node steps; wire the system into a Big Bet or schedule. Governance + recursion, stated honestly: the team’s OWN tool calls dispatch through the SAME governed door as this call (grant-scoped, OPA `os-<systemId>` pre-gated, then handleRpc AS YOU) — so a team can never exceed its declared grants NOR your role; there is no escalation in the loop. You must own the system or be entitled to run it (a domain-Shared system is runnable by in-domain members); a non-runnable id is a typed forbidden. A hermes/legacy-grant system cannot run in-process — that is a typed bad_request pointing to the Agents tab UI. Note: the run drives a live LLM; each node takes seconds.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        systemId: { type: 'string', description: 'The agent system to run (from list_agent_systems).' },
+        message: { type: 'string', description: 'The user message for this turn.' },
+        messages: {
+          type: 'array',
+          description: 'Optional multi-turn conversation (overrides `message`); last 20 kept.',
+          items: { type: 'object', properties: { role: { type: 'string', enum: ['user', 'assistant'] }, content: { type: 'string' } }, required: ['role', 'content'] },
+        },
+      },
+      required: ['systemId', 'message'],
+      examples: [{ systemId: 'sys_ab12cd', message: 'Analyze last quarter’s refund workflow and summarize the risks.' }],
+    },
+    call: async (user, args) => {
+      const systemId = str(args.systemId).trim();
+      if (!systemId) fail('run_agent_system needs a `systemId`', 400);
+      // Run-scope authorization BEFORE any side effect (owner / in-domain admin /
+      // in-domain member of a Shared system) — the same gate as the Agents tab run.
+      const view = getSystemForRun(systemId, P(user));
+      const msgs = runMessages(args);
+      // Dynamic imports: agentic-graph-server reads the tool registry at module init,
+      // so a static import here would be a server.ts ↔ write-tools.ts cycle.
+      const { isAgenticOsTeam } = await import('@/lib/agents/build/os-tools');
+      if (!isAgenticOsTeam(view.system)) {
+        fail(
+          'This system does not run on the in-process agentic-os path (hermes runtime or legacy/unmapped tool grants) — run it from the Agents tab UI instead',
+          400,
+        );
+      }
+      const runTeam = runTeamOverride ?? (await import('@/lib/agents/build/agentic-graph-server')).runOsTeam;
+      const team = await runTeam({ user, yaml: view.yaml, systemId, messages: msgs, disabledAgents: view.disabledAgents });
+      return {
+        systemId,
+        mode: 'live',
+        path: team.path,
+        finalText: team.finalText,
+        // Per-node summary: model + governed tool steps (no raw model text — tight).
+        nodes: team.runs.map((r) => ({
+          node: r.node,
+          model: r.model,
+          steps: r.result.steps.map((s) => ({ tool: s.tool, isError: s.isError })),
+        })),
+      };
+    },
+  },
 ];
+
+/** One turn's conversation: `messages` (validated, last 20) else the single `message`. */
+function runMessages(args: Record<string, unknown>): { role: 'user' | 'assistant'; content: string }[] {
+  const raw = Array.isArray(args.messages) ? (args.messages as { role?: string; content?: string }[]) : [];
+  const clean = raw
+    .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
+    .slice(-20)
+    .map((m) => ({ role: m.role as 'user' | 'assistant', content: (m.content as string).trim() }));
+  if (clean.length > 0) return clean;
+  const message = str(args.message).trim();
+  if (!message) fail('run_agent_system needs a `message` (or `messages`)', 400);
+  return [{ role: 'user', content: message }];
+}
+
+/** The runOsTeam signature the tool drives (structural, so tests can inject a spy). */
+type RunTeamFn = (input: {
+  user: CurrentUser;
+  yaml: string;
+  systemId: string;
+  messages: { role: 'user' | 'assistant'; content: string }[];
+  disabledAgents?: string[];
+}) => Promise<{
+  path: string[];
+  finalText: string;
+  runs: { node: string; model: string; result: { steps: { tool: string; isError: boolean }[] } }[];
+}>;
+
+// runOsTeam drives a LIVE LiteLLM call; tests inject a spy so the wrapper's
+// identity threading + governance gates are testable offline (mirrors the
+// injectable deps runOsTeam itself exposes). null → the real function.
+let runTeamOverride: RunTeamFn | null = null;
+export function __setRunOsTeamForTests(fn: RunTeamFn | null): void {
+  runTeamOverride = fn;
+}
 
 export const ALL_WRITE_TOOLS: McpTool[] = [
   ...dataWriteTools,
@@ -706,6 +1247,7 @@ export const ALL_WRITE_TOOLS: McpTool[] = [
   ...dashboardWriteTools,
   ...bigbetWriteTools,
   ...agentWriteTools,
+  ...promotionTools,
 ];
 
 // Keep an explicit reference to JsonSchema so the imported type is used (schemas above

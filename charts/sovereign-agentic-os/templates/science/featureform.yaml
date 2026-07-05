@@ -58,6 +58,23 @@ spec:
               value: "6379"
             - name: FEATUREFORM_ONLINE_VALKEY_PASSWORD
               valueFrom: { secretKeyRef: { name: {{ $f.valkeySecretName }}, key: password } }
+            # Metadata + coordinator state = Postgres (FF_STATE_PROVIDER=psql is the
+            # image default). Without these the server retries localhost:5432 forever
+            # and never binds its API (7878) or dashboard (80) ports — the pod shows
+            # Running but is non-functional. `featureform` role/db comes from
+            # postgres.extraDatabases (pg-init creates it; secret per that entry).
+            - name: PSQL_HOST
+              value: {{ include "soa.pgHost" . | quote }}
+            - name: PSQL_PORT
+              value: "5432"
+            - name: PSQL_DB
+              value: featureform
+            - name: PSQL_USER
+              valueFrom: { secretKeyRef: { name: postgres-featureform-credentials, key: username } }
+            - name: PSQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-featureform-credentials, key: password } }
+            - name: PSQL_SSLMODE
+              value: disable
           ports:
             - { name: api, containerPort: 7878 }
             - { name: dashboard, containerPort: 80 }

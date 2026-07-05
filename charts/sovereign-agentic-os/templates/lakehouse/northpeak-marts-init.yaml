@@ -11,9 +11,25 @@
   churn) broken out by region / product / month.
 
   Idempotent + repeatable: it waits for Trino, skips if the table already has rows (set
-  MARTS_FORCE=true to rebuild), otherwise DROP+CTAS. Runs AFTER polaris-catalog-init
-  (weight 10) so the `lakehouse` warehouse exists — this Job is weight 20. Talks ONLY to
-  Trino's HTTP protocol (no S3 creds needed here — Trino owns storage credentials).
+  MARTS_FORCE=true to rebuild), otherwise DELETE+INSERT. Runs AFTER polaris-catalog-init
+  (weight 10) so the `lakehouse` warehouse exists — this Job is weight 20. The Node
+  container talks ONLY to Trino's HTTP protocol (no S3 creds needed — Trino owns storage
+  credentials).
+
+  WHY create-then-INSERT instead of a plain Trino CTAS: on this Polaris (1.0.1) +
+  MinIO/no-STS stack, Polaris performs the create-table metadata COMMIT server-side with
+  its OWN Iceberg S3FileIO (IcebergCatalog.doCommit -> S3OutputStream). That FileIO is
+  built from `metadata.properties()` only; with SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION the
+  vended AccessConfig is empty, so Polaris's client falls back to the AWS_ENDPOINT_URL_S3
+  env endpoint with DEFAULT (virtual-host) addressing -> `s3://lakehouse` becomes host
+  `lakehouse.minio` -> UnknownHostException. Catalog-level and `table-default.s3.*`
+  properties do NOT reach that write FileIO, and Trino refuses `s3.*` keys in
+  extra_properties, so a Trino CTAS can never carry path-style into the first metadata
+  write. The ensure-table initContainer therefore creates the table (via the Polaris REST
+  catalog / PyIceberg) with `s3.path-style-access=true` stamped INTO the table's own
+  metadata; Polaris then forces path-style (-> host `minio`, path `/lakehouse/...`) and
+  every subsequent commit (this INSERT and later appends) inherits it. The proper
+  platform-wide fix is Polaris >= 1.1.0's storageConfigInfo.pathStyleAccess/endpoint.
 */}}
 {{- $m := .Values.marts }}
 apiVersion: v1
@@ -76,8 +92,12 @@ data:
     // Session-grained gold mart. ~CONV of sessions convert to a paid order (net_amount
     // & order_total > 0); the rest are abandoned sessions (0). Decorrelated pseudo-random
     // via distinct prime multipliers so region/product/month/price/churn vary independently.
-    const CTAS = `
-      CREATE TABLE ${FQN} AS
+    // INSERT (not CTAS): the table is pre-created by the ensure-table initContainer with
+    // s3.path-style-access stamped into its metadata (see the header comment), so Polaris's
+    // server-side commit uses path-style. A CTAS would recreate the table WITHOUT that
+    // property and fail the metadata write with UnknownHostException (lakehouse.minio).
+    const INSERT_SQL = `
+      INSERT INTO ${FQN}
       WITH s AS (SELECT row_number() OVER () AS n FROM UNNEST(sequence(1, 10000)) AS a(x) CROSS JOIN UNNEST(sequence(1, CAST(ceil(${ROWS} / 10000.0) AS bigint))) AS b(y) LIMIT ${ROWS}),
       base AS (
         SELECT n,
@@ -123,8 +143,10 @@ data:
         } catch { /* table missing → build */ }
       }
       console.log(`building ${FQN} (${ROWS} sessions, conversion ${CONV}, churn ${CHURN}) ...`);
-      await runSql(`DROP TABLE IF EXISTS ${FQN}`);
-      await runSql(CTAS);
+      // DELETE (not DROP): keep the pre-created table so its s3.path-style-access metadata
+      // property (and thus Polaris's path-style commit) survives a MARTS_FORCE rebuild.
+      await runSql(`DELETE FROM ${FQN}`);
+      await runSql(INSERT_SQL);
       const stats = await runSql(
         `SELECT count(*) AS sessions, sum(converted) AS orders, round(sum(net_amount),2) AS revenue, ` +
         `round(sum(order_total)/nullif(sum(converted),0),2) AS aov, round(avg(converted),4) AS conversion, ` +
@@ -132,6 +154,69 @@ data:
         `FROM ${FQN}`);
       console.log('materialized gold mart:', JSON.stringify(stats[0]));
     })().catch((e) => { console.error('marts-init failed:', e.message); process.exit(1); });
+  create_table.py: |
+    # ensure-table initContainer: create the gold mart table with s3.path-style-access
+    # stamped INTO its Iceberg metadata so Polaris's server-side create-commit addresses
+    # MinIO path-style (host `minio`, path `/lakehouse/...`) instead of virtual-host
+    # `lakehouse.minio` (UnknownHostException). Idempotent: ensure the property if the
+    # table exists, else staged-create it. Runs THROUGH the Polaris REST catalog (PyIceberg).
+    import os, sys
+    from pyiceberg.catalog.rest import RestCatalog
+    from pyiceberg.schema import Schema
+    from pyiceberg.types import NestedField, StringType, DecimalType, IntegerType, DateType
+
+    URI = os.environ.get("POLARIS_URI", "http://polaris:8181/api/catalog")
+    EP = os.environ["S3_ENDPOINT"]
+    SCHEMA = os.environ.get("TRINO_SCHEMA", "sales")
+    TABLE = os.environ.get("TRINO_TABLE", "gold_northpeak_commerce")
+    IDENT = SCHEMA + "." + TABLE
+    PROPS = {"s3.path-style-access": "true", "s3.endpoint": EP}
+
+    cat = RestCatalog(
+        "lakehouse", uri=URI, credential=os.environ["POLARIS_OAUTH_CREDENTIAL"],
+        warehouse=os.environ.get("POLARIS_WAREHOUSE", "lakehouse"), scope="PRINCIPAL_ROLE:ALL",
+        **{
+            "oauth2-server-uri": URI + "/v1/oauth/tokens",
+            "s3.endpoint": EP,
+            "s3.access-key-id": os.environ["AWS_ACCESS_KEY_ID"],
+            "s3.secret-access-key": os.environ["AWS_SECRET_ACCESS_KEY"],
+            "s3.region": os.environ.get("S3_REGION", "us-east-1"),
+            "s3.path-style-access": "true",
+        },
+    )
+    # Match Trino (vended-credentials-enabled=false): drop the access-delegation header so
+    # the op is CREATE_TABLE_STAGED (granted to the catalog principal), not the
+    # *_WITH_WRITE_DELEGATION variant (which is not granted).
+    for hk in list(cat._session.headers.keys()):
+        if hk.lower() == "x-iceberg-access-delegation":
+            cat._session.headers.pop(hk)
+
+    try:
+        cat.create_namespace_if_not_exists(SCHEMA)
+    except Exception:
+        pass
+
+    if cat.table_exists(IDENT):
+        t = cat.load_table(IDENT)
+        with t.transaction() as tx:
+            tx.set_properties(**PROPS)
+        print("ensure-table: %s exists; ensured s3.path-style-access" % IDENT)
+        sys.exit(0)
+
+    schema = Schema(
+        NestedField(1, "order_id", StringType(), required=False),
+        NestedField(2, "customer_id", StringType(), required=False),
+        NestedField(3, "region", StringType(), required=False),
+        NestedField(4, "product", StringType(), required=False),
+        NestedField(5, "net_amount", DecimalType(10, 2), required=False),
+        NestedField(6, "order_total", DecimalType(10, 2), required=False),
+        NestedField(7, "converted", IntegerType(), required=False),
+        NestedField(8, "order_date", DateType(), required=False),
+        NestedField(9, "is_churned", IntegerType(), required=False),
+    )
+    txn = cat.create_table_transaction(IDENT, schema=schema, properties=PROPS)
+    txn.commit_transaction()
+    print("ensure-table: created %s with s3.path-style-access" % IDENT)
 ---
 apiVersion: batch/v1
 kind: Job
@@ -208,6 +293,44 @@ spec:
           resources:
             requests: { cpu: 25m, memory: 64Mi }
             limits: { cpu: 200m, memory: 128Mi }
+        # Create the target table with s3.path-style-access in its Iceberg metadata BEFORE
+        # the Node INSERT. Trino cannot stamp s3.* into table metadata (CTAS + blocked
+        # extra_properties), and Polaris's server-side create-commit needs path-style in
+        # metadata.properties() to address MinIO (see header comment). Uses the data-runner
+        # image (ships PyIceberg) to create THROUGH the Polaris REST catalog.
+        - name: ensure-table
+          image: "{{ .Values.dataRunner.image.repository }}:{{ .Values.dataRunner.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          workingDir: /work
+          command: ["python3", "/work/create_table.py"]
+          env:
+            - { name: HOME, value: /tmp }
+            - name: POLARIS_URI
+              value: {{ .Values.dataRunner.polaris.uri | quote }}
+            - name: POLARIS_WAREHOUSE
+              value: {{ .Values.dataRunner.polaris.warehouse | quote }}
+            - name: POLARIS_OAUTH_CREDENTIAL
+              valueFrom: { secretKeyRef: { name: {{ .Values.dataRunner.polaris.oauthSecretName }}, key: POLARIS_OAUTH_CREDENTIAL } }
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_ACCESS_KEY_ID } }
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_SECRET_ACCESS_KEY } }
+            - name: S3_ENDPOINT
+              value: {{ include "soa.s3Endpoint" . | quote }}
+            - name: S3_REGION
+              value: {{ .Values.objectStorage.region | quote }}
+            - name: TRINO_SCHEMA
+              value: {{ $m.schema | quote }}
+            - name: TRINO_TABLE
+              value: {{ $m.table | quote }}
+          volumeMounts:
+            - { name: script, mountPath: /work, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
       containers:
         - name: marts-init
           image: "{{ $m.image.repository }}:{{ $m.image.tag }}"

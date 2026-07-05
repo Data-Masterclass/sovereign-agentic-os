@@ -36,6 +36,23 @@ test('consumption axis: gold → metric → dashboard', () => {
   assert.ok(g.edges.some((e) => e.from === 'm:revenue' && e.to === 'dash' && e.kind === 'dashboard'));
 });
 
+test('reuse axis: recorded join upstreams feed the Gold node (multi-upstream)', () => {
+  const g = lineageFor(ds({
+    upstreams: [
+      { datasetId: 'ds_np', name: 'Northpeak Commerce', fqn: 'iceberg.sales.gold_northpeak_commerce', joinType: 'inner' },
+      { datasetId: 'ds_cmp', name: 'Campaigns', fqn: 'iceberg.sales.gold_campaigns', joinType: 'left' },
+    ],
+  }));
+  const ups = g.nodes.filter((n) => n.kind === 'upstream');
+  assert.deepEqual(ups.map((n) => n.label), ['Northpeak Commerce', 'Campaigns']);
+  assert.equal(g.edges.filter((e) => e.kind === 'join' && e.to === 'v:gold').length, 2);
+  assert.match(ups[0].sublabel, /inner join · iceberg\.sales\.gold_northpeak_commerce/);
+});
+
+test('no upstream nodes when there is no Gold join (backwards compatible)', () => {
+  assert.equal(lineageFor(ds()).nodes.filter((n) => n.kind === 'upstream').length, 0);
+});
+
 test('trust axis + transparency are carried on the graph', () => {
   const g = lineageFor(ds());
   assert.equal(g.tier, 'product');

@@ -1,0 +1,44 @@
+{{- if and .Values.osUI.enabled .Values.openmetadata.enabled }}
+{{- /*
+  OS-UI OpenMetadata bot-JWT Secret. The Catalog surface unions OpenMetadata
+  entries ONLY when a bot token is present (os-ui/app/api/catalog/route.ts);
+  OM requires a Bearer token on every API call, so without one the Catalog
+  SKIPS OpenMetadata honestly instead of firing a doomed 401. The OS UI reads
+  OPENMETADATA_JWT from this Secret so the token is NEVER in plaintext env or
+  committed to git.
+
+  Resolution order (no secret is ever committed):
+    1. an explicit `osUI.openmetadataJwt` (operator-provided / ExternalSecret), else
+    2. the value already stored in this Secret (preserved across `helm upgrade`
+       via `lookup`), else
+    3. an empty string — the Catalog simply keeps skipping OM until supplied.
+
+  The operator mints the token from OM itself (admin login -> ingestion-bot ->
+  auth-mechanism JWT, see docs/components/openmetadata.md) and supplies it
+  out-of-band, e.g.
+    kubectl -n <ns> create secret generic os-ui-openmetadata \
+      --from-literal=OPENMETADATA_JWT='<ingestion-bot JWT>'
+  or via a gitignored values.private.yaml (`osUI.openmetadataJwt`) / an
+  ExternalSecret. GITOPS CAVEAT: `lookup` is empty under `helm template` (Argo CD
+  / Flux), so for those pipelines set the value explicitly (an ExternalSecret is
+  ideal) rather than relying on step 2.
+*/}}
+{{- $name := "os-ui-openmetadata" }}
+{{- $existing := (lookup "v1" "Secret" .Release.Namespace $name) }}
+{{- $current := "" }}
+{{- if $existing }}{{ $current = (index $existing.data "OPENMETADATA_JWT" | default "" | b64dec) }}{{- end }}
+{{- $jwt := .Values.osUI.openmetadataJwt | default $current | default "" }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui") | nindent 4 }}
+  annotations:
+    "helm.sh/resource-policy": keep
+type: Opaque
+stringData:
+  OPENMETADATA_JWT: {{ $jwt | quote }}
+{{- end }}

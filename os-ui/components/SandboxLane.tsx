@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-type Dataset = { id: string; name: string; origin: 'upload' | 'extract'; columns: string[]; rowCount: number };
+type Dataset = { id: string; name: string; origin: 'upload' | 'extract'; columns: string[]; rowCount: number | null };
 type Grid = { columns: string[]; rows: string[][] };
 
 /**
@@ -38,16 +38,14 @@ export default function SandboxLane() {
   const onFile = useCallback(async (file: File) => {
     setErr(''); setBusyUp(true);
     try {
-      const text = await file.text();
-      const lines = text.trim().split(/\r?\n/);
-      const columns = (lines.shift() ?? '').split(',').map((c) => c.trim());
-      const rows = lines.map((l) => l.split(',').map((c) => c.trim()));
-      const res = await fetch('/api/data/sandbox', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action: 'upload', name: upName || file.name, columns, rows }),
-      });
+      if (file.size > 100 * 1024 * 1024) { setErr('That file is over the 100 MB upload limit for now.'); return; }
+      // Stream the raw file → MinIO → data-runner → a real Iceberg table (survives restarts).
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('name', upName || file.name);
+      const res = await fetch('/api/data/sandbox/upload', { method: 'POST', body: fd });
       const data = await res.json();
-      if (!res.ok) setErr(data.error ?? 'Upload failed'); else { setUpName(''); refresh(); }
+      if (!res.ok || !data.ok) setErr(data.error ?? 'Upload failed'); else { setUpName(''); refresh(); }
     } catch (e) { setErr((e as Error).message); } finally { setBusyUp(false); }
   }, [upName, refresh]);
 
@@ -123,10 +121,10 @@ export default function SandboxLane() {
         {/* Bring data — upload */}
         <div className="card">
           <h3>Bring data — upload</h3>
-          <p className="muted" style={{ marginTop: 0 }}>CSV / Parquet / Excel → your private prefix.</p>
+          <p className="muted" style={{ marginTop: 0 }}>CSV / Parquet / JSON → a real Iceberg table in your private lane (max 100 MB).</p>
           <input type="text" placeholder="dataset name (optional)" value={upName} onChange={(e) => setUpName(e.target.value)} />
           <div className="row" style={{ marginTop: 10 }}>
-            <input type="file" accept=".csv,.tsv,.txt" disabled={busyUp}
+            <input type="file" accept=".csv,.tsv,.txt,.parquet,.json,.ndjson" disabled={busyUp}
               onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); }} />
             {busyUp ? <span className="spin" /> : null}
           </div>
@@ -159,7 +157,7 @@ export default function SandboxLane() {
                   <td style={{ fontWeight: 600 }}>{d.name}</td>
                   <td><span className={`chip${d.origin === 'extract' ? '' : ''}`}>{d.origin === 'extract' ? 'Trino extract (masked)' : 'upload'}</span></td>
                   <td className="mono" style={{ fontSize: 11 }}>{d.columns.join(', ') || '—'}</td>
-                  <td>{d.rowCount}</td>
+                  <td>{d.rowCount ?? '—'}</td>
                   <td><button className="btn ghost" style={{ padding: '4px 10px' }} onClick={() => setPromoteId(d.id)}>Promote →</button></td>
                 </tr>
               ))}

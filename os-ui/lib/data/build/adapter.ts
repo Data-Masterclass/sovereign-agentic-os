@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { Dataset } from '../dataset-schema.ts';
+import type { ExecuteIdentity } from '@/lib/governed';
 
 /**
  * The ONE Data Build adapter interface (clone of lib/agents/build/adapter.ts). Each
@@ -27,6 +28,21 @@ export type DataBuildContext = {
   principal?: string;
   /** The stage being built (so an adapter shared across stages picks the right model). */
   stage?: DataStage;
+  /** Compiled, allowlisted transform SQL (guided Silver/Gold builder) to EXECUTE via
+   *  the governed write path. When present with {@link identity}, the dbt adapter runs
+   *  a REAL CTAS instead of a verify-only probe. Absent ⇒ verify-only (pass-through). */
+  transformSql?: string;
+  /** The caller identity for the governed WRITE — derived server-side from the signed
+   *  session (never the request body). Threaded to {@link ExecuteIdentity}-based writes.
+   *  For the `promote` stage this is the APPROVING Builder (separation of duties). */
+  identity?: ExecuteIdentity;
+  /** Publish (promote) only: `CREATE SCHEMA IF NOT EXISTS iceberg.<domain>` run
+   *  before the CTAS so a first-ever domain publish doesn't fail on the namespace. */
+  schemaSql?: string;
+  /** Publish (promote) only: the requester's `personal_<uid>` schema the CTAS reads —
+   *  released read-only to the approver for the duration of the publish (trino.rego
+   *  `data.governance.releases`), withdrawn immediately after. */
+  releaseSchema?: string;
 };
 
 export interface DataAdapter {

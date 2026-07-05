@@ -5,7 +5,7 @@ Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 
 # Tutorials system
 
-One illustrated, hands-on tutorial per golden path (ten in all), authored once and
+One illustrated, hands-on tutorial per golden path (fourteen in all), authored once and
 reused by **two entry points that resolve the same registry entry** — so they can
 never drift:
 
@@ -26,13 +26,14 @@ lib/tutorials/
   engine.ts       # PURE logic: role framing, sandbox guard, anchor targeting
   engine.test.ts  # node --test proof of the invariants below
   registry.ts     # single registry, keyed by golden path; validates the set
-  content/*.ts    # the ten authored tutorials (one default-exported TutorialDef)
+  coverage.test.ts# TRIPWIRE: every nav tab has a tutorial or a documented exemption
+  content/*.ts    # the fourteen authored tutorials (one default-exported TutorialDef)
 components/tutorials/
   TutorialProvider.tsx  # mounted once in the root layout; hosts the overlay
   TutorialOverlay.tsx   # storybook + mode toggle + graduate + you-did-it
   CoachMarks.tsx        # the live walk-through engine (spotlight + tooltip)
   TutorialLink.tsx      # the single trigger (Home card + tab header)
-  HomeLauncher.tsx      # the Home ten-card golden-path gallery
+  HomeLauncher.tsx      # the Home golden-path card gallery
   Illustration.tsx      # the cohesive inline-SVG illustration set (16 motifs)
 ```
 
@@ -58,7 +59,7 @@ wired; the rest reconcile at consolidation without engine changes).
 
 1. **Sandbox writes nothing real.** In practice mode, `walkSteps(def,'sandbox',…)`
    removes every `governedWrite` step and `assertSandboxSafe` throws if one
-   survives. The registry asserts this for all ten tutorials at import. Practice
+   survives. The registry asserts this for all tutorials at import. Practice
    only ever targets the tab's personal/sandbox lane (`sandboxAnchor`).
 2. **Role framing is faithful.** `framingForRole` maps the session role
    (`participant → creator`, `builder/admin → builder`, else `user`); the core
@@ -81,6 +82,14 @@ Add `content/<path>.ts` exporting a default `TutorialDef` (see `types.ts`). Rule
 
 Run `node --test 'lib/tutorials/**/*.test.ts'` — the registry self-check + engine
 tests fail loudly on a broken contract.
+
+## Completeness (the tripwire)
+
+`coverage.test.ts` asserts every canonical OS nav tab (from `lib/tabs.ts`) has a
+registry tutorial (matched by route) **or** a documented exemption in
+`TUTORIAL_EXEMPT_ROUTES` — so a future tab cannot ship without a tutorial.
+Platform-group tabs (Admin, Users, Gateway, Terminal, …) are exempt as a class:
+operator consoles for the people RUNNING the OS, not student golden paths.
 
 ## Wiring a new tab's anchors
 

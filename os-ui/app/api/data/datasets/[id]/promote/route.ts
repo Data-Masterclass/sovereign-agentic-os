@@ -52,10 +52,17 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     const user = await requirePrincipal();
     const { id } = await ctx.params;
     const dataset = getDataset(id, user); // view-scope guard
-    const pending = listApprovals().find(
+    // The panel's status source: an in-flight request wins; otherwise the LATEST
+    // decided one (so a failed publish shows its real error until re-requested,
+    // and a stale earlier decision can't shadow a newer attempt).
+    const all = listApprovals().filter(
       (a) => a.kind === 'dataset_promote' && a.payload?.datasetId === id,
     );
-    return NextResponse.json({ tier: dataset.tier, gate: transparencyGate(dataset), request: pending ?? null });
+    const request =
+      all.find((a) => a.status === 'pending') ??
+      [...all].sort((x, y) => (y.decidedAt ?? y.createdAt).localeCompare(x.decidedAt ?? x.createdAt))[0] ??
+      null;
+    return NextResponse.json({ tier: dataset.tier, gate: transparencyGate(dataset), request });
   } catch (e) {
     return errorResponse(e);
   }

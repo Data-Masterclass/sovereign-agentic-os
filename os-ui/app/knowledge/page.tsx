@@ -186,7 +186,7 @@ export default function KnowledgePage() {
 
   return (
     <>
-      <PageHeader title="Knowledge" crumb="domain operating manual · workflows · context" tutorial="knowledge" mcpTab="knowledge" />
+      <PageHeader title="Knowledge" crumb="domain operating manual · workflows · context" tutorial="knowledge" />
       <div className="content">
 
         {/* ── Tab navigation ── */}

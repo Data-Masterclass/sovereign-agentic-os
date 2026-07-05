@@ -15,6 +15,8 @@ import {
   importProduct,
   listFiles,
   writeFile,
+  listJoinable,
+  buildGoldJoin,
   type Principal,
 } from './store.ts';
 import { DatasetError } from './dataset-schema.ts';
@@ -48,6 +50,47 @@ test('SECURITY: a participant/creator cannot import a cross-domain data product'
   // A finance Builder may.
   const product = importProduct(id, finBuilder);
   assert.ok(product.imports?.includes('finance'));
+});
+
+test('GOVERNANCE: the Gold join picker (listJoinable) is canView-scoped', () => {
+  // A promoted sales asset, plus a private finance dataset the sales users can't see.
+  const orders = seedOrders();
+  transition(orders, sara, 'promote', { visibility: 'domain' }); // → asset (sales, silver built)
+  const secret = createDataset(kenji, { name: 'Finance Ledger' }).id;
+  buildVersion(secret, kenji, 'bronze', { quality: 'passing', artifact: 'bronze/l.dlt.yml' });
+  buildVersion(secret, kenji, 'silver', { quality: 'passing', artifact: 'silver/l.sql' });
+
+  // A sales builder can reuse the promoted sales asset…
+  const forBea = listJoinable(bea);
+  assert.deepEqual(forBea.map((d) => d.name), ['Orders']);
+  assert.equal(forBea[0].fqn, 'iceberg.sales.silver_orders'); // physical FQN, not gold (gold unbuilt)
+
+  // …but NEVER the private finance dataset (canView false) — for anyone outside it.
+  assert.ok(!listJoinable(bea).some((d) => d.name === 'Finance Ledger'));
+  assert.ok(!listJoinable(amir).some((d) => d.name === 'Finance Ledger'));
+  // kenji sees his own only if it were shared; a private dataset is never joinable even
+  // for its owner (reuse is a governed-tier concept), and it never leaks cross-domain.
+  assert.ok(!listJoinable(finBuilder).some((d) => d.name === 'Orders')); // sales asset, not finance-visible
+
+  // The base dataset is excluded from its own picker.
+  assert.ok(!listJoinable(bea, orders).some((d) => d.id === orders));
+});
+
+test('buildGoldJoin lights Gold + records measures and multi-upstream lineage', () => {
+  const orders = seedOrders();
+  const updated = buildGoldJoin(orders, amir, {
+    measures: [{ name: 'net_after_returns', type: 'sum', sql: 'net_after_returns' }],
+    upstreams: [{ datasetId: 'ds_np', name: 'Northpeak Commerce', fqn: 'iceberg.sales.gold_northpeak_commerce', joinType: 'inner' }],
+    artifact: 'gold/mart_orders.sql',
+    body: 'create or replace table iceberg.personal_amir.gold_orders as select 1 as x',
+  });
+  assert.equal(updated.versions.gold.built, true);
+  assert.deepEqual(updated.measures.map((m) => m.name), ['net_after_returns']);
+  assert.equal(updated.upstreams?.length, 1);
+  assert.equal(updated.upstreams?.[0].fqn, 'iceberg.sales.gold_northpeak_commerce');
+  // survives a serialize/parse round-trip (the durable single source).
+  const reopened = getDataset(orders, amir);
+  assert.equal(reopened.upstreams?.[0].name, 'Northpeak Commerce');
 });
 
 test('a fresh tenant has no datasets', () => {

@@ -40,6 +40,15 @@ export async function POST(req: Request) {
   if (!config.workbenchAllowedRoles.includes(user.role)) {
     return NextResponse.json({ error: 'not authorised for workbench' }, { status: 403 });
   }
+  // Fail honestly when the deployment has no browser-reachable broker URL
+  // (ingress on, ingress.hosts.workbench unset => chart renders "") instead of
+  // handing the browser a token for a broker it can never reach.
+  if (!config.workbenchBrokerUrl) {
+    return NextResponse.json(
+      { error: 'workbench broker is not reachable from the browser on this deployment — set ingress.hosts.workbench in the chart values' },
+      { status: 503 },
+    );
+  }
 
   // Resolve the requested domain; default to the user's first domain. A builder
   // can ONLY open a workbench for a domain they belong to.

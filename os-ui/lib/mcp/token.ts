@@ -25,15 +25,44 @@ import { getPublicUser } from '@/lib/users';
 
 const PREFIX = 'soa_mcp_';
 
-type McpTokenPayload = { id: string; iat: number };
+function nowSec(): number {
+  return Math.floor(Date.now() / 1000);
+}
 
-/** Mint a bearer token for a user id. Server-only. */
-export function signMcpToken(id: string, secret: string = config.mcpTokenSecret): string {
-  const body = Buffer.from(
-    JSON.stringify({ id, iat: Math.floor(Date.now() / 1000) } satisfies McpTokenPayload),
-  ).toString('base64url');
+export type McpTokenPayload = {
+  id: string;
+  iat: number;
+  /** OAuth access tokens: the MCP resource (`aud`) this token is bound to. */
+  aud?: string;
+  /** Expiry (epoch seconds). Absent = legacy long-lived token (no expiry check). */
+  exp?: number;
+  /** Coarse OAuth scope, e.g. `mcp:tools`. Advisory only — role is the authority. */
+  scope?: string;
+  /** `access` (default) or `refresh`. A refresh token is never a valid MCP bearer. */
+  typ?: 'access' | 'refresh';
+  /** Random nonce so two tokens minted in the same second differ. */
+  jti?: string;
+};
+
+/**
+ * Sign an arbitrary MCP token payload (`iat` is stamped if absent). This is the
+ * single signing primitive; `signMcpToken` and the OAuth layer both build on it,
+ * so the OAuth access token is the SAME envelope as the copy-paste bearer — only
+ * enriched with `aud`/`exp`/`scope`/`typ`. Server-only.
+ */
+export function signMcpPayload(
+  claims: Omit<McpTokenPayload, 'iat'> & { iat?: number },
+  secret: string = config.mcpTokenSecret,
+): string {
+  const payload: McpTokenPayload = { iat: nowSec(), ...claims };
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
   const sig = createHmac('sha256', secret).update(body).digest('base64url');
   return `${PREFIX}${body}.${sig}`;
+}
+
+/** Mint a long-lived bearer token for a user id (the copy-paste path). Server-only. */
+export function signMcpToken(id: string, secret: string = config.mcpTokenSecret): string {
+  return signMcpPayload({ id }, secret);
 }
 
 /** Verify + decode a bearer token. Returns the payload, or null on any tamper. */
@@ -58,7 +87,10 @@ export function verifyMcpToken(
   if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString()) as McpTokenPayload;
-    return payload && typeof payload.id === 'string' && payload.id ? payload : null;
+    if (!payload || typeof payload.id !== 'string' || !payload.id) return null;
+    // Enforce expiry ONLY when present, so legacy no-exp tokens keep verifying.
+    if (typeof payload.exp === 'number' && payload.exp <= nowSec()) return null;
+    return payload;
   } catch {
     return null;
   }
@@ -72,7 +104,7 @@ export function verifyMcpToken(
  */
 export async function resolveMcpUser(token: string | undefined | null): Promise<CurrentUser | null> {
   const payload = verifyMcpToken(token);
-  if (!payload) return null;
+  if (!payload || payload.typ === 'refresh') return null; // a refresh token is not an MCP bearer
   const u = await getPublicUser(payload.id);
   if (!u || u.mustChangeCredentials) return null;
   return { id: u.id, name: u.name, domains: u.domains, role: u.role };

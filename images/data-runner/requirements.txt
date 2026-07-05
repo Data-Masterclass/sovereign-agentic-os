@@ -1,0 +1,7 @@
+# data-runner — the ingest service. DuckDB infers the schema of an uploaded file
+# and PyIceberg writes it as a Bronze Iceberg table THROUGH the Polaris REST catalog
+# (same warehouse Trino reads). boto3 pulls the object from MinIO (no DuckDB httpfs —
+# extension autoload would need egress, which is default-denied in the cluster).
+duckdb>=1.1,<2
+pyiceberg[pyarrow]>=0.8,<0.9
+boto3>=1.34,<2

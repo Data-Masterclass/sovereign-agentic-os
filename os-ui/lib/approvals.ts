@@ -87,8 +87,18 @@ export type Approval = {
   decidedBy?: string;
   decidedAt?: string;
   /** What the approval actually did (set once the effect runs). */
-  effect?: { applied: string; live: boolean; standingPolicyId?: string };
+  effect?: ApprovalEffect;
   createdAt: string;
+};
+
+/** The recorded outcome of an approval's executed effect. `publish` carries the
+ *  physical dataset-publish result (T8) so the PromotePanel / Governance card can
+ *  show live | failed honestly instead of string-matching the summary. */
+export type ApprovalEffect = {
+  applied: string;
+  live: boolean;
+  standingPolicyId?: string;
+  publish?: { ok: boolean; fqn: string; error?: string; mode?: string; cubeView?: string | null };
 };
 
 // Pinned to globalThis so the queue is a TRUE singleton across separately
@@ -199,7 +209,7 @@ export function pendingCount(domain?: string): number {
 /** Stamp what the approval actually did (the executed effect), for the card + audit. */
 export function recordEffect(
   approvalId: string,
-  effect: { applied: string; live: boolean; standingPolicyId?: string },
+  effect: ApprovalEffect,
 ): Approval | null {
   const a = queue.get(approvalId);
   if (!a) return null;

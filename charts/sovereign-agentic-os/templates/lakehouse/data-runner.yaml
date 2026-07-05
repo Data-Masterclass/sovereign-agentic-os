@@ -1,0 +1,108 @@
+{{- if .Values.dataRunner.enabled }}
+{{- /*
+  data-runner — the REAL ingest service (Data-tab "Upload"). os-ui streams a file to
+  MinIO under s3://<bucket>/uploads/<uid>/<file>, then calls POST /ingest; the runner
+  reads it with DuckDB (schema inference) and writes a PHYSICAL Iceberg Bronze table
+  `lakehouse.personal_<uid>.bronze_<slug>` THROUGH the Polaris REST catalog (PyIceberg),
+  so uploads stop being an in-memory placebo.
+
+  Cluster-internal only (ClusterIP): the trusted os-ui backend supplies `principal`
+  (session-bound, never the browser) — same trust model as the query-tool's /query.
+
+  Credentials (no new broad creds invented):
+    * Polaris OAuth — reuse the SAME client Trino writes Iceberg with
+      (trino-catalog-credentials / POLARIS_OAUTH_CREDENTIAL, chart-created for
+      profile=local). Namespace/table registration goes through Polaris.
+    * Object storage — reuse the SAME object-storage creds Trino/Polaris use to
+      read/write the warehouse bucket (MinIO has no STS, so Polaris vends none and the
+      client writes the Parquet data files with these static creds). Used to GET the
+      upload and to write Iceberg data files.
+  Runs in the apps sync-wave with the other lakehouse infra (Polaris/Trino must be up).
+*/}}
+{{- $dr := .Values.dataRunner }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-runner
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "apps") | nindent 4 }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "data-runner") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "data-runner") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "data-runner") | nindent 8 }}
+    spec:
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "app") | nindent 6 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: data-runner
+          image: "{{ $dr.image.repository }}:{{ $dr.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          env:
+            - { name: PORT, value: "8000" }
+            - { name: HOME, value: /tmp }
+            # Polaris REST catalog (same warehouse Trino reads/writes).
+            - { name: POLARIS_URI, value: {{ $dr.polaris.uri | quote }} }
+            - { name: POLARIS_WAREHOUSE, value: {{ $dr.polaris.warehouse | quote }} }
+            - { name: POLARIS_OAUTH_SCOPE, value: {{ $dr.polaris.oauthScope | quote }} }
+            - name: POLARIS_OAUTH_CREDENTIAL
+              valueFrom: { secretKeyRef: { name: {{ $dr.polaris.oauthSecretName | quote }}, key: POLARIS_OAUTH_CREDENTIAL } }
+            # Object storage (upload GET + Iceberg data-file write).
+            - { name: S3_ENDPOINT, value: {{ include "soa.s3Endpoint" . | quote }} }
+            - { name: S3_REGION, value: {{ $dr.s3.region | quote }} }
+            - { name: S3_PATH_STYLE, value: {{ $dr.s3.pathStyleAccess | quote }} }
+            - { name: UPLOADS_BUCKET, value: {{ $dr.uploadsBucket | quote }} }
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_ACCESS_KEY_ID } }
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_SECRET_ACCESS_KEY } }
+          ports:
+            - { name: http, containerPort: 8000 }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml $dr.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-runner
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "data-runner") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "data-runner") | nindent 4 }}
+  ports:
+    - { name: http, port: 8000, targetPort: http }
+{{- end }}

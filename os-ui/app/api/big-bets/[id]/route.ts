@@ -28,7 +28,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     const url = new URL(req.url);
     const basis = url.searchParams.get('basis');
     const allocation = url.searchParams.get('allocation');
-    const view = buildBetView(id, user, {
+    const view = await buildBetView(id, user, {
       basis: basis && BASES.includes(basis as ValueBasis) ? (basis as ValueBasis) : undefined,
       allocation: allocation && METHODS.includes(allocation as AllocationMethod) ? (allocation as AllocationMethod) : undefined,
       today: url.searchParams.get('today') ?? undefined,

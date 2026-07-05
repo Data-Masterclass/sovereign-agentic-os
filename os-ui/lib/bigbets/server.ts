@@ -4,7 +4,9 @@
 import 'server-only';
 import { authorize } from '@/lib/governed';
 import { config } from '@/lib/config';
-import { type CurrentUser } from '@/lib/auth';
+// Type-only ON PURPOSE: a value-import of lib/auth would drag next/headers into
+// every consumer (and break the node --test runner). Nothing here needs it at runtime.
+import type { CurrentUser } from '@/lib/auth';
 import {
   type Actor,
   type BigBet,
@@ -17,6 +19,7 @@ import { rollup } from './roadmap.ts';
 import { buildComposition } from './composition.ts';
 import { realizedValue, distribute } from './value.ts';
 import { resolveArtifact, getPillar, getMetric, sourceMode, READY_VERB } from './sources.ts';
+import { listPillars as listStrategyPillars } from '@/lib/strategy/pillars';
 
 /**
  * The server boundary for Big Bets: turns the authenticated CurrentUser into a
@@ -93,12 +96,15 @@ export type BetView = {
 /**
  * Compose the full bet view for a viewer. `basis`/`allocation` override the bet's
  * stored knobs so the UI can preview "what if uplift→absolute / manual→usage".
+ *
+ * Async so it can look up the pillar name from the real strategy store (avoids
+ * the globalThis-timing issue where the cache may not yet be warm).
  */
-export function buildBetView(
+export async function buildBetView(
   betId: string,
   user: CurrentUser,
   opts: { basis?: BigBet['valueBasis']; allocation?: BigBet['allocation']; today?: string } = {},
-): BetView {
+): Promise<BetView> {
   const p = principal(user);
   const bet = getBet(betId, p);
   const effective: BigBet = {
@@ -139,7 +145,11 @@ export function buildBetView(
   const weights = new Map(bet.components.map((c) => [c.id, c.weight]));
   const distribution = distribute(realized.realized, refs, weights, effective.allocation, composition);
 
-  const pillar = getPillar(bet.pillarId);
+  // Resolve pillar from the real strategy store (async, avoids phantom gap);
+  // fall back to sources.ts adapter for unit-test / warm-cache path.
+  const strategyPillars = await listStrategyPillars(user).catch(() => null);
+  const stratPillar = strategyPillars?.find((p) => p.id === bet.pillarId) ?? null;
+  const pillar = stratPillar ?? getPillar(bet.pillarId);
   const metric = getMetric(bet.metricId);
 
   return {

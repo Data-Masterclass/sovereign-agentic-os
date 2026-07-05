@@ -9,11 +9,15 @@
  * the orchestrator, the launchpad for the full external tool UIs, and the
  * About / Licenses page).
  */
+import type { Role } from '@/lib/session';
+
 export type Tab = {
   label: string;
   icon: string; // single-glyph marker rendered in the sidebar
   href?: string; // present => navigable; absent => stub ("soon")
-  role?: string; // gating note (informational in the MVP)
+  role?: string; // human-readable display hint (legacy informational label)
+  /** Machine-readable minimum role required to see + reach this tab. */
+  minRole?: Role;
 };
 
 export type TabGroup = {
@@ -46,19 +50,44 @@ export const TAB_GROUPS: TabGroup[] = [
   {
     heading: 'Platform',
     tabs: [
-      { label: 'Admin', icon: '❖', href: '/platform', role: 'Administrator' },
-      { label: 'Users', icon: '☖', href: '/users', role: 'Administrator' },
-      { label: 'Components', icon: '▥', href: '/components', role: 'Builder / Administrator' },
-      { label: 'Gateway', icon: '⌁', href: '/gateway' },
-      { label: 'Orchestration', icon: '⟲', href: '/orchestration' },
-      { label: 'Workbench', icon: '⬓', href: '/workbench', role: 'Builder / Administrator' },
-      { label: 'Terminal', icon: '▮', href: '/terminal', role: 'Builder / Administrator' },
+      { label: 'Admin', icon: '❖', href: '/platform', role: 'Administrator', minRole: 'admin' },
+      { label: 'Users', icon: '☖', href: '/users', role: 'Administrator', minRole: 'admin' },
+      { label: 'Components', icon: '▥', href: '/components', role: 'Administrator', minRole: 'admin' },
+      { label: 'Gateway', icon: '⌁', href: '/gateway', role: 'Administrator', minRole: 'admin' },
+      { label: 'Orchestration', icon: '⟲', href: '/orchestration', role: 'Administrator', minRole: 'admin' },
+      { label: 'Workbench', icon: '⬓', href: '/workbench', role: 'Administrator', minRole: 'admin' },
+      { label: 'Terminal', icon: '▮', href: '/terminal', role: 'Administrator', minRole: 'admin' },
       { label: 'Tutorials', icon: '◎', href: '/tutorials' },
-      { label: 'Consoles', icon: '◫', href: '/consoles' },
-      { label: 'About / Licenses', icon: '©', href: '/about' },
+      { label: 'Consoles', icon: '◫', href: '/consoles', role: 'Administrator', minRole: 'admin' },
+      { label: 'About / Licenses', icon: '©', href: '/about', role: 'Administrator', minRole: 'admin' },
     ],
   },
 ];
 
 // Flat list (kept for any consumer that just wants every tab in order).
 export const TABS: Tab[] = TAB_GROUPS.flatMap((g) => g.tabs);
+
+/** Role rank — creator(0) < builder(1) < admin(2). */
+const ROLE_RANK: Record<Role, number> = { creator: 0, builder: 1, admin: 2 };
+
+/**
+ * Pure visibility check: can `userRole` see `tab`?
+ * No `minRole` on the tab means visible to everyone.
+ * A `null`/`undefined` userRole (unauthenticated) always passes — the Edge
+ * middleware handles the redirect to /signin before the page renders.
+ */
+export function tabVisible(tab: Tab, userRole: Role | null | undefined): boolean {
+  if (!tab.minRole) return true;
+  if (!userRole) return true; // middleware guards; UI shows tabs, server redirects
+  return (ROLE_RANK[userRole] ?? 0) >= (ROLE_RANK[tab.minRole] ?? 0);
+}
+
+/**
+ * Filter tab groups for a given user role. Empty groups (all tabs hidden) are
+ * dropped so no dangling heading appears in the sidebar.
+ */
+export function filterTabGroups(groups: TabGroup[], userRole: Role | null | undefined): TabGroup[] {
+  return groups
+    .map((g) => ({ ...g, tabs: g.tabs.filter((t) => tabVisible(t, userRole)) }))
+    .filter((g) => g.tabs.length > 0);
+}

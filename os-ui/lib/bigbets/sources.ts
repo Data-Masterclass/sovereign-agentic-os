@@ -206,6 +206,51 @@ const TABS: Tab[] = [
 
 const SOURCES = new Map<Tab, ComponentSource>(TABS.map((t) => [t, new MockSource(t)]));
 
+/** What the governed attach door passes in: the REAL artifact's reference card. */
+export type LinkedArtifactInput = {
+  id: string;
+  tab: Tab;
+  title: string;
+  domain: string;
+  visibility: Artifact['visibility'];
+  lifecycle: Lifecycle;
+  omFqn?: string;
+};
+
+/**
+ * Register (or refresh) a REAL per-tab artifact as a linkable reference in this
+ * registry — called by the governed `attach_component` door AFTER the caller has
+ * resolved the id through the tab's OWN canView gate (getDataset/getDashboard/
+ * getSystem). The per-tab store stays the single source of truth; this records
+ * only the reference card the bet renders (id · title · tier · lifecycle),
+ * preserving any existing bet tags. Nothing here bypasses governance: an id the
+ * caller cannot see never reaches this function.
+ */
+export function registerLinkedArtifact(input: LinkedArtifactInput): Artifact {
+  ensureSeeded();
+  const existing = artifacts.get(input.id);
+  if (existing) {
+    // Refresh the reference card from the real store; keep bet tags + usage.
+    existing.title = input.title;
+    existing.visibility = input.visibility;
+    existing.lifecycle = input.lifecycle;
+    if (input.omFqn) existing.omFqn = input.omFqn;
+    return existing;
+  }
+  return put({
+    id: input.id,
+    tab: input.tab,
+    title: input.title,
+    domain: input.domain,
+    visibility: input.visibility,
+    lifecycle: input.lifecycle,
+    consumes: [],
+    bigBetIds: [],
+    usage30d: 0,
+    omFqn: input.omFqn,
+  });
+}
+
 export function sourceFor(tab: Tab): ComponentSource {
   const s = SOURCES.get(tab);
   if (!s) throw new BetError(`No source for tab '${tab}'`, 400);
@@ -225,14 +270,20 @@ export function allArtifacts(): Artifact[] {
 }
 
 // ------------------------------------------------ Strategy up-link (mock) ----
+//
+// These functions are the Strategy seam that the rest of the BigBets spine
+// reads (value calc, server view, tests). In production the REAL data lives in
+// lib/strategy/pillars.ts — pinned to globalThis[Symbol.for('soa.strategy.pillars')]
+// — which this module reads WITHOUT importing the server-only module (so it
+// stays unit-testable in Node tests with no Next.js context). When the real
+// cache is present it takes precedence; the phantom Maps below are fallback
+// for unit tests that seed data via __seedStrategy.
 
 const metrics = new Map<string, BusinessMetric>();
 const pillars = new Map<string, Pillar>();
 let strategySeeded = false;
 
 function ensureStrategy(): void {
-  // A fresh tenant starts EMPTY. Strategy metrics and pillars are defined only
-  // through the platform's own governed flows (e.g. the Northpeak seed).
   if (strategySeeded) return;
   strategySeeded = true;
 }
@@ -251,14 +302,85 @@ export function __seedStrategy(metric?: BusinessMetric, pillar?: Pillar): void {
   if (pillar) pillars.set(pillar.id, pillar);
 }
 
+// ---------- globalThis adapter (no server-only import, no async) ----------
+
+type RealStrategyState = {
+  cache: Map<string, {
+    id: string;
+    name: string;
+    scope: string;
+    domain: string;
+    metrics: { cube: string; measure: string; title: string; basis: string; seedTotal: number; baseline?: number }[];
+    valueMetric?: { name: string; description: string };
+  }> | null;
+};
+
+function realStrategyCache(): RealStrategyState['cache'] | null {
+  const KEY = Symbol.for('soa.strategy.pillars');
+  const g = globalThis as unknown as Record<symbol, RealStrategyState | undefined>;
+  return g[KEY]?.cache ?? null;
+}
+
+/**
+ * Read the real strategy store (no import, reads globalThis directly). Returns
+ * null when the cache hasn't been initialised yet (unit tests without a Next.js
+ * context, or the first request before any strategy route has run).
+ */
+function readRealStrategy(): { pillars: Pillar[]; metricsByMeasure: Map<string, BusinessMetric> } | null {
+  const cache = realStrategyCache();
+  if (!cache) return null;
+
+  const out: Pillar[] = [];
+  const metricsByMeasure = new Map<string, BusinessMetric>();
+
+  for (const p of cache.values()) {
+    const firstMetric = p.metrics[0];
+    // metricId for the bigbets spine: prefer Cube measure (stable, unique); fall
+    // back to a synthetic id for value-metric-only pillars.
+    const metricId = firstMetric?.measure ?? (p.valueMetric?.name ? `vm_${p.id}` : '');
+    out.push({
+      id: p.id,
+      name: p.name,
+      scope: p.scope as 'tenant' | 'domain',
+      domain: p.domain,
+      metricId,
+    });
+    for (const m of p.metrics) {
+      if (!metricsByMeasure.has(m.measure)) {
+        metricsByMeasure.set(m.measure, {
+          id: m.measure,
+          name: m.title,
+          cubeMeasure: m.measure,
+          unit: '€',
+          baseline: m.baseline ?? 0,
+          current: m.seedTotal,
+        });
+      }
+    }
+  }
+  return { pillars: out, metricsByMeasure };
+}
+
 export function getPillar(pillarId: string): Pillar | null {
   ensureStrategy();
-  return pillars.get(pillarId) ?? null;
+  // Real store first — populated by any strategy route that ran this request. If the
+  // real cache is warm but lacks this id, STILL fall back to the phantom map: in
+  // production the phantom is empty (no-op), while in unit tests another suite may
+  // have warmed the real cache without the fixture seeded via __seedStrategy.
+  const real = readRealStrategy();
+  const fromReal = real ? (real.pillars.find((p) => p.id === pillarId) ?? null) : null;
+  return fromReal ?? pillars.get(pillarId) ?? null;
 }
 
 export function getMetric(metricId: string): BusinessMetric | null {
   ensureStrategy();
-  return metrics.get(metricId) ?? null;
+  // Try the phantom map first (unit tests inject BusinessMetric objects directly).
+  const phantom = metrics.get(metricId);
+  if (phantom) return phantom;
+  // Fall back to the real strategy store — scan all pillar metrics by measure id.
+  const real = readRealStrategy();
+  if (real) return real.metricsByMeasure.get(metricId) ?? null;
+  return null;
 }
 
 /**
@@ -277,5 +399,9 @@ export function resolveMetric(
 
 export function listPillars(): Pillar[] {
   ensureStrategy();
+  // Real store first (populated by any strategy route on this process).
+  const real = readRealStrategy();
+  if (real) return real.pillars;
+  // Phantom fallback (unit tests).
   return [...pillars.values()];
 }

@@ -102,9 +102,10 @@ test('offline-mock runs the SAME adapter logic and agrees with live (no drift)',
   assert.deepEqual(mock.rows.map((x) => x.tool), ['cube', 'om']);
 });
 
-test('promote stage runs the full set (dbt-trino → trino → om → policy) and ✓', async () => {
+test('promote stage runs the full set (policy → dbt-trino → trino) and ✓', async () => {
   const r = await orchestrateStage('promote', ctxFor(gold()), makeLiveAdapters(fakes()));
-  assert.deepEqual(r.rows.map((x) => x.tool), ['dbt-trino', 'trino', 'om', 'policy']);
+  // policy FIRST: the promoted FQN's OPA governance is live before the table exists.
+  assert.deepEqual(r.rows.map((x) => x.tool), ['policy', 'dbt-trino', 'trino']);
   assert.equal(r.ok, true);
   assert.deepEqual(r.skipped, []);
 });
@@ -113,8 +114,36 @@ test('orchestrator SKIPS an absent adapter (no faked ✓) rather than inventing 
   const adapters = makeLiveAdapters(fakes());
   delete adapters.policy; // simulate a not-yet-wired tool
   const r = await orchestrateStage('promote', ctxFor(gold()), adapters);
-  assert.deepEqual(r.rows.map((x) => x.tool), ['dbt-trino', 'trino', 'om']);
+  assert.deepEqual(r.rows.map((x) => x.tool), ['dbt-trino', 'trino']);
   assert.deepEqual(r.skipped, ['policy']);
+});
+
+test('T8 publish: the promote CTAS + the APPROVING Builder identity thread to dbt-trino', async () => {
+  const b = newMockBackends();
+  const ctx = {
+    ...ctxFor(gold()),
+    principal: 'bea',
+    transformSql: 'create or replace table iceberg.sales.gold_orders as select * from iceberg.personal_amir.gold_orders',
+    schemaSql: 'create schema if not exists iceberg.sales',
+    identity: { principal: 'bea', uid: 'bea', domains: ['sales'], role: 'builder' as const },
+    releaseSchema: 'personal_amir',
+  };
+  const r = await orchestrateStage('promote', ctx, makeMockAdapters(b));
+  assert.equal(r.ok, true);
+  assert.equal(b.publishWrites.length, 1);
+  assert.equal(b.publishWrites[0].uid, 'bea', 'the CTAS runs as the APPROVER, never the requester');
+  assert.equal(b.publishWrites[0].role, 'builder');
+  assert.equal(b.publishWrites[0].releaseSchema, 'personal_amir');
+  assert.match(b.publishWrites[0].sql, /^create or replace table iceberg\.sales\.gold_orders as select/);
+  const row = r.rows.find((x) => x.tool === 'dbt-trino')!;
+  assert.match(row.detail, /approving Builder|materialized/);
+});
+
+test('T8 publish without a write ctx stays a verify-only probe (no accidental DDL)', async () => {
+  const b = newMockBackends();
+  const r = await orchestrateStage('promote', ctxFor(gold()), makeMockAdapters(b));
+  assert.equal(r.ok, true);
+  assert.equal(b.publishWrites.length, 0);
 });
 
 test('promote ✗ if the materialized table is not queryable (dbt-trino/trino chain)', async () => {

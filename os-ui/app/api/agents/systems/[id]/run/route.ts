@@ -5,7 +5,8 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { getSystemForRun, setRunning, recordActivity } from '@/lib/agents/store';
 import { runSystem } from '@/lib/agents/build/server';
-import { isAgenticSoftwareTeam, runAgenticTeam } from '@/lib/agents/build/agentic-graph-server';
+import { runOsTeam } from '@/lib/agents/build/agentic-graph-server';
+import { isAgenticOsTeam } from '@/lib/agents/build/os-tools';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,14 +59,17 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const view = getSystemForRun(id, user);
     const prompt = typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : 'Test invocation';
 
-    // A software-MCP LangGraph team runs LIVE, in-process, as the signed-in user:
-    // each node runs the PLAN→ACT harness with its pinned model and executes tools
-    // via handleRpc(user, …) — genuinely building + requesting deploys, never a
-    // system principal. Everything else keeps the runtime/mock `runSystem` path.
-    if (isAgenticSoftwareTeam(view.system)) {
-      const team = await runAgenticTeam({
+    // Any agentic-os LangGraph team (data + knowledge + connections + software
+    // grants, all resolving to the MCP registry) runs LIVE, in-process, as the
+    // signed-in user: each node runs the PLAN→ACT harness with its pinned model and
+    // executes tools via grantedToolExecutor → handleRpc(user, …) — governed as the
+    // acting user, never a system principal. Hermes/unmapped-legacy systems keep the
+    // runtime/mock `runSystem` fallback path.
+    if (isAgenticOsTeam(view.system)) {
+      const team = await runOsTeam({
         user,
         yaml: view.yaml,
+        systemId: id,
         messages: runMessages(body, prompt),
         disabledAgents: view.disabledAgents,
       });

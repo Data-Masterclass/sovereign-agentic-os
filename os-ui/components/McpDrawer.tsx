@@ -7,16 +7,23 @@ import { useEffect, useState } from 'react';
 import McpConnect from './McpConnect';
 
 /**
- * Button + side-drawer for the per-tab MCP connect instructions.
- * Used in the top-left ActionBar on all MCP-enabled tabs.
- * The `className` prop lets callers override the button style
- * (action-bar uses "action-bar-btn"; legacy topbar used "tut-link tut-link-header").
+ * Button + side-drawer for the MCP connect instructions.
+ *
+ * Without a `tab` (global mode): opens the overarching /api/mcp endpoint that
+ * exposes ALL golden-path tools across every tab. Used in the top-right topbar
+ * so it is reachable from every page.
+ *
+ * With a `tab` (legacy per-tab mode, unused since Phase 7 follow-up): scoped
+ * to that tab's filtered tool surface.
+ *
+ * The `className` prop lets callers control the button style
+ * (topbar uses "topbar-mcp-btn"; action-bar used "action-bar-btn").
  */
 export default function McpDrawer({
   tab,
   className = 'action-bar-btn',
 }: {
-  tab: string;
+  tab?: string;
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -51,7 +58,14 @@ export default function McpDrawer({
             aria-label="Connect your AI Tool via MCP"
           >
             <div className="drawer-head">
-              <h2>Connect your AI Tool via MCP</h2>
+              <div>
+                <h2>Connect your AI Tool via MCP</h2>
+                {!tab && (
+                  <p style={{ margin: '2px 0 0', fontSize: 12.5, color: 'var(--text-muted)', fontWeight: 400 }}>
+                    One endpoint, every golden path — build data, knowledge, agents and apps by chatting.
+                  </p>
+                )}
+              </div>
               <button className="drawer-x" onClick={() => setOpen(false)} aria-label="Close">
                 ×
               </button>

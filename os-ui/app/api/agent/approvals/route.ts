@@ -7,11 +7,11 @@ import { decide, getApproval, listApprovals } from '@/lib/approvals';
 import { curateFact, proposeFact } from '@/lib/agent-memory';
 import { trace } from '@/lib/agent-governed';
 import {
-  applyApprovedPromotion,
   applyApprovedCertification,
   type PromotionRequest,
   type CertificationRequest,
 } from '@/lib/data/store';
+import { publishPromotionLive } from '@/lib/data/publish-server';
 import { applyApprovedFilePromotion, type FilePromotionRequest } from '@/lib/files/store';
 import { reindexById } from '@/lib/files/pipeline-server';
 import { listLineage } from '@/lib/files/lineage';
@@ -73,8 +73,14 @@ export async function POST(req: Request) {
   const principal = { id: user.id, domains: user.domains, role: user.role };
   if (decision === 'approve' && existing.kind === 'dataset_promote') {
     try {
-      const asset = applyApprovedPromotion(existing.payload as unknown as PromotionRequest, principal);
-      applied = `Promoted “${asset.name}” to a ${asset.visibility} data asset (${asset.tier}) in Trino.`;
+      // T8: the promotion is PHYSICAL — materialize + verify + policy push as the
+      // approving Builder; the tier flips only on ✓. A failed publish returns the
+      // real error and leaves the request pending (no faked "approved").
+      const out = await publishPromotionLive(existing.payload as unknown as PromotionRequest, principal);
+      if (!out.ok) {
+        return NextResponse.json({ error: `Physical publish failed (tier unchanged): ${out.error}` }, { status: 502 });
+      }
+      applied = `Published “${out.dataset.name}” → ${out.fqn} (${out.mode}) — a ${out.dataset.visibility} data asset in Trino.`;
     } catch (e) {
       return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 400 });
     }

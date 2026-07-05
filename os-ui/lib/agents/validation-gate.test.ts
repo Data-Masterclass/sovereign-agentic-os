@@ -153,7 +153,7 @@ test('granted connection works while a non-granted one is blocked; a write is he
   registerGrants(backends, sys);
   const gw = gatewayFor(backends);
 
-  assert.equal((await gw.authorize('p', 'retrieve')).effect, 'allow', 'granted tool resolves');
+  assert.equal((await gw.authorize('p', 'search_knowledge')).effect, 'allow', 'granted tool resolves');
   assert.equal((await gw.authorize('p', 'connection_crm')).effect, 'allow', 'granted Read connection resolves');
   assert.equal((await gw.authorize('p', 'connection_crm_write', { write: true })).effect, 'requires_approval', 'a write is held for approval');
   assert.equal((await gw.authorize('p', 'connection_ghost', { write: true })).effect, 'deny', 'a non-granted connection is blocked');

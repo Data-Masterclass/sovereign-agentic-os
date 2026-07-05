@@ -1,10 +1,12 @@
 import PageHeader from '@/components/PageHeader';
 import OpenToolButton from '@/components/OpenToolButton';
 import { config } from '@/lib/config';
+import { currentUser } from '@/lib/auth';
 
 // Server component: the launchpad for the full external tool consoles. These
 // keep their own auth + session, so the OS UI links out rather than proxying.
 // Each card carries the port-forward command + URL + dev login from the docs.
+// Admin-only: the consoles expose cluster-internal credentials and admin logins.
 //
 // force-dynamic so the console URLs are read from the RUNTIME env (SUPERSET_URL,
 // LANGFUSE_CONSOLE_URL, … — the public ingress hosts on a deploy) at request
@@ -78,7 +80,21 @@ const CONSOLES: Console[] = [
   },
 ];
 
-export default function ConsolesPage() {
+export default async function ConsolesPage() {
+  const user = await currentUser();
+  if (!user || user.role !== 'admin') {
+    return (
+      <>
+        <PageHeader title="Consoles" crumb="launchpad — the full external tool UIs" />
+        <div className="content">
+          <div className="stub-page" style={{ marginTop: 20 }}>
+            This area is for platform administrators. You are signed in as a{' '}
+            <strong>{user?.role ?? 'guest'}</strong>.
+          </div>
+        </div>
+      </>
+    );
+  }
   return (
     <>
       <PageHeader title="Consoles" crumb="launchpad — the full external tool UIs" />

@@ -117,6 +117,91 @@ data:
           - name: product
             type: string
             sql: product
+{{- if $c.modelSync.enabled }}
+---
+{{- /*
+  Cube model-sync sidecar script (data-tab T7). A tiny, dependency-free node
+  poller (built-in `http`, no new image — runs on the Cube image's node runtime).
+  It GETs the cluster-internal os-ui endpoint `/api/cube/models`, which returns the
+  cube_dbt model YAML + compiled access policy for every GOVERNED dataset (never a
+  private one), and writes each changed model into the SHARED /cube/conf/model dir.
+  Cube dev-mode schema-watch then hot-reloads. The static demo seed models
+  (northpeakcommerce/daily_revenue/mart_sales .yml) are left untouched — delivered
+  files use a distinct `<slug>.cube.yml` suffix, so they never collide.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cube-model-sync
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "cube") | nindent 4 }}
+data:
+  sync.js: |
+    'use strict';
+    var http = require('http');
+    var fs = require('fs');
+    var path = require('path');
+
+    var URL_STR = process.env.OSUI_MODELS_URL || 'http://os-ui:3000/api/cube/models';
+    var MODEL_DIR = process.env.MODEL_DIR || '/cube/conf/model';
+    var POLL_MS = (parseInt(process.env.POLL_SECONDS || '30', 10) || 30) * 1000;
+    var written = new Map();
+
+    function log(msg) { process.stdout.write('[cube-model-sync] ' + msg + '\n'); }
+
+    function fetchJson(u) {
+      return new Promise(function (resolve, reject) {
+        var req = http.get(u, { timeout: 8000 }, function (res) {
+          if (res.statusCode !== 200) { res.resume(); reject(new Error('HTTP ' + res.statusCode)); return; }
+          var body = '';
+          res.setEncoding('utf8');
+          res.on('data', function (c) { body += c; });
+          res.on('end', function () { try { resolve(JSON.parse(body)); } catch (e) { reject(e); } });
+        });
+        req.on('timeout', function () { req.destroy(new Error('timeout')); });
+        req.on('error', reject);
+      });
+    }
+
+    // Only accept a simple `<slug>.cube.yml` (or metrics/<slug>.cube.yml) file name,
+    // written flat into the model dir — never a traversal path.
+    function safeName(file) {
+      var b = path.basename(String(file || ''));
+      return /^[a-z0-9_]+\.cube\.yml$/.test(b) ? b : null;
+    }
+
+    function syncOnce() {
+      return fetchJson(URL_STR).then(function (payload) {
+        var models = (payload && Array.isArray(payload.models)) ? payload.models : [];
+        var changed = 0;
+        for (var i = 0; i < models.length; i++) {
+          var m = models[i];
+          var name = safeName(m && m.file);
+          if (!name || typeof m.model !== 'string') continue;
+          if (written.get(name) === m.model) continue;
+          var dest = path.join(MODEL_DIR, name);
+          var tmp = dest + '.tmp';
+          fs.writeFileSync(tmp, m.model);
+          fs.renameSync(tmp, dest);
+          written.set(name, m.model);
+          changed++;
+        }
+        if (changed) log('wrote ' + changed + ' model(s) to ' + MODEL_DIR);
+      });
+    }
+
+    function loop() {
+      syncOnce().catch(function (e) { log('sync error: ' + (e && e.message)); }).then(function () {
+        setTimeout(loop, POLL_MS);
+      });
+    }
+
+    try { fs.mkdirSync(MODEL_DIR, { recursive: true }); } catch (e) { /* seeded by init */ }
+    log('polling ' + URL_STR + ' every ' + (POLL_MS / 1000) + 's -> ' + MODEL_DIR);
+    loop();
+{{- end }}
 ---
 {{- if eq .Values.global.profile "local" }}
 apiVersion: v1
@@ -151,6 +236,10 @@ spec:
     metadata:
       annotations:
         checksum/model: {{ .Files.Get "templates/cube/cube.yaml" | default "" | sha256sum }}
+        {{- if $c.modelSync.enabled }}
+        # Roll the pod when the sync template (script/config) changes.
+        checksum/model-sync: {{ printf "%s|%s|%v" $c.modelSync.osUiUrl (toString $c.modelSync.pollSeconds) $c.modelSync.enabled | sha256sum }}
+        {{- end }}
       labels:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "cube") | nindent 8 }}
@@ -211,10 +300,41 @@ spec:
           volumeMounts:
             - { name: conf, mountPath: /cube/conf }
             - { name: tmp, mountPath: /tmp }
+        {{- if $c.modelSync.enabled }}
+        # Model-sync sidecar: same Cube image (node runtime, NO new image), sharing the
+        # `conf` emptyDir so files it writes to /cube/conf/model are seen by Cube's
+        # schema-watch. Polls the cluster-internal os-ui models endpoint.
+        - name: model-sync
+          image: "{{ $c.image.repository }}@{{ $c.image.digest }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          command: ["node", "/scripts/sync.js"]
+          env:
+            - name: HOME
+              value: /tmp
+            - name: OSUI_MODELS_URL
+              value: "{{ $c.modelSync.osUiUrl }}/api/cube/models"
+            - name: MODEL_DIR
+              value: /cube/conf/model
+            - name: POLL_SECONDS
+              value: {{ $c.modelSync.pollSeconds | quote }}
+          resources:
+            {{- toYaml $c.modelSync.resources | nindent 12 }}
+          volumeMounts:
+            - { name: conf, mountPath: /cube/conf }
+            - { name: model-sync, mountPath: /scripts, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+        {{- end }}
       volumes:
         - name: model
           configMap:
             name: cube-model
+        {{- if $c.modelSync.enabled }}
+        - name: model-sync
+          configMap:
+            name: cube-model-sync
+        {{- end }}
         - name: conf
           emptyDir: {}
         - name: tmp

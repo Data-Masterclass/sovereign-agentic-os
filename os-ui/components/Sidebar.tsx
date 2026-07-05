@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { TAB_GROUPS, type Tab } from '@/lib/tabs';
+import { TAB_GROUPS, filterTabGroups, type Tab } from '@/lib/tabs';
 import { useUser } from '@/lib/useUser';
 // Static import so the brand mark is emitted into .next/static (served in the
 // standalone container, where public/ is not copied).
@@ -20,19 +20,11 @@ export default function Sidebar() {
     window.location.assign('/signin');
   }
 
-  // Hide role-gated tabs from users who can't act on them, so participants
-  // never walk into a permission wall. Builders keep Builder tabs; only admins
-  // see Administrator-only surfaces (e.g. Users).
-  function canSeeTab(tab: Tab): boolean {
-    if (!tab.role || !user) return true;
-    const r = tab.role.toLowerCase();
-    if (r === 'administrator') return user.role === 'admin';
-    if (r.includes('builder')) return user.role === 'admin' || user.role === 'builder';
-    return true;
-  }
+  // Derive the visible tab groups once per render. filterTabGroups uses the
+  // machine-readable minRole on each tab — no string parsing, no edge cases.
+  const visibleGroups = filterTabGroups(TAB_GROUPS, user?.role ?? null);
 
   function renderTab(tab: Tab) {
-    if (!canSeeTab(tab)) return null;
     if (!tab.href) {
       return (
         <div key={tab.label} className="nav-item stub" title={tab.role}>
@@ -77,7 +69,7 @@ export default function Sidebar() {
       </div>
 
       <nav className="nav">
-        {TAB_GROUPS.map((group, i) => (
+        {visibleGroups.map((group, i) => (
           <div key={group.heading ?? `group-${i}`} className="nav-group">
             {group.heading ? <div className="nav-heading">{group.heading}</div> : null}
             {group.tabs.map(renderTab)}

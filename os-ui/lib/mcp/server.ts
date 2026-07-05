@@ -11,7 +11,19 @@ import { servePredict } from '@/lib/science/serve';
 import type { ChurnFeatures } from '@/lib/science';
 import { retrieveKnowledge } from '@/lib/knowledge/retrieve';
 import { listSystems } from '@/lib/agents/store';
+import { principalFor } from '@/lib/governance/roles';
 import { ALL_WRITE_TOOLS } from '@/lib/mcp/write-tools';
+import { DISCOVERY_TOOLS } from '@/lib/mcp/discovery-tools';
+import {
+  RESOURCES,
+  RESOURCE_TEMPLATES,
+  resourcesForTab,
+  templatesForTab,
+  type McpResource,
+  type McpResourceTemplate,
+} from '@/lib/mcp/resources';
+import { PROMPTS, renderPrompt, promptsForTab, type McpPrompt } from '@/lib/mcp/prompts';
+import { buildInstructions } from '@/lib/mcp/instructions';
 
 /**
  * THE SOVEREIGN AGENTIC OS — remote MCP server (JSON-RPC 2.0 core).
@@ -52,7 +64,7 @@ export type JsonSchema = {
  * the ONE registry below (`/api/mcp/<tab>`) — a scoped lens, never a second
  * governance path. The overarching `/api/mcp` endpoint still serves them all.
  */
-export const MCP_TABS = ['software', 'data', 'science', 'knowledge', 'agents', 'files', 'metrics', 'dashboards', 'bigbets'] as const;
+export const MCP_TABS = ['software', 'data', 'science', 'knowledge', 'agents', 'files', 'metrics', 'dashboards', 'bigbets', 'connections'] as const;
 export type McpTab = (typeof MCP_TABS)[number];
 export function isMcpTab(x: string): x is McpTab {
   return (MCP_TABS as readonly string[]).includes(x);
@@ -72,6 +84,8 @@ export type McpTool = {
   minRole: Role;
   /** The OS tab this tool lives under (used to build the per-tab MCP view). */
   tab: ToolTab;
+  /** Extra tabs this tool ALSO surfaces on (e.g. promotion tools span data+files). */
+  extraTabs?: ToolTab[];
   inputSchema: JsonSchema;
   call: (user: CurrentUser, args: Record<string, unknown>) => Promise<unknown>;
 };
@@ -200,7 +214,7 @@ const crossTools: McpTool[] = [
   {
     name: 'science_predict',
     description:
-      'Score the deployed churn model through the governed predict door (tier scope + OPA `predict` grant, then a Langfuse trace).',
+      'Score the deployed churn model through the governed predict door. Path: the Science golden path (guide: sovereign-os://guide/path/science). Governance: runs AS YOU (principal user:<id>) — tier scope + your OPA `predict` grant, then a Langfuse trace. 404 when ml.enabled=false; a missing grant → forbidden.',
     minRole: 'creator',
     tab: 'science',
     inputSchema: {
@@ -212,12 +226,14 @@ const crossTools: McpTool[] = [
     },
     call: async (user, args) => {
       if (!config.mlEnabled) fail('Science (Layer 4) is off — set ml.enabled=true to enable predict', 404);
+      // Run-as-user invariant: score under the CALLER's own identity + domains,
+      // never a hardcoded service principal. Their OPA `predict` grant decides.
       const result = await servePredict({
         account: str(args.account) || undefined,
         features: (args.features as Partial<ChurnFeatures>) || undefined,
-        principal: 'sales-assistant',
+        principal: principalFor(user),
         domains: user.domains,
-        isAgent: true,
+        isAgent: false,
         requestedBy: user.id,
       });
       return result.body;
@@ -331,6 +347,7 @@ export const ALL_MCP_TOOLS: McpTool[] = [
   ...knowledgeTools,
   ...agentTools,
   ...ALL_WRITE_TOOLS,
+  ...DISCOVERY_TOOLS,
   ...discoveryTools,
 ];
 
@@ -340,7 +357,7 @@ export const ALL_MCP_TOOLS: McpTool[] = [
  * `list_capabilities` work on every per-tab endpoint too.
  */
 export function toolsForTab(tab: McpTab): McpTool[] {
-  return ALL_MCP_TOOLS.filter((t) => t.tab === tab || t.tab === 'meta');
+  return ALL_MCP_TOOLS.filter((t) => t.tab === tab || t.tab === 'meta' || t.extraTabs?.includes(tab));
 }
 
 /** The role-scoped, wire-shaped tool list for `tools/list` (no internals leak). */
@@ -383,6 +400,11 @@ function rpcError(
   return { jsonrpc: '2.0', id: id ?? null, error: { code, message } };
 }
 
+/** The MCP resource-not-found error (-32002), carrying the uri in `data`. */
+function rpcResourceNotFound(id: string | number | null | undefined, uri: string): JsonRpcResponse {
+  return { jsonrpc: '2.0', id: id ?? null, error: { code: -32002, message: `Resource not found: ${uri || '(none)'}`, data: { uri } } };
+}
+
 /**
  * Optional per-endpoint scoping. The overarching `/api/mcp` passes nothing (→ the
  * full registry + generic serverInfo); a per-tab `/api/mcp/<tab>` passes that
@@ -392,9 +414,74 @@ function rpcError(
  */
 export type HandleRpcOptions = {
   tools?: McpTool[];
+  resources?: McpResource[];
+  resourceTemplates?: McpResourceTemplate[];
+  prompts?: McpPrompt[];
   serverInfo?: { name: string; title: string; version: string };
   instructions?: string;
 };
+
+/** The role-scoped wire list for `resources/list` (no `read` fn / internals leak). */
+export function listResourcesForRole(
+  role: Role,
+  resources: McpResource[] = RESOURCES,
+): { uri: string; name: string; title: string; description: string; mimeType: string; annotations: { audience: string[]; priority?: number } }[] {
+  return resources
+    .filter((r) => roleCanUse(role, r.minRole))
+    .map((r) => ({
+      uri: r.uri,
+      name: r.name,
+      title: r.title,
+      description: r.description,
+      mimeType: r.mimeType,
+      annotations: { audience: ['assistant'], ...(r.priority !== undefined ? { priority: r.priority } : {}) },
+    }));
+}
+
+/** The wire list for `resources/templates/list`. */
+export function listResourceTemplatesForRole(
+  role: Role,
+  templates: McpResourceTemplate[] = RESOURCE_TEMPLATES,
+): { uriTemplate: string; name: string; title: string; description: string; mimeType: string }[] {
+  return templates
+    .filter((r) => roleCanUse(role, r.minRole))
+    .map((r) => ({ uriTemplate: r.uriTemplate, name: r.name, title: r.title, description: r.description, mimeType: r.mimeType }));
+}
+
+/** The wire list for `prompts/list`. */
+export function listPromptsForRole(
+  role: Role,
+  prompts: McpPrompt[] = PROMPTS,
+): { name: string; title: string; description: string; arguments: { name: string; description: string; required?: boolean }[] }[] {
+  return prompts
+    .filter((p) => roleCanUse(role, p.minRole))
+    .map((p) => ({ name: p.name, title: p.title, description: p.description, arguments: p.arguments }));
+}
+
+/**
+ * Match a concrete `resources/read` uri against the exact resources + the
+ * templates ({id}). Returns a resolver bound to the caller, or null if no
+ * registered uri matches (→ -32002, indistinguishable from "not visible").
+ */
+function resolveResourceUri(
+  uri: string,
+  resources: McpResource[],
+  templates: McpResourceTemplate[],
+): { minRole: Role; mimeType: string; read: (user: CurrentUser) => Promise<string> } | null {
+  const exact = resources.find((r) => r.uri === uri);
+  if (exact) return { minRole: exact.minRole, mimeType: exact.mimeType, read: exact.read };
+  for (const t of templates) {
+    // 'sovereign-os://dataset/{id}' → capture the single {id} segment.
+    const prefix = t.uriTemplate.replace(/\{[^}]+\}$/, '');
+    if (prefix && prefix !== t.uriTemplate && uri.startsWith(prefix)) {
+      const idPart = uri.slice(prefix.length);
+      if (idPart && !idPart.includes('/')) {
+        return { minRole: t.minRole, mimeType: t.mimeType, read: (user) => t.read(user, { id: idPart }) };
+      }
+    }
+  }
+  return null;
+}
 
 /**
  * Handle a single JSON-RPC request under the caller's delegated identity.
@@ -408,6 +495,9 @@ export async function handleRpc(
   const id = req?.id ?? null;
   const method = req?.method;
   const tools = opts.tools ?? ALL_MCP_TOOLS;
+  const resources = opts.resources ?? RESOURCES;
+  const resourceTemplates = opts.resourceTemplates ?? RESOURCE_TEMPLATES;
+  const prompts = opts.prompts ?? PROMPTS;
 
   // Notifications (e.g. notifications/initialized) get no response body.
   if (typeof method === 'string' && method.startsWith('notifications/')) return null;
@@ -416,9 +506,18 @@ export async function handleRpc(
     case 'initialize':
       return ok(id, {
         protocolVersion: MCP_PROTOCOL_VERSION,
-        capabilities: { tools: { listChanged: false } },
+        // Declare all three primitives. No subscribe/listChanged: this transport
+        // is POST-only (no server-initiated stream), so we never promise updates.
+        capabilities: {
+          tools: { listChanged: false },
+          resources: {},
+          prompts: { listChanged: false },
+        },
         serverInfo: opts.serverInfo ?? MCP_SERVER_INFO,
-        ...(opts.instructions ? { instructions: opts.instructions } : {}),
+        // Instructions ALWAYS present — orientation reaches the model before any
+        // call. A per-tab endpoint passes its own; the overarching one defaults
+        // to the full orientation.
+        instructions: opts.instructions ?? buildInstructions(),
       });
 
     case 'ping':
@@ -426,6 +525,48 @@ export async function handleRpc(
 
     case 'tools/list':
       return ok(id, { tools: listToolsForRole(user.role, tools) });
+
+    case 'resources/list':
+      return ok(id, { resources: listResourcesForRole(user.role, resources) });
+
+    case 'resources/templates/list':
+      return ok(id, { resourceTemplates: listResourceTemplatesForRole(user.role, resourceTemplates) });
+
+    case 'resources/read': {
+      const uri = str((req.params ?? {}).uri);
+      const match = resolveResourceUri(uri, resources, resourceTemplates);
+      // Unknown, out-of-scope, or role-denied → the SAME -32002. A denial is
+      // indistinguishable from "not found" (no existence leak), mirroring tools.
+      if (!match || !roleCanUse(user.role, match.minRole)) {
+        return rpcResourceNotFound(id, uri);
+      }
+      try {
+        const text = await match.read(user);
+        return ok(id, { contents: [{ uri, mimeType: match.mimeType, text }] });
+      } catch (e) {
+        // A governed 404 (id you cannot see) is a resource-not-found, not a crash.
+        const status = (e as { status?: number }).status;
+        if (status === 404 || status === 403) return rpcResourceNotFound(id, uri);
+        return rpcError(id, -32603, (e as Error).message || 'resources/read failed');
+      }
+    }
+
+    case 'prompts/list':
+      return ok(id, { prompts: listPromptsForRole(user.role, prompts) });
+
+    case 'prompts/get': {
+      const params = req.params ?? {};
+      const name = str(params.name);
+      const prompt = prompts.find((p) => p.name === name && roleCanUse(user.role, p.minRole));
+      if (!prompt) return rpcError(id, -32602, `Prompt not available: ${name || '(none)'}`);
+      const args = (params.arguments as Record<string, string>) ?? {};
+      // Validate required args (a prompt renders TEXT only — it never executes).
+      const missing = prompt.arguments.filter((a) => a.required && !str(args[a.name]).trim());
+      if (missing.length) {
+        return rpcError(id, -32602, `Missing required argument(s): ${missing.map((m) => m.name).join(', ')}`);
+      }
+      return ok(id, { description: prompt.description, messages: renderPrompt(prompt, user, args) });
+    }
 
     case 'tools/call': {
       const params = req.params ?? {};

@@ -55,6 +55,28 @@ export const config = {
   // query-tool (governed, Trino): POST {QUERY_TOOL_URL}/query  {"sql": "..."}
   queryToolUrl: base(env('QUERY_TOOL_URL', 'http://query-tool:8000')),
 
+  // data-runner (real INGEST): POST {DATA_RUNNER_URL}/ingest {principal, dataset,
+  // objectKey} — reads an uploaded file from MinIO and writes a PHYSICAL Iceberg
+  // Bronze table `iceberg.personal_<uid>.bronze_<slug>` via Polaris. Cluster-internal
+  // only (the trusted os-ui backend supplies `principal`, session-bound). When the
+  // runner is unreachable (laptop) the Data-tab upload degrades to the honest
+  // offline-mock so the teaching flow still runs.
+  dataRunnerUrl: base(env('DATA_RUNNER_URL', 'http://data-runner:8000')),
+
+  // Object storage (MinIO / STACKIT Object Storage) — the Data-tab upload streams
+  // a file to `s3://<uploadsBucket>/uploads/<uid>/<file>` (path-style SigV4 PUT,
+  // lib/data/object-store.ts) before calling the runner. Server-only creds; the
+  // SAME `object-storage-credentials` Secret + `soa.s3Endpoint` the lakehouse uses.
+  s3Endpoint: base(env('S3_ENDPOINT', 'http://minio:9000')),
+  s3Region: env('S3_REGION', 'us-east-1'),
+  s3PathStyle: env('S3_PATH_STYLE', 'true').toLowerCase() !== 'false',
+  uploadsBucket: env('UPLOADS_BUCKET', 'lakehouse'),
+  awsAccessKeyId: env('AWS_ACCESS_KEY_ID', ''),
+  awsSecretAccessKey: env('AWS_SECRET_ACCESS_KEY', ''),
+  // M1 upload cap (documented). Streams a single buffered PUT; ~100 MB keeps the
+  // os-ui pod memory bounded. Larger loads are an M2 connector (dlt source) job.
+  uploadMaxBytes: Number(env('UPLOAD_MAX_BYTES', String(100 * 1024 * 1024))) || 100 * 1024 * 1024,
+
   // sandbox-duckdb (personal/sandbox lane): ephemeral DuckDB scoped to the user's
   // private prefix ONLY (uploads + Trino-authorized extracts) — never governed
   // marts. POST {SANDBOX_DUCKDB_URL}/query {"sql": "..."}.
@@ -208,7 +230,11 @@ export const config = {
     .map((r) => r.trim())
     .filter(Boolean),
   terminalBrokerSecret: env('TERMINAL_BROKER_SECRET', 'dev-only-insecure-terminal-secret-change-me'),
-  terminalBrokerWsUrl: env('TERMINAL_BROKER_WS', 'ws://localhost:8090/terminal'),
+  // consoleEnv (NOT env): when ingress is on but ingress.hosts.terminal is unset,
+  // the chart renders TERMINAL_BROKER_WS="" (soa.terminalWsUrl). That explicit
+  // empty must surface as "not reachable on this deployment" — not silently fall
+  // back to a dead ws://localhost the browser can never reach on a real deploy.
+  terminalBrokerWsUrl: consoleEnv('TERMINAL_BROKER_WS', 'ws://localhost:8090/terminal'),
 
   // ---- Domain-Builder Workbench. The OS UI mints a short-lived single-use HMAC
   // token (signed with workbenchBrokerSecret — the SAME value the workbench-broker
@@ -223,7 +249,9 @@ export const config = {
     .map((r) => r.trim())
     .filter(Boolean),
   workbenchBrokerSecret: env('WORKBENCH_BROKER_SECRET', 'dev-only-insecure-workbench-secret-change-me'),
-  workbenchBrokerUrl: base(env('WORKBENCH_BROKER_URL', 'http://localhost:8091')),
+  // consoleEnv for the same reason as terminalBrokerWsUrl above (chart renders
+  // "" when ingress.hosts.workbench is unset — honour it, don't dial localhost).
+  workbenchBrokerUrl: base(consoleEnv('WORKBENCH_BROKER_URL', 'http://localhost:8091')),
 
   // Dagster (Orchestration): POST {DAGSTER_URL}/graphql (no auth locally).
   dagsterUrl: base(env('DAGSTER_URL', 'http://agentic-os-dagster-webserver:80')),
@@ -232,10 +260,23 @@ export const config = {
   // with a Cube query. No auth in dev (CUBEJS_DEV_MODE); add a JWT on STACKIT.
   cubeUrl: base(env('CUBE_URL', 'http://cube:4000')),
 
+  // Cube model-sync (GET /api/cube/models): embed the compiled Cube access policy
+  // (member_level excludes) into the delivered model YAML. Default on; set
+  // CUBE_EMBED_ACCESS_POLICY=false to serve plain models if a Cube version rejects
+  // `access_policy` blocks (data-tab-plan risk #2 fallback — the full policy still
+  // rides in the JSON payload for audit + the Trino-OPA enforcement path).
+  cubeEmbedAccessPolicy: env('CUBE_EMBED_ACCESS_POLICY', 'true') !== 'false',
+
   // OpenMetadata (catalog & lineage): server-side REST API base. OFF by default
   // locally (~2.5 GB JVM) — the Data/Unstructured surfaces probe it and degrade
   // to the query-tool catalog / OpenSearch index when it's unreachable.
   openmetadataApiUrl: base(env('OPENMETADATA_API_URL', 'http://openmetadata:8585')),
+  // OpenMetadata bot JWT (server-only). OM requires a Bearer token — an
+  // unauthenticated call 401s. When this is set the catalog sends it; when it is
+  // EMPTY (the default until a bot token is minted into the os-ui Secret) the
+  // catalog SKIPS OpenMetadata entirely and reports it honestly, rather than
+  // firing a doomed 401 and silently degrading. See app/api/catalog/route.ts.
+  openmetadataJwt: env('OPENMETADATA_JWT', ''),
 
   // ---- Layer-4 (Science / ML) ENABLEMENT. Off by default; an Admin enables
   // Science per domain (`ml.enabled=true`) + sets GPU quotas. When OFF, the

@@ -21,6 +21,14 @@ const nextConfig = {
     '/api/**/*': ['./lib/tabs/*.context.md'],
   },
   reactStrictMode: true,
+  // Do NOT auto-redirect `/path/` → `/path`. The same-origin tool proxy serves
+  // embedded apps at `/tools/<key>/` (trailing slash). Some tools (MLflow) emit
+  // RELATIVE asset URLs like `static-files/static/js/main.js`; those only resolve
+  // correctly when the iframe's document URL keeps its trailing slash. Next's
+  // default trailing-slash 308 rewrote `/tools/mlflow/` → `/tools/mlflow`, which
+  // reparented every relative asset to `/tools/static-files/…` (404 → blank page).
+  // Keeping the slash lets them resolve under the tool prefix and proxy through.
+  skipTrailingSlashRedirect: true,
   // The UI never exposes backend URLs/keys to the browser; all calls go through
   // server-side API routes. Nothing here is a NEXT_PUBLIC_* var by design.
 };

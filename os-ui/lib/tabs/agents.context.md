@@ -4,6 +4,7 @@
 
 **Tools (MCP `agents`):**
 - `list_agent_systems()` — the agent systems you can see (yours, domain-shared, marketplace). Read-only, scoped to your identity.
+- `run_agent_system(systemId, message)` — run an agentic-os team live, AS YOU; returns the reply + per-node governed tool steps. The team's own tool calls go through the same governed dispatch (grant-scoped, no escalation). Hermes/legacy systems → run from the UI.
 
 **In-app helper:** natural-language edits to `system.yaml` (the same file the canvas + Monaco edit); deterministic and narrow-only — a synthesised sub-agent's tools are intersected with the system's existing grants (never widened).
 

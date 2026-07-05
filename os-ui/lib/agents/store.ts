@@ -116,7 +116,7 @@ function starterYaml(name: string, domain: string, visibility: Visibility): stri
     safetyPreset: 'read-only',
     entrypoint: 'assistant',
     state: { channels: { messages: 'add_messages' } },
-    grants: { data: [], knowledge: [], tools: ['retrieve'], connections: [] },
+    grants: { data: [], knowledge: [], tools: ['search_knowledge'], connections: [] },
     routing: { overrides: {} },
     agents: [
       {
@@ -124,7 +124,7 @@ function starterYaml(name: string, domain: string, visibility: Visibility): stri
         role: 'A helpful assistant',
         agent_md: `# ${name}\n\nYou are a helpful assistant in the Sovereign Agentic OS.\nUse only your granted, governed tools.`,
         memory_md: '# Memory\n\n(Durable facts the assistant should always know.)',
-        tools: ['retrieve'],
+        tools: ['search_knowledge'],
       },
     ],
     edges: [],
@@ -465,9 +465,12 @@ export function recordActivity(systemId: string): void {
  */
 export function systemForScheduler(
   systemId: string,
-): { yaml: string; domain: string; disabledAgents: string[] } | null {
+): { yaml: string; domain: string; owner: string; disabledAgents: string[] } | null {
   ensureSeeded();
   const rec = state().store.get(systemId);
   if (!rec) return null;
-  return { yaml: rec.yaml, domain: rec.domain, disabledAgents: rec.disabledAgents };
+  // `owner` is exposed so the scheduled-run endpoint can resolve it to the OWNER's
+  // live governed identity and run the agent's tools under exactly the owner's
+  // rights (delegated identity) — never a service principal.
+  return { yaml: rec.yaml, domain: rec.domain, owner: rec.owner, disabledAgents: rec.disabledAgents };
 }

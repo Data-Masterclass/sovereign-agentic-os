@@ -15,9 +15,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export KUBECONFIG="$PWD/deploy/kubeconfig.yaml"
 NS=agentic-os
-IMG=ghcr.io/aborek/sovereign-os/os-ui:0.1.17
+IMG=ghcr.io/aborek/sovereign-os/os-ui:0.1.25
 
-echo "== 1. roll os-ui -> 0.1.17 =="
+echo "== 1. roll os-ui -> 0.1.25 =="
 kubectl -n $NS set image deploy/os-ui os-ui=$IMG
 
 echo "== 2. update OS_USERS auth (8 migrated base rows + Agentic-Leader cast) =="
@@ -40,13 +40,17 @@ echo "== 3. verify logins =="
 # password come from the gitignored users.secret.json (the non-instructor key).
 PART_EMAIL=$(node -e 'const c=require("./seed/campaign/users.secret.json");console.log(Object.keys(c).find(k=>k!=="alp-instructor"))')
 PART_PW=$(node -e 'const c=require("./seed/campaign/users.secret.json");console.log(c[Object.keys(c).find(k=>k!=="alp-instructor")])')
+# Admin creds are read from the gitignored values.private.yaml — NEVER hardcode a
+# live password in this tracked script (it publishes to the public repo).
+ADMIN_PW=$(node -e 'const fs=require("fs");const m=fs.readFileSync("values.private.yaml","utf8").match(/usersSeed:\s*.(\[.*\]).\s*$/m);const x=(JSON.parse(m[1]).find(r=>r.id==="aborek"))||{};console.log(x.password||"")')
+ADMIN_EMAIL=$(node -e 'const fs=require("fs");const m=fs.readFileSync("values.private.yaml","utf8").match(/usersSeed:\s*.(\[.*\]).\s*$/m);const x=(JSON.parse(m[1]).find(r=>r.id==="aborek"))||{};console.log(x.email||"")')
 kubectl -n $NS exec deploy/os-ui -- node -e '
 (async()=>{
  const L=(u,p)=>fetch("http://localhost:3000/api/auth/login",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({username:u,password:p})}).then(r=>r.status);
- console.log("   aborek(id)     ->", await L("aborek","Data!Masterclass2026"));
- console.log("   aborek(email)  ->", await L("alex@datamasterclass.com","Data!Masterclass2026"));
- console.log("   participant    ->", await L(process.argv[1],process.argv[2]));
-})()' "$PART_EMAIL" "$PART_PW"
+ console.log("   aborek(id)     ->", await L("aborek", process.argv[3]));
+ console.log("   admin(email)   ->", await L(process.argv[4], process.argv[3]));
+ console.log("   participant    ->", await L(process.argv[1], process.argv[2]));
+})()' "$PART_EMAIL" "$PART_PW" "$ADMIN_PW" "$ADMIN_EMAIL"
 
 echo "== 4. seed the Campaign-Optimization exercise into domain agentic-leader-q3-2026 =="
 kubectl -n $NS delete configmap northpeak-campaign-seed --ignore-not-found

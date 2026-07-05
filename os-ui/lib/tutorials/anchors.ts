@@ -53,6 +53,12 @@ export const ANCHORS = {
     organize: 'knowledge.organize',
     publish: 'knowledge.publish',
   },
+  files: {
+    sandbox: 'files.sandbox',
+    upload: 'files.upload',
+    search: 'files.search',
+    share: 'files.share',
+  },
   connections: {
     sandbox: 'connections.sandbox',
     add: 'connections.add',
@@ -99,11 +105,31 @@ export const ANCHORS = {
     bundle: 'big-bets.bundle',
     track: 'big-bets.track',
   },
+  strategy: {
+    sandbox: 'strategy.sandbox',
+    rollup: 'strategy.rollup',
+    bets: 'strategy.bets',
+    value: 'strategy.value',
+    create: 'strategy.create',
+  },
   marketplace: {
     sandbox: 'marketplace.sandbox',
     browse: 'marketplace.browse',
     inspect: 'marketplace.inspect',
     request: 'marketplace.request',
+  },
+  governance: {
+    sandbox: 'governance.sandbox',
+    approve: 'governance.approve',
+    remember: 'governance.remember',
+    audit: 'governance.audit',
+    cost: 'governance.cost',
+  },
+  monitoring: {
+    sandbox: 'monitoring.sandbox',
+    scope: 'monitoring.scope',
+    attention: 'monitoring.attention',
+    lenses: 'monitoring.lenses',
   },
 } as const;
 

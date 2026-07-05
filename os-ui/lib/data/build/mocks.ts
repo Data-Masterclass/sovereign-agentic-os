@@ -32,12 +32,15 @@ export type MockBackends = {
   rawTables: Set<string>;
   materialized: Set<string>;
   policyPushes: number;
+  /** Publish (T8) writes the mock dbt-trino received — lets tests assert the CTAS
+   *  and the APPROVING Builder's identity were threaded through the adapter. */
+  publishWrites: { fqn: string; sql: string; uid: string; role: string; releaseSchema?: string }[];
 };
 
 export function newMockBackends(): MockBackends {
   return {
     cubeSchemas: new Map(), dashboards: new Set(), exposures: new Map(), lineage: new Set(),
-    rawTables: new Set(), materialized: new Set(), policyPushes: 0,
+    rawTables: new Set(), materialized: new Set(), policyPushes: 0, publishWrites: [],
   };
 }
 
@@ -97,7 +100,17 @@ function mockDbt(): DbtClient {
 }
 
 function mockDbtTrino(b: MockBackends): DbtTrinoClient {
-  return { async materialize(fqn) { b.materialized.add(fqn); return { ok: true }; } };
+  return {
+    async materialize(fqn, write) {
+      if (write) {
+        b.publishWrites.push({
+          fqn, sql: write.sql, uid: write.identity.uid, role: write.identity.role, releaseSchema: write.releaseSchema,
+        });
+      }
+      b.materialized.add(fqn);
+      return { ok: true };
+    },
+  };
 }
 
 function mockTrino(b: MockBackends): TrinoClient {

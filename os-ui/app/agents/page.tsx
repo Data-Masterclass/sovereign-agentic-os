@@ -10,7 +10,7 @@ import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 export default function AgentsPage() {
   return (
     <>
-      <PageHeader title="Agents" crumb="Governed agent systems — LangGraph & autonomous Hermes" tutorial="agents" mcpTab="agents" />
+      <PageHeader title="Agents" crumb="Governed agent systems — LangGraph & autonomous Hermes" tutorial="agents" />
       <div className="content">
         <p className="lead">
           Author agent systems against their real artifacts — drag the canvas, edit

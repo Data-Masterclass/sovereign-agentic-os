@@ -79,6 +79,17 @@ test('LOCKDOWN 3: /api/knowledge/docs gates GET (DLS filter) + POST (session-sta
   assert.match(src, /visibility: 'Personal'/, 'POST defaults to Personal visibility');
 });
 
+test('LOCKDOWN: /api/data/ask requires a session, scopes context via listAskable, executes ONLY via queryRun(sql, principal)', () => {
+  const src = read('app/api/data/ask/route.ts');
+  assert.match(src, /requirePrincipal/, 'ask must gate on a session (401 for anon)');
+  assert.match(src, /listAskable\(user\)/, 'the LLM context must be the canView-scoped registry list');
+  assert.match(src, /queryRun\(sql, principal\)/, 'execution must go through the governed read path');
+  assert.match(src, /runAsk\(/, 'generation must pass the validating orchestrator (read-only single SELECT)');
+  assert.doesNotMatch(src, /body\.principal/, 'principal must come from the session, never the body');
+  assert.doesNotMatch(src, /body\.sql/, 'the client can never supply the SQL — only the question');
+  assert.match(src, /trace\(\{/, 'every ask turn is Langfuse-traced');
+});
+
 test('LOCKDOWN 4: /api/traces requires a session and scopes to the caller (admin = all)', () => {
   const src = read('app/api/traces/route.ts');
   assert.match(src, /requireUser/);
@@ -123,6 +134,7 @@ const USER_GATED_GETS = [
   'app/api/agents/route.ts',
   'app/api/status/route.ts',
   'app/api/agents/models/route.ts',
+  'app/api/agents/tool-catalog/route.ts',
 ];
 
 test('LEAK-FIX 1: /api/policy GET is ADMIN-only (full grants matrix + all principal emails)', () => {
@@ -149,4 +161,57 @@ for (const p of USER_GATED_GETS) {
 test('LEAK-FIX: /api/software GET scopes private repos to admins (no cross-user private recon)', () => {
   const src = read('app/api/software/route.ts');
   assert.match(src, /user\.role === 'admin' \? all : all\.filter\(\(r\) => !r\.private\)/, 'non-admins never see private repos');
+});
+
+test('ROLE-PERMS: the role-permissions API is admin-only on both verbs', () => {
+  const src = read('app/api/platform-admin/roles/route.ts');
+  // adminCtx() is the authoritative admin gate (401 anon / 403 non-admin).
+  assert.match(src, /adminCtx\(\)/, 'GET/PATCH must pass through adminCtx');
+  // The mutating verb recompiles OPA grants for the affected role's users.
+  assert.match(src, /compileRoleToGrants/, 'PATCH must recompile OPA grants on change');
+  assert.match(src, /audit\(/, 'PATCH must audit the capability change');
+});
+
+// ---------------------------------------------------------------------------
+// Platform-group page gates (sidebar tab → server enforces the same rule).
+// ---------------------------------------------------------------------------
+
+test('PLATFORM-GATE 1: /users, /components, /gateway, /orchestration have server-side admin layout', () => {
+  for (const p of [
+    'app/users/layout.tsx',
+    'app/components/layout.tsx',
+    'app/gateway/layout.tsx',
+    'app/orchestration/layout.tsx',
+  ]) {
+    const src = read(p);
+    assert.match(src, /currentUser/, `${p} must call currentUser`);
+    assert.match(src, /role !== 'admin'/, `${p} must gate non-admins`);
+  }
+});
+
+test('PLATFORM-GATE 2: /workbench and /terminal are admin-only at the page level', () => {
+  for (const p of ['app/workbench/page.tsx', 'app/terminal/page.tsx']) {
+    const src = read(p);
+    assert.match(src, /role !== 'admin'/, `${p} must have admin-only gate`);
+  }
+});
+
+test('PLATFORM-GATE 3: /consoles and /about have server-side admin gate in the page', () => {
+  for (const p of ['app/consoles/page.tsx', 'app/about/page.tsx']) {
+    const src = read(p);
+    assert.match(src, /currentUser/, `${p} must call currentUser`);
+    assert.match(src, /role !== 'admin'/, `${p} must gate non-admins`);
+  }
+});
+
+test('PLATFORM-GATE 4: sidebar tab minRole=admin is set on every Platform tab except Tutorials', () => {
+  const src = read('lib/tabs.ts');
+  // All admin-only Platform entries carry minRole: 'admin'.
+  for (const label of ['Admin', 'Users', 'Components', 'Gateway', 'Orchestration', 'Workbench', 'Terminal', 'Consoles', 'About / Licenses']) {
+    assert.match(src, new RegExp(`label: '${label.replace('/', '\\/')}[^']*'[^}]*minRole: 'admin'`, 's'),
+      `Platform tab "${label}" must declare minRole: 'admin'`);
+  }
+  // Tutorials must NOT carry minRole (visible to all roles — students need it).
+  const tutBlock = src.match(/label: 'Tutorials'[^}]*/s)?.[0] ?? '';
+  assert.doesNotMatch(tutBlock, /minRole/, "Tutorials must not declare minRole (all-roles visible)");
 });

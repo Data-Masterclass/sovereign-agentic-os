@@ -16,7 +16,21 @@ import { useState } from 'react';
 
 type BuildRow = { tool: string; applied: boolean; verified: boolean; status: 'ok' | 'fail'; detail: string; error?: string };
 type BuildReport = { ok: boolean; rows: BuildRow[] };
-type RunReport = { running: boolean; ok: boolean; path: string[]; traces: number; held: number; steps: { node: string; tool: string; effect: string }[] };
+type RunStep = { node: string; tool: string; effect: string; ran?: boolean };
+type RunReport = {
+  running: boolean;
+  ok: boolean;
+  path: string[];
+  traces: number;
+  held: number;
+  steps: RunStep[];
+  output?: string;
+  mode?: 'live' | 'offline-mock';
+  traceStoreAvailable?: boolean;
+  traceUrl?: string;
+};
+
+const EFFECT_BADGE: Record<string, string> = { allow: 'ok', deny: 'err', requires_approval: 'warn' };
 
 export default function BuildRunPanel({
   systemId,
@@ -127,11 +141,49 @@ export default function BuildRunPanel({
       {runErr ? <div className="error" style={{ marginTop: 10 }}>{runErr}</div> : null}
       {run ? (
         <div className="answer" style={{ marginTop: 12, fontSize: 13 }}>
+          {/* Final output — always shown, straight from the run (no Langfuse needed). */}
+          <div className="section-title" style={{ marginTop: 0 }}>Run output</div>
+          <p className="mono" style={{ margin: '2px 0 8px', whiteSpace: 'pre-wrap' }}>
+            {run.output || '(the run produced no final text)'}
+          </p>
+
           <div><strong>Path:</strong> <span className="mono">{run.path.join(' → ')} → END</span></div>
           <div style={{ marginTop: 6 }}>
             <span className="badge ok">{run.steps.length} governed call{run.steps.length === 1 ? '' : 's'}</span>{' '}
             <span className="badge">{run.traces} trace{run.traces === 1 ? '' : 's'}</span>{' '}
             {run.held > 0 ? <span className="badge warn">{run.held} held for approval ↗ Governance</span> : <span className="badge ok">no approvals needed</span>}
+            {run.mode === 'offline-mock' ? <span className="badge" style={{ marginLeft: 6 }}>offline mock</span> : null}
+          </div>
+
+          {/* Step-by-step: the plan→act tool calls the agent actually made. */}
+          {run.steps.length > 0 ? (
+            <div className="table-wrap" style={{ marginTop: 10 }}>
+              <table>
+                <thead><tr><th>#</th><th>Agent</th><th>Tool call</th><th>Decision</th></tr></thead>
+                <tbody>
+                  {run.steps.map((s, i) => (
+                    <tr key={`${s.node}-${s.tool}-${i}`}>
+                      <td className="mono">{i + 1}</td>
+                      <td className="mono">{s.node}</td>
+                      <td className="mono">{s.tool}</td>
+                      <td>
+                        <span className={`badge ${EFFECT_BADGE[s.effect] ?? ''}`}>{s.effect}</span>
+                        {s.ran === false ? <span className="b-off" style={{ marginLeft: 6 }}>not run</span> : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+
+          {/* Trace store: honest note when the durable store is down; deep-link when up. */}
+          <div className="hint" style={{ marginTop: 8 }}>
+            {run.traceStoreAvailable && run.traceUrl ? (
+              <>Full trace: <a href={run.traceUrl} target="_blank" rel="noreferrer">open in Langfuse ↗</a></>
+            ) : (
+              <>Live trace store unavailable — showing the in-run steps above (the durable Langfuse trace may lag or be down).</>
+            )}
           </div>
         </div>
       ) : null}

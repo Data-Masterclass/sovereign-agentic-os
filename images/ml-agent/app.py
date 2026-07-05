@@ -63,9 +63,11 @@ def _plan(state: FlowState) -> FlowState:
 
 
 _graph = StateGraph(FlowState)
-_graph.add_node("plan", _plan)
-_graph.add_edge(START, "plan")
-_graph.add_edge("plan", END)
+# Node name must NOT collide with a FlowState key ("plan") — langgraph raises
+# "'plan' is already being used as a state key" at import, crashlooping the pod.
+_graph.add_node("planner", _plan)
+_graph.add_edge(START, "planner")
+_graph.add_edge("planner", END)
 _flow = _graph.compile()
 
 

@@ -107,3 +107,64 @@ test('autonomous + promote effects run and audit correctly', async () => {
   const p = await applyEffect(appr({ kind: 'promote_certify', payload: { artifact: 'fact:q1', stage: 'certified' } }), 'bea');
   assert.match(p.applied, /certified/);
 });
+
+// ---- T8: dataset_promote is a PHYSICAL publish -------------------------------
+
+const promoteReq = {
+  datasetId: 'ds_x',
+  datasetName: 'Orders',
+  domain: 'sales',
+  owner: 'amir',
+  visibility: 'domain',
+  grants: [],
+  target: 'iceberg.sales.gold_orders',
+};
+
+test('dataset_promote passes the APPROVER identity (real role + domains) to the publisher', async () => {
+  let got: { id: string; role: string; domains: string[] } | null = null;
+  const r = await applyEffect(
+    appr({ kind: 'dataset_promote', payload: promoteReq }),
+    { id: 'bea', role: 'builder', domains: ['sales'] },
+    {
+      publishPromotion: async (req, approver) => {
+        got = approver;
+        return {
+          ok: true, fqn: req.target, mode: 'live',
+          report: { ok: true, rows: [], skipped: [] }, cubeView: 'Orders',
+          dataset: { name: req.datasetName, id: req.datasetId, tier: 'asset' } as never,
+        };
+      },
+    },
+  );
+  assert.deepEqual(got, { id: 'bea', role: 'builder', domains: ['sales'] });
+  assert.equal(r.ok, true);
+  assert.equal(r.live, true);
+  assert.deepEqual(r.publish, { ok: true, fqn: 'iceberg.sales.gold_orders', mode: 'live', cubeView: 'Orders' });
+  assert.match(r.applied, /iceberg\.sales\.gold_orders/);
+});
+
+test('dataset_promote FAILURE: the effect reports ok:false with the real error (tier untouched)', async () => {
+  const r = await applyEffect(
+    appr({ kind: 'dataset_promote', payload: promoteReq }),
+    { id: 'bea', role: 'builder', domains: ['sales'] },
+    {
+      publishPromotion: async (req) => ({
+        ok: false, fqn: req.target, mode: 'live',
+        report: { ok: false, rows: [], skipped: [] },
+        error: 'Trino: Access Denied on personal_amir',
+      }),
+    },
+  );
+  assert.equal(r.ok, false);
+  assert.equal(r.live, false);
+  assert.equal(r.publish?.ok, false);
+  assert.match(r.publish?.error ?? '', /Access Denied/);
+  assert.match(r.applied, /tier unchanged/);
+});
+
+test('dataset_promote FAILS LOUD when no physical publisher is injected (no silent flip)', async () => {
+  await assert.rejects(
+    () => applyEffect(appr({ kind: 'dataset_promote', payload: promoteReq }), 'bea'),
+    /publishPromotion/,
+  );
+});

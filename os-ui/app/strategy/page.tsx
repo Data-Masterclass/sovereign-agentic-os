@@ -7,12 +7,14 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 import { euro } from '@/lib/strategy/model';
 import {
   FOUNDATION_TYPES,
   FOUNDATION_LABEL,
   type FoundationType,
 } from '@/lib/strategy/scorecard-core';
+import { useTileOrder } from '@/lib/prefs/useTileOrder';
 import BetDetail from './BetDetail';
 import ValueChart from './ValueChart';
 import {
@@ -50,6 +52,10 @@ type Scorecard = {
  *
  * Nothing else. Calm, Apple-grade; governance stays server-side.
  */
+// Stable references for useTileOrder (memoization holds across renders).
+const NO_CARDS: PillarCard[] = [];
+const pillarIdOf = (card: PillarCard) => card.pillar.id;
+
 export default function StrategyPage() {
   const [resp, setResp] = useState<ListResp | null>(null);
   const [scorecard, setScorecard] = useState<Scorecard | null>(null);
@@ -80,16 +86,23 @@ export default function StrategyPage() {
 
   const canCreate = Boolean(resp?.canCreateTenant || resp?.canCreateDomain);
 
+  // Tile-order drag — everyone can arrange their own pillar view.
+  const { orderedItems: orderedCards, itemDragProps, dragHandleProps } = useTileOrder(
+    'strategy.pillars',
+    resp?.items ?? NO_CARDS,
+    pillarIdOf,
+  );
+
   return (
     <>
-      <PageHeader title="Strategy" crumb="where this company invests in its agentic transformation" />
+      <PageHeader title="Strategy" crumb="where this company invests in its agentic transformation" tutorial="strategy" />
       <div className="content strat-page">
         {error ? <div className="error" style={{ marginTop: 12 }}>{error}</div> : null}
         {loading && !resp ? <div className="stub-page" style={{ marginTop: 20 }}>Loading strategy…</div> : null}
 
         {/* 1 — Big Bets (the pillars centerpiece) */}
         {resp ? (
-          <section className="strat-section">
+          <section className="strat-section" {...anchorAttr(ANCHORS.strategy.sandbox)}>
             <div className="strat-section-head">
               <h2 className="strat-section-title">Strategic Pillars</h2>
               <p className="strat-section-sub">
@@ -102,12 +115,14 @@ export default function StrategyPage() {
               </div>
             ) : (
               <div className="strat-pillars">
-                {resp.items.map((card) => (
+                {orderedCards.map((card) => (
                   <PillarColumn
                     key={card.pillar.id}
                     card={card}
                     onChanged={reload}
                     onOpenBet={(bet) => setOpen({ card, bet })}
+                    dragProps={itemDragProps(card)}
+                    dragHandleProps={dragHandleProps}
                   />
                 ))}
                 {canCreate ? <NewPillarColumn resp={resp} onCreated={reload} /> : null}
@@ -200,14 +215,21 @@ function FoundationsSection({ sc }: { sc: Scorecard }) {
 
 /* ------------------------------------------------------------------ Pillar ---- */
 
+type DragHandleProps = { onMouseDown: (e: React.MouseEvent) => void };
+type ItemDragProps = ReturnType<ReturnType<typeof useTileOrder>['itemDragProps']>;
+
 function PillarColumn({
   card,
   onChanged,
   onOpenBet,
+  dragProps,
+  dragHandleProps,
 }: {
   card: PillarCard;
   onChanged: () => void;
   onOpenBet: (bet: DBet) => void;
+  dragProps?: ItemDragProps;
+  dragHandleProps?: DragHandleProps;
 }) {
   const { pillar, rollup, canEdit } = card;
   const [editing, setEditing] = useState(false);
@@ -215,14 +237,26 @@ function PillarColumn({
   const scopeLabel = pillar.scope === 'tenant' ? 'company' : pillar.domain;
 
   return (
-    <section className="strat-pillar">
+    <section className="strat-pillar" {...(dragProps ?? {})}>
       <div className="strat-pillar-top">
         <span className={`badge ${pillar.scope === 'tenant' ? 'ok' : 'muted'}`}>{scopeLabel}</span>
-        {canEdit ? (
-          <button className="strat-icon-btn" onClick={() => setEditing((v) => !v)} aria-label="Edit pillar">
-            {editing ? '×' : '✎'}
-          </button>
-        ) : null}
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          {dragHandleProps ? (
+            <span
+              className="drag-handle"
+              title="Drag to reorder"
+              aria-label="Drag to reorder"
+              {...dragHandleProps}
+            >
+              ⋮⋮
+            </span>
+          ) : null}
+          {canEdit ? (
+            <button className="strat-icon-btn" onClick={() => setEditing((v) => !v)} aria-label="Edit pillar">
+              {editing ? '×' : '✎'}
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {editing ? (
@@ -232,14 +266,14 @@ function PillarColumn({
           <h2 className="strat-pillar-name">{pillar.name}</h2>
           {pillar.description ? <p className="strat-pillar-desc">{pillar.description}</p> : null}
 
-          <div className="strat-pillar-value">
+          <div className="strat-pillar-value" {...anchorAttr(ANCHORS.strategy.rollup)}>
             <span className="strat-pillar-amount">{euro(rollup.total)}</span>
             <span className="strat-pillar-metric">{rollup.metricTitle}</span>
           </div>
 
           <ValueMetricBlock card={card} onChanged={onChanged} />
 
-          <div className="strat-bets">
+          <div className="strat-bets" {...anchorAttr(ANCHORS.strategy.bets)}>
             {rollup.bets.length === 0 ? (
               <div className="hint" style={{ margin: 0 }}>
                 No big bets linked yet.{canEdit ? ' Link one below to start delivering this pillar.' : ''}
@@ -309,7 +343,7 @@ function ValueMetricBlock({ card, onChanged }: { card: PillarCard; onChanged: ()
   };
 
   return (
-    <div className="strat-vm">
+    <div className="strat-vm" {...anchorAttr(ANCHORS.strategy.value)}>
       {rollup.metricDescription ? <p className="strat-vm-desc">{rollup.metricDescription}</p> : null}
 
       {mode === 'manual' ? (
@@ -474,7 +508,7 @@ function NewPillarColumn({ resp, onCreated }: { resp: ListResp; onCreated: () =>
   if (!open) {
     const first = resp.items.length === 0;
     return (
-      <button className="strat-pillar strat-pillar-new" onClick={() => setOpen(true)}>
+      <button className="strat-pillar strat-pillar-new" onClick={() => setOpen(true)} {...anchorAttr(ANCHORS.strategy.create)}>
         <span className="strat-new-plus">+</span>
         <span className="strat-new-label">{first ? 'Create your first pillar' : 'New pillar'}</span>
         <span className="muted" style={{ fontSize: 11.5 }}>Define a strategic priority</span>
@@ -511,4 +545,3 @@ function NewPillarColumn({ resp, onCreated }: { resp: ListResp; onCreated: () =>
     </section>
   );
 }
-

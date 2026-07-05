@@ -94,6 +94,23 @@ spec:
               cnt=$(printf '%s' "$cnt" | tr -d '[:space:]')
               if [ "${cnt:-0}" -gt 0 ]; then
                 echo "realm '$POLARIS_REALM' already bootstrapped ($cnt root-principal row(s)) -- skipping bootstrap"
+                # --- Polaris 1.0.x -> 1.1.0 JDBC schema migration (additive + idempotent) ---
+                # 1.1.0 introduced JDBC schema versioning: on startup the server reads
+                # `polaris_schema.version` and expects a `location_without_scheme` column on
+                # `entities`. A metastore bootstrapped by 1.0.x has NEITHER, so 1.1.0 errors
+                # loading the VERSION table. These statements add both WITHOUT touching any
+                # existing catalog/namespace/table rows (CREATE TABLE / ADD COLUMN IF NOT
+                # EXISTS + INSERT ... ON CONFLICT DO NOTHING -> safe to re-run on every pod
+                # start / Argo sync). We stamp schema version = 1 (the 1.0.x-compatible schema
+                # 1.1.0 still uses by default). NOTE: do NOT enable the OPTIMIZED_SIBLING_CHECK
+                # feature after this migration — location_without_scheme is intentionally left
+                # un-backfilled for pre-existing rows, which that feature would misread. This
+                # runs only in the already-bootstrapped branch; a fresh 1.1.0 install gets the
+                # correct v1 schema (incl. the version table) straight from the admin tool.
+                echo "ensuring 1.1.0 JDBC schema (version table + location_without_scheme) ..."
+                psql -h "$PG_HOST" -U "$PG_USER" -d "$PG_DB" -v ON_ERROR_STOP=1 -c \
+                  "CREATE TABLE IF NOT EXISTS polaris_schema.version (version_key TEXT PRIMARY KEY, version_value INTEGER NOT NULL); INSERT INTO polaris_schema.version (version_key, version_value) VALUES ('version', 1) ON CONFLICT (version_key) DO NOTHING; ALTER TABLE polaris_schema.entities ADD COLUMN IF NOT EXISTS location_without_scheme TEXT;"
+                echo "1.1.0 JDBC schema ensured"
                 : > /bootstrap-state/done
               else
                 echo "realm '$POLARIS_REALM' not bootstrapped -- bootstrap will run"
@@ -192,25 +209,15 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_ACCESS_KEY_ID } }
             - name: AWS_SECRET_ACCESS_KEY
               valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_SECRET_ACCESS_KEY } }
-            # MinIO / STACKIT Object Storage have NO AWS STS endpoint, so Polaris cannot
-            # mint sub-scoped (AssumeRole) credentials for its OWN write/commit FileIO — the
-            # create-table COMMIT failed with "Failed to get subscoped credentials ... Sts,
-            # Status Code: 403". This feature flag makes Polaris skip credential-subscoping
-            # entirely (FileIOUtil.refreshAccessConfig returns an empty AccessConfig instead of
-            # calling STS), so the write FileIO uses the static AWS_* creds above (AWS SDK
-            # APPLICATION_DEFAULT chain). Because the skipped sub-scoping also stops injecting
-            # the S3 endpoint + path-style, those are re-supplied to new tables via the
-            # `table-default.s3.*` catalog properties (see polaris-bootstrap.yaml).
-            #
-            # The flag MUST be passed as a JVM system property, NOT the env-var form
-            # POLARIS_FEATURES_SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION: Quarkus/SmallRye maps
-            # feature flags under the dynamic map key polaris.features."<NAME>", and the
-            # relaxed-env-name back-mapping for a *quoted* map key silently no-ops (the env
-            # var is accepted but never bound), so sub-scoping was still attempted -> STS 403.
-            # JAVA_OPTS_APPEND sets the property unambiguously on the JVM (run-java.sh appends
-            # it), matching the exact config path polaris.features."SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION".
-            - name: JAVA_OPTS_APPEND
-              value: '-Dpolaris.features."SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION"=true'
+            # NOTE — do NOT reintroduce the SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION feature
+            # flag here (it was needed on 1.0.x, where MinIO's lack of an AWS STS endpoint
+            # 403'd the sub-scoping call). On Polaris 1.1.0 credential vending calls STS at
+            # the catalog's storageConfigInfo `endpointInternal` by default, and MinIO's STS
+            # AssumeRole works (verified live: HTTP 200 + temp creds), so Polaris's own
+            # write/commit FileIO receives a fully-populated AccessConfig — including
+            # endpointInternal + pathStyleAccess — and CTAS succeeds. With the flag set,
+            # 1.1.0 instead returns an EMPTY AccessConfig, so endpoint/path-style never
+            # reach the write FileIO and CTAS breaks again. Removing the flag IS the fix.
           ports:
             - { name: catalog, containerPort: 8181 }
             - { name: mgmt, containerPort: 8182 }

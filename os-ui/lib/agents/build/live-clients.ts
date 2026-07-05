@@ -32,11 +32,16 @@ import {
  * without a passing probe.
  */
 
-async function withTimeout(url: string, init: RequestInit, ms = 4000): Promise<Response | null> {
+async function withTimeout(
+  url: string,
+  init: RequestInit,
+  ms = 4000,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Response | null> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
   try {
-    return await fetch(url, { ...init, signal: ctrl.signal, cache: 'no-store' });
+    return await fetchImpl(url, { ...init, signal: ctrl.signal, cache: 'no-store' });
   } catch {
     return null;
   } finally {
@@ -54,34 +59,44 @@ function encodePath(p: string): string {
   return p.split('/').map(encodeURIComponent).join('/');
 }
 
-export function realForgejo(): ForgejoClient {
+export function realForgejo(fetchImpl: typeof fetch = fetch): ForgejoClient {
   const owner = config.forgejoRepoOwner;
   const api = (method: string, path: string, body?: unknown) =>
     withTimeout(`${config.forgejoUrl}/api/v1${path}`, {
       method,
       headers: { authorization: forgejoAuth(), accept: 'application/json', 'content-type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    }, 4000, fetchImpl);
+  const readContents = async (repo: string, path: string) => {
+    const res = await api('GET', `/repos/${owner}/${repo}/contents/${encodePath(path)}?ref=main`);
+    if (!res || !res.ok) return null;
+    const d = (await res.json().catch(() => null)) as { content?: string; encoding?: string; sha?: string } | null;
+    if (!d || typeof d.content !== 'string') return null;
+    const content = d.encoding === 'base64' ? Buffer.from(d.content, 'base64').toString('utf8') : d.content;
+    return { content, sha: String(d.sha ?? '') };
+  };
   return {
     async ensureRepo(repo) {
       // Idempotent: create the system repo; a 409 (exists) is fine.
       await api('POST', '/user/repos', { name: repo, private: true, auto_init: true, default_branch: 'main' });
     },
-    async readFile(repo, path) {
-      const res = await api('GET', `/repos/${owner}/${repo}/contents/${encodePath(path)}?ref=main`);
-      if (!res || !res.ok) return null;
-      const d = (await res.json().catch(() => null)) as { content?: string; encoding?: string; sha?: string } | null;
-      if (!d || typeof d.content !== 'string') return null;
-      const content = d.encoding === 'base64' ? Buffer.from(d.content, 'base64').toString('utf8') : d.content;
-      return { content, sha: String(d.sha ?? '') };
-    },
+    readFile: readContents,
     async writeFile(repo, path, content, sha) {
-      const res = await api('PUT', `/repos/${owner}/${repo}/contents/${encodePath(path)}`, {
-        content: Buffer.from(content, 'utf8').toString('base64'),
-        message: `Build: sync ${path}`,
-        sha: sha || undefined,
-        branch: 'main',
-      });
+      // Forgejo's contents API splits create vs update: POST = CreateFile (new file),
+      // PUT = UpdateFile (REQUIRES `sha`). Using PUT to create a not-yet-existing
+      // file 422s ("sha is required") — the Build failure. So: POST when we have no
+      // sha, PUT+sha when the file already exists.
+      const url = `/repos/${owner}/${repo}/contents/${encodePath(path)}`;
+      const b64 = Buffer.from(content, 'utf8').toString('base64');
+      const write = (method: 'POST' | 'PUT', withSha?: string) =>
+        api(method, url, { content: b64, message: `Build: sync ${path}`, branch: 'main', ...(withSha ? { sha: withSha } : {}) });
+
+      let res = sha ? await write('PUT', sha) : await write('POST');
+      // Create race: the file already existed (POST → 422). Re-read its sha + update.
+      if (res && res.status === 422 && !sha) {
+        const cur = await readContents(repo, path);
+        if (cur?.sha) res = await write('PUT', cur.sha);
+      }
       if (!res || !res.ok) throw new Error(`Forgejo write ${path} failed (${res?.status ?? 'unreachable'})`);
       const d = (await res.json().catch(() => ({}))) as { content?: { sha?: string } };
       return { sha: String(d?.content?.sha ?? '') };
@@ -232,6 +247,23 @@ export function realLangfuse(): LangfuseClient {
       return (d.data ?? []).filter((t) => t?.metadata?.principal === principal).length;
     },
   };
+}
+
+/**
+ * Can we READ traces back from the durable Langfuse store? The trace query API is
+ * clickhouse-backed, so this returns false when clickhouse is down — even though
+ * ingestion (langfuse-web) may still accept writes. The Run panel uses this to
+ * decide between an honest "in-run steps" note and a live "full trace" deep-link,
+ * so it never shows a dead "(no trace appeared)".
+ */
+export async function traceStoreReachable(): Promise<boolean> {
+  const auth = 'Basic ' + Buffer.from(`${config.langfusePublicKey}:${config.langfuseSecretKey}`).toString('base64');
+  const res = await withTimeout(
+    `${config.langfuseUrl}/api/public/traces?limit=1`,
+    { method: 'GET', headers: { authorization: auth, accept: 'application/json' } },
+    2500,
+  );
+  return Boolean(res && res.ok);
 }
 
 /**

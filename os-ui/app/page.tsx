@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic';
  * Home — the welcoming golden-path launcher (home-golden-path.md). Server-rendered
  * from the OPA/RLS-scoped home-feed adapter: an illustrated launcher whose copy
  * + dimming shift by the viewer's persona. Home is the front door — it orients
- * and routes into the ten paths; the live "what's moving / what needs me" view
+ * and routes into the golden paths; the live "what's moving / what needs me" view
  * lives one click away in the Cockpit (`/cockpit`).
  */
 export default async function HomePage() {

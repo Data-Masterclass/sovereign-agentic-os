@@ -22,6 +22,24 @@
   "nginx.ingress.kubernetes.io/proxy-read-timeout" "3600"
   "nginx.ingress.kubernetes.io/proxy-send-timeout" "3600"
 }}
+{{- /* The Workbench tab establishes its session CROSS-ORIGIN: the browser (on the
+       OS UI origin) fetch-POSTs `workbench.<zone>/session?t=<token>` with
+       credentials BEFORE iframing the editor, so the workbench Ingress must
+       answer CORS for the OS UI origin(s) — the broker itself sets no CORS
+       headers. The terminal needs none of this (WebSockets are not CORS-gated). */}}
+{{- $uiOrigins := list }}
+{{- range $k := list "osUI" "osUIApex" }}
+{{- with index ($ing.hosts | default dict) $k }}{{- $uiOrigins = append $uiOrigins (printf "https://%s" .) }}{{- end }}
+{{- end }}
+{{- $wbAnno := merge (dict) $wsAnno }}
+{{- if $uiOrigins }}
+{{- $wbAnno = merge (dict
+      "nginx.ingress.kubernetes.io/enable-cors" "true"
+      "nginx.ingress.kubernetes.io/cors-allow-origin" (join ", " $uiOrigins)
+      "nginx.ingress.kubernetes.io/cors-allow-credentials" "true"
+      "nginx.ingress.kubernetes.io/cors-allow-methods" "GET, POST, OPTIONS"
+    ) $wbAnno }}
+{{- end }}
 {{- $routes := dict
   "osUI"         (dict "service" "os-ui" "port" 3000)
   "litellm"      (dict "service" "agentic-os-litellm" "port" 4000)
@@ -31,7 +49,7 @@
   "argocd"       (dict "service" "argocd-server" "port" 80)
   "openmetadata" (dict "service" "openmetadata" "port" 8585)
   "terminal"     (dict "service" "terminal-broker" "port" 8080 "annotations" $wsAnno)
-  "workbench"    (dict "service" "workbench-broker" "port" 8080 "annotations" $wsAnno)
+  "workbench"    (dict "service" "workbench-broker" "port" 8080 "annotations" $wbAnno)
 }}
 {{- range $key, $route := $routes }}
 {{- $host := index ($ing.hosts | default dict) $key }}

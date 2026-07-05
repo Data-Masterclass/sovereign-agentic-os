@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import PageHeader from '@/components/PageHeader';
 import { useApi } from '@/lib/useApi';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 import type { HealthItem, Overview } from '@/lib/monitoring';
 import AttentionStrip from '@/components/monitoring/AttentionStrip';
 import LensCard from '@/components/monitoring/LensCard';
@@ -25,10 +26,10 @@ export default function MonitoringPage() {
 
   return (
     <>
-      <PageHeader title="Monitoring" crumb="health · spend · traces — the read plane" />
+      <PageHeader title="Monitoring" crumb="health · spend · traces — the read plane" tutorial="monitoring" />
       <div className="content">
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <p className="lead" style={{ marginBottom: 0 }}>
+          <p className="lead" style={{ marginBottom: 0 }} {...anchorAttr(ANCHORS.monitoring.sandbox)}>
             What your agents, pipelines and artifacts are doing — scoped to your identity.
             Monitoring traces runs, watches spend, and surfaces pipeline + model drift; it never
             sets policy or caps (that is Governance), and infrastructure health lives in
@@ -41,7 +42,7 @@ export default function MonitoringPage() {
 
         {data && (
           <div className="row" style={{ marginTop: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span className="pill">
+            <span className="pill" {...anchorAttr(ANCHORS.monitoring.scope)}>
               <span className="live" />
               {scopeLabel(data.scope)}
             </span>
@@ -62,10 +63,12 @@ export default function MonitoringPage() {
         {data && (
           <>
             <div className="section-title">Needs attention</div>
-            <AttentionStrip items={data.attention} onOpen={setSelected} />
+            <div {...anchorAttr(ANCHORS.monitoring.attention)}>
+              <AttentionStrip items={data.attention} onOpen={setSelected} />
+            </div>
 
             <div className="section-title">Lenses</div>
-            <div className="mon-lens-grid">
+            <div className="mon-lens-grid" {...anchorAttr(ANCHORS.monitoring.lenses)}>
               {data.lenses.map((lens) => (
                 <LensCard key={lens.id} lens={lens} onOpen={setSelected} />
               ))}

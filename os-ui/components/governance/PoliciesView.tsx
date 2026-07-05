@@ -98,6 +98,66 @@ export default function PoliciesView() {
 
       {data && (
         <>
+          {/* Capability profiles — heart of the policy plane, shown first */}
+          <div className="section-title">
+            Capability profiles
+            {data.sources.length > 0 && (
+              <span className="count-pill">{data.sources.length}</span>
+            )}
+            {data.canOverride ? (
+              <a
+                href="/platform/roles"
+                className="btn ghost"
+                style={{ marginLeft: 'auto', padding: '4px 12px', fontSize: 12, textDecoration: 'none' }}
+              >
+                Edit profiles →
+              </a>
+            ) : (
+              <span className="hint" style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-faint)' }}>
+                Editable by platform admins in Platform → Roles
+              </span>
+            )}
+          </div>
+          {data.sources.length === 0 ? (
+            <div className="stub-page">
+              {data.canOverride
+                ? 'No capability profiles compiled yet — define them in Platform → Roles.'
+                : 'No capability profiles configured.'}
+            </div>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Profile</th><th>Authored in</th><th>Compiled to</th><th>Rights</th></tr>
+                </thead>
+                <tbody>
+                  {data.sources.map((s, i) => (
+                    <tr key={i}>
+                      <td className="mono" style={{ fontWeight: 600 }}>{s.name}</td>
+                      <td style={{ fontSize: 12 }}>{s.authoredIn}</td>
+                      <td className="mono" style={{ fontSize: 12 }}>{s.compiledTo}</td>
+                      <td>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          {s.rights.map((r) => (
+                            <span key={r} className="chip">{r}</span>
+                          ))}
+                        </div>
+                        {data.canOverride && (
+                          <a
+                            href={`/platform/roles`}
+                            style={{ display: 'block', marginTop: 4, fontSize: 11, color: 'var(--text-faint)', textDecoration: 'none' }}
+                          >
+                            Edit in Roles →
+                          </a>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {/* Access grants table */}
           <div className="section-title">
             Access grants · principal × tool
@@ -151,39 +211,6 @@ export default function PoliciesView() {
                 </tbody>
               </table>
             </div>
-          )}
-
-          {/* Capability profiles */}
-          {data.sources.length > 0 && (
-            <>
-              <div className="section-title">
-                Capability profiles
-                <span className="count-pill">{data.sources.length}</span>
-              </div>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr><th>Profile</th><th>Authored in</th><th>Compiled to</th><th>Rights</th></tr>
-                  </thead>
-                  <tbody>
-                    {data.sources.map((s, i) => (
-                      <tr key={i}>
-                        <td className="mono" style={{ fontWeight: 600 }}>{s.name}</td>
-                        <td style={{ fontSize: 12 }}>{s.authoredIn}</td>
-                        <td className="mono" style={{ fontSize: 12 }}>{s.compiledTo}</td>
-                        <td>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                            {s.rights.map((r) => (
-                              <span key={r} className="chip">{r}</span>
-                            ))}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
           )}
 
           {/* Egress allowlist */}

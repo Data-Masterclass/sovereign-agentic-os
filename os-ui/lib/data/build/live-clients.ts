@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { config } from '@/lib/config';
-import { cubeLoad, queryRun } from '@/lib/governed';
+import { cubeLoad, executeRun, queryRun } from '@/lib/governed';
 import { listUsers as userRoster } from '@/lib/users';
 import {
   type CubeClient,
@@ -136,28 +136,117 @@ async function probeQueryable(fqn: string, principal?: string): Promise<boolean>
   }
 }
 
-export function realDlt(): DltClient {
-  // The raw load runs via the sandbox / Dagster out of band; this client verifies the
-  // RESULT landed in Polaris (a probe SELECT), so a missing table reports ✗.
+/** The data-runner /ingest result (the physical Bronze table it just wrote). */
+export type IngestOutcome = { table: string; rowCount: number; columns: { name: string; type: string }[] };
+
+/** POST the upload to the data-runner /ingest. principal + objectKey come from the
+ *  caller (session-derived); the runner independently forces the personal_<uid>
+ *  schema + the uploads/<uid>/ prefix, so a spoofed value can't cross users. */
+async function postIngest(input: { principal?: string; dataset: string; objectKey: string }): Promise<IngestOutcome> {
+  const res = await withTimeout(
+    `${config.dataRunnerUrl}/ingest`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ principal: input.principal, dataset: input.dataset, objectKey: input.objectKey }),
+    },
+    60_000, // large files: DuckDB read + PyIceberg write can take a while.
+  );
+  if (!res) throw new Error('data-runner unreachable');
+  const text = await res.text();
+  let data: Record<string, unknown> = {};
+  try { data = JSON.parse(text); } catch { throw new Error(`data-runner returned non-JSON: ${text.slice(0, 200)}`); }
+  if (!res.ok || data.ok === false || data.error) throw new Error((data.error as string) ?? `data-runner ${res.status}`);
   return {
-    async load() {},
-    async tableExists(table) { return probeQueryable(table); },
+    table: String(data.table ?? ''),
+    rowCount: typeof data.rowCount === 'number' ? data.rowCount : 0,
+    columns: Array.isArray(data.columns) ? (data.columns as IngestOutcome['columns']) : [],
   };
 }
 
+/** Is the data-runner reachable? Gates the LIVE physical ingest vs the offline-mock. */
+export async function dataRunnerReachable(): Promise<boolean> {
+  const res = await withTimeout(`${config.dataRunnerUrl}/health`, { method: 'GET' }, 2500);
+  return Boolean(res && res.ok);
+}
+
+export function realDlt(): DltClient & { lastIngest?: IngestOutcome } {
+  // `load` performs the REAL ingest when a file objectKey is present (data-runner
+  // writes the physical Bronze table); `tableExists` verifies the RESULT landed in
+  // Polaris (a governed probe SELECT as the principal), so a missing table reports ✗.
+  const self: DltClient & { lastIngest?: IngestOutcome } = {
+    async load(_table, source, ctx) {
+      if (!ctx?.objectKey) return; // no upload context → nothing to load (verify then ✗).
+      self.lastIngest = await postIngest({ principal: ctx.principal, dataset: source, objectKey: ctx.objectKey });
+    },
+    async tableExists(table, principal) { return probeQueryable(table, principal); },
+  };
+  return self;
+}
+
 export function realDbt(): DbtClient {
-  // dbt build runs via Dagster/CI; we verify the mart is queryable. dbt `build` aborts
-  // dependents on a failed test, so a queryable table is honest evidence tests passed.
+  // M1 Silver builder: when the guided panel supplies a compiled, allowlisted transform
+  // + the caller identity, EXECUTE the governed CTAS as the caller (Trino→OPA masks the
+  // reads inside the SELECT), then verify the result is queryable. A rejected statement
+  // (400/403) or Trino error throws with the real message ⇒ the row reports ✗ honestly.
+  // Without a transform (pass-through / built out of band) we fall back to a verify-only
+  // probe: dbt `build` aborts dependents on a failed test, so a queryable table is
+  // honest evidence its tests passed. (dbt tests/docs/scheduling are M2.)
   return {
-    async build(modelFqn) {
+    async build(modelFqn, write) {
+      if (write) {
+        await executeRun(write.sql, write.identity); // throws on any rejection/Trino error
+        const queryable = await probeQueryable(modelFqn, write.identity.principal);
+        return { testsPassed: queryable, compiledCode: true };
+      }
       const queryable = await probeQueryable(modelFqn);
       return { testsPassed: queryable, compiledCode: queryable };
     },
   };
 }
 
+/**
+ * Promotion release (T8): a one-time, SINGLE-READER, READ-ONLY exemption on the
+ * requester's `personal_<uid>` schema so the APPROVING Builder's publish CTAS can
+ * copy it into the domain schema. `trino.rego` honours it only for non-write
+ * operations and only for `reader`; it is pushed just before the CTAS and withdrawn
+ * in a `finally` (and any straggler is wiped by the next full `data.governance`
+ * PUT). A failed push is not fatal here — the CTAS then fails CLOSED with the real
+ * Trino access-denied, which the adapter reports honestly.
+ */
+async function pushPromoteRelease(schema: string, reader: string, fqn: string): Promise<void> {
+  await withTimeout(`${config.opaUrl}/v1/data/governance/releases/${schema}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ reader, fqn, at: new Date().toISOString() }),
+  });
+}
+async function withdrawPromoteRelease(schema: string): Promise<void> {
+  await withTimeout(`${config.opaUrl}/v1/data/governance/releases/${schema}`, { method: 'DELETE' });
+}
+
 export function realDbtTrino(): DbtTrinoClient {
-  return { async materialize(fqn) { return { ok: await probeQueryable(fqn) }; } };
+  return {
+    async materialize(fqn, write) {
+      if (write) {
+        // T8 publish: the REAL materialization — the allowlisted promote CTAS runs
+        // through the governed /execute AS THE APPROVING BUILDER (write.identity is
+        // built from the approver, never the requester). executeRun throws with the
+        // real query-tool/Trino error so a failed publish reports ✗ verbatim.
+        if (write.releaseSchema) {
+          await pushPromoteRelease(write.releaseSchema, write.identity.principal, fqn);
+        }
+        try {
+          if (write.schemaSql) await executeRun(write.schemaSql, write.identity);
+          await executeRun(write.sql, write.identity);
+        } finally {
+          if (write.releaseSchema) await withdrawPromoteRelease(write.releaseSchema);
+        }
+        return { ok: await probeQueryable(fqn, write.identity.principal) };
+      }
+      return { ok: await probeQueryable(fqn) };
+    },
+  };
 }
 
 export function realTrino(): TrinoClient {

@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { type DataAdapter, type DataStage, type StepResult } from './adapter.ts';
+import type { ExecuteIdentity } from '@/lib/governed';
 import { transparencyGate, gateReason } from '../transparency.ts';
 import {
   CUBE_ARTIFACT,
@@ -48,23 +49,50 @@ export interface OmClient {
   hasLineage(fqn: string): Promise<boolean>;
 }
 
+/** The artifact key carrying the uploaded object's MinIO key into the Bronze build,
+ *  so the dlt adapter's `apply` can hand it to the data-runner /ingest call. */
+export const INGEST_OBJECT_KEY = 'ingest.objectKey';
+
 export interface DltClient {
-  /** Run the load → a raw Iceberg table in Polaris. */
-  load(table: string, source: string): Promise<void>;
-  /** A table + snapshot exist in Polaris (the verify probe). */
-  tableExists(table: string): Promise<boolean>;
+  /** Run the load → a raw Iceberg table in Polaris. For a file upload the `ctx`
+   *  carries the MinIO objectKey + the acting principal so the real client calls the
+   *  data-runner /ingest; with no objectKey it is a no-op (verify then reports ✗). */
+  load(table: string, source: string, ctx?: { objectKey?: string; principal?: string }): Promise<void>;
+  /** A table + snapshot exist in Polaris (the verify probe, run as the principal). */
+  tableExists(table: string, principal?: string): Promise<boolean>;
 }
 
 export interface DbtClient {
   /** `dbt build` (+ compile, docs generate) for the model FQN; reports tests +
    *  compiled_code. Note: dbt `build` aborts dependents on a failed test, so a
-   *  queryable mart is honest evidence its tests passed. */
-  build(modelFqn: string): Promise<{ testsPassed: boolean; compiledCode: boolean }>;
+   *  queryable mart is honest evidence its tests passed.
+   *
+   *  M1 Silver builder: when `write` is supplied, the client EXECUTES the compiled,
+   *  allowlisted CTAS as the caller (governed `/execute`) and reports whether the
+   *  resulting table is queryable — a rejected statement or Trino error throws with
+   *  the real message so the row reports ✗ honestly (dbt tests/scheduling are M2). */
+  build(
+    modelFqn: string,
+    write?: { sql: string; identity: ExecuteIdentity },
+  ): Promise<{ testsPassed: boolean; compiledCode: boolean }>;
 }
 
+/** The publish write bundle (T8): the promote CTAS + the APPROVING Builder's
+ *  identity, plus the idempotent domain-schema DDL and the personal source schema
+ *  to release read-only for the copy's duration. */
+export type DbtTrinoWrite = {
+  sql: string;
+  schemaSql?: string;
+  identity: ExecuteIdentity;
+  releaseSchema?: string;
+};
+
 export interface DbtTrinoClient {
-  /** Materialize the model as a governed Iceberg table via dbt-trino. */
-  materialize(fqn: string): Promise<{ ok: boolean }>;
+  /** Materialize the model as a governed Iceberg table. With a `write` (the promote
+   *  publish) the REAL client executes the allowlisted CTAS via the governed
+   *  `/execute` as `write.identity` — the approving Builder — then probes the
+   *  result; a rejection/Trino error throws with the real message (honest ✗). */
+  materialize(fqn: string, write?: DbtTrinoWrite): Promise<{ ok: boolean }>;
 }
 
 export interface TrinoClient {
@@ -111,7 +139,13 @@ export const ADAPTER_SET: Record<DataStage, string[]> = {
   gold: ['dbt', 'om'],
   metric: ['cube', 'om'],
   dashboard: ['superset', 'om'],
-  promote: ['dbt-trino', 'trino', 'om', 'policy'],
+  // T8 — publish for real. `policy` runs FIRST so the compiled OPA governance for
+  // the promoted FQN is live BEFORE the table materializes (no window where the new
+  // domain table exists without its row filters). `om` is intentionally NOT in this
+  // set: the promoted table's OM lineage lands via the dbt-artifacts ingestion (M2),
+  // and the Catalog already lists governed registry assets via the T0.2 union — a
+  // hard OM dependency here would block every real publish on a catalog side-car.
+  promote: ['policy', 'dbt-trino', 'trino'],
   certify: ['om', 'policy'],
 };
 
@@ -190,12 +224,17 @@ export function makeLiveAdapters(deps: DataLiveDeps): Record<string, DataAdapter
     tool: 'dlt',
     async apply(ctx) {
       const table = `iceberg.${ctx.dataset.domain}.bronze_${slug(ctx.dataset.name)}`;
-      await deps.dlt.load(table, ctx.dataset.name);
+      // A file upload carries its MinIO objectKey; the real client POSTs it to the
+      // data-runner /ingest (which writes the physical Bronze table as the principal).
+      await deps.dlt.load(table, ctx.dataset.name, {
+        objectKey: ctx.artifacts[INGEST_OBJECT_KEY],
+        principal: ctx.principal,
+      });
       return ok(`loaded raw Iceberg table ${table}`);
     },
     async verify(ctx) {
       const table = `iceberg.${ctx.dataset.domain}.bronze_${slug(ctx.dataset.name)}`;
-      const exists = await deps.dlt.tableExists(table);
+      const exists = await deps.dlt.tableExists(table, ctx.principal);
       if (!exists) return fail(`raw table ${table} (or its snapshot) is not in Polaris`);
       return ok(`raw table + snapshot present in Polaris`);
     },
@@ -211,10 +250,22 @@ export function makeLiveAdapters(deps: DataLiveDeps): Record<string, DataAdapter
     tool: 'dbt',
     async apply(ctx) {
       const fqn = dbtModelFqn(ctx);
-      const r = await deps.dbt.build(fqn);
-      if (!r.testsPassed) return fail(`dbt tests failed on ${fqn} — nothing untested enters Trino`);
+      // Guided Silver/Gold builder: with a compiled transform + caller identity, run the
+      // REAL governed CTAS (executeRun) as the caller; otherwise verify-only probe.
+      const write =
+        ctx.transformSql && ctx.identity ? { sql: ctx.transformSql, identity: ctx.identity } : undefined;
+      const r = await deps.dbt.build(fqn, write);
+      if (!r.testsPassed) {
+        return fail(
+          write
+            ? `${fqn} was not queryable after the transform ran`
+            : `dbt tests failed on ${fqn} — nothing untested enters Trino`,
+        );
+      }
       if (!r.compiledCode) return fail('manifest is missing compiled_code (run dbt compile)');
-      return ok(`dbt build ${fqn} passed (tests + compiled_code present)`);
+      return ok(
+        write ? `materialized ${fqn} via governed CTAS` : `dbt build ${fqn} passed (tests + compiled_code present)`,
+      );
     },
     async verify(ctx) {
       return ok(`${dbtModelFqn(ctx)} built, tests green`);
@@ -227,9 +278,20 @@ export function makeLiveAdapters(deps: DataLiveDeps): Record<string, DataAdapter
     tool: 'dbt-trino',
     async apply(ctx) {
       const fqn = assetTarget(ctx.dataset);
-      const r = await deps.dbtTrino.materialize(fqn);
+      // T8 publish: with the compiled promote CTAS + the APPROVING Builder's identity
+      // in the context, run the REAL governed write (executeRun as the approver —
+      // never the requester); otherwise the legacy verify-only probe.
+      const write =
+        ctx.transformSql && ctx.identity
+          ? { sql: ctx.transformSql, schemaSql: ctx.schemaSql, identity: ctx.identity, releaseSchema: ctx.releaseSchema }
+          : undefined;
+      const r = await deps.dbtTrino.materialize(fqn, write);
       if (!r.ok) return fail(`dbt-trino could not materialize ${fqn}`);
-      return ok(`materialized governed Iceberg table ${fqn}`);
+      return ok(
+        write
+          ? `materialized ${fqn} via governed CTAS as ${write.identity.uid} (the approving Builder)`
+          : `materialized governed Iceberg table ${fqn}`,
+      );
     },
     async verify(ctx) {
       const fqn = assetTarget(ctx.dataset);

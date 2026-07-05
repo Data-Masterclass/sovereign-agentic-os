@@ -8,6 +8,34 @@ import { commitSystem } from './commitSystem';
 import type { Capability, System } from '@/lib/agents/system-schema';
 import { modelInfo, type ModelInfo } from '@/lib/agents/routing';
 
+/** Mirrors CatalogEntry from lib/agents/tool-catalog — client-safe (no server import). */
+type CatalogEntry = {
+  name: string;
+  tab: string;
+  minRole: string;
+  description: string;
+  requires_approval: boolean;
+};
+
+const TAB_LABELS: Record<string, string> = {
+  data: 'Data',
+  knowledge: 'Knowledge',
+  files: 'Files',
+  metrics: 'Metrics',
+  dashboards: 'Dashboards',
+  bigbets: 'Big Bets',
+  connections: 'Connections',
+  science: 'Science',
+  software: 'Software',
+  agents: 'Agents',
+  meta: 'Meta',
+};
+
+const TAB_ORDER = [
+  'data', 'knowledge', 'files', 'metrics', 'dashboards',
+  'bigbets', 'connections', 'science', 'software', 'agents', 'meta',
+];
+
 /**
  * System-level grants + the activity→model routing table (Tasks 5 & 6). Grants are
  * inherited by sub-agents and narrowable per agent (in the agent editor).
@@ -49,6 +77,28 @@ export default function GrantsRouting({
   const [newConnCap, setNewConnCap] = useState<Capability>('Read');
   const [probeId, setProbeId] = useState('');
   const [probes, setProbes] = useState<Record<string, ProbeResult>>({});
+
+  // --- tool picker state ----
+  const [catalog, setCatalog] = useState<CatalogEntry[] | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
+  const [search, setSearch] = useState('');
+  const [catalogLoading, setCatalogLoading] = useState(false);
+
+  const openPicker = async () => {
+    setShowPicker(true);
+    if (catalog !== null) return; // already loaded
+    setCatalogLoading(true);
+    try {
+      const res = await fetch('/api/agents/tool-catalog');
+      if (!res.ok) throw new Error('Failed to load tool catalog');
+      const data = (await res.json()) as { tools: CatalogEntry[] };
+      setCatalog(data.tools);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setCatalogLoading(false);
+    }
+  };
 
   const commit = async (mutate: (s: System) => void) => {
     if (busy) return;
@@ -109,13 +159,139 @@ export default function GrantsRouting({
 
       <div className="section-title" style={{ marginTop: 4 }}>Tool grants</div>
       <p className="hint" style={{ marginTop: 0 }}>Granted at the system level, inherited by sub-agents, narrowable per agent.</p>
-      {chipList(
-        'MCP tools',
-        system.grants.tools,
-        (v) => commit((s) => { if (!s.grants.tools.includes(v)) s.grants.tools.push(v); }),
-        (v) => commit((s) => { s.grants.tools = s.grants.tools.filter((t) => t !== v); }),
-        'add a tool, e.g. retrieve',
-      )}
+      {/* MCP tool grants — replaced with a role-scoped picker */}
+      {(() => {
+        const q = search.toLowerCase();
+        const filtered = (catalog ?? []).filter(
+          (t) => !q || t.name.includes(q) || t.description.toLowerCase().includes(q),
+        );
+        const grouped = TAB_ORDER
+          .map((tab) => [tab, filtered.filter((t) => t.tab === tab)] as [string, CatalogEntry[]])
+          .filter(([, tools]) => tools.length > 0);
+
+        return (
+          <div className="grant-block">
+            <div className="comp-label">MCP tools</div>
+            <div className="chip-row">
+              {system.grants.tools.length === 0 ? (
+                <span className="muted" style={{ fontSize: 12.5 }}>none</span>
+              ) : null}
+              {system.grants.tools.map((t) => (
+                <span key={t} className="chip mono">
+                  {t}
+                  {canEdit ? (
+                    <button
+                      className="chip-x"
+                      disabled={busy}
+                      onClick={() => commit((s) => { s.grants.tools = s.grants.tools.filter((x) => x !== t); })}
+                      aria-label={`Remove ${t}`}
+                    >×</button>
+                  ) : null}
+                </span>
+              ))}
+            </div>
+            {canEdit ? (
+              <div style={{ marginTop: 8 }}>
+                {!showPicker ? (
+                  <button className="btn ghost sm" disabled={busy} onClick={openPicker}>
+                    Choose tools…
+                  </button>
+                ) : (
+                  <div style={{
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius)',
+                    background: 'var(--bg-elevated)',
+                    padding: '12px 14px',
+                    marginTop: 4,
+                  }}>
+                    <div className="row" style={{ alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                      <input
+                        type="text"
+                        placeholder="Search tools…"
+                        value={search}
+                        autoFocus
+                        onChange={(e) => setSearch(e.target.value)}
+                        style={{ flex: 1 }}
+                      />
+                      <button
+                        className="btn ghost sm"
+                        onClick={() => { setShowPicker(false); setSearch(''); }}
+                      >
+                        Done
+                      </button>
+                    </div>
+                    {catalogLoading ? (
+                      <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>Loading…</p>
+                    ) : catalog === null ? null : grouped.length === 0 ? (
+                      <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>No tools match.</p>
+                    ) : grouped.map(([tab, tools]) => (
+                      <div key={tab} style={{ marginBottom: 10 }}>
+                        <div className="comp-label" style={{ marginBottom: 4 }}>
+                          {TAB_LABELS[tab] ?? tab}
+                        </div>
+                        {tools.map((t) => {
+                          const checked = system.grants.tools.includes(t.name);
+                          return (
+                            <label
+                              key={t.name}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'flex-start',
+                                gap: 8,
+                                padding: '5px 0',
+                                cursor: busy ? 'not-allowed' : 'pointer',
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                disabled={busy}
+                                style={{ marginTop: 2, flexShrink: 0 }}
+                                onChange={() => {
+                                  if (checked) {
+                                    commit((s) => {
+                                      s.grants.tools = s.grants.tools.filter((x) => x !== t.name);
+                                    });
+                                  } else {
+                                    commit((s) => {
+                                      if (!s.grants.tools.includes(t.name)) s.grants.tools.push(t.name);
+                                    });
+                                  }
+                                }}
+                              />
+                              <span style={{ flex: 1, minWidth: 0 }}>
+                                <span className="mono" style={{ fontSize: 12.5, fontWeight: 500 }}>
+                                  {t.name}
+                                </span>
+                                {t.requires_approval ? (
+                                  <span
+                                    className="badge warn"
+                                    style={{ fontSize: 10.5, marginLeft: 6, verticalAlign: 'middle' }}
+                                  >
+                                    needs approval
+                                  </span>
+                                ) : null}
+                                <span
+                                  className="muted"
+                                  style={{ display: 'block', fontSize: 11.5, marginTop: 1, lineHeight: 1.4 }}
+                                >
+                                  {t.description.length > 120
+                                    ? `${t.description.slice(0, 120)}…`
+                                    : t.description}
+                                </span>
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </div>
+        );
+      })()}
       <div className="row" style={{ gap: 18, flexWrap: 'wrap' }}>
         {chipList(
           'Data products',

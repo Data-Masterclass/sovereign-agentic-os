@@ -17,6 +17,7 @@ import { assertSandboxSafe, walkSteps } from './engine';
 
 import data from './content/data';
 import knowledge from './content/knowledge';
+import files from './content/files';
 import connections from './content/connections';
 import agents from './content/agents';
 import software from './content/software';
@@ -24,11 +25,15 @@ import science from './content/science';
 import metrics from './content/metrics';
 import dashboards from './content/dashboards';
 import bigBets from './content/big-bets';
+import strategy from './content/strategy';
 import marketplace from './content/marketplace';
+import governance from './content/governance';
+import monitoring from './content/monitoring';
 
 const REGISTRY: Record<GoldenPathKey, TutorialDef> = {
   data,
   knowledge,
+  files,
   connections,
   agents,
   software,
@@ -36,13 +41,17 @@ const REGISTRY: Record<GoldenPathKey, TutorialDef> = {
   metrics,
   dashboards,
   'big-bets': bigBets,
+  strategy,
   marketplace,
+  governance,
+  monitoring,
 };
 
 /** Canonical ordering for galleries (mirrors the Home launcher). */
 export const TUTORIAL_ORDER: GoldenPathKey[] = [
   'data',
   'knowledge',
+  'files',
   'connections',
   'agents',
   'software',
@@ -50,8 +59,27 @@ export const TUTORIAL_ORDER: GoldenPathKey[] = [
   'metrics',
   'dashboards',
   'big-bets',
+  'strategy',
   'marketplace',
+  'governance',
+  'monitoring',
 ];
+
+/**
+ * Nav tabs that DELIBERATELY have no tutorial — the documented-exclusion list
+ * the coverage tripwire (`coverage.test.ts`) checks against. Every canonical OS
+ * tab must either have a registry tutorial (matched by route) or an entry here
+ * with a reason. Platform-group tabs (Admin, Users, Gateway, Terminal, …) are
+ * exempt as a class: they are operator consoles for the admins/builders RUNNING
+ * the OS — operators, not students — and are covered by the operator guide, not
+ * in-app teaching. If one ever becomes a student surface, give it a tutorial.
+ */
+export const TUTORIAL_EXEMPT_ROUTES: Record<string, string> = {
+  '/': 'Home is the tutorial launcher itself — it hosts the golden-path gallery.',
+  '/cockpit':
+    'Read-only personal overview that aggregates the tabs; every card deep-links into a tab that has its own tutorial.',
+  '/settings': 'Read-only deployment configuration; nothing to practice or decide here.',
+};
 
 /** Resolve one tutorial. Returns `undefined` for an unknown key. */
 export function getTutorial(key: string): TutorialDef | undefined {

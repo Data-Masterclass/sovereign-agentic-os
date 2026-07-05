@@ -18,6 +18,12 @@ export async function middleware(req: NextRequest) {
     pathname.startsWith('/signin') ||
     pathname.startsWith('/recover') ||
     pathname.startsWith('/api/auth') ||
+    // OAuth managed-authorization surface. The discovery/metadata + register +
+    // token endpoints must be reachable unauthenticated; /oauth/authorize
+    // self-guards via currentUser() and does its OWN /signin bounce (preserving
+    // the full query), so it must NOT be page-gated here.
+    pathname.startsWith('/.well-known/') ||
+    pathname.startsWith('/oauth/') ||
     pathname.startsWith('/_next') ||
     pathname === '/icon.svg' ||
     pathname === '/favicon.ico'
@@ -44,6 +50,7 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  // Run on everything except Next internals + static asset files.
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg).*)'],
+  // Run on everything except Next internals + static asset files (incl. the
+  // self-hosted Monaco editor bundle under /monaco — never auth-gate it).
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg|monaco).*)'],
 };

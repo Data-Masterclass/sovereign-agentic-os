@@ -81,6 +81,13 @@ export type TrustLevel = 'bronze' | 'silver' | 'gold';
 export type Certification = { level: TrustLevel; by: string; at: string };
 export const TRUST_LEVELS: TrustLevel[] = ['bronze', 'silver', 'gold'];
 
+/** An ADDITIONAL dataset joined into this dataset's Gold version (stage-4 reuse). The
+ *  base's own bronze→silver→gold chain is its refinement lineage; each `upstream` is a
+ *  second/third source the Gold join reads — the multi-upstream edges the lineage
+ *  graph renders. `fqn` is the physical table the join read; `datasetId` links back to
+ *  the registry entry (a governed asset/product the builder could see). */
+export type DatasetUpstream = { datasetId: string; name: string; fqn: string; joinType: 'inner' | 'left' };
+
 export type Dataset = {
   version: string;
   id: string;
@@ -100,6 +107,8 @@ export type Dataset = {
   /** Domains that have imported/subscribed to this product (lineage-aware: a
    *  product with importers can't be decertified without orphaning them). */
   imports?: string[];
+  /** Additional datasets joined into the Gold version (multi-upstream lineage). */
+  upstreams?: DatasetUpstream[];
 };
 
 export class DatasetError extends Error {
@@ -248,6 +257,18 @@ function parseColumn(raw: unknown, i: number): ColumnDoc {
   return { name: raw.name, description: typeof raw.description === 'string' ? raw.description : '' };
 }
 
+function parseUpstream(raw: unknown, i: number): DatasetUpstream {
+  if (!isRecord(raw) || typeof raw.fqn !== 'string' || raw.fqn.length === 0) {
+    throw new DatasetError(`dataset.yaml: upstreams[${i}] needs a string 'fqn'`);
+  }
+  return {
+    datasetId: typeof raw.datasetId === 'string' ? raw.datasetId : '',
+    name: typeof raw.name === 'string' ? raw.name : '',
+    fqn: raw.fqn,
+    joinType: raw.joinType === 'left' ? 'left' : 'inner',
+  };
+}
+
 export function parseDataset(input: string | Record<string, unknown>): Dataset {
   let doc: unknown;
   if (typeof input === 'string') {
@@ -278,6 +299,7 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
     certification = { level: c.level as TrustLevel, by: String(c.by ?? ''), at: String(c.at ?? '') };
   }
   const imports = Array.isArray(doc.imports) ? doc.imports.map((x) => String(x)) : undefined;
+  const upstreams = Array.isArray(doc.upstreams) ? doc.upstreams.map(parseUpstream) : undefined;
 
   return {
     version: doc.version !== undefined ? String(doc.version) : '1',
@@ -295,6 +317,7 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
     columns: columnsRaw.map(parseColumn),
     ...(certification ? { certification } : {}),
     ...(imports ? { imports } : {}),
+    ...(upstreams ? { upstreams } : {}),
   };
 }
 
@@ -315,6 +338,7 @@ export function serializeDataset(d: Dataset): string {
   if (d.columns.length > 0) doc.columns = d.columns;
   if (d.certification) doc.certification = d.certification;
   if (d.imports && d.imports.length > 0) doc.imports = d.imports;
+  if (d.upstreams && d.upstreams.length > 0) doc.upstreams = d.upstreams;
   return yaml.dump(doc, { lineWidth: 100, noRefs: true });
 }
 

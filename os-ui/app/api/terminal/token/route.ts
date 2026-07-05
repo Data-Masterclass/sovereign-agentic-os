@@ -35,6 +35,15 @@ export async function POST() {
   if (!config.terminalAllowedRoles.includes(user.role)) {
     return NextResponse.json({ error: 'not authorised for terminal' }, { status: 403 });
   }
+  // Fail honestly when the deployment has no browser-reachable broker URL
+  // (ingress on, ingress.hosts.terminal unset => chart renders "") instead of
+  // handing the browser a token for a WebSocket it can never open.
+  if (!config.terminalBrokerWsUrl) {
+    return NextResponse.json(
+      { error: 'terminal broker is not reachable from the browser on this deployment — set ingress.hosts.terminal in the chart values' },
+      { status: 503 },
+    );
+  }
 
   const now = Math.floor(Date.now() / 1000);
   const claims = {

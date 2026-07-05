@@ -6,6 +6,7 @@
 import { useCallback, useState } from 'react';
 
 type Grid = { columns: string[]; rows: string[][] };
+type Stage = { layer: string; built: boolean };
 
 /**
  * Bronze — "Bring it in." The guided face over the personal/sandbox lane: bring a
@@ -26,27 +27,32 @@ export default function BronzePanel({
   const [source, setSource] = useState<'upload' | 'extract'>('upload');
   const [preview, setPreview] = useState<Grid | null>(null);
   const [previewNote, setPreviewNote] = useState('');
+  const [landed, setLanded] = useState<Stage[] | null>(null); // Bronze committed server-side
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // upload
+  const MAX_BYTES = 100 * 1024 * 1024; // keep in step with UPLOAD_MAX_BYTES (M1 cap)
+
+  // upload — stream the raw file to MinIO → data-runner → physical Iceberg Bronze.
+  // The server lights the Bronze dot ONLY after the ingest verify passes.
   const onFile = useCallback(async (file: File) => {
-    setErr(''); setBusy(true); setPreview(null);
+    setErr(''); setBusy(true); setPreview(null); setLanded(null);
     try {
-      const text = await file.text();
-      const lines = text.trim().split(/\r?\n/);
-      const columns = (lines.shift() ?? '').split(',').map((c) => c.trim());
-      const rows = lines.map((l) => l.split(',').map((c) => c.trim()));
-      const res = await fetch('/api/data/sandbox', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action: 'upload', name: datasetName, columns, rows }),
-      });
+      if (file.size > MAX_BYTES) { setErr('That file is over the 100 MB upload limit for now.'); return; }
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch(`/api/data/datasets/${datasetId}/ingest`, { method: 'POST', body: fd });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Upload failed'); return; }
-      setPreview({ columns, rows: rows.slice(0, 20) });
-      setPreviewNote(`${rows.length} row${rows.length === 1 ? '' : 's'} landed in your private prefix.`);
+      if (!res.ok || !data.ok) { setErr(data.error ?? 'Upload failed'); return; }
+      const r = data.report;
+      setPreview({ columns: r.preview?.columns ?? [], rows: (r.preview?.rows ?? []).slice(0, 20) });
+      setPreviewNote(
+        `${r.rowCount} row${r.rowCount === 1 ? '' : 's'} landed in ${r.table}` +
+        (r.mode === 'offline-mock' ? ' (offline preview — no cluster reachable).' : ' — Bronze is live.'),
+      );
+      setLanded((data.stages ?? []) as Stage[]);
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
-  }, [datasetName]);
+  }, [datasetId, MAX_BYTES]);
 
   // pull extract through Trino (masked)
   const [sql, setSql] = useState('select order_date, region, net_amount from daily_revenue order by 1');
@@ -89,13 +95,13 @@ export default function BronzePanel({
       </p>
 
       <div className="seg">
-        <button className={source === 'upload' ? 'on' : ''} onClick={() => { setSource('upload'); setPreview(null); }}>Upload a file</button>
-        <button className={source === 'extract' ? 'on' : ''} onClick={() => { setSource('extract'); setPreview(null); }}>Pull from a product</button>
+        <button className={source === 'upload' ? 'on' : ''} onClick={() => { setSource('upload'); setPreview(null); setLanded(null); }}>Upload a file</button>
+        <button className={source === 'extract' ? 'on' : ''} onClick={() => { setSource('extract'); setPreview(null); setLanded(null); }}>Pull from a product</button>
       </div>
 
       {source === 'upload' ? (
         <div className="row" style={{ marginTop: 12 }}>
-          <input type="file" accept=".csv,.tsv,.txt" disabled={busy}
+          <input type="file" accept=".csv,.tsv,.txt,.parquet,.json,.ndjson" disabled={busy}
             onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); }} />
           {busy ? <span className="spin" /> : null}
         </div>
@@ -112,7 +118,9 @@ export default function BronzePanel({
 
       {preview ? (
         <div style={{ marginTop: 16 }}>
-          <div className="section-title" style={{ marginTop: 0 }}>Preview<span className="count-pill ok">before commit</span></div>
+          <div className="section-title" style={{ marginTop: 0 }}>
+            Preview<span className={`count-pill ok`}>{landed ? 'landed · verified' : 'before commit'}</span>
+          </div>
           {previewNote ? <p className="hint" style={{ marginTop: 0 }}>{previewNote}</p> : null}
           <div className="table-wrap">
             <table>
@@ -121,10 +129,18 @@ export default function BronzePanel({
             </table>
           </div>
           <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end', gap: 8 }}>
-            <button className="btn ghost" onClick={() => setPreview(null)}>Discard</button>
-            <button className="btn" onClick={commit} disabled={committing}>
-              {committing ? <span className="spin" /> : 'Confirm — this is my Bronze'}
-            </button>
+            {landed ? (
+              // Upload already landed + verified server-side (Bronze dot lit). Continue
+              // just refreshes the stepper — there is nothing left to confirm.
+              <button className="btn" onClick={() => onCommitted(landed)}>Continue</button>
+            ) : (
+              <>
+                <button className="btn ghost" onClick={() => setPreview(null)}>Discard</button>
+                <button className="btn" onClick={commit} disabled={committing}>
+                  {committing ? <span className="spin" /> : 'Confirm — this is my Bronze'}
+                </button>
+              </>
+            )}
           </div>
         </div>
       ) : null}

@@ -91,7 +91,7 @@ export default function SoftwarePage() {
 
   return (
     <>
-      <PageHeader title="Software" crumb="build, chat, deploy — sovereign" tutorial="software" mcpTab="software" />
+      <PageHeader title="Software" crumb="build, chat, deploy — sovereign" tutorial="software" />
       <div className="content sw">
         {/* The big, home-style create launcher. */}
         <div className={`sw-create${open ? ' is-open' : ''}`}>

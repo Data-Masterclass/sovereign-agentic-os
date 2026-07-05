@@ -11,10 +11,11 @@
  * renders it and drives a lightweight coach-mark walk-through over the REAL tab.
  */
 
-/** The ten golden paths. The registry is keyed by these. */
+/** The fourteen golden paths — one per teachable tab. The registry is keyed by these. */
 export type GoldenPathKey =
   | 'data'
   | 'knowledge'
+  | 'files'
   | 'connections'
   | 'agents'
   | 'software'
@@ -22,7 +23,10 @@ export type GoldenPathKey =
   | 'metrics'
   | 'dashboards'
   | 'big-bets'
-  | 'marketplace';
+  | 'strategy'
+  | 'marketplace'
+  | 'governance'
+  | 'monitoring';
 
 /**
  * Framing role — derived from the session Role, drives the verb + emphasis.
@@ -34,7 +38,7 @@ export type GoldenPathKey =
 export type FramingRole = 'user' | 'creator' | 'builder';
 
 /**
- * The cohesive illustration set. A small, fixed motif vocabulary keeps the ten
+ * The cohesive illustration set. A small, fixed motif vocabulary keeps the
  * tutorials feeling like one set (no stock clip-art, no per-tutorial drift).
  * Rendered by `components/tutorials/Illustration.tsx` as inline brand-palette SVG.
  */

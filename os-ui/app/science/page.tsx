@@ -109,7 +109,7 @@ export default function SciencePage() {
 
   return (
     <>
-      <PageHeader title="Science" crumb="Layer 4 — model-as-a-service (ML, not LLMs)" tutorial="science" mcpTab="science" />
+      <PageHeader title="Science" crumb="Layer 4 — model-as-a-service (ML, not LLMs)" tutorial="science" />
       <div className="content">
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <p className="lead" style={{ marginBottom: 0 }}>

@@ -11,6 +11,7 @@ const SECTIONS: { label: string; href: string }[] = [
   { label: 'Overview', href: '/platform' },
   { label: 'Domains', href: '/platform/domains' },
   { label: 'Users & Access', href: '/platform/access' },
+  { label: 'Roles & Permissions', href: '/platform/roles' },
   { label: 'Cost & Billing', href: '/platform/billing' },
   { label: 'Models & Providers', href: '/platform/models' },
   { label: 'Components & System', href: '/platform/components' },

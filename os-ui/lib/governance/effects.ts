@@ -6,12 +6,12 @@ import type { AuditAction } from './audit.ts';
 import { addAccessGrant, addEgressEndpoint, isEgressAllowed } from './policy-view.ts';
 import { writeGrantsToOpa } from './roles.ts';
 import {
-  applyApprovedPromotion,
   certify as certifyDataset,
   type Principal,
   type PromotionRequest,
   type CertificationRequest,
 } from '../data/store.ts';
+import type { PublishOutcome } from '../data/publish.ts';
 import { applyApprovedFilePromotion, type FilePromotionRequest } from '../files/store.ts';
 
 /**
@@ -37,18 +37,44 @@ export type EffectResult = {
   audit: { action: AuditAction; subject: string; reason: string; detail: Record<string, unknown> };
   /** Set when the effect created an OPA grant (access requests). */
   grant?: { principal: string; tool: string };
+  /** Set by the physical dataset publish (T8) — ok/fqn/error for honest status. */
+  publish?: { ok: boolean; fqn: string; error?: string; mode?: string; cubeView?: string | null };
+};
+
+/** The approving human: the id (legacy string form) or the full session identity —
+ *  the `dataset_promote` publish needs the REAL role + domains so the CTAS identity
+ *  is the approver's, never a synthesized one. */
+export type EffectApprover = string | { id: string; role: Principal['role']; domains: string[] };
+
+/** Server-injected effect backends. `publishPromotion` is the physical dataset
+ *  publish (server-only build runner) — REQUIRED for `dataset_promote`, injected by
+ *  the route so this module (and its tests) stay free of server-only imports. */
+export type EffectDeps = {
+  publishPromotion?: (req: PromotionRequest, approver: Principal) => Promise<PublishOutcome>;
 };
 
 function s(v: unknown, fallback = ''): string {
   return v === undefined || v === null ? fallback : String(v);
 }
 
+function approverId(approver: EffectApprover): string {
+  return typeof approver === 'string' ? approver : approver.id;
+}
+
+/** The approver as a data-store Principal — the REAL identity when the caller
+ *  supplied one; the legacy synthesized fallback (role floor) otherwise. */
+function approverPrincipal(approver: EffectApprover, fallbackRole: Principal['role'], domain: string): Principal {
+  if (typeof approver === 'string') return { id: approver, role: fallbackRole, domains: [domain] };
+  return { id: approver.id, role: approver.role, domains: approver.domains };
+}
+
 /**
  * Execute the governed effect for an APPROVED item. Idempotent per call; the
  * caller guarantees the item was pending and the approver was in scope.
  */
-export async function applyEffect(a: Approval, approver: string): Promise<EffectResult> {
+export async function applyEffect(a: Approval, approver: EffectApprover, deps: EffectDeps = {}): Promise<EffectResult> {
   const p = a.payload ?? {};
+  const who = approverId(approver);
   switch (a.kind) {
     case 'deploy_review': {
       // Live path = Argo CD sync; unwired here, so mock + mark live:false.
@@ -60,7 +86,7 @@ export async function applyEffect(a: Approval, approver: string): Promise<Effect
         audit: {
           action: 'deploy',
           subject: app,
-          reason: `Deploy-review approved by ${approver}`,
+          reason: `Deploy-review approved by ${who}`,
           detail: { app, resources: p.resources, cost: p.cost },
         },
       };
@@ -79,14 +105,14 @@ export async function applyEffect(a: Approval, approver: string): Promise<Effect
         audit: {
           action: 'access.grant',
           subject: `${principal}→${tool}`,
-          reason: `Access request approved by ${approver}`,
+          reason: `Access request approved by ${who}`,
           detail: { principal, tool, dataset: p.dataset },
         },
       };
     }
     case 'egress_request': {
       const endpoint = s(p.endpoint, 'https://example.com');
-      addEgressEndpoint(endpoint, a.domain, approver);
+      addEgressEndpoint(endpoint, a.domain, who);
       return {
         ok: true,
         applied: `Allowlisted egress endpoint ${endpoint} (mock proxy) — now reachable.`,
@@ -94,7 +120,7 @@ export async function applyEffect(a: Approval, approver: string): Promise<Effect
         audit: {
           action: 'egress.allow',
           subject: endpoint,
-          reason: `Egress request approved by ${approver}`,
+          reason: `Egress request approved by ${who}`,
           detail: { endpoint, allowed: isEgressAllowed(endpoint) },
         },
       };
@@ -108,27 +134,48 @@ export async function applyEffect(a: Approval, approver: string): Promise<Effect
         audit: {
           action: 'approve',
           subject: action,
-          reason: `Out-of-policy action approved once by ${approver}`,
+          reason: `Out-of-policy action approved once by ${who}`,
           detail: { action, agent: a.agent },
         },
       };
     }
     case 'dataset_promote': {
-      // Approval IS the action: actually move the dataset → asset (governed tier),
-      // so Cube/metrics can read the Gold mart. The route already enforced that the
-      // approver was an in-scope Builder, so synthesise that Principal here.
+      // Approval IS the action — and the action is PHYSICAL (T8): the injected
+      // publisher runs the promote adapter-set (governed CTAS as the APPROVING
+      // Builder — never the requester — then probe + OPA push + conformance) and
+      // flips the registry tier ONLY on ✓. A failed materialization returns the
+      // real error with the tier unchanged (the honesty contract).
       const req = a.payload as unknown as PromotionRequest;
-      const approverP: Principal = { id: approver, role: 'builder', domains: [a.domain] };
-      const ds = applyApprovedPromotion(req, approverP);
+      const approverP = approverPrincipal(approver, 'builder', a.domain);
+      if (!deps.publishPromotion) {
+        // Fail LOUD: nothing may flip a tier without the physical publish.
+        throw new Error('dataset_promote requires the physical publisher (publishPromotion dep not injected)');
+      }
+      const out = await deps.publishPromotion(req, approverP);
+      if (!out.ok) {
+        return {
+          ok: false,
+          applied: `Physical publish FAILED — “${req.datasetName}” stays a private dataset (tier unchanged): ${out.error}`,
+          live: false,
+          publish: { ok: false, fqn: out.fqn, error: out.error, mode: out.mode },
+          audit: {
+            action: 'approve',
+            subject: req.datasetName,
+            reason: `Dataset promotion approved by ${who} but the physical publish FAILED (tier unchanged)`,
+            detail: { datasetId: req.datasetId, fqn: out.fqn, error: out.error, mode: out.mode },
+          },
+        };
+      }
       return {
         ok: true,
-        applied: `Promoted “${ds.name}” → data asset (governed; Cube can read the Gold mart).`,
-        live: true,
+        applied: `Published “${out.dataset.name}” → ${out.fqn} (${out.mode}${out.cubeView ? `; Cube view '${out.cubeView}' delivered` : ''}).`,
+        live: out.mode === 'live',
+        publish: { ok: true, fqn: out.fqn, mode: out.mode, cubeView: out.cubeView },
         audit: {
           action: 'approve',
-          subject: ds.name,
-          reason: `Dataset promotion approved by ${approver}`,
-          detail: { datasetId: ds.id, tier: ds.tier },
+          subject: out.dataset.name,
+          reason: `Dataset promotion approved by ${who} — physically published as the approver`,
+          detail: { datasetId: out.dataset.id, tier: out.dataset.tier, fqn: out.fqn, mode: out.mode },
         },
       };
     }
@@ -136,7 +183,7 @@ export async function applyEffect(a: Approval, approver: string): Promise<Effect
       // Approval IS the action: certify the asset → data product (marketplace-listed).
       // The route already enforced an in-scope Admin approver.
       const req = a.payload as unknown as CertificationRequest;
-      const approverP: Principal = { id: approver, role: 'admin', domains: [a.domain] };
+      const approverP = approverPrincipal(approver, 'admin', a.domain);
       const ds = certifyDataset(req.datasetId, approverP, { level: req.level, visibility: req.visibility });
       return {
         ok: true,
@@ -145,7 +192,7 @@ export async function applyEffect(a: Approval, approver: string): Promise<Effect
         audit: {
           action: 'approve',
           subject: ds.name,
-          reason: `Dataset certification approved by ${approver}`,
+          reason: `Dataset certification approved by ${who}`,
           detail: { datasetId: ds.id, tier: ds.tier },
         },
       };
@@ -160,7 +207,7 @@ export async function applyEffect(a: Approval, approver: string): Promise<Effect
         audit: {
           action: 'approve',
           subject: artifact,
-          reason: `Promote/certify approved by ${approver}`,
+          reason: `Promote/certify approved by ${who}`,
           detail: { artifact, stage },
         },
       };
@@ -170,7 +217,7 @@ export async function applyEffect(a: Approval, approver: string): Promise<Effect
       // it (bytes move to the domain prefix, DLS grants set) so the domain can read
       // it. The route already enforced an in-scope Builder/Admin approver.
       const req = a.payload as unknown as FilePromotionRequest;
-      const approverP: Principal = { id: approver, role: 'builder', domains: [a.domain] };
+      const approverP = approverPrincipal(approver, 'builder', a.domain);
       const file = applyApprovedFilePromotion(req, approverP);
       return {
         ok: true,
@@ -179,7 +226,7 @@ export async function applyEffect(a: Approval, approver: string): Promise<Effect
         audit: {
           action: 'approve',
           subject: file.name,
-          reason: `File promotion approved by ${approver}`,
+          reason: `File promotion approved by ${who}`,
           detail: { fileId: file.id, tier: file.tier, visibility: file.visibility },
         },
       };
@@ -197,7 +244,7 @@ export async function applyEffect(a: Approval, approver: string): Promise<Effect
         audit: {
           action: 'approve',
           subject: a.tool || a.kind,
-          reason: `${a.kind} approved by ${approver}`,
+          reason: `${a.kind} approved by ${who}`,
           detail: { kind: a.kind, agent: a.agent },
         },
       };

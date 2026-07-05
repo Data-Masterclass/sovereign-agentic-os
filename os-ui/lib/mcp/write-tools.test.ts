@@ -12,6 +12,7 @@ import { __resetStore as resetFiles } from '@/lib/files/store';
 import { __resetDashboards } from '@/lib/dashboards/store';
 import { __resetBets } from '@/lib/bigbets/store';
 import { __resetStore as resetAgents } from '@/lib/agents/store';
+import { __resetApprovals } from '@/lib/approvals';
 
 /**
  * The governed MCP WRITE tools: each must delegate to the SAME lib function the UI
@@ -31,6 +32,7 @@ function resetAll(): void {
   __resetDashboards();
   __resetBets();
   resetAgents();
+  __resetApprovals();
 }
 
 async function call(user: CurrentUser, name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -67,9 +69,13 @@ test('DATA: a builder builds a governed dataset → metric → dashboard, all as
   payload(await call(builder, 'add_dataset_version', { datasetId, layer: 'gold', passThrough: true }));
   payload(await call(builder, 'document_dataset', { datasetId, description: 'One row per order.' }));
 
-  const promoted = payload<{ promoted: boolean; dataset: { tier: string } }>(await call(builder, 'promote_dataset', { datasetId }));
-  assert.equal(promoted.promoted, true);
-  assert.equal(promoted.dataset.tier, 'asset', 'promote_dataset moved it into the governed asset tier');
+  // Split promotion: a creator FILES the request, a Builder APPLIES it. Here the
+  // builder does both (they are the domain Builder).
+  const req = payload<{ approvalId: string; status: string }>(await call(builder, 'request_promotion', { kind: 'dataset', id: datasetId }));
+  assert.equal(req.status, 'pending', 'request_promotion enqueues a governed request');
+  const promoted = payload<{ approved: boolean; asset: { tier: string } }>(await call(builder, 'approve_promotion', { approvalId: req.approvalId }));
+  assert.equal(promoted.approved, true);
+  assert.equal(promoted.asset.tier, 'asset', 'approve_promotion moved it into the governed asset tier');
 
   const metric = payload<{ member: string }>(await call(builder, 'define_metric', {
     datasetId, name: 'Revenue', aggregation: 'sum', column: 'net_amount', dimensions: ['order_date'],
@@ -111,8 +117,10 @@ test('FILES: upload a documented file, then a builder promotes it to a domain as
   assert.ok(file.id);
   assert.equal(file.owner, 'ben');
 
-  const promoted = payload<{ promoted: boolean; asset: { tier: string } }>(await call(builder, 'promote_file', { fileId: file.id }));
-  assert.equal(promoted.promoted, true);
+  const req = payload<{ approvalId: string; status: string }>(await call(builder, 'request_promotion', { kind: 'file', id: file.id }));
+  assert.equal(req.status, 'pending');
+  const promoted = payload<{ approved: boolean; asset: { tier: string } }>(await call(builder, 'approve_promotion', { approvalId: req.approvalId }));
+  assert.equal(promoted.approved, true);
   assert.equal(promoted.asset.tier, 'asset');
 });
 
@@ -143,14 +151,24 @@ test('BIG BETS + AGENTS: create a bet and assemble + build an agent system as th
 test('LOCKDOWN: a creator may create but is denied every promote/publish (typed forbidden, not a crash)', async () => {
   resetAll();
   // A creator CAN create in their own domain.
-  const ds = payload(await call(creator, 'create_dataset', { name: 'My draft' }));
+  const ds = payload(await call(creator, 'create_dataset', {
+    name: 'My draft', columns: [{ name: 'a', description: 'A constant' }],
+  }));
   assert.equal(ds.owner, 'cara');
-  const file = payload(await call(creator, 'upload_file', { name: 'note.md', description: 'x', tags: ['t'] }));
   const wf = payload(await call(creator, 'author_knowledge', { title: 'Draft flow' }));
 
+  // The creator CAN FILE a promotion request (the split's whole point) — but the
+  // dataset must be documented + silver/gold. Build it up so the FILE step is a
+  // genuine governance file, then prove APPROVE is the forbidden half.
+  payload(await call(creator, 'add_dataset_version', { datasetId: ds.id, layer: 'bronze' }));
+  payload(await call(creator, 'add_dataset_version', { datasetId: ds.id, layer: 'silver', body: 'select 1 as a from bronze' }));
+  payload(await call(creator, 'document_dataset', { datasetId: ds.id, description: 'Draft.', columns: [{ name: 'a', description: 'A constant' }] }));
+  const filed = payload<{ approvalId: string; status: string }>(await call(creator, 'request_promotion', { kind: 'dataset', id: ds.id }));
+  assert.equal(filed.status, 'pending', 'a creator CAN file a promotion request');
+
+  // …but a creator may NOT approve it, nor publish knowledge (typed forbidden).
   for (const [name, args] of [
-    ['promote_dataset', { datasetId: ds.id }],
-    ['promote_file', { fileId: (file as { id: string }).id }],
+    ['approve_promotion', { approvalId: filed.approvalId }],
     ['publish_knowledge', { workflowId: (wf as { id: string }).id }],
   ] as const) {
     const e = errorOf(await call(creator, name, args as Record<string, unknown>));
@@ -174,7 +192,7 @@ test('DISCOVERY: whoami + list_capabilities reflect the caller’s role', async 
   const avail = caps.available.map((t) => t.name);
   const gated = caps.gated.map((t) => t.name);
   assert.ok(avail.includes('create_dataset') && avail.includes('whoami'));
-  assert.ok(gated.includes('promote_dataset') && gated.includes('promote'), 'gated tools are listed with a reason');
+  assert.ok(gated.includes('approve_promotion') && gated.includes('promote'), 'gated tools are listed with a reason');
 
   // An admin sees strictly more available tools than a creator.
   const adminCaps = payload<{ available: { name: string }[] }>(await call(admin, 'list_capabilities'));

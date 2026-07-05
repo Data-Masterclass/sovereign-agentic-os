@@ -12,6 +12,7 @@ import {
   promotePlan,
   type SandboxDataset,
 } from '@/lib/sandbox';
+import { listPersonalTables } from '@/lib/data/ingest';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,21 +63,21 @@ export async function POST(req: Request) {
 
   try {
     if (action === 'list') {
-      return NextResponse.json({ prefix, datasets: listFor(uid).map(meta) });
+      // PHYSICAL personal Bronze tables (durable — survive restarts) unioned with the
+      // in-session masked extracts. The old in-memory upload rows are gone: uploads are
+      // now real Iceberg tables (POST /api/data/sandbox/upload), queryable through Trino.
+      const physical = await listPersonalTables(uid);
+      const extracts = listFor(uid).filter((d) => d.origin === 'extract').map(meta);
+      return NextResponse.json({ prefix, datasets: [...physical, ...extracts] });
     }
 
     if (action === 'upload') {
-      const name = (body.name ?? '').trim();
-      if (!name) return NextResponse.json({ error: 'upload needs a name' }, { status: 400 });
-      const d: SandboxDataset = {
-        id: `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        name,
-        origin: 'upload',
-        columns: Array.isArray(body.columns) ? body.columns : [],
-        rows: Array.isArray(body.rows) ? body.rows : [],
-      };
-      add(uid, d);
-      return NextResponse.json({ ok: true, prefix, dataset: meta(d) });
+      // File uploads moved to the physical path (multipart POST /api/data/sandbox/upload
+      // → MinIO → data-runner → iceberg.personal_<uid>). This JSON action is retired.
+      return NextResponse.json(
+        { error: 'upload a file via POST /api/data/sandbox/upload (multipart) — it now lands a real Iceberg table' },
+        { status: 400 },
+      );
     }
 
     if (action === 'pull-extract') {
@@ -129,7 +130,14 @@ export async function POST(req: Request) {
 
     if (action === 'promote') {
       const id = body.id;
-      const ds = listFor(uid).find((d) => d.id === id);
+      // Physical personal Bronze tables (id = `personal_<uid>.bronze_<name>`) are no
+      // longer in the in-process Map — synthesize a plan from the FQN; extracts still
+      // resolve from the Map. (Governed promotion itself is the registry flow, T8.)
+      const ds: SandboxDataset | undefined =
+        listFor(uid).find((d) => d.id === id) ??
+        (typeof id === 'string' && id.includes('.bronze_')
+          ? { id, name: id.split('.bronze_')[1] ?? id, origin: 'upload', columns: [], rows: [] }
+          : undefined);
       if (!ds) return NextResponse.json({ error: 'unknown dataset' }, { status: 404 });
       const plan = promotePlan(ds, {
         domain: body.domain || principal,

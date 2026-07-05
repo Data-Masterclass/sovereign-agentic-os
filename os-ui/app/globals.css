@@ -3216,6 +3216,35 @@ button.card.tile:hover .tile-action { opacity: 1; }
   gap: 12px;
 }
 
+/* Global "Connect your AI Tool via MCP" button — lives in the top-right topbar
+   on every page. Apple-dark: translucent white border, muted fill, off-white
+   text; teal ⊕ spark signals "connect". Transitions on hover only. */
+.topbar-mcp-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  white-space: nowrap;
+}
+.topbar-mcp-btn:hover {
+  background: rgba(255, 255, 255, 0.10);
+  border-color: rgba(255, 255, 255, 0.30);
+}
+.topbar-mcp-btn .tut-link-spark {
+  color: var(--teal);
+  font-size: 11px;
+}
+
 /* The single tutorial trigger (Home card + tab header) */
 .tut-link {
   display: inline-flex;
@@ -4911,4 +4940,44 @@ button.card.tile:hover .tile-action { opacity: 1; }
   .rs-preset-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* -------------------------------------------------------- Tile-order drag ---- */
+
+/* ⋮⋮ grab handle — quiet dot-grid affordance, appears on parent hover only */
+.drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  cursor: grab;
+  color: var(--text-faint);
+  font-size: 11px;
+  letter-spacing: 1px;
+  line-height: 1;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.14s ease, color 0.14s ease;
+  flex-shrink: 0;
+  user-select: none;
+}
+.drag-handle:active { cursor: grabbing; }
+
+/* Show handle when the draggable parent is hovered or is the drag source */
+[draggable='true']:hover .drag-handle,
+[data-drag-source='true'] .drag-handle {
+  opacity: 1;
+}
+
+/* Drop target highlight — calm gold outline */
+[draggable='true'][data-drag-over='true'] {
+  outline: 2px solid var(--gold-line);
+  outline-offset: 2px;
+  border-radius: inherit;
+}
+
+/* Drag source — slight fade so the native ghost + original are distinguishable */
+[data-drag-source='true'] {
+  opacity: 0.5;
 }

@@ -314,6 +314,11 @@ postgres:
       secretName: postgres-mlflow-credentials
       createdb: false
       localPassword: mlflow-local-dev
+    - name: featureform       # Featureform metadata + coordinator state (Layer 4 Science)
+      username: featureform
+      secretName: postgres-featureform-credentials
+      createdb: false
+      localPassword: featureform-local-dev
 
 # -----------------------------------------------------------------------------
 # Valkey (BSD-3) — Langfuse queue/cache. NOT Redis (SSPL) — stack-decisions.md.
@@ -1234,15 +1239,26 @@ opa:
   # table. Locally we seed the Sales worked example so the governance proof
   # (cross-domain read masked; owner sees it; PII column masked) runs on kind.
   governance:
+    # Tables are keyed by the REAL schema the data lives in: `iceberg.sales.*`
+    # (marts.schema / dbt profiles / queryTool.trino.schema are all `sales`). The
+    # old `iceberg.analytics.*` keys pointed at a dead schema, so the live sales
+    # mart had NO governance entry and domain row-filters never fired on it.
     tables:
+      # The LIVE Northpeak gold mart (written by northpeak-marts-init) — row
+      # filter by domain: an out-of-domain principal reads ZERO rows.
+      iceberg.sales.gold_northpeak_commerce:
+        domain: sales
+        visibility: domain
+        shared_with: []
+        sensitive_columns: {}
       # The Sales mart (dbt-trino Iceberg) — row filter by domain.
-      iceberg.analytics.daily_revenue:
+      iceberg.sales.daily_revenue:
         domain: sales
         visibility: domain          # domain-scoped: non-members get a `false` row filter
         shared_with: []
         sensitive_columns: {}
       # The Sales staging table — column mask by sensitivity (customer = PII).
-      iceberg.analytics.stg_orders:
+      iceberg.sales.stg_orders:
         domain: sales
         visibility: domain
         shared_with: []
@@ -1257,6 +1273,20 @@ opa:
         clearances: [pii]
       marketing-agent:              # cross-domain — rows masked, PII masked
         domains: [marketing]
+        clearances: []
+      # Sales-lane SERVICE principals. With the sales tables above governed, any
+      # principal outside the sales domain gets a `false` row filter — so the
+      # engines that read/build these marts MUST be entitled, or Metrics (Cube),
+      # the marts seed Job and dbt builds silently see zero rows (and the seed
+      # Job's has-rows check would fail and DELETE+INSERT-duplicate the mart).
+      cube-sales:                   # Cube semantic layer (cube.trino.user)
+        domains: [sales]
+        clearances: []
+      dbt-sales:                    # dbt-trino builds (dbt.trino.user)
+        domains: [sales]
+        clearances: []
+      northpeak-marts:              # gold-mart seed Job (marts.trino.user)
+        domains: [sales]
         clearances: []
 
 # -----------------------------------------------------------------------------
@@ -1386,7 +1416,12 @@ dbt:
     port: 8080
     user: dbt-sales
     catalog: iceberg
-    schema: analytics
+    # The domain schema the marts land in. MUST match queryTool.trino.schema and
+    # marts.schema (all `sales`) so the query-tool session, the Northpeak gold mart
+    # and the dbt marts (daily_revenue, staging) share ONE catalog.schema. The old
+    # `analytics` literal drifted from marts.schema (`sales`) and was killed by the
+    # warehouse re-provision, which is what broke the Catalog + default query.
+    schema: sales
 
 # -----------------------------------------------------------------------------
 # Cube — semantic/metrics layer reading the marts THROUGH central Trino
@@ -1409,6 +1444,19 @@ cube:
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "1", memory: 768Mi }
+  # Cube model-sync sidecar (data-tab T7): polls os-ui GET /api/cube/models and
+  # writes changed cube_dbt model YAML into the shared /cube/conf/model dir; Cube
+  # dev-mode schema-watch hot-reloads. Reuses the Cube image (node runtime) — NO
+  # new image. Static demo seed models are preserved (separate .yml files).
+  modelSync:
+    enabled: true
+    # In-cluster os-ui Service. The endpoint is cluster-internal (unauthenticated by
+    # design — it emits only governed model definitions, never row data).
+    osUiUrl: http://os-ui:3000
+    pollSeconds: 30
+    resources:
+      requests: { cpu: 20m, memory: 32Mi }
+      limits: { cpu: 100m, memory: 96Mi }
   local:
     apiSecret: cube-local-dev-secret
 
@@ -1569,15 +1617,23 @@ polaris:
   enabled: true
   image:
     repository: apache/polaris
-    tag: "1.0.1-incubating"
-    digest: sha256:91d94987a2641220091c612900db30dbb596b45c3379115dbe08c4dd3b0855f9
+    # 1.1.0-incubating: adds AwsStorageConfigInfo endpoint/endpointInternal/
+    # stsEndpoint/pathStyleAccess so Polaris's OWN server-side write/commit FileIO
+    # uses path-style S3 for EVERY table-create path — fixes the 1.0.1 bug where new
+    # tables were written with virtual-host addressing (host lakehouse.minio ->
+    # UnknownHostException) on Trino CTAS / server-side create. The relational-jdbc
+    # metastore stays v1-schema-compatible with 1.0.x data after a purely ADDITIVE
+    # migration (a `version` table + one nullable column); the bootstrap-check
+    # initContainer in polaris.yaml applies it idempotently before the server starts.
+    tag: "1.1.0-incubating"
+    digest: sha256:27d081a539aa021df00f18ff1ae0a59d9b9e7a1db2a44b643ba29c61eaa9cdf9
   # Admin/bootstrap tool image (same Polaris release). ONLY used when
   # persistenceType == relational-jdbc: an initContainer runs `bootstrap` to
   # create `polaris_schema` + the realm's root principal in the JDBC metastore.
   adminImage:
     repository: apache/polaris-admin-tool
-    tag: "1.0.1-incubating"
-    digest: ""                    # optional pin; tag-only is fine for the admin tool
+    tag: "1.1.0-incubating"
+    digest: sha256:7cdd9216c2e55a45ad0e725f47949c7632e6eadcf1e18bbcaeee19ea65f2c94e
   # Image for the catalog-registration Job (templates/lakehouse/polaris-bootstrap.yaml):
   # a tiny curl + POSIX-shell image (the OAuth token is parsed with sed, no jq). It
   # registers the `lakehouse` catalog via the Polaris management API once Polaris is
@@ -1621,7 +1677,11 @@ queryTool:
   enabled: true
   image:
     repository: sovereign-os/query-tool     # built locally, loaded into kind
-    tag: "0.3.0"                             # 0.3.0 = Trino-backed governed tool
+    tag: "0.4.0"                             # 0.4.0 = governed write path (/execute:
+                                             #         allowlisted DDL, per-caller target +
+                                             #         role gate, runs as principal).
+                                             # 0.3.1 = schema-agnostic (/query accepts
+                                             #         schema); default schema `sales`
   # Central Trino connection. The user identifies the governed domain principal to
   # the Trino->OPA row/column plugin.
   trino:
@@ -1629,10 +1689,50 @@ queryTool:
     port: 8080
     user: query-agent
     catalog: iceberg
-    schema: analytics
+    # Default session schema for unqualified queries. `sales` = the live Northpeak
+    # domain schema (iceberg.sales holds the marts). MUST match dbt.trino.schema +
+    # marts.schema. os-ui's Catalog overrides this per request with the caller's
+    # own domain (schema-agnostic /query) so it never recons a foreign schema. The
+    # old `analytics` literal was a dead schema → SCHEMA_NOT_FOUND → the 500.
+    schema: sales
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "1", memory: 768Mi }
+
+# -----------------------------------------------------------------------------
+# data-runner — the REAL ingest service. os-ui streams an uploaded file to MinIO
+# under uploads/<uid>/<file>, then POST /ingest here; DuckDB infers the schema and
+# PyIceberg writes a PHYSICAL Iceberg Bronze table `lakehouse.personal_<uid>.bronze_<slug>`
+# THROUGH the Polaris REST catalog. M1 = personal lane ONLY (target schema derived
+# from the caller's principal, never the body). M2 = dlt connector sources (Postgres/
+# API) using the platform Connections secrets — same Iceberg landing. Built locally +
+# loaded into kind (Mode A); ghcr path is set in values.stackit-selfhosted.yaml.
+# -----------------------------------------------------------------------------
+dataRunner:
+  enabled: true
+  image:
+    repository: sovereign-os/data-runner     # built locally, loaded into kind
+    tag: "0.1.0"
+  polaris:
+    # Same Polaris REST catalog + warehouse Trino reads/writes.
+    uri: "http://polaris:8181/api/catalog"
+    warehouse: lakehouse
+    oauthScope: "PRINCIPAL_ROLE:ALL"
+    # Reuse the SAME Polaris OAuth client Trino writes Iceberg with (key
+    # POLARIS_OAUTH_CREDENTIAL = "clientId:clientSecret"). For profile=local the
+    # chart creates `trino-catalog-credentials` from polaris.local.* (trino.yaml);
+    # a true external profile would point this at the External-Secrets-supplied name.
+    oauthSecretName: trino-catalog-credentials
+  s3:
+    # Static object-storage creds come from objectStorage.secretName (no STS on MinIO
+    # -> Polaris vends none; the client writes the Iceberg data files, like Trino).
+    region: us-east-1
+    pathStyleAccess: true
+  # MinIO bucket holding both the uploads/ prefix and the wh/ warehouse root.
+  uploadsBucket: lakehouse
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
 
 # -----------------------------------------------------------------------------
 # Sandbox DuckDB — the PERSONAL/SANDBOX lane engine (behind Trino's governance).
@@ -1966,6 +2066,14 @@ osUI:
   # In-cluster backend Service URLs (base URLs; the app appends the paths).
   sampleAgentUrl: "http://sample-agent:8000"
   queryToolUrl:   "http://query-tool:8000"
+  # data-runner (Data-tab REAL ingest). os-ui streams an uploaded file to MinIO under
+  # uploads/<uid>/, then POSTs /ingest here; the runner writes the physical Iceberg
+  # Bronze table. Reachability gates the LIVE ingest vs the honest offline-mock.
+  dataRunnerUrl:  "http://data-runner:8000"
+  # Object-storage bucket holding the uploads/ prefix (same warehouse bucket as the
+  # lakehouse). The S3 endpoint + creds are wired in the template from soa.s3Endpoint
+  # and the shared `objectStorage.secretName` Secret (no new creds invented).
+  uploadsBucket:  "lakehouse"
   langfuseUrl:    "http://agentic-os-langfuse-web:3000"
   opensearchUrl:  "http://opensearch:9200"
   knowledgeIndex: "knowledge"
@@ -2010,6 +2118,13 @@ osUI:
   litellmSecret:
     name: litellm-credentials     # keys incl. masterkey
     key: masterkey
+  # OpenMetadata ingestion-bot JWT for the Catalog union (OPTIONAL). Leave EMPTY
+  # here; supply it out-of-band into the `os-ui-openmetadata` Secret (key
+  # OPENMETADATA_JWT, preserved across helm upgrade) or via a gitignored
+  # values.private.yaml. Mint it from OM: admin login -> ingestion-bot ->
+  # auth-mechanism JWT (docs/components/openmetadata.md). Without it the Catalog
+  # skips OpenMetadata honestly. NEVER commit a real token.
+  openmetadataJwt: ""
   # Auth session-signing secret (HMAC-SHA256 for the login cookie). Leave EMPTY:
   # the chart generates a strong random value into the `os-ui-session` Secret on
   # first install and preserves it across `helm upgrade`. Set a value (or wire an

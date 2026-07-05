@@ -10,10 +10,10 @@ import { applyInstruction } from './assistant.ts';
 const BASE = `
 system: { name: Desk, domain: sales, visibility: Personal }
 entrypoint: supervisor
-grants: { tools: [retrieve, write_file] }
+grants: { tools: [search_knowledge, upload_file] }
 agents:
   - { id: supervisor, role: router, agent_md: "# Sup", memory_md: "", members: [writer] }
-  - { id: writer, role: writes, agent_md: "# Writer", memory_md: "", tools: [write_file] }
+  - { id: writer, role: writes, agent_md: "# Writer", memory_md: "", tools: [upload_file] }
 edges:
   - { from: supervisor, to: writer, type: supervise }
 `;

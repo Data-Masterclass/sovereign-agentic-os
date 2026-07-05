@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUser } from '@/lib/useUser';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 import FilePreview from './FilePreview';
 
 type Summary = {
@@ -128,18 +129,19 @@ export default function FilesBrowser() {
         <div className="files-scope">
           {(['mine', 'domain', 'marketplace'] as Scope[]).map((s) => (
             <button key={s} className={scope === s ? 'on' : ''}
+              {...(s === 'mine' ? anchorAttr(ANCHORS.files.sandbox) : {})}
               onClick={() => { setScope(s); setFolder(null); setTag(null); setSelected(null); }}>
               {scopeLabel[s]}{groups ? ` (${groups[s].length})` : ''}
             </button>
           ))}
         </div>
-        <div className="files-search">
+        <div className="files-search" {...anchorAttr(ANCHORS.files.search)}>
           <span className="sk">Search</span>
           <input value={query} placeholder="across names, tags, and content…"
             onChange={(e) => setQuery(e.target.value)} aria-label="Search files" />
           {searching ? <button className="preview-close" onClick={() => setQuery('')} aria-label="Clear">×</button> : null}
         </div>
-        <button className="btn" onClick={() => fileRef.current?.click()}>Upload</button>
+        <button className="btn" onClick={() => fileRef.current?.click()} {...anchorAttr(ANCHORS.files.upload)}>Upload</button>
         <input ref={fileRef} type="file" multiple hidden
           onChange={(e) => { if (e.target.files?.length) upload(e.target.files); e.target.value = ''; }} />
       </div>

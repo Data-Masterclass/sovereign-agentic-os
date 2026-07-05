@@ -4,7 +4,10 @@
 import { NextResponse } from 'next/server';
 import { serveMcp, mcpMethodNotAllowed } from '@/lib/mcp/http';
 import { isMcpTab, toolsForTab, MCP_SERVER_INFO } from '@/lib/mcp/server';
-import { loadTabContext, tabTitle } from '@/lib/tabs/context';
+import { resourcesForTab, templatesForTab } from '@/lib/mcp/resources';
+import { promptsForTab } from '@/lib/mcp/prompts';
+import { buildInstructions } from '@/lib/mcp/instructions';
+import { tabTitle } from '@/lib/tabs/context';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,12 +29,16 @@ export async function POST(req: Request, ctx: { params: Promise<{ tab: string }>
   }
   return serveMcp(req, {
     tools: toolsForTab(tab),
+    resources: resourcesForTab(tab),
+    resourceTemplates: templatesForTab(tab),
+    prompts: promptsForTab(tab),
     serverInfo: {
       name: `sovereign-agentic-os-${tab}`,
       title: `Sovereign Agentic OS — ${tabTitle(tab)}`,
       version: MCP_SERVER_INFO.version,
     },
-    instructions: loadTabContext(tab),
+    // The tab brief + the shared governance core (roles + whoami-first + discover).
+    instructions: buildInstructions(tab),
   });
 }
 

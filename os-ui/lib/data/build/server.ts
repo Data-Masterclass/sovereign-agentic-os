@@ -4,6 +4,7 @@
 import 'server-only';
 import { type Dataset } from '../dataset-schema.ts';
 import { type DataStage } from './adapter.ts';
+import type { ExecuteIdentity } from '@/lib/governed';
 import { orchestrateStage, type DataBuildReport } from './orchestrate.ts';
 import { makeMockAdapters, newMockBackends } from './mocks.ts';
 import { makeRealClients, liveDataReachable } from './live-clients.ts';
@@ -38,8 +39,21 @@ export async function buildStage(
   dataset: Dataset,
   stage: DataStage,
   principal?: string,
+  /** The guided Silver/Gold builder passes the compiled CTAS + caller identity so the
+   *  dbt adapter runs a REAL governed write; the promote publish (T8) additionally
+   *  passes the domain-schema DDL + the personal source schema to release read-only.
+   *  Omitted ⇒ the existing verify-only path. */
+  write?: { transformSql?: string; identity?: ExecuteIdentity; schemaSql?: string; releaseSchema?: string },
 ): Promise<DataBuildReport & { mode: BuildMode }> {
-  const ctx = { dataset, artifacts: artifactsFor(dataset), principal };
+  const ctx = {
+    dataset,
+    artifacts: artifactsFor(dataset),
+    principal,
+    transformSql: write?.transformSql,
+    identity: write?.identity,
+    schemaSql: write?.schemaSql,
+    releaseSchema: write?.releaseSchema,
+  };
   if (await liveDataReachable()) {
     const report = await orchestrateStage(stage, ctx, makeLiveAdapters(await makeRealClients()));
     return { ...report, mode: 'live' };

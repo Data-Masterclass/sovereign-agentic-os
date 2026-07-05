@@ -9,7 +9,11 @@ import Link from 'next/link';
 
 function SignInForm() {
   const params = useSearchParams();
-  const next = params.get('next') || '/';
+  // Same-origin paths only — never an absolute URL (`https://…`) or a
+  // protocol-relative `//host`, which would be an open-redirect footgun. The
+  // OAuth authorize bounce sends a `/oauth/authorize?…` path, which passes.
+  const rawNext = params.get('next') || '/';
+  const next = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/';
 
   // The sign-in field is the user's EMAIL (login-by-email). The value is still
   // posted as `username` to the login route, where the directory resolves it

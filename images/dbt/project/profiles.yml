@@ -12,7 +12,9 @@ sovereign:
       user: "{{ env_var('TRINO_USER', 'dbt-sales') }}"
       http_scheme: "{{ env_var('TRINO_HTTP_SCHEME', 'http') }}"
       # Iceberg catalog + the domain namespace (= Iceberg schema). marts land as
-      # real Iceberg tables on Polaris.
+      # real Iceberg tables on Polaris. Default `sales` = the live domain schema
+      # (matches queryTool.trino.schema + marts.schema); the old `analytics` literal
+      # drifted from the marts and was killed by the warehouse re-provision.
       catalog: "{{ env_var('TRINO_CATALOG', 'iceberg') }}"
-      schema: "{{ env_var('TRINO_SCHEMA', 'analytics') }}"
+      schema: "{{ env_var('TRINO_SCHEMA', 'sales') }}"
       threads: 4

@@ -145,3 +145,38 @@ export async function runAgenticGraph(
   const finalText = runs.length > 0 ? runs[runs.length - 1].result.finalText : '(no agents ran)';
   return { path: order, runs, finalText };
 }
+
+/**
+ * Run EXACTLY ONE node of the team for one turn (the phase-router path). Same
+ * injected, governed surface as {@link runAgenticGraph}, but a single `runAgentic`
+ * call instead of the six-node walk — ~6× fewer LLM calls per turn, and the one
+ * node that runs is chosen by the phase router. `extraGuidance` (the phase's
+ * instructions) is appended to the node's system prompt; `onStep` streams each
+ * governed tool step so the UI shows live progress, never a silent spinner.
+ */
+export async function runNode(
+  ir: IR,
+  nodeId: string,
+  messages: { role: 'user' | 'assistant'; content: string }[],
+  deps: AgenticGraphDeps,
+  opts: { extraGuidance?: string; onStep?: (step: import('@/lib/assistant/agentic').AgenticStep) => void } = {},
+): Promise<NodeRun> {
+  const node = ir.nodes.find((n) => n.id === nodeId);
+  if (!node) throw new Error(`Unknown team node: ${nodeId}`);
+  const system = opts.extraGuidance
+    ? `${nodeSystem(deps.preamble, node, [])}\n\n--- THIS TURN ---\n${opts.extraGuidance}`
+    : nodeSystem(deps.preamble, node, []);
+  const actModel = node.model ?? deps.execModel;
+  const result = await runAgentic({
+    system,
+    userMessages: messages,
+    tools: deps.toolSpecsFor(node),
+    callTool: deps.callTool,
+    llm: deps.llm,
+    planModel: deps.reasoningModel,
+    actModel,
+    maxIterations: deps.maxIterations,
+    onStep: opts.onStep,
+  });
+  return { node: nodeId, model: actModel, result };
+}

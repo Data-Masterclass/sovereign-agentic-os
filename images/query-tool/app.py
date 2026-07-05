@@ -21,30 +21,43 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 import trino
+import trino.exceptions
+
+from execute_guard import ExecuteError, connect_kwargs, guard
 
 PORT = int(os.environ.get("PORT", "8000"))
 TRINO_HOST = os.environ.get("TRINO_HOST", "trino")
 TRINO_PORT = int(os.environ.get("TRINO_PORT", "8080"))
 TRINO_CATALOG = os.environ.get("TRINO_CATALOG", "iceberg")
-TRINO_SCHEMA = os.environ.get("TRINO_SCHEMA", "analytics")
+# Default session schema. `sales` is the live Northpeak demo domain schema
+# (iceberg.sales holds the materialized marts). The former `analytics` literal was
+# a dead schema — killed by the warehouse re-provision, never recreated — which is
+# what made every unqualified query 500 (SCHEMA_NOT_FOUND). Callers can override
+# per request with an explicit `schema` (os-ui passes the caller's domain) so the
+# session targets the RIGHT catalog.schema instead of a hardcoded literal.
+TRINO_SCHEMA = os.environ.get("TRINO_SCHEMA", "sales")
 # The Trino session user the OPA row/column plugin governs. The gateway authorizes
 # tool access per agent key; the query runs as this governed domain principal.
 TRINO_USER = os.environ.get("TRINO_USER", "query-agent")
 
 
-def _connect(principal: str | None = None):
+def _connect(principal: str | None = None, schema: str | None = None):
     return trino.dbapi.connect(
-        host=TRINO_HOST,
-        port=TRINO_PORT,
-        user=principal or TRINO_USER,
-        catalog=TRINO_CATALOG,
-        schema=TRINO_SCHEMA,
-        http_scheme=os.environ.get("TRINO_HTTP_SCHEME", "http"),
+        **connect_kwargs(
+            principal,
+            schema or TRINO_SCHEMA,
+            host=TRINO_HOST,
+            port=TRINO_PORT,
+            catalog=TRINO_CATALOG,
+            http_scheme=os.environ.get("TRINO_HTTP_SCHEME", "http"),
+            default_user=TRINO_USER,
+        )
     )
 
 
-def run_query(sql: str, principal: str | None = None) -> dict:
-    conn = _connect(principal)
+def run_query(sql: str, principal: str | None = None, schema: str | None = None) -> dict:
+    eff_schema = schema or TRINO_SCHEMA
+    conn = _connect(principal, eff_schema)
     cur = conn.cursor()
     cur.execute(sql)
     rows = cur.fetchall()
@@ -52,11 +65,23 @@ def run_query(sql: str, principal: str | None = None) -> dict:
     return {
         "engine": "trino",
         "catalog": TRINO_CATALOG,
-        "schema": TRINO_SCHEMA,
+        "schema": eff_schema,
         "columns": cols,
         "rows": [[str(v) for v in r] for r in rows],
         "row_count": len(rows),
     }
+
+
+def run_execute(sql: str, principal: str, schema: str) -> dict:
+    """Execute an already-guarded write DDL as `principal` (so Trino's OPA plugin
+    governs the reads inside a CTAS AS THE CALLER). The session schema is set to the
+    write target so unqualified refs resolve in the caller's own domain."""
+    conn = _connect(principal, schema)
+    cur = conn.cursor()
+    cur.execute(sql)
+    cur.fetchall()  # drain the result stream (CTAS returns a rowcount row)
+    rc = getattr(cur, "rowcount", None)
+    return {"ok": True, "rowsAffected": rc if isinstance(rc, int) and rc >= 0 else None}
 
 
 mcp = FastMCP("sovereign-query", host="0.0.0.0", port=PORT)
@@ -91,10 +116,43 @@ async def http_query(req: Request):
     if not sql:
         return JSONResponse({"error": "missing sql"}, status_code=400)
     try:
-        # Optional per-call identity so Trino's OPA plugin governs the right user.
-        return JSONResponse(run_query(sql, body.get("principal")))
+        # Optional per-call identity so Trino's OPA plugin governs the right user,
+        # and an optional session schema so the caller targets their own domain
+        # (os-ui's catalog passes the caller's domain) instead of a fixed literal.
+        return JSONResponse(run_query(sql, body.get("principal"), body.get("schema")))
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@mcp.custom_route("/execute", methods=["POST"])
+async def http_execute(req: Request):
+    """Governed WRITE path. Accepts a single allowlisted DDL statement and executes
+    it as the caller's principal. Identity (principal/uid/domains/role) is supplied by
+    os-ui SERVER-SIDE from the signed session — never by a browser — exactly as /query
+    trusts `principal`. Two gates run BEFORE Trino: a strict statement allowlist and a
+    target-schema/role check (see execute_guard). The data-confidentiality boundary is
+    the Trino session user (principal): even a spoofed identity field cannot read past
+    what that principal is entitled to, because the CTAS reads run under Trino->OPA."""
+    body = await req.json()
+    sql = body.get("sql", "")
+    principal = body.get("principal")
+    uid = body.get("uid")
+    domains = body.get("domains") or []
+    role = body.get("role")
+    if not principal:
+        return JSONResponse({"ok": False, "error": "missing principal"}, status_code=400)
+    try:
+        parsed = guard(sql, uid, domains, role)
+    except ExecuteError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=e.status)
+    try:
+        return JSONResponse(run_execute(sql, principal, parsed.schema))
+    except trino.exceptions.TrinoUserError as e:
+        # A genuine SQL/permission error from Trino (incl. an OPA-denied read) — the
+        # caller's mistake, surfaced honestly with the real message.
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
 if __name__ == "__main__":

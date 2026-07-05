@@ -13,16 +13,15 @@
   keeps both across restarts, and this Job simply short-circuits when the catalog is
   already there.
 
-  Storage: MinIO/STACKIT Object Storage has no STS, so credentials are STATIC
-  (s3.access-key-id/secret in `properties`, from the same object-storage Secret the
-  chart wires for MinIO); roleArn is a required-by-schema placeholder that is never
-  used for STS (vended-credentials is off — Trino reads with its own static creds).
-  Polaris ALSO skips STS for its own write/commit FileIO via the
-  SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION feature flag (see polaris.yaml). That flag
-  makes Polaris return an empty sub-scoped AccessConfig, so the S3 endpoint + path-style
-  it would have injected are instead pushed onto every NEW table through the
-  `table-default.s3.*` properties below; Iceberg's S3FileIO reads those from the table
-  metadata, and the static creds come from Polaris's AWS_* env (SDK default chain).
+  Storage: static creds stay in `properties` (s3.access-key-id/secret, from the same
+  object-storage Secret the chart wires for MinIO) — Trino reads with its own static
+  creds. On Polaris 1.1.0 credential sub-scoping WORKS against MinIO (STS AssumeRole,
+  called at storageConfigInfo `endpointInternal`; verified live), so Polaris's own
+  write/commit FileIO gets a vended AccessConfig carrying endpointInternal +
+  pathStyleAccess — the old SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION flag is REMOVED
+  (see polaris.yaml: on 1.1.0 it empties the AccessConfig and re-breaks writes).
+  The `table-default.s3.*` properties below additionally stamp endpoint/path-style
+  into every NEW table's metadata for engines that build FileIO from table properties.
 */}}
 {{- $pl := .Values.polaris }}
 {{- $cat := $pl.catalog.name }}
@@ -115,24 +114,60 @@ spec:
                 | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
               if [ -z "$TOKEN" ]; then echo "ERROR: could not obtain Polaris token"; exit 1; fi
 
-              # Idempotent: skip if the catalog already exists.
-              # NOTE (table-default.s3.*): this Job ONLY sets catalog properties at
-              # CREATE time. On a cluster where `lakehouse` was already registered by an
-              # earlier chart version (no table-default.s3.* props), this short-circuit
-              # means the new table-defaults are NEVER applied to the existing catalog —
-              # so writes still 403 because new tables get no s3.endpoint/path-style. To
-              # apply them to an already-registered catalog you MUST drop + re-register it
-              # (DELETE then POST — only safe when it holds no tables you need), or
-              # PUT-update its properties:
-              #   PUT $POLARIS_CATALOG_API/api/management/v1/catalogs/$CATALOG
-              #   {"currentEntityVersion":<n>,"properties":{...,"table-default.s3.endpoint":...,
-              #    "table-default.s3.path-style-access":"true","table-default.s3.region":...}}
-              # (existing tables keep their old metadata; re-point only affects NEW tables.)
-              code=$(curl -s -o /dev/null -w '%{http_code}' \
+              # The `lakehouse` catalog persists across upgrades in the JDBC metastore, so on
+              # an existing cluster it is ALREADY registered. Polaris 1.1.0 fixes new-table
+              # writes via endpointInternal + pathStyleAccess on the catalog's
+              # storageConfigInfo (the NEW 1.1.0 AwsStorageConfigInfo fields), so the server's
+              # OWN write/commit FileIO uses path-style S3 on every table-create path. We
+              # therefore do NOT just short-circuit on "exists": GET the catalog and, if it
+              # lacks pathStyleAccess, PUT-update its storageConfigInfo IN PLACE. This never
+              # drops the catalog (a DELETE would fail anyway while it holds the mart + dataset
+              # registrations) — existing tables keep their metadata; only NEW creates pick up
+              # the endpoint/path-style. Idempotent: once pathStyleAccess=true is present,
+              # subsequent Argo syncs are a no-op.
+              existing=$(curl -s -w '\n%{http_code}' \
                 -H "Authorization: Bearer $TOKEN" \
                 "$POLARIS_CATALOG_API/api/management/v1/catalogs/$CATALOG")
+              code=$(printf '%s' "$existing" | tail -n1)
+              body=$(printf '%s' "$existing" | sed '$d')
               if [ "$code" = "200" ]; then
-                echo "catalog $CATALOG already exists — nothing to do"; exit 0
+                if printf '%s' "$body" | grep -q '"pathStyleAccess":true'; then
+                  echo "catalog $CATALOG already has pathStyleAccess — nothing to do"; exit 0
+                fi
+                ver=$(printf '%s' "$body" | sed -n 's/.*"entityVersion":\([0-9]*\).*/\1/p')
+                # Polaris UpdateCatalog REPLACES the properties map wholesale: a PUT that
+                # sends only storageConfigInfo WIPES every s3.* / table-default.s3.*
+                # catalog property (this happened live and briefly broke reads). So the
+                # update PUT is NEVER storageConfigInfo-only: take the catalog's CURRENT
+                # properties from the GET above, drop the s3/table-default keys this Job
+                # owns, re-add them at the desired values, and send the FULL merged map
+                # alongside storageConfigInfo. Everything else (default-base-location,
+                # access keys, operator-added keys) is preserved byte-for-byte.
+                props=$(printf '%s' "$body" | sed -n 's/.*"properties":{\([^}]*\)}.*/\1/p')
+                for k in 's3\.endpoint' 's3\.path-style-access' 's3\.region' \
+                         'table-default\.s3\.endpoint' 'table-default\.s3\.path-style-access' 'table-default\.s3\.region'; do
+                  props=$(printf '%s' "$props" | sed 's/"'"$k"'":"[^"]*"//g')
+                done
+                props=$(printf '%s' "$props" | sed 's/,,*/,/g; s/^,//; s/,$//')
+                managed='"s3.endpoint":"'"$S3_ENDPOINT"'","s3.path-style-access":"true","s3.region":"'"$S3_REGION"'","table-default.s3.endpoint":"'"$S3_ENDPOINT"'","table-default.s3.path-style-access":"true","table-default.s3.region":"'"$S3_REGION"'"'
+                if [ -n "$props" ]; then merged="$props,$managed"; else merged="$managed"; fi
+                echo "catalog $CATALOG exists (entityVersion=$ver) — updating storageConfigInfo + FULL properties map"
+                curl -fsS -X PUT \
+                  -H "Authorization: Bearer $TOKEN" \
+                  -H "Content-Type: application/json" \
+                  "$POLARIS_CATALOG_API/api/management/v1/catalogs/$CATALOG" \
+                  -d '{
+                    "currentEntityVersion": '"$ver"',
+                    "properties": {'"$merged"'},
+                    "storageConfigInfo": {
+                      "storageType": "S3",
+                      "roleArn": "arn:aws:iam::000000000000:role/polaris-lakehouse",
+                      "allowedLocations": ["'"$BASE_LOCATION"'", "'"$BASE_LOCATION"'/*"],
+                      "endpointInternal": "'"$S3_ENDPOINT"'",
+                      "pathStyleAccess": true
+                    }
+                  }'
+                echo "catalog $CATALOG updated — path-style storage config + s3/table-default properties ensured"; exit 0
               fi
 
               echo "registering catalog $CATALOG -> $BASE_LOCATION"
@@ -158,7 +193,9 @@ spec:
                     "storageConfigInfo": {
                       "storageType": "S3",
                       "roleArn": "arn:aws:iam::000000000000:role/polaris-lakehouse",
-                      "allowedLocations": ["'"$BASE_LOCATION"'", "'"$BASE_LOCATION"'/*"]
+                      "allowedLocations": ["'"$BASE_LOCATION"'", "'"$BASE_LOCATION"'/*"],
+                      "endpointInternal": "'"$S3_ENDPOINT"'",
+                      "pathStyleAccess": true
                     }
                   }
                 }'

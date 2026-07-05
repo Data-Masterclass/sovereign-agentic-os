@@ -72,3 +72,21 @@ test('with no disabled list every agent still runs (no regression)', async () =>
   assert.ok(res.path.includes('worker'));
   assert.ok(res.steps.some((s) => s.node === 'worker'));
 });
+
+test('a run returns a structured output summary + per-step trace (visible without Langfuse)', async () => {
+  // The Run panel renders these inline so the user can always see what the agent
+  // did, independent of the (clickhouse-backed) Langfuse trace store.
+  const ir = compile(parseSystem(SYS));
+  const { gw } = spyGateway(() => true);
+  const res = await runGraph(ir, { gateway: gw });
+
+  assert.equal(typeof res.output, 'string');
+  assert.ok(res.output.includes('END'), 'output summarises the run reaching END');
+  assert.ok(res.steps.length > 0, 'there is a step-by-step trace');
+  for (const s of res.steps) {
+    assert.ok(typeof s.node === 'string' && s.node);
+    assert.ok(typeof s.tool === 'string' && s.tool);
+    assert.ok(['allow', 'deny', 'requires_approval'].includes(s.effect));
+    assert.equal(typeof s.ran, 'boolean');
+  }
+});

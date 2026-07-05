@@ -21,6 +21,9 @@ export type RunResult = {
   steps: RunStep[];
   path: string[];
   traces: number;
+  /** A final, human-readable summary of what the run did — shown inline so the
+   *  user can always see the output without depending on the Langfuse trace store. */
+  output: string;
 };
 
 export type RunOptions = {
@@ -82,5 +85,11 @@ export async function runGraph(ir: IR, opts: RunOptions): Promise<RunResult> {
     if (!node.supervisor && handoffs.length === 0) reachedEnd = true; // a leaf reaches END
   }
 
-  return { ok: reachedEnd, reachedEnd, steps, path, traces: steps.length };
+  const ran = steps.filter((s) => s.ran).length;
+  const held = steps.filter((s) => s.effect === 'requires_approval').length;
+  const output = reachedEnd
+    ? `Reached END via ${path.join(' → ')} — ${ran}/${steps.length} governed tool call(s) ran` +
+      (held > 0 ? `, ${held} held for approval.` : '.')
+    : 'Run did not reach END.';
+  return { ok: reachedEnd, reachedEnd, steps, path, traces: steps.length, output };
 }

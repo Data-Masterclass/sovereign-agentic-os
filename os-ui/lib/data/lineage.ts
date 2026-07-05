@@ -16,8 +16,8 @@ import { cubeViewName, goldMartFqn } from './metrics.ts';
  * lineage panel and any catalog export share one graph.
  */
 
-export type LineageKind = 'version' | 'metric' | 'dashboard';
-export type EdgeKind = 'refinement' | 'metric' | 'dashboard';
+export type LineageKind = 'version' | 'metric' | 'dashboard' | 'upstream';
+export type EdgeKind = 'refinement' | 'metric' | 'dashboard' | 'join';
 
 export type LineageNode = {
   id: string;
@@ -70,6 +70,22 @@ export function lineageFor(d: Dataset): LineageGraph {
     });
     if (prev) edges.push({ from: prev, to: id, kind: 'refinement' });
     prev = id;
+  }
+
+  // Reuse axis — ADDITIONAL datasets joined into the Gold version (multi-upstream).
+  // Each recorded upstream feeds the Gold node, alongside the base's own Silver.
+  if (d.versions.gold.built && d.upstreams && d.upstreams.length > 0) {
+    d.upstreams.forEach((u, i) => {
+      const id = `up:${u.datasetId || slug(u.name) || i}`;
+      nodes.push({
+        id,
+        kind: 'upstream',
+        label: u.name || u.fqn,
+        sublabel: `${u.joinType} join · ${u.fqn}`,
+        built: true,
+      });
+      edges.push({ from: id, to: 'v:gold', kind: 'join' });
+    });
   }
 
   // Consumption axis — metric(s) on Gold, then a dashboard on the view.

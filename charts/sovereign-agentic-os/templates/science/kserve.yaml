@@ -54,6 +54,10 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "kserve") | nindent 4 }}
+    # The kserve-mlserver ClusterServingRuntime templates its
+    # MLSERVER_MODEL_IMPLEMENTATION env from {{ printf "{{.Labels.modelClass}}" }} —
+    # without this label the v2 runtime boots with an empty implementation.
+    modelClass: mlserver_sklearn.SKLearnModel
   annotations:
     # RawDeployment mode — plain k8s Deployment/Service, no Knative dependency.
     serving.kserve.io/deploymentMode: RawDeployment
@@ -63,6 +67,12 @@ spec:
     model:
       modelFormat:
         name: {{ $k.sampleModel.format }}
+      # v2 (Open Inference Protocol): the OS UI's predict tool calls
+      # `/v2/models/churn_model/infer` (lib/science/churn.ts), so auto-select the
+      # v2-capable kserve-mlserver runtime; the artifact's model-settings.json
+      # names the model `churn_model` to match. The v1 sklearnserver default
+      # (`--model_name=<isvc name>`, v1 paths only) 404s every UI call.
+      protocolVersion: v2
       # Trained model artifact (logged via MLflow) in object storage.
       storageUri: {{ $k.sampleModel.storageUri | quote }}
       resources:

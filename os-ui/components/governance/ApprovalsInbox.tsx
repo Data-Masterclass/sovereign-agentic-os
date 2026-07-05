@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@/lib/useUser';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 
 type Preview = {
   what: string;
@@ -401,6 +402,7 @@ export default function ApprovalsInbox() {
                           style={{ padding: '5px 14px' }}
                           disabled={isBusy}
                           onClick={() => decide(a.id, 'approve')}
+                          {...anchorAttr(ANCHORS.governance.approve)}
                         >
                           {busy === `${a.id}:approve` ? <span className="spin" /> : 'Approve'}
                         </button>
@@ -415,6 +417,7 @@ export default function ApprovalsInbox() {
                             }}
                             disabled={isBusy}
                             onClick={() => decide(a.id, 'approve', true)}
+                            {...anchorAttr(ANCHORS.governance.remember)}
                           >
                             {busy === `${a.id}:approve:remember` ? (
                               <span className="spin" />

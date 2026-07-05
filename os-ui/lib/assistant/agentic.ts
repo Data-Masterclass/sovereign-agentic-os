@@ -162,6 +162,8 @@ export async function runAgentic(opts: {
   planModel: string;
   actModel: string;
   maxIterations?: number;
+  /** Optional progress hook — called after each governed tool step executes. */
+  onStep?: (step: AgenticStep) => void;
 }): Promise<AgenticResult> {
   const maxIterations = opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   const user = opts.userMessages.map((m) => ({ role: m.role, content: m.content }));
@@ -241,7 +243,9 @@ export async function runAgentic(opts: {
     // Execute each call through the governed executor and feed the result back.
     for (const call of calls) {
       const out = await opts.callTool(call.name, call.args);
-      steps.push({ tool: call.name, args: call.args, result: out.text, isError: out.isError });
+      const step: AgenticStep = { tool: call.name, args: call.args, result: out.text, isError: out.isError };
+      steps.push(step);
+      opts.onStep?.(step);
       if (react) {
         messages.push({ role: 'user', content: `Observation: ${out.text}` });
       } else {

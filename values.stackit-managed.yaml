@@ -327,6 +327,11 @@ ingress:
     superset: "superset.REPLACE-DNS-NAME"
     forgejo: "forgejo.REPLACE-DNS-NAME"
     argocd: "argocd.REPLACE-DNS-NAME"
+    # Terminal + Workbench broker hosts (used when terminal/workbench are enabled).
+    # Without these the os-ui gets empty TERMINAL_BROKER_WS / WORKBENCH_BROKER_URL
+    # and the consoles cannot reach their brokers from the browser.
+    terminal: "terminal.REPLACE-DNS-NAME"
+    workbench: "workbench.REPLACE-DNS-NAME"
 
 # Cache/analytics (Valkey/ClickHouse) stay bundled — no managed STACKIT
 # equivalent (stackit.md). Flip enabled:false + external here if that changes.

@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-type Node = { id: string; kind: 'version' | 'metric' | 'dashboard'; label: string; sublabel: string; built: boolean; passThrough?: boolean; columns?: string[] };
+type Node = { id: string; kind: 'version' | 'metric' | 'dashboard' | 'upstream'; label: string; sublabel: string; built: boolean; passThrough?: boolean; columns?: string[] };
 type Edge = { from: string; to: string; kind: string };
 type Gate = { ok: boolean; missing: string[] };
 type Graph = { dataset: string; tier: string; certification?: { level: string; by: string }; nodes: Node[]; edges: Edge[]; transparency: Gate };
@@ -37,6 +37,7 @@ export default function LineagePanel({ datasetId }: { datasetId: string }) {
   const versions = graph.nodes.filter((n) => n.kind === 'version');
   const metrics = graph.nodes.filter((n) => n.kind === 'metric');
   const dash = graph.nodes.find((n) => n.kind === 'dashboard');
+  const upstreams = graph.nodes.filter((n) => n.kind === 'upstream');
 
   return (
     <div className="guided-panel">
@@ -46,6 +47,20 @@ export default function LineagePanel({ datasetId }: { datasetId: string }) {
           <ul className="gate-missing">{graph.transparency.missing.map((m) => <li key={m}>{m}</li>)}</ul>
         )}
       </div>
+
+      {upstreams.length ? (
+        <div className="lineage-flow" style={{ marginBottom: 10, alignItems: 'center' }}>
+          <span className="hint" style={{ margin: 0 }}>Joined from</span>
+          {upstreams.map((u) => (
+            <span key={u.id} className="lineage-node upstream">
+              <span className="ln-label">{u.label}</span>
+              <span className="ln-sub mono">{u.sublabel}</span>
+            </span>
+          ))}
+          <span className="lineage-arrow">→</span>
+          <span className="muted">Gold (joined)</span>
+        </div>
+      ) : null}
 
       <div className="lineage-flow">
         {versions.map((n, i) => (

@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUser } from '@/lib/useUser';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 
 /** Mirrors lib/files store FileAsset / FileView (the fields the pane shows). */
 type Asset = {
@@ -208,7 +209,7 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
 
       {/* ---- Sharing lifecycle (governed exactly like Data): a Creator requests a
               promotion (a Builder approves); an Admin certifies to the marketplace. ---- */}
-      <div className="preview-share">
+      <div className="preview-share" {...anchorAttr(ANCHORS.files.share)}>
         <label className="rail-group-title">Sharing</label>
         {a.tier === 'dataset' ? (
           promote?.request ? (
