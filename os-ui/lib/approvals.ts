@@ -38,6 +38,11 @@ export type ApprovalKind =
   | 'autonomous_out_of_policy'
   | 'access_request'
   | 'egress_request'
+  // Rung-1 promotion (Personal→Domain) for the ladder kinds that were formerly
+  // one-step DIRECT (knowledge/connection/model/artifact/dashboard/app). The
+  // payload carries `{ artifactKind, id }`; the effect dispatches per-kind.
+  | 'artifact_promote'
+  // Rung-2 certification (Domain→Marketplace) for EVERY kind — admin-approved.
   | 'promote_certify';
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 

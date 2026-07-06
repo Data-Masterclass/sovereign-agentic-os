@@ -29,8 +29,8 @@ import {
   getConnectionForUser,
   createConnection,
   testConnection,
-  promoteConnection,
 } from '@/lib/connections';
+import { promoteThroughSeam } from '@/lib/governance/ladder';
 import {
   CONNECTION_TEMPLATES,
   isPersonalConnectable,
@@ -730,7 +730,9 @@ const connectionTools: McpTool[] = [
     call: async (user, args) => {
       const id = str(args.connId).trim();
       if (!id) fail('promote_connection needs a `connId`', 400);
-      return promoteConnection(id, user);
+      // Route the flip through the ONE effect seam (never promoteConnection directly).
+      const r = await promoteThroughSeam('connection', id, user);
+      return getConnectionForUser(id, user).then((c) => ({ id: c.id, name: c.name, visibility: c.visibility, applied: r.applied, live: r.live }));
     },
   },
 ];

@@ -13,6 +13,17 @@ import {
 } from '../data/store.ts';
 import type { PublishOutcome } from '../data/publish.ts';
 import { applyApprovedFilePromotion, type FilePromotionRequest } from '../files/store.ts';
+// The ladder's per-kind promote/certify appliers. The SYNC + in-memory ones
+// (knowledge/dashboard/model/agent_system) are dispatched here directly; the
+// async + server-only ones (connection/artifact/app) arrive as injected deps so
+// this module (and its tests) stay free of the heavy object-store cache imports —
+// exactly the isolation pattern `publishPromotion` already uses.
+import { publishWorkflow, certifyWorkflow } from '../knowledge/store.ts';
+import { transitionDashboard } from '../dashboards/store.ts';
+import { promoteSystem } from '../agents/store.ts';
+import { promoteModel, certifyModel } from '../science/model-service.ts';
+import type { Actor as ModelActor } from '../science/types.ts';
+import type { ConsumptionMode } from '../science/types.ts';
 
 /**
  * The approval-IS-an-action executor (governance-golden-path.md key principle).
@@ -49,9 +60,31 @@ export type EffectApprover = string | { id: string; role: Principal['role']; dom
 /** Server-injected effect backends. `publishPromotion` is the physical dataset
  *  publish (server-only build runner) — REQUIRED for `dataset_promote`, injected by
  *  the route so this module (and its tests) stay free of server-only imports. */
+/** The applied summary an injected ladder promote/certify returns (name + tier). */
+export type LadderApplied = { id: string; name: string; visibility: string };
+/** Advance one rung of an async, server-only ladder artifact AS the approver. */
+export type LadderApplier = (id: string, approver: { id: string; role: Principal['role']; domains: string[] }) => Promise<LadderApplied>;
+
 export type EffectDeps = {
   publishPromotion?: (req: PromotionRequest, approver: Principal) => Promise<PublishOutcome>;
+  /** Connection promote/certify (Personal→Shared→Certified single-step advance). */
+  promoteConnection?: LadderApplier;
+  /** Artifact promote/certify (Personal→Shared→Certified single-step advance). */
+  promoteArtifact?: LadderApplier;
+  /** App promote/certify (Personal→Shared→Certified single-step advance). */
+  promoteApp?: LadderApplier;
 };
+
+/** The model-service Actor for a human approver (agents can never decide — the
+ *  `assertHuman` guard in model-service enforces this; we set isAgent:false). */
+function modelActor(approver: EffectApprover, fallbackRole: Principal['role'], domain: string): ModelActor {
+  const p = approverPrincipal(approver, fallbackRole, domain);
+  // model-service's Actor role is a narrower 'user'|'builder'|'admin'; map the
+  // 4-rank session role onto it (domain_admin acts at builder rank for models —
+  // it may promote, and certification stays admin-only, so this is safe).
+  const role: ModelActor['role'] = p.role === 'admin' ? 'admin' : p.role === 'builder' || p.role === 'domain_admin' ? 'builder' : 'user';
+  return { id: p.id, role, domains: p.domains, isAgent: false };
+}
 
 function s(v: unknown, fallback = ''): string {
   return v === undefined || v === null ? fallback : String(v);
@@ -197,20 +230,34 @@ export async function applyEffect(a: Approval, approver: EffectApprover, deps: E
         },
       };
     }
+    case 'artifact_promote': {
+      // Rung 1 (Personal→Domain) for the formerly-DIRECT kinds. THE single seam:
+      // the per-kind dispatch lives here and NOWHERE else — every UI + MCP promote
+      // route files this kind and lands in this switch. The underlying store fn
+      // re-enforces the Builder+domain gate (defence in depth), running AS the
+      // approver identity passed in.
+      return applyLadder(a, approver, deps, 'promote', who);
+    }
     case 'promote_certify': {
-      const artifact = s(p.artifact ?? p.dataset, a.title);
-      const stage = s(p.stage, 'certified');
-      return {
-        ok: true,
-        applied: `Promoted ${artifact} → ${stage} (mock OpenMetadata + registry).`,
-        live: false,
-        audit: {
-          action: 'approve',
-          subject: artifact,
-          reason: `Promote/certify approved by ${who}`,
-          detail: { artifact, stage },
-        },
-      };
+      // Rung 2 (Domain→Marketplace). LIVE per-kind dispatch when the ladder payload
+      // names an `artifactKind`; otherwise the legacy `{artifact,stage}` mock is
+      // preserved for backward compatibility (old queue items still resolve).
+      if (!p.artifactKind) {
+        const artifact = s(p.artifact ?? p.dataset, a.title);
+        const stage = s(p.stage, 'certified');
+        return {
+          ok: true,
+          applied: `Promoted ${artifact} → ${stage} (mock OpenMetadata + registry).`,
+          live: false,
+          audit: {
+            action: 'approve',
+            subject: artifact,
+            reason: `Promote/certify approved by ${who}`,
+            detail: { artifact, stage },
+          },
+        };
+      }
+      return applyLadder(a, approver, deps, 'certify', who);
     }
     case 'file_promote': {
       // Approval IS the action: actually move the file dataset→asset and re-govern
@@ -249,5 +296,76 @@ export async function applyEffect(a: Approval, approver: EffectApprover, deps: E
         },
       };
     }
+  }
+}
+
+/**
+ * THE UNIFIED LADDER SEAM. Every promotion (rung 1) and certification (rung 2) of
+ * a formerly-DIRECT kind (knowledge/connection/model/artifact/dashboard/app) flows
+ * through here — the ONE place the per-kind promote/certify dispatch lives. No UI
+ * route and no MCP tool flips a tier without arriving in this switch, so the
+ * governance back door is closed at a single point. The underlying store fn
+ * re-enforces its own role+domain gate (defence in depth), acting AS the approver.
+ */
+async function applyLadder(
+  a: Approval,
+  approver: EffectApprover,
+  deps: EffectDeps,
+  rung: 'promote' | 'certify',
+  who: string,
+): Promise<EffectResult> {
+  const p = a.payload ?? {};
+  const kind = s(p.artifactKind);
+  const id = s(p.id);
+  if (!id) throw new Error(`${a.kind} requires payload.id`);
+  const verb = rung === 'promote' ? 'Shared to the domain' : 'Certified to the marketplace';
+  const auditBase = (subject: string, detail: Record<string, unknown>) => ({
+    action: 'approve' as AuditAction,
+    subject,
+    reason: `${kind} ${rung} approved by ${who}`,
+    detail: { artifactKind: kind, id, rung, ...detail },
+  });
+  const okResult = (name: string, extra: Record<string, unknown> = {}): EffectResult => ({
+    ok: true,
+    applied: `${verb}: “${name}”.`,
+    live: true,
+    audit: auditBase(name, extra),
+  });
+
+  switch (kind) {
+    case 'knowledge': {
+      const rec = rung === 'promote'
+        ? publishWorkflow(id, approverPrincipal(approver, 'builder', a.domain))
+        : certifyWorkflow(id, approverPrincipal(approver, 'admin', a.domain));
+      return okResult(rec.title, { visibility: rec.visibility, status: rec.status });
+    }
+    case 'dashboard': {
+      const rec = transitionDashboard(id, approverPrincipal(approver, rung === 'promote' ? 'builder' : 'admin', a.domain), rung);
+      return okResult(rec.spec.name, { tier: rec.tier });
+    }
+    case 'model': {
+      const actor = modelActor(approver, rung === 'promote' ? 'builder' : 'admin', a.domain);
+      const m = rung === 'promote'
+        ? promoteModel(id, actor)
+        : certifyModel(id, actor, (s(p.mode) as ConsumptionMode) || 'read-in-place');
+      return okResult(m.name, { tier: m.tier });
+    }
+    case 'agent_system': {
+      // promoteSystem is a single-step advance (Personal→Shared→Marketplace),
+      // role-gated internally exactly like promoteArtifact — sync + in-memory.
+      const rec = promoteSystem(id, approverPrincipal(approver, rung === 'promote' ? 'builder' : 'admin', a.domain));
+      return okResult(rec.name, { visibility: rec.visibility });
+    }
+    case 'connection':
+    case 'artifact':
+    case 'app': {
+      const applier = kind === 'connection' ? deps.promoteConnection : kind === 'artifact' ? deps.promoteArtifact : deps.promoteApp;
+      if (!applier) throw new Error(`${kind} ${rung} requires the injected ${kind} applier (not injected)`);
+      const full = typeof approver === 'string' ? { id: approver, role: 'builder' as Principal['role'], domains: [a.domain] } : approver;
+      const r = await applier(id, full);
+      return okResult(r.name, { visibility: r.visibility });
+    }
+    default:
+      throw new Error(`unknown ladder artifactKind: ${kind || '(none)'}`);
   }
 }

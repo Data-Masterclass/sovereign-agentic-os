@@ -14,6 +14,7 @@ import { listSystems } from '@/lib/agents/store';
 import { principalFor } from '@/lib/governance/roles';
 import { ALL_WRITE_TOOLS } from '@/lib/mcp/write-tools';
 import { DISCOVERY_TOOLS } from '@/lib/mcp/discovery-tools';
+import { governanceTools } from '@/lib/mcp/governance-tools';
 import {
   RESOURCES,
   RESOURCE_TEMPLATES,
@@ -64,7 +65,11 @@ export type JsonSchema = {
  * the ONE registry below (`/api/mcp/<tab>`) — a scoped lens, never a second
  * governance path. The overarching `/api/mcp` endpoint still serves them all.
  */
-export const MCP_TABS = ['software', 'data', 'science', 'knowledge', 'agents', 'files', 'metrics', 'dashboards', 'bigbets', 'connections'] as const;
+// `governance` + `marketplace` are the first mcp-v2 cross-cutting surfaces (P0):
+// the approval queue + ladder + lineage + marketplace import. Later waves add
+// `strategy`/`monitoring`/`platform` here WHEN their tools ship (every declared
+// tab must carry ≥1 tool — the tabs.test invariant).
+export const MCP_TABS = ['software', 'data', 'science', 'knowledge', 'agents', 'files', 'metrics', 'dashboards', 'bigbets', 'connections', 'governance', 'marketplace'] as const;
 export type McpTab = (typeof MCP_TABS)[number];
 export function isMcpTab(x: string): x is McpTab {
   return (MCP_TABS as readonly string[]).includes(x);
@@ -352,6 +357,7 @@ export const ALL_MCP_TOOLS: McpTool[] = [
   ...agentTools,
   ...ALL_WRITE_TOOLS,
   ...DISCOVERY_TOOLS,
+  ...governanceTools,
   ...discoveryTools,
 ];
 

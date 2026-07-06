@@ -42,7 +42,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, reason: result.reason, consistency: result.consistency }, { status: 403 });
     }
 
-    // Persist the tier move via the Data lifecycle (single source of tier truth).
+    // INVARIANT (effects.ts): a dataset tier flip that would MATERIALIZE (dataset →
+    // asset) must run the physical publish — it can never be a bare tier relabel.
+    // A metric is defined on an already-governed asset, so its dataset is materialised;
+    // if it is somehow still a private `dataset`, refuse here and send the caller to
+    // the Data tab's request_promotion (which runs the governed physical publish).
+    if (record.dataset.tier === 'dataset') {
+      return NextResponse.json(
+        { ok: false, reason: 'Promote the underlying dataset to a governed asset in the Data tab first (request_promotion runs the physical publish) — a metric transition cannot materialise an un-published dataset tier here.' },
+        { status: 409 },
+      );
+    }
+    // Only a NON-materialising move remains (asset → product certify): the physical
+    // table already exists, so relabelling the tier (like the direct Admin certify)
+    // is safe and keeps the metric + its dataset from drifting on tier.
     const dataset = transitionDataset(record.dataset.id, user, transition);
     return NextResponse.json({ ok: true, metricId, tier: result.record.tier, consistency: result.consistency, dataset });
   } catch (e) {

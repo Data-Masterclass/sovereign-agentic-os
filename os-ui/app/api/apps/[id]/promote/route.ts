@@ -3,20 +3,23 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { promoteApp } from '@/lib/apps';
+import { getAppForUser } from '@/lib/apps';
+import { promoteThroughSeam } from '@/lib/governance/ladder';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * Promote an app (+ its data/files/connection) one step up the ladder:
- * Personal → Shared (Builder/Admin) → Marketplace (Admin only). Role-gated,
- * domain-scoped and audited in `promoteApp`. A non-Builder is rejected (403).
+ * Personal → Shared (Builder/Admin) → Marketplace (Admin only). The flip runs
+ * THROUGH the governance effect seam (never a direct promoteApp — the former back
+ * door is closed); the applier re-enforces role + domain. A non-Builder is 403.
  */
 export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireUser();
     const { id } = await ctx.params;
-    const app = await promoteApp(id, user);
+    await promoteThroughSeam('app', id, user);
+    const app = await getAppForUser(id, user);
     return NextResponse.json({ app });
   } catch (e) {
     const status = (e as { status?: number })?.status ?? 500;

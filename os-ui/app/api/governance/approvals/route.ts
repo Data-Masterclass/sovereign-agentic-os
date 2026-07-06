@@ -6,7 +6,7 @@ import { currentUser } from '@/lib/auth';
 import { decide, ensureHydrated, getApproval, listApprovals, recordEffect } from '@/lib/approvals';
 import { canApprove, canSee, roleLabel } from '@/lib/governance/roles';
 import { applyEffect } from '@/lib/governance/effects';
-import { publishPromotionLive } from '@/lib/data/publish-server';
+import { buildEffectDeps } from '@/lib/governance/ladder';
 import { record as audit } from '@/lib/governance/audit';
 import { remember } from '@/lib/governance/standing';
 
@@ -78,7 +78,7 @@ export async function POST(req: Request) {
     effect = await applyEffect(
       updated,
       { id: user.id, role: user.role, domains: user.domains },
-      { publishPromotion: publishPromotionLive },
+      buildEffectDeps(),
     );
   } catch (e) {
     // The decision stands (item is approved) but the effect failed — record the

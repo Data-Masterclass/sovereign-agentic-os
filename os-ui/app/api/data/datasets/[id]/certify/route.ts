@@ -40,12 +40,16 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const approval = enqueue({
       kind: 'dataset_certify',
       title: `Certify “${request.datasetName}” as a data product`,
-      detail: `${user.id} requests certifying ${request.datasetName} (trust: ${request.level}, visibility: ${request.visibility}) and listing it in the marketplace. A domain Admin must approve.`,
+      detail: `${user.id} requests certifying ${request.datasetName} (trust: ${request.level}, visibility: ${request.visibility}) and listing it in the marketplace. A platform Admin must approve.`,
       agent: user.id,
       domain: request.domain,
       requestedBy: user.id,
       tool: 'data_certify',
       payload: request as unknown as Record<string, unknown>,
+      // Certification is a platform-Admin decision (tenant scope) — NOT the default
+      // builder/domain, so a domain Builder can never approve a marketplace listing.
+      approverRole: 'admin',
+      scope: 'tenant',
     });
     return NextResponse.json({ approval });
   } catch (e) {

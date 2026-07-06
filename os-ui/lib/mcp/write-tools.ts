@@ -42,13 +42,13 @@ import type { MeasureType } from '@/lib/data/metrics';
 import {
   createWorkflow,
   updateWorkflow,
-  publishWorkflow,
   getWorkflow,
   getDomainKnowledge,
 } from '@/lib/knowledge/store';
+import { fileArtifactPromotion, promoteThroughSeam, isLadderKind, type LadderKind } from '@/lib/governance/ladder';
+import { pendingHandle } from '@/lib/mcp/pending';
 import {
   serializeWorkflow,
-  parseWorkflow,
   type Workflow,
   type WorkflowStep,
   type WorkflowRule,
@@ -585,7 +585,7 @@ export const knowledgeWriteTools: McpTool[] = [
     tab: 'knowledge',
     minRole: 'builder',
     description:
-      'Publish a draft workflow Personal → Shared (draft→live) and re-index it for retrieval. Builder+ only (the creator lockdown mirrors publishWorkflow). Idempotency: publishing an already-live workflow returns a `conflict`.',
+      'Publish a draft workflow Personal → Shared (draft→live) and re-index it for retrieval. Builder+ only (the creator lockdown). This is the compat "approve half" of the ladder: the flip runs THROUGH the governance effect seam (no direct publish back door). Idempotency: publishing an already-live workflow returns a `conflict`.',
     inputSchema: {
       type: 'object',
       properties: { workflowId: { type: 'string', description: 'Draft workflow id to publish.' } },
@@ -596,10 +596,13 @@ export const knowledgeWriteTools: McpTool[] = [
       const id = str(args.workflowId).trim();
       if (!id) fail('publish_knowledge needs a `workflowId`', 400);
       const p = P(user);
-      const rec = publishWorkflow(id, p);
+      // Route the flip through the ONE effect seam (never publishWorkflow directly).
+      // Intent is PUBLISH (rung 1): a mismatch (already-Shared workflow) is a typed
+      // conflict, not a silent certify-to-marketplace.
+      await promoteThroughSeam('knowledge', id, user, { rung: 'promote' });
+      const rec = getWorkflow(id, p);
       try {
-        const wf = parseWorkflow(rec.md);
-        await indexWorkflow(wf, { owner: rec.owner, tacit: rec.tacit, updatedAt: rec.updatedAt });
+        await indexWorkflow(rec.workflow, { owner: rec.owner, tacit: rec.tacit, updatedAt: rec.updatedAt });
         await indexDomain(getDomainKnowledge(rec.domain));
       } catch {
         /* indexing is best-effort; publish already succeeded */
@@ -690,23 +693,33 @@ export const promotionTools: McpTool[] = [
     extraTabs: ['files'],
     minRole: 'creator',
     description:
-      'FILE a promotion request for a documented dataset or file (Personal → a governed domain asset). Path: the promote step of the Data/Files golden paths. Before: document the asset (docs + ≥1 tag are the promotion gate). After: a Builder/Admin in the domain runs `approve_promotion`. Governance: a creator CAN file this (owner-checked); it does NOT promote — it enqueues the governed request. Idempotency: filing while a request is pending returns the existing one.',
+      'FILE a rung-1 promotion request (Personal → a governed DOMAIN asset) for ANY ownable artifact: a dataset, file, knowledge workflow, connection, dashboard, model, app or agent system. Path: the promote step of every tab’s golden path — the ONE governed ladder. Before: create + document the artifact. After: a Builder/Admin in the domain runs `decide_approval` (or `approve_promotion` for dataset/file). Governance: OWNER-ONLY trigger — edit rights are not enough; it does NOT promote, it enqueues the governed request and returns the pending handle. Certification (Domain→Marketplace) is the separate `request_certification`. Idempotency: filing while a request is pending returns the existing handle.',
     inputSchema: {
       type: 'object',
       properties: {
-        kind: { type: 'string', enum: ['dataset', 'file'], description: 'What to promote.' },
-        id: { type: 'string', description: 'The dataset id or file id you own and have documented.' },
-        visibility: { type: 'string', description: 'Requested asset visibility (default domain).' },
-        grants: { type: 'array', description: 'Optional explicit policy grants (else a domain read grant).' },
+        kind: { type: 'string', enum: ['dataset', 'file', 'knowledge', 'connection', 'dashboard', 'model', 'app', 'agent_system'], description: 'What to promote (you must OWN it).' },
+        id: { type: 'string', description: 'The artifact id you own and have documented.' },
+        visibility: { type: 'string', description: 'Requested asset visibility (dataset/file only; default domain).' },
+        grants: { type: 'array', description: 'Optional explicit policy grants (dataset/file only; else a domain read grant).' },
       },
       required: ['kind', 'id'],
-      examples: [{ kind: 'dataset', id: 'ds_ab12cd', visibility: 'domain' }, { kind: 'file', id: 'file_ab12cd' }],
+      examples: [{ kind: 'dataset', id: 'ds_ab12cd', visibility: 'domain' }, { kind: 'knowledge', id: 'wf_ab12cd' }, { kind: 'connection', id: 'conn_ab12cd' }],
     },
     call: async (user, args) => {
       const kind = str(args.kind).trim();
-      if (kind !== 'dataset' && kind !== 'file') fail('request_promotion needs `kind` = "dataset" | "file"', 400);
       const id = str(args.id).trim();
       if (!id) fail('request_promotion needs an `id`', 400);
+
+      // The formerly-DIRECT ladder kinds (knowledge/connection/dashboard/model/app/
+      // agent_system) file through the ONE ladder seam — owner-only, effect applied
+      // on approval.
+      if (isLadderKind(kind)) {
+        const approval = await fileArtifactPromotion(kind as LadderKind, id, user);
+        return pendingHandle(approval, { artifactKind: kind, target: approval.detail, domain: approval.domain });
+      }
+      if (kind !== 'dataset' && kind !== 'file') {
+        fail('request_promotion needs `kind` = dataset | file | knowledge | connection | dashboard | model | app | agent_system', 400);
+      }
       const p = P(user);
       const opts = {
         visibility: (str(args.visibility) as DataVisibility) || undefined,
@@ -714,9 +727,8 @@ export const promotionTools: McpTool[] = [
       };
       const approvalKind = kind === 'dataset' ? 'dataset_promote' : 'file_promote';
       // Don't file a duplicate pending request for the same asset.
-      const targetId = id;
-      const existing = enqueueDedup(approvalKind, targetId);
-      if (existing) return { approvalId: existing.id, kind, target: existing.detail, domain: existing.domain, status: 'pending', already: true };
+      const existing = enqueueDedup(approvalKind, id);
+      if (existing) return pendingHandle(existing, { artifactKind: kind, target: existing.detail, domain: existing.domain, already: true });
 
       if (kind === 'dataset') {
         const req: PromotionRequest = requestDatasetPromotion(id, p, opts);
@@ -730,7 +742,7 @@ export const promotionTools: McpTool[] = [
           tool: 'data_promote',
           payload: req as unknown as Record<string, unknown>,
         });
-        return { approvalId: approval.id, kind, target: req.target, domain: req.domain, status: 'pending' };
+        return pendingHandle(approval, { artifactKind: kind, target: req.target, domain: req.domain });
       }
       const req: FilePromotionRequest = requestFilePromotion(id, p, opts);
       const approval = enqueue({
@@ -743,7 +755,7 @@ export const promotionTools: McpTool[] = [
         tool: 'file_promote',
         payload: req as unknown as Record<string, unknown>,
       });
-      return { approvalId: approval.id, kind, target: req.target, domain: req.domain, status: 'pending' };
+      return pendingHandle(approval, { artifactKind: kind, target: req.target, domain: req.domain });
     },
   },
   {

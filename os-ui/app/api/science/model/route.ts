@@ -9,9 +9,7 @@ import {
   listModelsForUser,
   getModel,
   compilePredictPolicy,
-  promoteModel,
   goLive,
-  certifyModel,
   importModel,
   featuresAdapter,
   trainTrackAdapter,
@@ -22,6 +20,7 @@ import {
   type Actor,
   type ConsumptionMode,
 } from '@/lib/science';
+import { promoteThroughSeam } from '@/lib/governance/ladder';
 
 export const dynamic = 'force-dynamic';
 
@@ -111,18 +110,28 @@ export async function POST(req: Request) {
   try {
     switch (body.op) {
       case 'promote': {
-        const m = promoteModel(model, actor);
+        // Route the tier flip THROUGH the governance effect seam (never a direct
+        // promoteModel — the former back door is closed). The seam's applier
+        // re-enforces the Builder+domain gate. Intent = promote (rung 1): a mismatch
+        // with the model's tier is a typed conflict, never a silent certify.
+        await promoteThroughSeam('model', model, user, { rung: 'promote' });
+        const m = getModel(model)!;
         await trace({ principal: user.id, tool: 'model_promote', input: { model }, output: { tier: m.tier }, decision: 'allow' });
         return NextResponse.json({ ok: true, model: m, policy: compilePredictPolicy(m) });
       }
       case 'go-live': {
+        // go-live is a STAGE move (Staging→Production), orthogonal to the tier
+        // ladder — it does not share/promote an artifact, so it stays direct.
         const m = goLive(model, actor);
         await trace({ principal: user.id, tool: 'model_go_live', input: { model }, output: { stage: m.stage }, decision: 'allow' });
         return NextResponse.json({ ok: true, model: m });
       }
       case 'certify': {
         const mode: ConsumptionMode = body.mode === 'fork-allowed' ? 'fork-allowed' : 'read-in-place';
-        const m = certifyModel(model, actor, mode);
+        // Certification (Domain→Marketplace) THROUGH the seam (never a direct
+        // certifyModel). Intent = certify (rung 2); a mismatch is a typed conflict.
+        await promoteThroughSeam('model', model, user, { mode, rung: 'certify' });
+        const m = getModel(model)!;
         await trace({ principal: user.id, tool: 'model_certify', input: { model, mode }, output: { tier: m.tier }, decision: 'allow' });
         return NextResponse.json({ ok: true, model: m, policy: compilePredictPolicy(m) });
       }

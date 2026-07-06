@@ -6,10 +6,10 @@ import type { CurrentUser } from '@/lib/auth';
 import {
   createApp,
   getAppByIdInternal,
-  promoteApp,
   withStatus,
   type AppTemplateKey,
 } from '@/lib/apps';
+import { promoteThroughSeam } from '@/lib/governance/ladder';
 import { trace } from '@/lib/agent-governed';
 import { startPreview, requestDeploy, decideDeploy } from './review.ts';
 import { archiveApp, deleteApp, useAsData, consumeResource } from './lifecycle.ts';
@@ -136,8 +136,10 @@ export async function callPlatformMcp(
       break;
 
     case 'promote':
-      // Role-gated inside promoteApp: a Creator gets 403, exactly as in the UI.
-      result = await promoteApp(appId, user);
+      // Route the flip through the ONE effect seam (never promoteApp directly).
+      // Role-gated inside the seam's applier (promoteApp): a Creator/non-Admin at
+      // the wrong rung gets a typed 403, exactly as in the UI.
+      result = await promoteThroughSeam('app', appId, user);
       break;
 
     case 'archive':
