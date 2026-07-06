@@ -46,6 +46,9 @@ export type ConnectorSource = {
   mode: SyncMode;
   owner: string;
   domain: string;
+  /** The governed Connection (Connections tab) whose OAuth Read token this source
+   *  syncs with. Null → no linked connection → the sync uses the mock fake-drive. */
+  connectionId: string | null;
   /** The tier files land at (re-governed under OUR model). Default private dataset. */
   landingSensitivity: Sensitivity;
   /** Delta cursor for incremental pulls (null until the first sync). */
@@ -118,7 +121,7 @@ function id(): string {
 
 export function addSource(input: {
   provider: Provider; label: string; scope: SyncScope; target: string; mode: SyncMode;
-  owner: string; domain: string; landingSensitivity?: Sensitivity;
+  owner: string; domain: string; connectionId?: string | null; landingSensitivity?: Sensitivity;
 }): ConnectorSource {
   const src: ConnectorSource = {
     id: id(),
@@ -129,6 +132,7 @@ export function addSource(input: {
     mode: input.mode,
     owner: input.owner,
     domain: input.domain,
+    connectionId: input.connectionId ?? null,
     landingSensitivity: input.landingSensitivity ?? 'internal',
     cursor: null,
     initialDone: false,

@@ -21,8 +21,9 @@
  * + no-op so the spine stays unit-testable offline.
  */
 
-import { type Actor, type Principal, type Tab, BetError } from './model.ts';
+import { type Actor, type Principal, type Tab, TAB_LABEL, BetError } from './model.ts';
 import { addComponent, getBet, setComponentPlan } from './store.ts';
+import { assistantComplete, type AssistantMessage } from '../assistant/complete.ts';
 
 export type PlannerStep = {
   tab: Tab;
@@ -55,37 +56,105 @@ const defaultHooks: Required<PlannerHooks> = {
   trace: () => {},
 };
 
-// --------------------------------------------------------------- templates ---
+// --------------------------------------------------------------- the planner ---
+
+/** The set of tabs a Big Bet component may target (the model's `Tab` values). */
+const PLAN_TABS: Tab[] = ['data', 'metric', 'knowledge', 'connection', 'dashboard', 'agent', 'software', 'ml'];
+
+/** A completion transport (injected in tests). Turns messages into raw text. */
+export type PlanCompleter = (messages: AssistantMessage[]) => Promise<string>;
+
+const defaultCompleter: PlanCompleter = async (messages) => (await assistantComplete(messages)).content;
+
+function planSystem(): string {
+  return [
+    'You are the Big Bet PLANNER for the Sovereign Agentic OS. You break a strategic',
+    'goal into a concrete, buildable roadmap of governed OS components. Each step is',
+    'ONE artifact built in exactly ONE tab. Choose from these tabs:',
+    PLAN_TABS.map((t) => `- ${t}: ${TAB_LABEL[t]}`).join('\n'),
+    '',
+    'Order the steps as a build DAG: upstream foundations first (data / connection /',
+    'knowledge / metric), then the value-generating leaves (dashboard / agent /',
+    'software / ml) that depend on them. Keep it to 2–6 steps.',
+    '',
+    'Respond with STRICT JSON ONLY (no prose, no code fences) of the shape:',
+    '{"template":"<short-kebab-name>","steps":[{"tab":"data","title":"...",',
+    '"dependsOn":[<indices of earlier steps>],"offsetDays":<int planned-ready offset>,',
+    '"consumes":["<upstream artifact id>"],"rationale":"..."}]}',
+    'Indices in dependsOn refer to earlier steps in this same array (0-based).',
+  ].join('\n');
+}
+
+function planUser(goal: string, upstream?: { data?: string; connection?: string; knowledge?: string }): string {
+  const hints: string[] = [];
+  if (upstream?.data) hints.push(`existing data product artifact id: ${upstream.data}`);
+  if (upstream?.connection) hints.push(`existing connection artifact id: ${upstream.connection}`);
+  if (upstream?.knowledge) hints.push(`existing knowledge artifact id: ${upstream.knowledge}`);
+  return [
+    `Goal: ${goal}`,
+    hints.length ? `Reusable upstream artifacts (put in "consumes" where relevant):\n- ${hints.join('\n- ')}` : '',
+    'Produce the JSON plan now.',
+  ].filter(Boolean).join('\n\n');
+}
+
+/** Extract the first JSON object from the model text (tolerates ```json fences). */
+function extractJson(text: string): Record<string, unknown> | null {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidates = [fenced?.[1], text.match(/\{[\s\S]*\}/)?.[0]].filter(Boolean) as string[];
+  for (const c of candidates) {
+    try {
+      const obj = JSON.parse(c.trim());
+      if (obj && typeof obj === 'object') return obj as Record<string, unknown>;
+    } catch { /* try next */ }
+  }
+  return null;
+}
 
 /**
- * Goal → breakdown templates. The "churn"/"retention" template is the worked
- * example: a churn data product → a churn ML model (depends on data) → a Churn
- * Risk dashboard + a retention agent (both depend on the model). Other goals get
- * a sensible default (a data product + a dashboard on top).
+ * Parse + VALIDATE the model's JSON into a ProposedPlan. Unknown tabs are dropped,
+ * dependsOn indices are clamped to earlier steps, and offsets default sanely. A
+ * plan with no valid step is rejected (honest error — we never fabricate one).
  */
-export function proposePlan(goal: string, opts?: { upstream?: { data?: string; connection?: string; knowledge?: string } }): ProposedPlan {
-  const g = goal.toLowerCase();
-  const churn = /churn|retention|attrition/.test(g);
-  if (churn) {
-    return {
-      goal,
-      template: 'reduce-churn',
-      steps: [
-        { tab: 'data', title: 'Churn data product', dependsOn: [], offsetDays: 14, consumes: opts?.upstream?.connection ? [opts.upstream.connection] : [], rationale: 'A governed churn feature mart the model trains on.' },
-        { tab: 'ml', title: 'Churn risk model', dependsOn: [0], offsetDays: 35, rationale: 'Predicts churn probability; depends on the data product.' },
-        { tab: 'dashboard', title: 'Churn Risk dashboard', dependsOn: [1], offsetDays: 49, rationale: 'Surfaces at-risk accounts to the team; builds on the model.' },
-        { tab: 'agent', title: 'Sales retention agent', dependsOn: [1], offsetDays: 56, consumes: opts?.upstream?.knowledge ? [opts.upstream.knowledge] : [], rationale: 'Reaches out to at-risk accounts; builds on the model + knowledge.' },
-      ],
-    };
+export function parsePlanResponse(goal: string, raw: string): ProposedPlan {
+  const obj = extractJson(raw);
+  const rawSteps = Array.isArray(obj?.steps) ? (obj!.steps as Record<string, unknown>[]) : [];
+  const steps: PlannerStep[] = [];
+  for (let i = 0; i < rawSteps.length; i++) {
+    const s = rawSteps[i];
+    const tab = String(s.tab ?? '') as Tab;
+    if (!PLAN_TABS.includes(tab)) continue;
+    const title = String(s.title ?? '').trim() || `${TAB_LABEL[tab]} ${steps.length + 1}`;
+    const dependsOn = Array.isArray(s.dependsOn)
+      ? (s.dependsOn as unknown[]).map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 0 && d < i)
+      : [];
+    const offsetDays = Number.isFinite(Number(s.offsetDays)) && Number(s.offsetDays) > 0 ? Math.round(Number(s.offsetDays)) : 14 * (steps.length + 1);
+    const consumes = Array.isArray(s.consumes) ? (s.consumes as unknown[]).map((c) => String(c)).filter(Boolean) : undefined;
+    const rationale = String(s.rationale ?? '').trim() || `${TAB_LABEL[tab]} for the goal.`;
+    steps.push({ tab, title, dependsOn, offsetDays, ...(consumes && consumes.length ? { consumes } : {}), rationale });
   }
-  return {
-    goal,
-    template: 'default',
-    steps: [
-      { tab: 'data', title: `${goal} data product`, dependsOn: [], offsetDays: 14, rationale: 'A governed data product to ground the initiative.' },
-      { tab: 'dashboard', title: `${goal} dashboard`, dependsOn: [0], offsetDays: 28, rationale: 'A dashboard built on the data product.' },
-    ],
-  };
+  if (steps.length === 0) throw new BetError('The planner did not return a usable plan — try rephrasing the goal.', 502);
+  const template = String(obj?.template ?? '').trim() || 'plan';
+  return { goal, template, steps };
+}
+
+/**
+ * Turn a goal into a buildable plan by asking the ONE governed assistant LLM
+ * (resolved from Platform Admin → Models & Providers) to break it down, then
+ * validating its JSON. If the assistant is not configured, `assistantComplete`
+ * throws an honest, admin-actionable error — there is NO canned-template fallback.
+ */
+export async function proposePlan(
+  goal: string,
+  opts?: { upstream?: { data?: string; connection?: string; knowledge?: string }; complete?: PlanCompleter },
+): Promise<ProposedPlan> {
+  const g = goal.trim();
+  if (!g) throw new BetError('A goal is required.', 400);
+  const complete = opts?.complete ?? defaultCompleter;
+  const raw = await complete([
+    { role: 'system', content: planSystem() },
+    { role: 'user', content: planUser(g, opts?.upstream) },
+  ]);
+  return parsePlanResponse(g, raw);
 }
 
 // ----------------------------------------------------------------- approve ---

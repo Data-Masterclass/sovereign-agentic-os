@@ -85,6 +85,13 @@ const DEFAULT_ALLOWLIST = [
   'notion.com',
   'mcp.notion.com',
   'api.notion.com',
+  // Connected-drive OAuth flow: the Google + Microsoft OAuth token endpoints and
+  // the Drive / Microsoft Graph APIs the connector reads from (also add these to
+  // egressProxy.allowlist + the Cilium FQDN policy on a real deploy).
+  'googleapis.com', // www.googleapis.com (Drive) + oauth2.googleapis.com (token)
+  'accounts.google.com', // Google authorize endpoint
+  'graph.microsoft.com', // OneDrive via Microsoft Graph
+  'login.microsoftonline.com', // Microsoft OAuth authorize + token endpoints
 ];
 
 function allowlist(): string[] {

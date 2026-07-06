@@ -24,13 +24,30 @@ import {
   setOverride,
   updateBet,
 } from './store.ts';
-import { proposePlan, approvePlan } from './planner.ts';
+import { proposePlan, approvePlan, type PlanCompleter } from './planner.ts';
 import { deriveBet } from './status.ts';
 import { rollup } from './roadmap.ts';
 import { buildComposition } from './composition.ts';
 import { realizedValue, distribute } from './value.ts';
 import { __resetSources, __resetStrategy, __seedStrategy, resolveArtifact, sourceFor, isReady } from './sources.ts';
 import { type Actor, type BigBet, type Principal } from './model.ts';
+
+/**
+ * A deterministic assistant completer standing in for the ONE governed LLM: it
+ * returns the worked "reduce churn" breakdown as the planner's JSON contract, so
+ * these gate tests exercise the real proposePlan → parse → scaffold path offline.
+ */
+const churnCompleter: PlanCompleter = async () =>
+  JSON.stringify({
+    template: 'reduce-churn',
+    steps: [
+      { tab: 'data', title: 'Churn data product', dependsOn: [], offsetDays: 14, rationale: 'A governed churn feature mart the model trains on.' },
+      { tab: 'ml', title: 'Churn risk model', dependsOn: [0], offsetDays: 35, rationale: 'Predicts churn probability; depends on the data product.' },
+      { tab: 'dashboard', title: 'Churn Risk dashboard', dependsOn: [1], offsetDays: 49, rationale: 'Surfaces at-risk accounts; builds on the model.' },
+      { tab: 'agent', title: 'Sales retention agent', dependsOn: [1], offsetDays: 56, rationale: 'Reaches out to at-risk accounts; builds on the model.' },
+    ],
+  });
+const churnPlan = () => proposePlan('Reduce churn', { complete: churnCompleter });
 
 const sara: Actor = { id: 'sara', domains: ['sales'], role: 'builder', kind: 'human' };
 const amir: Principal = { id: 'amir', domains: ['marketing'], role: 'creator' }; // non-member, other domain
@@ -70,7 +87,7 @@ function newChurnBet() {
 test('gate: planner proposes + scaffolds a churn breakdown, all tagged + planned', async () => {
   reset();
   const bet = newChurnBet();
-  const plan = proposePlan('Reduce churn');
+  const plan = await churnPlan();
   assert.equal(plan.template, 'reduce-churn');
   assert.deepEqual(plan.steps.map((s) => s.tab), ['data', 'ml', 'dashboard', 'agent']);
 
@@ -94,7 +111,7 @@ test('gate: planner proposes + scaffolds a churn breakdown, all tagged + planned
 test('gate: certify the data product → status auto-flips; model blocked until then', async () => {
   reset();
   const bet = newChurnBet();
-  await approvePlan(bet.id, sara, proposePlan('Reduce churn'), { mode: 'autonomous', kickoff: '2026-07-01' });
+  await approvePlan(bet.id, sara, await churnPlan(), { mode: 'autonomous', kickoff: '2026-07-01' });
   let b = getBet(bet.id, sara);
   const data = b.components.find((c) => c.tab === 'data')!;
   const model = b.components.find((c) => c.tab === 'ml')!;
@@ -112,7 +129,7 @@ test('gate: certify the data product → status auto-flips; model blocked until 
 test('gate: the planner CANNOT promote the model; a Builder can', async () => {
   reset();
   const bet = newChurnBet();
-  const res = await approvePlan(bet.id, sara, proposePlan('Reduce churn'), { mode: 'autonomous' });
+  const res = await approvePlan(bet.id, sara, await churnPlan(), { mode: 'autonomous' });
   const model = getBet(bet.id, sara).components.find((c) => c.tab === 'ml')!;
 
   // A planner actor is rejected for the ready (production) transition.
@@ -318,7 +335,7 @@ test('gate: PATCH whitelist blocks mass-assignment + creator self-activation', (
 test('value end-to-end: realized distributes to components and reconciles to the bet', async () => {
   reset();
   const bet = newChurnBet();
-  await approvePlan(bet.id, sara, proposePlan('Reduce churn'), { mode: 'autonomous' });
+  await approvePlan(bet.id, sara, await churnPlan(), { mode: 'autonomous' });
   const b = getBet(bet.id, sara);
   const realized = realizedValue(b, 'sara').realized; // uplift default = 360k
   const refs = b.components.map((c) => ({ refId: c.id, artifactId: c.artifactId }));

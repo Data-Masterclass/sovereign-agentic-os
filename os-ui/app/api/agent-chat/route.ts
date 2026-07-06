@@ -6,6 +6,7 @@ import { config } from '@/lib/config';
 import { contextForAgentKey, tabForAgentKey } from '@/lib/tabs/context';
 import { currentUser } from '@/lib/auth';
 import { runTabAgent, renderAssistantText } from '@/lib/assistant/runtime';
+import { assistantComplete, AssistantNotConfiguredError } from '@/lib/assistant/complete';
 
 export const dynamic = 'force-dynamic';
 
@@ -144,6 +145,9 @@ export async function POST(req: Request) {
         model: config.litellmExecModel,
       });
     } catch (e) {
+      if (e instanceof AssistantNotConfiguredError) {
+        return NextResponse.json({ error: e.message }, { status: e.status });
+      }
       if ((e as Error).name === 'AbortError') {
         return NextResponse.json(
           { error: 'The model did not respond in time — it may still be warming up. Try again in a few seconds.' },
@@ -159,57 +163,31 @@ export async function POST(req: Request) {
 
   // PLAIN PATH (keys with no tool surface, e.g. connections): ground the helper in
   // its tab's CONTEXT.md (tools, golden path, constraints) so answers match the
-  // real, governed environment the user builds in.
+  // real, governed environment the user builds in. It runs on the SAME one
+  // assistant model as every other built-in assistant, via the governed gateway.
   const base = SYSTEM_PROMPTS[agent] ?? FALLBACK_PROMPT;
   const tabContext = contextForAgentKey(agent);
   const system = tabContext
     ? `${base}\n\n--- TAB BUILD CONTEXT (authoritative environment reference) ---\n${tabContext}`
     : base;
-  const payload = {
-    model: config.litellmChatModel,
-    messages: [{ role: 'system', content: system }, ...clean],
-    temperature: 0.2,
-  };
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), CHAT_TIMEOUT_MS);
   try {
-    const res = await fetch(`${config.litellmUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${config.litellmMasterKey}`,
-        'content-type': 'application/json',
-        accept: 'application/json',
-      },
-      body: JSON.stringify(payload),
-      cache: 'no-store',
-      signal: ctrl.signal,
-    });
-    const text = await res.text();
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: `LiteLLM ${res.status}: ${text.slice(0, 300)}` },
-        { status: 502 },
-      );
-    }
-    let data: Record<string, unknown> = {};
-    try {
-      data = JSON.parse(text);
-    } catch {
-      return NextResponse.json(
-        { error: `LiteLLM returned non-JSON: ${text.slice(0, 200)}` },
-        { status: 502 },
-      );
-    }
-    const choices = (data?.choices ?? []) as Array<Record<string, unknown>>;
-    const message = (choices[0]?.message ?? {}) as Record<string, unknown>;
-    const content = String(message?.content ?? '').trim();
+    const user = await currentUser().catch(() => null);
+    const { content, model } = await assistantComplete(
+      [{ role: 'system', content: system }, ...clean],
+      { user: user ?? undefined, signal: ctrl.signal },
+    );
     return NextResponse.json({
       role: 'assistant',
       content: content || '(the model returned no content)',
-      model: String(data?.model ?? config.litellmChatModel),
+      model,
     });
   } catch (e) {
+    if (e instanceof AssistantNotConfiguredError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
     if ((e as Error).name === 'AbortError') {
       return NextResponse.json(
         { error: 'The model did not respond in time — it may still be warming up. Try again in a few seconds.' },
@@ -217,7 +195,7 @@ export async function POST(req: Request) {
       );
     }
     return NextResponse.json(
-      { error: `Could not reach LiteLLM: ${(e as Error).message}` },
+      { error: `Could not reach the assistant model: ${(e as Error).message}` },
       { status: 502 },
     );
   } finally {

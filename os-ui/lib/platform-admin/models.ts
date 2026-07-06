@@ -21,6 +21,20 @@ export type ModelTask = 'chat' | 'reasoning' | 'embedding';
 export type ModelTier = 'sovereign' | 'premium';
 export type ModelRoute = 'self-hosted' | 'stackit';
 
+/**
+ * The OpenAI-compatible endpoint of an ADMIN-REGISTERED model (e.g. the STACKIT
+ * managed LLM service). It carries ONLY the base URL, the upstream model name and
+ * a secrets-manager REFERENCE (+ fingerprint) to its API key — NEVER a raw key.
+ * The raw key lives solely in the secrets vault; the LiteLLM gateway reads it once
+ * at registration time to proxy the model.
+ */
+export type ModelEndpoint = {
+  baseUrl: string;
+  modelName: string;
+  keyRef: { name: string; key: string };
+  fingerprint: string;
+};
+
 export type Model = {
   id: string;
   label: string;
@@ -31,6 +45,8 @@ export type Model = {
   enabled: boolean;
   /** Monthly spend cap in EUR for this model, or null for "envelope only". */
   capEUR: number | null;
+  /** Present only for admin-registered OpenAI-compatible models (ref, never raw). */
+  endpoint?: ModelEndpoint;
 };
 
 /** A provider key as the catalog holds it: a REFERENCE + fingerprint, never raw. */
@@ -48,11 +64,22 @@ function fail(message: string, status: number): Error {
   return e;
 }
 
-type ModelsState = { catalog: Map<string, Model>; keys: Map<string, ProviderKey>; defaults: Record<ModelTask, string>; hydration: Promise<void> | null };
+type ModelsState = {
+  catalog: Map<string, Model>;
+  keys: Map<string, ProviderKey>;
+  defaults: Record<ModelTask, string>;
+  /** The ONE assistant model that powers every built-in artifact-building
+   *  assistant (Agents/Software build chat, Big Bets planner, Knowledge, Metric).
+   *  Defaults to the sovereign chat model so the OS works out of the box; an admin
+   *  points it at the STACKIT managed LLM in Platform Admin → Models & Providers. */
+  assistant: string;
+  hydration: Promise<void> | null;
+};
 const MODELS_KEY = Symbol.for('soa.platform.models');
+const DEFAULT_ASSISTANT = 'ministral-8b';
 function modelsState(): ModelsState {
   const g = globalThis as unknown as Record<symbol, ModelsState | undefined>;
-  if (!g[MODELS_KEY]) g[MODELS_KEY] = { catalog: new Map(), keys: new Map(), defaults: { chat: 'ministral-8b', reasoning: 'magistral-small', embedding: 'bge-m3' }, hydration: null };
+  if (!g[MODELS_KEY]) g[MODELS_KEY] = { catalog: new Map(), keys: new Map(), defaults: { chat: 'ministral-8b', reasoning: 'magistral-small', embedding: 'bge-m3' }, assistant: DEFAULT_ASSISTANT, hydration: null };
   return g[MODELS_KEY]!;
 }
 
@@ -70,9 +97,10 @@ const mirror = osMirror({
         route: { type: 'keyword' },
         enabled: { type: 'boolean' },
         addedAt: { type: 'date' },
-        // Arbitrary shapes (cap, ref, defaults) stored but not field-indexed.
+        // Arbitrary shapes (cap, ref, endpoint, defaults) stored but not field-indexed.
         capEUR: { type: 'double' },
         ref: { type: 'object', enabled: false },
+        endpoint: { type: 'object', enabled: false },
         fingerprint: { type: 'keyword' },
       },
     },
@@ -99,10 +127,18 @@ async function hydrateModels(): Promise<void> {
       if (d.chat) s.defaults.chat = d.chat;
       if (d.reasoning) s.defaults.reasoning = d.reasoning;
       if (d.embedding) s.defaults.embedding = d.embedding;
+    } else if (docId === '__assistant__') {
+      // Restore the chosen assistant model id.
+      const a = doc as unknown as { assistant?: string };
+      if (a.assistant) s.assistant = a.assistant;
     } else if (docId.startsWith('key:')) {
       // Restore provider key (ref+fingerprint; NEVER a raw value).
       const pk = doc as unknown as ProviderKey;
       if (pk.provider) s.keys.set(pk.provider, pk);
+    } else if (typeof doc.task === 'string' && !s.catalog.has(docId)) {
+      // An admin-REGISTERED model (e.g. the STACKIT managed LLM) not in the static
+      // seed — restore it in full (endpoint holds only a ref + fingerprint).
+      s.catalog.set(docId, doc as unknown as Model);
     } else {
       // Restore mutable model fields (enabled, capEUR) — keep seed catalog shape.
       const m = s.catalog.get(docId);
@@ -155,6 +191,9 @@ export function setEnabled(modelId: string, enabled: boolean): Model {
   if (!enabled && Object.values(modelsState().defaults).includes(modelId)) {
     throw fail('Cannot disable a model that is a current default', 409);
   }
+  if (!enabled && modelsState().assistant === modelId) {
+    throw fail('Cannot disable the current assistant model', 409);
+  }
   m.enabled = enabled;
   mirror.writeThrough(m.id, m);
   return m;
@@ -201,6 +240,71 @@ export function listProviderKeys(): ProviderKey[] {
   return [...modelsState().keys.values()].sort((a, b) => a.provider.localeCompare(b.provider));
 }
 
+// ------------------------------------------------------- assistant LLM (the ONE) --
+
+/**
+ * Register an admin-supplied OpenAI-compatible model (the STACKIT managed LLM
+ * service). THE SECRETS RULE holds: the caller passes only the secrets-manager
+ * `keyRef` + `fingerprint` (the raw key was written to the vault + handed to the
+ * gateway server-side); this catalog NEVER sees or stores a raw key. The model is
+ * a `chat`-task premium route so it is eligible to be the default assistant.
+ */
+export function registerAssistantModel(input: {
+  id?: string;
+  label: string;
+  endpoint: ModelEndpoint;
+  addedBy: string;
+}): Model {
+  seed();
+  const id = (input.id?.trim() || 'stackit-managed-assistant');
+  if (!input.label.trim()) throw fail('A model label is required', 400);
+  if (!input.endpoint.baseUrl.trim() || !input.endpoint.modelName.trim()) throw fail('A base URL and model name are required', 400);
+  if (!input.endpoint.keyRef?.name || !input.endpoint.keyRef?.key) throw fail('A secrets-manager key reference is required', 400);
+  const m: Model = {
+    id,
+    label: input.label.trim(),
+    provider: 'stackit',
+    task: 'chat',
+    tier: 'premium',
+    route: 'stackit',
+    enabled: true,
+    capEUR: null,
+    endpoint: input.endpoint,
+  };
+  modelsState().catalog.set(id, m);
+  mirror.writeThrough(id, m);
+  return m;
+}
+
+/** The id of the ONE model that powers every built-in assistant. */
+export function getAssistantModelId(): string {
+  seed();
+  return modelsState().assistant;
+}
+
+/**
+ * Resolve the assistant model, or `null` when it is unset / unknown / disabled —
+ * the caller turns `null` into an HONEST "configure it in Platform Admin" error
+ * (never a silent fake-AI fallback).
+ */
+export function getAssistantModel(): Model | null {
+  seed();
+  const m = modelsState().catalog.get(modelsState().assistant);
+  return m && m.enabled ? m : null;
+}
+
+/** Choose the assistant model. It must exist, be enabled and be chat-capable. */
+export function setAssistantModel(modelId: string): Model {
+  seed();
+  const m = modelsState().catalog.get(modelId);
+  if (!m) throw fail('Unknown model', 404);
+  if (m.task !== 'chat') throw fail(`Model ${modelId} is not a chat model — the assistant must be chat-capable`, 400);
+  if (!m.enabled) throw fail('Cannot set a disabled model as the assistant', 409);
+  modelsState().assistant = modelId;
+  mirror.writeThrough('__assistant__', { id: '__assistant__', assistant: modelId });
+  return m;
+}
+
 /** model id → enabled, for the policy compiler. */
 export function enabledMap(): Record<string, boolean> {
   return Object.fromEntries(listModels().map((m) => [m.id, m.enabled]));
@@ -213,6 +317,7 @@ export function _reset(): void {
   s.defaults.chat = 'ministral-8b';
   s.defaults.reasoning = 'magistral-small';
   s.defaults.embedding = 'bge-m3';
+  s.assistant = DEFAULT_ASSISTANT;
   s.hydration = null;
   mirror.__reset();
 }

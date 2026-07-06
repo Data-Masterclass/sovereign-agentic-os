@@ -38,6 +38,9 @@ import {
 } from '@/lib/governance';
 import { registerBronzeSource, indexToFiles } from '@/lib/data-handoff';
 import { logEgress } from '@/lib/egress-requests';
+import { providerForTemplate } from '@/lib/oauth/providers';
+import { storeTokens, resolveAccessToken } from '@/lib/oauth/connection-token';
+import type { TokenSet } from '@/lib/oauth/token-set';
 
 /**
  * Connections registry — the home of record for every MANUALLY-credentialed
@@ -670,6 +673,73 @@ function executeMock(c: Connection, tool: string, args: Record<string, unknown>,
     default:
       return { ...base, ok: true, tool, args };
   }
+}
+
+// -------------------------------------------------------- OAuth token wiring ---
+
+/**
+ * OAuth CALLBACK sink: persist the real token set on a Drive connection's secret
+ * ref (overwriting the offline placeholder minted at create time). ONLY the
+ * connection owner may complete the OAuth flow for their personal connection.
+ * The token set is the credential — never returned, traced, or logged (we trace
+ * ONLY that a connection was authorized + its non-reversible fingerprint).
+ */
+export async function storeConnectionTokens(connId: string, userId: string, tokens: TokenSet): Promise<Connection> {
+  const map = await getCache();
+  const c = map.get(connId);
+  if (!c) throw withStatus(new Error('Connection not found'), 404);
+  if (c.owner !== userId) throw withStatus(new Error('Only the connection owner can complete its OAuth flow'), 403);
+  if (c.type !== 'Drive') throw withStatus(new Error('This connection is not an OAuth Drive connection'), 400);
+  storeTokens(c.secretRef, tokens); // raw token set → Secrets Manager only
+  c.secretSet = true;
+  c.secretFingerprint = secretFingerprint(c.secretRef);
+  c.health = 'healthy';
+  c.mode = 'live';
+  c.updatedAt = now();
+  map.set(c.id, c);
+  writeThrough(c);
+  void trace({
+    principal: c.principal,
+    tool: 'generate',
+    input: { action: 'oauth_connected', by: userId, provider: providerForTemplate(c.template) },
+    output: { connectionId: c.id, fingerprint: c.secretFingerprint }, // fingerprint, NEVER the token
+    decision: 'allow',
+  });
+  return c;
+}
+
+/**
+ * Resolve a live OAuth access token for a Drive connection so the Files sync can
+ * pull the REAL drive. GOVERNANCE: only the connection OWNER may sync it. Silently
+ * refreshes an expired token (and re-stores it); on a hard auth failure marks the
+ * connection `needs-reconnect` and returns null so the sync degrades to the mock
+ * client instead of throwing. The token is returned ONLY to the trusted server
+ * sync path — never to a client, trace, or log.
+ */
+export async function resolveConnectionAccessToken(connId: string, userId: string): Promise<string | null> {
+  const map = await getCache();
+  const c = map.get(connId);
+  if (!c) throw withStatus(new Error('Connection not found'), 404);
+  if (c.owner !== userId) throw withStatus(new Error('Only the connection owner can sync this connection'), 403);
+  const provider = c.type === 'Drive' ? providerForTemplate(c.template) : null;
+  if (!provider) return null; // not an OAuth drive connection → mock path
+  const res = await resolveAccessToken(c.secretRef, provider);
+  if (res.status === 'live') {
+    if (res.refreshed || c.health !== 'healthy') {
+      c.health = 'healthy';
+      c.updatedAt = now();
+      map.set(c.id, c);
+      writeThrough(c);
+    }
+    return res.accessToken;
+  }
+  if (res.status === 'needs-reconnect' && c.health !== 'needs-reconnect') {
+    c.health = 'needs-reconnect';
+    c.updatedAt = now();
+    map.set(c.id, c);
+    writeThrough(c);
+  }
+  return null; // 'none' (offline placeholder) or 'needs-reconnect' → mock fake-drive
 }
 
 export async function deleteConnection(connId: string, user: CurrentUser): Promise<void> {

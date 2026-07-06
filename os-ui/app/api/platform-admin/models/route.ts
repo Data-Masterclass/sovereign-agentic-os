@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { listModels, getDefaults, listProviderKeys, registerProviderKey } from '@/lib/platform-admin/models';
+import { listModels, getDefaults, getAssistantModelId, listProviderKeys, registerProviderKey } from '@/lib/platform-admin/models';
 import { putSecret, secretFingerprint } from '@/lib/secrets';
 import { audit } from '@/lib/platform-admin/audit';
 
@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     await adminCtx();
-    return NextResponse.json({ models: listModels(), defaults: getDefaults(), keys: listProviderKeys() });
+    return NextResponse.json({ models: listModels(), defaults: getDefaults(), assistant: getAssistantModelId(), keys: listProviderKeys() });
   } catch (e) {
     return fail(e);
   }

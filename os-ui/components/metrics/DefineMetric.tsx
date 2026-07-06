@@ -15,59 +15,10 @@ import {
 const AGGREGATIONS = ['count', 'count_distinct', 'sum', 'avg', 'min', 'max', 'number'] as const;
 type Aggregation = (typeof AGGREGATIONS)[number];
 
-type Form = { name: string; aggregation: Aggregation; column: string; dimensions: string };
+type Form = { name: string; aggregation: Aggregation; column: string; dimensions: string[] };
 type Mode = 'form' | 'agent' | 'yaml';
 
-const EMPTY: Form = { name: '', aggregation: 'sum', column: '', dimensions: '' };
-
-/**
- * Best-effort client parse of a metrics-agent prompt into the SAME form fields, e.g.
- * "define revenue as the sum of net_amount by region" →
- *   { name: revenue, aggregation: sum, column: net_amount, dimensions: region }.
- * It only fills what it recognizes — the user reviews the result before submitting, and
- * the API still proves form == agent on the server (convergence).
- */
-function parsePrompt(text: string): Form {
-  const t = text.trim();
-  const lower = t.toLowerCase();
-
-  let aggregation: Aggregation = 'sum';
-  if (/\bcount[\s_]?distinct\b|\bdistinct\b|\bunique\b/.test(lower)) aggregation = 'count_distinct';
-  else if (/\bcount\b|\bnumber of\b/.test(lower)) aggregation = 'count';
-  else if (/\bavg\b|\baverage\b|\bmean\b/.test(lower)) aggregation = 'avg';
-  else if (/\bsum\b|\btotal\b/.test(lower)) aggregation = 'sum';
-  else if (/\bmin\b|\bminimum\b/.test(lower)) aggregation = 'min';
-  else if (/\bmax\b|\bmaximum\b/.test(lower)) aggregation = 'max';
-
-  // name — the words after "define"/"call it"/"metric" and before "as".
-  let name = '';
-  const nameMatch = t.match(/(?:define|call it|create|metric)\s+(.+?)\s+(?:as|=|:)\b/i);
-  if (nameMatch) name = nameMatch[1].trim();
-  else {
-    const lead = t.match(/^([A-Za-z][\w ]*?)\s+(?:as|=|:)\b/);
-    if (lead) name = lead[1].trim();
-  }
-
-  // column — the identifier after "of"/"on"/"column" (the thing being aggregated).
-  let column = '';
-  if (aggregation !== 'count') {
-    const colMatch = t.match(/\b(?:of|on|over|column|field)\s+(?:the\s+)?([A-Za-z_][\w]*)/i);
-    if (colMatch) column = colMatch[1];
-  }
-
-  // dimensions — everything after "by", split on "and"/commas.
-  let dimensions = '';
-  const dimMatch = t.match(/\bby\s+(.+)$/i);
-  if (dimMatch) {
-    dimensions = dimMatch[1]
-      .split(/,|\band\b/i)
-      .map((s) => s.trim().replace(/[.;]+$/, ''))
-      .filter(Boolean)
-      .join(', ');
-  }
-
-  return { name, aggregation, column, dimensions };
-}
+const EMPTY: Form = { name: '', aggregation: 'sum', column: '', dimensions: [] };
 
 function DatasetPicker({
   value,
@@ -100,23 +51,72 @@ function DatasetPicker({
   );
 }
 
+/** Fetch the host dataset's REAL columns so the pickers never take a typed name. */
+function useColumns(datasetId: string): string[] {
+  const [columns, setColumns] = useState<string[]>([]);
+  useEffect(() => {
+    if (!datasetId) { setColumns([]); return; }
+    let live = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/data/datasets/${datasetId}`, { cache: 'no-store' });
+        const data = await res.json();
+        if (live && res.ok) {
+          const cols = (data?.dataset?.columns ?? []) as { name: string }[];
+          setColumns(cols.map((c) => c.name).filter(Boolean));
+        }
+      } catch { if (live) setColumns([]); }
+    })();
+    return () => { live = false; };
+  }, [datasetId]);
+  return columns;
+}
+
 export default function DefineMetric({ onDefined }: { onDefined: () => void }) {
   const [datasetId, setDatasetId] = useState('');
   const [mode, setMode] = useState<Mode>('form');
   const [form, setForm] = useState<Form>(EMPTY);
   const [prompt, setPrompt] = useState('define revenue as the sum of net_amount by region');
   const [usedAgent, setUsedAgent] = useState(false);
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [agentErr, setAgentErr] = useState('');
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [result, setResult] = useState<DefineResult | null>(null);
 
+  const columns = useColumns(datasetId);
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
 
-  const applyPrompt = useCallback(() => {
-    setForm(parsePrompt(prompt));
-    setUsedAgent(true);
-  }, [prompt]);
+  const toggleDimension = (col: string) =>
+    setForm((f) => ({
+      ...f,
+      dimensions: f.dimensions.includes(col) ? f.dimensions.filter((d) => d !== col) : [...f.dimensions, col],
+    }));
+
+  // The agent proposes a metric grounded in the dataset's real columns via the ONE
+  // governed assistant LLM; the user reviews the proposed fields, then defines.
+  const askAgent = useCallback(async () => {
+    if (!datasetId) { setAgentErr('Pick a host dataset first.'); return; }
+    setAgentErr(''); setAgentBusy(true);
+    try {
+      const res = await fetch('/api/metrics/agent', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ datasetId, goal: prompt }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setAgentErr(data.error ?? 'The metric agent could not propose a metric'); return; }
+      const p = data.form as { name: string; aggregation: Aggregation; column: string; dimensions: string[] };
+      setForm({
+        name: p.name ?? '',
+        aggregation: (AGGREGATIONS as readonly string[]).includes(p.aggregation) ? p.aggregation : 'sum',
+        column: p.column ?? '',
+        dimensions: Array.isArray(p.dimensions) ? p.dimensions : [],
+      });
+      setUsedAgent(true);
+    } catch (e) { setAgentErr((e as Error).message); } finally { setAgentBusy(false); }
+  }, [datasetId, prompt]);
 
   const submit = useCallback(async () => {
     setErr(''); setBusy(true); setResult(null);
@@ -124,13 +124,13 @@ export default function DefineMetric({ onDefined }: { onDefined: () => void }) {
       name: form.name.trim(),
       aggregation: form.aggregation,
       column: form.column.trim(),
-      dimensions: form.dimensions.split(',').map((s) => s.trim()).filter(Boolean),
+      dimensions: form.dimensions,
     };
     try {
       const res = await fetch('/api/metrics/define', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        // In agent mode we send the SAME parsed form as `agent` so the API can prove
+        // In agent mode we send the SAME accepted form as `agent` so the API can prove
         // form == agent; otherwise the server defaults agent to the form.
         body: JSON.stringify({ datasetId, form: payload, agent: usedAgent ? payload : undefined }),
       });
@@ -175,12 +175,17 @@ export default function DefineMetric({ onDefined }: { onDefined: () => void }) {
               rows={2}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder="define revenue as the sum of net_amount by region"
+              placeholder="describe the metric — e.g. total net revenue by region"
             />
             <div className="row" style={{ marginTop: 10 }}>
-              <button className="btn ghost" onClick={applyPrompt} disabled={!prompt.trim()}>Parse →</button>
-              <span className="hint" style={{ marginTop: 6 }}>Parsed into the same fields below — review, then define.</span>
+              <button className="btn ghost" onClick={askAgent} disabled={agentBusy || !prompt.trim() || !datasetId}>
+                {agentBusy ? <span className="spin" /> : 'Propose →'}
+              </button>
+              <span className="hint" style={{ marginTop: 6 }}>
+                The agent proposes into the fields below using this dataset&apos;s real columns — review, then define.
+              </span>
             </div>
+            {agentErr ? <div className="error" style={{ marginTop: 10 }}>{agentErr}</div> : null}
           </div>
         ) : null}
 
@@ -193,16 +198,48 @@ export default function DefineMetric({ onDefined }: { onDefined: () => void }) {
             )}
           </div>
         ) : (
-          <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 14 }}>
-            <input placeholder="name (e.g. Revenue)" value={form.name} onChange={(e) => set({ name: e.target.value })} style={{ maxWidth: 180 }} />
-            <select value={form.aggregation} onChange={(e) => set({ aggregation: e.target.value as Aggregation })}>
-              {AGGREGATIONS.map((a) => <option key={a} value={a}>{a}</option>)}
-            </select>
-            {form.aggregation !== 'count' ? (
-              <input placeholder="column (e.g. net_amount)" value={form.column} onChange={(e) => set({ column: e.target.value })} style={{ maxWidth: 180 }} />
-            ) : null}
-            <input placeholder="dimensions, comma-separated (region, order_date)" value={form.dimensions} onChange={(e) => set({ dimensions: e.target.value })} style={{ maxWidth: 320 }} />
-          </div>
+          <>
+            <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 14 }}>
+              <input placeholder="name (e.g. Revenue)" value={form.name} onChange={(e) => set({ name: e.target.value })} style={{ maxWidth: 180 }} />
+              <select value={form.aggregation} onChange={(e) => set({ aggregation: e.target.value as Aggregation })}>
+                {AGGREGATIONS.map((a) => <option key={a} value={a}>{a}</option>)}
+              </select>
+              {form.aggregation !== 'count' ? (
+                <select
+                  value={columns.includes(form.column) ? form.column : ''}
+                  onChange={(e) => set({ column: e.target.value })}
+                  disabled={!datasetId || columns.length === 0}
+                  style={{ minWidth: 200 }}
+                >
+                  <option value="">{columns.length === 0 ? 'no columns — document them in Data' : 'choose a column…'}</option>
+                  {columns.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              ) : null}
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              <span className="comp-label" style={{ margin: 0 }}>Dimensions (slice by)</span>
+              {columns.length === 0 ? (
+                <p className="hint" style={{ marginTop: 6 }}>
+                  {datasetId ? 'This dataset has no documented columns yet — add column docs in Data.' : 'Pick a host dataset to choose dimensions.'}
+                </p>
+              ) : (
+                <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                  {columns.filter((c) => c !== form.column).map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      className={`switch${form.dimensions.includes(c) ? ' on' : ''}`}
+                      onClick={() => toggleDimension(c)}
+                    >
+                      <span className="switch-track"><span className="switch-thumb" /></span>
+                      <span className="switch-text">{c}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
         )}
 
         {mode !== 'yaml' ? (

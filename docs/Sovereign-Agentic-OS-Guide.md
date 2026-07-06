@@ -2,7 +2,7 @@
 title: "Sovereign Agentic OS"
 subtitle: "The product guide — install it, run it, and put every governed workflow to work."
 author: "Orchestrated by Data Masterclass · datamasterclass.com · www.sovereign-agentic.com"
-date: "Chart 0.2.11 (app 0.2.0-alpha.11 · os-ui 0.1.32) · generated {{DATE}} from commit {{GIT_COMMIT}}"
+date: "Chart 0.2.12 (app 0.2.0-alpha.12 · os-ui 0.1.44) · generated {{DATE}} from commit {{GIT_COMMIT}}"
 titlepage: true
 titlepage-rule-color: "c8a24a"
 toc: true
@@ -108,10 +108,12 @@ service to run.
 
 > **Where this release stands.** Layers 1–3 are in place; **Science (Layer 4) is opt-in / off by
 > default**. The **OS UI is v1.0** — every sidebar tab is a real surface, brand-themed, with a
-> light/dark theme (light is the default). Most flows run **live against the cluster** and fall
-> back to an honest, clearly-labelled offline mock on a local `kind` cluster. A few areas are
-> explicitly v1 scaffolds — most notably some **Connections** create/build flows (see that chapter).
-> The core is **Apache-2.0**; bundled components keep their own licenses.
+> light/dark theme (light is the default). The governance spine — OPA, approvals, RLS, promote
+> ladders, roles, audit, MCP (live end-to-end at `https://agentic.datamasterclass.com/api/mcp`),
+> auth, Knowledge, and the Data ingest pipeline — is **fully live**. A few execution and
+> integration surfaces are still being wired: real external tool execution beyond Google Drive /
+> OneDrive, the in-cluster live-app runner for Software, and the Science / Layer-4 ML tab
+> (deferred, opt-in). The core is **Apache-2.0**; bundled components keep their own licenses.
 
 \newpage
 
@@ -294,7 +296,9 @@ team is a deliberate, audited sequence — this is the secure first-run path:
 5. **Invite real users.** In **Admin → Users & Access** (or **Governance → Users & access**), invite
    people **by email — the email is the username** — pick their **domain memberships** (a
    multi-select), and give each a **role per domain**; the role picker explains what each role can
-   do. If a mailer is configured the invitee gets a verification email; you never send a password.
+   do. The platform generates a **one-time temporary password** that the Administrator copies and
+   shares out-of-band; the invitee must set their own password on first login. If a mailer is
+   configured the invitee also receives a verification email.
 6. **Roles take effect everywhere.** Each assignment **compiles to OPA**, so a person who is a
    *Builder* in one domain and a *Creator* in another sees exactly the right controls in every tab,
    immediately.
@@ -378,7 +382,8 @@ numbers and never bypasses governance.
 
 **Roles.** Every role — the modules and ordering shift by persona; everything is OPA/RLS-scoped.
 **Connects to.** Reads Governance, the artifact registry, Strategy and Monitoring; routes into every
-tab. *(Domain pulse and Health & cost read live feeds, mock-stubbed on `kind` and labelled as such.)*
+tab. Domain pulse and spend feeds run live on a deployed cluster; on a local `kind` install they
+fall back to labelled offline stubs.
 
 ## Strategy — pillars, value and adoption
 
@@ -432,8 +437,10 @@ the platform, linked up to a Strategy pillar with a value target.
 
 **Roles.** Anyone can draft a bet; advancing and promotion stay human (Builder/Admin); the planner
 runs as a non-promoting actor.
-**Connects to.** **Strategy** (pillar up-link), every Build tab (components), **Monitoring** (runtime
-health). *(Cross-tab component sources are offline-mock on `kind`, honestly labelled.)*
+**Connects to.** **Strategy** (pillar up-link, with a live Strategy↔Big Bets linkage), every Build
+tab (cross-tab artifact links and real metric values are live on a deployed cluster), **Monitoring**
+(runtime health). On a local `kind` install cross-tab component sources fall back to labelled
+offline stubs.
 
 ## Agents — compose, govern, run
 
@@ -459,9 +466,11 @@ left, the selected system's full detail on the right.
    per-agent override writes the system's LiteLLM routing.
 4. Press **Build** — *Build = execute + verify*: it runs the compiled system and checks it, every
    call routed through **LiteLLM → OPA → Langfuse**.
-5. **Run / schedule / toggle** the system, or **fork-to-own** a copy. By default agents are
+5. **Run / schedule / toggle** the system, or **fork-to-own** a copy. **Scheduling** provisions a
+   real Kubernetes **CronJob** for the system (live on a deployed cluster). By default agents are
    *propose-don't-commit* — a write pauses for approval and enqueues in **Governance**.
-6. Certify a finished agent to list it in the Marketplace.
+6. **Promote** the system up the sharing ladder via the promote UX on the system card, then
+   **certify** a finished system to list it in the Marketplace.
 
 > **What is no longer here.** The Agents tab shows only **user-authored agent systems**. The
 > platform's backend service agents — the **Domain RAG agent**, the **ML pipeline agent** and the
@@ -613,7 +622,9 @@ security keeps Personal units private.
    OCR/caption for images) → embed → hybrid OpenSearch index.
 2. Organize with **folders + tags** and preview in place.
 3. **Search** across names, tags and content (DLS-filtered to what you may see).
-4. In **Sources**, connect **Google Drive / OneDrive**; synced files **re-govern** under our tiers,
+4. In **Sources**, connect **Google Drive / OneDrive** via OAuth — the OAuth app for each must be
+   registered once by a platform Administrator in **Admin → Connections** (see that chapter); once
+   registered, any user can connect their own account. Synced files **re-govern** under our tiers,
    not the source's ACLs.
 5. **Promote/certify** up the ladder (a light docs gate: owner + description + at least one tag);
    `restricted` files are stored but never indexed.
@@ -646,7 +657,10 @@ non-technical users. The tiles are grouped **Data** (your Personal datasets) · 
 3. Personal work stays governed per-user: your Bronze/Silver/Gold tables live in your per-user
    Iceberg schema, and the separate Query **sandbox lane** (DuckDB) sits *behind* the same Trino
    governance boundary — it only ever sees your own uploads or an already-masked extract.
-4. Browse structured assets in **Catalog** (OpenMetadata) and **Preview** any into Query.
+   Datasets that have not been materialized yet are shown with an honest **not-materialized**
+   state label — the tab never fabricates a green ✓ for a stage that has not been built.
+4. Browse structured assets in **Catalog** (OpenMetadata); **row-preview** any dataset inline
+   (a governed sample, DLS-filtered to what you may see) and **Preview** any into Query.
 5. Ask questions in **Talk to your data** — governed **NL→SQL**: the model is shown only the
    datasets *you* can see, generates exactly one read-only SELECT (validated before it runs),
    executes through governed Trino under your row filters and masks, and answers grounded only in
@@ -699,13 +713,14 @@ layer and the agents can never disagree.
 **The golden path.**
 
 1. Open **Dashboards** — tiles grouped Personal / Shared / Marketplace.
-2. Build one two convergent ways: **drag charts** in Superset, or ask the **dashboard agent**
-   ("build me a Sales overview") — both edit the same dashboard, on the same metrics.
+2. Build one two convergent ways: **drag charts** in Superset (real Superset import, live), or ask
+   the **dashboard agent** ("build me a Sales overview") — both edit the same dashboard, on the
+   same metrics.
 3. **Double-click** a tile to open it inline via the Superset Embedded SDK; a server-minted **guest
    token carries the viewer's RLS**, so a shared dashboard still shows only your rows.
 4. Set a **threshold alert** on a metric → notify by email/Slack/in-app *and* optionally trigger a
-   governed agent run (Langfuse-traced).
-5. Schedule a **report** (a dashboard snapshot on a cadence).
+   governed agent run (Langfuse-traced). Alert delivery is live.
+5. Schedule a **report** (a dashboard snapshot on a cadence). Report delivery is live.
 6. **Promote/certify** the dashboard up the ladder without ever broadening rows.
 
 **Roles.** Creators build; Builders promote to Shared; Administrators certify to Marketplace.
@@ -763,7 +778,8 @@ reuse **Administrator-certified products of every type** across the tenant's dom
 3. Open a listing → an RLS-filtered **preview/sample**, lineage and ratings.
 4. **Import.** The default is **read-in-place**: you consume under **your own identity + row-level
    security**, and the owner's certified artifact stays the source of truth. Some types differ — an
-   **app** deploys your own instance, a **connection** is a template (bring your own credentials), an
+   **app** deploys your own real running instance (live), a **connection template** creates a real
+   governed Connection in your personal lane (bring your own credentials, then use immediately), an
    **agent** is fork-to-own.
 5. Approval-required imports create a pending grant + a **request in Governance**; clearing it
    activates the grant.
@@ -815,9 +831,11 @@ shown **in context** (the Promote / Certify panels on the artifact itself).
 2. Read the consolidated **Policies** plane; an Administrator can override (revoke a grant).
 3. Search the hash-chained **Audit** (who / when / why) and verify chain integrity.
 4. Set a **cap** in **Cost & limits** — over-cap is enforced.
-5. Manage **Users & access** — invite **by email** (the email is the username; a raw password is
-   never sent), pick **domain memberships** in a multi-select, and assign a role — the picker
-   describes each role. A **Domain admin** works this surface for their **own domain(s) only**:
+5. Manage **Users & access** — invite **by email** (the email is the username), pick **domain
+   memberships** in a multi-select, and assign a role — the picker describes each role. The
+   platform generates a **one-time temporary password** the inviting admin copies and shares
+   out-of-band; the invitee must change it on first login (a raw password is never stored or
+   re-displayable). A **Domain admin** works this surface for their **own domain(s) only**:
    invite, edit, deactivate/reactivate, and assign roles **up to Builder** — never another Domain
    admin or an Administrator (only the platform Administrator appoints Domain admins).
    Existing users can be **edited**, and retired ones walk a safe lifecycle:
@@ -854,8 +872,13 @@ through to OPA. Labelled **Admin** in the sidebar (the conceptual "Platform Admi
    already-provisioned workloads 0↔1; the UI never provisions cloud resources).
 4. **Users & Access** — invite by email (email = username; the credential is never returned), set
    domain memberships and roles; archive/restore/delete run behind confirmations.
-5. **Models & Providers / Security & Egress / Cost & Billing / Backups & Restore** — configure;
-   provider keys are stored as a **reference + fingerprint**, never raw.
+5. **Models & Providers** — configure the platform's single **assistant LLM**: the endpoint and
+   key for the STACKIT managed model (or any compatible provider) that powers the built-in
+   artifact-building assistants across every tab. Provider keys are stored as a **reference +
+   fingerprint**, never raw. Also register the **Google Drive and OneDrive OAuth apps** here
+   (client ID + secret for each) so users can connect their own accounts from the Files tab.
+   **Security & Egress / Cost & Billing / Backups & Restore** — configure the remaining posture;
+   all compile through OPA.
 6. Destructive actions (restore, disable) require a **typed-confirmation guard** and are audited;
    identity/domain/egress/model changes **re-compile to OPA**.
 
@@ -908,8 +931,9 @@ four groups.
 4. **Personal (unshared) MCPs.** Personal Software apps and personal Connections not yet promoted.
 
 Every entry shows a **"Import into Claude"** and **"Import into ChatGPT"** deep-link for one-click
-registration in an external client. The registry is **read-only here** — to govern tool capability
-profiles go to **Connections**; to promote an app's MCP go to **Software**.
+registration in an external client (live — the OAuth consent flow completes in the client on first
+use). The registry is **read-only here** — to govern tool capability profiles go to
+**Connections**; to promote an app's MCP go to **Software**.
 
 **Roles.** Administrators only (full-tenant view); individual import links are surfaced in
 **Connections** and **Marketplace** for non-admins.
@@ -1137,9 +1161,25 @@ node-rolls; enable it only when you want to bridge to an outside model.
 
 ## Use the OS from Claude or ChatGPT (MCP)
 
-The platform exposes itself as **governed MCP servers** you can import into Claude, ChatGPT or any
-MCP client — reachable from any tab's **"Connect your AI Tool via MCP"** button. One **overarching**
-authenticated remote server at **`/api/mcp`** (Streamable-HTTP, a per-user token, role-scoped)
+The platform exposes itself as **governed MCP servers** — **live end-to-end** at
+**`https://agentic.datamasterclass.com/api/mcp`** — importable into Claude, ChatGPT, or any
+Streamable-HTTP MCP client. Open any tab's **"Connect your AI Tool via MCP"** button for a
+one-click import link with pre-filled instructions.
+
+**Connecting (OAuth flow).** The server uses managed OAuth with the
+**client-id-metadata-document** pattern:
+
+1. Your MCP client fetches the server's metadata document at the root (auto-handled by
+   conforming clients such as Claude and ChatGPT).
+2. The client is redirected (**303 consent redirect**) to the OS consent screen; you approve
+   once per client.
+3. The client receives a **180-day access token** — held in your client's credential store, never
+   in the OS.
+4. From that point every tool call is authenticated as you; the role floor is re-checked from
+   the live session on every call, and OPA authorizes the tool. The token scope matches your OS
+   role exactly — no broader.
+
+One **overarching** server at the host above (Streamable-HTTP SSE, per-user token, role-scoped)
 surfaces the OS's cross-tab tools; alongside it, **per-tab** servers at **`/api/mcp/<tab>`**
 (`software`, `data`, `science`, `knowledge`, `agents`, `files`, `metrics`, `dashboards`, `bigbets`)
 each ship a token-minimal `CONTEXT.md`, so a client gets just that tab's tools and just enough
@@ -1268,8 +1308,27 @@ Grouped by layer — see `docs/components/<id>.md` for the full per-component gu
 
 ## Version & changelog
 
-- **Chart 0.2.11 · app `0.2.0-alpha.11` · os-ui `0.1.32`.** This build: generated `{{DATE}}` from commit `{{GIT_COMMIT}}`.
-- **This build (os-ui 0.1.32): the role model grew to four ranks** — `creator < builder <
+- **Chart 0.2.12 · app `0.2.0-alpha.12` · os-ui `0.1.44`.** This build: generated `{{DATE}}` from commit `{{GIT_COMMIT}}`.
+- **This build (os-ui 0.1.44): Tier-1 platform hardening + MCP live.** MCP is **live end-to-end**
+  at `https://agentic.datamasterclass.com/api/mcp` with managed OAuth (client-id-metadata-document
+  flow, 303 consent redirect, Streamable-HTTP SSE, 180-day access token) and governed per-user
+  tool execution. **Real file storage and download** (MinIO PVC-backed). **User-invite flow**: the
+  platform now generates a one-time temporary password the Administrator shares out-of-band;
+  invitee sets their own on first login. **Cockpit/Home** domain-pulse and spend feeds are live (no
+  longer mock-stubbed on a deployed cluster). **Monitoring** alerts, cost and health feeds are live
+  (no more canned fixtures). **Marketplace**: connection templates create real governed Connections;
+  deploy-instance produces a real running artifact. **Big Bets** link real cross-tab artifacts and
+  real metric values; Strategy↔Big Bets linkage is live. **Agents**: promote UX on the system
+  card; scheduling provisions a real Kubernetes CronJob. **Dashboards**: real Superset import, and
+  scheduled report + alert delivery are live. **Data**: row-preview (governed inline sample) and
+  honest not-materialized state labels. **Admin**: single configurable assistant LLM (STACKIT
+  managed model endpoint/key) that powers all built-in artifact-building assistants across every
+  tab; **Google Drive and OneDrive** OAuth app registration (client ID + secret) for the Files
+  connector, live. Honest state: the governance spine (OPA, approvals, RLS, promote ladders,
+  roles, audit, MCP, auth, Knowledge, Data pipeline) is fully live; external tool execution beyond
+  Drive/OneDrive, the in-cluster Software live-app runner, and Science/Layer-4 are still being
+  wired or deferred.
+- **os-ui 0.1.32: the role model grew to four ranks** — `creator < builder <
   domain_admin < admin`. The new **Domain admin** carries everything a Builder can **plus**
   administering the users of their own domain(s) only (invite, edit, deactivate, roles up to
   Builder — never another Domain admin or an Administrator; only the platform Administrator
@@ -1345,9 +1404,9 @@ Grouped by layer — see `docs/components/<id>.md` for the full per-component gu
   (Home, Cockpit, Strategy, Big Bets, Agents, Software, Science, Knowledge, Files, Data, Metrics,
   Dashboards, Connections, Marketplace, Monitoring, Governance, Settings); and first-run gained an
   **auto-verifying bootstrap admin** with optional email via **Microsoft Graph `sendMail`** or **SMTP**.
-- **Next** — wiring the remaining Connections create/build flows from scaffold to live, broader
-  tutorial anchors, and full per-domain spaces. Bump this section additively as the OS evolves and
-  re-run `scripts/build-docs.sh`.
+- **Next** — real external tool execution beyond Drive/OneDrive; the in-cluster live-app runner
+  for Software; broader tutorial anchors; full per-domain spaces; Science/Layer-4 wiring. Bump
+  this section additively as the OS evolves and re-run `scripts/build-docs.sh`.
 
 ---
 

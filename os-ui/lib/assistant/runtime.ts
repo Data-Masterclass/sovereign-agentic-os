@@ -15,6 +15,7 @@ import {
   type ToolExecutor,
   type ToolSpec,
 } from './agentic.ts';
+import { resolveAssistantModelId } from './complete.ts';
 
 /**
  * Server wiring for the agentic assistant harness. Binds the pure PLAN→ACT loop
@@ -186,14 +187,21 @@ export type RunTabAgentInput = {
 
 /** Run one PLAN→ACT turn for a tab assistant and return the full trace. */
 export async function runTabAgent(input: RunTabAgentInput): Promise<AgenticResult> {
+  // Production callers run on the ONE platform-admin assistant model (the same
+  // model every built-in assistant uses); if none is configured this throws an
+  // honest, admin-actionable error rather than silently answering with fake AI.
+  // An INJECTED `llm` (tests/advanced) owns model selection, so we leave the
+  // config tiers as opaque ids the fake caller ignores.
+  const injected = input.llm;
+  const assistantId = injected ? config.litellmExecModel : resolveAssistantModelId();
   return runAgentic({
     system: osSystem(input.tab, input.extraContext),
     userMessages: input.messages,
     tools: tabToolSpecs(input.user, input.tab),
     callTool: tabToolExecutor(input.user, input.tab),
-    llm: input.llm ?? liteLlmCaller(),
-    planModel: config.litellmReasoningModel,
-    actModel: config.litellmExecModel,
+    llm: injected ?? liteLlmCaller(),
+    planModel: injected ? config.litellmReasoningModel : assistantId,
+    actModel: assistantId,
     maxIterations: input.maxIterations,
   });
 }

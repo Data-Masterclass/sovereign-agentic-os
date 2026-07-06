@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../../_ctx';
 import { recompile } from '../../_compile';
-import { setEnabled, setCap, setDefault, type ModelTask } from '@/lib/platform-admin/models';
+import { setEnabled, setCap, setDefault, setAssistantModel, type ModelTask } from '@/lib/platform-admin/models';
 import { audit } from '@/lib/platform-admin/audit';
 
 export const dynamic = 'force-dynamic';
@@ -29,6 +29,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       case 'default':
         result = setDefault(String(body?.task) as ModelTask, id);
         detail = `Set default ${String(body?.task)} model to ${id}`;
+        break;
+      case 'assistant':
+        result = setAssistantModel(id);
+        detail = `Set the assistant model (the ONE LLM powering every built-in assistant) to ${id}`;
         break;
       default:
         return NextResponse.json({ error: 'Unknown op' }, { status: 400 });

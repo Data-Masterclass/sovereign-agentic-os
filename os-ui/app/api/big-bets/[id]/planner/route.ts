@@ -3,8 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { proposePlan, approvePlan, type Mode } from '@/lib/bigbets/planner';
+import { proposePlan, approvePlan, type Mode, type PlanCompleter } from '@/lib/bigbets/planner';
 import { principal, plannerHooks } from '@/lib/bigbets/server';
+import { assistantComplete } from '@/lib/assistant/complete';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,13 +27,17 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const { id } = await ctx.params;
     const b = await req.json().catch(() => ({}));
 
+    // The planner runs on the ONE governed assistant LLM under the caller identity.
+    const complete: PlanCompleter = async (messages) =>
+      (await assistantComplete(messages, { user })).content;
+
     if (b.action === 'propose') {
       if (!b.goal?.trim()) return NextResponse.json({ error: 'A goal is required.' }, { status: 400 });
-      return NextResponse.json(proposePlan(b.goal));
+      return NextResponse.json(await proposePlan(b.goal, { complete }));
     }
 
     if (b.action === 'approve') {
-      const plan = b.plan?.steps ? b.plan : proposePlan(b.goal ?? '');
+      const plan = b.plan?.steps ? b.plan : await proposePlan(b.goal ?? '', { complete });
       const mode: Mode = b.mode === 'autonomous' ? 'autonomous' : 'in-tab';
       const result = await approvePlan(id, principal(user), plan, { mode, kickoff: b.kickoff, hooks: plannerHooks() });
       return NextResponse.json(result);
