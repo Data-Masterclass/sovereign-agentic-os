@@ -8,6 +8,7 @@ import {
   SystemError,
   parseSystem,
   serializeSystem,
+  assertGrantsWithinRole,
 } from './system-schema.ts';
 import { canPromote, roleAtLeast } from '../session.ts';
 import { type TemplateKey, templateYaml } from './templates.ts';
@@ -33,6 +34,19 @@ import { osMirror } from '../os-mirror.ts';
 export type Role = import('../session.ts').Role;
 export type Principal = { id: string; domains: string[]; role: Role };
 
+/** One row in the per-tool build report (mirrors BuildRow from lib/agents/build/adapter.ts). */
+export type LastBuildRow = {
+  tool: string;
+  applied: boolean;
+  verified: boolean;
+  status: 'ok' | 'fail';
+  detail: string;
+  error?: string;
+};
+
+/** The last build outcome persisted server-side so it survives tab-switches + reloads. */
+export type LastBuild = { ok: boolean; at: number; rows: LastBuildRow[] };
+
 export type SystemRecord = {
   id: string;
   name: string;
@@ -49,6 +63,8 @@ export type SystemRecord = {
   yaml: string;
   updatedAt: string;
   lastActivity: string | null;
+  /** Last build outcome. Absent on records created before this field was added. */
+  lastBuild?: LastBuild;
 };
 
 export type SystemSummary = {
@@ -105,6 +121,7 @@ const mirror = osMirror({
         yaml: { type: 'text', index: false },
         schedule: { type: 'object', enabled: false },
         disabledAgents: { type: 'keyword' },
+        lastBuild: { type: 'object', enabled: false },
       },
     },
   },
@@ -160,7 +177,7 @@ function starterYaml(name: string, domain: string, visibility: Visibility): stri
     safetyPreset: 'read-only',
     entrypoint: 'assistant',
     state: { channels: { messages: 'add_messages' } },
-    grants: { data: [], knowledge: [], tools: ['search_knowledge'], connections: [] },
+    grants: { data: [], knowledge: [], metrics: [], tools: ['search_knowledge'], connections: [] },
     routing: { overrides: {} },
     agents: [
       {
@@ -454,7 +471,16 @@ export function writeFile(
   if (path === 'system.yaml') {
     // Reject syntactically/structurally invalid YAML so the store never holds
     // garbage; semantic graph errors are surfaced later by Build.
-    parseSystem(content); // throws SystemError on bad shape
+    const parsed = parseSystem(content); // throws SystemError on bad shape
+    // Governance escalation guard: a direct-write (Write-bounded) grant on any
+    // artifact is builder-only. Enforced here at the ONE save chokepoint so a
+    // crafted client payload can't grant an agent direct write when its owner is
+    // only a creator. The editor is the owner (self-edit) or a same-domain admin
+    // (builder+) — either way the saver's role is the authority for the grant.
+    // Only the DELTA vs the currently-stored system is checked: a pre-existing
+    // direct-write grant never blocks an unrelated edit — it is instead
+    // neutralised at run time by downgradeGrantsForRole.
+    assertGrantsWithinRole(parsed, user.role, parseSystem(current));
     rec.yaml = content;
   } else {
     const m = /^agents\/([^/]+)\/(AGENT|MEMORY)\.md$/.exec(path);
@@ -509,6 +535,14 @@ export function recordActivity(systemId: string): void {
   const rec = state().store.get(systemId);
   if (rec) rec.lastActivity = now();
   if (rec) writeThrough(rec);
+}
+
+export function setLastBuild(systemId: string, user: Principal, build: LastBuild): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  rec.lastBuild = build;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
 }
 
 /**

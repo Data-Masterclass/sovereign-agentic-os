@@ -16,7 +16,7 @@ type QueryResult = {
   rows: string[][];
   rowCount: number;
 };
-type Asset = { name: string; fqn: string; description: string; type: string; source?: string };
+type Asset = { name: string; fqn: string; description: string; type: string; source?: string; datasetId?: string };
 type CatalogSourceStatus = { source: string; ok: boolean; count: number; status: string };
 type Catalog = { source: string; note?: string; sources?: CatalogSourceStatus[]; assets: Asset[] };
 type Answer = { question: string; answer: string; retrieved: string[]; traced: boolean };

@@ -88,13 +88,18 @@ export default function WorkflowView({
   const [mdMsg, setMdMsg] = useState('');
 
   const reload = useCallback(async () => {
-    const res = await fetch(`/api/knowledge/workflows/${workflowId}`, { cache: 'no-store' });
-    const body = await res.json();
-    if (!res.ok) { setError(body.error ?? 'Could not load workflow'); return null; }
-    setData(body as WorkflowData);
-    setMdDraft((body as WorkflowData).md);
-    setError('');
-    return body as WorkflowData;
+    try {
+      const res = await fetch(`/api/knowledge/workflows/${workflowId}`, { cache: 'no-store' });
+      const body = await res.json();
+      if (!res.ok) { setError(body.error ?? 'Could not load workflow'); return null; }
+      setData(body as WorkflowData);
+      setMdDraft((body as WorkflowData).md);
+      setError('');
+      return body as WorkflowData;
+    } catch (e) {
+      setError((e as Error).message);
+      return null;
+    }
   }, [workflowId]);
 
   useEffect(() => {

@@ -9,11 +9,12 @@ import {
   listToolsForRole,
   type McpTool,
 } from '@/lib/mcp/server';
+import { ALL_WRITE_TOOLS } from '@/lib/mcp/write-tools';
 import type { ToolExecutor, ToolSpec } from '@/lib/assistant/agentic';
 import type { System } from '../system-schema.ts';
 import { type Effect } from '../gateway.ts';
 import { principalFor } from './runtime-contract.ts';
-import { authorize as realAuthorize, trace as realTrace, type ToolName } from '@/lib/agent-governed';
+import { trace as realTrace } from '@/lib/agent-governed';
 import { enqueue as realEnqueue } from '@/lib/approvals';
 
 /**
@@ -26,21 +27,26 @@ import { enqueue as realEnqueue } from '@/lib/approvals';
  *
  * THE DOUBLE GATE (an agent can exceed NEITHER its grants NOR its runner's rights):
  *   1. Grant scope — the tool must be in the system's `grants.tools` (resolved
- *      through the legacy→MCP alias map) AND authorized for the SYSTEM principal
- *      `os-<systemId>` by OPA. This is where a Write-approval tool is HELD: a
- *      `requires_approval` effect enqueues to Governance and NEVER executes.
+ *      through the legacy→MCP alias map). This is ALSO where a WRITE tool is HELD:
+ *      a granted write tool (any {@link ALL_WRITE_TOOLS} name) resolves to
+ *      `requires_approval`, enqueues to Governance and NEVER executes; a granted
+ *      read tool is allowed to reach gate 2. This decision is derived IN-PROCESS
+ *      from the system's own resolved grant-set + the write-tool catalog — it does
+ *      NOT depend on a live `os-<systemId>` OPA document (which only a Build writes),
+ *      so a scaffolded system runs correctly with no prior Build.
  *   2. Role floor + governed authority — the actual call runs through
  *      `handleRpc(user, …)`, which re-checks the tool's role floor (`server.ts`)
  *      and runs the governed library under `user:<id>` + domains (OPA/DLS/RLS).
  *      The USER is always the identity of the real side effect — never the service
- *      principal `os-<systemId>`.
+ *      principal `os-<systemId>`. This is the REAL authority: the owner DLS clause
+ *      (own units always visible), the role floor and RLS all live here.
  *
- * The gates are an INTERSECTION: a tool passes only if BOTH the system grant and
- * the user's role/OPA allow it. Neither can broaden the other.
+ * The gates are an INTERSECTION: a tool passes only if BOTH the system grant scope
+ * AND the user's own role/OPA/DLS allow it. Neither can broaden the other.
  *
- * Pure-ish + dependency-injected (mirrors `gateway.ts`): `authorize`, `enqueue`,
- * `handleRpc` and `trace` are injectable so the double-gate + identity threading
- * is trivially unit-testable without a live cluster.
+ * Pure-ish + dependency-injected (mirrors `gateway.ts`): `enqueue`, `handleRpc`
+ * and `trace` are injectable so the double-gate + identity threading is trivially
+ * unit-testable without a live cluster.
  */
 
 /**
@@ -64,6 +70,15 @@ export function resolveAlias(name: string): string {
 }
 
 const MCP_NAMES = new Set(ALL_MCP_TOOLS.map((t) => t.name));
+
+/**
+ * The state-modifying MCP tools (the SAME set `lib/agents/tool-catalog.ts` marks
+ * `requires_approval`). An agent's call to any of these is HELD for human approval
+ * and NEVER auto-executed — the run path's in-process mirror of the Build/OPA
+ * `requires_approval` list, so gate 1b needs no live `os-<id>` OPA document. Read
+ * tools are absent → they flow through to the run-as-user governed dispatch.
+ */
+const WRITE_APPROVAL_NAMES = new Set(ALL_WRITE_TOOLS.map((t) => t.name));
 
 /**
  * Resolve a system's `grants.tools` through the alias map, split into the MCP
@@ -129,8 +144,6 @@ export function grantedToolSpecs(user: CurrentUser, sys: System, nodeTools?: str
 
 /** Injected collaborators (default to the real governed libs; tests inject spies). */
 export type OsToolDeps = {
-  /** OPA gate for the SYSTEM principal `os-<id>` (grant scope + Write-approval holds). */
-  authorize: (principal: string, tool: string) => Promise<{ effect: Effect; reason: string }>;
   /** Governance-queue enqueue for a held (requires_approval) write. */
   enqueue: typeof realEnqueue;
   /** The ONE MCP dispatch — runs the governed lib under the ACTING USER. */
@@ -140,7 +153,6 @@ export type OsToolDeps = {
 };
 
 const defaultDeps: OsToolDeps = {
-  authorize: (principal, tool) => realAuthorize(principal, tool as ToolName),
   enqueue: realEnqueue,
   handleRpc: realHandleRpc,
   trace: realTrace,
@@ -158,16 +170,19 @@ function errorResult(code: string, reason: string): { text: string; isError: boo
  *
  *   1. Grant scope (structural): the alias-resolved tool must be one of the
  *      system's granted MCP tools, else → "Tool not available", NEVER executed.
- *   2. Grant scope (OPA, `os-<systemId>` principal): `deny` → typed forbidden,
- *      never executed; `requires_approval` → ENQUEUE to Governance and return a
- *      typed `held` result, never executed.
- *   3. Identity + role floor: dispatch through `handleRpc(user, …)` scoped to the
- *      granted subset. handleRpc re-checks the tool's role floor (a creator calling
- *      a builder-floor tool gets a typed `forbidden`) and runs the governed library
- *      under `user:<id>` — so the real side effect is ALWAYS the acting user, and an
- *      agent can exceed neither its grants nor its runner's rights.
+ *   2. Write-approval hold (in-process): a granted WRITE tool ({@link
+ *      WRITE_APPROVAL_NAMES}) → ENQUEUE to Governance and return a typed `held`
+ *      result, NEVER executed. Derived from the system's own resolved grant-set +
+ *      the write-tool catalog — no live `os-<systemId>` OPA document required, so a
+ *      scaffolded system with no prior Build still runs its READ tools.
+ *   3. Identity + role floor: a granted READ tool dispatches through
+ *      `handleRpc(user, …)` scoped to the granted subset. handleRpc re-checks the
+ *      tool's role floor (a creator calling a builder-floor tool gets a typed
+ *      `forbidden`) and runs the governed library under `user:<id>` — so the real
+ *      side effect is ALWAYS the acting user (its owner DLS clause sees its own
+ *      units), and an agent can exceed neither its grants nor its runner's rights.
  *
- * `systemId` is required for the `os-<id>` OPA pre-gate + trace attribution.
+ * `systemId` is required for the enqueue attribution + trace attribution.
  */
 export function grantedToolExecutor(
   user: CurrentUser,
@@ -187,25 +202,23 @@ export function grantedToolExecutor(
       return errorResult('not_found', `Tool not available: ${name || '(none)'}`);
     }
 
-    // Gate 1b — OPA on the SYSTEM principal (grant scope + Write-approval holds).
-    const decision = await deps.authorize(sysPrincipal, mcpName);
-    if (decision.effect === 'requires_approval') {
+    // Gate 1b — the Write-approval HOLD, derived IN-PROCESS from the granted set +
+    // the write-tool catalog (no live `os-<systemId>` OPA doc, which only a Build
+    // writes). A granted WRITE tool is HELD; a granted READ tool falls through to
+    // the run-as-user dispatch, where the owner DLS clause + role floor decide.
+    if (WRITE_APPROVAL_NAMES.has(mcpName)) {
       // A held write is NEVER executed — record the human-in-the-loop request.
       deps.enqueue({
         kind: 'connection_write',
         title: `Approval needed: ${mcpName}`,
-        detail: `System '${systemId}' agent attempted a write-approval tool '${mcpName}' during a run.`,
+        detail: `System '${systemId}' agent attempted a write tool '${mcpName}' during a run — writes are held for human approval.`,
         agent: sysPrincipal,
         domain: sys.system.domain,
         requestedBy: user.id,
         tool: mcpName,
       });
-      await safeTrace(deps, sysPrincipal, mcpName, args, decision.effect);
-      return errorResult('held', `${mcpName} requires approval — enqueued to Governance (${decision.reason})`);
-    }
-    if (decision.effect !== 'allow') {
-      await safeTrace(deps, sysPrincipal, mcpName, args, decision.effect);
-      return errorResult('forbidden', `${sysPrincipal} is not granted ${mcpName} (${decision.reason})`);
+      await safeTrace(deps, sysPrincipal, mcpName, args, 'requires_approval');
+      return errorResult('held', `${mcpName} requires approval — enqueued to Governance (agent writes are held)`);
     }
 
     // Gate 2 — dispatch as the ACTING USER through the ONE governed MCP door. The

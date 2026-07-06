@@ -26,8 +26,9 @@ export default function Roadmap({ view }: { view: BetView }) {
   const refTab = new Map(view.bet.components.map((r) => [r.id, r.tab]));
   const titleOf = (refId: string) => byRef.get(refId)?.artifact?.title ?? '🔒 members only';
 
-  const starts = rcs.map((c) => day(c.start));
+  const rawStarts = rcs.map((c) => day(c.start)).filter((t) => t > 0);
   const ends = rcs.map((c) => day(c.plannedReady));
+  const starts = rawStarts.length > 0 ? rawStarts : ends;
   const t0 = Math.min(...starts);
   const t1 = Math.max(...ends, day(view.roadmap.goLive));
   const span = Math.max(t1 - t0, 86400000);
@@ -72,8 +73,8 @@ export default function Roadmap({ view }: { view: BetView }) {
                   {tab}{c ? ` · ${c.status.label}` : ''}
                 </div>
                 {override ? (
-                  <div style={{ fontSize: 10.5, color: 'var(--gold-text)' }} title="owner override">
-                    ⚑ owner: {override}
+                  <div style={{ fontSize: 10.5, color: 'var(--gold-text)' }} title="owner note">
+                    ⚑ {override}
                   </div>
                 ) : null}
                 {deps.length ? (

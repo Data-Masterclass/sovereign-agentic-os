@@ -72,10 +72,7 @@ export async function POST(req: Request) {
     const statement: string = String((legacy ? b?.problem?.need : b?.problem) ?? '').trim();
     const solution: string = String(b?.solution ?? (legacy ? b?.problem?.impact : '') ?? '').trim();
 
-    if (!statement) {
-      return NextResponse.json({ error: 'A problem statement is required.' }, { status: 400 });
-    }
-
+    // Empty statement → derives "Untitled big bet" via deriveBetName; that's intentional.
     const name = String(b?.name ?? '').trim() || deriveBetName(statement);
 
     const bet = createBet(principal(user), {
@@ -87,8 +84,8 @@ export async function POST(req: Request) {
         impact: legacy ? String(b?.problem?.impact ?? '') : '',
       },
       solution: solution || undefined,
-      pillarId: b.pillarId ?? 'pillar_retention',
-      metricId: b.metricId ?? 'metric_nrr',
+      pillarId: b.pillarId || undefined,
+      metricId: b.metricId || undefined,
       targetValue: Number(b.targetValue) || 0,
       goLive: b.goLive ?? new Date(Date.now() + 56 * 86400000).toISOString().slice(0, 10),
       domain: typeof b.domain === 'string' ? b.domain : undefined,

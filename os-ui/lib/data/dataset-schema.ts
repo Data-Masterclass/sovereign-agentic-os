@@ -89,6 +89,18 @@ export const TRUST_LEVELS: TrustLevel[] = ['bronze', 'silver', 'gold'];
  *  the registry entry (a governed asset/product the builder could see). */
 export type DatasetUpstream = { datasetId: string; name: string; fqn: string; joinType: 'inner' | 'left' };
 
+/** A manually-authored data-quality check intention. Checks are RECORDED here
+ *  so they are discoverable and versioned alongside the dataset.yaml spine; they
+ *  are NOT auto-executed by the OS — connect a data quality tool (dbt tests,
+ *  Great Expectations, etc.) to run them and push results back. */
+export type DataCheck = {
+  id: string;
+  name: string;
+  description: string;
+  createdBy: string;
+  createdAt: string;
+};
+
 export type Dataset = {
   version: string;
   id: string;
@@ -110,6 +122,8 @@ export type Dataset = {
   imports?: string[];
   /** Additional datasets joined into the Gold version (multi-upstream lineage). */
   upstreams?: DatasetUpstream[];
+  /** Manually-authored data-quality check intentions (not auto-executed). */
+  checks?: DataCheck[];
 };
 
 export class DatasetError extends Error {
@@ -270,6 +284,17 @@ function parseUpstream(raw: unknown, i: number): DatasetUpstream {
   };
 }
 
+function parseCheck(raw: unknown, i: number): DataCheck {
+  if (!isRecord(raw)) throw new DatasetError(`dataset.yaml: checks[${i}] must be a mapping`);
+  return {
+    id: typeof raw.id === 'string' ? raw.id : `chk_${i}`,
+    name: typeof raw.name === 'string' ? raw.name : 'Untitled check',
+    description: typeof raw.description === 'string' ? raw.description : '',
+    createdBy: typeof raw.createdBy === 'string' ? raw.createdBy : '',
+    createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : '',
+  };
+}
+
 export function parseDataset(input: string | Record<string, unknown>): Dataset {
   let doc: unknown;
   if (typeof input === 'string') {
@@ -293,6 +318,7 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
   const grantsRaw = Array.isArray(doc.grants) ? doc.grants : [];
   const measuresRaw = Array.isArray(doc.measures) ? doc.measures : [];
   const columnsRaw = Array.isArray(doc.columns) ? doc.columns : [];
+  const checksRaw = Array.isArray(doc.checks) ? doc.checks : [];
 
   let certification: Certification | undefined;
   if (isRecord(doc.certification) && TRUST_LEVELS.includes(doc.certification.level as TrustLevel)) {
@@ -301,6 +327,7 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
   }
   const imports = Array.isArray(doc.imports) ? doc.imports.map((x) => String(x)) : undefined;
   const upstreams = Array.isArray(doc.upstreams) ? doc.upstreams.map(parseUpstream) : undefined;
+  const checks = checksRaw.length > 0 ? checksRaw.map(parseCheck) : undefined;
 
   return {
     version: doc.version !== undefined ? String(doc.version) : '1',
@@ -319,6 +346,7 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
     ...(certification ? { certification } : {}),
     ...(imports ? { imports } : {}),
     ...(upstreams ? { upstreams } : {}),
+    ...(checks ? { checks } : {}),
   };
 }
 
@@ -340,6 +368,7 @@ export function serializeDataset(d: Dataset): string {
   if (d.certification) doc.certification = d.certification;
   if (d.imports && d.imports.length > 0) doc.imports = d.imports;
   if (d.upstreams && d.upstreams.length > 0) doc.upstreams = d.upstreams;
+  if (d.checks && d.checks.length > 0) doc.checks = d.checks;
   return yaml.dump(doc, { lineWidth: 100, noRefs: true });
 }
 

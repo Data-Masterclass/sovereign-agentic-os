@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { buildBetView, principal } from '@/lib/bigbets/server';
 import { updateBet } from '@/lib/bigbets/store';
-import { type ValueBasis, type AllocationMethod } from '@/lib/bigbets/model';
+import { type ValueBasis, type AllocationMethod, type BigBet } from '@/lib/bigbets/model';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,8 +44,12 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   try {
     const user = await requireUser();
     const { id } = await ctx.params;
-    const patch = await req.json().catch(() => ({}));
-    const bet = updateBet(id, principal(user), patch);
+    const body = await req.json().catch(() => ({}));
+    // `note` is provenance for the audit trail (e.g. the rationale behind a
+    // reported value) — not a bet field. Everything else is whitelisted + typed
+    // inside updateBet, so untrusted keys never reach the record.
+    const { note, ...patch } = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+    const bet = updateBet(id, principal(user), patch as Partial<BigBet>, typeof note === 'string' && note.trim() ? { note: note.trim() } : {});
     return NextResponse.json({ id: bet.id, updatedAt: bet.updatedAt });
   } catch (e) {
     return fail(e);

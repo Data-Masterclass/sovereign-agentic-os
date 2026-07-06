@@ -30,6 +30,7 @@ import {
   type Tab,
   type ValueBasis,
   BetError,
+  roleAtLeast,
 } from './model.ts';
 import { resolveArtifact, sourceFor } from './sources.ts';
 import { osMirror } from '../os-mirror.ts';
@@ -176,8 +177,8 @@ export type CreateBetInput = {
   name: string;
   problem: ProblemStatement;
   solution?: string;
-  pillarId: string;
-  metricId: string;
+  pillarId?: string;
+  metricId?: string;
   targetValue: number;
   goLive: string;
   domain?: string;
@@ -237,17 +238,64 @@ export function getBet(betId: string, user: Principal): BigBet {
 
 // ----------------------------------------------------------------- update ----
 
+/**
+ * The ONLY bet fields an edit may ever touch. The `Pick<>` in the signature is
+ * compile-time only — at runtime an authenticated owner could otherwise PATCH raw
+ * JSON that lands any key on the bet (domain/owner/crossDomain/id/components/…),
+ * a mass-assignment escalation. So we filter against this whitelist at runtime and
+ * validate each value. Never trust the client — the role gate (requireEdit) is
+ * necessary but NOT sufficient; the field surface must be constrained too.
+ */
+const EDITABLE_BET_FIELDS = [
+  'name', 'problem', 'solution', 'targetValue', 'goLive',
+  'valueBasis', 'allocation', 'ownerDeclaredValue', 'members', 'status',
+] as const;
+const VALUE_BASES: ValueBasis[] = ['uplift', 'absolute', 'owner-declared'];
+const ALLOCATIONS: AllocationMethod[] = ['manual', 'usage', 'equal'];
+const BET_STATUSES: BigBet['status'][] = ['draft', 'active', 'shipped', 'archived'];
+
 export function updateBet(
   betId: string,
   user: Principal,
-  patch: Partial<Pick<BigBet, 'name' | 'problem' | 'solution' | 'targetValue' | 'goLive' | 'valueBasis' | 'allocation' | 'ownerDeclaredValue' | 'members' | 'status'>>,
+  patch: Partial<BigBet>,
+  opts: { note?: string } = {},
 ): BigBet {
   const bet = requireEdit(betId, user);
-  Object.assign(bet, patch);
-  if (patch.members) bet.members = [...new Set([bet.owner, ...patch.members])];
+  const raw = patch as Record<string, unknown>;
+  const clean: Partial<BigBet> = {};
+  for (const k of EDITABLE_BET_FIELDS) {
+    const v = raw[k];
+    if (v === undefined) continue;
+    switch (k) {
+      case 'targetValue':
+      case 'ownerDeclaredValue':
+        if (typeof v !== 'number' || !Number.isFinite(v)) throw new BetError(`${k} must be a finite number`, 400);
+        break;
+      case 'valueBasis':
+        if (!VALUE_BASES.includes(v as ValueBasis)) throw new BetError('valueBasis must be uplift | absolute | owner-declared', 400);
+        break;
+      case 'allocation':
+        if (!ALLOCATIONS.includes(v as AllocationMethod)) throw new BetError('allocation must be manual | usage | equal', 400);
+        break;
+      case 'status':
+        if (!BET_STATUSES.includes(v as BigBet['status'])) throw new BetError('status must be draft | active | shipped | archived', 400);
+        // Promotion out of draft (active/shipped) is a Builder+ act — a Creator
+        // may draft + archive their own bet but never self-activate it.
+        if ((v === 'active' || v === 'shipped') && !roleAtLeast(user.role, 'builder')) {
+          throw new BetError('Only a Builder or Admin can activate or ship a bet', 403);
+        }
+        break;
+      case 'members':
+        if (!Array.isArray(v) || v.some((m) => typeof m !== 'string')) throw new BetError('members must be a string array', 400);
+        break;
+    }
+    (clean as Record<string, unknown>)[k] = v;
+  }
+  Object.assign(bet, clean);
+  if (clean.members) bet.members = [...new Set([bet.owner, ...clean.members])];
   bet.updatedAt = now();
   writeThrough(bet);
-  log(user.id, 'bet.update', betId, { fields: Object.keys(patch) });
+  log(user.id, 'bet.update', betId, { fields: Object.keys(clean), ...(opts.note ? { note: opts.note } : {}) });
   return bet;
 }
 

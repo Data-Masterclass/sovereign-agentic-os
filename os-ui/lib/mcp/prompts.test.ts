@@ -27,15 +27,18 @@ async function rpc(user: CurrentUser, method: string, params?: Record<string, un
 const EXPECTED = [
   'build_data_product', 'author_and_publish_knowledge', 'connect_data_source',
   'build_agent_system', 'build_and_ship_software', 'define_metric', 'build_dashboard',
-  'create_big_bet', 'upload_and_share_file', 'score_and_wire_prediction', 'orient_me',
+  'create_big_bet', 'upload_and_share_file', 'score_and_wire_prediction',
+  // mcp-v2 surfaces wave — one golden-path prompt per new surface.
+  'frame_strategy', 'reuse_from_marketplace', 'work_the_queue', 'check_my_runs',
+  'orient_me',
 ];
 
-test('prompts/list: exposes exactly the 11 golden-path prompts', async () => {
+test('prompts/list: exposes exactly the 15 golden-path prompts', async () => {
   const r = result(await rpc(creator, 'prompts/list'));
   const names = (r.prompts as { name: string }[]).map((p) => p.name);
-  assert.equal(PROMPTS.length, 11);
+  assert.equal(PROMPTS.length, 15);
   for (const n of EXPECTED) assert.ok(names.includes(n), `missing prompt ${n}`);
-  assert.equal(names.length, 11);
+  assert.equal(names.length, 15);
 });
 
 test('prompts/get: score_and_wire_prediction renders the Science golden path honestly', async () => {

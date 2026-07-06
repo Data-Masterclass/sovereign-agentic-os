@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { serveMcp, mcpMethodNotAllowed } from '@/lib/mcp/http';
+import { serveMcp, serveMcpStream } from '@/lib/mcp/http';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,7 +28,8 @@ export async function POST(req: Request) {
   return serveMcp(req);
 }
 
-// Streamable HTTP: no server-initiated SSE stream is offered at this endpoint.
+// Streamable HTTP: serve the (idle) server→client SSE stream on GET. Hosted Claude
+// opens this on connect and treats a 405 as fatal, so we return a real event-stream.
 export async function GET() {
-  return mcpMethodNotAllowed();
+  return serveMcpStream();
 }

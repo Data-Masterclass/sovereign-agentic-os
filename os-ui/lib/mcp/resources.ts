@@ -17,6 +17,7 @@ import { listSystems, getSystem } from '@/lib/agents/store';
 import { listAppsForUser, getAppForUser } from '@/lib/apps';
 import { listConnectionsForUser, getConnectionForUser } from '@/lib/connections';
 import { listModelsForUser } from '@/lib/science/model-service';
+import { listPillars } from '@/lib/strategy/pillars';
 import { config } from '@/lib/config';
 import { loadGuide, guideTitle, type GuidePath } from '@/lib/tabs/guides';
 import { loadBuildSpec } from '@/lib/tabs/build-spec';
@@ -77,6 +78,9 @@ const GUIDE_DEFS: GuideDef[] = [
   { uri: 'sovereign-os://guide/path/bigbets', path: 'bigbets', tab: 'bigbets' },
   { uri: 'sovereign-os://guide/path/files', path: 'files', tab: 'files' },
   { uri: 'sovereign-os://guide/path/science', path: 'science', tab: 'science' },
+  { uri: 'sovereign-os://guide/path/strategy', path: 'strategy', tab: 'strategy' },
+  { uri: 'sovereign-os://guide/path/marketplace', path: 'marketplace', tab: 'marketplace' },
+  { uri: 'sovereign-os://guide/path/monitoring', path: 'monitoring', tab: 'monitoring' },
 ];
 
 const guideResources: McpResource[] = GUIDE_DEFS.map((g) => ({
@@ -218,6 +222,16 @@ const myResources: McpResource[] = [
         mlEnabled: config.mlEnabled,
         models: listModelsForUser({ id: user.id, domains: user.domains }),
       }),
+  },
+  {
+    uri: 'sovereign-os://my/pillars',
+    name: 'my-pillars',
+    title: 'My strategy pillars',
+    description: 'Strategy pillars you can see (tenant + your domain), the value spine bets roll up to. Reuse before creating.',
+    mimeType: 'application/json',
+    tab: 'strategy',
+    minRole: 'creator',
+    read: async (user) => json(await listPillars(user)),
   },
   {
     uri: 'sovereign-os://my/bigbets',

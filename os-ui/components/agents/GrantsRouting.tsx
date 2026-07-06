@@ -3,9 +3,9 @@
  */
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { commitSystem } from './commitSystem';
-import type { Capability, System } from '@/lib/agents/system-schema';
+import type { ArtifactGrant, Capability, System } from '@/lib/agents/system-schema';
 import { modelInfo, type ModelInfo } from '@/lib/agents/routing';
 
 /** Mirrors CatalogEntry from lib/agents/tool-catalog — client-safe (no server import). */
@@ -46,7 +46,23 @@ const TAB_ORDER = [
  * system's LiteLLM routing config (overrides), applied on Build.
  */
 
-const CAPS: Capability[] = ['Off', 'Read', 'Write-approval', 'Write-bounded', 'Blocked'];
+/**
+ * The uniform per-artifact access model (data / knowledge / metrics / connections).
+ * `Off` means "not granted" (no entry in the grants list). `Write (direct)` maps to
+ * the `Write-bounded` capability and is BUILDER-ONLY — hidden here AND rejected
+ * server-side at the save boundary (system-schema.assertGrantsWithinRole).
+ */
+type Access = 'Off' | 'Read' | 'Write-approval' | 'Write-bounded';
+const ACCESS_OPTIONS: { value: Access; label: string; direct?: boolean }[] = [
+  { value: 'Off', label: 'Off' },
+  { value: 'Read', label: 'Read' },
+  { value: 'Write-approval', label: 'Write (needs approval)' },
+  { value: 'Write-bounded', label: 'Write (direct)', direct: true },
+];
+
+type Available = { id: string; name: string; scope: 'personal' | 'domain' | 'marketplace' };
+type GrantField = 'data' | 'knowledge' | 'metrics' | 'connections';
+type Kind = 'data' | 'knowledge' | 'metric' | 'connection';
 
 type RoutingData = {
   activities: string[];
@@ -60,6 +76,7 @@ export default function GrantsRouting({
   systemId,
   system,
   canEdit,
+  canDirectWrite,
   models,
   routing,
   onChanged,
@@ -67,14 +84,14 @@ export default function GrantsRouting({
   systemId: string;
   system: System;
   canEdit: boolean;
+  /** True when the current user ranks builder+ (may select Write (direct)). */
+  canDirectWrite: boolean;
   models: ModelInfo[];
   routing: RoutingData | null;
   onChanged: () => void | Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const [newConn, setNewConn] = useState('');
-  const [newConnCap, setNewConnCap] = useState<Capability>('Read');
   const [probeId, setProbeId] = useState('');
   const [probes, setProbes] = useState<Record<string, ProbeResult>>({});
 
@@ -131,26 +148,6 @@ export default function GrantsRouting({
     } catch (e) {
       setErr((e as Error).message);
     }
-  };
-
-  const chipList = (label: string, items: string[], onAdd: (v: string) => void, onRemove: (v: string) => void, placeholder: string) => {
-    return (
-      <div className="grant-block">
-        <div className="comp-label">{label}</div>
-        <div className="chip-row">
-          {items.length === 0 ? <span className="muted" style={{ fontSize: 12.5 }}>none</span> : null}
-          {items.map((t) => (
-            <span key={t} className="chip mono">
-              {t}
-              {canEdit ? (
-                <button className="chip-x" disabled={busy} onClick={() => onRemove(t)} aria-label={`Remove ${t}`}>×</button>
-              ) : null}
-            </span>
-          ))}
-        </div>
-        {canEdit ? <AddInline placeholder={placeholder} disabled={busy} onAdd={onAdd} /> : null}
-      </div>
-    );
   };
 
   return (
@@ -292,102 +289,64 @@ export default function GrantsRouting({
           </div>
         );
       })()}
-      <div className="row" style={{ gap: 18, flexWrap: 'wrap' }}>
-        {chipList(
-          'Data products',
-          system.grants.data,
-          (v) => commit((s) => { if (!s.grants.data.includes(v)) s.grants.data.push(v); }),
-          (v) => commit((s) => { s.grants.data = s.grants.data.filter((t) => t !== v); }),
-          'add a data product',
-        )}
-        {chipList(
-          'Knowledge',
-          system.grants.knowledge,
-          (v) => commit((s) => { if (!s.grants.knowledge.includes(v)) s.grants.knowledge.push(v); }),
-          (v) => commit((s) => { s.grants.knowledge = s.grants.knowledge.filter((t) => t !== v); }),
-          'add a knowledge base',
-        )}
-      </div>
+      <div className="section-title">Data, Knowledge &amp; Metrics grants</div>
+      <p className="hint" style={{ marginTop: 0 }}>
+        Browse what you can access — your personal artifacts, your domain’s, and anything added from the
+        Marketplace — and choose per-artifact access. <strong>Read</strong> marks it queryable;
+        <strong> Write (needs approval)</strong> marks writes as held-for-approval;
+        <strong> Write (direct)</strong> is direct write, builder-only.
+      </p>
+      <p className="hint" style={{ marginTop: 0, fontSize: 11.5 }}>
+        The builder-gate on <strong>Write (direct)</strong> is enforced at save and re-checked against the
+        owner’s current role at run time (a demoted owner’s direct writes fall back to held-for-approval).
+        These data/knowledge/metric capabilities are also enforced in the offline Build-verification
+        gateway. On the <strong>live cluster</strong>, data/knowledge/metric access takes effect through the
+        system’s tool grants, OPA policy, run-as-user rights and dataset-level security —{' '}
+        <strong>per-artifact live enforcement is a labelled follow-up</strong>. <strong>Connections</strong>{' '}
+        below are enforced live per call today.
+      </p>
+      <ArtifactGrantList
+        systemId={systemId} kind="data" field="data" label="Data products"
+        emptyText="No data products you can access." grants={system.grants.data}
+        canEdit={canEdit} canDirectWrite={canDirectWrite} busy={busy} commit={commit}
+      />
+      <ArtifactGrantList
+        systemId={systemId} kind="knowledge" field="knowledge" label="Knowledge"
+        emptyText="No knowledge workflows you can access." grants={system.grants.knowledge}
+        canEdit={canEdit} canDirectWrite={canDirectWrite} busy={busy} commit={commit}
+      />
+      <ArtifactGrantList
+        systemId={systemId} kind="metric" field="metrics" label="Metrics"
+        emptyText="No metrics you can access." grants={system.grants.metrics}
+        canEdit={canEdit} canDirectWrite={canDirectWrite} busy={busy} commit={commit}
+      />
 
       <div className="section-title">Connections &amp; capability profiles</div>
       <p className="hint" style={{ marginTop: 0 }}>
-        Each connection carries a capability profile. Probe to verify: granted Read → allow,
-        non-granted → deny, Write-approval → held for approval in Governance.
+        Browse the connections you can access and grant per-connection capability. Probe to verify:
+        granted Read → allow, non-granted → deny, Write (needs approval) → held for approval in Governance.
       </p>
-      <div className="table-wrap" style={{ marginBottom: 12 }}>
-        <table>
-          <thead>
-            <tr><th>Connection</th><th>Capability</th><th>Probe</th><th>Result</th>{canEdit ? <th /> : null}</tr>
-          </thead>
-          <tbody>
-            {system.grants.connections.length === 0 ? (
-              <tr><td colSpan={canEdit ? 5 : 4} className="muted">No connections granted.</td></tr>
-            ) : null}
-            {system.grants.connections.map((c) => {
-              const r = probes[`${c.id}:r`];
-              const w = probes[`${c.id}:w`];
-              return (
-                <tr key={c.id}>
-                  <td className="mono">{c.id}</td>
-                  <td>
-                    {canEdit ? (
-                      <select
-                        value={c.capability}
-                        disabled={busy}
-                        onChange={(e) => commit((s) => {
-                          const conn = s.grants.connections.find((x) => x.id === c.id);
-                          if (conn) conn.capability = e.target.value as Capability;
-                        })}
-                        style={{ minWidth: 150 }}
-                      >
-                        {CAPS.map((cap) => <option key={cap} value={cap}>{cap}</option>)}
-                      </select>
-                    ) : (
-                      <span className="badge">{c.capability}</span>
-                    )}
-                  </td>
-                  <td>
-                    <div className="row" style={{ gap: 6 }}>
-                      <button className="btn ghost sm" onClick={() => probe(c.id, false)}>Read</button>
-                      <button className="btn ghost sm" onClick={() => probe(c.id, true)}>Write</button>
-                    </div>
-                  </td>
-                  <td style={{ fontSize: 12 }}>
-                    {r ? <div><ProbeBadge r={r} /> read</div> : null}
-                    {w ? <div><ProbeBadge r={w} /> write</div> : null}
-                    {!r && !w ? <span className="muted">—</span> : null}
-                  </td>
-                  {canEdit ? (
-                    <td>
-                      <button className="chip-x" disabled={busy} onClick={() => commit((s) => { s.grants.connections = s.grants.connections.filter((x) => x.id !== c.id); })} aria-label={`Remove ${c.id}`}>×</button>
-                    </td>
-                  ) : null}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      {canEdit ? (
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
-          <input type="text" value={newConn} onChange={(e) => setNewConn(e.target.value)} placeholder="connection id, e.g. crm" style={{ width: 200 }} />
-          <select value={newConnCap} onChange={(e) => setNewConnCap(e.target.value as Capability)}>
-            {CAPS.map((cap) => <option key={cap} value={cap}>{cap}</option>)}
-          </select>
-          <button
-            className="btn sm"
-            disabled={busy || !newConn.trim()}
-            onClick={() => commit((s) => {
-              const idv = newConn.trim();
-              if (!s.grants.connections.some((x) => x.id === idv)) s.grants.connections.push({ id: idv, capability: newConnCap });
-            }).then(() => setNewConn(''))}
-          >
-            Grant connection
-          </button>
-        </div>
-      ) : null}
+      <ArtifactGrantList
+        systemId={systemId} kind="connection" field="connections" label="Connections"
+        emptyText="No connections you can access." grants={system.grants.connections}
+        canEdit={canEdit} canDirectWrite={canDirectWrite} busy={busy} commit={commit}
+        renderProbe={(id) => {
+          const r = probes[`${id}:r`];
+          const w = probes[`${id}:w`];
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+              <button className="btn ghost sm" onClick={() => probe(id, false)}>Read</button>
+              <button className="btn ghost sm" onClick={() => probe(id, true)}>Write</button>
+              <span>
+                {r ? <span style={{ marginRight: 6 }}><ProbeBadge r={r} /> r</span> : null}
+                {w ? <span><ProbeBadge r={w} /> w</span> : null}
+              </span>
+            </div>
+          );
+        }}
+      />
 
-      <div className="grant-block" style={{ marginBottom: 12 }}>
+      <div className="grant-block" style={{ marginBottom: 12, marginTop: 12 }}>
         <div className="comp-label">Probe a non-granted connection (expect deny)</div>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
           <input type="text" value={probeId} onChange={(e) => setProbeId(e.target.value)} placeholder="e.g. crm_write" style={{ width: 200 }} />
@@ -460,16 +419,148 @@ function ProbeBadge({ r }: { r: ProbeResult }) {
   return <span className={`badge ${cls}`}>{label}</span>;
 }
 
-function AddInline({ placeholder, disabled, onAdd }: { placeholder: string; disabled: boolean; onAdd: (v: string) => void }) {
-  const [v, setV] = useState('');
+const SCOPE_BADGE: Record<Available['scope'], string> = { personal: 'personal', domain: 'domain', marketplace: 'marketplace' };
+
+/**
+ * One browsable, searchable grant list for an artifact type (data / knowledge /
+ * metrics / connections). Loads what the caller can see from the scoped
+ * `…/grants/available?kind=` endpoint, merges any already-granted ids that are no
+ * longer listed so nothing is hidden, and gives each row a scope badge + an access
+ * `<select>`. The `Write (direct)` option is hidden unless the user is a builder —
+ * server-side enforcement still rejects it on save regardless of the UI.
+ */
+function ArtifactGrantList({
+  systemId, kind, field, label, emptyText, grants, canEdit, canDirectWrite, busy, commit, renderProbe,
+}: {
+  systemId: string;
+  kind: Kind;
+  field: GrantField;
+  label: string;
+  emptyText: string;
+  grants: ArtifactGrant[];
+  canEdit: boolean;
+  canDirectWrite: boolean;
+  busy: boolean;
+  commit: (mutate: (s: System) => void) => Promise<void>;
+  renderProbe?: (id: string) => ReactNode;
+}) {
+  const [available, setAvailable] = useState<Available[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadErr, setLoadErr] = useState('');
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setLoadErr('');
+    fetch(`/api/agents/systems/${systemId}/grants/available?kind=${kind}`, { cache: 'no-store' })
+      .then(async (res) => {
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? 'Failed to load');
+        if (alive) setAvailable(body.items as Available[]);
+      })
+      .catch((e) => { if (alive) setLoadErr((e as Error).message); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [systemId, kind]);
+
+  const capOf = (id: string): Access => {
+    const g = grants.find((x) => x.id === id);
+    return (g ? g.capability : 'Off') as Access;
+  };
+
+  const setAccess = (id: string, access: Access) => {
+    commit((s) => {
+      const arr = s.grants[field];
+      const rest = arr.filter((x) => x.id !== id);
+      s.grants[field] = access === 'Off' ? rest : [...rest, { id, capability: access }];
+    });
+  };
+
+  // Merge granted-but-unlisted ids (e.g. an artifact you can no longer browse) so
+  // an existing grant is always visible + removable — never silently orphaned.
+  const rows: Available[] = (() => {
+    const listed = available ?? [];
+    const knownIds = new Set(listed.map((a) => a.id));
+    const extra: Available[] = grants
+      .filter((g) => !knownIds.has(g.id))
+      .map((g) => ({ id: g.id, name: g.id, scope: 'personal' as const }));
+    const all = [...listed, ...extra];
+    const q = search.trim().toLowerCase();
+    return q ? all.filter((a) => a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q)) : all;
+  })();
+
+  const options = ACCESS_OPTIONS.filter((o) => canDirectWrite || !o.direct);
+
   return (
-    <form
-      className="row"
-      style={{ gap: 6, marginTop: 6, alignItems: 'center' }}
-      onSubmit={(e) => { e.preventDefault(); if (v.trim()) { onAdd(v.trim()); setV(''); } }}
-    >
-      <input type="text" value={v} onChange={(e) => setV(e.target.value)} placeholder={placeholder} style={{ width: 200 }} />
-      <button className="btn ghost sm" type="submit" disabled={disabled || !v.trim()}>Add</button>
-    </form>
+    <div className="grant-block" style={{ marginBottom: 14 }}>
+      <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+        <div className="comp-label" style={{ margin: 0 }}>{label}</div>
+        {available && available.length > 6 ? (
+          <input
+            type="text"
+            placeholder={`Search ${label.toLowerCase()}…`}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: 200 }}
+          />
+        ) : null}
+      </div>
+      {loadErr ? <div className="error" style={{ marginBottom: 8 }}>{loadErr}</div> : null}
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th><th style={{ width: 96 }}>Scope</th><th style={{ width: 190 }}>Access</th>
+              {renderProbe ? <th style={{ width: 220 }}>Probe</th> : null}
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={renderProbe ? 4 : 3} className="muted">Loading…</td></tr>
+            ) : rows.length === 0 ? (
+              <tr><td colSpan={renderProbe ? 4 : 3} className="muted">{search ? 'No matches.' : emptyText}</td></tr>
+            ) : rows.map((a) => {
+              const cur = capOf(a.id);
+              return (
+                <tr key={a.id}>
+                  <td style={{ maxWidth: 0 }}>
+                    <span
+                      title={`${a.name} (${a.id})`}
+                      style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    >
+                      {a.name}
+                    </span>
+                  </td>
+                  <td><span className="badge muted">{SCOPE_BADGE[a.scope]}</span></td>
+                  <td>
+                    {canEdit ? (
+                      <select
+                        value={cur}
+                        disabled={busy}
+                        onChange={(e) => setAccess(a.id, e.target.value as Access)}
+                        style={{ minWidth: 180 }}
+                      >
+                        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    ) : (
+                      <span className={`badge ${cur === 'Off' ? 'muted' : ''}`}>
+                        {ACCESS_OPTIONS.find((o) => o.value === cur)?.label ?? cur}
+                      </span>
+                    )}
+                  </td>
+                  {renderProbe ? <td>{renderProbe(a.id)}</td> : null}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {canEdit && !canDirectWrite ? (
+        <p className="muted" style={{ fontSize: 11.5, marginTop: 6 }}>
+          Direct write (no approval) is builder-only — grant “Write (needs approval)” to route writes through Governance.
+        </p>
+      ) : null}
+    </div>
   );
 }

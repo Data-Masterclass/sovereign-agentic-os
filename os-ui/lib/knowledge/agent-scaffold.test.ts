@@ -55,7 +55,7 @@ test('default scaffold agentifies the Agent step, leaves others manual', () => {
 
 test('the workflow is attached as context via grants.knowledge', () => {
   const out = scaffoldSystem(parseWorkflow(WF));
-  assert.deepEqual(out.system.grants.knowledge, ['bank-submission']);
+  assert.deepEqual(out.system.grants.knowledge, [{ id: 'bank-submission', capability: 'Read' }]);
   assert.deepEqual(out.system.grants.tools, ['retrieve']);
 });
 
@@ -99,5 +99,5 @@ test('all-manual workflow scaffolds a single coordinator with the workflow conte
   assert.equal(out.agentSteps.length, 0);
   assert.equal(out.system.agents.length, 1);
   assert.equal(out.system.agents[0].id, 'coordinator');
-  assert.deepEqual(out.system.grants.knowledge, ['bank-submission']);
+  assert.deepEqual(out.system.grants.knowledge, [{ id: 'bank-submission', capability: 'Read' }]);
 });

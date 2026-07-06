@@ -84,6 +84,8 @@ export const TUTORIAL_EXEMPT_ROUTES: Record<string, string> = {
   '/settings': 'Read-only deployment configuration; nothing to practice or decide here.',
   '/tutorials':
     'The tutorial gallery itself — teaching how to open tutorials would be circular.',
+  '/mcp':
+    'Static reference/teaching page that documents the MCP protocol and tool catalog; the connection instructions are self-contained and nothing needs practising in a sandbox.',
 };
 
 /** Resolve one tutorial. Returns `undefined` for an unknown key. */

@@ -254,3 +254,36 @@ test('certify requires an Admin (a Builder is refused)', () => {
   applyApprovedFilePromotion(requestPromotion(a.id, amir, {}), bea);
   assert.throws(() => transition(a.id, bea, 'certify', {}), /Admin|requires|permitted/i);
 });
+
+// ------------------------------------------------- download canView gate tests --
+
+test('getFile (download gate) returns body text to the owner', () => {
+  const a = createFile(amir, { name: 'training-deck.pdf', text: 'page 1 content here' });
+  const view = getFile(a.id, amir);
+  assert.equal(view.text, 'page 1 content here');
+  assert.equal(view.asset.name, 'training-deck.pdf');
+});
+
+test('getFile (download gate) blocks a non-member from a private file', () => {
+  const a = createFile(amir, { name: 'private.pdf', text: 'confidential' });
+  // kenji is in finance; amir's file is private to sales — canView must deny
+  assert.throws(() => getFile(a.id, kenji), /permitted|not found|40[34]/i);
+});
+
+test('getFile (download gate) allows a domain peer to download a promoted file', () => {
+  const a = createFile(amir, { name: 'handbook.pdf', tags: ['guide'], text: 'the shared handbook' });
+  setDocs(a.id, amir, { description: 'sales domain handbook', tags: ['guide'] });
+  const req = requestPromotion(a.id, amir, {});
+  applyApprovedFilePromotion(req, bea);
+  // bea is in the same domain (sales) — canView should now pass
+  const view = getFile(a.id, bea);
+  assert.equal(view.text, 'the shared handbook');
+});
+
+test('getFile (download gate) blocks a user outside the domain from a domain asset', () => {
+  const a = createFile(amir, { name: 'shared.pdf', tags: ['internal'], text: 'domain-only content' });
+  setDocs(a.id, amir, { description: 'only for sales', tags: ['internal'] });
+  applyApprovedFilePromotion(requestPromotion(a.id, amir, {}), bea);
+  // kenji is in finance, not in the sales domain grant — must be blocked
+  assert.throws(() => getFile(a.id, kenji), /permitted|not found|40[34]/i);
+});

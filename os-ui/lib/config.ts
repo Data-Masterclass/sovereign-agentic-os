@@ -71,6 +71,10 @@ export const config = {
   s3Region: env('S3_REGION', 'us-east-1'),
   s3PathStyle: env('S3_PATH_STYLE', 'true').toLowerCase() !== 'false',
   uploadsBucket: env('UPLOADS_BUCKET', 'lakehouse'),
+  // The governed Files-tab object store. Uploaded originals live under the store's
+  // prefix invariant `s3://files/<owner|domain>/…` (lib/files/asset-schema.ts →
+  // objectPrefixFor); this bucket name is the `files` in that scheme.
+  filesBucket: env('FILES_BUCKET', 'files'),
   awsAccessKeyId: env('AWS_ACCESS_KEY_ID', ''),
   awsSecretAccessKey: env('AWS_SECRET_ACCESS_KEY', ''),
   // M1 upload cap (documented). Streams a single buffered PUT; ~100 MB keeps the

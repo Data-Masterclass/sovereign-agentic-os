@@ -185,7 +185,7 @@ export default function McpConnect({ tab }: { tab?: string } = {}) {
           </div>
 
           <div className="section-title" style={{ marginTop: 18 }}>2 · Connect from Claude (Desktop or claude.ai)</div>
-          <ol style={{ margin: '4px 0 4px', paddingLeft: 22, fontSize: 12.5, lineHeight: 1.9, color: '#1a1813' }}>
+          <ol style={{ margin: '4px 0 4px', paddingLeft: 22, fontSize: 12.5, lineHeight: 1.9, color: 'var(--text)' }}>
             <li>Open <strong>Settings</strong> → <strong>Connectors</strong> → <strong>Add custom connector</strong>.</li>
             <li>Paste the endpoint URL. Leave everything else empty.</li>
             <li>Choose <strong>Managed Authorization</strong> (<em>Verwaltete Autorisierung</em>) — no token needed.</li>
@@ -196,27 +196,12 @@ export default function McpConnect({ tab }: { tab?: string } = {}) {
             <li>Click <strong>Approve</strong>. Done — revocable any time from this OS.</li>
           </ol>
 
-          <div className="section-title" style={{ marginTop: 16 }}>2 · Connect from ChatGPT</div>
-          <ol style={{ margin: '4px 0 4px', paddingLeft: 22, fontSize: 12.5, lineHeight: 1.9, color: '#1a1813' }}>
-            <li>Open <strong>Settings</strong> → <strong>Connectors</strong> (enable <em>Developer mode</em> if asked).</li>
-            <li>Click <strong>Add custom connector</strong> and give it a name (e.g. &ldquo;Sovereign OS&rdquo;).</li>
-            <li>Paste the endpoint URL as the <strong>MCP Server URL</strong>.</li>
-            <li>Authentication → <strong>Access token / API key</strong> → paste your <strong>personal token</strong> from above.</li>
-            <li>Save, then enable it in the chat composer&rsquo;s tools. ChatGPT now works as you, fully governed.</li>
-          </ol>
-
-          <div className="section-title" style={{ marginTop: 16 }}>2 · Connect from Claude Code (terminal)</div>
-          <p className="muted" style={{ fontSize: 12, margin: '4px 0 6px' }}>One command — paste into your terminal:</p>
-          <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
-            <pre className="mono" style={{ flex: 1, whiteSpace: 'pre-wrap', margin: 0, fontSize: 12, color: '#1a1813', background: '#ffffff' }}>{claudeCode}</pre>
-            <CopyButton text={claudeCode} />
-          </div>
-
-          <details style={{ marginTop: 16 }}>
-            <summary className="muted" style={{ cursor: 'pointer', fontSize: 12.5 }}>
-              Config-file fallback — only for older Claude Desktop versions without custom connectors
-            </summary>
-            <p className="muted" style={{ fontSize: 12, margin: '10px 0 6px' }}>
+          <p style={{ margin: '10px 0 2px', fontSize: 12.5 }}>
+            <strong style={{ color: 'var(--text)' }}>Config-file fallback — only for older Claude Desktop versions without custom connectors</strong>
+          </p>
+          <details style={{ marginTop: 4 }}>
+            <summary className="muted" style={{ cursor: 'pointer', fontSize: 12 }}>Show config file</summary>
+            <p className="muted" style={{ fontSize: 12, margin: '8px 0 6px' }}>
               Add to <span className="mono">claude_desktop_config.json</span> (Settings → Developer → Edit Config),
               then restart Claude.
             </p>
@@ -225,6 +210,22 @@ export default function McpConnect({ tab }: { tab?: string } = {}) {
               <CopyButton text={desktopJson} />
             </div>
           </details>
+
+          <div className="section-title" style={{ marginTop: 16 }}>3 · Connect from ChatGPT</div>
+          <ol style={{ margin: '4px 0 4px', paddingLeft: 22, fontSize: 12.5, lineHeight: 1.9, color: 'var(--text)' }}>
+            <li>Open <strong>Settings</strong> → <strong>Connectors</strong> (enable <em>Developer mode</em> if asked).</li>
+            <li>Click <strong>Add custom connector</strong> and give it a name (e.g. &ldquo;Sovereign OS&rdquo;).</li>
+            <li>Paste the endpoint URL as the <strong>MCP Server URL</strong>.</li>
+            <li>Authentication → <strong>Access token / API key</strong> → paste your <strong>personal token</strong> from above.</li>
+            <li>Save, then enable it in the chat composer&rsquo;s tools. ChatGPT now works as you, fully governed.</li>
+          </ol>
+
+          <div className="section-title" style={{ marginTop: 16 }}>4 · Connect from Claude Code (terminal)</div>
+          <p className="muted" style={{ fontSize: 12, margin: '4px 0 6px' }}>One command — paste into your terminal:</p>
+          <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
+            <pre className="mono" style={{ flex: 1, whiteSpace: 'pre-wrap', margin: 0, fontSize: 12, color: '#1a1813', background: '#ffffff' }}>{claudeCode}</pre>
+            <CopyButton text={claudeCode} />
+          </div>
 
           <div className="hint" style={{ marginTop: 12 }}>
             Lost or leaked your token? An operator rotates <span className="mono">OS_MCP_TOKEN_SECRET</span> to

@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 import { TEMPLATES, type TemplateKey } from '@/lib/agents/templates';
+import { getUrlParam } from '@/lib/url-params';
 
 /**
  * Create a new agent system, guided. Pick a plain-language starter template
@@ -15,7 +16,7 @@ import { TEMPLATES, type TemplateKey } from '@/lib/agents/templates';
  * "+ New" pane so the create-flow keeps the same layout.
  */
 export default function NewSystemPanel({ onCreated }: { onCreated: (id: string) => void }) {
-  const [name, setName] = useState('');
+  const [name, setName] = useState(() => getUrlParam('name') ?? '');
   const [template, setTemplate] = useState<TemplateKey>('blank');
   const [creating, setCreating] = useState(false);
   const [err, setErr] = useState('');

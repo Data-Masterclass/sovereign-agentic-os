@@ -28,6 +28,9 @@ export type CatalogAsset = {
   description: string;
   type: string;
   source: CatalogSource;
+  /** Populated for registry-sourced entries — enables the catalog to link to the
+   *  dataset detail view without reversing the FQN. */
+  datasetId?: string;
 };
 
 export type CatalogSourceStatus = {
@@ -72,6 +75,7 @@ export function registryAssets(groups: DatasetGroups): CatalogAsset[] {
       description: `${tierLabel} · ${d.domain}${materialized}`,
       type: tierLabel,
       source: 'registry' as const,
+      datasetId: d.id,
     };
   });
 }

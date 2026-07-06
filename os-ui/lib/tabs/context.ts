@@ -43,6 +43,8 @@ const TITLES: Record<McpTab, string> = {
   connections: 'Connections',
   governance: 'Governance',
   marketplace: 'Marketplace',
+  strategy: 'Strategy',
+  monitoring: 'Monitoring',
 };
 export function tabTitle(tab: McpTab): string {
   return TITLES[tab];

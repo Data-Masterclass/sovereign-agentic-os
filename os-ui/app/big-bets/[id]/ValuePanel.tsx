@@ -3,6 +3,7 @@
  */
 'use client';
 
+import { useState } from 'react';
 import { type BetView, type ValueBasis, type AllocationMethod, eur } from '../types';
 import { Segmented } from '../ui';
 
@@ -18,17 +19,51 @@ const METHODS: { value: AllocationMethod; label: string }[] = [
 ];
 
 export default function ValuePanel({
-  view, basis, allocation, onBasis, onAllocation,
+  view, basis, allocation, onBasis, onAllocation, canEdit, betId, onMutate,
 }: {
   view: BetView;
   basis: ValueBasis;
   allocation: AllocationMethod;
   onBasis: (b: ValueBasis) => void;
   onAllocation: (a: AllocationMethod) => void;
+  canEdit: boolean;
+  betId: string;
+  onMutate: () => void;
 }) {
   const r = view.value.realized;
   const d = view.value.distribution;
   const gain = r.current - r.baseline;
+  const [reporting, setReporting] = useState(false);
+  const [amount, setAmount] = useState('');
+  const [reportNote, setReportNote] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [reportErr, setReportErr] = useState('');
+
+  const report = async () => {
+    setSaving(true); setReportErr('');
+    try {
+      const res = await fetch(`/api/big-bets/${betId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          ownerDeclaredValue: Number(amount),
+          valueBasis: 'owner-declared',
+          ...(reportNote.trim() ? { note: reportNote.trim() } : {}),
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as { error?: string }).error ?? `Request failed (${res.status})`);
+      }
+      setReporting(false);
+      setAmount(''); setReportNote('');
+      onMutate();
+    } catch (e) {
+      setReportErr((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div>
@@ -60,7 +95,12 @@ export default function ValuePanel({
           ) : null}
         </div>
         {r.corroboration ? (
-          <span className="bb-baseline-corr">corroboration: {r.corroboration}</span>
+          <span className="bb-baseline-corr">
+            corroboration: declared {eur(r.corroboration.declared)}, metric uplift {eur(r.corroboration.metric)}
+            {r.corroboration.deltaPct !== 0
+              ? ` (${r.corroboration.deltaPct > 0 ? '+' : ''}${r.corroboration.deltaPct}% vs metric)`
+              : ''}
+          </span>
         ) : null}
       </div>
 
@@ -87,6 +127,9 @@ export default function ValuePanel({
             </tr>
           </thead>
           <tbody>
+            {d.components.length === 0 ? (
+              <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: '10px 0', fontSize: 12 }}>No components yet.</td></tr>
+            ) : null}
             {d.components.map((row) => (
               <tr key={row.refId ?? row.artifactId}>
                 <td>
@@ -111,6 +154,34 @@ export default function ValuePanel({
           {d.reconciles ? '✓ shares reconcile' : '⚠ does not reconcile'} · residual {eur(d.residual)}
         </span>
       </div>
+
+      {canEdit && view.bet.status !== 'archived' ? (
+        <div style={{ marginTop: 16 }}>
+          {reporting ? (
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, display: 'grid', gap: 8 }}>
+              <div className="row" style={{ gap: 12 }}>
+                <label style={{ display: 'block', flex: 1 }}>
+                  <span className="muted" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Amount (€)</span>
+                  <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} style={{ width: '100%' }} placeholder="420000" />
+                </label>
+                <label style={{ display: 'block', flex: 2 }}>
+                  <span className="muted" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Note (optional)</span>
+                  <input type="text" value={reportNote} onChange={(e) => setReportNote(e.target.value)} style={{ width: '100%' }} placeholder="Source or rationale" />
+                </label>
+              </div>
+              {reportErr ? <div className="error">{reportErr}</div> : null}
+              <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+                <button className="btn ghost sm" onClick={() => setReporting(false)} disabled={saving}>Cancel</button>
+                <button className="btn sm" onClick={report} disabled={saving || !amount || Number.isNaN(Number(amount))}>
+                  {saving ? <span className="spin" /> : 'Save'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button className="btn ghost sm" onClick={() => setReporting(true)}>Report value</button>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

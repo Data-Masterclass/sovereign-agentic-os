@@ -42,6 +42,14 @@ export type OsMirror = {
   hydrate(size?: number): Promise<unknown[] | null>;
   /** One doc's `_source`, or null when missing/unreachable. Does NOT probe. */
   getDoc(id: string): Promise<unknown | null>;
+  /** Atomic single-use claim: an AWAITED delete that reports who won the race.
+   *  'won'         → this caller deleted an existing doc (authoritative single-use);
+   *  'lost'        → the doc was already gone (another caller won / never existed);
+   *  'unreachable' → mirror error/timeout — the caller must NOT treat it as claimed.
+   *  Unlike `deleteThrough` this is NOT fire-and-forget: it lets a store gate a
+   *  single-use action (e.g. refresh-token rotation) on the mirror's OWN atomic
+   *  delete instead of read-then-fire-and-forget-delete (which can resurrect). */
+  claim(id: string): Promise<'won' | 'lost' | 'unreachable'>;
   /** Fire-and-forget upsert. While unhealthy, lazily re-probes (throttled) and,
    *  if the mirror healed, persists THIS doc. Earlier dropped writes are NOT
    *  replayed — the in-process store stays authoritative until the next roll. */
@@ -157,6 +165,20 @@ export function osMirror(opts: {
     }
   }
 
+  async function claim(id: string): Promise<'won' | 'lost' | 'unreachable'> {
+    const res = await osFetch(`/${index}/_doc/${id}?refresh=true`, { method: 'DELETE' });
+    if (!res) return 'unreachable'; // network error / timeout → cannot prove single-use
+    if (res.status === 404) return 'lost'; // already deleted / never existed
+    if (!res.ok) return 'unreachable'; // 5xx / auth failure → do NOT assume claimed
+    try {
+      const body = (await res.json()) as { result?: string };
+      // OpenSearch DELETE returns result:"deleted" (won) or "not_found" (lost).
+      return body?.result === 'not_found' ? 'lost' : 'won';
+    } catch {
+      return 'won'; // 2xx with an unreadable body — the delete succeeded
+    }
+  }
+
   /** Send now if healthy; otherwise lazily re-probe (throttled) and send on heal. */
   function sendThrough(send: () => void): void {
     const s = st();
@@ -191,6 +213,7 @@ export function osMirror(opts: {
     probe,
     hydrate,
     getDoc,
+    claim,
     writeThrough,
     deleteThrough,
     __reset: () => {

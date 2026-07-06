@@ -47,32 +47,41 @@ function sha256hex(data: string): string {
   return createHash('sha256').update(data, 'utf8').digest('hex');
 }
 
-/** PUT a buffered body to the uploads bucket at `key` (SigV4, path-style). Throws on
- *  a non-2xx so the caller reports the failure honestly (never a false success). */
-export async function putObject(
-  key: string,
-  body: Buffer,
-  contentType = 'application/octet-stream',
-): Promise<void> {
+function requireCreds(): void {
   if (!config.awsAccessKeyId || !config.awsSecretAccessKey) {
     throw new Error('object-store credentials are not configured (AWS_ACCESS_KEY_ID/SECRET)');
   }
-  const url = new URL(config.s3Endpoint);
-  const host = url.host; // e.g. "minio:9000" — undici sends this host header automatically.
-  const canonicalUri = `/${config.uploadsBucket}/${encodeKey(key)}`;
+}
+
+/**
+ * SigV4-sign a single path-style request against `<bucket>/<key>` and return the
+ * headers to send. Payload is UNSIGNED (integrity still on the wire) so both PUT
+ * (buffered body) and GET (no body) share one signer. `content-type` is only signed
+ * when supplied (writes); reads omit it.
+ */
+function signedHeadersFor(
+  method: 'PUT' | 'GET',
+  bucket: string,
+  key: string,
+  contentType?: string,
+): Record<string, string> {
+  const host = new URL(config.s3Endpoint).host; // e.g. "minio:9000"
+  const canonicalUri = `/${bucket}/${encodeKey(key)}`;
   const amzDate = new Date().toISOString().replace(/[:-]|\.\d{3}/g, ''); // YYYYMMDDTHHMMSSZ
   const dateStamp = amzDate.slice(0, 8);
   const region = config.s3Region;
   const service = 's3';
   const payloadHash = 'UNSIGNED-PAYLOAD';
 
+  // Signed headers are sorted; content-type is present only for writes.
+  const withCt = contentType !== undefined;
   const canonicalHeaders =
-    `content-type:${contentType}\n` +
+    (withCt ? `content-type:${contentType}\n` : '') +
     `host:${host}\n` +
     `x-amz-content-sha256:${payloadHash}\n` +
     `x-amz-date:${amzDate}\n`;
-  const signedHeaders = 'content-type;host;x-amz-content-sha256;x-amz-date';
-  const canonicalRequest = ['PUT', canonicalUri, '', canonicalHeaders, signedHeaders, payloadHash].join('\n');
+  const signedHeaders = (withCt ? 'content-type;' : '') + 'host;x-amz-content-sha256;x-amz-date';
+  const canonicalRequest = [method, canonicalUri, '', canonicalHeaders, signedHeaders, payloadHash].join('\n');
 
   const scope = `${dateStamp}/${region}/${service}/aws4_request`;
   const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, sha256hex(canonicalRequest)].join('\n');
@@ -82,25 +91,64 @@ export async function putObject(
     `AWS4-HMAC-SHA256 Credential=${config.awsAccessKeyId}/${scope}, ` +
     `SignedHeaders=${signedHeaders}, Signature=${signature}`;
 
+  const headers: Record<string, string> = {
+    'x-amz-content-sha256': payloadHash,
+    'x-amz-date': amzDate,
+    authorization,
+  };
+  if (withCt) headers['content-type'] = contentType!;
+  return headers;
+}
+
+/** PUT a buffered body to `bucket` at `key` (SigV4, path-style; default = the uploads
+ *  bucket). Throws on a non-2xx so the caller reports the failure honestly. */
+export async function putObject(
+  key: string,
+  body: Buffer,
+  contentType = 'application/octet-stream',
+  bucket: string = config.uploadsBucket,
+): Promise<void> {
+  requireCreds();
+  const canonicalUri = `/${bucket}/${encodeKey(key)}`;
+  const headers = signedHeadersFor('PUT', bucket, key, contentType);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 60_000);
   try {
     const res = await fetch(`${config.s3Endpoint}${canonicalUri}`, {
-      method: 'PUT',
-      headers: {
-        'content-type': contentType,
-        'x-amz-content-sha256': payloadHash,
-        'x-amz-date': amzDate,
-        authorization,
-      },
-      body,
-      cache: 'no-store',
-      signal: ctrl.signal,
+      method: 'PUT', headers, body, cache: 'no-store', signal: ctrl.signal,
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new Error(`object-store PUT ${res.status}: ${text.slice(0, 240)}`);
     }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** GET an object from `bucket` at `key`. Returns the buffered body + content-type, or
+ *  `null` for a 404 (absent object). Throws on any other non-2xx. */
+export async function getObject(
+  key: string,
+  bucket: string = config.uploadsBucket,
+): Promise<{ body: Buffer; contentType: string } | null> {
+  requireCreds();
+  const canonicalUri = `/${bucket}/${encodeKey(key)}`;
+  const headers = signedHeadersFor('GET', bucket, key);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60_000);
+  try {
+    const res = await fetch(`${config.s3Endpoint}${canonicalUri}`, {
+      method: 'GET', headers, cache: 'no-store', signal: ctrl.signal,
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`object-store GET ${res.status}: ${text.slice(0, 240)}`);
+    }
+    const body = Buffer.from(await res.arrayBuffer());
+    const contentType = res.headers.get('content-type') ?? 'application/octet-stream';
+    return { body, contentType };
   } finally {
     clearTimeout(timer);
   }

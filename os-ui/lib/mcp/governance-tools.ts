@@ -14,6 +14,11 @@ import { record as audit } from '@/lib/governance/audit';
 import { getLineage } from '@/lib/lineage/unified';
 import { importAdapter } from '@/lib/marketplace';
 import type { ImportMode } from '@/lib/marketplace/types';
+import { canViewPolicyPlane, consolidatedPlane, listEgress, policySources } from '@/lib/governance/policy-view';
+import { listStanding } from '@/lib/governance/standing';
+import { listCaps, checkCap } from '@/lib/governance/cost';
+import { listUsers } from '@/lib/users';
+import { roleAtLeast } from '@/lib/session';
 
 /**
  * THE GOVERNANCE QUEUE + LADDER META-TOOLS (mcp-v2 P0). These wrap the EXISTING
@@ -272,6 +277,61 @@ export const governanceTools: McpTool[] = [
         scope: result.grant.scope,
         derivedId: result.grant.derivedId ?? null,
         note: result.note,
+      };
+    },
+  },
+  {
+    name: 'get_policy_view',
+    tab: 'governance',
+    minRole: 'builder',
+    description:
+      'Read the consolidated, READ-ONLY policy plane — who-can-do-what end-to-end: role-derived grants + dynamic access grants + egress allowlist + standing policies, each labelled with the engine it compiles to (OPA / Cube / OpenSearch-DLS), PLUS the capability-profile catalogue. Purpose: understand the governance posture before you act. Governance: gated on the `policy.view` right (re-checked in-lib, NOT just the Builder floor) — a creator is refused; a Builder/Domain-admin sees ONLY their own domain(s); an Admin sees tenant-wide. Read-only: editing lives in each tab, overrides are Admin-only.',
+    inputSchema: { type: 'object', properties: {}, examples: [{}] },
+    call: async (user) => {
+      // Re-gate authoritatively on the policy.view right (the real control).
+      if (!canViewPolicyPlane(user.role)) {
+        fail('Viewing the policy plane requires the policy.view right (Builder or Admin)', 403);
+      }
+      const scope = user.role === 'admin' ? undefined : user.domains;
+      const users = await listUsers();
+      return {
+        plane: consolidatedPlane(users, scope),
+        sources: policySources(),
+        egress: listEgress(scope),
+        standing: listStanding(scope),
+        canOverride: user.role === 'admin',
+      };
+    },
+  },
+  {
+    name: 'get_cost',
+    tab: 'governance',
+    minRole: 'creator',
+    description:
+      'Read the spend caps in your scope + their live status (projected spend vs limit, and which are near/over). Purpose: know the cost guardrails before running metered work. Governance: read-only; scope is derived from your identity — a creator/Builder sees their own domain’s caps (+ key caps), an Admin sees tenant-wide. HONESTY: cap ENFORCEMENT is live (checkCap), but spend accrual is in-process today (a real deploy reconciles LiteLLM usage); setting a cap is a governance mutation gated elsewhere (Builder+), not exposed here.',
+    inputSchema: { type: 'object', properties: {}, examples: [{}] },
+    call: async (user) => {
+      const scope = user.role === 'admin' ? undefined : user.domains;
+      const caps = listCaps(scope);
+      const status = caps.map((c) => {
+        const check = checkCap({ scope: c.scope, subject: c.subject, amount: 0, modelClass: c.modelClass });
+        return {
+          id: c.id,
+          scope: c.scope,
+          subject: c.subject,
+          limit: c.limit,
+          period: c.period,
+          modelClass: c.modelClass ?? null,
+          projectedSpend: check.projected,
+          withinCap: check.allowed,
+          alert: !check.allowed ? 'over' : check.cap && check.projected >= check.cap.limit * 0.8 ? 'near' : 'ok',
+        };
+      });
+      return {
+        canSetCap: roleAtLeast(user.role, 'builder'),
+        caps: status,
+        alerts: status.filter((s) => s.alert !== 'ok'),
+        note: 'Cap enforcement is live (checkCap); spend accrual is in-process offline and reconciles to LiteLLM usage on a real deploy.',
       };
     },
   },

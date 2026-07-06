@@ -269,17 +269,20 @@ export default function AppPage() {
                 </div>
                 <div className="row" style={{ gap: 8, alignItems: 'center', flexShrink: 0 }}>
                   {surface.ui ? (
-                    <button
-                      className="btn"
-                      disabled
-                      title={
-                        app.deploy.state === 'live'
-                          ? 'Deploy approved — the in-cluster runner that serves this app ships in the next release.'
-                          : 'Publish a release to go live'
-                      }
-                    >
-                      Open app UI ↗
-                    </button>
+                    app.deploy.previewUrl ? (
+                      <a
+                        href={app.deploy.previewUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn"
+                      >
+                        Open app UI ↗
+                      </a>
+                    ) : (
+                      <span className="muted" style={{ fontSize: 12 }}>
+                        In-cluster app runner ships in the next release
+                      </span>
+                    )
                   ) : null}
                   {surface.api ? (
                     <button className={surface.ui ? 'btn ghost' : 'btn'} onClick={() => setShowApi((v) => !v)}>

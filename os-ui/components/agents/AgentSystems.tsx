@@ -38,11 +38,16 @@ export default function AgentSystems() {
   }, []);
   const back = useCallback(() => {
     setOpenId(null);
-    patchUrl({ system: null });
+    // Clear any deep-link `?name=` seed too, so a later "+ New" pane starts blank.
+    patchUrl({ system: null, name: null });
     setRailKey((k) => k + 1); // refresh the landing list after edits
   }, []);
   const startNew = useCallback(() => open(NEW), [open]);
-  const onCreated = useCallback((id: string) => { setRailKey((k) => k + 1); open(id); }, [open]);
+  const onCreated = useCallback((id: string) => {
+    patchUrl({ name: null }); // consume the deep-link name seed once created
+    setRailKey((k) => k + 1);
+    open(id);
+  }, [open]);
 
   // Landing — no system open.
   if (!openId) return <SystemsList onOpen={open} />;

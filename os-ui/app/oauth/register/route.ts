@@ -22,7 +22,7 @@ export async function POST(req: Request) {
     );
   }
   try {
-    const client = registerClient({ redirect_uris: body?.redirect_uris, client_name: body?.client_name });
+    const client = await registerClient({ redirect_uris: body?.redirect_uris, client_name: body?.client_name });
     return NextResponse.json(
       {
         client_id: client.clientId,

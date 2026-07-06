@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import yaml from 'js-yaml';
+import { roleAtLeast, type Role } from '../session';
 
 /**
  * `system.yaml` — the SINGLE source of truth for an agent system (Agents tab,
@@ -34,13 +35,24 @@ export type SafetyPreset = 'read-only' | 'read-propose' | 'read-bounded' | 'full
 /** Connection capability profile (mirrors lib/agent-governed `ConnMode`). */
 export type Capability = 'Off' | 'Read' | 'Write-approval' | 'Write-bounded' | 'Blocked';
 
-export type ConnectionGrant = { id: string; capability: Capability };
+/**
+ * A per-artifact grant: an id plus the capability the agent holds on it.
+ *  - `Read`           → read/query immediately
+ *  - `Write-approval` → propose a write, HELD in the Governance queue for a human
+ *  - `Write-bounded`  → immediate write, NO approval (builder-only; server-enforced)
+ * The same shape governs data products, knowledge, metrics AND connections so the
+ * grant model is uniform across every artifact type.
+ */
+export type ArtifactGrant = { id: string; capability: Capability };
+/** Back-compat alias — connections have always carried a capability profile. */
+export type ConnectionGrant = ArtifactGrant;
 
 export type Grants = {
-  data: string[];
-  knowledge: string[];
+  data: ArtifactGrant[];
+  knowledge: ArtifactGrant[];
+  metrics: ArtifactGrant[];
   tools: string[];
-  connections: ConnectionGrant[];
+  connections: ArtifactGrant[];
 };
 
 export type AgentSpec = {
@@ -119,29 +131,113 @@ function strMap(v: unknown): Record<string, string> {
   return out;
 }
 
+/**
+ * Parse an artifact-grant list (`data` / `knowledge` / `metrics` / `connections`),
+ * migrating the OLD shape on read: a bare `string[]` of ids (or a mixed list with
+ * string entries) coerces each string to `{ id, capability: 'Read' }`. This keeps
+ * every system.yaml saved before per-artifact access existed working unchanged.
+ */
+function parseArtifactGrants(v: unknown, where: string): ArtifactGrant[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) throw new SystemError(`system.yaml: '${where}' must be a list`);
+  const out: ArtifactGrant[] = [];
+  for (const entry of v) {
+    // Back-compat: an old bare-string id ⇒ Read.
+    if (typeof entry === 'string') {
+      out.push({ id: entry, capability: 'Read' });
+      continue;
+    }
+    if (!isRecord(entry) || typeof entry.id !== 'string') {
+      throw new SystemError(`system.yaml: each ${where} entry needs an 'id'`);
+    }
+    const capability = (entry.capability ?? 'Read') as Capability;
+    if (!CAPABILITIES.includes(capability)) {
+      throw new SystemError(
+        `system.yaml: ${where} '${entry.id}' has invalid capability '${String(entry.capability)}' (expected ${CAPABILITIES.join('|')})`,
+      );
+    }
+    out.push({ id: entry.id, capability });
+  }
+  return out;
+}
+
 function parseGrants(v: unknown): Grants {
   const g = isRecord(v) ? v : {};
-  const connections: ConnectionGrant[] = [];
-  if (g.connections !== undefined) {
-    if (!Array.isArray(g.connections)) throw new SystemError("system.yaml: 'grants.connections' must be a list");
-    for (const c of g.connections) {
-      if (!isRecord(c) || typeof c.id !== 'string') {
-        throw new SystemError("system.yaml: each grants.connections entry needs an 'id'");
-      }
-      const capability = (c.capability ?? 'Read') as Capability;
-      if (!CAPABILITIES.includes(capability)) {
-        throw new SystemError(
-          `system.yaml: connection '${c.id}' has invalid capability '${String(c.capability)}' (expected ${CAPABILITIES.join('|')})`,
-        );
-      }
-      connections.push({ id: c.id, capability });
-    }
-  }
   return {
-    data: strArray(g.data, 'grants.data'),
-    knowledge: strArray(g.knowledge, 'grants.knowledge'),
+    data: parseArtifactGrants(g.data, 'grants.data'),
+    knowledge: parseArtifactGrants(g.knowledge, 'grants.knowledge'),
+    metrics: parseArtifactGrants(g.metrics, 'grants.metrics'),
     tools: strArray(g.tools, 'grants.tools'),
-    connections,
+    connections: parseArtifactGrants(g.connections, 'grants.connections'),
+  };
+}
+
+/** The four artifact grant lists, paired with a stable kind label for messages. */
+function grantKinds(sys: System): { kind: string; arr: ArtifactGrant[] }[] {
+  return [
+    { kind: 'data', arr: sys.grants.data },
+    { kind: 'knowledge', arr: sys.grants.knowledge },
+    { kind: 'metric', arr: sys.grants.metrics },
+    { kind: 'connection', arr: sys.grants.connections },
+  ];
+}
+
+/** `kind:id` keys of every grant currently at `Write-bounded` (direct write). */
+function directWriteKeys(sys: System): Set<string> {
+  const keys = new Set<string>();
+  for (const { kind, arr } of grantKinds(sys)) {
+    for (const g of arr) if (g.capability === 'Write-bounded') keys.add(`${kind}:${g.id}`);
+  }
+  return keys;
+}
+
+/**
+ * Server-side escalation guard for the SAVE boundary: `Write-bounded` (direct
+ * write, no approval) may only be *introduced* by a saver who ranks builder+. A
+ * creator crafting a payload with a NEW direct-write grant is REJECTED here — the
+ * UI hiding the option is not trusted. Read + Write-approval are allowed at any
+ * role (Write-approval still holds every effect in the Governance queue).
+ *
+ * Only the DELTA is enforced: when `prev` is supplied, a direct-write grant that
+ * ALREADY existed (e.g. admin-set, or set before the owner was downgraded) does
+ * not block an unrelated edit — a creator can always keep editing their own
+ * system. Stale pre-existing direct-writes are instead neutralised at run time by
+ * {@link downgradeGrantsForRole}.
+ */
+export function assertGrantsWithinRole(sys: System, role: Role, prev?: System): void {
+  if (roleAtLeast(role, 'builder')) return;
+  const already = prev ? directWriteKeys(prev) : new Set<string>();
+  const offenders = [...directWriteKeys(sys)].filter((k) => !already.has(k));
+  if (offenders.length > 0) {
+    throw new SystemError(
+      `Direct write (Write-bounded) is builder-only — the owner lacks that role for: ${offenders.join(', ')}. Use "Write (needs approval)" instead.`,
+      403,
+    );
+  }
+}
+
+/**
+ * Runtime re-assertion of the builder-gate against the OWNER's CURRENT role. When
+ * the owner is no longer builder+, every `Write-bounded` (direct) artifact grant
+ * is DOWNGRADED to `Write-approval` — the agent keeps working, but its writes are
+ * HELD for a human in Governance rather than applied directly. Fails to approval,
+ * never to error. Applied at build / run / scheduled-run so a grant set while the
+ * owner was a builder cannot survive a later downgrade. Pure — returns a new
+ * System, never mutates the input.
+ */
+export function downgradeGrantsForRole(sys: System, role: Role): System {
+  if (roleAtLeast(role, 'builder')) return sys;
+  const fix = (arr: ArtifactGrant[]): ArtifactGrant[] =>
+    arr.map((g) => (g.capability === 'Write-bounded' ? { id: g.id, capability: 'Write-approval' } : g));
+  return {
+    ...sys,
+    grants: {
+      ...sys.grants,
+      data: fix(sys.grants.data),
+      knowledge: fix(sys.grants.knowledge),
+      metrics: fix(sys.grants.metrics),
+      connections: fix(sys.grants.connections),
+    },
   };
 }
 

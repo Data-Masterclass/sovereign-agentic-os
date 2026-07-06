@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { buildCatalog } from './tool-catalog.ts';
+import { buildCatalog, buildFullCatalog } from './tool-catalog.ts';
 
 const OSUI = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (p: string) => readFileSync(resolve(OSUI, p), 'utf8');
@@ -107,4 +107,27 @@ test('GrantsRouting: emits canonical names — writes t.name into grants.tools',
   const src = read('components/agents/GrantsRouting.tsx');
   // The picker writes t.name (the canonical MCP name) not a custom string.
   assert.match(src, /grants\.tools\.push\(t\.name\)|grants\.tools\.includes\(t\.name\)/, 'uses t.name for canonical grants');
+});
+
+// --- buildFullCatalog --------------------------------------------------------
+
+test('buildFullCatalog: includes ALL tools including builder-floor (not filtered by creator)', () => {
+  const full = buildFullCatalog();
+  const creatorCatalog = buildCatalog('creator');
+  // Full catalog is a strict superset of the creator-scoped catalog.
+  assert.ok(full.length > creatorCatalog.length, 'full catalog must include builder+ tools not in creator catalog');
+  assert.ok(full.some((t) => t.name === 'approve_promotion'), 'full catalog must include approve_promotion (builder-floor)');
+});
+
+test('buildFullCatalog: every entry carries name, tab, minRole, description, requires_approval', () => {
+  const full = buildFullCatalog();
+  assert.ok(full.length > 0, 'full catalog is non-empty');
+  for (const entry of full) {
+    assert.equal(typeof entry.name, 'string', `${entry.name}: name must be a string`);
+    assert.ok(entry.name.length > 0, `${entry.name}: name must be non-empty`);
+    assert.equal(typeof entry.tab, 'string', `${entry.name}: tab must be a string`);
+    assert.equal(typeof entry.minRole, 'string', `${entry.name}: minRole must be a string`);
+    assert.equal(typeof entry.description, 'string', `${entry.name}: description must be a string`);
+    assert.equal(typeof entry.requires_approval, 'boolean', `${entry.name}: requires_approval must be a boolean`);
+  }
 });

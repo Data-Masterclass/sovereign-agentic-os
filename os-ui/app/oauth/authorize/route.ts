@@ -3,7 +3,7 @@
  */
 import { NextResponse, type NextRequest } from 'next/server';
 import { currentUser, type CurrentUser } from '@/lib/auth';
-import { validateAuthorizeRequest, issueCode, getClient, OAuthError, type AuthorizeRequest } from '@/lib/mcp/oauth';
+import { validateAuthorizeRequest, issueCode, getClient, issuer, OAuthError, type AuthorizeRequest } from '@/lib/mcp/oauth';
 
 export const dynamic = 'force-dynamic';
 
@@ -63,8 +63,8 @@ function page(inner: string): string {
 </style></head><body><div class="card">${inner}</div></body></html>`;
 }
 
-function consentPage(v: AuthorizeRequest, user: CurrentUser): string {
-  const client = getClient(v.clientId);
+async function consentPage(v: AuthorizeRequest, user: CurrentUser): Promise<string> {
+  const client = await getClient(v.clientId);
   const clientName = esc(client?.clientName || 'Claude');
   const hidden = (['response_type', 'client_id', 'redirect_uri', 'code_challenge', 'code_challenge_method', 'resource', 'scope', 'state'] as const)
     .map((k) => {
@@ -105,22 +105,30 @@ function consentPage(v: AuthorizeRequest, user: CurrentUser): string {
   `);
 }
 
-function signinBounce(origin: string, next: string): NextResponse {
-  const url = new URL(`/signin?next=${encodeURIComponent(next)}`, origin);
-  return NextResponse.redirect(url);
+function signinBounce(fallbackOrigin: string, next: string): NextResponse {
+  // Behind the ingress, req.url's origin is the container's internal address
+  // (0.0.0.0:3000) — a redirect there is unreachable from the user's browser and
+  // breaks the whole managed-auth sign-in. Prefer the public base (OS_PUBLIC_URL,
+  // the same value the discovery metadata advertises); fall back to the request
+  // origin only for local dev where OS_PUBLIC_URL is unset.
+  const base = issuer() || fallbackOrigin;
+  const url = new URL(`/signin?next=${encodeURIComponent(next)}`, base);
+  // 303: /signin is always a GET page — the bounce may be triggered from the consent
+  // POST, and 307/302 would wrongly re-issue that as a POST.
+  return NextResponse.redirect(url, 303);
 }
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   let v: AuthorizeRequest;
   try {
-    v = validateAuthorizeRequest(url.searchParams); // bad client/redirect must NOT redirect
+    v = await validateAuthorizeRequest(url.searchParams); // bad client/redirect must NOT redirect
   } catch (e) {
     return errorPage(e);
   }
   const user = await currentUser();
   if (!user) return signinBounce(url.origin, url.pathname + url.search);
-  return new NextResponse(consentPage(v, user), {
+  return new NextResponse(await consentPage(v, user), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
   });
 }
@@ -132,7 +140,7 @@ export async function POST(req: NextRequest) {
 
   let v: AuthorizeRequest;
   try {
-    v = validateAuthorizeRequest(params);
+    v = await validateAuthorizeRequest(params);
   } catch (e) {
     return errorPage(e);
   }
@@ -147,7 +155,11 @@ export async function POST(req: NextRequest) {
     const back = new URL(v.redirectUri);
     back.searchParams.set('error', 'access_denied');
     if (v.state) back.searchParams.set('state', v.state);
-    return NextResponse.redirect(back);
+    // 303 See Other: the consent form is submitted via POST, and the OAuth redirect
+  // to the client's callback MUST switch the browser to GET — a 307/302 here would
+  // re-POST to claude.ai/api/mcp/auth_callback, which only accepts GET → the client
+  // reports "Method Not Allowed" and the connection fails.
+  return NextResponse.redirect(back, 303);
   }
 
   const code = issueCode({
@@ -161,5 +173,9 @@ export async function POST(req: NextRequest) {
   const back = new URL(v.redirectUri);
   back.searchParams.set('code', code);
   if (v.state) back.searchParams.set('state', v.state);
-  return NextResponse.redirect(back);
+  // 303 See Other: the consent form is submitted via POST, and the OAuth redirect
+  // to the client's callback MUST switch the browser to GET — a 307/302 here would
+  // re-POST to claude.ai/api/mcp/auth_callback, which only accepts GET → the client
+  // reports "Method Not Allowed" and the connection fails.
+  return NextResponse.redirect(back, 303);
 }

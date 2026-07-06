@@ -3,6 +3,8 @@
  */
 import Link from 'next/link';
 import type { LauncherCard } from '@/lib/home/launcher';
+import type { GoldenPathKey } from '@/lib/tutorials/types';
+import TutorialLink from '@/components/tutorials/TutorialLink';
 import PathIllustration from './illustrations';
 
 /**
@@ -39,9 +41,7 @@ export default function HomeLauncher({ cards }: { cards: LauncherCard[] }) {
                 <span aria-hidden="true"> →</span>
               </Link>
             )}
-            <Link className="launch-how" href={c.tutorialHref}>
-              How it works
-            </Link>
+            <TutorialLink tutorial={c.id as GoldenPathKey} variant="card" />
           </div>
         </div>
       ))}

@@ -83,7 +83,7 @@ def _s3_client():
 
 
 def _catalog():
-    return load_catalog(
+    cat = load_catalog(
         "lakehouse",
         **{
             "type": "rest",
@@ -100,6 +100,17 @@ def _catalog():
             "s3.path-style-access": S3_PATH_STYLE,
         },
     )
+    # Polaris grants the catalog principal CREATE_TABLE_STAGED but NOT the
+    # *_WITH_WRITE_DELEGATION variant (matching Trino's vended-credentials-enabled=false).
+    # PyIceberg sends `X-Iceberg-Access-Delegation: vended-credentials` by DEFAULT, which
+    # makes create_table request WRITE_DELEGATION → ForbiddenException(CREATE_TABLE_DIRECT_
+    # WITH_WRITE_DELEGATION). We write data files with our OWN static S3 creds above, so we
+    # never need vended credentials — drop the header so the op is the granted STAGED create.
+    # (Identical to the northpeak-marts-init fix.)
+    for hk in list(cat._session.headers.keys()):
+        if hk.lower() == "x-iceberg-access-delegation":
+            cat._session.headers.pop(hk)
+    return cat
 
 
 def _read_to_arrow(local_path: str, object_key: str):

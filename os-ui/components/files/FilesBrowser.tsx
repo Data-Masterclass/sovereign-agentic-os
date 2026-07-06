@@ -100,13 +100,14 @@ export default function FilesBrowser() {
   const upload = useCallback(async (files: FileList | File[]) => {
     setErr('');
     for (const file of Array.from(files)) {
-      const isText = /^text\/|json|csv|markdown/.test(file.type) || /\.(txt|md|csv|json|tsv)$/i.test(file.name);
-      const text = isText ? await file.text() : undefined;
+      // Send the ORIGINAL bytes (multipart) so the file is stored and downloadable
+      // byte-for-byte — the server extracts text from text-like files for search.
+      const form = new FormData();
+      form.append('file', file);
+      form.append('name', file.name);
+      form.append('folder', folder ?? '/');
       try {
-        const res = await fetch('/api/files', {
-          method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ name: file.name, text, bytes: file.size, folder: folder ?? '/' }),
-        });
+        const res = await fetch('/api/files', { method: 'POST', body: form });
         if (!res.ok) { setErr((await res.json()).error ?? 'Upload failed'); }
       } catch (e) { setErr((e as Error).message); }
     }

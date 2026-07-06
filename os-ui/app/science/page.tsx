@@ -222,21 +222,15 @@ function ServicesGrid({ data }: { data: GateData }) {
 
 /* --------------------------------------------------- B. guided new-model flow */
 
-const STAGE_BADGE: Record<Stage['status'], { cls: string; label: string }> = {
-  live: { cls: 'ok', label: 'live' },
-  ready: { cls: 'muted', label: 'ready' },
-  pending: { cls: 'warn', label: 'pending deploy' },
-};
-const GUIDE = ['Explore', 'Features', 'Train', 'Register', 'Certify', 'Deploy', 'Consume', 'Monitor'];
-
 function ChurnSlice() {
-  const { data, loading } = useApi<ChurnData>('/api/science/churn');
+  const { data, loading, error } = useApi<ChurnData>('/api/science/churn');
 
+  if (error) return <div className="error">{error}</div>;
   if (loading || !data) {
     return (
       <>
-        <div className="section-title">Model lifecycle — the golden path</div>
-        <div className="stub-page" style={{ marginTop: 8 }}>Loading the churn golden path…</div>
+        <div className="section-title">Features</div>
+        <div className="stub-page" style={{ marginTop: 8 }}>Loading the feature set…</div>
       </>
     );
   }
@@ -244,48 +238,6 @@ function ChurnSlice() {
   return (
     <>
       <div className="section-title">
-        Model lifecycle — the golden path
-        <span className="count-pill">{data.model}</span>
-      </div>
-      <p className="muted" style={{ marginTop: -4 }}>
-        Every model ships through these stages — shown here on a live worked example: the{' '}
-        <code>{data.model}</code> model, built from the governed data product{' '}
-        <code>{data.dataProduct}</code>. Not a tutorial (that&rsquo;s in Tutorials → Science) and not a
-        wizard — it&rsquo;s the real path with the real stage status, so you always know where a model
-        stands and who acts next. JupyterHub stays the escape hatch for raw notebooks.
-      </p>
-      <div className="row" style={{ flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
-        {GUIDE.map((g, i) => (
-          <span key={g} className="badge muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            {g}
-            {i < GUIDE.length - 1 ? <span style={{ color: 'var(--text-faint)' }}>→</span> : null}
-          </span>
-        ))}
-      </div>
-
-      <div style={{ display: 'grid', gap: 10 }}>
-        {data.stages.map((g) => {
-          const b = STAGE_BADGE[g.status];
-          return (
-            <div className="golden" key={g.key}>
-              <span className="ico">{g.n}</span>
-              <div style={{ flex: 1 }}>
-                <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ fontWeight: 600 }}>{g.label}</div>
-                  <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-                    <span className="badge muted">{g.actor}</span>
-                    <span className={`badge ${b.cls}`}>{b.label}</span>
-                  </div>
-                </div>
-                <div className="muted">{g.desc}</div>
-                <div className="muted" style={{ fontSize: 12, marginTop: 2, opacity: 0.8 }}>{g.backend}</div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="section-title" style={{ marginTop: 20 }}>
         Features — <code>{data.featureSet}</code>
         <span className={`count-pill${data.featuresLive ? ' ok' : ''}`}>
           {data.featuresLive ? 'Featureform live' : 'seed'}
@@ -335,7 +287,7 @@ const TIER_VIS: Record<ModelTier, string> = {
 };
 
 function ModelService() {
-  const { data, loading, reload } = useApi<ModelData>('/api/science/model');
+  const { data, loading, error, reload } = useApi<ModelData>('/api/science/model');
   const model = data?.models?.[0];
 
   if (loading && !data) {
@@ -346,6 +298,7 @@ function ModelService() {
       </>
     );
   }
+  if (error) return <div className="error">{error}</div>;
   if (!model) {
     // A fresh tenant has an empty model registry. Say so explicitly (rather than
     // rendering nothing) so the tier ladder / front doors / monitoring don't just

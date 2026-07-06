@@ -47,6 +47,42 @@ export function mcpMethodNotAllowed(): NextResponse {
   );
 }
 
+/**
+ * The Streamable-HTTP server→client stream (the transport's optional GET). Every OS
+ * tool is request/response, so we have no server-initiated messages — but hosted
+ * Claude opens this GET stream on connect and treats a 405 as a fatal "Method Not
+ * Allowed", so we serve a real `text/event-stream` that stays open and idle (with a
+ * keep-alive comment every 25s). All actual tool calls still flow over authenticated
+ * POST; this stream carries no data, so it needs no bearer to sit idle.
+ */
+export function serveMcpStream(): Response {
+  const enc = new TextEncoder();
+  let ping: ReturnType<typeof setInterval> | undefined;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(enc.encode(': mcp stream open\n\n'));
+      ping = setInterval(() => {
+        try {
+          controller.enqueue(enc.encode(': ping\n\n'));
+        } catch {
+          if (ping) clearInterval(ping);
+        }
+      }, 25000);
+    },
+    cancel() {
+      if (ping) clearInterval(ping);
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no', // don't let the ingress buffer the stream
+    },
+  });
+}
+
 /** Resolve the bearer, then dispatch a single request or a JSON-RPC batch. */
 export async function serveMcp(req: Request, opts: HandleRpcOptions = {}): Promise<NextResponse> {
   const user = await resolveMcpUser(bearerFrom(req));

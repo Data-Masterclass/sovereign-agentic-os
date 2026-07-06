@@ -147,10 +147,11 @@ export async function buildBetView(
 
   // Resolve pillar from the real strategy store (async, avoids phantom gap);
   // fall back to sources.ts adapter for unit-test / warm-cache path.
+  // pillarId/metricId may be absent on new bets not yet linked to a pillar.
   const strategyPillars = await listStrategyPillars(user).catch(() => null);
-  const stratPillar = strategyPillars?.find((p) => p.id === bet.pillarId) ?? null;
-  const pillar = stratPillar ?? getPillar(bet.pillarId);
-  const metric = getMetric(bet.metricId);
+  const stratPillar = bet.pillarId ? (strategyPillars?.find((p) => p.id === bet.pillarId) ?? null) : null;
+  const pillar = bet.pillarId ? (stratPillar ?? getPillar(bet.pillarId)) : null;
+  const metric = bet.metricId ? getMetric(bet.metricId) : null;
 
   return {
     bet,

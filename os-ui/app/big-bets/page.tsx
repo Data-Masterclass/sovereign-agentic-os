@@ -45,7 +45,7 @@ export default function BigBetsPage() {
   // would undo. Mirrors groupByPillar's bucketing (unknown pillar → Unassigned).
   const pillarIds = useMemo(() => new Set(pillars.map((p) => p.id)), [pillars]);
   const groupOf = useCallback(
-    (b: BetSummary) => (pillarIds.has(b.pillarId) ? b.pillarId : '__none__'),
+    (b: BetSummary) => (b.pillarId && pillarIds.has(b.pillarId) ? b.pillarId : '__none__'),
     [pillarIds],
   );
 
@@ -133,7 +133,7 @@ function groupByPillar(bets: BetSummary[], pillars: Pillar[]): PortfolioGroup[] 
   const byId = new Map(pillars.map((p) => [p.id, p]));
   const buckets = new Map<string, BetSummary[]>();
   for (const b of bets) {
-    const key = byId.has(b.pillarId) ? b.pillarId : '__none__';
+    const key = b.pillarId && byId.has(b.pillarId) ? b.pillarId : '__none__';
     const arr = buckets.get(key) ?? [];
     arr.push(b);
     buckets.set(key, arr);
@@ -284,7 +284,9 @@ function CreatePanel({
     }
   };
 
-  const valid = Boolean(f.problem.trim());
+  // No mandatory field — the server derives a name from any text provided, or uses
+  // "Untitled big bet" if nothing is filled in. The submit button is always enabled.
+  const valid = true;
 
   const submit = async () => {
     if (!valid || busy) return;
@@ -390,7 +392,7 @@ function CreatePanel({
                 <button
                   type="button"
                   className="btn ghost sm"
-                  style={{ marginTop: 6, fontSize: 12, color: 'var(--text-secondary)' }}
+                  style={{ marginTop: 6, fontSize: 12 }}
                   onClick={() => setShowNewPillar(true)}
                 >
                   + New pillar
@@ -405,12 +407,12 @@ function CreatePanel({
         )}
       </Field>
 
-      <Field label="Problem Statement" required>
+      <Field label="Problem Statement">
         <textarea
           value={f.problem}
           rows={3}
           onChange={(e) => set('problem', e.target.value)}
-          placeholder="e.g. Sales reps spend 3 hours/week manually updating CRM — costing $400k/year in lost selling time."
+          placeholder="e.g. Sales reps spend 3 hours/week manually updating CRM — costing $400k/year in lost selling time. (Optional — you can add this later.)"
         />
       </Field>
 

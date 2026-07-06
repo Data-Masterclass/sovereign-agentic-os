@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { currentUser } from '@/lib/auth';
 import { homeFeed } from '@/lib/home/feed';
 import HomeLauncher from '@/components/home/HomeLauncher';
+import McpDrawer from '@/components/McpDrawer';
 
 export const dynamic = 'force-dynamic';
 
@@ -67,6 +68,17 @@ export default async function HomePage() {
       </header>
 
       <div className="content home-content">
+        {/* MCP connect CTA — prominent invite to drive the OS from Claude/ChatGPT */}
+        <div className="mcp-cta-banner">
+          <div className="mcp-cta-banner-text">
+            <p className="mcp-cta-banner-kicker">MCP — AI-native access</p>
+            <p className="mcp-cta-banner-line">
+              Drive the whole OS from Claude or ChatGPT — governed as you.
+            </p>
+          </div>
+          <McpDrawer className="mcp-cta-btn" />
+        </div>
+
         <div className="home-sec-head">
           <h2 className="home-sec-title">Golden paths</h2>
           <p className="home-sec-sub">

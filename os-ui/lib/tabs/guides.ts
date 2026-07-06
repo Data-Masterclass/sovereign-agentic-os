@@ -28,6 +28,9 @@ export const GUIDE_PATHS = [
   'bigbets',
   'files',
   'science',
+  'strategy',
+  'marketplace',
+  'monitoring',
 ] as const;
 export type GuidePath = (typeof GUIDE_PATHS)[number];
 
@@ -65,6 +68,9 @@ const TITLES: Record<GuidePath, string> = {
   bigbets: 'Big Bets — golden path',
   files: 'Files — golden path',
   science: 'Science — golden path',
+  strategy: 'Strategy — golden path',
+  marketplace: 'Marketplace — golden path',
+  monitoring: 'Monitoring — golden path',
 };
 export function guideTitle(path: GuidePath): string {
   return TITLES[path];

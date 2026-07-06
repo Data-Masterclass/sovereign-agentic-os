@@ -16,6 +16,18 @@ import { useState } from 'react';
 
 type BuildRow = { tool: string; applied: boolean; verified: boolean; status: 'ok' | 'fail'; detail: string; error?: string };
 type BuildReport = { ok: boolean; rows: BuildRow[] };
+type LastBuild = { ok: boolean; at: number; rows: BuildRow[] };
+
+/** Formats a Unix-ms timestamp as a compact relative time string. */
+function timeAgo(atMs: number): string {
+  const secs = Math.floor((Date.now() - atMs) / 1000);
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
 type RunStep = { node: string; tool: string; effect: string; ran?: boolean };
 type RunReport = {
   running: boolean;
@@ -30,21 +42,59 @@ type RunReport = {
   traceUrl?: string;
 };
 
+// The run route returns TWO shapes: a single-agent report (output/steps/traces/held)
+// and a multi-agent "team" run (finalText/nodes, no steps/traces). Normalize both
+// into RunReport so the panel renders either without crashing on a missing field.
+type TeamNode = { node: string; model?: string; steps?: { tool: string; isError?: boolean }[] };
+type RawRun = Partial<RunReport> & { team?: boolean; finalText?: string; nodes?: TeamNode[] };
+
+function normalizeRun(body: RawRun): RunReport {
+  const steps: RunStep[] =
+    body.steps ??
+    body.nodes?.flatMap((n) =>
+      (n.steps ?? []).map((s) => ({
+        node: n.node,
+        tool: s.tool,
+        effect: s.isError ? 'deny' : 'allow',
+        ran: true,
+      })),
+    ) ??
+    [];
+  const rawOut = body.output ?? body.finalText;
+  return {
+    running: body.running ?? false,
+    ok: body.ok ?? true,
+    path: Array.isArray(body.path) ? body.path : [],
+    traces: body.traces ?? 0,
+    held: body.held ?? 0,
+    steps,
+    output: typeof rawOut === 'string' ? rawOut : rawOut ? JSON.stringify(rawOut) : undefined,
+    mode: body.mode,
+    traceStoreAvailable: body.traceStoreAvailable,
+    traceUrl: body.traceUrl,
+  };
+}
+
 const EFFECT_BADGE: Record<string, string> = { allow: 'ok', deny: 'err', requires_approval: 'warn' };
 
 export default function BuildRunPanel({
   systemId,
   running,
   canEdit,
+  lastBuild,
   onStateChange,
 }: {
   systemId: string;
   running: boolean;
   canEdit: boolean;
+  lastBuild?: LastBuild | null;
   onStateChange: () => void;
 }) {
   const [building, setBuilding] = useState(false);
-  const [report, setReport] = useState<BuildReport | null>(null);
+  // Seed from server-persisted lastBuild so the panel survives tab-switches.
+  const [report, setReport] = useState<BuildReport | null>(lastBuild ?? null);
+  // Track the timestamp of the currently displayed report (null = never built).
+  const [builtAt, setBuiltAt] = useState<number | null>(lastBuild?.at ?? null);
   const [buildErr, setBuildErr] = useState('');
 
   const [prompt, setPrompt] = useState('Test invocation');
@@ -59,7 +109,7 @@ export default function BuildRunPanel({
       const res = await fetch(`/api/agents/systems/${systemId}/build`, { method: 'POST' });
       const body = await res.json();
       if (!res.ok) setBuildErr(body.error ?? 'Build failed');
-      else setReport(body as BuildReport);
+      else { setReport(body as BuildReport); setBuiltAt(Date.now()); }
     } catch (e) {
       setBuildErr((e as Error).message);
     } finally {
@@ -78,7 +128,7 @@ export default function BuildRunPanel({
       });
       const body = await res.json();
       if (!res.ok) setRunErr(body.error ?? 'Run failed');
-      else if (!stop) setRun(body as RunReport);
+      else if (!stop) setRun(normalizeRun(body as RawRun));
       onStateChange();
     } catch (e) {
       setRunErr((e as Error).message);
@@ -95,6 +145,21 @@ export default function BuildRunPanel({
           {building ? <span className="spin" /> : 'Build'}
         </button>
       </div>
+      {builtAt ? (
+        <div className="hint" style={{ marginTop: 2, marginBottom: 4 }}>
+          Last built {timeAgo(builtAt)}
+          {report ? (
+            <>
+              {' · '}
+              <span className={`badge ${report.ok ? 'ok' : 'err'}`} style={{ fontSize: 11 }}>
+                {report.ok
+                  ? '✓ all green'
+                  : `✗ ${report.rows.filter((r) => r.status !== 'ok').length} failing`}
+              </span>
+            </>
+          ) : null}
+        </div>
+      ) : null}
       <p className="hint" style={{ marginTop: 0 }}>
         Compiles system.yaml → LangGraph, writes the Forgejo files, registers the LiteLLM key +
         routing and the OPA grants, links Langfuse — then verifies each with a probe. Mocked in kind.

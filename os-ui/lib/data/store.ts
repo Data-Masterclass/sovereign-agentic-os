@@ -15,6 +15,7 @@ import {
   type ColumnDoc,
   type TrustLevel,
   type DatasetUpstream,
+  type DataCheck,
   DatasetError,
   canTransition,
   emptyVersions,
@@ -446,6 +447,31 @@ export function setDocs(
   if (docs.columns !== undefined) {
     d.columns = docs.columns.filter((c) => c.name.trim()).map((c) => ({ name: c.name.trim(), description: c.description ?? '' }));
   }
+  persist(rec, d);
+  return d;
+}
+
+/**
+ * Append a data-quality check intention to a dataset (visible in the detail view).
+ * Checks are RECORDED alongside the dataset.yaml spine — they are NOT auto-executed;
+ * connect a data quality tool (dbt tests, Great Expectations, etc.) to run them.
+ * Editing is Creator+ on a dataset you can edit (owner or domain Admin).
+ */
+export function addCheck(
+  id: string,
+  user: Principal,
+  input: { name: string; description: string },
+): Dataset {
+  const rec = get(id);
+  const d = editOf(rec, user);
+  const check: DataCheck = {
+    id: `chk_${Math.random().toString(36).slice(2, 8)}`,
+    name: input.name.trim() || 'Untitled check',
+    description: input.description ?? '',
+    createdBy: user.id,
+    createdAt: now(),
+  };
+  d.checks = [...(d.checks ?? []), check];
   persist(rec, d);
   return d;
 }

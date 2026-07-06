@@ -38,3 +38,19 @@ export function buildCatalog(role: Role): CatalogEntry[] {
     requires_approval: WRITE_NAMES.has(t.name),
   }));
 }
+
+/**
+ * The complete tool catalog with no role filtering — every tool the OS exposes
+ * over MCP, including builder/admin-floor tools. Used by the MCP reference page
+ * which is a read-only teaching surface (tool execution remains governed at
+ * call time; listing the catalog is not a privilege escalation).
+ */
+export function buildFullCatalog(): CatalogEntry[] {
+  return ALL_MCP_TOOLS.map((t) => ({
+    name: t.name,
+    tab: t.tab,
+    minRole: t.minRole,
+    description: t.description,
+    requires_approval: WRITE_NAMES.has(t.name),
+  }));
+}

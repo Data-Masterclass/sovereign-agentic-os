@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
+import { previewText } from '@/lib/files/preview';
 
 /** Mirrors lib/files store FileAsset / FileView (the fields the pane shows). */
 type Asset = {
@@ -48,6 +49,7 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
   const [promote, setPromote] = useState<PromoteStatus | null>(null);
   const [lineage, setLineage] = useState<LineageEdge[]>([]);
   const [useAsMsg, setUseAsMsg] = useState('');
+  const [showFullText, setShowFullText] = useState(false);
   const reuploadRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -142,6 +144,11 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
   const isOwner = user?.id === a.owner;
   const isMedia = a.kind === 'image' || a.kind === 'video' || a.kind === 'audio';
 
+  /** Truncate very long extracted text; the reader can expand on demand. */
+  const preview = previewText(view.text, showFullText);
+  const textIsTruncated = preview.truncated;
+  const textToShow = preview.body;
+
   return (
     <aside className="files-preview">
       <div className="preview-head">
@@ -161,14 +168,24 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
       </div>
 
       {/* The extracted text / transcript / caption — the only "preview" we surface;
-          the raw bytes open on demand (a Phase-5 concern). */}
+          the raw bytes are available via the Download button (a Phase-5 concern). */}
       {isMedia ? (
         <div className="media-stage">
-          {a.kind === 'image' ? 'Image — open original to view' : a.kind === 'audio' ? 'Audio — transcript below' : 'Video — transcript below'}
+          {a.kind === 'image' ? 'Image — download to view' : a.kind === 'audio' ? 'Audio — transcript below' : 'Video — transcript below'}
         </div>
       ) : null}
       {view.text ? (
-        <div className="preview-text">{view.text}</div>
+        <div>
+          {/* `expanded` drops the fixed max-height so "Show all" actually reveals the
+              full text (the box otherwise just scrolls inside a 240px clamp). */}
+          <div className={`preview-text${showFullText ? ' expanded' : ''}`}>{textToShow}{textIsTruncated ? '…' : ''}</div>
+          {preview.canToggle ? (
+            <button className="btn ghost sm" style={{ marginTop: 4 }}
+              onClick={() => setShowFullText((s) => !s)}>
+              {showFullText ? 'Collapse text' : `Show all (${(view.text.length / 1000).toFixed(1)} K chars)`}
+            </button>
+          ) : null}
+        </div>
       ) : (
         <div className="media-stage">Extracted text appears once the file is indexed.</div>
       )}
@@ -259,6 +276,9 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
       {err ? <div className="error">{err}</div> : null}
 
       <div className="preview-row" style={{ justifyContent: 'space-between', marginTop: 'auto' }}>
+        {/* Download: UI-uploaded files stream their ORIGINAL bytes from the object
+            store; text-only (MCP) records download their extracted text as .txt. */}
+        <a className="btn ghost sm" href={`/api/files/${id}/download`} download={a.name}>Download</a>
         <button className="btn ghost sm" onClick={() => reuploadRef.current?.click()}>Re-upload (new version)</button>
         {isOwner ? <button className="btn ghost sm" style={{ color: 'var(--danger)' }} onClick={remove}>Delete</button> : null}
         <input ref={reuploadRef} type="file" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) reupload(f); e.target.value = ''; }} />

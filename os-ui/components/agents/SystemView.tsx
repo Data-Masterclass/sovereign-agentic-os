@@ -34,6 +34,9 @@ const GraphCanvas = dynamic(() => import('./GraphCanvas'), {
  * supervise, otherwise handoff) and committed as a system.yaml diff.
  */
 
+type LastBuildRow = { tool: string; applied: boolean; verified: boolean; status: 'ok' | 'fail'; detail: string; error?: string };
+type LastBuild = { ok: boolean; at: number; rows: LastBuildRow[] };
+
 type SystemViewData = {
   id: string;
   name: string;
@@ -45,6 +48,7 @@ type SystemViewData = {
   schedule: Schedule;
   disabledAgents: string[];
   lastActivity: string | null;
+  lastBuild: LastBuild | null;
   system: System;
   ir: unknown;
   compileError: string | null;
@@ -308,10 +312,10 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
           <MonacoFile systemId={systemId} path="system.yaml" canEdit={data.canEdit} height={420} reloadSignal={reloadKey} onSaved={reloadAll} />
         ) : null}
         {panel === 'grants' ? (
-          <GrantsRouting systemId={systemId} system={sys} canEdit={data.canEdit} models={models} routing={routingData} onChanged={reloadAll} />
+          <GrantsRouting systemId={systemId} system={sys} canEdit={data.canEdit} canDirectWrite={roleAtLeast(data.role, 'builder')} models={models} routing={routingData} onChanged={reloadAll} />
         ) : null}
         {panel === 'build' ? (
-          <BuildRunPanel systemId={systemId} running={data.running} canEdit={data.canEdit} onStateChange={reloadAll} />
+          <BuildRunPanel systemId={systemId} running={data.running} canEdit={data.canEdit} lastBuild={data.lastBuild} onStateChange={reloadAll} />
         ) : null}
         {panel === 'helper' ? (
           <HelperChat systemId={systemId} canEdit={data.canEdit} onApplied={reloadAll} />

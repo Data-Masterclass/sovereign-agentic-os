@@ -53,14 +53,22 @@ const enabled = (c: Capability) => c === 'Read' || c === 'Write-approval' || c =
 
 /**
  * Register a system's grants into the OPA mock: the granted tools, plus each
- * connection's capability under the synthetic tool name `connection_<id>`. Shared
- * by the OPA adapter, the Run path and the connection probe so they enforce the
- * SAME policy.
+ * artifact's capability under a synthetic tool name (`connection_<id>`,
+ * `data_<id>`, `knowledge_<id>`, `metric_<id>`). Shared by the OPA adapter, the
+ * Run path and the connection probe so every artifact type enforces the SAME
+ * capability semantics through one gateway: Read → allow, Write-approval → held
+ * for approval, Write-bounded → direct write.
  */
 export function registerGrants(backends: MockBackends, sys: System): void {
   backends.opa.tools = new Set(sys.grants.tools);
   backends.opa.connections.clear();
-  for (const c of sys.grants.connections) backends.opa.connections.set(`connection_${c.id}`, c.capability);
+  const put = (prefix: string, grants: { id: string; capability: Capability }[]) => {
+    for (const g of grants) backends.opa.connections.set(`${prefix}_${g.id}`, g.capability);
+  };
+  put('connection', sys.grants.connections);
+  put('data', sys.grants.data);
+  put('knowledge', sys.grants.knowledge);
+  put('metric', sys.grants.metrics);
 }
 
 /**

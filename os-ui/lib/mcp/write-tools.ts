@@ -5,6 +5,8 @@ import 'server-only';
 import type { CurrentUser } from '@/lib/auth';
 import type { Role } from '@/lib/session';
 import type { McpTool, JsonSchema } from './server';
+import { strategyWriteTools } from './strategy-tools';
+import { marketplaceWriteTools } from './marketplace-tools';
 
 // --- Governed lib functions (the EXACT same the UI + /api routes call) ---------
 import {
@@ -1260,6 +1262,9 @@ export const ALL_WRITE_TOOLS: McpTool[] = [
   ...bigbetWriteTools,
   ...agentWriteTools,
   ...promotionTools,
+  // mcp-v2 surfaces wave — Strategy (pillar CRUD) + Marketplace (rate) writes.
+  ...strategyWriteTools,
+  ...marketplaceWriteTools,
 ];
 
 // Keep an explicit reference to JsonSchema so the imported type is used (schemas above

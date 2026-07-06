@@ -50,7 +50,7 @@ export type RealizedValue = {
 
 /** Resolve a bet's realized value for a viewer, by the selected basis (RLS-scoped). */
 export function realizedValue(bet: BigBet, viewerId: string): RealizedValue {
-  const m = resolveMetric(bet.metricId, viewerId);
+  const m = bet.metricId ? resolveMetric(bet.metricId, viewerId) : null;
   const baseline = m?.baseline ?? 0;
   const current = m?.current ?? 0;
   const unit = m?.unit ?? '€';

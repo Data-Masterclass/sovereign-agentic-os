@@ -43,6 +43,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       schedule: view.schedule,
       disabledAgents: view.disabledAgents,
       lastActivity: view.lastActivity,
+      lastBuild: view.lastBuild ?? null,
       system: view.system,
       ir,
       compileError,

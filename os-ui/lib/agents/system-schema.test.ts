@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSystem, serializeSystem } from './system-schema.ts';
+import { parseSystem, serializeSystem, assertGrantsWithinRole, downgradeGrantsForRole } from './system-schema.ts';
 
 const VALID = `
 version: "1"
@@ -121,4 +121,164 @@ agents: [{ id: a, role: r, agent_md: "", memory_md: "" }]
 ui: { positions: { a: { x: "nope", y: 5 } } }
 `);
   assert.equal(sys.ui, undefined); // no valid positions → no ui block
+});
+
+test('MIGRATION: old string[] grants.data/knowledge coerce to {id, capability: Read}', () => {
+  const sys = parseSystem(`
+entrypoint: a
+grants:
+  data: [sales.orders, sales.customers]
+  knowledge: [onboarding-flow]
+agents:
+  - { id: a, role: r, agent_md: "", memory_md: "" }
+`);
+  assert.deepEqual(sys.grants.data, [
+    { id: 'sales.orders', capability: 'Read' },
+    { id: 'sales.customers', capability: 'Read' },
+  ]);
+  assert.deepEqual(sys.grants.knowledge, [{ id: 'onboarding-flow', capability: 'Read' }]);
+  assert.deepEqual(sys.grants.metrics, []); // new category defaults empty
+});
+
+test('MIGRATION: new {id, capability} shape + a mixed list both parse', () => {
+  const sys = parseSystem(`
+entrypoint: a
+grants:
+  data:
+    - id: sales.orders
+      capability: Write-approval
+    - legacy.string.id
+  metrics:
+    - id: sales.orders.count
+      capability: Read
+agents:
+  - { id: a, role: r, agent_md: "", memory_md: "" }
+`);
+  assert.deepEqual(sys.grants.data, [
+    { id: 'sales.orders', capability: 'Write-approval' },
+    { id: 'legacy.string.id', capability: 'Read' },
+  ]);
+  assert.deepEqual(sys.grants.metrics, [{ id: 'sales.orders.count', capability: 'Read' }]);
+});
+
+test('assertGrantsWithinRole: rejects Write-bounded below builder, allows at builder+', () => {
+  const sys = parseSystem(`
+entrypoint: a
+grants:
+  metrics:
+    - id: m1
+      capability: Write-bounded
+agents:
+  - { id: a, role: r, agent_md: "", memory_md: "" }
+`);
+  assert.throws(() => assertGrantsWithinRole(sys, 'creator'), /builder-only/i);
+  assert.doesNotThrow(() => assertGrantsWithinRole(sys, 'builder'));
+  assert.doesNotThrow(() => assertGrantsWithinRole(sys, 'admin'));
+});
+
+test('assertGrantsWithinRole: Read + Write-approval are allowed at creator', () => {
+  const sys = parseSystem(`
+entrypoint: a
+grants:
+  data:
+    - id: d1
+      capability: Write-approval
+  connections:
+    - id: crm
+      capability: Read
+agents:
+  - { id: a, role: r, agent_md: "", memory_md: "" }
+`);
+  assert.doesNotThrow(() => assertGrantsWithinRole(sys, 'creator'));
+});
+
+test('grants round-trip through serialize (data/knowledge/metrics carry capability)', () => {
+  const sys = parseSystem(`
+entrypoint: a
+grants:
+  data:
+    - id: d1
+      capability: Read
+  metrics:
+    - id: m1
+      capability: Write-approval
+agents:
+  - { id: a, role: r, agent_md: "", memory_md: "" }
+`);
+  const reparsed = parseSystem(serializeSystem(sys));
+  assert.deepEqual(reparsed.grants.data, [{ id: 'd1', capability: 'Read' }]);
+  assert.deepEqual(reparsed.grants.metrics, [{ id: 'm1', capability: 'Write-approval' }]);
+});
+
+test('assertGrantsWithinRole (DELTA): a PRE-EXISTING Write-bounded grant does not block a creator edit', () => {
+  const prev = parseSystem(`
+entrypoint: a
+grants:
+  data:
+    - id: d1
+      capability: Write-bounded
+agents:
+  - { id: a, role: r, agent_md: "", memory_md: "" }
+`);
+  // Same direct-write grant carried forward + an unrelated Read added → NOT blocked.
+  const next = parseSystem(`
+entrypoint: a
+grants:
+  data:
+    - id: d1
+      capability: Write-bounded
+  knowledge:
+    - id: k1
+      capability: Read
+agents:
+  - { id: a, role: r, agent_md: "", memory_md: "" }
+`);
+  assert.doesNotThrow(() => assertGrantsWithinRole(next, 'creator', prev));
+
+  // But INTRODUCING a NEW direct-write (different id) is still rejected.
+  const escalated = parseSystem(`
+entrypoint: a
+grants:
+  data:
+    - id: d1
+      capability: Write-bounded
+    - id: d2
+      capability: Write-bounded
+agents:
+  - { id: a, role: r, agent_md: "", memory_md: "" }
+`);
+  assert.throws(() => assertGrantsWithinRole(escalated, 'creator', prev), /d2/);
+});
+
+test('downgradeGrantsForRole: below builder, every Write-bounded → Write-approval across all four kinds', () => {
+  const sys = parseSystem(`
+entrypoint: a
+grants:
+  data:      [{ id: d1, capability: Write-bounded }]
+  knowledge: [{ id: k1, capability: Write-bounded }]
+  metrics:   [{ id: m1, capability: Write-bounded }]
+  connections: [{ id: c1, capability: Write-bounded }, { id: c2, capability: Read }]
+agents:
+  - { id: a, role: r, agent_md: "", memory_md: "" }
+`);
+  const down = downgradeGrantsForRole(sys, 'creator');
+  assert.equal(down.grants.data[0].capability, 'Write-approval');
+  assert.equal(down.grants.knowledge[0].capability, 'Write-approval');
+  assert.equal(down.grants.metrics[0].capability, 'Write-approval');
+  assert.equal(down.grants.connections[0].capability, 'Write-approval');
+  assert.equal(down.grants.connections[1].capability, 'Read'); // untouched
+  // Pure: the input is not mutated.
+  assert.equal(sys.grants.data[0].capability, 'Write-bounded');
+});
+
+test('downgradeGrantsForRole: builder+ is a no-op (direct write preserved)', () => {
+  const sys = parseSystem(`
+entrypoint: a
+grants:
+  data: [{ id: d1, capability: Write-bounded }]
+agents:
+  - { id: a, role: r, agent_md: "", memory_md: "" }
+`);
+  assert.equal(downgradeGrantsForRole(sys, 'builder').grants.data[0].capability, 'Write-bounded');
+  assert.equal(downgradeGrantsForRole(sys, 'admin').grants.data[0].capability, 'Write-bounded');
 });

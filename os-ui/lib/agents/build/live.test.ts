@@ -199,6 +199,11 @@ test('opa grants the system principal + holds the write tool for approval', asyn
   await orchestrateBuild({ yaml: YAML, systemId: 'sys_live', adapters: makeLiveAdapters(d), probe: 'p' });
   const g = d.opa.grants.get('os-sys_live')!;
   assert.ok(g.has('retrieve'), 'granted tool present');
+  // Raw legacy grants ALSO resolve into their sanctioned MCP registry names, so a
+  // Build authorizes the same vocabulary the Run path resolves to (raw ∪ resolved).
+  assert.ok(g.has('search_knowledge'), 'legacy retrieve grant resolved into its MCP name');
+  assert.ok(g.has('upload_file'), 'legacy write_file grant resolved into its MCP name');
+  assert.equal((await d.opa.decision('os-sys_live', 'search_knowledge')).effect, 'allow');
   assert.ok(g.has('connection_crm'), 'enabled connection present');
   assert.ok(g.has('connection_crm_write'), 'write connection granted');
   assert.ok(d.opa.approval.has('connection_crm_write'), 'write connection held for approval');

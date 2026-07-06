@@ -49,16 +49,22 @@ export type Principal = { id: string; domains: string[]; role: Role };
 /** A single uploaded version's content fingerprint (the content-hash cache key). */
 export type FileVersion = { version: string; hash: string; at: string; bytes: number };
 
+/** The ORIGINAL uploaded object in the governed blob store (object-store.ts). Present
+ *  for UI uploads that carried real bytes; ABSENT for text-only (MCP) records. */
+export type StoredObjectMeta = { key: string; contentType: string; bytes: number };
+
 export type FileRecord = {
   id: string;
   owner: string;
   domain: string;
   /** The single source of truth. */
   yaml: string;
-  /** MOCK object-store body: extracted text (docs/tables) / transcript / caption. */
+  /** Extracted/preview text (docs/tables) / transcript / caption — indexed for search. */
   text: string;
-  /** MOCK byte size for display. */
+  /** Byte size for display (the original object's size when one is stored). */
   bytes: number;
+  /** The original bytes' location in the blob store. Null for text-only records. */
+  object?: StoredObjectMeta | null;
   history: FileVersion[];
   updatedAt: string;
 };
@@ -328,12 +334,42 @@ export function listFiles(user: Principal): FileGroups {
   return { mine, domain, marketplace, facets: facetsOf(mine) };
 }
 
-export type FileView = { asset: FileAsset; text: string; bytes: number; history: FileVersion[] };
+export type FileView = { asset: FileAsset; text: string; bytes: number; object: StoredObjectMeta | null; history: FileVersion[] };
 
 export function getFile(id: string, user: Principal): FileView {
   const rec = get(id);
   const a = viewOf(rec, user);
-  return { asset: a, text: rec.text, bytes: rec.bytes, history: rec.history };
+  return { asset: a, text: rec.text, bytes: rec.bytes, object: rec.object ?? null, history: rec.history };
+}
+
+/**
+ * The object key for a stored file — the store's prefix invariant (`s3://files/<owner|
+ * domain>/…`) minus the `s3://<bucket>/` scheme, i.e. the key WITHIN the files bucket.
+ * `null` for in-place references (nothing of ours to serve).
+ */
+export function objectKeyForAsset(a: FileAsset): string | null {
+  if (a.storage !== 'object-store') return null;
+  const m = /^s3:\/\/[^/]+\/(.+)$/.exec(a.deepLink);
+  return m ? m[1] : null;
+}
+
+/**
+ * Record that the ORIGINAL bytes for a file were stored (by the server route) in the
+ * blob store. Owner-gated (`editOf`) — only someone who may edit the file may attach
+ * its object. The key is derived from the asset's governed deep-link, so it always
+ * matches the file's visibility prefix.
+ */
+export function attachObject(id: string, user: Principal, meta: { contentType: string; bytes: number }): StoredObjectMeta {
+  const rec = get(id);
+  const a = editOf(rec, user); // owner/admin gate
+  const key = objectKeyForAsset(a);
+  if (!key) fail('This file has no object-store location', 400);
+  const object: StoredObjectMeta = { key, contentType: meta.contentType, bytes: meta.bytes };
+  rec.object = object;
+  rec.bytes = meta.bytes;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return object;
 }
 
 // ------------------------------------------------------------- create / edit --

@@ -30,7 +30,7 @@ export default function TutorialLink({
       ? (def?.buttonLabel ?? 'Tutorial')
       : variant === 'header'
         ? 'Tutorial'
-        : 'How it works';
+        : 'Tutorials';
   const text = label ?? defaultText;
 
   return (

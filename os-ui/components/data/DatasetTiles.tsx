@@ -55,9 +55,9 @@ function TileCard({ t, onOpen, onImport }: { t: Tile; onOpen: (id: string) => vo
       role="button"
       tabIndex={0}
       className="card tile"
-      onDoubleClick={() => onOpen(t.id)}
+      onClick={() => onOpen(t.id)}
       onKeyDown={(e) => { if (e.key === 'Enter') onOpen(t.id); }}
-      title="Double-click to open"
+      title="Click to open"
     >
       <div className="tile-top">
         <span className="tile-name">{t.name}</span>
@@ -130,7 +130,7 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
       const data = await res.json();
       if (!res.ok) { setErr(data.error ?? 'Could not create'); return; }
       setNewName(''); setCreating(false);
-      onOpen(data.dataset.id); // straight into the new dataset's stepper
+      onOpen(data.dataset.id); // navigates to the new dataset's detail view
     } catch (e) { setErr((e as Error).message); }
   }, [newName, onOpen]);
 

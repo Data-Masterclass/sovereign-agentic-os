@@ -160,6 +160,8 @@ export default function KnowledgePage() {
       await loadWorkflows();
       setSelectedWorkflowId(d.id);
       setView('detail');
+    } catch (e) {
+      setCreateError((e as Error).message);
     } finally {
       setCreating(false);
     }

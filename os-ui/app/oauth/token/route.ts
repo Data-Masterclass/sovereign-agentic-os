@@ -57,7 +57,7 @@ export async function POST(req: Request) {
       const refreshToken = params.get('refresh_token') ?? '';
       const clientId = params.get('client_id') ?? '';
       if (!refreshToken || !clientId) throw new OAuthError('invalid_request', 'missing required parameter');
-      const { userId } = redeemRefreshToken(refreshToken, clientId);
+      const { userId } = await redeemRefreshToken(refreshToken, clientId);
       const { access_token, expires_in, scope } = issueAccessToken(userId);
       const refresh_token = issueRefreshToken(userId, clientId);
       return tokenJson({ access_token, token_type: 'Bearer', expires_in, refresh_token, scope });

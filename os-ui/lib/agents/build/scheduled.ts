@@ -3,7 +3,8 @@
  */
 import type { CurrentUser } from '@/lib/auth';
 import { getPublicUser } from '@/lib/users';
-import { parseSystem } from '../system-schema.ts';
+import { parseSystem, serializeSystem, downgradeGrantsForRole } from '../system-schema.ts';
+import { governSystemForOwner } from './owner-grants.ts';
 import { isAgenticOsTeam } from './os-tools.ts';
 import { runOsTeam } from './agentic-graph-server.ts';
 import { runSystem } from './server.ts';
@@ -74,10 +75,14 @@ export async function runScheduledSystem(
           `never fall back to a service principal.`,
       };
     }
+    // S1: re-assert the builder-gate against the owner's LIVE role — a scheduled
+    // run acts under the owner's delegated identity, so a stale direct-write grant
+    // must be neutralised to held-for-approval when the owner is no longer builder+.
+    const governedYaml = serializeSystem(downgradeGrantsForRole(sys, owner.role));
     const run = deps.runOsTeam ?? runOsTeam;
     const team = await run({
       user: owner,
-      yaml: rec.yaml,
+      yaml: governedYaml,
       systemId,
       messages: [{ role: 'user', content: prompt }],
       disabledAgents: rec.disabledAgents,
@@ -98,8 +103,15 @@ export async function runScheduledSystem(
     };
   }
 
+  // Hermes / unmapped-legacy fallback: still re-assert the builder-gate against
+  // the owner's LIVE role (S-B) — `runSystem` re-registers grants from this yaml at
+  // run time, so it must be governed exactly like the interactive run route.
+  // Owner role is read fresh; missing/disabled ⇒ least privilege (fail-safe). This
+  // path resolves the role directly (not via deps.resolveOwner) — it never threads
+  // a per-tool owner identity into the dispatch.
+  const governedYaml = serializeSystem(await governSystemForOwner(sys, rec.owner));
   const run = deps.runSystem ?? runSystem;
-  const report = await run(systemId, rec.yaml, {
+  const report = await run(systemId, governedYaml, {
     prompt,
     requestedBy: 'scheduler',
     disabledAgents: rec.disabledAgents,

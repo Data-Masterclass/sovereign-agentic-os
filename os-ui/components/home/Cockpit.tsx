@@ -44,7 +44,7 @@ export default function Cockpit({ feed }: { feed: HomeFeed }) {
               <li key={n.id} className="cm-item">
                 <Link href={n.href} className="cm-item-main">
                   <span className={`cm-dot ${n.actionable ? 'act' : 'wait'}`} aria-hidden="true" />
-                  <span>
+                  <span className="cm-item-body">
                     <span className="cm-item-label">{n.label}</span>
                     <span className="cm-item-detail">{n.detail}</span>
                   </span>
@@ -69,7 +69,7 @@ export default function Cockpit({ feed }: { feed: HomeFeed }) {
               <li key={w.id} className="cm-item">
                 <Link href={w.href} className="cm-item-main">
                   <span className="cm-dot draft" aria-hidden="true" />
-                  <span>
+                  <span className="cm-item-body">
                     <span className="cm-item-label">{w.name}</span>
                     <span className="cm-item-detail">{w.type}</span>
                   </span>

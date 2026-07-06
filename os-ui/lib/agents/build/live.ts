@@ -131,6 +131,20 @@ function routedModels(sys: System, table: RoutingTable): string[] {
   return [...set];
 }
 
+/**
+ * The tool vocabulary granted to a system's principal in OPA / LiteLLM: the RAW
+ * grant names (kept so the runtime's raw-IR tool calls stay authorized) UNIONED
+ * with their RESOLVED MCP registry names (so a legacy `retrieve` grant ALSO
+ * authorizes `search_knowledge`, matching the sanctioned MCP vocabulary the Run
+ * path resolves to), plus the enabled connection tools. Resolved via a dynamic
+ * import so this module has no eager dependency on the (heavier) os-tools chain.
+ */
+async function grantVocabulary(sys: System, connections: string[]): Promise<string[]> {
+  const { resolveGrantedTools } = await import('./os-tools.ts');
+  const resolved = resolveGrantedTools(sys).mcpNames;
+  return [...new Set([...sys.grants.tools, ...resolved, ...connections])];
+}
+
 /** connection_<id> tool names for enabled connections; and the write-held subset. */
 function connectionTools(sys: System): { all: string[]; held: string[] } {
   const all: string[] = [];
@@ -197,7 +211,7 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
     async apply(ctx) {
       const principal = principalFor(ctx.systemId ?? 'sys');
       const { all, held } = connectionTools(ctx.system);
-      const tools = [...ctx.system.grants.tools, ...all];
+      const tools = await grantVocabulary(ctx.system, all);
       await deps.opa.putGrants(principal, tools);
       if (held.length > 0) await deps.opa.mergeRequiresApproval(held);
       return ok(`granted ${tools.length} tool(s) to ${principal}${held.length ? `; ${held.length} held for approval` : ''}`);
@@ -245,7 +259,7 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
         modelMaxBudget,
         rpmLimit: caps.rpmLimit,
         tpmLimit: caps.tpmLimit,
-        allowedTools: [...ctx.system.grants.tools, ...all],
+        allowedTools: await grantVocabulary(ctx.system, all),
       });
       return ok(`registered scoped key '${alias}' (${models.length} model(s), budget ${caps.maxBudget})`);
     },

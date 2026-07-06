@@ -1,8 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-'use client';
-
 import PageHeader from '@/components/PageHeader';
 import TutorialLink from '@/components/tutorials/TutorialLink';
 import { listTutorials } from '@/lib/tutorials/registry';

@@ -3,8 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { getSystemForEdit } from '@/lib/agents/store';
+import { getSystemForEdit, setLastBuild } from '@/lib/agents/store';
 import { buildSystem } from '@/lib/agents/build/server';
+import { governYamlForOwner } from '@/lib/agents/build/owner-grants';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,7 +22,13 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     // Build executes the system + lands Langfuse traces (a side effect into
     // shared Monitoring), so it is edit-level, consistent with Run/Probe.
     const view = getSystemForEdit(id, user);
-    const report = await buildSystem(id, view.yaml);
+    // Re-assert the builder-gate against the OWNER's CURRENT role (S1): a stale
+    // direct-write grant is downgraded to held-for-approval before it compiles
+    // into live OPA/LiteLLM policy.
+    const yaml = await governYamlForOwner(view.yaml, view.owner);
+    const report = await buildSystem(id, yaml);
+    // Persist the build outcome so it survives tab-switches, reloads, and redeploys.
+    setLastBuild(id, user, { ok: report.ok, at: Date.now(), rows: report.rows });
     return NextResponse.json(report);
   } catch (e) {
     return fail(e);

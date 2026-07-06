@@ -16,10 +16,11 @@ import {
   writeFile,
   forkSystem,
   setSchedule,
+  setLastBuild,
   toggleAgent,
   WHITELIST_HINT,
 } from './store.ts';
-import type { Principal } from './store.ts';
+import type { Principal, LastBuild } from './store.ts';
 
 const sara = { id: 'sara', domains: ['sales'], role: 'builder' as const };
 const amir = { id: 'amir', domains: ['sales'], role: 'creator' as const };
@@ -308,4 +309,119 @@ test('schedule persists and an agent toggle is recorded', () => {
   const entry = getSystem(sys.id, sara).system.agents[0].id;
   toggleAgent(sys.id, sara, entry, false);
   assert.ok(getSystem(sys.id, sara).disabledAgents.includes(entry));
+});
+
+test('BUILDER-GATE: a creator saving a Write-bounded artifact grant is rejected server-side', () => {
+  __resetStore();
+  // A creator owns + edits their own system. Craft a payload that tries to grant
+  // the agent DIRECT write (Write-bounded) on a data product — the UI can't send
+  // this, but a hand-crafted PUT could. The save chokepoint must reject it.
+  const sys = createSystem(creator, { name: 'Sneaky', domain: 'sales' });
+  const f = readFile(sys.id, creator, 'system.yaml');
+  const escalated = f.content.replace(
+    /grants:\n([\s\S]*?)\n(routing|agents):/,
+    'grants:\n  data:\n    - id: sales.orders\n      capability: Write-bounded\n  knowledge: []\n  tools: []\n  connections: []\n$2:',
+  );
+  assert.notEqual(escalated, f.content); // sanity: the splice happened
+  assert.throws(
+    () => writeFile(sys.id, creator, { path: 'system.yaml', content: escalated, sha: f.sha }),
+    /builder-only/i,
+  );
+
+  // A Write-approval grant (held for a human) is allowed at any role.
+  const proposed = escalated.replace('Write-bounded', 'Write-approval');
+  const saved = writeFile(sys.id, creator, { path: 'system.yaml', content: proposed, sha: f.sha });
+  assert.ok(saved.sha);
+  assert.equal(getSystem(sys.id, creator).system.grants.data[0].capability, 'Write-approval');
+});
+
+test('BUILDER-GATE: a builder MAY save a Write-bounded (direct) artifact grant', () => {
+  __resetStore();
+  const sys = createSystem(sara, { name: 'Direct', domain: 'sales' });
+  const f = readFile(sys.id, sara, 'system.yaml');
+  const direct = f.content.replace(
+    /grants:\n([\s\S]*?)\n(routing|agents):/,
+    'grants:\n  data:\n    - id: sales.orders\n      capability: Write-bounded\n  knowledge: []\n  tools: []\n  connections: []\n$2:',
+  );
+  assert.notEqual(direct, f.content);
+  const saved = writeFile(sys.id, sara, { path: 'system.yaml', content: direct, sha: f.sha });
+  assert.ok(saved.sha);
+  assert.equal(getSystem(sys.id, sara).system.grants.data[0].capability, 'Write-bounded');
+});
+
+test('N1: a pre-existing Write-bounded grant (set while builder) does NOT block the same owner after a downgrade to creator', () => {
+  __resetStore();
+  // Same owner id 'cara': first a builder (sets the direct-write grant), later
+  // downgraded to creator. The stored system now carries a Write-bounded grant.
+  const caraBuilder = { id: 'cara', domains: ['sales'], role: 'builder' as const };
+  const sys = createSystem(caraBuilder, { name: 'Owned', domain: 'sales' });
+  const f0 = readFile(sys.id, caraBuilder, 'system.yaml');
+  const withDirect = f0.content.replace(
+    /grants:\n([\s\S]*?)\n(routing|agents):/,
+    'grants:\n  data:\n    - id: sales.orders\n      capability: Write-bounded\n  knowledge: []\n  tools: []\n  connections: []\n$2:',
+  );
+  assert.notEqual(withDirect, f0.content);
+  writeFile(sys.id, caraBuilder, { path: 'system.yaml', content: withDirect, sha: f0.sha });
+
+  // Now the SAME owner, downgraded to creator, makes an UNRELATED edit (append a
+  // comment), carrying the pre-existing direct-write grant forward untouched —
+  // must NOT be rejected (N1).
+  const f1 = readFile(sys.id, creator, 'system.yaml');
+  const edited = f1.content + '\n# creator note\n';
+  assert.doesNotThrow(() => writeFile(sys.id, creator, { path: 'system.yaml', content: edited, sha: f1.sha }));
+  assert.equal(getSystem(sys.id, creator).system.grants.data[0].capability, 'Write-bounded');
+
+  // But the creator INTRODUCING a second direct-write grant is still rejected.
+  const f2 = readFile(sys.id, creator, 'system.yaml');
+  const escalated = f2.content.replace(
+    'capability: Write-bounded',
+    'capability: Write-bounded\n    - id: sales.customers\n      capability: Write-bounded',
+  );
+  assert.throws(
+    () => writeFile(sys.id, creator, { path: 'system.yaml', content: escalated, sha: f2.sha }),
+    /builder-only/i,
+  );
+});
+
+test('lastBuild round-trips: persisted build result loads on getSystem and is absent before first build', () => {
+  __resetStore();
+  const sys = createSystem(sara, { name: 'BuildPersist', domain: 'sales' });
+
+  // A fresh system has no lastBuild.
+  assert.equal(getSystem(sys.id, sara).lastBuild, undefined);
+
+  const build: LastBuild = {
+    ok: true,
+    at: Date.now(),
+    rows: [
+      { tool: 'langgraph', applied: true, verified: true, status: 'ok', detail: 'compiled' },
+      { tool: 'opa', applied: true, verified: true, status: 'ok', detail: 'grants registered' },
+    ],
+  };
+  setLastBuild(sys.id, sara, build);
+
+  // The record now carries the build result.
+  const view = getSystem(sys.id, sara);
+  assert.ok(view.lastBuild, 'lastBuild is present after setLastBuild');
+  assert.equal(view.lastBuild!.ok, true);
+  assert.equal(view.lastBuild!.rows.length, 2);
+  assert.equal(view.lastBuild!.rows[0].tool, 'langgraph');
+  assert.equal(view.lastBuild!.rows[1].tool, 'opa');
+  assert.ok(view.lastBuild!.at > 0, 'at timestamp is set');
+
+  // A failing build result also round-trips correctly.
+  const failBuild: LastBuild = {
+    ok: false,
+    at: Date.now(),
+    rows: [
+      { tool: 'langgraph', applied: false, verified: false, status: 'fail', detail: 'bad yaml', error: 'SyntaxError' },
+    ],
+  };
+  setLastBuild(sys.id, sara, failBuild);
+  const view2 = getSystem(sys.id, sara);
+  assert.equal(view2.lastBuild!.ok, false);
+  assert.equal(view2.lastBuild!.rows[0].error, 'SyntaxError');
+
+  // A non-editor cannot overwrite the build result.
+  assert.throws(() => setLastBuild(sys.id, amir, build), /not permitted to edit/i);
 });

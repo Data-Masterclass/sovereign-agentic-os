@@ -57,11 +57,10 @@ function toolCallingLlm(toolName: string): LlmCall {
   };
 }
 
-/** Spy deps: authorize allows; handleRpc records the (user, tool) it dispatched. */
+/** Spy deps: handleRpc records the (user, tool) it dispatched. */
 function spyDeps(): OsToolDeps & { calls: { handleRpc: { user: CurrentUser; name: string }[] } } {
   const calls = { handleRpc: [] as { user: CurrentUser; name: string }[] };
   const deps: OsToolDeps = {
-    authorize: async () => ({ effect: 'allow', reason: 'granted' }),
     enqueue: (() => ({}) as never) as OsToolDeps['enqueue'],
     handleRpc: (async (user, req) => {
       const name = (req.params as { name?: string })?.name ?? '';
@@ -180,4 +179,60 @@ test('resolveOwner: returns a live principal for an active owner, null for disab
   assert.equal(await resolveOwner('u2', async () => disabled), null, 'disabled owner → null');
   assert.equal(await resolveOwner('u3', async () => pending), null, 'setup-incomplete owner → null');
   assert.equal(await resolveOwner('gone', async () => null), null, 'missing owner → null');
+});
+
+// --- 5) S1: a stale direct-write grant is downgraded to held-for-approval at run --
+
+/** An agentic-os team carrying a direct-write (Write-bounded) connection grant. */
+function directWriteYaml(): string {
+  const sys: System = parseSystem({
+    version: '1',
+    system: { name: 'Writer', domain: 'finance', visibility: 'Personal' },
+    runtime: 'langgraph',
+    entrypoint: 'analyst',
+    grants: {
+      tools: ['query_data', 'search_knowledge'],
+      data: [{ id: 'fin.ledger', capability: 'Write-bounded' }],
+      connections: [{ id: 'erp', capability: 'Write-bounded' }],
+    },
+    agents: [{ id: 'analyst', role: 'agent', agent_md: 'You analyse.', memory_md: '' }],
+  });
+  return serializeSystem(sys);
+}
+
+test('S1: scheduled run downgrades a stale Write-bounded grant to Write-approval when the owner is no longer builder+', async () => {
+  let ranYaml = '';
+  const wiredRunOsTeam: ScheduledDeps['runOsTeam'] = (input) => {
+    ranYaml = input.yaml; // capture the yaml the governed run actually received
+    return Promise.resolve({ path: [], finalText: 'ok', runs: [] } as never);
+  };
+
+  // Owner resolves LIVE as a creator (e.g. demoted since the grant was set).
+  await runScheduledSystem(
+    'sys-writer',
+    { yaml: directWriteYaml(), owner: OWNER.id, disabledAgents: [] },
+    'Scheduled run',
+    { resolveOwner: async () => OWNER, runOsTeam: wiredRunOsTeam },
+  );
+
+  const ran = parseSystem(ranYaml);
+  assert.equal(ran.grants.data[0].capability, 'Write-approval', 'data direct-write neutralised');
+  assert.equal(ran.grants.connections[0].capability, 'Write-approval', 'connection direct-write neutralised');
+});
+
+test('S1: a builder owner keeps direct write on a scheduled run', async () => {
+  let ranYaml = '';
+  const wiredRunOsTeam: ScheduledDeps['runOsTeam'] = (input) => {
+    ranYaml = input.yaml;
+    return Promise.resolve({ path: [], finalText: 'ok', runs: [] } as never);
+  };
+  const builderOwner: CurrentUser = { ...OWNER, role: 'builder' };
+  await runScheduledSystem(
+    'sys-writer',
+    { yaml: directWriteYaml(), owner: builderOwner.id, disabledAgents: [] },
+    'Scheduled run',
+    { resolveOwner: async () => builderOwner, runOsTeam: wiredRunOsTeam },
+  );
+  const ran = parseSystem(ranYaml);
+  assert.equal(ran.grants.data[0].capability, 'Write-bounded', 'builder keeps direct write');
 });

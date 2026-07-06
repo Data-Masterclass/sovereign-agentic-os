@@ -442,6 +442,7 @@ function LinkBet({ pillarId, linkedIds, onChanged }: { pillarId: string; linkedI
   const [open, setOpen] = useState(false);
   const [cat, setCat] = useState<{ id: string; name: string; domain: string }[]>([]);
   const [busy, setBusy] = useState('');
+  const [err, setErr] = useState('');
 
   const load = async () => {
     setOpen(true);
@@ -449,11 +450,10 @@ function LinkBet({ pillarId, linkedIds, onChanged }: { pillarId: string; linkedI
     catch { /* offline */ }
   };
   const toggle = async (betId: string, on: boolean) => {
-    setBusy(betId);
+    setBusy(betId); setErr('');
     try {
       await api(`/api/strategy/pillars/${pillarId}/bets${on ? `?betId=${betId}` : ''}`, on ? 'DELETE' : 'POST', on ? undefined : { betId });
-      onChanged();
-    } catch { /* surfaced on reload */ } finally { setBusy(''); }
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(''); onChanged(); }
   };
 
   if (!open) {
@@ -475,6 +475,7 @@ function LinkBet({ pillarId, linkedIds, onChanged }: { pillarId: string; linkedI
           </button>
         );
       })}
+      {err ? <div className="error" style={{ fontSize: 11.5 }}>{err}</div> : null}
       <button className="btn ghost sm" onClick={() => setOpen(false)}>Done</button>
     </div>
   );
@@ -492,6 +493,7 @@ function NewPillarColumn({ resp, onCreated }: { resp: ListResp; onCreated: () =>
   const [err, setErr] = useState('');
 
   const create = async () => {
+    if (scope === 'domain' && !domain.trim()) { setErr('No domain available'); return; }
     setBusy(true); setErr('');
     try {
       await api('/api/strategy/pillars', 'POST', {
@@ -526,7 +528,9 @@ function NewPillarColumn({ resp, onCreated }: { resp: ListResp; onCreated: () =>
           {resp.canCreateTenant ? (
             <button className={`rt-seg-opt${scope === 'tenant' ? ' active' : ''}`} onClick={() => setScope('tenant')}>Company</button>
           ) : null}
-          <button className={`rt-seg-opt${scope === 'domain' ? ' active' : ''}`} onClick={() => setScope('domain')}>Domain</button>
+          {resp.user.domains.length > 0 ? (
+            <button className={`rt-seg-opt${scope === 'domain' ? ' active' : ''}`} onClick={() => setScope('domain')}>Domain</button>
+          ) : null}
         </div>
         {scope === 'domain' ? (
           <select value={domain} onChange={(e) => setDomain(e.target.value)}>

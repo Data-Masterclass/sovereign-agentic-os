@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { serveMcp, mcpMethodNotAllowed } from '@/lib/mcp/http';
+import { serveMcp, serveMcpStream } from '@/lib/mcp/http';
 import { isMcpTab, toolsForTab, MCP_SERVER_INFO } from '@/lib/mcp/server';
 import { resourcesForTab, templatesForTab } from '@/lib/mcp/resources';
 import { promptsForTab } from '@/lib/mcp/prompts';
@@ -43,5 +43,5 @@ export async function POST(req: Request, ctx: { params: Promise<{ tab: string }>
 }
 
 export async function GET() {
-  return mcpMethodNotAllowed();
+  return serveMcpStream();
 }

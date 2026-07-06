@@ -185,9 +185,9 @@ export type BigBet = {
   solution?: string;
   /** Members who may SEE not-yet-shared component detail (OPA). Owner is always a member. */
   members: string[];
-  /** Up-link to the Strategy value model. */
-  pillarId: string;
-  metricId: string;
+  /** Up-link to the Strategy value model. Optional — a new bet may not yet be linked. */
+  pillarId?: string;
+  metricId?: string;
   /** Target € value the bet commits to. */
   targetValue: number;
   /** Realized-value basis + allocation method (both selectable, per bet). */

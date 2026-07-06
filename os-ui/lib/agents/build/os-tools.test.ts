@@ -32,16 +32,17 @@ function sysWith(tools: string[], runtime: 'langgraph' | 'hermes' = 'langgraph')
 const CREATOR: CurrentUser = { id: 'u1', name: 'Cara Creator', domains: ['sales'], role: 'creator' };
 const BUILDER: CurrentUser = { id: 'u2', name: 'Bo Builder', domains: ['sales'], role: 'builder' };
 
-/** A deps bundle with spies; `authorize` defaults to allow, handleRpc echoes. */
+/**
+ * A deps bundle with spies. There is NO authorize spy: Gate 1b is now derived
+ * IN-PROCESS from the system's resolved grant-set + the write-tool catalog, so a
+ * granted READ tool must be allowed WITHOUT any injected/OPA decision. handleRpc
+ * echoes the resolved tool name; enqueue records held writes.
+ */
 function spyDeps(over: Partial<OsToolDeps> = {}): OsToolDeps & {
-  calls: { authorize: string[][]; handleRpc: unknown[]; enqueue: unknown[] };
+  calls: { handleRpc: unknown[]; enqueue: unknown[] };
 } {
-  const calls = { authorize: [] as string[][], handleRpc: [] as unknown[], enqueue: [] as unknown[] };
+  const calls = { handleRpc: [] as unknown[], enqueue: [] as unknown[] };
   const base: OsToolDeps = {
-    authorize: async (principal, tool) => {
-      calls.authorize.push([principal, tool]);
-      return { effect: 'allow', reason: 'granted' };
-    },
     enqueue: ((input: unknown) => {
       calls.enqueue.push(input);
       return {} as never;
@@ -113,14 +114,13 @@ test('executor: an ungranted tool never executes (no OPA, no dispatch)', async (
   const res = await exec('query_data', { sql: 'select 1' });
   assert.equal(res.isError, true);
   assert.match(res.text, /Tool not available/);
-  assert.equal(deps.calls.authorize.length, 0); // never reached OPA
   assert.equal(deps.calls.handleRpc.length, 0); // never executed
 });
 
 test('executor: a requires_approval tool enqueues and never executes', async () => {
-  const deps = spyDeps({
-    authorize: async () => ({ effect: 'requires_approval', reason: 'high-stakes' }),
-  });
+  // `create_dataset` is a WRITE tool → Gate 1b HOLDS it in-process (write-tool
+  // catalog), enqueues to Governance and never dispatches — no OPA doc needed.
+  const deps = spyDeps();
   const exec = grantedToolExecutor(CREATOR, sysWith(['create_dataset']), 'sys1', deps);
   const res = await exec('create_dataset', { name: 'x' });
   assert.equal(res.isError, true);
@@ -139,9 +139,8 @@ test('executor: an allowed tool dispatches as the ACTING USER (not the service p
   const res = await exec('retrieve', { query: 'contracts' }); // legacy alias
   assert.equal(res.isError, false);
   assert.equal(res.text, 'ran search_knowledge'); // alias resolved before dispatch
-  // OPA pre-gate used the SYSTEM principal…
-  assert.deepEqual(deps.calls.authorize[0], ['os-sys1', 'search_knowledge']);
-  // …but the governed dispatch threads the ACTING USER, never `os-sys1`.
+  // Gate 1b is derived in-process from the granted read set — no OPA pre-gate call.
+  // The governed dispatch threads the ACTING USER, never the `os-sys1` principal.
   const call = deps.calls.handleRpc[0] as { user: CurrentUser; req: { params: { name: string } } };
   assert.equal(call.user, CREATOR); // same object → identity threaded through
   assert.equal(call.user.id, 'u1');
@@ -149,11 +148,13 @@ test('executor: an allowed tool dispatches as the ACTING USER (not the service p
 });
 
 test('executor: a creator hits a typed forbidden on a builder-floor tool (real role floor)', async () => {
-  // authorize (os-principal) allows, but the REAL handleRpc role floor rejects a
-  // creator calling a builder-floor tool — the second gate can't be bypassed.
+  // `get_policy_view` is a builder-floor READ tool: it passes Gate 1 (granted) and
+  // Gate 1b (not a write hold), so it reaches the REAL handleRpc — whose role floor
+  // (Gate 2) rejects a creator calling a builder-floor tool. The second gate is the
+  // real authority and can't be bypassed by the in-process grant scope.
   const deps = spyDeps({ handleRpc: realHandleRpc });
-  const exec = grantedToolExecutor(CREATOR, sysWith(['approve_promotion']), 'sys1', deps);
-  const res = await exec('approve_promotion', { id: 'x' });
+  const exec = grantedToolExecutor(CREATOR, sysWith(['get_policy_view']), 'sys1', deps);
+  const res = await exec('get_policy_view', { id: 'x' });
   assert.equal(res.isError, true);
   assert.match(res.text, /requires builder|forbidden/i);
 });

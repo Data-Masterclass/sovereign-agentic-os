@@ -48,11 +48,10 @@ function toolCallingLlm(toolName: string): LlmCall {
   };
 }
 
-/** Spy deps: authorize allows, handleRpc records its (user, req, opts) and returns a real-shaped result. */
+/** Spy deps: handleRpc records its (user, req, opts) and returns a real-shaped result. */
 function spyDeps(): OsToolDeps & { calls: { handleRpc: { user: CurrentUser; name: string; toolNames: string[] }[] } } {
   const calls = { handleRpc: [] as { user: CurrentUser; name: string; toolNames: string[] }[] };
   const deps: OsToolDeps = {
-    authorize: async () => ({ effect: 'allow', reason: 'granted' }),
     enqueue: (() => ({}) as never) as OsToolDeps['enqueue'],
     handleRpc: (async (user, req, opts) => {
       const name = (req.params as { name?: string })?.name ?? '';

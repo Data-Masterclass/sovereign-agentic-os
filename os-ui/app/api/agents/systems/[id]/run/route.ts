@@ -7,6 +7,7 @@ import { getSystemForRun, setRunning, recordActivity } from '@/lib/agents/store'
 import { runSystem } from '@/lib/agents/build/server';
 import { runOsTeam } from '@/lib/agents/build/agentic-graph-server';
 import { isAgenticOsTeam } from '@/lib/agents/build/os-tools';
+import { governYamlForOwner } from '@/lib/agents/build/owner-grants';
 
 export const dynamic = 'force-dynamic';
 
@@ -59,6 +60,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const view = getSystemForRun(id, user);
     const prompt = typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : 'Test invocation';
 
+    // Re-assert the builder-gate against the OWNER's CURRENT role (S1): a stale
+    // direct-write grant (set while the owner was a builder, or by an admin) is
+    // downgraded to held-for-approval before this run — read live, never trusted
+    // from the saved yaml.
+    const yaml = await governYamlForOwner(view.yaml, view.owner);
+
     // Any agentic-os LangGraph team (data + knowledge + connections + software
     // grants, all resolving to the MCP registry) runs LIVE, in-process, as the
     // signed-in user: each node runs the PLAN→ACT harness with its pinned model and
@@ -68,7 +75,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if (isAgenticOsTeam(view.system)) {
       const team = await runOsTeam({
         user,
-        yaml: view.yaml,
+        yaml,
         systemId: id,
         messages: runMessages(body, prompt),
         disabledAgents: view.disabledAgents,
@@ -89,7 +96,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       });
     }
 
-    const report = await runSystem(id, view.yaml, {
+    const report = await runSystem(id, yaml, {
       prompt,
       requestedBy: user.id,
       disabledAgents: view.disabledAgents,

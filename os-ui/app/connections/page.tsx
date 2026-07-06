@@ -98,7 +98,7 @@ export default function ConnectionsPage() {
                       <tr key={c.id}>
                         <td style={{ fontWeight: 600 }}>{c.name}</td>
                         <td className="mono">{c.principal}</td>
-                        <td className="muted mono" style={{ fontSize: 11.5 }}>{c.tools.map((t) => t.name).join(', ')}</td>
+                        <td className="muted mono" style={{ fontSize: 11.5, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.tools.map((t) => t.name).join(', ')}>{c.tools.map((t) => t.name).join(', ')}</td>
                         <td><span className={`badge vis-${c.visibility.toLowerCase()}`}>{c.visibility}</span></td>
                         <td><Link className="btn ghost" href={`/software/${c.appId}`}>Open →</Link></td>
                       </tr>

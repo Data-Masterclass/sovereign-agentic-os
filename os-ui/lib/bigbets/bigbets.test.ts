@@ -22,6 +22,7 @@ import {
   listBets,
   removeComponent,
   setOverride,
+  updateBet,
 } from './store.ts';
 import { proposePlan, approvePlan } from './planner.ts';
 import { deriveBet } from './status.ts';
@@ -29,7 +30,7 @@ import { rollup } from './roadmap.ts';
 import { buildComposition } from './composition.ts';
 import { realizedValue, distribute } from './value.ts';
 import { __resetSources, __resetStrategy, __seedStrategy, resolveArtifact, sourceFor, isReady } from './sources.ts';
-import { type Actor, type Principal } from './model.ts';
+import { type Actor, type BigBet, type Principal } from './model.ts';
 
 const sara: Actor = { id: 'sara', domains: ['sales'], role: 'builder', kind: 'human' };
 const amir: Principal = { id: 'amir', domains: ['marketing'], role: 'creator' }; // non-member, other domain
@@ -204,6 +205,114 @@ test('scoping: list only returns bets the user may view', () => {
   assert.ok(listBets(sara).some((b) => b.id === bet.id));
   assert.equal(listBets(amir).some((b) => b.id === bet.id), false, 'other-domain non-member sees nothing');
   assert.ok(listBets(arya).some((b) => b.id === bet.id), 'admin sees all');
+});
+
+test('audit: detail is a Record object (not a string) — JSON.stringify is safe for UI rendering', () => {
+  reset();
+  const bet = newChurnBet();
+  const logs = auditLog(bet.id);
+  assert.ok(logs.length > 0, 'createBet writes at least one audit event');
+  const withDetail = logs.filter((e) => e.detail !== undefined);
+  assert.ok(withDetail.length > 0, 'bet.create event carries a detail object');
+  for (const e of withDetail) {
+    // detail must be a plain object — rendering it raw as a React child would crash
+    // ("Objects are not valid as a React child"). The fix: JSON.stringify before render.
+    assert.strictEqual(typeof e.detail, 'object', 'detail is an object, not a string');
+    assert.doesNotThrow(() => JSON.stringify(e.detail), 'safe to serialize for rendering');
+  }
+});
+
+test('picker: sourceFor list returns scaffolded artifacts; canView filter is domain-scoped', () => {
+  reset();
+  const bet = newChurnBet();
+  const ref = addComponent(bet.id, sara, { tab: 'data', scaffold: { title: 'Churn data' }, plannedReady: '2026-07-15' }).ref;
+  const art = resolveArtifact(ref.artifactId)!;
+  assert.equal(art.visibility, 'personal', 'freshly scaffolded artifact is personal (draft)');
+
+  // sourceFor list surfaces the artifact (the API endpoint reads this list then applies the canView filter).
+  const list = sourceFor('data').list();
+  assert.ok(list.some((a) => a.id === art.id), 'scaffolded artifact appears in sourceFor list');
+
+  // The API-level canView predicate (replicated here):
+  const canSee = (domains: string[], role: string) =>
+    role === 'admin' || art.visibility !== 'personal' || domains.includes(art.domain);
+
+  assert.ok(canSee(sara.domains, sara.role), 'same-domain builder sees their own personal artifact');
+  assert.ok(!canSee(amir.domains, amir.role), 'other-domain non-admin cannot see a personal artifact');
+  assert.ok(canSee(arya.domains, arya.role), 'admin sees all');
+
+  // Attaching by resolved id re-resolves through tag(), confirming server-side id authority.
+  const linked = sourceFor('data').tag(art.id, bet.id);
+  assert.ok(linked, 'tag() returns the artifact');
+  assert.ok(linked!.bigBetIds.includes(bet.id), 'bet id is recorded on the artifact after link');
+});
+
+test('updateBet: editing core fields persists and is audited', () => {
+  reset();
+  const bet = newChurnBet();
+  const updated = updateBet(bet.id, sara, {
+    name: 'Reduce enterprise churn',
+    solution: 'Churn propensity ML model',
+    targetValue: 500_000,
+    goLive: '2026-10-01',
+    ownerDeclaredValue: 420_000,
+  });
+  assert.equal(updated.name, 'Reduce enterprise churn');
+  assert.equal(updated.solution, 'Churn propensity ML model');
+  assert.equal(updated.targetValue, 500_000);
+  assert.equal(updated.ownerDeclaredValue, 420_000);
+  const log = auditLog(bet.id);
+  assert.ok(log.some(e => e.action === 'bet.update'), 'update is audited');
+});
+
+test('gate: a non-owner cannot edit the bet (updateBet → 403)', () => {
+  reset();
+  const bet = newChurnBet(); // sara owns
+  assert.throws(() => updateBet(bet.id, amir, { name: 'hijack' }), /Not permitted to edit/);
+});
+
+test('gate: a creator cannot advance a component to a ready verb (human-ships needs Builder+)', () => {
+  reset();
+  const bet = newChurnBet();
+  const data = addComponent(bet.id, sara, { tab: 'data', scaffold: { title: 'Churn data' }, plannedReady: '2026-07-15' }).ref;
+  const cara: Actor = { id: 'cara', domains: ['sales'], role: 'creator', kind: 'human' };
+  assert.throws(() => advanceComponent(bet.id, cara, data.id, 'certified'), /Builder or Admin/);
+});
+
+test('gate: a cross-domain bet cannot be edited by a non-admin', () => {
+  reset();
+  const bet = createBet(arya, {
+    name: 'Cross-domain bet',
+    problem: { who: 'Ops', need: 'shared outcome', obstacle: 'silos', impact: 'slow' },
+    pillarId: 'pillar_retention', metricId: 'metric_nrr', targetValue: 100_000, goLive: '2026-09-01',
+    crossDomain: true,
+  });
+  assert.throws(() => updateBet(bet.id, sara, { name: 'nope' }), /Not permitted to edit/);
+});
+
+test('gate: PATCH whitelist blocks mass-assignment + creator self-activation', () => {
+  reset();
+  const cara: Principal = { id: 'cara', domains: ['sales'], role: 'creator' };
+  const draft = createBet(cara, {
+    name: 'Cara draft',
+    problem: { who: 'Cara', need: 'x', obstacle: 'y', impact: 'z' },
+    pillarId: 'pillar_retention', metricId: 'metric_nrr', targetValue: 1, goLive: '2026-09-01',
+  });
+  assert.equal(draft.status, 'draft');
+  // A Creator may draft + archive their own bet, but NEVER self-activate it.
+  assert.throws(() => updateBet(draft.id, cara, { status: 'active' }), /Builder or Admin/);
+  // Escalation keys are silently stripped; only the whitelisted `name` lands.
+  const evil: Partial<BigBet> = { owner: 'mallory', domain: 'finance', crossDomain: true, id: 'evil', name: 'renamed' };
+  updateBet(draft.id, cara, evil);
+  const after = getBet(draft.id, cara);
+  assert.equal(after.owner, 'cara', 'owner is immutable via PATCH');
+  assert.equal(after.domain, 'sales', 'domain is immutable via PATCH');
+  assert.equal(after.crossDomain, false, 'crossDomain is immutable via PATCH');
+  assert.equal(after.id, draft.id, 'id is immutable via PATCH');
+  assert.equal(after.status, 'draft', 'still a draft — no self-activation slipped through');
+  assert.equal(after.name, 'renamed', 'the whitelisted field applied');
+  // A non-finite target is rejected outright (no €NaN for viewers).
+  assert.throws(() => updateBet(draft.id, cara, { targetValue: Number('abc') }), /finite number/);
 });
 
 test('value end-to-end: realized distributes to components and reconciles to the bet', async () => {

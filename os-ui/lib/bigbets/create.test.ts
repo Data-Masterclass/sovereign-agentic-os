@@ -41,6 +41,36 @@ test('createBet stores the owner, problem statement and solution; name is given'
   assert.equal(bet.status, 'active');
 });
 
+test('problem-optional: createBet with empty problem.need succeeds and derives "Untitled big bet"', () => {
+  __resetBets();
+  // The create form may now submit with no problem text; the server derives the name.
+  const bet = createBet(sara, {
+    name: deriveBetName(''), // → 'Untitled big bet'
+    problem: { who: 'Retention team', need: '', obstacle: '', impact: '' },
+    pillarId: 'pillar_retention',
+    metricId: 'metric_nrr',
+    targetValue: 0,
+    goLive: '2026-12-01',
+  });
+  assert.equal(bet.name, 'Untitled big bet');
+  assert.equal(bet.problem.need, '');
+  assert.equal(bet.problem.who, 'Retention team');
+  assert.equal(bet.status, 'active');
+});
+
+test('createBet without pillarId/metricId stores undefined (no seed-ID fallback)', () => {
+  __resetBets();
+  const bet = createBet(sara, {
+    name: 'Unlinked bet',
+    problem: { who: 'Team', need: 'No pillar yet', obstacle: '', impact: '' },
+    targetValue: 0,
+    goLive: '2026-12-01',
+  });
+  assert.equal(bet.pillarId, undefined);
+  assert.equal(bet.metricId, undefined);
+  assert.equal(bet.name, 'Unlinked bet');
+});
+
 test('updateBet archives a bet (the Archive action)', () => {
   __resetBets();
   const bet = createBet(sara, {

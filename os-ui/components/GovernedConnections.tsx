@@ -173,6 +173,8 @@ export default function GovernedConnections() {
   const showOAuthForm = (canCreatePersonal || canCreate) && isOAuth && oauthTemplates.length > 0;
   const showServiceForm = canCreate && !isOAuth && serviceTemplates.length > 0;
 
+  if (!data && !error) return <div className="hint"><span className="spin" /> Loading connections…</div>;
+
   return (
     <>
       <div className="section-title">New connection</div>
@@ -190,7 +192,7 @@ export default function GovernedConnections() {
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Connection name (e.g. Alex&apos;s Google Drive, Salesforce Sales org)"
+            placeholder="Connection name (e.g. Alex's Google Drive, Salesforce Sales org)"
           />
 
           <div className="row" style={{ marginTop: 10 }}>
@@ -442,7 +444,11 @@ function ConnectionCard({
 
   async function test() {
     const r = await doPost(`/api/connections/${c.id}/test`);
-    setMsg(r.ok ? `✓ ${r.data.detail as string}` : `✗ ${r.data.error as string}`);
+    // Branch on the PAYLOAD's ok, not the HTTP status — the route always
+    // returns 200 even on credential/connectivity failure, with ok:false.
+    setMsg((r.data.ok as boolean)
+      ? `✓ ${r.data.detail as string}`
+      : `✗ ${(r.data.error as string) ?? (r.data.detail as string)}`);
   }
 
   async function promote() {

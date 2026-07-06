@@ -2635,6 +2635,9 @@ button.card.tile:hover .tile-action { opacity: 1; }
   max-height: 240px; overflow: auto; background: var(--bg-elevated);
   border: 1px solid var(--border); border-radius: var(--radius); padding: 12px;
 }
+/* "Show all" removes the clamp so the full extracted text is revealed, not just
+   scrolled inside the 240px box. */
+.preview-text.expanded { max-height: none; }
 .preview-meta { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 12.5px; }
 .preview-meta dt { color: var(--text-faint); }
 .preview-meta dd { margin: 0; color: var(--text); word-break: break-word; }
@@ -3120,6 +3123,15 @@ button.card.tile:hover .tile-action { opacity: 1; }
   flex: 1;
   min-width: 0;
 }
+/* Flex child of .cm-item-main: must be allowed to shrink below content width
+   (min-width:0) or the label's ellipsis never engages and long artifact names
+   overflow the card. */
+.cm-item-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
 .cm-item-label {
   display: block;
   font-size: 13px;
@@ -3134,6 +3146,9 @@ button.card.tile:hover .tile-action { opacity: 1; }
   font-size: 11.5px;
   color: var(--text-muted);
   margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .cm-dot {
   width: 8px;
@@ -3674,15 +3689,16 @@ button.card.tile:hover .tile-action { opacity: 1; }
   transform: translateY(-3px);
   box-shadow: 0 12px 30px rgba(12, 11, 13, 0.12);
 }
-.launch-art {
+/* Scope these to .launch-card so they don't override the .launch-tile rules above */
+.launch-card .launch-art {
   display: flex;
   justify-content: flex-start;
   margin-bottom: 10px;
 }
-.launch-title { font-family: var(--font-head); font-size: 19px; margin: 0 0 4px; }
+.launch-card .launch-title { font-family: var(--font-head); font-size: 19px; margin: 0 0 4px; }
 .launch-line { margin: 0 0 16px; color: var(--text-muted); font-size: 13.5px; line-height: 1.5; flex: 1; }
-.launch-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.launch-go {
+.launch-card .launch-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.launch-card .launch-go {
   font-weight: 600;
   font-size: 13.5px;
   color: var(--gold-text);
@@ -3690,7 +3706,7 @@ button.card.tile:hover .tile-action { opacity: 1; }
   border-bottom: 1.5px solid transparent;
   transition: border-color 0.15s ease;
 }
-.launch-go:hover { border-color: var(--gold); }
+.launch-card .launch-go:hover { border-color: var(--gold); }
 
 /* ---- tutorials: polish pass (focus-visible + reduced motion) ---- */
 .tut-link:focus-visible,
@@ -4017,6 +4033,62 @@ button.card.tile:hover .tile-action { opacity: 1; }
   .home-cockpit-cta:hover { transform: none; }
 }
 
+/* ---- MCP connect CTA banner (reused on Home + Cockpit) ---- */
+.mcp-cta-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 20px;
+  border: 1px solid var(--gold-line);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(480px 120px at 100% 0%, var(--gold-soft), transparent 70%),
+    var(--panel);
+  margin-bottom: 20px;
+}
+.mcp-cta-banner-text { flex: 1; min-width: 0; }
+.mcp-cta-banner-kicker {
+  font-family: var(--font-head);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--gold-text);
+  margin: 0 0 3px;
+}
+.mcp-cta-banner-line {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0;
+}
+.mcp-cta-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 18px;
+  border: 1px solid var(--gold-line);
+  border-radius: 999px;
+  background: var(--gold-soft);
+  color: var(--gold-text);
+  font-family: var(--font-head);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  white-space: nowrap;
+}
+.mcp-cta-btn:hover {
+  background: rgba(200, 162, 74, 0.2);
+  border-color: var(--gold);
+}
+.mcp-cta-btn .tut-link-spark { color: var(--teal); font-size: 11px; }
+@media (max-width: 640px) {
+  .mcp-cta-banner { flex-direction: column; align-items: flex-start; }
+}
+
 /* ============================================================ Strategy ====== */
 /* Pillars are the centerpiece — tall, distinct columns that read as real
    "pillars". Brand palette + a single gold accent; generous space; calm. */
@@ -4083,6 +4155,10 @@ button.card.tile:hover .tile-action { opacity: 1; }
   letter-spacing: -0.01em;
   line-height: 1.15;
   text-wrap: balance;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 .strat-pillar-desc {
   margin: 0;

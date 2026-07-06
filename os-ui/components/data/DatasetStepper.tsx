@@ -125,7 +125,7 @@ export default function DatasetStepper({ datasetId, onBack }: { datasetId: strin
 
   const onCommitted = useCallback((next: Stage[]) => { setStages(next); setOpenStage(null); load(); }, [load]);
 
-  if (err) return <><button className="btn ghost" onClick={onBack}>← All datasets</button><div className="error" style={{ marginTop: 14 }}>{err}</div></>;
+  if (err) return <><button className="btn ghost" onClick={onBack}>← Back to dataset</button><div className="error" style={{ marginTop: 14 }}>{err}</div></>;
   if (!dataset) return <div className="stub-page">Opening dataset…</div>;
 
   const active = openStage ? stages.find((s) => s.layer === openStage) ?? null : null;
@@ -133,7 +133,7 @@ export default function DatasetStepper({ datasetId, onBack }: { datasetId: strin
   return (
     <>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-        <button className="btn ghost" onClick={onBack}>← All datasets</button>
+        <button className="btn ghost" onClick={onBack}>← Back to dataset</button>
         <button className={`btn ghost${showCode ? ' on' : ''}`} onClick={() => setShowCode((v) => !v)}>
           {showCode ? 'Hide the code' : '‹ › Show the code'}
         </button>

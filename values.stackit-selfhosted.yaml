@@ -184,6 +184,28 @@ osUI:
     # renamed `creator`->`agentic-leader`, label "Agentic Leader Program"; ladder
     # agentic-leader<builder<admin) + real Q3-2026 cohort seed (id=email) into
     # domain agentic-leader-q3-2026.
+    # 0.1.36 = home/cockpit UX: golden-path "How it works" links renamed "Tutorials"
+    # and made clickable (they opened no overlay + a duplicate CSS block clobbered the
+    # cards) + prominent "Connect your AI tool to MCP" CTA on Home and Cockpit; new MCP
+    # tab documenting every governed tool (name, what it does, min role, approval) from
+    # the live registry. 0.1.35 = MCP fix: OAuth client + refresh-token durability
+    # (survive redeploys via the OpenSearch mirror + an atomic delete-claim so refresh
+    # single-use holds — Fable-gated); authorize sign-in redirect uses OS_PUBLIC_URL,
+    # not the container's internal 0.0.0.0:3000; agent-run panel no longer crashes on a
+    # multi-agent team run; cockpit long-name overflow + MCP-connect dark-mode contrast;
+    # Science tab moved under Dashboards. NOTE: OS_PUBLIC_URL corrected on the live
+    # deploy to https://agentic.datamasterclass.com (the canonical host).
+    # 0.1.34 = Big Bets usability pass (11 QA items): problem statement optional;
+    # component picker is browse/search/choose (no hand-typed IDs); Audit + owner-
+    # declared object-as-React-child crashes fixed; editable bet (set target, report
+    # value manually + audited note); component lifecycle as a labelled segmented
+    # control (old confusing select+Advance consolidated); "Override" -> plain-language
+    # "note"; bet-scoped Health (no cluster-wide leakage); "Set up in Agents" deep-link
+    # for scaffolded agents. SECURITY (Fable review gate): server-side mass-assignment
+    # whitelist on the bet PATCH/updateBet boundary — domain/owner/crossDomain/status
+    # can no longer be escalated via PATCH; status active/shipped gated to Builder+;
+    # confirm on irreversible visibility promotes; +8 gating tests. Science: read-only
+    # golden-path lifecycle block removed from the main window (lives in Tutorials).
     # 0.1.33 = SECURITY: MCP v2 P0 — unified promotion/certification ladder (one
     # effects.ts seam) closes 8 governance back doors incl. a builder publishing a
     # student's private knowledge draft; pending-handle governance queue; get_lineage;
@@ -225,7 +247,7 @@ osUI:
     # 0.1.11 = Agents-tab builder rebuild: globalThis store fix (AGENT.md/MEMORY.md
     # now load), single Auto/Reasoning/Execution model toggle (real sovereign-*
     # ids), React Flow drag-and-drop graph builder, master-detail rail + templates.
-    tag: "0.1.33"
+    tag: "0.1.43"
   # ---- Mailer: the OS sends its OWN mail via the in-cluster maddy MTA. --------
   # os-ui's SMTP transport is pointed at the in-cluster `mail` Service (587,
   # STARTTLS); maddy DKIM-signs and delivers as noreply@sovereign-agentic.com.
@@ -324,7 +346,7 @@ queryTool:
 dataRunner:
   image:
     repository: ghcr.io/aborek/sovereign-os/data-runner
-    tag: "0.1.0"
+    tag: "0.1.1"
 
 sandbox:
   image:
@@ -553,6 +575,13 @@ ingress:
   className: nginx
   tlsIssuer: letsencrypt-prod
   hosts:
+    # CANONICAL HOST = the apex `agentic.datamasterclass.com` (confirmed by the owner).
+    # OS_PUBLIC_URL / soa.consoleUrl derives from `osUI` below, which drives the MCP
+    # endpoint URL + OAuth issuer + email links. It is currently corrected on the LIVE
+    # deploy via `kubectl set env OS_PUBLIC_URL=https://agentic.datamasterclass.com`.
+    # TODO when the helm release is healthy again: make the apex canonical here (swap
+    # osUI/osUIApex or point osUI at the apex) and re-verify the discovery issuer, so a
+    # helm upgrade can't revert OS_PUBLIC_URL back to os.<zone> and re-break MCP.
     osUI: "os.agentic.datamasterclass.com"
     # Bare zone apex also serves the OS UI so it no longer 404s next to os.<zone>.
     osUIApex: "agentic.datamasterclass.com"

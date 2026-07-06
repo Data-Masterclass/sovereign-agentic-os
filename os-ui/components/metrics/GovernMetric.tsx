@@ -49,7 +49,7 @@ export default function GovernMetric({
       // 200 → moved; 403 → denied with a reason + the same consistency rows. Any other
       // non-OK shape (400 bad input, 404 not found, 5xx) has no `consistency` field —
       // surface it as a plain error so the render never dereferences a missing gate.
-      if (!res.ok && !data.consistency) { setErr(data.error ?? 'Governance failed'); return; }
+      if (!res.ok && !data.consistency) { setErr(data.reason ?? data.error ?? 'Governance failed'); return; }
       setResult(data);
       if (data.ok) onGoverned();
     } catch (e) { setErr((e as Error).message); } finally { setBusy(''); }

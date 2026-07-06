@@ -6,6 +6,7 @@ import { currentUser } from '@/lib/auth';
 import { cockpitFeed } from '@/lib/home/feed';
 import Cockpit from '@/components/home/Cockpit';
 import TopItems from '@/components/home/TopItems';
+import McpDrawer from '@/components/McpDrawer';
 import './cockpit.css';
 
 export const dynamic = 'force-dynamic';
@@ -33,7 +34,18 @@ export default async function CockpitPage() {
     );
   }
 
-  const feed = await cockpitFeed(user);
+  const feed = await cockpitFeed(user).catch(() => null);
+  if (!feed) {
+    return (
+      <div className="cockpit-page">
+        <div className="ci-shell">
+          <div className="stub-page">
+            Could not load your cockpit. The platform may be starting up — try refreshing in a moment.
+          </div>
+        </div>
+      </div>
+    );
+  }
   const firstName = user.name.split(' ')[0] || user.name;
 
   const openNeeds = feed.needs.filter((n) => n.actionable).length;
@@ -98,6 +110,17 @@ export default async function CockpitPage() {
       </header>
 
       <div className="ci-shell">
+        {/* MCP connect CTA — prominent invite to drive the OS from Claude/ChatGPT */}
+        <div className="mcp-cta-banner">
+          <div className="mcp-cta-banner-text">
+            <p className="mcp-cta-banner-kicker">MCP — AI-native access</p>
+            <p className="mcp-cta-banner-line">
+              Drive the whole OS from Claude or ChatGPT — governed as you.
+            </p>
+          </div>
+          <McpDrawer className="mcp-cta-btn" />
+        </div>
+
         <div className="ci-stats">
           {stats.map((s) => (
             <Link key={s.label} href={s.href} className={`ci-stat tone-${s.tone}`}>

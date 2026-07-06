@@ -18,7 +18,7 @@ export type Problem = { who: string; need: string; obstacle: string; impact: str
 
 export type BetSummary = {
   id: string; name: string; domain: string; owner: string; crossDomain: boolean;
-  pillarId: string; problem: Problem; solution: string; goLive: string; status: string;
+  pillarId?: string; problem: Problem; solution: string; goLive: string; status: string;
   components: number; completion: { done: number; total: number; pct: number };
   signal: Readiness; goLiveRealistic: boolean; targetValue: number; realized: number;
 };
@@ -59,7 +59,7 @@ export type DistributionRow = {
 export type BetView = {
   bet: {
     id: string; name: string; domain: string; crossDomain: boolean; owner: string;
-    members: string[]; pillarId: string; metricId: string; targetValue: number;
+    members: string[]; pillarId?: string; metricId?: string; targetValue: number;
     valueBasis: ValueBasis; allocation: AllocationMethod; goLive: string; status: string;
     problem: Problem; solution?: string; components: ComponentRef[];
   };
@@ -74,7 +74,7 @@ export type BetView = {
   value: {
     realized: {
       basis: ValueBasis; target: number; realized: number; baseline: number;
-      current: number; unit: string; corroboration?: string;
+      current: number; unit: string; corroboration?: { declared: number; metric: number; deltaPct: number };
     };
     distribution: {
       betValue: number; components: DistributionRow[];
@@ -86,7 +86,7 @@ export type BetView = {
     edges: { from: string; to: string }[];
   };
   sourceMode: 'live' | 'mock';
-  audit: { id: string; at: string; actor: string; action: string; betId?: string; detail?: string }[];
+  audit: { id: string; at: string; actor: string; action: string; betId?: string; detail?: string | Record<string, unknown> }[];
   canEdit: boolean;
 };
 
