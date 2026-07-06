@@ -71,8 +71,19 @@ export default function ValuePanel({
       <div className="bb-value-stats">
         <div className="bb-value-box accent">
           <span className="bb-value-box-label">Realized · {basis}</span>
-          <span className="bb-value-box-amount">{eur(r.realized)}</span>
-          <span className="bb-value-box-foot">of {eur(r.target)} target</span>
+          {/* Honest empty state: a metric-derived basis with no metric linked shows
+              €0 for no real reason — say so instead of implying zero value. */}
+          {!r.metricResolved && r.basis !== 'owner-declared' ? (
+            <>
+              <span className="bb-value-box-amount">—</span>
+              <span className="bb-value-box-foot">Link a metric to track value</span>
+            </>
+          ) : (
+            <>
+              <span className="bb-value-box-amount">{eur(r.realized)}</span>
+              <span className="bb-value-box-foot">of {eur(r.target)} target</span>
+            </>
+          )}
         </div>
         <div className="bb-value-box">
           <span className="bb-value-box-label">Target</span>

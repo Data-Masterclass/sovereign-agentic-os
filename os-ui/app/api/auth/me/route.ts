@@ -20,6 +20,10 @@ export async function GET() {
   return NextResponse.json({
     user,
     mustChangeCredentials: Boolean(flags?.mustChangeCredentials),
+    // Distinguishes the two forced-setup variants: the first-run bootstrap admin
+    // (chooses username/email/password) vs. an invited user replacing a temp
+    // password (password only). Both share the /onboarding/bootstrap gate.
+    bootstrap: Boolean(flags?.bootstrap),
     onboarded: Boolean(flags?.onboarded),
     emailVerified: Boolean(flags?.emailVerified),
     email: flags?.email ?? null,

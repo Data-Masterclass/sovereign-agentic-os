@@ -77,6 +77,12 @@ export function addSpend(scope: CapScope, subject: string, amount: number, model
   costState().spend.set(k, (costState().spend.get(k) ?? 0) + amount);
 }
 
+/** Read current accumulated spend for a subject (read-only; seed via addSpend in tests). */
+export function getSpend(scope: CapScope, subject: string, modelClass?: string): number {
+  const k = key(scope, subject, modelClass);
+  return costState().spend.get(k) ?? costState().spend.get(key(scope, subject)) ?? 0;
+}
+
 export type CapCheck = { allowed: boolean; reason: string; cap?: Cap; projected: number };
 
 /**

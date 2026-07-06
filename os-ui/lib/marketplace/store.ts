@@ -55,8 +55,13 @@ export type MockProduct = {
 
 /** The worked-example catalog (marketplace-golden-path.md §"Worked example"). */
 function seed(): MockProduct[] {
-  // A fresh tenant starts EMPTY. Marketplace listings are published only
-  // through the platform's own governed certify flows (e.g. the Northpeak seed).
+  // A fresh tenant starts EMPTY, and stays honest: the Marketplace is NOT empty
+  // in practice because `allListings()` unions in the REAL certified artifacts
+  // from `lib/artifacts.ts` (anything promoted to Certified surfaces as a
+  // listing). Starter/example listings are therefore NOT hard-coded here — they
+  // are published only through the platform's own governed certify flows (the
+  // exercise seed, e.g. the Northpeak / e-commerce case study), so no code path
+  // ever fabricates a listing that pretends to be a certified product.
   return [];
 }
 

@@ -22,6 +22,7 @@
  *
  * Kept free of `server-only` / Next / network imports (mirrors transform.ts/profile.ts).
  */
+import { isNotMaterialized, notMaterializedReason } from './materialized.ts';
 
 export type AskColumn = { name: string; description: string };
 
@@ -180,7 +181,7 @@ export type AskSuccess = {
 };
 export type AskFailure = {
   ok: false;
-  kind: 'no_dataset' | 'invalid_sql' | 'query_failed';
+  kind: 'no_dataset' | 'invalid_sql' | 'query_failed' | 'not_materialized';
   message: string;
   sql?: string;
 };
@@ -216,6 +217,18 @@ export async function runAsk(input: {
   try {
     grid = await input.query(v.sql);
   } catch (e) {
+    // A dataset can be REGISTERED (and even flagged built) while its physical Iceberg
+    // table was never materialized — Trino answers TABLE_NOT_FOUND/"does not exist".
+    // That is "not built yet", not a broken platform: answer it calmly instead of
+    // bubbling a raw Trino stack trace to the student.
+    if (isNotMaterialized(e)) {
+      return {
+        ok: false,
+        kind: 'not_materialized',
+        message: notMaterializedReason('A dataset this question needs'),
+        sql: v.sql,
+      };
+    }
     return { ok: false, kind: 'query_failed', message: (e as Error).message, sql: v.sql };
   }
 

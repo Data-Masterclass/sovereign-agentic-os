@@ -11,6 +11,7 @@ import {
   assembleCatalog,
   registryAssets,
   type CatalogAsset,
+  type SourceSeverity,
 } from '@/lib/data/catalog';
 
 export const dynamic = 'force-dynamic';
@@ -46,10 +47,12 @@ async function fromQueryTool(principal: string): Promise<CatalogAsset[]> {
   });
 }
 
-/** OpenMetadata catalog entries — ONLY when a bot token is configured. */
-async function fromOpenMetadata(): Promise<{ assets: CatalogAsset[] | null; status: string }> {
+/** OpenMetadata catalog entries — ONLY when a bot token is configured. When it is not,
+ *  that is an OPTIONAL integration left un-configured (calm `info`), not a fault; a real
+ *  reachability/auth failure is a `warn`. */
+async function fromOpenMetadata(): Promise<{ assets: CatalogAsset[] | null; status: string; severity?: SourceSeverity }> {
   if (!config.openmetadataJwt) {
-    return { assets: null, status: 'not configured (no OpenMetadata bot token) — skipped' };
+    return { assets: null, status: 'optional catalog integration — not connected', severity: 'info' };
   }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 2500);
@@ -62,9 +65,9 @@ async function fromOpenMetadata(): Promise<{ assets: CatalogAsset[] | null; stat
         headers: { accept: 'application/json', authorization: `Bearer ${config.openmetadataJwt}` },
       },
     );
-    if (!res.ok) return { assets: null, status: `OpenMetadata ${res.status} — dropped from the union` };
+    if (!res.ok) return { assets: null, status: `OpenMetadata ${res.status} — dropped from the union`, severity: 'warn' };
     const data = (await res.json()) as { data?: Record<string, unknown>[] };
-    if (!Array.isArray(data?.data)) return { assets: null, status: 'OpenMetadata returned no table list' };
+    if (!Array.isArray(data?.data)) return { assets: null, status: 'OpenMetadata returned no table list', severity: 'warn' };
     const assets: CatalogAsset[] = data.data.map((t) => ({
       name: String(t.name ?? ''),
       fqn: String(t.fullyQualifiedName ?? t.name ?? ''),
@@ -74,7 +77,7 @@ async function fromOpenMetadata(): Promise<{ assets: CatalogAsset[] | null; stat
     }));
     return { assets, status: 'OpenMetadata catalog' };
   } catch {
-    return { assets: null, status: 'OpenMetadata unreachable — dropped from the union' };
+    return { assets: null, status: 'OpenMetadata unreachable — dropped from the union', severity: 'warn' };
   } finally {
     clearTimeout(timer);
   }

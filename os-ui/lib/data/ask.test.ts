@@ -262,6 +262,26 @@ test('ASK: a Trino/OPA refusal surfaces as query_failed with the real message + 
   assert.ok(fail.sql);
 });
 
+test('ASK: a TABLE_NOT_FOUND is answered as calm not_materialized, never a raw Trino error', async () => {
+  const out = await runAsk({
+    question: 'weekly cac',
+    datasets: [northpeak],
+    llm: async () => 'select * from iceberg.sales.bronze_northpeak_cac_cos_weekly limit 100',
+    models: { generate: 'g', summarize: 's' },
+    query: async () => {
+      throw new Error(
+        'TrinoUserError TABLE_NOT_FOUND: iceberg.sales.bronze_northpeak_cac_cos_weekly does not exist',
+      );
+    },
+  });
+  assert.equal(out.ok, false);
+  const fail = out as { kind: string; message: string; sql?: string };
+  assert.equal(fail.kind, 'not_materialized');
+  assert.match(fail.message, /materialized yet/i);
+  assert.doesNotMatch(fail.message, /TABLE_NOT_FOUND/); // the raw Trino error never leaks
+  assert.ok(fail.sql); // the SQL is still shown for transparency
+});
+
 test('ASK: answerMessages caps the grounding rows but reports the true rowCount', () => {
   const rows = Array.from({ length: 80 }, (_, i) => [`r${i}`, String(i)]);
   const messages = answerMessages('q', 'select 1', { columns: ['region', 'total'], rows, rowCount: 80 });

@@ -3,7 +3,7 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { hashPassword } from './password.ts';
+import { assessPasswordStrength, generateTempPassword, hashPassword, isHashed } from './password.ts';
 import { ROLES } from './session.ts';
 import { ROLE_RIGHTS } from './governance/roles.ts';
 import { __resetUsers } from './users.ts';
@@ -313,6 +313,87 @@ test('globalThis: soa.users.cache — write on one module instance visible from 
   const users2 = await freshUsers();
   const found = (await users2.listUsers()).find((u: { id: string }) => u.id === 'pin-test-admin');
   assert.ok(found, 'same user is visible from a different module instance — pinned');
+
+  activeFetch = null;
+});
+
+// ---- Invite: one-time temp password → forced first-login ---------------------
+
+test('generateTempPassword is strong (passes strength) and shareable/unambiguous', () => {
+  for (let i = 0; i < 40; i++) {
+    const pw = generateTempPassword();
+    assert.equal(pw.length, 16);
+    assert.ok(assessPasswordStrength(pw).ok, `temp password should pass strength: ${pw}`);
+    // Unambiguous alphabet: none of O/0, I/l/1.
+    assert.ok(!/[Oo0Il1]/.test(pw), `no ambiguous chars: ${pw}`);
+  }
+  // Two draws must differ (crypto-random, not a constant).
+  assert.notEqual(generateTempPassword(), generateTempPassword());
+});
+
+test('invited user signs in with the temp credential, then is REQUIRED to onboard (set own password)', async () => {
+  const { store, stub } = openSearchStub();
+  activeFetch = stub;
+  const users = await freshUsers();
+
+  // Admin invites a student: server mints a one-time temp password, stores only
+  // its hash, and flags mustChangeCredentials (mirrors the governance route).
+  const tempPassword = generateTempPassword();
+  const created = await users.createUser({
+    id: 'student1@example.com',
+    email: 'student1@example.com',
+    password: tempPassword,
+    domains: ['cohort'],
+    role: 'creator',
+    mustChangeCredentials: true,
+  });
+  assert.equal(created.mustChangeCredentials, true, 'invited account is forced through first-login setup');
+
+  // The plaintext temp password is NEVER persisted — only a scrypt hash.
+  const stored = store.get('student1@example.com') as { password?: string; mustChangeCredentials?: boolean };
+  assert.ok(isHashed(stored.password), 'stored password is a scrypt hash, not plaintext');
+  assert.notEqual(stored.password, tempPassword, 'plaintext temp password is not persisted');
+  assert.equal(stored.mustChangeCredentials, true);
+
+  // The invitee CAN authenticate with the issued temp credential…
+  const signedIn = await users.authenticate('student1@example.com', tempPassword);
+  assert.ok(signedIn, 'invited user authenticates with the temp credential');
+  assert.equal(signedIn!.mustChangeCredentials, true, '…and is still required to onboard');
+
+  // A wrong password is rejected (the hash is real).
+  assert.equal(await users.authenticate('student1@example.com', 'wrong-password-xx'), null);
+
+  // First-login setup: they set their OWN strong password (bootstrap admin uses
+  // setupAdmin instead; this non-bootstrap path only takes the ready hash).
+  const myPassword = 'Zephyr!Meadow-72';
+  await users.completeFirstLogin('student1@example.com', await hashPassword(myPassword));
+
+  // The temp credential is now dead; the chosen one works; the gate is cleared.
+  assert.equal(await users.authenticate('student1@example.com', tempPassword), null, 'temp password no longer works');
+  const now = await users.authenticate('student1@example.com', myPassword);
+  assert.ok(now, 'invited user signs in with their own password');
+  assert.equal(now!.mustChangeCredentials ?? false, false, 'forced first-login gate is cleared');
+
+  activeFetch = null;
+});
+
+test('completeFirstLogin refuses the bootstrap admin and already-set accounts', async () => {
+  const { stub } = openSearchStub();
+  activeFetch = stub;
+  const users = await freshUsers();
+
+  // Bootstrap admin must use setupAdmin, never completeFirstLogin.
+  await assert.rejects(
+    users.completeFirstLogin('admin', await hashPassword('Zephyr!Meadow-72')),
+    /bootstrap setup/i,
+  );
+
+  // A normal (already set-up) account has no pending first-login setup.
+  await users.createUser({ id: 'set@example.com', email: 'set@example.com', password: 'Zephyr!Meadow-72', domains: ['cohort'], role: 'creator' });
+  await assert.rejects(
+    users.completeFirstLogin('set@example.com', await hashPassword('Another!Strong-99')),
+    /already completed/i,
+  );
 
   activeFetch = null;
 });

@@ -3,6 +3,11 @@
  */
 import 'server-only';
 import type { ArtifactKind, ComponentBuildStatus } from '@/lib/strategy/model';
+import { entitledToDomain } from '@/lib/strategy/model';
+import type { Role } from '@/lib/session';
+import type { BigBet, Tab } from '@/lib/bigbets/model';
+import { _allBets, canView } from '@/lib/bigbets/store';
+import { resolveArtifact } from '@/lib/bigbets/sources';
 
 /**
  * Pillar ↔ Big-Bet share interface — the CROSS-TAB seam with the Big Bets tab.
@@ -141,10 +146,82 @@ function normaliseShares(bets: BetShare[]): void {
   for (const b of bets) b.sharePct = b.sharePct / sum;
 }
 
+// ---------------------------------------------- REAL Big Bets adapter --------
+//
+// The bridge now reads REAL bets from the Big Bets registry (lib/bigbets/store)
+// so student-created bets appear in Strategy — both in the "link a bet" catalogue
+// and in a pillar's value roll-up — scoped by the bets store's OWN `canView`
+// (domain + membership; cross-domain bets are members/admin only). The STUB seed
+// stays as a fallback so the worked-example demo + existing tests keep working.
+
+/** A scope carrier compatible with both the bigbets `canView` and `entitledToDomain`. */
+type BetViewer = { id: string; domains: string[]; role: Role };
+
+const KIND_OF_TAB: Record<Tab, ArtifactKind> = {
+  data: 'data',
+  metric: 'metric',
+  dashboard: 'dashboard',
+  software: 'software',
+  agent: 'agent',
+  ml: 'ml',
+  knowledge: 'data',
+  files: 'data',
+  connection: 'data',
+};
+
+/** Map a REAL BigBet to the pillar-facing BetShare (component weights → fractions). */
+function realBetToShare(bet: BigBet): BetShare {
+  const comps = bet.components;
+  const totalW = comps.reduce((s, c) => s + (c.weight || 0), 0);
+  const components: BetComponentShare[] = comps.map((c) => ({
+    id: c.id,
+    name: resolveArtifact(c.artifactId)?.title ?? `${c.tab} component`,
+    kind: KIND_OF_TAB[c.tab],
+    weight: totalW > 0 ? (c.weight || 0) / totalW : comps.length ? 1 / comps.length : 0,
+    dueDate: c.plannedReady,
+    artifactId: c.artifactId,
+  }));
+  return {
+    id: bet.id,
+    name: bet.name,
+    domain: bet.domain,
+    // The bet's pillar-relative share is re-normalised across the pillar's bets on
+    // link/roll-up; a real bet contributes an equal default share to start.
+    sharePct: 1,
+    goLive: bet.goLive,
+    components,
+  };
+}
+
+/**
+ * The bets a viewer can offer to link to a pillar: REAL bets they may see (via the
+ * Big Bets store's canView) ∪ the STUB seed (entitled domains only), deduped by id.
+ * Never leaks a cross-domain / other-user bet — each gate is the tab's own.
+ */
+export function betCatalogue(user: BetViewer): BetShare[] {
+  const real = _allBets()
+    .filter((b) => canView(b, user))
+    .map(realBetToShare);
+  const seen = new Set(real.map((b) => b.id));
+  const stub = STUB_BET_CATALOGUE.filter((b) => entitledToDomain(user, b.domain) && !seen.has(b.id));
+  return [...real, ...stub];
+}
+
 export const defaultBetShareSource: BetShareSource = {
   async forPillar(pillarId: string): Promise<BetShare[]> {
-    const dyn = bridgeState().linked.get(pillarId);
-    if (dyn && dyn.length) return dyn;
+    // REAL bets tagged to this pillar (bet.pillarId) + any dynamically-linked stub
+    // shares, deduped by id. Value roll-up masks each bet's € by domain (RLS), so
+    // returning the full set here is correct — visibility is enforced downstream.
+    const real = _allBets()
+      .filter((b) => b.pillarId === pillarId)
+      .map(realBetToShare);
+    const seen = new Set(real.map((b) => b.id));
+    const dyn = (bridgeState().linked.get(pillarId) ?? []).filter((b) => !seen.has(b.id));
+    const merged = [...real, ...dyn];
+    if (merged.length) {
+      normaliseShares(merged);
+      return merged;
+    }
     return STUB[pillarId] ?? [];
   },
 };

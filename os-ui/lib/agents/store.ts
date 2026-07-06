@@ -78,6 +78,13 @@ export type SystemSummary = {
   scheduled: boolean;
   agentCount: number;
   lastActivity: string | null;
+  /**
+   * True when a Personal system has a pending Personal→Shared promotion filed
+   * (owner filed `request_promotion`, a Builder/Admin has not yet approved). Left
+   * undefined by the store; the API route decorates it from the approvals queue so
+   * the list can honestly show "pending share approval" instead of looking inert.
+   */
+  pendingShare?: boolean;
 };
 
 export type RepoFile = { path: string; content: string; sha: string };
@@ -292,6 +299,23 @@ export function listSystems(user: Principal): SystemGroups {
   }
   const byName = (a: SystemSummary, b: SystemSummary) => a.name.localeCompare(b.name);
   return { mine: mine.sort(byName), domain: domain.sort(byName), marketplace: marketplace.sort(byName) };
+}
+
+/**
+ * Decorate the caller's groups with `pendingShare` for any Personal system that has
+ * a promotion request in flight (the ids come from the approvals queue, resolved in
+ * the API route — this stays pure/store-only). Pure + non-mutating so it is unit
+ * testable without the server-only approvals module.
+ */
+export function markPendingShares(groups: SystemGroups, pendingIds: ReadonlySet<string>): SystemGroups {
+  if (pendingIds.size === 0) return groups;
+  const mark = (s: SystemSummary): SystemSummary =>
+    s.visibility === 'Personal' && pendingIds.has(s.id) ? { ...s, pendingShare: true } : s;
+  return {
+    mine: groups.mine.map(mark),
+    domain: groups.domain.map(mark),
+    marketplace: groups.marketplace.map(mark),
+  };
 }
 
 export type SystemView = SystemRecord & { system: System };

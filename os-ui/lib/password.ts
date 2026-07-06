@@ -59,6 +59,35 @@ export function isHashed(value: string | undefined | null): boolean {
   return typeof value === 'string' && value.startsWith('scrypt$');
 }
 
+/**
+ * Mint a strong, one-time TEMPORARY password for an admin-issued invite. It is
+ * crypto-random (node:crypto), guarantees all four character classes and passes
+ * `assessPasswordStrength`, yet stays human-shareable (unambiguous alphabet — no
+ * O/0, I/l/1). The caller hands it to the invitee ONCE and stores ONLY its scrypt
+ * hash; the invitee is forced to replace it on first login. Never persisted or
+ * logged in the clear.
+ */
+export function generateTempPassword(): string {
+  const lowers = 'abcdefghijkmnpqrstuvwxyz'; // no l, o
+  const uppers = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; // no I, O
+  const digits = '23456789'; // no 0, 1
+  const symbols = '!@#$%*-_=+';
+  const all = lowers + uppers + digits + symbols;
+  const LEN = 16;
+  const bytes = randomBytes(LEN * 2);
+  const pick = (set: string, i: number) => set[bytes[i] % set.length];
+  // Seed one of each class so strength (3-of-4 + length) is always satisfied,
+  // then fill the rest from the full alphabet.
+  const out: string[] = [pick(lowers, 0), pick(uppers, 1), pick(digits, 2), pick(symbols, 3)];
+  for (let i = 4; i < LEN; i++) out.push(pick(all, i));
+  // Fisher-Yates shuffle (fresh random bytes) so the class positions aren't fixed.
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = bytes[LEN + i] % (i + 1);
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out.join('');
+}
+
 async function scryptWith(plain: string, salt: Buffer): Promise<Buffer> {
   // Node's scrypt requires maxmem high enough for N*r*128 bytes; bump it.
   // promisify drops the options arg, so call the raw form for the cost params.

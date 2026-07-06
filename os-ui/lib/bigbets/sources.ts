@@ -31,6 +31,7 @@ import {
   type ComponentSource,
   type Lifecycle,
   type Pillar,
+  type Principal,
   type Tab,
   BetError,
   roleAtLeast,
@@ -81,6 +82,24 @@ const artifacts = new Map<string, Artifact>();
 let seeded = false;
 let seq = 0;
 
+// ---------------------------------------------- real per-tab reader (picker) --
+//
+// The picker ("Link existing") must surface the REAL artifacts a student built
+// across the tabs — datasets, agents, dashboards, knowledge, files, metrics. Those
+// stores are server-side, so a server module (`real-sources.ts`) registers a reader
+// here via `setRealTabReader`, keeping THIS module free of server-only imports
+// (unit tests without that module still work: no reader → in-memory only, as before).
+export type RealTabReader = (tab: Tab, viewer: Principal) => Artifact[];
+let realTabReaderFn: RealTabReader | null = null;
+export function setRealTabReader(fn: RealTabReader | null): void {
+  realTabReaderFn = fn;
+}
+
+/** The picker's canView predicate for an IN-MEMORY (scaffolded/registered) draft. */
+function inMemoryVisible(a: Artifact, viewer: Principal): boolean {
+  return viewer.role === 'admin' || a.visibility !== 'personal' || viewer.domains.includes(a.domain);
+}
+
 function id(tab: Tab): string {
   seq += 1;
   return `${tab}_${(Date.now().toString(36) + seq.toString(36)).slice(-7)}`;
@@ -114,15 +133,29 @@ class MockSource implements ComponentSource {
     this.tab = tab;
   }
 
-  list(opts?: { bigBetId?: string; domain?: string }): Artifact[] {
+  list(opts?: { bigBetId?: string; domain?: string; viewer?: Principal }): Artifact[] {
     ensureSeeded();
-    const out: Artifact[] = [];
+    const viewer = opts?.viewer;
+    const collected = new Map<string, Artifact>();
+
+    // 1) REAL per-tab artifacts, already canView-scoped by each tab's own gate.
+    if (viewer && realTabReaderFn) {
+      for (const a of realTabReaderFn(this.tab, viewer)) {
+        if (a.tab === this.tab) collected.set(a.id, a);
+      }
+    }
+    // 2) In-memory scaffolded/registered drafts (the real store is the source of
+    //    truth for anything with the same id, so it wins the dedupe).
     for (const a of artifacts.values()) {
       if (a.tab !== this.tab) continue;
-      if (opts?.bigBetId && !a.bigBetIds.includes(opts.bigBetId)) continue;
-      if (opts?.domain && a.domain !== opts.domain) continue;
-      out.push(a);
+      if (collected.has(a.id)) continue;
+      if (viewer && !inMemoryVisible(a, viewer)) continue; // picker canView filter
+      collected.set(a.id, a);
     }
+
+    let out = [...collected.values()];
+    if (opts?.bigBetId) out = out.filter((a) => a.bigBetIds.includes(opts.bigBetId!));
+    if (opts?.domain) out = out.filter((a) => a.domain === opts.domain);
     return out.sort((x, y) => x.title.localeCompare(y.title));
   }
 
@@ -323,6 +356,35 @@ function realStrategyCache(): RealStrategyState['cache'] | null {
 }
 
 /**
+ * The GOVERNED business-metric catalogue (Metrics tab → Cube), pinned to
+ * globalThis by lib/strategy/pillars.ts at module load. This is the REAL metric
+ * registry a bet's linked metric resolves against even when the metric is not yet
+ * attached to a pillar — so a bet wired to a real Cube measure shows a real number,
+ * never a misleading €0. Read WITHOUT importing the server module (no coupling).
+ */
+type CatalogueMetric = { measure: string; title: string; seedTotal: number; baseline?: number };
+function realMetricCatalogue(): CatalogueMetric[] | null {
+  const KEY = Symbol.for('soa.strategy.metric-catalogue');
+  const g = globalThis as unknown as Record<symbol, CatalogueMetric[] | undefined>;
+  return g[KEY] ?? null;
+}
+
+function metricFromCatalogue(metricId: string): BusinessMetric | null {
+  const cat = realMetricCatalogue();
+  if (!cat) return null;
+  const m = cat.find((c) => c.measure === metricId);
+  if (!m) return null;
+  return {
+    id: m.measure,
+    name: m.title,
+    cubeMeasure: m.measure,
+    unit: '€',
+    baseline: m.baseline ?? 0,
+    current: m.seedTotal,
+  };
+}
+
+/**
  * Read the real strategy store (no import, reads globalThis directly). Returns
  * null when the cache hasn't been initialised yet (unit tests without a Next.js
  * context, or the first request before any strategy route has run).
@@ -378,10 +440,13 @@ export function getMetric(metricId: string): BusinessMetric | null {
   // Try the phantom map first (unit tests inject BusinessMetric objects directly).
   const phantom = metrics.get(metricId);
   if (phantom) return phantom;
-  // Fall back to the real strategy store — scan all pillar metrics by measure id.
+  // Then the real strategy store — pillar metrics resolved by measure id.
   const real = readRealStrategy();
-  if (real) return real.metricsByMeasure.get(metricId) ?? null;
-  return null;
+  const fromPillar = real ? real.metricsByMeasure.get(metricId) ?? null : null;
+  if (fromPillar) return fromPillar;
+  // Finally the governed metric CATALOGUE: a bet may link a real Cube measure that
+  // isn't attached to any pillar yet — it still resolves to a real value here.
+  return metricFromCatalogue(metricId);
 }
 
 /**

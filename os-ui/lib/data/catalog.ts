@@ -3,6 +3,7 @@
  */
 import type { DatasetGroups } from './store.ts';
 import { slug } from './store-fqn.ts';
+import { isNotMaterialized } from './materialized.ts';
 
 /**
  * Catalog assembly — the PURE core behind /api/catalog, kept free of `server-only`
@@ -33,11 +34,21 @@ export type CatalogAsset = {
   datasetId?: string;
 };
 
+/**
+ * How LOUD a source's status should read in the UI:
+ *   • ok   — the source contributed (green);
+ *   • info — an EXPECTED, calm absence: an integration that isn't configured, or marts
+ *            that aren't materialized yet. Optional, not a fault — never a scary dash;
+ *   • warn — a genuine fault the operator should notice (engine unreachable, auth error).
+ */
+export type SourceSeverity = 'ok' | 'info' | 'warn';
+
 export type CatalogSourceStatus = {
   source: CatalogSource;
   ok: boolean;
   count: number;
   status: string;
+  severity: SourceSeverity;
 };
 
 export type CatalogResult = {
@@ -80,12 +91,14 @@ export function registryAssets(groups: DatasetGroups): CatalogAsset[] {
   });
 }
 
-/** Classify a query-tool/Trino error into an honest, non-alarming source status. */
+/** Classify a query-tool/Trino error into an honest, non-alarming source status. A
+ *  missing schema/table just means "not built yet" (calm); anything else is a real
+ *  warehouse fault. Shares ONE classifier with the preview + ask surfaces. */
 export function trinoStatus(err: unknown, schema: string): string {
-  const msg = (err as Error)?.message ?? String(err);
-  if (/SCHEMA_NOT_FOUND|does not exist|NoSuchBucket|TABLE_NOT_FOUND/i.test(msg)) {
+  if (isNotMaterialized(err)) {
     return `physical marts not materialized yet (iceberg.${schema})`;
   }
+  const msg = (err as Error)?.message ?? String(err);
   return `warehouse unreachable — ${msg.slice(0, 120)}`;
 }
 
@@ -98,7 +111,7 @@ export async function assembleCatalog(opts: {
   schema: string;
   registry: CatalogAsset[];
   trino: () => Promise<CatalogAsset[]>;
-  openmetadata: () => Promise<{ assets: CatalogAsset[] | null; status: string }>;
+  openmetadata: () => Promise<{ assets: CatalogAsset[] | null; status: string; severity?: SourceSeverity }>;
 }): Promise<CatalogResult> {
   const assets: CatalogAsset[] = [];
   const sources: CatalogSourceStatus[] = [];
@@ -110,9 +123,11 @@ export async function assembleCatalog(opts: {
     ok: true,
     count: opts.registry.length,
     status: opts.registry.length ? 'governed dataset registry' : 'no datasets registered yet',
+    severity: opts.registry.length ? 'ok' : 'info',
   });
 
-  // 2. trino — physical tables in the caller's own domain schema.
+  // 2. trino — physical tables in the caller's own domain schema. A missing/empty
+  //    schema is a CALM "not materialized yet" (info), not a warehouse fault (warn).
   try {
     const t = await opts.trino();
     assets.push(...t);
@@ -121,18 +136,26 @@ export async function assembleCatalog(opts: {
       ok: true,
       count: t.length,
       status: t.length ? `physical tables in iceberg.${opts.schema}` : `no physical marts in iceberg.${opts.schema} yet`,
+      severity: t.length ? 'ok' : 'info',
     });
   } catch (e) {
-    sources.push({ source: 'trino', ok: false, count: 0, status: trinoStatus(e, opts.schema) });
+    sources.push({
+      source: 'trino',
+      ok: false,
+      count: 0,
+      status: trinoStatus(e, opts.schema),
+      severity: isNotMaterialized(e) ? 'info' : 'warn',
+    });
   }
 
-  // 3. openmetadata — only when a bot token is configured (else skipped honestly).
+  // 3. openmetadata — only when a bot token is configured (else skipped honestly). A
+  //    missing token is an OPTIONAL, un-configured integration (info) — not an error.
   const om = await opts.openmetadata();
   if (om.assets) {
     assets.push(...om.assets);
-    sources.push({ source: 'openmetadata', ok: true, count: om.assets.length, status: om.status });
+    sources.push({ source: 'openmetadata', ok: true, count: om.assets.length, status: om.status, severity: 'ok' });
   } else {
-    sources.push({ source: 'openmetadata', ok: false, count: 0, status: om.status });
+    sources.push({ source: 'openmetadata', ok: false, count: 0, status: om.status, severity: om.severity ?? 'warn' });
   }
 
   return { source: 'union', sources, assets };

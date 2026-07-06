@@ -3,7 +3,7 @@
  */
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 /* ---- Password strength helpers (mirror server rules; server re-checks) ---- */
 
@@ -63,11 +63,33 @@ export default function BootstrapPage() {
   const [error, setError] = useState('');
   const [reasons, setReasons] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  // Which forced-setup flow: the first-run bootstrap admin (chooses username +
+  // email) or an INVITED user replacing a one-time temp password (login fixed).
+  const [invited, setInvited] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/auth/me', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((b: { user?: { id: string; name?: string } | null; bootstrap?: boolean; email?: string | null; mustChangeCredentials?: boolean }) => {
+        if (!alive) return;
+        const isInvited = Boolean(b?.user && b.mustChangeCredentials && !b.bootstrap);
+        setInvited(isInvited);
+        if (isInvited && b.user) {
+          // Login id + email are fixed for an invited user; prefill (read-only).
+          setUsername(b.user.id);
+          setEmail(b.email ?? b.user.id);
+          setName(b.user.name && b.user.name !== b.user.id ? b.user.name : '');
+        }
+      })
+      .catch(() => { if (alive) setInvited(false); });
+    return () => { alive = false; };
+  }, []);
 
   const { unmet } = getStrength(password, username);
   const passwordsMatch = password === confirm;
   const canSubmit = !!(
-    username && email && password && confirm && passwordsMatch && unmet.length === 0 && !busy
+    username && (invited || email) && password && confirm && passwordsMatch && unmet.length === 0 && !busy
   );
 
   async function submit(e: React.FormEvent) {
@@ -107,11 +129,18 @@ export default function BootstrapPage() {
           Sovereign <span className="accent">Agentic</span> OS
         </div>
 
-        <div className="signin-sub" style={{ marginTop: 8 }}>Secure your deployment</div>
+        <div className="signin-sub" style={{ marginTop: 8 }}>
+          {invited ? 'Set your password' : 'Secure your deployment'}
+        </div>
         <p style={{ margin: '12px 0 0', fontSize: 13, color: '#b0a99c', lineHeight: 1.6 }}>
-          You're signed in with the temporary bootstrap admin. Set a real admin account to
-          continue — the default admin/admin login is deleted the moment you finish, and your
-          account is active right away.
+          {invited ? (
+            <>You signed in with a one-time invite password. Choose your own password to finish
+            setting up your account — your temporary password stops working the moment you do.</>
+          ) : (
+            <>You&apos;re signed in with the temporary bootstrap admin. Set a real admin account to
+            continue — the default admin/admin login is deleted the moment you finish, and your
+            account is active right away.</>
+          )}
         </p>
 
         <form onSubmit={submit} className="signin-form" style={{ marginTop: 20 }}>
@@ -122,6 +151,8 @@ export default function BootstrapPage() {
                   onChange={(e) => setUsername(e.target.value)}
                   autoComplete="username"
                   placeholder="admin"
+                  readOnly={!!invited}
+                  disabled={!!invited}
                 />
               </label>
 
@@ -144,6 +175,8 @@ export default function BootstrapPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   autoComplete="email"
                   placeholder="you@example.com"
+                  readOnly={!!invited}
+                  disabled={!!invited}
                 />
               </label>
 
@@ -193,7 +226,7 @@ export default function BootstrapPage() {
               )}
 
           <button className="btn" type="submit" disabled={!canSubmit}>
-            {busy ? <span className="spin" /> : 'Create admin & continue'}
+            {busy ? <span className="spin" /> : invited ? 'Set password & continue' : 'Create admin & continue'}
           </button>
         </form>
       </div>

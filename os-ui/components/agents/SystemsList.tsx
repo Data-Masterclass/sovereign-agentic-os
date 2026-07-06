@@ -21,6 +21,8 @@ type Summary = {
   visibility: 'Personal' | 'Shared' | 'Marketplace';
   origin: 'authored' | 'forked';
   running: boolean; scheduled: boolean; agentCount: number; lastActivity: string | null;
+  /** A Personal→Shared promotion is filed but not yet approved (governed). */
+  pendingShare?: boolean;
 };
 type Groups = { mine: Summary[]; domain: Summary[]; marketplace: Summary[] };
 
@@ -56,6 +58,9 @@ export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }
       <div className="row" style={{ gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
         <span className={`badge ${s.running ? 'ok' : 'muted'}`}>{s.running ? 'running' : 'stopped'}</span>
         {s.scheduled ? <span className="badge warn">scheduled</span> : null}
+        {s.pendingShare ? (
+          <span className="badge warn" title="You filed a Personal→Shared promotion — it stays Personal until a Builder or Admin approves it.">⏳ pending share approval</span>
+        ) : null}
         <span className="badge muted">{s.agentCount} agent{s.agentCount === 1 ? '' : 's'}</span>
       </div>
       <div className="muted mono" style={{ marginTop: 10, fontSize: 11.5 }}>
@@ -107,7 +112,7 @@ export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }
       {error ? <div className="error">{error}</div> : null}
       {data ? (
         <>
-          {group('Personal', 'agent systems you own', data.mine, 'open')}
+          {group('Mine', 'agent systems you own — any visibility', data.mine, 'open')}
           {group(domainLabel, `shared in ${domainLabel}`, data.domain, 'open')}
           {group('Marketplace', 'install a copy you own', data.marketplace, 'install')}
         </>

@@ -44,6 +44,12 @@ export type RealizedValue = {
   baseline: number;
   current: number;
   unit: '€' | '%' | 'count';
+  /**
+   * Whether a REAL metric resolved for this bet. `false` means no metric is linked
+   * (or it doesn't resolve) — the UI must show an honest "link a metric to track
+   * value" state rather than a misleading €0.
+   */
+  metricResolved: boolean;
   /** For owner-declared: how far the declared figure sits from the metric. */
   corroboration?: { declared: number; metric: number; deltaPct: number };
 };
@@ -73,7 +79,7 @@ export function realizedValue(bet: BigBet, viewerId: string): RealizedValue {
       realized = Math.max(0, current - baseline);
       break;
   }
-  return { basis: bet.valueBasis, target: bet.targetValue, realized, baseline, current, unit, corroboration };
+  return { basis: bet.valueBasis, target: bet.targetValue, realized, baseline, current, unit, metricResolved: m !== null, corroboration };
 }
 
 export type ComponentValue = {

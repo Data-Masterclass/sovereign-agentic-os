@@ -21,7 +21,7 @@ import { auditStrategy } from '@/lib/strategy/audit';
 import {
   linkBetStub,
   unlinkBetStub,
-  STUB_BET_CATALOGUE,
+  betCatalogue,
   type BetShare,
 } from '@/lib/strategy/bets-bridge';
 
@@ -117,6 +117,12 @@ export const METRIC_CATALOGUE: MetricLink[] = [
     seedTotal: 760_000,
   },
 ];
+
+// Pin the governed metric catalogue to globalThis so the Big Bets value spine
+// (lib/bigbets/sources.ts) can resolve a bet's linked metric to its REAL current
+// value without importing this server module — the same globalThis seam the
+// pillars cache already uses. Loaded whenever any strategy/big-bets route runs.
+(globalThis as unknown as Record<symbol, unknown>)[Symbol.for('soa.strategy.metric-catalogue')] = METRIC_CATALOGUE;
 
 function seed(): Pillar[] {
   // A fresh tenant starts EMPTY. Strategy pillars are created only through the
@@ -341,7 +347,10 @@ export async function addValueEntry(
  */
 export async function linkBet(user: CurrentUser, pid: string, betId: string): Promise<Pillar> {
   const { map, p } = await requireEditable(user, pid);
-  const bet: BetShare | undefined = STUB_BET_CATALOGUE.find((b) => b.id === betId);
+  // Validate the betId against what the caller may actually link — REAL bets they
+  // can see (canView) ∪ the worked-example stub — so student bets link, and an
+  // unseen/forged id is a typed not_found (never linked).
+  const bet: BetShare | undefined = betCatalogue(user).find((b) => b.id === betId);
   if (!bet) throw withStatus(new Error('Unknown Big Bet'), 404);
   if (!p.betIds.includes(betId)) p.betIds.push(betId);
   // Register a fresh share for the stub source (default share until Big Bets owns it).

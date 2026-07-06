@@ -3,7 +3,6 @@
  */
 import 'server-only';
 import { listComponentsWithStatus } from '@/lib/platform';
-import { MOCK_SYSTEM } from '../mock';
 import type { Health, HealthItem } from '../types';
 
 /**
@@ -78,14 +77,9 @@ export async function collectSystem(): Promise<HealthItem[]> {
       });
     }
   } catch {
-    /* not in a cluster — fall through to the mock self-heal story */
+    /* not in a cluster — cluster health unavailable */
   }
 
-  // The OOMKilled→auto-restart self-heal narrative + Prometheus/Argo/OpenSearch
-  // are mock on kind (no AGPL Grafana; managed STACKIT Observability is Mode-B).
-  // Always include the OOM self-heal item (it ties the gate together); add the
-  // cluster greens only when we have no live workload reads.
-  const oom = MOCK_SYSTEM.find((m) => m.id === 'sys-4001')!;
-  if (live.length > 0) return [oom, ...live];
-  return [...MOCK_SYSTEM];
+  // Return only live k8s data. Empty means the cluster is unreachable (honest).
+  return live;
 }

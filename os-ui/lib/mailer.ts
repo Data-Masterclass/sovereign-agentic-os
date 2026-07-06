@@ -185,36 +185,78 @@ function verificationMail(to: string, link: string, from: string): OutgoingMail 
   return { to, from, subject: 'Verify your email — Sovereign Agentic OS', text, html };
 }
 
+/** A branded transactional notification (scheduled report / fired alert). */
+function notificationMail(to: string, subject: string, bodyLines: string[], from: string): OutgoingMail {
+  const text = [...bodyLines, '', '— Sovereign Agentic OS'].join('\n');
+  const body = bodyLines
+    .map((l) => `<p style="margin:0 0 10px;font-size:15px;line-height:1.6;color:#cfc8ba">${escapeHtml(l)}</p>`)
+    .join('');
+  const html = [
+    '<!doctype html><html><body style="margin:0;background:#141210;padding:32px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#e8e2d6">',
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">',
+    '<table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#1d1a16;border:1px solid #2c2820;border-radius:14px;overflow:hidden">',
+    '<tr><td style="padding:28px 32px 8px">',
+    '<div style="font-size:18px;font-weight:600;letter-spacing:.2px">Sovereign <span style="color:#c8a24a">Agentic</span> OS</div>',
+    '</td></tr>',
+    `<tr><td style="padding:8px 32px 4px;font-size:16px;font-weight:600;color:#e8e2d6">${escapeHtml(subject)}</td></tr>`,
+    `<tr><td style="padding:8px 32px 28px">${body}</td></tr>`,
+    '</table></td></tr></table></body></html>',
+  ].join('');
+  return { to, from, subject, text, html };
+}
+
 // ---- Delivery (transport selection) -----------------------------------------
 
 /**
- * Send the verification email through the selected transport. Best-effort:
- * returns false (never throws) when no mailer is configured or delivery fails —
- * callers must treat verification as non-blocking. No secret is ever logged.
+ * Deliver one message through the selected transport (test override > Graph > SMTP).
+ * Best-effort: returns false (never throws) when no mailer is configured or delivery
+ * fails. Each transport stamps its own `from`. No secret is ever logged.
  */
-export async function sendVerificationEmail(to: string, link: string): Promise<boolean> {
+async function deliver(mail: OutgoingMail): Promise<boolean> {
   try {
     if (transportOverride) {
-      await transportOverride(verificationMail(to, link, senderAddress()));
+      await transportOverride(mail);
       return true;
     }
     const g = graphConfig();
     if (g) {
-      await graphDeliver(verificationMail(to, link, g.from), g);
+      await graphDeliver({ ...mail, from: g.from }, g);
       return true;
     }
     const s = smtpConfig();
     if (s) {
-      await smtpDeliver(verificationMail(to, link, s.from), s);
+      await smtpDeliver({ ...mail, from: s.from }, s);
       return true;
     }
     return false;
   } catch (e) {
-    // Swallow: delivery failures must not break account creation or leak details.
+    // Swallow: delivery failures must not break the caller or leak details.
     // Log only a non-sensitive status (never a secret, token, or response body).
     console.warn(`mailer: sendMail failed (${(e as Error).message})`);
     return false;
   }
+}
+
+/**
+ * Send the verification email through the selected transport. Best-effort:
+ * returns false (never throws) when no mailer is configured or delivery fails —
+ * callers must treat verification as non-blocking.
+ */
+export async function sendVerificationEmail(to: string, link: string): Promise<boolean> {
+  return deliver(verificationMail(to, link, senderAddress()));
+}
+
+/**
+ * Send a transactional notification email (scheduled reports, fired alerts) through the
+ * same transport stack. Best-effort: returns false when no mailer is configured — the
+ * caller then falls back to a persisted in-app notification (never a silent no-op).
+ */
+export async function sendNotificationEmail(
+  to: string,
+  subject: string,
+  bodyLines: string[],
+): Promise<boolean> {
+  return deliver(notificationMail(to, subject, bodyLines, senderAddress()));
 }
 
 // ---- Microsoft Graph client (OAuth2 client-credentials; fetch, no SDK) -------

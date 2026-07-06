@@ -4,8 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { METRIC_CATALOGUE } from '@/lib/strategy/pillars';
-import { STUB_BET_CATALOGUE } from '@/lib/strategy/bets-bridge';
-import { entitledToDomain } from '@/lib/strategy/model';
+import { betCatalogue } from '@/lib/strategy/bets-bridge';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,7 +20,8 @@ export async function GET() {
     const user = await requireUser();
     return NextResponse.json({
       metrics: METRIC_CATALOGUE,
-      bets: STUB_BET_CATALOGUE.filter((b) => entitledToDomain(user, b.domain)).map((b) => ({
+      // REAL bets the caller may see (canView) ∪ the worked-example stub seed.
+      bets: betCatalogue(user).map((b) => ({
         id: b.id,
         name: b.name,
         domain: b.domain,

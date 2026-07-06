@@ -3,14 +3,16 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@/lib/auth';
+import { recentTraces } from '@/lib/agent-governed';
+import { listCaps, getSpend } from '@/lib/governance/cost';
 import { collectRuns } from './adapters/run-trace';
 import { collectPipelines } from './adapters/pipeline-health';
 import { collectCost } from './adapters/cost';
 import { collectArtifacts } from './adapters/artifact-health';
 import { filterScope, scopeForUser } from './scope';
 import { pickAttention, summarize } from './rollup';
-import { MOCK_ALERTS } from './mock';
-import { LENS_IDS, type Alert, type HealthItem, type LensSummary, type Overview, type Scope } from './types';
+import { deriveAlerts, type AlertTraceInput, type AlertCapInput } from './alerts-derive';
+import { LENS_IDS, type HealthItem, type LensSummary, type Overview, type Scope } from './types';
 
 /**
  * OPA-SCOPED MULTI-SOURCE AGGREGATION (the Opus core). Fans out to the five
@@ -54,8 +56,30 @@ export async function buildOverview(user: CurrentUser): Promise<Overview> {
   return { scope, lenses, attention, alerts, generatedAt: new Date().toISOString() };
 }
 
-/** Operational alerts, scope-filtered (cluster alerts → admin only). */
-function scopedAlerts(scope: Scope): Alert[] {
-  // Live Alertmanager is not in the kind bundle → mock operational alerts only.
-  return filterScope(scope, MOCK_ALERTS);
+/**
+ * Operational alerts derived from REAL in-process signals — no mocks.
+ * Sources: failed/denied runs (governed-run ring) + cost-cap breaches (governance
+ * cost store). If neither source has anything, returns [] (honest empty).
+ */
+function scopedAlerts(scope: Scope) {
+  const traces: AlertTraceInput[] = recentTraces(50).map((r) => ({
+    id: r.id,
+    principal: r.principal,
+    tool: r.tool,
+    decision: r.decision,
+    output: r.output,
+  }));
+
+  const caps: AlertCapInput[] = listCaps().map((c) => ({
+    id: c.id,
+    scope: c.scope,
+    subject: c.subject,
+    limit: c.limit,
+    period: c.period,
+    modelClass: c.modelClass,
+    createdBy: c.createdBy,
+    spent: getSpend(c.scope, c.subject, c.modelClass),
+  }));
+
+  return deriveAlerts(traces, caps, scope);
 }

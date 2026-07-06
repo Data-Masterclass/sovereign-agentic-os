@@ -4,6 +4,8 @@
 import 'server-only';
 import { config } from '@/lib/config';
 import { listMarketplace, getArtifact, addFromMarketplace, createArtifact } from '@/lib/artifacts';
+import { createConnection } from '@/lib/connections';
+import { templateByKey, type ConnectionTemplateKey } from '@/lib/connection-model';
 import { enqueue } from '@/lib/approvals';
 import type { CurrentUser } from '@/lib/auth';
 import { roleAtLeast } from '@/lib/session';
@@ -358,10 +360,14 @@ class GovernedImportAdapter implements ImportAdapter {
 }
 
 /**
- * Apply the non-grant side of a fork/instance/template import. For forks we reuse
- * the artifact registry's copy-to-own (or create a derived artifact); instances
- * and templates return a synthetic id (the real Argo deploy / connection create
- * lands at consolidation with the parallel tabs).
+ * Apply the non-grant side of a fork / template / deploy-instance import. Every
+ * mode now materialises a REAL object the importer owns and can see in its tab:
+ *   • fork            → an owned artifact copy (registry copy-to-own, else a fresh copy).
+ *   • template        → a real BYO-credentials Connection in the Connections tab.
+ *   • deploy-instance → a real owned artifact recording the instance + its HONEST
+ *                       deploy status (a true in-cluster Argo roll-out still needs
+ *                       the platform deploy pipeline, so the record is marked
+ *                       pending — never a fake "deployed").
  */
 async function materialize(
   productId: string,
@@ -369,28 +375,97 @@ async function materialize(
   mode: ImportMode,
   viewer: Viewer,
 ): Promise<string | undefined> {
-  const user: CurrentUser = { id: viewer.id, name: viewer.id, domains: viewer.domains, role: viewer.role };
-  if (mode === 'fork') {
-    try {
-      const copy = await addFromMarketplace(productId, user); // real certified artifact
-      return copy.id;
-    } catch {
-      // Mock fixture (no artifact row): create a fresh owned copy in the consumer's domain.
-      const mp = mockProduct(productId);
-      const created = await createArtifact(user, {
-        type: (type === 'app' ? 'agent' : type) as Artifact['type'],
-        name: `${mp?.name ?? 'Forked product'} (fork)`,
-        description: `Forked from the certified ${type} “${mp?.name ?? productId}”.`,
-        tags: [...(mp?.tags ?? []), 'fork'],
-        spec: mp?.previewSpec ?? {},
-        domain: actingDomain(viewer),
-      });
-      return created.id;
-    }
-  }
-  if (mode === 'template') return `conn_${productId}_${viewer.id}`; // new connection (BYO creds) — created in Connections tab
-  if (mode === 'deploy-instance') return `instance_${productId}_${viewer.id}`; // Argo deploy in the consumer's namespace
+  if (mode === 'fork') return materializeFork(productId, type, viewer);
+  if (mode === 'template') return materializeTemplate(productId, viewer);
+  if (mode === 'deploy-instance') return materializeInstance(productId, viewer);
   return undefined;
+}
+
+function viewerAsUser(viewer: Viewer): CurrentUser {
+  return { id: viewer.id, name: viewer.id, domains: viewer.domains, role: viewer.role };
+}
+
+/** Name / tags / spec of a product, from the mock catalog or the real artifact registry. */
+async function productMeta(productId: string): Promise<{ name: string; tags: string[]; spec: Record<string, unknown> }> {
+  const mp = mockProduct(productId);
+  if (mp) return { name: mp.name, tags: mp.tags, spec: mp.previewSpec ?? {} };
+  const a = await getArtifact(productId);
+  if (a) return { name: a.name, tags: a.tags, spec: (a.spec ?? {}) as Record<string, unknown> };
+  return { name: productId, tags: [], spec: {} };
+}
+
+/** fork: reuse the registry copy-to-own; fall back to a fresh owned copy for a mock fixture. */
+async function materializeFork(productId: string, type: ProductType, viewer: Viewer): Promise<string | undefined> {
+  const user = viewerAsUser(viewer);
+  try {
+    const copy = await addFromMarketplace(productId, user); // real certified artifact
+    return copy.id;
+  } catch {
+    const meta = await productMeta(productId);
+    const created = await createArtifact(user, {
+      type: (type === 'app' ? 'agent' : type) as Artifact['type'],
+      name: `${meta.name} (fork)`,
+      description: `Forked from the certified ${type} “${meta.name}”.`,
+      tags: [...meta.tags, 'fork'],
+      spec: meta.spec,
+      domain: actingDomain(viewer),
+    });
+    return created.id;
+  }
+}
+
+/** Pick the connection template this product should instantiate (spec hint, else a generic API). */
+function resolveTemplateKey(meta: { spec: Record<string, unknown> }): ConnectionTemplateKey {
+  const hint = String(meta.spec.template ?? meta.spec.templateKey ?? meta.spec.connector ?? '').toLowerCase();
+  if (templateByKey(hint)) return hint as ConnectionTemplateKey;
+  return 'generic-api';
+}
+
+/**
+ * template: create a REAL BYO-credentials Connection owned by the importer. It lands
+ * in their Connections tab (Personal, no secret yet) for them to add credentials —
+ * the actual create side of `lib/connections.ts`. Returns the new connection's id.
+ */
+async function materializeTemplate(productId: string, viewer: Viewer): Promise<string | undefined> {
+  const meta = await productMeta(productId);
+  try {
+    const conn = await createConnection(viewerAsUser(viewer), {
+      name: `${meta.name} (from template)`,
+      template: resolveTemplateKey(meta),
+      endpoint: '', // use the template's endpoint hint (egress-safe); the importer edits it in Connections
+      credential: '', // BYO — the importer adds their own credential in the Connections tab
+      domain: actingDomain(viewer),
+    });
+    return conn.id;
+  } catch {
+    return undefined; // never fail the whole import if the connection can't be created
+  }
+}
+
+/**
+ * deploy-instance: materialise a REAL owned artifact for the importer. A real certified
+ * artifact is taken as an owned copy (the same path fork uses); an app from the Software
+ * registry has no artifact row, so we create one that records the instance and its HONEST
+ * deploy status. Provisioning a true in-cluster instance still needs the platform's Argo
+ * deploy pipeline, so it is marked pending — not a fake "deployed".
+ */
+async function materializeInstance(productId: string, viewer: Viewer): Promise<string | undefined> {
+  const user = viewerAsUser(viewer);
+  try {
+    const copy = await addFromMarketplace(productId, user); // real certified artifact → owned copy
+    return copy.id;
+  } catch {
+    const meta = await productMeta(productId);
+    const created = await createArtifact(user, {
+      type: 'agent', // no 'app' ArtifactType — the instance is tracked as an owned artifact
+      name: `${meta.name} (instance)`,
+      description: `Your deployed instance of the certified app “${meta.name}”. Provisioning is pending the in-cluster deploy.`,
+      tags: [...meta.tags, 'app-instance'],
+      spec: { ...meta.spec, kind: 'app-instance', sourceProductId: productId, deployStatus: 'pending-provision', provisioned: false },
+      domain: actingDomain(viewer),
+    });
+    return created.id;
+  }
 }
 
 // ----------------------------------------------------------------- exports --

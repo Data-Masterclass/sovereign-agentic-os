@@ -47,6 +47,15 @@ export const config = {
   // Shared bearer the runtime presents to the os-ui governed-tool endpoint (the
   // ONLY way the runtime reaches OPA/Langfuse — it has neither itself). Server-only.
   agentRuntimeToken: env('AGENT_RUNTIME_TOKEN', 'dev-only-insecure-agent-runtime-token'),
+  // Agent SCHEDULE CronJobs (Agents tab). Saving a `cron` schedule provisions a
+  // batch/v1 CronJob in the platform namespace that curls the scheduled-run
+  // receiver below with the shared runtime bearer. The bearer is read at run time
+  // from a Secret (never baked into the CronJob spec) — its name/key are
+  // env-configurable so this tracks whatever Secret mounts AGENT_RUNTIME_TOKEN.
+  scheduledRunUrl: base(env('SCHEDULED_RUN_URL', 'http://os-ui:3000/api/agents/scheduled-run')),
+  scheduleCronImage: env('SCHEDULE_CRON_IMAGE', 'curlimages/curl:8.11.1'),
+  agentRuntimeTokenSecret: env('AGENT_RUNTIME_TOKEN_SECRET', 'os-ui'),
+  agentRuntimeTokenSecretKey: env('AGENT_RUNTIME_TOKEN_SECRET_KEY', 'agent-runtime-token'),
 
   // ml-agent (LangGraph Science driver): GET {ML_AGENT_URL}/health, /models;
   // POST /run. Off by default (opt-in Science component); probed gracefully.

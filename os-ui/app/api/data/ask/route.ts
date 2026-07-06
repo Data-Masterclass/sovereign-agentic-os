@@ -68,9 +68,15 @@ export async function POST(req: Request) {
     });
 
     if (!result.ok) {
-      // Honest failure states: no accessible dataset is a calm 200 answer (not an
-      // error); invalid SQL (rejected, never executed) 422; a Trino/OPA refusal 502.
-      const status = result.kind === 'no_dataset' ? 200 : result.kind === 'invalid_sql' ? 422 : 502;
+      // Honest failure states: no accessible dataset — or a dataset that simply isn't
+      // materialized yet — is a calm 200 answer (not an error); invalid SQL (rejected,
+      // never executed) 422; a Trino/OPA refusal 502.
+      const status =
+        result.kind === 'no_dataset' || result.kind === 'not_materialized'
+          ? 200
+          : result.kind === 'invalid_sql'
+            ? 422
+            : 502;
       return NextResponse.json(
         { ok: false, kind: result.kind, error: result.message, sql: result.sql ?? null, traced },
         { status },

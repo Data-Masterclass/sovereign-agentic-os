@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { config } from '@/lib/config';
+import { listCaps } from '@/lib/governance/cost';
 import { readFetch } from '../util';
 import { MOCK_COST } from '../mock';
 import type { Health, HealthItem } from '../types';
@@ -19,20 +20,18 @@ import type { Health, HealthItem } from '../types';
  */
 
 /**
- * The Governance caps, READ-ONLY. On a live cluster these come from Governance's
- * cap store (LiteLLM key max_budget / the policy compiler). Offline we mirror the
- * worked-example caps so the "nearing cap" signal is demonstrable. We never write.
+ * The Governance caps, READ-ONLY. Reads domain-scoped caps the admin SET in
+ * Governance → Cost & Limits (the in-process governance cost store). No write
+ * path exists here; Monitoring only ever reads.
  */
-async function readCaps(): Promise<Record<string, { domain: string; owner: string; limitUsd: number }>> {
-  // The caps are AUTHORED IN GOVERNANCE; Monitoring only READS them. On a live
-  // cluster this resolves the Governance cap store (LiteLLM key max_budget / the
-  // policy-compiler output). Until that source is on `main` we return the
-  // worked-example mirror — the exact caps Governance would hold — so the
-  // "nearing the cap" signal is demonstrable. No write path exists here.
-  return {
-    'cap-sales-monthly': { domain: 'sales', owner: 'u_sales_rep', limitUsd: 200 },
-    'cap-finance-monthly': { domain: 'finance', owner: 'u_other', limitUsd: 300 },
-  };
+function readCaps(): Record<string, { domain: string; owner: string; limitUsd: number }> {
+  const domainCaps = listCaps().filter((c) => c.scope === 'domain');
+  if (domainCaps.length === 0) return {};
+  const out: Record<string, { domain: string; owner: string; limitUsd: number }> = {};
+  for (const cap of domainCaps) {
+    out[cap.id] = { domain: cap.subject, owner: cap.createdBy, limitUsd: cap.limit };
+  }
+  return out;
 }
 
 function capHealth(spent: number, limit: number): Health {
@@ -44,31 +43,33 @@ function capHealth(spent: number, limit: number): Health {
 }
 
 export async function collectCost(): Promise<HealthItem[]> {
-  const caps = await readCaps();
-  const spendByDomain = await litellmSpendByDomain();
+  const caps = readCaps();
 
-  if (spendByDomain) {
-    const items: HealthItem[] = [];
-    for (const [capId, cap] of Object.entries(caps)) {
-      const spent = spendByDomain[cap.domain] ?? 0;
-      items.push({
-        id: `cost-${cap.domain}`,
-        lens: 'cost',
-        title: `${cap.domain} domain — LLM spend (month-to-date)`,
-        health: capHealth(spent, cap.limitUsd),
-        detail: `$${spent.toFixed(0)} of the $${cap.limitUsd} Governance cap (${Math.round((spent / cap.limitUsd) * 100)}%).`,
-        owner: cap.owner,
-        domain: cap.domain,
-        metric: spent,
-        cap: { id: capId, limitUsd: cap.limitUsd, spentUsd: spent },
-        links: { capRef: capId },
-        source: 'live',
-      });
-    }
-    if (items.length > 0) return items;
+  if (Object.keys(caps).length === 0) {
+    // No governance caps set yet — fall through to offline mock.
+    return [...MOCK_COST];
   }
-  // Offline-mock — Sales nearing its cap (amber), Finance comfortable (green).
-  return [...MOCK_COST];
+
+  // Real caps exist. Spend 0 is honest when LiteLLM is offline; the cap is real.
+  const spendByDomain = await litellmSpendByDomain();
+  const items: HealthItem[] = [];
+  for (const [capId, cap] of Object.entries(caps)) {
+    const spent = spendByDomain?.[cap.domain] ?? 0;
+    items.push({
+      id: `cost-${cap.domain}`,
+      lens: 'cost',
+      title: `${cap.domain} domain — LLM spend (month-to-date)`,
+      health: capHealth(spent, cap.limitUsd),
+      detail: `$${spent.toFixed(0)} of the $${cap.limitUsd} Governance cap (${Math.round((spent / cap.limitUsd) * 100)}%).`,
+      owner: cap.owner,
+      domain: cap.domain,
+      metric: spent,
+      cap: { id: capId, limitUsd: cap.limitUsd, spentUsd: spent },
+      links: { capRef: capId },
+      source: 'live',
+    });
+  }
+  return items;
 }
 
 /** Read LiteLLM spend grouped by domain tag. Returns null when LiteLLM is off. */

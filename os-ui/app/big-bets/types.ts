@@ -74,7 +74,8 @@ export type BetView = {
   value: {
     realized: {
       basis: ValueBasis; target: number; realized: number; baseline: number;
-      current: number; unit: string; corroboration?: { declared: number; metric: number; deltaPct: number };
+      current: number; unit: string; metricResolved: boolean;
+      corroboration?: { declared: number; metric: number; deltaPct: number };
     };
     distribution: {
       betValue: number; components: DistributionRow[];

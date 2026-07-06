@@ -5,6 +5,7 @@ import 'server-only';
 import { config } from '@/lib/config';
 import { cubeLoad, executeRun, queryRun } from '@/lib/governed';
 import { listUsers as userRoster } from '@/lib/users';
+import { importDashboardBundle } from '@/lib/superset/client';
 import {
   type CubeClient,
   type DataLiveDeps,
@@ -71,18 +72,15 @@ export function realCube(): CubeClient {
 // ----------------------------------------------------------------- Superset ------
 
 export function realSuperset(): SupersetClient {
-  const base = config.supersetUrl;
+  // In-cluster Service URL (the import must reach Superset itself, not the optional
+  // browser console link) — mirrors the Dashboards build client.
+  const base = config.supersetInternalUrl;
   return {
-    async importBundle(name, _bundle) {
-      // Superset import is a multipart ZIP via /api/v1/dashboard/import (CSRF+auth).
-      // We POST the bundle metadata; a non-2xx (incl. auth) → throw → ✗ (falls back to
-      // the offline-mock when Superset is not reachable/authed on a laptop).
-      const res = await withTimeout(`${base}/api/v1/dashboard/import/`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ dashboard_title: name }),
-      });
-      if (!res || !res.ok) throw new Error(`Superset import failed (${res?.status ?? 'unreachable'})`);
+    async importBundle(_name, bundle) {
+      // Build the real import_assets ZIP from the manifest and POST it multipart
+      // (formData + overwrite + passwords, with CSRF). A non-2xx throws → ✗ → the
+      // offline-mock fallback when Superset is not reachable/authed on a laptop.
+      await importDashboardBundle(base, bundle);
     },
     async dashboardExists(name) {
       const q = encodeURIComponent(JSON.stringify({ filters: [{ col: 'dashboard_title', opr: 'ct', value: name }] }));

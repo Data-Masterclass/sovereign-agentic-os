@@ -1,23 +1,30 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import 'server-only';
 
 /**
- * Cross-tab feed STUBS for the `kind` gate — Domain pulse (from **Strategy**)
- * and Health & cost (from **Monitoring**). Those tabs are built on parallel
- * branches; per the build plan Home stubs their feeds behind the adapter now and
- * reconciles at consolidation. CRITICAL: this is the SINGLE source of these
- * numbers for Home, returned with an explicit `source: 'mock'` marker, so:
+ * Cross-tab feed ADAPTERS for the Cockpit "Domain Pulse" and "Spend / Health"
+ * modules. These were formerly stubs returning `source: 'mock'` with all-zero
+ * values. They now read from the real in-process stores that are already live
+ * server-side (Big Bets, Governance cost, User directory, Strategy pillars).
  *
- *   • the UI is HONEST that the figure is a local stand-in (no fake "live"), and
- *   • there is NO recomputation drift — Home reads exactly what the adapter
- *     returns and never re-derives it. At consolidation, swap the two functions
- *     below for `import { domainPulse } from '@/lib/strategy'` /
- *     `import { healthCost } from '@/lib/monitoring'` returning the SAME shape;
- *     the Home page, tests and components do not change.
- *
- * Deterministic per domain so the same viewer always sees a stable cockpit.
+ * Design rules:
+ *   - Honest empty state: a domain with NO activity genuinely shows 0s with
+ *     source:'live'; the UI is responsible for the "no activity yet" affordance.
+ *   - No recomputation drift: Home reads exactly what these functions return and
+ *     never re-derives; the stores are the single source of truth.
+ *   - Surgical dependency: `domainPulseStub` takes pre-fetched pillars + bets
+ *     (already loaded by feed.ts) to avoid double-fetching. User counts come from
+ *     a direct listUsers() call (in-process, fast).
  */
+
+import { listUsers } from '@/lib/users';
+import { listCaps, getSpend } from '@/lib/governance/cost';
+import { latestManualValue } from '@/lib/strategy/model';
+import type { Pillar } from '@/lib/strategy/model';
+import type { BigBet } from '@/lib/bigbets/model';
+import { deriveBet, completion } from '@/lib/bigbets/status';
 
 export type FeedSource = 'live' | 'mock';
 
@@ -45,41 +52,107 @@ export type HealthCost = {
 };
 
 /**
- * STUB for the Strategy roll-up (strategy-golden-path.md): value-vs-target,
- * adoption counts, promoted/certified this period, and a few Big Bets. Scoped to
- * one domain. Replace with the real Strategy adapter at consolidation.
+ * Live domain-pulse adapter. Reads:
+ *   - valuePct   : strategy pillars with targets (manual entries or seed total for
+ *                  governed metrics) vs their annual value target.
+ *   - activeCreators / activeBuilders : user-directory head-count in the domain.
+ *   - bets       : Big Bets store for this domain, status + component completion.
+ *
+ * Takes pre-fetched `pillars` and `bets` to avoid double-fetching (caller has
+ * already loaded them for other feed modules).
  */
-export function domainPulseStub(domain: string): DomainPulse {
-  // A fresh tenant has no activity yet — the cockpit shows an empty pulse until
-  // real Strategy/Big-Bets artifacts exist (e.g. via the Northpeak seed).
+export async function domainPulseStub(
+  domain: string,
+  opts: { pillars: Pillar[]; bets: BigBet[] },
+): Promise<DomainPulse> {
+  const { pillars, bets } = opts;
+
+  // ── Value % ────────────────────────────────────────────────────────────────
+  // Tenant pillars contribute to every domain; domain pillars scope to theirs.
+  const relevantPillars = pillars.filter(
+    (p) => p.scope === 'tenant' || p.domain === domain,
+  );
+  let totalActual = 0;
+  let totalTarget = 0;
+  for (const p of relevantPillars) {
+    const target = p.targets?.valueGenerated.annual ?? 0;
+    if (target <= 0) continue; // skip pillars without a set target
+    const mode = p.valueMetric?.mode ?? (p.metrics[0] ? 'governed' : 'describe');
+    let actual = 0;
+    if (mode === 'manual') {
+      actual = latestManualValue(p.valueMetric);
+    } else if (mode === 'governed' && p.metrics[0]) {
+      // Use the pillar's offline seed total (safe when Cube is unreachable).
+      actual = p.metrics[0].seedTotal;
+    }
+    // 'describe' mode: no number defined yet — contributes 0 to the numerator.
+    totalActual += actual;
+    totalTarget += target;
+  }
+  const valuePct = totalTarget > 0
+    ? Math.round((totalActual / totalTarget) * 100)
+    : 0;
+
+  // ── Active people ──────────────────────────────────────────────────────────
+  // Count enabled users whose domains include this domain, by role.
+  const users = await listUsers();
+  const domainUsers = users.filter((u) => !u.disabled && u.domains.includes(domain));
+  const activeCreators = domainUsers.filter((u) => u.role === 'creator').length;
+  // Builders + domain_admins both hold Builder-level authoring rights.
+  const activeBuilders = domainUsers.filter(
+    (u) => u.role === 'builder' || u.role === 'domain_admin',
+  ).length;
+
+  // ── Big Bets ───────────────────────────────────────────────────────────────
+  const domainBets = bets.filter(
+    (b) => b.domain === domain && b.status !== 'archived',
+  );
+  const betShapes = domainBets.map((b) => {
+    const statuses = deriveBet(b.components);
+    const { pct } = completion(statuses);
+    // Status mapping: draft → planned; active/shipped → on-track.
+    // (at-risk would require component-level override signals — not yet surfaced.)
+    const status: DomainPulse['bets'][0]['status'] =
+      b.status === 'draft' ? 'planned' : 'on-track';
+    return { name: b.name, status, pct };
+  });
+
   return {
-    source: 'mock',
+    source: 'live',
     domain,
-    valuePct: 0,
+    valuePct,
     valueLabel: `Value created vs ${new Date().getUTCFullYear()} target`,
-    activeCreators: 0,
-    activeBuilders: 0,
+    activeCreators,
+    activeBuilders,
     promotedThisPeriod: 0,
     certifiedThisPeriod: 0,
-    bets: [],
+    bets: betShapes,
   };
 }
 
 /**
- * STUB for the Monitoring signals (monitoring-golden-path.md): red items for the
- * viewer's scope + spend vs cap. Scoped to the viewer. Replace with the real
- * Monitoring adapter at consolidation.
+ * Live health/cost adapter. Reads:
+ *   - capUsd  : Governance cost store — most-specific cap for the domain
+ *               (domain-level cap if set; falls back to tenant cap).
+ *   - spendUsd: recorded spend against that cap's scope/subject.
+ *   - redItems: reserved for future Monitoring signals (empty for now).
  */
-export function healthCostStub(_viewerId: string, _domain: string): HealthCost {
-  // A fresh tenant has no agents/pipelines running — nothing red and no spend
-  // until real activity exists (e.g. via the Northpeak seed).
-  void _viewerId;
-  void _domain;
+export function healthCostStub(_viewerId: string, domain: string): HealthCost {
+  const allCaps = listCaps();
+  // Most-specific cap wins: domain-level before tenant-wide.
+  const domainCap = allCaps.find((c) => c.scope === 'domain' && c.subject === domain);
+  const tenantCap = allCaps.find((c) => c.scope === 'tenant');
+  const activeCap = domainCap ?? tenantCap;
+
+  const capUsd = activeCap?.limit ?? 0;
+  const spendUsd = activeCap ? getSpend(activeCap.scope, activeCap.subject) : 0;
+  const spendPct = capUsd > 0 ? Math.min(spendUsd / capUsd, 1) : 0;
+
   return {
-    source: 'mock',
+    source: 'live',
     redItems: [],
-    spendUsd: 0,
-    capUsd: 0,
-    spendPct: 0,
+    spendUsd,
+    capUsd,
+    spendPct,
   };
 }

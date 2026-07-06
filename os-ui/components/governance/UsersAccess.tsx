@@ -70,6 +70,54 @@ function ConfirmDialog({
 }
 
 // ---------------------------------------------------------------------------
+// Invite result — shows the one-time temp password ONCE with a copy button.
+// ---------------------------------------------------------------------------
+function InviteResultDialog({
+  open, userId, tempPassword, onClose,
+}: {
+  open: boolean; userId: string; tempPassword: string; onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  if (!open) return null;
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(tempPassword);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch { /* clipboard unavailable — the value is shown for manual copy */ }
+  }
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      onClick={onClose}
+    >
+      <div
+        style={{ background: 'var(--surface, #fff)', borderRadius: 14, padding: '28px 32px', width: 440, boxShadow: '0 12px 48px rgba(0,0,0,0.22)', border: '1px solid var(--border, #e5e7eb)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: -0.2, marginBottom: 8 }}>Invite sent</div>
+        <div className="muted" style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 16 }}>
+          <strong>{userId}</strong> can sign in with the one-time password below. Share it with
+          them once — they&apos;ll be required to set their own password on first login. This is the
+          only time it&apos;s shown.
+        </div>
+        <div
+          style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'var(--code-bg, #f4f4f5)', border: '1px solid var(--border, #e5e7eb)', borderRadius: 10, padding: '10px 12px', marginBottom: 18 }}
+        >
+          <code style={{ flex: 1, fontSize: 15, letterSpacing: 0.5, wordBreak: 'break-all' }}>{tempPassword}</code>
+          <button className="btn" style={{ padding: '4px 12px', fontSize: 12, flexShrink: 0 }} onClick={copy}>
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+        </div>
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <button className="btn ghost" onClick={onClose}>Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Domain multi-select (pill checkboxes).
 // ---------------------------------------------------------------------------
 function DomainPicker({
@@ -239,6 +287,9 @@ export default function UsersAccess() {
   const [editUser, setEditUser] = useState<GovUser | null>(null);
   const [editError, setEditError] = useState('');
 
+  // invite result — the one-time temp password to hand to the invitee.
+  const [invited, setInvited] = useState<{ id: string; tempPassword: string } | null>(null);
+
   // archive confirm
   const [archiveTarget, setArchiveTarget] = useState<GovUser | null>(null);
 
@@ -284,7 +335,12 @@ export default function UsersAccess() {
       });
       const body = await res.json();
       if (!res.ok) setError(body.error ?? 'Invite failed');
-      else { setNewEmail(''); setNewName(''); setNewDomains([]); await load(); }
+      else {
+        // Surface the one-time temp password to the admin exactly once — the
+        // server never returns it again.
+        if (body.tempPassword) setInvited({ id: body.user?.id ?? email, tempPassword: body.tempPassword });
+        setNewEmail(''); setNewName(''); setNewDomains([]); await load();
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -382,6 +438,12 @@ export default function UsersAccess() {
   return (
     <div>
       {/* Dialogs */}
+      <InviteResultDialog
+        open={!!invited}
+        userId={invited?.id ?? ''}
+        tempPassword={invited?.tempPassword ?? ''}
+        onClose={() => setInvited(null)}
+      />
       <EditUserPanel
         open={!!editUser}
         user={editUser}
@@ -420,7 +482,8 @@ export default function UsersAccess() {
         </button>
       </div>
       <p className="hint" style={{ marginTop: 0, marginBottom: 14 }}>
-        Accounts &amp; passwords are handled by the identity provider — no credentials are set or stored here.
+        Inviting a user issues a one-time password shown to you once — hand it to them and they
+        set their own password on first login. Passwords are stored only as salted hashes.
       </p>
 
       {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}

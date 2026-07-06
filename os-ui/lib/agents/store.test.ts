@@ -8,6 +8,7 @@ import {
   createSystem,
   promoteSystem,
   listSystems,
+  markPendingShares,
   getSystem,
   getSystemForEdit,
   getSystemForRun,
@@ -309,6 +310,27 @@ test('schedule persists and an agent toggle is recorded', () => {
   const entry = getSystem(sys.id, sara).system.agents[0].id;
   toggleAgent(sys.id, sara, entry, false);
   assert.ok(getSystem(sys.id, sara).disabledAgents.includes(entry));
+});
+
+test('markPendingShares: a filed Personal→Shared promotion badges the owned Personal system only', () => {
+  __resetStore();
+  const a = createSystem(creator, { name: 'Pending one', domain: 'sales' }); // Personal, filed
+  const b = createSystem(creator, { name: 'Not filed', domain: 'sales' });     // Personal, no request
+  const groups = listSystems(creator);
+  const marked = markPendingShares(groups, new Set([a.id]));
+  const find = (id: string) => marked.mine.find((s) => s.id === id)!;
+  assert.equal(find(a.id).pendingShare, true, 'the filed Personal system is badged');
+  assert.equal(find(b.id).pendingShare, undefined, 'an unfiled system is not badged');
+  // Non-mutating + a no-op when nothing is pending.
+  assert.equal(groups.mine.find((s) => s.id === a.id)!.pendingShare, undefined);
+  assert.equal(markPendingShares(groups, new Set()), groups);
+});
+
+test('markPendingShares: never badges an already-Shared system even if an id lingers', () => {
+  __resetStore();
+  const shared = makeShared(sara, { name: 'Already shared', domain: 'sales' });
+  const marked = markPendingShares(listSystems(sara), new Set([shared.id]));
+  assert.equal(marked.mine.find((s) => s.id === shared.id)!.pendingShare, undefined);
 });
 
 test('BUILDER-GATE: a creator saving a Write-bounded artifact grant is rejected server-side', () => {

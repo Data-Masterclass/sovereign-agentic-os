@@ -239,8 +239,14 @@ export type Pillar = {
  */
 export interface ComponentSource {
   readonly tab: Tab;
-  /** List artifacts (optionally scoped to a bet). */
-  list(opts?: { bigBetId?: string; domain?: string }): Artifact[];
+  /**
+   * List artifacts (optionally scoped to a bet/domain). When `viewer` is supplied
+   * the list is canView-scoped: real per-tab artifacts are read through each tab's
+   * OWN governed list gate, and in-memory (scaffolded/registered) drafts are
+   * filtered by the same visibility rule the picker route uses. Without a viewer
+   * the list is the raw in-memory registry (unit tests / lineage joins).
+   */
+  list(opts?: { bigBetId?: string; domain?: string; viewer?: Principal }): Artifact[];
   get(artifactId: string): Artifact | null;
   /**
    * The tab's GOVERNED create flow. Scaffolds a draft-level artifact (lifecycle

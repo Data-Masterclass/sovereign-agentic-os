@@ -6,6 +6,9 @@ import { requireUser } from '@/lib/auth';
 import { getBet } from '@/lib/bigbets/store';
 import { principal } from '@/lib/bigbets/server';
 import { sourceFor } from '@/lib/bigbets/sources';
+// Side-effect import: registers the REAL cross-tab reader so the picker surfaces
+// the actual datasets/agents/dashboards/knowledge/files/metrics a student built.
+import '@/lib/bigbets/real-sources';
 import { type Tab } from '@/lib/bigbets/model';
 
 export const dynamic = 'force-dynamic';
@@ -41,13 +44,12 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       return NextResponse.json({ error: `tab must be one of: ${TABS.join(', ')}` }, { status: 400 });
     }
 
-    const all = sourceFor(tab).list();
-
-    // canView filter: admin sees everything; others see shared/certified/marketplace
-    // artifacts, or personal artifacts that live in their own domain.
-    const visible = p.role === 'admin'
-      ? all
-      : all.filter((a) => a.visibility !== 'personal' || p.domains.includes(a.domain));
+    // canView-scoped at the source: REAL artifacts come through each tab's own
+    // governed list(viewer) gate; in-memory drafts are filtered by the same
+    // visibility rule (admin sees all; others see shared/certified/marketplace, or
+    // personal artifacts in their own domain). Attachment is still re-resolved
+    // server-side by POST /components — the picker never grants authority.
+    const visible = sourceFor(tab).list({ viewer: p });
 
     return NextResponse.json({
       artifacts: visible.map((a) => ({

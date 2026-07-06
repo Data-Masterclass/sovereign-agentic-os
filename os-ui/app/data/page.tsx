@@ -17,12 +17,12 @@ type QueryResult = {
   rowCount: number;
 };
 type Asset = { name: string; fqn: string; description: string; type: string; source?: string; datasetId?: string };
-type CatalogSourceStatus = { source: string; ok: boolean; count: number; status: string };
+type CatalogSourceStatus = { source: string; ok: boolean; count: number; status: string; severity?: 'ok' | 'info' | 'warn' };
 type Catalog = { source: string; note?: string; sources?: CatalogSourceStatus[]; assets: Asset[] };
 type Answer = { question: string; answer: string; retrieved: string[]; traced: boolean };
 type AskDataResult = {
   ok: boolean;
-  kind?: 'no_dataset' | 'invalid_sql' | 'query_failed';
+  kind?: 'no_dataset' | 'invalid_sql' | 'query_failed' | 'not_materialized';
   error?: string;
   sql?: string | null;
   columns?: string[];
@@ -194,11 +194,22 @@ export default function DataPage() {
                 report exactly why they did or didn't contribute — no silent fallback. */}
             {catalog?.sources ? (
               <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-                {catalog.sources.map((s) => (
-                  <span key={s.source} className={`count-pill ${s.ok ? 'ok' : ''}`} title={s.status}>
-                    {s.source}: {s.ok ? `${s.count}` : '—'} · {s.status}
-                  </span>
-                ))}
+                {catalog.sources.map((s) => {
+                  // Calm by severity: a contributing source shows its count; an optional,
+                  // un-configured integration (or marts not built yet) reads quietly with
+                  // no scary dash; only a genuine fault carries the muted "—".
+                  const sev = s.severity ?? (s.ok ? 'ok' : 'warn');
+                  return (
+                    <span
+                      key={s.source}
+                      className={`count-pill${sev === 'ok' ? ' ok' : ''}`}
+                      title={s.status}
+                      style={sev === 'info' ? { opacity: 0.6 } : undefined}
+                    >
+                      {sev === 'ok' ? `${s.source}: ${s.count} · ${s.status}` : `${s.source} · ${s.status}`}
+                    </span>
+                  );
+                })}
               </div>
             ) : null}
             {catalog?.note ? <p className="hint" style={{ marginTop: 0 }}>{catalog.note}</p> : null}
@@ -328,8 +339,9 @@ export default function DataPage() {
                   </>
                 ) : (
                   <>
-                    {/* Honest failure states — never a fabricated answer. */}
-                    {dataAnswer.kind === 'no_dataset' ? (
+                    {/* Honest failure states — never a fabricated answer. A dataset that
+                        isn't materialized yet is a calm "build it first", not an error. */}
+                    {dataAnswer.kind === 'no_dataset' || dataAnswer.kind === 'not_materialized' ? (
                       <div className="answer">{dataAnswer.error}</div>
                     ) : (
                       <div className="error">

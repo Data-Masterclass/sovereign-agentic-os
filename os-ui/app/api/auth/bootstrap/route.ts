@@ -4,29 +4,38 @@
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/config';
 import { currentUser } from '@/lib/auth';
-import { getPublicUser, setupAdmin } from '@/lib/users';
+import { completeFirstLogin, getPublicUser, setupAdmin } from '@/lib/users';
 import { assessPasswordStrength, hashPassword } from '@/lib/password';
 import { SESSION_COOKIE, SESSION_MAX_AGE, signSession } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * Forced first-run setup. Only callable by the signed-in bootstrap admin (the
- * `admin/admin` row, flagged mustChangeCredentials). Sets a real username, email
- * and STRONG password (strength enforced server-side), DELETES the default
- * `admin/admin` identity, AUTO-VERIFIES the account (the operator holding the
- * bootstrap credential is trusted — no mailer needed) and signs the operator
- * straight in as the new real admin. The instance is immediately usable; no
- * email step can dead-end a fresh clone.
+ * Forced first-run / first-login setup. Two variants, both gated on the signed-in
+ * user's `mustChangeCredentials` flag:
+ *
+ *  1. BOOTSTRAP ADMIN (the `admin/admin` row, `bootstrap`): sets a real username,
+ *     email and STRONG password, DELETES the default `admin/admin` identity and
+ *     AUTO-VERIFIES (the operator holding the bootstrap credential is trusted — no
+ *     mailer needed). No email step can dead-end a fresh clone.
+ *  2. INVITED USER (`mustChangeCredentials`, not bootstrap): signed in with the
+ *     admin-issued one-time temp password, they set their OWN strong password
+ *     (username/email/role stay fixed). This clears the flag, killing the temp
+ *     credential.
+ *
+ * Either way the strong-password strength is enforced server-side and the caller
+ * is re-signed into a fresh session (mustChangeCredentials is read live, so the
+ * forced gate lifts immediately).
  */
 export async function POST(req: Request) {
   const me = await currentUser();
   if (!me) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   const flags = await getPublicUser(me.id);
-  if (!flags?.bootstrap || !flags?.mustChangeCredentials) {
+  if (!flags?.mustChangeCredentials) {
     return NextResponse.json({ error: 'Setup is not available for this account' }, { status: 409 });
   }
+  const isBootstrap = Boolean(flags.bootstrap);
 
   let username = '';
   let email = '';
@@ -42,23 +51,24 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  if (!username) return NextResponse.json({ error: 'A username is required' }, { status: 400 });
-  const strength = assessPasswordStrength(password, username);
+  // The invited variant keeps its assigned username/email — only the password (and
+  // optional display name) are set here. Strength is checked against the login id.
+  const strengthLabel = isBootstrap ? username : me.id;
+  if (isBootstrap && !username) {
+    return NextResponse.json({ error: 'A username is required' }, { status: 400 });
+  }
+  const strength = assessPasswordStrength(password, strengthLabel);
   if (!strength.ok) {
     return NextResponse.json({ error: strength.reasons[0] ?? 'Password is too weak', reasons: strength.reasons }, { status: 400 });
   }
 
   try {
     const passwordHashReady = await hashPassword(password);
-    const { user } = await setupAdmin({
-      bootstrapId: me.id,
-      username,
-      name: name || undefined,
-      email,
-      passwordHashReady,
-    });
+    const user = isBootstrap
+      ? (await setupAdmin({ bootstrapId: me.id, username, name: name || undefined, email, passwordHashReady })).user
+      : await completeFirstLogin(me.id, passwordHashReady, { name: name || undefined });
 
-    // Re-issue the session as the new real admin.
+    // Re-issue the session (the name may have changed; the forced gate is lifted).
     const token = await signSession(
       { id: user.id, name: user.name, domains: user.domains, role: user.role },
       config.sessionSecret,

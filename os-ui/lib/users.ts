@@ -323,6 +323,8 @@ export async function createUser(input: {
   domains: string[];
   role: Role;
   email?: string;
+  /** Force the first-login email+password setup (admin-issued invite). */
+  mustChangeCredentials?: boolean;
 }): Promise<PublicUser> {
   const map = await getCache();
   const id = input.id.trim().toLowerCase();
@@ -354,6 +356,9 @@ export async function createUser(input: {
     role: input.role,
     email,
     emailVerified: !verify,
+    // An invited account carries a one-time temp password (hash only) and is
+    // forced through the first-login setup to replace it with its own.
+    mustChangeCredentials: input.mustChangeCredentials ? true : undefined,
     onboarded: false,
     createdAt: Date.now(),
   };
@@ -513,6 +518,33 @@ export async function setupAdmin(input: {
   writeThrough(real);
 
   return { user: publicOf(real) };
+}
+
+/**
+ * Complete the forced first-login setup for an INVITED (non-bootstrap) user.
+ * The invitee signed in with the admin-issued one-time temp password; here they
+ * replace it with their own strong password (strength enforced by the caller —
+ * we only take the ready scrypt hash) which CLEARS `mustChangeCredentials`, so
+ * the temp credential is now dead. The bootstrap admin uses `setupAdmin`
+ * instead; this path never touches username/email/role/domains.
+ */
+export async function completeFirstLogin(
+  id: string,
+  passwordHashReady: string,
+  opts?: { name?: string },
+): Promise<PublicUser> {
+  const map = await getCache();
+  const u = map.get(id);
+  if (!u || isReserved(u.id) || u.disabled) throw err('Account not found', 404);
+  if (u.bootstrap) throw err('Use the bootstrap setup for this account', 409);
+  if (!u.mustChangeCredentials) throw err('First-login setup already completed', 409);
+  u.password = passwordHashReady;
+  u.mustChangeCredentials = false;
+  if (opts?.name?.trim()) u.name = opts.name.trim();
+  u.updatedAt = Date.now();
+  map.set(u.id, u);
+  writeThrough(u);
+  return publicOf(u);
 }
 
 /**

@@ -11,14 +11,13 @@ import 'server-only';
  *   • approvals  → lib/approvals (Governance queue)            [LIVE]
  *   • my WIP +   → lib/artifacts + lib/apps (registry/OM)      [LIVE]
  *     recent activity
- *   • domain pulse → lib/home/stubs (Strategy roll-up)         [MOCK — kind]
- *   • health & cost → lib/home/stubs (Monitoring signals)      [MOCK — kind]
+ *   • domain pulse → lib/home/stubs (Strategy roll-up)         [LIVE]
+ *   • health & cost → lib/home/stubs (Governance cost store)   [LIVE]
  *
  * It fetches the raw rows, then hands them to the PURE scope.ts shapers which
  * apply the SAME RLS predicates the owning tabs enforce. Home is read + route —
  * this module triggers nothing and mutates nothing; it only re-surfaces, scoped.
- * The two MOCK feeds are clearly marked `source:'mock'` and are a drop-in seam
- * for the real Strategy/Monitoring adapters at consolidation (see stubs.ts).
+ * The two live feeds read from real in-process stores and return `source:'live'`.
  */
 
 import type { CurrentUser } from '@/lib/auth';
@@ -150,8 +149,8 @@ export async function homeFeed(user: CurrentUser): Promise<HomeFeed> {
     wip: myWip(viewer, artifacts, apps),
     // Shared in-domain events (scoped) + newly Certified products (cross-domain).
     recent: recentActivity(viewer, [...artifacts, ...market]),
-    pulse: domainPulseStub(domain), // MOCK (Strategy) — see stubs.ts
-    health: healthCostStub(user.id, domain), // MOCK (Monitoring) — see stubs.ts
+    pulse: await domainPulseStub(domain, { pillars: pillarsRaw, bets: betsRaw }), // LIVE
+    health: healthCostStub(user.id, domain), // LIVE
     topItems: topItems(viewer, artifacts, apps, bets, pillars),
   };
 }

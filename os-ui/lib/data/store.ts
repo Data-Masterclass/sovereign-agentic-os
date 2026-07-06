@@ -276,6 +276,25 @@ export function getDataset(id: string, user: Principal): Dataset {
 }
 
 /**
+ * The physical Trino FQN of a dataset's built medallion layer, resolved tier-aware:
+ * a private `dataset` lives in the caller's OWN `personal_<uid>` schema, a governed
+ * asset/product in its domain schema — the SAME resolution {@link listAskable} uses, so
+ * a governed row preview targets exactly the table the ask/query surface would. Returns
+ * null when the requested layer (or, absent one, the furthest built layer) isn't built —
+ * the caller then answers "not materialized yet" instead of building a doomed FQN.
+ */
+export function builtLayerFqn(
+  d: Dataset,
+  user: Principal,
+  layer?: Layer,
+): { layer: Layer; fqn: string } | null {
+  const chosen = layer && d.versions[layer]?.built ? layer : furthest(d).layer;
+  if (!chosen) return null;
+  const schema = d.tier === 'dataset' ? personalSchema(user.id) : d.domain;
+  return { layer: chosen, fqn: `iceberg.${schema}.${chosen}_${slug(d.name)}` };
+}
+
+/**
  * All governed datasets (shared assets + certified products), UNSCOPED — the source
  * the Cube model-sync sidecar reads via `GET /api/cube/models`. Deliberately not
  * user-scoped: it emits ONLY governed tiers, so a private `dataset` (owner-only,

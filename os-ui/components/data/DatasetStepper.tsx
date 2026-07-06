@@ -12,6 +12,7 @@ import CertifyPanel from './CertifyPanel';
 import MetricsPanel from './MetricsPanel';
 import LineagePanel from './LineagePanel';
 import ExplorePanel from './ExplorePanel';
+import PreviewPanel from './PreviewPanel';
 
 type Layer = 'bronze' | 'silver' | 'gold';
 type Stage = {
@@ -193,6 +194,14 @@ export default function DatasetStepper({ datasetId, onBack }: { datasetId: strin
               onCommitted={(s) => onCommitted(s as Stage[])} />
           )}
         </div>
+      ) : null}
+
+      {/* Preview — scan a subset of the actual rows (governed read: masked to the viewer). */}
+      {stages.some((s) => s.built) ? (
+        <>
+          <div className="section-title" style={{ marginTop: 22 }}>Preview data</div>
+          <PreviewPanel datasetId={dataset.id} builtLayers={stages.filter((s) => s.built).map((s) => s.layer)} />
+        </>
       ) : null}
 
       {/* Explore — profile the built versions (governed reads: masked to the viewer). */}

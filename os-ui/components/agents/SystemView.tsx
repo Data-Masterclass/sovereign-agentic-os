@@ -231,7 +231,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
           ) : (
             <button className="btn sm" onClick={() => post('run', { prompt: 'Test invocation' })} disabled={!data.canEdit || acting}>Run</button>
           )}
-          <ScheduleControl schedule={data.schedule} canEdit={data.canEdit && !acting} onSet={(s) => post('schedule', s)} />
+          <ScheduleControl systemId={systemId} schedule={data.schedule} canEdit={data.canEdit && !acting} onSaved={reloadAll} />
           {canPromote ? (
             <button className="btn ghost sm" onClick={() => post('promote')} disabled={acting} title={`Governed publish step — ${promoteLabel}`}>
               {promoteLabel}
@@ -373,34 +373,74 @@ function BuildChecklist({ system, compileError, disabledAgents }: { system: Syst
   );
 }
 
-function ScheduleControl({ schedule, canEdit, onSet }: { schedule: Schedule; canEdit: boolean; onSet: (s: Schedule) => void }) {
+type CronStatus = { ok: boolean; live: boolean; action: string; detail: string; name: string };
+
+function ScheduleControl({ systemId, schedule, canEdit, onSaved }: { systemId: string; schedule: Schedule; canEdit: boolean; onSaved: () => void | Promise<void> }) {
   // Local optimistic mirrors of the server-owned schedule so the dropdown reflects
   // the choice immediately (no snap-back during the round-trip) and the cron field
   // re-syncs when the persisted value changes.
   const [kind, setKind] = useState<Schedule['kind']>(schedule.kind);
   const [cron, setCron] = useState(schedule.cron ?? '0 9 * * 1');
+  const [busy, setBusy] = useState(false);
+  // The CronJob reconcile status (honest): a cron schedule only fires once a real
+  // CronJob is provisioned — surface when it was NOT (e.g. cluster unreachable).
+  const [cronStatus, setCronStatus] = useState<CronStatus | null>(null);
+  const [err, setErr] = useState('');
   useEffect(() => { setKind(schedule.kind); }, [schedule.kind]);
   useEffect(() => { if (schedule.cron) setCron(schedule.cron); }, [schedule.cron]);
+
+  const save = async (next: Schedule) => {
+    setBusy(true);
+    setErr('');
+    setCronStatus(null);
+    try {
+      const res = await fetch(`/api/agents/systems/${systemId}/schedule`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(next),
+      });
+      const b = await res.json();
+      if (!res.ok) throw new Error(b.error ?? 'Schedule update failed');
+      if (b.cron) setCronStatus(b.cron as CronStatus);
+      await onSaved();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-      <select
-        value={kind}
-        disabled={!canEdit}
-        onChange={(e) => {
-          const next = e.target.value as Schedule['kind'];
-          setKind(next);
-          onSet(next === 'cron' ? { kind: next, cron } : next === 'event' ? { kind: next, event: 'on_demand' } : { kind: next });
-        }}
-        title="Schedule"
-      >
-        <option value="manual">manual</option>
-        <option value="cron">cron</option>
-        <option value="event">event</option>
-      </select>
-      {kind === 'cron' ? (
-        <form onSubmit={(e) => { e.preventDefault(); onSet({ kind: 'cron', cron }); }}>
-          <input type="text" value={cron} onChange={(e) => setCron(e.target.value)} disabled={!canEdit} style={{ width: 120 }} className="mono" />
-        </form>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+      <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+        <select
+          value={kind}
+          disabled={!canEdit || busy}
+          onChange={(e) => {
+            const next = e.target.value as Schedule['kind'];
+            setKind(next);
+            void save(next === 'cron' ? { kind: next, cron } : next === 'event' ? { kind: next, event: 'on_demand' } : { kind: next });
+          }}
+          title="Schedule"
+        >
+          <option value="manual">manual</option>
+          <option value="cron">cron</option>
+          <option value="event">event</option>
+        </select>
+        {kind === 'cron' ? (
+          <form onSubmit={(e) => { e.preventDefault(); void save({ kind: 'cron', cron }); }}>
+            <input type="text" value={cron} onChange={(e) => setCron(e.target.value)} disabled={!canEdit || busy} style={{ width: 120 }} className="mono" />
+          </form>
+        ) : null}
+      </div>
+      {err ? <span className="muted" style={{ fontSize: 11, color: 'var(--danger, #c0392b)' }}>{err}</span> : null}
+      {cronStatus && kind === 'cron' && !cronStatus.ok ? (
+        <span className="muted" style={{ fontSize: 11, color: 'var(--warn, #b7791f)' }} title={cronStatus.detail}>
+          ⚠ schedule saved but not scheduled — {cronStatus.detail}
+        </span>
+      ) : null}
+      {cronStatus && kind === 'cron' && cronStatus.ok && cronStatus.live ? (
+        <span className="muted" style={{ fontSize: 11 }}>✓ CronJob {cronStatus.action} — runs on schedule</span>
       ) : null}
     </div>
   );

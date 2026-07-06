@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { currentUser } from '@/lib/auth';
 import { archiveUser, createUser, deleteUser, knownDomains, listUsers, restoreUser, updateUser } from '@/lib/users';
+import { generateTempPassword } from '@/lib/password';
 import { ROLES, type Role } from '@/lib/session';
 import { canAdministerUsers, canManageRole, canTouchUser, compileRoleToGrants, roleLabel, userAdminInScope } from '@/lib/governance/roles';
 import { record as audit } from '@/lib/governance/audit';
@@ -23,10 +24,14 @@ export const dynamic = 'force-dynamic';
  * never touch an admin or another domain_admin, and may never place a user in a
  * domain the caller isn't in. Builders and creators have NO user administration.
  *
- * NEVER handle raw credentials: account creation / passwords / SSO use Ory's
- * secure flow. The invite below assigns role + membership and hands the
- * credential to Ory (here a server-side placeholder seam) — the tab never sees,
- * accepts, or returns a password.
+ * INVITE CREDENTIAL: the admin never types a password. On invite the server
+ * mints a strong, one-time TEMPORARY password (lib/password.generateTempPassword),
+ * stores ONLY its scrypt hash, flags the account `mustChangeCredentials`, and
+ * returns the temp password ONCE in the API response for the admin to hand to the
+ * invitee (shown in the UI with a copy button). The invitee signs in with it and
+ * is forced through the first-login setup to set their own password — at which
+ * point the temp credential is dead. The plaintext is never persisted or logged.
+ * A rejected `password` field keeps admins from ever supplying one directly.
  */
 function asActor(u: { id: string; domains: string[]; role: Role }) {
   return { id: u.id, domains: u.domains, role: u.role };
@@ -57,7 +62,7 @@ export async function GET() {
   });
 }
 
-/** Invite a user (Ory owns the credential) + assign role-per-domain. */
+/** Invite a user (server mints a one-time temp password) + assign role-per-domain. */
 export async function POST(req: Request) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
@@ -83,21 +88,36 @@ export async function POST(req: Request) {
   }
 
   try {
-    // Ory seam: the credential is created in Ory's secure flow; locally we mint a
-    // server-only placeholder the tab never sees. Swap createUser for the Ory
-    // identity API later; role + memberships (below) stay in the app tier.
-    const oryPlaceholder = `ory:${crypto.randomUUID()}`;
-    const created = await createUser({ id, name: body?.name ? String(body.name) : undefined, email: (body as { email?: string })?.email ? String((body as { email?: string }).email) : undefined, password: oryPlaceholder, domains, role });
+    // Mint a strong, one-time temp password. Only its scrypt hash is stored (by
+    // createUser); the plaintext is returned ONCE below for the admin to relay and
+    // is never persisted or logged. The account is flagged mustChangeCredentials
+    // so the invitee must replace it on first login.
+    const tempPassword = generateTempPassword();
+    const created = await createUser({
+      id,
+      name: body?.name ? String(body.name) : undefined,
+      email: (body as { email?: string })?.email ? String((body as { email?: string }).email) : undefined,
+      password: tempPassword,
+      domains,
+      role,
+      mustChangeCredentials: true,
+    });
     const grant = await compileRoleToGrants({ id: created.id, role: created.role });
     audit({
       actor: user.id,
       action: 'role.change',
       subject: created.id,
       domain: domains[0],
-      reason: `Invited ${created.id} as ${roleLabel(role)} in ${domains.join(', ')} (Ory credential)`,
+      // Never record the temp password itself — only that an invite was issued.
+      reason: `Invited ${created.id} as ${roleLabel(role)} in ${domains.join(', ')} (one-time temp password issued)`,
       detail: { role, domains, principal: grant.principal, tools: grant.tools, opaLive: grant.live },
     });
-    return NextResponse.json({ user: { ...created, roleLabel: roleLabel(created.role) }, grant }, { status: 201 });
+    // tempPassword is surfaced to the admin ONCE here — the only time it ever
+    // leaves the server. The invitee sets their own password on first login.
+    return NextResponse.json(
+      { user: { ...created, roleLabel: roleLabel(created.role) }, grant, tempPassword },
+      { status: 201 },
+    );
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 500 });
   }

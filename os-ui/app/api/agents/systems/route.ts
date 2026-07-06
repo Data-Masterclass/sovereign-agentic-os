@@ -3,8 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { listSystems, createSystem, ensureHydrated } from '@/lib/agents/store';
+import { listSystems, createSystem, ensureHydrated, markPendingShares } from '@/lib/agents/store';
 import { isTemplateKey } from '@/lib/agents/templates';
+import { listApprovals } from '@/lib/approvals';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,12 +14,25 @@ function fail(e: unknown) {
   return NextResponse.json({ error: (e as Error).message }, { status });
 }
 
+/** The ids of agent systems with a Personal→Shared promotion pending in the queue
+ *  (owner filed `request_promotion`; a Builder/Admin has not yet approved). Used to
+ *  honestly badge those systems as "pending share approval" in the list. */
+function pendingShareIds(): Set<string> {
+  const ids = new Set<string>();
+  for (const a of listApprovals({ status: 'pending' })) {
+    if (a.kind === 'artifact_promote' && a.payload?.artifactKind === 'agent_system' && typeof a.payload?.id === 'string') {
+      ids.add(a.payload.id);
+    }
+  }
+  return ids;
+}
+
 /** GET → the caller's systems grouped Mine / My domain / Marketplace. */
 export async function GET() {
   try {
     await ensureHydrated();
     const user = await requireUser();
-    return NextResponse.json(listSystems(user));
+    return NextResponse.json(markPendingShares(listSystems(user), pendingShareIds()));
   } catch (e) {
     return fail(e);
   }
