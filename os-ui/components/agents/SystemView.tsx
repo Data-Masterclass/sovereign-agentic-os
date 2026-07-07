@@ -9,7 +9,6 @@ import { useApi } from '@/lib/useApi';
 import AgentEditor from './AgentEditor';
 import GrantsRouting from './GrantsRouting';
 import BuildRunPanel from './BuildRunPanel';
-import HelperChat from './HelperChat';
 import MonacoFile from './MonacoFile';
 import RuntimeSelector from './RuntimeSelector';
 import { commitSystem } from './commitSystem';
@@ -60,7 +59,7 @@ type SystemViewData = {
 type ModelsData = { models: ModelInfo[]; source: 'litellm' | 'offline' };
 type RoutingData = { activities: string[]; tiers: Record<string, string>; table: Record<string, { tier: string; model: string }> };
 
-type Panel = 'yaml' | 'grants' | 'build' | 'helper';
+type Panel = 'yaml' | 'grants' | 'build';
 
 const visClass = (v: string) => (v === 'Shared' ? 'vis-shared' : v === 'Marketplace' ? 'vis-certified' : 'vis-personal');
 
@@ -304,7 +303,6 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
         <button className={panel === 'yaml' ? 'active' : ''} onClick={() => setPanel('yaml')}>system.yaml</button>
         <button className={panel === 'grants' ? 'active' : ''} onClick={() => setPanel('grants')}>Grants &amp; routing</button>
         <button className={panel === 'build' ? 'active' : ''} onClick={() => setPanel('build')}>Build &amp; run</button>
-        <button className={panel === 'helper' ? 'active' : ''} onClick={() => setPanel('helper')}>Agent-system helper</button>
       </div>
 
       <div style={{ marginTop: 14 }}>
@@ -316,9 +314,6 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
         ) : null}
         {panel === 'build' ? (
           <BuildRunPanel systemId={systemId} running={data.running} canEdit={data.canEdit} lastBuild={data.lastBuild} onStateChange={reloadAll} />
-        ) : null}
-        {panel === 'helper' ? (
-          <HelperChat systemId={systemId} canEdit={data.canEdit} onApplied={reloadAll} />
         ) : null}
       </div>
 

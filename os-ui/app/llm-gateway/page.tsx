@@ -89,13 +89,13 @@ export default function LlmGatewayPage() {
           <div className="hint" style={{ margin: 0 }}>
             The gateway&apos;s public model catalogue, embedded same-origin with your OS session. Read-only.
           </div>
-          <a className="btn ghost" style={{ padding: '5px 12px' }} href="/tools/litellm/ui/model_hub_table" target="_blank" rel="noreferrer">
+          <a className="btn ghost" style={{ padding: '5px 12px' }} href="/tools/litellm/public/model_hub" target="_blank" rel="noreferrer">
             Open ↗
           </a>
         </div>
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <iframe
-            src="/tools/litellm/ui/model_hub_table"
+            src="/tools/litellm/public/model_hub"
             title="LiteLLM Model Hub"
             style={{ width: '100%', height: 640, border: 0, display: 'block' }}
             sandbox="allow-same-origin allow-scripts allow-popups"

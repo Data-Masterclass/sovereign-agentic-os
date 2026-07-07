@@ -172,7 +172,7 @@ export const TOOLS: Record<string, Tool> = {
     minRole: 'creator',
     embeddable: true,
     sso: { mode: 'none' },
-    note: "Read-only Model Hub only (/ui/model_hub_table). No credential injected — the master key stays server-side; LiteLLM's admin UI stays behind its own login.",
+    note: "Read-only public Model Hub only (/public/model_hub). No credential injected — the master key stays server-side; LiteLLM's admin UI stays behind its own login.",
   },
   opensearch: {
     key: 'opensearch',
