@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { deleteArtifact, getArtifact, updateArtifact } from '@/lib/artifacts';
+import { archiveArtifact, deleteArtifact, getArtifact, updateArtifact } from '@/lib/artifacts';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,6 +37,22 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       spec: typeof body?.spec === 'object' && body?.spec ? body.spec : undefined,
     });
     return NextResponse.json({ item });
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Lifecycle: archive / unarchive (reversible soft-hide) — edit-scoped. */
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    const user = await requireUser();
+    const { id } = await ctx.params;
+    const body = await req.json().catch(() => ({}));
+    if (body?.action === 'archive' || body?.action === 'unarchive') {
+      const item = await archiveArtifact(id, user, body.action === 'archive');
+      return NextResponse.json({ item });
+    }
+    return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
   } catch (e) {
     return fail(e);
   }

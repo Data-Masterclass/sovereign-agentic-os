@@ -31,6 +31,7 @@ import { canRead } from './dls.ts';
 import { promotionGate, gateReason } from './promotion.ts';
 import { recordLineage } from './lineage.ts';
 import { osMirror } from '../os-mirror.ts';
+import { type ArtifactVersion, versionLog } from '../versioning.ts';
 
 /**
  * The file registry — the MOCK store behind the Files tab (kind-only, in-process;
@@ -67,6 +68,8 @@ export type FileRecord = {
   object?: StoredObjectMeta | null;
   history: FileVersion[];
   updatedAt: string;
+  /** Soft-archived: hidden from the working lists, reversible, retained. */
+  archived?: boolean;
 };
 
 /** What an upload becomes Searchable as — the calm status chip (deep-design A5). */
@@ -89,6 +92,8 @@ export type FileSummary = {
   storage: Storage;
   status: FileStatus;
   bytes: number;
+  /** Soft-archived (retained, reversible). Absent/false = live. */
+  archived?: boolean;
 };
 
 export type Facets = {
@@ -140,10 +145,19 @@ const fileMirror = osMirror({
         docs: { type: 'text', index: false },
         versions: { type: 'object', enabled: false },
         indexingMode: { type: 'keyword' },
+        archived: { type: 'boolean' },
       },
     },
   },
 });
+
+// Durable, per-artifact version history (reused across the OS).
+const versions = versionLog('file');
+
+/** The versioned slice of a file record — the user-editable content + metadata. */
+function snapshotState(rec: FileRecord): { yaml: string; text: string; bytes: number } {
+  return { yaml: rec.yaml, text: rec.text, bytes: rec.bytes };
+}
 
 function writeThrough(rec: FileRecord): void {
   fileMirror.writeThrough(rec.id, rec);
@@ -151,7 +165,7 @@ function writeThrough(rec: FileRecord): void {
 
 export async function ensureHydrated(): Promise<void> {
   const s = fs();
-  if (!s.hydration) s.hydration = hydrateFiles();
+  if (!s.hydration) s.hydration = Promise.all([hydrateFiles(), versions.ensureHydrated()]).then(() => {});
   return s.hydration;
 }
 
@@ -230,6 +244,7 @@ export function __resetStore(): void {
   s.seeded = false;
   s.hydration = null;
   fileMirror.__reset();
+  versions.__reset();
 }
 
 /** Which retrieval representations a kind yields (mock map; the real ingest
@@ -301,6 +316,7 @@ function summarise(a: FileAsset, rec: FileRecord): FileSummary {
     tags: a.tags, sensitivity: a.sensitivity, freshness: a.freshness,
     version: a.version, deepLink: a.deepLink, storage: a.storage,
     status: statusOf(a), bytes: rec.bytes,
+    archived: rec.archived ?? false,
   };
 }
 
@@ -317,12 +333,13 @@ function facetsOf(summaries: FileSummary[]): Facets {
   };
 }
 
-export function listFiles(user: Principal): FileGroups {
+export function listFiles(user: Principal, opts: { includeArchived?: boolean } = {}): FileGroups {
   ensureSeeded();
   const mine: FileSummary[] = [];
   const domain: FileSummary[] = [];
   const marketplace: FileSummary[] = [];
   for (const rec of fs().store.values()) {
+    if (rec.archived && !opts.includeArchived) continue;
     const a = parseAsset(rec.yaml);
     if (a.owner === user.id) mine.push(summarise(a, rec));
     else if (a.tier === 'product') marketplace.push(summarise(a, rec));
@@ -423,6 +440,7 @@ export function createFile(user: Principal, input: UploadInput): FileAsset {
 export function moveFile(id: string, user: Principal, folder: string): FileAsset {
   const rec = get(id);
   const a = editOf(rec, user);
+  versions.record(rec.id, user.id, snapshotState(rec), 'edit folder');
   a.folder = normalise(folder);
   a.deepLink = deepLinkFor(a);
   persist(rec, a);
@@ -432,6 +450,7 @@ export function moveFile(id: string, user: Principal, folder: string): FileAsset
 export function setTags(id: string, user: Principal, tags: string[]): FileAsset {
   const rec = get(id);
   const a = editOf(rec, user);
+  versions.record(rec.id, user.id, snapshotState(rec), 'edit tags');
   a.tags = tags.map((t) => t.trim()).filter(Boolean);
   persist(rec, a);
   return a;
@@ -442,6 +461,7 @@ export function setTags(id: string, user: Principal, tags: string[]): FileAsset 
 export function setDocs(id: string, user: Principal, docs: { description?: string; tags?: string[] }): FileAsset {
   const rec = get(id);
   const a = editOf(rec, user);
+  versions.record(rec.id, user.id, snapshotState(rec), 'edit docs');
   if (docs.description !== undefined) a.description = docs.description;
   if (docs.tags !== undefined) a.tags = docs.tags.map((t) => t.trim()).filter(Boolean);
   persist(rec, a);
@@ -452,6 +472,7 @@ export function setDocs(id: string, user: Principal, docs: { description?: strin
 export function addVersion(id: string, user: Principal, input: { text?: string; bytes?: number }): FileAsset {
   const rec = get(id);
   const a = editOf(rec, user);
+  versions.record(rec.id, user.id, snapshotState(rec), 'content upload');
   const n = rec.history.length + 1;
   const at = now();
   const text = input.text ?? rec.text;
@@ -469,6 +490,7 @@ export function addVersion(id: string, user: Principal, input: { text?: string; 
 export function setIndexingMode(id: string, user: Principal, mode: IndexingMode): FileAsset {
   const rec = get(id);
   const a = editOf(rec, user);
+  versions.record(rec.id, user.id, snapshotState(rec), 'edit indexing');
   a.indexing.mode = indexingModeFor(a.sensitivity, mode);
   a.indexing.representations = representationsFor(a.kind, a.indexing.mode);
   persist(rec, a);
@@ -478,6 +500,7 @@ export function setIndexingMode(id: string, user: Principal, mode: IndexingMode)
 export function setSensitivity(id: string, user: Principal, sensitivity: Sensitivity): FileAsset {
   const rec = get(id);
   const a = editOf(rec, user);
+  versions.record(rec.id, user.id, snapshotState(rec), 'edit sensitivity');
   a.sensitivity = sensitivity;
   // Re-clamp indexing (restricted ⇒ stored-only).
   a.indexing.mode = indexingModeFor(sensitivity, a.indexing.mode);
@@ -490,8 +513,68 @@ export function deleteFile(id: string, user: Principal): void {
   const rec = get(id);
   const a = parseAsset(rec.yaml);
   if (!canEdit(a, user)) fail('Not permitted to delete this file', 403);
+  versions.purge(id);
   fileMirror.deleteThrough(id);
   fs().store.delete(id);
+}
+
+// -------------------------------------------- archive / delete / versions --
+
+/**
+ * Archive a file: a reversible soft-hide. Edit-scoped — only the owner or
+ * an in-domain Admin may archive (exactly like editing). The record + its
+ * history are retained; the file leaves the working lists until unarchived.
+ */
+export function archiveFile(id: string, user: Principal): FileRecord {
+  const rec = get(id);
+  const a = parseAsset(rec.yaml);
+  if (!canEdit(a, user)) fail('Not permitted to archive this file', 403);
+  rec.archived = true;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+/** Restore an archived file back into the working lists (edit-scoped). */
+export function unarchiveFile(id: string, user: Principal): FileRecord {
+  const rec = get(id);
+  const a = parseAsset(rec.yaml);
+  if (!canEdit(a, user)) fail('Not permitted to unarchive this file', 403);
+  rec.archived = false;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+/** Version history for a file, newest first (view-scoped). */
+export function listFileVersions(id: string, user: Principal): ArtifactVersion[] {
+  const rec = get(id);
+  viewOf(rec, user); // view-scoped: any viewer may see the history
+  return versions.list(id);
+}
+
+/**
+ * Restore a prior version of a file's content + metadata. Restore is itself
+ * auditable + reversible: the CURRENT state is snapshotted as a new version
+ * first, THEN the chosen version's state is applied. Edit-scoped.
+ */
+export function restoreFileVersion(id: string, user: Principal, version: number): FileRecord {
+  const rec = get(id);
+  const a = parseAsset(rec.yaml);
+  if (!canEdit(a, user)) fail('Not permitted to restore this file', 403);
+  const snap = versions.get(id, version);
+  if (!snap) fail(`Version ${version} not found`, 404);
+  const s = snap.state as { yaml?: string; text?: string; bytes?: number };
+  if (typeof s.yaml !== 'string') fail(`Version ${version} has no restorable source`, 422);
+  parseAsset(s.yaml); // validate before applying — never go live with corrupt state
+  // Snapshot the live state first so the restore can itself be undone.
+  versions.record(id, user.id, snapshotState(rec), `restore of v${version}`);
+  rec.yaml = s.yaml;
+  if (typeof s.text === 'string') rec.text = s.text;
+  if (typeof s.bytes === 'number') rec.bytes = s.bytes;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
 }
 
 // -------------------------------------------------------------------- search --
@@ -519,6 +602,7 @@ export function searchFiles(user: Principal, query: string): SearchHit[] {
   const qTokens = new Set(tokens(q));
   const hits: SearchHit[] = [];
   for (const rec of fs().store.values()) {
+    if (rec.archived) continue; // archived files are not searchable
     const a = parseAsset(rec.yaml);
     if (!canView(a, user)) continue;
     if (a.indexing.mode === 'stored-only') continue; // not indexed → not searchable

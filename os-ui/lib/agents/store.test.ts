@@ -18,7 +18,13 @@ import {
   forkSystem,
   setSchedule,
   setLastBuild,
+  setRunning,
   toggleAgent,
+  archiveSystem,
+  unarchiveSystem,
+  deleteSystem,
+  listSystemVersions,
+  restoreSystemVersion,
   WHITELIST_HINT,
 } from './store.ts';
 import type { Principal, LastBuild } from './store.ts';
@@ -446,4 +452,94 @@ test('lastBuild round-trips: persisted build result loads on getSystem and is ab
 
   // A non-editor cannot overwrite the build result.
   assert.throws(() => setLastBuild(sys.id, amir, build), /not permitted to edit/i);
+});
+
+// ------------------------------------------------ archive / delete / versions --
+
+test('writeFile snapshots the prior source; restore reverts + is itself versioned', () => {
+  __resetStore();
+  const sys = createSystem(sara, { name: 'Versioned', domain: 'sales' });
+  const v0 = readFile(sys.id, sara, 'system.yaml');
+  assert.equal(listSystemVersions(sys.id, sara).length, 0, 'no history before first edit');
+
+  // First edit → one prior version captured.
+  const edit1 = v0.content + '\n# edit-1\n';
+  const s1 = writeFile(sys.id, sara, { path: 'system.yaml', content: edit1, sha: v0.sha });
+  // Second edit → two prior versions.
+  const edit2 = edit1 + '# edit-2\n';
+  writeFile(sys.id, sara, { path: 'system.yaml', content: edit2, sha: s1.sha });
+
+  const history = listSystemVersions(sys.id, sara);
+  assert.equal(history.length, 2);
+  assert.equal(history[0].version, 2, 'newest first');
+  assert.equal(history[0].author, 'sara');
+  assert.equal(history[1].version, 1, 'oldest last');
+
+  // A no-op save does NOT churn a new version.
+  writeFile(sys.id, sara, { path: 'system.yaml', content: edit2, sha: readFile(sys.id, sara, 'system.yaml').sha });
+  assert.equal(listSystemVersions(sys.id, sara).length, 2);
+
+  // Restore v1 (the original) → live yaml reverts AND the pre-restore state is
+  // snapshotted as v3, so restore is auditable + reversible.
+  restoreSystemVersion(sys.id, sara, 1);
+  assert.equal(readFile(sys.id, sara, 'system.yaml').content, v0.content);
+  const after = listSystemVersions(sys.id, sara);
+  assert.equal(after.length, 3);
+  assert.equal(after[0].version, 3);
+  assert.match(after[0].summary, /restore of v1/);
+
+  // Restoring an unknown version 404s.
+  assert.throws(() => restoreSystemVersion(sys.id, sara, 99), /not found/i);
+});
+
+test('archive hides + stops the system; unarchive restores it', () => {
+  __resetStore();
+  const sys = createSystem(sara, { name: 'Archivable', domain: 'sales' });
+  setRunning(sys.id, sara, true);
+  assert.equal(getSystem(sys.id, sara).running, true);
+
+  archiveSystem(sys.id, sara);
+  const archived = getSystem(sys.id, sara);
+  assert.equal(archived.archived, true);
+  assert.equal(archived.running, false, 'archiving stops the system');
+  // Hidden from the default working list, visible with includeArchived.
+  assert.ok(!listSystems(sara).mine.some((s) => s.id === sys.id));
+  assert.ok(listSystems(sara, { includeArchived: true }).mine.some((s) => s.id === sys.id));
+
+  unarchiveSystem(sys.id, sara);
+  assert.equal(getSystem(sys.id, sara).archived, false);
+  assert.ok(listSystems(sara).mine.some((s) => s.id === sys.id));
+});
+
+test('delete removes the system permanently + purges its history', () => {
+  __resetStore();
+  const sys = createSystem(sara, { name: 'Deletable', domain: 'sales' });
+  const v0 = readFile(sys.id, sara, 'system.yaml');
+  writeFile(sys.id, sara, { path: 'system.yaml', content: v0.content + '\n# e\n', sha: v0.sha });
+  assert.equal(listSystemVersions(sys.id, sara).length, 1);
+
+  deleteSystem(sys.id, sara);
+  assert.throws(() => getSystem(sys.id, sara), /not found/i);
+  assert.ok(!listSystems(sara, { includeArchived: true }).mine.some((s) => s.id === sys.id));
+
+  // A fresh system reusing nothing has no leaked history (purge worked).
+  const sys2 = createSystem(sara, { name: 'Fresh', domain: 'sales' });
+  assert.equal(listSystemVersions(sys2.id, sara).length, 0);
+});
+
+test('archive / delete / restore obey edit authz (a viewer is rejected 403)', () => {
+  __resetStore();
+  // Shared system in sales; amir (creator, same domain) can VIEW but not EDIT.
+  const sys = makeShared(sara, { name: 'Governed', domain: 'sales' });
+  const v0 = readFile(sys.id, sara, 'system.yaml');
+  writeFile(sys.id, sara, { path: 'system.yaml', content: v0.content + '\n# e\n', sha: v0.sha });
+
+  // Viewer may READ history but not mutate.
+  assert.doesNotThrow(() => listSystemVersions(sys.id, amir));
+  assert.throws(() => archiveSystem(sys.id, amir), /not permitted to edit/i);
+  assert.throws(() => deleteSystem(sys.id, amir), /not permitted to edit/i);
+  assert.throws(() => restoreSystemVersion(sys.id, amir, 1), /not permitted to edit/i);
+
+  // A same-domain Admin (builder+ over the domain) may archive it.
+  assert.doesNotThrow(() => archiveSystem(sys.id, admin));
 });

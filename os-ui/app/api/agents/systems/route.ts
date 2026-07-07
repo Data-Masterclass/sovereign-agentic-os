@@ -27,12 +27,14 @@ function pendingShareIds(): Set<string> {
   return ids;
 }
 
-/** GET → the caller's systems grouped Mine / My domain / Marketplace. */
-export async function GET() {
+/** GET → the caller's systems grouped Mine / My domain / Marketplace.
+ *  `?archived=1` includes soft-archived systems (for the Archived view). */
+export async function GET(req: Request) {
   try {
     await ensureHydrated();
     const user = await requireUser();
-    return NextResponse.json(markPendingShares(listSystems(user), pendingShareIds()));
+    const includeArchived = new URL(req.url).searchParams.get('archived') === '1';
+    return NextResponse.json(markPendingShares(listSystems(user, { includeArchived }), pendingShareIds()));
   } catch (e) {
     return fail(e);
   }

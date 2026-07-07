@@ -5,6 +5,7 @@ import type { Role } from '../session.ts';
 import { type DashTier, type DashboardRecord, dashboardRecord, governDashboard } from './governance.ts';
 import { type DashboardSpec } from './model.ts';
 import { osMirror } from '../os-mirror.ts';
+import { type ArtifactVersion, versionLog } from '../versioning.ts';
 
 /**
  * A small in-memory dashboard registry (mirrors lib/data/store's shape + discipline:
@@ -16,7 +17,7 @@ import { osMirror } from '../os-mirror.ts';
 
 export type Principal = { id: string; domains: string[]; role: Role };
 
-type Stored = DashboardRecord & { domain: string };
+type Stored = DashboardRecord & { domain: string; archived?: boolean };
 
 // A fresh tenant starts EMPTY. Dashboards are created only through the
 // platform's own governed flows (e.g. the Northpeak e-commerce seed).
@@ -41,11 +42,19 @@ const mirror = osMirror({
         domain: { type: 'keyword' },
         tier: { type: 'keyword' },
         updatedAt: { type: 'date' },
+        archived: { type: 'boolean' },
         spec: { type: 'object', enabled: false },
       },
     },
   },
 });
+
+// Durable, per-dashboard version history (the reusable OS helper): the spec is
+// snapshotted on every save + on restore, so any prior version is restorable.
+const versions = versionLog('dashboard');
+function snapshotState(rec: Stored): { spec: DashboardSpec } {
+  return { spec: rec.spec };
+}
 
 function writeThrough(rec: Stored): void {
   mirror.writeThrough(rec.id, rec);
@@ -53,7 +62,7 @@ function writeThrough(rec: Stored): void {
 
 export async function ensureHydrated(): Promise<void> {
   const s = dashState();
-  if (!s.hydration) s.hydration = hydrate();
+  if (!s.hydration) s.hydration = Promise.all([hydrate(), versions.ensureHydrated()]).then(() => {});
   return s.hydration;
 }
 
@@ -72,6 +81,7 @@ export function __resetDashboards(): void {
   s.dashboards = SEED.map((d) => ({ ...d, spec: { ...d.spec, charts: [...d.spec.charts] } }));
   s.hydration = null;
   mirror.__reset();
+  versions.__reset();
 }
 
 export type DashboardSummary = { id: string; name: string; view: string; tier: DashTier; owner: string; charts: number };
@@ -82,12 +92,14 @@ function summarise(d: Stored): DashboardSummary {
 
 export type DashboardGroups = { mine: DashboardSummary[]; domain: DashboardSummary[]; marketplace: DashboardSummary[] };
 
-/** List dashboards visible to the user, grouped like every other governed surface. */
-export function listDashboards(user: Principal): DashboardGroups {
+/** List dashboards visible to the user, grouped like every other governed surface.
+ *  Archived dashboards are soft-hidden by default (reversible). */
+export function listDashboards(user: Principal, opts: { includeArchived?: boolean } = {}): DashboardGroups {
   const mine: DashboardSummary[] = [];
   const domain: DashboardSummary[] = [];
   const marketplace: DashboardSummary[] = [];
   for (const d of dashState().dashboards) {
+    if (d.archived && !opts.includeArchived) continue;
     if (d.tier === 'marketplace') marketplace.push(summarise(d));
     else if (d.owner === user.id) mine.push(summarise(d));
     else if (d.tier === 'domain' && user.domains.includes(d.domain)) domain.push(summarise(d));
@@ -108,6 +120,8 @@ export function saveDashboard(user: Principal, id: string, spec: DashboardSpec):
   const existing = dashState().dashboards.find((x) => x.id === id);
   if (existing) {
     if (existing.owner !== user.id) throw status('only the owner can edit this dashboard', 403);
+    // Snapshot the PRIOR spec before overwriting so the edit is restorable.
+    versions.record(existing.id, user.id, snapshotState(existing), 'edit');
     existing.spec = spec;
     writeThrough(existing);
     return existing;
@@ -124,6 +138,52 @@ export function transitionDashboard(id: string, approver: Principal, transition:
   const res = governDashboard(d, transition, { id: approver.id, role: approver.role });
   if (!res.ok) throw status(res.reason ?? 'transition denied', 403);
   d.tier = res.record.tier;
+  writeThrough(d);
+  return d;
+}
+
+/** The store's edit authority: only the owner may archive/delete/restore. */
+function requireOwned(id: string, user: Principal): Stored {
+  const d = dashState().dashboards.find((x) => x.id === id);
+  if (!d) throw status(`dashboard '${id}' not found`, 404);
+  if (d.owner !== user.id) throw status('only the owner can modify this dashboard', 403);
+  return d;
+}
+
+/** Archive / unarchive a dashboard: a reversible soft-hide (owner-scoped). */
+export function setDashboardArchived(id: string, user: Principal, archived: boolean): Stored {
+  const d = requireOwned(id, user);
+  d.archived = archived;
+  writeThrough(d);
+  return d;
+}
+
+/** Permanently delete a dashboard + its version history (owner-scoped). */
+export function deleteDashboard(id: string, user: Principal): void {
+  const d = requireOwned(id, user);
+  const arr = dashState().dashboards;
+  arr.splice(arr.indexOf(d), 1);
+  mirror.deleteThrough(d.id);
+  versions.purge(d.id);
+}
+
+/** Version history for a dashboard, newest first (view-scoped). */
+export function listDashboardVersions(id: string, user: Principal): ArtifactVersion[] {
+  getDashboard(id, user); // view-scope check
+  return versions.list(id);
+}
+
+/**
+ * Restore a prior version of a dashboard's spec. Restore is itself auditable +
+ * reversible: the current spec is snapshotted first, THEN the chosen version is
+ * applied. Owner-scoped.
+ */
+export function restoreDashboardVersion(id: string, user: Principal, version: number): Stored {
+  const d = requireOwned(id, user);
+  const snap = versions.get(id, version);
+  if (!snap) throw status(`version ${version} not found`, 404);
+  versions.record(id, user.id, snapshotState(d), `restore of v${version}`);
+  d.spec = (snap.state as { spec: DashboardSpec }).spec;
   writeThrough(d);
   return d;
 }

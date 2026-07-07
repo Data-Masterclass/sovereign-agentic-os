@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { buildBetView, principal } from '@/lib/bigbets/server';
-import { updateBet } from '@/lib/bigbets/store';
+import { updateBet, archiveBet, unarchiveBet, deleteBet, ensureHydrated } from '@/lib/bigbets/store';
 import { type ValueBasis, type AllocationMethod, type BigBet } from '@/lib/bigbets/model';
 
 export const dynamic = 'force-dynamic';
@@ -34,6 +34,42 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       today: url.searchParams.get('today') ?? undefined,
     });
     return NextResponse.json(view);
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * POST → bet lifecycle: `archive` (reversible soft-hide) or `unarchive`.
+ * Edit-scoped in the store (owner or Admin), so a viewer is rejected 403.
+ */
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    await ensureHydrated();
+    const user = await requireUser();
+    const { id } = await ctx.params;
+    const body = (await req.json().catch(() => ({}))) as { action?: string };
+    switch (body.action) {
+      case 'archive':
+        return NextResponse.json({ bet: archiveBet(id, principal(user)) });
+      case 'unarchive':
+        return NextResponse.json({ bet: unarchiveBet(id, principal(user)) });
+      default:
+        return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+    }
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** DELETE → permanently remove a bet + its version history (edit-scoped). */
+export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    await ensureHydrated();
+    const user = await requireUser();
+    const { id } = await ctx.params;
+    deleteBet(id, principal(user));
+    return NextResponse.json({ ok: true });
   } catch (e) {
     return fail(e);
   }

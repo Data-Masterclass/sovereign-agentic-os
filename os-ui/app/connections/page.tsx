@@ -110,7 +110,12 @@ export default function ConnectionsPage() {
 
             <div className="section-title">Supported connectors</div>
             <p className="hint" style={{ marginTop: 0, marginBottom: 14 }}>
-              Register an external source as a connection. Available drivers can be added now; the rest are on the roadmap.
+              These three connectors are wired end-to-end: you sign in with your own account and only a
+              token <em>reference</em> is stored (never a raw secret). Connect any of them from the{' '}
+              <button
+                onClick={() => setTab('governed')}
+                style={{ background: 'none', border: 'none', padding: 0, color: 'var(--gold-text)', cursor: 'pointer', font: 'inherit', textDecoration: 'underline' }}
+              >Governed connections</button> tab.
             </p>
             {CONNECTOR_CATEGORIES.map((cat) => {
               const items = CONNECTORS.filter((c) => c.category === cat);
@@ -123,13 +128,11 @@ export default function ConnectionsPage() {
                       <div className="card" key={c.name}>
                         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
                           <h3 style={{ margin: 0 }}>{c.name}</h3>
-                          <span className={`badge ${c.available ? 'ok' : 'muted'}`}>{c.available ? 'available' : 'roadmap'}</span>
+                          <span className="badge ok">available</span>
                         </div>
                         <div className="muted" style={{ marginTop: 8 }}>Auth: {c.auth}</div>
                         <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
-                          <button className="btn ghost" onClick={() => setTab('build')} disabled={!c.available}>
-                            {c.available ? 'Register →' : 'Soon'}
-                          </button>
+                          <button className="btn ghost" onClick={() => setTab('governed')}>Connect →</button>
                         </div>
                       </div>
                     ))}

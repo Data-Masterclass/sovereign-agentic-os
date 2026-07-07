@@ -14,6 +14,9 @@ import {
 import { canPromote, roleAtLeast } from '../session.ts';
 import type { Role } from '../session.ts';
 import { osMirror } from '../os-mirror.ts';
+import { type ArtifactVersion, versionLog } from '../versioning.ts';
+
+export type { ArtifactVersion };
 
 /**
  * Knowledge workflow store — the mock Forgejo repo behind the Knowledge tab
@@ -50,6 +53,8 @@ export type WorkflowRecord = {
   /** Lighter knowledge-specific marketplace certification (decision #5). */
   certifiedAt: string | null;
   certifiedBy: string | null;
+  /** Soft-archived: hidden from the working lists, reversible, retained. */
+  archived?: boolean;
 };
 
 export type WorkflowSummary = Omit<WorkflowRecord, 'md' | 'tacit'>;
@@ -120,18 +125,28 @@ const mirror = osMirror({
         certifiedAt: { type: 'date' },
         md: { type: 'text', index: false },
         tacit: { type: 'text', index: false },
+        archived: { type: 'boolean' },
       },
     },
   },
 });
 
+// Durable, per-artifact version history (reused across the OS). A workflow's
+// canonical `md` + `tacit` is snapshotted on every meaningful edit + on restore.
+const versions = versionLog('knowledge-workflow');
+
 function writeThrough(rec: WorkflowRecord): void {
   mirror.writeThrough(rec.id, rec);
 }
 
+/** The versioned slice of a workflow record — the editable canonical source. */
+function snapshotState(rec: WorkflowRecord): { md: string; tacit: string } {
+  return { md: rec.md, tacit: rec.tacit };
+}
+
 export async function ensureHydrated(): Promise<void> {
   const s = ks();
-  if (!s.hydration) s.hydration = hydrate();
+  if (!s.hydration) s.hydration = Promise.all([hydrate(), versions.ensureHydrated()]).then(() => {});
   return s.hydration;
 }
 
@@ -160,6 +175,7 @@ export function __resetStore(): void {
   s.seeded = false;
   s.hydration = null;
   mirror.__reset();
+  versions.__reset();
 }
 
 // --------------------------------------------------------------- scoping -----
@@ -211,13 +227,14 @@ function summarise(rec: WorkflowRecord): WorkflowSummary {
   return rest;
 }
 
-export function listWorkflows(user: Principal): WorkflowGroups {
+export function listWorkflows(user: Principal, opts: { includeArchived?: boolean } = {}): WorkflowGroups {
   ensureSeeded();
   const mine: WorkflowSummary[] = [];
   const domain: WorkflowSummary[] = [];
   const marketplace: WorkflowSummary[] = [];
 
   for (const rec of ks().workflows.values()) {
+    if (rec.archived && !opts.includeArchived) continue;
     if (rec.owner === user.id) {
       mine.push(summarise(rec));
     } else if (rec.visibility === 'Marketplace') {
@@ -304,6 +321,11 @@ export function updateWorkflow(
       fail('The workflow changed since you opened it (stale sha) — reload and re-apply', 409);
     }
 
+    if (patch.md === rec.md) return rec; // no-op edit → no version churn
+
+    // Snapshot the PRIOR canonical source before overwriting it.
+    versions.record(id, user.id, snapshotState(rec), 'edit md');
+
     // Parse to extract denormalised title + visibility/status.
     const w = parseWorkflow(patch.md);
     rec.md = patch.md;
@@ -321,6 +343,7 @@ export function deleteWorkflow(id: string, user: Principal): void {
   const rec = requireEdit(id, user);
   if (rec.status === 'live') fail('Cannot delete a published workflow — unpublish it first', 400);
   mirror.deleteThrough(id);
+  versions.purge(id);
   ks().workflows.delete(id);
 }
 
@@ -418,7 +441,66 @@ export function getTacit(id: string, user: Principal): { tacit: string } {
 /** Replace the workflow's sibling tacit.md (knowledge-agent-compressed markdown). */
 export function updateTacit(id: string, user: Principal, tacit: string): WorkflowRecord {
   const rec = requireEdit(id, user);
+  if (tacit === rec.tacit) return rec; // no-op edit → no version churn
+  versions.record(id, user.id, snapshotState(rec), 'edit tacit');
   rec.tacit = tacit;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+// ------------------------------------------ archive / delete / versions -------
+
+/**
+ * Archive a workflow: reversible soft-hide. Edit-scoped — only the owner or a
+ * same-domain Builder+ may archive. The record + its history are retained;
+ * the workflow leaves the working lists until unarchived.
+ */
+export function archiveWorkflow(id: string, user: Principal): WorkflowRecord {
+  const rec = requireEdit(id, user);
+  rec.archived = true;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+/** Restore an archived workflow back into the working lists (edit-scoped). */
+export function unarchiveWorkflow(id: string, user: Principal): WorkflowRecord {
+  const rec = requireEdit(id, user);
+  rec.archived = false;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+/** Version history for a workflow, newest first (view-scoped). */
+export function listWorkflowVersions(id: string, user: Principal): ArtifactVersion[] {
+  requireView(id, user);
+  return versions.list(id);
+}
+
+/**
+ * Restore a prior version of a workflow's canonical source. Auditable + reversible:
+ * the CURRENT state is snapshotted as a new version first, THEN the chosen version
+ * is applied. Edit-scoped. The restored md is re-validated before going live.
+ */
+export function restoreWorkflowVersion(id: string, user: Principal, version: number): WorkflowRecord {
+  const rec = requireEdit(id, user);
+  const snap = versions.get(id, version);
+  if (!snap) fail(`Version ${version} not found`, 404);
+  const state = snap.state as { md?: string; tacit?: string };
+  const restored = state.md;
+  if (typeof restored !== 'string') fail(`Version ${version} has no restorable source`, 422);
+  parseWorkflow(restored); // reject a corrupt snapshot rather than go live with it
+  // Snapshot the live state first so the restore can itself be undone.
+  versions.record(id, user.id, snapshotState(rec), `restore of v${version}`);
+  rec.md = restored;
+  if (typeof state.tacit === 'string') rec.tacit = state.tacit;
+  // Re-derive denormalised fields from the restored source.
+  const w = parseWorkflow(restored);
+  rec.title = w.title;
+  rec.visibility = w.visibility;
+  rec.status = w.status;
   rec.updatedAt = now();
   writeThrough(rec);
   return rec;

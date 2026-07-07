@@ -31,6 +31,7 @@ import type {
 import { generateAndCompile } from '@/lib/software/auto-mcp';
 import { parseAppManifest, renderAppYaml, defaultOpenApi, detectSurface } from '@/lib/software/metadata';
 import { osMirror } from '@/lib/os-mirror';
+import { type ArtifactVersion, versionLog } from '@/lib/versioning';
 
 /**
  * App registry — the home of record for every application built in the Software
@@ -343,8 +344,21 @@ function withStatus(err: Error, status: number): Error {
 // lib/os-mirror.ts. A missing index is CREATED, never mistaken for a dead mirror.
 const mirror = osMirror({ index: config.appsIndex });
 
+// Durable, per-artifact version history. Snapshots the user-editable doc content
+// (designDecisions, dataDescriptions, docs) before each meaningful mutation.
+const versions = versionLog('app');
+
 function writeThrough(a: App): void {
   mirror.writeThrough(a.id, a);
+}
+
+/** The versioned slice of an app — the user-editable documentation fields. */
+function snapshotState(a: App): { designDecisions: string; dataDescriptions: string; docs: string } {
+  return { designDecisions: a.designDecisions, dataDescriptions: a.dataDescriptions, docs: a.docs };
+}
+
+function isOwnerOrAdminApp(a: App, user: CurrentUser): boolean {
+  return a.owner === user.id || (user.role === 'admin' && user.domains.includes(a.domain));
 }
 
 async function getCache(): Promise<Map<string, App>> {
@@ -362,6 +376,11 @@ async function getCache(): Promise<Map<string, App>> {
   }
   s.cache = map;
   return map;
+}
+
+/** Ensure the app registry and its version history are both hydrated. Used by the versions route. */
+export async function ensureHydrated(): Promise<void> {
+  await Promise.all([getCache(), versions.ensureHydrated()]);
 }
 
 // ------------------------------------------------------------------- Forgejo --
@@ -824,6 +843,12 @@ export async function updateAppDocs(
   const isOwner = a.owner === user.id;
   const isDomainAdmin = user.role === 'admin' && user.domains.includes(a.domain);
   if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to edit this app'), 403);
+  // Snapshot prior state before any mutation; skip version churn on no-op edits.
+  const changed =
+    (patch.designDecisions !== undefined && patch.designDecisions !== a.designDecisions) ||
+    (patch.dataDescriptions !== undefined && patch.dataDescriptions !== a.dataDescriptions) ||
+    (patch.docs !== undefined && patch.docs !== a.docs);
+  if (changed) versions.record(a.id, user.id, snapshotState(a), 'edit docs');
   if (patch.designDecisions !== undefined) a.designDecisions = patch.designDecisions;
   if (patch.dataDescriptions !== undefined) a.dataDescriptions = patch.dataDescriptions;
   if (patch.docs !== undefined) a.docs = patch.docs;
@@ -890,6 +915,41 @@ export async function promoteApp(appId: string, user: CurrentUser): Promise<App>
   return a;
 }
 
+// --------------------------------------------------------- Version history -----
+
+/** Version history for an app, newest first (view-scoped). */
+export async function listAppVersions(appId: string, user: CurrentUser): Promise<ArtifactVersion[]> {
+  await getAppForUser(appId, user); // view gate — throws 404 if not visible
+  return versions.list(appId);
+}
+
+/**
+ * Restore a prior version of an app's doc content. Restore is auditable +
+ * reversible: the current state is snapshotted as a new version first, then
+ * the chosen version is applied. Edit-scoped (owner or Admin only).
+ */
+export async function restoreAppVersion(appId: string, user: CurrentUser, version: number): Promise<App> {
+  const map = await getCache();
+  const a = map.get(appId);
+  if (!a || !visibleToUser(a, user)) throw withStatus(new Error('App not found'), 404);
+  if (!isOwnerOrAdminApp(a, user)) throw withStatus(new Error('Not permitted to edit this app'), 403);
+  const snap = versions.get(appId, version);
+  if (!snap) throw withStatus(new Error(`Version ${version} not found`), 404);
+  const restored = snap.state as { designDecisions?: string; dataDescriptions?: string; docs?: string };
+  if (typeof restored.designDecisions !== 'string') {
+    throw withStatus(new Error(`Version ${version} has no restorable content`), 422);
+  }
+  // Snapshot the live state first so the restore can itself be undone.
+  versions.record(appId, user.id, snapshotState(a), `restore of v${version}`);
+  if (restored.designDecisions !== undefined) a.designDecisions = restored.designDecisions;
+  if (restored.dataDescriptions !== undefined) a.dataDescriptions = restored.dataDescriptions;
+  if (restored.docs !== undefined) a.docs = restored.docs;
+  a.updatedAt = now();
+  map.set(a.id, a);
+  writeThrough(a);
+  return a;
+}
+
 // ------------------------------------------------------- Server accessors -----
 //
 // The governed software modules (review / lifecycle / server / platform-mcp)
@@ -916,6 +976,7 @@ export async function removeAppInternal(appId: string): Promise<void> {
   const map = await getCache();
   map.delete(appId);
   mirror.deleteThrough(appId);
+  versions.purge(appId);
 }
 
 /** Persist a mutated app back to the cache + the durable mirror. */
@@ -942,7 +1003,8 @@ export function __resetAppsCache(): void {
   const s = appCacheState();
   s.cache = null;
   mirror.__reset();
+  versions.__reset();
 }
 
 export { withStatus };
-export type { Artifact };
+export type { Artifact, ArtifactVersion };

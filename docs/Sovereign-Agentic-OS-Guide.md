@@ -152,6 +152,29 @@ that turns green only when an artifact is documented and in the lineage graph. T
 product the creator-only scope is always labelled **"Personal"** (never "Mine" or "My"), and a
 domain is named directly — **"<domain> domain"**, not "My Domain".
 
+## Archive, delete and version history
+
+Every artifact carries the same three lifecycle controls, surfaced consistently on each tab —
+agent systems, apps, big bets, dashboards, knowledge workflows, files, datasets/metrics/knowledge
+docs. Only the artifact's owner (or an in-domain Admin) may use them, exactly the same authority
+that governs editing it; a viewer sees the history but cannot change it.
+
+- **Archive** — a reversible *soft-hide*. The artifact leaves the working lists (a running agent is
+  also stopped) but nothing is lost; **Restore** brings it back unchanged. Use "Show archived" to
+  see and restore archived items. Archiving a Shared/Marketplace artifact hides it for everyone
+  until restored.
+- **Delete** — a confirmed, permanent removal of the artifact **and** its version history. It is
+  guarded by an explicit "Confirm delete" step.
+- **Version history** — every meaningful edit first **snapshots the prior state** as a numbered
+  version (with author + timestamp). Open **History** on any artifact to see the timeline and
+  **Restore** any earlier version. Restore is itself auditable and reversible: it snapshots the
+  *current* state as a new version before rolling back, so you can always undo a restore. History is
+  durable — it is mirrored to OpenSearch (see *Durable state — every store mirrors, one core*), so
+  it survives redeploys, and it is purged only when the artifact is deleted.
+
+One reusable helper (`lib/versioning.ts`) provides this to every store, so the behaviour — snapshot
+on edit, list, restore-creates-a-new-version — is identical wherever you are.
+
 ## Four roles, assigned per domain
 
 | Role | What they do |
@@ -195,6 +218,31 @@ gate**. The Software build assistant is the fullest example: it scaffolds a repo
 code, previews the app, and assembles a **deploy review card** through `lib/software` — it never
 self-approves a go-live. Which models fill the two phases is set once at the gateway (see *Models &
 the LLM gateway*).
+
+## The Sovereign OS Assistant — one assistant, everywhere, governed
+
+Above the per-tab helpers sits **one overarching assistant**, present on **every** tab (the **Ask
+the OS** launcher in the bottom-right opens it). It is **context-aware of the tab you are on** — it
+is grounded in that tab's context and surfaces that tab's tools first — while carrying the
+**whole-OS** picture: it can reach **every** governed tool across every tab, so it helps with the
+work in front of you *and* anything else in the platform.
+
+Crucially, it is a **client of the OS's own MCP server**. It gets all information and takes all
+actions by dispatching through the **exact same governed path** (`handleRpc`) that external MCP
+clients like Claude Desktop use — under **your** delegated identity. So it inherits **identical
+guardrails**: the role floor, approval gates, OPA/RLS, and Langfuse audit all apply unchanged. There
+is **no privileged side-channel** — the assistant cannot do anything you could not do yourself
+through the governed tools.
+
+It runs on the **one assistant model** (`sovereign-default`, routed through the governed LiteLLM
+gateway to STACKIT) using the same **PLAN → ACT** harness as the tab helpers. The panel is
+**transparent and honest**: each answer lists the governed tools it invoked, and if governance
+**blocks** a call (wrong role, or an approval is required) it says so plainly and flags the tool —
+it never pretends it acted. If the assistant model is unreachable, it shows the honest error.
+
+*Under the hood:* `components/OsAssistant.tsx` (shell-mounted, tab-aware via the route) → `POST
+/api/assistant/chat` → `lib/assistant/agent-loop.ts` (`runOsAssistant`), which reuses the shared
+harness and executes every tool via `handleRpc`.
 
 \newpage
 
@@ -752,13 +800,18 @@ system — `credentials + endpoint + a set of governed tools`, never a raw pipe 
 for agents and software. You grant **use**, never the token: the secret stays in the secrets store.
 (Platform-service status moved out — that now lives in **Components**.)
 
+**Supported connectors.** The Connections tab offers exactly **three** connectors today, each wired
+end-to-end so you connect your **own** account and only a token *reference* is stored (never a raw
+secret): **Google Drive**, **Microsoft OneDrive** (both personal read-only OAuth), and **Notion** (via
+Notion's **hosted MCP**, OAuth 2.1 · PKCE). There are no placeholder/"roadmap" connectors — you can
+never stand up a non-working mock connection from this surface.
+
 **The golden path.**
 
-1. In **My connections**, register a connection (source type + endpoint) under the Personal → Shared
-   → Certified lifecycle. Any user can connect their **own** account (e.g. their Google Drive) via
-   per-user OAuth; Builders/Admins create **shared** connections with service credentials.
-2. In **Registry**, see the supported connectors (available vs. on the roadmap) and the
-   auto-generated **App MCP connections** (one per Software app).
+1. In **My connections**, register a connection under the Personal → Shared → Certified lifecycle.
+   Any user can connect their **own** account (Google Drive, OneDrive, or Notion) via per-user OAuth.
+2. In **Registry**, see the three supported connectors and the auto-generated **App MCP connections**
+   (one per Software app). Each connector's **Connect →** opens the Governed connections tab.
 3. In **Governed connections**, set each tool's **capability profile** — a mode of *Off / Read /
    Write-approval / Write-bounded / Blocked*, plus scope, rate and cost limits. **Reads on, writes
    off by default**; the profile compiles to an OPA policy, and a grant to an agent can only
@@ -775,11 +828,13 @@ connections to agents; Administrators manage the egress allowlist and Marketplac
 **Connects to.** **Agents** (connection = tool), **Data/Files** (connection = source), **Software**
 (the auto-MCP), **Governance** (egress + write-back approvals), **Marketplace**.
 
-> **v1 status — read this.** The **Governed connections** tab is the real capability-profile and
-> policy surface and works as described. Some **My connections** / **Build a connector** create flows
-> are **scaffolded in v1**: they draft a configuration for review rather than minting live
-> credentials. The chapter describes the full design so the shape is clear; expect those flows to say
-> *"scaffolded in v1"* on screen until they are wired.
+> **v1 status — read this.** The three connectors in **Governed connections** (Google Drive, OneDrive,
+> Notion) are wired end-to-end: real per-user OAuth, a durable token *reference* in Secrets Manager
+> with silent refresh, a verified connected state, and — for Notion — a live MCP `tools/list` proof.
+> The **Build a connector** agent still *drafts* a configuration for review rather than minting live
+> credentials (marked *"scaffolded in v1"* on screen). Governed tool **execution** for a connected
+> Notion workspace beyond `tools/list` is the next increment; the capability-profile, OPA policy and
+> approval spine already govern every call.
 
 ### Connecting Google Drive / OneDrive
 
@@ -824,6 +879,31 @@ never shows or logs the raw secret.
 >
 > The redirect URIs must match character-for-character. The raw secret is stored only in Secrets
 > Manager; if you ever need to rotate it, register again — the panel replaces the reference + fingerprint.
+
+### Connecting Notion (hosted MCP)
+
+Notion connects via its **hosted MCP server** (`https://mcp.notion.com/mcp`) — the OS acts as an MCP
+*client* and you authorize your **own** Notion workspace. Unlike Drive/OneDrive there is **no admin
+setup**: the flow uses OAuth 2.1 with **dynamic client registration** and **PKCE**, so the OS
+registers itself with Notion on the fly.
+
+**For each user (Connections → Governed connections):**
+
+1. Under **New connection**, pick **Notion (personal · hosted MCP)**, give it a name, and click
+   **Add Notion**. This creates a private (Personal) connection with no live token yet — the card
+   shows **Not connected**.
+2. On the card, click **Connect Notion**. The OS discovers Notion's OAuth endpoints (RFC 9728 →
+   RFC 8414), registers a public client (RFC 7591), and navigates you to Notion's consent screen with
+   a PKCE challenge. Sign in as **yourself** and choose which pages/workspace to share. You are sent
+   back and the card reads **Connected as `<you>`**. The token set is stored in Secrets Manager — never
+   in the browser, the record, a log, or a trace; only a fingerprint is shown.
+3. Click **Verify · list tools** to *prove the connection is live*: the OS runs a real MCP
+   `initialize` + `tools/list` round-trip through your stored token and lists the tools the Notion
+   server exposes. A stale access token is refreshed silently first; if refresh fails the card shows
+   **Needs reconnect**. **Disconnect** removes the connection and its stored token.
+
+The egress allowlist already includes `mcp.notion.com` and `api.notion.com`. No client secret is
+required (public client + PKCE); if Notion ever issues one it is stored only in Secrets Manager.
 
 ## Marketplace — consume across domains
 

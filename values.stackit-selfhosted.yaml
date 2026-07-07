@@ -247,7 +247,7 @@ osUI:
     # 0.1.11 = Agents-tab builder rebuild: globalThis store fix (AGENT.md/MEMORY.md
     # now load), single Auto/Reasoning/Execution model toggle (real sovereign-*
     # ids), React Flow drag-and-drop graph builder, master-detail rail + templates.
-    tag: "0.1.46"
+    tag: "0.1.47"
   # CANONICAL PUBLIC URL — the apex host. OS_PUBLIC_URL derives from this (os-ui.yaml
   # reads `.Values.osUI.publicUrl` first, only falling back to the `os.<zone>` ingress
   # host). Pinning it here makes the apex authoritative so a `helm upgrade` can NEVER
@@ -344,6 +344,18 @@ webFetch:
   image:
     repository: ghcr.io/aborek/sovereign-os/web-fetch
     tag: "0.1.0"
+
+# Software live-app runner ON for STACKIT — the os-ui provisions real running apps
+# into the `agentic-apps` namespace with per-app hosts under this apps domain.
+# OPERATOR (for reachable URLs): add a wildcard DNS record
+#   *.apps.agentic.datamasterclass.com  ->  the ingress-nginx LoadBalancer IP
+# (same LB as the tool consoles); cert-manager then issues per-host TLS via HTTP-01.
+softwareRunner:
+  enabled: true
+  namespace: agentic-apps
+  appsDomain: "apps.agentic.datamasterclass.com"
+  runnerImage: "traefik/whoami:latest"   # teaching default; a built app overrides via runImage
+  # ingressClass / tlsIssuer fall back to the ingress.* values (nginx / letsencrypt-prod).
 
 queryTool:
   image:

@@ -5,6 +5,7 @@ import Sidebar from '@/components/Sidebar';
 import TutorialProvider from '@/components/tutorials/TutorialProvider';
 import { ToolWindowProvider } from '@/components/ToolWindowProvider';
 import AuthGate from '@/components/AuthGate';
+import OsAssistant from '@/components/OsAssistant';
 
 export const metadata: Metadata = {
   title: 'Sovereign Agentic OS by datamasterclass.com',
@@ -42,6 +43,9 @@ export default function RootLayout({
               <Sidebar />
               <div className="main">{children}</div>
             </div>
+            {/* The ONE overarching, tab-aware OS assistant — on every tab, acts
+                through the OS's own governed MCP. */}
+            <OsAssistant />
           </ToolWindowProvider>
         </TutorialProvider>
         <AuthGate />

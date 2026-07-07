@@ -13,6 +13,7 @@ import { canPromote } from '@/lib/session';
 import { roleRank } from '@/lib/governance/roles';
 import type { CurrentUser } from '@/lib/auth';
 import { osMirror } from '@/lib/os-mirror';
+import { type ArtifactVersion, versionLog } from '@/lib/versioning';
 
 /**
  * Artifact registry + scoping logic — the server-side enforcement point for the
@@ -60,12 +61,23 @@ const mirror = osMirror({
         name: { type: 'text' },
         description: { type: 'text' },
         tags: { type: 'keyword' },
+        archived: { type: 'boolean' },
         createdAt: { type: 'date' },
         updatedAt: { type: 'date' },
       },
     },
   },
 });
+
+// Durable, per-artifact version history (the reusable OS helper). We snapshot
+// the editable slice (name/description/tags/spec) on every meaningful edit + on
+// restore, so any prior version can be viewed and restored.
+const versions = versionLog('artifact');
+
+type ArtifactSnapshot = Pick<Artifact, 'name' | 'description' | 'tags' | 'spec'>;
+function snapshotState(a: Artifact): ArtifactSnapshot {
+  return { name: a.name, description: a.description, tags: a.tags, spec: a.spec };
+}
 
 function writeThrough(a: Artifact): void {
   // Fire-and-forget durable mirror; never block the request on it.
@@ -115,6 +127,7 @@ export function seed(): Artifact[] {
 async function getCache(): Promise<Map<string, Artifact>> {
   const s = artifactCacheState();
   if (s.cache) return s.cache;
+  await versions.ensureHydrated();
   const map = new Map<string, Artifact>();
   // Try to hydrate from OpenSearch; fall back to the in-memory seed.
   const docs = await mirror.hydrate(1000);
@@ -156,11 +169,13 @@ function visibleToUser(a: Artifact, user: CurrentUser): boolean {
 
 export async function listForUser(
   user: CurrentUser,
-  opts: { type?: ArtifactType; visibility?: Visibility } = {},
+  opts: { type?: ArtifactType; visibility?: Visibility; includeArchived?: boolean } = {},
 ): Promise<Artifact[]> {
   const map = await getCache();
   return [...map.values()]
     .filter((a) => visibleToUser(a, user))
+    // Archived artifacts are soft-hidden from the working lists (reversible).
+    .filter((a) => (opts.includeArchived ? true : !a.archived))
     .filter((a) => (opts.type ? a.type === opts.type : true))
     .filter((a) => (opts.visibility ? a.visibility === opts.visibility : true))
     .sort((x, y) => y.updatedAt.localeCompare(x.updatedAt));
@@ -289,10 +304,63 @@ export async function updateArtifact(
   const isOwner = a.owner === user.id;
   const isDomainAdmin = user.role === 'admin' && user.domains.includes(a.domain);
   if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to edit this artifact'), 403);
+  // Snapshot the PRIOR editable state before overwriting it, so the edit is
+  // restorable from the version history.
+  versions.record(a.id, user.id, snapshotState(a), 'edit');
   if (patch.name !== undefined) a.name = patch.name.trim() || a.name;
   if (patch.description !== undefined) a.description = patch.description;
   if (patch.tags !== undefined) a.tags = patch.tags;
   if (patch.spec !== undefined) a.spec = { ...a.spec, ...patch.spec };
+  a.updatedAt = now();
+  map.set(a.id, a);
+  writeThrough(a);
+  return a;
+}
+
+/** Archive: a reversible soft-hide (retained). Edit-scoped, like updating it. */
+export async function archiveArtifact(artId: string, user: CurrentUser, archived: boolean): Promise<Artifact> {
+  const map = await getCache();
+  const a = map.get(artId);
+  if (!a) throw withStatus(new Error('Artifact not found'), 404);
+  const isOwner = a.owner === user.id;
+  const isDomainAdmin = user.role === 'admin' && user.domains.includes(a.domain);
+  if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to archive this artifact'), 403);
+  a.archived = archived;
+  a.updatedAt = now();
+  map.set(a.id, a);
+  writeThrough(a);
+  return a;
+}
+
+/** Version history for an artifact, newest first (view-scoped). */
+export async function listArtifactVersions(artId: string, user: CurrentUser): Promise<ArtifactVersion[]> {
+  const map = await getCache();
+  const a = map.get(artId);
+  if (!a) throw withStatus(new Error('Artifact not found'), 404);
+  if (!visibleToUser(a, user)) throw withStatus(new Error('Not permitted to view this artifact'), 403);
+  return versions.list(artId);
+}
+
+/**
+ * Restore a prior version of an artifact. Restore is itself auditable +
+ * reversible: the CURRENT state is snapshotted as a new version first, THEN the
+ * chosen version's editable slice is applied. Edit-scoped.
+ */
+export async function restoreArtifactVersion(artId: string, user: CurrentUser, version: number): Promise<Artifact> {
+  const map = await getCache();
+  const a = map.get(artId);
+  if (!a) throw withStatus(new Error('Artifact not found'), 404);
+  const isOwner = a.owner === user.id;
+  const isDomainAdmin = user.role === 'admin' && user.domains.includes(a.domain);
+  if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to edit this artifact'), 403);
+  const snap = versions.get(artId, version);
+  if (!snap) throw withStatus(new Error(`Version ${version} not found`), 404);
+  const restored = snap.state as ArtifactSnapshot;
+  versions.record(artId, user.id, snapshotState(a), `restore of v${version}`);
+  a.name = restored.name;
+  a.description = restored.description;
+  a.tags = restored.tags;
+  a.spec = restored.spec;
   a.updatedAt = now();
   map.set(a.id, a);
   writeThrough(a);
@@ -308,6 +376,7 @@ export async function deleteArtifact(artId: string, user: CurrentUser): Promise<
   if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to delete this artifact'), 403);
   map.delete(artId);
   deleteThrough(artId);
+  versions.purge(artId);
 }
 
 function withStatus(err: Error, status: number): Error {
@@ -319,6 +388,7 @@ export function __resetArtifactsCache(): void {
   const s = artifactCacheState();
   s.cache = null;
   mirror.__reset();
+  versions.__reset();
 }
 
 export type { Artifact, ArtifactType, Visibility, ArtifactOrigin };

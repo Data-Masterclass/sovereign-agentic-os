@@ -208,6 +208,23 @@ spec:
                   key: token
             - name: QUERY_TOOL_URL
               value: {{ $u.queryToolUrl | quote }}
+            {{- if .Values.softwareRunner.enabled }}
+            # ---- Software live-app runner (Software tab). The os-ui provisions a
+            # real Deployment+Service+Ingress per built app into softwareRunner.namespace
+            # (RBAC in templates/os-ui/apps-runner.yaml). Per-app host is
+            # <slug>.<domain>.<appsDomain>; runnerImage is the teaching default when a
+            # built app has no image of its own. ----
+            - name: SOFTWARE_RUNNER_NAMESPACE
+              value: {{ .Values.softwareRunner.namespace | quote }}
+            - name: OS_APPS_DOMAIN
+              value: {{ .Values.softwareRunner.appsDomain | quote }}
+            - name: SOFTWARE_RUNNER_IMAGE
+              value: {{ .Values.softwareRunner.runnerImage | quote }}
+            - name: OS_APPS_INGRESS_CLASS
+              value: {{ .Values.softwareRunner.ingressClass | default .Values.ingress.className | quote }}
+            - name: OS_APPS_TLS_ISSUER
+              value: {{ .Values.softwareRunner.tlsIssuer | default .Values.ingress.tlsIssuer | quote }}
+            {{- end }}
             # ---- Data-tab ingest (T3). os-ui streams an uploaded file to MinIO
             # (uploads/<uid>/) with a SigV4 PUT, then calls the data-runner /ingest —
             # which writes the physical Iceberg Bronze table. Reuses the SAME

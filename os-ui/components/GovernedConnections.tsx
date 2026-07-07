@@ -185,10 +185,9 @@ export default function GovernedConnections() {
       {(canCreate || canCreatePersonal) ? (
         <>
           <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-            Pick a connection type. Personal connections (Drive, Slack) use OAuth — we complete the
-            flow server-side and store only a token reference. Shared connections (databases, APIs,
-            MCP servers) require a <strong>Builder</strong> or <strong>Administrator</strong> to
-            enter service credentials — these also go to <strong>Secrets Manager</strong>.
+            Pick a connector: <strong>Google Drive</strong>, <strong>OneDrive</strong> or
+            {' '}<strong>Notion</strong>. Each connects with your own account via OAuth — you sign in,
+            we complete the flow server-side and store only a token <em>reference</em> (never the token).
             All external endpoints are checked against the <strong>egress allowlist</strong>.
           </p>
 
@@ -196,7 +195,7 @@ export default function GovernedConnections() {
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Connection name (e.g. Alex's Google Drive, Salesforce Sales org)"
+            placeholder="Connection name (e.g. Alex's Google Drive, My Notion workspace)"
           />
 
           <div className="row" style={{ marginTop: 10 }}>
@@ -433,6 +432,48 @@ function ConnectionCard({
   const canManage = roleAtLeast(role, 'builder');
   const exposed = c.tools.filter((t) => t.mode === 'Read' || t.mode === 'Write-approval' || t.mode === 'Write-bounded');
   const isDrive = c.connector === 'drive' || c.type === 'Drive';
+
+  // Notion hosted-MCP connection: a per-user OAuth (DCR + PKCE) connect flow that
+  // proves liveness with a real MCP tools/list. Status derives from the same safe
+  // health field a Drive uses (untested → Not connected; healthy → Connected).
+  const isNotion = c.template === 'notion-mcp';
+  const notionStatus = driveConnectionStatus(c);
+  const [notionTools, setNotionTools] = useState<{ name: string; description?: string }[] | null>(null);
+  const [notionMsg, setNotionMsg] = useState('');
+
+  function connectNotion() {
+    window.location.href = `/api/connections/notion/authorize?connectionId=${encodeURIComponent(c.id)}`;
+  }
+
+  async function verifyNotion() {
+    setBusy('verify-notion');
+    setNotionMsg('');
+    try {
+      const r = await postJSON(`/api/connections/${c.id}/mcp-tools`);
+      const detail = (r.data.detail as string) ?? (r.data.error as string) ?? 'Verification failed';
+      setNotionMsg(`${r.data.ok ? '✓' : '✗'} ${detail}`);
+      setNotionTools((r.data.tools as { name: string; description?: string }[]) ?? []);
+      if (r.data.ok) onChange();
+    } catch (e) {
+      setNotionMsg(`✗ ${(e as Error).message}`);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function disconnectNotion() {
+    if (typeof window !== 'undefined' && !window.confirm(`Disconnect "${c.name}"? This removes the connection and its stored token.`)) return;
+    setBusy('disconnect');
+    setNotionMsg('');
+    try {
+      const res = await fetch(`/api/connections/${c.id}`, { method: 'DELETE' });
+      if (res.ok) { onChange(); return; }
+      const d = await res.json() as { error?: string };
+      setNotionMsg(`✗ ${d.error ?? 'Could not disconnect'}`);
+    } catch (e) {
+      setNotionMsg(`✗ ${(e as Error).message}`);
+    } finally { setBusy(''); }
+  }
 
   // Personal-drive OAuth wiring: which provider this drive federates to, whether an
   // admin has registered its OAuth app, and the current connect status. A user
@@ -675,9 +716,51 @@ function ConnectionCard({
         </div>
       ) : null}
 
+      {/* Notion hosted-MCP connect status + controls (own workspace, own consent). */}
+      {isNotion ? (
+        <div style={{ marginTop: 12 }}>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            {notionStatus === 'connected'
+              ? <span className="badge ok">Connected as {c.owner}</span>
+              : notionStatus === 'needs-reconnect'
+                ? <span className="badge err">Needs reconnect</span>
+                : <span className="badge muted">Not connected</span>}
+            {notionStatus === 'connected' ? (
+              <>
+                <button className="btn ghost" onClick={verifyNotion} disabled={busy !== ''}>
+                  {busy === 'verify-notion' ? <span className="spin" /> : 'Verify · list tools'}
+                </button>
+                <button className="btn ghost" onClick={connectNotion} disabled={busy !== ''}>Reconnect</button>
+                <button className="btn ghost" onClick={disconnectNotion} disabled={busy !== ''}>Disconnect</button>
+              </>
+            ) : notionStatus === 'needs-reconnect' ? (
+              <>
+                <button className="btn" onClick={connectNotion} disabled={busy !== ''}>Reconnect</button>
+                <button className="btn ghost" onClick={disconnectNotion} disabled={busy !== ''}>Disconnect</button>
+              </>
+            ) : (
+              <button className="btn" onClick={connectNotion} disabled={busy !== ''}>Connect Notion</button>
+            )}
+          </div>
+          <p className="hint" style={{ marginTop: 6, marginBottom: 0, fontSize: 11.5 }}>
+            Connect signs you in to Notion and authorizes your own workspace via Notion&apos;s hosted MCP
+            (OAuth 2.1 · PKCE). Only a token <em>reference</em> is stored — never the token itself.
+            {' '}<strong>Verify · list tools</strong> runs a real MCP tools/list to prove the connection is live.
+          </p>
+          {notionMsg ? (
+            <div className={notionMsg.startsWith('✗') ? 'error' : 'answer'} style={{ marginTop: 8 }}>{notionMsg}</div>
+          ) : null}
+          {notionTools && notionTools.length > 0 ? (
+            <div className="muted mono" style={{ marginTop: 8, fontSize: 11.5 }}>
+              Live tools: {notionTools.map((t) => t.name).join(', ')}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* Action buttons */}
       <div className="row" style={{ marginTop: 12, gap: 8, flexWrap: 'wrap' }}>
-        {driveProvider ? null : c.health === 'needs-reconnect'
+        {driveProvider || isNotion ? null : c.health === 'needs-reconnect'
           ? <button className="btn ghost" onClick={test} disabled={busy !== ''}>Reconnect</button>
           : <button className="btn ghost" onClick={test} disabled={busy !== ''}>Test</button>}
         <button className="btn ghost" onClick={onToggle}>

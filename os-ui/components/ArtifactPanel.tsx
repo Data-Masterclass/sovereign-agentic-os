@@ -24,6 +24,9 @@ export type SpecField = {
 
 type Group = { key: string; heading: string; sub?: string; items: Artifact[] };
 
+/** One row of an artifact's version history (from GET …/versions). */
+type VersionRow = { version: number; at: string; author: string; summary: string };
+
 /**
  * Reusable workspace panel for one artifact type. Renders the caller's scoped
  * list — their Personal items, their domains' Shared items GROUPED BY DOMAIN,
@@ -51,12 +54,19 @@ export default function ArtifactPanel({
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'All' | Visibility>('All');
   const [busyId, setBusyId] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
 
   // inline edit (alter name + description in place)
   const [editId, setEditId] = useState('');
   const [editName, setEditName] = useState('');
   const [editDesc, setEditDesc] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // inline version history (per artifact)
+  const [historyId, setHistoryId] = useState('');
+  const [versionsList, setVersionsList] = useState<VersionRow[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState('');
 
   // create form
   const [name, setName] = useState('');
@@ -72,7 +82,7 @@ export default function ArtifactPanel({
   const load = useCallback(async () => {
     setError('');
     try {
-      const res = await fetch(`/api/artifacts?type=${type}`, { cache: 'no-store' });
+      const res = await fetch(`/api/artifacts?type=${type}${showArchived ? '&archived=1' : ''}`, { cache: 'no-store' });
       const body = await res.json();
       if (!res.ok) setError(body.error ?? 'Failed to load');
       else setItems(body.items ?? []);
@@ -81,7 +91,7 @@ export default function ArtifactPanel({
     } finally {
       setLoading(false);
     }
-  }, [type]);
+  }, [type, showArchived]);
 
   useEffect(() => {
     load();
@@ -127,6 +137,60 @@ export default function ArtifactPanel({
       }
     },
     [load],
+  );
+
+  // POST a body-carrying action (archive/unarchive/restore) then reload.
+  const post = useCallback(
+    async (a: Artifact, path: string, payload: unknown) => {
+      setBusyId(a.id);
+      setError('');
+      try {
+        const res = await fetch(path, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          setError(body.error ?? 'Action failed');
+        } else await load();
+      } finally {
+        setBusyId('');
+      }
+    },
+    [load],
+  );
+
+  const fetchHistory = useCallback(async (id: string) => {
+    setLoadingHistory(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/artifacts/${id}/versions`, { cache: 'no-store' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) setError(body.error ?? 'Failed to load history');
+      else setVersionsList(body.versions ?? []);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, []);
+
+  // Open (or close) the inline version-history panel for one artifact.
+  const toggleHistory = useCallback(
+    async (a: Artifact) => {
+      if (historyId === a.id) { setHistoryId(''); return; }
+      setHistoryId(a.id);
+      setVersionsList([]);
+      await fetchHistory(a.id);
+    },
+    [historyId, fetchHistory],
+  );
+
+  const restoreVersion = useCallback(
+    async (a: Artifact, version: number) => {
+      await post(a, `/api/artifacts/${a.id}/versions`, { version });
+      await fetchHistory(a.id); // reflect the new "restore of vN" entry
+    },
+    [post, fetchHistory],
   );
 
   const beginEdit = useCallback((a: Artifact) => {
@@ -209,11 +273,14 @@ export default function ArtifactPanel({
     }
     return (
       <div className="card" key={a.id}>
-        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
           <h3 style={{ margin: 0 }}>{a.name}</h3>
-          <span className={isCert ? badgeClass('Certified') : badgeClass(a.visibility)}>
-            {isCert ? 'Certified' : a.visibility}
-          </span>
+          <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+            {a.archived ? <span className="badge" style={{ opacity: 0.75 }}>Archived</span> : null}
+            <span className={isCert ? badgeClass('Certified') : badgeClass(a.visibility)}>
+              {isCert ? 'Certified' : a.visibility}
+            </span>
+          </div>
         </div>
         {a.description ? <div className="muted" style={{ marginTop: 8, whiteSpace: 'normal' }}>{a.description}</div> : null}
         {renderSpec ? <div style={{ marginTop: 8 }}>{renderSpec(a)}</div> : null}
@@ -236,17 +303,67 @@ export default function ArtifactPanel({
               {busyId === a.id ? <span className="spin" /> : 'Certify → Marketplace'}
             </button>
           ) : null}
-          {canModify ? (
+          {canModify && !a.archived ? (
             <button className="btn ghost" style={{ padding: '5px 12px' }} disabled={busyId === a.id} onClick={() => beginEdit(a)}>
               Edit
             </button>
           ) : null}
+          <button className="btn ghost" style={{ padding: '5px 12px' }} disabled={busyId === a.id} onClick={() => toggleHistory(a)}>
+            {historyId === a.id ? 'Hide history' : 'History'}
+          </button>
           {canModify ? (
-            <button className="btn ghost" style={{ padding: '5px 12px' }} disabled={busyId === a.id} onClick={() => act(a, `/api/artifacts/${a.id}`, 'DELETE')}>
-              Delete
-            </button>
+            a.archived ? (
+              <button className="btn ghost" style={{ padding: '5px 12px' }} disabled={busyId === a.id} onClick={() => post(a, `/api/artifacts/${a.id}`, { action: 'unarchive' })}>
+                {busyId === a.id ? <span className="spin" /> : 'Restore'}
+              </button>
+            ) : (
+              <button className="btn ghost" style={{ padding: '5px 12px' }} disabled={busyId === a.id} onClick={() => post(a, `/api/artifacts/${a.id}`, { action: 'archive' })}>
+                Archive
+              </button>
+            )
+          ) : null}
+          {canModify ? (
+            confirmDeleteId === a.id ? (
+              <>
+                <button className="btn" style={{ padding: '5px 12px', background: 'var(--danger, #b42318)' }} disabled={busyId === a.id} onClick={() => act(a, `/api/artifacts/${a.id}`, 'DELETE')}>
+                  {busyId === a.id ? <span className="spin" /> : 'Confirm delete'}
+                </button>
+                <button className="btn ghost" style={{ padding: '5px 12px' }} disabled={busyId === a.id} onClick={() => setConfirmDeleteId('')}>
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button className="btn ghost" style={{ padding: '5px 12px' }} disabled={busyId === a.id} onClick={() => setConfirmDeleteId(a.id)}>
+                Delete
+              </button>
+            )
           ) : null}
         </div>
+        {historyId === a.id ? (
+          <div className="card" style={{ marginTop: 10, background: 'var(--surface-2, rgba(0,0,0,0.02))' }}>
+            <div className="hint" style={{ marginTop: 0, marginBottom: 8 }}>Version history — restore any prior version (creates a new version).</div>
+            {loadingHistory ? (
+              <div className="muted">Loading…</div>
+            ) : versionsList.length === 0 ? (
+              <div className="muted">No prior versions yet — the first edit captures one.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {versionsList.map((v) => (
+                  <div className="row" key={v.version} style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                    <div className="muted mono" style={{ fontSize: 11 }}>
+                      v{v.version} · {v.summary} · {v.author} · {new Date(v.at).toLocaleString()}
+                    </div>
+                    {canModify ? (
+                      <button className="btn ghost" style={{ padding: '3px 10px', fontSize: 12 }} disabled={busyId === a.id} onClick={() => restoreVersion(a, v.version)}>
+                        Restore
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : null}
         {!isCert && a.visibility === 'Personal' && user && !canPromote(user.role, 'Personal') ? (
           <div className="hint" style={{ marginTop: 6, fontSize: 11 }}>Promotion to Shared is for builders/admins.</div>
         ) : null}
@@ -298,12 +415,22 @@ export default function ArtifactPanel({
       <div className="section-title">
         My workspace
         <span className="count-pill">{items.length}</span>
-        <div className="tabstrip" style={{ marginLeft: 'auto', marginBottom: 0 }}>
-          {(['All', 'Personal', 'Shared', 'Certified'] as const).map((f) => (
-            <button key={f} className={filter === f ? 'active' : ''} onClick={() => setFilter(f)}>
-              {f}{f !== 'All' ? ` (${counts[f]})` : ''}
-            </button>
-          ))}
+        <div className="row" style={{ marginLeft: 'auto', gap: 10, alignItems: 'center' }}>
+          <button
+            className="btn ghost"
+            style={{ padding: '4px 10px', fontSize: 12, opacity: showArchived ? 1 : 0.7 }}
+            onClick={() => setShowArchived((v) => !v)}
+            title="Archived artifacts are hidden by default"
+          >
+            {showArchived ? 'Hide archived' : 'Show archived'}
+          </button>
+          <div className="tabstrip" style={{ marginBottom: 0 }}>
+            {(['All', 'Personal', 'Shared', 'Certified'] as const).map((f) => (
+              <button key={f} className={filter === f ? 'active' : ''} onClick={() => setFilter(f)}>
+                {f}{f !== 'All' ? ` (${counts[f]})` : ''}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

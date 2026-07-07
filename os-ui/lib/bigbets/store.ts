@@ -34,6 +34,7 @@ import {
 } from './model.ts';
 import { resolveArtifact, sourceFor } from './sources.ts';
 import { osMirror } from '../os-mirror.ts';
+import { type ArtifactVersion, versionLog } from '../versioning.ts';
 
 /**
  * State pinned to `globalThis` so it is a TRUE singleton across all Next.js
@@ -48,6 +49,10 @@ function state(): BetsState {
   if (!g[STATE_KEY]) g[STATE_KEY] = { bets: new Map(), audit: [], seq: 0, hydration: null };
   return g[STATE_KEY]!;
 }
+
+// Durable, per-artifact version history (reused across the OS). A bet's editable
+// content is snapshotted on every meaningful update + on restore.
+const versions = versionLog('big-bet');
 
 // ---------------------------------------------------- durable mirror (best-effort) --
 const mirror = osMirror({
@@ -74,9 +79,30 @@ function writeThrough(bet: BigBet): void {
   mirror.writeThrough(bet.id, bet);
 }
 
+/** The versioned slice of a big bet — all fields a user edits. */
+function snapshotState(bet: BigBet): {
+  name: string; problem: BigBet['problem']; solution?: string;
+  targetValue: number; goLive: string; valueBasis: BigBet['valueBasis'];
+  allocation: BigBet['allocation']; ownerDeclaredValue?: number;
+  members: string[]; status: BigBet['status'];
+} {
+  return {
+    name: bet.name,
+    problem: bet.problem,
+    solution: bet.solution,
+    targetValue: bet.targetValue,
+    goLive: bet.goLive,
+    valueBasis: bet.valueBasis,
+    allocation: bet.allocation,
+    ownerDeclaredValue: bet.ownerDeclaredValue,
+    members: [...bet.members],
+    status: bet.status,
+  };
+}
+
 export async function ensureHydrated(): Promise<void> {
   const s = state();
-  if (!s.hydration) s.hydration = hydrate();
+  if (!s.hydration) s.hydration = Promise.all([hydrate(), versions.ensureHydrated()]).then(() => {});
   return s.hydration;
 }
 
@@ -104,7 +130,7 @@ function log(actor: string, action: string, betId?: string, detail?: Record<stri
   state().audit.unshift({ id: id('aud'), at: now(), actor, action, betId, detail });
 }
 
-/** Test hook: wipe the registry + audit. */
+/** Test hook: wipe the registry + audit + version history. */
 export function __resetBets(): void {
   const s = state();
   s.bets.clear();
@@ -112,6 +138,7 @@ export function __resetBets(): void {
   s.seq = 0;
   s.hydration = null;
   mirror.__reset();
+  versions.__reset();
 }
 
 export function auditLog(betId?: string): AuditEvent[] {
@@ -228,8 +255,15 @@ export function createBet(user: Principal, input: CreateBetInput): BigBet {
 
 // ------------------------------------------------------------------- read ----
 
-export function listBets(user: Principal): BigBet[] {
-  return [...state().bets.values()].filter((b) => canView(b, user)).sort((a, b) => a.name.localeCompare(b.name));
+/**
+ * List bets the user may view. Archived bets (status === 'archived') are hidden
+ * from the default working list — the owner or Admin can opt-in via `includeArchived`
+ * to review, restore, or permanently delete them.
+ */
+export function listBets(user: Principal, opts: { includeArchived?: boolean } = {}): BigBet[] {
+  return [...state().bets.values()]
+    .filter((b) => canView(b, user) && (opts.includeArchived || b.status !== 'archived'))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function getBet(betId: string, user: Principal): BigBet {
@@ -291,6 +325,10 @@ export function updateBet(
     }
     (clean as Record<string, unknown>)[k] = v;
   }
+  if (Object.keys(clean).length === 0) return bet; // no-op edit → no version churn
+  // Snapshot the PRIOR state before overwriting so every meaningful edit is
+  // restorable from the version history.
+  versions.record(betId, user.id, snapshotState(bet), 'edit');
   Object.assign(bet, clean);
   if (clean.members) bet.members = [...new Set([bet.owner, ...clean.members])];
   bet.updatedAt = now();
@@ -448,6 +486,80 @@ export function advanceComponent(betId: string, user: Actor, refId: string, to: 
   writeThrough(bet);
   log(user.id, 'component.advance', bet.id, { refId, to, actorKind: user.kind ?? 'human' });
   return ref;
+}
+
+// ------------------------------------------------ archive / delete / versions --
+
+/**
+ * Archive a bet: a reversible soft-hide (status → 'archived'). Edit-scoped —
+ * only the owner or an Admin may archive, exactly like editing it. The record
+ * and its history are retained; the bet leaves the working list until unarchived.
+ */
+export function archiveBet(betId: string, user: Principal): BigBet {
+  const bet = requireEdit(betId, user);
+  bet.status = 'archived';
+  bet.updatedAt = now();
+  writeThrough(bet);
+  log(user.id, 'bet.archive', betId);
+  return bet;
+}
+
+/** Restore an archived bet back into the working list (edit-scoped). */
+export function unarchiveBet(betId: string, user: Principal): BigBet {
+  const bet = requireEdit(betId, user);
+  bet.status = 'active';
+  bet.updatedAt = now();
+  writeThrough(bet);
+  log(user.id, 'bet.unarchive', betId);
+  return bet;
+}
+
+/**
+ * Permanently delete a bet + its version history (edit-scoped, irreversible).
+ * The API route confirms intent; this is the hard delete once confirmed.
+ */
+export function deleteBet(betId: string, user: Principal): void {
+  const bet = requireEdit(betId, user);
+  state().bets.delete(bet.id);
+  mirror.deleteThrough(bet.id);
+  versions.purge(bet.id);
+  log(user.id, 'bet.delete', betId);
+}
+
+/** Version history for a bet, newest first (view-scoped). */
+export function listBetVersions(betId: string, user: Principal): ArtifactVersion[] {
+  requireView(betId, user);
+  return versions.list(betId);
+}
+
+/**
+ * Restore a prior version of a bet's editable content. Restore is itself
+ * auditable + reversible: the CURRENT state is snapshotted as a new version
+ * first, THEN the chosen version's fields are applied. Edit-scoped.
+ */
+export function restoreBetVersion(betId: string, user: Principal, version: number): BigBet {
+  const bet = requireEdit(betId, user);
+  const snap = versions.get(betId, version);
+  if (!snap) throw new BetError(`Version ${version} not found`, 404);
+  const s = snap.state as ReturnType<typeof snapshotState> | null;
+  if (!s || typeof s.name !== 'string') throw new BetError(`Version ${version} has no restorable state`, 422);
+  // Snapshot the live state first so the restore can itself be undone.
+  versions.record(betId, user.id, snapshotState(bet), `restore of v${version}`);
+  // Apply the snapshot's editable fields.
+  bet.name = s.name;
+  bet.problem = s.problem;
+  bet.solution = s.solution;
+  bet.targetValue = s.targetValue;
+  bet.goLive = s.goLive;
+  bet.valueBasis = s.valueBasis;
+  bet.allocation = s.allocation;
+  bet.ownerDeclaredValue = s.ownerDeclaredValue;
+  if (Array.isArray(s.members)) bet.members = [...new Set([bet.owner, ...s.members])];
+  bet.status = s.status;
+  bet.updatedAt = now();
+  writeThrough(bet);
+  log(user.id, 'bet.restore', betId, { version });
+  return bet;
 }
 
 // ----------------------------------------------------------- internal hook ---

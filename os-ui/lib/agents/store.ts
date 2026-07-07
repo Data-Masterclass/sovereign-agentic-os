@@ -13,6 +13,7 @@ import {
 import { canPromote, roleAtLeast } from '../session.ts';
 import { type TemplateKey, templateYaml } from './templates.ts';
 import { osMirror } from '../os-mirror.ts';
+import { type ArtifactVersion, versionLog } from '../versioning.ts';
 
 /**
  * The agent-system store — the MOCK Forgejo repo behind the Agents tab (kind-only,
@@ -65,6 +66,8 @@ export type SystemRecord = {
   lastActivity: string | null;
   /** Last build outcome. Absent on records created before this field was added. */
   lastBuild?: LastBuild;
+  /** Soft-archived: hidden from the working lists, reversible, retained. */
+  archived?: boolean;
 };
 
 export type SystemSummary = {
@@ -85,6 +88,8 @@ export type SystemSummary = {
    * the list can honestly show "pending share approval" instead of looking inert.
    */
   pendingShare?: boolean;
+  /** Soft-archived (retained, reversible). Absent/false = live. */
+  archived?: boolean;
 };
 
 export type RepoFile = { path: string; content: string; sha: string };
@@ -129,18 +134,28 @@ const mirror = osMirror({
         schedule: { type: 'object', enabled: false },
         disabledAgents: { type: 'keyword' },
         lastBuild: { type: 'object', enabled: false },
+        archived: { type: 'boolean' },
       },
     },
   },
 });
 
+// Durable, per-artifact version history (reused across the OS). A system's
+// canonical `yaml` is snapshotted here on every meaningful edit + on restore.
+const versions = versionLog('agent-system');
+
 function writeThrough(rec: SystemRecord): void {
   mirror.writeThrough(rec.id, rec);
 }
 
+/** The versioned slice of a system record — the single source (system.yaml). */
+function snapshotState(rec: SystemRecord): { yaml: string } {
+  return { yaml: rec.yaml };
+}
+
 export async function ensureHydrated(): Promise<void> {
   const s = state();
-  if (!s.hydration) s.hydration = hydrate();
+  if (!s.hydration) s.hydration = Promise.all([hydrate(), versions.ensureHydrated()]).then(() => {});
   return s.hydration;
 }
 
@@ -227,6 +242,7 @@ export function __resetStore(): void {
   s.seeded = false;
   s.hydration = null;
   mirror.__reset();
+  versions.__reset();
 }
 
 // ------------------------------------------------------------------- scoping --
@@ -282,17 +298,25 @@ function summarise(rec: SystemRecord): SystemSummary {
     scheduled: rec.schedule.kind !== 'manual',
     agentCount,
     lastActivity: rec.lastActivity,
+    archived: rec.archived ?? false,
   };
 }
 
 export type SystemGroups = { mine: SystemSummary[]; domain: SystemSummary[]; marketplace: SystemSummary[] };
 
-export function listSystems(user: Principal): SystemGroups {
+/**
+ * The caller's systems, grouped. Archived systems are HIDDEN by default (soft
+ * archive) — the owner/Admin can list them explicitly via `includeArchived` to
+ * restore or delete. A shared/marketplace system, once archived by its owner,
+ * disappears from everyone's domain/marketplace list too.
+ */
+export function listSystems(user: Principal, opts: { includeArchived?: boolean } = {}): SystemGroups {
   ensureSeeded();
   const mine: SystemSummary[] = [];
   const domain: SystemSummary[] = [];
   const marketplace: SystemSummary[] = [];
   for (const rec of state().store.values()) {
+    if (rec.archived && !opts.includeArchived) continue;
     if (rec.owner === user.id) mine.push(summarise(rec));
     else if (rec.visibility === 'Shared' && user.domains.includes(rec.domain)) domain.push(summarise(rec));
     else if (rec.visibility === 'Marketplace') marketplace.push(summarise(rec));
@@ -491,6 +515,11 @@ export function writeFile(
   if (input.sha && input.sha !== sha(current)) {
     fail('The file changed since you opened it (stale sha) — reload and re-apply', 409);
   }
+  if (content === current) return { path, content, sha: sha(content) }; // no-op edit → no version churn
+
+  // Snapshot the PRIOR canonical source before overwriting it, so every
+  // meaningful edit is restorable from the version history.
+  versions.record(rec.id, user.id, snapshotState(rec), `edit ${path}`);
 
   if (path === 'system.yaml') {
     // Reject syntactically/structurally invalid YAML so the store never holds
@@ -564,6 +593,70 @@ export function recordActivity(systemId: string): void {
 export function setLastBuild(systemId: string, user: Principal, build: LastBuild): SystemRecord {
   const rec = requireEdit(systemId, user);
   rec.lastBuild = build;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+// ------------------------------------------------ archive / delete / versions --
+
+/**
+ * Archive a system: a reversible soft-hide that also STOPS it (an archived
+ * agent must not keep running). Edit-scoped — only the owner or an in-domain
+ * Admin may archive, exactly like editing it. The record + its history are
+ * retained; the system just leaves the working lists until unarchived.
+ */
+export function archiveSystem(systemId: string, user: Principal): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  rec.archived = true;
+  rec.running = false;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+/** Restore an archived system back into the working lists (edit-scoped). */
+export function unarchiveSystem(systemId: string, user: Principal): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  rec.archived = false;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+/**
+ * Permanently delete a system + its version history (edit-scoped, irreversible).
+ * The API route confirms intent; this is the hard delete once confirmed.
+ */
+export function deleteSystem(systemId: string, user: Principal): void {
+  const rec = requireEdit(systemId, user);
+  state().store.delete(rec.id);
+  mirror.deleteThrough(rec.id);
+  versions.purge(rec.id);
+}
+
+/** Version history for a system, newest first (view-scoped). */
+export function listSystemVersions(systemId: string, user: Principal): ArtifactVersion[] {
+  requireView(systemId, user);
+  return versions.list(systemId);
+}
+
+/**
+ * Restore a prior version of a system's canonical source. Restore is itself
+ * auditable + reversible: the CURRENT state is snapshotted as a new version
+ * first, THEN the chosen version's yaml is applied. Edit-scoped. The restored
+ * yaml is re-validated (never trust stored garbage) before it goes live.
+ */
+export function restoreSystemVersion(systemId: string, user: Principal, version: number): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  const snap = versions.get(systemId, version);
+  if (!snap) fail(`Version ${version} not found`, 404);
+  const restored = (snap.state as { yaml?: string }).yaml;
+  if (typeof restored !== 'string') fail(`Version ${version} has no restorable source`, 422);
+  parseSystem(restored); // reject a corrupt snapshot rather than go live with it
+  // Snapshot the live state first so the restore can itself be undone.
+  versions.record(systemId, user.id, snapshotState(rec), `restore of v${version}`);
+  rec.yaml = restored;
   rec.updatedAt = now();
   writeThrough(rec);
   return rec;

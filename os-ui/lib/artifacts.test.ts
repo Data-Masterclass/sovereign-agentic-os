@@ -11,7 +11,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { seed, createArtifact, promoteArtifact, addFromMarketplace, getArtifact, __resetArtifactsCache } from './artifacts.ts';
+import { seed, createArtifact, promoteArtifact, addFromMarketplace, getArtifact, updateArtifact, deleteArtifact, listForUser, archiveArtifact, listArtifactVersions, restoreArtifactVersion, __resetArtifactsCache } from './artifacts.ts';
 import type { CurrentUser } from './auth.ts';
 
 const admin: CurrentUser = { id: 'arya', name: 'Arya', domains: ['sales'], role: 'admin' };
@@ -60,4 +60,56 @@ test('globalThis: soa.artifacts.cache — write is visible on globalThis and rea
   assert.ok(g.cache.has(a.id), 'written artifact is in globalThis cache');
   const fetched = await getArtifact(a.id);
   assert.equal(fetched?.id, a.id, 'reading back returns the same artifact — pinned');
+});
+
+// ------------------------------------------------ archive / delete / versions --
+
+test('updateArtifact snapshots the prior state; restore reverts + is itself versioned', async () => {
+  __resetArtifactsCache();
+  const a = await createArtifact(builder, { type: 'knowledge', name: 'Runbook', description: 'v0', domain: 'sales' });
+  assert.equal((await listArtifactVersions(a.id, builder)).length, 0);
+
+  await updateArtifact(a.id, builder, { description: 'v1' });
+  await updateArtifact(a.id, builder, { description: 'v2' });
+  const history = await listArtifactVersions(a.id, builder);
+  assert.equal(history.length, 2);
+  assert.equal(history[0].version, 2, 'newest first');
+  assert.equal((history[1].state as { description: string }).description, 'v0', 'v1 holds the original');
+
+  // Restore v1 (original description) → reverts AND snapshots the current state.
+  const restored = await restoreArtifactVersion(a.id, builder, 1);
+  assert.equal(restored.description, 'v0');
+  const after = await listArtifactVersions(a.id, builder);
+  assert.equal(after.length, 3);
+  assert.match(after[0].summary, /restore of v1/);
+
+  await assert.rejects(() => restoreArtifactVersion(a.id, builder, 99), /not found/i);
+});
+
+test('archive soft-hides an artifact from the list; unarchive restores it', async () => {
+  __resetArtifactsCache();
+  const a = await createArtifact(builder, { type: 'knowledge', name: 'Draft', domain: 'sales' });
+  await archiveArtifact(a.id, builder, true);
+  assert.ok(!(await listForUser(builder, { type: 'knowledge' })).some((x) => x.id === a.id));
+  assert.ok((await listForUser(builder, { type: 'knowledge', includeArchived: true })).some((x) => x.id === a.id));
+  await archiveArtifact(a.id, builder, false);
+  assert.ok((await listForUser(builder, { type: 'knowledge' })).some((x) => x.id === a.id));
+});
+
+test('delete purges the artifact and its version history; edits obey edit authz', async () => {
+  __resetArtifactsCache();
+  const a = await createArtifact(builder, { type: 'knowledge', name: 'Doomed', description: 'x', domain: 'sales' });
+  await updateArtifact(a.id, builder, { description: 'y' });
+  assert.equal((await listArtifactVersions(a.id, builder)).length, 1);
+
+  // A different creator (not owner, not admin) cannot archive/edit/restore.
+  const other: CurrentUser = { id: 'nate', name: 'Nate', domains: ['sales'], role: 'creator' };
+  await assert.rejects(() => archiveArtifact(a.id, other, true), /Not permitted/i);
+  await assert.rejects(() => restoreArtifactVersion(a.id, other, 1), /Not permitted/i);
+
+  await deleteArtifact(a.id, builder);
+  assert.equal(await getArtifact(a.id), null);
+  // A fresh artifact starts with clean history (purge worked, no leakage).
+  const b = await createArtifact(builder, { type: 'knowledge', name: 'Fresh', domain: 'sales' });
+  assert.equal((await listArtifactVersions(b.id, builder)).length, 0);
 });

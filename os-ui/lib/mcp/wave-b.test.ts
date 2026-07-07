@@ -401,7 +401,7 @@ test('list_connection_templates: the catalog from the SAME registry create_conne
   const r = payload<{ templates: { key: string; personal: boolean; minRoleToCreate: string; requiredFields: string[]; tools: { name: string; mode: string }[] }[]; note: string }>(
     await call(creator, 'list_connection_templates'),
   );
-  assert.equal(r.templates.length, 10, 'the full template catalog');
+  assert.equal(r.templates.length, 7, 'the full template catalog (3 user-facing + 4 internal building blocks)');
 
   // ONE source of truth: exactly the keys the create_connection schema accepts.
   const createTool = ALL_MCP_TOOLS.find((t) => t.name === 'create_connection')!;
@@ -412,8 +412,8 @@ test('list_connection_templates: the catalog from the SAME registry create_conne
   assert.equal(gdrive.personal, true, 'per-user OAuth → any user may connect');
   assert.equal(gdrive.minRoleToCreate, 'creator');
   const notion = r.templates.find((t) => t.key === 'notion-mcp')!;
-  assert.equal(notion.personal, false, 'service credentials → Builder/Admin');
-  assert.equal(notion.minRoleToCreate, 'builder');
+  assert.equal(notion.personal, true, 'Notion connects via per-user hosted-MCP OAuth → any user may connect their own workspace');
+  assert.equal(notion.minRoleToCreate, 'creator');
   assert.ok(notion.requiredFields.includes('name') && notion.requiredFields.includes('template'));
   assert.ok(notion.tools.some((t) => t.mode === 'Blocked'), 'the safe preset profile is stated (deletes blocked)');
 });

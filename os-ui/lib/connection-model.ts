@@ -142,10 +142,7 @@ export type ConnectionTemplateKey =
   | 'salesforce-api'
   | 'generic-mcp'
   | 'generic-api'
-  | 'database'
-  | 'mysql'
-  | 'slack'
-  | 'saas';
+  | 'database';
 
 export type ConnectionTemplate = {
   key: ConnectionTemplateKey;
@@ -199,11 +196,14 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
   },
   {
     key: 'notion-mcp',
-    label: 'Notion (MCP server)',
+    label: 'Notion (personal · hosted MCP)',
     type: 'MCP',
     connector: 'mcp',
-    auth: 'service',
-    endpointHint: 'https://mcp.notion.com/sse',
+    // Per-user connect: the user signs in to Notion and authorizes their own
+    // workspace via Notion's hosted MCP OAuth 2.1 (dynamic client registration +
+    // PKCE). We store only the user's token reference — never a raw secret.
+    auth: 'oauth',
+    endpointHint: 'https://mcp.notion.com/mcp',
     secretKey: 'mcp-token',
     tools: [
       { name: 'notion_search', description: 'Search pages and databases (read).', write: false, mode: 'Read' },
@@ -284,50 +284,26 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
       { name: 'drop_table', description: 'Drop a table (write).', write: true, mode: 'Blocked' },
     ],
   },
-  {
-    key: 'mysql',
-    label: 'MySQL / MariaDB database',
-    type: 'Database',
-    connector: 'database',
-    auth: 'service',
-    endpointHint: 'mysql://db.example.com:3306/app',
-    secretKey: 'db-password',
-    tools: [
-      { name: 'query', description: 'Governed read query (read).', write: false, mode: 'Read', limits: { dataScope: 'allowlisted tables' } },
-      { name: 'write_row', description: 'Insert/update a row (write).', write: true, mode: 'Off' },
-      { name: 'drop_table', description: 'Drop a table (write).', write: true, mode: 'Blocked' },
-    ],
-  },
-  {
-    key: 'slack',
-    label: 'Slack (SaaS)',
-    type: 'SaaS',
-    connector: 'saas',
-    auth: 'oauth',
-    endpointHint: 'https://slack.com/api',
-    secretKey: 'oauth-token',
-    tools: [
-      { name: 'read_messages', description: 'Read channel messages (read).', write: false, mode: 'Read' },
-      { name: 'list_channels', description: 'List channels (read).', write: false, mode: 'Read' },
-      { name: 'post_message', description: 'Post a message (write).', write: true, mode: 'Write-approval', limits: { rateLimitPerMin: 10 } },
-      { name: 'delete_message', description: 'Delete a message (write).', write: true, mode: 'Blocked' },
-    ],
-  },
-  {
-    key: 'saas',
-    label: 'Packaged SaaS integration',
-    type: 'SaaS',
-    connector: 'saas',
-    auth: 'service',
-    endpointHint: 'https://app.example-saas.com/api',
-    secretKey: 'api-key',
-    tools: [
-      { name: 'read', description: 'Read records (read).', write: false, mode: 'Read' },
-      { name: 'create', description: 'Create a record (write).', write: true, mode: 'Off' },
-      { name: 'delete', description: 'Delete a record (write).', write: true, mode: 'Blocked' },
-    ],
-  },
 ];
+
+/**
+ * The connectors a user may actually CONNECT from the Connections tab today — the
+ * three that are genuinely wired end-to-end: Google Drive + OneDrive (personal
+ * OAuth), and Notion via its hosted MCP OAuth. Every other template below is kept
+ * ONLY as an internal building block for other working features (Marketplace
+ * import, the connections gate, adapter tests) and is deliberately NOT offered in
+ * the create picker — a user can never stand up a non-working mock connection.
+ */
+export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp'];
+
+export function isUserFacingTemplate(key: string): boolean {
+  return (USER_FACING_TEMPLATE_KEYS as string[]).includes(key);
+}
+
+/** The templates offered in the Connections tab (the three working connectors). */
+export function userFacingTemplates(): ConnectionTemplate[] {
+  return CONNECTION_TEMPLATES.filter((t) => isUserFacingTemplate(t.key));
+}
 
 /** Templates a NON-Builder (any participant) may create — personal OAuth only. */
 export function isPersonalConnectable(tpl: ConnectionTemplate): boolean {

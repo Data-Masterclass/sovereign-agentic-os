@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { getWorkflow, updateWorkflow, deleteWorkflow } from '@/lib/knowledge/store';
+import { getWorkflow, updateWorkflow, deleteWorkflow, archiveWorkflow, unarchiveWorkflow, ensureHydrated } from '@/lib/knowledge/store';
 import { findGaps } from '@/lib/knowledge/gaps';
 import { resolveEntityIndex } from '@/lib/knowledge/mock-entities';
 import { roleAtLeast } from '@/lib/session';
@@ -51,9 +51,33 @@ export async function PATCH(req: Request, { params }: Params) {
   }
 }
 
-/** DELETE → remove a draft workflow. */
+/**
+ * POST → workflow lifecycle: `archive` (reversible soft-hide) or `unarchive`.
+ * Edit-scoped in the store (owner or same-domain Builder+).
+ */
+export async function POST(req: Request, { params }: Params) {
+  try {
+    await ensureHydrated();
+    const user = await requireUser();
+    const { id } = await params;
+    const body = (await req.json().catch(() => ({}))) as { action?: string };
+    switch (body.action) {
+      case 'archive':
+        return NextResponse.json({ workflow: archiveWorkflow(id, user) });
+      case 'unarchive':
+        return NextResponse.json({ workflow: unarchiveWorkflow(id, user) });
+      default:
+        return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+    }
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** DELETE → permanently remove a draft workflow + its version history (edit-scoped). */
 export async function DELETE(_req: Request, { params }: Params) {
   try {
+    await ensureHydrated();
     const user = await requireUser();
     const { id } = await params;
     deleteWorkflow(id, user);

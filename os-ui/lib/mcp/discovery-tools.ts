@@ -691,7 +691,7 @@ const connectionTools: McpTool[] = [
         domain: { type: 'string', description: 'One of YOUR domains; defaults to your first.' },
       },
       required: ['name', 'template'],
-      examples: [{ name: 'My Notion', template: 'notion-mcp', endpoint: 'https://mcp.notion.com', credential: 'secret_xxx' }],
+      examples: [{ name: 'Ops MCP', template: 'generic-mcp', endpoint: 'https://mcp.example.com/sse', credential: 'secret_xxx' }],
     },
     call: async (user, args) => {
       const name = str(args.name).trim();

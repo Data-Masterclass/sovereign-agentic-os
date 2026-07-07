@@ -48,6 +48,8 @@ export type Artifact = {
   /** Free-form, type-specific payload (sql, cube schema, langgraph spec, …). */
   spec?: Record<string, unknown>;
   tags: string[];
+  /** Soft-archived: retained + reversible, hidden from the working lists. */
+  archived?: boolean;
   createdAt: string;
   updatedAt: string;
 };

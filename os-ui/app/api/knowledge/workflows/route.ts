@@ -12,12 +12,14 @@ function fail(e: unknown) {
   return NextResponse.json({ error: (e as Error).message }, { status });
 }
 
-/** GET → caller's workflows grouped mine / domain / marketplace. */
-export async function GET() {
+/** GET → caller's workflows grouped mine / domain / marketplace. Pass ?archived=1 to include archived. */
+export async function GET(req: Request) {
   try {
     const user = await requireUser();
     await ensureHydrated();
-    return NextResponse.json(listWorkflows(user));
+    const url = new URL(req.url);
+    const includeArchived = url.searchParams.get('archived') === '1';
+    return NextResponse.json(listWorkflows(user, { includeArchived }));
   } catch (e) {
     return fail(e);
   }

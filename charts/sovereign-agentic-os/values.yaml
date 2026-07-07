@@ -1615,6 +1615,24 @@ webFetch:
     limits: { cpu: 250m, memory: 128Mi }
 
 # -----------------------------------------------------------------------------
+# Software live-app runner (Software tab). When ON, the os-ui provisions a real
+# Deployment+Service+Ingress per built app into `namespace` (RBAC:
+# templates/os-ui/apps-runner.yaml) and drives its status from the live pod.
+# OFF here so kind/base helm-template stays minimal; the STACKIT overlay enables
+# it. Reachable per-app URLs additionally need a `*.<appsDomain>` wildcard DNS
+# record → the ingress LB (see the operator note in apps-runner.yaml).
+# -----------------------------------------------------------------------------
+softwareRunner:
+  enabled: false
+  namespace: agentic-apps
+  appsDomain: "apps.local"
+  # Teaching default served when a built app has no image of its own. A real built
+  # app overrides this with its CI-published image (apps.ts `runImage`).
+  runnerImage: "traefik/whoami:latest"
+  ingressClass: ""        # falls back to ingress.className
+  tlsIssuer: ""           # falls back to ingress.tlsIssuer
+
+# -----------------------------------------------------------------------------
 # Connections golden path — manually-credentialed Connections (API/MCP/Database/
 # SaaS) a Builder/Admin creates. The connection RECORD holds metadata + a Secrets
 # Manager reference; the credential lives ONLY in Secrets Manager, synced via the

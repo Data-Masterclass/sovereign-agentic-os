@@ -2,43 +2,31 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 /**
- * Static catalog of supported external connectors for the Connections surface
- * (os-application.md §4). Registering a connection stores credentials in the
- * secrets store (never the browser) and shares *use* — never the secret —
- * under OPA policy. The live in-cluster backends are shown separately, sourced
- * from /api/status. This catalog is the "what you can connect" half.
+ * The connectors the Connections surface actually offers today — the three that
+ * are genuinely wired end-to-end. Registering one stores the user's token in the
+ * secrets store (never the browser) as a reference, and shares *use* — never the
+ * secret — under OPA policy. This catalog is the honest "what you can connect"
+ * half; there are no roadmap/placeholder entries. Each maps to a real connection
+ * template (`lib/connection-model.ts`) you connect from the Governed connections
+ * tab. Keep this list in lock-step with `USER_FACING_TEMPLATE_KEYS`.
  */
 
-export type ConnectorCategory = 'Database' | 'Warehouse' | 'Object storage' | 'SaaS / API' | 'Streaming';
+export type ConnectorCategory = 'Files' | 'Workspace';
 
 export type Connector = {
   name: string;
   category: ConnectorCategory;
-  /** Whether a driver/integration ships in this deployment. */
+  /** Whether a driver/integration ships in this deployment (all true — honest catalog). */
   available: boolean;
   auth: string; // credential type held in the secrets store
+  /** The connection template this connector connects via (Governed connections tab). */
+  template: 'gdrive' | 'onedrive' | 'notion-mcp';
 };
 
 export const CONNECTORS: Connector[] = [
-  { name: 'PostgreSQL', category: 'Database', available: true, auth: 'user / password' },
-  { name: 'MySQL / MariaDB', category: 'Database', available: true, auth: 'user / password' },
-  { name: 'Microsoft SQL Server', category: 'Database', available: false, auth: 'user / password' },
-  { name: 'Snowflake', category: 'Warehouse', available: false, auth: 'key pair' },
-  { name: 'Google BigQuery', category: 'Warehouse', available: false, auth: 'service account' },
-  { name: 'Databricks SQL', category: 'Warehouse', available: false, auth: 'PAT' },
-  { name: 'S3 / STACKIT Object Storage', category: 'Object storage', available: true, auth: 'access key' },
-  { name: 'MinIO', category: 'Object storage', available: true, auth: 'access key' },
-  { name: 'Apache Iceberg (Polaris)', category: 'Warehouse', available: true, auth: 'catalog token' },
-  { name: 'REST / GraphQL API', category: 'SaaS / API', available: true, auth: 'bearer / OAuth2' },
-  { name: 'Salesforce', category: 'SaaS / API', available: false, auth: 'OAuth2' },
-  { name: 'HubSpot', category: 'SaaS / API', available: false, auth: 'private app token' },
-  { name: 'Apache Kafka', category: 'Streaming', available: false, auth: 'SASL / mTLS' },
+  { name: 'Google Drive', category: 'Files', available: true, auth: 'personal OAuth (read-only)', template: 'gdrive' },
+  { name: 'Microsoft OneDrive', category: 'Files', available: true, auth: 'personal OAuth (read-only)', template: 'onedrive' },
+  { name: 'Notion', category: 'Workspace', available: true, auth: 'personal OAuth · hosted MCP', template: 'notion-mcp' },
 ];
 
-export const CONNECTOR_CATEGORIES: ConnectorCategory[] = [
-  'Database',
-  'Warehouse',
-  'Object storage',
-  'SaaS / API',
-  'Streaming',
-];
+export const CONNECTOR_CATEGORIES: ConnectorCategory[] = ['Files', 'Workspace'];

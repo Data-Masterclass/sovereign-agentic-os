@@ -14,6 +14,10 @@ import {
   certifyWorkflow,
   getDomainKnowledge,
   updateDomainKnowledge,
+  archiveWorkflow,
+  unarchiveWorkflow,
+  listWorkflowVersions,
+  restoreWorkflowVersion,
   sha,
 } from './store.ts';
 
@@ -165,6 +169,90 @@ test('outsider cannot update domain knowledge', () => {
     () => updateDomainKnowledge('sales', outsider, { sections: [{ id: 'overview', content: 'x' }] }),
     /permitted/i,
   );
+});
+
+// ------------------------------------------ archive / delete / versions -------
+
+test('updateWorkflow snapshots the prior source; restore reverts + is itself versioned', () => {
+  __resetStore();
+  const rec = createWorkflow(builder, { title: 'Versioned', domain: 'sales' });
+  assert.equal(listWorkflowVersions(rec.id, builder).length, 0, 'no history before first edit');
+
+  const view0 = getWorkflow(rec.id, builder);
+  const edit1 = view0.md + '\n<!-- edit-1 -->';
+  updateWorkflow(rec.id, builder, { md: edit1, sha: view0.sha });
+  const view1 = getWorkflow(rec.id, builder);
+  const edit2 = edit1 + '\n<!-- edit-2 -->';
+  updateWorkflow(rec.id, builder, { md: edit2, sha: view1.sha });
+
+  const history = listWorkflowVersions(rec.id, builder);
+  assert.equal(history.length, 2);
+  assert.equal(history[0].version, 2, 'newest first');
+  assert.equal(history[0].author, builder.id);
+  assert.equal(history[1].version, 1);
+
+  // A no-op save does NOT churn a new version.
+  updateWorkflow(rec.id, builder, { md: edit2, sha: getWorkflow(rec.id, builder).sha });
+  assert.equal(listWorkflowVersions(rec.id, builder).length, 2);
+
+  // Restore v1 (the first edit's prior = original) → md reverts AND the
+  // pre-restore state is snapshotted as v3, so restore is auditable + reversible.
+  restoreWorkflowVersion(rec.id, builder, 1);
+  assert.equal(getWorkflow(rec.id, builder).md, view0.md);
+  const after = listWorkflowVersions(rec.id, builder);
+  assert.equal(after.length, 3);
+  assert.equal(after[0].version, 3);
+  assert.match(after[0].summary, /restore of v1/);
+
+  // Restoring an unknown version 404s.
+  assert.throws(() => restoreWorkflowVersion(rec.id, builder, 99), /not found/i);
+});
+
+test('archive hides from working list; unarchive restores it', () => {
+  __resetStore();
+  const rec = createWorkflow(builder, { title: 'Archivable', domain: 'sales' });
+
+  archiveWorkflow(rec.id, builder);
+  assert.equal(getWorkflow(rec.id, builder).archived, true);
+  // Hidden from the default working list, visible with includeArchived.
+  assert.ok(!listWorkflows(builder).mine.some((w) => w.id === rec.id));
+  assert.ok(listWorkflows(builder, { includeArchived: true }).mine.some((w) => w.id === rec.id));
+
+  unarchiveWorkflow(rec.id, builder);
+  assert.equal(getWorkflow(rec.id, builder).archived, false);
+  assert.ok(listWorkflows(builder).mine.some((w) => w.id === rec.id));
+});
+
+test('delete purges version history (hard delete)', () => {
+  __resetStore();
+  const rec = createWorkflow(builder, { title: 'Deletable', domain: 'sales' });
+  const view0 = getWorkflow(rec.id, builder);
+  updateWorkflow(rec.id, builder, { md: view0.md + '\n<!-- e -->', sha: view0.sha });
+  assert.equal(listWorkflowVersions(rec.id, builder).length, 1);
+
+  deleteWorkflow(rec.id, builder);
+  assert.throws(() => getWorkflow(rec.id, builder), /not found/i);
+
+  // A fresh workflow has no leaked history (purge worked).
+  const fresh = createWorkflow(builder, { title: 'Fresh', domain: 'sales' });
+  assert.equal(listWorkflowVersions(fresh.id, builder).length, 0);
+});
+
+test('archive / delete / restore obey edit authz (viewer is rejected 403)', () => {
+  __resetStore();
+  // A published workflow is Shared → visible to same-domain participants.
+  const rec = createWorkflow(builder, { title: 'Governed', domain: 'sales' });
+  publishWorkflow(rec.id, builder); // now Shared(live)
+  const view0 = getWorkflow(rec.id, builder);
+  updateWorkflow(rec.id, builder, { md: view0.md + '\n<!-- e -->', sha: view0.sha });
+
+  // participant (creator, sales) can VIEW history but NOT edit/archive/restore.
+  assert.doesNotThrow(() => listWorkflowVersions(rec.id, participant));
+  assert.throws(() => archiveWorkflow(rec.id, participant), /not permitted to edit/i);
+  assert.throws(() => restoreWorkflowVersion(rec.id, participant, 1), /not permitted to edit/i);
+
+  // Same-domain admin (builder+) may archive.
+  assert.doesNotThrow(() => archiveWorkflow(rec.id, admin));
 });
 
 test('cross-instance: workflow writes are visible through globalThis symbol', () => {

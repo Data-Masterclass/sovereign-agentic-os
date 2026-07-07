@@ -1,0 +1,60 @@
+{{- if .Values.softwareRunner.enabled }}
+{{- /*
+  Software live-app runner (Software tab). The os-ui provisions a real
+  Deployment + Service + Ingress per built app into a DEDICATED namespace so a
+  student's running app is isolated from the platform namespace. This grants the
+  os-ui ServiceAccount (which lives in the release namespace) exactly the verbs it
+  needs IN THE RUNNER NAMESPACE ONLY — least privilege, no cluster-wide power, no
+  namespace-create (the namespace is declared here so the runner never needs it).
+  Gated by softwareRunner.enabled (off in the base chart; on for the STACKIT deploy).
+
+  NOTE (operator): reachable per-app URLs (<slug>.<domain>.<appsDomain>) also need
+  a wildcard DNS record `*.<appsDomain>` → the ingress-nginx LoadBalancer, and
+  cert-manager issues a per-host TLS cert via HTTP-01. Without the wildcard DNS the
+  app still runs in-cluster (pod Ready) but its public host will not resolve.
+*/}}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.softwareRunner.namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    soa.dev/purpose: software-runner
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: os-ui-apps-runner
+  namespace: {{ .Values.softwareRunner.namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: os-ui-apps-runner
+  namespace: {{ .Values.softwareRunner.namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: os-ui-apps-runner
+subjects:
+  - kind: ServiceAccount
+    name: os-ui
+    namespace: {{ .Release.Namespace }}
+{{- end }}

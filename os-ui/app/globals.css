@@ -5154,3 +5154,102 @@ button.card.tile:hover .tile-action { opacity: 1; }
 [data-drag-source='true'] {
   opacity: 0.5;
 }
+
+/* ==== Sovereign OS Assistant — the one overarching, tab-aware assistant ====
+   A global launcher + chat drawer mounted in the app shell (components/
+   OsAssistant.tsx). Styling reuses the OS's dark/gold language; it is NOT a
+   generic floating chat bubble. Scoped under `.osa-` to avoid any collision. */
+.osa-launcher {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 25;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 18px;
+  font-family: var(--font-head);
+  font-size: 12.5px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: #f4f0e7;
+  background: linear-gradient(135deg, #14120f 0%, #201b12 100%);
+  border: 1px solid var(--gold-line);
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.osa-launcher:hover {
+  transform: translateY(-1px);
+  border-color: var(--gold-light);
+  box-shadow: 0 14px 34px -12px rgba(0, 0, 0, 0.75), 0 0 22px -6px var(--gold-soft);
+}
+.osa-spark {
+  color: var(--gold-light);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.osa-drawer {
+  width: min(520px, 96vw);
+}
+.osa-body {
+  padding: 16px 20px 22px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.osa-body .chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.osa-log {
+  flex: 1;
+  min-height: 0;
+}
+.osa-context {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-muted);
+  letter-spacing: 0.2px;
+}
+.osa-context strong {
+  color: var(--gold-text);
+}
+.osa-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--gold-light);
+  box-shadow: 0 0 0 3px var(--gold-soft);
+  vertical-align: middle;
+}
+
+/* Governed-tool trace under each answer — transparency, not decoration. */
+.osa-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.chip.osa-tool {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  letter-spacing: 0.2px;
+  padding: 2px 8px;
+  border-color: var(--gold-line);
+  color: var(--gold-text);
+  background: var(--gold-soft);
+}
+.chip.osa-tool.blocked {
+  border-color: rgba(190, 60, 60, 0.4);
+  color: #b23b3b;
+  background: rgba(190, 60, 60, 0.08);
+}

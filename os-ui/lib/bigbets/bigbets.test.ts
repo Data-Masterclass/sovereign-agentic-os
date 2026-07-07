@@ -15,13 +15,18 @@ import {
   __resetBets,
   addComponent,
   advanceComponent,
+  archiveBet,
   auditLog,
   canViewComponentDetail,
   createBet,
+  deleteBet,
   getBet,
+  listBetVersions,
   listBets,
   removeComponent,
+  restoreBetVersion,
   setOverride,
+  unarchiveBet,
   updateBet,
 } from './store.ts';
 import { proposePlan, approvePlan, type PlanCompleter } from './planner.ts';
@@ -344,4 +349,104 @@ test('value end-to-end: realized distributes to components and reconciles to the
   const dist = distribute(realized, refs, weights, 'manual', comp);
   assert.ok(dist.reconciles, `shares sum back to the bet (residual ${dist.residual})`);
   assert.equal(dist.betValue, 360_000);
+});
+
+// ------------------------------------------------ archive / delete / versions --
+
+test('versions: updateBet snapshots prior state; list is newest-first; no-op skips', () => {
+  reset();
+  const bet = newChurnBet();
+  assert.equal(listBetVersions(bet.id, sara).length, 0, 'no history before first edit');
+
+  // First edit → one prior version captured.
+  updateBet(bet.id, sara, { name: 'Reduce enterprise churn' });
+  assert.equal(listBetVersions(bet.id, sara).length, 1);
+
+  // Second edit → two prior versions.
+  updateBet(bet.id, sara, { targetValue: 500_000 });
+  const history = listBetVersions(bet.id, sara);
+  assert.equal(history.length, 2);
+  assert.equal(history[0].version, 2, 'newest first');
+  assert.equal(history[0].author, 'sara');
+  assert.equal(history[1].version, 1, 'oldest last');
+
+  // A no-op PATCH (empty clean object) does NOT churn a new version.
+  updateBet(bet.id, sara, {});
+  assert.equal(listBetVersions(bet.id, sara).length, 2, 'no-op edit skips version');
+});
+
+test('versions: restore reverts content and is itself snapshotted', () => {
+  reset();
+  const bet = newChurnBet();
+  const originalName = bet.name;
+
+  // Two edits capture v1 (original) and v2 (after first edit).
+  updateBet(bet.id, sara, { name: 'Edit one' });
+  updateBet(bet.id, sara, { name: 'Edit two' });
+  assert.equal(listBetVersions(bet.id, sara).length, 2);
+
+  // Restore v1 → name reverts to original AND the pre-restore state is
+  // snapshotted as v3, so restore is auditable + reversible.
+  restoreBetVersion(bet.id, sara, 1);
+  assert.equal(getBet(bet.id, sara).name, originalName, 'content reverted to v1');
+  const after = listBetVersions(bet.id, sara);
+  assert.equal(after.length, 3);
+  assert.equal(after[0].version, 3);
+  assert.match(after[0].summary, /restore of v1/);
+
+  // Restoring an unknown version 404s.
+  assert.throws(() => restoreBetVersion(bet.id, sara, 99), /not found/i);
+});
+
+test('archive: hides from default list; unarchive restores it', () => {
+  reset();
+  const bet = newChurnBet();
+  assert.ok(listBets(sara).some((b) => b.id === bet.id), 'visible before archive');
+
+  archiveBet(bet.id, sara);
+  assert.equal(getBet(bet.id, sara).status, 'archived');
+  // Hidden from the default working list.
+  assert.ok(!listBets(sara).some((b) => b.id === bet.id), 'hidden after archive');
+  // Visible with includeArchived opt-in.
+  assert.ok(listBets(sara, { includeArchived: true }).some((b) => b.id === bet.id));
+
+  unarchiveBet(bet.id, sara);
+  assert.equal(getBet(bet.id, sara).status, 'active');
+  assert.ok(listBets(sara).some((b) => b.id === bet.id), 'visible again after unarchive');
+});
+
+test('delete: removes bet permanently and purges version history', () => {
+  reset();
+  const bet = newChurnBet();
+  updateBet(bet.id, sara, { name: 'Going away' });
+  assert.equal(listBetVersions(bet.id, sara).length, 1, 'history exists before delete');
+
+  deleteBet(bet.id, sara);
+  assert.throws(() => getBet(bet.id, sara), /not found/i);
+  assert.ok(!listBets(sara, { includeArchived: true }).some((b) => b.id === bet.id));
+
+  // A fresh bet reusing no state has no leaked history (purge worked).
+  const fresh = newChurnBet();
+  assert.equal(listBetVersions(fresh.id, sara).length, 0, 'no leaked history after purge');
+});
+
+test('authz: archive / delete / restore obey edit-scope (non-editor is rejected 403)', () => {
+  reset();
+  // Sara owns the bet; amir is a different domain, non-member.
+  const bet = newChurnBet();
+  updateBet(bet.id, sara, { name: 'Governed bet' });
+
+  // amir (other domain) may NOT edit → archive/delete/restore rejected.
+  assert.throws(() => archiveBet(bet.id, amir), /not permitted to edit/i);
+  assert.throws(() => deleteBet(bet.id, amir), /not permitted to edit/i);
+  assert.throws(() => restoreBetVersion(bet.id, amir, 1), /not permitted to edit/i);
+
+  // arya is an admin → may archive (admin overrides all domain checks).
+  assert.doesNotThrow(() => archiveBet(bet.id, arya));
+
+  // Viewer (amir) may still LIST versions (view-scoped) — but amir can't view
+  // this bet at all (different domain, non-member), so that 403s too.
+  // A same-domain viewer (if the bet were Shared) would pass list but not restore.
+  // Here we just assert amir cannot view at all.
+  assert.throws(() => listBetVersions(bet.id, amir), /not permitted to view/i);
 });

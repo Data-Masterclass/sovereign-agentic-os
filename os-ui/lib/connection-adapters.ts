@@ -225,6 +225,11 @@ const apiAdapter: ConnectionAdapter = {
 const mcpAdapter: ConnectionAdapter = {
   connector: 'mcp',
   async auth(ctx) {
+    // A per-user MCP-OAuth template (e.g. Notion hosted MCP) mints a placeholder
+    // token at create time — exactly like a Drive — which the real OAuth callback
+    // then overwrites with the user's token set. A service-credential MCP keeps the
+    // Builder-supplied value.
+    if (ctx.template.auth === 'oauth') return oauthAuth(ctx, 'MCP OAuth');
     return { ok: true, mode: 'offline-mock', detail: 'MCP token captured for Secrets Manager.', data: { secretValue: '', secretKey: ctx.template.secretKey } };
   },
   test: (ctx) => probeTest(ctx, 'MCP server'),

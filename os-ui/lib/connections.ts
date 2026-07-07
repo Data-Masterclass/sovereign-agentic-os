@@ -39,8 +39,17 @@ import {
 import { registerBronzeSource, indexToFiles } from '@/lib/data-handoff';
 import { logEgress } from '@/lib/egress-requests';
 import { providerForTemplate } from '@/lib/oauth/providers';
-import { storeTokens, resolveAccessToken } from '@/lib/oauth/connection-token';
-import type { TokenSet } from '@/lib/oauth/token-set';
+import { storeTokens, readTokens, resolveAccessToken } from '@/lib/oauth/connection-token';
+import { isExpired, type TokenSet } from '@/lib/oauth/token-set';
+import {
+  refreshNotionToken,
+  listNotionMcpTools,
+  serializeClientReg,
+  parseClientReg,
+  type FetchFn,
+  type NotionClientReg,
+  type McpToolInfo,
+} from '@/lib/oauth/notion-mcp';
 
 /**
  * Connections registry — the home of record for every MANUALLY-credentialed
@@ -740,6 +749,115 @@ export async function resolveConnectionAccessToken(connId: string, userId: strin
     writeThrough(c);
   }
   return null; // 'none' (offline placeholder) or 'needs-reconnect' → mock fake-drive
+}
+
+// --------------------------------------------- Notion hosted-MCP OAuth wiring ---
+
+/** The vault ref for the connection's registered MCP client (parallel to the token ref). */
+function notionRegRef(c: Connection): { name: string; key: string } {
+  return { name: c.secretRef.name, key: 'mcp-client' };
+}
+
+function isNotionMcp(c: Connection): boolean {
+  return c.template === 'notion-mcp';
+}
+
+/**
+ * Notion MCP OAuth CALLBACK sink: persist the user's token set AND the registered
+ * client (both server-side, in Secrets Manager) on the connection, overwriting the
+ * placeholder minted at create time. Only the owner may complete their own flow.
+ * Neither the token nor any client secret is ever returned/traced — only the
+ * non-reversible fingerprint is surfaced.
+ */
+export async function storeNotionConnection(
+  connId: string,
+  userId: string,
+  tokens: TokenSet,
+  reg: NotionClientReg,
+): Promise<Connection> {
+  const map = await getCache();
+  const c = map.get(connId);
+  if (!c) throw withStatus(new Error('Connection not found'), 404);
+  if (c.owner !== userId) throw withStatus(new Error('Only the connection owner can complete its OAuth flow'), 403);
+  if (!isNotionMcp(c)) throw withStatus(new Error('This connection is not a Notion MCP connection'), 400);
+  storeTokens(c.secretRef, tokens); // token set → Secrets Manager only
+  const ref = notionRegRef(c);
+  putSecret(ref.name, ref.key, serializeClientReg(reg)); // client reg → vault only (never a record)
+  c.secretSet = true;
+  c.secretFingerprint = secretFingerprint(c.secretRef);
+  c.health = 'healthy';
+  c.mode = 'live';
+  c.updatedAt = now();
+  map.set(c.id, c);
+  writeThrough(c);
+  void trace({
+    principal: c.principal,
+    tool: 'generate',
+    input: { action: 'notion_mcp_connected', by: userId },
+    output: { connectionId: c.id, fingerprint: c.secretFingerprint }, // fingerprint, NEVER the token
+    decision: 'allow',
+  });
+  return c;
+}
+
+/** Read the stored Notion client registration (server-side only). */
+export function getNotionClientReg(c: Connection): NotionClientReg | null {
+  return parseClientReg(getSecretServerSide(notionRegRef(c)));
+}
+
+/**
+ * PROVE LIVENESS: resolve the stored token (silently refreshing when expired),
+ * then run a real MCP initialize + tools/list round-trip through the Notion hosted
+ * server and return its advertised tools. Owner-only. On a hard auth/transport
+ * failure the connection is marked needs-reconnect. `fetchImpl` is injectable so
+ * the whole path unit-tests against a fake; the token is used ONLY as the bearer
+ * server-side and is never returned to the client.
+ */
+export async function verifyNotionConnection(
+  connId: string,
+  userId: string,
+  opts: { fetchImpl?: FetchFn; now?: number } = {},
+): Promise<{ ok: boolean; tools: McpToolInfo[]; detail: string }> {
+  const map = await getCache();
+  const c = map.get(connId);
+  if (!c || c.owner !== userId) throw withStatus(new Error('Connection not found'), 404);
+  if (!isNotionMcp(c)) throw withStatus(new Error('This connection is not a Notion MCP connection'), 400);
+
+  const reg = getNotionClientReg(c);
+  const ts = readTokens(c.secretRef);
+  if (!reg || !ts) {
+    return { ok: false, tools: [], detail: 'Notion is not connected yet — click Connect Notion to authorize your workspace.' };
+  }
+
+  const nowSec = opts.now ?? Math.floor(Date.now() / 1000);
+  try {
+    let access = ts.accessToken;
+    if (isExpired(ts, nowSec)) {
+      const next = await refreshNotionToken(reg, ts, { fetchImpl: opts.fetchImpl, now: nowSec });
+      storeTokens(c.secretRef, next);
+      access = next.accessToken;
+    }
+    const tools = await listNotionMcpTools(reg, access, { fetchImpl: opts.fetchImpl });
+    c.health = 'healthy';
+    c.mode = 'live';
+    c.updatedAt = now();
+    map.set(c.id, c);
+    writeThrough(c);
+    void trace({
+      principal: c.principal,
+      tool: 'generate',
+      input: { action: 'notion_tools_list', by: userId },
+      output: { count: tools.length }, // tool count only — never the token
+      decision: 'allow',
+    });
+    return { ok: true, tools, detail: `Live — the Notion MCP server advertises ${tools.length} tool${tools.length === 1 ? '' : 's'} through your token.` };
+  } catch (e) {
+    c.health = 'needs-reconnect';
+    c.updatedAt = now();
+    map.set(c.id, c);
+    writeThrough(c);
+    return { ok: false, tools: [], detail: `Could not reach the Notion MCP server: ${(e as Error).message}. Try Reconnect.` };
+  }
 }
 
 export async function deleteConnection(connId: string, user: CurrentUser): Promise<void> {

@@ -23,6 +23,7 @@ export async function GET(req: Request) {
     const items = await listForUser(user, {
       type: typeParam && ARTIFACT_TYPES.includes(typeParam) ? typeParam : undefined,
       visibility: visParam && VISIBILITIES.includes(visParam) ? visParam : undefined,
+      includeArchived: searchParams.get('archived') === '1',
     });
     return NextResponse.json({ user, items });
   } catch (e) {
