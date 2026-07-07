@@ -1594,6 +1594,11 @@ egressProxy:
     - notion.com               # Connections slice — Notion MCP endpoints
     - mcp.notion.com
     - api.notion.com
+    # Personal connected-drive OAuth (Connections tab) — mirrors lib/secrets.ts.
+    - googleapis.com           # Google Drive (www.googleapis.com) + token (oauth2.googleapis.com)
+    - accounts.google.com      # Google OAuth consent/authorize
+    - graph.microsoft.com      # OneDrive via Microsoft Graph
+    - login.microsoftonline.com # Microsoft OAuth authorize + token
   resources:
     requests: { cpu: 25m, memory: 32Mi }
     limits: { cpu: 250m, memory: 96Mi }

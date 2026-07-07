@@ -4,8 +4,10 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { CAPABILITY_MODES, type CapabilityMode } from '@/lib/connection-model';
+import { CAPABILITY_MODES, type CapabilityMode, type ConnectionTemplateKey } from '@/lib/connection-model';
 import { roleAtLeast, type Role } from '@/lib/session';
+import { providerForTemplate, providerConfig, type OAuthProvider } from '@/lib/oauth/providers';
+import { driveConnectionStatus, driveAuthorizePath } from '@/lib/oauth/drive-status';
 
 /**
  * Governed Connections surface (Connections golden path). A Builder/Admin creates
@@ -55,12 +57,14 @@ type Template = {
   auth: 'oauth' | 'service';
   endpointHint: string;
 };
+type OAuthProviderStatus = { provider: OAuthProvider; label: string; configured: boolean };
 type Data = {
   user: { id: string; role: Role };
   connections: Conn[];
   templates: Template[];
   canCreate: boolean;
   canCreatePersonal: boolean;
+  oauthProviders?: OAuthProviderStatus[];
 };
 type ApprovalDiff = { field: string; before: unknown; after: unknown };
 type ApprovalPreview = {
@@ -157,7 +161,7 @@ export default function GovernedConnections() {
         const c = resp.connection;
         const ref = `${c.secretRef.name}/${c.secretRef.key}`;
         if (isOAuth) {
-          setCreateMsg(`✓ Created "${c.name}" — ${c.visibility}. Token stored as ref ${ref} (never the value).`);
+          setCreateMsg(`✓ Created "${c.name}" — ${c.visibility}. Now click Connect on its card below to sign in and authorize your own account. The token goes to Secrets Manager as ref ${ref} (never the value).`);
         } else {
           setCreateMsg(`✓ Created "${c.name}" — ${c.visibility}. Credential stored as ref ${ref} (never the value).`);
         }
@@ -221,12 +225,14 @@ export default function GovernedConnections() {
           {showOAuthForm ? (
             <>
               <p className="hint" style={{ marginTop: 10, marginBottom: 6 }}>
-                We complete OAuth and store the token in Secrets Manager — never in the browser or
-                the record. This connection is private to you (<strong>Personal</strong>).
+                Add the drive, then click <strong>Connect</strong> on its card to sign in through
+                {tpl ? ` ${tpl.label}` : ' the provider'} and authorize your own account. We complete OAuth
+                and store the token in Secrets Manager — never in the browser or the record. This
+                connection is private to you (<strong>Personal</strong>).
               </p>
               <div className="row" style={{ justifyContent: 'flex-end' }}>
                 <button className="btn" onClick={create} disabled={creating || !name.trim()}>
-                  {creating ? <span className="spin" /> : `Connect with ${tpl?.label ?? 'OAuth'}`}
+                  {creating ? <span className="spin" /> : `Add ${tpl?.label ?? 'drive'}`}
                 </button>
               </div>
             </>
@@ -291,6 +297,7 @@ export default function GovernedConnections() {
           key={c.id}
           c={c}
           role={data.user.role}
+          oauthProviders={data.oauthProviders ?? []}
           open={open === c.id}
           onToggle={() => setOpen(open === c.id ? '' : c.id)}
           onChange={load}
@@ -401,9 +408,9 @@ const AUTONOMOUS_PRESETS = ['read-only', 'read-propose', 'read-bounded', 'full-i
 type AutonomousPreset = typeof AUTONOMOUS_PRESETS[number];
 
 function ConnectionCard({
-  c, role, open, onToggle, onChange,
+  c, role, oauthProviders, open, onToggle, onChange,
 }: {
-  c: Conn; role: Role; open: boolean; onToggle: () => void; onChange: () => void;
+  c: Conn; role: Role; oauthProviders: OAuthProviderStatus[]; open: boolean; onToggle: () => void; onChange: () => void;
 }) {
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
@@ -426,6 +433,37 @@ function ConnectionCard({
   const canManage = roleAtLeast(role, 'builder');
   const exposed = c.tools.filter((t) => t.mode === 'Read' || t.mode === 'Write-approval' || t.mode === 'Write-bounded');
   const isDrive = c.connector === 'drive' || c.type === 'Drive';
+
+  // Personal-drive OAuth wiring: which provider this drive federates to, whether an
+  // admin has registered its OAuth app, and the current connect status. A user
+  // connects their OWN drive via the provider consent screen (full-page navigation).
+  const driveProvider: OAuthProvider | null = isDrive && c.auth === 'oauth'
+    ? providerForTemplate(c.template as ConnectionTemplateKey)
+    : null;
+  const driveProviderStatus = driveProvider ? oauthProviders.find((p) => p.provider === driveProvider) : undefined;
+  const driveProviderConfigured = driveProviderStatus?.configured ?? false;
+  const driveProviderLabel = driveProvider ? providerConfig(driveProvider).label : '';
+  const driveStatus = driveConnectionStatus(c);
+
+  /** The "Connect"/"Reconnect" button navigates full-page — the route 302s to consent. */
+  function connectDrive() {
+    if (!driveProvider) return;
+    window.location.href = driveAuthorizePath(driveProvider, c.id);
+  }
+
+  async function disconnectDrive() {
+    if (typeof window !== 'undefined' && !window.confirm(`Disconnect "${c.name}"? This removes the connection and its stored token. You can reconnect by adding it again.`)) return;
+    setBusy('disconnect');
+    setMsg('');
+    try {
+      const res = await fetch(`/api/connections/${c.id}`, { method: 'DELETE' });
+      if (res.ok) { onChange(); return; }
+      const d = await res.json() as { error?: string };
+      setMsg(`✗ ${d.error ?? 'Could not disconnect'}`);
+    } catch (e) {
+      setMsg(`✗ ${(e as Error).message}`);
+    } finally { setBusy(''); }
+  }
 
   /** Card-level POST — tracks the global busy state so all buttons disable. */
   async function doPost(path: string, body?: unknown): Promise<{ ok: boolean; status: number; data: Record<string, unknown> }> {
@@ -609,9 +647,37 @@ function ConnectionCard({
         </div>
       ) : null}
 
+      {/* Personal-drive connect status + controls (own account, own consent). */}
+      {driveProvider ? (
+        <div className="row" style={{ marginTop: 12, gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          {driveStatus === 'connected'
+            ? <span className="badge ok">Connected as {c.owner}</span>
+            : driveStatus === 'needs-reconnect'
+              ? <span className="badge err">Needs reconnect</span>
+              : <span className="badge muted">Not connected</span>}
+          {!driveProviderConfigured ? (
+            <span className="hint" style={{ fontSize: 12 }}>
+              An administrator must configure the {driveProviderLabel} OAuth app first.
+            </span>
+          ) : driveStatus === 'connected' ? (
+            <>
+              <button className="btn ghost" onClick={connectDrive} disabled={busy !== ''}>Reconnect</button>
+              <button className="btn ghost" onClick={disconnectDrive} disabled={busy !== ''}>Disconnect</button>
+            </>
+          ) : driveStatus === 'needs-reconnect' ? (
+            <>
+              <button className="btn" onClick={connectDrive} disabled={busy !== ''}>Reconnect</button>
+              <button className="btn ghost" onClick={disconnectDrive} disabled={busy !== ''}>Disconnect</button>
+            </>
+          ) : (
+            <button className="btn" onClick={connectDrive} disabled={busy !== ''}>Connect {driveProviderLabel}</button>
+          )}
+        </div>
+      ) : null}
+
       {/* Action buttons */}
       <div className="row" style={{ marginTop: 12, gap: 8, flexWrap: 'wrap' }}>
-        {c.health === 'needs-reconnect'
+        {driveProvider ? null : c.health === 'needs-reconnect'
           ? <button className="btn ghost" onClick={test} disabled={busy !== ''}>Reconnect</button>
           : <button className="btn ghost" onClick={test} disabled={busy !== ''}>Test</button>}
         <button className="btn ghost" onClick={onToggle}>

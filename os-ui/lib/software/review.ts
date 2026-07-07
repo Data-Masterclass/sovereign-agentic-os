@@ -16,6 +16,7 @@ import { enqueue, decide as decideApproval, listApprovals } from '@/lib/approval
 import { securityScan } from './scan.ts';
 import { detectSurface } from './metadata.ts';
 import { getSnapshot } from './server.ts';
+import { deployApp, runnerStatus, type RunnerApp, type RunnerOutcome, type RunnerStatus } from './runner.ts';
 import { roleAtLeast } from '@/lib/session';
 import type {
   DeployEnvelope,
@@ -61,6 +62,33 @@ const FOOTPRINT: Record<App['template'], ResourceFootprint> = {
 
 function isBuilder(user: CurrentUser): boolean {
   return roleAtLeast(user.role, 'builder');
+}
+
+/** The minimal runnable shape the in-cluster runner needs, derived from an app. */
+function runnerAppFor(app: App): RunnerApp {
+  return {
+    slug: app.slug,
+    host: app.subdomain,
+    runImage: app.runImage,
+    footprint: FOOTPRINT[app.template] ?? FOOTPRINT['nextjs-supabase'],
+  };
+}
+
+/**
+ * Reflect the REAL runner outcome onto the app's deploy fields — honestly. When
+ * the cluster is unreachable we leave `previewUrl` null and `pipeline.live`
+ * `pending` (never fabricate a live URL); the served URL only appears once the
+ * pod is actually `running` (the status route reconciles it as readiness lands).
+ */
+function applyRunnerOutcome(app: App, outcome: RunnerOutcome): void {
+  if (!outcome.live) {
+    app.deploy.previewUrl = null;
+    app.pipeline.live = 'pending';
+    return;
+  }
+  const running = outcome.phase === 'running';
+  app.deploy.previewUrl = running ? outcome.url : null;
+  app.pipeline.live = running ? 'ok' : 'pending';
 }
 
 /** The exact governed scope a deploy is asking for (the envelope under review). */
@@ -114,21 +142,22 @@ function appFiles(app: App): ScaffoldFile[] {
 // --------------------------------------------------------------- Preview -------
 
 /**
- * The HONEST preview/deploy state for Phase 1. The build + commit loop is real
- * (real Forgejo commits), but no in-cluster runner serves a preview or live
- * workload yet — so we NEVER fabricate a URL (the old `…sandbox.local` host was
- * unresolvable). Preview enters the private iterate state; the served workload is
- * explicitly pending. Phase 2 wires the real runner and fills these URLs.
+ * The HONEST preview note used when the in-cluster runner is UNREACHABLE (a
+ * laptop with no cluster). The build + commit loop is real either way; when the
+ * k8s API cannot be reached the runner provisions nothing and we NEVER fabricate
+ * a URL. When a cluster IS reachable, `startPreview`/`decideDeploy` provision a
+ * real Deployment+Service+Ingress and the served URL appears once the pod is ready.
  */
 export const PREVIEW_PENDING_NOTE =
-  'Preview is not yet available — the in-cluster preview runner ships in the next release. ' +
-  'Your commits are real; the served preview URL is pending.';
+  'Preview runner unreachable — your commits are real, but no in-cluster runner could be provisioned; ' +
+  'the served preview URL is pending until the Kubernetes API is reachable.';
 
 /**
  * Start a PRIVATE sandbox preview the creator runs themselves — no review. Any
  * owner (or a Builder in the domain) can preview. This is the free-iteration
- * loop; only going live in the domain is gated. Phase 1: this marks the app as
- * previewing but reports the runner as PENDING (no fabricated URL).
+ * loop; only going live in the domain is gated. Phase 2: this provisions the REAL
+ * in-cluster runner (Deployment+Service+Ingress); the served URL surfaces once
+ * the pod is ready. Offline (no cluster) it stays honestly pending (no URL).
  */
 export async function startPreview(appId: string, user: CurrentUser): Promise<App> {
   const app = await getAppByIdInternal(appId);
@@ -137,14 +166,18 @@ export async function startPreview(appId: string, user: CurrentUser): Promise<Ap
   if (!ownerOrBuilder) throw withStatus(new Error('Only the creator can preview this app'), 403);
   if (app.status === 'archived') throw withStatus(new Error('Archived apps cannot run a preview'), 409);
   app.deploy.state = app.deploy.state === 'live' ? 'live' : 'preview';
-  // Honest: no runner yet → no URL. Do not claim a working preview.
-  app.deploy.previewUrl = null;
+
+  // Provision the real runner; reflect its outcome honestly (no fake URL offline).
+  const runner = await deployApp(runnerAppFor(app));
+  applyRunnerOutcome(app, runner);
   await persistApp(app);
   void trace({
     principal: app.mcpPrincipal,
     tool: 'generate',
     input: { action: 'start_preview', by: user.id },
-    output: { preview: 'pending-runner', note: PREVIEW_PENDING_NOTE },
+    output: runner.live
+      ? { preview: runner.phase, url: app.deploy.previewUrl, host: runner.host }
+      : { preview: 'pending-runner', note: PREVIEW_PENDING_NOTE },
     decision: 'allow',
   });
   return app;
@@ -188,6 +221,8 @@ export async function requestDeploy(
   if (app.deploy.state === 'live' && !broadened && scan.passed) {
     app.deploy.reviewCardId = null;
     app.deploy.releases += 1; // a routine update ships a new release/version.
+    // Roll the new release onto the real runner (idempotent replace).
+    applyRunnerOutcome(app, await deployApp(runnerAppFor(app)));
     await persistApp(app);
     void trace({
       principal: app.mcpPrincipal,
@@ -284,7 +319,10 @@ export async function decideDeploy(
     app.deploy.approved = card.requested;
     app.deploy.reviewCardId = null;
     app.deploy.releases += 1; // approved go-live ships a new release/version.
-    app.pipeline.live = 'ok';
+    // Provision the real in-cluster runner on the app's per-app host; the served
+    // URL + `pipeline.live = ok` only land once the pod is actually running
+    // (offline stays honestly pending — the go-live decision is still recorded).
+    applyRunnerOutcome(app, await deployApp(runnerAppFor(app)));
   } else {
     card.decision = 'denied';
     app.deploy.state = 'preview'; // back to the free preview loop to fix it
@@ -314,6 +352,36 @@ function listGovernanceForCard(cardId: string): string[] {
   return listApprovals({ status: 'pending' })
     .filter((a) => a.kind === 'app_deploy' && (a.payload as { cardId?: string })?.cardId === cardId)
     .map((a) => a.id);
+}
+
+// ------------------------------------------------------- Runner status poll ----
+
+/**
+ * Poll the app's REAL in-cluster runner status and reconcile the deploy fields
+ * off ACTUAL pod state (the `deploying → running → failed` transition is driven
+ * by the Deployment's readyReplicas/conditions, never a timer). The served URL
+ * only appears once the pod is `running`; a failed rollout marks `pipeline.live`
+ * accordingly. Offline (no cluster) mutates nothing — it cannot confirm state.
+ */
+export async function reconcileDeployStatus(
+  appId: string,
+  user: CurrentUser,
+): Promise<{ app: App; status: RunnerStatus }> {
+  const app = await getAppByIdInternal(appId);
+  if (!app) throw withStatus(new Error('App not found'), 404);
+  const ownerOrBuilder = app.owner === user.id || (isBuilder(user) && user.domains.includes(app.domain));
+  if (!ownerOrBuilder) throw withStatus(new Error('Only the creator or a Builder can read this app runner status'), 403);
+
+  const status = await runnerStatus({ slug: app.slug });
+  if (status.live) {
+    const running = status.phase === 'running';
+    app.deploy.previewUrl = running ? `https://${app.subdomain}` : null;
+    if (app.deploy.state === 'live') {
+      app.pipeline.live = running ? 'ok' : status.phase === 'failed' ? 'offline' : 'pending';
+    }
+    await persistApp(app);
+  }
+  return { app, status };
 }
 
 // ------------------------------------------------------------- Readers ---------

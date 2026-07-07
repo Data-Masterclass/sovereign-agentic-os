@@ -3,13 +3,30 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { startPreview, requestDeploy } from '@/lib/software/review';
+import { startPreview, requestDeploy, reconcileDeployStatus } from '@/lib/software/review';
 
 export const dynamic = 'force-dynamic';
 
 function fail(e: unknown) {
   const status = (e as { status?: number })?.status ?? 500;
   return NextResponse.json({ error: (e as Error).message }, { status });
+}
+
+/**
+ * Live runner status. Polls the app's REAL in-cluster Deployment and reconciles
+ * the served URL + `deploying → running → failed` transition off actual pod
+ * state (not a timer). The client can poll this after a preview/go-live to watch
+ * the app come up. Offline (no cluster) it reports `offline` and mutates nothing.
+ */
+export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    const user = await requireUser();
+    const { id } = await ctx.params;
+    const { app, status } = await reconcileDeployStatus(id, user);
+    return NextResponse.json({ app, status });
+  } catch (e) {
+    return fail(e);
+  }
 }
 
 /**

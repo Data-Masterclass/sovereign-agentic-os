@@ -76,7 +76,12 @@ type ModelsState = {
   hydration: Promise<void> | null;
 };
 const MODELS_KEY = Symbol.for('soa.platform.models');
-const DEFAULT_ASSISTANT = 'ministral-8b';
+// The ONE assistant defaults to the gateway's standard chat route `sovereign-default`.
+// That model_name is defined in EVERY LiteLLM config: self-hosted (values.yaml) it
+// routes to the sovereign chat model; on the live STACKIT deploy (values.private.yaml)
+// it routes to Qwen3.6-27B on STACKIT managed model-serving. So the built-in assistants
+// work out of the box against a real, non-wedging model without any admin action.
+const DEFAULT_ASSISTANT = 'sovereign-default';
 function modelsState(): ModelsState {
   const g = globalThis as unknown as Record<symbol, ModelsState | undefined>;
   if (!g[MODELS_KEY]) g[MODELS_KEY] = { catalog: new Map(), keys: new Map(), defaults: { chat: 'ministral-8b', reasoning: 'magistral-small', embedding: 'bge-m3' }, assistant: DEFAULT_ASSISTANT, hydration: null };
@@ -153,6 +158,9 @@ async function hydrateModels(): Promise<void> {
 function seed(): void {
   if (modelsState().catalog.size > 0) return;
   const rows: Model[] = [
+    // The default assistant route — the gateway's standard chat model_name. Defined in
+    // every LiteLLM config (self-hosted → sovereign chat; live → Qwen3.6-27B on STACKIT).
+    { id: 'sovereign-default', label: 'Sovereign chat (default)', provider: 'self-hosted', task: 'chat', tier: 'sovereign', route: 'self-hosted', enabled: true, capEUR: null },
     { id: 'magistral-small', label: 'Magistral Small (reasoning)', provider: 'self-hosted', task: 'reasoning', tier: 'sovereign', route: 'self-hosted', enabled: true, capEUR: null },
     { id: 'ministral-8b', label: 'Ministral 8B (chat)', provider: 'self-hosted', task: 'chat', tier: 'sovereign', route: 'self-hosted', enabled: true, capEUR: null },
     { id: 'bge-m3', label: 'bge-m3 (embeddings)', provider: 'self-hosted', task: 'embedding', tier: 'sovereign', route: 'self-hosted', enabled: true, capEUR: null },

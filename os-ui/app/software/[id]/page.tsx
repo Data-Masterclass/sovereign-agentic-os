@@ -127,7 +127,9 @@ export default function AppPage() {
       if (!res.ok) setDeployMsg(`✗ ${body.error}`);
       else if (action === 'preview')
         setDeployMsg(
-          '✓ Preview requested — your commits are real. The served preview URL is pending the in-cluster runner (next release).',
+          body.app?.deploy?.previewUrl
+            ? '✓ Preview running — open the app UI above.'
+            : '✓ Preview requested — the in-cluster runner is provisioning; the URL appears once the pod is ready (or stays pending if no cluster is reachable).',
         );
       else if (body.kind === 'review') setDeployMsg('✓ Sent to a Builder for review (see Deploy reviews).');
       else setDeployMsg('✓ Routine update — published within the approved envelope.');
@@ -280,7 +282,7 @@ export default function AppPage() {
                       </a>
                     ) : (
                       <span className="muted" style={{ fontSize: 12 }}>
-                        In-cluster app runner ships in the next release
+                        App runner pending — provisioning, or no cluster reachable
                       </span>
                     )
                   ) : null}

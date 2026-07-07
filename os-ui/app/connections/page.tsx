@@ -27,9 +27,9 @@ type AppConn = {
 type AppConns = { connections: AppConn[] };
 
 const STARTERS = [
-  'Build a connector to a OneDrive folder of invoices.',
-  'Connect a read-only PostgreSQL database of orders.',
-  'Build a connector to a REST API with bearer auth.',
+  'Connect my Google Drive so agents can read my files.',
+  'Connect a OneDrive folder where finance drops invoices.',
+  'Connect my Notion workspace via its hosted MCP.',
 ];
 
 export default function ConnectionsPage() {

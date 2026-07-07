@@ -190,6 +190,20 @@ export const config = {
   harborEnabled: env('HARBOR_ENABLED', '') === 'true',
   harborRegistry: env('HARBOR_REGISTRY', 'forgejo-http:3000/gitea_admin'),
 
+  // Software golden path — Phase 2 in-cluster app RUNNER (lib/software/runner.ts).
+  // A go-live provisions a real Deployment+Service+Ingress for the built app into
+  // a dedicated runner namespace, on the app's per-app host (App.subdomain). The
+  // image is the app's CI-published registry artifact by default; set
+  // SOFTWARE_RUNNER_IMAGE to a known-good prebuilt image (e.g. traefik/whoami) to
+  // serve every app from a teaching placeholder until its own image is published.
+  // Ingress class + TLS issuer MATCH the chart's tool ingress (ingress.className /
+  // ingress.tlsIssuer) so per-app hosts get a cert-manager cert exactly like the
+  // consoles. When the k8s API is unreachable the runner degrades honestly (no URL).
+  softwareRunnerNamespace: env('SOFTWARE_RUNNER_NAMESPACE', 'agentic-apps'),
+  softwareRunnerImage: env('SOFTWARE_RUNNER_IMAGE', ''),
+  appsIngressClass: env('OS_APPS_INGRESS_CLASS', 'nginx'),
+  appsTlsIssuer: env('OS_APPS_TLS_ISSUER', 'letsencrypt-prod'),
+
   // Hermes autonomous runtime (Layer 1, opt-in). GATED OFF by default — the chart
   // sets HERMES_ENABLED=true only when `hermes.enabled` is on (never in base/kind).
   // When off the Agent tab still SHOWS the runtime option (documented) but the

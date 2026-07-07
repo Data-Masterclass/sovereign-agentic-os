@@ -42,3 +42,4 @@ stackit/private-instance-models.md
 
 # Tier-0 OpenSearch migration exports (live platform data — never commit)
 .opensearch-migration/
+node_modules

@@ -170,6 +170,21 @@ export function getDomain(id: string): Domain {
   return d;
 }
 
+/**
+ * Narrow a list of domain ids to the ones that are NOT archived. An archived
+ * domain must disappear from a member's active scope (e.g. the sidebar switcher)
+ * even though their membership record still lists it. Unknown ids are KEPT
+ * (defensive — synthetic scopes like `platform`, or a domain not yet hydrated).
+ */
+export function activeDomainIds(ids: string[]): string[] {
+  seed();
+  const store = domainsState().store;
+  return ids.filter((id) => {
+    const d = store.get(id);
+    return !d || !d.archived;
+  });
+}
+
 export function createDomain(input: { name: string; owner: string; template?: string }): Domain {
   seed();
   const id = slug(input.name);

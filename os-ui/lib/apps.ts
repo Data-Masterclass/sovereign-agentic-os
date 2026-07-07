@@ -80,6 +80,13 @@ export type App = {
   mode: 'live' | 'offline';
   repo: { fullName: string; htmlUrl: string; seeded: string[] };
   subdomain: string;
+  /**
+   * Explicit prebuilt container image the in-cluster runner should serve (Phase 2
+   * runner). Optional: when unset the runner uses the CI-published registry
+   * convention `<registry>/<slug>:latest` (or the SOFTWARE_RUNNER_IMAGE default).
+   * We NEVER build images in-cluster — this is a reference to an already-built one.
+   */
+  runImage?: string;
   pipeline: Record<PipelineStage, StageStatus>;
   /** Markdown captured from the build chat + the template. */
   designDecisions: string;

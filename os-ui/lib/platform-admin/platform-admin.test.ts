@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { assertTenantAccess, currentTenantId, getTenant, updateTenant } from './tenant.ts';
 import { assertGuarded, confirmationPhrase, GuardError } from './guard.ts';
 import { compile, type CompileInput } from './policy-compiler.ts';
-import { _reset as resetDomains, createDomain, setLayer, setArchived, listDomains, compilerView, ensureHydrated as ensureDomainsHydrated, hydrateDomains } from './domains.ts';
+import { _reset as resetDomains, createDomain, setLayer, setArchived, listDomains, compilerView, activeDomainIds, ensureHydrated as ensureDomainsHydrated, hydrateDomains } from './domains.ts';
 import { _reset as resetSec, addAllowlist, removeAllowlist, decideRequest, listRequests, listAllowlist } from './security.ts';
 import { _reset as resetModels, registerProviderKey, listProviderKeys, setEnabled, setDefault, setCap, getDefaults } from './models.ts';
 import { billingView, offlineSpend } from './billing.ts';
@@ -87,6 +87,16 @@ test('domains: create from template, toggle a layer, archive guards layers', () 
   assert.throws(() => setLayer('marketing', 'ml', false), (e: { status?: number }) => e.status === 409);
   // compiler view reflects archived + layers
   assert.equal(compilerView().find((x) => x.id === 'marketing')?.archived, true);
+});
+
+test('domains: activeDomainIds drops archived, keeps active + unknown scopes', () => {
+  resetDomains();
+  createDomain({ name: 'Test', owner: 'sara' });
+  createDomain({ name: 'Ops', owner: 'sara' });
+  setArchived('test', true);
+  // A member listing [test(archived), ops(active), platform(unknown/synthetic)]:
+  const active = activeDomainIds(['test', 'ops', 'platform']);
+  assert.deepEqual(active, ['ops', 'platform']); // archived 'test' removed; unknown 'platform' kept
 });
 
 test('domains: duplicate create is 409', () => {

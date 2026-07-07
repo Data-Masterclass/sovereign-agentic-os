@@ -247,7 +247,14 @@ osUI:
     # 0.1.11 = Agents-tab builder rebuild: globalThis store fix (AGENT.md/MEMORY.md
     # now load), single Auto/Reasoning/Execution model toggle (real sovereign-*
     # ids), React Flow drag-and-drop graph builder, master-detail rail + templates.
-    tag: "0.1.45"
+    tag: "0.1.46"
+  # CANONICAL PUBLIC URL — the apex host. OS_PUBLIC_URL derives from this (os-ui.yaml
+  # reads `.Values.osUI.publicUrl` first, only falling back to the `os.<zone>` ingress
+  # host). Pinning it here makes the apex authoritative so a `helm upgrade` can NEVER
+  # revert OS_PUBLIC_URL back to os.<zone> and re-break the MCP endpoint URL / OAuth
+  # issuer / email links (resolves the TODO in the ingress block below). The apex is
+  # already served by the `osUIApex` Ingress. Matches the live `kubectl set env`.
+  publicUrl: "https://agentic.datamasterclass.com"
   # ---- Mailer: the OS sends its OWN mail via the in-cluster maddy MTA. --------
   # os-ui's SMTP transport is pointed at the in-cluster `mail` Service (587,
   # STARTTLS); maddy DKIM-signs and delivers as noreply@sovereign-agentic.com.

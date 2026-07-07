@@ -6,6 +6,7 @@ import { cookies } from 'next/headers';
 import { config } from '@/lib/config';
 import { SESSION_COOKIE, type Role, verifySession } from '@/lib/session';
 import { authenticate as authUser, getPublicUser } from '@/lib/users';
+import { activeDomainIds } from '@/lib/platform-admin/domains';
 
 /**
  * Identity facade consumed by the rest of the app. Credentials + the user
@@ -37,7 +38,9 @@ export async function currentUser(): Promise<CurrentUser | null> {
   const token = store.get(SESSION_COOKIE)?.value;
   const claims = await verifySession(token, config.sessionSecret);
   if (!claims) return null;
-  return { id: claims.id, name: claims.name, domains: claims.domains, role: claims.role };
+  // Drop archived domains from the live scope so a member no longer sees them
+  // (e.g. the sidebar switcher) even though their JWT/membership still lists them.
+  return { id: claims.id, name: claims.name, domains: activeDomainIds(claims.domains), role: claims.role };
 }
 
 /** Guard for API routes. Throws a 401-tagged error if unauthenticated. */

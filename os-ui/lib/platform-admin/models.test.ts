@@ -31,9 +31,11 @@ test('registerProviderKey stores ref+fingerprint only', () => {
   assert.equal(listProviderKeys().length, 1);
 });
 
-test('assistant model defaults to the sovereign chat model out of the box', () => {
-  assert.equal(getAssistantModelId(), 'ministral-8b');
-  assert.equal(getAssistantModel()?.id, 'ministral-8b');
+test('assistant model defaults to the sovereign chat route out of the box', () => {
+  // sovereign-default is defined in every LiteLLM config, so the assistant works
+  // against a real model without admin action (live → Qwen3.6-27B on STACKIT).
+  assert.equal(getAssistantModelId(), 'sovereign-default');
+  assert.equal(getAssistantModel()?.id, 'sovereign-default');
 });
 
 test('registerAssistantModel stores endpoint ref + fingerprint, never a raw key', () => {

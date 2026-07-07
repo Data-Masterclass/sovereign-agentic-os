@@ -14,6 +14,7 @@ import {
 import { removeConnection } from '@/lib/app-registry';
 import { unregisterConnectionProfile, trace } from '@/lib/agent-governed';
 import { generateAndCompile } from './auto-mcp.ts';
+import { stopApp as stopRunner, deleteApp as deleteRunner } from './runner.ts';
 import type { ConsumedResource } from './model.ts';
 import { roleAtLeast } from '@/lib/session';
 
@@ -49,6 +50,10 @@ export async function archiveApp(appId: string, user: CurrentUser): Promise<App>
   app.deploy.state = 'building'; // scaled to zero, no longer live/preview
   app.deploy.previewUrl = null;
   app.pipeline.live = 'disabled';
+  // Scale the in-cluster runner to zero (retains the objects so unarchive can
+  // re-provision). Best-effort + honestly reported; a stopped/absent/offline
+  // runner never blocks the archive.
+  const stopped = await stopRunner({ slug: app.slug });
   // Disable the MCP: drop the app-registry grant + the compiled OPA profile so
   // no agent can call its tools while archived. Data artifacts are RETAINED.
   removeConnection(app.id);
@@ -58,7 +63,7 @@ export async function archiveApp(appId: string, user: CurrentUser): Promise<App>
     principal: app.mcpPrincipal,
     tool: 'generate',
     input: { action: 'archive_app', by: user.id },
-    output: { status: 'archived', dataRetained: app.dataArtifactId },
+    output: { status: 'archived', dataRetained: app.dataArtifactId, runner: stopped.action, runnerLive: stopped.live },
     decision: 'allow',
   });
   return app;
@@ -127,6 +132,10 @@ export async function deleteApp(appId: string, user: CurrentUser): Promise<{ del
       409,
     );
   }
+  // Tear down the in-cluster runner (Ingress+Service+Deployment) before removing
+  // the record so a delete never orphans running pods. Best-effort + honest: a
+  // 404/offline is benign (nothing to remove / no cluster to reach).
+  const teardown = await deleteRunner({ slug: app.slug });
   removeConnection(app.id);
   unregisterConnectionProfile(app.mcpPrincipal);
   await removeAppInternal(app.id);
@@ -134,7 +143,7 @@ export async function deleteApp(appId: string, user: CurrentUser): Promise<{ del
     principal: app.mcpPrincipal,
     tool: 'generate',
     input: { action: 'delete_app', by: user.id },
-    output: { deleted: app.id },
+    output: { deleted: app.id, runner: teardown.action, runnerLive: teardown.live },
     decision: 'allow',
   });
   return { deleted: true };

@@ -14,6 +14,7 @@ const SECTIONS: { label: string; href: string }[] = [
   { label: 'Roles & Permissions', href: '/platform/roles' },
   { label: 'Cost & Billing', href: '/platform/billing' },
   { label: 'Models & Providers', href: '/platform/models' },
+  { label: 'Drive OAuth apps', href: '/platform/oauth-apps' },
   { label: 'Components & System', href: '/platform/components' },
   { label: 'Security & Egress', href: '/platform/security' },
   { label: 'Backups & Restore', href: '/platform/backups' },

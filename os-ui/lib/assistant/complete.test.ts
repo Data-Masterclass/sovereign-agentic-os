@@ -9,7 +9,7 @@ import { assistantComplete, resolveAssistantModelId, AssistantNotConfiguredError
 beforeEach(() => _reset());
 
 test('resolveAssistantModelId returns the configured assistant (sovereign chat by default)', () => {
-  assert.equal(resolveAssistantModelId(), 'ministral-8b');
+  assert.equal(resolveAssistantModelId(), 'sovereign-default');
 });
 
 test('assistantComplete runs on the chosen model via the injected caller', async () => {

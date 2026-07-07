@@ -94,7 +94,14 @@ spec:
               value: "superset-sales"
             - name: TRINO_CATALOG
               value: "iceberg"
-          command: ["python", "/script/bootstrap.py"]
+          # Non-blocking data hook (like dbt-build): a bootstrap error (Superset or
+          # Trino not ready yet, transient API failure) must NOT fail the platform
+          # upgrade — it only means the Superset↔Trino datasource is stale until the
+          # next run. Wrap so the container always exits 0; the WARNING stays in the log.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              python /script/bootstrap.py || echo "WARNING: superset bootstrap reported errors — the Trino datasource/dataset may be missing; NOT failing the platform upgrade (data hook is non-blocking)."
           resources:
             requests: { cpu: 25m, memory: 64Mi }
             limits: { cpu: 250m, memory: 192Mi }

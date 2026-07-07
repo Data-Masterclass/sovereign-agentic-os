@@ -112,8 +112,9 @@ service to run.
 > ladders, roles, audit, MCP (live end-to-end at `https://agentic.datamasterclass.com/api/mcp`),
 > auth, Knowledge, and the Data ingest pipeline — is **fully live**. A few execution and
 > integration surfaces are still being wired: real external tool execution beyond Google Drive /
-> OneDrive, the in-cluster live-app runner for Software, and the Science / Layer-4 ML tab
-> (deferred, opt-in). The core is **Apache-2.0**; bundled components keep their own licenses.
+> OneDrive, and the Science / Layer-4 ML tab (deferred, opt-in). The Software tab's **in-cluster
+> live-app runner** provisions a real Deployment + Service + Ingress with a per-app live URL. The
+> core is **Apache-2.0**; bundled components keep their own licenses.
 
 \newpage
 
@@ -539,6 +540,22 @@ Committing the app **auto-creates its MCP** from its OpenAPI spec (**reads on, w
 approval**), governed by the same OPA gate every connection uses — so the app is instantly usable as
 a tool by your agents.
 
+**The in-cluster runner (live preview URLs).** Preview and go-live provision a **real running
+workload**, not a mock. `lib/software/runner.ts` creates a Kubernetes **Deployment** (1 replica,
+CPU/memory requests + limits from the app's footprint, a TCP readiness probe), a **Service**, and an
+**Ingress** into a dedicated runner namespace (`SOFTWARE_RUNNER_NAMESPACE`, default `agentic-apps`,
+auto-created if missing). The app is served on its **per-app host** — the app's `subdomain`,
+`<slug>.<domain>.<appsDomain>` — with a cert-manager TLS cert issued by the same cluster-issuer and
+ingress class the platform consoles use (`OS_APPS_INGRESS_CLASS` / `OS_APPS_TLS_ISSUER`). The image
+is the app's **CI-published registry artifact** (`<registry>/<slug>:latest`) by default, or an
+explicit prebuilt `runImage`, or the platform-wide `SOFTWARE_RUNNER_IMAGE` teaching placeholder — the
+OS **never builds images in-cluster**. Lifecycle status is **pod-driven**: `deploying → running →
+failed` comes straight from the Deployment's `readyReplicas`/conditions (poll
+`GET /api/apps/{id}/deploy`), and the **live URL only appears once the pod is actually running** —
+when no cluster is reachable the runner degrades **honestly** (no fabricated URL, status `offline`).
+**Archive** scales the runner to zero (objects retained, restartable); **delete** tears down the
+Ingress + Service + Deployment before removing the record, so nothing is orphaned.
+
 **The Software Delivery Team.** Beside the solo build chat, the tab offers a full **six-agent
 LangGraph system** that takes a brief through the whole lifecycle: an **orchestrator** (delivery
 lead) routes the work through **planner → builder → tester → deployer**, and a **communication**
@@ -764,6 +781,50 @@ connections to agents; Administrators manage the egress allowlist and Marketplac
 > credentials. The chapter describes the full design so the shape is clear; expect those flows to say
 > *"scaffolded in v1"* on screen until they are wired.
 
+### Connecting Google Drive / OneDrive
+
+Any user can connect their **own** Google Drive or OneDrive with their **own** account — no admin in
+the loop per user. It is a two-step, least-privilege OAuth flow.
+
+**For each user (Connections → Governed connections):**
+
+1. Under **New connection**, pick **Google Drive (personal)** or **OneDrive (personal)**, give it a
+   name, and click **Add**. This creates a private (Personal) connection with no live token yet — its
+   card shows **Not connected**.
+2. On the card, click **Connect**. The page navigates to the provider's consent screen, where you sign
+   in as **yourself** and approve **read-only** access. You are sent back and the card now reads
+   **Connected as `<you>`**. The token set is stored in Secrets Manager — never in the browser, the
+   record, a log, or a trace; only a fingerprint is ever shown.
+3. A stale token is refreshed silently. If a refresh ever fails, the card shows **Needs reconnect** —
+   click **Reconnect** to re-consent. **Disconnect** removes the connection and its stored token.
+4. If the provider's OAuth app has not been registered yet, the card says *"An administrator must
+   configure the Google/Microsoft OAuth app first"* and **Connect** is unavailable until they do.
+
+**For the platform administrator (one-time setup).** Register the tenant's Google and Azure OAuth apps
+once under **Platform → Drive OAuth apps**. See the operator note below for the exact steps. The client
+secret is written to Secrets Manager server-side; the catalog keeps only a reference + fingerprint and
+never shows or logs the raw secret.
+
+> **Operator note — registering the Drive OAuth apps (one-time).**
+>
+> **Google Drive.** In **Google Cloud Console → APIs & Services → Credentials**, create an **OAuth
+> client ID** of type *Web application*. Add the authorized redirect URI **exactly**:
+> `https://agentic.datamasterclass.com/api/connections/oauth/google/callback`. On the OAuth consent
+> screen add the scope `https://www.googleapis.com/auth/drive.readonly` (read-only). Copy the **client
+> id** and **client secret** and paste them into **Platform → Drive OAuth apps → Google Drive**, then
+> click **Register**.
+>
+> **OneDrive (Microsoft).** In **Azure Portal → App registrations**, create a registration (multi-tenant
+> is fine — the connector uses the `common` endpoint). Under **Authentication**, add a **Web** redirect
+> URI **exactly**: `https://agentic.datamasterclass.com/api/connections/oauth/microsoft/callback`. Under
+> **API permissions**, add the Microsoft Graph **delegated** scopes `Files.Read` and `offline_access`
+> (the latter yields a refresh token for silent renewal). Create a **client secret** under *Certificates
+> & secrets*, then paste the **application (client) id** and the **secret value** into **Platform →
+> Drive OAuth apps → OneDrive** and click **Register**. The optional **tenant** field can be left blank.
+>
+> The redirect URIs must match character-for-character. The raw secret is stored only in Secrets
+> Manager; if you ever need to rotate it, register again — the panel replaces the reference + fingerprint.
+
 ## Marketplace — consume across domains
 
 **What it's for.** The *Consume* counterpart to every Build tab's **certify** step: discover and
@@ -875,11 +936,14 @@ through to OPA. Labelled **Admin** in the sidebar (the conceptual "Platform Admi
 5. **Models & Providers** — configure the platform's single **assistant LLM**: the endpoint and
    key for the STACKIT managed model (or any compatible provider) that powers the built-in
    artifact-building assistants across every tab. Provider keys are stored as a **reference +
-   fingerprint**, never raw. Also register the **Google Drive and OneDrive OAuth apps** here
-   (client ID + secret for each) so users can connect their own accounts from the Files tab.
+   fingerprint**, never raw.
+6. **Drive OAuth apps** — register the tenant's **Google Drive and OneDrive OAuth apps** once
+   (client ID + secret for each; the secret is stored as a reference + fingerprint, never raw) so
+   users can connect their **own** accounts from the **Connections** tab. See *Connecting Google Drive /
+   OneDrive* above for the exact redirect URIs and scopes.
    **Security & Egress / Cost & Billing / Backups & Restore** — configure the remaining posture;
    all compile through OPA.
-6. Destructive actions (restore, disable) require a **typed-confirmation guard** and are audited;
+7. Destructive actions (restore, disable) require a **typed-confirmation guard** and are audited;
    identity/domain/egress/model changes **re-compile to OPA**.
 
 **Roles.** Administrators only.

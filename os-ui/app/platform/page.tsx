@@ -86,6 +86,7 @@ export default function PlatformOverview() {
                 ['Domains', '/platform/domains', 'Create & toggle optional layers'],
                 ['Users & Access', '/platform/access', 'Invite via Ory · tenant Admin'],
                 ['Models & Providers', '/platform/models', 'Defaults · caps · provider keys'],
+                ['Drive OAuth apps', '/platform/oauth-apps', 'Google & Microsoft apps for connected drives'],
                 ['Components & System', '/platform/components', 'Up/down · versions · self-heal'],
                 ['Security & Egress', '/platform/security', 'Allowlist · OPA bundle · residency'],
                 ['Backups & Restore', '/platform/backups', 'Status · guarded restore'],
