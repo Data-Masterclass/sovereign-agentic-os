@@ -27,17 +27,12 @@ test('a fully documented dataset passes the gate', () => {
   assert.match(gateReason(r), /green/);
 });
 
-test('missing description blocks the gate with the exact gap', () => {
-  const r = transparencyGate(ds({ description: '   ' }));
-  assert.equal(r.ok, false);
-  assert.ok(r.missing.includes('description'));
-  assert.match(gateReason(r), /missing description/);
-});
-
-test('no column description blocks the gate', () => {
-  const r = transparencyGate(ds({ columns: [{ name: 'x', description: '' }] }));
-  assert.equal(r.ok, false);
-  assert.ok(r.missing.includes('at least one column description'));
+test('documentation is advisory — missing description/column docs no longer block', () => {
+  // Relaxed gate: a description, per-column descriptions and an upstream edge are
+  // ENCOURAGED but do NOT hard-block promotion (they were stopping cohort work with no
+  // security value). Only the structural essentials (owner/domain/tier) still gate.
+  assert.equal(transparencyGate(ds({ description: '   ' })).ok, true);
+  assert.equal(transparencyGate(ds({ columns: [{ name: 'x', description: '' }] })).ok, true);
 });
 
 test('an upstream edge requires ≥2 built layers or a metric', () => {
@@ -48,11 +43,9 @@ test('an upstream edge requires ≥2 built layers or a metric', () => {
   assert.equal(hasUpstreamEdge(ds({ versions: oneLayer, measures: [{ name: 'rev', type: 'sum', sql: 'net_amount' }] })), true);
 });
 
-test('the gate names every gap at once', () => {
+test('the gate names only the STRUCTURAL gaps (owner/domain/tier)', () => {
   const bare = emptyVersions();
+  // domain/tier/visibility are set on ds(); only owner is blank → the sole hard gap.
   const r = transparencyGate(ds({ owner: '', description: '', columns: [], versions: bare }));
-  assert.deepEqual(
-    r.missing.sort(),
-    ['an upstream lineage edge', 'at least one column description', 'description', 'owner'].sort(),
-  );
+  assert.deepEqual(r.missing.sort(), ['owner']);
 });

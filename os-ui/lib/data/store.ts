@@ -27,7 +27,7 @@ import {
 } from './dataset-schema.ts';
 import { transparencyGate, gateReason } from './transparency.ts';
 import { CUBE_ARTIFACT, EXPOSURE_ARTIFACT, scaffoldCubeYaml, scaffoldExposureYaml } from './metrics.ts';
-import { assetTarget, productTarget, personalSchema, slug } from './store-fqn.ts';
+import { assetTarget, productTarget, personalSchema, domainSchema, slug } from './store-fqn.ts';
 import { config } from '../config.ts';
 import { osMirror } from '../os-mirror.ts';
 
@@ -287,11 +287,17 @@ export function builtLayerFqn(
   d: Dataset,
   user: Principal,
   layer?: Layer,
-): { layer: Layer; fqn: string } | null {
+): { layer: Layer; fqn: string; principal: string } | null {
   const chosen = layer && d.versions[layer]?.built ? layer : furthest(d).layer;
   if (!chosen) return null;
-  const schema = d.tier === 'dataset' ? personalSchema(user.id) : d.domain;
-  return { layer: chosen, fqn: `iceberg.${schema}.${chosen}_${slug(d.name)}` };
+  // A private `dataset` lives in the OWNER's personal lane and must be READ AS the
+  // owner (personal_<uid> ownership); a governed asset/product lives in its domain
+  // schema, read as the domain principal. domainSchema() keeps a hyphenated domain a
+  // VALID Trino identifier (raw `agentic-leader-q3-2026` is a SYNTAX_ERROR).
+  const personal = d.tier === 'dataset';
+  const schema = personal ? personalSchema(user.id) : domainSchema(d.domain);
+  const principal = personal ? user.id : (user.domains[0] ?? user.id);
+  return { layer: chosen, fqn: `iceberg.${schema}.${chosen}_${slug(d.name)}`, principal };
 }
 
 /**
@@ -364,7 +370,7 @@ export function listAskable(user: Principal): AskableDataset[] {
     if (!canView(d, user)) continue; // the hard visibility gate
     const f = furthest(d);
     if (!f.layer) continue; // nothing materialized — nothing to query
-    const schema = d.tier === 'dataset' ? personalSchema(user.id) : d.domain;
+    const schema = d.tier === 'dataset' ? personalSchema(user.id) : domainSchema(d.domain);
     out.push({
       id: d.id,
       name: d.name,

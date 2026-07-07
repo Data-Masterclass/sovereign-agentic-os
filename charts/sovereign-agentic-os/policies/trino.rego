@@ -73,6 +73,15 @@ write_schema := s if {
 
 write_target_entitled if write_schema in principal.domains
 
+# os-ui mints a domain's mart SCHEMA as sanitizeIdent(domain) (store-fqn.domainSchema),
+# so a hyphenated domain `agentic-leader-q3-2026` writes to schema `agentic_leader_q3_2026`.
+# Entitle the write when a declared domain sanitizes to the target schema (byte-identical
+# to the minting rule) — otherwise a governed principal could never write its own mart.
+write_target_entitled if {
+	some d in principal.domains
+	sanitize_ident(d) == write_schema
+}
+
 write_target_entitled if startswith(write_schema, "personal_")
 
 allow := false if {

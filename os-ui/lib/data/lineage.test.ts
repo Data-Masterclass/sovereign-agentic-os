@@ -60,10 +60,11 @@ test('trust axis + transparency are carried on the graph', () => {
   assert.equal(g.transparency.ok, true);
 });
 
-test('an undocumented dataset surfaces a red transparency gate', () => {
+test('an undocumented dataset still passes the (relaxed) transparency gate', () => {
+  // Docs are advisory now — an undocumented dataset with owner/domain/tier set is green.
   const g = lineageFor(ds({ description: '', columns: [] }));
-  assert.equal(g.transparency.ok, false);
-  assert.ok(g.transparency.missing.includes('description'));
+  assert.equal(g.transparency.ok, true);
+  assert.deepEqual(g.transparency.missing, []);
 });
 
 test('only built layers appear; a bronze-only dataset has no metric chain', () => {

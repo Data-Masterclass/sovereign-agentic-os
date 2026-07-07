@@ -226,6 +226,14 @@ export function personalSchema(uid: string): string {
   return 'personal_' + (core || 'user');
 }
 
+/** A domain normalized to a VALID Trino/Iceberg schema identifier — the SAME shape as
+ *  store-fqn.domainSchema, so a hyphenated domain (`agentic-leader-q3-2026`) becomes a
+ *  legal schema (`agentic_leader_q3_2026`) instead of a SYNTAX_ERROR. */
+export function domainSchema(domain: string): string {
+  const core = (domain ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return core || 'domain';
+}
+
 /**
  * The schema a Silver build writes into: the dataset's own domain when the dataset is
  * already governed AND the caller is in that domain (the query-tool re-checks the
@@ -234,7 +242,7 @@ export function personalSchema(uid: string): string {
  * never a literal cross-domain schema.
  */
 export function silverSchema(o: { tier: string; domain: string; uid: string; domains: string[] }): string {
-  if (o.tier !== 'dataset' && Array.isArray(o.domains) && o.domains.includes(o.domain)) return o.domain;
+  if (o.tier !== 'dataset' && Array.isArray(o.domains) && o.domains.includes(o.domain)) return domainSchema(o.domain);
   return personalSchema(o.uid);
 }
 
@@ -467,10 +475,10 @@ export function publishPlan(d: {
   const s = slug(d.name);
   const sourceSchema = personalSchema(d.owner);
   const source = `iceberg.${sourceSchema}.${layer}_${s}`;
-  const target = `iceberg.${d.domain}.${layer}_${s}`;
+  const target = `iceberg.${domainSchema(d.domain)}.${layer}_${s}`;
   assertFqn(source, 'publish source');
   assertFqn(target, 'publish target');
-  const schemaSql = `create schema if not exists iceberg.${d.domain}`;
+  const schemaSql = `create schema if not exists iceberg.${domainSchema(d.domain)}`;
   const sql = `create or replace table ${target} as select * from ${source}`;
   assertNoSqlMeta(sql, 'compiled SQL'); // defense in depth: never emit a guard-failing statement
   return { source, sourceSchema, target, layer, schemaSql, sql };

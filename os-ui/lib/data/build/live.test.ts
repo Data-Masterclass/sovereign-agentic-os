@@ -75,12 +75,13 @@ test('cardinal rule: cube apply ok but the metric does NOT resolve → ✗ (no f
   assert.equal(cube.status, 'fail');
 });
 
-test('om verify fails when the transparency gate is red (undocumented)', async () => {
-  const bare = gold({ description: '', columns: [] });
+test('om verify fails when the transparency gate is red (structural gap)', async () => {
+  // Docs are advisory now — the gate only reds on a STRUCTURAL gap (owner/domain/tier).
+  const bare = gold({ domain: '' });
   const r = await orchestrateStage('metric', ctxFor(bare), makeLiveAdapters(fakes()));
   const om = r.rows.find((x) => x.tool === 'om')!;
   assert.equal(om.status, 'fail');
-  assert.match(om.error ?? '', /transparency gate|description/);
+  assert.match(om.error ?? '', /transparency gate|domain/);
 });
 
 test('dashboard stage ✓ when the bundle imports and the dashboard loads', async () => {

@@ -41,12 +41,12 @@ test('consistencyCheck is the promotion gate: documented + defined + resolves', 
   assert.ok(ok.ok, JSON.stringify(ok.rows));
   assert.equal(ok.member, 'Sales.revenue');
 
-  // undocumented dataset (no column descriptions) → gate red
+  // undocumented dataset → docs are advisory now, so the gate no longer blocks
   const undoc = goldSales({ columns: [{ name: 'order_id', description: '' }, { name: 'net_amount', description: '' }] });
-  const red = await consistencyCheck(undoc, m, async () => 1);
-  assert.equal(red.ok, false);
+  const advisory = await consistencyCheck(undoc, m, async () => 42000);
+  assert.equal(advisory.ok, true);
 
-  // does not resolve → gate red
+  // does not resolve → gate red (this is a REAL gate — the metric must resolve)
   const noResolve = await consistencyCheck(d, m, async () => null);
   assert.equal(noResolve.ok, false);
 });

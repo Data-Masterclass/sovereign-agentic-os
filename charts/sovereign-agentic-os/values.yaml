@@ -1235,6 +1235,19 @@ opa:
       - llm_generate
       - query
       - web_fetch
+    # DOMAIN principals — the governed data tools authorize as `user.domains[0]`
+    # (the domain), so a domain must be granted the read tools its members + agents
+    # use. Row/column scoping is still enforced by package `trino` (data.governance),
+    # so a `query` grant does NOT bypass row filters — it only lets the domain OPEN
+    # the governed query door; it then sees only rows its governance entitles.
+    agentic-leader-q3-2026:     # the live Q3-2026 cohort domain (36 students)
+      - query                    # governed Trino lakehouse read (query_data)
+      - metrics                  # Cube semantic layer (query_metric)
+      - retrieve                 # governed RAG over domain knowledge (search_knowledge)
+    test:                       # the internal test/admin domain
+      - query
+      - metrics
+      - retrieve
     sales-assistant:            # Agent golden-path slice — scoped LiteLLM key
       - metrics                  # Cube semantic layer (same metric as the BI)
       - retrieve                 # governed RAG over contract + discount policy
@@ -1282,8 +1295,11 @@ opa:
       # filter by domain: an out-of-domain principal reads ZERO rows.
       iceberg.sales.gold_northpeak_commerce:
         domain: sales
-        visibility: domain
-        shared_with: []
+        # SHARED with the Q3-2026 cohort: the Northpeak campaign is THEIR case-study
+        # dataset, so their domain principal must pass the row filter (else a granted
+        # `query` still returns zero rows). Owning `sales` still sees it too.
+        visibility: shared
+        shared_with: ["agentic-leader-q3-2026"]
         sensitive_columns: {}
       # The Sales mart (dbt-trino Iceberg) — row filter by domain.
       iceberg.sales.daily_revenue:

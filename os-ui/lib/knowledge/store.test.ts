@@ -50,6 +50,15 @@ test('a published workflow is visible to its domain', () => {
   assert.ok(all.some((w) => w.title === 'Customer Onboarding'), 'Customer Onboarding should be visible');
 });
 
+test('own Shared (published) workflow groups under Domain, not Mine', () => {
+  __resetStore();
+  const rec = createWorkflow(builder, { title: 'Refund Handling', domain: 'sales' });
+  publishWorkflow(rec.id, builder); // Personal draft → Shared live
+  const groups = listWorkflows(builder);
+  assert.ok(groups.domain.some((w) => w.id === rec.id), 'own Shared workflow belongs under Domain');
+  assert.ok(!groups.mine.some((w) => w.id === rec.id), 'own Shared workflow is NOT under Mine');
+});
+
 test('outsider from another domain cannot see Personal drafts', () => {
   __resetStore();
   createWorkflow(participant, { title: 'Bank Submission', domain: 'sales' });

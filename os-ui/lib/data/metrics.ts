@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { Dataset, Measure, ColumnDoc } from './dataset-schema.ts';
+import { domainSchema } from './store-fqn.ts';
 
 /**
  * The Metric handover to Cube (data-ui-ux.md §"Define a metric — the Cube handover",
@@ -35,7 +36,7 @@ export function cubeViewName(d: Dataset): string {
 
 /** The Gold mart FQN the cube binds to via `sql_table` (the handover contract). */
 export function goldMartFqn(d: Dataset): string {
-  return `iceberg.${d.domain}.gold_${slug(d.name)}`;
+  return `iceberg.${domainSchema(d.domain)}.gold_${slug(d.name)}`;
 }
 
 /** cube_dbt's dbt data_type → Cube dimension type. We have no live manifest in kind,

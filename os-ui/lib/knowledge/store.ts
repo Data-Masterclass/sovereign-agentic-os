@@ -235,19 +235,17 @@ export function listWorkflows(user: Principal, opts: { includeArchived?: boolean
 
   for (const rec of ks().workflows.values()) {
     if (rec.archived && !opts.includeArchived) continue;
-    if (rec.owner === user.id) {
-      mine.push(summarise(rec));
-    } else if (rec.visibility === 'Marketplace') {
+    if (!canView(rec, user)) continue;
+    // Group by VISIBILITY, not ownership: Shared workflows are domain knowledge and
+    // belong under Domain even when the caller authored them; Marketplace under
+    // Marketplace; Personal (the caller's own drafts, plus same-domain drafts a
+    // builder stewards — already gated by canView) under Personal.
+    if (rec.visibility === 'Marketplace') {
       marketplace.push(summarise(rec));
-    } else if (rec.visibility === 'Shared' && user.domains.includes(rec.domain)) {
+    } else if (rec.visibility === 'Shared') {
       domain.push(summarise(rec));
-    } else if (
-      roleAtLeast(user.role, 'builder') &&
-      user.domains.includes(rec.domain) &&
-      rec.visibility === 'Personal'
-    ) {
-      // Builders can see all drafts in their domain.
-      domain.push(summarise(rec));
+    } else {
+      mine.push(summarise(rec));
     }
   }
 

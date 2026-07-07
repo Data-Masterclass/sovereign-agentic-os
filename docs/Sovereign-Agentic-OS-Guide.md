@@ -661,7 +661,10 @@ per business process, made retrievable by a knowledge agent behind document-leve
 1. In **Domain knowledge**, edit the four guided sections (overview / glossary / goals / context) —
    auto-pinned as the base context for every domain agent. The **knowledge agent** can draft; you
    paste the result in.
-2. Switch to **Workflows** and browse tiles (Personal / Shared / Marketplace).
+2. Switch to **Workflows** and browse tiles grouped by **visibility** — **Personal** (your own
+   drafts), **Domain** (Shared workflows the whole domain sees), and **Marketplace**. Each tile
+   offers **Archive** (a reversible soft-hide); **Show archived** reveals archived workflows with
+   **Restore** or permanent **Delete**.
 3. **+ New workflow** → name a business process → open the detail editor: an **actor-coloured
    swimlane** whose lanes (Human / Software / Agent) are **vertical columns and flow top → bottom**,
    **Monaco markdown**, and a derived diagram — all editing one versioned `workflow.md`.

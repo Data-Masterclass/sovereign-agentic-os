@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { DatasetGroups } from './store.ts';
-import { slug } from './store-fqn.ts';
+import { slug, domainSchema } from './store-fqn.ts';
 import { isNotMaterialized } from './materialized.ts';
 
 /**
@@ -78,7 +78,7 @@ export function registryAssets(groups: DatasetGroups): CatalogAsset[] {
     const tierLabel = d.tier === 'product' ? 'data product' : d.tier === 'asset' ? 'data asset' : 'dataset';
     // A built version has a governed Iceberg FQN; an un-materialized registry
     // dataset is still catalogued (honestly flagged) so it is discoverable.
-    const fqn = layer ? `iceberg.${d.domain}.${layer}_${slug(d.name)}` : `registry:${d.id}`;
+    const fqn = layer ? `iceberg.${domainSchema(d.domain)}.${layer}_${slug(d.name)}` : `registry:${d.id}`;
     const materialized = layer ? '' : ' · not materialized yet';
     return {
       name: d.name,

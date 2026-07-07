@@ -31,6 +31,18 @@ export function personalSchema(principal: string): string {
   return `personal_${sanitizeIdent(principal)}`;
 }
 
+/**
+ * The Trino/Iceberg SCHEMA a domain's governed marts live in. A domain id can carry
+ * characters that are NOT legal in an unquoted SQL identifier — notably a HYPHEN
+ * (e.g. `agentic-leader-q3-2026`), which makes `iceberg.<domain>.<t>` a Trino
+ * SYNTAX_ERROR and leaves the catalog reading a schema that can never be created.
+ * Normalize the domain to the SAME identifier shape as the personal lane so the
+ * schema is always valid and WRITES + READS agree on one name.
+ */
+export function domainSchema(domain: string): string {
+  return sanitizeIdent(domain);
+}
+
 /** The Bronze table FQN for a dataset landing in a given schema. */
 export function bronzeTarget(schema: string, name: string): string {
   return `iceberg.${schema}.bronze_${slug(name)}`;
@@ -39,21 +51,21 @@ export function bronzeTarget(schema: string, name: string): string {
 /** The governed Iceberg target a promotion writes via dbt-trino (gold preferred). */
 export function assetTarget(d: Dataset): string {
   const layer = d.versions.gold.built ? 'gold' : 'silver';
-  return `iceberg.${d.domain}.${layer}_${slug(d.name)}`;
+  return `iceberg.${domainSchema(d.domain)}.${layer}_${slug(d.name)}`;
 }
 
 /** The product FQN a certified asset is listed/queried under. */
 export function productTarget(d: Dataset): string {
   const layer = d.versions.gold.built ? 'gold' : 'silver';
-  return `iceberg.${d.domain}.${layer}_${slug(d.name)}`;
+  return `iceberg.${domainSchema(d.domain)}.${layer}_${slug(d.name)}`;
 }
 
 /**
  * The physical Iceberg FQN of ONE specific medallion version — the same
- * `iceberg.<domain>.<layer>_<slug>` name the Build adapters materialise
+ * `iceberg.<domainSchema>.<layer>_<slug>` name the Build adapters materialise
  * (`live.ts` bronze/silver/gold targets). The Explore/profile panel resolves
  * against this so it profiles the exact table a version wrote — no new naming.
  */
 export function versionTarget(d: Dataset, layer: Layer): string {
-  return `iceberg.${d.domain}.${layer}_${slug(d.name)}`;
+  return `iceberg.${domainSchema(d.domain)}.${layer}_${slug(d.name)}`;
 }

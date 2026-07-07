@@ -61,6 +61,9 @@ export default function KnowledgePage() {
   const [groups, setGroups] = useState<WorkflowGroups | null>(null);
   const [wfLoading, setWfLoading] = useState(true);
   const [wfError, setWfError] = useState('');
+  // Archive/lifecycle UI
+  const [showArchived, setShowArchived] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   // New workflow form
   const [newTitle, setNewTitle] = useState('');
@@ -86,7 +89,9 @@ export default function KnowledgePage() {
     setWfLoading(true);
     setWfError('');
     try {
-      const res = await fetch('/api/knowledge/workflows', { cache: 'no-store' });
+      // ?archived=1 additionally returns soft-archived workflows (shown in their
+      // own section with Restore / Delete).
+      const res = await fetch(`/api/knowledge/workflows${showArchived ? '?archived=1' : ''}`, { cache: 'no-store' });
       if (res.ok) setGroups(await res.json());
       else setWfError('Could not load workflows.');
     } catch {
@@ -94,11 +99,10 @@ export default function KnowledgePage() {
     } finally {
       setWfLoading(false);
     }
-  }, []);
+  }, [showArchived]);
 
   useEffect(() => {
     void loadDomainKnowledge();
-    void loadWorkflows();
     // Load user role from existing /api/auth endpoint. `/api/auth/me` nests the
     // profile under `.user`, so read that (else role stays undefined and the
     // Builder-only affordances never light up).
@@ -106,7 +110,37 @@ export default function KnowledgePage() {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => d?.user && setUser(d.user))
       .catch(() => null);
-  }, [loadDomainKnowledge, loadWorkflows]);
+  }, [loadDomainKnowledge]);
+
+  // Reload workflows whenever the archived filter toggles (loadWorkflows depends
+  // on showArchived).
+  useEffect(() => {
+    void loadWorkflows();
+  }, [loadWorkflows]);
+
+  // ── Workflow lifecycle: archive / restore / delete ───────────────────────
+  async function wfLifecycle(id: string, action: 'archive' | 'unarchive') {
+    setWfError('');
+    try {
+      const res = await fetch(`/api/knowledge/workflows/${id}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      if (!res.ok) { setWfError((await res.json().catch(() => ({}))).error ?? `Could not ${action}.`); return; }
+      await loadWorkflows();
+    } catch (e) { setWfError((e as Error).message); }
+  }
+
+  async function deleteWf(id: string) {
+    setWfError('');
+    try {
+      const res = await fetch(`/api/knowledge/workflows/${id}`, { method: 'DELETE' });
+      setConfirmDelete(null);
+      if (!res.ok) { setWfError((await res.json().catch(() => ({}))).error ?? 'Could not delete.'); return; }
+      await loadWorkflows();
+    } catch (e) { setConfirmDelete(null); setWfError((e as Error).message); }
+  }
 
   // ── Domain section editing ───────────────────────────────────────────────
 
@@ -175,6 +209,38 @@ export default function KnowledgePage() {
     ...(groups?.domain ?? []),
     ...(groups?.marketplace ?? []),
   ];
+  // Active (non-archived) workflows per visibility bucket + the flat archived list.
+  const activeMine = (groups?.mine ?? []).filter((w) => !w.archived);
+  const activeDomain = (groups?.domain ?? []).filter((w) => !w.archived);
+  const activeMarketplace = (groups?.marketplace ?? []).filter((w) => !w.archived);
+  const archivedWorkflows = allWorkflows.filter((w) => w.archived);
+  const activeCount = activeMine.length + activeDomain.length + activeMarketplace.length;
+
+  const openWorkflow = (id: string) => { setSelectedWorkflowId(id); setView('detail'); };
+
+  // One workflow card + its lifecycle actions (Archive, or Restore/Delete when archived).
+  const renderCell = (w: WorkflowSummary) => (
+    <div key={w.id} className="k-wf-cell">
+      <WorkflowTile workflow={w} onClick={openWorkflow} />
+      <div className="k-wf-actions">
+        {w.archived ? (
+          <>
+            <button className="btn ghost sm" onClick={() => void wfLifecycle(w.id, 'unarchive')}>Restore</button>
+            {confirmDelete === w.id ? (
+              <>
+                <button className="btn ghost sm k-danger" onClick={() => void deleteWf(w.id)}>Confirm delete</button>
+                <button className="btn ghost sm" onClick={() => setConfirmDelete(null)}>Cancel</button>
+              </>
+            ) : (
+              <button className="btn ghost sm" onClick={() => setConfirmDelete(w.id)}>Delete</button>
+            )}
+          </>
+        ) : (
+          <button className="btn ghost sm" onClick={() => void wfLifecycle(w.id, 'archive')}>Archive</button>
+        )}
+      </div>
+    </div>
+  );
 
   // ── Workflow detail — the tri-directional editor (swimlane + markdown + Mermaid) ─
 
@@ -205,9 +271,9 @@ export default function KnowledgePage() {
             onClick={() => setView('workflows')}
           >
             Workflows
-            {allWorkflows.length > 0 && (
+            {activeCount > 0 && (
               <span className="badge muted" style={{ marginLeft: 7, fontSize: 10 }}>
-                {allWorkflows.length}
+                {activeCount}
               </span>
             )}
           </button>
@@ -319,12 +385,20 @@ export default function KnowledgePage() {
                 One tile per business process — steps, decision rules, and tacit knowledge
                 that agents follow.
               </p>
-              <button
-                className="btn sm"
-                onClick={() => setView(view === 'new' ? 'workflows' : 'new')}
-              >
-                {view === 'new' ? 'Cancel' : '+ New workflow'}
-              </button>
+              <div className="row" style={{ gap: 8 }}>
+                <button
+                  className={`btn ghost sm ${showArchived ? 'active' : ''}`}
+                  onClick={() => setShowArchived((s) => !s)}
+                >
+                  {showArchived ? 'Hide archived' : 'Show archived'}
+                </button>
+                <button
+                  className="btn sm"
+                  onClick={() => setView(view === 'new' ? 'workflows' : 'new')}
+                >
+                  {view === 'new' ? 'Cancel' : '+ New workflow'}
+                </button>
+              </div>
             </div>
 
             {view === 'new' && (
@@ -358,55 +432,47 @@ export default function KnowledgePage() {
               <div className="error" style={{ marginTop: 16 }}>{wfError}</div>
             ) : (
               <>
-                {groups && groups.mine.length > 0 && (
+                {/* Grouped by VISIBILITY: Personal (your drafts) · Domain (shared) · Marketplace. */}
+                {activeMine.length > 0 && (
                   <>
-                    <div className="section-title" style={{ marginTop: 24 }}>My workflows</div>
-                    <div className="k-workflow-grid">
-                      {groups.mine.map((w) => (
-                        <WorkflowTile
-                          key={w.id}
-                          workflow={w}
-                          onClick={(id) => { setSelectedWorkflowId(id); setView('detail'); }}
-                        />
-                      ))}
-                    </div>
+                    <div className="section-title" style={{ marginTop: 24 }}>Personal</div>
+                    <div className="k-workflow-grid">{activeMine.map(renderCell)}</div>
                   </>
                 )}
 
-                {groups && groups.domain.length > 0 && (
+                {activeDomain.length > 0 && (
                   <>
-                    <div className="section-title" style={{ marginTop: 24 }}>Domain workflows</div>
-                    <div className="k-workflow-grid">
-                      {groups.domain.map((w) => (
-                        <WorkflowTile
-                          key={w.id}
-                          workflow={w}
-                          onClick={(id) => { setSelectedWorkflowId(id); setView('detail'); }}
-                        />
-                      ))}
-                    </div>
+                    <div className="section-title" style={{ marginTop: 24 }}>Domain</div>
+                    <div className="k-workflow-grid">{activeDomain.map(renderCell)}</div>
                   </>
                 )}
 
-                {groups && groups.marketplace.length > 0 && (
+                {activeMarketplace.length > 0 && (
                   <>
                     <div className="section-title" style={{ marginTop: 24 }}>Marketplace</div>
-                    <div className="k-workflow-grid">
-                      {groups.marketplace.map((w) => (
-                        <WorkflowTile
-                          key={w.id}
-                          workflow={w}
-                          onClick={(id) => { setSelectedWorkflowId(id); setView('detail'); }}
-                        />
-                      ))}
-                    </div>
+                    <div className="k-workflow-grid">{activeMarketplace.map(renderCell)}</div>
                   </>
                 )}
 
-                {allWorkflows.length === 0 && (
+                {activeCount === 0 && !showArchived && (
                   <div className="stub-page" style={{ marginTop: 32 }}>
                     No workflows yet. Create one above to document a business process.
                   </div>
+                )}
+
+                {showArchived && (
+                  archivedWorkflows.length > 0 ? (
+                    <>
+                      <div className="section-title" style={{ marginTop: 28 }}>Archived</div>
+                      <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
+                        Archived workflows are hidden from agents and the working lists.
+                        Restore brings one back; Delete removes it permanently.
+                      </p>
+                      <div className="k-workflow-grid">{archivedWorkflows.map(renderCell)}</div>
+                    </>
+                  ) : (
+                    <div className="hint" style={{ marginTop: 20 }}>No archived workflows.</div>
+                  )
                 )}
 
                 {!canPublish && allWorkflows.some((w) => w.status === 'draft') && (
@@ -491,6 +557,17 @@ const KnowledgeStyles = `
   gap: 14px;
   margin-top: 12px;
 }
+/* A workflow card + its lifecycle action row (archive / restore / delete). */
+.k-wf-cell { display: flex; flex-direction: column; gap: 6px; }
+.k-wf-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  opacity: 0.7;
+  transition: opacity 0.14s;
+}
+.k-wf-cell:hover .k-wf-actions { opacity: 1; }
+.k-wf-actions .k-danger { color: var(--danger, #d9534f); border-color: var(--danger, #d9534f); }
 
 /* New workflow form */
 .k-new-form {

@@ -41,11 +41,13 @@ test('Creator requests promotion of their OWN documented dataset', () => {
   assert.match(req.target, /^iceberg\.sales\.silver_orders$/);
 });
 
-test('promotion request is blocked when the transparency gate is red', () => {
+test('promotion is NO LONGER blocked by missing docs (transparency gate relaxed)', () => {
   const d = createDataset(amir, { name: 'Bare' });
   buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'b' });
   buildVersion(d.id, amir, 'silver', { artifact: 's' }); // built, but no docs
-  assert.throws(() => requestPromotion(d.id, amir), /transparency gate|documentation/i);
+  // owner/domain/tier are set at creation; documentation is advisory now → promotes.
+  const req = requestPromotion(d.id, amir);
+  assert.ok(req?.target);
 });
 
 test('Bronze-only data is not shareable', () => {

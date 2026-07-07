@@ -36,11 +36,11 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     const limit = url.searchParams.get('limit');
 
     // Resolve the physical table tier-aware (the SAME name the ask/query surface uses).
+    // builtLayerFqn also returns the PRINCIPAL to read as: a private dataset lives in
+    // the owner's personal_<uid> lane and must be read AS the owner (else Trino's OPA
+    // plugin denies the columns); a governed asset is read as the caller's domain.
     const target = builtLayerFqn(dataset, user, requested ?? undefined);
-
-    // The principal Trino's OPA plugin governs row/column on — the caller's domain (or
-    // their id). NEVER trusted from the request body. Same as /api/query and profile.
-    const principal = user.domains[0] ?? user.id;
+    const principal = target?.principal ?? (user.domains[0] ?? user.id);
 
     const outcome = await runPreview({
       target,

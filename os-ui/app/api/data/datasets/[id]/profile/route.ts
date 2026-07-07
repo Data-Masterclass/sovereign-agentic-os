@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { getDataset } from '@/lib/data/store';
-import { versionTarget } from '@/lib/data/store-fqn';
+import { builtLayerFqn } from '@/lib/data/store';
 import { queryRun } from '@/lib/governed';
 import type { Layer } from '@/lib/data/dataset-schema';
 import {
@@ -66,7 +66,12 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       });
     }
 
-    const fqn = versionTarget(dataset, layer);
+    // Tier-aware: a private dataset lives in the owner's personal_<uid> lane (read AS
+    // the owner); a governed asset in its (sanitized) domain schema. Same resolver as
+    // the preview surface — fixes both the personal PERMISSION_DENIED and a hyphenated
+    // domain SYNTAX_ERROR (domainSchema normalizes it).
+    const resolved = builtLayerFqn(dataset, user, layer);
+    const fqn = resolved?.fqn ?? '';
     const stamp = dataset.versions[layer].updatedAt ?? dataset.version;
     const key = `${id}:${layer}:${stamp}`;
 
@@ -75,9 +80,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       if (hit) return NextResponse.json({ datasetId: id, name: dataset.name, available: true, cached: true, ...hit });
     }
 
-    // The principal Trino's OPA plugin governs row/column on — the caller's domain
-    // (or their id). NEVER trusted from the request body. Same as /api/query.
-    const principal = user.domains[0] ?? user.id;
+    // The principal Trino's OPA plugin governs row/column on — the OWNER for a personal
+    // dataset (personal_<uid> ownership), else the caller's domain. NEVER from the body.
+    const principal = resolved?.principal ?? (user.domains[0] ?? user.id);
 
     let columns: ProfileColumn[];
     try {

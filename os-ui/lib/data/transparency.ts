@@ -24,13 +24,16 @@ export function hasUpstreamEdge(d: Dataset): boolean {
 }
 
 export function transparencyGate(d: Dataset): GateResult {
+  // Relaxed per product decision: promotion is gated ONLY on the structural essentials
+  // that must exist for a governed artifact (owner · domain · visibility/tier — all set
+  // at creation). Documentation quality (a description, per-column descriptions, an
+  // upstream lineage edge) is ENCOURAGED but no longer HARD-BLOCKS a promotion — it was
+  // stopping cohort work with no security value. `hasUpstreamEdge` stays exported for
+  // the lineage/quality surfaces that still advise on it.
   const missing: string[] = [];
   if (!d.owner.trim()) missing.push('owner');
   if (!d.domain.trim()) missing.push('domain');
-  if (!d.description.trim()) missing.push('description');
-  if (!d.columns.some((c) => c.description.trim())) missing.push('at least one column description');
   if (!d.tier || !d.visibility) missing.push('visibility/tier');
-  if (!hasUpstreamEdge(d)) missing.push('an upstream lineage edge');
   return { ok: missing.length === 0, missing };
 }
 
