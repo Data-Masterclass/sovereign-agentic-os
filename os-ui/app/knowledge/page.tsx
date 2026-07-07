@@ -5,7 +5,6 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
-import AgentChat from '@/components/AgentChat';
 import WorkflowTile from '@/components/knowledge/WorkflowTile';
 import WorkflowView from '@/components/knowledge/WorkflowView';
 import type { WorkflowSummary } from '@/lib/knowledge/store';
@@ -55,7 +54,6 @@ export default function KnowledgePage() {
   const [sectionDraft, setSectionDraft] = useState('');
   const [dkSaving, setDkSaving] = useState(false);
   const [dkMsg, setDkMsg] = useState('');
-  const [agentDraft, setAgentDraft] = useState('');
 
   // Workflows
   const [groups, setGroups] = useState<WorkflowGroups | null>(null);
@@ -343,31 +341,6 @@ export default function KnowledgePage() {
                     : <div className="error" style={{ marginTop: 8 }}>{dkMsg}</div>
                 )}
 
-                {/* Knowledge agent for drafting ── */}
-                <div className="section-title" style={{ marginTop: 28 }}>Draft with the knowledge agent</div>
-                <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-                  Describe your domain and the agent produces structured markdown — paste into any
-                  section above.
-                </p>
-                <AgentChat
-                  agent="knowledge"
-                  label="knowledge agent"
-                  placeholder="e.g. We run the bank submission process for mortgage applications in Germany…"
-                  starters={[
-                    'Draft a domain overview for our mortgage submission operation.',
-                    'Write a glossary of key terms for a sales domain.',
-                    'What goals should a loan operations team track?',
-                  ]}
-                  onAssistant={(content) => setAgentDraft(content)}
-                />
-                {agentDraft && (
-                  <div style={{ marginTop: 10 }}>
-                    <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
-                      Agent reply — copy into a section above:
-                    </div>
-                    <pre className="k-prose k-agent-output">{agentDraft}</pre>
-                  </div>
-                )}
               </>
             ) : (
               <div className="stub-page">Could not load domain knowledge.</div>

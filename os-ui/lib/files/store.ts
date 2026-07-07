@@ -338,17 +338,24 @@ export function listFiles(user: Principal, opts: { includeArchived?: boolean } =
   const mine: FileSummary[] = [];
   const domain: FileSummary[] = [];
   const marketplace: FileSummary[] = [];
+  const owned: FileSummary[] = []; // the caller's whole drive — drives the facet rail
   for (const rec of fs().store.values()) {
     if (rec.archived && !opts.includeArchived) continue;
     const a = parseAsset(rec.yaml);
-    if (a.owner === user.id) mine.push(summarise(a, rec));
-    else if (a.tier === 'product') marketplace.push(summarise(a, rec));
-    else if (a.tier === 'asset' && canView(a, user)) domain.push(summarise(a, rec));
+    if (!canView(a, user)) continue;
+    const s = summarise(a, rec);
+    if (a.owner === user.id) owned.push(s);
+    // Group by VISIBILITY (tier), not ownership: a promoted asset is domain content and
+    // belongs under Domain even when the caller authored it; a certified product under
+    // Marketplace; a private file (owner-only, via canView) under Personal.
+    if (a.tier === 'product') marketplace.push(s);
+    else if (a.tier === 'asset') domain.push(s);
+    else mine.push(s);
   }
   const byName = (x: FileSummary, y: FileSummary) => x.folder.localeCompare(y.folder) || x.name.localeCompare(y.name);
   mine.sort(byName); domain.sort(byName); marketplace.sort(byName);
-  // Facets describe the OWNER's own drive (the folder rail / tag cloud).
-  return { mine, domain, marketplace, facets: facetsOf(mine) };
+  // Facets describe the OWNER's own drive (the folder rail / tag cloud) across every tier.
+  return { mine, domain, marketplace, facets: facetsOf(owned) };
 }
 
 export type FileView = { asset: FileAsset; text: string; bytes: number; object: StoredObjectMeta | null; history: FileVersion[] };

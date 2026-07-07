@@ -16,7 +16,7 @@ type QueryResult = {
   rows: string[][];
   rowCount: number;
 };
-type Asset = { name: string; fqn: string; description: string; type: string; source?: string; datasetId?: string };
+type Asset = { name: string; fqn: string; description: string; type: string; source?: string; datasetId?: string; omUrl?: string };
 type CatalogSourceStatus = { source: string; ok: boolean; count: number; status: string; severity?: 'ok' | 'info' | 'warn' };
 type Catalog = { source: string; note?: string; sources?: CatalogSourceStatus[]; assets: Asset[] };
 type Answer = { question: string; answer: string; retrieved: string[]; traced: boolean };
@@ -236,7 +236,23 @@ export default function DataPage() {
                           <td style={{ fontWeight: 600 }}>{a.name}</td>
                           <td>{a.type}</td>
                           <td>{a.source ? <span className="chip">{a.source}</span> : '—'}</td>
-                          <td className="mono">{a.fqn}</td>
+                          <td className="mono">
+                            {a.fqn}
+                            {/* Deep link into the OpenMetadata entity — the governed
+                                mart's metadata/lineage in the catalog backbone. */}
+                            {a.omUrl ? (
+                              <a
+                                href={a.omUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="muted"
+                                style={{ marginLeft: 8, fontSize: 12 }}
+                                title="Open in OpenMetadata"
+                              >
+                                OM ↗
+                              </a>
+                            ) : null}
+                          </td>
                           <td className="muted" style={{ whiteSpace: 'normal' }}>{a.description || '—'}</td>
                           <td>
                             {/* A not-yet-materialized registry entry has no physical

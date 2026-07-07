@@ -99,6 +99,14 @@ export const config = {
   langfuseUrl: base(env('LANGFUSE_URL', 'http://agentic-os-langfuse-web:3000')),
   langfusePublicKey: env('LANGFUSE_PUBLIC_KEY', 'pk-lf-localdev0000public'),
   langfuseSecretKey: env('LANGFUSE_SECRET_KEY', 'sk-lf-localdev0000secret'),
+  // Langfuse SSO service account (server-only). Langfuse authenticates with
+  // NextAuth — no trusted-header remote-user mode — so the /tools/langfuse proxy
+  // signs in server-side with THIS account and injects the resulting session
+  // cookie (lib/tool-sso-langfuse.ts). The password NEVER reaches the browser.
+  // Defaults to the local headless-init user; on STACKIT point these at a
+  // dedicated read-only (VIEWER) Langfuse account via the os-ui Secret.
+  langfuseSsoEmail: env('LANGFUSE_SSO_EMAIL', 'alex@datamasterclass.com'),
+  langfuseSsoPassword: env('LANGFUSE_SSO_PASSWORD', 'langfuse-local-dev-admin'),
 
   // OpenSearch (Knowledge / Search): GET/POST {OPENSEARCH_URL}/knowledge/_search
   // Security plugin is disabled locally (no auth); on STACKIT enable security+TLS.
@@ -225,6 +233,13 @@ export const config = {
   // fall back to the mock chat model so the loop still runs on a laptop.
   litellmReasoningModel: env('LITELLM_REASONING_MODEL', env('LITELLM_CHAT_MODEL', 'sovereign-reasoning')),
   litellmExecModel: env('LITELLM_EXEC_MODEL', env('LITELLM_CHAT_MODEL', 'sovereign-default')),
+  // LLM Gateway tab — the read-only, tenant-total usage/spend panel
+  // (app/api/gateway/usage). The budget envelope is surfaced for the "budget
+  // used" bar; it mirrors the chart's litellmAgentKey.maxBudget / budgetDuration
+  // (USD cap + reset window). Read-only; no key or per-user datum reaches the
+  // browser — the master key stays server-side in the usage route.
+  litellmBudgetUsd: Number(env('LITELLM_BUDGET_USD', '5')) || 0,
+  litellmBudgetWindow: env('LITELLM_BUDGET_WINDOW', 'weekly'),
 
   // OPA (Policy): POST {OPA_URL}/v1/data/agentic/authz/allow and
   // GET {OPA_URL}/v1/data/grants for the principal -> tools grant map.
@@ -304,6 +319,12 @@ export const config = {
   // catalog SKIPS OpenMetadata entirely and reports it honestly, rather than
   // firing a doomed 401 and silently degrading. See app/api/catalog/route.ts.
   openmetadataJwt: env('OPENMETADATA_JWT', ''),
+  // The OpenMetadata SERVICE name the Trino/Iceberg lakehouse is ingested under
+  // (OM entity FQNs are `<service>.<catalog>.<schema>.<table>`). Used ONLY to build
+  // browser deep links from a governed mart (`iceberg.<schema>.<table>`) to its OM
+  // entity page — see lib/data/openmetadata.ts omEntityUrl. Must match the OM
+  // ingestion pipeline's service name; defaults to `trino`.
+  openmetadataService: env('OPENMETADATA_SERVICE', 'trino'),
 
   // ---- Layer-4 (Science / ML) ENABLEMENT. Off by default; an Admin enables
   // Science per domain (`ml.enabled=true`) + sets GPU quotas. When OFF, the

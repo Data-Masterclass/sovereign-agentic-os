@@ -263,9 +263,13 @@ export function listDatasets(user: Principal): DatasetGroups {
   const marketplace: DatasetSummary[] = [];
   for (const rec of ds().store.values()) {
     const d = parseDataset(rec.yaml);
-    if (d.owner === user.id) mine.push(summarise(d));
-    else if (d.tier === 'product') marketplace.push(summarise(d));
-    else if (d.tier === 'asset' && canView(d, user)) domain.push(summarise(d));
+    if (!canView(d, user)) continue;
+    // Group by VISIBILITY (tier), not ownership: a promoted asset is domain data and
+    // belongs under Domain even when the caller authored it; a certified product under
+    // Marketplace; a private dataset (owner-only, via canView) under Personal.
+    if (d.tier === 'product') marketplace.push(summarise(d));
+    else if (d.tier === 'asset') domain.push(summarise(d));
+    else mine.push(summarise(d));
   }
   const byName = (a: DatasetSummary, b: DatasetSummary) => a.name.localeCompare(b.name);
   return { mine: mine.sort(byName), domain: domain.sort(byName), marketplace: marketplace.sort(byName) };

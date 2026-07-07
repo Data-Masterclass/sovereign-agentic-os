@@ -44,6 +44,7 @@ export const TAB_GROUPS: TabGroup[] = [
       { label: 'Dashboards', icon: '▦', href: '/dashboards' },
       { label: 'Science', icon: '∿', href: '/science' },
       { label: 'Connections', icon: '⇄', href: '/connections' },
+      { label: 'LLM Gateway', icon: '⌁', href: '/llm-gateway' },
       { label: 'MCP', icon: '⌗', href: '/mcp' },
       { label: 'Marketplace', icon: '⊞', href: '/marketplace', role: 'Builder / Administrator' },
       { label: 'Monitoring', icon: '◷', href: '/monitoring' },

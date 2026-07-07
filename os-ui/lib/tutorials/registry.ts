@@ -86,6 +86,8 @@ export const TUTORIAL_EXEMPT_ROUTES: Record<string, string> = {
     'The tutorial gallery itself — teaching how to open tutorials would be circular.',
   '/mcp':
     'Static reference/teaching page that documents the MCP protocol and tool catalog; the connection instructions are self-contained and nothing needs practising in a sandbox.',
+  '/llm-gateway':
+    'Read-only observability over the LiteLLM gateway (tenant usage + the public Model Hub embed); nothing to configure or practise — the actionable model/cost controls live in Platform.',
 };
 
 /** Resolve one tutorial. Returns `undefined` for an unknown key. */

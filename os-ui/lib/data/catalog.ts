@@ -13,12 +13,14 @@ import { isNotMaterialized } from './materialized.ts';
  *   • registry     — the governed dataset registry (always available, DLS-scoped to
  *                     the caller by the store; a missing warehouse never hides it).
  *   • trino        — physical Iceberg tables in the caller's OWN domain schema.
- *   • openmetadata  — the platform catalog, ONLY when a bot token is configured.
+ *   • openmetadata — the CORE metadata backbone (a live health probe drives its
+ *                     CONNECTED state; governed marts are mirrored + deep-linked
+ *                     into it, and its own tables are pulled when a bot token is set).
  *
- * The contract: a missing/empty warehouse or an unreachable/unauthenticated
- * OpenMetadata yields a valid registry-only-or-empty catalog with an honest
- * per-source status — NEVER a 500. Every asset carries its `source` so the UI is
- * truthful about where each entry came from.
+ * The contract: a missing/empty warehouse or an unreachable OpenMetadata yields a
+ * valid registry-only-or-empty catalog with an honest per-source status — NEVER a
+ * 500. Every asset carries its `source` so the UI is truthful about where each
+ * entry came from.
  */
 
 export type CatalogSource = 'registry' | 'trino' | 'openmetadata';
@@ -32,6 +34,9 @@ export type CatalogAsset = {
   /** Populated for registry-sourced entries — enables the catalog to link to the
    *  dataset detail view without reversing the FQN. */
   datasetId?: string;
+  /** Deep link to this asset's OpenMetadata entity page (governed Iceberg marts,
+   *  when OM is connected). Lets each governed row jump into the metadata backbone. */
+  omUrl?: string;
 };
 
 /**
@@ -111,7 +116,17 @@ export async function assembleCatalog(opts: {
   schema: string;
   registry: CatalogAsset[];
   trino: () => Promise<CatalogAsset[]>;
-  openmetadata: () => Promise<{ assets: CatalogAsset[] | null; status: string; severity?: SourceSeverity }>;
+  openmetadata: () => Promise<{
+    assets: CatalogAsset[] | null;
+    status: string;
+    severity?: SourceSeverity;
+    /** Explicit source health. OpenMetadata can be CONNECTED (ok) with 0 pulled
+     *  tables — it is the metadata backbone, not an optional list. Defaults to
+     *  `!!assets` so callers that only push assets keep the old behaviour. */
+    ok?: boolean;
+    /** Explicit pill count (e.g. governed marts mirrored when nothing is pulled). */
+    count?: number;
+  }>;
 }): Promise<CatalogResult> {
   const assets: CatalogAsset[] = [];
   const sources: CatalogSourceStatus[] = [];
@@ -148,15 +163,20 @@ export async function assembleCatalog(opts: {
     });
   }
 
-  // 3. openmetadata — only when a bot token is configured (else skipped honestly). A
-  //    missing token is an OPTIONAL, un-configured integration (info) — not an error.
+  // 3. openmetadata — the CORE metadata backbone. Its health is probed live: a
+  //    CONNECTED OM counts as ok even when it pulls 0 tables (the governed marts are
+  //    mirrored into it), and only a genuinely unreachable OM degrades to `warn`
+  //    ("reconnecting…"). It is never framed as an optional/off integration.
   const om = await opts.openmetadata();
-  if (om.assets) {
-    assets.push(...om.assets);
-    sources.push({ source: 'openmetadata', ok: true, count: om.assets.length, status: om.status, severity: 'ok' });
-  } else {
-    sources.push({ source: 'openmetadata', ok: false, count: 0, status: om.status, severity: om.severity ?? 'warn' });
-  }
+  if (om.assets) assets.push(...om.assets);
+  const omOk = om.ok ?? !!om.assets;
+  sources.push({
+    source: 'openmetadata',
+    ok: omOk,
+    count: om.count ?? om.assets?.length ?? 0,
+    status: om.status,
+    severity: om.severity ?? (omOk ? 'ok' : 'warn'),
+  });
 
   return { source: 'union', sources, assets };
 }

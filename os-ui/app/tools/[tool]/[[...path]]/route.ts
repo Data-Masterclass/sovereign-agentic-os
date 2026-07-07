@@ -3,7 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { proxy, resolveTool, roleAllowed } from '@/lib/tool-proxy';
+import { proxy, resolveTool, roleAllowed, type SessionSso } from '@/lib/tool-proxy';
+import { getLangfuseSessionCookies, hasLangfuseSession } from '@/lib/tool-sso-langfuse';
 
 /**
  * Same-origin reverse proxy for embedded tools:
@@ -43,7 +44,14 @@ async function handle(
     );
   }
 
-  return proxy(req, tool, path ?? [], user);
+  // Session-SSO tools (Langfuse) get a server-minted session injected when the
+  // browser has none yet. The provider fails soft (returns [] → tool's own login).
+  const sessionSso: SessionSso | undefined =
+    tool.key === 'langfuse'
+      ? { active: hasLangfuseSession, provide: () => getLangfuseSessionCookies() }
+      : undefined;
+
+  return proxy(req, tool, path ?? [], user, fetch, sessionSso);
 }
 
 export const GET = handle;

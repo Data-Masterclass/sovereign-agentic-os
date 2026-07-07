@@ -6,7 +6,6 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
-import AgentChat from '@/components/AgentChat';
 import ArtifactPanel from '@/components/ArtifactPanel';
 import GovernedConnections from '@/components/GovernedConnections';
 import { useApi } from '@/lib/useApi';
@@ -26,15 +25,9 @@ type AppConn = {
 };
 type AppConns = { connections: AppConn[] };
 
-const STARTERS = [
-  'Connect my Google Drive so agents can read my files.',
-  'Connect a OneDrive folder where finance drops invoices.',
-  'Connect my Notion workspace via its hosted MCP.',
-];
-
 export default function ConnectionsPage() {
   const { data: appConns } = useApi<AppConns>('/api/connections/apps');
-  const [tab, setTab] = useState<'mine' | 'registry' | 'governed' | 'build'>('mine');
+  const [tab, setTab] = useState<'mine' | 'registry' | 'governed'>('mine');
 
   return (
     <>
@@ -44,7 +37,7 @@ export default function ConnectionsPage() {
           The external systems this domain brings in — databases, APIs and SaaS — registered as governed
           connections that expose <strong>APIs or MCPs as tools</strong> for your agents and software.
           Credentials go to the secrets store and are never exposed — you share <em>use</em>, never the
-          secret, under policy. The connections agent drafts new connectors for you. (Internal platform
+          secret, under policy. (Internal platform
           services live in <Link href="/platform/components">Platform → Components</Link>.)
         </p>
 
@@ -52,7 +45,6 @@ export default function ConnectionsPage() {
           <button className={tab === 'mine' ? 'active' : ''} onClick={() => setTab('mine')}>Personal connections</button>
           <button className={tab === 'registry' ? 'active' : ''} onClick={() => setTab('registry')}>Registry</button>
           <button className={tab === 'governed' ? 'active' : ''} onClick={() => setTab('governed')}>Governed connections</button>
-          <button className={tab === 'build' ? 'active' : ''} onClick={() => setTab('build')}>Build a connector</button>
         </div>
 
         {tab === 'mine' ? (
@@ -140,23 +132,6 @@ export default function ConnectionsPage() {
                 </div>
               );
             })}
-          </>
-        ) : null}
-
-        {tab === 'build' ? (
-          <>
-            <div className="section-title">Connections agent</div>
-            <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-              Describe the source you want to connect. The agent drafts the connector type,
-              required credentials (held in the secrets store), and a config to scaffold.
-              Building/registering the connection is <strong>scaffolded</strong> in v1 — the draft is for review.
-            </p>
-            <AgentChat
-              agent="connections"
-              label="connections agent"
-              placeholder="e.g. Connect a OneDrive folder where finance drops monthly invoices…"
-              starters={STARTERS}
-            />
           </>
         ) : null}
       </div>

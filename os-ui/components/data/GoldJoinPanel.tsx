@@ -4,7 +4,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import AgentChat from '@/components/AgentChat';
 import {
   compileGoldJoin,
   personalSchema,
@@ -355,15 +354,6 @@ export default function GoldJoinPanel({
           </button>
         </div>
       </div>
-
-      <div className="section-title">Or ask the data agent</div>
-      <AgentChat
-        agent="data-product"
-        label="data agent"
-        minHeight={170}
-        placeholder={`Tell the data agent how to join “${datasetName}” with another dataset…`}
-        starters={[`Join ${datasetName} with a shared dataset on a common key.`, `Add a net-revenue measure to ${datasetName}.`]}
-      />
     </div>
   );
 }

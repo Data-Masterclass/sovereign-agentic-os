@@ -4,7 +4,6 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import AgentChat from '@/components/AgentChat';
 import {
   compileSilver,
   personalSchema,
@@ -265,15 +264,6 @@ function SilverBuilder({
       <p className="hint" style={{ textAlign: 'right' }}>
         The Silver step lights only after this table is written into Trino and a probe reads it back — no faked check.
       </p>
-
-      <div className="section-title">Or ask the data agent</div>
-      <AgentChat
-        agent="data-product"
-        label="data agent"
-        minHeight={170}
-        placeholder={`Tell the data agent how to clean “${datasetName}”…`}
-        starters={[`Clean ${datasetName}: dedupe and set the key.`, `Type the columns in ${datasetName} and drop blanks.`]}
-      />
     </div>
   );
 }

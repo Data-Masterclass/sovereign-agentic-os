@@ -19,6 +19,10 @@ import { ROLES, SESSION_COOKIE, type Role } from '@/lib/session';
  *    provisions the account on first request. Credentials never touch the wire.
  *  - `sso.mode:'basic'` — inject a shared server-side credential as HTTP Basic
  *    (the browser never sees it). For tools fronted by a single service login.
+ *  - `sso.mode:'session'` — the tool has NO trusted-header mode (Langfuse's
+ *    NextAuth). The proxy signs a server-only service account in server-side and
+ *    injects the resulting session cookie (lib/tool-sso-langfuse.ts) so no second
+ *    login is shown; the password never reaches the browser.
  *  - `sso.mode:'none'` — no per-user account exists (MLflow/Dagster/Cube OSS);
  *    the proxy + role gate IS the access control. Nothing is injected.
  *
@@ -29,7 +33,7 @@ import { ROLES, SESSION_COOKIE, type Role } from '@/lib/session';
  */
 
 export type Protocol = 'http' | 'ws';
-export type SsoMode = 'header' | 'basic' | 'none';
+export type SsoMode = 'header' | 'basic' | 'session' | 'none';
 
 export type ToolSso = {
   mode: SsoMode;
@@ -139,6 +143,36 @@ export const TOOLS: Record<string, Tool> = {
       roleMap: { admin: 'Admin', builder: 'Alpha', 'creator': 'Gamma' },
     },
     note: 'AUTH_REMOTE_USER + auto-user-registration; role via X-Forwarded-Roles.',
+  },
+  langfuse: {
+    key: 'langfuse',
+    title: 'Langfuse',
+    upstream: config.langfuseUrl,
+    protocol: 'http',
+    frame: 'strip',
+    basePath: '/tools/langfuse',
+    // Admin-only: the embedded console shows EVERY project trace (agent I/O
+    // across users), unlike the per-user-scoped Monitoring API. Non-admins use
+    // Monitoring for their own traces.
+    minRole: 'admin',
+    embeddable: true,
+    sso: { mode: 'session' }, // NextAuth: proxy signs a server-only account in.
+    note: 'NextAuth SSO — the proxy establishes the session server-side (lib/tool-sso-langfuse.ts); no second login, password never reaches the browser.',
+  },
+  litellm: {
+    key: 'litellm',
+    title: 'LLM Gateway',
+    upstream: config.litellmUrl,
+    protocol: 'http',
+    frame: 'strip',
+    basePath: '/tools/litellm',
+    // All users; the tab opens ONLY the public, key-free Model Hub. No auth is
+    // injected — the LiteLLM master key must NEVER reach the browser, so the
+    // admin UI (spend/keys) simply shows its own login if navigated to.
+    minRole: 'creator',
+    embeddable: true,
+    sso: { mode: 'none' },
+    note: "Read-only Model Hub only (/ui/model_hub_table). No credential injected — the master key stays server-side; LiteLLM's admin UI stays behind its own login.",
   },
   opensearch: {
     key: 'opensearch',
@@ -365,8 +399,27 @@ export function buildUpstreamHeaders(args: {
 /* --------------------------------------------------------------- the proxy */
 
 /**
+ * Server-side session establishment for `sso.mode:'session'` tools (Langfuse).
+ * `active` answers "does the browser already carry a tool session?"; `provide`
+ * mints one (full Set-Cookie strings) server-side. Kept as an injected seam so
+ * lib/tool-proxy stays free of any one tool's auth specifics + is unit-testable.
+ */
+export type SessionSso = {
+  active: (cookieHeader: string | null) => boolean;
+  provide: () => Promise<string[]>;
+};
+
+/** `name=value` from a Set-Cookie string (attributes dropped) — for the Cookie request header. */
+function setCookiePair(setCookie: string): string {
+  return setCookie.split(';', 1)[0].trim();
+}
+
+/**
  * Reverse-proxy one request to a tool upstream and stream the response back with
- * the header transforms applied. `fetchImpl` is injectable for tests.
+ * the header transforms applied. `fetchImpl` is injectable for tests. For
+ * session-SSO tools the caller passes `sessionSso`; when the browser has no tool
+ * session yet, the proxy injects a server-minted one into BOTH this upstream
+ * request and the browser response, so the console loads already logged-in.
  */
 export async function proxy(
   req: Request,
@@ -374,6 +427,7 @@ export async function proxy(
   pathSegments: string[],
   user: Principal,
   fetchImpl: typeof fetch = fetch,
+  sessionSso?: SessionSso,
 ): Promise<Response> {
   const reqUrl = new URL(req.url);
   const host = req.headers.get('host') ?? reqUrl.host;
@@ -386,6 +440,20 @@ export async function proxy(
   const headers = buildUpstreamHeaders({ tool, user, incoming: req.headers, proto, host });
   const method = req.method.toUpperCase();
   const hasBody = method !== 'GET' && method !== 'HEAD';
+
+  // Session SSO: mint + inject a tool session when the browser lacks one. On any
+  // provider failure we inject nothing and forward as-is (the tool shows its own
+  // login) — never a hard error.
+  let injectedSetCookies: string[] = [];
+  if (tool.sso.mode === 'session' && sessionSso && !sessionSso.active(req.headers.get('cookie'))) {
+    const minted = await sessionSso.provide();
+    if (minted.length > 0) {
+      const pairs = minted.map(setCookiePair);
+      const existing = headers.get('cookie');
+      headers.set('cookie', [existing, ...pairs].filter(Boolean).join('; '));
+      injectedSetCookies = minted;
+    }
+  }
 
   const init: RequestInit & { duplex?: 'half' } = {
     method,
@@ -405,6 +473,9 @@ export async function proxy(
     proto,
     host,
   });
+  // Persist the minted session on the browser (scoped to the tool prefix) so the
+  // next /tools/<key> request carries it and we skip the server-side login.
+  for (const c of injectedSetCookies) outHeaders.append('set-cookie', rewriteSetCookie(c, tool.basePath));
   return new Response(upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,

@@ -863,6 +863,17 @@ litellm:
   masterkeySecretKey: masterkey
   environmentSecrets:
     - litellm-credentials
+  # SERVER_ROOT_PATH lets LiteLLM serve its UI + emit redirects under a path
+  # prefix. The read-only Model Hub is embedded in the OS "LLM Gateway" tab via
+  # the same-origin proxy at /tools/litellm (lib/tool-proxy.ts), so its Next.js
+  # assets must load under that prefix. This is a FastAPI root_path: it only
+  # changes generated URLs (UI base, redirect Location) — it does NOT change
+  # route matching, so agents calling the gateway directly at
+  # http://agentic-os-litellm:4000/v1/... are unaffected. (Direct port-forward to
+  # the admin UI now lives at /tools/litellm/ui.) The public Model Hub itself is
+  # turned on by an admin, once: UI → Model Hub → "Select Models to Make Public".
+  envVars:
+    SERVER_ROOT_PATH: "/tools/litellm"
   # Middleware tier — wave 1. deploymentAnnotations lands on the Deployment
   # metadata (Argo ordering). NOTE: litellm-helm exposes NO priorityClassName
   # value, so this pod runs at the cluster-default priority (0) — already below
@@ -1338,6 +1349,20 @@ opa:
       northpeak-marts:              # gold-mart seed Job (marts.trino.user)
         domains: [sales]
         clearances: []
+      # DOMAIN principals — the governed query tools run AS `user.domains[0]` (the
+      # DOMAIN name is the Trino session user), so each domain MUST map to itself here
+      # or the row filter resolves its membership to [] and returns ZERO rows — an
+      # authenticated user reads nothing from their OWN / shared marts (the bug behind
+      # the empty campaign scorecard).
+      sales:                        # the Sales worked-example domain
+        domains: [sales]
+        clearances: [pii]
+      agentic-leader-q3-2026:       # the live Q3-2026 cohort domain
+        domains: [agentic-leader-q3-2026]
+        clearances: []
+      test:                         # the internal test/admin domain
+        domains: [test]
+        clearances: [pii]
 
 # -----------------------------------------------------------------------------
 # Sales Assistant — the Agent golden-path vertical slice. Ships AGENT.md +
@@ -1952,6 +1977,54 @@ superset:
       DATA_CACHE_CONFIG = {"CACHE_TYPE": "SimpleCache"}
       FILTER_STATE_CACHE_CONFIG = {"CACHE_TYPE": "SimpleCache"}
       EXPLORE_FORM_DATA_CACHE_CONFIG = {"CACHE_TYPE": "SimpleCache"}
+    # ------------------------------------------------------------------------
+    # OS single sign-on. The os-ui reverse proxy (/tools/superset) injects the
+    # trusted X-Forwarded-User + X-Forwarded-Roles headers for the already-
+    # authenticated, role-gated OS user (lib/tool-proxy.ts). This before_request
+    # hook auto-provisions + logs that user in, so NO Superset login is shown.
+    # We deliberately KEEP AUTH_TYPE = AUTH_DB (the default) so the in-cluster
+    # bootstrap Job's admin API login (provider: db) still works — the hook is a
+    # no-op for any request that lacks the trusted header (health probes, the
+    # bootstrap Job, direct in-cluster calls). The headers are ONLY reachable via
+    # the os-ui proxy, which strips any client-supplied copies, so they cannot be
+    # spoofed from a browser. Role map (X-Forwarded-Roles): Admin / Alpha /
+    # Gamma; most OS users land on Gamma (read-only).
+    # ------------------------------------------------------------------------
+    remote_user_sso: |
+      from flask import request
+      from flask_login import current_user, login_user
+
+      SSO_USER_HEADER = "X-Forwarded-User"
+      SSO_ROLES_HEADER = "X-Forwarded-Roles"
+      SSO_DEFAULT_ROLE = "Gamma"
+
+      def _sso_login():
+          username = request.headers.get(SSO_USER_HEADER)
+          if not username:
+              return  # no trusted header -> leave AUTH_DB untouched
+          try:
+              if getattr(current_user, "is_authenticated", False) and \
+                      getattr(current_user, "username", None) == username:
+                  return  # already the right session
+              from superset import security_manager as sm
+              role_name = request.headers.get(SSO_ROLES_HEADER) or SSO_DEFAULT_ROLE
+              role = sm.find_role(role_name) or sm.find_role(SSO_DEFAULT_ROLE)
+              user = sm.find_user(username=username)
+              if user is None:
+                  user = sm.add_user(
+                      username, username, "SSO",
+                      "%s@sso.local" % username, role,
+                  )
+              elif role is not None and role not in user.roles:
+                  user.roles = [role]  # keep the OS-mapped role authoritative
+                  sm.update_user(user)
+              if user:
+                  login_user(user)
+          except Exception:  # never 500 the console on an SSO hiccup
+              pass
+
+      def FLASK_APP_MUTATOR(app):
+          app.before_request(_sso_login)
 
 # -----------------------------------------------------------------------------
 # Forgejo — self-hosted git (Layer 3 software delivery). Lean local: sqlite,

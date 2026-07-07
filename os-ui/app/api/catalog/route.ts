@@ -11,8 +11,8 @@ import {
   assembleCatalog,
   registryAssets,
   type CatalogAsset,
-  type SourceSeverity,
 } from '@/lib/data/catalog';
+import { openMetadataSource, omEntityUrl } from '@/lib/data/openmetadata';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,8 +24,10 @@ export const dynamic = 'force-dynamic';
  *   • Trino tables are listed from the caller's OWN domain schema (schema-agnostic
  *     query-tool), and a missing/empty schema degrades to an honest source status
  *     ("physical marts not materialized yet") instead of a Trino error;
- *   • OpenMetadata is included only WITH a bot token — no token means it is skipped
- *     honestly rather than firing a doomed 401 and silently falling back.
+ *   • OpenMetadata is the CORE metadata backbone: a live health probe drives its
+ *     CONNECTED state (token or not), the governed marts are deep-linked into it,
+ *     and its own tables are pulled to enrich the union when a bot token is set. An
+ *     unreachable OM degrades to a calm "reconnecting…" — never a 500, never "off".
  * The assembly itself lives in the pure lib/data/catalog module (unit-tested).
  */
 
@@ -47,40 +49,14 @@ async function fromQueryTool(principal: string): Promise<CatalogAsset[]> {
   });
 }
 
-/** OpenMetadata catalog entries — ONLY when a bot token is configured. When it is not,
- *  that is an OPTIONAL integration left un-configured (calm `info`), not a fault; a real
- *  reachability/auth failure is a `warn`. */
-async function fromOpenMetadata(): Promise<{ assets: CatalogAsset[] | null; status: string; severity?: SourceSeverity }> {
-  if (!config.openmetadataJwt) {
-    return { assets: null, status: 'optional catalog integration — not connected', severity: 'info' };
-  }
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2500);
-  try {
-    const res = await fetch(
-      `${config.openmetadataApiUrl}/api/v1/tables?limit=50&fields=description`,
-      {
-        cache: 'no-store',
-        signal: ctrl.signal,
-        headers: { accept: 'application/json', authorization: `Bearer ${config.openmetadataJwt}` },
-      },
-    );
-    if (!res.ok) return { assets: null, status: `OpenMetadata ${res.status} — dropped from the union`, severity: 'warn' };
-    const data = (await res.json()) as { data?: Record<string, unknown>[] };
-    if (!Array.isArray(data?.data)) return { assets: null, status: 'OpenMetadata returned no table list', severity: 'warn' };
-    const assets: CatalogAsset[] = data.data.map((t) => ({
-      name: String(t.name ?? ''),
-      fqn: String(t.fullyQualifiedName ?? t.name ?? ''),
-      description: String(t.description ?? ''),
-      type: 'table',
-      source: 'openmetadata',
-    }));
-    return { assets, status: 'OpenMetadata catalog' };
-  } catch {
-    return { assets: null, status: 'OpenMetadata unreachable — dropped from the union', severity: 'warn' };
-  } finally {
-    clearTimeout(timer);
-  }
+/** Attach an OpenMetadata entity deep link to each governed Iceberg mart, so every
+ *  governed row can jump into the metadata backbone. Non-materialized registry
+ *  entries (`registry:<id>`) get no link — omEntityUrl returns null for them. */
+function withOmLinks(assets: CatalogAsset[]): CatalogAsset[] {
+  return assets.map((a) => {
+    const omUrl = omEntityUrl(config.openmetadataUrl, config.openmetadataService, a.fqn);
+    return omUrl ? { ...a, omUrl } : a;
+  });
 }
 
 export async function GET() {
@@ -96,11 +72,24 @@ export async function GET() {
   const principal = user.domains[0] ?? user.id;
   const p: Principal = { id: user.id, domains: user.domains, role: user.role };
 
+  // Governed registry marts (DLS-scoped). The materialized ones (real `iceberg.*`
+  // FQNs) are what this OS mirrors into OpenMetadata — count them for the OM pill.
+  const registry = registryAssets(listDatasets(p));
+  const mirroredMarts = registry.filter((a) => a.fqn.startsWith('iceberg.')).length;
+
   const result = await assembleCatalog({
     schema: principal,
-    registry: registryAssets(listDatasets(p)),
+    registry,
     trino: () => fromQueryTool(principal),
-    openmetadata: () => fromOpenMetadata(),
+    openmetadata: () =>
+      openMetadataSource({
+        apiUrl: config.openmetadataApiUrl,
+        jwt: config.openmetadataJwt || undefined,
+        fetchImpl: fetch,
+        mirroredMarts,
+      }),
   });
+  // Deep-link every governed Iceberg asset (registry + Trino) into its OM entity.
+  result.assets = withOmLinks(result.assets);
   return NextResponse.json(result);
 }

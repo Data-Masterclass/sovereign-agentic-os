@@ -302,12 +302,20 @@ spec:
               value: {{ $u.kserveUrl | default (printf "http://%s-predictor:80" .Values.kserve.sampleModel.name) | quote }}
             - name: OPENMETADATA_API_URL
               value: {{ $u.openmetadataApiUrl | default "http://openmetadata:8585" | quote }}
-            # OpenMetadata bot JWT (optional). OM requires a Bearer token; when this
-            # is empty/absent the Catalog SKIPS OpenMetadata honestly instead of
-            # firing a doomed 401. Sourced from the os-ui-openmetadata Secret
-            # (optional — the pod starts fine without it), which the operator fills
-            # out-of-band with a minted ingestion-bot JWT (or via the gitignored
-            # osUI.openmetadataJwt value). Server-only; never sent to the browser.
+            # The OpenMetadata SERVICE the Trino/Iceberg lakehouse is ingested under.
+            # Used ONLY to build browser deep links from a governed mart to its OM
+            # entity page (OM FQN = <service>.<catalog>.<schema>.<table>). Must match
+            # the OM ingestion pipeline's service name; defaults to `trino`.
+            - name: OPENMETADATA_SERVICE
+              value: {{ $u.openmetadataService | default "trino" | quote }}
+            # OpenMetadata bot JWT. OM is the CORE catalog backbone: the Catalog
+            # shows it CONNECTED from a live (unauthenticated) health probe with or
+            # without this token, and governed marts are deep-linked into OM either
+            # way. The token ENRICHES the union by pulling OM's own table list — when
+            # it is absent OM stays connected and simply isn't pulled. Sourced from
+            # the os-ui-openmetadata Secret (optional — the pod starts fine without
+            # it), which the operator fills out-of-band with a minted ingestion-bot
+            # JWT (or via the gitignored osUI.openmetadataJwt value). Server-only.
             - name: OPENMETADATA_JWT
               valueFrom:
                 secretKeyRef:

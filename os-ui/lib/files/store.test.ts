@@ -245,6 +245,23 @@ test('an Admin certifies a domain asset into a marketplace product', () => {
   assert.ok(listFiles(kenji).marketplace.some((f) => f.id === a.id));
 });
 
+test('own promoted (Shared) file groups under Domain, not Mine', () => {
+  const a = documented(); // owned by amir, private
+  applyApprovedFilePromotion(requestPromotion(a.id, amir, {}), bea); // → domain asset
+  const g = listFiles(amir); // the OWNER lists
+  assert.ok(g.domain.some((f) => f.id === a.id), 'own Shared file belongs under Domain');
+  assert.ok(!g.mine.some((f) => f.id === a.id), 'own Shared file is NOT under Mine');
+});
+
+test('own certified (Marketplace) file groups under Marketplace, not Mine', () => {
+  const a = documented();
+  applyApprovedFilePromotion(requestPromotion(a.id, amir, {}), bea);
+  transition(a.id, sara, 'certify', {}); // → marketplace product
+  const g = listFiles(amir); // the OWNER lists
+  assert.ok(g.marketplace.some((f) => f.id === a.id), 'own product belongs under Marketplace');
+  assert.ok(!g.mine.some((f) => f.id === a.id), 'own product is NOT under Mine');
+});
+
 test('cross-instance: writes are visible through globalThis symbol', () => {
   __resetStore();
   const a = createFile(amir, { name: 'ci-test.pdf', text: 'hello' });

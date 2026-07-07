@@ -46,6 +46,18 @@ test('registry keys are self-consistent (key + basePath)', () => {
   assert.equal(resolveTool('does-not-exist'), undefined);
 });
 
+test('langfuse + litellm are registered with the right gate + SSO mode', () => {
+  // Langfuse: session-SSO, admin-only (the embedded console shows every trace).
+  assert.equal(TOOLS.langfuse.sso.mode, 'session');
+  assert.equal(TOOLS.langfuse.minRole, 'admin');
+  assert.equal(TOOLS.langfuse.embeddable, true);
+  // LiteLLM: read-only Model Hub for everyone; NO credential injected.
+  assert.equal(TOOLS.litellm.sso.mode, 'none');
+  assert.equal(TOOLS.litellm.minRole, 'creator');
+  assert.equal(roleAllowed('creator', TOOLS.litellm.minRole), true);
+  assert.equal(roleAllowed('builder', TOOLS.langfuse.minRole), false, 'non-admin cannot open embedded Langfuse');
+});
+
 test('role gate: minRole is enforced by rank, not equality', () => {
   // participant < creator < builder < admin
   assert.equal(roleAllowed('creator', 'creator'), true);
@@ -217,4 +229,49 @@ test('proxy() streams the upstream body and applies every header transform', asy
   assert.ok(/frame-ancestors 'self'/.test(res.headers.get('content-security-policy') ?? ''));
   assert.equal(res.headers.get('location'), '/tools/mlflow/#/experiments/1');
   assert.equal(await res.text(), '<html>ok</html>', 'body streamed through unbuffered');
+});
+
+/* --------------------------------------------------- session SSO injection */
+
+function okUpstream(): (url: string | URL, init?: RequestInit) => Promise<Response> {
+  return async () => new Response('<html>lf</html>', { status: 200, headers: { 'content-type': 'text/html' } });
+}
+
+test('proxy() session SSO injects a server-minted cookie upstream + sets it on the browser', async () => {
+  const tool = fakeTool({ key: 'langfuse', basePath: '/tools/langfuse', upstream: 'http://lf:3000', sso: { mode: 'session' } });
+  let sawCookie: string | null = null;
+  const fakeFetch = async (_url: string | URL, init?: RequestInit): Promise<Response> => {
+    sawCookie = new Headers(init?.headers).get('cookie');
+    return okUpstream()(_url, init);
+  };
+  let provided = 0;
+  const sessionSso = {
+    active: () => false, // browser has no Langfuse session yet
+    provide: async () => {
+      provided++;
+      return ['next-auth.session-token=THEJWT; Path=/; HttpOnly; SameSite=Lax'];
+    },
+  };
+
+  const req = new Request('https://os/tools/langfuse/', { headers: { host: 'os' } });
+  const res = await proxy(req, tool, [], USER, fakeFetch as typeof fetch, sessionSso);
+
+  assert.equal(provided, 1, 'minted a session once');
+  assert.ok(/next-auth\.session-token=THEJWT/.test(sawCookie ?? ''), 'injected session cookie upstream');
+  const setCookies = (res.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
+  assert.ok(setCookies.some((c) => /next-auth\.session-token=THEJWT/.test(c)), 'browser gets the session cookie');
+  assert.ok(setCookies.some((c) => /Path=\/tools\/langfuse\//.test(c)), 'scoped to the tool prefix');
+});
+
+test('proxy() session SSO does NOT re-mint when the browser already has a session', async () => {
+  const tool = fakeTool({ key: 'langfuse', basePath: '/tools/langfuse', upstream: 'http://lf:3000', sso: { mode: 'session' } });
+  let provided = 0;
+  const sessionSso = { active: () => true, provide: async () => { provided++; return ['x=y']; } };
+  const req = new Request('https://os/tools/langfuse/', {
+    headers: { host: 'os', cookie: 'next-auth.session-token=already' },
+  });
+  const res = await proxy(req, tool, [], USER, okUpstream() as typeof fetch, sessionSso);
+  assert.equal(provided, 0, 'existing session → no server-side login');
+  const setCookies = (res.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
+  assert.equal(setCookies.length, 0, 'nothing injected');
 });

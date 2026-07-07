@@ -73,6 +73,7 @@ function isUp(status: string) {
 /** Same-origin console overlay keys (lib/tool-proxy.ts registry), by component id. */
 const TOOL_KEYS: Record<string, string> = {
   superset: 'superset',
+  langfuse: 'langfuse',
   openmetadata: 'openmetadata',
   dagster: 'dagster',
   forgejo: 'forgejo',

@@ -153,6 +153,23 @@ test('only Admin certifies asset -> product; product is marketplace-discoverable
   assert.equal(listDatasets(kenji).marketplace.some((x) => x.id === id), true);
 });
 
+test('own promoted (Shared) dataset groups under Domain, not Mine', () => {
+  const id = seedOrders(); // owned by amir, private
+  transition(id, sara, 'promote', { visibility: 'domain' }); // → shared asset
+  const groups = listDatasets(amir); // the OWNER lists
+  assert.ok(groups.domain.some((d) => d.id === id), 'own Shared dataset belongs under Domain');
+  assert.ok(!groups.mine.some((d) => d.id === id), 'own Shared dataset is NOT under Mine');
+});
+
+test('own certified (Marketplace) dataset groups under Marketplace, not Mine', () => {
+  const id = seedOrders();
+  transition(id, sara, 'promote', { visibility: 'domain' });
+  transition(id, sara, 'certify', { visibility: 'shared' }); // → marketplace product
+  const groups = listDatasets(amir); // the OWNER lists
+  assert.ok(groups.marketplace.some((d) => d.id === id), 'own product belongs under Marketplace');
+  assert.ok(!groups.mine.some((d) => d.id === id), 'own product is NOT under Mine');
+});
+
 test('promoted asset is visible to domain peers, denied cross-domain without a grant', () => {
   const id = seedOrders();
   transition(id, sara, 'promote', { visibility: 'domain' });

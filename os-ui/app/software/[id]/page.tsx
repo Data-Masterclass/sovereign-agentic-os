@@ -7,7 +7,6 @@ import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
-import AgentChat from '@/components/AgentChat';
 import CodePanel from '@/components/CodePanel';
 import { useToolWindow } from '@/components/ToolWindowProvider';
 import { useApi } from '@/lib/useApi';
@@ -91,21 +90,18 @@ export default function AppPage() {
   const [busy, setBusy] = useState(false);
   const [deployMsg, setDeployMsg] = useState('');
   const [showApi, setShowApi] = useState(false);
-  const [buildTab, setBuildTab] = useState<'chat' | 'code'>(search?.get('build') === 'code' ? 'code' : 'chat');
   const [manage, setManage] = useState(false);
 
-  // Persist which surface is open (Edit mode + Chat/Code tab) in the URL so a
-  // reload restores the open build assistant instead of the default Monitor view.
+  // Persist whether Edit mode is open in the URL so a reload restores the editor
+  // instead of the default Monitor view.
   useEffect(() => {
     patchUrl({
       mode: mode === 'edit' ? 'edit' : null,
-      build: mode === 'edit' && buildTab === 'code' ? 'code' : null,
     });
-  }, [mode, buildTab]);
+  }, [mode]);
   useEffect(() => {
     const sync = () => {
       setMode(getUrlParam('mode') === 'edit' ? 'edit' : 'monitor');
-      setBuildTab(getUrlParam('build') === 'code' ? 'code' : 'chat');
     };
     window.addEventListener('popstate', sync);
     return () => window.removeEventListener('popstate', sync);
@@ -425,33 +421,26 @@ export default function AppPage() {
             ) : null}
           </>
         ) : (
-          /* ---- Edit mode: the chat is the centerpiece, with a code toggle. ---- */
+          /* ---- Edit mode: edit the code directly; use the global “Ask the OS”
+                 assistant (top-right) for conversational, agent-driven changes. ---- */
           <div className="sw-edit">
             <div className="sw-edit-bar">
-              {canEditCode ? (
-                <div className="sw-modeswitch sw-modeswitch-sm">
-                  <button className={buildTab === 'chat' ? 'active' : ''} onClick={() => setBuildTab('chat')}>Chat</button>
-                  <button className={buildTab === 'code' ? 'active' : ''} onClick={() => setBuildTab('code')}>Code</button>
-                </div>
-              ) : <span className="sw-edit-hint">Tell the agent what to build. It writes code, commits to Forgejo, and you publish a release.</span>}
+              <span className="sw-edit-hint">
+                {canEditCode
+                  ? 'Edit the code directly below, or ask the “Ask the OS” assistant (top-right) to build changes for you.'
+                  : 'Ask the “Ask the OS” assistant (top-right) to describe the changes you want — it writes code, commits to Forgejo, and prepares a release.'}
+              </span>
               <button className="btn" onClick={() => deployAction()} disabled={publishDisabled} title={inReview ? 'A deploy is awaiting a Builder in Deploy reviews' : undefined}>
                 {publishLabel}
               </button>
             </div>
 
-            {canEditCode && buildTab === 'code' ? (
+            {canEditCode ? (
               <CodePanel appId={app.id} repoFullName={app.repo.fullName} />
             ) : (
-              <AgentChat
-                agent="software-app"
-                variant="claude"
-                label="build assistant"
-                minHeight={360}
-                endpoint={`/api/apps/${app.id}/chat`}
-                initialMessages={app.chat.map((m) => ({ role: m.role, content: m.content }))}
-                placeholder={`Message the ${app.name} build assistant…  (e.g. add a status filter and a CSV export)`}
-                starters={['Add a renewals list sorted by renews_on.', 'Add an export-to-CSV action.']}
-              />
+              <div className="stub-page">
+                Use the “Ask the OS” assistant (top-right) to describe what you want changed.
+              </div>
             )}
             {deployMsg ? <div className={deployMsg.startsWith('✓') ? 'answer' : 'error'} style={{ marginTop: 12 }}>{deployMsg}</div> : null}
           </div>

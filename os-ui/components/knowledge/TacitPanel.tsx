@@ -4,14 +4,12 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import AgentChat from '@/components/AgentChat';
 
 /**
  * Tacit-knowledge panel — the workflow-level tacit doc (sibling tacit.md). Capture
  * the practitioners' hidden know-how ANY way: paste notes, upload a transcript, or
- * record-stub (a mocked in-app transcription), then let the knowledge agent
- * COMPRESS it into clean markdown (reuses AgentChat). The compressed reply lands in
- * the editor; Save commits it to tacit.md. The transcription backend is stubbed in
+ * record-stub (a mocked in-app transcription). The captured source lands in the
+ * editor; Save commits it to tacit.md. The transcription backend is stubbed in
  * kind; paste/upload are fully real.
  */
 
@@ -88,7 +86,7 @@ export default function TacitPanel({
     <div className="tacit-panel">
       <p className="hint" style={{ marginTop: 0 }}>
         The practitioners&rsquo; hidden know-how. Capture it any way — paste, upload a transcript,
-        or record — then the knowledge agent compresses it into clean markdown.
+        or record — then append it into the tacit.md editor and save.
       </p>
 
       {/* Current tacit.md */}
@@ -128,20 +126,15 @@ export default function TacitPanel({
             onChange={(e) => setRaw(e.target.value)}
             placeholder="Paste raw notes / interview transcript here, or use Upload / Record above…"
           />
-
-          {/* Compress with the knowledge agent */}
-          <div className="section-title" style={{ marginTop: 20 }}>Compress with the knowledge agent</div>
-          <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-            Send the raw capture and the agent returns clean, compressed tacit markdown. Its reply
-            lands in the editor above — review, then Save.
-          </p>
-          <AgentChat
-            agent="knowledge"
-            label="knowledge agent"
-            placeholder={raw ? 'Press Send to compress the captured notes…' : 'Paste or capture notes above first…'}
-            starters={raw ? [`Compress these notes into clean tacit-knowledge markdown:\n\n${raw.slice(0, 400)}`] : []}
-            onAssistant={(content) => setTacit(content)}
-          />
+          <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
+            <button
+              className="btn ghost sm"
+              onClick={() => { setTacit((t) => (t ? `${t}\n\n${raw}` : raw)); setRaw(''); }}
+              disabled={!raw.trim()}
+            >
+              Append to tacit.md ↑
+            </button>
+          </div>
         </>
       )}
 
