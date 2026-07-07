@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { errorResponse } from '@/lib/data/server';
 import { queryRun } from '@/lib/governed';
+import { readPrincipalFor } from '@/lib/data/store-fqn';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,9 +27,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing SQL' }, { status: 400 });
     }
 
-    // The principal Trino's OPA plugin governs row/column on — the caller's domain
-    // (or their id as a fallback). Never trusted from the request body.
-    const principal = u.domains[0] ?? u.id;
+    // The principal Trino's OPA plugin governs row/column on. Owner-aware: a read that
+    // touches the caller's OWN `personal_<uid>` lane runs AS the owner (that schema is
+    // owner-only under OPA `is_owned_personal`, so the domain principal is denied — even
+    // for the owner's own table); every other read runs as the caller's domain. Derived
+    // SERVER-SIDE from the session + SQL — never trusted from the request body.
+    const principal = readPrincipalFor(sql, u);
     const result = await queryRun(sql, principal);
     return NextResponse.json(result);
   } catch (e) {

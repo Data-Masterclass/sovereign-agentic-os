@@ -90,6 +90,31 @@ test("VALIDATOR: keywords inside STRING LITERALS don't false-positive; word stem
   assert.ok(b.ok, 'created_at/deleted_at/offset are not write keywords');
 });
 
+// BUG 2: a raw hyphenated identifier (the model copying the cohort domain / display
+// name) is a Trino SYNTAX_ERROR — reject it BEFORE execution, don't ship it.
+test('VALIDATOR: a raw hyphenated FQN/identifier is rejected (never reaches Trino)', () => {
+  for (const sql of [
+    'select name\nfrom iceberg.agentic-leader-Q3-2026.bronze_participants limit 10',
+    'select * from agentic-leader-q3-2026 limit 5',
+    'select foo-bar from t limit 1',
+  ]) {
+    const v = validateReadOnlySelect(sql);
+    assert.equal(v.ok, false, `must reject: ${sql}`);
+    assert.match((v as { reason: string }).reason, /identifier|fully-qualified/i);
+  }
+});
+
+test('VALIDATOR: a valid slugified FQN + spaced subtraction still pass (no false positive)', () => {
+  // The CORRECT physical name for the hyphenated cohort — underscores, no hyphen.
+  const a = validateReadOnlySelect(
+    'select name from iceberg.agentic_leader_q3_2026.bronze_participants limit 10',
+  );
+  assert.ok(a.ok, 'the slugified FQN is valid');
+  // Real subtraction is spaced — the hyphen guard must not fire on it.
+  const b = validateReadOnlySelect('select revenue - cost as margin from iceberg.sales.gold_x limit 5');
+  assert.ok(b.ok, 'spaced arithmetic is not a hyphenated identifier');
+});
+
 test('VALIDATOR: empty / non-SELECT prose is rejected', () => {
   assert.equal(validateReadOnlySelect('').ok, false);
   assert.equal(validateReadOnlySelect('I cannot answer that').ok, false);
@@ -139,6 +164,25 @@ test('GOVERNANCE: listAskable is canView-scoped and only lists BUILT datasets', 
   // kenji sees his own private dataset (his personal schema), not amir's.
   const forKenji = listAskable(kenji);
   assert.deepEqual(forKenji.map((d) => d.fqn), ['iceberg.personal_kenji.silver_finance_ledger']);
+});
+
+// BUG 2: a hyphenated-domain dataset must reach the model as a VALID slug FQN, and the
+// prompt must forbid inventing a name from the display/domain label.
+test('CONTEXT: a hyphenated domain yields a hyphen-free slug FQN + a no-invent rule', () => {
+  const cohortOwner: Principal = { id: 'aborek', domains: ['agentic-leader-q3-2026'], role: 'creator' };
+  const shared = createDataset(cohortOwner, { name: 'Agentic Leader Q3 2026 Participants' });
+  buildVersion(shared.id, cohortOwner, 'silver', { quality: 'passing', artifact: 'silver/p.sql' });
+  transition(shared.id, { ...cohortOwner, role: 'admin' }, 'promote', { visibility: 'domain' });
+
+  const askable = listAskable(cohortOwner);
+  const fqn = askable[0].fqn;
+  assert.doesNotMatch(fqn, /-/, 'no raw hyphen may reach Trino');
+  assert.match(fqn, /^iceberg\.agentic_leader_q3_2026\.silver_agentic_leader_q3_2026_participants$/);
+
+  // The generated FQN passes the validator; and the prompt tells the model not to invent.
+  assert.ok(validateReadOnlySelect(`select * from ${fqn} limit 5`).ok);
+  const sys = sqlGenMessages('list participants', askable.map((d) => ({ ...d, tier: d.tier as string })))[0].content;
+  assert.match(sys, /NEVER build a table name/i);
 });
 
 // -------------------------------------------------------------- orchestrator --
@@ -198,6 +242,26 @@ test('ASK: invalid generated SQL is REJECTED and never executed', async () => {
   assert.match(fail.message, /SELECT/i);
   assert.equal(fail.sql, 'drop table iceberg.sales.gold_northpeak_commerce'); // shown honestly
   assert.equal(executed, 0, 'rejected SQL must never reach queryRun');
+});
+
+test('ASK: an invented hyphenated table name is rejected as invalid_sql, never executed', async () => {
+  let executed = 0;
+  const out = await runAsk({
+    question: 'first 10 participants',
+    datasets: [northpeak],
+    // The model ignores the FQN and invents a name from the cohort domain/display label.
+    llm: async () => 'select name\nfrom iceberg.agentic-leader-Q3-2026.bronze_participants limit 10',
+    models: { generate: 'g', summarize: 's' },
+    query: async () => {
+      executed++;
+      return grid([]);
+    },
+  });
+  assert.equal(out.ok, false);
+  const fail = out as { kind: string; message: string };
+  assert.equal(fail.kind, 'invalid_sql');
+  assert.match(fail.message, /identifier|fully-qualified/i);
+  assert.equal(executed, 0, 'a doomed hyphenated statement must never reach Trino');
 });
 
 test('ASK: the NO_ACCESSIBLE_DATASET token and an empty context both answer honestly', async () => {

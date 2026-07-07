@@ -58,6 +58,8 @@ export type DatasetRecord = {
    *  The dataset.yaml spine points at these; both are Forgejo-versioned (dual-mode). */
   artifacts?: Record<string, string>;
   updatedAt: string;
+  /** Soft-archived: hidden from the working lists, reversible, retained. */
+  archived?: boolean;
 };
 
 export type DatasetSummary = {
@@ -73,6 +75,8 @@ export type DatasetSummary = {
   /** B/S/G dots for the tile. */
   dots: { bronze: boolean; silver: boolean; gold: boolean };
   storage: ReturnType<typeof storageFor>;
+  /** Soft-archived (retained, reversible). Absent/false = live. */
+  archived?: boolean;
 };
 
 type DataStoreState = { store: Map<string, DatasetRecord>; seeded: boolean; hydration: Promise<void> | null };
@@ -116,6 +120,7 @@ const mirror = osMirror({
         // would otherwise explode the mapping.
         yaml: { type: 'text', index: false },
         artifacts: { type: 'object', enabled: false },
+        archived: { type: 'boolean' },
       },
     },
   },
@@ -237,7 +242,7 @@ function furthest(d: Dataset): { freshness: string | null; layer: Layer | null }
   return { freshness: null, layer: null };
 }
 
-function summarise(d: Dataset): DatasetSummary {
+function summarise(d: Dataset, archived = false): DatasetSummary {
   const f = furthest(d);
   const built = f.layer ? d.versions[f.layer] : null;
   return {
@@ -251,25 +256,30 @@ function summarise(d: Dataset): DatasetSummary {
     quality: built ? built.quality : 'unknown',
     dots: { bronze: d.versions.bronze.built, silver: d.versions.silver.built, gold: d.versions.gold.built },
     storage: storageFor(d.tier),
+    archived,
   };
 }
 
 export type DatasetGroups = { mine: DatasetSummary[]; domain: DatasetSummary[]; marketplace: DatasetSummary[] };
 
-export function listDatasets(user: Principal): DatasetGroups {
+export function listDatasets(user: Principal, opts: { includeArchived?: boolean } = {}): DatasetGroups {
   ensureSeeded();
   const mine: DatasetSummary[] = [];
   const domain: DatasetSummary[] = [];
   const marketplace: DatasetSummary[] = [];
   for (const rec of ds().store.values()) {
+    // Archived datasets are HIDDEN by default (soft archive) — the owner/Admin can
+    // list them explicitly via `includeArchived` to restore or delete. A shared/
+    // certified dataset, once archived, disappears from everyone's list too.
+    if (rec.archived && !opts.includeArchived) continue;
     const d = parseDataset(rec.yaml);
     if (!canView(d, user)) continue;
     // Group by VISIBILITY (tier), not ownership: a promoted asset is domain data and
     // belongs under Domain even when the caller authored it; a certified product under
     // Marketplace; a private dataset (owner-only, via canView) under Personal.
-    if (d.tier === 'product') marketplace.push(summarise(d));
-    else if (d.tier === 'asset') domain.push(summarise(d));
-    else mine.push(summarise(d));
+    if (d.tier === 'product') marketplace.push(summarise(d, rec.archived));
+    else if (d.tier === 'asset') domain.push(summarise(d, rec.archived));
+    else mine.push(summarise(d, rec.archived));
   }
   const byName = (a: DatasetSummary, b: DatasetSummary) => a.name.localeCompare(b.name);
   return { mine: mine.sort(byName), domain: domain.sort(byName), marketplace: marketplace.sort(byName) };
@@ -770,6 +780,49 @@ export function listImported(user: Principal): DatasetSummary[] {
     if (d.tier === 'product' && user.domains.some((dm) => d.imports?.includes(dm))) out.push(summarise(d));
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// ------------------------------------------------ archive / delete -----------
+
+/**
+ * Archive a dataset: a reversible soft-hide. Edit-scoped — only the owner or an
+ * in-domain Admin may archive (the same authz as editing). The record is retained;
+ * the dataset just leaves the working lists (and everyone's domain/marketplace
+ * lists) until unarchived.
+ */
+export function archiveDataset(id: string, user: Principal): DatasetSummary {
+  const rec = get(id);
+  const d = editOf(rec, user);
+  rec.archived = true;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return summarise(d, true);
+}
+
+/** Restore an archived dataset back into the working lists (edit-scoped). */
+export function unarchiveDataset(id: string, user: Principal): DatasetSummary {
+  const rec = get(id);
+  const d = editOf(rec, user);
+  rec.archived = false;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return summarise(d, false);
+}
+
+/**
+ * Permanently delete a dataset (edit-scoped, irreversible). A certified product
+ * that other domains import is refused — remove subscribers first — so a delete can
+ * never orphan a cross-domain dependency (mirrors the decertify lineage guard). The
+ * API route confirms intent; this is the hard delete once confirmed.
+ */
+export function deleteDataset(id: string, user: Principal): void {
+  const rec = get(id);
+  const d = editOf(rec, user);
+  if ((d.imports?.length ?? 0) > 0) {
+    fail(`Cannot delete — ${d.imports!.length} domain(s) import this data product. Remove subscribers first.`, 409);
+  }
+  ds().store.delete(id);
+  mirror.deleteThrough(id);
 }
 
 // --------------------------------------------------------------------- files --

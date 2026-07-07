@@ -43,6 +43,27 @@ export function domainSchema(domain: string): string {
   return sanitizeIdent(domain);
 }
 
+/**
+ * The Trino principal a governed READ must run AS. A `personal_<uid>` schema is owned
+ * by that user ALONE (Trino OPA `is_owned_personal`), so a read that touches the
+ * caller's OWN personal lane MUST run as the owner (`user.id`) — even the owner is
+ * DENIED reading their own personal table under the domain principal. Every other read
+ * (a governed asset/product, or a bare/unqualified query) runs as the caller's domain
+ * principal, so cross-domain governance stays intact. This mirrors the owner-principal
+ * logic in `builtLayerFqn` that the preview/profile routes already use.
+ *
+ * Derived SERVER-SIDE from the signed session + the SQL text — NEVER trusted from the
+ * request body. Only the caller's OWN personal schema flips the principal to their id;
+ * another user's `personal_*` schema is left on the domain principal (Trino/OPA denies
+ * it regardless — we never impersonate to reach someone else's private lane).
+ */
+export function readPrincipalFor(sql: string, user: { id: string; domains: string[] }): string {
+  const own = personalSchema(user.id); // personal_<sanitizeIdent(uid)> — regex-safe ([a-z0-9_])
+  // Match the schema only as a qualified-name segment: `…personal_<uid>.<table>`.
+  const touchesOwnLane = new RegExp(`(^|[^a-z0-9_])${own}\\.`, 'i').test(sql);
+  return touchesOwnLane ? user.id : (user.domains[0] ?? user.id);
+}
+
 /** The Bronze table FQN for a dataset landing in a given schema. */
 export function bronzeTarget(schema: string, name: string): string {
   return `iceberg.${schema}.bronze_${slug(name)}`;

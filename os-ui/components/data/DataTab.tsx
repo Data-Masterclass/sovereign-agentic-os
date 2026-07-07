@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import DatasetTiles from './DatasetTiles';
 import DatasetDetail from './DatasetDetail';
 import DatasetStepper from './DatasetStepper';
+import { useTabNavReset } from '@/lib/tab-nav';
 
 type TabView =
   | { kind: 'tiles' }
@@ -35,6 +36,10 @@ export default function DataTab({
   onDatasetOpened?: () => void;
 }) {
   const [view, setView] = useState<TabView>({ kind: 'tiles' });
+
+  // Clicking the Data sidebar link while inside a dataset detail/stepper returns to
+  // the tiles list (same-route client nav wouldn't otherwise re-mount this component).
+  useTabNavReset(() => setView({ kind: 'tiles' }));
 
   // One-shot handoff: when the catalog (or any external caller) sets openDatasetId,
   // jump to the detail view and immediately clear the signal so it doesn't re-fire.

@@ -17,6 +17,9 @@ import {
   writeFile,
   listJoinable,
   buildGoldJoin,
+  archiveDataset,
+  unarchiveDataset,
+  deleteDataset,
   type Principal,
 } from './store.ts';
 import { DatasetError } from './dataset-schema.ts';
@@ -295,4 +298,59 @@ test('the data store degrades gracefully when the backend is unavailable (never 
   } finally {
     globalThis.fetch = orig;
   }
+});
+
+// ------------------------------------------------ archive / delete -----------
+
+test('archive hides a dataset from the working lists; unarchive restores it', () => {
+  __resetStore();
+  const d = createDataset(amir, { name: 'Scratch' });
+  assert.equal(listDatasets(amir).mine.length, 1);
+
+  const s = archiveDataset(d.id, amir);
+  assert.equal(s.archived, true);
+  // Hidden by default…
+  assert.equal(listDatasets(amir).mine.length, 0);
+  // …but visible (and flagged) with includeArchived.
+  const withArchived = listDatasets(amir, { includeArchived: true });
+  assert.equal(withArchived.mine.length, 1);
+  assert.equal(withArchived.mine[0].archived, true);
+
+  const back = unarchiveDataset(d.id, amir);
+  assert.equal(back.archived, false);
+  assert.equal(listDatasets(amir).mine.length, 1);
+  assert.equal(listDatasets(amir).mine[0].archived, false);
+});
+
+test('SECURITY: archive/unarchive/delete are edit-scoped (a non-owner viewer is 403)', () => {
+  __resetStore();
+  // A promoted sales asset amir authored — kenji (finance) cannot even see it,
+  // and bea (sales creator, not owner/admin) can see but not manage it.
+  const id = seedOrders();
+  transition(id, sara, 'promote', { visibility: 'domain' }); // → asset (sales)
+  assert.throws(() => archiveDataset(id, bea), (e: DatasetError) => e.status === 403);
+  assert.throws(() => deleteDataset(id, kenji), (e: DatasetError) => e.status === 403);
+  // The owner may; an in-domain admin may too.
+  assert.equal(archiveDataset(id, amir).archived, true);
+  assert.equal(unarchiveDataset(id, sara).archived, false);
+});
+
+test('delete permanently removes a dataset; a missing dataset is 404', () => {
+  __resetStore();
+  const d = createDataset(amir, { name: 'Ephemeral' });
+  deleteDataset(d.id, amir);
+  assert.equal(listDatasets(amir, { includeArchived: true }).mine.length, 0);
+  assert.throws(() => getDataset(d.id, amir), (e: DatasetError) => e.status === 404);
+  assert.throws(() => deleteDataset(d.id, amir), (e: DatasetError) => e.status === 404);
+});
+
+test('delete is refused while other domains import the product (no orphaned dependency)', () => {
+  __resetStore();
+  const id = seedOrders();
+  transition(id, sara, 'promote', { visibility: 'domain' });
+  transition(id, sara, 'certify', { visibility: 'shared' }); // → product (sales)
+  importProduct(id, finBuilder); // finance subscribes
+  assert.throws(() => deleteDataset(id, sara), (e: DatasetError) => e.status === 409);
+  // Archive stays available even for a governed product (reversible hide).
+  assert.equal(archiveDataset(id, sara).archived, true);
 });

@@ -8,11 +8,13 @@ import { listDatasets, createDataset } from '@/lib/data/store';
 export const dynamic = 'force-dynamic';
 
 /** The dataset registry: GET lists tiles (grouped mine/domain/marketplace);
+ *  `?archived=1` includes soft-archived datasets (for the Archived view).
  *  POST creates a new private dataset (a Bronze→Silver→Gold spine). */
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const user = await requirePrincipal();
-    return NextResponse.json(listDatasets(user));
+    const includeArchived = new URL(req.url).searchParams.get('archived') === '1';
+    return NextResponse.json(listDatasets(user, { includeArchived }));
   } catch (e) {
     return errorResponse(e);
   }

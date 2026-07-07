@@ -90,6 +90,19 @@ export function validateReadOnlySelect(raw: string): SqlValidation {
   if (!/^(select|with)\b/i.test(sql)) return { ok: false, reason: 'only a read-only SELECT is allowed' };
   const hit = bare.match(WRITE_KEYWORDS);
   if (hit) return { ok: false, reason: `read-only: '${hit[1].toLowerCase()}' is not allowed` };
+  // Reject a raw HYPHENATED identifier reaching Trino — e.g. the model copying the
+  // cohort domain / dataset display name as `agentic-leader-Q3-2026`, which Trino
+  // parses as subtraction and rejects (`SYNTAX_ERROR: mismatched input 'Q3'`). Every
+  // valid physical name is a slugified FQN (underscores, no hyphen); real subtraction
+  // is spaced. So an unquoted `word-word` run is an invalid table identifier — reject
+  // it here with a clear reason instead of shipping a doomed statement.
+  const hyphen = bare.match(/[A-Za-z_][A-Za-z0-9_]*-[A-Za-z0-9_]/);
+  if (hyphen) {
+    return {
+      ok: false,
+      reason: `invalid identifier '${hyphen[0]}…' — reference tables only by their exact fully-qualified name`,
+    };
+  }
   return { ok: true, sql };
 }
 
@@ -123,7 +136,10 @@ export function sqlGenMessages(question: string, datasets: AskDataset[]): AskMes
     'Rules:',
     '- Output ONLY the SQL statement: no prose, no markdown fence, no comments, no semicolon.',
     '- Exactly one read-only SELECT (WITH … SELECT is fine). Never INSERT/UPDATE/DELETE/CREATE/DROP.',
-    '- Reference tables ONLY by the fully-qualified names listed above.',
+    '- Reference tables ONLY by the exact fully-qualified name after "Table:" — use it verbatim.',
+    "- NEVER build a table name from a dataset's display name or domain label: those are",
+    '  context only and are NOT valid identifiers (they may contain spaces/hyphens/capitals).',
+    '  The FQNs are already lowercase, underscore-separated, and hyphen-free — do not alter them.',
     '- Lowercase identifiers; standard Trino SQL functions only.',
     '- End non-aggregating queries with "limit 100".',
     `- If NONE of the listed datasets can answer the question, reply with exactly ${NO_DATASET_TOKEN}.`,

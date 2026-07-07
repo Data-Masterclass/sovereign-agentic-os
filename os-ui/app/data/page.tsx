@@ -8,6 +8,7 @@ import PageHeader from '@/components/PageHeader';
 import SandboxLane from '@/components/SandboxLane';
 import DataTab from '@/components/data/DataTab';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
+import { useTabNavReset } from '@/lib/tab-nav';
 
 type QueryResult = {
   engine: string;
@@ -52,6 +53,10 @@ type View = 'datasets' | 'mydata' | 'catalog' | 'ask' | 'query';
 
 export default function DataPage() {
   const [view, setView] = useState<View>('datasets');
+
+  // Clicking the Data sidebar link returns to the primary Datasets sub-tab (its
+  // list). DataTab separately resets any open dataset detail back to the tiles.
+  useTabNavReset(() => setView('datasets'));
 
   // ---- catalog ----
   const [catalog, setCatalog] = useState<Catalog | null>(null);

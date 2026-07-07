@@ -11,6 +11,7 @@ import ExploreMetric from '@/components/metrics/ExploreMetric';
 import GovernMetric from '@/components/metrics/GovernMetric';
 import LiveCube from '@/components/metrics/LiveCube';
 import type { MetricSummary } from '@/components/metrics/shared';
+import { useTabNavReset } from '@/lib/tab-nav';
 
 /**
  * The Metrics tab — one definition of every number. Four governed surfaces (registry,
@@ -27,6 +28,10 @@ export default function MetricsPage() {
 
   const select = (m: MetricSummary, go?: View) => { setSelected(m); if (go) setView(go); };
   const refreshRegistry = () => setRegistryKey((k) => k + 1);
+
+  // Clicking the Metrics sidebar link returns to the Registry list from any detail
+  // sub-view (Explore/Govern) — same-route client nav wouldn't re-mount this page.
+  useTabNavReset(() => { setSelected(null); setView('registry'); });
 
   return (
     <>

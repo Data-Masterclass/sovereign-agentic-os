@@ -10,6 +10,7 @@ import WorkflowView from '@/components/knowledge/WorkflowView';
 import type { WorkflowSummary } from '@/lib/knowledge/store';
 import type { DomainKnowledge } from '@/lib/knowledge/schema';
 import { roleAtLeast, type Role } from '@/lib/session';
+import { useTabNavReset } from '@/lib/tab-nav';
 
 /**
  * Knowledge tab — the domain's operating manual.
@@ -46,6 +47,10 @@ const SECTION_PLACEHOLDERS: Record<string, string> = {
 export default function KnowledgePage() {
   const [view, setView] = useState<'overview' | 'workflows' | 'new' | 'detail'>('overview');
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
+
+  // Clicking the Knowledge sidebar link while inside a workflow detail returns to
+  // the tab root (same-route client nav wouldn't otherwise re-mount this page).
+  useTabNavReset(() => { setSelectedWorkflowId(null); setView('overview'); });
 
   // Domain knowledge (top section)
   const [domainKnowledge, setDomainKnowledge] = useState<DomainKnowledge | null>(null);

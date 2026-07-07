@@ -9,6 +9,7 @@ import SystemView from './SystemView';
 import SystemRail from './SystemRail';
 import NewSystemPanel from './NewSystemPanel';
 import { getUrlParam, patchUrl } from '@/lib/url-params';
+import { useTabNavReset } from '@/lib/tab-nav';
 
 /**
  * The Agents tab experience. Master–detail: the landing shows the grouped systems
@@ -42,6 +43,10 @@ export default function AgentSystems() {
     patchUrl({ system: null, name: null });
     setRailKey((k) => k + 1); // refresh the landing list after edits
   }, []);
+  // Clicking the Agents sidebar link while a system/create pane is open returns to
+  // the list. The Link nav drops ?system= from the URL, so this just mirrors it in
+  // state (same-route client nav doesn't re-run the mount/popstate sync above).
+  useTabNavReset(back);
   const startNew = useCallback(() => open(NEW), [open]);
   const onCreated = useCallback((id: string) => {
     patchUrl({ name: null }); // consume the deep-link name seed once created
