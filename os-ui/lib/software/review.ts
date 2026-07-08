@@ -18,6 +18,15 @@ import { detectSurface } from './metadata.ts';
 import { getSnapshot } from './server.ts';
 import { deployApp, runnerStatus, type RunnerApp, type RunnerOutcome, type RunnerStatus } from './runner.ts';
 import { roleAtLeast } from '@/lib/session';
+import { config } from '@/lib/config';
+
+/** The app's live host, ALWAYS computed from the CURRENT apps domain — not the
+ *  `app.subdomain` stored at creation time (which may carry a stale default like
+ *  `apps.local` for apps created before OS_APPS_DOMAIN was configured). This keeps
+ *  the served Ingress host + the UI link on the real, resolvable wildcard domain. */
+function appHost(app: App): string {
+  return `${app.slug}.${app.domain}.${config.appsBaseDomain}`;
+}
 import type {
   DeployEnvelope,
   DiffSummary,
@@ -68,7 +77,7 @@ function isBuilder(user: CurrentUser): boolean {
 function runnerAppFor(app: App): RunnerApp {
   return {
     slug: app.slug,
-    host: app.subdomain,
+    host: appHost(app),
     runImage: app.runImage,
     footprint: FOOTPRINT[app.template] ?? FOOTPRINT['nextjs-supabase'],
   };
@@ -375,7 +384,7 @@ export async function reconcileDeployStatus(
   const status = await runnerStatus({ slug: app.slug });
   if (status.live) {
     const running = status.phase === 'running';
-    app.deploy.previewUrl = running ? `https://${app.subdomain}` : null;
+    app.deploy.previewUrl = running ? `https://${appHost(app)}` : null;
     if (app.deploy.state === 'live') {
       app.pipeline.live = running ? 'ok' : status.phase === 'failed' ? 'offline' : 'pending';
     }

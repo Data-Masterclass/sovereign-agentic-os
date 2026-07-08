@@ -241,13 +241,19 @@ async function ensureNamespace(k8s: RunnerK8s, ns: string): Promise<{ reachable:
   const got = await k8s('GET', `/api/v1/namespaces/${ns}`);
   if (got.status === 0) return { reachable: false, ok: false };
   if (got.status === 200) return { reachable: true, ok: true };
+  // 401/403: the runner's namespaced ServiceAccount cannot read/create a CLUSTER-scoped
+  // Namespace object — but the Helm chart PRE-CREATES the runner namespace, so its
+  // existence is guaranteed. Treat "forbidden" as "it's there, managed externally" and
+  // proceed to the namespaced writes (deployments/services/ingresses) the SA CAN do.
+  if (got.status === 401 || got.status === 403) return { reachable: true, ok: true };
   if (got.status === 404) {
     const made = await k8s('POST', '/api/v1/namespaces', {
       apiVersion: 'v1',
       kind: 'Namespace',
       metadata: { name: ns, labels: { 'app.kubernetes.io/managed-by': 'os-ui', 'soa.software-runner': 'true' } },
     });
-    return { reachable: true, ok: made.status === 201 || made.status === 200 || made.status === 409 };
+    // A 403 on create also means the chart owns it — proceed.
+    return { reachable: true, ok: made.status === 201 || made.status === 200 || made.status === 409 || made.status === 403 };
   }
   return { reachable: true, ok: false };
 }
