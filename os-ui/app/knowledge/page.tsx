@@ -11,6 +11,8 @@ import type { WorkflowSummary } from '@/lib/knowledge/store';
 import type { DomainKnowledge } from '@/lib/knowledge/schema';
 import { roleAtLeast, type Role } from '@/lib/session';
 import { useTabNavReset } from '@/lib/tab-nav';
+import { SCOPE_GROUPS, groupByScope, activeScopeCounts, type ScopeKey } from '@/lib/scopes';
+import type { PersonalKnowledgeSummary } from '@/lib/knowledge/personal-store';
 
 /**
  * Knowledge tab — the domain's operating manual.
@@ -31,7 +33,13 @@ type WorkflowGroups = {
   marketplace: WorkflowSummary[];
 };
 
-type UserInfo = { role: Role; domains: string[] };
+type UserInfo = { id: string; role: Role; domains: string[] };
+
+type PersonalGroups = {
+  mine: PersonalKnowledgeSummary[];
+  domain: PersonalKnowledgeSummary[];
+  marketplace: PersonalKnowledgeSummary[];
+};
 
 const SECTION_PLACEHOLDERS: Record<string, string> = {
   overview:
@@ -60,8 +68,21 @@ export default function KnowledgePage() {
   const [dkSaving, setDkSaving] = useState(false);
   const [dkMsg, setDkMsg] = useState('');
 
+  // Knowledge sub-area scope (Shared = domain sections · My = personal entries · Marketplace).
+  const [kScope, setKScope] = useState<ScopeKey>('all');
+
+  // Personal general-knowledge entries ("My knowledge").
+  const [personal, setPersonal] = useState<PersonalGroups | null>(null);
+  const [pkNewTitle, setPkNewTitle] = useState('');
+  const [pkCreating, setPkCreating] = useState(false);
+  const [pkOpenId, setPkOpenId] = useState<string | null>(null);
+  const [pkDraft, setPkDraft] = useState<{ title: string; md: string }>({ title: '', md: '' });
+  const [pkSaving, setPkSaving] = useState(false);
+  const [pkMsg, setPkMsg] = useState('');
+
   // Workflows
   const [groups, setGroups] = useState<WorkflowGroups | null>(null);
+  const [wfScope, setWfScope] = useState<ScopeKey>('all');
   const [wfLoading, setWfLoading] = useState(true);
   const [wfError, setWfError] = useState('');
   // Archive/lifecycle UI
@@ -87,6 +108,15 @@ export default function KnowledgePage() {
       setDkLoading(false);
     }
   }, []);
+
+  const loadPersonal = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/knowledge/personal${showArchived ? '?archived=1' : ''}`, { cache: 'no-store' });
+      if (res.ok) setPersonal(await res.json());
+    } catch {
+      /* leave personal null → the sub-area shows its loading/empty surface */
+    }
+  }, [showArchived]);
 
   const loadWorkflows = useCallback(async () => {
     setWfLoading(true);
@@ -115,11 +145,12 @@ export default function KnowledgePage() {
       .catch(() => null);
   }, [loadDomainKnowledge]);
 
-  // Reload workflows whenever the archived filter toggles (loadWorkflows depends
-  // on showArchived).
+  // Reload workflows + personal knowledge whenever the archived filter toggles
+  // (both loaders depend on showArchived).
   useEffect(() => {
     void loadWorkflows();
-  }, [loadWorkflows]);
+    void loadPersonal();
+  }, [loadWorkflows, loadPersonal]);
 
   // ── Workflow lifecycle: archive / restore / delete ───────────────────────
   async function wfLifecycle(id: string, action: 'archive' | 'unarchive') {
@@ -178,6 +209,75 @@ export default function KnowledgePage() {
     }
   }
 
+  // ── Personal knowledge ("My knowledge") ──────────────────────────────────
+
+  async function createPersonal() {
+    const title = pkNewTitle.trim();
+    if (!title || pkCreating) return;
+    setPkCreating(true);
+    setPkMsg('');
+    try {
+      const res = await fetch('/api/knowledge/personal', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+      const d = await res.json();
+      if (!res.ok) { setPkMsg(d.error ?? 'Could not create.'); return; }
+      setPkNewTitle('');
+      await loadPersonal();
+      // Open the fresh entry for immediate editing.
+      setPkOpenId(d.id);
+      setPkDraft({ title: d.title, md: '' });
+    } catch (e) { setPkMsg((e as Error).message); }
+    finally { setPkCreating(false); }
+  }
+
+  async function openPersonal(id: string) {
+    setPkMsg('');
+    try {
+      const res = await fetch(`/api/knowledge/personal/${id}`, { cache: 'no-store' });
+      if (!res.ok) { setPkMsg('Could not open entry.'); return; }
+      const d = await res.json();
+      setPkOpenId(id);
+      setPkDraft({ title: d.title, md: d.md });
+    } catch (e) { setPkMsg((e as Error).message); }
+  }
+
+  async function savePersonal() {
+    if (!pkOpenId || pkSaving) return;
+    setPkSaving(true);
+    setPkMsg('');
+    try {
+      const res = await fetch(`/api/knowledge/personal/${pkOpenId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: pkDraft.title, md: pkDraft.md }),
+      });
+      if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? 'Could not save.'); return; }
+      setPkMsg('Saved.');
+      setTimeout(() => setPkMsg(''), 2000);
+      await loadPersonal();
+    } catch (e) { setPkMsg((e as Error).message); }
+    finally { setPkSaving(false); }
+  }
+
+  async function personalLifecycle(id: string, action: 'archive' | 'unarchive') {
+    try {
+      const res = await fetch(`/api/knowledge/personal/${id}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action }),
+      });
+      if (res.ok) await loadPersonal();
+    } catch { /* transient */ }
+  }
+
+  async function deletePersonal(id: string) {
+    try {
+      const res = await fetch(`/api/knowledge/personal/${id}`, { method: 'DELETE' });
+      if (res.ok) { if (pkOpenId === id) setPkOpenId(null); await loadPersonal(); }
+    } catch { /* transient */ }
+  }
+
   // ── Create workflow ──────────────────────────────────────────────────────
 
   async function createWorkflow() {
@@ -207,17 +307,18 @@ export default function KnowledgePage() {
   // ── Helpers ──────────────────────────────────────────────────────────────
 
   const canPublish = !!user && roleAtLeast(user.role, 'builder');
+  const uid = user?.id ?? '';
   const allWorkflows = [
     ...(groups?.mine ?? []),
     ...(groups?.domain ?? []),
     ...(groups?.marketplace ?? []),
   ];
-  // Active (non-archived) workflows per visibility bucket + the flat archived list.
-  const activeMine = (groups?.mine ?? []).filter((w) => !w.archived);
-  const activeDomain = (groups?.domain ?? []).filter((w) => !w.archived);
-  const activeMarketplace = (groups?.marketplace ?? []).filter((w) => !w.archived);
+  // The OS-wide four groups (All · My · Shared · Marketplace), owner-scoped for "My".
+  const wfScoped = groups ? groupByScope(groups, uid) : null;
+  const wfCounts = groups ? activeScopeCounts(groups, uid) : null;
+  const scopedWorkflows = (wfScoped ? wfScoped[wfScope] : []).filter((w) => !w.archived);
   const archivedWorkflows = allWorkflows.filter((w) => w.archived);
-  const activeCount = activeMine.length + activeDomain.length + activeMarketplace.length;
+  const activeCount = allWorkflows.filter((w) => !w.archived).length;
 
   const openWorkflow = (id: string) => { setSelectedWorkflowId(id); setView('detail'); };
 
@@ -267,7 +368,7 @@ export default function KnowledgePage() {
             className={view === 'overview' ? 'active' : ''}
             onClick={() => setView('overview')}
           >
-            Domain knowledge
+            Knowledge
           </button>
           <button
             className={view === 'workflows' || view === 'new' ? 'active' : ''}
@@ -283,72 +384,194 @@ export default function KnowledgePage() {
         </div>
 
         {/* ══════════════════════════════════════════════════════════════
-            DOMAIN KNOWLEDGE — four guided sections
+            KNOWLEDGE — four groups: All · My · Shared · Marketplace
+            My      = personal entries about the user (feeds their own agents)
+            Shared  = the domain operating manual (four guided sections)
+            Market  = certified general-knowledge entries about other domains
         ══════════════════════════════════════════════════════════════ */}
         {view === 'overview' && (
           <>
             <p className="lead" style={{ marginTop: 18 }}>
-              The domain&rsquo;s baseline context — automatically pinned as base context
-              for every agent in this domain. Keep it short and current.
+              General knowledge that grounds your agents. <strong>Shared</strong> is the
+              domain&rsquo;s operating manual; <strong>My knowledge</strong> is personal
+              context about how you work; <strong>Marketplace</strong> is certified
+              knowledge from across the org.
             </p>
 
-            {dkLoading ? (
-              <div className="stub-page"><span className="spin" /> Loading…</div>
-            ) : domainKnowledge ? (
-              <>
-                {domainKnowledge.sections.map((section) => (
-                  <div key={section.id} className="k-section">
-                    <div className="k-section-head">
-                      <span className="k-section-label">{section.title}</span>
-                      {editingSection !== section.id && (
-                        <button className="btn ghost sm" onClick={() => startEditSection(section.id)}>
-                          Edit
-                        </button>
-                      )}
-                    </div>
+            {/* Scope switcher — the OS-wide four groups. */}
+            <div className="seg" style={{ marginTop: 14 }}>
+              {SCOPE_GROUPS.map((g) => {
+                const n = g.key === 'mine' ? (personal?.mine.length ?? 0)
+                  : g.key === 'shared' ? (domainKnowledge?.sections.filter((s) => s.content).length ?? 0)
+                  : g.key === 'marketplace' ? (personal?.marketplace.length ?? 0)
+                  : undefined; // 'all' has no single count
+                return (
+                  <button key={g.key} type="button" className={kScope === g.key ? 'on' : ''} onClick={() => setKScope(g.key)}>
+                    {g.label('Knowledge')}{n !== undefined ? ` (${n})` : ''}
+                  </button>
+                );
+              })}
+            </div>
 
-                    {editingSection === section.id ? (
-                      <>
-                        <textarea
-                          className="k-section-editor"
-                          rows={6}
-                          value={sectionDraft}
-                          onChange={(e) => setSectionDraft(e.target.value)}
-                          placeholder={SECTION_PLACEHOLDERS[section.id]}
-                          autoFocus
-                        />
-                        <div className="row" style={{ gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
-                          <button className="btn ghost sm" onClick={() => setEditingSection(null)} disabled={dkSaving}>
-                            Cancel
-                          </button>
-                          <button className="btn sm" onClick={() => void saveSectionDraft()} disabled={dkSaving}>
-                            {dkSaving ? <span className="spin" /> : 'Save'}
-                          </button>
+            {/* ── SHARED: the domain operating manual (four guided sections) ── */}
+            {(kScope === 'all' || kScope === 'shared') && (
+              <div style={{ marginTop: 20 }}>
+                <div className="section-title">Shared · the domain operating manual</div>
+                <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
+                  Pinned as base context for every agent in this domain. Keep it short and current.
+                </p>
+                {dkLoading ? (
+                  <div className="stub-page"><span className="spin" /> Loading…</div>
+                ) : domainKnowledge ? (
+                  <>
+                    {domainKnowledge.sections.map((section) => (
+                      <div key={section.id} className="k-section">
+                        <div className="k-section-head">
+                          <span className="k-section-label">{section.title}</span>
+                          {editingSection !== section.id && (
+                            <button className="btn ghost sm" onClick={() => startEditSection(section.id)}>Edit</button>
+                          )}
                         </div>
-                      </>
-                    ) : (
-                      <div className="k-section-body">
-                        {section.content ? (
-                          <pre className="k-prose">{section.content}</pre>
+                        {editingSection === section.id ? (
+                          <>
+                            <textarea
+                              className="k-section-editor"
+                              rows={6}
+                              value={sectionDraft}
+                              onChange={(e) => setSectionDraft(e.target.value)}
+                              placeholder={SECTION_PLACEHOLDERS[section.id]}
+                              autoFocus
+                            />
+                            <div className="row" style={{ gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
+                              <button className="btn ghost sm" onClick={() => setEditingSection(null)} disabled={dkSaving}>Cancel</button>
+                              <button className="btn sm" onClick={() => void saveSectionDraft()} disabled={dkSaving}>
+                                {dkSaving ? <span className="spin" /> : 'Save'}
+                              </button>
+                            </div>
+                          </>
                         ) : (
-                          <span className="muted" style={{ fontSize: 13, fontStyle: 'italic' }}>
-                            {SECTION_PLACEHOLDERS[section.id]}
-                          </span>
+                          <div className="k-section-body">
+                            {section.content ? (
+                              <pre className="k-prose">{section.content}</pre>
+                            ) : (
+                              <span className="muted" style={{ fontSize: 13, fontStyle: 'italic' }}>
+                                {SECTION_PLACEHOLDERS[section.id]}
+                              </span>
+                            )}
+                          </div>
                         )}
                       </div>
+                    ))}
+                    {dkMsg && (
+                      dkMsg === 'Saved.'
+                        ? <div className="hint" style={{ marginTop: 8, color: 'var(--teal)' }}>{dkMsg}</div>
+                        : <div className="error" style={{ marginTop: 8 }}>{dkMsg}</div>
                     )}
-                  </div>
-                ))}
-
-                {dkMsg && (
-                  dkMsg === 'Saved.'
-                    ? <div className="hint" style={{ marginTop: 8, color: 'var(--teal)' }}>{dkMsg}</div>
-                    : <div className="error" style={{ marginTop: 8 }}>{dkMsg}</div>
+                  </>
+                ) : (
+                  <div className="stub-page">Could not load domain knowledge.</div>
                 )}
+              </div>
+            )}
 
-              </>
-            ) : (
-              <div className="stub-page">Could not load domain knowledge.</div>
+            {/* ── MY KNOWLEDGE: personal general-knowledge entries ── */}
+            {(kScope === 'all' || kScope === 'mine') && (
+              <div style={{ marginTop: 24 }}>
+                <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                  <div>
+                    <div className="section-title" style={{ marginTop: 0 }}>My knowledge</div>
+                    <p className="hint" style={{ marginTop: 0 }}>
+                      Personal notes about your role and how you work — feeds your own agents &amp; assistant. Owner-only.
+                    </p>
+                  </div>
+                  <form onSubmit={(e) => { e.preventDefault(); void createPersonal(); }} className="row" style={{ gap: 8 }}>
+                    <input
+                      value={pkNewTitle}
+                      onChange={(e) => setPkNewTitle(e.target.value)}
+                      placeholder="New note — e.g. How I like reports…"
+                    />
+                    <button className="btn sm" type="submit" disabled={pkCreating || !pkNewTitle.trim()}>
+                      {pkCreating ? <span className="spin" /> : '+ Add'}
+                    </button>
+                  </form>
+                </div>
+
+                {pkMsg && pkMsg !== 'Saved.' ? <div className="error" style={{ marginTop: 8 }}>{pkMsg}</div> : null}
+
+                {personal === null ? (
+                  <div className="stub-page"><span className="spin" /> Loading…</div>
+                ) : personal.mine.length === 0 ? (
+                  <div className="stub-page" style={{ marginTop: 8 }}>
+                    No personal knowledge yet. Add a note above — it stays private to you.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
+                    {personal.mine.map((e) => (
+                      <div key={e.id} className="k-section">
+                        <div className="k-section-head">
+                          <span className="k-section-label">{e.title}</span>
+                          <div className="row" style={{ gap: 6 }}>
+                            <button className="btn ghost sm" onClick={() => void (pkOpenId === e.id ? setPkOpenId(null) : openPersonal(e.id))}>
+                              {pkOpenId === e.id ? 'Close' : 'Edit'}
+                            </button>
+                            <button className="btn ghost sm" onClick={() => void personalLifecycle(e.id, 'archive')}>Archive</button>
+                            <button className="btn ghost sm k-danger" onClick={() => void deletePersonal(e.id)}>Delete</button>
+                          </div>
+                        </div>
+                        {pkOpenId === e.id ? (
+                          <>
+                            <input
+                              style={{ width: '100%', marginBottom: 8 }}
+                              value={pkDraft.title}
+                              onChange={(ev) => setPkDraft((d) => ({ ...d, title: ev.target.value }))}
+                            />
+                            <textarea
+                              className="k-section-editor"
+                              rows={6}
+                              value={pkDraft.md}
+                              onChange={(ev) => setPkDraft((d) => ({ ...d, md: ev.target.value }))}
+                              placeholder="Free-form markdown about you — your role, preferences, working style…"
+                              autoFocus
+                            />
+                            <div className="row" style={{ gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
+                              {pkMsg === 'Saved.' ? <span className="hint" style={{ color: 'var(--teal)' }}>Saved.</span> : null}
+                              <button className="btn sm" onClick={() => void savePersonal()} disabled={pkSaving}>
+                                {pkSaving ? <span className="spin" /> : 'Save'}
+                              </button>
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── MARKETPLACE: certified general-knowledge entries ── */}
+            {(kScope === 'all' || kScope === 'marketplace') && (
+              <div style={{ marginTop: 24 }}>
+                <div className="section-title">Marketplace · certified knowledge</div>
+                {personal === null ? (
+                  <div className="stub-page"><span className="spin" /> Loading…</div>
+                ) : personal.marketplace.length === 0 ? (
+                  <div className="stub-page" style={{ marginTop: 8 }}>
+                    Nothing certified yet. Admins certify general knowledge into the marketplace.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
+                    {personal.marketplace.map((e) => (
+                      <button key={e.id} type="button" className="k-section" style={{ textAlign: 'left', cursor: 'pointer' }} onClick={() => void openPersonal(e.id)}>
+                        <div className="k-section-head">
+                          <span className="k-section-label">{e.title}</span>
+                          <span className="badge vis-certified">Certified</span>
+                        </div>
+                        <span className="muted" style={{ fontSize: 12 }}>{e.owner} · {e.domain}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </>
         )}
@@ -410,31 +633,26 @@ export default function KnowledgePage() {
               <div className="error" style={{ marginTop: 16 }}>{wfError}</div>
             ) : (
               <>
-                {/* Grouped by VISIBILITY: Personal (your drafts) · Domain (shared) · Marketplace. */}
-                {activeMine.length > 0 && (
-                  <>
-                    <div className="section-title" style={{ marginTop: 24 }}>Personal</div>
-                    <div className="k-workflow-grid">{activeMine.map(renderCell)}</div>
-                  </>
-                )}
+                {/* Scope switcher — the OS-wide four groups: All · My · Shared · Marketplace. */}
+                <div className="seg" style={{ marginTop: 18 }}>
+                  {SCOPE_GROUPS.map((g) => (
+                    <button key={g.key} type="button" className={wfScope === g.key ? 'on' : ''} onClick={() => setWfScope(g.key)}>
+                      {g.label('Workflows')}{wfCounts ? ` (${wfCounts[g.key]})` : ''}
+                    </button>
+                  ))}
+                </div>
 
-                {activeDomain.length > 0 && (
-                  <>
-                    <div className="section-title" style={{ marginTop: 24 }}>Domain</div>
-                    <div className="k-workflow-grid">{activeDomain.map(renderCell)}</div>
-                  </>
-                )}
+                {scopedWorkflows.length > 0 ? (
+                  <div className="k-workflow-grid" style={{ marginTop: 16 }}>{scopedWorkflows.map(renderCell)}</div>
+                ) : null}
 
-                {activeMarketplace.length > 0 && (
-                  <>
-                    <div className="section-title" style={{ marginTop: 24 }}>Marketplace</div>
-                    <div className="k-workflow-grid">{activeMarketplace.map(renderCell)}</div>
-                  </>
-                )}
-
-                {activeCount === 0 && !showArchived && (
+                {scopedWorkflows.length === 0 && !showArchived && (
                   <div className="stub-page" style={{ marginTop: 32 }}>
-                    No workflows yet. Create one above to document a business process.
+                    {wfScope === 'mine' || wfScope === 'all'
+                      ? 'No workflows yet. Create one above to document a business process.'
+                      : wfScope === 'shared'
+                        ? 'Nothing shared in your domain yet — publish a workflow to share it.'
+                        : 'Nothing in the marketplace yet.'}
                   </div>
                 )}
 

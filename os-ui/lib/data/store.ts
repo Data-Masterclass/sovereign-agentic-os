@@ -79,7 +79,13 @@ export type DatasetSummary = {
   archived?: boolean;
 };
 
-type DataStoreState = { store: Map<string, DatasetRecord>; seeded: boolean; hydration: Promise<void> | null };
+type DataStoreState = {
+  store: Map<string, DatasetRecord>;
+  seeded: boolean;
+  hydration: Promise<void> | null;
+  /** Set when the last hydration found the mirror DOWN — gates the throttled retry. */
+  hydrateFailedAt?: number;
+};
 const DS_KEY = Symbol.for('soa.data.store');
 function ds(): DataStoreState {
   const g = globalThis as unknown as Record<symbol, DataStoreState | undefined>;
@@ -135,15 +141,33 @@ function writeThrough(rec: DatasetRecord): void {
  * at the server boundary (requirePrincipal) BEFORE any read, so a restarted os-ui
  * serves the persisted datasets. Idempotent + graceful (offline → in-memory only).
  */
+/** Retry a failed hydration at most this often (a down mirror must not add a
+ *  probe round-trip to EVERY request — mirrors os-mirror's write reprobe). */
+const HYDRATE_RETRY_MS = 60_000;
+
 export async function ensureHydrated(): Promise<void> {
   const s = ds();
-  if (!s.hydration) s.hydration = hydrate();
+  if (!s.hydration) {
+    // After a mirror-down hydration, retry (throttled) instead of staying pinned
+    // to an empty registry for the pod's lifetime — a transient OpenSearch blip
+    // at boot must not "lose" every mirrored dataset until the next deploy.
+    if (s.hydrateFailedAt && Date.now() - s.hydrateFailedAt < HYDRATE_RETRY_MS) return;
+    s.hydration = hydrate();
+  }
   return s.hydration;
 }
 
 async function hydrate(): Promise<void> {
   const s = ds();
-  const docs = (await mirror.hydrate(1000)) ?? []; // null → mirror down → in-memory only
+  const docs = await mirror.hydrate(1000);
+  if (docs === null) {
+    // Mirror down → stay un-hydrated and retry on a later read (never cache a
+    // FAILED hydration as done — the oauth store's rule).
+    s.hydrateFailedAt = Date.now();
+    s.hydration = null;
+    return;
+  }
+  s.hydrateFailedAt = undefined;
   for (const rec of docs as DatasetRecord[]) {
     // Don't clobber records created in-process before hydration completed.
     if (rec && rec.id && !s.store.has(rec.id)) s.store.set(rec.id, rec);
@@ -181,6 +205,7 @@ export function __resetStore(): void {
   s.store.clear();
   s.seeded = false;
   s.hydration = null;
+  s.hydrateFailedAt = undefined;
   mirror.__reset();
 }
 
@@ -813,9 +838,10 @@ export function unarchiveDataset(id: string, user: Principal): DatasetSummary {
  * Permanently delete a dataset (edit-scoped, irreversible). A certified product
  * that other domains import is refused — remove subscribers first — so a delete can
  * never orphan a cross-domain dependency (mirrors the decertify lineage guard). The
- * API route confirms intent; this is the hard delete once confirmed.
+ * API route confirms intent; this is the hard delete once confirmed. Returns the
+ * deleted dataset so the route can drop its PHYSICAL tables (physical-delete.ts).
  */
-export function deleteDataset(id: string, user: Principal): void {
+export function deleteDataset(id: string, user: Principal): Dataset {
   const rec = get(id);
   const d = editOf(rec, user);
   if ((d.imports?.length ?? 0) > 0) {
@@ -823,6 +849,7 @@ export function deleteDataset(id: string, user: Principal): void {
   }
   ds().store.delete(id);
   mirror.deleteThrough(id);
+  return d;
 }
 
 // --------------------------------------------------------------------- files --

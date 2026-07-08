@@ -57,8 +57,8 @@ const data: TutorialDef = {
     {
       anchor: ANCHORS.data.sandbox,
       sandboxAnchor: ANCHORS.data.sandbox,
-      title: 'Open your personal lane',
-      body: 'Practice here without touching governed data. Your personal lane is private, ungoverned, and safe to explore.',
+      title: 'Open your datasets',
+      body: 'Datasets is home: All Data, My Data, Shared Data and Marketplace Data. My Data is your private space — practice here without touching shared domain data.',
       route: '/data',
     },
     {
@@ -100,9 +100,9 @@ const data: TutorialDef = {
   ],
 
   sandbox: {
-    lane: 'Personal data',
+    lane: 'My Data',
     anchor: ANCHORS.data.sandbox,
-    note: 'Your personal lane is private and ungoverned — upload, clean, and explore freely without affecting any shared domain data.',
+    note: 'My Data is your private space — upload, clean, and explore freely without affecting any shared domain data.',
   },
 
   outro: {

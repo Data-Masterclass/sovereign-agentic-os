@@ -12,6 +12,8 @@ import {
   compileGoldJoin,
   goldJoinPlan,
   goldMeasureToCube,
+  layerTarget,
+  passThroughPlan,
   TransformError,
   type SilverSpec,
   type TransformOp,
@@ -414,4 +416,31 @@ test('publishPlan sanitizes an email owner into the same personal schema the gua
     versions: { silver: { built: true }, gold: { built: true } },
   });
   assert.equal(plan.sourceSchema, 'personal_amir_example_com');
+});
+
+// ------------------------------------------------ layerTarget / passThroughPlan ---
+
+test('layerTarget resolves tier-aware: personal dataset → personal_<uid>, governed → domain schema', () => {
+  const me = { uid: 'alex', domains: ['sales'] };
+  assert.equal(
+    layerTarget({ name: 'Web Orders', domain: 'sales', tier: 'dataset' }, me, 'silver'),
+    'iceberg.personal_alex.silver_web_orders',
+  );
+  assert.equal(
+    layerTarget({ name: 'Web Orders', domain: 'sales', tier: 'asset' }, me, 'gold'),
+    'iceberg.sales.gold_web_orders',
+  );
+});
+
+test('passThroughPlan compiles a REAL guard-shaped CTAS copy of the prior layer (no registry-only flag)', () => {
+  const me = { uid: 'alex', domains: ['sales'] };
+  const silver = passThroughPlan({ name: 'Web Orders', domain: 'sales', tier: 'dataset' }, me, 'silver');
+  assert.equal(silver.source, 'iceberg.personal_alex.bronze_web_orders');
+  assert.equal(silver.target, 'iceberg.personal_alex.silver_web_orders');
+  assert.equal(silver.sql, 'create or replace table iceberg.personal_alex.silver_web_orders as select * from iceberg.personal_alex.bronze_web_orders');
+  assert.ok(!silver.sql.includes(';') && !silver.sql.includes('--'), 'guard-shaped: one statement, no comments');
+
+  const gold = passThroughPlan({ name: 'Web Orders', domain: 'sales', tier: 'dataset' }, me, 'gold');
+  assert.equal(gold.source, 'iceberg.personal_alex.silver_web_orders'); // gold copies SILVER forward
+  assert.equal(gold.target, 'iceberg.personal_alex.gold_web_orders');
 });

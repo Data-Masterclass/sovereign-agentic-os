@@ -32,6 +32,11 @@ export type DataBuildContext = {
    *  the governed write path. When present with {@link identity}, the dbt adapter runs
    *  a REAL CTAS instead of a verify-only probe. Absent ⇒ verify-only (pass-through). */
   transformSql?: string;
+  /** The PHYSICAL table this build targets (`iceberg.<schema>.<layer>_<slug>`),
+   *  resolved by the route from the dataset tier + caller identity (personal vs
+   *  domain schema). The dbt adapter probes THIS name — the same table the CTAS
+   *  wrote — so verify can never pass against a table the build didn't touch. */
+  targetFqn?: string;
   /** The caller identity for the governed WRITE — derived server-side from the signed
    *  session (never the request body). Threaded to {@link ExecuteIdentity}-based writes.
    *  For the `promote` stage this is the APPROVING Builder (separation of duties). */

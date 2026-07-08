@@ -10,7 +10,11 @@ import { authorize, queryRun, trace } from '@/lib/governed';
 import { servePredict } from '@/lib/science/serve';
 import type { ChurnFeatures } from '@/lib/science';
 import { retrieveKnowledge } from '@/lib/knowledge/retrieve';
-import { listSystems } from '@/lib/agents/store';
+import { listSystems, ensureHydrated as agentsHydrated } from '@/lib/agents/store';
+import { ensureHydrated as datasetsHydrated } from '@/lib/data/store';
+import { ensureHydrated as filesHydrated } from '@/lib/files/store';
+import { ensureHydrated as knowledgeHydrated } from '@/lib/knowledge/store';
+import { ensureHydrated as betsHydrated } from '@/lib/bigbets/store';
 import { principalFor } from '@/lib/governance/roles';
 import { ALL_WRITE_TOOLS } from '@/lib/mcp/write-tools';
 import { DISCOVERY_TOOLS } from '@/lib/mcp/discovery-tools';
@@ -518,6 +522,14 @@ export async function handleRpc(
 
   // Notifications (e.g. notifications/initialized) get no response body.
   if (typeof method === 'string' && method.startsWith('notifications/')) return null;
+
+  // Hydrate the durable-mirrored stores BEFORE any read/write — the same seam the
+  // HTTP routes get via their server boundaries (requirePrincipal → ensureHydrated).
+  // Without this, a fresh pod's first MCP call would see an EMPTY registry even
+  // though the mirror has the data. Idempotent + graceful (offline → in-memory).
+  if (method === 'tools/call' || method === 'resources/read') {
+    await Promise.all([datasetsHydrated(), filesHydrated(), agentsHydrated(), knowledgeHydrated(), betsHydrated()]);
+  }
 
   switch (method) {
     case 'initialize':

@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
 import { useApi } from '@/lib/useApi';
+import { SCOPE_GROUPS, groupByScope, groupsFromVisibility, scopeCounts, type ScopeKey } from '@/lib/scopes';
 import TeamPanel from './TeamPanel';
 
 type Visibility = 'Personal' | 'Shared' | 'Certified';
@@ -61,6 +62,7 @@ export default function SoftwarePage() {
   const [name, setName] = useState('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
+  const [scope, setScope] = useState<ScopeKey>('all');
 
   async function create() {
     if (!name.trim() || creating) return;
@@ -87,7 +89,12 @@ export default function SoftwarePage() {
     }
   }
 
-  const apps = data?.apps ?? [];
+  const allApps = data?.apps ?? [];
+  const uid = data?.user.id ?? '';
+  const appGroups = groupsFromVisibility(allApps);
+  const scopedApps = groupByScope(appGroups, uid);
+  const appCounts = scopeCounts(appGroups, uid);
+  const apps = scopedApps[scope];
 
   return (
     <>
@@ -153,18 +160,34 @@ export default function SoftwarePage() {
           <TeamPanel onBuilt={reload} />
         </div>
 
-        {/* Running apps. */}
+        {/* Software apps — the OS-wide four groups: All · My · Shared · Marketplace. */}
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', marginTop: 30 }}>
-          <h2 className="sw-sec-title">Personal software apps that are running</h2>
+          <h2 className="sw-sec-title">Software apps</h2>
           <Link className="sw-quiet-link" href="/software/reviews">Deploy reviews →</Link>
         </div>
+
+        {data ? (
+          <div className="seg" style={{ marginTop: 8, marginBottom: 4 }}>
+            {SCOPE_GROUPS.map((g) => (
+              <button key={g.key} type="button" className={scope === g.key ? 'on' : ''} onClick={() => setScope(g.key)}>
+                {g.label('Software')} ({appCounts[g.key]})
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         {loading && !data ? (
           <div className="stub-page" style={{ marginTop: 12 }}>Loading your apps…</div>
         ) : apps.length === 0 ? (
           <div className="sw-empty">
-            <div className="sw-empty-title">No apps yet</div>
-            <div className="sw-empty-sub">Create your first — it takes one line of chat to get something running.</div>
+            <div className="sw-empty-title">
+              {scope === 'mine' || scope === 'all' ? 'No apps yet' : scope === 'shared' ? 'Nothing shared yet' : 'Nothing certified yet'}
+            </div>
+            <div className="sw-empty-sub">
+              {scope === 'mine' || scope === 'all'
+                ? 'Create your first — it takes one line of chat to get something running.'
+                : scope === 'shared' ? 'Promote an app to share it in your domain.' : 'Admins certify apps into the marketplace.'}
+            </div>
           </div>
         ) : (
           <div className="sw-apps">

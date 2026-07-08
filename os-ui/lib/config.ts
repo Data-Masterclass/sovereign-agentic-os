@@ -233,6 +233,10 @@ export const config = {
   // fall back to the mock chat model so the loop still runs on a laptop.
   litellmReasoningModel: env('LITELLM_REASONING_MODEL', env('LITELLM_CHAT_MODEL', 'sovereign-reasoning')),
   litellmExecModel: env('LITELLM_EXEC_MODEL', env('LITELLM_CHAT_MODEL', 'sovereign-default')),
+  // Ask-the-OS assistant: max PLAN→ACT tool-call rounds per turn. Raised from the
+  // original 8 so multi-step builds (ingest → silver → gold → metric → publish) can
+  // complete in one conversation. Tunable via env without a rebuild.
+  assistantMaxSteps: Number(env('ASSISTANT_MAX_STEPS', '')) || 20,
   // LLM Gateway tab — the read-only, tenant-total usage/spend panel
   // (app/api/gateway/usage). The budget envelope is surfaced for the "budget
   // used" bar; it mirrors the chart's litellmAgentKey.maxBudget / budgetDuration

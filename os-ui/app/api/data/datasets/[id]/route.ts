@@ -4,6 +4,8 @@
 import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { getDataset, archiveDataset, unarchiveDataset, deleteDataset } from '@/lib/data/store';
+import { dropPhysicalTables } from '@/lib/data/physical-delete';
+import { executeRun } from '@/lib/governed';
 import { stepperStages } from '@/lib/data/panels';
 
 export const dynamic = 'force-dynamic';
@@ -43,13 +45,21 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
 }
 
-/** DELETE → permanently remove a dataset (edit-scoped; confirmed in the UI). */
+/**
+ * DELETE → permanently remove a dataset (edit-scoped; confirmed in the UI) —
+ * registry record AND its physical Iceberg tables. The record delete runs first
+ * (it re-checks canEdit + the import guard, so nothing is dropped for a caller
+ * who couldn't delete); the governed `DROP TABLE IF EXISTS` drops then run
+ * best-effort AS the caller. A table the engine couldn't drop is reported as
+ * `physical.orphaned` — the delete stands, the leftover is never silent.
+ */
 export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
     const user = await requirePrincipal();
     const { id } = await ctx.params;
-    deleteDataset(id, user);
-    return NextResponse.json({ ok: true });
+    const dataset = deleteDataset(id, user); // throws 403/409 → nothing is dropped
+    const physical = await dropPhysicalTables(dataset, user, executeRun);
+    return NextResponse.json({ ok: true, physical });
   } catch (e) {
     return errorResponse(e);
   }

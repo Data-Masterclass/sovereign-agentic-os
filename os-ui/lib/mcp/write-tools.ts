@@ -24,7 +24,7 @@ import { enqueue, getApproval, decide, listApprovals } from '@/lib/approvals';
 import { canBuildStage, canPassThrough, stageArtifact } from '@/lib/data/panels';
 import { scaffoldCubeYaml } from '@/lib/data/metrics';
 import { ingestAndRegisterBronze } from '@/lib/data/ingest';
-import { buildStage } from '@/lib/data/build/server';
+import { buildStage, commitLayerVersion } from '@/lib/data/build/server';
 import {
   silverPlan,
   goldJoinPlan,
@@ -224,7 +224,7 @@ export const dataWriteTools: McpTool[] = [
     tab: 'data',
     minRole: 'creator',
     description:
-      'Build one medallion version (bronze→silver→gold) of a dataset you can edit — the guided panel’s “Confirm”. Pass an authored dbt-SQL `body` for silver/gold, or `passThrough:true` to carry the prior layer forward. The prior layer must exist first.',
+      'Commit one medallion version (bronze→silver→gold) of a dataset you can edit — the guided panel’s “Confirm”. Pass an authored dbt-SQL `body` for silver/gold, or `passThrough:true` to carry the prior layer forward. The prior layer must exist first. Honesty contract: silver/gold register ONLY after a real materialization — a pass-through runs a governed CTAS copy of the prior layer, an authored commit is probed against its physical table (build it first, e.g. via transform_silver); a ✗ registers nothing. Offline it degrades to an honestly-labelled offline-mock.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -250,12 +250,17 @@ export const dataWriteTools: McpTool[] = [
       if (!canBuildStage(current.versions, layer)) fail(`bring in the prior layer before building ${layer}`, 400);
       const passThrough = bool(args.passThrough);
       if (passThrough && !canPassThrough(layer)) fail('Bronze is the entry point — nothing to pass through', 400);
-      return buildVersion(datasetId, p, layer, {
-        quality: (str(args.quality) as Quality) || undefined,
+      // The ONE honest commit path (shared with the version route): silver/gold are
+      // registered ONLY after the materialize-or-probe build report is ✓.
+      const outcome = await commitLayerVersion(current, layer, p, {
         passThrough,
-        artifact: passThrough ? null : stageArtifact(current.name, layer),
-        body: passThrough ? undefined : (typeof args.body === 'string' ? args.body : undefined),
+        quality: (str(args.quality) as Quality) || undefined,
+        body: typeof args.body === 'string' ? args.body : undefined,
       });
+      if (!outcome.ok || !outcome.dataset) {
+        fail(`${layer} commit did not pass${outcome.build ? ` (${outcome.build.mode})` : ''}: ${outcome.error ?? 'apply/verify failed'} — nothing was registered`, 502);
+      }
+      return outcome.dataset;
     },
   },
   {
@@ -382,7 +387,7 @@ export const dataWriteTools: McpTool[] = [
       // Personal-lane builds run under the UID so Trino→OPA recognises the caller as
       // the personal_<uid> owner (same rule as the transform route).
       if (plan.schema.startsWith('personal_')) identity.principal = user.id;
-      const build = await buildStage(dataset, 'silver', identity.principal, { transformSql: plan.sql, identity });
+      const build = await buildStage(dataset, 'silver', identity.principal, { transformSql: plan.sql, identity, targetFqn: plan.target });
       if (!build.ok) {
         const failed = build.rows.find((r) => r.status === 'fail');
         fail(`Silver build did not pass (${build.mode}): ${failed?.error ?? 'apply/verify failed'} — nothing was registered`, 502);
@@ -480,7 +485,7 @@ export const dataWriteTools: McpTool[] = [
       // Compile server-side (TransformError → typed bad_request with the real reason).
       const plan = goldJoinPlan(dataset, identity, joins, dimensions, measures);
       if (plan.schema.startsWith('personal_')) identity.principal = user.id;
-      const build = await buildStage(dataset, 'gold', identity.principal, { transformSql: plan.sql, identity });
+      const build = await buildStage(dataset, 'gold', identity.principal, { transformSql: plan.sql, identity, targetFqn: plan.target });
       if (!build.ok) {
         const failed = build.rows.find((r) => r.status === 'fail');
         fail(`Gold join did not pass (${build.mode}): ${failed?.error ?? 'apply/verify failed'} — nothing was recorded`, 502);

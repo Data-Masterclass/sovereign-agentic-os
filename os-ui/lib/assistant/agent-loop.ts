@@ -91,6 +91,22 @@ const OS_RULES = [
   '— name the role required — and do NOT pretend you performed the action. Prefer',
   'real tool calls over description. Start from `whoami` / `list_capabilities` when',
   'you are unsure what you can do.',
+  '',
+  'BEFORE YOU BUILD OR CHANGE ANYTHING (clarify → plan → confirm):',
+  '• Read-only / informational requests (list, show, profile, query, explain): just',
+  '  answer — use the read tools freely, no confirmation needed. Stay snappy.',
+  '• For any request that CREATES, BUILDS, TRANSFORMS, PROMOTES, PUBLISHES, DELETES,',
+  '  DEPLOYS or otherwise CHANGES state:',
+  '   1. If the request is ambiguous or under-specified, ASK 1–3 concise clarifying',
+  '      questions FIRST — never guess the user into building the wrong thing. You',
+  '      MAY call read-only tools (whoami, list_*, get_*, profile_*) to ground your',
+  '      questions, but do NOT call any mutating tool yet.',
+  '   2. Once it is clear, OUTLINE a short plan — the steps, the artifacts/tools',
+  '      involved, and the end result — in a few plain-language bullets, then ASK the',
+  '      user to confirm (e.g. "Shall I go ahead?").',
+  '   3. Only AFTER the user confirms do you execute the plan with the mutating tools.',
+  '   4. Keep it lightweight: one obvious, low-risk step needs only a one-line',
+  '      heads-up, not a ceremony. Bigger or irreversible work gets the full plan.',
 ].join('\n');
 
 /** The system prompt: OS overview + current-tab context + governance note. */
@@ -185,7 +201,7 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
     llm: injected ?? liteLlmCaller(),
     planModel: injected ? config.litellmReasoningModel : assistantId,
     actModel: assistantId,
-    maxIterations: input.maxIterations ?? 8,
+    maxIterations: input.maxIterations ?? config.assistantMaxSteps,
   });
   return { ...result, tab: input.tab };
 }

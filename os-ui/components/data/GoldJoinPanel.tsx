@@ -197,6 +197,8 @@ export default function GoldJoinPanel({
       });
       const data = await res.json();
       if (!res.ok) { setErr(data.error ?? 'Could not pass through'); return; }
+      // A pass-through is a REAL CTAS copy now — an honest ✗ registers nothing.
+      if (data.error || (data.build && !data.build.ok)) { setReport(data.build ?? null); setErr(data.error ?? 'The pass-through did not materialize'); return; }
       onCommitted(data.stages ?? []);
     } catch (e) { setErr((e as Error).message); } finally { setBusy(''); }
   }

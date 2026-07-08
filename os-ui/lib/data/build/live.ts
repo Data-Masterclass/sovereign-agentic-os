@@ -12,7 +12,7 @@ import {
   goldMartFqn,
   slug,
 } from '../metrics.ts';
-import { assetTarget } from '../store-fqn.ts';
+import { assetTarget, domainSchema } from '../store-fqn.ts';
 import { type CubeAccessPolicy, type OpaBundle, compilePolicy } from '../policy/compiler.ts';
 import { runConformance } from '../policy/conformance.ts';
 
@@ -74,6 +74,9 @@ export interface DbtClient {
   build(
     modelFqn: string,
     write?: { sql: string; identity: ExecuteIdentity },
+    /** Principal for the verify-only probe (no `write`): a personal-lane table can
+     *  only be read AS its owner, so the probe must run as the caller. */
+    principal?: string,
   ): Promise<{ testsPassed: boolean; compiledCode: boolean }>;
 }
 
@@ -240,11 +243,17 @@ export function makeLiveAdapters(deps: DataLiveDeps): Record<string, DataAdapter
     },
   };
 
-  const dbtModelFqn = (ctx: { dataset: { domain: string; name: string }; stage?: DataStage }) => {
+  // The physical model FQN this build touches. Routes resolve the tier-aware target
+  // (personal_<uid> vs domain schema) and thread it as ctx.targetFqn — the probe MUST
+  // check the exact table the CTAS wrote, or a personal-lane build would be verified
+  // against `iceberg.<domain>.…` (a table that never existed → false ✗, or worse, a
+  // stale domain table → false ✓). The fallback keeps the legacy domain-schema shape,
+  // sanitized so a hyphenated domain can't produce an invalid Trino identifier.
+  const dbtModelFqn = (ctx: { dataset: { domain: string; name: string }; stage?: DataStage; targetFqn?: string }) => {
+    if (ctx.targetFqn) return ctx.targetFqn;
     const s = slug(ctx.dataset.name);
-    return ctx.stage === 'silver'
-      ? `iceberg.${ctx.dataset.domain}.silver_${s}`
-      : `iceberg.${ctx.dataset.domain}.gold_${s}`;
+    const schema = domainSchema(ctx.dataset.domain);
+    return ctx.stage === 'silver' ? `iceberg.${schema}.silver_${s}` : `iceberg.${schema}.gold_${s}`;
   };
   const dbt: DataAdapter = {
     tool: 'dbt',
@@ -254,7 +263,7 @@ export function makeLiveAdapters(deps: DataLiveDeps): Record<string, DataAdapter
       // REAL governed CTAS (executeRun) as the caller; otherwise verify-only probe.
       const write =
         ctx.transformSql && ctx.identity ? { sql: ctx.transformSql, identity: ctx.identity } : undefined;
-      const r = await deps.dbt.build(fqn, write);
+      const r = await deps.dbt.build(fqn, write, ctx.principal);
       if (!r.testsPassed) {
         return fail(
           write

@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@/lib/useUser';
+import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/scopes';
 import {
   type MetricGroups,
   type MetricSummary,
@@ -65,41 +66,6 @@ function MetricCard({
   );
 }
 
-function Group({
-  title,
-  metrics,
-  selectedId,
-  onSelect,
-  onExplore,
-  onGovern,
-}: {
-  title: string;
-  metrics: MetricSummary[];
-  selectedId: string | null;
-  onSelect: (m: MetricSummary) => void;
-  onExplore: (m: MetricSummary) => void;
-  onGovern: (m: MetricSummary) => void;
-}) {
-  if (metrics.length === 0) return null;
-  return (
-    <>
-      <div className="section-title">{title}<span className="count-pill">{metrics.length}</span></div>
-      <div className="tile-grid">
-        {metrics.map((m) => (
-          <MetricCard
-            key={m.id}
-            m={m}
-            selected={m.id === selectedId}
-            onSelect={onSelect}
-            onExplore={onExplore}
-            onGovern={onGovern}
-          />
-        ))}
-      </div>
-    </>
-  );
-}
-
 export default function MetricsRegistry({
   selectedId,
   onSelect,
@@ -112,7 +78,7 @@ export default function MetricsRegistry({
   onGovern: (m: MetricSummary) => void;
 }) {
   const { user } = useUser();
-  const domainLabel = user?.domains[0] ? `${user.domains[0]} domain` : 'your domain';
+  const [scope, setScope] = useState<ScopeKey>('all');
   const [groups, setGroups] = useState<MetricGroups | null>(null);
   const [err, setErr] = useState('');
 
@@ -127,7 +93,10 @@ export default function MetricsRegistry({
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
 
-  const empty = groups && groups.mine.length === 0 && groups.domain.length === 0 && groups.marketplace.length === 0;
+  const uid = user?.id ?? '';
+  const scoped = groups ? groupByScope(groups, uid) : null;
+  const counts = groups ? scopeCounts(groups, uid) : null;
+  const visible = scoped ? scoped[scope] : [];
 
   return (
     <>
@@ -137,20 +106,35 @@ export default function MetricsRegistry({
         all resolve. Select one to explore it under your own identity, or govern its tier.
       </p>
 
+      {/* Scope switcher — the OS-wide four groups: All · My · Shared · Marketplace. */}
+      <div className="seg" style={{ marginTop: 14 }}>
+        {SCOPE_GROUPS.map((g) => (
+          <button key={g.key} type="button" className={scope === g.key ? 'on' : ''} onClick={() => setScope(g.key)}>
+            {g.label('Metrics')}{counts ? ` (${counts[g.key]})` : ''}
+          </button>
+        ))}
+      </div>
+
       {err ? <div className="error" style={{ marginTop: 14 }}>{err}</div> : null}
 
-      {empty ? (
+      {groups && visible.length === 0 ? (
         <div className="stub-page" style={{ marginTop: 20 }}>
-          No metrics yet. <strong>Define</strong> one on a governed Gold dataset to see it here.
+          {scope === 'mine' || scope === 'all'
+            ? <>No metrics yet. <strong>Define</strong> one on a governed Gold dataset to see it here.</>
+            : scope === 'shared'
+              ? 'Nothing shared in your domain yet — promote a metric to share it.'
+              : 'Nothing in the marketplace yet.'}
         </div>
       ) : null}
 
-      {groups ? (
-        <>
-          <Group title="Personal" metrics={groups.mine} selectedId={selectedId} onSelect={onSelect} onExplore={onExplore} onGovern={onGovern} />
-          <Group title={`Shared in ${domainLabel}`} metrics={groups.domain} selectedId={selectedId} onSelect={onSelect} onExplore={onExplore} onGovern={onGovern} />
-          <Group title="Marketplace" metrics={groups.marketplace} selectedId={selectedId} onSelect={onSelect} onExplore={onExplore} onGovern={onGovern} />
-        </>
+      {scoped ? (
+        visible.length > 0 ? (
+          <div className="tile-grid" style={{ marginTop: 16 }}>
+            {visible.map((m) => (
+              <MetricCard key={m.id} m={m} selected={m.id === selectedId} onSelect={onSelect} onExplore={onExplore} onGovern={onGovern} />
+            ))}
+          </div>
+        ) : null
       ) : !err ? <div className="stub-page" style={{ marginTop: 20 }}>Loading metrics…</div> : null}
     </>
   );

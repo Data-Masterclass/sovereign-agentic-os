@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CAPABILITY_MODES, type CapabilityMode, type ConnectionTemplateKey } from '@/lib/connection-model';
 import { roleAtLeast, type Role } from '@/lib/session';
+import { SCOPE_GROUPS, groupByScope, groupsFromVisibility, scopeCounts, type ScopeKey } from '@/lib/scopes';
 import { providerForTemplate, providerConfig, type OAuthProvider } from '@/lib/oauth/providers';
 import { driveConnectionStatus, driveAuthorizePath } from '@/lib/oauth/drive-status';
 
@@ -104,6 +105,7 @@ export default function GovernedConnections() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState('');
   const [open, setOpen] = useState<string>('');
+  const [scope, setScope] = useState<ScopeKey>('all');
 
   const load = useCallback(async () => {
     setError('');
@@ -288,20 +290,45 @@ export default function GovernedConnections() {
 
       <div className="section-title">Your governed connections</div>
       {error ? <div className="error">{error}</div> : null}
-      {data && data.connections.length === 0 ? (
-        <div className="stub-page">No governed connections yet{canCreate ? ' — create one above.' : '.'}</div>
-      ) : null}
-      {data?.connections.map((c) => (
-        <ConnectionCard
-          key={c.id}
-          c={c}
-          role={data.user.role}
-          oauthProviders={data.oauthProviders ?? []}
-          open={open === c.id}
-          onToggle={() => setOpen(open === c.id ? '' : c.id)}
-          onChange={load}
-        />
-      ))}
+
+      {(() => {
+        if (!data) return null;
+        const groups = groupsFromVisibility(data.connections);
+        const scoped = groupByScope(groups, data.user.id);
+        const counts = scopeCounts(groups, data.user.id);
+        const visible = scoped[scope];
+        return (
+          <>
+            {/* Scope switcher — the OS-wide four groups: All · My · Shared · Marketplace. */}
+            <div className="seg" style={{ marginBottom: 14 }}>
+              {SCOPE_GROUPS.map((g) => (
+                <button key={g.key} type="button" className={scope === g.key ? 'on' : ''} onClick={() => setScope(g.key)}>
+                  {g.label('Connections')} ({counts[g.key]})
+                </button>
+              ))}
+            </div>
+            {visible.length === 0 ? (
+              <div className="stub-page">
+                {scope === 'mine' || scope === 'all'
+                  ? <>No governed connections yet{canCreate ? ' — create one above.' : '.'}</>
+                  : scope === 'shared' ? 'Nothing shared in your domain yet.' : 'Nothing in the marketplace yet.'}
+              </div>
+            ) : (
+              visible.map((c) => (
+                <ConnectionCard
+                  key={c.id}
+                  c={c}
+                  role={data.user.role}
+                  oauthProviders={data.oauthProviders ?? []}
+                  open={open === c.id}
+                  onToggle={() => setOpen(open === c.id ? '' : c.id)}
+                  onChange={load}
+                />
+              ))
+            )}
+          </>
+        );
+      })()}
 
       {canCreate ? <EgressSection /> : null}
     </>

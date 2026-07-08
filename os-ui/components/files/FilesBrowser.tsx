@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
+import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/scopes';
 import FilePreview from './FilePreview';
 
 type Summary = {
@@ -18,7 +19,6 @@ type Facets = { folders: { path: string; count: number }[]; tags: { tag: string;
 type Groups = { mine: Summary[]; domain: Summary[]; marketplace: Summary[]; facets: Facets };
 type Hit = { id: string; name: string; folder: string; tags: string[]; kind: Summary['kind']; score: number; snippet: string };
 
-type Scope = 'mine' | 'domain' | 'marketplace';
 const KIND_LABEL: Record<Summary['kind'], string> = { doc: 'DOC', image: 'IMG', audio: 'AUD', video: 'VID', table: 'TAB', archive: 'ZIP', other: 'FILE' };
 
 function bytesLabel(n: number): string {
@@ -51,13 +51,7 @@ function FileCard({ f, on, onOpen }: { f: Summary; on: boolean; onOpen: () => vo
 
 export default function FilesBrowser() {
   const { user } = useUser();
-  const domainLabel = user?.domains[0] ? `${user.domains[0]} domain` : 'your domain';
-  const scopeLabel: Record<Scope, string> = {
-    mine: 'Personal files',
-    domain: `Shared in ${domainLabel}`,
-    marketplace: 'Marketplace',
-  };
-  const [scope, setScope] = useState<Scope>('mine');
+  const [scope, setScope] = useState<ScopeKey>('mine');
   const [groups, setGroups] = useState<Groups | null>(null);
   const [err, setErr] = useState('');
   const [folder, setFolder] = useState<string | null>(null);
@@ -119,7 +113,10 @@ export default function FilesBrowser() {
     if (e.dataTransfer.files?.length) upload(e.dataTransfer.files);
   }, [upload]);
 
-  const list = groups ? groups[scope] : [];
+  const uid = user?.id ?? '';
+  const scoped = groups ? groupByScope(groups, uid) : null;
+  const counts = groups ? scopeCounts(groups, uid) : null;
+  const list = scoped ? scoped[scope] : [];
   const facets = groups?.facets ?? { folders: [], tags: [] };
   const filtered = list.filter((f) => (!folder || f.folder === folder) && (!tag || f.tags.includes(tag)));
   const searching = query.trim().length > 0;
@@ -128,11 +125,11 @@ export default function FilesBrowser() {
     <>
       <div className="files-bar">
         <div className="files-scope">
-          {(['mine', 'domain', 'marketplace'] as Scope[]).map((s) => (
-            <button key={s} className={scope === s ? 'on' : ''}
-              {...(s === 'mine' ? anchorAttr(ANCHORS.files.sandbox) : {})}
-              onClick={() => { setScope(s); setFolder(null); setTag(null); setSelected(null); }}>
-              {scopeLabel[s]}{groups ? ` (${groups[s].length})` : ''}
+          {SCOPE_GROUPS.map((g) => (
+            <button key={g.key} className={scope === g.key ? 'on' : ''}
+              {...(g.key === 'mine' ? anchorAttr(ANCHORS.files.sandbox) : {})}
+              onClick={() => { setScope(g.key); setFolder(null); setTag(null); setSelected(null); }}>
+              {g.label('Files')}{counts ? ` (${counts[g.key]})` : ''}
             </button>
           ))}
         </div>
@@ -204,9 +201,9 @@ export default function FilesBrowser() {
                 <div className="stub-page"><span className="spin" /> Loading your drive…</div>
               ) : filtered.length === 0 ? (
                 <div className="stub-page">
-                  {scope === 'mine'
+                  {scope === 'mine' || scope === 'all'
                     ? 'No files here yet. Drag a file in, or use Upload — any type works.'
-                    : `Nothing ${scope === 'domain' ? 'shared in your domain' : 'in the marketplace'} yet.`}
+                    : `Nothing ${scope === 'shared' ? 'shared in your domain' : 'in the marketplace'} yet.`}
                 </div>
               ) : (
                 <div className="file-grid">

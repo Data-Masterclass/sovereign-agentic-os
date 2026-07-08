@@ -81,7 +81,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // Compile server-side (throws TransformError → 400 with the real reason).
     const plan = goldJoinPlan(dataset, identity, joins, dimensions, measures);
 
-    const build = await buildStage(dataset, 'gold', identity.principal, { transformSql: plan.sql, identity });
+    // Personal-lane builds must run under the UID (not the domain principal) so
+    // Trino→OPA recognises the caller as the `personal_<uid>` owner — the same
+    // rule as the Silver transform route.
+    if (plan.schema.startsWith('personal_')) identity.principal = user.id;
+
+    // targetFqn: probe the exact table the CTAS wrote (personal vs domain schema).
+    const build = await buildStage(dataset, 'gold', identity.principal, { transformSql: plan.sql, identity, targetFqn: plan.target });
     if (!build.ok) {
       const failed = build.rows.find((r) => r.status === 'fail');
       return NextResponse.json(

@@ -436,6 +436,48 @@ export function silverPlan(
   return { source, target, schema, sql };
 }
 
+/**
+ * The tier-aware PHYSICAL target of one medallion layer for this caller — the same
+ * schema resolution {@link silverPlan}/{@link goldJoinPlan} use, exposed so every
+ * build path (guided transform, pass-through, authored commit) probes/writes the
+ * SAME table name. Personal datasets live in `personal_<uid>`, governed ones in
+ * their (sanitized) domain schema.
+ */
+export function layerTarget(
+  dataset: { name: string; domain: string; tier: string },
+  identity: { uid: string; domains: string[] },
+  layer: 'bronze' | 'silver' | 'gold',
+): string {
+  const schema = silverSchema({ tier: dataset.tier, domain: dataset.domain, uid: identity.uid, domains: identity.domains });
+  return `iceberg.${schema}.${layer}_${slug(dataset.name)}`;
+}
+
+export type PassThroughPlan = { source: string; target: string; schema: string; sql: string };
+
+/**
+ * Compile the PASS-THROUGH materialization for Silver/Gold: carrying the prior layer
+ * forward is a PHYSICAL copy (`CREATE OR REPLACE TABLE <layer> AS SELECT * FROM
+ * <prior>`), never a registry-only flag — a "built" version must have a queryable
+ * table behind it (the honesty contract). Same guard-shaped single statement + caller
+ * schema discipline as {@link silverPlan}; server-authoritative.
+ */
+export function passThroughPlan(
+  dataset: { name: string; domain: string; tier: string },
+  identity: { uid: string; domains: string[] },
+  layer: 'silver' | 'gold',
+): PassThroughPlan {
+  const schema = silverSchema({ tier: dataset.tier, domain: dataset.domain, uid: identity.uid, domains: identity.domains });
+  const s = slug(dataset.name);
+  const prior = layer === 'silver' ? 'bronze' : 'silver';
+  const source = `iceberg.${schema}.${prior}_${s}`;
+  const target = `iceberg.${schema}.${layer}_${s}`;
+  assertFqn(source, 'pass-through source');
+  assertFqn(target, 'pass-through target');
+  const sql = `create or replace table ${target} as select * from ${source}`;
+  assertNoSqlMeta(sql, 'compiled SQL'); // defense in depth: never emit a guard-failing statement
+  return { source, target, schema, sql };
+}
+
 // ================================================================ Publish =======
 
 export type PublishPlan = {

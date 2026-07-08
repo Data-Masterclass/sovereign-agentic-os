@@ -55,6 +55,14 @@ test('the system prompt carries OS orientation AND the current tab context', () 
   assert.match(osAssistantSystem(null), /CURRENT TAB: none/);
 });
 
+test('the system prompt tells the assistant to clarify + plan + confirm before building', () => {
+  const sys = osAssistantSystem('data');
+  assert.match(sys, /clarify → plan → confirm/i);
+  assert.match(sys, /clarifying\s+questions/i); // asks before guessing
+  assert.match(sys, /confirm/i);                // confirms before executing
+  assert.match(sys, /Read-only .* just\s*\n?\s*answer/i); // reads stay snappy (no ceremony)
+});
+
 test('the current tab tools are surfaced FIRST but the full registry is reachable', () => {
   const specs = osToolSpecs(creator, 'data');
   const names = specs.map((s) => s.name);

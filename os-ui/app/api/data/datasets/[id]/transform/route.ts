@@ -56,6 +56,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const build = await buildStage(dataset, 'silver', identity.principal, {
       transformSql: plan.sql,
       identity,
+      // Probe the exact table the CTAS wrote (personal vs domain schema).
+      targetFqn: plan.target,
     });
 
     if (!build.ok) {

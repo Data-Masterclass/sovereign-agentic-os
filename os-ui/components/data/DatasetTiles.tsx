@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { roleAtLeast } from '@/lib/session';
+import { DATASET_SCOPES, tilesForScope, scopeCounts, type DatasetScope } from '@/lib/data/dataset-scopes';
 
 /** Mirrors lib/data/store `DatasetSummary`. */
 type Tile = {
@@ -128,24 +129,6 @@ function TileCard({ t, onOpen, onImport, manage }: { t: Tile; onOpen: (id: strin
   );
 }
 
-function Group({ title, tiles, onOpen, onImport, manageFor }: {
-  title: string;
-  tiles: Tile[];
-  onOpen: (id: string) => void;
-  onImport?: (id: string) => void;
-  manageFor?: (t: Tile) => Manage | undefined;
-}) {
-  if (tiles.length === 0) return null;
-  return (
-    <>
-      <div className="section-title">{title}<span className="count-pill">{tiles.length}</span></div>
-      <div className="tile-grid">
-        {tiles.map((t) => <TileCard key={t.id} t={t} onOpen={onOpen} onImport={onImport} manage={manageFor?.(t)} />)}
-      </div>
-    </>
-  );
-}
-
 export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void }) {
   const { user } = useUser();
   // Importing a marketplace product grants the WHOLE domain read access, so the store
@@ -156,6 +139,8 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
   const [err, setErr] = useState('');
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
+  // Scope switcher — the Files-tab mental model: All · My · Shared · Marketplace.
+  const [scope, setScope] = useState<DatasetScope>('all');
   // Archive/lifecycle UI (mirrors the Knowledge tab's reference pattern).
   const [showArchived, setShowArchived] = useState(false);
   const [busyId, setBusyId] = useState('');
@@ -205,12 +190,19 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
     setErr('');
     try {
       const res = await fetch(`/api/data/datasets/${id}`, req);
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? 'Action failed');
-      }
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        physical?: { orphaned?: { fqn: string; reason: string }[] };
+      };
+      if (!res.ok) throw new Error(body.error ?? 'Action failed');
       setConfirmDeleteId('');
       await refresh();
+      // A delete also drops the physical Iceberg tables; if the engine couldn't
+      // drop one, say so honestly instead of pretending the state is clean.
+      const orphaned = body.physical?.orphaned ?? [];
+      if (orphaned.length > 0) {
+        setErr(`Deleted from the registry, but ${orphaned.length} physical table(s) could not be dropped: ${orphaned.map((o) => o.fqn).join(', ')}.`);
+      }
     } catch (e) { setErr((e as Error).message); }
     finally { setBusyId(''); }
   }, [refresh]);
@@ -236,13 +228,12 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
     };
   }, [canManage, busyId, confirmDeleteId, setArchived, del]);
 
-  // Split active (working lists) from archived (their own section, like Knowledge).
-  const all = groups ? [...groups.mine, ...groups.domain, ...groups.marketplace] : [];
-  const archivedTiles = all.filter((t) => t.archived);
-  const activeMine = groups?.mine.filter((t) => !t.archived) ?? [];
-  const activeDomain = groups?.domain.filter((t) => !t.archived) ?? [];
-  const activeMarketplace = groups?.marketplace.filter((t) => !t.archived) ?? [];
-  const empty = groups && activeMine.length === 0 && activeDomain.length === 0 && activeMarketplace.length === 0;
+  // Scope slice (Files mental model): All Data · My Data · Shared Data · Marketplace
+  // Data, working tiles + archived (soft-hidden) split per scope.
+  const uid = user?.id ?? '';
+  const scoped = groups ? tilesForScope(groups, scope, uid) : { active: [], archived: [] };
+  const counts = groups ? scopeCounts(groups, uid) : null;
+  const empty = groups && scoped.active.length === 0;
 
   return (
     <>
@@ -273,29 +264,59 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
         </div>
       </div>
 
+      {/* Scope switcher — same grouping logic as the Files tab, plus All Data. */}
+      <div className="seg" style={{ marginTop: 14 }}>
+        {DATASET_SCOPES.map((s) => (
+          <button
+            key={s.key}
+            type="button"
+            className={scope === s.key ? 'on' : ''}
+            onClick={() => { setScope(s.key); setConfirmDeleteId(''); }}
+          >
+            {s.label}{counts ? ` (${counts[s.key]})` : ''}
+          </button>
+        ))}
+      </div>
+
       {err ? <div className="error" style={{ marginTop: 14 }}>{err}</div> : null}
 
       {empty ? (
         <div className="stub-page" style={{ marginTop: 20 }}>
-          No datasets yet. <strong>+ New dataset</strong> starts one — bring a file in, and you’re at Bronze.
+          {scope === 'mine' || scope === 'all'
+            ? <>No datasets yet. <strong>+ New dataset</strong> starts one — bring a file in, and you’re at Bronze.</>
+            : scope === 'shared'
+              ? 'Nothing shared in your domain yet — promote a dataset to share it.'
+              : 'Nothing in the marketplace yet — an Admin certifies assets into data products.'}
         </div>
       ) : null}
 
       {groups ? (
         <>
-          <Group title="My data" tiles={activeMine} onOpen={onOpen} manageFor={manageFor} />
-          <Group title="Shared Data" tiles={activeDomain} onOpen={onOpen} manageFor={manageFor} />
-          <Group title="Marketplace Data" tiles={activeMarketplace} onOpen={onOpen} onImport={canImport ? importProduct : undefined} manageFor={manageFor} />
+          {scoped.active.length > 0 ? (
+            <div className="tile-grid" style={{ marginTop: 16 }}>
+              {scoped.active.map((t) => (
+                <TileCard
+                  key={t.id}
+                  t={t}
+                  onOpen={onOpen}
+                  // Import applies to marketplace products only (Builder+; store re-checks).
+                  onImport={canImport && t.tier === 'product' && t.owner !== uid ? importProduct : undefined}
+                  manage={manageFor(t)}
+                />
+              ))}
+            </div>
+          ) : null}
 
           {showArchived ? (
-            archivedTiles.length > 0 ? (
+            scoped.archived.length > 0 ? (
               <>
-                <div className="section-title">Archived<span className="count-pill">{archivedTiles.length}</span></div>
+                <div className="section-title">Archived<span className="count-pill">{scoped.archived.length}</span></div>
                 <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-                  Archived datasets are hidden from the working lists. Restore brings one back; Delete removes it permanently.
+                  Archived datasets are hidden from the working lists (their tables are retained).
+                  Restore brings one back; Delete removes it permanently — including its physical tables.
                 </p>
                 <div className="tile-grid">
-                  {archivedTiles.map((t) => <TileCard key={t.id} t={t} onOpen={onOpen} manage={manageFor(t)} />)}
+                  {scoped.archived.map((t) => <TileCard key={t.id} t={t} onOpen={onOpen} manage={manageFor(t)} />)}
                 </div>
               </>
             ) : (

@@ -5,6 +5,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@/lib/useUser';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
+import LineagePanel from './LineagePanel';
 
 type Layer = 'bronze' | 'silver' | 'gold';
 type VersionState = { built: boolean; updatedAt: string | null; artifact: string | null };
@@ -38,8 +40,12 @@ function furthestBuilt(versions: Dataset['versions']): Layer | null {
   return null;
 }
 
-function physicalFqn(domain: string, layer: Layer, name: string): string {
-  return `iceberg.${domain}.${layer}_${slug(name)}`;
+/** Tier-aware physical FQN — mirrors the server's builtLayerFqn: a personal dataset
+ *  lives in the OWNER's `personal_<uid>` schema, a governed one in its (sanitized)
+ *  domain schema. Never shows a table name that can't exist. */
+function physicalFqn(d: Dataset, layer: Layer): string {
+  const schema = d.tier === 'dataset' ? `personal_${slug(d.owner)}` : slug(d.domain);
+  return `iceberg.${schema}.${layer}_${slug(d.name)}`;
 }
 
 /** Whether a dataset would be delivered to the Cube semantic layer (mirrors cubeDeliverable). */
@@ -82,6 +88,9 @@ export default function DatasetDetail({
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [checks, setChecks] = useState<DataCheck[]>([]);
   const [loadErr, setLoadErr] = useState('');
+  // Catalog handshake (folded into the detail — there is no separate Catalog tab):
+  // the OpenMetadata deep link for this dataset's governed entity, when present.
+  const [omUrl, setOmUrl] = useState<string | null>(null);
 
   // ---- docs editing ----
   const [editingDocs, setEditingDocs] = useState(false);
@@ -123,6 +132,22 @@ export default function DatasetDetail({
   }, [datasetId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Best-effort: surface this dataset's OpenMetadata entry (deep link) from the
+  // catalog union. A missing catalog/OM never blocks the detail view.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/catalog', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = (await res.json()) as { assets?: { datasetId?: string; omUrl?: string }[] };
+        const hit = (data.assets ?? []).find((a) => a.datasetId === datasetId && a.omUrl);
+        if (!cancelled && hit?.omUrl) setOmUrl(hit.omUrl);
+      } catch { /* catalog offline — the detail stands on the registry alone */ }
+    })();
+    return () => { cancelled = true; };
+  }, [datasetId]);
 
   const saveDocs = useCallback(async () => {
     setDocsErr(''); setDocsOk(''); setDocsBusy(true);
@@ -175,7 +200,7 @@ export default function DatasetDetail({
   if (!dataset) return <div className="stub-page">Opening dataset…</div>;
 
   const layer = furthestBuilt(dataset.versions);
-  const fqn = layer ? physicalFqn(dataset.domain, layer, dataset.name) : null;
+  const fqn = layer ? physicalFqn(dataset, layer) : null;
   const cubeReady = isCubeReady(dataset);
   const published = !!dataset.certification;
   const canEdit = !!user && (user.id === dataset.owner || (user.role === 'admin' && user.domains?.includes(dataset.domain)));
@@ -250,6 +275,19 @@ export default function DatasetDetail({
           </span>
         )}
 
+        {/* Catalog (OpenMetadata) deep link — the catalog lives IN the detail now. */}
+        {omUrl ? (
+          <a
+            className="status-chip s-searchable"
+            href={omUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open this dataset's entity in the OpenMetadata catalog"
+          >
+            catalog · OpenMetadata ↗
+          </a>
+        ) : null}
+
         {/* Published / certified */}
         {published ? (
           <span
@@ -271,7 +309,7 @@ export default function DatasetDetail({
       </div>
 
       {/* ── Documentation ── */}
-      <div className="section-title" style={{ marginTop: 4 }}>
+      <div className="section-title" style={{ marginTop: 4 }} {...anchorAttr(ANCHORS.data.document)}>
         Documentation
         {!editingDocs && canEdit ? (
           <button className="btn ghost sm" style={{ marginLeft: 10 }} onClick={() => { setEditingDocs(true); setDocsOk(''); }}>
@@ -354,6 +392,19 @@ export default function DatasetDetail({
         </>
       )}
 
+      {/* ── Metrics (defined measures — the Cube handover) ── */}
+      {dataset.measures.length > 0 ? (
+        <>
+          <div className="section-title" style={{ marginTop: 4 }}>
+            Metrics
+            <span className="count-pill">{dataset.measures.length}</span>
+          </div>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+            {dataset.measures.map((m) => <span className="chip" key={m.name}>{m.name}</span>)}
+          </div>
+        </>
+      ) : null}
+
       {/* ── Data checks ── */}
       <div className="section-title" style={{ marginTop: 4 }}>
         Data checks
@@ -421,12 +472,16 @@ export default function DatasetDetail({
         </div>
       ) : null}
 
+      {/* ── Lineage (refinement + consumption chain, from the single source) ── */}
+      <div className="section-title" style={{ marginTop: 20 }}>Lineage</div>
+      <LineagePanel datasetId={dataset.id} />
+
       {/* ── Sharing / promotion hint ── */}
       {dataset.tier === 'dataset' ? (
         <div className="gate-check" style={{ marginTop: 20 }}>
           <span className="badge vis-personal">Personal</span>{' '}
           <span className="muted" style={{ fontSize: 13 }}>
-            This dataset is in your personal lane (DuckDB sandbox).
+            This dataset is in your private space — only you can see it.
             Use <strong>Build / refine →</strong> to build a Silver or Gold version
             and request promotion to share it with your domain.
           </span>

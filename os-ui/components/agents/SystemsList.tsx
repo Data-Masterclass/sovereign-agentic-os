@@ -8,6 +8,7 @@ import { useApi } from '@/lib/useApi';
 import { useUser } from '@/lib/useUser';
 import NewSystemPanel from './NewSystemPanel';
 import { roleAtLeast } from '@/lib/session';
+import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/scopes';
 
 /**
  * Level 1 — the systems list (landing). Grouped Mine / My domain / Marketplace,
@@ -35,9 +36,9 @@ const visClass = (v: string) => (v === 'Shared' ? 'vis-shared' : v === 'Marketpl
 
 export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }) {
   const [showArchived, setShowArchived] = useState(false);
+  const [scope, setScope] = useState<ScopeKey>('all');
   const { data, loading, error, reload } = useApi<Groups>(`/api/agents/systems${showArchived ? '?archived=1' : ''}`);
   const { user } = useUser();
-  const domainLabel = user?.domains[0] ? `${user.domains[0]} domain` : 'your domain';
   // Installing a Marketplace template is a Builder+ action (mirrors the promotion
   // ladder). Show the gate up front instead of letting the click 403.
   const canInstall = !!user && roleAtLeast(user.role, 'builder');
@@ -208,19 +209,14 @@ export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }
     </div>
   );
 
-  const group = (title: string, sub: string, items: Summary[], kind: 'open' | 'install') => (
-    <>
-      <div className="group-head">
-        <span className="group-heading">{title}</span>
-        <span className="group-sub">{sub}</span>
-      </div>
-      {items.length === 0 ? (
-        <div className="stub-page" style={{ padding: 24 }}>Nothing here yet.</div>
-      ) : (
-        <div className="grid">{items.map((s) => card(s, kind))}</div>
-      )}
-    </>
-  );
+  const uid = user?.id ?? '';
+  const scoped = data ? groupByScope(data, uid) : null;
+  const counts = data ? scopeCounts(data, uid) : null;
+  const visible = scoped ? scoped[scope] : [];
+  // A card is "install" (fork-to-own) only for a Marketplace system the caller
+  // does NOT already own; everything else opens in place.
+  const kindFor = (s: Summary): 'open' | 'install' =>
+    s.visibility === 'Marketplace' && s.owner !== uid ? 'install' : 'open';
 
   return (
     <div className="systems-list">
@@ -249,9 +245,23 @@ export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }
       {error ? <div className="error">{error}</div> : null}
       {data ? (
         <>
-          {group('Mine', 'agent systems you own — any visibility', data.mine, 'open')}
-          {group(domainLabel, `shared in ${domainLabel}`, data.domain, 'open')}
-          {group('Marketplace', 'install a copy you own', data.marketplace, 'install')}
+          {/* Scope switcher — the OS-wide four groups: All · My · Shared · Marketplace. */}
+          <div className="seg" style={{ marginBottom: 16 }}>
+            {SCOPE_GROUPS.map((g) => (
+              <button key={g.key} type="button" className={scope === g.key ? 'on' : ''} onClick={() => setScope(g.key)}>
+                {g.label('Agents')}{counts ? ` (${counts[g.key]})` : ''}
+              </button>
+            ))}
+          </div>
+          {visible.length === 0 ? (
+            <div className="stub-page" style={{ padding: 24 }}>
+              {scope === 'mine' || scope === 'all'
+                ? 'No agent systems yet — create one above.'
+                : scope === 'shared' ? 'Nothing shared in your domain yet.' : 'Nothing in the marketplace yet.'}
+            </div>
+          ) : (
+            <div className="grid">{visible.map((s) => card(s, kindFor(s)))}</div>
+          )}
         </>
       ) : loading ? (
         <div className="stub-page"><span className="spin" /> Loading systems…</div>
