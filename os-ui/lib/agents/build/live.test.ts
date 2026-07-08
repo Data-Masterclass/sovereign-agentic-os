@@ -60,6 +60,12 @@ function fakeForgejo(): ForgejoClient & { files: Map<string, { content: string; 
       files.clear();
       return { deleted: true };
     },
+    async listCommits() {
+      return [];
+    },
+    async getCommitFiles() {
+      return {};
+    },
   };
 }
 

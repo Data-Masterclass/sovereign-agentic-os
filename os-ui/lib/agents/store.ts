@@ -667,6 +667,26 @@ export function restoreSystemVersion(systemId: string, user: Principal, version:
 }
 
 /**
+ * Apply a yaml restored from an EXTERNAL source of truth (a Forgejo commit, via
+ * git-versioning) onto the live record. Edit-scoped + validated (never trust an
+ * externally-supplied yaml) + snapshotted first (so the git restore is ALSO undoable
+ * from the snapshot log). This is the store hook the git-backed versions route calls
+ * after re-committing a prior build's files, so the in-process record + the durable
+ * mirror reflect the restored source and the next Run/Build picks it up.
+ */
+export function applyRestoredYaml(systemId: string, user: Principal, yaml: string, summary: string): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  parseSystem(yaml); // reject corrupt restored source rather than go live with it
+  if (yaml !== rec.yaml) {
+    versions.record(systemId, user.id, snapshotState(rec), summary);
+    rec.yaml = yaml;
+    rec.updatedAt = now();
+    writeThrough(rec);
+  }
+  return rec;
+}
+
+/**
  * UNSCOPED read for the in-cluster scheduler only (a schedule CronJob → the
  * token-authenticated scheduled-run endpoint). There is no human user in a
  * scheduled run, so this bypasses the per-user view scope; the endpoint is gated
