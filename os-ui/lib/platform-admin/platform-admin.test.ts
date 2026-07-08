@@ -48,7 +48,7 @@ test('policy compiler: role + active-user + domain-layer → OPA grants', () => 
       { id: 'amir', role: 'creator', domains: ['sales'] },
       { id: 'ghost', role: 'builder', domains: ['sales'], active: false },
     ],
-    domains: [{ id: 'sales', layers: { ml: true, spark: false } }],
+    domains: [{ id: 'sales', layers: { ml: true } }],
     egressAllowlist: ['Github.com', 'github.com', 'api.example.com'],
   };
   const out = compile(input);
@@ -68,7 +68,7 @@ test('policy compiler: role + active-user + domain-layer → OPA grants', () => 
 test('policy compiler: archived domain drops its grants', () => {
   const out = compile({
     tenant: 't', users: [{ id: 'u', role: 'creator', domains: ['old'] }],
-    domains: [{ id: 'old', archived: true, layers: { ml: true, spark: false } }],
+    domains: [{ id: 'old', archived: true, layers: { ml: true } }],
     egressAllowlist: [],
   });
   assert.equal(out.grants['domain:old'], undefined);
@@ -81,8 +81,8 @@ test('domains: create from template, toggle a layer, archive guards layers', () 
   const d = createDomain({ name: 'Marketing', owner: 'sara', template: 'science' });
   assert.equal(d.id, 'marketing');
   assert.equal(d.layers.ml, true); // science template enables ML
-  setLayer('marketing', 'spark', true);
-  assert.equal(listDomains().find((x) => x.id === 'marketing')?.layers.spark, true);
+  setLayer('marketing', 'ml', false);
+  assert.equal(listDomains().find((x) => x.id === 'marketing')?.layers.ml, false);
   setArchived('marketing', true);
   assert.throws(() => setLayer('marketing', 'ml', false), (e: { status?: number }) => e.status === 409);
   // compiler view reflects archived + layers

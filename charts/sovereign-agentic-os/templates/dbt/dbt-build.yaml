@@ -3,7 +3,7 @@
   dbt build Job — builds the seed data into Iceberg marts via the central Trino
   engine (dbt-trino over the Polaris REST catalog). Runs as a post-install/upgrade
   hook once Trino is up. Cube + Superset + the agent query tool read these marts
-  THROUGH Trino. (dbt-trino is the single governed adapter — no DuckDB/Postgres.)
+  THROUGH Trino. dbt-trino is the single governed adapter.
 */}}
 {{- $d := .Values.dbt }}
 apiVersion: batch/v1

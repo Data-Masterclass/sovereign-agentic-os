@@ -146,7 +146,7 @@ export default function NewDataProduct({ onDone }: { onDone?: () => void }) {
       if (!res.ok) { setError(data.error ?? 'Parity check failed'); return; }
       setParity(data);
       const reg = await postJSON('/api/artifacts', {
-        type: 'agent', name: `${name} Agent`, description: 'LangGraph agent with governed Cube metrics + DuckDB query tools (OPA + Langfuse).',
+        type: 'agent', name: `${name} Agent`, description: 'LangGraph agent with governed Cube metrics + Trino query tools (OPA + Langfuse).',
         tags: ['langgraph', 'metrics-tool', 'query-tool'], spec: { tools: ['metrics', 'query'], grounding: 'mart_sales', proof: data.equal ? `match=${data.metrics.value}` : 'pending' },
       });
       if (reg.ok) mark(5, data.equal ? `Proven: agent == dashboard == ${data.metrics.value}.` : 'Agent registered; parity pending.');
@@ -208,7 +208,7 @@ export default function NewDataProduct({ onDone }: { onDone?: () => void }) {
           <div className="section-title" style={{ marginTop: 0 }}>2 · Transform — dbt staging + mart (preview before save)</div>
           <p className="hint" style={{ marginTop: 0 }}>
             The agent drafts the dbt SQL from your description; you preview the result against the lakehouse
-            (DuckDB over Iceberg) before saving. Saving scaffolds the dbt model + tests and a Dagster asset.
+            (Trino over Iceberg) before saving. Saving scaffolds the dbt model + tests and a Dagster asset.
           </p>
           <textarea className="mono" rows={5} value={sql} onChange={(e) => setSql(e.target.value)} spellCheck={false} />
           <div className="row" style={{ marginTop: 10, justifyContent: 'flex-end' }}>
@@ -274,7 +274,7 @@ export default function NewDataProduct({ onDone }: { onDone?: () => void }) {
         <div className="card">
           <div className="section-title" style={{ marginTop: 0 }}>6 · Use in agents — governed tools + the parity proof</div>
           <p className="hint" style={{ marginTop: 0 }}>
-            The agent calls a governed <strong>metrics</strong> tool (Cube) and a <strong>query</strong> tool (DuckDB over the
+            The agent calls a governed <strong>metrics</strong> tool (Cube) and a <strong>query</strong> tool (Trino over the
             same Iceberg mart), both OPA-authorized + Langfuse-traced. Because it reads the same metric and mart
             as the dashboard, the numbers can&apos;t disagree — prove it:
           </p>
@@ -286,7 +286,7 @@ export default function NewDataProduct({ onDone }: { onDone?: () => void }) {
                 <table style={{ marginTop: 10, width: '100%' }}>
                   <tbody>
                     <tr><td>Agent · metrics tool (Cube)</td><td className="mono" style={{ textAlign: 'right' }}>{fmt(parity.metrics.value)}</td><td>{parity.metrics.traced ? '· traced' : ''}</td></tr>
-                    <tr><td>Agent · query tool (DuckDB/Iceberg)</td><td className="mono" style={{ textAlign: 'right' }}>{fmt(parity.query.value)}</td><td>{parity.query.traced ? '· traced' : ''}</td></tr>
+                    <tr><td>Agent · query tool (Trino/Iceberg)</td><td className="mono" style={{ textAlign: 'right' }}>{fmt(parity.query.value)}</td><td>{parity.query.traced ? '· traced' : ''}</td></tr>
                     <tr><td>Dashboard (Superset on Cube)</td><td className="mono" style={{ textAlign: 'right' }}>{fmt(parity.dashboard.value)}</td><td /></tr>
                   </tbody>
                 </table>
@@ -337,7 +337,7 @@ function fmt(v: number | null): string {
 function PreviewTable({ p }: { p: NonNullable<Preview> }) {
   return (
     <div style={{ marginTop: 12 }}>
-      <div className="hint" style={{ marginTop: 0 }}>Preview · {p.engine ?? 'duckdb'}</div>
+      <div className="hint" style={{ marginTop: 0 }}>Preview · {p.engine ?? 'trino'}</div>
       <div className="table-wrap">
         <table>
           <thead><tr>{p.columns.map((c) => <th key={c}>{c}</th>)}</tr></thead>

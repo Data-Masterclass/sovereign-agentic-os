@@ -60,3 +60,10 @@ test('promote is the ONLY personal->shared path: dbt-trino writes Iceberg + Open
   assert.equal(plan.catalog, 'openmetadata');
   assert.equal(plan.visibility, 'shared');
 });
+
+test('promote normalizes a hyphenated domain to a valid Trino schema (dash->underscore)', () => {
+  const d: PersonalDataset = { id: 'x', name: 'Cohort Cut', origin: 'extract', columns: [], rows: [] };
+  const plan = promotePlan(d, { domain: 'agentic-leader-q3-2026', owner: 'alice', visibility: 'shared' });
+  // The target schema must match the real Iceberg schema, not the dashed domain id.
+  assert.equal(plan.target, 'iceberg.agentic_leader_q3_2026.cohort_cut');
+});

@@ -17,7 +17,7 @@ import { domainSchema } from './store-fqn.ts';
  * (Phase 6) all generate exactly the same YAML.
  */
 
-export const MEASURE_TYPES = ['count', 'count_distinct', 'sum', 'avg', 'min', 'max', 'number'] as const;
+export const MEASURE_TYPES = ['count', 'count_distinct', 'count_distinct_approx', 'sum', 'avg', 'min', 'max', 'number'] as const;
 export type MeasureType = (typeof MEASURE_TYPES)[number];
 export type CubeDimType = 'string' | 'number' | 'time' | 'boolean';
 
@@ -55,6 +55,30 @@ function primaryKeyColumn(columns: ColumnDoc[]): string | null {
   return idCol ? idCol.name : columns[0]?.name ?? null;
 }
 
+/** One measure's YAML block — the base (`name`/`type`/`sql`) plus, only when present,
+ *  the richer Cube fields (filters / rolling_window / format / drill_members). A plain
+ *  `{name,type,sql}` measure emits BYTE-FOR-BYTE what it did before these fields existed,
+ *  so the live Cube auto-registration and every existing test are unchanged. */
+function measureYaml(m: Measure): string {
+  const out = [`      - name: ${m.name}`, `        type: ${m.type}`];
+  if (m.sql && m.type !== 'count') out.push(`        sql: ${m.sql}`);
+  if (m.filters && m.filters.length > 0) {
+    out.push('        filters:');
+    for (const f of m.filters) out.push(`          - sql: "${f.sql.replace(/"/g, '\\"')}"`);
+  }
+  if (m.rollingWindow && (m.rollingWindow.trailing || m.rollingWindow.leading || m.rollingWindow.offset)) {
+    out.push('        rolling_window:');
+    if (m.rollingWindow.trailing) out.push(`          trailing: ${m.rollingWindow.trailing}`);
+    if (m.rollingWindow.leading) out.push(`          leading: ${m.rollingWindow.leading}`);
+    if (m.rollingWindow.offset) out.push(`          offset: ${m.rollingWindow.offset}`);
+  }
+  if (m.format) out.push(`        format: ${m.format}`);
+  if (m.drillMembers && m.drillMembers.length > 0) {
+    out.push(`        drill_members: [${m.drillMembers.join(', ')}]`);
+  }
+  return out.join('\n');
+}
+
 /** Build the Cube model YAML (cube + view) from the Gold columns + named measures —
  *  the file the Metric step would hand-write only the `measures:` block of. */
 export function scaffoldCubeYaml(d: Dataset): string {
@@ -65,10 +89,7 @@ export function scaffoldCubeYaml(d: Dataset): string {
     const pkLine = c.name === pk ? '\n        primary_key: true' : '';
     return `      - name: ${c.name}\n        sql: ${c.name}\n        type: ${type}${pkLine}`;
   });
-  const measures = (d.measures.length ? d.measures : [{ name: 'count', type: 'count', sql: '' } as Measure]).map((m) => {
-    const sqlLine = m.sql && m.type !== 'count' ? `\n        sql: ${m.sql}` : '';
-    return `      - name: ${m.name}\n        type: ${m.type}${sqlLine}`;
-  });
+  const measures = (d.measures.length ? d.measures : [{ name: 'count', type: 'count', sql: '' } as Measure]).map(measureYaml);
   const includes = [...d.measures.map((m) => m.name), ...d.columns.filter((c) => c.name !== pk).map((c) => c.name)];
   return [
     'cubes:',

@@ -4,12 +4,12 @@
 /**
  * Domain adapter — the structural map of the tenant. Admins create / rename /
  * archive / transfer domains, set an owner + defaults, and toggle each domain's
- * OPTIONAL layers (`ml.enabled`, `spark.enabled`) — so enabling ML in a domain
- * is a click here, not a Helm edit. Domain templates seed sensible defaults.
+ * OPTIONAL ML layer (`ml.enabled`) — so enabling Science/ML in a domain is a
+ * click here, not a Helm edit. Domain templates seed sensible defaults.
  *
- * The layer toggles only flip a governed flag on an ALREADY-provisioned layer
- * (no prod provisioning from the UI). The flag compiles through the policy
- * compiler so the `ml` / `spark` tool grant follows the toggle.
+ * The ML layer toggle only flips a governed flag on an ALREADY-provisioned
+ * layer (no prod provisioning from the UI). The flag compiles through the
+ * policy compiler so the `ml` OPA tool grant follows the toggle.
  *
  * In-memory fast cache + a best-effort OpenSearch mirror ("os-domains"), hydrated
  * once at the route/app-tier seam. Kept free of `server-only`/users imports (only
@@ -20,7 +20,7 @@
 import { config } from '../config.ts';
 import { osMirror } from '../os-mirror.ts';
 
-export type DomainLayers = { ml: boolean; spark: boolean };
+export type DomainLayers = { ml: boolean };
 
 export type Domain = {
   id: string;
@@ -41,10 +41,10 @@ export type DomainTemplate = {
 };
 
 export const TEMPLATES: DomainTemplate[] = [
-  { id: 'blank', name: 'Blank', description: 'Core data + agents only.', layers: { ml: false, spark: false } },
-  { id: 'analytics', name: 'Analytics', description: 'Core + dashboards; no heavy ML.', layers: { ml: false, spark: false } },
-  { id: 'science', name: 'Data Science', description: 'Adds the ML layer (Layer 4).', layers: { ml: true, spark: false } },
-  { id: 'big-data', name: 'Big Data', description: 'Adds Spark for large batch.', layers: { ml: false, spark: true } },
+  { id: 'blank', name: 'Blank', description: 'Core data + agents only.', layers: { ml: false } },
+  { id: 'analytics', name: 'Analytics', description: 'Core + dashboards; no heavy ML.', layers: { ml: false } },
+  { id: 'science', name: 'Data Science', description: 'Adds the ML layer (Layer 4).', layers: { ml: true } },
+  { id: 'big-data', name: 'Big Data', description: 'Core data + agents; large-batch processing.', layers: { ml: false } },
 ];
 
 function now(): string {
@@ -236,7 +236,7 @@ export function setLayer(id: string, layer: keyof DomainLayers, enabled: boolean
   return d;
 }
 
-/** Shape the policy compiler consumes (id + archived + layers). */
+/** Shape the policy compiler consumes (id + archived + ml layer). */
 export function compilerView(): { id: string; archived: boolean; layers: DomainLayers }[] {
   return listDomains().map((d) => ({ id: d.id, archived: d.archived, layers: d.layers }));
 }

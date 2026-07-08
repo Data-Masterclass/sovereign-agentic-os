@@ -500,7 +500,10 @@ export default function KnowledgePage() {
             <div className="seg" style={{ marginTop: 14 }}>
               {SCOPE_GROUPS.map((g) => {
                 const n = g.key === 'mine' ? (personal?.mine.length ?? 0)
-                  : g.key === 'shared' ? (domainKnowledge?.sections.filter((s) => s.content).length ?? 0)
+                  : g.key === 'shared' ? (
+                      (domainKnowledge?.sections.filter((s) => s.content).length ?? 0) +
+                      (personal?.domain.length ?? 0)
+                    )
                   : g.key === 'marketplace' ? (personal?.marketplace.length ?? 0)
                   : undefined; // 'all' has no single count
                 return (

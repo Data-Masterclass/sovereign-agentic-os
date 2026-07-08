@@ -2,7 +2,7 @@
 {{- /*
   data-runner — the REAL ingest service (Data-tab "Upload"). os-ui streams a file to
   MinIO under s3://<bucket>/uploads/<uid>/<file>, then calls POST /ingest; the runner
-  reads it with DuckDB (schema inference) and writes a PHYSICAL Iceberg Bronze table
+  infers the schema and writes a PHYSICAL Iceberg Bronze table
   `lakehouse.personal_<uid>.bronze_<slug>` THROUGH the Polaris REST catalog (PyIceberg),
   so uploads stop being an in-memory placebo.
 

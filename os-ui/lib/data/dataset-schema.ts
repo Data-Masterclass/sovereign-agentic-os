@@ -67,9 +67,33 @@ export type Grant = {
   action: 'read';
 };
 
+/** A conditional filter applied to a measure's aggregation (Cube `filters:`). The
+ *  `sql` is a boolean predicate on the cube, e.g. `{CUBE}.status = 'completed'`. */
+export type MeasureFilter = { sql: string };
+
+/** A moving time window for a measure (Cube `rolling_window:`). `trailing`/`leading`
+ *  are durations like `7 day`, `1 month`, or `unbounded`; `offset` anchors the window
+ *  (`start`|`end`). A cumulative/running total is `{ trailing: 'unbounded' }`. */
+export type RollingWindow = { trailing?: string; leading?: string; offset?: 'start' | 'end' };
+
 /** A metric defined on the GOLD version — the Cube handover. The user only names
- *  the measure; `cube_dbt` scaffolds dimensions from the gold manifest. */
-export type Measure = { name: string; type: string; sql: string };
+ *  the measure; `cube_dbt` scaffolds dimensions from the gold manifest. The four
+ *  optional fields expose the richer Cube measure model (filters / rolling windows /
+ *  display format / drill-down members); they are ABSENT on a plain measure so every
+ *  existing consumer (parse, serialize, scaffoldCubeYaml, sameMeasure) is unchanged. */
+export type Measure = {
+  name: string;
+  type: string;
+  sql: string;
+  /** Conditional filters narrowing what the aggregation counts (Cube `filters:`). */
+  filters?: MeasureFilter[];
+  /** A moving time window — trailing/leading/running total (Cube `rolling_window:`). */
+  rollingWindow?: RollingWindow;
+  /** Display format — `percent`, `currency`, `number`, … (Cube `format:`). */
+  format?: string;
+  /** Drill-down members exposed for exploration (Cube `drill_members:`). */
+  drillMembers?: string[];
+};
 
 /** A documented column (the documentation form). At least one with a non-empty
  *  description is required by the transparency gate before a dataset can promote. */
@@ -286,7 +310,34 @@ function parseMeasure(raw: unknown, i: number): Measure {
   if (!isRecord(raw) || typeof raw.name !== 'string') {
     throw new DatasetError(`dataset.yaml: measures[${i}] needs a string 'name'`);
   }
-  return { name: raw.name, type: typeof raw.type === 'string' ? raw.type : 'count', sql: typeof raw.sql === 'string' ? raw.sql : '' };
+  const m: Measure = {
+    name: raw.name,
+    type: typeof raw.type === 'string' ? raw.type : 'count',
+    sql: typeof raw.sql === 'string' ? raw.sql : '',
+  };
+  // Cube's richer measure model — accept both camelCase (our TS) and snake_case (Cube YAML).
+  const filtersRaw = (raw.filters ?? (raw as Record<string, unknown>).filters) as unknown;
+  if (Array.isArray(filtersRaw)) {
+    const filters = filtersRaw
+      .map((f) => (isRecord(f) && typeof f.sql === 'string' ? { sql: f.sql } : null))
+      .filter((f): f is MeasureFilter => f !== null);
+    if (filters.length > 0) m.filters = filters;
+  }
+  const rw = (raw.rollingWindow ?? (raw as Record<string, unknown>).rolling_window) as unknown;
+  if (isRecord(rw)) {
+    const win: RollingWindow = {};
+    if (typeof rw.trailing === 'string') win.trailing = rw.trailing;
+    if (typeof rw.leading === 'string') win.leading = rw.leading;
+    if (rw.offset === 'start' || rw.offset === 'end') win.offset = rw.offset;
+    if (win.trailing || win.leading || win.offset) m.rollingWindow = win;
+  }
+  if (typeof raw.format === 'string' && raw.format) m.format = raw.format;
+  const dm = (raw.drillMembers ?? (raw as Record<string, unknown>).drill_members) as unknown;
+  if (Array.isArray(dm)) {
+    const members = dm.map((x) => String(x)).filter(Boolean);
+    if (members.length > 0) m.drillMembers = members;
+  }
+  return m;
 }
 
 function parseColumn(raw: unknown, i: number): ColumnDoc {

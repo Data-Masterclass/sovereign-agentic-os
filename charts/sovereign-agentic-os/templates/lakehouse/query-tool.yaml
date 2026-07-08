@@ -2,8 +2,8 @@
 {{- /*
   Governed `query` tool — read-only SQL THROUGH central Trino over the Iceberg
   marts. Exposed over HTTP + MCP for the LiteLLM gateway (OPA gates tool access);
-  Trino enforces row/column governance on every read. No embedded DuckDB — that is
-  the personal/sandbox lane (behind Trino).
+  Trino enforces row/column governance on every read. Single engine: Trino serves
+  both shared marts and personal schemas (iceberg.personal_<uid>.*).
 */}}
 {{- $q := .Values.queryTool }}
 apiVersion: apps/v1

@@ -226,7 +226,7 @@ export function makeLiveAdapters(deps: DataLiveDeps): Record<string, DataAdapter
   const dlt: DataAdapter = {
     tool: 'dlt',
     async apply(ctx) {
-      const table = `iceberg.${ctx.dataset.domain}.bronze_${slug(ctx.dataset.name)}`;
+      const table = `iceberg.${domainSchema(ctx.dataset.domain)}.bronze_${slug(ctx.dataset.name)}`;
       // A file upload carries its MinIO objectKey; the real client POSTs it to the
       // data-runner /ingest (which writes the physical Bronze table as the principal).
       await deps.dlt.load(table, ctx.dataset.name, {
@@ -236,7 +236,7 @@ export function makeLiveAdapters(deps: DataLiveDeps): Record<string, DataAdapter
       return ok(`loaded raw Iceberg table ${table}`);
     },
     async verify(ctx) {
-      const table = `iceberg.${ctx.dataset.domain}.bronze_${slug(ctx.dataset.name)}`;
+      const table = `iceberg.${domainSchema(ctx.dataset.domain)}.bronze_${slug(ctx.dataset.name)}`;
       const exists = await deps.dlt.tableExists(table, ctx.principal);
       if (!exists) return fail(`raw table ${table} (or its snapshot) is not in Polaris`);
       return ok(`raw table + snapshot present in Polaris`);

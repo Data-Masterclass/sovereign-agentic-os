@@ -56,7 +56,7 @@ export default async function TerminalPage() {
         ) : (
           <>
             <p className="lead">
-              An ephemeral, locked-down shell (python3 + duckdb) scoped to your domain&apos;s governed
+              An ephemeral, locked-down shell (python3) scoped to your domain&apos;s governed
               data. It starts when you open this tab, stays connected while you move around the OS,
               and is destroyed when you sign out (or after a generous idle window). It cannot reach
               the cluster API, read secrets, or the public internet.

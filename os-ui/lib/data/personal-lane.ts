@@ -109,7 +109,10 @@ export function promotePlan(
 ): PromotePlan {
   return {
     engine: 'dbt-trino',
-    target: `iceberg.${meta.domain}.${slug(d.name)}`,
+    // Normalize the domain to a valid Trino identifier (dash→underscore) — the SAME
+    // shape as store-fqn.domainSchema — so a hyphenated domain (`agentic-leader-q3-2026`)
+    // targets the real Iceberg schema (`agentic_leader_q3_2026`) instead of a SYNTAX_ERROR.
+    target: `iceberg.${slug(meta.domain)}.${slug(d.name)}`,
     catalog: 'openmetadata',
     domain: meta.domain,
     owner: meta.owner,

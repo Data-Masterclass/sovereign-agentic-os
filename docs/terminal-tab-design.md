@@ -7,8 +7,8 @@ Status: **PROTOTYPE on local kind — NOT deployed to STACKIT.** Ships **off by
 default** (`terminal.enabled=false`). This document is the sign-off package.
 
 A new **Terminal** tab in the OS UI gives an authenticated user an **ephemeral,
-sandboxed teaching shell** (python3 + duckdb today; dbt + the governed query CLI
-are additive) — for learning, **not** access to the live server/cluster. It is
+sandboxed teaching shell** (python3 + the governed `dq` CLI; dbt is additive) — for
+learning, **not** access to the live server/cluster. It is
 the highest-risk surface in a 30-student multi-tenant platform, so the security
 model is the point of the design.
 
@@ -28,7 +28,7 @@ model is the point of the design.
    • destroys the Pod on disconnect / idle / max-TTL  (+ janitor reaps orphans)
    ▼
  sandbox Pod  (per session, no rights, no token, non-root, RO-rootfs, deny-egress)
-   bash → python3 / duckdb, scoped to the governed data endpoint only
+   bash → python3 / dq (governed Trino CLI), scoped to the governed data endpoint only
 ```
 
 ### Backend/PTY decision — chosen: **broker + k8s `exec` into an ephemeral pod**
@@ -75,7 +75,7 @@ NO_KUBECTL           # kubectl not installed
 API_BLOCKED_OR_NO_ROUTE   # connect to 10.96.0.1:443 timed out
 ROOTFS_READONLY      # touch / -> read-only file system
 CapEff: 0000000000000000   # all capabilities dropped
-duckdb 1.1.3 ; select 6*7 -> (42,)   # teaching toolset works
+dq --version ; dq "select 6*7"           # governed dq CLI works
 ```
 Plus: broker SA `can-i create pods -n agentic-os` = **no**, `get secrets` (any ns)
 = **no**, `list nodes` = **no**, `* * --all-namespaces` = **no**; sandbox SA = no
@@ -101,8 +101,8 @@ limits, images.
 1. **Which roles get it?** Prototype default = `builder`, `admin` (participants
    excluded). Decision: do students (participants) get a terminal, or only
    builders/instructors? (`terminal.allowedRoles`.)
-2. **Toolset.** Prototype = python3 + duckdb. Add `dbt-core`/`dbt-duckdb` + the
-   governed query CLI to `images/sandbox-shell`? Anything else (pandas, polars)?
+2. **Toolset.** Prototype = python3 + `dq` governed CLI. Add `dbt-core` (dbt-trino) to
+   `images/sandbox-shell`? Anything else (pandas, polars)?
 3. **Session/resource limits.** Idle 10m / max 60m / 30 concurrent; pod
    0.5 vCPU / 512Mi / 512Mi ephemeral. OK for a 30-student cohort, or tune?
 4. **Isolation model.** Prototype = **one shared sandbox namespace** + per-pod
@@ -115,7 +115,7 @@ limits, images.
 
 ## 6. Build plan to production-ready (est.)
 
-- Harden image: add dbt + query CLI, pin digests, scan (Trivy), distroless-ish. ~1d
+- Harden image: add dbt-core (dbt-trino) + pin digests, scan (Trivy), distroless-ish. ~1d
 - Secret via ExternalSecret + per-env `brokerSecret`; ingress + TLS for the WS. ~0.5d
 - Namespace-per-user option + ResourceQuota/LimitRange per cohort. ~1d
 - Broker: structured audit logging (who/when/pod), Langfuse/metrics, graceful

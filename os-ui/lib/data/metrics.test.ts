@@ -68,6 +68,25 @@ test('a measure-less gold still scaffolds a count cube (so the view is valid)', 
   assert.match(y, /name: count\n\s+type: count/);
 });
 
+test('the richer Cube measure fields emit only when present (plain measures unchanged)', () => {
+  const y = scaffoldCubeYaml(gold({
+    measures: [{
+      name: 'completed_revenue', type: 'sum', sql: 'net_amount',
+      filters: [{ sql: "{CUBE}.status = 'completed'" }],
+      rollingWindow: { trailing: '7 day', offset: 'end' },
+      format: 'currency',
+      drillMembers: ['order_id', 'region'],
+    }],
+  }));
+  assert.match(y, /filters:\n\s+- sql: "\{CUBE\}\.status = 'completed'"/);
+  assert.match(y, /rolling_window:\n\s+trailing: 7 day\n\s+offset: end/);
+  assert.match(y, /format: currency/);
+  assert.match(y, /drill_members: \[order_id, region\]/);
+  // A plain measure alongside it emits NO rich blocks (no leakage).
+  const plain = scaffoldCubeYaml(gold());
+  assert.doesNotMatch(plain, /filters:|rolling_window:|format:|drill_members:/);
+});
+
 test('handover names line up across cube + exposure + dashboard', () => {
   const d = gold();
   assert.equal(goldMartFqn(d), 'iceberg.sales.gold_orders');

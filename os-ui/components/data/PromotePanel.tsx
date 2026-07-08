@@ -34,6 +34,7 @@ export default function PromotePanel({
   tier,
   initialDescription,
   initialColumns,
+  refined = true,
   onChanged,
 }: {
   datasetId: string;
@@ -42,6 +43,10 @@ export default function PromotePanel({
   tier: 'dataset' | 'asset' | 'product';
   initialDescription: string;
   initialColumns: ColumnDoc[];
+  /** True once a Silver/Gold version exists. A Bronze-only dataset is NOT shareable
+   *  (the server fail-closes in requestPromotion); we mirror that here — no dead
+   *  control, a clear "refine first" hint instead of a promote button. */
+  refined?: boolean;
   onChanged: () => void;
 }) {
   const { user } = useUser();
@@ -138,8 +143,19 @@ export default function PromotePanel({
 
       {err ? <div className="error" style={{ marginTop: 12 }}>{err}</div> : null}
 
+      {/* A Bronze-only dataset is not shareable — hide the promote control entirely
+          (fail-closed to match the server) and say why. */}
+      {isOwner && !pending && !refined ? (
+        <div className="gate-check" style={{ marginTop: 14 }}>
+          <span className="badge vis-personal">Bronze only</span>{' '}
+          <span className="muted" style={{ fontSize: 13 }}>
+            Raw Bronze data can&apos;t be shared — <strong>promote after refining to Silver/Gold</strong>.
+          </span>
+        </div>
+      ) : null}
+
       {/* Owner: request promotion */}
-      {isOwner && !pending ? (
+      {isOwner && !pending && refined ? (
         <div className="row" style={{ marginTop: 14, gap: 8, alignItems: 'center' }}>
           <label className="muted" style={{ fontSize: 12.5 }}>Share with</label>
           <select value={visibility} onChange={(e) => setVisibility(e.target.value as 'domain' | 'shared')}>

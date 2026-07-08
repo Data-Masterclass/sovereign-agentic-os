@@ -27,7 +27,7 @@ import { config } from '../config.ts';
 export type Role = 'creator' | 'builder' | 'domain_admin' | 'admin';
 
 export type CompileUser = { id: string; role: Role; domains: string[]; active?: boolean };
-export type CompileDomain = { id: string; archived?: boolean; layers?: { ml?: boolean; spark?: boolean } };
+export type CompileDomain = { id: string; archived?: boolean; layers?: { ml?: boolean } };
 export type CompileInput = {
   tenant: string;
   users: CompileUser[];
@@ -92,7 +92,6 @@ export function compile(input: CompileInput): CompiledPolicy {
     for (const d of input.domains) {
       if (d.archived || !u.domains.includes(d.id)) continue;
       if (d.layers?.ml) tools.push('ml');
-      if (d.layers?.spark) tools.push('spark');
     }
     grants[`user:${u.id}`] = uniqSort(tools);
   }
@@ -101,7 +100,6 @@ export function compile(input: CompileInput): CompiledPolicy {
     if (d.archived) continue;
     const tools = ['metrics', 'query'];
     if (d.layers?.ml) tools.push('ml');
-    if (d.layers?.spark) tools.push('spark');
     grants[`domain:${d.id}`] = uniqSort(tools);
   }
 

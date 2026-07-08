@@ -34,6 +34,7 @@ import {
   silverPlan,
   goldJoinPlan,
   goldMeasureToCube,
+  CAST_TYPES,
   type TransformOp,
   type ResolvedJoin,
   type GoldDimension,
@@ -43,7 +44,7 @@ import {
 import { assetTarget } from '@/lib/data/store-fqn';
 import type { ExecuteIdentity } from '@/lib/governed';
 import type { Layer, Quality, DataVisibility, Grant, ColumnDoc, DatasetUpstream } from '@/lib/data/dataset-schema';
-import { measureFromForm, measureMember, type MetricForm } from '@/lib/metrics/model';
+import { measureFromForm, measureMember, type MetricForm, type GuidedFilter, type GuidedWindow } from '@/lib/metrics/model';
 import type { MeasureType } from '@/lib/data/metrics';
 
 import {
@@ -411,7 +412,7 @@ export const dataWriteTools: McpTool[] = [
     tab: 'data',
     minRole: 'creator',
     description:
-      'Build a dataset’s physical GOLD by JOINING its Silver with other governed datasets you may read — the Data tab’s stage-4 reuse, compiled into ONE governed CTAS. You pass dataset IDS to join (never table names — each is re-resolved through the canView guard), the join keys, projected dimensions and derived measures (sum/avg/count/count_distinct/min/max, or count(*) with agg "count" and no col). Column refs are {ref, column} where ref 0 = your Silver base and 1..n = the joined datasets in order. Purpose: the reuse step of the physical Data golden path — the measures recorded here feed define_metric after promotion. Before: transform_silver (Silver must be built); pick join partners from list_datasets (governed asset/product tiers with a built table). After: document_dataset → request_promotion → define_metric. Governance: the CTAS targets YOUR OWN schema and executes AS YOU (Trino→OPA masks every joined read); a non-visible pick is a typed forbidden; Gold + lineage + measures are recorded ONLY on a ✓ apply+verify.',
+      'Build a dataset’s physical GOLD by JOINING its Silver with other governed datasets you may read — the Data tab’s stage-4 reuse, compiled into ONE governed CTAS. You pass dataset IDS to join (never table names — each is re-resolved through the canView guard), the join keys, projected dimensions and derived measures (sum/avg/count/count_distinct/min/max, or count(*) with agg "count" and no col). Column refs are {ref, column} where ref 0 = your Silver base and 1..n = the joined datasets in order. KEY MAPPING / RECONCILE: same-name keys auto-match with no extra config; when the two sides differ, set the join key’s optional `adapt` to reconcile them symmetrically (both sides wrapped): `{mode:"text"}` normalizes to lower(trim(cast … as varchar)) so keys differing only by case/whitespace/format line up, `{mode:"cast",type}` coerces both sides to one Trino type (varchar|integer|bigint|double|boolean|date|timestamp) — e.g. an id stored as varchar on one side, integer on the other. Purpose: the reuse step of the physical Data golden path — the measures recorded here feed define_metric after promotion. Before: transform_silver (Silver must be built); pick join partners from list_datasets (governed asset/product tiers with a built table). After: document_dataset → request_promotion → define_metric. Governance: the CTAS targets YOUR OWN schema and executes AS YOU (Trino→OPA masks every joined read); a non-visible pick is a typed forbidden; Gold + lineage + measures are recorded ONLY on a ✓ apply+verify.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -432,6 +433,15 @@ export const dataWriteTools: McpTool[] = [
                   properties: {
                     left: { type: 'object', properties: { ref: { type: 'number' }, column: { type: 'string' } }, required: ['ref', 'column'] },
                     right: { type: 'string' },
+                    adapt: {
+                      type: 'object',
+                      description: 'Optional key reconciliation when the two sides don’t match verbatim (auto-matched same-name keys need none). Applied symmetrically to BOTH sides. `text` normalizes to lower(trim(cast … as varchar)) (case/whitespace/format); `cast` coerces both sides to one Trino type.',
+                      properties: {
+                        mode: { type: 'string', enum: ['text', 'cast'] },
+                        type: { type: 'string', enum: [...CAST_TYPES], description: 'Required for mode "cast": the shared Trino type both sides are cast to.' },
+                      },
+                      required: ['mode'],
+                    },
                   },
                   required: ['left', 'right'],
                 },
@@ -456,6 +466,18 @@ export const dataWriteTools: McpTool[] = [
         {
           datasetId: 'ds_ab12cd',
           picks: [{ datasetId: 'ds_customers', type: 'left', on: [{ left: { ref: 0, column: 'customer_id' }, right: 'customer_id' }] }],
+          dimensions: [{ col: { ref: 1, column: 'region' } }],
+          measures: [{ name: 'revenue', agg: 'sum', col: { ref: 0, column: 'net_amount' } }],
+        },
+        {
+          datasetId: 'ds_ab12cd',
+          picks: [
+            {
+              datasetId: 'ds_customers',
+              type: 'left',
+              on: [{ left: { ref: 0, column: 'cust_code' }, right: 'customer_id', adapt: { mode: 'text' } }],
+            },
+          ],
           dimensions: [{ col: { ref: 1, column: 'region' } }],
           measures: [{ name: 'revenue', agg: 'sum', col: { ref: 0, column: 'net_amount' } }],
         },
@@ -910,18 +932,55 @@ export const metricWriteTools: McpTool[] = [
     tab: 'metrics',
     minRole: 'creator',
     description:
-      'Define a governed metric on a dataset’s built GOLD version — the one definition of a number (Cube member). The dataset must already be a governed asset/product (promote it in Data first). Returns the canonical member + the generated Cube YAML.',
+      'Define a governed metric on a dataset’s built GOLD version — the one definition of a number (Cube member). The dataset must already be a governed asset/product (promote it in Data first). Returns the canonical member + the generated Cube YAML. THE FULL MEASURE MODEL (same as the Metrics tab form — all optional, a plain call yields exactly {name,type,sql}): `aggregation` — count · count_distinct · count_distinct_approx (fast approximate distinct) · sum · avg · min · max · number (a DERIVED/ratio measure). `filter` — a FILTERED measure: aggregate only rows where {column op value} (op: equals|notEquals|gt|gte|lt|lte|set|notSet). `runningTotal` — a cumulative running total from the beginning of time. `rollingWindow` — a trailing time window (last N day|week|month|quarter|year), mutually exclusive with runningTotal. `ratio` — for aggregation "number", a derived measure numerator/denominator over two OTHER measures on the same cube. `format` — display format (currency|percent|number…). `drillMembers` — drill-down members exposed for exploration. `timeDimension`+`granularity` are query-time (query_metric), not part of the definition.',
     inputSchema: {
       type: 'object',
       properties: {
         datasetId: { type: 'string', description: 'Gold, governed (asset/product) dataset id.' },
         name: { type: 'string', description: 'Human metric name, e.g. "Revenue".' },
-        aggregation: { type: 'string', enum: ['count', 'count_distinct', 'sum', 'avg', 'min', 'max', 'number'], description: 'The aggregation.' },
-        column: { type: 'string', description: 'Gold column to aggregate (empty for count).' },
+        aggregation: { type: 'string', enum: ['count', 'count_distinct', 'count_distinct_approx', 'sum', 'avg', 'min', 'max', 'number'], description: 'The aggregation. count/count_distinct/count_distinct_approx count rows; sum/avg/min/max aggregate a column; number is a derived (ratio) measure.' },
+        column: { type: 'string', description: 'Gold column to aggregate (omit for count/count_distinct-of-rows and for number/ratio).' },
         dimensions: { type: 'array', items: { type: 'string' }, description: 'Dimensions the metric can be sliced by.' },
+        filter: {
+          type: 'object',
+          description: 'Optional FILTERED measure — aggregate only rows matching {column op value}.',
+          properties: {
+            column: { type: 'string' },
+            operator: { type: 'string', enum: ['equals', 'notEquals', 'gt', 'gte', 'lt', 'lte', 'set', 'notSet'] },
+            value: { type: 'string', description: 'Compared value (unused for set/notSet).' },
+          },
+          required: ['column', 'operator'],
+        },
+        runningTotal: { type: 'boolean', description: 'Cumulative running total from the beginning of time (mutually exclusive with rollingWindow).' },
+        rollingWindow: {
+          type: 'object',
+          description: 'Trailing time window — last `amount` `unit` (mutually exclusive with runningTotal).',
+          properties: {
+            amount: { type: 'number' },
+            unit: { type: 'string', enum: ['day', 'week', 'month', 'quarter', 'year'] },
+          },
+          required: ['amount', 'unit'],
+        },
+        ratio: {
+          type: 'object',
+          description: 'For aggregation "number": a derived measure = numerator / denominator, each an EXISTING measure member name on the same cube.',
+          properties: {
+            numerator: { type: 'string' },
+            denominator: { type: 'string' },
+          },
+          required: ['numerator', 'denominator'],
+        },
+        format: { type: 'string', description: 'Display format — e.g. currency, percent, number.' },
+        drillMembers: { type: 'array', items: { type: 'string' }, description: 'Drill-down members exposed for exploration.' },
       },
       required: ['datasetId', 'name', 'aggregation'],
-      examples: [{ datasetId: 'ds_ab12cd', name: 'Revenue', aggregation: 'sum', column: 'net_amount', dimensions: ['order_date', 'region'] }],
+      examples: [
+        { datasetId: 'ds_ab12cd', name: 'Revenue', aggregation: 'sum', column: 'net_amount', dimensions: ['order_date', 'region'] },
+        { datasetId: 'ds_ab12cd', name: 'Unique Customers', aggregation: 'count_distinct_approx', column: 'customer_id' },
+        { datasetId: 'ds_ab12cd', name: 'Completed Orders', aggregation: 'count', filter: { column: 'status', operator: 'equals', value: 'completed' } },
+        { datasetId: 'ds_ab12cd', name: 'Trailing 7d Revenue', aggregation: 'sum', column: 'net_amount', rollingWindow: { amount: 7, unit: 'day' }, format: 'currency' },
+        { datasetId: 'ds_ab12cd', name: 'Conversion Rate', aggregation: 'number', ratio: { numerator: 'orders', denominator: 'sessions' }, format: 'percent' },
+      ],
     },
     call: async (user, args) => {
       const datasetId = str(args.datasetId).trim();
@@ -934,7 +993,24 @@ export const metricWriteTools: McpTool[] = [
         column: str(args.column),
         dimensions: strArr(args.dimensions),
       };
-      const measure = measureFromForm(form);
+      // The richer (optional) measure model — same guided controls as the tab form.
+      const f = args.filter as Record<string, unknown> | undefined;
+      if (f && str(f.column).trim()) {
+        form.filter = { column: str(f.column), operator: str(f.operator) as GuidedFilter['operator'], value: str(f.value) };
+      }
+      if (args.runningTotal === true) form.runningTotal = true;
+      const rw = args.rollingWindow as Record<string, unknown> | undefined;
+      if (rw && typeof rw.amount === 'number' && str(rw.unit).trim()) {
+        form.rollingWindow = { amount: rw.amount, unit: str(rw.unit) as GuidedWindow['unit'] };
+      }
+      const r = args.ratio as Record<string, unknown> | undefined;
+      if (r && str(r.numerator).trim() && str(r.denominator).trim()) {
+        form.ratio = { numerator: str(r.numerator), denominator: str(r.denominator) };
+      }
+      if (str(args.format).trim()) form.format = str(args.format).trim();
+      if (Array.isArray(args.drillMembers)) form.drillMembers = strArr(args.drillMembers);
+
+      const measure = measureFromForm(form); // MetricError → typed bad_request with the real reason
       const dataset = defineMeasure(datasetId, P(user), measure);
       return { datasetId, measure, member: measureMember(dataset, measure), cube: scaffoldCubeYaml(dataset) };
     },

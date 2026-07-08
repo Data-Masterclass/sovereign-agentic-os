@@ -9,7 +9,7 @@ dashboards, agents and software.
 ## Layers
 - **Layer 1 — Agent core:** LangGraph agents · LiteLLM gateway · Langfuse tracing · OpenSearch retrieval.
 - **Layer 2 — Context:** OPA · Docling · Haystack · Dagster · dbt · Cube · OpenMetadata.
-- **Layer 3 — Self-service:** Iceberg lakehouse (Polaris + central Trino; DuckDB = personal/sandbox lane) · Superset BI · Forgejo + Argo CD.
+- **Layer 3 — Self-service:** Iceberg lakehouse (Polaris + central Trino — the single governed query engine) · Superset BI · Forgejo + Argo CD.
 - **Security baseline:** default-deny egress · egress proxy · governed OPA-gated `web_fetch`.
 
 ## Install (local, kind)

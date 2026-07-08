@@ -145,7 +145,7 @@ $(c "Try it:")
   # RAG agent:
   kubectl -n $NS run ask --rm -i --restart=Never --image=curlimages/curl:8.11.1 -- \\
     curl -sS http://sample-agent:8000/ask -G --data-urlencode "q=What is the retrieval backbone?"
-  # DuckDB query over the lakehouse via the LiteLLM MCP gateway: see README.
+  # Trino query over the lakehouse via the governed query-tool / LiteLLM MCP gateway: see README.
 
 Uninstall: ./install.sh --uninstall   (or 'kind delete cluster --name $CLUSTER')
 EOF

@@ -213,7 +213,7 @@ objectStorage:
     - langfuse                 # Langfuse v3 blob store (events/media)
     - lakehouse                # Iceberg warehouse (Polaris / Layer 3)
     - mlflow                   # MLflow artifact store (Layer 4 Science; only used when mlflow.enabled)
-    - sandbox                  # personal/sandbox lane — per-user private prefixes (DuckDB)
+    - sandbox                  # personal/sandbox lane — per-user private prefixes (Iceberg personal_<uid>.*)
   # MinIO is the local-kind S3 stand-in (reliable for Iceberg + Langfuse).
   # SeaweedFS is the air-gap/sovereign alternative but proved unreliable for
   # Iceberg writes on kind. MinIO is AGPL — local dev stand-in only, never bundled.
@@ -1349,7 +1349,7 @@ dagster:
 # dbt (dbt-trino) — the SINGLE governed transform path. staging -> marts build as
 # Iceberg tables via the central Trino engine (Polaris REST catalog). Runs as a
 # post-install hook Job; Cube + Superset + the agent query tool read the marts
-# THROUGH Trino. No dbt-duckdb / dbt-postgres on the governed path.
+# THROUGH Trino. dbt-trino is the only adapter — one engine, one SQL dialect.
 # -----------------------------------------------------------------------------
 dbt:
   enabled: true
@@ -1640,8 +1640,8 @@ polaris:
 # -----------------------------------------------------------------------------
 # Governed `query` MCP tool — read-only SQL THROUGH central Trino over the Iceberg
 # marts. OPA gates tool ACCESS at the gateway; Trino enforces ROW/COLUMN governance
-# on every read. No embedded DuckDB (that is the personal/sandbox lane — see the
-# sandbox section). (Pre-2026-06-29 this was a DuckDB engine; now Trino-backed.)
+# on every read. Single engine: Trino is the only query engine for both shared
+# marts and personal schemas (personal_<uid>.*). Trino-backed since 2026-06-29.
 # -----------------------------------------------------------------------------
 queryTool:
   enabled: true
@@ -1671,8 +1671,8 @@ queryTool:
 
 # -----------------------------------------------------------------------------
 # data-runner — the REAL ingest service. os-ui streams an uploaded file to MinIO
-# under uploads/<uid>/<file>, then POST /ingest here; DuckDB infers the schema and
-# PyIceberg writes a PHYSICAL Iceberg Bronze table `lakehouse.personal_<uid>.bronze_<slug>`
+# under uploads/<uid>/<file>, then POST /ingest here; schema inference + PyIceberg
+# writes a PHYSICAL Iceberg Bronze table `lakehouse.personal_<uid>.bronze_<slug>`
 # THROUGH the Polaris REST catalog. M1 = personal lane ONLY (target schema derived
 # from the caller's principal, never the body). M2 = dlt connector sources (Postgres/
 # API) using the platform Connections secrets — same Iceberg landing. Built locally +
@@ -1704,14 +1704,10 @@ dataRunner:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "1", memory: 1Gi }
 
-# -----------------------------------------------------------------------------
-# (Removed) Sandbox DuckDB — the personal-query engine. Single-engine cleanup:
-# a user's own data now lives as a physical Iceberg table in `iceberg.personal_<uid>.*`
-# and is queried THROUGH the SAME governed Trino path (owner-principal) as every other
-# read. There is no separate personal query engine — the `sandbox-duckdb` Deployment is
-# gone. (This is NOT the terminal/Hermes code-execution sandbox — see `terminal:` /
-# `hermes:` below, which stay.)
-# -----------------------------------------------------------------------------
+# NOTE (2026-06-29): The personal-query sandbox engine was removed. Personal data
+# now lives as a physical Iceberg table in `iceberg.personal_<uid>.*` and is queried
+# THROUGH the same governed Trino path as shared marts (owner-principal). The
+# terminal/Hermes code-execution sandbox (`terminal:` / `hermes:`) is unaffected.
 
 # -----------------------------------------------------------------------------
 # Trino — the CENTRAL GOVERNED query engine for all shared marts (decided
@@ -2305,7 +2301,7 @@ terminal:
 # =============================================================================
 # Domain-Builder Workbench — a PERSISTENT, DOMAIN-SCOPED code-server (VS Code in
 # the browser) per builder. EXTENDS the terminal sandbox model from an ephemeral
-# PTY to a long-lived editor (git + python + duckdb + the governed `dq` CLI) where
+# PTY to a long-lived editor (git + python + the governed `dq` CLI) where
 # a `builder` builds/edits/administers ALL of THEIR domain's artifacts — software,
 # agents, data, knowledge — in one place. Default OFF (more access than the
 # terminal: persistence + domain creds + git, so it is opt-in, pending sign-off).

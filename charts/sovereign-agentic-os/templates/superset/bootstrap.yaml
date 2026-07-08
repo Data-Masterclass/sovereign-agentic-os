@@ -3,7 +3,7 @@
   Superset bootstrap — registers CENTRAL TRINO as a database connection (Trino
   SQLAlchemy dialect) and creates a dataset on analytics.daily_revenue, so a
   domain can build charts on the governed mart THROUGH Trino (OPA row/column
-  enforced). No DuckDB / Postgres-warehouse datasource. Post-install/upgrade hook;
+  enforced). Trino is the only registered datasource. Post-install/upgrade hook;
   idempotent. Uses the query-tool image (requests).
 */}}
 apiVersion: v1

@@ -274,8 +274,19 @@ export type MeasureOp = (typeof MEASURE_OPS)[number];
 /** A column drawn from one join input: `ref` 0 = the base source, 1..n = joins[ref-1]. */
 export type ColRef = { ref: number; column: string };
 
-/** One equi-key of a join: an earlier table's column = a column on THIS joined table. */
-export type JoinCond = { left: ColRef; right: string };
+/** The reconciliation a mismatched key needs before it will match. `cast` coerces both
+ *  sides to one type (e.g. a numeric id stored as varchar on one side, integer on the
+ *  other); `text` normalizes both sides to `lower(trim(cast(x as varchar)))` so keys
+ *  that differ only by case/whitespace/format line up. Both wrap BOTH sides so the
+ *  equality is symmetric — the guided "adapt keys" step, kept out of the common case. */
+export type KeyAdapt =
+  | { mode: 'cast'; type: CastType }
+  | { mode: 'text' };
+
+/** One equi-key of a join: an earlier table's column = a column on THIS joined table.
+ *  `adapt` (optional) reconciles keys that differ by type or text format — auto-matched
+ *  same-name keys need none; the "adapt keys" step sets it only when needed. */
+export type JoinCond = { left: ColRef; right: string; adapt?: KeyAdapt };
 
 export type JoinInput = { table: string; type: JoinType; on: JoinCond[] };
 
@@ -312,6 +323,19 @@ function qref(c: ColRef, maxRef: number, what: string): string {
     throw new TransformError(`${what} references a table that is not part of this join`);
   }
   return `${tableAlias(c.ref)}.${qcol(c.column)}`;
+}
+
+/** Wrap ONE side of a join key with its reconciliation, if any. `cast` coerces to a
+ *  supported Trino type; `text` normalizes to `lower(trim(cast(x as varchar)))`. The
+ *  same adaptation is applied to both sides so the equality stays symmetric. */
+function adaptKey(expr: string, adapt: KeyAdapt | undefined, what: string): string {
+  if (!adapt) return expr;
+  if (adapt.mode === 'text') return `lower(trim(cast(${expr} as varchar)))`;
+  if (adapt.mode === 'cast') {
+    if (!CAST_TYPES.includes(adapt.type)) throw new TransformError(`${what}: unsupported cast type '${adapt.type}'`);
+    return `cast(${expr} as ${adapt.type})`;
+  }
+  throw new TransformError(`${what}: unknown key adaptation`);
 }
 
 function measureExpr(m: GoldMeasure, maxRef: number): string {
@@ -361,7 +385,8 @@ export function compileGoldJoin(spec: GoldJoinSpec): string {
       // The left side must reference an ALREADY-joined table (base or an earlier join).
       if (!c || !c.left || c.left.ref > i) throw new TransformError(`the join key for ${j.table} must match an earlier table`);
       const left = qref(c.left, i, `join #${i + 1} key`);
-      return `${left} = ${rightAlias}.${qcol(c.right)}`;
+      const right = `${rightAlias}.${qcol(c.right)}`;
+      return `${adaptKey(left, c.adapt, `join #${i + 1} key`)} = ${adaptKey(right, c.adapt, `join #${i + 1} key`)}`;
     });
     joinSql.push(`${j.type} join ${j.table} ${rightAlias} on ${on.join(' and ')}`);
   });

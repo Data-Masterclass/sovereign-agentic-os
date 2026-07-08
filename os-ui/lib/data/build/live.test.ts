@@ -103,6 +103,26 @@ test('offline-mock runs the SAME adapter logic and agrees with live (no drift)',
   assert.deepEqual(mock.rows.map((x) => x.tool), ['cube', 'om']);
 });
 
+test('bronze dlt adapter normalizes a hyphenated domain to a valid Trino schema (dash->underscore)', async () => {
+  const seen: string[] = [];
+  const deps: DataLiveDeps = {
+    ...fakes(),
+    dlt: {
+      async load(table) { seen.push(table); },
+      async tableExists(table) { seen.push(table); return true; },
+    },
+  };
+  const d = gold({ domain: 'agentic-leader-q3-2026', name: 'Orders' });
+  const r = await orchestrateStage('bronze', ctxFor(d), makeLiveAdapters(deps));
+  assert.equal(r.ok, true);
+  // Both the load (apply) and existence probe (verify) must target the underscore schema.
+  assert.ok(seen.length >= 1, 'dlt adapter was invoked');
+  for (const table of seen) {
+    assert.equal(table, 'iceberg.agentic_leader_q3_2026.bronze_orders');
+    assert.ok(!table.includes('-'), 'no dash reaches Trino');
+  }
+});
+
 test('promote stage runs the full set (policy → dbt-trino → trino) and ✓', async () => {
   const r = await orchestrateStage('promote', ctxFor(gold()), makeLiveAdapters(fakes()));
   // policy FIRST: the promoted FQN's OPA governance is live before the table exists.

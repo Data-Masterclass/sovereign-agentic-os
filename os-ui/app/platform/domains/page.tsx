@@ -3,7 +3,7 @@
  */
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
 
 type Domain = {
@@ -11,11 +11,11 @@ type Domain = {
   name: string;
   owner: string;
   archived: boolean;
-  layers: { ml: boolean; spark: boolean };
+  layers: { ml: boolean };
   template: string;
   createdAt: string;
 };
-type Template = { id: string; name: string; description: string; layers: { ml: boolean; spark: boolean } };
+type Template = { id: string; name: string; description: string; layers: { ml: boolean } };
 
 export default function DomainsPage() {
   const [domains, setDomains] = useState<Domain[]>([]);
@@ -23,9 +23,15 @@ export default function DomainsPage() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
 
+  // Create form state
   const [name, setName] = useState('');
   const [owner, setOwner] = useState('');
   const [template, setTemplate] = useState('');
+
+  // Inline rename state: domain id → draft name
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const renameRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     setError('');
@@ -81,6 +87,22 @@ export default function DomainsPage() {
     }
   }, [load]);
 
+  const startRename = useCallback((d: Domain) => {
+    setRenaming(d.id);
+    setRenameDraft(d.name);
+    // Focus the input on next tick once it renders
+    setTimeout(() => renameRef.current?.focus(), 0);
+  }, []);
+
+  const commitRename = useCallback(async (d: Domain) => {
+    const next = renameDraft.trim();
+    if (!next || next === d.name) { setRenaming(null); return; }
+    await patch(d, { op: 'rename', name: next });
+    setRenaming(null);
+  }, [renameDraft, patch]);
+
+  const cancelRename = useCallback(() => setRenaming(null), []);
+
   return (
     <>
       <PageHeader title="Domains" crumb="platform · structural map of the tenant" />
@@ -116,12 +138,53 @@ export default function DomainsPage() {
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>Domain</th><th>Owner</th><th>Template</th><th>ML layer</th><th>Spark layer</th><th></th></tr>
+              <tr><th>Domain</th><th>Owner</th><th>Template</th><th>ML layer</th><th></th></tr>
             </thead>
             <tbody>
               {domains.map((d) => (
                 <tr key={d.id} className={d.archived ? 'muted' : undefined}>
-                  <td><strong>{d.name}</strong><div className="mono muted" style={{ fontSize: 11 }}>{d.id}</div></td>
+                  <td>
+                    {renaming === d.id ? (
+                      <span className="row" style={{ gap: 6, alignItems: 'center' }}>
+                        <input
+                          ref={renameRef}
+                          value={renameDraft}
+                          onChange={(e) => setRenameDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') commitRename(d);
+                            if (e.key === 'Escape') cancelRename();
+                          }}
+                          style={{ width: 160, padding: '3px 7px', fontSize: 13 }}
+                          autoComplete="off"
+                        />
+                        <button className="btn" style={{ padding: '3px 10px', fontSize: 12 }}
+                          onClick={() => commitRename(d)} disabled={busy === d.id || !renameDraft.trim()}>
+                          {busy === d.id ? <span className="spin" /> : 'Save'}
+                        </button>
+                        <button className="btn ghost" style={{ padding: '3px 8px', fontSize: 12 }} onClick={cancelRename}>
+                          Cancel
+                        </button>
+                      </span>
+                    ) : (
+                      <span className="row" style={{ gap: 8, alignItems: 'center' }}>
+                        <span>
+                          <strong>{d.name}</strong>
+                          <div className="mono muted" style={{ fontSize: 11 }}>{d.id}</div>
+                        </span>
+                        {!d.archived && (
+                          <button
+                            className="btn ghost"
+                            style={{ padding: '2px 8px', fontSize: 11 }}
+                            onClick={() => startRename(d)}
+                            disabled={busy === d.id}
+                            title="Rename domain"
+                          >
+                            Rename
+                          </button>
+                        )}
+                      </span>
+                    )}
+                  </td>
                   <td>{d.owner}</td>
                   <td><span className="pa-tag">{d.template}</span></td>
                   <td>
@@ -132,16 +195,6 @@ export default function DomainsPage() {
                     >
                       <span className="switch-track"><span className="switch-thumb" /></span>
                       <span className="switch-text">{d.layers.ml ? 'ON' : 'OFF'}</span>
-                    </button>
-                  </td>
-                  <td>
-                    <button
-                      className={'switch' + (d.layers.spark ? ' on' : '')}
-                      disabled={busy === d.id || d.archived}
-                      onClick={() => patch(d, { op: 'layer', layer: 'spark', enabled: !d.layers.spark })}
-                    >
-                      <span className="switch-track"><span className="switch-thumb" /></span>
-                      <span className="switch-text">{d.layers.spark ? 'ON' : 'OFF'}</span>
                     </button>
                   </td>
                   <td style={{ textAlign: 'right' }}>

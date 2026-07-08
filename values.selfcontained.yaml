@@ -30,8 +30,7 @@ openmetadata:
 # Central Trino is the GOVERNED query engine for all shared marts (values.yaml
 # default = on; on the m3i.16 node it always runs). It is a memory-hungry JVM, so
 # on a TINY kind node flip it off (and drop trino.jvm.maxHeap) — the governed query
-# path then needs the node scaled up. DuckDB is scoped to the personal/sandbox lane
-# (sandbox-duckdb), never the governed path.
+# path then needs the node scaled up.
 trino:
   enabled: false        # tiny-node override; set true (or size the node) for the governed path
 spark:

@@ -11,10 +11,18 @@ The Metrics tab is the OS's single source of truth for business numbers. A metri
 3. **Define.** Call `define_metric` with:
    - `datasetId` — the ID of the Gold dataset
    - `name` — canonical business name (e.g. `gross_revenue`, `order_count`)
-   - `aggregation` — one of `count`, `sum`, `avg`, `min`, `max`, `count_distinct`
-   - `column` — required for all aggregations except `count`
+   - `aggregation` — one of `count`, `count_distinct`, `count_distinct_approx` (fast approximate distinct for large cardinalities), `sum`, `avg`, `min`, `max`, or `number` (a derived/ratio measure)
+   - `column` — required for `sum`/`avg`/`min`/`max`/`count_distinct*`; omit for `count`-of-rows and for `number`/ratio
    - `dimensions` — optional array of columns to group by
    The metric is registered as a Cube member immediately and is available to dashboards.
+
+   The **full measure model** is available as optional arguments (all guided — you never write Cube SQL; a call with none of them yields exactly the plain measure it always did):
+   - `filter` — a **filtered measure**: aggregate only rows where `{column, operator, value}` (operator: `equals`/`notEquals`/`gt`/`gte`/`lt`/`lte`/`set`/`notSet`). e.g. count only `status = completed`.
+   - `runningTotal: true` — a **cumulative running total** from the beginning of time.
+   - `rollingWindow: {amount, unit}` — a **trailing time window** (last N `day`/`week`/`month`/`quarter`/`year`). Mutually exclusive with `runningTotal`.
+   - `ratio: {numerator, denominator}` — with `aggregation: "number"`, a **derived measure** = numerator / denominator over two EXISTING measure members on the same cube.
+   - `format` — display format (`currency`, `percent`, `number`, …).
+   - `drillMembers` — drill-down members exposed for exploration.
 4. **Read the definition back.** Call `get_metric` with the metric `id` (`<datasetId>.<measure>`) to read back exactly what was registered — the aggregation + column, the backing dataset, the canonical Cube member and the generated Cube YAML — before iterating or charting it.
 5. **Read the number.** Call `query_metric` with the metric `id` from `list_metrics` (`<datasetId>.<measure>`), optionally sliced by `dimensions` / `timeDimension` + `granularity`. This is how "what is revenue this month" resolves — through the SEMANTIC LAYER, never raw SQL: the tool accepts no SQL by construction, and Cube applies YOUR per-viewer row-level security (the securityContext is derived from your session identity), so the number you read is identical to the charts.
 
@@ -23,7 +31,9 @@ That is the complete flow. Metrics do not have a separate promotion step — the
 ## What to consider
 
 - **Gold only.** Attempting to define a metric on a Bronze or Silver dataset returns `bad_request`. Complete the data tier ladder first.
-- **`count` needs no column.** Passing a `column` argument with `aggregation: "count"` is harmless but unnecessary. All other aggregations require a valid column name from the Gold schema.
+- **`count` needs no column.** Passing a `column` argument with `aggregation: "count"` is harmless but unnecessary. `sum`/`avg`/`min`/`max`/`count_distinct*` require a valid Gold column; a `number` metric requires a `ratio` (numerator + denominator), not a column.
+- **Running total vs rolling window.** Set one or the other, never both — `runningTotal` is unbounded-cumulative; `rollingWindow` is a trailing window. Both need a time dimension on the cube to be meaningful.
+- **Ratios reference OTHER measures.** A `number`/`ratio` metric’s numerator and denominator name existing measures on the same cube — define those first.
 - **One definition per number.** If two metrics compute the same thing under different names, dashboards will diverge. Check `list_metrics` carefully and reuse existing definitions. The OS does not enforce uniqueness by formula — that discipline is yours.
 - **Dimensions are optional but powerful.** Declaring `dimensions` on a metric allows dashboard charts to slice by those columns without re-defining the metric. Add dimensions that are genuinely needed; do not over-specify.
 - **Schema changes on Gold propagate.** If the backing Gold dataset schema changes in a breaking way, metrics that reference removed columns return `error` at query time. Version Gold datasets carefully.

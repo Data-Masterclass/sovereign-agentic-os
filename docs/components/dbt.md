@@ -3,7 +3,7 @@
 **What it is:** dbt Core (Apache 2.0) with the **dbt-trino** adapter — the single governed
 transform path. It builds raw → `stg_orders` (table) → `daily_revenue` (incremental mart) as
 **Iceberg tables via central Trino** (Polaris REST catalog). Runs as a post-install Job and as
-**Dagster** assets. No dbt-duckdb / dbt-postgres on the governed path — one engine, one SQL dialect.
+**Dagster** assets. dbt-trino is the only adapter — one engine, one SQL dialect.
 
 ## How to use it
 - It runs automatically on install (the marts are built through Trino). Inspect the result:
@@ -20,6 +20,5 @@ transform path. It builds raw → `stg_orders` (table) → `daily_revenue` (incr
 **Q: No service — where's the UI?** dbt is a CLI/transform tool; its "UI" is Dagster (assets +
 lineage) and the resulting Iceberg tables (Cube/Superset/the agent `query` tool read them through
 Trino).
-**Q: Why dbt-trino, not dbt-duckdb?** Trino is the single governed engine: it writes/maintains
-Iceberg natively (DuckDB's Iceberg writes are immature) and applies OPA row/column governance.
-DuckDB is scoped to the personal/sandbox lane only.
+**Q: Why dbt-trino?** Trino is the single governed engine: it writes/maintains Iceberg natively
+and applies OPA row/column governance. One engine for all marts and personal schemas.

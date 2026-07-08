@@ -2,17 +2,16 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 /**
- * Tab visibility gate tests for the consolidated nav. The five-section matrix:
+ * Tab visibility gate tests for the consolidated nav. The six-section matrix:
  *   Ungrouped:  Home, Cockpit (entry-points, always visible, no heading)
- *   Plan:       Strategy, Big Bets
- *   Context:    Knowledge, Files, Data, Connections
- *   Build:      Agents, Software, Science, MCP, LLM Gateway, Marketplace
- *   Monitor:    Metrics, Dashboards, Monitoring
- *   Admin:      Governance (builder+), Components (admin), Terminal (admin),
- *               Admin (admin), Settings, Tutorials, About / Licenses (admin)
+ *   Plan:       Strategy, Big Bets, MCP, Tutorials
+ *   Context:    Knowledge, Files, Data, Connections, Metrics, Marketplace
+ *   Build:      Agents, Software, Science, Dashboards
+ *   Monitor:    Governance (builder+), Monitoring, Components (admin), LLM Gateway
+ *   Admin:      Admin (admin), Terminal (admin), About / Licenses (admin)
  *
  * Governance (builders approve promotions — the sharing ladder) is oversight, so
- * it lives under Admin alongside the admin-only consoles.
+ * it lives under Monitor (first tab), visible to builder+.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -39,7 +38,9 @@ assert.ok(MONITOR_GROUP, 'Monitor group must exist in TAB_GROUPS');
 assert.ok(ADMIN_GROUP,   'Admin group must exist in TAB_GROUPS');
 
 // Admin-gated console tabs (the tabs a creator/builder never sees).
-const ADMIN_ONLY_LABELS = ADMIN_GROUP.tabs
+// These are spread across Monitor (Components) and Admin (Terminal, Admin, About / Licenses).
+const ADMIN_ONLY_LABELS = TAB_GROUPS
+  .flatMap((g) => g.tabs)
   .filter((t) => t.minRole === 'admin')
   .map((t) => t.label);
 
@@ -50,38 +51,38 @@ test('TAB-SET entry group is exactly Home + Cockpit', () => {
   );
 });
 
-test('TAB-SET Plan group is Strategy + Big Bets', () => {
+test('TAB-SET Plan group is Strategy, Big Bets, MCP, Tutorials', () => {
   assert.deepEqual(
     PLAN_GROUP.tabs.map((t) => t.label),
-    ['Strategy', 'Big Bets'],
+    ['Strategy', 'Big Bets', 'MCP', 'Tutorials'],
   );
 });
 
-test('TAB-SET Context group is Knowledge, Files, Data, Connections', () => {
+test('TAB-SET Context group is Knowledge, Files, Data, Connections, Metrics, Marketplace', () => {
   assert.deepEqual(
     CONTEXT_GROUP.tabs.map((t) => t.label),
-    ['Knowledge', 'Files', 'Data', 'Connections'],
+    ['Knowledge', 'Files', 'Data', 'Connections', 'Metrics', 'Marketplace'],
   );
 });
 
-test('TAB-SET Build group contains Agents, Software, Science, MCP, LLM Gateway, Marketplace', () => {
+test('TAB-SET Build group contains Agents, Software, Science, Dashboards', () => {
   assert.deepEqual(
     BUILD_GROUP.tabs.map((t) => t.label),
-    ['Agents', 'Software', 'Science', 'MCP', 'LLM Gateway', 'Marketplace'],
+    ['Agents', 'Software', 'Science', 'Dashboards'],
   );
 });
 
-test('TAB-SET Monitor group contains Metrics, Dashboards, Monitoring', () => {
+test('TAB-SET Monitor group contains Governance, Monitoring, Components, LLM Gateway', () => {
   assert.deepEqual(
     MONITOR_GROUP.tabs.map((t) => t.label),
-    ['Metrics', 'Dashboards', 'Monitoring'],
+    ['Governance', 'Monitoring', 'Components', 'LLM Gateway'],
   );
 });
 
-test('TAB-SET Admin group contains Governance, Components, Terminal, Admin, Settings, Tutorials, About / Licenses', () => {
+test('TAB-SET Admin group contains Admin, Terminal, About / Licenses (no standalone Settings)', () => {
   assert.deepEqual(
     ADMIN_GROUP.tabs.map((t) => t.label),
-    ['Governance', 'Components', 'Terminal', 'Admin', 'Settings', 'Tutorials', 'About / Licenses'],
+    ['Admin', 'Terminal', 'About / Licenses'],
   );
 });
 
@@ -95,9 +96,9 @@ test('TAB-SET removed tabs are gone from the nav entirely', () => {
   }
 });
 
-test('TAB-SET Tutorials is in the Admin group with no minRole', () => {
-  const tut = ADMIN_GROUP.tabs.find((t) => t.label === 'Tutorials');
-  assert.ok(tut, 'Tutorials must be in the Admin group');
+test('TAB-SET Tutorials is in the Plan group with no minRole', () => {
+  const tut = PLAN_GROUP.tabs.find((t) => t.label === 'Tutorials');
+  assert.ok(tut, 'Tutorials must be in the Plan group');
   assert.equal(tut!.minRole, undefined, 'Tutorials must have no minRole');
 });
 
@@ -111,35 +112,23 @@ test('TAB-VIS creator: sees no admin-only tabs at all', () => {
   assert.ok(!labels.includes('Governance'), 'creator must not see Governance (builder+)');
 });
 
-test('TAB-VIS creator: Admin group drops the admin-gated tabs but Settings + Tutorials remain', () => {
+test('TAB-VIS creator: Admin group is hidden entirely (all three tabs are admin-only)', () => {
   const groups = filterTabGroups(TAB_GROUPS, 'creator');
   const admin = groups.find((g) => g.heading === 'Admin');
-  assert.ok(admin, 'Admin group must still be present for creator (Settings + Tutorials visible)');
-  const labels = admin!.tabs.map((t) => t.label);
-  assert.ok(labels.includes('Settings'), 'Settings must remain');
-  assert.ok(labels.includes('Tutorials'), 'Tutorials must remain');
-  for (const l of ADMIN_ONLY_LABELS) {
-    assert.ok(!labels.includes(l), `admin-only tab "${l}" must be absent for creator`);
-  }
+  assert.ok(!admin, 'Admin group must be absent for creator (all tabs are admin-gated)');
 });
 
-test('TAB-VIS builder: Admin group includes Governance', () => {
+test('TAB-VIS builder: Monitor group includes Governance', () => {
   const groups = filterTabGroups(TAB_GROUPS, 'builder');
-  const admin = groups.find((g) => g.heading === 'Admin');
-  assert.ok(admin, 'Admin group must be present for builder');
-  assert.ok(admin!.tabs.some((t) => t.label === 'Governance'), 'builder must see Governance');
+  const monitor = groups.find((g) => g.heading === 'Monitor');
+  assert.ok(monitor, 'Monitor group must be present for builder');
+  assert.ok(monitor!.tabs.some((t) => t.label === 'Governance'), 'builder must see Governance');
 });
 
-test('TAB-VIS builder: Admin group still shows only Settings + Tutorials (no admin consoles)', () => {
+test('TAB-VIS builder: Admin group is hidden entirely (all tabs are admin-only)', () => {
   const groups = filterTabGroups(TAB_GROUPS, 'builder');
   const admin = groups.find((g) => g.heading === 'Admin');
-  assert.ok(admin, 'Admin group must be present for builder');
-  const labels = admin!.tabs.map((t) => t.label);
-  assert.ok(labels.includes('Settings'));
-  assert.ok(labels.includes('Tutorials'));
-  for (const l of ADMIN_ONLY_LABELS) {
-    assert.ok(!labels.includes(l), `admin-only tab "${l}" must be absent for builder`);
-  }
+  assert.ok(!admin, 'Admin group must be absent for builder (all tabs are admin-gated)');
 });
 
 test('TAB-VIS domain_admin: sees no admin-only tabs', () => {
@@ -157,21 +146,22 @@ test('TAB-VIS admin: sees all tabs', () => {
     assert.ok(labels.includes(l), `admin must see tab: ${l}`);
   }
   assert.ok(labels.includes('Governance'), 'admin must see Governance');
-  assert.ok(labels.includes('Settings'), 'admin must see Settings');
   assert.ok(labels.includes('Tutorials'), 'admin must see Tutorials');
+  assert.ok(!labels.includes('Settings'), 'standalone Settings tab must not appear in nav');
 });
 
 test('TAB-VIS Governance carries minRole=builder (builders approve promotions)', () => {
-  const gov = ADMIN_GROUP.tabs.find((t) => t.label === 'Governance');
-  assert.ok(gov, 'Governance tab must exist in the Admin group');
+  const gov = MONITOR_GROUP.tabs.find((t) => t.label === 'Governance');
+  assert.ok(gov, 'Governance tab must exist in the Monitor group');
   assert.equal(gov!.minRole, 'builder', 'Governance must have minRole builder');
   assert.equal(tabVisible(gov!, 'builder'), true);
   assert.equal(tabVisible(gov!, 'creator'), false);
 });
 
 test('TAB-VIS admin-only console tabs all have minRole=admin', () => {
-  for (const tab of ADMIN_GROUP.tabs) {
-    if (!tab.minRole) continue; // Settings and Tutorials have no minRole — that's correct
+  const allTabs = TAB_GROUPS.flatMap((g) => g.tabs);
+  for (const tab of allTabs) {
+    if (!tab.minRole) continue; // tabs with no minRole — that's correct
     if (tab.label === 'Governance') continue; // builder-level oversight, not an admin-only console
     assert.equal(tab.minRole, 'admin', `Admin console "${tab.label}" must have minRole: 'admin'`);
   }

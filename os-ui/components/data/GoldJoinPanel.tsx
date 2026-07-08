@@ -11,13 +11,17 @@ import {
   JOIN_TYPES,
   MEASURE_AGGS,
   MEASURE_OPS,
+  CAST_TYPES,
   type JoinType,
   type MeasureAgg,
   type MeasureOp,
+  type CastType,
   type GoldDimension,
   type GoldMeasure,
   type JoinInput,
+  type KeyAdapt,
 } from '@/lib/data/transform';
+import GoldJoinGraph, { type JoinGraphTable, type JoinGraphEdge } from './GoldJoinGraph';
 
 /**
  * Gold JOIN builder — dataset REUSE (data-tab stage 4). Pick 1..n OTHER datasets you
@@ -32,7 +36,9 @@ type Joinable = { id: string; name: string; domain: string; tier: string; fqn: s
 type BuildRow = { tool: string; status: 'ok' | 'fail'; detail: string; error?: string };
 type BuildReport = { ok: boolean; rows: BuildRow[]; mode?: 'live' | 'offline-mock' };
 
-type JoinRow = { datasetId: string; type: JoinType; baseCol: string; joinCol: string };
+/** `adaptMode` is the guided "adapt keys" choice: none (exact match), coerce both sides
+ *  to a type, or normalize text. `adaptType` is the target type when `adaptMode==='cast'`. */
+type JoinRow = { datasetId: string; type: JoinType; baseCol: string; joinCol: string; adaptMode: 'none' | 'cast' | 'text'; adaptType: CastType };
 type DimRow = { source: string; as: string }; // source = "ref::column"
 type MeasureRow = { name: string; agg: MeasureAgg; col: string; op: '' | MeasureOp; col2: string };
 
@@ -114,16 +120,42 @@ export default function GoldJoinPanel({
     return `iceberg.${schema}.gold_${slug(datasetName)}`;
   }, [tier, owner, domain, datasetName]);
 
+  // Visual join graph: the base + each fully-specified join as nodes, each key as a
+  // labelled edge. Pure derivation of the guided state — updates as picks/keys change.
+  const graphTables = useMemo<JoinGraphTable[]>(() => {
+    const keptOf = (ref: number) => dims.filter((d) => colRef(d.source)?.ref === ref).length || undefined;
+    const out: JoinGraphTable[] = [{ ref: 0, name: `${datasetName}`, base: true, kept: keptOf(0) }];
+    activeJoins.forEach((j, i) => {
+      out.push({ ref: i + 1, name: byId.get(j.datasetId)?.name ?? j.datasetId, kept: keptOf(i + 1) });
+    });
+    return out;
+  }, [datasetName, activeJoins, byId, dims]);
+
+  const graphEdges = useMemo<JoinGraphEdge[]>(() =>
+    activeJoins.map((j, i) => ({
+      fromRef: 0,
+      toRef: i + 1,
+      type: j.type,
+      label: `${j.baseCol} = ${j.joinCol}`,
+      adapted: j.adaptMode !== 'none',
+    })), [activeJoins]);
+
   // Assemble the compiler inputs from the guided state (client preview == server plan).
   const spec = useMemo(() => {
     const schema = tier === 'dataset' ? personalSchema(owner) : domain;
     const s = slug(datasetName);
     const source = `iceberg.${schema}.silver_${s}`;
-    const jin: JoinInput[] = activeJoins.map((j) => ({
-      table: byId.get(j.datasetId)!.fqn,
-      type: j.type,
-      on: [{ left: { ref: 0, column: j.baseCol }, right: j.joinCol }],
-    }));
+    const jin: JoinInput[] = activeJoins.map((j) => {
+      const adapt: KeyAdapt | undefined =
+        j.adaptMode === 'cast' ? { mode: 'cast', type: j.adaptType }
+          : j.adaptMode === 'text' ? { mode: 'text' }
+            : undefined;
+      return {
+        table: byId.get(j.datasetId)!.fqn,
+        type: j.type,
+        on: [{ left: { ref: 0, column: j.baseCol }, right: j.joinCol, ...(adapt ? { adapt } : {}) }],
+      };
+    });
     const dimensions: GoldDimension[] = dims
       .map((d) => {
         const c = colRef(d.source);
@@ -158,10 +190,21 @@ export default function GoldJoinPanel({
   }, [spec]);
 
   function addJoin() {
-    setJoins((j) => [...j, { datasetId: '', type: 'inner', baseCol: '', joinCol: '' }]);
+    setJoins((j) => [...j, { datasetId: '', type: 'inner', baseCol: '', joinCol: '', adaptMode: 'none', adaptType: 'varchar' }]);
   }
   function patchJoin(i: number, patch: Partial<JoinRow>) {
     setJoins((js) => js.map((x, k) => (k === i ? { ...x, ...patch } : x)));
+  }
+
+  /** When a dataset is picked, auto-match keys with the SAME name (the one-click common
+   *  case): if exactly one base column shares a name with a their-column, prefill both.
+   *  The user can override; this just removes the busywork when names already agree. */
+  function pickDataset(i: number, datasetId: string) {
+    const picked = byId.get(datasetId);
+    const theirs = new Set((picked?.columns ?? []).map((c) => c.toLowerCase()));
+    const match = baseCols.find((c) => theirs.has(c.toLowerCase()));
+    const theirCol = match ? (picked?.columns ?? []).find((c) => c.toLowerCase() === match.toLowerCase()) ?? '' : '';
+    patchJoin(i, { datasetId, baseCol: match ?? '', joinCol: theirCol, adaptMode: 'none' });
   }
 
   async function build() {
@@ -233,30 +276,55 @@ export default function GoldJoinPanel({
       ) : null}
       {joins.map((j, i) => {
         const picked = byId.get(j.datasetId);
+        const keysChosen = !!j.baseCol && !!j.joinCol;
+        const autoMatched = keysChosen && j.baseCol.toLowerCase() === j.joinCol.toLowerCase() && j.adaptMode === 'none';
         return (
-          <div className="row" key={i} style={{ gap: 8, marginBottom: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <select value={j.datasetId} onChange={(e) => patchJoin(i, { datasetId: e.target.value, joinCol: '' })}>
-              <option value="">dataset…</option>
-              {joinable.map((d) => <option key={d.id} value={d.id}>{d.name} · {d.domain}</option>)}
-            </select>
-            <select value={j.type} onChange={(e) => patchJoin(i, { type: e.target.value as JoinType })}>
-              {JOIN_TYPES.map((t) => <option key={t} value={t}>{t === 'inner' ? 'inner join' : 'left join'}</option>)}
-            </select>
-            <span className="muted">on</span>
-            <select value={j.baseCol} onChange={(e) => patchJoin(i, { baseCol: e.target.value })}>
-              <option value="">this column…</option>
-              {baseCols.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
-            <span className="muted">=</span>
-            <select value={j.joinCol} disabled={!picked} onChange={(e) => patchJoin(i, { joinCol: e.target.value })}>
-              <option value="">their column…</option>
-              {(picked?.columns ?? []).map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
-            <button className="btn ghost sm" onClick={() => setJoins((js) => js.filter((_, k) => k !== i))}>Remove</button>
+          <div key={i} className="join-row" style={{ marginBottom: 10 }}>
+            <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <select value={j.datasetId} onChange={(e) => pickDataset(i, e.target.value)}>
+                <option value="">dataset…</option>
+                {joinable.map((d) => <option key={d.id} value={d.id}>{d.name} · {d.domain}</option>)}
+              </select>
+              <select value={j.type} onChange={(e) => patchJoin(i, { type: e.target.value as JoinType })}>
+                {JOIN_TYPES.map((t) => <option key={t} value={t}>{t === 'inner' ? 'inner join' : 'left join'}</option>)}
+              </select>
+              <span className="muted">on</span>
+              <select value={j.baseCol} onChange={(e) => patchJoin(i, { baseCol: e.target.value })}>
+                <option value="">this column…</option>
+                {baseCols.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <span className="muted">=</span>
+              <select value={j.joinCol} disabled={!picked} onChange={(e) => patchJoin(i, { joinCol: e.target.value })}>
+                <option value="">their column…</option>
+                {(picked?.columns ?? []).map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              {autoMatched ? <span className="chip ok" title="Keys with the same name matched automatically">auto-matched</span> : null}
+              <button className="btn ghost sm" onClick={() => setJoins((js) => js.filter((_, k) => k !== i))}>Remove</button>
+            </div>
+            {/* Adapt keys — only surfaced once both keys are chosen (advanced-only). When
+                the keys differ by type or text format, reconcile them so they line up. */}
+            {keysChosen ? (
+              <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: 6, marginLeft: 4 }}>
+                <span className="hint" style={{ margin: 0 }}>Keys don’t match?</span>
+                <select value={j.adaptMode} onChange={(e) => patchJoin(i, { adaptMode: e.target.value as JoinRow['adaptMode'] })}>
+                  <option value="none">they match as-is</option>
+                  <option value="text">ignore case &amp; spacing</option>
+                  <option value="cast">force to the same type</option>
+                </select>
+                {j.adaptMode === 'cast' ? (
+                  <select value={j.adaptType} onChange={(e) => patchJoin(i, { adaptType: e.target.value as CastType })}>
+                    {CAST_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         );
       })}
       <button className="btn ghost sm" onClick={addJoin} disabled={joinable.length === 0}>+ Add a dataset</button>
+
+      {/* Visual join graph — how the chosen tables interconnect (keys as edges). */}
+      <GoldJoinGraph tables={graphTables} edges={graphEdges} />
 
       {/* Keep columns */}
       <div className="section-title" style={{ marginTop: 16 }}>Keep columns</div>

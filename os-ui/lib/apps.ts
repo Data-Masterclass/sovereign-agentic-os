@@ -152,6 +152,51 @@ type Template = {
   files: (name: string, slug: string) => { path: string; content: string }[];
 };
 
+/**
+ * The REAL build->push CI workflow seeded into every app repo. Runs on the
+ * in-cluster Forgejo Actions runner inside the ci-builder job container, builds
+ * the image via the in-pod DinD daemon (which trusts forgejo-http:3000 as an
+ * insecure registry) and pushes `:latest` — the exact tag the OS app runner
+ * pulls (lib/software/runner.ts imageRef). Modelled on the proven demo-app seed
+ * workflow (charts/.../software/forgejo-seed.yaml). Login uses the REGISTRY_PASS
+ * Actions secret set by scaffoldRepo(). No external actions (fully sovereign).
+ */
+function ciWorkflow(slug: string): string {
+  // harborRegistry is "<host>/<owner>" (e.g. forgejo-http:3000/gitea_admin);
+  // docker login needs the bare host, so split it out.
+  const registry = config.harborRegistry.split('/')[0];
+  const owner = config.forgejoRepoOwner;
+  return (
+    'on:\n' +
+    '  push:\n' +
+    '    branches: [main]\n' +
+    'jobs:\n' +
+    '  build-and-push:\n' +
+    '    runs-on: docker\n' +
+    '    env:\n' +
+    '      DOCKER_HOST: tcp://localhost:2375\n' +
+    '      REGISTRY: ' + registry + '\n' +
+    '      OWNER: ' + owner + '\n' +
+    '      REPO: ' + slug + '\n' +
+    '    steps:\n' +
+    '      - name: Checkout (manual — sovereign, no github.com)\n' +
+    '        env: { REG_PASS: "${{ secrets.REGISTRY_PASS }}" }\n' +
+    '        run: |\n' +
+    '          set -eu\n' +
+    '          git clone --depth 1 "http://${OWNER}:${REG_PASS}@${REGISTRY}/${OWNER}/${REPO}.git" src\n' +
+    '      - name: Build & push image\n' +
+    '        env: { REG_PASS: "${{ secrets.REGISTRY_PASS }}" }\n' +
+    '        run: |\n' +
+    '          set -eu\n' +
+    '          TAG="$(echo "${GITHUB_SHA}" | cut -c1-12)"\n' +
+    '          IMAGE="${REGISTRY}/${OWNER}/${REPO}"\n' +
+    '          echo "${REG_PASS}" | docker login "${REGISTRY}" -u "${OWNER}" --password-stdin\n' +
+    '          docker build -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" ./src\n' +
+    '          docker push "${IMAGE}:${TAG}"\n' +
+    '          docker push "${IMAGE}:latest"\n'
+  );
+}
+
 function nextjsSupabaseTemplate(): Template {
   return {
     key: 'nextjs-supabase',
@@ -236,9 +281,7 @@ function nextjsSupabaseTemplate(): Template {
       },
       {
         path: '.forgejo/workflows/ci.yml',
-        content:
-          'on:\n  push:\n    branches: [main]\njobs:\n  build:\n    runs-on: docker\n    steps:\n' +
-          '      - run: echo "build & push image for ' + slug + ' (kaniko/buildah -> Harbor)"\n',
+        content: ciWorkflow(slug),
       },
       {
         path: 'manifests/app.yaml',
@@ -448,6 +491,12 @@ async function scaffoldRepo(
     // Forgejo unreachable -> offline shell.
     return { mode: 'offline', fullName, htmlUrl, seeded: [] };
   }
+  // The CI workflow logs in to the registry with the REGISTRY_PASS Actions
+  // secret; set it before seeding the workflow so the first push can build.
+  // (Admin creds — the same local-dev convenience the demo-app seed uses.)
+  await forgejoApi('PUT', `/repos/${owner}/${slug}/actions/secrets/REGISTRY_PASS`, {
+    data: config.forgejoPassword,
+  });
   const seeded: string[] = [];
   for (const f of tpl.files(name, slug)) {
     const r = await forgejoWrite(`/repos/${owner}/${slug}/contents/${f.path}`, {

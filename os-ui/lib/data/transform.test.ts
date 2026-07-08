@@ -290,6 +290,49 @@ test('count(*) grand total (no dims) emits no GROUP BY', () => {
   assert.doesNotMatch(sql, /group by/);
 });
 
+// ---- key adaptation ("adapt keys": mismatched keys reconciled at join time) ----
+
+test('a same-name auto-matched key needs no adaptation (the common case is untouched)', () => {
+  const sql = compileGoldJoin({ source: BASE, joins: [{ table: NP, type: 'inner', on: KEY }], dimensions: [{ col: { ref: 0, column: 'order_id' } }], measures: [], target: GOLD });
+  assertGuardShape(sql);
+  assert.match(sql, /on t0\."order_id" = t1\."order_id"/);
+  assert.doesNotMatch(sql, /cast\(.*as .*\) = cast/);
+});
+
+test('cast adaptation coerces BOTH sides of the key to one type (varchar id vs integer id)', () => {
+  const sql = compileGoldJoin({
+    source: BASE,
+    joins: [{ table: NP, type: 'inner', on: [{ left: { ref: 0, column: 'order_id' }, right: 'order_ref', adapt: { mode: 'cast', type: 'varchar' } }] }],
+    dimensions: [{ col: { ref: 0, column: 'order_id' } }],
+    measures: [],
+    target: GOLD,
+  });
+  assertGuardShape(sql);
+  assert.match(sql, /on cast\(t0\."order_id" as varchar\) = cast\(t1\."order_ref" as varchar\)/);
+});
+
+test('text adaptation normalizes BOTH sides (case/whitespace/format) so keys line up', () => {
+  const sql = compileGoldJoin({
+    source: BASE,
+    joins: [{ table: NP, type: 'inner', on: [{ left: { ref: 0, column: 'email' }, right: 'Email', adapt: { mode: 'text' } }] }],
+    dimensions: [{ col: { ref: 0, column: 'email' } }],
+    measures: [],
+    target: GOLD,
+  });
+  assertGuardShape(sql);
+  assert.match(sql, /on lower\(trim\(cast\(t0\."email" as varchar\)\)\) = lower\(trim\(cast\(t1\."Email" as varchar\)\)\)/);
+});
+
+test('an unsupported cast type in a key adaptation is rejected (no silent bad SQL)', () => {
+  assert.throws(() => compileGoldJoin({
+    source: BASE,
+    joins: [{ table: NP, type: 'inner', on: [{ left: { ref: 0, column: 'order_id' }, right: 'order_ref', adapt: { mode: 'cast', type: 'json' as unknown as 'varchar' } }] }],
+    dimensions: [{ col: { ref: 0, column: 'order_id' } }],
+    measures: [],
+    target: GOLD,
+  }), TransformError);
+});
+
 test('a three-way join keeps the table aliases aligned to the ref indices', () => {
   const OTHER = 'iceberg.sales.gold_campaigns';
   const sql = compileGoldJoin({

@@ -29,6 +29,8 @@ ROLES (4, lowest→highest — the caller's role decides everything):
 - admin — everything tenant-wide + certify to the marketplace, cross-domain big bets, policy overrides and cost caps. The only role that appoints a domain_admin.
 Tier ladder: Personal → Shared (Builder gate) → Certified (Admin gate). Promotion ALWAYS requires documentation first.
 
+NAV (5 sections, so you can orient the user): Plan (Strategy · Big Bets · MCP · Tutorials) · Context (Knowledge · Files · Data · Connections · Metrics · Marketplace) · Build (Agents · Software · Science · Dashboards) · Monitor (Governance · Monitoring · Components · LLM Gateway) · Admin. There is no Settings tab and no separate personal (DuckDB) query engine — one governed Trino/Iceberg engine for everything.
+
 BUILD ON WHAT EXISTS: before creating a dataset, workflow, connection, metric or agent, DISCOVER what the user already has — read \`sovereign-os://my/<datasets|knowledge|connections|files|metrics|dashboards|agents|software|bigbets|science>\` or call the matching \`list_*\` tool. Reuse and reference existing ids.
 
 RULES: use ONLY these OS tools for OS artifacts — never fabricate ids, never invent a bypass. Tool errors are typed \`{code, reason, hint}\` — follow the hint (e.g. \`forbidden\` → ask a Builder or keep the work Personal). Read-only SQL only in \`query_data\`. Prompts (slash commands) exist for every golden path — prefer them when starting a new build.`;

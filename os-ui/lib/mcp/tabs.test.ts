@@ -147,7 +147,7 @@ test('context.md and guide.md files reference only real MCP tool names (drift tr
     'bad_request', 'not_found', 'forbidden', 'conflict', // typed error codes
     'not_null', 'accepted_values', 'not_blank',           // data-quality rule names
     'not_run',                                            // DQ result status (honest not-run)
-    'count_distinct',                                     // aggregation type (not a tool)
+    'count_distinct', 'count_distinct_approx',            // aggregation types (not tools)
     'rest_api',                                           // connection type enum value
     'gross_revenue', 'order_count',                       // example metric names in guide worked examples
   ]);

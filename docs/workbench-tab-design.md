@@ -11,7 +11,7 @@ A new **Workbench** tab gives a `builder`-role user a **persistent, domain-scope
 `code-server` (VS Code in the browser)** where they build, edit, and administer
 **ALL of their domain's artifacts in one place** — Software (their domain's
 Forgejo repos), Agents (agent definitions), Data (the governed data layer via
-`dq`/duckdb), and Knowledge. It **extends the terminal sandbox** (`docs/terminal-tab-design.md`,
+`dq` CLI via governed Trino), and Knowledge. It **extends the terminal sandbox** (`docs/terminal-tab-design.md`,
 T1–T10): same broker/least-privilege trust model, but adapted from an *ephemeral
 shell with no rights* to a *long-lived editor that holds real, domain-scoped
 credentials*. More access ⇒ more to lock down, so this is opt-in and gated.
@@ -37,7 +37,7 @@ credentials*. More access ⇒ more to lock down, so this is opt-in and gated.
  code-server pod  (per builder; persistent PVC; NO k8s token; non-root; caps dropped;
                    reachable ONLY from the broker; egress only to its domain's
                    Forgejo + the governed query-tool)
-   VS Code  +  git (domain-scoped token)  +  python3 / duckdb  +  `dq` governed-data CLI
+   VS Code  +  git (domain-scoped token)  +  python3  +  `dq` governed-data CLI (Trino)
 ```
 
 ### Backend decision — chosen: **broker reconciles + reverse-proxies a per-builder code-server**
@@ -155,7 +155,7 @@ protects it. Storage: `pvcSize` default **2 Gi** per builder (durable, cheap).
    (this design), vs Forgejo-only (lighter, loses non-repo state) — and the PVC
    size (default 2 Gi) and storage class (kind default / STACKIT managed).
 2. **Which artifact types in v1?** Wired: **Software** (Forgejo repos, domain
-   token) + **Data** (`dq`/duckdb, governed). **Agents** + **Knowledge** are
+   token) + **Data** (`dq` via governed Trino). **Agents** + **Knowledge** are
    edited as files in the domain repo today — promote them to first-class panels
    (validation, schema) in v1, or keep file-based for the prototype?
 3. **Per-builder vs shared infra.** Prototype = **per-builder pod + PVC** in **one
@@ -189,8 +189,8 @@ protects it. Storage: `pvcSize` default **2 Gi** per builder (durable, cheap).
 
 ## 7. Build plan to production-ready (est.)
 
-- Build + digest-pin + Trivy-scan the `code-server-workbench` image (git + duckdb +
-  `dq` + entrypoint already authored); add dbt/query-CLI parity with the sandbox. ~1d
+- Build + digest-pin + Trivy-scan the `code-server-workbench` image (git + python3 +
+  `dq` (Trino) + entrypoint already authored); add dbt-trino parity with the sandbox. ~1d
 - Real domain-scoped Forgejo tokens via ExternalSecret; ingress + TLS for the
   broker; per-domain creds rotation. ~1d
 - Broker hardening: structured audit log (who/when/domain/pod), Langfuse/metrics,

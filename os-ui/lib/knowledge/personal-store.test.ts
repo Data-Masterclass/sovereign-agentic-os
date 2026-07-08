@@ -128,3 +128,21 @@ test('promotion guards: cannot re-promote an already-Shared entry, cannot certif
   const rec2 = createPersonalKnowledge(ada, { title: 'Skip', md: 'x' });
   assert.throws(() => certifyPersonalKnowledge(rec2.id, ada), /Promote this knowledge to the domain/);
 });
+
+test('Shared-count bug regression: after Personal→Shared promotion the domain group count increments', () => {
+  // Regression: the Knowledge tab scope-switcher previously read only
+  // domainKnowledge.sections for the Shared count and ignored personal.domain,
+  // so a promoted entry never incremented the "(N)" badge.
+  __resetStore();
+  const rec = createPersonalKnowledge(bea, { title: 'Promoted note', md: 'content' });
+  // Before promotion: mine=1, domain=0.
+  let g = listPersonalKnowledge(amir); // peer in same domain
+  assert.equal(g.domain.length, 0, 'domain count must be 0 before promotion');
+  // Promote Personal → Shared.
+  promotePersonalKnowledge(rec.id, bea);
+  // After promotion: the entry moves from mine to domain, so domain count increments.
+  g = listPersonalKnowledge(amir);
+  assert.equal(g.domain.length, 1, 'domain count must be 1 after promotion (Shared-count badge fix)');
+  assert.equal(g.domain[0].title, 'Promoted note');
+  assert.equal(g.domain[0].visibility, 'Shared');
+});

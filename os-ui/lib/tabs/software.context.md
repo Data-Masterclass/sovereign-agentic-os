@@ -3,8 +3,8 @@
 **Purpose:** Create → build → preview → governed-deploy real apps (Next.js + Supabase) that live in sovereign Git (Forgejo) and ship Forgejo Actions → Harbor → Argo CD to a live subdomain.
 
 **Tools (MCP `software`):**
-- `create_software(name, description?, template?, domain?)` — new governed app.
-- `commit(appId, files[], message?)` — write files (re-parsed each commit).
+- `create_software(name, description?, template?, domain?)` — new governed app. Seeds a REAL build→push CI workflow + `REGISTRY_PASS` secret into the app's Forgejo repo, so the app image AUTO-BUILDS on every commit to main (Forgejo Actions → registry) with no manual build step.
+- `commit(appId, files[], message?)` — write files (re-parsed each commit). A commit pushes main and triggers the auto-build; watch it via `get_software_status`.
 - `start_preview(appId)` — private sandbox, no review.
 - `request_deploy(appId)` — opens a Builder review card; `decide_deploy(cardId, decision)` — Builder/Admin only.
 - `use_connection|use_data|use_knowledge(appId, ref, scope?)` — consume a granted resource by reference (never raw creds).

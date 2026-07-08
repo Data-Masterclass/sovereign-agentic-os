@@ -736,6 +736,11 @@ export function validatePromotion(req: PromotionRequest, approver: Principal): D
   if (!approver.domains.includes(d.domain)) fail('A promotion is approved by a Builder in the dataset’s domain', 403);
   const roleGate = canTransition(approver.role, 'dataset', 'promote');
   if (!roleGate.ok) fail(roleGate.reason ?? 'promotion requires a Builder', 403);
+  // Fail-closed on the approval side too: a BRONZE-only dataset is never shareable,
+  // regardless of what the queued request claimed. Refine to Silver/Gold first.
+  if (!d.versions.silver.built && !d.versions.gold.built) {
+    fail('Promote a Silver or Gold version — Bronze raw data is not shareable', 400);
+  }
   const gate = transparencyGate(d);
   if (!gate.ok) fail(`Promotion blocked — ${gateReason(gate)}`, 400);
   return d;

@@ -162,6 +162,21 @@ export const PREVIEW_PENDING_NOTE =
   'the served preview URL is pending until the Kubernetes API is reachable.';
 
 /**
+ * Honest pending-preview note. Distinguishes the two very different pending
+ * states so we never claim "runner unreachable / API not reachable" when the
+ * app IS provisioned and we're simply waiting on the image:
+ *   • cluster unreachable (phase offline)  → PREVIEW_PENDING_NOTE
+ *   • provisioned, pod not yet running     → image build in progress
+ */
+function previewPendingNote(outcome: RunnerOutcome): string {
+  if (!outcome.live) return PREVIEW_PENDING_NOTE;
+  return (
+    'Image build in progress — the app is provisioned and the preview URL appears once CI ' +
+    'publishes the image and the pod becomes ready.'
+  );
+}
+
+/**
  * Start a PRIVATE sandbox preview the creator runs themselves — no review. Any
  * owner (or a Builder in the domain) can preview. This is the free-iteration
  * loop; only going live in the domain is gated. Phase 2: this provisions the REAL
@@ -184,9 +199,10 @@ export async function startPreview(appId: string, user: CurrentUser): Promise<Ap
     principal: app.mcpPrincipal,
     tool: 'generate',
     input: { action: 'start_preview', by: user.id },
-    output: runner.live
-      ? { preview: runner.phase, url: app.deploy.previewUrl, host: runner.host }
-      : { preview: 'pending-runner', note: PREVIEW_PENDING_NOTE },
+    output:
+      runner.live && runner.phase === 'running'
+        ? { preview: runner.phase, url: app.deploy.previewUrl, host: runner.host }
+        : { preview: runner.live ? runner.phase : 'pending-runner', note: previewPendingNote(runner) },
     decision: 'allow',
   });
   return app;

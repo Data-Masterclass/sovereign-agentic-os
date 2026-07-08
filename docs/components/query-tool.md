@@ -4,8 +4,8 @@
 SQL **THROUGH central Trino** over the Iceberg marts (Polaris REST catalog, object storage). It's
 registered in the **LiteLLM MCP gateway** as the `query` tool (OPA-gated), so agents can query the
 governed lakehouse. **OPA gates tool access** at the gateway; **Trino enforces row/column
-governance** (the Trino→OPA plugin) on every read. DuckDB is **not** on this path — it is scoped to
-the personal/sandbox lane (see `sandbox-duckdb`).
+governance** (the Trino→OPA plugin) on every read. Trino is the **single** query engine — for
+both shared marts and personal schemas (`iceberg.personal_<uid>.*`).
 
 ## Access
 - **Direct HTTP:**
@@ -30,8 +30,8 @@ the personal/sandbox lane (see `sandbox-duckdb`).
   domain sees it. The query forwards the caller's principal so Trino governs the right identity.
 
 ## FAQ
-**Q: Trino vs DuckDB?** Trino is the single governed engine for all shared marts (federation,
-Iceberg read/write/maintenance, OPA row/column). DuckDB is kept ONLY for the personal/sandbox lane
-(`sandbox-duckdb`), behind Trino's governance — never a second door to governed marts.
+**Q: Why Trino only?** Trino is the single governed engine for all marts and personal schemas
+(federation, Iceberg read/write/maintenance, OPA row/column). One engine, one SQL dialect, one
+governance boundary — no separate personal query engine (removed 2026-06-29).
 **Q: Local creds?** On kind, Trino uses static S3 creds (Polaris S3 credential vending needs AWS
 STS, absent in the MinIO stand-in). On STACKIT, vended credentials are enabled.

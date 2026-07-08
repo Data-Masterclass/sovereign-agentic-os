@@ -61,8 +61,52 @@ export async function purgeKnowledgeUnits(scope: string): Promise<boolean> {
   return !!res && res.ok;
 }
 
+/** The `knowledge` index mapping — a knn_vector `embedding` whose dimension comes
+ *  from config (never hardcoded), plus the keyword/text/date fields the writer sets
+ *  and the retrieve query filters/searches on. Mirrors `filesIndexMapping`. */
+export function knowledgeIndexMapping(dim = config.embedDim): Record<string, unknown> {
+  return {
+    settings: { index: { knn: true } },
+    mappings: {
+      properties: {
+        title: { type: 'text' },
+        text: { type: 'text' },
+        embedding: { type: 'knn_vector', dimension: dim },
+        domain: { type: 'keyword' },
+        workflow_id: { type: 'keyword' },
+        step_id: { type: 'keyword' },
+        type: { type: 'keyword' },
+        actor: { type: 'keyword' },
+        owner: { type: 'keyword' },
+        version: { type: 'keyword' },
+        visibility: { type: 'keyword' },
+        trust: { type: 'float' },
+        authority: { type: 'float' },
+        updated_at: { type: 'date' },
+        ingested_at: { type: 'date' },
+      },
+    },
+  };
+}
+
+/** Create the `knowledge` index with its knn_vector mapping if absent (best-effort).
+ *  Without this the index auto-creates with NO `embedding` field → writes fail and
+ *  retrieval silently falls back to the in-memory mirror. Mirrors `ensureFilesIndex`. */
+export async function ensureKnowledgeIndex(): Promise<boolean> {
+  const head = await withTimeout(`${config.opensearchUrl}/${config.knowledgeIndex}`, { method: 'HEAD' });
+  if (head && head.ok) return true;
+  const res = await withTimeout(`${config.opensearchUrl}/${config.knowledgeIndex}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(knowledgeIndexMapping()),
+  });
+  return Boolean(res && res.ok);
+}
+
 /** Bulk-write embedded units to OpenSearch (best-effort live path). */
 async function writeOpenSearch(scope: string, indexed: IndexedUnit[]): Promise<boolean> {
+  await ensureKnowledgeIndex();
+
   // Delete the scope's existing docs first (incremental re-index), then bulk-add.
   const delBody = {
     query: {

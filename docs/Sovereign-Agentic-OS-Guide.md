@@ -736,8 +736,8 @@ non-technical users. The tiles are grouped **Data** (your Personal datasets) · 
    schema** (`iceberg.personal_<you>.bronze_…`), Silver and the Gold **join** build real tables the
    same way, and everything is queried through governed Trino under your identity.
 3. Personal work stays governed per-user: your Bronze/Silver/Gold tables live in your per-user
-   Iceberg schema, and the separate Query **sandbox lane** (DuckDB) sits *behind* the same Trino
-   governance boundary — it only ever sees your own uploads or an already-masked extract.
+   Iceberg schema (`iceberg.personal_<you>.*`) and are queried through the same governed Trino
+   path as every other domain — one engine, one governance boundary.
    Datasets that have not been materialized yet are shown with an honest **not-materialized**
    state label — the tab never fabricates a green ✓ for a stage that has not been built.
 4. Browse structured assets in **Catalog** (OpenMetadata); **row-preview** any dataset inline

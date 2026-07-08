@@ -18,7 +18,6 @@ dbt:0.2.0
 egress-proxy:0.1.0
 web-fetch:0.1.0
 query-tool:0.3.0
-sandbox-duckdb:0.1.0
 superset:6.1.0
 mlflow:2.19.0
 ml-agent:0.1.0

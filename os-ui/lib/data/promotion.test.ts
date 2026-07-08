@@ -87,6 +87,27 @@ test('cross-domain Builder/Admin cannot approve another domain’s promotion', (
   assert.throws(() => applyApprovedPromotion(req, kenji), (e: DatasetError) => e.status === 403);
 });
 
+test('approval fails closed on a BRONZE-only dataset even if a request slips through', () => {
+  // A Bronze-only dataset can never be requested via requestPromotion (the request
+  // path blocks it). Forge the request object directly to prove the APPROVAL path
+  // also refuses it — fail-closed, so a stale/forged queue entry can't share raw data.
+  const d = createDataset(amir, { name: 'RawOnly2' });
+  buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'b' });
+  setDocs(d.id, amir, { description: 'x', columns: [{ name: 'c', description: 'd' }] });
+  const forged = {
+    datasetId: d.id,
+    datasetName: 'RawOnly2',
+    domain: 'sales',
+    owner: amir.id,
+    visibility: 'domain' as const,
+    grants: [],
+    target: assetTarget(getDataset(d.id, amir)),
+  };
+  assert.throws(() => applyApprovedPromotion(forged, bea), /Silver or Gold/i);
+  // and the tier is untouched — still a private dataset
+  assert.equal(getDataset(d.id, amir).tier, 'dataset');
+});
+
 test('double-apply is rejected once the dataset is already an asset', () => {
   const id = readyDataset();
   const req = requestPromotion(id, amir);

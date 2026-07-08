@@ -36,7 +36,6 @@ global:
 # docling:      { enabled: false }
 # osdashboards: { enabled: false }
 # openmetadata: { enabled: false }
-# Central Trino is the GOVERNED query engine (default on); DuckDB is scoped to the
-# personal/sandbox lane (sandbox-duckdb). On a tiny node flip Trino off:
+# Central Trino is the GOVERNED query engine (default on). On a tiny node flip Trino off:
 # trino: { enabled: false }
 # spark: { enabled: true }   # optional distributed batch/ETL

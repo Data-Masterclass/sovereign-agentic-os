@@ -60,7 +60,7 @@ function NullBar({ pct }: { pct: number }) {
  * preview. Every number comes back through the governed read path, so it is already
  * scoped + masked to what the viewer is allowed to see. No machinery on show.
  */
-export default function ExplorePanel({ datasetId, builtLayers }: { datasetId: string; builtLayers: Layer[] }) {
+export default function ExplorePanel({ datasetId, builtLayers, showPreview = true }: { datasetId: string; builtLayers: Layer[]; showPreview?: boolean }) {
   const order: Layer[] = ['bronze', 'silver', 'gold'];
   const layers = order.filter((l) => builtLayers.includes(l));
   const [layer, setLayer] = useState<Layer>(layers[layers.length - 1] ?? 'bronze');
@@ -198,7 +198,7 @@ export default function ExplorePanel({ datasetId, builtLayers }: { datasetId: st
             );
           })() : null}
 
-          {profile.preview && profile.preview.rows.length > 0 ? (
+          {showPreview && profile.preview && profile.preview.rows.length > 0 ? (
             <>
               <div className="section-title" style={{ marginTop: 20 }}>
                 Preview<span className="count-pill ok">first {profile.preview.rows.length}</span>

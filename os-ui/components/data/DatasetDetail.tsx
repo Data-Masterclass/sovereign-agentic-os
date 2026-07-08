@@ -7,6 +7,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 import LineagePanel from './LineagePanel';
+import RefinePanel from './RefinePanel';
+import GoldJoinPanel from './GoldJoinPanel';
+import ExplorePanel from './ExplorePanel';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import DomainTag from '@/components/DomainTag';
@@ -162,6 +165,10 @@ export default function DatasetDetail({
   const [previewing, setPreviewing] = useState(false);
   const [previewErr, setPreviewErr] = useState('');
 
+  // ---- guided refinement flow open in-detail (the two CTAs) ----
+  // 'silver' → the guided Silver builder; 'gold' → the guided harmonize/join builder.
+  const [flow, setFlow] = useState<'silver' | 'gold' | null>(null);
+
   const load = useCallback(async () => {
     setLoadErr('');
     try {
@@ -303,6 +310,12 @@ export default function DatasetDetail({
     }
   }, [datasetId]);
 
+  // Auto-load the row preview whenever a dataset detail opens (and on dataset switch);
+  // the button below is then just a manual "Refresh preview".
+  useEffect(() => {
+    void loadPreview();
+  }, [loadPreview]);
+
   if (loadErr) {
     return (
       <>
@@ -318,6 +331,16 @@ export default function DatasetDetail({
   const cubeReady = isCubeReady(dataset);
   const published = !!dataset.certification;
   const canEdit = !!user && (user.id === dataset.owner || (user.role === 'admin' && user.domains?.includes(dataset.domain)));
+
+  const builtLayers = (['bronze', 'silver', 'gold'] as Layer[]).filter((l) => dataset.versions[l].built);
+  const colNames = dataset.columns.map((c) => c.name).filter(Boolean);
+  // The two guided next-steps, gated on what already exists:
+  //  • a Bronze (raw) dataset → clean it into Silver;
+  //  • a Silver dataset → harmonize it into Gold by joining trusted datasets.
+  const canRefineSilver = dataset.versions.bronze.built;
+  const canHarmonizeGold = dataset.versions.silver.built;
+  // A guided build committed → close the flow and reload the honest built state.
+  const onFlowCommitted = () => { setFlow(null); void load(); };
 
   return (
     <ConfirmProvider>
@@ -340,9 +363,11 @@ export default function DatasetDetail({
               compact
             />
           ) : null}
-          <button className="btn ghost" onClick={() => onOpenStepper(dataset.id)}>
-            Build / refine →
-          </button>
+          {canEdit ? (
+            <button className="btn ghost" onClick={() => onOpenStepper(dataset.id)} title="The full Bronze → Silver → Gold build rail">
+              Advanced build rail →
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -440,6 +465,72 @@ export default function DatasetDetail({
           </span>
         )}
       </div>
+
+      {/* ── Refine: the two guided next-steps (the primary CTAs) ── */}
+      {canEdit ? (
+        <div style={{ marginBottom: 18 }}>
+          {!canRefineSilver ? (
+            <div className="gate-check">
+              <span className="muted" style={{ fontSize: 13 }}>
+                Bring in a Bronze version first — open the <strong>Advanced build rail →</strong> to upload a file or pull an extract.
+                Once it&apos;s in, you can turn it into a clean Silver dataset here.
+              </span>
+            </div>
+          ) : (
+            <div className="refine-cta">
+              {/* Bronze → Silver: the single primary action for a raw dataset. */}
+              {!dataset.versions.silver.built ? (
+                <button className={`btn${flow === 'silver' ? ' ghost' : ''}`} onClick={() => setFlow(flow === 'silver' ? null : 'silver')}>
+                  {flow === 'silver' ? 'Close' : 'Turn into clean Silver Dataset'}
+                </button>
+              ) : (
+                <button className={`btn${flow === 'silver' ? '' : ' ghost'}`} onClick={() => setFlow(flow === 'silver' ? null : 'silver')}>
+                  {flow === 'silver' ? 'Close' : 'Re-clean the Silver version'}
+                </button>
+              )}
+              {/* Silver → Gold: harmonize by joining trusted datasets. */}
+              {canHarmonizeGold ? (
+                <button className={`btn${flow === 'gold' ? '' : ' ghost'}`} onClick={() => setFlow(flow === 'gold' ? null : 'gold')}>
+                  {flow === 'gold' ? 'Close' : 'Turn into a harmonized Gold dataset'}
+                </button>
+              ) : (
+                <span className="hint" style={{ margin: 0, alignSelf: 'center' }}>
+                  Clean it to Silver first, then you can harmonize it into Gold.
+                </span>
+              )}
+            </div>
+          )}
+
+          {flow === 'silver' && canRefineSilver ? (
+            <div style={{ marginTop: 12 }}>
+              <RefinePanel
+                datasetId={dataset.id}
+                datasetName={dataset.name}
+                owner={dataset.owner}
+                domain={dataset.domain}
+                tier={dataset.tier}
+                columns={colNames}
+                stage={{ layer: 'silver', copy: { title: 'Clean it up', subtitle: '', tool: '' } }}
+                onCommitted={onFlowCommitted}
+              />
+            </div>
+          ) : null}
+
+          {flow === 'gold' && canHarmonizeGold ? (
+            <div style={{ marginTop: 12 }}>
+              <GoldJoinPanel
+                datasetId={dataset.id}
+                datasetName={dataset.name}
+                owner={dataset.owner}
+                domain={dataset.domain}
+                tier={dataset.tier}
+                columns={colNames}
+                onCommitted={onFlowCommitted}
+              />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* ── Documentation ── */}
       <div className="section-title" style={{ marginTop: 4 }} {...anchorAttr(ANCHORS.data.document)}>
@@ -656,7 +747,7 @@ export default function DatasetDetail({
       <div className="section-title" style={{ marginTop: 20 }}>
         Data preview
         <button className="btn ghost sm" style={{ marginLeft: 10 }} onClick={loadPreview} disabled={previewing}>
-          {previewing ? <span className="spin" /> : preview ? 'Refresh preview' : 'Preview first 50 rows'}
+          {previewing ? <span className="spin" /> : 'Refresh preview'}
         </button>
       </div>
       <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
@@ -694,6 +785,16 @@ export default function DatasetDetail({
         )
       ) : null}
 
+      {/* ── Explore (quiet profile of a built version — governed reads, masked) ── */}
+      {builtLayers.length > 0 ? (
+        <>
+          <div className="section-title" style={{ marginTop: 20 }}>Explore</div>
+          {/* The row preview lives ONCE in the "Data preview" section above — Explore
+              here shows the profile only, so the same rows aren't rendered twice. */}
+          <ExplorePanel datasetId={dataset.id} builtLayers={builtLayers} showPreview={false} />
+        </>
+      ) : null}
+
       {/* ── Lineage (refinement + consumption chain, from the single source) ── */}
       <div className="section-title" style={{ marginTop: 20 }}>Lineage</div>
       <LineagePanel datasetId={dataset.id} />
@@ -702,11 +803,21 @@ export default function DatasetDetail({
       {dataset.tier === 'dataset' ? (
         <div className="gate-check" style={{ marginTop: 20 }}>
           <span className="badge vis-personal">Personal</span>{' '}
-          <span className="muted" style={{ fontSize: 13 }}>
-            This dataset is in your private space — only you can see it.
-            Use <strong>Build / refine →</strong> to build a Silver or Gold version
-            and request promotion to share it with your domain.
-          </span>
+          {canHarmonizeGold ? (
+            <span className="muted" style={{ fontSize: 13 }}>
+              This dataset is in your private space — only you can see it. It&apos;s refined past Bronze,
+              so you can request promotion to share it with your domain (a Builder approves).
+              {canEdit ? <> Use the <strong>Advanced build rail →</strong> to request promotion.</> : null}
+            </span>
+          ) : (
+            // Bronze-only: promotion to Shared is NOT available — mirror the server's
+            // fail-closed rule (requestPromotion blocks Bronze) with a clear, calm hint.
+            <span className="muted" style={{ fontSize: 13 }}>
+              This raw <strong>Bronze</strong> dataset can&apos;t be shared yet —
+              <strong> promote after refining to Silver/Gold</strong>.
+              {canEdit ? <> Use <strong>Turn into clean Silver Dataset</strong> above to refine it first.</> : null}
+            </span>
+          )}
         </div>
       ) : dataset.tier === 'asset' ? (
         <div className="gate-check gate-ok" style={{ marginTop: 20 }}>

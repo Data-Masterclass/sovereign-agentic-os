@@ -208,7 +208,8 @@ export default function DatasetStepper({ datasetId, onBack }: { datasetId: strin
       {stages.some((s) => s.built) ? (
         <>
           <div className="section-title" style={{ marginTop: 22 }}>Explore</div>
-          <ExplorePanel datasetId={dataset.id} builtLayers={stages.filter((s) => s.built).map((s) => s.layer)} />
+          {/* Preview rows are shown once by PreviewPanel above; Explore shows profile only. */}
+          <ExplorePanel datasetId={dataset.id} builtLayers={stages.filter((s) => s.built).map((s) => s.layer)} showPreview={false} />
         </>
       ) : null}
 
@@ -222,6 +223,9 @@ export default function DatasetStepper({ datasetId, onBack }: { datasetId: strin
           tier={dataset.tier}
           initialDescription={dataset.description}
           initialColumns={dataset.columns}
+          // A Bronze-only dataset is not shareable — hide the promote control (server
+          // fail-closes too). Silver or Gold built ⇒ refined.
+          refined={stages.some((s) => (s.layer === 'silver' || s.layer === 'gold') && s.built)}
           onChanged={load}
         />
       ) : (

@@ -223,11 +223,6 @@ queryTool:
     repository: ghcr.io/aborek/sovereign-os/query-tool
     tag: "0.3.0@sha256:310342ad0f383c1f38ad276c5833cb174ac057b5d7790a3cef4dcc80f2527db3"
 
-sandbox:
-  image:
-    repository: ghcr.io/aborek/sovereign-os/sandbox-duckdb
-    tag: "0.1.0@sha256:6dbf74e5811b95dbfbd0bd731f667594cf48ed5b478683424e4ab9d18f5993c9"
-
 # Admin Console is DEPRECATED — its functionality is now native to the OS UI
 # (Platform -> Components). Off by default in the chart; no image needed. Set
 # adminConsole.enabled=true (and supply the image below) only for the legacy
