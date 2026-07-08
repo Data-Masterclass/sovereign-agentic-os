@@ -9,6 +9,9 @@ import { roleAtLeast, type Role } from '@/lib/session';
 import { SCOPE_GROUPS, groupByScope, groupsFromVisibility, scopeCounts, type ScopeKey } from '@/lib/scopes';
 import { providerForTemplate, providerConfig, type OAuthProvider } from '@/lib/oauth/providers';
 import { driveConnectionStatus, driveAuthorizePath } from '@/lib/oauth/drive-status';
+import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
+import LifecycleActions from '@/components/lifecycle/LifecycleActions';
+import type { Visibility } from '@/lib/lifecycle';
 
 /**
  * Governed Connections surface (Connections golden path). A Builder/Admin creates
@@ -42,6 +45,8 @@ type Conn = {
   owner: string;
   domain: string;
   visibility: 'Personal' | 'Shared' | 'Certified';
+  /** Soft-archived (retained, reversible). */
+  archived?: boolean;
   mode: string;
   secretRef: { name: string; key: string };
   secretSet: boolean;
@@ -106,16 +111,18 @@ export default function GovernedConnections() {
   const [error, setError] = useState('');
   const [open, setOpen] = useState<string>('');
   const [scope, setScope] = useState<ScopeKey>('all');
+  const [showArchived, setShowArchived] = useState(false);
 
   const load = useCallback(async () => {
     setError('');
     try {
-      const res = await fetch('/api/connections', { cache: 'no-store' });
+      // ?archived=1 additionally returns soft-archived connections (their own toggle).
+      const res = await fetch(`/api/connections${showArchived ? '?archived=1' : ''}`, { cache: 'no-store' });
       const body = await res.json() as Data | { error: string };
       if (!res.ok) setError((body as { error: string }).error ?? 'Failed to load connections');
       else setData(body as Data);
     } catch (e) { setError((e as Error).message); }
-  }, []);
+  }, [showArchived]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -182,7 +189,7 @@ export default function GovernedConnections() {
   if (!data && !error) return <div className="hint"><span className="spin" /> Loading connections…</div>;
 
   return (
-    <>
+    <ConfirmProvider>
       <div className="section-title">New connection</div>
       {(canCreate || canCreatePersonal) ? (
         <>
@@ -288,7 +295,17 @@ export default function GovernedConnections() {
         </div>
       )}
 
-      <div className="section-title">Your governed connections</div>
+      <div className="section-title">
+        Your governed connections
+        <button
+          className="btn ghost"
+          style={{ marginLeft: 'auto', padding: '4px 12px', opacity: showArchived ? 1 : 0.7 }}
+          onClick={() => setShowArchived((v) => !v)}
+          title="Archived connections are hidden by default"
+        >
+          {showArchived ? 'Hide archived' : 'Show archived'}
+        </button>
+      </div>
       {error ? <div className="error">{error}</div> : null}
 
       {(() => {
@@ -331,7 +348,7 @@ export default function GovernedConnections() {
       })()}
 
       {canCreate ? <EgressSection /> : null}
-    </>
+    </ConfirmProvider>
   );
 }
 
@@ -432,6 +449,10 @@ function EgressSection() {
 
 const AUTONOMOUS_PRESETS = ['read-only', 'read-propose', 'read-bounded', 'full-in-scope'] as const;
 type AutonomousPreset = typeof AUTONOMOUS_PRESETS[number];
+
+/** Connection visibility → the OS-wide lifecycle visibility (drives the delete gate). */
+const connVisibility = (v: Conn['visibility']): Visibility =>
+  v === 'Shared' ? 'shared' : v === 'Certified' ? 'certified' : 'personal';
 
 function ConnectionCard({
   c, role, oauthProviders, open, onToggle, onChange,
@@ -677,6 +698,7 @@ function ConnectionCard({
           </div>
         </div>
         <div className="row" style={{ gap: 6, alignItems: 'center', flexShrink: 0, marginLeft: 12 }}>
+          {c.archived ? <span className="badge muted">archived</span> : null}
           {dataUsage === 'bronze' && <span className="badge warn">Bronze source</span>}
           {dataUsage === 'files' && <span className="badge warn">Files index</span>}
           <span className={badge(c.visibility)}>{c.visibility}</span>
@@ -808,6 +830,19 @@ function ConnectionCard({
             Same connection — agent tool + {dataUsage === 'files' ? 'Files index' : 'Bronze source'}
           </span>
         )}
+        {/* The OS-wide lifecycle cluster: Archive/Restore · Delete · Version history. */}
+        {canManage ? (
+          <LifecycleActions
+            id={c.id}
+            name={c.name}
+            kind="connection"
+            visibility={connVisibility(c.visibility)}
+            archived={!!c.archived}
+            api={`/api/connections/${c.id}`}
+            onChanged={onChange}
+            compact
+          />
+        ) : null}
       </div>
 
       {msg ? <div className={msg.startsWith('✗') ? 'error' : 'answer'} style={{ marginTop: 10 }}>{msg}</div> : null}

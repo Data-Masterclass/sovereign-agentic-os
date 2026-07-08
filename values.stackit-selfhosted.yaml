@@ -87,6 +87,7 @@ backup:
 # Pinned 0.6.8 in the chart default is too old for ministral-3 on this node.
 # -----------------------------------------------------------------------------
 modelServer:
+  enabled: false   # DELETED: wedges on CPU warmup + no LiteLLM route uses it (all inference on STACKIT); frees ~2-12 CPU / 4-6Gi
   image:
     tag: "latest"
   # CPU headroom for Ministral 3 3B on the m3i.16 node (16 vCPU / 128 GB). Ollama
@@ -247,7 +248,7 @@ osUI:
     # 0.1.11 = Agents-tab builder rebuild: globalThis store fix (AGENT.md/MEMORY.md
     # now load), single Auto/Reasoning/Execution model toggle (real sovereign-*
     # ids), React Flow drag-and-drop graph builder, master-detail rail + templates.
-    tag: "0.1.58"
+    tag: "0.1.59"
   # CANONICAL PUBLIC URL — the apex host. OS_PUBLIC_URL derives from this (os-ui.yaml
   # reads `.Values.osUI.publicUrl` first, only falling back to the `os.<zone>` ingress
   # host). Pinning it here makes the apex authoritative so a `helm upgrade` can NEVER

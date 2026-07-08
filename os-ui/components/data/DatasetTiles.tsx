@@ -7,6 +7,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { roleAtLeast } from '@/lib/session';
 import { DATASET_SCOPES, tilesForScope, scopeCounts, type DatasetScope } from '@/lib/data/dataset-scopes';
+import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
+import LifecycleActions from '@/components/lifecycle/LifecycleActions';
+import type { Visibility } from '@/lib/lifecycle';
 
 /** Mirrors lib/data/store `DatasetSummary`. */
 type Tile = {
@@ -25,17 +28,9 @@ type Tile = {
 };
 type Groups = { mine: Tile[]; domain: Tile[]; marketplace: Tile[] };
 
-/** The per-card lifecycle controls (archive / restore / confirm-delete). */
-type Manage = {
-  archived: boolean;
-  busy: boolean;
-  confirmingDelete: boolean;
-  onArchive: () => void;
-  onRestore: () => void;
-  onAskDelete: () => void;
-  onConfirmDelete: () => void;
-  onCancelDelete: () => void;
-};
+/** Tile tier → the OS-wide lifecycle visibility (drives the delete gate). */
+const lcVis = (tier: Tile['tier']): Visibility =>
+  tier === 'asset' ? 'shared' : tier === 'product' ? 'certified' : 'personal';
 
 function freshLabel(iso: string | null): string {
   if (!iso) return 'not built yet';
@@ -62,7 +57,7 @@ function Dots({ dots }: { dots: Tile['dots'] }) {
   );
 }
 
-function TileCard({ t, onOpen, onImport, manage }: { t: Tile; onOpen: (id: string) => void; onImport?: (id: string) => void; manage?: Manage }) {
+function TileCard({ t, onOpen, onImport, canManage, onChanged }: { t: Tile; onOpen: (id: string) => void; onImport?: (id: string) => void; canManage?: boolean; onChanged: () => void }) {
   // A role="button" DIV (not a <button>) so the optional Import / lifecycle controls
   // can be real nested <button>s without invalid button-in-button nesting. Every
   // nested control stops propagation so it never also opens the card.
@@ -100,29 +95,23 @@ function TileCard({ t, onOpen, onImport, manage }: { t: Tile; onOpen: (id: strin
           Import
         </button>
       ) : null}
-      {manage ? (
-        <div className="row" style={{ gap: 6, marginTop: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {manage.archived ? (
-            <>
-              <button type="button" className="btn ghost sm" disabled={manage.busy} onClick={stop(manage.onRestore)}>
-                {manage.busy ? <span className="spin" /> : 'Restore'}
-              </button>
-              {manage.confirmingDelete ? (
-                <>
-                  <button type="button" className="btn ghost sm" style={{ color: 'var(--danger, #b42318)', borderColor: 'var(--danger, #b42318)' }} disabled={manage.busy} onClick={stop(manage.onConfirmDelete)}>
-                    {manage.busy ? <span className="spin" /> : 'Confirm delete'}
-                  </button>
-                  <button type="button" className="btn ghost sm" disabled={manage.busy} onClick={stop(manage.onCancelDelete)}>Cancel</button>
-                </>
-              ) : (
-                <button type="button" className="btn ghost sm" disabled={manage.busy} onClick={stop(manage.onAskDelete)}>Delete</button>
-              )}
-            </>
-          ) : (
-            <button type="button" className="btn ghost sm" disabled={manage.busy} onClick={stop(manage.onArchive)} title="Archive hides the dataset (reversible)">
-              {manage.busy ? <span className="spin" /> : 'Archive'}
-            </button>
-          )}
+      {canManage ? (
+        <div
+          className="row"
+          style={{ gap: 6, marginTop: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <LifecycleActions
+            id={t.id}
+            name={t.name}
+            kind="dataset"
+            visibility={lcVis(t.tier)}
+            archived={!!t.archived}
+            api={`/api/data/datasets/${t.id}`}
+            onChanged={onChanged}
+            compact
+            showVersions={false}
+          />
         </div>
       ) : null}
     </div>
@@ -143,8 +132,6 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
   const [scope, setScope] = useState<DatasetScope>('all');
   // Archive/lifecycle UI (mirrors the Knowledge tab's reference pattern).
   const [showArchived, setShowArchived] = useState(false);
-  const [busyId, setBusyId] = useState('');
-  const [confirmDeleteId, setConfirmDeleteId] = useState('');
 
   const refresh = useCallback(async () => {
     setErr('');
@@ -184,49 +171,10 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
     } catch (e) { setErr((e as Error).message); }
   }, [refresh]);
 
-  // archive / unarchive (POST {action}) or delete (DELETE), then refresh.
-  const lifecycle = useCallback(async (id: string, req: RequestInit) => {
-    setBusyId(id);
-    setErr('');
-    try {
-      const res = await fetch(`/api/data/datasets/${id}`, req);
-      const body = (await res.json().catch(() => ({}))) as {
-        error?: string;
-        physical?: { orphaned?: { fqn: string; reason: string }[] };
-      };
-      if (!res.ok) throw new Error(body.error ?? 'Action failed');
-      setConfirmDeleteId('');
-      await refresh();
-      // A delete also drops the physical Iceberg tables; if the engine couldn't
-      // drop one, say so honestly instead of pretending the state is clean.
-      const orphaned = body.physical?.orphaned ?? [];
-      if (orphaned.length > 0) {
-        setErr(`Deleted from the registry, but ${orphaned.length} physical table(s) could not be dropped: ${orphaned.map((o) => o.fqn).join(', ')}.`);
-      }
-    } catch (e) { setErr((e as Error).message); }
-    finally { setBusyId(''); }
-  }, [refresh]);
-  const setArchived = useCallback((id: string, archived: boolean) =>
-    lifecycle(id, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: archived ? 'archive' : 'unarchive' }) }), [lifecycle]);
-  const del = useCallback((id: string) => lifecycle(id, { method: 'DELETE' }), [lifecycle]);
-
   // A dataset is the caller's to manage when they own it or are an in-domain Admin
   // (the server enforces this either way — this only decides whether to show controls).
   const canManage = useCallback((t: Tile) =>
     !!user && (t.owner === user.id || (user.role === 'admin' && user.domains.includes(t.domain))), [user]);
-  const manageFor = useCallback((t: Tile): Manage | undefined => {
-    if (!canManage(t)) return undefined;
-    return {
-      archived: !!t.archived,
-      busy: busyId === t.id,
-      confirmingDelete: confirmDeleteId === t.id,
-      onArchive: () => setArchived(t.id, true),
-      onRestore: () => setArchived(t.id, false),
-      onAskDelete: () => setConfirmDeleteId(t.id),
-      onConfirmDelete: () => del(t.id),
-      onCancelDelete: () => setConfirmDeleteId(''),
-    };
-  }, [canManage, busyId, confirmDeleteId, setArchived, del]);
 
   // Scope slice (Files mental model): All Data · My Data · Shared Data · Marketplace
   // Data, working tiles + archived (soft-hidden) split per scope.
@@ -236,7 +184,7 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
   const empty = groups && scoped.active.length === 0;
 
   return (
-    <>
+    <ConfirmProvider>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-end' }}>
         <p className="lead" style={{ margin: 0, maxWidth: 560 }}>
           Your datasets. Open one to refine it through <strong>Bronze → Silver → Gold</strong>,
@@ -271,7 +219,7 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
             key={s.key}
             type="button"
             className={scope === s.key ? 'on' : ''}
-            onClick={() => { setScope(s.key); setConfirmDeleteId(''); }}
+            onClick={() => setScope(s.key)}
           >
             {s.label}{counts ? ` (${counts[s.key]})` : ''}
           </button>
@@ -301,7 +249,8 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
                   onOpen={onOpen}
                   // Import applies to marketplace products only (Builder+; store re-checks).
                   onImport={canImport && t.tier === 'product' && t.owner !== uid ? importProduct : undefined}
-                  manage={manageFor(t)}
+                  canManage={canManage(t)}
+                  onChanged={refresh}
                 />
               ))}
             </div>
@@ -316,7 +265,7 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
                   Restore brings one back; Delete removes it permanently — including its physical tables.
                 </p>
                 <div className="tile-grid">
-                  {scoped.archived.map((t) => <TileCard key={t.id} t={t} onOpen={onOpen} manage={manageFor(t)} />)}
+                  {scoped.archived.map((t) => <TileCard key={t.id} t={t} onOpen={onOpen} canManage={canManage(t)} onChanged={refresh} />)}
                 </div>
               </>
             ) : (
@@ -325,6 +274,6 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
           ) : null}
         </>
       ) : !err ? <div className="stub-page" style={{ marginTop: 20 }}>Loading datasets…</div> : null}
-    </>
+    </ConfirmProvider>
   );
 }

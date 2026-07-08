@@ -13,6 +13,13 @@ import { roleAtLeast, type Role } from '@/lib/session';
 import { useTabNavReset } from '@/lib/tab-nav';
 import { SCOPE_GROUPS, groupByScope, activeScopeCounts, type ScopeKey } from '@/lib/scopes';
 import type { PersonalKnowledgeSummary } from '@/lib/knowledge/personal-store';
+import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
+import LifecycleActions from '@/components/lifecycle/LifecycleActions';
+import type { Visibility as LcVisibility } from '@/lib/lifecycle';
+
+/** Knowledge visibility (Personal/Shared/Marketplace) → OS-wide lifecycle visibility. */
+const lcVis = (v: 'Personal' | 'Shared' | 'Marketplace'): LcVisibility =>
+  v === 'Shared' ? 'shared' : v === 'Marketplace' ? 'certified' : 'personal';
 
 /**
  * Knowledge tab — the domain's operating manual.
@@ -87,7 +94,6 @@ export default function KnowledgePage() {
   const [wfError, setWfError] = useState('');
   // Archive/lifecycle UI
   const [showArchived, setShowArchived] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   // New workflow form
   const [newTitle, setNewTitle] = useState('');
@@ -151,30 +157,6 @@ export default function KnowledgePage() {
     void loadWorkflows();
     void loadPersonal();
   }, [loadWorkflows, loadPersonal]);
-
-  // ── Workflow lifecycle: archive / restore / delete ───────────────────────
-  async function wfLifecycle(id: string, action: 'archive' | 'unarchive') {
-    setWfError('');
-    try {
-      const res = await fetch(`/api/knowledge/workflows/${id}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action }),
-      });
-      if (!res.ok) { setWfError((await res.json().catch(() => ({}))).error ?? `Could not ${action}.`); return; }
-      await loadWorkflows();
-    } catch (e) { setWfError((e as Error).message); }
-  }
-
-  async function deleteWf(id: string) {
-    setWfError('');
-    try {
-      const res = await fetch(`/api/knowledge/workflows/${id}`, { method: 'DELETE' });
-      setConfirmDelete(null);
-      if (!res.ok) { setWfError((await res.json().catch(() => ({}))).error ?? 'Could not delete.'); return; }
-      await loadWorkflows();
-    } catch (e) { setConfirmDelete(null); setWfError((e as Error).message); }
-  }
 
   // ── Domain section editing ───────────────────────────────────────────────
 
@@ -262,22 +244,6 @@ export default function KnowledgePage() {
     finally { setPkSaving(false); }
   }
 
-  async function personalLifecycle(id: string, action: 'archive' | 'unarchive') {
-    try {
-      const res = await fetch(`/api/knowledge/personal/${id}`, {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action }),
-      });
-      if (res.ok) await loadPersonal();
-    } catch { /* transient */ }
-  }
-
-  async function deletePersonal(id: string) {
-    try {
-      const res = await fetch(`/api/knowledge/personal/${id}`, { method: 'DELETE' });
-      if (res.ok) { if (pkOpenId === id) setPkOpenId(null); await loadPersonal(); }
-    } catch { /* transient */ }
-  }
-
   // ── Create workflow ──────────────────────────────────────────────────────
 
   async function createWorkflow() {
@@ -322,26 +288,23 @@ export default function KnowledgePage() {
 
   const openWorkflow = (id: string) => { setSelectedWorkflowId(id); setView('detail'); };
 
-  // One workflow card + its lifecycle actions (Archive, or Restore/Delete when archived).
+  // One workflow card + its lifecycle actions (the OS-wide Archive/Restore · Delete ·
+  // Version-history cluster). The tile is a bare <button>, so the controls live in a
+  // sibling action row — never nested inside the button.
   const renderCell = (w: WorkflowSummary) => (
     <div key={w.id} className="k-wf-cell">
       <WorkflowTile workflow={w} onClick={openWorkflow} />
       <div className="k-wf-actions">
-        {w.archived ? (
-          <>
-            <button className="btn ghost sm" onClick={() => void wfLifecycle(w.id, 'unarchive')}>Restore</button>
-            {confirmDelete === w.id ? (
-              <>
-                <button className="btn ghost sm k-danger" onClick={() => void deleteWf(w.id)}>Confirm delete</button>
-                <button className="btn ghost sm" onClick={() => setConfirmDelete(null)}>Cancel</button>
-              </>
-            ) : (
-              <button className="btn ghost sm" onClick={() => setConfirmDelete(w.id)}>Delete</button>
-            )}
-          </>
-        ) : (
-          <button className="btn ghost sm" onClick={() => void wfLifecycle(w.id, 'archive')}>Archive</button>
-        )}
+        <LifecycleActions
+          id={w.id}
+          name={w.title}
+          kind="knowledge"
+          visibility={lcVis(w.visibility)}
+          archived={!!w.archived}
+          api={`/api/knowledge/workflows/${w.id}`}
+          onChanged={() => void loadWorkflows()}
+          compact
+        />
       </div>
     </div>
   );
@@ -358,7 +321,7 @@ export default function KnowledgePage() {
   }
 
   return (
-    <>
+    <ConfirmProvider>
       <PageHeader title="Knowledge" crumb="domain operating manual · workflows · context" tutorial="knowledge" />
       <div className="content">
 
@@ -510,12 +473,21 @@ export default function KnowledgePage() {
                       <div key={e.id} className="k-section">
                         <div className="k-section-head">
                           <span className="k-section-label">{e.title}</span>
-                          <div className="row" style={{ gap: 6 }}>
+                          <div className="row" style={{ gap: 6, alignItems: 'center' }}>
                             <button className="btn ghost sm" onClick={() => void (pkOpenId === e.id ? setPkOpenId(null) : openPersonal(e.id))}>
                               {pkOpenId === e.id ? 'Close' : 'Edit'}
                             </button>
-                            <button className="btn ghost sm" onClick={() => void personalLifecycle(e.id, 'archive')}>Archive</button>
-                            <button className="btn ghost sm k-danger" onClick={() => void deletePersonal(e.id)}>Delete</button>
+                            <LifecycleActions
+                              id={e.id}
+                              name={e.title}
+                              kind="knowledge"
+                              visibility={lcVis(e.visibility)}
+                              archived={!!e.archived}
+                              api={`/api/knowledge/personal/${e.id}`}
+                              onChanged={() => { if (pkOpenId === e.id) setPkOpenId(null); void loadPersonal(); }}
+                              compact
+                              showVersions={false}
+                            />
                           </div>
                         </div>
                         {pkOpenId === e.id ? (
@@ -684,7 +656,7 @@ export default function KnowledgePage() {
       </div>
 
       <style>{KnowledgeStyles}</style>
-    </>
+    </ConfirmProvider>
   );
 }
 

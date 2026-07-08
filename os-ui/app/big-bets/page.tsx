@@ -8,11 +8,18 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
 import { useApi } from '@/lib/useApi';
+import { useUser } from '@/lib/useUser';
 import { useTileOrder } from '@/lib/prefs/useTileOrder';
 import {
   type BetSummary, type Pillar, api, eur, fmtDate, problemLine,
 } from './types';
 import { ProgressBar, SignalBadge } from './ui';
+import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
+import LifecycleActions from '@/components/lifecycle/LifecycleActions';
+import type { Visibility as LcVisibility } from '@/lib/lifecycle';
+
+/** A bet's reach → the OS-wide lifecycle visibility (cross-domain bets affect others). */
+const betVisibility = (b: BetSummary): LcVisibility => (b.crossDomain ? 'shared' : 'personal');
 
 type ListData = { bets: BetSummary[] };
 type StrategyData = {
@@ -33,9 +40,17 @@ const NO_BETS: BetSummary[] = [];
 const betIdOf = (b: BetSummary) => b.id;
 
 export default function BigBetsPage() {
-  const { data, loading, error } = useApi<ListData>('/api/big-bets');
+  const { data, loading, error, reload } = useApi<ListData>('/api/big-bets');
   const { data: strat } = useApi<StrategyData>('/api/big-bets/strategy');
+  const { user } = useUser();
   const [creating, setCreating] = useState(false);
+
+  // A bet is the caller's to manage when they own it or are an Admin (the route
+  // re-checks either way — this only decides whether to surface the controls).
+  const canManage = useCallback(
+    (b: BetSummary) => !!user && (b.owner === user.id || user.role === 'admin'),
+    [user],
+  );
 
   const pillars = useMemo(() => strat?.pillars ?? [], [strat]);
   const bets = data?.bets ?? NO_BETS;
@@ -62,7 +77,7 @@ export default function BigBetsPage() {
   const groups = useMemo(() => groupByPillar(orderedBets, pillars), [orderedBets, pillars]);
 
   return (
-    <>
+    <ConfirmProvider>
       <PageHeader title="Big Bets" crumb="initiative roadmaps over real components" tutorial="big-bets" />
       <div className="content">
         <p className="lead">
@@ -113,6 +128,8 @@ export default function BigBetsPage() {
                         b={b}
                         dragProps={itemDragProps(b)}
                         dragHandleProps={dragHandleProps}
+                        canManage={canManage(b)}
+                        onChanged={reload}
                       />
                     ))}
                   </div>
@@ -122,7 +139,7 @@ export default function BigBetsPage() {
           </>
         )}
       </div>
-    </>
+    </ConfirmProvider>
   );
 }
 
@@ -155,10 +172,14 @@ function BetCard({
   b,
   dragProps,
   dragHandleProps,
+  canManage,
+  onChanged,
 }: {
   b: BetSummary;
   dragProps?: ItemDragProps;
   dragHandleProps?: DragHandleProps;
+  canManage?: boolean;
+  onChanged?: () => void;
 }) {
   const archived = b.status === 'archived';
   return (
@@ -221,6 +242,20 @@ function BetCard({
           </span>
         </div>
       </Link>
+      {canManage ? (
+        <div className="row" style={{ gap: 6, marginTop: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+          <LifecycleActions
+            id={b.id}
+            name={b.name}
+            kind="bigbet"
+            visibility={betVisibility(b)}
+            archived={archived}
+            api={`/api/big-bets/${b.id}`}
+            onChanged={onChanged}
+            compact
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -16,10 +16,12 @@ function fail(e: unknown) {
 }
 
 /** Governed connections visible to the caller (Personal + domain Shared + Marketplace). */
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const user = await requireUser();
-    const connections = await listConnectionsForUser(user);
+    // ?archived=1 additionally returns soft-archived connections (hidden by default).
+    const includeArchived = new URL(req.url).searchParams.get('archived') === '1';
+    const connections = await listConnectionsForUser(user, { includeArchived });
     // Only the three genuinely-working connectors are offered in the create picker.
     const templates = userFacingTemplates().map((t) => ({
       key: t.key,

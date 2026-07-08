@@ -10,6 +10,9 @@ import PageHeader from '@/components/PageHeader';
 import { useApi } from '@/lib/useApi';
 import { SCOPE_GROUPS, groupByScope, groupsFromVisibility, scopeCounts, type ScopeKey } from '@/lib/scopes';
 import TeamPanel from './TeamPanel';
+import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
+import LifecycleActions from '@/components/lifecycle/LifecycleActions';
+import type { Visibility as LcVisibility } from '@/lib/lifecycle';
 
 type Visibility = 'Personal' | 'Shared' | 'Certified';
 type AppItem = {
@@ -21,10 +24,25 @@ type AppItem = {
   owner: string;
   domain: string;
   visibility: Visibility;
+  status: 'active' | 'archived';
   mode: 'live' | 'offline';
   subdomain: string;
   deploy: { state: 'building' | 'preview' | 'review' | 'live'; releases: number };
 };
+
+/** App visibility → the OS-wide lifecycle visibility (drives the delete gate). */
+const lcVis = (v: Visibility): LcVisibility =>
+  v === 'Shared' ? 'shared' : v === 'Certified' ? 'certified' : 'personal';
+
+/** Post an app lifecycle action to its lifecycle route (archive/unarchive/delete). */
+async function appLifecycle(id: string, action: 'archive' | 'unarchive' | 'delete') {
+  const res = await fetch(`/api/apps/${id}/lifecycle`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Action failed');
+}
 type AppsData = {
   user: { id: string; role: string };
   apps: AppItem[];
@@ -96,8 +114,13 @@ export default function SoftwarePage() {
   const appCounts = scopeCounts(appGroups, uid);
   const apps = scopedApps[scope];
 
+  // An app is the caller's to manage when they own it or are an in-domain Admin
+  // (the lifecycle route re-checks either way — this only decides whether to show it).
+  const role = data?.user.role ?? '';
+  const canManage = (a: AppItem) => uid !== '' && (a.owner === uid || role === 'admin');
+
   return (
-    <>
+    <ConfirmProvider>
       <PageHeader title="Software" crumb="build, chat, deploy — sovereign" tutorial="software" />
       <div className="content sw">
         {/* The big, home-style create launcher. */}
@@ -193,24 +216,49 @@ export default function SoftwarePage() {
           <div className="sw-apps">
             {apps.map((a) => {
               const s = statusBadge(a.deploy.state);
+              const archived = a.status === 'archived';
               return (
-                <Link className="sw-app" key={a.id} href={`/software/${a.id}`}>
-                  <div className="sw-app-top">
-                    <h3 className="sw-app-name">{a.name}</h3>
-                    <span className={s.cls}>{s.label}</span>
-                  </div>
-                  <div className="sw-app-desc">{a.description || 'No description yet.'}</div>
-                  <div className="sw-app-foot">
-                    <span className="sw-app-ver">{versionLabel(a.deploy.releases)}</span>
-                    {a.mode === 'offline' ? <span className="badge muted">git not ready</span> : null}
-                    <span className="sw-app-open">Open →</span>
-                  </div>
-                </Link>
+                <div className="sw-app-cell" key={a.id}>
+                  <Link className="sw-app" href={`/software/${a.id}`}>
+                    <div className="sw-app-top">
+                      <h3 className="sw-app-name">{a.name}</h3>
+                      <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+                        {archived ? <span className="badge muted">archived</span> : null}
+                        <span className={s.cls}>{s.label}</span>
+                      </div>
+                    </div>
+                    <div className="sw-app-desc">{a.description || 'No description yet.'}</div>
+                    <div className="sw-app-foot">
+                      <span className="sw-app-ver">{versionLabel(a.deploy.releases)}</span>
+                      {a.mode === 'offline' ? <span className="badge muted">git not ready</span> : null}
+                      <span className="sw-app-open">Open →</span>
+                    </div>
+                  </Link>
+                  {canManage(a) ? (
+                    <div className="sw-app-actions">
+                      <LifecycleActions
+                        id={a.id}
+                        name={a.name}
+                        kind="app"
+                        visibility={lcVis(a.visibility)}
+                        archived={archived}
+                        api={`/api/apps/${a.id}`}
+                        handlers={{
+                          onArchive: () => appLifecycle(a.id, 'archive'),
+                          onRestore: () => appLifecycle(a.id, 'unarchive'),
+                          onDelete: () => appLifecycle(a.id, 'delete'),
+                        }}
+                        onChanged={reload}
+                        compact
+                      />
+                    </div>
+                  ) : null}
+                </div>
               );
             })}
           </div>
         )}
       </div>
-    </>
+    </ConfirmProvider>
   );
 }
