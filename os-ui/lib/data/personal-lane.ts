@@ -2,28 +2,31 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 /**
- * Personal / sandbox lane logic — DuckDB kept BEHIND Trino's governance boundary.
+ * The PERSONAL lane — a user's own datasets, kept BEHIND Trino's governance.
  *
- * Invariants (stack-decisions.md "DuckDB — personal/sandbox lane"):
- *   1. A user's sandbox only ever sees (a) their own uploads or (b) a
- *      Trino-authorized (already row/column-masked) extract — never a governed
- *      mart directly. `assertSandboxScoped` enforces (b) at the SQL boundary; the
- *      sandbox-duckdb engine has NO Polaris/catalog creds so it can't reach them.
- *   2. Governed data enters the sandbox ONLY via `pullExtract`, which runs the
- *      query THROUGH the governed Trino path (so OPA masking always applies).
- *   3. The ONLY path back to shared is `promotePlan` — dbt-trino writes a governed
- *      Iceberg product + OpenMetadata catalogs it.
+ * SINGLE-ENGINE INVARIANT (data-architecture-model.md, single-engine cleanup):
+ * there is NO separate personal query engine. A user's own data lives as a physical
+ * Iceberg table in their private schema (`iceberg.personal_<uid>.*`) and is queried
+ * THROUGH the SAME governed Trino path (`queryRun`, owner-principal) as every other
+ * read — so OPA row/column masking always applies and there is one place a query can
+ * run. (The old `sandbox-duckdb` engine that used to answer personal queries is gone.)
  *
- * Pure logic (dependency-injected) so the invariants are unit-tested without a
- * live backend; the API route wires the real governed query path.
+ * This module keeps ONLY the still-needed pure helpers:
+ *   - `privatePrefix`      — the user's object-storage upload prefix (MinIO).
+ *   - `pullExtract`        — pull a Trino-authorized, already-masked extract.
+ *   - `assertScopedToSelf` — reject a personal query that reaches a governed catalog.
+ *   - `promotePlan`        — the ONLY personal→shared path (dbt-trino → Iceberg + OM).
+ *
+ * Pure (dependency-injected) so the invariants are unit-tested without a live backend;
+ * the API route wires the real governed query path.
  */
 
-export type SandboxOrigin = 'upload' | 'extract';
+export type PersonalOrigin = 'upload' | 'extract';
 
-export interface SandboxDataset {
+export interface PersonalDataset {
   id: string;
   name: string;
-  origin: SandboxOrigin;
+  origin: PersonalOrigin;
   columns: string[];
   rows: string[][];
 }
@@ -41,14 +44,15 @@ export type GovernedQueryFn = (
 /**
  * Pull an extract THROUGH Trino (governed). The result is whatever Trino's OPA
  * row/column plugin already masked for `principal`; it lands as a private extract
- * on the user's prefix. This is the only door governed data takes into the sandbox.
+ * on the user's prefix. This is the only door governed data takes into the personal
+ * lane — and, since the query lane is now Trino too, the same governed engine.
  */
 export async function pullExtract(opts: {
   principal: string;
   sql: string;
   name: string;
   queryFn: GovernedQueryFn;
-}): Promise<SandboxDataset> {
+}): Promise<PersonalDataset> {
   const r = await opts.queryFn(opts.sql, opts.principal);
   if (r.engine !== 'trino') {
     throw new Error('pull-extract must go through Trino (governed) — refusing an ungoverned read');
@@ -62,15 +66,17 @@ export async function pullExtract(opts: {
   };
 }
 
-// Governed marts live in the Iceberg/Polaris catalog; the sandbox DuckDB must
-// never name them. A catalog-qualified reference is the tell.
+// Governed marts live in the Iceberg/Polaris catalog; a personal-lane query names
+// only the user's OWN tables. A catalog-qualified reference to a governed catalog is
+// the tell — such a read must go through the governed domain principal, not the
+// personal lane. (Kept as a defence-in-depth guard on the pull-extract source SQL.)
 const GOVERNED_CATALOG_REF = /\b(?:iceberg|polaris|hive)\s*\.\s*\w/i;
 
-/** Reject any sandbox query that reaches into a governed catalog/mart. */
-export function assertSandboxScoped(sql: string): void {
+/** Reject any personal-lane query that reaches into a governed catalog/mart. */
+export function assertScopedToSelf(sql: string): void {
   if (GOVERNED_CATALOG_REF.test(sql)) {
     throw new Error(
-      'sandbox DuckDB cannot read governed marts — pull an extract through Trino first',
+      'a personal-lane query cannot read governed marts — pull an extract through Trino first',
     );
   }
 }
@@ -93,12 +99,12 @@ function slug(name: string): string {
 }
 
 /**
- * Promote a sandbox dataset into the governed lane — the ONLY sandbox->shared
+ * Promote a personal dataset into the governed lane — the ONLY personal→shared
  * path. dbt-trino writes it as a governed Iceberg product; OpenMetadata catalogs
  * it (owner/domain/visibility/lineage). Production transforms stay dbt-trino.
  */
 export function promotePlan(
-  d: SandboxDataset,
+  d: PersonalDataset,
   meta: { domain: string; owner: string; visibility: string },
 ): PromotePlan {
   return {

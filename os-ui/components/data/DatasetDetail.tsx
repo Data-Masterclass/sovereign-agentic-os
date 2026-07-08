@@ -11,8 +11,36 @@ import LineagePanel from './LineagePanel';
 type Layer = 'bronze' | 'silver' | 'gold';
 type VersionState = { built: boolean; updatedAt: string | null; artifact: string | null };
 type ColumnDoc = { name: string; description: string };
-type DataCheck = { id: string; name: string; description: string; createdBy: string; createdAt: string };
+type DataCheckRule = 'not_null' | 'not_blank' | 'unique' | 'accepted_values' | 'range';
+type DataCheck = {
+  id: string; name: string; description: string; createdBy: string; createdAt: string;
+  rule?: DataCheckRule; column?: string; values?: string[]; min?: number; max?: number;
+};
+type CheckStatus = 'pass' | 'fail' | 'not_run';
+type CheckResult = { id: string; label: string; status: CheckStatus; violations: number | null; reason?: string };
+type QualityBadge = 'passing' | 'failing' | 'unknown';
 type Certification = { level: string; by: string; at: string };
+
+const RULE_LABELS: Record<DataCheckRule, string> = {
+  not_null: 'Not null',
+  not_blank: 'Not blank',
+  unique: 'Unique',
+  accepted_values: 'Accepted values',
+  range: 'In range',
+};
+
+/** The dbt-style label the editor shows for a stored rule. */
+function ruleText(c: DataCheck): string {
+  const col = c.column ?? '';
+  switch (c.rule) {
+    case 'not_null': return `not_null(${col})`;
+    case 'not_blank': return `not_blank(${col})`;
+    case 'unique': return `unique(${col})`;
+    case 'accepted_values': return `accepted_values(${col}, [${(c.values ?? []).join(', ')}])`;
+    case 'range': return `range(${col}, ${c.min ?? ''}, ${c.max ?? ''})`;
+    default: return c.name || 'check';
+  }
+}
 
 type Dataset = {
   id: string;
@@ -100,11 +128,20 @@ export default function DatasetDetail({
   const [docsErr, setDocsErr] = useState('');
   const [docsOk, setDocsOk] = useState('');
 
-  // ---- checks ----
-  const [newCheckName, setNewCheckName] = useState('');
-  const [newCheckDesc, setNewCheckDesc] = useState('');
+  // ---- data-quality rules editor ----
+  const [ruleKind, setRuleKind] = useState<DataCheckRule>('not_null');
+  const [ruleColumn, setRuleColumn] = useState('');
+  const [ruleValues, setRuleValues] = useState(''); // comma-separated (accepted_values)
+  const [ruleMin, setRuleMin] = useState('');
+  const [ruleMax, setRuleMax] = useState('');
   const [checksBusy, setChecksBusy] = useState(false);
   const [checksErr, setChecksErr] = useState('');
+  // ---- run results ----
+  const [results, setResults] = useState<Record<string, CheckResult>>({});
+  const [badge, setBadge] = useState<QualityBadge | null>(null);
+  const [ranAt, setRanAt] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+  const [runErr, setRunErr] = useState('');
 
   const load = useCallback(async () => {
     setLoadErr('');
@@ -169,25 +206,65 @@ export default function DatasetDetail({
     }
   }, [datasetId, desc, cols]);
 
-  const addCheck = useCallback(async () => {
-    if (!newCheckName.trim()) return;
+  const addRule = useCallback(async () => {
+    const column = ruleColumn.trim();
+    if (!column) { setChecksErr('Pick a column for the rule.'); return; }
     setChecksErr(''); setChecksBusy(true);
+    const payload: Record<string, unknown> = { rule: ruleKind, column };
+    if (ruleKind === 'accepted_values') {
+      payload.values = ruleValues.split(',').map((v) => v.trim()).filter(Boolean);
+    }
+    if (ruleKind === 'range') {
+      if (ruleMin.trim() !== '') payload.min = Number(ruleMin);
+      if (ruleMax.trim() !== '') payload.max = Number(ruleMax);
+    }
     try {
       const res = await fetch(`/api/data/datasets/${datasetId}/checks`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: newCheckName.trim(), description: newCheckDesc.trim() }),
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (!res.ok) { setChecksErr(data.error ?? 'Could not add check'); return; }
+      if (!res.ok) { setChecksErr(data.error ?? 'Could not add rule'); return; }
       setChecks((prev) => [...prev, data.check]);
-      setNewCheckName(''); setNewCheckDesc('');
+      setRuleColumn(''); setRuleValues(''); setRuleMin(''); setRuleMax('');
     } catch (e) {
       setChecksErr((e as Error).message);
     } finally {
       setChecksBusy(false);
     }
-  }, [datasetId, newCheckName, newCheckDesc]);
+  }, [datasetId, ruleKind, ruleColumn, ruleValues, ruleMin, ruleMax]);
+
+  const deleteRule = useCallback(async (checkId: string) => {
+    try {
+      const res = await fetch(`/api/data/datasets/${datasetId}/checks`, {
+        method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ checkId }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setChecks(data.checks ?? []);
+        setResults((prev) => { const n = { ...prev }; delete n[checkId]; return n; });
+      }
+    } catch { /* leave the row — a failed delete never fabricates state */ }
+  }, [datasetId]);
+
+  const runChecks = useCallback(async () => {
+    setRunErr(''); setRunning(true);
+    try {
+      const res = await fetch(`/api/data/datasets/${datasetId}/checks`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'run' }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setRunErr(data.error ?? 'Could not run checks'); return; }
+      const byId: Record<string, CheckResult> = {};
+      for (const r of (data.results ?? []) as CheckResult[]) byId[r.id] = r;
+      setResults(byId);
+      setBadge(data.badge ?? 'unknown');
+      setRanAt(data.ranAt ?? null);
+    } catch (e) {
+      setRunErr((e as Error).message);
+    } finally {
+      setRunning(false);
+    }
+  }, [datasetId]);
 
   if (loadErr) {
     return (
@@ -405,67 +482,114 @@ export default function DatasetDetail({
         </>
       ) : null}
 
-      {/* ── Data checks ── */}
+      {/* ── Data quality ── */}
       <div className="section-title" style={{ marginTop: 4 }}>
-        Data checks
+        Data quality
         <span className="count-pill">{checks.length}</span>
+        {badge ? (
+          <span
+            className={`badge ${badge === 'passing' ? 'vis-shared' : badge === 'failing' ? 'vis-personal' : ''}`}
+            style={{ marginLeft: 10 }}
+            title={ranAt ? `Last run ${formatDate(ranAt)}` : undefined}
+          >
+            {badge === 'passing' ? '✓ passing' : badge === 'failing' ? '✗ failing' : 'not run'}
+          </span>
+        ) : null}
+        {checks.length > 0 ? (
+          <button className="btn ghost sm" style={{ marginLeft: 10 }} onClick={runChecks} disabled={running}>
+            {running ? <span className="spin" /> : 'Run checks'}
+          </button>
+        ) : null}
       </div>
       <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-        Check intentions recorded alongside this dataset — NOT auto-executed by the OS.
-        Wire a data quality tool (dbt tests, Great Expectations, Soda, …) to run them.
+        Dropdown rules run through the governed query path (as the owner) against this
+        dataset&apos;s built table — a real pass/fail per rule. A rule that can&apos;t run
+        (nothing materialised yet) shows &ldquo;not run&rdquo;, never a fake pass.
+        {' '}Full dbt-core tests are the next step; this is the governed-SQL bridge.
       </p>
+      {runErr ? <div className="error" style={{ marginBottom: 10 }}>{runErr}</div> : null}
 
       {checks.length > 0 ? (
         <div className="table-wrap" style={{ marginBottom: 14 }}>
           <table>
             <thead>
               <tr>
-                <th>Check</th>
-                <th>Description</th>
+                <th>Rule</th>
+                <th>Result</th>
                 <th>Added by</th>
-                <th>Date</th>
+                {canEdit ? <th /> : null}
               </tr>
             </thead>
             <tbody>
-              {checks.map((chk) => (
-                <tr key={chk.id}>
-                  <td style={{ fontWeight: 600 }}>{chk.name}</td>
-                  <td className="muted" style={{ whiteSpace: 'normal' }}>{chk.description || '—'}</td>
-                  <td className="muted">{chk.createdBy}</td>
-                  <td className="muted">{chk.createdAt ? formatDate(chk.createdAt) : '—'}</td>
-                </tr>
-              ))}
+              {checks.map((chk) => {
+                const r = results[chk.id];
+                return (
+                  <tr key={chk.id}>
+                    <td className="mono" style={{ whiteSpace: 'nowrap', fontWeight: 600 }}>{ruleText(chk)}</td>
+                    <td>
+                      {r ? (
+                        r.status === 'pass' ? (
+                          <span className="status-chip s-searchable" style={{ cursor: 'default' }}>✓ pass</span>
+                        ) : r.status === 'fail' ? (
+                          <span className="status-chip s-stored" style={{ cursor: 'default' }} title={`${r.violations} violating row(s)`}>
+                            ✗ fail · {r.violations}
+                          </span>
+                        ) : (
+                          <span className="muted" title={r.reason}>not run</span>
+                        )
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
+                    <td className="muted">{chk.createdBy}</td>
+                    {canEdit ? (
+                      <td>
+                        <button className="btn ghost sm" onClick={() => deleteRule(chk.id)} aria-label="Remove rule">×</button>
+                      </td>
+                    ) : null}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       ) : (
-        <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>No checks defined yet.</p>
+        <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>No quality rules yet.</p>
       )}
 
       {canEdit ? (
         <div className="guided-panel" style={{ padding: '12px 16px' }}>
-          <div className="muted" style={{ fontSize: 12.5, marginBottom: 8 }}>Add a check</div>
-          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-            <input
-              style={{ maxWidth: 220 }}
-              placeholder="Check name (e.g. no null ids)"
-              value={newCheckName}
-              onChange={(e) => setNewCheckName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') addCheck(); }}
-            />
-            <input
-              style={{ flex: 1, minWidth: 160 }}
-              placeholder="What it verifies"
-              value={newCheckDesc}
-              onChange={(e) => setNewCheckDesc(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') addCheck(); }}
-            />
-            <button
-              className="btn"
-              onClick={addCheck}
-              disabled={checksBusy || !newCheckName.trim()}
-            >
-              {checksBusy ? <span className="spin" /> : 'Add'}
+          <div className="muted" style={{ fontSize: 12.5, marginBottom: 8 }}>Add a rule</div>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <select value={ruleKind} onChange={(e) => setRuleKind(e.target.value as DataCheckRule)} style={{ maxWidth: 170 }}>
+              {(Object.keys(RULE_LABELS) as DataCheckRule[]).map((k) => (
+                <option key={k} value={k}>{RULE_LABELS[k]}</option>
+              ))}
+            </select>
+            {dataset.columns.length > 0 ? (
+              <select value={ruleColumn} onChange={(e) => setRuleColumn(e.target.value)} style={{ maxWidth: 200 }}>
+                <option value="">column…</option>
+                {dataset.columns.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+              </select>
+            ) : (
+              <input style={{ maxWidth: 200 }} placeholder="column" value={ruleColumn} onChange={(e) => setRuleColumn(e.target.value)} />
+            )}
+            {ruleKind === 'accepted_values' ? (
+              <input
+                style={{ flex: 1, minWidth: 160 }}
+                placeholder="allowed values, comma-separated"
+                value={ruleValues}
+                onChange={(e) => setRuleValues(e.target.value)}
+              />
+            ) : null}
+            {ruleKind === 'range' ? (
+              <>
+                <input style={{ maxWidth: 90 }} placeholder="min" value={ruleMin} onChange={(e) => setRuleMin(e.target.value)} inputMode="decimal" />
+                <input style={{ maxWidth: 90 }} placeholder="max" value={ruleMax} onChange={(e) => setRuleMax(e.target.value)} inputMode="decimal" />
+              </>
+            ) : null}
+            <button className="btn" onClick={addRule} disabled={checksBusy || !ruleColumn.trim()}>
+              {checksBusy ? <span className="spin" /> : 'Add rule'}
             </button>
           </div>
           {checksErr ? <div className="error" style={{ marginTop: 8 }}>{checksErr}</div> : null}

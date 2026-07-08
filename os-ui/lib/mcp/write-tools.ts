@@ -17,8 +17,13 @@ import {
   getDataset,
   defineMeasure,
   buildGoldJoin as commitGoldJoin,
+  addCheck,
+  builtLayerFqn,
   type PromotionRequest,
 } from '@/lib/data/store';
+import { runQualityChecks } from '@/lib/data/dq-run';
+import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/data/dataset-schema';
+import { queryRun } from '@/lib/governed';
 import { publishPromotionLive } from '@/lib/data/publish-server';
 import { enqueue, getApproval, decide, listApprovals } from '@/lib/approvals';
 import { canBuildStage, canPassThrough, stageArtifact } from '@/lib/data/panels';
@@ -507,6 +512,86 @@ export const dataWriteTools: McpTool[] = [
         measures: updated.measures,
         upstreams: updated.upstreams,
       };
+    },
+  },
+  {
+    name: 'define_quality_rules',
+    tab: 'data',
+    minRole: 'creator',
+    description:
+      'Add one or more data-quality RULES to a dataset you can edit — the Data tab’s "Data quality" editor. Each rule is executable: not_null(column), not_blank(column), unique(column), accepted_values(column, values[]), range(column, min?, max?). Rules are stored on the dataset.yaml spine (versioned + discoverable) and RUN via run_quality_checks. Before: get_dataset (to see the real column names). After: run_quality_checks to get a real pass/fail. Governance: Creator+ on a dataset you own (or domain Admin); each rule needs a column. Idempotent-ish: re-running appends rules.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        datasetId: { type: 'string', description: 'Target dataset id (from list_datasets / get_dataset).' },
+        rules: {
+          type: 'array',
+          description: 'The rules to add.',
+          items: {
+            type: 'object',
+            properties: {
+              rule: { type: 'string', enum: [...DATA_CHECK_RULES], description: 'The rule kind.' },
+              column: { type: 'string', description: 'The column the rule applies to.' },
+              values: { type: 'array', items: { type: 'string' }, description: 'accepted_values: the allowed set.' },
+              min: { type: 'number', description: 'range: inclusive lower bound (optional).' },
+              max: { type: 'number', description: 'range: inclusive upper bound (optional).' },
+            },
+            required: ['rule', 'column'],
+          },
+        },
+      },
+      required: ['datasetId', 'rules'],
+      examples: [
+        { datasetId: 'ds_ab12cd', rules: [{ rule: 'not_null', column: 'order_id' }, { rule: 'range', column: 'net_amount', min: 0 }, { rule: 'accepted_values', column: 'status', values: ['open', 'shipped', 'closed'] }] },
+      ],
+    },
+    call: async (user, args) => {
+      const datasetId = str(args.datasetId).trim();
+      if (!datasetId) fail('define_quality_rules needs a `datasetId`', 400);
+      const rulesIn = Array.isArray(args.rules) ? args.rules : [];
+      if (rulesIn.length === 0) fail('define_quality_rules needs at least one rule', 400);
+      const p = P(user);
+      let dataset = getDataset(datasetId, p); // canView/canEdit re-gated in addCheck
+      for (const raw of rulesIn) {
+        const r = (raw ?? {}) as Record<string, unknown>;
+        const rule = str(r.rule) as DataCheckRule;
+        if (!(DATA_CHECK_RULES as string[]).includes(rule)) fail(`unknown rule '${str(r.rule)}' (${DATA_CHECK_RULES.join('|')})`, 400);
+        const column = str(r.column).trim();
+        if (!column) fail(`${rule} needs a column`, 400);
+        dataset = addCheck(datasetId, p, {
+          name: `${rule}(${column})`,
+          rule,
+          column,
+          values: Array.isArray(r.values) ? r.values.map((x) => str(x)) : undefined,
+          min: typeof r.min === 'number' ? r.min : undefined,
+          max: typeof r.max === 'number' ? r.max : undefined,
+        });
+      }
+      return { datasetId, checks: dataset.checks ?? [] };
+    },
+  },
+  {
+    name: 'run_quality_checks',
+    tab: 'data',
+    minRole: 'creator',
+    description:
+      'Run a dataset’s data-quality rules and READ the result — the "Run checks" button. Each structured rule is compiled to a governed COUNT-of-violations SQL and executed through the SAME governed query path AS THE OWNER (a private dataset’s personal_<uid> table is read as its owner, OPA-governed), producing a REAL pass/fail per rule plus an aggregate badge (passing | failing | unknown). Honesty: a rule that can’t run (nothing materialised yet, or a free-text intention) is reported "not_run", NEVER a fake pass. Before: define_quality_rules (+ a built layer to check). Governance: Creator+ on a dataset you can see; read-only.',
+    inputSchema: {
+      type: 'object',
+      properties: { datasetId: { type: 'string', description: 'Dataset id whose rules to run (from get_dataset).' } },
+      required: ['datasetId'],
+    },
+    call: async (user, args) => {
+      const datasetId = str(args.datasetId).trim();
+      if (!datasetId) fail('run_quality_checks needs a `datasetId`', 400);
+      const p = P(user);
+      const dataset = getDataset(datasetId, p); // canView gate
+      const resolved = builtLayerFqn(dataset, p); // { fqn, principal } | null
+      const report = await runQualityChecks(dataset.checks ?? [], {
+        fqn: resolved?.fqn ?? null,
+        queryFn: (sql) => queryRun(sql, resolved?.principal),
+      });
+      return { datasetId, name: dataset.name, ...report };
     },
   },
 ];

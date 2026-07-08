@@ -89,16 +89,37 @@ export const TRUST_LEVELS: TrustLevel[] = ['bronze', 'silver', 'gold'];
  *  the registry entry (a governed asset/product the builder could see). */
 export type DatasetUpstream = { datasetId: string; name: string; fqn: string; joinType: 'inner' | 'left' };
 
-/** A manually-authored data-quality check intention. Checks are RECORDED here
- *  so they are discoverable and versioned alongside the dataset.yaml spine; they
- *  are NOT auto-executed by the OS — connect a data quality tool (dbt tests,
- *  Great Expectations, etc.) to run them and push results back. */
+/** The dropdown-driven data-quality rule kinds the DQ editor offers. Each compiles
+ *  to a COUNT-of-violations SQL check run through the governed query path (see
+ *  `lib/data/dq.ts`). `range` uses `min`/`max`; `accepted_values` uses `values`. */
+export type DataCheckRule =
+  | 'not_null'
+  | 'not_blank'
+  | 'unique'
+  | 'accepted_values'
+  | 'range';
+
+export const DATA_CHECK_RULES: DataCheckRule[] = ['not_null', 'not_blank', 'unique', 'accepted_values', 'range'];
+
+/** A data-quality check on the dataset. A STRUCTURED rule (`rule` + `column` + args)
+ *  is EXECUTABLE — compiled to a governed COUNT-of-violations SQL and run AS the owner
+ *  to produce a real pass/fail. A check with no `rule` is a legacy free-text intention
+ *  (kept for back-compat) and is reported as "not run". */
 export type DataCheck = {
   id: string;
   name: string;
   description: string;
   createdBy: string;
   createdAt: string;
+  /** The executable rule kind (absent ⇒ a legacy free-text intention). */
+  rule?: DataCheckRule;
+  /** The column the rule applies to (required for every executable rule). */
+  column?: string;
+  /** `accepted_values`: the allowed value set. */
+  values?: string[];
+  /** `range`: inclusive numeric bounds (either may be omitted for a one-sided range). */
+  min?: number;
+  max?: number;
 };
 
 export type Dataset = {
@@ -137,15 +158,18 @@ export class DatasetError extends Error {
 
 // ----------------------------------------------------------- hard storage line --
 
-export type Storage = 'duckdb-sandbox' | 'trino-iceberg';
+export type Storage = 'personal-iceberg' | 'trino-iceberg';
 
 /**
  * THE HARD STORAGE LINE (data-architecture-model.md): private datasets live in the
- * per-user DuckDB sandbox; only promoted assets and certified products live in
- * Trino/Iceberg. This single function is the one place that line is drawn.
+ * per-user PERSONAL Iceberg schema (`iceberg.personal_<uid>.*`), read AS the owner
+ * through governed Trino; only promoted assets and certified products live in the
+ * shared domain Trino/Iceberg schema. SINGLE-ENGINE: both are Trino/Iceberg — the tier
+ * decides the schema + owning principal, not the engine. This is the one place that
+ * line is drawn.
  */
 export function storageFor(tier: Tier): Storage {
-  return tier === 'dataset' ? 'duckdb-sandbox' : 'trino-iceberg';
+  return tier === 'dataset' ? 'personal-iceberg' : 'trino-iceberg';
 }
 
 // --------------------------------------------------------- role-gated lifecycle --
@@ -286,13 +310,22 @@ function parseUpstream(raw: unknown, i: number): DatasetUpstream {
 
 function parseCheck(raw: unknown, i: number): DataCheck {
   if (!isRecord(raw)) throw new DatasetError(`dataset.yaml: checks[${i}] must be a mapping`);
-  return {
+  const base: DataCheck = {
     id: typeof raw.id === 'string' ? raw.id : `chk_${i}`,
     name: typeof raw.name === 'string' ? raw.name : 'Untitled check',
     description: typeof raw.description === 'string' ? raw.description : '',
     createdBy: typeof raw.createdBy === 'string' ? raw.createdBy : '',
     createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : '',
   };
+  const rule = raw.rule;
+  if (typeof rule === 'string' && (DATA_CHECK_RULES as string[]).includes(rule)) {
+    base.rule = rule as DataCheckRule;
+    if (typeof raw.column === 'string') base.column = raw.column;
+    if (Array.isArray(raw.values)) base.values = raw.values.map((x) => String(x));
+    if (typeof raw.min === 'number') base.min = raw.min;
+    if (typeof raw.max === 'number') base.max = raw.max;
+  }
+  return base;
 }
 
 export function parseDataset(input: string | Record<string, unknown>): Dataset {

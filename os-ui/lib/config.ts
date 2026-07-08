@@ -90,10 +90,9 @@ export const config = {
   // os-ui pod memory bounded. Larger loads are an M2 connector (dlt source) job.
   uploadMaxBytes: Number(env('UPLOAD_MAX_BYTES', String(100 * 1024 * 1024))) || 100 * 1024 * 1024,
 
-  // sandbox-duckdb (personal/sandbox lane): ephemeral DuckDB scoped to the user's
-  // private prefix ONLY (uploads + Trino-authorized extracts) — never governed
-  // marts. POST {SANDBOX_DUCKDB_URL}/query {"sql": "..."}.
-  sandboxDuckdbUrl: base(env('SANDBOX_DUCKDB_URL', 'http://sandbox-duckdb:8000')),
+  // (Removed) sandbox-duckdb personal-query engine — the second engine. The personal
+  // lane now reads through the SAME governed Trino path (owner-principal); there is
+  // no separate query engine.
 
   // Langfuse: GET {LANGFUSE_URL}/api/public/traces  (HTTP basic auth)
   langfuseUrl: base(env('LANGFUSE_URL', 'http://agentic-os-langfuse-web:3000')),

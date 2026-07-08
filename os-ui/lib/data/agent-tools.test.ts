@@ -5,7 +5,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runAgentTool, type Executors } from './agent-tools.ts';
 import { claimsFromUser } from './identity.ts';
-import { assertSandboxScoped } from '../sandbox.ts';
 
 const amir = claimsFromUser({ id: 'amir', domains: ['sales'], role: 'builder', attributes: { region: 'DE' } });
 
@@ -13,22 +12,20 @@ function spyExecutors(over: Partial<Executors> = {}): { ex: Executors; calls: Re
   const calls: Record<string, unknown> = {};
   const ex: Executors = {
     async authorize() { return { allowed: true, policy: 'opa-allow' }; },
-    async trinoQuery(sql, principal) { calls.trinoPrincipal = principal; return { columns: ['x'], rows: [['1']] }; },
+    async trinoQuery(_sql, principal) { calls.trinoPrincipal = principal; return { columns: ['x'], rows: [['1']] }; },
     async cubeQuery(_q, sc) { calls.cubeSecurityContext = sc; return { rows: [{ revenue: 100 }] }; },
-    async sandboxQuery(sql, prefix) { calls.sandboxPrefix = prefix; return { columns: ['c'], rows: [['v']] }; },
     async trace(e) { calls.traced = e; return true; },
-    assertSandboxScoped,
     ...over,
   };
   return { ex, calls };
 }
 
-test('personal scope runs on the user’s OWN sandbox prefix, never a governed mart', async () => {
+test('personal scope runs through governed Trino AS the owner, never a governed mart', async () => {
   const { ex, calls } = spyExecutors();
   const r = await runAgentTool(amir, { scope: 'personal', kind: 'query', sql: 'select * from my_upload' }, ex);
   assert.equal(r.ok, true);
-  assert.equal(r.source, 'duckdb');
-  assert.equal(calls.sandboxPrefix, 's3://sandbox/amir/');
+  assert.equal(r.source, 'trino'); // single engine — no separate DuckDB source
+  assert.equal(calls.trinoPrincipal, 'amir'); // run AS the owner so OPA governs personal_<uid>
 });
 
 test('personal scope REFUSES a query that reaches into a governed catalog', async () => {

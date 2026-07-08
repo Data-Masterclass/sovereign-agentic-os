@@ -21,7 +21,6 @@ import { runConformance, evaluateOpa } from './policy/conformance.ts';
 import { lineageFor } from './lineage.ts';
 import { runAgentTool, type Executors } from './agent-tools.ts';
 import { claimsFromUser } from './identity.ts';
-import { assertSandboxScoped } from '../sandbox.ts';
 import type { Dataset } from './dataset-schema.ts';
 
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' }; // Creator
@@ -119,9 +118,7 @@ test('Orders both ways: the data agent reads exactly the governed product the UI
         return { columns: ['order_id', 'net_amount'], rows: entitled ? [['1', '100']] : [] }; // RLS: no rows if not entitled
       },
       async cubeQuery() { return { rows: [{ revenue: 100 }] }; },
-      async sandboxQuery() { return { columns: ['c'], rows: [['x']] }; },
       async trace() { return true; },
-      assertSandboxScoped,
     };
   }
 

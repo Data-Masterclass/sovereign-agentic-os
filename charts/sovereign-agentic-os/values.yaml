@@ -1833,20 +1833,13 @@ dataRunner:
     limits: { cpu: "1", memory: 1Gi }
 
 # -----------------------------------------------------------------------------
-# Sandbox DuckDB — the PERSONAL/SANDBOX lane engine (behind Trino's governance).
-# Ephemeral DuckDB scoped to the user's PRIVATE PREFIX only (uploads + a
-# Trino-authorized, already-masked extract). It has NO Polaris/Iceberg-catalog
-# credentials, so by construction it can never read governed marts — the invariant.
+# (Removed) Sandbox DuckDB — the personal-query engine. Single-engine cleanup:
+# a user's own data now lives as a physical Iceberg table in `iceberg.personal_<uid>.*`
+# and is queried THROUGH the SAME governed Trino path (owner-principal) as every other
+# read. There is no separate personal query engine — the `sandbox-duckdb` Deployment is
+# gone. (This is NOT the terminal/Hermes code-execution sandbox — see `terminal:` /
+# `hermes:` below, which stay.)
 # -----------------------------------------------------------------------------
-sandbox:
-  enabled: true
-  image:
-    repository: sovereign-os/sandbox-duckdb   # built locally, loaded into kind
-    tag: "0.1.0"
-  bucket: sandbox                             # the per-user private-prefix bucket
-  resources:
-    requests: { cpu: 50m, memory: 128Mi }
-    limits: { cpu: 500m, memory: 512Mi }
 
 # -----------------------------------------------------------------------------
 # Trino — the CENTRAL GOVERNED query engine for all shared marts (decided

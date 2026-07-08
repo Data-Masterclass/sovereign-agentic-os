@@ -33,8 +33,8 @@ function sample(over: Partial<Dataset> = {}): Dataset {
   };
 }
 
-test('hard storage line: datasets -> DuckDB; assets/products -> Trino', () => {
-  assert.equal(storageFor('dataset'), 'duckdb-sandbox');
+test('hard storage line: datasets -> personal Iceberg lane; assets/products -> shared Trino', () => {
+  assert.equal(storageFor('dataset'), 'personal-iceberg');
   assert.equal(storageFor('asset'), 'trino-iceberg');
   assert.equal(storageFor('product'), 'trino-iceberg');
 });

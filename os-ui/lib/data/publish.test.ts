@@ -10,12 +10,14 @@ import {
   setDocs,
   requestPromotion,
   getDataset,
+  listGovernedDatasets,
   type Principal,
   type PromotionRequest,
 } from './store.ts';
 import { DatasetError, type Dataset } from './dataset-schema.ts';
 import { publishApprovedPromotion, type PublishWrite } from './publish.ts';
 import { publishPlan } from './transform.ts';
+import { buildCubeModels } from './cube-models.ts';
 import { governanceFor } from './policy/compiler.ts';
 import type { DataBuildReport } from './build/orchestrate.ts';
 
@@ -106,6 +108,40 @@ test('success: the tier flips AND the Cube models payload includes the new view'
   assert.equal(ds.tier, 'asset');
   assert.ok(out.ok && out.cubeView, 'the promoted Gold dataset appears in /api/cube/models');
   assert.equal(out.ok && out.fqn, 'iceberg.sales.gold_orders');
+});
+
+test('Gold publish auto-registers a COMPLETE, queryable Cube model — no define_metric needed', async () => {
+  // A dataset the user NEVER ran define_metric on: zero measures, gold columns documented.
+  const d = createDataset(amir, { name: 'Orders' });
+  buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'b' });
+  buildVersion(d.id, amir, 'silver', { quality: 'passing', artifact: 's' });
+  buildVersion(d.id, amir, 'gold', { quality: 'passing', artifact: 'g' });
+  setDocs(d.id, amir, {
+    description: 'Sales orders.',
+    columns: [
+      { name: 'order_id', description: 'Key.' },
+      { name: 'region', description: 'Where.' },
+      { name: 'net_amount', description: 'Value.' },
+    ],
+  });
+  const req = requestPromotion(d.id, amir, { visibility: 'domain' });
+
+  const out = await publishApprovedPromotion(req, bea, fakeBuild(true).deps);
+  assert.equal(out.ok, true);
+
+  // The Cube model the sync sidecar reads is emitted from the SAME governed source.
+  const model = buildCubeModels(listGovernedDatasets()).models.find((m) => m.name === 'orders');
+  assert.ok(model, 'the Gold dataset is auto-registered as a Cube model');
+  // Measures auto-fall back to `count` (queryable without any user-defined metric).
+  assert.deepEqual(model!.measures, ['count']);
+  assert.match(model!.model, /name: count\n\s+type: count/);
+  // Dimensions are derived AUTOMATICALLY from the gold columns — no manual step.
+  assert.match(model!.model, /dimensions:/);
+  assert.match(model!.model, /name: order_id/);
+  assert.match(model!.model, /name: region/);
+  assert.match(model!.model, /name: net_amount/);
+  // It binds to the built Gold mart, so the semantic model is actually queryable.
+  assert.match(model!.model, /sql_table: iceberg\.sales\.gold_orders/);
 });
 
 test('a silver-only promotion publishes silver_<slug> and honestly reports no Cube view', async () => {

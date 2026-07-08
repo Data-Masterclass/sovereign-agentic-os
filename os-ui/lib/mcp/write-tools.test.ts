@@ -206,3 +206,50 @@ test('ERGONOMICS: a missing required arg is a typed bad_request (with a hint), n
   assert.equal(e.code, 'bad_request');
   assert.ok(e.hint.length > 0);
 });
+
+// ---- DATA QUALITY: define rules (write) → run them (read), honestly ----------
+test('DATA QUALITY: define_quality_rules stores executable rules; run_quality_checks reports honestly', async () => {
+  resetAll();
+  const d = payload<{ id: string }>(await call(creator, 'create_dataset', { name: 'Orders', domain: 'sales' }));
+
+  // A creator can author quality rules on their own dataset.
+  const defined = payload<{ datasetId: string; checks: { rule?: string; column?: string }[] }>(
+    await call(creator, 'define_quality_rules', {
+      datasetId: d.id,
+      rules: [
+        { rule: 'not_null', column: 'order_id' },
+        { rule: 'accepted_values', column: 'status', values: ['open', 'closed'] },
+        { rule: 'range', column: 'net_amount', min: 0 },
+      ],
+    }),
+  );
+  assert.equal(defined.checks.length, 3);
+  assert.deepEqual(defined.checks.map((c) => c.rule), ['not_null', 'accepted_values', 'range']);
+
+  // Running them: no physical table is materialized in-process, so every rule is
+  // honestly "not_run" and the badge is unknown — NEVER a fake pass.
+  const report = payload<{ badge: string; results: { status: string }[] }>(
+    await call(creator, 'run_quality_checks', { datasetId: d.id }),
+  );
+  assert.equal(report.results.length, 3);
+  assert.ok(report.results.every((r) => r.status === 'not_run'), 'no built layer ⇒ not_run, never a fake pass');
+  assert.equal(report.badge, 'unknown');
+});
+
+test('DATA QUALITY: a rule without a column is a typed bad_request', async () => {
+  resetAll();
+  const d = payload<{ id: string }>(await call(creator, 'create_dataset', { name: 'Orders', domain: 'sales' }));
+  const e = errorOf(await call(creator, 'define_quality_rules', { datasetId: d.id, rules: [{ rule: 'not_null' }] }));
+  assert.equal(e.code, 'bad_request');
+});
+
+// ---- CUBE auto-registration reflected in get_dataset -------------------------
+test('DISCOVERY: get_dataset reflects Cube auto-registration state (no manual metric needed)', async () => {
+  resetAll();
+  const d = payload<{ id: string }>(await call(creator, 'create_dataset', { name: 'Orders', domain: 'sales' }));
+  // A brand-new private dataset is NOT Cube-ready (not shared, no Gold).
+  const before = payload<{ cube: { ready: boolean; measures: string[] } }>(await call(creator, 'get_dataset', { datasetId: d.id }));
+  assert.equal(before.cube.ready, false);
+  // The measures default to the count fallback (queryable without define_metric).
+  assert.deepEqual(before.cube.measures, ['count']);
+});

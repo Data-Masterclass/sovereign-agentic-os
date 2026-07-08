@@ -14,7 +14,7 @@ import {
   IdentityError,
   type Claims,
 } from './identity.ts';
-import { privatePrefix } from '../sandbox.ts';
+import { privatePrefix } from './personal-lane.ts';
 
 const claims: Claims = claimsFromUser({ id: 'amir', domains: ['sales'], role: 'builder', attributes: { region: 'DE' } });
 
@@ -57,5 +57,5 @@ test('personal lane: sandbox prefix is exposed only for personal scope, and only
   assert.equal(propagate(delegate(claims, 'personal')).sandboxPrefix, privatePrefix('amir'));
   const tok = delegate(claims, 'personal');
   assert.doesNotThrow(() => assertOwnSandbox(tok, privatePrefix('amir')));
-  assert.throws(() => assertOwnSandbox(tok, privatePrefix('bea')), IdentityError); // never another user's DuckDB
+  assert.throws(() => assertOwnSandbox(tok, privatePrefix('bea')), IdentityError); // never another user's private lane
 });

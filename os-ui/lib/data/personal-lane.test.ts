@@ -6,10 +6,10 @@ import assert from 'node:assert/strict';
 import {
   privatePrefix,
   pullExtract,
-  assertSandboxScoped,
+  assertScopedToSelf,
   promotePlan,
-  type SandboxDataset,
-} from './sandbox.ts';
+  type PersonalDataset,
+} from './personal-lane.ts';
 
 test('private prefix is per-user and isolated', () => {
   assert.equal(privatePrefix('alice'), 's3://sandbox/alice/');
@@ -33,7 +33,7 @@ test('pull-extract goes THROUGH Trino (governed/masked) and lands as a private e
   assert.deepEqual(ds.columns, ['region', 'revenue']);
 });
 
-test('pull-extract REFUSES any path that did not go through Trino', async () => {
+test('pull-extract REFUSES any path that did not go through Trino (single engine)', async () => {
   await assert.rejects(
     pullExtract({
       principal: 'p',
@@ -45,16 +45,15 @@ test('pull-extract REFUSES any path that did not go through Trino', async () => 
   );
 });
 
-test('sandbox DuckDB cannot reference a governed catalog/mart (the invariant)', () => {
-  // governed marts live in the iceberg/polaris catalog — DuckDB must not touch them.
-  assert.throws(() => assertSandboxScoped('select * from iceberg.sales.daily_revenue'), /governed/i);
-  assert.throws(() => assertSandboxScoped('SELECT * FROM Polaris.analytics.t'), /governed/i);
+test('a personal-lane query cannot reference a governed catalog/mart (the invariant)', () => {
+  assert.throws(() => assertScopedToSelf('select * from iceberg.sales.daily_revenue'), /governed/i);
+  assert.throws(() => assertScopedToSelf('SELECT * FROM Polaris.analytics.t'), /governed/i);
   // a user's own uploads / pulled extracts are fine.
-  assert.doesNotThrow(() => assertSandboxScoped('select * from my_upload join sales_snapshot using (id)'));
+  assert.doesNotThrow(() => assertScopedToSelf('select * from my_upload join sales_snapshot using (id)'));
 });
 
-test('promote is the ONLY sandbox->shared path: dbt-trino writes Iceberg + OpenMetadata', () => {
-  const d: SandboxDataset = { id: 'x', name: 'My Sales Cut', origin: 'extract', columns: [], rows: [] };
+test('promote is the ONLY personal->shared path: dbt-trino writes Iceberg + OpenMetadata', () => {
+  const d: PersonalDataset = { id: 'x', name: 'My Sales Cut', origin: 'extract', columns: [], rows: [] };
   const plan = promotePlan(d, { domain: 'sales', owner: 'alice', visibility: 'shared' });
   assert.equal(plan.engine, 'dbt-trino');
   assert.equal(plan.target, 'iceberg.sales.my_sales_cut');

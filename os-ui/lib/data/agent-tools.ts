@@ -8,22 +8,27 @@ import {
   delegate,
   propagate,
 } from './identity.ts';
+import { assertScopedToSelf } from './personal-lane.ts';
 
 export type { AgentScope } from './identity.ts';
 
 /**
  * The scoped data-agent tools (data-architecture-model.md §"The data agent's data
  * access"). Acting under the user's DELEGATED identity (R2), the agent reaches exactly
- * three sources — nothing else:
+ * three scopes — nothing else, all through ONE governed engine (Trino):
  *
- *   • `personal`     → the user's OWN DuckDB sandbox (their datasets only).
+ *   • `personal`     → Trino AS the owner: only their OWN `personal_<uid>` tables.
  *   • `domain`       → Trino: their domain's assets + products (OPA-scoped).
  *   • `marketplace`  → Trino: only the products they've imported (OPA grants).
  *
+ * SINGLE-ENGINE: the personal lane is no longer a separate DuckDB engine — a user's
+ * own data is a physical Iceberg table read through the SAME governed Trino path, run
+ * AS the owner so Trino's OPA plugin governs `personal_<uid>` ownership.
+ *
  * Enforcement is layered: delegation (R2) + OPA (tool/domain) + Trino RLS (the
- * forwarded user, R3) + Cube securityContext (R3) + per-user sandbox binding. Pure —
+ * forwarded user, R3) + Cube securityContext (R3) + per-user prefix binding. Pure —
  * the backends are injected — so the scoping is unit-tested without live services; the
- * route wires the real governed/sandbox executors.
+ * route wires the real governed executors.
  */
 
 export type ToolKind = 'query' | 'metrics';
@@ -35,16 +40,14 @@ export type Executors = {
   authorize(principal: string, tool: string): Promise<{ allowed: boolean; policy: string }>;
   trinoQuery(sql: string, principal: string): Promise<Grid>;
   cubeQuery(query: unknown, securityContext: Record<string, unknown>): Promise<{ rows: Record<string, unknown>[] }>;
-  sandboxQuery(sql: string, prefix: string): Promise<Grid>;
   trace(event: Record<string, unknown>): Promise<boolean>;
-  assertSandboxScoped(sql: string): void;
 };
 
 export type AgentToolResult = {
   ok: boolean;
   scope: AgentScope;
   policy: string;
-  source: 'duckdb' | 'trino' | 'cube';
+  source: 'trino' | 'cube';
   columns?: string[];
   rows?: string[][];
   data?: Record<string, unknown>[];
@@ -73,13 +76,16 @@ export async function runAgentTool(claims: Claims, input: AgentToolInput, ex: Ex
   }
 
   if (input.scope === 'personal') {
-    if (input.kind !== 'query') throw new AgentToolError('the personal lane is your DuckDB — use a query, not metrics', 400);
+    if (input.kind !== 'query') throw new AgentToolError('the personal lane is a query lane — use a query, not metrics', 400);
     const sql = input.sql ?? '';
-    ex.assertSandboxScoped(sql); // never a governed mart
+    assertScopedToSelf(sql); // never reach a governed mart from the personal lane
     assertOwnSandbox(token, ids.sandboxPrefix!); // only the caller's own prefix
-    const grid = await ex.sandboxQuery(sql, ids.sandboxPrefix!);
-    const traced = await ex.trace({ principal: token.sub, scope: 'personal', tool: 'query', source: 'duckdb' });
-    return { ok: true, scope: 'personal', policy: authz.policy, source: 'duckdb', columns: grid.columns, rows: grid.rows, traced };
+    // SINGLE-ENGINE: personal data is a physical Iceberg table read AS the owner
+    // (token.sub), so Trino's OPA plugin governs `personal_<uid>` ownership — the
+    // same governed path domain/marketplace use, no separate personal engine.
+    const grid = await ex.trinoQuery(sql, token.sub);
+    const traced = await ex.trace({ principal: token.sub, scope: 'personal', tool: 'query', source: 'trino' });
+    return { ok: true, scope: 'personal', policy: authz.policy, source: 'trino', columns: grid.columns, rows: grid.rows, traced };
   }
 
   // domain / marketplace — governed Trino (ad-hoc) or Cube (metrics) under the user.

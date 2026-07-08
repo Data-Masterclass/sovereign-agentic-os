@@ -4,37 +4,36 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { authorize, queryRun, trace } from '@/lib/governed';
-import { config } from '@/lib/config';
 import {
   privatePrefix,
   pullExtract,
-  assertSandboxScoped,
   promotePlan,
-  type SandboxDataset,
-} from '@/lib/sandbox';
+  type PersonalDataset,
+} from '@/lib/data/personal-lane';
 import { listPersonalTables } from '@/lib/data/ingest';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * The personal / sandbox lane ("My data") — a single-user workbench that does NOT
- * bypass governance. DuckDB stays BEHIND Trino:
- *   - upload        : a file lands on the user's private prefix (v1: preview rows)
+ * The personal lane ("My data") — a single-user workbench that does NOT bypass
+ * governance. SINGLE-ENGINE: a user's own data is a physical Iceberg table queried
+ * THROUGH the SAME governed Trino path (owner-principal) as every other read; there is
+ * no separate personal query engine.
+ *   - upload        : a file lands a real iceberg.personal_<uid> table (multipart route)
  *   - pull-extract  : runs THROUGH Trino (OPA-masked) -> a private extract
- *   - explore       : ephemeral DuckDB over the private prefix ONLY (never marts)
  *   - promote       : the ONLY path to shared — dbt-trino writes Iceberg + OM
  */
 
 // Per-user in-process store (best-effort; mirrors the artifact-registry pattern).
-const STORE = new Map<string, SandboxDataset[]>();
-function listFor(uid: string): SandboxDataset[] {
+const STORE = new Map<string, PersonalDataset[]>();
+function listFor(uid: string): PersonalDataset[] {
   return STORE.get(uid) ?? [];
 }
-function add(uid: string, d: SandboxDataset): void {
+function add(uid: string, d: PersonalDataset): void {
   STORE.set(uid, [d, ...listFor(uid)]);
 }
 
-function meta(d: SandboxDataset) {
+function meta(d: PersonalDataset) {
   return { id: d.id, name: d.name, origin: d.origin, columns: d.columns, rowCount: d.rows.length };
 }
 
@@ -100,40 +99,12 @@ export async function POST(req: Request) {
       });
     }
 
-    if (action === 'explore') {
-      const sql = (body.sql ?? '').trim();
-      if (!sql) return NextResponse.json({ error: 'explore needs sql' }, { status: 400 });
-      // Guardrail: never a governed catalog/mart — only the private prefix.
-      assertSandboxScoped(sql);
-      // Run on the ephemeral sandbox-duckdb engine (no Polaris creds). Degrade to a
-      // scaffold note + the referenced dataset preview when it's not reachable.
-      try {
-        const res = await fetch(`${config.sandboxDuckdbUrl}/query`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ sql, prefix }),
-          cache: 'no-store',
-          signal: AbortSignal.timeout(6000),
-        });
-        const data = await res.json();
-        if (!res.ok || data.error) throw new Error(data.error ?? `sandbox-duckdb ${res.status}`);
-        return NextResponse.json({ engine: 'duckdb', scope: prefix, ...data });
-      } catch {
-        const hit = listFor(uid).find((d) => sql.toLowerCase().includes(d.name.toLowerCase().replace(/[^a-z0-9]+/g, '_')) || sql.toLowerCase().includes(d.name.toLowerCase()));
-        return NextResponse.json({
-          engine: 'duckdb', scope: prefix, scaffolded: true,
-          note: 'sandbox-duckdb not reachable locally — showing the referenced dataset preview',
-          columns: hit?.columns ?? [], rows: hit?.rows ?? [], rowCount: hit?.rows.length ?? 0,
-        });
-      }
-    }
-
     if (action === 'promote') {
       const id = body.id;
       // Physical personal Bronze tables (id = `personal_<uid>.bronze_<name>`) are no
       // longer in the in-process Map — synthesize a plan from the FQN; extracts still
       // resolve from the Map. (Governed promotion itself is the registry flow, T8.)
-      const ds: SandboxDataset | undefined =
+      const ds: PersonalDataset | undefined =
         listFor(uid).find((d) => d.id === id) ??
         (typeof id === 'string' && id.includes('.bronze_')
           ? { id, name: id.split('.bronze_')[1] ?? id, origin: 'upload', columns: [], rows: [] }

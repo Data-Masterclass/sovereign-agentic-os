@@ -16,11 +16,13 @@ The Data tab is the foundation of the OS. It stores versioned, governed datasets
    - **Guided physical (preferred):** call `transform_silver` with `columns` + guided `ops` (rename / cast / trim / normalize / drop / filter / dedupe). The OS compiles ONE governed CTAS into your own schema, runs it as you, and registers Silver only on a ✓ apply+verify.
    - **Authored:** call `add_dataset_version` with `tier: "silver"`, supplying your authored dbt SQL. Include `not_null` and `unique` tests in the version payload. Silver requires at least one passing test.
 6. **Promote to Gold.** Two ways:
-   - **Join/reuse (preferred):** call `build_gold_join` with dataset IDs to join (each re-resolved against what you may read — never a table name), join keys, projected dimensions and derived measures. Gold + lineage + measures are recorded only on ✓; the measures feed `define_metric` after promotion.
+   - **Join/reuse (preferred):** call `build_gold_join` with dataset IDs to join (each re-resolved against what you may read — never a table name), join keys, projected dimensions and derived measures. Gold + lineage + measures are recorded only on ✓. On promotion the Gold auto-registers as a Cube model (measures are additive via `define_metric`, not required to make it queryable).
    - **Authored:** call `add_dataset_version` with `tier: "gold"`. Gold locks the schema — downstream metric definitions depend on it.
-7. **Document.** Call `document_dataset` with a `description`, `owner`, and at least one `tag`. Documentation is the gate to promotion; this step is required before filing.
-8. **File a promotion request.** Creator calls `request_promotion` to move the dataset from Personal to Shared. The dataset stays Personal until a Builder acts.
-9. ⛔ **Builder approves.** A Builder or Admin calls `approve_promotion`. The dataset becomes visible to domain members.
+7. **Add data-quality rules (optional, recommended).** Call `define_quality_rules` with dropdown-style rules — `not_null`, `not_blank`, `unique`, `accepted_values` (with a values list), `range` (with min/max) on a column — then `run_quality_checks` to compile each to a governed COUNT-of-violations SQL and run it AS the owner for a REAL pass/fail per rule + an aggregate badge. A rule that can't run (no built table) is reported not-run, never a fake pass.
+8. **Document.** Call `document_dataset` with a `description`, `owner`, and at least one `tag`. Documentation is the gate to promotion; this step is required before filing.
+9. **File a promotion request.** Creator calls `request_promotion` to move the dataset from Personal to Shared. The dataset stays Personal until a Builder acts.
+10. ⛔ **Builder approves.** A Builder or Admin calls `approve_promotion`. The dataset becomes visible to domain members — and if it has a built Gold, it is **auto-registered as a queryable Cube model** (view + dimensions from the gold columns + a `count` measure) with no `define_metric` step. Confirm via `get_dataset` → `cube.ready`.
+11. **Add measures (optional).** Call `define_metric` only to ADD named measures to the already-queryable Cube model.
 
 **Note:** `query_data` is read-only at any point in the flow. Re-promoting an already-Shared dataset returns `conflict` — treat it as idempotent.
 

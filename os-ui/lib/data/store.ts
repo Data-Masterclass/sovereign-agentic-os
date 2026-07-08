@@ -516,26 +516,49 @@ export function setDocs(
 }
 
 /**
- * Append a data-quality check intention to a dataset (visible in the detail view).
- * Checks are RECORDED alongside the dataset.yaml spine — they are NOT auto-executed;
- * connect a data quality tool (dbt tests, Great Expectations, etc.) to run them.
+ * Append a data-quality check to a dataset (visible + runnable in the detail view).
+ * A STRUCTURED rule (`rule` + `column` + args) is EXECUTABLE — compiled to a governed
+ * COUNT-of-violations SQL and run AS the owner to produce a real pass/fail (see
+ * `runQualityChecks`). A bare `name`/`description` is a legacy free-text intention.
  * Editing is Creator+ on a dataset you can edit (owner or domain Admin).
  */
 export function addCheck(
   id: string,
   user: Principal,
-  input: { name: string; description: string },
+  input: {
+    name?: string;
+    description?: string;
+    rule?: DataCheck['rule'];
+    column?: string;
+    values?: string[];
+    min?: number;
+    max?: number;
+  },
 ): Dataset {
   const rec = get(id);
   const d = editOf(rec, user);
   const check: DataCheck = {
     id: `chk_${Math.random().toString(36).slice(2, 8)}`,
-    name: input.name.trim() || 'Untitled check',
+    name: (input.name ?? '').trim() || 'Untitled check',
     description: input.description ?? '',
     createdBy: user.id,
     createdAt: now(),
+    ...(input.rule ? { rule: input.rule } : {}),
+    ...(input.column ? { column: input.column.trim() } : {}),
+    ...(input.values ? { values: input.values } : {}),
+    ...(typeof input.min === 'number' ? { min: input.min } : {}),
+    ...(typeof input.max === 'number' ? { max: input.max } : {}),
   };
   d.checks = [...(d.checks ?? []), check];
+  persist(rec, d);
+  return d;
+}
+
+/** Remove one check by id (Creator+ on a dataset you can edit). */
+export function removeCheck(id: string, user: Principal, checkId: string): Dataset {
+  const rec = get(id);
+  const d = editOf(rec, user);
+  d.checks = (d.checks ?? []).filter((c) => c.id !== checkId);
   persist(rec, d);
   return d;
 }

@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { Role } from '../session.ts';
-import { privatePrefix } from '../sandbox.ts';
+import { privatePrefix } from './personal-lane.ts';
 
 /**
  * Delegated identity — the linchpin of data governance (data-policy-compiler.md).
@@ -17,7 +17,8 @@ import { privatePrefix } from '../sandbox.ts';
  *        coarse `user` + `groups` (low-card attributes encoded as groups, R1), Cube
  *        gets the full claims as `securityContext`. No shared service identity for reads.
  *   Personal lane — the agent's `personal` scope can reach ONLY the user's own
- *        sandbox prefix (`privatePrefix`), never another user's DuckDB.
+ *        private prefix (`privatePrefix`) / `personal_<uid>` Iceberg schema, never
+ *        another user's data. Its queries run through the SAME governed Trino path.
  *
  * Pure module (a mock of the Ory adapter) so the invariants are unit-tested without
  * a live IdP; the real token signing is wired at deploy. Mock-from-session per the
@@ -146,9 +147,9 @@ export function propagate(token: DelegatedToken): ConsumerIdentities {
 }
 
 /** Personal-lane guard: a prefix the agent may read must be the caller's own (never
- *  another user's DuckDB). The hard per-user isolation the personal scope rests on. */
+ *  another user's private lane). The hard per-user isolation the personal scope rests on. */
 export function assertOwnSandbox(token: DelegatedToken, prefix: string): void {
   if (prefix !== privatePrefix(token.sub)) {
-    throw new IdentityError('personal scope may only read the user’s own sandbox prefix');
+    throw new IdentityError('personal scope may only read the user’s own private prefix');
   }
 }

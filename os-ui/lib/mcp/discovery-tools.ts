@@ -36,7 +36,8 @@ import {
   isPersonalConnectable,
   type ConnectionTemplateKey,
 } from '@/lib/connection-model';
-import { scaffoldCubeYaml } from '@/lib/data/metrics';
+import { scaffoldCubeYaml, cubeViewName } from '@/lib/data/metrics';
+import { cubeDeliverable } from '@/lib/data/cube-models';
 import { loadGuide, isGuidePath, GUIDE_PATHS } from '@/lib/tabs/guides';
 import { config } from '@/lib/config';
 import { queryRun } from '@/lib/governed';
@@ -107,12 +108,29 @@ const readTools: McpTool[] = [
     tab: 'data',
     minRole: 'creator',
     description:
-      'Read one dataset you can see (medallion versions, docs, tier). Path: DISCOVERY for the Data golden path. Before: list_datasets. After: add_dataset_version / document_dataset / define_metric. Governance: read-only; an id you cannot see returns not_found (no existence leak).',
+      'Read one dataset you can see (medallion versions, docs, tier, data-quality rules) plus its semantic-layer state: `cube.ready` is true when the dataset is shared/certified AND its Gold is built — it is then AUTO-REGISTERED as a queryable Cube model (view `cube.view`, dimensions from the gold columns, count fallback) WITHOUT any define_metric step. Path: DISCOVERY for the Data golden path. Before: list_datasets. After: add_dataset_version / document_dataset / define_quality_rules → run_quality_checks / define_metric (only to ADD measures — the model is already queryable). Governance: read-only; an id you cannot see returns not_found (no existence leak).',
     inputSchema: idArg('datasetId', 'Dataset id from list_datasets.'),
     call: async (user, args) => {
       const id = str(args.datasetId).trim();
       if (!id) fail('get_dataset needs a `datasetId`', 400);
-      return getDataset(id, P(user));
+      const d = getDataset(id, P(user));
+      // Reflect the Cube auto-registration (the SAME gate cube-models delivers on):
+      // shared/certified + Gold built ⇒ a queryable model appears in /api/cube/models
+      // with no manual metric step. Kept honest — never claims ready before the gate.
+      const ready = cubeDeliverable(d);
+      return {
+        ...d,
+        cube: {
+          ready,
+          view: ready ? cubeViewName(d) : null,
+          measures: d.measures.length ? d.measures.map((m) => m.name) : ['count'],
+          note: ready
+            ? 'Auto-registered as a Cube model on publish — queryable now (dimensions from the gold columns; add measures with define_metric).'
+            : d.tier === 'dataset'
+              ? 'Not yet: promote to a shared asset and build Gold first.'
+              : 'Not yet: build the Gold layer first.',
+        },
+      };
     },
   },
   {
@@ -382,6 +400,10 @@ const waveBReadTools: McpTool[] = [
           // The sliceable dimensions come from the gold columns (cube_dbt contract).
           dimensions: r.dataset.columns.map((c) => c.name),
         },
+        // Whether the dataset's Cube model is auto-registered + queryable (the SAME
+        // shared+gold gate publish delivers on) — the measure resolves once ready.
+        cubeReady: cubeDeliverable(r.dataset),
+        cubeView: cubeDeliverable(r.dataset) ? cubeViewName(r.dataset) : null,
         cube: scaffoldCubeYaml(r.dataset),
       };
     },
