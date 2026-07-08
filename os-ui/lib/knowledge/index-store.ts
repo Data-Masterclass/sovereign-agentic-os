@@ -25,11 +25,17 @@ function idx(): Map<string, IndexedUnit> {
  * add the new ones — an incremental re-index that never leaves stale duplicates.
  */
 export function upsertUnits(scopeKey: string, units: IndexedUnit[]): void {
+  removeUnits(scopeKey);
+  for (const u of units) idx().set(u.id, u);
+}
+
+/** Remove ALL units belonging to a scope (a workflow id, or `domain:<name>`) — the
+ *  physical-delete side: a deleted workflow's units stop being retrievable offline. */
+export function removeUnits(scopeKey: string): void {
   for (const [id, u] of [...idx()]) {
     const key = u.provenance.workflowId ?? `domain:${u.provenance.domain}`;
     if (key === scopeKey) idx().delete(id);
   }
-  for (const u of units) idx().set(u.id, u);
 }
 
 /** All indexed units (the retriever's offline candidate set). */

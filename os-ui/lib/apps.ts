@@ -642,6 +642,28 @@ export async function saveAppFile(
   return { path: clean, sha: String(d?.content?.sha ?? ''), commitUrl: d?.commit?.html_url ?? null };
 }
 
+/**
+ * PHYSICALLY delete the app's per-app Forgejo repo (the counterpart of
+ * `scaffoldRepo`). Called on app DELETE only — archive keeps the repo so unarchive
+ * can re-provision. Best-effort + HONEST: a 404 (already gone / never created) is a
+ * benign success; an unreachable Forgejo (`status:0`) or a rejected delete is
+ * reported so the delete never silently claims the repo is gone. Idempotent.
+ */
+export async function deleteAppRepo(
+  app: App,
+): Promise<{ ok: boolean; live: boolean; action: 'deleted' | 'noop'; detail: string }> {
+  const { owner, repo } = repoCoords(app);
+  const res = await forgejoApi('DELETE', `/repos/${owner}/${repo}`);
+  if (res.status === 0) {
+    return { ok: false, live: false, action: 'noop', detail: 'Forgejo unreachable — repo not deleted (orphan flagged).' };
+  }
+  if (res.status === 404) return { ok: true, live: true, action: 'noop', detail: 'No repo to delete.' };
+  if (res.status === 204 || res.status === 200) {
+    return { ok: true, live: true, action: 'deleted', detail: `Deleted Forgejo repo ${owner}/${repo}.` };
+  }
+  return { ok: false, live: true, action: 'noop', detail: `Forgejo rejected the repo delete (HTTP ${res.status}).` };
+}
+
 // ----------------------------------------------------------------- MCP wiring --
 
 function rehydrateConnection(app: App): void {

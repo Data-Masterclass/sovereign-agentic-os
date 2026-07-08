@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/auth';
-import { createApp } from '@/lib/apps';
+import { createApp, deleteAppRepo } from '@/lib/apps';
 import { authorizeConnectionCall } from '@/lib/agent-governed';
 import { archiveApp, unarchiveApp, deleteApp, useAsData, consumeResource, dependentsOf } from './lifecycle.ts';
 import { getAppByIdInternal } from '@/lib/apps';
@@ -60,6 +60,38 @@ test('delete is lineage-aware — blocked while a dependency is in use', async (
   // Deleting the consumer first is fine, then the dependency unblocks.
   assert.deepEqual(await deleteApp(consumer.id, owner), { deleted: true });
   assert.deepEqual(await deleteApp(dep.id, owner), { deleted: true });
+});
+
+test('deleteAppRepo: PHYSICALLY deletes the per-app Forgejo repo, honest on 404 / unreachable', async () => {
+  const app = await createApp(owner, { name: 'Repo Del', template: 'service' });
+  const orig = globalThis.fetch;
+  try {
+    // Happy path: Forgejo confirms the repo delete (204).
+    let seen: { method?: string; url: string } | null = null;
+    globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+      seen = { method: init?.method, url: String(url) };
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    const ok = await deleteAppRepo(app);
+    assert.equal(ok.ok, true);
+    assert.equal(ok.action, 'deleted');
+    assert.equal(seen!.method, 'DELETE');
+    assert.match(seen!.url, /\/repos\//);
+
+    // Already gone (404) → benign no-op success.
+    globalThis.fetch = (async () => new Response(null, { status: 404 })) as typeof fetch;
+    assert.deepEqual((await deleteAppRepo(app)).action, 'noop');
+    assert.equal((await deleteAppRepo(app)).ok, true);
+
+    // Unreachable (network error) → honest failure (orphan flagged), never silent.
+    globalThis.fetch = (async () => { throw new Error('ECONNREFUSED'); }) as typeof fetch;
+    const down = await deleteAppRepo(app);
+    assert.equal(down.ok, false);
+    assert.equal(down.live, false);
+    assert.match(down.detail, /unreachable/i);
+  } finally {
+    globalThis.fetch = orig;
+  }
 });
 
 test('Use as Data marks the Bronze snapshot', async () => {

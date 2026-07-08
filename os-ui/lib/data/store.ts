@@ -314,6 +314,13 @@ export function getDataset(id: string, user: Principal): Dataset {
   return viewOf(get(id), user);
 }
 
+/** Prove EDIT authority on a dataset (owner or domain admin) and return it. The metric
+ *  lifecycle uses this so archive/history stay edit-scoped — consistent with the other
+ *  artifact tabs — even for ops (archive/history) that don't themselves write the yaml. */
+export function requireDatasetEditable(id: string, user: Principal): Dataset {
+  return editOf(get(id), user);
+}
+
 /**
  * The physical Trino FQN of a dataset's built medallion layer, resolved tier-aware:
  * a private `dataset` lives in the caller's OWN `personal_<uid>` schema, a governed
@@ -594,6 +601,36 @@ export function defineMeasure(id: string, user: Principal, measure: Measure): Da
   };
   persist(rec, d);
   return d;
+}
+
+/**
+ * PHYSICALLY de-register a metric (the delete side of the Metrics lifecycle): drop a
+ * defined measure from the Gold dataset. Because the Cube-models payload
+ * (`/api/cube/models`, `buildCubeModels`) is built from `d.measures`, removing the
+ * measure removes its Cube model member — the metric stops being queryable. Edit-scoped
+ * (owner or domain admin, via {@link editOf}). Regenerates the cube_dbt/exposure
+ * artifacts (or drops them when the last measure goes) so they always match the
+ * measures. Returns whether a measure was actually removed so the caller can report
+ * honestly. Archive (the reversible soft-hide) must NEVER call this.
+ */
+export function removeMeasure(id: string, user: Principal, measureName: string): { removed: boolean } {
+  const rec = get(id);
+  const d = editOf(rec, user);
+  const before = d.measures.length;
+  d.measures = d.measures.filter((m) => m.name !== measureName);
+  if (d.measures.length === before) return { removed: false }; // nothing to drop
+  const artifacts = { ...(rec.artifacts ?? {}) };
+  if (d.measures.length > 0) {
+    artifacts[CUBE_ARTIFACT(d)] = scaffoldCubeYaml(d);
+    artifacts[EXPOSURE_ARTIFACT] = scaffoldExposureYaml(d);
+  } else {
+    // Last measure gone → the metric artifacts no longer exist for this dataset.
+    delete artifacts[CUBE_ARTIFACT(d)];
+    delete artifacts[EXPOSURE_ARTIFACT];
+  }
+  rec.artifacts = artifacts;
+  persist(rec, d);
+  return { removed: true };
 }
 
 // ------------------------------------------------------- lifecycle (role-gated) --

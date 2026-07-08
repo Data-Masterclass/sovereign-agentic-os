@@ -62,6 +62,7 @@ export default function DashboardsTab({ supersetUrl }: { supersetUrl: string }) 
             supersetUrl={supersetUrl}
             onBack={() => setView({ kind: 'list' })}
             onGoverned={onGoverned}
+            onChanged={() => dashboards.reload()}
           />
         ) : (
           <>

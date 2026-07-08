@@ -5253,3 +5253,78 @@ button.card.tile:hover .tile-action { opacity: 1; }
   color: #b23b3b;
   background: rgba(190, 60, 60, 0.08);
 }
+
+/* =====================================================================
+   LIFECYCLE UX — shared archive / delete / restore / version controls
+   (components/lifecycle/*). One control cluster + one danger-styled
+   Delete + one version panel, identical across every artifact tab.
+   Reuses the .pa-confirm popup chrome for the confirm dialog.
+   ===================================================================== */
+
+/* Delete reads as destructive without shouting on a card: a quiet red ghost
+   that deepens on hover. The confirm popup carries the real weight. */
+.btn.ghost.lc-delete {
+  color: var(--danger);
+  border-color: rgba(192, 57, 43, 0.35);
+}
+.btn.ghost.lc-delete:hover {
+  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+}
+[data-theme='dark'] .btn.ghost.lc-delete,
+.drawer-head .btn.ghost.lc-delete {
+  color: #e88b82;
+  border-color: rgba(192, 57, 43, 0.4);
+}
+[data-theme='dark'] .btn.ghost.lc-delete:hover {
+  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+/* The version-history popover under the actions cluster — a calm bordered
+   panel, no card-in-card. */
+.lc-history-panel {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.lc-version-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.lc-version-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: 'meta action' 'summary action';
+  gap: 2px 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.lc-version-row:last-child { border-bottom: none; }
+.lc-version-meta {
+  grid-area: meta;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.lc-version-num {
+  font-family: var(--font-head);
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: var(--gold-text);
+}
+.lc-version-summary {
+  grid-area: summary;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.lc-version-row .btn { grid-area: action; }

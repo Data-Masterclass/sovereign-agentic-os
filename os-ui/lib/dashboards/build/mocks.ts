@@ -30,6 +30,7 @@ function mockSuperset(b: DashboardMockBackend): SupersetClient {
   return {
     async importBundle(name) { b.dashboards.add(name); },
     async dashboardExists(name) { return b.dashboards.has(name); },
+    async deleteDashboard(name) { return b.dashboards.delete(name); },
     async createReport(spec) { const id = `rep_${++seq}_${spec.dashboard}`; b.reports.add(id); return id; },
     async reportExists(id) { return b.reports.has(id); },
     async createAlert(rule) { const id = `alt_${++seq}_${rule.member}`; b.alerts.add(id); return id; },

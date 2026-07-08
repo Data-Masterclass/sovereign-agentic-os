@@ -3,7 +3,7 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { putBlob, getBlob, setBlobBackend, memoryBackend, __resetBlobs, type BlobBackend } from './object-store.ts';
+import { putBlob, getBlob, deleteBlob, setBlobBackend, memoryBackend, __resetBlobs, type BlobBackend } from './object-store.ts';
 import { __resetStore, createFile, attachObject, getFile, objectKeyForAsset, type Principal } from './store.ts';
 import { AssetError } from './asset-schema.ts';
 
@@ -40,12 +40,22 @@ test('setBlobBackend swaps the durable backend (server registration path)', asyn
   const fake: BlobBackend = {
     async put(key) { calls.push(`put:${key}`); },
     async get(key) { calls.push(`get:${key}`); return null; },
+    async del(key) { calls.push(`del:${key}`); },
   };
   setBlobBackend(fake);
   await putBlob('x', Buffer.from('y'), 'text/plain');
   await getBlob('x');
-  assert.deepEqual(calls, ['put:x', 'get:x']);
+  await deleteBlob('x');
+  assert.deepEqual(calls, ['put:x', 'get:x', 'del:x']);
   setBlobBackend(memoryBackend); // restore
+});
+
+test('memoryBackend.del removes the stored bytes (idempotent)', async () => {
+  await putBlob('gone', Buffer.from('bytes'), 'text/plain');
+  assert.notEqual(await getBlob('gone'), null);
+  await deleteBlob('gone');
+  assert.equal(await getBlob('gone'), null);
+  await deleteBlob('gone'); // idempotent — no throw on a missing key
 });
 
 // ---- the upload→download contract at the store layer ----

@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { config } from '@/lib/config';
-import { putObject, getObject } from '@/lib/data/object-store';
+import { putObject, getObject, deleteObject } from '@/lib/data/object-store';
 import { memoryBackend, setBlobBackend, type BlobBackend } from './object-store.ts';
 
 /**
@@ -36,6 +36,15 @@ const s3Backend: BlobBackend = {
       }
     }
     return memoryBackend.get(key);
+  },
+  async del(key) {
+    // Always drop the in-process copy; then attempt the durable delete. A durable
+    // failure is FATAL here (unlike put/get): the object DELETE path must be honest —
+    // if MinIO can't confirm the byte removal, the caller flags a physical orphan
+    // rather than claim a clean purge.
+    await memoryBackend.del(key);
+    if (!config.awsAccessKeyId || !config.awsSecretAccessKey) return; // memory-only (laptop)
+    await deleteObject(key, config.filesBucket);
   },
 };
 

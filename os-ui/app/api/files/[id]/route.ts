@@ -9,6 +9,9 @@ import {
 } from '@/lib/files/store';
 import { reindexById } from '@/lib/files/pipeline-server';
 import { removeFromIndex } from '@/lib/files/index-store';
+import { purgeFileObjects } from '@/lib/files/physical-delete';
+import { deleteBlob } from '@/lib/files/object-store';
+import '@/lib/files/object-store-server'; // registers the durable MinIO backend
 import type { IndexingMode, Sensitivity } from '@/lib/files/asset-schema';
 
 export const dynamic = 'force-dynamic';
@@ -78,13 +81,21 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
 }
 
+/**
+ * DELETE → permanently remove a file (edit-scoped; confirmed in the UI) — the
+ * registry record, its index chunks AND its object-store bytes. The record delete
+ * runs first (403 → nothing is purged); then the PHYSICAL bytes are purged through
+ * the same governed blob backend the upload/download path uses. An unreachable store
+ * surfaces in `physical[].ok:false` — the delete stands, the leftover is never silent.
+ */
 export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
     const user = await requirePrincipal();
     const { id } = await ctx.params;
-    deleteFile(id, user);
+    const rec = deleteFile(id, user); // throws 403 → nothing is purged
     removeFromIndex(id); // drop its chunks from the hybrid index
-    return NextResponse.json({ ok: true });
+    const physical = await purgeFileObjects(rec, deleteBlob);
+    return NextResponse.json({ ok: true, physical });
   } catch (e) {
     return errorResponse(e);
   }

@@ -79,3 +79,34 @@ export async function importDashboardBundle(
   });
   if (!res || !res.ok) throw new Error(`Superset import failed (${res?.status ?? 'unreachable'})`);
 }
+
+/**
+ * PHYSICALLY delete a Superset dashboard by TITLE (the delete side of the Dashboards
+ * lifecycle). Resolves the numeric id via the list endpoint (we key our records by name,
+ * not the Superset id), then `DELETE /api/v1/dashboard/{id}` with the CSRF token. Returns
+ * `false` when no dashboard by that title exists (already gone — an honest, non-fatal
+ * outcome); throws on a hard failure so the caller reports ✗. `fetchImpl` is injectable.
+ */
+export async function deleteDashboardByName(
+  base: string,
+  name: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<boolean> {
+  const { token, cookie } = await csrf(fetchImpl, base);
+  const q = encodeURIComponent(JSON.stringify({ filters: [{ col: 'dashboard_title', opr: 'ct', value: name }] }));
+  const listRes = await withTimeout(fetchImpl, `${base}/api/v1/dashboard/?q=${q}`, {
+    method: 'GET',
+    headers: { 'X-Forwarded-User': serviceUser(), accept: 'application/json' },
+  });
+  if (!listRes || !listRes.ok) throw new Error(`Superset dashboard lookup failed (${listRes?.status ?? 'unreachable'})`);
+  const data = (await listRes.json().catch(() => ({}))) as { result?: { id: number; dashboard_title?: string }[] };
+  const match = (data.result ?? []).find((d) => d.dashboard_title === name) ?? data.result?.[0];
+  if (!match) return false; // no such dashboard — already gone
+
+  const headers: Record<string, string> = { 'X-Forwarded-User': serviceUser(), Referer: base, accept: 'application/json' };
+  if (token) headers['X-CSRFToken'] = token;
+  if (cookie) headers['Cookie'] = cookie;
+  const delRes = await withTimeout(fetchImpl, `${base}/api/v1/dashboard/${match.id}`, { method: 'DELETE', headers });
+  if (!delRes || !delRes.ok) throw new Error(`Superset dashboard delete failed (${delRes?.status ?? 'unreachable'})`);
+  return true;
+}

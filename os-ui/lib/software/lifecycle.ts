@@ -8,6 +8,7 @@ import {
   persistApp,
   listAllAppsInternal,
   removeAppInternal,
+  deleteAppRepo,
   withStatus,
   type App,
 } from '@/lib/apps';
@@ -132,10 +133,13 @@ export async function deleteApp(appId: string, user: CurrentUser): Promise<{ del
       409,
     );
   }
-  // Tear down the in-cluster runner (Ingress+Service+Deployment) before removing
-  // the record so a delete never orphans running pods. Best-effort + honest: a
-  // 404/offline is benign (nothing to remove / no cluster to reach).
+  // PHYSICALLY tear down the app's live resources before removing the record so a
+  // delete never orphans running pods or a live repo. Both are best-effort + HONEST:
+  //   • the in-cluster runner (Ingress+Service+Deployment) — 404/offline is benign;
+  //   • the per-app Forgejo repo (created at build) — 404/unreachable is reported,
+  //     never a silent "repo gone".
   const teardown = await deleteRunner({ slug: app.slug });
+  const repo = await deleteAppRepo(app);
   removeConnection(app.id);
   unregisterConnectionProfile(app.mcpPrincipal);
   await removeAppInternal(app.id);
@@ -143,7 +147,13 @@ export async function deleteApp(appId: string, user: CurrentUser): Promise<{ del
     principal: app.mcpPrincipal,
     tool: 'generate',
     input: { action: 'delete_app', by: user.id },
-    output: { deleted: app.id, runner: teardown.action, runnerLive: teardown.live },
+    output: {
+      deleted: app.id,
+      runner: teardown.action,
+      runnerLive: teardown.live,
+      repo: repo.action,
+      repoOk: repo.ok,
+    },
     decision: 'allow',
   });
   return { deleted: true };

@@ -626,13 +626,17 @@ export function unarchiveSystem(systemId: string, user: Principal): SystemRecord
 
 /**
  * Permanently delete a system + its version history (edit-scoped, irreversible).
- * The API route confirms intent; this is the hard delete once confirmed.
+ * The API route confirms intent; this is the hard delete once confirmed. Returns the
+ * deleted record so the route can PHYSICALLY purge its backing resources (its Forgejo
+ * repo + any schedule CronJob) via physical-delete.ts — a "deleted" system whose repo
+ * or CronJob still exists isn't deleted. Archive (above) never purges either.
  */
-export function deleteSystem(systemId: string, user: Principal): void {
+export function deleteSystem(systemId: string, user: Principal): SystemRecord {
   const rec = requireEdit(systemId, user);
   state().store.delete(rec.id);
   mirror.deleteThrough(rec.id);
   versions.purge(rec.id);
+  return rec;
 }
 
 /** Version history for a system, newest first (view-scoped). */

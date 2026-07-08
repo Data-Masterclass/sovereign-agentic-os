@@ -17,7 +17,12 @@ import {
   templateByKey,
   isPersonalConnectable,
 } from '@/lib/connection-model';
-import { putSecret, secretFingerprint, getSecretServerSide, isEgressAllowed } from '@/lib/secrets';
+import { putSecret, secretFingerprint, getSecretServerSide, isEgressAllowed, deleteSecret, hasSecret } from '@/lib/secrets';
+import { type ArtifactVersion, versionLog } from '@/lib/versioning';
+import {
+  type PhysicalDeleteReport,
+  purgeConnectionSecrets,
+} from '@/lib/connections-physical-delete';
 import {
   registerConnectionProfile,
   unregisterConnectionProfile,
@@ -103,6 +108,14 @@ function withStatus(err: Error, status: number): Error {
 
 const mirror = osMirror({ index: 'os-connections' });
 
+// Durable, per-connection version history (the reused OS helper). The capability
+// profile (tools) is snapshotted before a meaningful edit so any prior profile is
+// restorable — the same discipline the other artifact stores use.
+const versions = versionLog('connection');
+function snapshotState(c: Connection): { tools: ConnectionTool[] } {
+  return { tools: c.tools };
+}
+
 function writeThrough(c: Connection): void {
   mirror.writeThrough(c.id, c);
 }
@@ -123,8 +136,8 @@ async function getCache(): Promise<Map<string, Connection>> {
   const s = connState();
   if (s.cache) return s.cache;
   const map = new Map<string, Connection>();
-  const docs = (await mirror.hydrate(500)) ?? []; // null → mirror down → in-memory only
-  for (const c of docs as Connection[]) {
+  const [docs] = await Promise.all([mirror.hydrate(500), versions.ensureHydrated()]);
+  for (const c of (docs ?? []) as Connection[]) { // null → mirror down → in-memory only
     map.set(c.id, c);
     compileProfile(c); // re-hydrate the OPA mirror after a restart
   }
@@ -140,10 +153,14 @@ function visibleToUser(c: Connection, user: CurrentUser): boolean {
   return true; // Certified (Marketplace) — discoverable across domains
 }
 
-export async function listConnectionsForUser(user: CurrentUser): Promise<Connection[]> {
+export async function listConnectionsForUser(
+  user: CurrentUser,
+  opts: { includeArchived?: boolean } = {},
+): Promise<Connection[]> {
   const map = await getCache();
   return [...map.values()]
     .filter((c) => visibleToUser(c, user))
+    .filter((c) => opts.includeArchived || !c.archived) // archived soft-hidden by default
     .sort((x, y) => y.updatedAt.localeCompare(x.updatedAt));
 }
 
@@ -273,6 +290,9 @@ export async function updateCapabilities(
   if (!roleAtLeast(user.role, 'builder')) {
     throw withStatus(new Error('Editing capabilities requires a Builder or Administrator'), 403);
   }
+
+  // Snapshot the PRIOR capability profile before overwriting it, so the edit is restorable.
+  versions.record(c.id, user.id, snapshotState(c), 'edit capabilities');
 
   for (const u of updates) {
     const tool = c.tools.find((t) => t.name === u.name);
@@ -860,22 +880,92 @@ export async function verifyNotionConnection(
   }
 }
 
-export async function deleteConnection(connId: string, user: CurrentUser): Promise<void> {
-  const map = await getCache();
-  const c = map.get(connId);
-  if (!c) return;
+/** The store's edit authority for archive/delete/restore: owner or a domain admin. */
+function requireConnEdit(c: Connection | undefined, user: CurrentUser): Connection {
+  if (!c) throw withStatus(new Error('Connection not found'), 404);
   const isOwner = c.owner === user.id;
   const isDomainAdmin = user.role === 'admin' && user.domains.includes(c.domain);
-  if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to delete this connection'), 403);
+  if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to modify this connection'), 403);
+  return c;
+}
+
+/**
+ * Archive / unarchive a connection: a reversible soft-hide (owner or domain admin). The
+ * vault secret + any OAuth token are KEPT — an archived connection reconnects with no
+ * re-auth. The OPA profile stays compiled so a restore is instant. Never purges physical.
+ */
+export async function setConnectionArchived(connId: string, user: CurrentUser, archived: boolean): Promise<Connection> {
+  const map = await getCache();
+  const c = requireConnEdit(map.get(connId), user);
+  c.archived = archived;
+  c.updatedAt = now();
+  writeThrough(c);
+  return c;
+}
+
+/** Version history for a connection's capability profile, newest first (edit-scoped). */
+export async function listConnectionVersions(connId: string, user: CurrentUser): Promise<ArtifactVersion[]> {
+  const map = await getCache();
+  requireConnEdit(map.get(connId), user);
+  return versions.list(connId);
+}
+
+/**
+ * Restore a prior capability profile. Auditable + reversible: the current profile is
+ * snapshotted first, THEN the chosen version is applied and re-compiled into the OPA
+ * mirror. Edit-scoped.
+ */
+export async function restoreConnectionVersion(connId: string, user: CurrentUser, version: number): Promise<Connection> {
+  const map = await getCache();
+  const c = requireConnEdit(map.get(connId), user);
+  const snap = versions.get(connId, version);
+  if (!snap) throw withStatus(new Error(`version ${version} not found`), 404);
+  const tools = (snap.state as { tools?: ConnectionTool[] }).tools;
+  if (!tools) throw withStatus(new Error(`version ${version} has no restorable profile`), 422);
+  versions.record(connId, user.id, snapshotState(c), `restore of v${version}`);
+  c.tools = tools;
+  c.updatedAt = now();
+  map.set(c.id, c);
+  compileProfile(c);
+  writeThrough(c);
+  return c;
+}
+
+/**
+ * Permanently delete a connection — registry record AND its VAULT secret (the credential
+ * plus any stored OAuth token/Notion MCP client, all under `secretRef`). A "deleted"
+ * connection whose credential still lives in Secrets Manager isn't deleted: the secret
+ * could still be injected. The record delete (profile unregister + registry forget) runs
+ * first, then the vault is purged best-effort AS the caller. A secret the vault couldn't
+ * forget is reported as `physical` ok:false — the delete stands, the leftover is never
+ * silent. Archive KEEPS every vault entry. Returns an honest report.
+ */
+export async function deleteConnection(connId: string, user: CurrentUser): Promise<PhysicalDeleteReport> {
+  const map = await getCache();
+  const c = map.get(connId);
+  if (!c) return { recordDeleted: false, physical: [] };
+  requireConnEdit(c, user);
   unregisterConnectionProfile(c.principal);
   map.delete(connId);
   mirror.deleteThrough(connId);
+  versions.purge(connId);
+  // Physical: purge the credential + OAuth token (+ Notion MCP client) from the vault.
+  const physical = purgeConnectionSecrets(c, hasSecret, deleteSecret);
+  void trace({
+    principal: c.principal,
+    tool: 'generate',
+    input: { action: 'delete_connection', by: user.id },
+    output: { connectionId: c.id, physical }, // secret refs only, never values
+    decision: 'allow',
+  });
+  return { recordDeleted: true, physical };
 }
 
 export function __resetConnections(): void {
   const s = connState();
   s.cache = null;
   mirror.__reset();
+  versions.__reset();
 }
 
 export type { Connection };

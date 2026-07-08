@@ -60,7 +60,7 @@ function requireCreds(): void {
  * when supplied (writes); reads omit it.
  */
 function signedHeadersFor(
-  method: 'PUT' | 'GET',
+  method: 'PUT' | 'GET' | 'DELETE',
   bucket: string,
   key: string,
   contentType?: string,
@@ -149,6 +149,31 @@ export async function getObject(
     const body = Buffer.from(await res.arrayBuffer());
     const contentType = res.headers.get('content-type') ?? 'application/octet-stream';
     return { body, contentType };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** DELETE an object from `bucket` at `key`. S3 DeleteObject is idempotent — a 404
+ *  (already absent) is treated as success. Throws on any other non-2xx so a real
+ *  failure (unreachable / denied) is reported honestly, never silently swallowed. */
+export async function deleteObject(
+  key: string,
+  bucket: string = config.uploadsBucket,
+): Promise<void> {
+  requireCreds();
+  const canonicalUri = `/${bucket}/${encodeKey(key)}`;
+  const headers = signedHeadersFor('DELETE', bucket, key);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60_000);
+  try {
+    const res = await fetch(`${config.s3Endpoint}${canonicalUri}`, {
+      method: 'DELETE', headers, cache: 'no-store', signal: ctrl.signal,
+    });
+    // 204 = deleted, 200 = deleted, 404 = already gone — all fine (idempotent).
+    if (res.status === 204 || res.status === 200 || res.status === 404) return;
+    const text = await res.text().catch(() => '');
+    throw new Error(`object-store DELETE ${res.status}: ${text.slice(0, 240)}`);
   } finally {
     clearTimeout(timer);
   }

@@ -24,6 +24,9 @@ export type Blob = { body: Buffer; contentType: string };
 export interface BlobBackend {
   put(key: string, body: Buffer, contentType: string): Promise<void>;
   get(key: string): Promise<Blob | null>;
+  /** Physically remove the object at `key` (idempotent: a missing key is a no-op).
+   *  Throws only on a real failure so a DELETE can be reported honestly. */
+  del(key: string): Promise<void>;
 }
 
 /** The always-available in-process backend (global-symbol-backed so it survives
@@ -44,6 +47,9 @@ export const memoryBackend: BlobBackend = {
     const b = mem().get(key);
     return b ? { body: Buffer.from(b.body), contentType: b.contentType } : null;
   },
+  async del(key) {
+    mem().delete(key);
+  },
 };
 
 let backend: BlobBackend = memoryBackend;
@@ -61,6 +67,11 @@ export function putBlob(key: string, body: Buffer, contentType: string): Promise
 /** GET the original bytes for a file at `key` (or `null` when absent). */
 export function getBlob(key: string): Promise<Blob | null> {
   return backend.get(key);
+}
+
+/** DELETE the original bytes for a file at `key` (idempotent; throws on a real failure). */
+export function deleteBlob(key: string): Promise<void> {
+  return backend.del(key);
 }
 
 /** Test hook: drop the in-memory blobs and reset to the default backend. */

@@ -516,13 +516,20 @@ export function setSensitivity(id: string, user: Principal, sensitivity: Sensiti
   return a;
 }
 
-export function deleteFile(id: string, user: Principal): void {
+/**
+ * Permanently delete a file (edit-scoped, irreversible). Removes the registry record,
+ * its version history and its durable mirror doc. Returns the deleted record so the
+ * route can PHYSICALLY purge its object-store bytes (physical-delete.ts) — a "deleted"
+ * file whose bytes still sit in MinIO isn't deleted. Archive (below) never purges.
+ */
+export function deleteFile(id: string, user: Principal): FileRecord {
   const rec = get(id);
   const a = parseAsset(rec.yaml);
   if (!canEdit(a, user)) fail('Not permitted to delete this file', 403);
   versions.purge(id);
   fileMirror.deleteThrough(id);
   fs().store.delete(id);
+  return rec;
 }
 
 // -------------------------------------------- archive / delete / versions --

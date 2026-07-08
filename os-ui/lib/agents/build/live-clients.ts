@@ -101,6 +101,15 @@ export function realForgejo(fetchImpl: typeof fetch = fetch): ForgejoClient {
       const d = (await res.json().catch(() => ({}))) as { content?: { sha?: string } };
       return { sha: String(d?.content?.sha ?? '') };
     },
+    async deleteRepo(repo) {
+      // Idempotent: a 404 means the repo is already gone. A null (unreachable) or a
+      // rejected delete throws so the DELETE path can flag an orphan honestly.
+      const res = await api('DELETE', `/repos/${owner}/${repo}`);
+      if (!res) throw new Error(`Forgejo deleteRepo ${repo} failed (unreachable)`);
+      if (res.status === 404) return { deleted: true };
+      if (res.status === 204 || res.status === 200) return { deleted: true };
+      throw new Error(`Forgejo deleteRepo ${repo} failed (${res.status})`);
+    },
   };
 }
 

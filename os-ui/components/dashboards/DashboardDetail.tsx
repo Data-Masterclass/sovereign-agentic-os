@@ -4,12 +4,20 @@
 'use client';
 
 import { useState } from 'react';
+import { useUser } from '@/lib/useUser';
 import EmbedPanel from './EmbedPanel';
 import Reports from './Reports';
 import Govern from './Govern';
 import { type DashboardSummary, type DashTier, TIER_BADGE, TIER_LABEL } from './shared';
+import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
+import LifecycleActions from '@/components/lifecycle/LifecycleActions';
+import type { Visibility } from '@/lib/lifecycle';
 
 type Facet = 'view' | 'reports' | 'govern';
+
+/** Dashboard tier → the OS-wide lifecycle visibility (drives the delete gate). */
+const lcVis = (tier: DashTier): Visibility =>
+  tier === 'domain' ? 'shared' : tier === 'marketplace' ? 'certified' : 'personal';
 
 /**
  * A single dashboard's DETAIL — the one place its viewer / reports / govern fold in, mirroring
@@ -23,21 +31,45 @@ export default function DashboardDetail({
   supersetUrl,
   onBack,
   onGoverned,
+  onChanged,
 }: {
   dashboard: DashboardSummary;
   supersetUrl: string;
   onBack: () => void;
   onGoverned: (tier: DashTier) => void;
+  /** Refresh the list after archive/restore/version-restore; delete returns to the list. */
+  onChanged: () => void;
 }) {
   const [facet, setFacet] = useState<Facet>('view');
+  const { user } = useUser();
+  const canManage = !!user && dashboard.owner === user.id;
 
   return (
-    <>
+    <ConfirmProvider>
       <button className="btn ghost sm" onClick={onBack} style={{ marginBottom: 14 }}>← All dashboards</button>
 
-      <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <h2 style={{ margin: 0 }}>{dashboard.name}</h2>
-        <span className={`badge ${TIER_BADGE[dashboard.tier]}`}>{TIER_LABEL[dashboard.tier]}</span>
+      <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'space-between' }}>
+        <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <h2 style={{ margin: 0 }}>{dashboard.name}</h2>
+          <span className={`badge ${TIER_BADGE[dashboard.tier]}`}>{TIER_LABEL[dashboard.tier]}</span>
+        </div>
+        {canManage ? (
+          <LifecycleActions
+            id={dashboard.id}
+            name={dashboard.name}
+            kind="dashboard"
+            visibility={lcVis(dashboard.tier)}
+            archived={false}
+            api={`/api/dashboards/${dashboard.id}`}
+            handlers={{ onDelete: async () => {
+              const res = await fetch(`/api/dashboards/${dashboard.id}`, { method: 'DELETE' });
+              if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Delete failed');
+              onChanged(); onBack();
+            } }}
+            onChanged={onChanged}
+            compact
+          />
+        ) : null}
       </div>
       <div className="tile-meta" style={{ marginTop: 6 }}>
         <span className="muted mono" style={{ fontSize: 12 }}>{dashboard.view}</span>
@@ -56,6 +88,6 @@ export default function DashboardDetail({
       {facet === 'view' ? <EmbedPanel dashboard={dashboard} supersetUrl={supersetUrl} /> : null}
       {facet === 'reports' ? <Reports dashboard={dashboard} /> : null}
       {facet === 'govern' ? <Govern dashboard={dashboard} onGoverned={onGoverned} /> : null}
-    </>
+    </ConfirmProvider>
   );
 }

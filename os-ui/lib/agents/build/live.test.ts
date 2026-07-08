@@ -56,6 +56,10 @@ function fakeForgejo(): ForgejoClient & { files: Map<string, { content: string; 
       files.set(path, rec);
       return { sha: rec.sha };
     },
+    async deleteRepo() {
+      files.clear();
+      return { deleted: true };
+    },
   };
 }
 

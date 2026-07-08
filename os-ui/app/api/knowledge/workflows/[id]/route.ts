@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { getWorkflow, updateWorkflow, deleteWorkflow, archiveWorkflow, unarchiveWorkflow, ensureHydrated } from '@/lib/knowledge/store';
+import { purgeKnowledgeUnits } from '@/lib/knowledge/index-pipeline';
 import { findGaps } from '@/lib/knowledge/gaps';
 import { resolveEntityIndex } from '@/lib/knowledge/mock-entities';
 import { roleAtLeast } from '@/lib/session';
@@ -80,8 +81,12 @@ export async function DELETE(_req: Request, { params }: Params) {
     await ensureHydrated();
     const user = await requireUser();
     const { id } = await params;
-    deleteWorkflow(id, user);
-    return NextResponse.json({ ok: true });
+    deleteWorkflow(id, user); // record + version history (edit-gated)
+    // PHYSICAL purge: remove the workflow's indexed vectors from OpenSearch + the
+    // offline mirror so a deleted workflow stops being retrievable. Best-effort +
+    // honest — the record is already gone; report if the index purge couldn't run.
+    const indexPurged = await purgeKnowledgeUnits(id);
+    return NextResponse.json({ ok: true, indexPurged });
   } catch (e) {
     return fail(e);
   }

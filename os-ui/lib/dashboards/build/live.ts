@@ -24,6 +24,8 @@ import { type AlertRule } from '../../metrics/alerts.ts';
 export interface SupersetClient {
   importBundle(name: string, bundle: string): Promise<void>;
   dashboardExists(name: string): Promise<boolean>;
+  /** PHYSICALLY delete the Superset dashboard by title. Returns false if already gone. */
+  deleteDashboard(name: string): Promise<boolean>;
   createReport(spec: { dashboard: string; cadence: string; channel: string }): Promise<string>;
   reportExists(id: string): Promise<boolean>;
   createAlert(rule: { member: string; comparator: string; threshold: number }): Promise<string>;

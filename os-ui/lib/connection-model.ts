@@ -129,6 +129,9 @@ export type Connection = {
   health: ConnectionHealth;
   /** Whether the connection is also registered as a data source, and where. */
   dataUsage: DataUsage;
+  /** Soft-archived: hidden from the working lists, reversible, retained (the vault
+   *  secret + OAuth token are KEPT). Absent/false = live. */
+  archived?: boolean;
   createdAt: string;
   updatedAt: string;
 };

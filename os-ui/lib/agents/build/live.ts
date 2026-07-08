@@ -48,6 +48,10 @@ export interface ForgejoClient {
   ensureRepo(repo: string): Promise<void>;
   readFile(repo: string, path: string): Promise<{ content: string; sha: string } | null>;
   writeFile(repo: string, path: string, content: string, sha?: string): Promise<{ sha: string }>;
+  /** PHYSICALLY delete the system's repo (DELETE path only). Returns whether the
+   *  repo is gone; throws only on a real failure (unreachable / rejected) so the
+   *  caller reports an orphan honestly. A missing repo (404) resolves cleanly. */
+  deleteRepo(repo: string): Promise<{ deleted: boolean }>;
 }
 
 export interface OpaClient {

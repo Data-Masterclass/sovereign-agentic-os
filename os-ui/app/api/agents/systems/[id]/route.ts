@@ -4,6 +4,9 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { getSystem, archiveSystem, unarchiveSystem, deleteSystem, ensureHydrated } from '@/lib/agents/store';
+import { purgeSystemResources } from '@/lib/agents/physical-delete';
+import { realForgejo } from '@/lib/agents/build/live-clients';
+import { reconcileScheduleCron } from '@/lib/agents/schedule-cron';
 import { compile } from '@/lib/agents/langgraph-compile';
 import { config } from '@/lib/config';
 
@@ -72,10 +75,19 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const { id } = await ctx.params;
     const body = (await req.json().catch(() => ({}))) as { action?: string };
     switch (body.action) {
-      case 'archive':
-        return NextResponse.json({ system: archiveSystem(id, user) });
-      case 'unarchive':
-        return NextResponse.json({ system: unarchiveSystem(id, user) });
+      case 'archive': {
+        // Archive stops the system + suspends its schedule CronJob (reconcile-to-none)
+        // but KEEPS the repo + the saved `schedule` record, so unarchive re-provisions.
+        const system = archiveSystem(id, user);
+        const cron = await reconcileScheduleCron(id, { kind: 'manual' });
+        return NextResponse.json({ system, cron });
+      }
+      case 'unarchive': {
+        // Restore re-provisions the CronJob from the retained schedule (no-op if manual).
+        const system = unarchiveSystem(id, user);
+        const cron = await reconcileScheduleCron(id, system.schedule);
+        return NextResponse.json({ system, cron });
+      }
       default:
         return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
     }
@@ -84,14 +96,28 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
 }
 
-/** DELETE → permanently remove a system + its version history (edit-scoped). */
+/**
+ * DELETE → permanently remove a system + its version history (edit-scoped), then
+ * PHYSICALLY purge its backing resources: its Forgejo repo (`os-<id>`) and any
+ * schedule CronJob. The record delete runs first (403 → nothing is purged); an
+ * unreachable Forgejo / k8s API surfaces in `physical[].ok:false` — the delete
+ * stands, the leftover is never silent.
+ */
 export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
     await ensureHydrated();
     const user = await requireUser();
     const { id } = await ctx.params;
-    deleteSystem(id, user);
-    return NextResponse.json({ ok: true });
+    const rec = deleteSystem(id, user); // throws 403 → nothing is purged
+    const physical = await purgeSystemResources(rec, {
+      deleteRepo: (repo) => realForgejo().deleteRepo(repo),
+      // Reconcile the schedule to "none" — deletes the CronJob (idempotent 404 = ok).
+      teardownCron: async (systemId) => {
+        const r = await reconcileScheduleCron(systemId, { kind: 'manual' });
+        return { ok: r.ok, detail: r.detail };
+      },
+    });
+    return NextResponse.json({ ok: true, physical });
   } catch (e) {
     return fail(e);
   }

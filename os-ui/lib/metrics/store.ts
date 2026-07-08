@@ -4,6 +4,7 @@
 import { type Principal, getDataset, listDatasets } from '../data/store.ts';
 import { type MetricRecord, metricRecord } from './governance.ts';
 import { measureMember } from './model.ts';
+import { isMetricArchived } from './lifecycle.ts';
 
 /**
  * Metrics derived from the Data tab's datasets (read-only over lib/data/store) — a metric
@@ -24,31 +25,39 @@ export type MetricSummary = {
   tier: 'personal' | 'domain' | 'marketplace';
   owner: string;
   type: string;
+  /** Soft-archived (retained, reversible). Absent/false = live. */
+  archived?: boolean;
 };
 
 function summariesFor(datasetId: string, user: Principal): MetricSummary[] {
   const d = getDataset(datasetId, user);
-  return d.measures.map((m) => ({
-    id: `${d.id}.${m.name}`,
-    name: m.name,
-    datasetId: d.id,
-    datasetName: d.name,
-    member: measureMember(d, m),
-    tier: TIER_OF[d.tier],
-    owner: d.owner,
-    type: m.type,
-  }));
+  return d.measures.map((m) => {
+    const id = `${d.id}.${m.name}`;
+    return {
+      id,
+      name: m.name,
+      datasetId: d.id,
+      datasetName: d.name,
+      member: measureMember(d, m),
+      tier: TIER_OF[d.tier],
+      owner: d.owner,
+      type: m.type,
+      archived: isMetricArchived(id),
+    };
+  });
 }
 
 export type MetricGroups = { mine: MetricSummary[]; domain: MetricSummary[]; marketplace: MetricSummary[] };
 
-/** List every metric visible to the user, grouped like the other governed surfaces. */
-export function listMetrics(user: Principal): MetricGroups {
+/** List every metric visible to the user, grouped like the other governed surfaces.
+ *  Archived metrics are soft-hidden by default (reversible). */
+export function listMetrics(user: Principal, opts: { includeArchived?: boolean } = {}): MetricGroups {
   const groups = listDatasets(user);
   const ids = [...groups.mine, ...groups.domain, ...groups.marketplace].map((s) => s.id);
   const out: MetricGroups = { mine: [], domain: [], marketplace: [] };
   for (const id of ids) {
     for (const s of summariesFor(id, user)) {
+      if (s.archived && !opts.includeArchived) continue;
       // The metric tier is personal|domain|marketplace; the registry group keys are
       // mine|domain|marketplace — map personal → mine (a personal metric is "mine").
       const key = s.tier === 'personal' ? 'mine' : s.tier;

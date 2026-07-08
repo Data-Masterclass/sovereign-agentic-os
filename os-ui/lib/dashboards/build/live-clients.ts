@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { config } from '@/lib/config';
-import { importDashboardBundle } from '@/lib/superset/client';
+import { importDashboardBundle, deleteDashboardByName } from '@/lib/superset/client';
 import { type DashboardLiveDeps, type EmbedClient, type SupersetClient } from './live.ts';
 import { type GuestTokenRequest } from '../embed.ts';
 
@@ -44,6 +44,10 @@ export function realSuperset(): SupersetClient {
       if (!res || !res.ok) return false;
       const d = (await res.json().catch(() => ({}))) as { count?: number };
       return (d.count ?? 0) > 0;
+    },
+    async deleteDashboard(name) {
+      // Real DELETE /api/v1/dashboard/{id} (id resolved by title); throws → ✗.
+      return deleteDashboardByName(base, name);
     },
     async createReport(spec) {
       const res = await withTimeout(`${base}/api/v1/report/`, {

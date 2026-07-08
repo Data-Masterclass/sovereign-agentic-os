@@ -27,8 +27,8 @@ export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string 
   try {
     const user = await requireUser();
     const { id } = await ctx.params;
-    await deleteConnection(id, user);
-    return NextResponse.json({ ok: true });
+    const physical = await deleteConnection(id, user);
+    return NextResponse.json({ ok: true, physical });
   } catch (e) {
     return fail(e);
   }

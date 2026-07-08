@@ -6,7 +6,7 @@ import { config } from '@/lib/config';
 import { type Workflow, type DomainKnowledge } from './schema.ts';
 import { chunkWorkflow, chunkDomain, type KnowledgeUnit } from './chunk.ts';
 import { embed } from './embed.ts';
-import { upsertUnits, type IndexedUnit } from './index-store.ts';
+import { upsertUnits, removeUnits, type IndexedUnit } from './index-store.ts';
 
 /**
  * The indexing pipeline (the "Dagster sensor → Haystack pipeline" of the design,
@@ -40,6 +40,25 @@ async function withTimeout(url: string, init: RequestInit, ms = 6000): Promise<R
 function toIndexed(units: KnowledgeUnit[], vectors: number[][]): IndexedUnit[] {
   const now = new Date().toISOString();
   return units.map((u, i) => ({ ...u, embedding: vectors[i] ?? [], indexedAt: now }));
+}
+
+/**
+ * PHYSICALLY purge a scope's indexed units — the delete side of the Knowledge
+ * lifecycle. Removes the workflow/domain's vectors from OpenSearch (_delete_by_query)
+ * AND the in-process offline mirror, so a DELETED knowledge artifact stops being
+ * retrievable (by agents or search). Best-effort + honest: returns whether the
+ * OpenSearch delete succeeded (the in-process removal always happens). Archive does
+ * NOT call this — an archived workflow keeps its index until it is truly deleted.
+ */
+export async function purgeKnowledgeUnits(scope: string): Promise<boolean> {
+  removeUnits(scope); // offline mirror — always
+  const delBody = { query: { bool: { should: [{ term: { workflow_id: scope } }, { term: { _id: scope } }] } } };
+  const res = await withTimeout(`${config.opensearchUrl}/${config.knowledgeIndex}/_delete_by_query?refresh=true`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(delBody),
+  });
+  return !!res && res.ok;
 }
 
 /** Bulk-write embedded units to OpenSearch (best-effort live path). */
