@@ -13,11 +13,14 @@ export const dynamic = 'force-dynamic';
  * /api/dashboards/embed) with the viewer's RLS, so a shared tile still shows only the
  * viewer's rows.
  */
-export async function GET() {
+export async function GET(req: Request) {
   try {
     await ensureHydrated();
     const user = await requirePrincipal();
-    return NextResponse.json(listDashboards(user));
+    // ?archived=1 additionally returns soft-archived dashboards (their own section),
+    // so an archived dashboard stays openable → its detail exposes Restore + Delete.
+    const includeArchived = new URL(req.url).searchParams.get('archived') === '1';
+    return NextResponse.json(listDashboards(user, { includeArchived }));
   } catch (e) {
     return errorResponse(e);
   }

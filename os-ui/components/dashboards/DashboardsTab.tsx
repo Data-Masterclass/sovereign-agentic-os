@@ -32,7 +32,10 @@ type View =
  */
 export default function DashboardsTab({ supersetUrl }: { supersetUrl: string }) {
   const [view, setView] = useState<View>({ kind: 'list' });
-  const dashboards = useApi<DashboardGroups>('/api/dashboards');
+  // ?archived=1 additionally returns soft-archived dashboards (their own section), so an
+  // archived dashboard stays openable → its detail exposes Restore + Delete (OS-wide rule).
+  const [showArchived, setShowArchived] = useState(false);
+  const dashboards = useApi<DashboardGroups>(`/api/dashboards${showArchived ? '?archived=1' : ''}`);
   const metrics = useApi<MetricGroups>('/api/metrics');
 
   // Clicking the Dashboards sidebar link returns to the list from any detail/new view.
@@ -86,6 +89,8 @@ export default function DashboardsTab({ supersetUrl }: { supersetUrl: string }) 
               loading={dashboards.loading}
               error={dashboards.error}
               onOpen={(d) => setView({ kind: 'detail', dashboard: d })}
+              showArchived={showArchived}
+              onToggleArchived={() => setShowArchived((v) => !v)}
             />
           </>
         )}

@@ -14,6 +14,8 @@ type Summary = {
   tier: 'dataset' | 'asset' | 'product'; kind: 'doc' | 'image' | 'video' | 'audio' | 'table' | 'archive' | 'other';
   folder: string; tags: string[]; sensitivity: string; freshness: string | null;
   version: string; status: 'processing' | 'searchable' | 'stored'; bytes: number;
+  /** Soft-archived (retained, reversible). Absent/false = live. */
+  archived?: boolean;
 };
 type Facets = { folders: { path: string; count: number }[]; tags: { tag: string; count: number }[] };
 type Groups = { mine: Summary[]; domain: Summary[]; marketplace: Summary[]; facets: Facets };
@@ -57,6 +59,9 @@ export default function FilesBrowser() {
   const [folder, setFolder] = useState<string | null>(null);
   const [tag, setTag] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  // ?archived=1 additionally returns soft-archived files (their own section), so an
+  // archived file stays openable → its preview exposes Restore + Delete (OS-wide rule).
+  const [showArchived, setShowArchived] = useState(false);
 
   // search
   const [query, setQuery] = useState('');
@@ -69,12 +74,12 @@ export default function FilesBrowser() {
   const refresh = useCallback(async () => {
     setErr('');
     try {
-      const res = await fetch('/api/files', { cache: 'no-store' });
+      const res = await fetch(`/api/files${showArchived ? '?archived=1' : ''}`, { cache: 'no-store' });
       const data = await res.json();
       if (!res.ok) { setErr(data.error ?? 'Failed to load files'); return; }
       setGroups(data);
     } catch (e) { setErr((e as Error).message); }
-  }, []);
+  }, [showArchived]);
   useEffect(() => { refresh(); }, [refresh]);
 
   // Debounced search across the user's indexed files.
@@ -118,7 +123,9 @@ export default function FilesBrowser() {
   const counts = groups ? scopeCounts(groups, uid) : null;
   const list = scoped ? scoped[scope] : [];
   const facets = groups?.facets ?? { folders: [], tags: [] };
-  const filtered = list.filter((f) => (!folder || f.folder === folder) && (!tag || f.tags.includes(tag)));
+  const matched = list.filter((f) => (!folder || f.folder === folder) && (!tag || f.tags.includes(tag)));
+  const filtered = matched.filter((f) => !f.archived);
+  const archivedFiles = matched.filter((f) => f.archived);
   const searching = query.trim().length > 0;
 
   return (
@@ -139,6 +146,14 @@ export default function FilesBrowser() {
             onChange={(e) => setQuery(e.target.value)} aria-label="Search files" />
           {searching ? <button className="preview-close" onClick={() => setQuery('')} aria-label="Clear">×</button> : null}
         </div>
+        <button
+          className="btn ghost"
+          style={{ opacity: showArchived ? 1 : 0.7 }}
+          onClick={() => { setShowArchived((v) => !v); setSelected(null); }}
+          title="Archived files are hidden by default"
+        >
+          {showArchived ? 'Hide archived' : 'Show archived'}
+        </button>
         <button className="btn" onClick={() => fileRef.current?.click()} {...anchorAttr(ANCHORS.files.upload)}>Upload</button>
         <input ref={fileRef} type="file" multiple hidden
           onChange={(e) => { if (e.target.files?.length) upload(e.target.files); e.target.value = ''; }} />
@@ -212,6 +227,20 @@ export default function FilesBrowser() {
                   ))}
                 </div>
               )}
+
+              {/* Archived — openable cards; the preview exposes Restore + Delete. */}
+              {showArchived && archivedFiles.length > 0 ? (
+                <>
+                  <div className="section-title" style={{ marginTop: 24 }}>
+                    Archived<span className="count-pill">{archivedFiles.length}</span>
+                  </div>
+                  <div className="file-grid">
+                    {archivedFiles.map((f) => (
+                      <FileCard key={f.id} f={f} on={selected === f.id} onOpen={() => setSelected(f.id)} />
+                    ))}
+                  </div>
+                </>
+              ) : null}
             </>
           )}
         </section>

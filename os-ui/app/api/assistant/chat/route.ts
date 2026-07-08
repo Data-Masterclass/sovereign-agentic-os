@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { config } from '@/lib/config';
+import { roleModel } from '@/lib/models/roles';
 import { requireUser } from '@/lib/auth';
 import { mcpTabForPath, runOsAssistant } from '@/lib/assistant/agent-loop';
 import { AssistantNotConfiguredError } from '@/lib/assistant/complete';
@@ -72,7 +72,7 @@ export async function POST(req: Request) {
       // Transparent, honest trace of the governed tools it invoked this turn.
       tools: result.steps.map((s) => ({ name: s.tool, isError: s.isError })),
       tab,
-      model: config.litellmExecModel,
+      model: roleModel('standard'),
     });
   } catch (e) {
     if (e instanceof AssistantNotConfiguredError) {

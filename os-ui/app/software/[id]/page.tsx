@@ -8,10 +8,13 @@ import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
 import CodePanel from '@/components/CodePanel';
+import LifecycleActions from '@/components/lifecycle/LifecycleActions';
+import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import { useToolWindow } from '@/components/ToolWindowProvider';
 import { useApi } from '@/lib/useApi';
 import { getUrlParam, patchUrl } from '@/lib/url-params';
 import { roleAtLeast, type Role as SessionRole } from '@/lib/session';
+import DomainTag from '@/components/DomainTag';
 
 type Visibility = 'Personal' | 'Shared' | 'Certified';
 type Tool = { name: string; description: string; write: boolean };
@@ -233,12 +236,13 @@ export default function AppPage() {
   const publishLabel = inReview ? 'Awaiting review' : app.deploy.releases > 0 ? 'Publish next release' : 'Publish release';
 
   return (
-    <>
+    <ConfirmProvider>
       <PageHeader title={app.name} crumb={`Software · ${app.slug}`} />
       <div className="content sw">
         <div className="sw-app-head">
           <div className="sw-app-head-meta">
             <span className={visBadge(app.visibility)}>{app.visibility}</span>
+            {(app.visibility === 'Shared' || app.visibility === 'Certified') ? <DomainTag domain={app.domain} /> : null}
             <span className={dep.cls}>{dep.label}</span>
             <span className="badge muted">{version}</span>
             {app.mode === 'offline' ? <span className="badge muted">git not ready</span> : null}
@@ -408,12 +412,21 @@ export default function AppPage() {
                   <button className="btn ghost" onClick={() => lifecycle('use-as-data')} disabled={busy || app.usedAsData}>
                     {app.usedAsData ? 'Used as Data ✓' : 'Use as Data'}
                   </button>
-                  {app.status === 'archived' ? (
-                    <button className="btn ghost" onClick={() => lifecycle('unarchive')} disabled={busy}>Restore</button>
-                  ) : (
-                    <button className="btn ghost" onClick={() => lifecycle('archive')} disabled={busy}>Archive</button>
-                  )}
-                  <button className="btn ghost" onClick={() => lifecycle('delete')} disabled={busy}>Delete</button>
+                  {/* OS-wide rule: live → Archive; only an ARCHIVED app exposes Delete.
+                      Real archived state drives which actions show. */}
+                  <LifecycleActions
+                    id={app.id}
+                    name={app.name}
+                    kind="app"
+                    visibility={app.visibility === 'Shared' ? 'shared' : app.visibility === 'Certified' ? 'certified' : 'personal'}
+                    archived={app.status === 'archived'}
+                    handlers={{
+                      onArchive: () => lifecycle('archive'),
+                      onRestore: () => lifecycle('unarchive'),
+                      onDelete: () => lifecycle('delete'),
+                    }}
+                    showVersions={false}
+                  />
                   <span className={`badge ${app.status === 'active' ? 'ok' : 'muted'}`}>{app.status}</span>
                 </div>
                 {msg ? <div className={msg.startsWith('✓') ? 'answer' : 'error'} style={{ marginTop: 12 }}>{msg}</div> : null}
@@ -446,6 +459,6 @@ export default function AppPage() {
           </div>
         )}
       </div>
-    </>
+    </ConfirmProvider>
   );
 }

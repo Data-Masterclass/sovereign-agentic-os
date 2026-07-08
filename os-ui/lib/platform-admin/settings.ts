@@ -17,7 +17,14 @@ export type Settings = {
   defaults: { domainTemplate: string; newUserRole: 'creator' | 'builder' };
   localization: { locale: 'en' | 'de'; available: ('en' | 'de')[] };
   notifications: { email: string; backupFailure: boolean; costThreshold: boolean };
+  // The three default model ROLES the OS resolves at runtime. Each is a live
+  // LiteLLM `model_name` (e.g. `sovereign-reasoning`); an EMPTY string means
+  // "unset — fall back to the config.ts env default" (see lib/models/roles.ts).
+  // The panel re-points ROLE→alias; it never rewrites the fixed LiteLLM aliases.
+  modelRoles: { reasoning: string; standard: string; embeddings: string };
 };
+
+const EMPTY_ROLES = { reasoning: '', standard: '', embeddings: '' };
 
 let settings: Settings = {
   sso: { enabled: false, provider: 'ory', issuerUrl: '', scim: false },
@@ -25,6 +32,7 @@ let settings: Settings = {
   defaults: { domainTemplate: 'analytics', newUserRole: 'creator' },
   localization: { locale: 'en', available: ['en', 'de'] },
   notifications: { email: 'admin@datamasterclass.com', backupFailure: true, costThreshold: true },
+  modelRoles: { ...EMPTY_ROLES },
 };
 
 function fail(message: string, status: number): Error {
@@ -48,6 +56,7 @@ export function updateSettings(patch: Partial<Settings> & Record<string, unknown
     defaults: { ...settings.defaults, ...(patch.defaults ?? {}) },
     localization: { ...settings.localization, ...(patch.localization ?? {}) },
     notifications: { ...settings.notifications, ...(patch.notifications ?? {}) },
+    modelRoles: { ...settings.modelRoles, ...(patch.modelRoles ?? {}) },
   };
   return settings;
 }
@@ -59,5 +68,6 @@ export function _reset(): void {
     defaults: { domainTemplate: 'analytics', newUserRole: 'creator' },
     localization: { locale: 'en', available: ['en', 'de'] },
     notifications: { email: 'admin@datamasterclass.com', backupFailure: true, costThreshold: true },
+    modelRoles: { ...EMPTY_ROLES },
   };
 }

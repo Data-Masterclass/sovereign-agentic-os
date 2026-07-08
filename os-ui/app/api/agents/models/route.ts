@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { config } from '@/lib/config';
 import { requireUser } from '@/lib/auth';
 import { MODEL_CATALOG, modelInfo, type ModelInfo } from '@/lib/agents/routing';
+import { roleModels } from '@/lib/models/roles';
 
 export const dynamic = 'force-dynamic';
 
@@ -64,14 +65,14 @@ export async function GET() {
           models.push(info);
         }
       }
-      if (models.length > 0) return NextResponse.json({ models, source: 'litellm' });
+      if (models.length > 0) return NextResponse.json({ models, source: 'litellm', roles: roleModels() });
     }
   } catch {
     /* fall through to the offline catalog */
   } finally {
     clearTimeout(timer);
   }
-  // Offline: the install catalog (Ministral light / Magistral reasoning / Qwen vision).
+  // Offline: the install catalog (Standard gpt-oss-20b / Reasoning + Vision Qwen3-VL-235B / Embeddings Qwen3-VL-Embedding-8B).
   const models: ModelInfo[] = Object.values(MODEL_CATALOG);
-  return NextResponse.json({ models, source: 'offline' });
+  return NextResponse.json({ models, source: 'offline', roles: roleModels() });
 }

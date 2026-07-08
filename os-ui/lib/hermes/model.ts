@@ -7,7 +7,7 @@
  * Hermes 4.3 is the TOOL-CALLING brain for Hermes-runtime agents, served via vLLM
  * BEHIND LiteLLM (so every call is metered, capped, traced, policy-routed). Three
  * size tiers; only the 14B is CPU-feasible on the box, 36B/70B are gated behind
- * the optional GPU pool. Magistral stays the general-reasoning default (routing.ts).
+ * the optional GPU pool. The Reasoning role model stays the general-reasoning default (routing.ts).
  *
  * Llama-license note: Hermes 4 weights are Llama-3.1-based → Llama 3.1 Community
  * License (source-available, NOT Apache/MIT). Fine for self-hosted internal use;

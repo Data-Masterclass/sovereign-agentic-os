@@ -74,10 +74,18 @@ export default function Sidebar() {
 
       <nav className="nav">
         {visibleGroups.map((group, i) => (
-          <div key={group.heading ?? `group-${i}`} className="nav-group">
-            {group.heading ? <div className="nav-heading">{group.heading}</div> : null}
-            {group.tabs.map(renderTab)}
-          </div>
+          group.heading ? (
+            <details key={group.heading} className="nav-group nav-section" open>
+              <summary className="nav-heading nav-heading-toggle">
+                {group.heading}
+              </summary>
+              {group.tabs.map(renderTab)}
+            </details>
+          ) : (
+            <div key={`group-${i}`} className="nav-group nav-entry">
+              {group.tabs.map(renderTab)}
+            </div>
+          )
         ))}
       </nav>
 

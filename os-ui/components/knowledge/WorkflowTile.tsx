@@ -4,6 +4,7 @@
 'use client';
 
 import type { WorkflowSummary } from '@/lib/knowledge/store';
+import DomainTag from '@/components/DomainTag';
 
 /**
  * A single workflow tile in the Knowledge tab grid. Shows title, actor mix
@@ -45,6 +46,8 @@ export default function WorkflowTile({ workflow: w, onClick }: Props) {
             published by {w.publishedBy}
           </span>
         )}
+        {/* Source-domain provenance in Shared/Marketplace scopes (renders nothing otherwise). */}
+        {(w.visibility === 'Shared' || w.visibility === 'Marketplace') && <DomainTag domain={w.domain} />}
       </div>
     </button>
   );

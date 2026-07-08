@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
+import { roleModel } from '@/lib/models/roles';
 import type { CurrentUser } from '@/lib/auth';
 import { ALL_MCP_TOOLS, isMcpTab, listToolsForRole, toolsForTab, type McpTab } from '@/lib/mcp/server';
 import { loadTabContext, tabTitle } from '@/lib/tabs/context';
@@ -164,8 +164,8 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<AgenticGraphResu
     toolSpecsFor: (node) => grantedToolSpecs(input.user, sys, node.tools),
     callTool: grantedToolExecutor(input.user, sys, input.systemId, input.toolDeps),
     preamble: osPreamble(sys),
-    reasoningModel: config.litellmReasoningModel,
-    execModel: config.litellmExecModel,
+    reasoningModel: roleModel('reasoning'),
+    execModel: roleModel('standard'),
     maxIterations: input.maxIterations,
     disabled: input.disabledAgents,
   });
@@ -216,8 +216,8 @@ export async function runPhaseTurn(input: RunPhaseTurnInput): Promise<PhaseTurnR
       toolSpecsFor: (node) => specsFor(node.tools),
       callTool: tabToolExecutor(input.user, 'software'),
       preamble: preamble(),
-      reasoningModel: config.litellmReasoningModel,
-      execModel: config.litellmExecModel,
+      reasoningModel: roleModel('reasoning'),
+      execModel: roleModel('standard'),
     },
     { extraGuidance: phaseGuidance(phase, session.appId), onStep: input.onStep },
   );

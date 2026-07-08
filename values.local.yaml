@@ -20,13 +20,6 @@ networkPolicies:
 
 # Component sizing/toggles for kind are added here as each is wired in.
 
-# Self-hosted default LLM (Ministral 3 3B). On a single ~14 GB kind node run ONE
-# replica (a Q4 3B working set is ~3 GB); the product default (values.yaml) is
-# 2+ for HA/throughput on a sized node. The first request pulls the model once
-# (needs egress to the model registry) — air-gap by baking weights into an image.
-modelServer:
-  replicas: 1
-
 # Build-and-toggle (RAM): on a 14 GB VM the full L1+L2 set doesn't all fit
 # (the spec sizes it for a 96 GB STACKIT node). These two are already validated
 # and committed; turned off locally to make room for OpenMetadata. Flip back on

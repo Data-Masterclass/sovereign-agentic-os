@@ -25,7 +25,7 @@ type Chain = {
 } | null;
 
 function statusClass(s: string): string {
-  if (s === 'running') return 'b-running';
+  if (s === 'running' || s === 'on-demand') return 'b-running';
   if (s === 'starting') return 'b-starting';
   if (s === 'off' || s === 'stopped' || s === 'disabled') return 'b-off';
   return 'b-unknown';

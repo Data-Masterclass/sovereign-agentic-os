@@ -49,7 +49,7 @@ The full L1–L3 self-contained slice already nearly fills a 14 GB VM. The Scien
 - **OK (one at a time):** `mlflow` (~0.5–1 GB) **or** a single JupyterHub notebook
   (hub ~0.4 GB + one singleuser pod ~0.5–2 GB).
 - **Keep OFF on 14 GB:** `featureform` (~1 GB + the providers it talks to), `kserve` (needs the
-  controller + cert-manager + a model-server pod), running `jupyterhub` **and** `mlflow`
+  controller + cert-manager + an inference/predictor pod), running `jupyterhub` **and** `mlflow`
   **and** the full L1–L3 set together. To exercise the whole Science flow, scale the node
   (≥ 24–32 GB) or use the STACKIT node.
 - Recommended local smoke test: turn the heavy L2 bits off (they already are in

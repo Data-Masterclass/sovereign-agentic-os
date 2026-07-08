@@ -12,6 +12,7 @@ import { type DashboardSummary, type DashTier, TIER_BADGE, TIER_LABEL } from './
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import type { Visibility } from '@/lib/lifecycle';
+import DomainTag from '@/components/DomainTag';
 
 type Facet = 'view' | 'reports' | 'govern';
 
@@ -51,6 +52,7 @@ export default function DashboardDetail({
       <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'space-between' }}>
         <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <h2 style={{ margin: 0 }}>{dashboard.name}</h2>
+          {(dashboard.tier === 'domain' || dashboard.tier === 'marketplace') ? <DomainTag domain={dashboard.domain} /> : null}
           <span className={`badge ${TIER_BADGE[dashboard.tier]}`}>{TIER_LABEL[dashboard.tier]}</span>
         </div>
         {canManage ? (
@@ -59,7 +61,7 @@ export default function DashboardDetail({
             name={dashboard.name}
             kind="dashboard"
             visibility={lcVis(dashboard.tier)}
-            archived={false}
+            archived={!!dashboard.archived}
             api={`/api/dashboards/${dashboard.id}`}
             handlers={{ onDelete: async () => {
               const res = await fetch(`/api/dashboards/${dashboard.id}`, { method: 'DELETE' });

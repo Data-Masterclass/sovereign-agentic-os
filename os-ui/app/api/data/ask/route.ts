@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { config } from '@/lib/config';
+import { roleModel } from '@/lib/models/roles';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { listAskable } from '@/lib/data/store';
 import { readPrincipalFor } from '@/lib/data/store-fqn';
@@ -48,8 +48,8 @@ export async function POST(req: Request) {
       llm: async (messages: AskMessage[], model: string) =>
         (await call({ model, messages, temperature: 0 })).content,
       models: {
-        generate: config.litellmReasoningModel, // SQL needs the deep model
-        summarize: config.litellmExecModel, // the grounded summary is light work
+        generate: roleModel('reasoning'), // SQL needs the deep model
+        summarize: roleModel('standard'), // the grounded summary is light work
       },
       // Owner-aware principal, resolved per generated SQL: a read of the caller's OWN
       // `personal_<uid>` lane runs AS the owner (that schema is owner-only under OPA

@@ -358,9 +358,9 @@ export default function GrantsRouting({
       <div className="section-title">Workspace default routing</div>
       <p className="hint" style={{ marginTop: 0 }}>
         The <strong>Auto</strong> fallback every agent uses when it isn’t pinned to a specific model.
-        Cheap-first: light work → Ministral, reasoning → in-box Magistral, vision → Qwen. An individual
+        Cheap-first: light work → Standard, reasoning → Reasoning, vision → the vision model. An individual
         agent can override this from its own <strong>How this agent thinks</strong> toggle
-        (Auto / Reasoning / Execution). A per-activity override here writes the system’s LiteLLM routing
+        (Auto / Standard / Reasoning). A per-activity override here writes the system’s LiteLLM routing
         config, applied on Build.
       </p>
       <div className="table-wrap">

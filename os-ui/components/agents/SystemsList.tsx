@@ -12,6 +12,7 @@ import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/sc
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import type { Visibility } from '@/lib/lifecycle';
+import DomainTag from '@/components/DomainTag';
 
 /**
  * Level 1 — the systems list (landing). Grouped Mine / My domain / Marketplace,
@@ -69,6 +70,7 @@ export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
         <h3 style={{ margin: 0, fontSize: 14, textTransform: 'none', letterSpacing: 0, color: 'var(--text)' }}>{s.name}</h3>
         <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+          {(s.visibility === 'Shared' || s.visibility === 'Marketplace') ? <DomainTag domain={s.domain} /> : null}
           {s.archived ? <span className="badge muted">archived</span> : null}
           <span className={`badge ${visClass(s.visibility)}`}>{s.visibility}</span>
         </div>
@@ -94,7 +96,8 @@ export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }
           )
         ) : (
           <>
-            {!s.archived ? <button className="btn sm" onClick={() => onOpen(s.id)}>Open</button> : null}
+            {/* Archived systems open too — Restore/Delete live inside the opened detail. */}
+            <button className="btn sm" onClick={() => onOpen(s.id)}>Open</button>
             {canManage(s) ? (
               <LifecycleActions
                 id={s.id}
@@ -105,6 +108,7 @@ export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }
                 api={`/api/agents/systems/${s.id}`}
                 onChanged={reload}
                 compact
+                surface="tile"
               />
             ) : null}
           </>

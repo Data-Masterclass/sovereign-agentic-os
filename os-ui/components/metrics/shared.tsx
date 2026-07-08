@@ -21,6 +21,10 @@ export type MetricSummary = {
   tier: MetricTier;
   owner: string;
   type: string;
+  /** Source domain — set on shared/marketplace metrics for provenance display. */
+  domain?: string;
+  /** Soft-archived (retained, reversible). Absent/false = live. */
+  archived?: boolean;
 };
 export type MetricGroups = { mine: MetricSummary[]; domain: MetricSummary[]; marketplace: MetricSummary[] };
 

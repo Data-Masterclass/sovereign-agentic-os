@@ -7,7 +7,6 @@ import { useCallback, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
 import DataTab from '@/components/data/DataTab';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
-import { useTabNavReset } from '@/lib/tab-nav';
 
 type QueryResult = {
   engine: string;
@@ -20,19 +19,12 @@ type QueryResult = {
 const DEFAULT_SQL =
   'select order_date, revenue, orders\nfrom daily_revenue\norder by order_date';
 
-// The Data tab is TWO surfaces: Datasets (the unified, Files-style home — All Data ·
-// My Data · Shared Data · Marketplace Data, with catalog detail folded into each
-// dataset) and Query (the power-user SQL editor). Conversational data Q&A lives in
-// the global Ask-the-OS assistant, not here; the engine (Trino/Iceberg) is invisible.
-type View = 'datasets' | 'query';
+// The Data tab is ONE screen, in one scroll: the datasets home on top (the unified,
+// Files-style grid — All · My · Shared · Marketplace, with catalog detail folded into
+// each dataset), and the power-user SQL editor at the bottom. Conversational data Q&A
+// lives in the global Ask-the-OS assistant; the engine (Trino/Iceberg) stays invisible.
 
 export default function DataPage() {
-  const [view, setView] = useState<View>('datasets');
-
-  // Clicking the Data sidebar link returns to the primary Datasets sub-tab (its
-  // list). DataTab separately resets any open dataset detail back to the tiles.
-  useTabNavReset(() => setView('datasets'));
-
   // ---- query ----
   const [sql, setSql] = useState(DEFAULT_SQL);
   const [running, setRunning] = useState(false);
@@ -65,7 +57,6 @@ export default function DataPage() {
   );
   const preview = useCallback((fqn: string) => {
     const bare = fqn.includes('.') ? fqn.split('.').pop()! : fqn;
-    setView('query');
     run(`select * from ${bare} limit 50`);
   }, [run]);
 
@@ -73,17 +64,16 @@ export default function DataPage() {
     <>
       <PageHeader title="Data" crumb="datasets · query" tutorial="data" />
       <div className="content">
-        <div className="tabstrip">
-          <button className={view === 'datasets' ? 'active' : ''} onClick={() => setView('datasets')} {...anchorAttr(ANCHORS.data.sandbox)}>Datasets</button>
-          <button className={view === 'query' ? 'active' : ''} onClick={() => setView('query')} {...anchorAttr(ANCHORS.data.query)}>Query</button>
+        {/* Top: the datasets home (tiles → detail → build flow). */}
+        <div {...anchorAttr(ANCHORS.data.sandbox)}>
+          <DataTab />
         </div>
 
-        {view === 'datasets' ? <DataTab /> : null}
-
-        {view === 'query' ? (
-          <>
-            <div className="section-title">Query the lakehouse</div>
-            {result && result.tables.length ? (
+        {/* Bottom: the power-user SQL editor — one screen, one scroll, below the tiles.
+            Same governed /api/query path; only the placement changed. */}
+        <div className="query-section" style={{ marginTop: 40 }} {...anchorAttr(ANCHORS.data.query)}>
+          <div className="section-title">Query the lakehouse</div>
+          {result && result.tables.length ? (
               <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
                 {result.tables.map((t) => (
                   <button key={t} type="button" className="chip" style={{ cursor: 'pointer', background: 'transparent' }}
@@ -129,8 +119,7 @@ export default function DataPage() {
                 </>
               ) : null}
             </div>
-          </>
-        ) : null}
+        </div>
       </div>
     </>
   );

@@ -25,7 +25,7 @@ type Asset = {
   indexing: { mode: 'indexed' | 'stored-only'; representations: string[] };
   description: string;
 };
-type View = { asset: Asset; text: string; bytes: number; history: { version: string; at: string }[] };
+type View = { asset: Asset; text: string; bytes: number; history: { version: string; at: string }[]; archived?: boolean };
 type Gate = { ok: boolean; missing: string[] };
 type PromoteStatus = { tier: Asset['tier']; gate: Gate; request: { status: string } | null };
 type LineageEdge = { id: string; kind: string; target: string; by: string; at: string };
@@ -301,7 +301,7 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
             name={a.name}
             kind="file"
             visibility={lcVis(a.tier)}
-            archived={false}
+            archived={!!view.archived}
             api={`/api/files/${id}`}
             handlers={{ onDelete: onDeleted }}
             onChanged={onMutated}

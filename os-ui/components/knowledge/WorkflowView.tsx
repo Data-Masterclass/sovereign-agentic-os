@@ -13,6 +13,8 @@ import TacitPanel from './TacitPanel';
 import ContextPanel from './ContextPanel';
 import HandoverPanel from './HandoverPanel';
 import { commitWorkflow } from './commitWorkflow';
+import LifecycleActions from '@/components/lifecycle/LifecycleActions';
+import DomainTag from '@/components/DomainTag';
 import { addStep } from '@/lib/knowledge/step-edit';
 import type { Workflow, ActorType } from '@/lib/knowledge/schema';
 import type { Gap } from '@/lib/knowledge/gaps';
@@ -38,6 +40,7 @@ type WorkflowData = {
   visibility: string;
   publishedBy: string | null;
   publishedAt: string | null;
+  archived?: boolean;
   md: string;
   tacit: string;
   sha: string;
@@ -160,6 +163,12 @@ export default function WorkflowView({
       });
       const d = await res.json();
       if (!res.ok) { setPubError(d.error ?? 'Failed'); return; }
+      if (d.requested) {
+        setPubMsg(action === 'certify'
+          ? 'Certification requested — a platform admin will review it.'
+          : 'Promotion requested — a domain builder will review it.');
+        return;
+      }
       setPubMsg(`Workflow is now ${d.visibility === 'Marketplace' ? 'in the Marketplace' : 'live'}.`);
       await reload();
     } finally {
@@ -200,6 +209,10 @@ export default function WorkflowView({
           <button className="btn ghost sm" onClick={onBack}>← Workflows</button>
           <h2 className="k-detail-title">{data.title}</h2>
           <span className={`badge ${VIS_CLASS[data.visibility] ?? 'muted'}`}>{data.visibility}</span>
+          {/* Source-domain provenance — shown only in Shared/Marketplace tiers. */}
+          {(data.visibility === 'Shared' || data.visibility === 'Marketplace') && (
+            <DomainTag domain={data.domain} />
+          )}
           <span className={`badge ${data.status === 'live' ? 'ok' : 'muted'}`}>{data.status === 'live' ? 'Live' : 'Draft'}</span>
           {data.gaps.length > 0 && (
             <span className="badge err" title="Some step links reference a missing entity">
@@ -219,6 +232,28 @@ export default function WorkflowView({
               {publishing ? <span className="spin" /> : 'Certify to Marketplace'}
             </button>
           )}
+          {/* Creator (can edit, cannot publish) files a governed promotion request
+              — docs-first; a domain builder approves it. */}
+          {!data.canPublish && data.canEdit && data.status === 'draft' && (
+            <button className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={() => void publish('publish')} disabled={publishing}>
+              {publishing ? <span className="spin" /> : 'Request promotion'}
+            </button>
+          )}
+        </div>
+
+        {/* Lifecycle lives in the opened detail (OS-wide rule): live → Archive + Version;
+            archived → Restore + Delete + Version. `data.archived` carries the real state. */}
+        <div style={{ marginBottom: 12 }}>
+          <LifecycleActions
+            id={data.id}
+            name={data.title}
+            kind="knowledge"
+            visibility={data.visibility === 'Shared' ? 'shared' : data.visibility === 'Marketplace' ? 'certified' : 'personal'}
+            archived={!!data.archived}
+            api={`/api/knowledge/workflows/${workflowId}`}
+            onChanged={onBack}
+            compact
+          />
         </div>
 
         {pubMsg && <div className="hint" style={{ marginBottom: 10, color: 'var(--teal)' }}>{pubMsg}</div>}

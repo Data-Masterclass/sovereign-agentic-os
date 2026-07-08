@@ -9,7 +9,7 @@ import { assertGuarded, confirmationPhrase, GuardError } from './guard.ts';
 import { compile, type CompileInput } from './policy-compiler.ts';
 import { _reset as resetDomains, createDomain, setLayer, setArchived, listDomains, compilerView, activeDomainIds, ensureHydrated as ensureDomainsHydrated, hydrateDomains } from './domains.ts';
 import { _reset as resetSec, addAllowlist, removeAllowlist, decideRequest, listRequests, listAllowlist } from './security.ts';
-import { _reset as resetModels, registerProviderKey, listProviderKeys, setEnabled, setDefault, setCap, getDefaults } from './models.ts';
+import { _reset as resetModels, registerProviderKey, listProviderKeys, setEnabled, setCap, getDefaults } from './models.ts';
 import { billingView, offlineSpend } from './billing.ts';
 import { _reset as resetBackups, restore, restorePhrase } from './backups.ts';
 import { _resetAudit as resetAudit, listAudit } from './audit.ts';
@@ -217,14 +217,15 @@ test('models: provider keys hold ONLY a ref + fingerprint — never a raw value'
   assert.equal((pk as Record<string, unknown>).value, undefined);
 });
 
-test('models: cannot disable a default; cannot default a disabled/mismatched model', () => {
+test('models: cannot disable a current role default; caps + defaults projection', () => {
   resetModels();
-  assert.throws(() => setEnabled('ministral-8b', false), (e: { status?: number }) => e.status === 409); // it is the chat default
-  assert.throws(() => setDefault('embedding', 'ministral-8b'), (e: { status?: number }) => e.status === 400);
-  setCap('stackit-llama-70b', 150);
-  setEnabled('stackit-llama-70b', true);
-  setDefault('chat', 'stackit-llama-70b');
-  assert.equal(getDefaults().chat, 'stackit-llama-70b');
+  // sovereign-default is the STANDARD role default out of the box → cannot disable.
+  assert.throws(() => setEnabled('sovereign-default', false), (e: { status?: number }) => e.status === 409);
+  // Per-model cap works on a live alias.
+  setCap('sovereign-premium', 150);
+  // getDefaults projects the ONE role store (unset → baselines).
+  assert.equal(getDefaults().chat, 'sovereign-default');
+  assert.equal(getDefaults().embedding, 'sovereign-embed');
 });
 
 // ------------------------------------------------------------------ billing --

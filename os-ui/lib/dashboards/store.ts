@@ -84,10 +84,10 @@ export function __resetDashboards(): void {
   versions.__reset();
 }
 
-export type DashboardSummary = { id: string; name: string; view: string; tier: DashTier; owner: string; charts: number };
+export type DashboardSummary = { id: string; name: string; view: string; tier: DashTier; owner: string; charts: number; archived?: boolean };
 
 function summarise(d: Stored): DashboardSummary {
-  return { id: d.id, name: d.spec.name, view: d.spec.view, tier: d.tier, owner: d.owner, charts: d.spec.charts.length };
+  return { id: d.id, name: d.spec.name, view: d.spec.view, tier: d.tier, owner: d.owner, charts: d.spec.charts.length, archived: d.archived ?? false };
 }
 
 export type DashboardGroups = { mine: DashboardSummary[]; domain: DashboardSummary[]; marketplace: DashboardSummary[] };

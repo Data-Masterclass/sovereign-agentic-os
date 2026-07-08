@@ -17,7 +17,7 @@ import {
   provenanceOf,
 } from './routing.ts';
 
-test('the default table routes light work to Ministral and reasoning to the local sovereign model', () => {
+test('the default table routes light work to the Standard tier and reasoning to the Reasoning tier', () => {
   const table = defaultRoutingTable();
   assert.equal(table.coding.tier, 'light');
   assert.equal(table.coding.model, TIER_MODELS.light);
@@ -27,7 +27,7 @@ test('the default table routes light work to Ministral and reasoning to the loca
   assert.equal(table.vision.tier, 'vision');
 });
 
-test('reasoning defaults to the local sovereign Magistral model (not STACKIT)', () => {
+test('reasoning tier maps to the sovereign-reasoning gateway alias', () => {
   assert.equal(TIER_MODELS.reasoning, 'sovereign-reasoning');
 });
 
@@ -58,9 +58,9 @@ test('a workspace override replaces an activity default', () => {
 });
 
 test('tierOf classifies known model_names', () => {
-  assert.equal(tierOf('ministral-3'), 'light');
-  assert.equal(tierOf('sovereign-reasoning'), 'reasoning');        // local Magistral
-  assert.equal(tierOf('sovereign-reasoning-fast'), 'reasoning');   // STACKIT fast/fallback
+  assert.equal(tierOf('some-small-model'), 'light');              // unknown → light heuristic
+  assert.equal(tierOf('sovereign-reasoning'), 'reasoning');
+  assert.equal(tierOf('sovereign-reasoning-fast'), 'reasoning');   // fast/fallback
   assert.equal(tierOf('stackit-qwen3-vl-reasoning'), 'reasoning'); // legacy alias
   assert.equal(tierOf('stackit-qwen3-vl'), 'vision');
 });
@@ -77,27 +77,30 @@ test('MODEL_CATALOG contains ONLY real live gateway model_names (no phantoms)', 
     // gateway. No `ministral-*` / `stackit-*` / other-provider phantoms.
     assert.ok(name.startsWith('sovereign-'), `${name} is a real sovereign gateway alias`);
   }
-  // The two toggle targets exist and are sovereign (internal).
-  assert.equal(MODEL_CATALOG['sovereign-default'].provenance, 'internal');
-  assert.equal(MODEL_CATALOG['sovereign-reasoning'].provenance, 'internal');
-  // No phantom ids leaked back in.
+  // The live model set is all STACKIT-managed inference → every alias is external.
+  assert.equal(MODEL_CATALOG['sovereign-default'].provenance, 'external');
+  assert.equal(MODEL_CATALOG['sovereign-reasoning'].provenance, 'external');
+  assert.equal(MODEL_CATALOG['sovereign-embed'].provenance, 'external');
+  // No phantom / stale self-hosted ids leaked back in.
   assert.equal(MODEL_CATALOG['ministral-3'], undefined);
-  assert.equal(MODEL_CATALOG['stackit-qwen3-vl'], undefined);
+  assert.equal(MODEL_CATALOG['magistral-small'], undefined);
+  assert.equal(MODEL_CATALOG['bge-m3'], undefined);
 });
 
-test('provenanceOf: catalog wins; unknown names fall back to prefix heuristics', () => {
-  assert.equal(provenanceOf('sovereign-default'), 'internal');
-  assert.equal(provenanceOf('sovereign-reasoning'), 'internal');
-  assert.equal(provenanceOf('sovereign-vision'), 'internal');
-  // unknown in-box-looking prefix → internal; hosted/other-provider → external
-  assert.equal(provenanceOf('ministral-custom-7b'), 'internal'); // self-host prefix heuristic
+test('provenanceOf: catalog wins; unknown names default to external (no in-box server)', () => {
+  assert.equal(provenanceOf('sovereign-default'), 'external');
+  assert.equal(provenanceOf('sovereign-reasoning'), 'external');
+  assert.equal(provenanceOf('sovereign-vision'), 'external');
+  assert.equal(provenanceOf('sovereign-embed'), 'external');
+  // Unknown names default to external (safer to over-warn than imply in-box).
+  assert.equal(provenanceOf('ministral-custom-7b'), 'external');
   assert.equal(provenanceOf('gpt-4o'), 'external');
   assert.equal(provenanceOf('stackit-anything'), 'external');
 });
 
 test('modelInfo resolves unknown model_names via heuristics (never throws)', () => {
   const known = modelInfo('sovereign-reasoning');
-  assert.equal(known.display, 'Sovereign Reasoning');
+  assert.equal(known.display, 'Qwen3-VL-235B');
   const unknown = modelInfo('mystery-model-x');
   assert.equal(unknown.model_name, 'mystery-model-x');
   assert.equal(unknown.display, 'mystery-model-x'); // display falls back to the id
@@ -109,9 +112,11 @@ test('the thinking toggle is 3-state Auto/Reasoning/Execution with real model pi
   assert.deepEqual(modes, ['auto', 'reasoning', 'execution']);
   // Auto pins nothing (workspace routing decides).
   assert.equal(MODEL_MODES.find((m) => m.mode === 'auto')!.model, null);
-  // Reasoning pins the in-box Magistral; Execution pins the in-box Ministral.
+  // Reasoning pins the Reasoning-tier alias; Standard pins the light/Standard-tier alias.
   assert.equal(MODEL_MODES.find((m) => m.mode === 'reasoning')!.model, TIER_MODELS.reasoning);
   assert.equal(MODEL_MODES.find((m) => m.mode === 'execution')!.model, TIER_MODELS.light);
+  // The execution mode is LABELLED "Standard" in the agent builder copy (the id stays `execution`).
+  assert.equal(MODEL_MODES.find((m) => m.mode === 'execution')!.label, 'Standard');
   for (const m of MODEL_MODES) assert.ok(m.label && m.hint, `${m.mode} has label + hint`);
 });
 

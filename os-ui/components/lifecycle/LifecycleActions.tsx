@@ -41,6 +41,7 @@ export default function LifecycleActions({
   onChanged,
   compact = false,
   showVersions = true,
+  surface = 'detail',
 }: {
   id: string;
   name: string;
@@ -56,6 +57,12 @@ export default function LifecycleActions({
   compact?: boolean;
   /** Whether this artifact kind has a versions route. */
   showVersions?: boolean;
+  /**
+   * Where this cluster renders. OS-wide rule: a `tile` shows NO lifecycle actions
+   * (only the tile's own Open) — Archive/Restore/Delete/Version live inside the
+   * opened `detail`. So on a tile we render nothing at all.
+   */
+  surface?: 'tile' | 'detail';
 }) {
   const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
@@ -106,13 +113,30 @@ export default function LifecycleActions({
     await run('delete', handlers?.onDelete);
   }, [confirm, kind, name, visibility, run, handlers]);
 
+  // OS-wide rule: tiles expose ONLY their own Open — no lifecycle actions. You
+  // archive/restore/delete/inspect versions from inside the opened detail.
+  if (surface === 'tile') return null;
+
   return (
     <>
       <div className="lc-actions row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         {archived ? (
-          <button type="button" className={`btn ghost${sm}`} disabled={busy} onClick={doRestore}>
-            {busy ? <span className="spin" /> : 'Restore'}
-          </button>
+          <>
+            <button type="button" className={`btn ghost${sm}`} disabled={busy} onClick={doRestore}>
+              {busy ? <span className="spin" /> : 'Restore'}
+            </button>
+            {/* Delete is reachable ONLY on an archived artifact — never a direct
+                action on a live one. Archive first, then delete. */}
+            <button
+              type="button"
+              className={`btn ghost${sm} lc-delete`}
+              disabled={busy}
+              onClick={doDelete}
+              title="Delete permanently — removes the backing resource"
+            >
+              Delete
+            </button>
+          </>
         ) : (
           <button
             type="button"
@@ -124,15 +148,6 @@ export default function LifecycleActions({
             {busy ? <span className="spin" /> : 'Archive'}
           </button>
         )}
-        <button
-          type="button"
-          className={`btn ghost${sm} lc-delete`}
-          disabled={busy}
-          onClick={doDelete}
-          title="Delete permanently — removes the backing resource"
-        >
-          Delete
-        </button>
         {showVersions && api ? (
           <button
             type="button"

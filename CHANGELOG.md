@@ -15,6 +15,86 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.62] — 2026-07-08
+
+The deployed **os-ui image** carries its own version line (`osUI.image.tag` in
+`values.stackit-selfhosted.yaml`). 0.1.62 is the STACKIT three-tier models +
+embeddings migration + OS-wide lifecycle UX + Data/Metrics consolidation release,
+live on the STACKIT tenant.
+
+### Models & inference
+
+- **STACKIT three-tier model set, admin-configurable.** All in-cluster Mistral
+  model workloads (**Ministral** and **Magistral**) and the **model-server**
+  component are **deleted** — all inference is STACKIT-managed, so no local model
+  weights sit on the node disk.
+  - **Standard / worker** — `openai/gpt-oss-20b` (`sovereign-default`)
+  - **Reasoning** — `Qwen/Qwen3-VL-235B-A22B-Instruct-FP8` (`sovereign-reasoning`)
+  - **Embeddings** — `Qwen/Qwen3-VL-Embedding-8B` (`sovereign-embed`), **4096-dim**
+- **Models & Providers admin page** unified to a single live-sourced store. Each
+  role (standard / reasoning / embeddings) is independently configurable by an
+  Administrator; the catalog is sourced live from the LiteLLM gateway (generic /
+  open-source — operators register their own models; the three above are helm
+  defaults). Replaces the former split "Models" + "Providers" pages.
+- **Agent builder** now offers only **Auto / Standard / Reasoning** — the
+  embeddings tier is infrastructure-only, not a user-facing model choice.
+
+### Embeddings migration
+
+- **4096-dim embeddings** replace the prior 384-dim mock. OpenSearch knowledge
+  and files indices recreated; `KNOWLEDGE_EMBED_DIM` and `FILES_EMBED_DIM` are
+  wired from `retrieval.knnDimension` in the chart.
+
+### OS-wide lifecycle UX
+
+- **Artifact tiles show only "Open".** Archive / Restore and Version history live
+  inside the opened detail view. **Delete** is surfaced only on already-archived
+  items. Applied consistently across every tab.
+- **Show-archived** reveals archived items in each tab's detail lists so Delete
+  remains reachable without cluttering the working view.
+
+### Data + Metrics tabs
+
+- **Collapsed to a single screen** — subtabs removed; the query sandbox sits below
+  the dataset / metric tiles on one page.
+- **Dataset detail** gained a governed **"Preview first 50 rows"** section
+  (DLS-filtered; never fabricated).
+
+### Knowledge tab
+
+- Prominent **"New knowledge"** action and My-knowledge focal view.
+- **Full Personal → Domain → Marketplace promotion** via the governance ladder.
+- **Git-backed versioning** for personal knowledge items.
+
+### Provenance tags
+
+- **Source-domain tags** appear on every artifact shown in Shared or Marketplace
+  scope (all tabs), making same-named artifacts from different domains unambiguous.
+
+### Sidebar restructured
+
+- **5 named sections:** Plan / Context / Build / Monitor / Admin (was a flat
+  business-tabs list + a Platform group).
+
+### Components tab & Governance
+
+- **Postgres** now detected via StatefulSet fallback (fixes false-negative status).
+- **dbt** status shows `"on-demand"` (was incorrectly red).
+- **Sample RAG agent** removed from the component registry.
+- **"Seed demo queue"** button removed from the Governance page.
+
+### Software delivery pipeline
+
+- **`appImageRef`** now serves the real CI-published image (was the whoami
+  placeholder).
+- **`ci-runner` pod** gains `fsGroup: 1000` so it can register its runner,
+  fixing the `CrashLoopBackOff` that blocked pipeline runs.
+
+### User & Access
+
+- Edit path regression-tested — **6 new route tests** covering the User & Access
+  edit flow.
+
 ## [os-ui 0.1.32] — 2026-07-05
 
 The deployed **os-ui image** carries its own version line (`osUI.image.tag` in

@@ -256,6 +256,11 @@ spec:
               value: {{ $u.opensearchUrl | quote }}
             - name: KNOWLEDGE_INDEX
               value: {{ $u.knowledgeIndex | quote }}
+            # Knowledge k-NN dimension — sourced from the SINGLE retrieval.knnDimension
+            # (same source as FILES_EMBED_DIM) so real embed vectors aren't rejected and
+            # silently downgraded to the offline hash when the dim changes (384↔4096).
+            - name: KNOWLEDGE_EMBED_DIM
+              value: {{ .Values.retrieval.knnDimension | quote }}
             # ---- Files tab (unstructured context products). The `files` hybrid
             # index + the SHARED embedding model. FILES_EMBED_DIM is sourced from
             # the SINGLE retrieval.knnDimension so the knn_vector mapping and the

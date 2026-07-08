@@ -30,35 +30,58 @@ export type TabGroup = {
 
 export const TAB_GROUPS: TabGroup[] = [
   {
+    // Entry points — ungrouped, always at the top
     tabs: [
       { label: 'Home', icon: '◇', href: '/' },
       { label: 'Cockpit', icon: '◉', href: '/cockpit' },
-      { label: 'Strategy', icon: '▲', href: '/strategy' },
-      { label: 'Big Bets', icon: '◆', href: '/big-bets' },
-      { label: 'Agents', icon: '✦', href: '/agents' },
-      { label: 'Software', icon: '⌘', href: '/software' },
-      { label: 'Knowledge', icon: '❦', href: '/knowledge' },
-      { label: 'Files', icon: '❏', href: '/unstructured' },
-      { label: 'Data', icon: '▤', href: '/data' },
-      { label: 'Metrics', icon: '∑', href: '/metrics' },
-      { label: 'Dashboards', icon: '▦', href: '/dashboards' },
-      { label: 'Science', icon: '∿', href: '/science' },
-      { label: 'Connections', icon: '⇄', href: '/connections' },
-      { label: 'LLM Gateway', icon: '⌁', href: '/llm-gateway' },
-      { label: 'MCP', icon: '⌗', href: '/mcp' },
-      { label: 'Marketplace', icon: '⊞', href: '/marketplace', role: 'Builder / Administrator' },
-      { label: 'Monitoring', icon: '◷', href: '/monitoring' },
-      { label: 'Tutorials', icon: '◎', href: '/tutorials' },
-      { label: 'Settings', icon: '⚙', href: '/settings' },
     ],
   },
   {
-    heading: 'Platform',
+    heading: 'Plan',
     tabs: [
+      { label: 'Strategy', icon: '▲', href: '/strategy' },
+      { label: 'Big Bets', icon: '◆', href: '/big-bets' },
+    ],
+  },
+  {
+    heading: 'Context',
+    tabs: [
+      { label: 'Knowledge', icon: '❦', href: '/knowledge' },
+      { label: 'Files', icon: '❏', href: '/unstructured' },
+      { label: 'Data', icon: '▤', href: '/data' },
+      { label: 'Connections', icon: '⇄', href: '/connections' },
+    ],
+  },
+  {
+    heading: 'Build',
+    tabs: [
+      { label: 'Agents', icon: '✦', href: '/agents' },
+      { label: 'Software', icon: '⌘', href: '/software' },
+      { label: 'Science', icon: '∿', href: '/science' },
+      { label: 'MCP', icon: '⌗', href: '/mcp' },
+      { label: 'LLM Gateway', icon: '⌁', href: '/llm-gateway' },
+      { label: 'Marketplace', icon: '⊞', href: '/marketplace', role: 'Builder / Administrator' },
+    ],
+  },
+  {
+    heading: 'Monitor',
+    tabs: [
+      { label: 'Metrics', icon: '∑', href: '/metrics' },
+      { label: 'Dashboards', icon: '▦', href: '/dashboards' },
+      { label: 'Monitoring', icon: '◷', href: '/monitoring' },
+    ],
+  },
+  {
+    heading: 'Admin',
+    tabs: [
+      // Governance (approvals / the sharing ladder) is oversight, not monitoring —
+      // it lives under Admin. Builder+ (its own minRole) still see it here.
       { label: 'Governance', icon: '⚖', href: '/governance', role: 'Builder / Administrator', minRole: 'builder' },
-      { label: 'Admin', icon: '❖', href: '/platform', role: 'Administrator', minRole: 'admin' },
       { label: 'Components', icon: '▥', href: '/components', role: 'Administrator', minRole: 'admin' },
       { label: 'Terminal', icon: '▮', href: '/terminal', role: 'Administrator', minRole: 'admin' },
+      { label: 'Admin', icon: '❖', href: '/platform', role: 'Administrator', minRole: 'admin' },
+      { label: 'Settings', icon: '⚙', href: '/settings' },
+      { label: 'Tutorials', icon: '◎', href: '/tutorials' },
       { label: 'About / Licenses', icon: '©', href: '/about', role: 'Administrator', minRole: 'admin' },
     ],
   },

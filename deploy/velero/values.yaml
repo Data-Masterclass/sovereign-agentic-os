@@ -12,7 +12,6 @@
 # default; the chart annotates the known exceptions with
 # `backup.velero.io/backup-volumes-excludes`:
 #   - pg `data`         -> pg_dump CronJob is the consistent Postgres path
-#   - model volumes     -> re-downloadable (ollama, magistral 20Gi)
 # Everything is file-level (kopia) — no CSI VolumeSnapshotClass exists on this
 # SKE setup, so snapshots stay disabled.
 

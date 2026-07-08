@@ -8,6 +8,7 @@ import { decide, enqueue, listApprovals, recordEffect, type Approval } from '@/l
 import { applyEffect, type EffectDeps, type EffectResult } from '@/lib/governance/effects';
 import { publishPromotionLive } from '@/lib/data/publish-server';
 import { getWorkflow } from '@/lib/knowledge/store';
+import { getPersonalKnowledge } from '@/lib/knowledge/personal-store';
 import { getDashboard } from '@/lib/dashboards/store';
 import { getConnectionForUser, promoteConnection } from '@/lib/connections';
 import { getModel } from '@/lib/science/model-service';
@@ -36,8 +37,8 @@ import { getSystem } from '@/lib/agents/store';
 
 /** The formerly-DIRECT ladder kinds this module governs (dataset/file keep their
  *  own already-two-step rails in write-tools). */
-export type LadderKind = 'knowledge' | 'connection' | 'model' | 'artifact' | 'dashboard' | 'app' | 'agent_system';
-export const LADDER_KINDS: readonly LadderKind[] = ['knowledge', 'connection', 'model', 'artifact', 'dashboard', 'app', 'agent_system'] as const;
+export type LadderKind = 'knowledge' | 'personal_knowledge' | 'connection' | 'model' | 'artifact' | 'dashboard' | 'app' | 'agent_system';
+export const LADDER_KINDS: readonly LadderKind[] = ['knowledge', 'personal_knowledge', 'connection', 'model', 'artifact', 'dashboard', 'app', 'agent_system'] as const;
 export function isLadderKind(x: string): x is LadderKind {
   return (LADDER_KINDS as readonly string[]).includes(x);
 }
@@ -69,6 +70,10 @@ export async function resolveLadderArtifact(kind: LadderKind, id: string, user: 
     case 'knowledge': {
       const w = getWorkflow(id, p); // throws 403/404 when unseeable
       return { owner: w.owner, domain: w.domain, name: w.title, visibility: w.visibility };
+    }
+    case 'personal_knowledge': {
+      const e = getPersonalKnowledge(id, p); // throws 403/404 when unseeable
+      return { owner: e.owner, domain: e.domain, name: e.title, visibility: e.visibility };
     }
     case 'dashboard': {
       const d = getDashboard(id, p); // throws 403/404

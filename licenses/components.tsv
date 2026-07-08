@@ -45,7 +45,4 @@ amazon/aws-cli	2.31.13	Apache-2.0	yes	licenses/Apache-2.0.txt	Bucket-init helper
 traefik/whoami	1.10.3	MIT	yes	licenses/MIT.txt	Software-delivery demo app
 Docker-in-Docker (dind)	27	Apache-2.0	yes	licenses/Apache-2.0.txt	CI build sidecar (Moby/Docker engine)
 MinIO	digest-pinned	AGPL-3.0	no	licenses/AGPL-3.0.txt	LOCAL DEV-ONLY S3 stand-in; AGPL, NEVER bundled/redistributed (SeaweedFS is the bundled option)
-Ollama (engine)	0.6.8	MIT	yes	licenses/MIT.txt	Self-hosted model runtime (modelServer); OpenAI-compatible. Engine only — model weights pulled at runtime, see the model-weights rows below.
-Ministral 3 3B (weights)	ministral-3:3b-instruct-2512-q4_K_M	Apache-2.0	no	licenses/Apache-2.0.txt	DEFAULT modelServer.model. Apache-2.0 (OSI-permissive) — the self-hosted default is Apache-clean. Weights pulled at runtime by Ollama, NOT redistributed here (bundled=no).
-llama.cpp (engine)	server	MIT	yes	licenses/MIT.txt	Self-hosted REASONING runtime (modelServer.reasoning, llama-server); OpenAI-compatible /v1. Engine only — the GGUF is provided out of band on the box, see the model-weights row below.
-Magistral Small 24B (weights)	Magistral-Small-2506-Q4_K_M.gguf	Apache-2.0	no	licenses/Apache-2.0.txt	SOVEREIGN reasoning weights (modelServer.reasoning, sovereign-reasoning). Apache-2.0 (OSI-permissive, Mistral AI). GGUF provided/runtime-mounted on the box, NOT redistributed here (bundled=no).
+STACKIT AI Model Serving	managed	n/a	no	n/a	Inference runs on the managed STACKIT API (reasoning Qwen3-VL-235B, standard/worker gpt-oss-20b, embeddings Qwen3-VL-Embedding-8B). No model engine or weights bundled/redistributed here.

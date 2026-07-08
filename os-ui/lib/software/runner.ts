@@ -99,16 +99,21 @@ export function runnerName(slug: string): string {
 }
 
 /**
- * The image the runner serves. An explicit prebuilt `runImage` wins; else the
- * platform default (`SOFTWARE_RUNNER_IMAGE`, e.g. a teaching image) when set;
- * else the CI-published registry convention `<registry>/<slug>:latest`. We never
+ * The image the runner serves. Precedence: an explicit prebuilt `runImage` wins;
+ * else the CI-published registry convention `<registry>/<slug>:latest` — the REAL
+ * app image the builder shipped; else, only when no registry is configured at all,
+ * a platform placeholder (`SOFTWARE_RUNNER_IMAGE`, e.g. a teaching stub). We never
  * BUILD here — a not-yet-published image simply fails readiness, honestly.
+ *
+ * NB: the registry image MUST win over `softwareRunnerImage`. Previously the global
+ * placeholder (SOFTWARE_RUNNER_IMAGE=traefik/whoami) shadowed every real image, so
+ * all apps ran the whoami stub on port 80 and never passed the 8080 readiness probe.
  */
 export function appImageRef(app: { slug: string; runImage?: string }): string {
   const explicit = (app.runImage ?? '').trim();
   if (explicit) return explicit;
-  if (config.softwareRunnerImage) return config.softwareRunnerImage;
-  return `${config.harborRegistry}/${app.slug}:latest`;
+  if (config.harborRegistry) return `${config.harborRegistry}/${app.slug}:latest`;
+  return config.softwareRunnerImage || `${config.harborRegistry}/${app.slug}:latest`;
 }
 
 /** Build the concrete runnable spec from an app (image + host + footprint). */

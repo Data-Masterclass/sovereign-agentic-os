@@ -27,6 +27,8 @@ function workloadHealth(status: string): Health {
     case 'starting':
     case 'off':
       return 'amber';
+    case 'on-demand':
+      return 'green'; // job-based (e.g. dbt): no standing pod, runs on demand — benign
     case 'unknown':
     case 'disabled':
     case 'n/a':
@@ -43,7 +45,11 @@ export async function collectSystem(): Promise<HealthItem[]> {
     // Only surface workloads we could actually read (status !== unknown/n-a) AND
     // that are not green-by-default noise; attention-first means we keep the few
     // not-running ones plus a single rolled-up "platform services" green.
-    const readable = comps.filter((c) => c.status !== 'unknown' && c.status !== 'n/a');
+    // 'on-demand' (job-based components like dbt) has no standing workload — it is
+    // not a health signal and must not defeat the "unreachable → []" honesty rule.
+    const readable = comps.filter(
+      (c) => c.status !== 'unknown' && c.status !== 'n/a' && c.status !== 'on-demand',
+    );
     if (readable.length > 0) {
       for (const c of readable) {
         const h = workloadHealth(c.status);

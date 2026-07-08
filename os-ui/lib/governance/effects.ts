@@ -19,6 +19,7 @@ import { applyApprovedFilePromotion, type FilePromotionRequest } from '../files/
 // this module (and its tests) stay free of the heavy object-store cache imports —
 // exactly the isolation pattern `publishPromotion` already uses.
 import { publishWorkflow, certifyWorkflow } from '../knowledge/store.ts';
+import { promotePersonalKnowledge, certifyPersonalKnowledge } from '../knowledge/personal-store.ts';
 import { transitionDashboard } from '../dashboards/store.ts';
 import { promoteSystem } from '../agents/store.ts';
 import { promoteModel, certifyModel } from '../science/model-service.ts';
@@ -338,6 +339,12 @@ async function applyLadder(
         ? publishWorkflow(id, approverPrincipal(approver, 'builder', a.domain))
         : certifyWorkflow(id, approverPrincipal(approver, 'admin', a.domain));
       return okResult(rec.title, { visibility: rec.visibility, status: rec.status });
+    }
+    case 'personal_knowledge': {
+      const rec = rung === 'promote'
+        ? promotePersonalKnowledge(id, approverPrincipal(approver, 'builder', a.domain))
+        : certifyPersonalKnowledge(id, approverPrincipal(approver, 'admin', a.domain));
+      return okResult(rec.title, { visibility: rec.visibility });
     }
     case 'dashboard': {
       const rec = transitionDashboard(id, approverPrincipal(approver, rung === 'promote' ? 'builder' : 'admin', a.domain), rung);

@@ -16,6 +16,10 @@ import { addAgent, addHandoffEdge, addSuperviseEdge, removeAgent, removeEdge, se
 import type { Schedule, System } from '@/lib/agents/system-schema';
 import type { ModelInfo } from '@/lib/agents/routing';
 import { roleAtLeast, type Role } from '@/lib/session';
+import LifecycleActions from '@/components/lifecycle/LifecycleActions';
+import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
+import type { Visibility } from '@/lib/lifecycle';
+import DomainTag from '@/components/DomainTag';
 
 // React Flow + Monaco are heavy, client-only, and SSR-tolerant only when lazy —
 // load the canvas ssr:false (same pattern as MonacoFile) so the standalone build
@@ -54,14 +58,20 @@ type SystemViewData = {
   canEdit: boolean;
   role: Role;
   hermesEnabled: boolean;
+  /** Soft-archived (retained, reversible). Absent/false = live. */
+  archived?: boolean;
 };
 
-type ModelsData = { models: ModelInfo[]; source: 'litellm' | 'offline' };
+type ModelsData = { models: ModelInfo[]; source: 'litellm' | 'offline'; roles?: { reasoning: string; standard: string; embeddings: string } };
 type RoutingData = { activities: string[]; tiers: Record<string, string>; table: Record<string, { tier: string; model: string }> };
 
 type Panel = 'yaml' | 'grants' | 'build';
 
 const visClass = (v: string) => (v === 'Shared' ? 'vis-shared' : v === 'Marketplace' ? 'vis-certified' : 'vis-personal');
+
+/** Systems visibility → the OS-wide lifecycle visibility (drives the delete gate). */
+const lcVis = (v: SystemViewData['visibility']): Visibility =>
+  v === 'Shared' ? 'shared' : v === 'Marketplace' ? 'certified' : 'personal';
 
 export default function SystemView({ systemId, onBack }: { systemId: string; onBack: () => void }) {
   const { data, loading, error, reload } = useApi<SystemViewData>(`/api/agents/systems/${systemId}`);
@@ -212,11 +222,13 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
   };
 
   return (
+    <ConfirmProvider>
     <div className="system-view">
       <div className="system-head">
         <button className="btn ghost sm" onClick={onBack}>← All systems</button>
         <div className="system-title-block">
           <span className="system-title">{data.name}</span>
+          {(data.visibility === 'Shared' || data.visibility === 'Marketplace') ? <DomainTag domain={data.domain} /> : null}
           <span className={`badge ${visClass(data.visibility)}`}>{data.visibility}</span>
           {data.origin === 'forked' ? <span className="badge muted">forked copy</span> : null}
           <span className={`badge ${data.running ? 'ok' : 'muted'}`}>{data.running ? 'running' : 'stopped'}</span>
@@ -235,6 +247,21 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
             <button className="btn ghost sm" onClick={() => post('promote')} disabled={acting} title={`Governed publish step — ${promoteLabel}`}>
               {promoteLabel}
             </button>
+          ) : null}
+          {/* OS-wide rule: live → Archive; only an ARCHIVED system exposes Delete.
+              Real archived state drives which actions show. */}
+          {data.canEdit ? (
+            <LifecycleActions
+              id={data.id}
+              name={data.name}
+              kind="agent"
+              visibility={lcVis(data.visibility)}
+              archived={!!data.archived}
+              api={`/api/agents/systems/${systemId}`}
+              onChanged={() => { if (data.archived) onBack(); else void reloadAll(); }}
+              showVersions={false}
+              compact
+            />
           ) : null}
         </div>
       </div>
@@ -326,8 +353,10 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
               system={sys}
               agentId={selectedAgent}
               canEdit={data.canEdit}
-              models={models}
-              modelsSource={modelsData?.source ?? null}
+              roles={{
+                reasoning: modelsData?.roles?.reasoning || 'sovereign-reasoning',
+                standard: modelsData?.roles?.standard || 'sovereign-default',
+              }}
               isEntrypoint={selectedAgent === sys.entrypoint}
               onSetEntrypoint={editable ? () => void commit(setEntrypoint(sys, selectedAgent), { snapshot: sys }) : undefined}
               onChanged={reloadAll}
@@ -337,6 +366,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
         </div>
       ) : null}
     </div>
+    </ConfirmProvider>
   );
 }
 

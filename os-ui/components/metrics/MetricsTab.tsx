@@ -27,7 +27,10 @@ type View =
  */
 export default function MetricsTab() {
   const [view, setView] = useState<View>({ kind: 'list' });
-  const metrics = useApi<MetricGroups>('/api/metrics');
+  // ?archived=1 additionally returns soft-archived metrics (their own section), so an
+  // archived metric stays openable → its detail exposes Restore + Delete (OS-wide rule).
+  const [showArchived, setShowArchived] = useState(false);
+  const metrics = useApi<MetricGroups>(`/api/metrics${showArchived ? '?archived=1' : ''}`);
 
   // Clicking the Metrics sidebar link returns to the list from any detail/define view.
   useTabNavReset(() => setView({ kind: 'list' }));
@@ -60,6 +63,8 @@ export default function MetricsTab() {
       error={metrics.error}
       onOpen={(m) => setView({ kind: 'detail', metric: m })}
       onDefine={() => setView({ kind: 'define' })}
+      showArchived={showArchived}
+      onToggleArchived={() => setShowArchived((v) => !v)}
     />
   );
 }

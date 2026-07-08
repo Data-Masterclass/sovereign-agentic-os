@@ -358,12 +358,14 @@ export function listFiles(user: Principal, opts: { includeArchived?: boolean } =
   return { mine, domain, marketplace, facets: facetsOf(owned) };
 }
 
-export type FileView = { asset: FileAsset; text: string; bytes: number; object: StoredObjectMeta | null; history: FileVersion[] };
+export type FileView = { asset: FileAsset; text: string; bytes: number; object: StoredObjectMeta | null; history: FileVersion[]; archived: boolean };
 
 export function getFile(id: string, user: Principal): FileView {
   const rec = get(id);
   const a = viewOf(rec, user);
-  return { asset: a, text: rec.text, bytes: rec.bytes, object: rec.object ?? null, history: rec.history };
+  // The archived flag lives on the RECORD — surface it on the returned view so the
+  // detail's lifecycle cluster shows the real state (Restore + Delete when archived).
+  return { asset: a, text: rec.text, bytes: rec.bytes, object: rec.object ?? null, history: rec.history, archived: rec.archived ?? false };
 }
 
 /**

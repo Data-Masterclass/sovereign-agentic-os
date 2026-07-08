@@ -1,10 +1,10 @@
 # Mock model — local offline embeddings (+ legacy chat stub)
 
-**What it is:** A tiny, dependency-free **OpenAI-compatible** server. Since the self-hosted
-[model-server](model-server.md) (**Ministral 3 3B**) became the default **chat** backend, the mock is
-retained as the offline **embeddings** provider (`sovereign-embed`): deterministic 384-dim hash
-vectors that match `opensearch.knnDimension` with zero download and no key (so kNN works). It still
-exposes a chat stub, but LiteLLM **no longer routes chat to it**.
+**What it is:** A tiny, dependency-free **OpenAI-compatible** server for kind/local
+deployments. It is the offline **embeddings** provider (`sovereign-embed`):
+deterministic 384-dim hash vectors that match `opensearch.knnDimension` with zero
+download and no key (so kNN works). It still exposes a chat stub, but LiteLLM **no
+longer routes chat to it** — chat/reasoning run on the STACKIT managed models.
 
 ## Access
 It sits behind LiteLLM — you normally call `sovereign-embed` via LiteLLM (chat goes to

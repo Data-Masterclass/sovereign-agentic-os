@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { config } from '@/lib/config';
+import { roleModel } from '@/lib/models/roles';
 import { hashEmbed } from './embed-core.ts';
 
 /**
@@ -37,7 +38,7 @@ export async function embed(texts: string[]): Promise<EmbedResult> {
   const res = await withTimeout(`${config.litellmUrl}/v1/embeddings`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${config.litellmMasterKey}` },
-    body: JSON.stringify({ model: config.embedModel, input: texts }),
+    body: JSON.stringify({ model: roleModel('embeddings'), input: texts }),
   });
 
   if (res && res.ok) {

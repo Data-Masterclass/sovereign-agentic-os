@@ -11,15 +11,29 @@ type Task = 'chat' | 'reasoning' | 'embedding';
 type Model = { id: string; label: string; provider: string; task: Task; tier: 'sovereign' | 'premium'; route: string; enabled: boolean; capEUR: number | null };
 type Key = { provider: string; fingerprint: string; addedBy: string; addedAt: string };
 
-const TASKS: Task[] = ['chat', 'reasoning', 'embedding'];
+// The three per-ROLE defaults are ONE store: the platform-admin settings
+// `modelRoles`, resolved at runtime by lib/models/roles.ts. This page shows the
+// SAME values (and writes the SAME store) as Settings → Model roles.
+type RoleKey = 'standard' | 'reasoning' | 'embeddings';
+type CatalogModel = { model_name: string; display: string; provenance: 'internal' | 'external' };
+const ROLE_META: { key: RoleKey; label: string; help: string }[] = [
+  { key: 'standard', label: 'Standard', help: 'Assistants, agent execution and light work. Default: sovereign-default.' },
+  { key: 'reasoning', label: 'Reasoning', help: 'Planning and deep reasoning across the OS. Default: sovereign-reasoning.' },
+  { key: 'embeddings', label: 'Embeddings', help: 'Knowledge + Files vector embeddings. Default: sovereign-embed.' },
+];
 
 const EMPTY_ASSISTANT = { label: 'STACKIT managed LLM', baseUrl: '', modelName: '', apiKey: '' };
 
 export default function ModelsPage() {
   const [models, setModels] = useState<Model[]>([]);
-  const [defaults, setDefaults] = useState<Record<Task, string>>({ chat: '', reasoning: '', embedding: '' });
   const [assistant, setAssistant] = useState('');
+  const [assistantExplicit, setAssistantExplicit] = useState(false);
   const [keys, setKeys] = useState<Key[]>([]);
+  // Live gateway catalog (source of truth for the role selectors) + the current
+  // modelRoles store (the ONE per-role default store).
+  const [catalog, setCatalog] = useState<CatalogModel[]>([]);
+  const [catalogSource, setCatalogSource] = useState<'litellm' | 'offline' | null>(null);
+  const [modelRoles, setModelRoles] = useState<Record<RoleKey, string>>({ standard: '', reasoning: '', embeddings: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
@@ -31,13 +45,32 @@ export default function ModelsPage() {
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const res = await fetch('/api/platform-admin/models', { cache: 'no-store' });
-      const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Failed to load');
-      else { setModels(body.models ?? []); setDefaults(body.defaults ?? {}); setAssistant(body.assistant ?? ''); setKeys(body.keys ?? []); }
+      const [mRes, cRes, sRes] = await Promise.all([
+        fetch('/api/platform-admin/models', { cache: 'no-store' }),
+        fetch('/api/agents/models', { cache: 'no-store' }),
+        fetch('/api/platform-admin/settings', { cache: 'no-store' }),
+      ]);
+      const mBody = await mRes.json();
+      if (!mRes.ok) { setError(mBody.error ?? 'Failed to load'); return; }
+      setModels(mBody.models ?? []); setAssistant(mBody.assistant ?? ''); setAssistantExplicit(Boolean(mBody.assistantExplicit)); setKeys(mBody.keys ?? []);
+      if (cRes.ok) { const c = await cRes.json(); setCatalog(c.models ?? []); setCatalogSource(c.source ?? null); }
+      if (sRes.ok) { const s = await sRes.json(); if (s.settings?.modelRoles) setModelRoles(s.settings.modelRoles); }
     } catch (e) { setError((e as Error).message); } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // Save the three per-role defaults to the ONE store (settings modelRoles).
+  const saveRoles = useCallback(async () => {
+    setBusy('roles'); setError('');
+    try {
+      const res = await fetch('/api/platform-admin/settings', {
+        method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ modelRoles }),
+      });
+      const body = await res.json();
+      if (!res.ok) setError(body.error ?? 'Save failed');
+      else { setToast('Saved the default model per role — every assistant, agent and embedding call resolves through these.'); await load(); }
+    } finally { setBusy(''); }
+  }, [modelRoles, load]);
 
   const registerAssistant = useCallback(async () => {
     if (!reg.label.trim() || !reg.baseUrl.trim() || !reg.modelName.trim() || !reg.apiKey.trim()) return;
@@ -85,50 +118,74 @@ export default function ModelsPage() {
       <PageHeader title="Models & Providers" crumb="platform · the LiteLLM catalog (sovereign + STACKIT)" />
       <div className="content">
         <p className="lead">
-          Govern which models run. Self-hosted sovereign models (Magistral / Ministral / bge-m3) plus the
-          STACKIT premium routes. Set the <strong>default per task</strong>, enable/disable, and cap
-          per-model spend. Provider keys are added <strong>via the secrets manager</strong> — the OS stores
-          a reference + fingerprint and <strong>never shows or logs the raw key</strong>.
+          Govern which models run. The live models behind the gateway aliases are set at deploy time
+          (this deployment runs STACKIT-managed inference: gpt-oss-20b for standard work, Qwen3-VL-235B for
+          reasoning/vision, Qwen3-VL-Embedding-8B for embeddings). Set the <strong>default model per
+          role</strong>, enable/disable, and cap per-model spend. Provider keys are added
+          <strong> via the secrets manager</strong> — the OS stores a reference + fingerprint and
+          <strong> never shows or logs the raw key</strong>.
         </p>
 
         {toast ? <div className="hint" style={{ color: 'var(--teal)' }}>{toast}</div> : null}
         {error ? <div className="error">{error}</div> : null}
 
-        <div className="section-title">Default model per task</div>
-        <div className="grid">
-          {TASKS.map((t) => (
-            <div className="card" key={t}>
-              <h3>{t}</h3>
-              <select
-                value={defaults[t] ?? ''}
-                disabled={busy !== ''}
-                onChange={(e) => patch(e.target.value, { op: 'default', task: t })}
-                style={{ width: '100%', marginTop: 6 }}
-              >
-                {models.filter((m) => m.task === t && m.enabled).map((m) => (
-                  <option key={m.id} value={m.id}>{m.label}</option>
-                ))}
-              </select>
-            </div>
-          ))}
+        <div className="section-title">Default model per role</div>
+        <div className="card" style={{ marginBottom: 18 }}>
+          <div className="hint" style={{ marginBottom: 12 }}>
+            The three defaults the whole OS resolves at runtime, picked from the LIVE gateway catalog.
+            Leave a role on <strong>Default</strong> to use the platform baseline. This is the SAME setting
+            as <Link href="/platform/settings">Settings → Model roles</Link> — one store, no duplicates.
+            {catalogSource === 'offline' ? ' LiteLLM is unreachable — showing the install catalog.' : ''}
+          </div>
+          {ROLE_META.map((r) => {
+            const val = modelRoles[r.key] ?? '';
+            const selected = catalog.find((m) => m.model_name === val);
+            return (
+              <div key={r.key} className="row" style={{ gap: 12, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                <label className="hint" style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 340px' }}>
+                  {r.label}
+                  <select
+                    value={val}
+                    disabled={busy !== ''}
+                    onChange={(e) => setModelRoles({ ...modelRoles, [r.key]: e.target.value })}
+                  >
+                    <option value="">Default (platform baseline)</option>
+                    {catalog.map((m) => (
+                      <option key={m.model_name} value={m.model_name}>
+                        {m.display} — {m.provenance === 'internal' ? 'in-box' : 'hosted'} ({m.model_name})
+                      </option>
+                    ))}
+                    {val && !selected ? <option value={val}>{val} (current)</option> : null}
+                  </select>
+                  <span className="hint" style={{ fontSize: 12 }}>{r.help}</span>
+                </label>
+              </div>
+            );
+          })}
+          <button className="btn" disabled={busy === 'roles'} onClick={saveRoles}>
+            {busy === 'roles' ? <span className="spin" /> : 'Save'}
+          </button>
         </div>
 
         <div className="section-title" style={{ marginTop: 22 }}>Assistant model · the ONE LLM behind every built-in assistant</div>
         <p className="hint">
           Agents &amp; Software build chat, the Big Bets planner, the Knowledge assistant and the Metric
-          agent all run on <strong>this one model</strong>, through the governed LiteLLM gateway. Point it
-          at the <strong>STACKIT managed LLM</strong> (or any enabled chat model). If it is unset, the
-          built-in assistants return an honest &ldquo;configure it here&rdquo; error — never fake AI.
+          agent all run on <strong>this one model</strong>, through the governed LiteLLM gateway. By default
+          it <strong>follows the Standard role</strong> above, so it just works; override it below to pin a
+          bespoke model (e.g. a registered STACKIT managed LLM).
         </p>
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <span className="comp-label" style={{ margin: 0 }}>Active assistant</span>
             <select
-              value={assistant}
+              value={assistantExplicit ? assistant : ''}
               disabled={busy !== ''}
-              onChange={(e) => patch(e.target.value, { op: 'assistant' })}
-              style={{ minWidth: 240 }}
+              onChange={(e) => e.target.value === ''
+                ? patch(assistant || 'assistant', { op: 'assistant-clear' })
+                : patch(e.target.value, { op: 'assistant' })}
+              style={{ minWidth: 260 }}
             >
+              <option value="">Follow Standard default ({assistant || 'unset'})</option>
               {models.filter((m) => m.task === 'chat' && m.enabled).map((m) => (
                 <option key={m.id} value={m.id}>{m.label}</option>
               ))}
@@ -154,8 +211,15 @@ export default function ModelsPage() {
           <table>
             <thead><tr><th>Model</th><th>Route</th><th>Tier</th><th>Cap €/mo</th><th>Enabled</th></tr></thead>
             <tbody>
-              {models.map((m) => {
-                const isDefault = Object.values(defaults).includes(m.id);
+              {(() => {
+                // The effective per-role default ids: the override else the platform baseline.
+                const roleDefaults = new Set([
+                  modelRoles.standard || 'sovereign-default',
+                  modelRoles.reasoning || 'sovereign-reasoning',
+                  modelRoles.embeddings || 'sovereign-embed',
+                ]);
+                return models.map((m) => {
+                const isDefault = roleDefaults.has(m.id);
                 const isAssistant = assistant === m.id;
                 return (
                   <tr key={m.id}>
@@ -184,7 +248,8 @@ export default function ModelsPage() {
                     </td>
                   </tr>
                 );
-              })}
+                });
+              })()}
             </tbody>
           </table>
         </div>

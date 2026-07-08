@@ -9,6 +9,7 @@ import { roleAtLeast } from '@/lib/session';
 import { DATASET_SCOPES, tilesForScope, scopeCounts, type DatasetScope } from '@/lib/data/dataset-scopes';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
+import DomainTag from '@/components/DomainTag';
 import type { Visibility } from '@/lib/lifecycle';
 
 /** Mirrors lib/data/store `DatasetSummary`. */
@@ -57,7 +58,7 @@ function Dots({ dots }: { dots: Tile['dots'] }) {
   );
 }
 
-function TileCard({ t, onOpen, onImport, canManage, onChanged }: { t: Tile; onOpen: (id: string) => void; onImport?: (id: string) => void; canManage?: boolean; onChanged: () => void }) {
+function TileCard({ t, onOpen, onImport, canManage, onChanged, showDomain }: { t: Tile; onOpen: (id: string) => void; onImport?: (id: string) => void; canManage?: boolean; onChanged: () => void; showDomain?: boolean }) {
   // A role="button" DIV (not a <button>) so the optional Import / lifecycle controls
   // can be real nested <button>s without invalid button-in-button nesting. Every
   // nested control stops propagation so it never also opens the card.
@@ -82,6 +83,9 @@ function TileCard({ t, onOpen, onImport, canManage, onChanged }: { t: Tile; onOp
         <span className="muted">{t.owner}</span>
         <span className="dot-sep">·</span>
         <span className="muted">{freshLabel(t.freshness)}</span>
+        {/* Source-domain provenance — shown in Shared/Marketplace where two datasets
+            from different domains can share a name. Renders nothing without a domain. */}
+        {showDomain ? <DomainTag domain={t.domain} style={{ marginLeft: 4 }} /> : null}
       </div>
       <div className="tile-foot">
         <span className={`quality-badge q-${t.quality}`}>
@@ -111,6 +115,7 @@ function TileCard({ t, onOpen, onImport, canManage, onChanged }: { t: Tile; onOp
             onChanged={onChanged}
             compact
             showVersions={false}
+            surface="tile"
           />
         </div>
       ) : null}
@@ -182,6 +187,10 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
   const scoped = groups ? tilesForScope(groups, scope, uid) : { active: [], archived: [] };
   const counts = groups ? scopeCounts(groups, uid) : null;
   const empty = groups && scoped.active.length === 0;
+  // Source-domain tag rides along in the cross-domain scopes (Shared / Marketplace),
+  // where a dataset's origin domain disambiguates same-named assets. DomainTag itself
+  // no-ops on a missing domain, so this is always safe.
+  const showDomain = scope === 'shared' || scope === 'marketplace';
 
   return (
     <ConfirmProvider>
@@ -251,6 +260,7 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
                   onImport={canImport && t.tier === 'product' && t.owner !== uid ? importProduct : undefined}
                   canManage={canManage(t)}
                   onChanged={refresh}
+                  showDomain={showDomain}
                 />
               ))}
             </div>
@@ -265,7 +275,7 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
                   Restore brings one back; Delete removes it permanently — including its physical tables.
                 </p>
                 <div className="tile-grid">
-                  {scoped.archived.map((t) => <TileCard key={t.id} t={t} onOpen={onOpen} canManage={canManage(t)} onChanged={refresh} />)}
+                  {scoped.archived.map((t) => <TileCard key={t.id} t={t} onOpen={onOpen} canManage={canManage(t)} onChanged={refresh} showDomain={showDomain} />)}
                 </div>
               </>
             ) : (

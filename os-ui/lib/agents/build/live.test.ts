@@ -35,7 +35,7 @@ grants:
     - { id: crm_write, capability: Write-approval }
 agents:
   - { id: supervisor, role: r, agent_md: "# Supervisor", memory_md: "# Mem", members: [worker], tools: [retrieve] }
-  - { id: worker, role: w, agent_md: "# Worker", memory_md: "", tools: [write_file], model: ministral-3 }
+  - { id: worker, role: w, agent_md: "# Worker", memory_md: "", tools: [write_file], model: sovereign-default }
 edges:
   - { from: supervisor, to: worker, type: supervise }
 `;
@@ -102,7 +102,7 @@ function fakeLitellm(): LiteLlmClient & { keys: Map<string, unknown> } {
       return { key: `sk-${input.alias}` };
     },
     async models() {
-      return ['ministral-3', 'stackit-qwen3-vl-reasoning', 'stackit-qwen3-vl', 'sovereign-mock'];
+      return ['sovereign-default', 'stackit-qwen3-vl-reasoning', 'stackit-qwen3-vl', 'sovereign-mock'];
     },
   };
 }
@@ -227,10 +227,10 @@ test('litellm registers a scoped key (alias os-<id>) with budget caps + routed m
   await orchestrateBuild({ yaml: YAML, systemId: 'sys_live', adapters: makeLiveAdapters(d), probe: 'p' });
   const info = (await d.litellm.keyInfo('os-sys_live')) as { models: string[]; maxBudget: number };
   assert.ok(info, 'key registered under the system alias');
-  assert.ok(info.models.includes('ministral-3'), 'light tier model allowed');
+  assert.ok(info.models.includes('sovereign-default'), 'light/standard tier model allowed');
   assert.ok(info.models.some((m) => /sovereign-reasoning/i.test(m)), 'reasoning tier model allowed');
   const litellm = (await orchestrateBuild({ yaml: YAML, systemId: 'sys_live', adapters: makeLiveAdapters(d), probe: 'p' })).rows.find((r) => r.tool === 'litellm')!;
-  assert.match(litellm.detail.toLowerCase(), /ministral/);
+  assert.match(litellm.detail.toLowerCase(), /sovereign-default/);
   assert.match(litellm.detail.toLowerCase(), /sovereign-reasoning/);
 });
 

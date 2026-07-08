@@ -254,3 +254,53 @@ export function listPersonalKnowledgeVersions(id: string, user: Principal): Arti
   requireView(id, user);
   return versions.list(id);
 }
+
+/**
+ * Restore a prior version of a personal entry's {title, md}. Auditable +
+ * reversible: the CURRENT state is snapshotted as a new version first, THEN the
+ * chosen version is applied. Edit-scoped — mirrors `restoreWorkflowVersion`.
+ */
+export function restorePersonalKnowledgeVersion(id: string, user: Principal, version: number): PersonalKnowledgeRecord {
+  const rec = requireEdit(id, user);
+  const snap = versions.get(id, version);
+  if (!snap) fail(`Version ${version} not found`, 404);
+  const state = snap.state as { title?: string; md?: string };
+  if (typeof state.md !== 'string') fail(`Version ${version} has no restorable source`, 422);
+  // Snapshot the live state first so the restore can itself be undone.
+  versions.record(id, user.id, { title: rec.title, md: rec.md }, `restore of v${version}`);
+  rec.title = typeof state.title === 'string' && state.title.trim() ? state.title : rec.title;
+  rec.md = state.md;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+// ------------------------------------------------------ promotion ladder ------
+// Personal knowledge rides the SAME governed Personal → Shared → Marketplace
+// ladder as every other artifact: these two flips are the applier-half invoked
+// by `lib/governance/effects.ts` after the seam enforces separation-of-duties
+// (owner files request_promotion → Builder approves → Admin certifies). The role
+// gate here is a defence-in-depth backstop; the seam is the primary gate.
+
+/** Personal → Shared. Builder+ only (the effect seam already enforced SoD). */
+export function promotePersonalKnowledge(id: string, user: Principal): PersonalKnowledgeRecord {
+  if (!roleAtLeast(user.role, 'builder')) fail('Only builders and admins can promote knowledge', 403);
+  const rec = requireEdit(id, user);
+  if (rec.visibility !== 'Personal') fail('This knowledge is already promoted', 409);
+  rec.visibility = 'Shared';
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+/** Shared → Marketplace. Admin only. */
+export function certifyPersonalKnowledge(id: string, user: Principal): PersonalKnowledgeRecord {
+  if (!roleAtLeast(user.role, 'admin')) fail('Only admins can certify knowledge to the marketplace', 403);
+  const rec = requireEdit(id, user);
+  if (rec.visibility === 'Marketplace') fail('This knowledge is already certified', 409);
+  if (rec.visibility !== 'Shared') fail('Promote this knowledge to the domain before certifying', 409);
+  rec.visibility = 'Marketplace';
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}

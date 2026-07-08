@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/scopes';
+import DomainTag from '@/components/DomainTag';
 import {
   type MetricGroups,
   type MetricSummary,
@@ -20,7 +21,8 @@ import {
  * tile OPENS its detail, where explore / govern / alert fold in. The parent owns the fetch so
  * the same grouped payload warms the alert palette.
  */
-function MetricCard({ m, onOpen }: { m: MetricSummary; onOpen: (m: MetricSummary) => void }) {
+function MetricCard({ m, onOpen, scope }: { m: MetricSummary; onOpen: (m: MetricSummary) => void; scope: ScopeKey }) {
+  const showDomain = scope === 'shared' || scope === 'marketplace' || scope === 'all';
   return (
     <button
       type="button"
@@ -31,7 +33,10 @@ function MetricCard({ m, onOpen }: { m: MetricSummary; onOpen: (m: MetricSummary
     >
       <div className="tile-top">
         <span className="tile-name">{m.name}</span>
-        <span className={`badge ${TIER_BADGE[m.tier]}`}>{TIER_WORD[m.tier]}</span>
+        <div className="row" style={{ gap: 4, alignItems: 'center' }}>
+          {showDomain ? <DomainTag domain={m.domain} /> : null}
+          <span className={`badge ${TIER_BADGE[m.tier]}`}>{TIER_WORD[m.tier]}</span>
+        </div>
       </div>
       <div className="muted mono" style={{ fontSize: 12 }}>{m.member}</div>
       <div className="tile-meta" style={{ marginTop: 'auto' }}>
@@ -51,12 +56,16 @@ export default function MetricsRegistry({
   error,
   onOpen,
   onDefine,
+  showArchived = false,
+  onToggleArchived,
 }: {
   groups: MetricGroups | null;
   loading: boolean;
   error: string;
   onOpen: (m: MetricSummary) => void;
   onDefine: () => void;
+  showArchived?: boolean;
+  onToggleArchived?: () => void;
 }) {
   const { user } = useUser();
   const [scope, setScope] = useState<ScopeKey>('all');
@@ -64,7 +73,11 @@ export default function MetricsRegistry({
   const uid = user?.id ?? '';
   const scoped = groups ? groupByScope(groups, uid) : null;
   const counts = groups ? scopeCounts(groups, uid) : null;
-  const visible = scoped ? scoped[scope] : [];
+  // The scoped slice can include soft-archived metrics (when ?archived=1) — split them
+  // so the working grid stays live-only and archived get their own openable section.
+  const scopedAll = scoped ? scoped[scope] : [];
+  const visible = scopedAll.filter((m) => !m.archived);
+  const archived = scopedAll.filter((m) => m.archived);
 
   return (
     <>
@@ -74,7 +87,19 @@ export default function MetricsRegistry({
           definition — the Cube <strong>member</strong> the explorer, dashboards and the agent
           all resolve. Open one to explore it under your own identity, govern its tier, or set an alert.
         </p>
-        <button className="btn" onClick={onDefine} style={{ marginTop: 4 }}>＋ Define metric</button>
+        <div className="row" style={{ gap: 8, marginTop: 4 }}>
+          {onToggleArchived ? (
+            <button
+              className="btn ghost"
+              style={{ opacity: showArchived ? 1 : 0.7 }}
+              onClick={onToggleArchived}
+              title="Archived metrics are hidden by default"
+            >
+              {showArchived ? 'Hide archived' : 'Show archived'}
+            </button>
+          ) : null}
+          <button className="btn" onClick={onDefine}>＋ Define metric</button>
+        </div>
       </div>
 
       {/* Scope switcher — the OS-wide four groups: All · My · Shared · Marketplace. */}
@@ -102,11 +127,31 @@ export default function MetricsRegistry({
         visible.length > 0 ? (
           <div className="tile-grid" style={{ marginTop: 16 }}>
             {visible.map((m) => (
-              <MetricCard key={m.id} m={m} onOpen={onOpen} />
+              <MetricCard key={m.id} m={m} onOpen={onOpen} scope={scope} />
             ))}
           </div>
         ) : null
       ) : loading && !error ? <div className="stub-page" style={{ marginTop: 20 }}>Loading metrics…</div> : null}
+
+      {/* Archived — openable tiles; the opened detail exposes Restore + Delete. */}
+      {showArchived ? (
+        archived.length > 0 ? (
+          <>
+            <div className="section-title" style={{ marginTop: 24 }}>
+              Archived<span className="count-pill">{archived.length}</span>
+            </div>
+            <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
+              Archived metrics are hidden from the working registry (their definitions are retained).
+              Open one to Restore it, or Delete it permanently.
+            </p>
+            <div className="tile-grid">
+              {archived.map((m) => <MetricCard key={m.id} m={m} onOpen={onOpen} scope={scope} />)}
+            </div>
+          </>
+        ) : (
+          <div className="hint" style={{ marginTop: 16 }}>No archived metrics.</div>
+        )
+      ) : null}
     </>
   );
 }

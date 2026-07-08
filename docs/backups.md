@@ -32,7 +32,6 @@ that night's Velero backup.
 | Harbor registry | PVC `harbor-registry-data` | Velero fs-backup (images also rebuildable by CI) | ≤ 24 h | ~1 h |
 | CI runner state, JupyterHub DB, poet poems | PVCs `ci-runner-data`, `hub-db-dir`, `poet-poems` | Velero fs-backup | ≤ 24 h | ~1 h |
 | ClickHouse (Langfuse analytics) | emptyDir | Velero fs-backup (opt-out covers emptyDirs) — **crash-consistent at best** | ≤ 24 h, best effort | hours |
-| Ollama + Magistral models | PVC `magistral-reasoning-models`, model-server volume | **Excluded** — re-downloadable | n/a | re-pull (~30–60 min) |
 | Valkey (queue/cache) | emptyDir | fs-backup best-effort; contents are cache — treat as disposable | n/a | n/a |
 
 ## Consistency notes (honest)

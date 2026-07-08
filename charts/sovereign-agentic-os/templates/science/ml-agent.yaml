@@ -71,8 +71,8 @@ spec:
             - { name: http, containerPort: 8000 }
           # Same blocking-warmup-before-bind pattern as poet-agent: the agent runs
           # a wait-for-gateway warmup BEFORE it binds the HTTP server, so /health
-          # does not answer until warmup finishes. When a dependency (model-server,
-          # litellm key, MLflow) is still coming up the previous layout let
+          # does not answer until warmup finishes. When a dependency (litellm
+          # gateway, litellm key, MLflow) is still coming up the previous layout let
           # livenessProbe kill the pod before it ever bound -> CrashLoop (~11
           # restarts). A startupProbe gives the slow start a generous budget
           # (5s * 45 = 225s) and holds liveness/readiness off until the server is

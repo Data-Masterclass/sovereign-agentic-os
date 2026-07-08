@@ -148,6 +148,12 @@ spec:
       securityContext:
         seccompProfile:
           type: {{ .Values.global.podSecurity.seccompProfile }}
+        # act_runner runs as the non-root "act" user (UID/GID 1000) under the global
+        # runAsNonRoot baseline. Without fsGroup the runner-data PVC mount (/data) is
+        # root-owned, so writing the `.runner` registration file fails ("permission
+        # denied" -> "registration file not found" crashloop). fsGroup makes /data
+        # group-writable for the runner. Matches the chart's fsGroup:1000 convention.
+        fsGroup: 1000
       containers:
         # Docker-in-Docker — the build daemon (privileged; trusts the Forgejo registry).
         - name: dind

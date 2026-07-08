@@ -13,6 +13,7 @@ import TeamPanel from './TeamPanel';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import type { Visibility as LcVisibility } from '@/lib/lifecycle';
+import DomainTag from '@/components/DomainTag';
 
 type Visibility = 'Personal' | 'Shared' | 'Certified';
 type AppItem = {
@@ -223,6 +224,7 @@ export default function SoftwarePage() {
                     <div className="sw-app-top">
                       <h3 className="sw-app-name">{a.name}</h3>
                       <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+                        {(scope === 'shared' || scope === 'marketplace') ? <DomainTag domain={a.domain} /> : null}
                         {archived ? <span className="badge muted">archived</span> : null}
                         <span className={s.cls}>{s.label}</span>
                       </div>
@@ -250,6 +252,7 @@ export default function SoftwarePage() {
                         }}
                         onChanged={reload}
                         compact
+                        surface="tile"
                       />
                     </div>
                   ) : null}

@@ -12,7 +12,17 @@ type Settings = {
   defaults: { domainTemplate: string; newUserRole: string };
   localization: { locale: 'en' | 'de'; available: string[] };
   notifications: { email: string; backupFailure: boolean; costThreshold: boolean };
+  modelRoles: { reasoning: string; standard: string; embeddings: string };
 };
+
+type CatalogModel = { model_name: string; display: string; provenance: 'internal' | 'external' };
+type ModelsResponse = { models: CatalogModel[]; source: 'litellm' | 'offline'; roles: { reasoning: string; standard: string; embeddings: string } };
+
+const ROLE_META: { key: keyof Settings['modelRoles']; label: string; help: string }[] = [
+  { key: 'reasoning', label: 'Reasoning', help: 'Planning and deep reasoning across the OS. Default: sovereign-reasoning.' },
+  { key: 'standard', label: 'Standard', help: 'Assistants, agent execution and light work. Default: sovereign-default.' },
+  { key: 'embeddings', label: 'Embeddings', help: 'Knowledge + Files vector embeddings. Default: sovereign-embed.' },
+];
 
 function Switch({ on, onClick, disabled }: { on: boolean; onClick: () => void; disabled?: boolean }) {
   return (
@@ -23,10 +33,21 @@ function Switch({ on, onClick, disabled }: { on: boolean; onClick: () => void; d
   );
 }
 
+/** In-box (sovereign) vs hosted (external) badge — same language as the agent builder. */
+function ProvBadge({ provenance }: { provenance: 'internal' | 'external' }) {
+  return provenance === 'internal' ? (
+    <span className="badge ok" title="Runs in-box on the sovereign cluster — no data leaves.">in-box · sovereign</span>
+  ) : (
+    <span className="badge warn" title="Runs on a hosted API — the call leaves the box.">hosted · external</span>
+  );
+}
+
 export default function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
+  const [catalog, setCatalog] = useState<CatalogModel[]>([]);
+  const [catalogSource, setCatalogSource] = useState<'litellm' | 'offline' | null>(null);
 
   const load = useCallback(async () => {
     setError('');
@@ -41,6 +62,20 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // The live LiteLLM catalog that populates the three model-role selectors (same
+  // source the agent builder uses). Falls back to the install catalog offline.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/agents/models', { cache: 'no-store' });
+        const body = (await res.json()) as ModelsResponse;
+        if (alive && res.ok) { setCatalog(body.models ?? []); setCatalogSource(body.source ?? null); }
+      } catch { /* keep the selectors on their current values */ }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   const save = useCallback(async (group: string, patch: Partial<Settings>) => {
     setBusy(group);
@@ -160,6 +195,44 @@ export default function SettingsPage() {
               {busy === 'localization' ? <span className="spin" /> : 'Save'}
             </button>
           </div>
+        </div>
+
+        <div className="section-title">Model roles</div>
+        <div className="card" style={{ marginBottom: 18 }}>
+          <div className="hint" style={{ marginBottom: 12 }}>
+            The three default models the OS resolves at runtime. Each is chosen from the live LiteLLM
+            catalog; leave a role on <strong>Default</strong> to use the platform env baseline. This
+            re-points the app ROLE → gateway alias — it never changes the fixed LiteLLM aliases.
+            {catalogSource === 'offline' ? ' LiteLLM is unreachable — showing the install catalog.' : ''}
+          </div>
+          {ROLE_META.map((r) => {
+            const value = s.modelRoles[r.key];
+            const selected = catalog.find((m) => m.model_name === value);
+            return (
+              <div key={r.key} className="row" style={{ gap: 12, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                <label className="hint" style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 320px' }}>
+                  {r.label}
+                  <select
+                    value={value}
+                    onChange={(e) => set('modelRoles', { ...s.modelRoles, [r.key]: e.target.value })}
+                  >
+                    <option value="">Default (platform baseline)</option>
+                    {catalog.map((m) => (
+                      <option key={m.model_name} value={m.model_name}>
+                        {m.display} — {m.provenance === 'internal' ? 'in-box' : 'hosted'} ({m.model_name})
+                      </option>
+                    ))}
+                    {value && !selected ? <option value={value}>{value} (current)</option> : null}
+                  </select>
+                  <span className="hint" style={{ fontSize: 12 }}>{r.help}</span>
+                </label>
+                {selected ? <ProvBadge provenance={selected.provenance} /> : null}
+              </div>
+            );
+          })}
+          <button className="btn" disabled={busy === 'modelRoles'} onClick={() => save('modelRoles', { modelRoles: s.modelRoles })}>
+            {busy === 'modelRoles' ? <span className="spin" /> : 'Save'}
+          </button>
         </div>
 
         <div className="section-title">Notifications</div>

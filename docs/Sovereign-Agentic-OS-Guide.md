@@ -2,7 +2,7 @@
 title: "Sovereign Agentic OS"
 subtitle: "The product guide — install it, run it, and put every governed workflow to work."
 author: "Orchestrated by Data Masterclass · datamasterclass.com · www.sovereign-agentic.com"
-date: "Chart 0.2.12 (app 0.2.0-alpha.12 · os-ui 0.1.44) · generated {{DATE}} from commit {{GIT_COMMIT}}"
+date: "Chart 0.2.12 (app 0.2.0-alpha.12 · os-ui 0.1.62) · generated {{DATE}} from commit {{GIT_COMMIT}}"
 titlepage: true
 titlepage-rule-color: "c8a24a"
 toc: true
@@ -154,19 +154,23 @@ domain is named directly — **"<domain> domain"**, not "My Domain".
 
 ## Archive, delete and version history
 
-Every artifact carries the same three lifecycle controls, surfaced consistently on each tab —
+Every artifact carries the same lifecycle controls, surfaced consistently on each tab —
 agent systems, apps, big bets, dashboards, knowledge workflows, files, datasets/metrics/knowledge
 docs. Only the artifact's owner (or an in-domain Admin) may use them, exactly the same authority
 that governs editing it; a viewer sees the history but cannot change it.
 
+**Tile surface:** each tile shows only **"Open"** — the working list is kept clean. Archive / Restore
+and Version history are reached by opening the detail view of the artifact. **Delete** is surfaced
+only on artifacts that have already been archived: archive first, then delete from the detail. Use
+**"Show archived"** to reveal archived items in the list so they remain reachable.
+
 - **Archive** — a reversible *soft-hide*. The artifact leaves the working lists (a running agent is
-  also stopped) but nothing is lost; **Restore** brings it back unchanged. Use "Show archived" to
-  see and restore archived items. Archiving a Shared/Marketplace artifact hides it for everyone
-  until restored.
-- **Delete** — a confirmed, permanent removal of the artifact **and** its version history. It is
-  guarded by an explicit "Confirm delete" step.
+  also stopped) but nothing is lost; **Restore** brings it back unchanged. Archiving a
+  Shared/Marketplace artifact hides it for everyone until restored.
+- **Delete** — available only on already-archived artifacts. A confirmed, permanent removal of the
+  artifact **and** its version history, guarded by an explicit "Confirm delete" step.
 - **Version history** — every meaningful edit first **snapshots the prior state** as a numbered
-  version (with author + timestamp). Open **History** on any artifact to see the timeline and
+  version (with author + timestamp). Open **History** in the detail view to see the timeline and
   **Restore** any earlier version. Restore is itself auditable and reversible: it snapshots the
   *current* state as a new version before rolling back, so you can always undo a restore. History is
   durable — it is mirrored to OpenSearch (see *Durable state — every store mirrors, one core*), so
@@ -181,7 +185,7 @@ on edit, list, restore-creates-a-new-version — is identical wherever you are.
 |---|---|
 | **Creator** | the base role — creates and runs their **own** artifacts (datasets, workflows, agents, apps — Personal by default) and consumes anything shared or certified. Cannot promote, approve, or reach admin; files promotion requests. |
 | **Builder** | the domain approver — everything a Creator can, plus review/approve domain promotions, deploys, knowledge and connections. An approver, **not** a people-admin. |
-| **Domain admin** | everything a Builder can, plus administering the users of their **own domain(s) only** — invite, edit, reset credentials, deactivate/reactivate, and assign roles **up to Builder**. Never mints another Domain admin or an Administrator, and never reaches the Platform group. |
+| **Domain admin** | everything a Builder can, plus administering the users of their **own domain(s) only** — invite, edit, reset credentials, deactivate/reactivate, and assign roles **up to Builder**. Never mints another Domain admin or an Administrator, and never reaches the Admin section. |
 | **Administrator** | tenant-wide — users (the only role that appoints **Domain admins**), policy, certification to the **Marketplace**, cost caps; runs Admin (Platform) |
 
 The ladder is exactly **creator < builder < domain_admin < admin**. Earlier releases had two more
@@ -380,9 +384,18 @@ redeploys). Each has a one-card launcher on **Home**.
 # Using the platform, tab by tab
 
 Every chapter below follows the same shape: **What it's for · The golden path · Roles · Connects
-to**. They are in **sidebar order** — the business tabs first, then a short **Platform** section for
-the operational consoles. Most flows run live against the cluster and fall back to a labelled
-offline mock on `kind` — a ✓ always means a real apply and verify.
+to**. They are in **sidebar order**. The sidebar is divided into **five named sections**:
+
+| Section | Contains |
+|---|---|
+| **Plan** | Strategy, Big Bets |
+| **Context** | Knowledge, Files, Data, Metrics, Dashboards, Connections |
+| **Build** | Agents, Software, Science, Marketplace |
+| **Monitor** | Monitoring, Governance |
+| **Admin** | Components, Admin (Platform), Terminal, About / Licenses |
+
+Most flows run live against the cluster and fall back to a labelled offline mock on `kind` — a ✓
+always means a real apply and verify.
 
 Every page also carries a **top-left ActionBar** under its title: a **Tutorial** button on every tab
 that has a golden-path tutorial, and — on the tabs that expose an MCP endpoint — a
@@ -545,8 +558,8 @@ it to the profile's identity. There is no side door.
 
 - **Model tier.** Hermes uses **Hermes 4.3** as its tool-calling brain, served via **vLLM behind
   LiteLLM** — the 14B tier is CPU-feasible; the stronger 36B/70B tiers sit behind the optional GPU
-  pool. Magistral stays the general-reasoning default. *(Hermes 4 weights are Llama-3.1-based →
-  Llama 3.1 Community License; fine for self-hosted use, not redistributed.)*
+  pool. The STACKIT **Qwen3-VL-235B** reasoning tier stays the general-reasoning default. *(Hermes 4
+  weights are Llama-3.1-based → Llama 3.1 Community License; fine for self-hosted use, not redistributed.)*
 - **Safety presets** map straight to the profile: **read-only** (reads only, no unattended writes),
   **read + propose** (writes drafted for a human), **read + bounded writes** (bounded writes auto-run,
   approval-writes queue), **full in-scope** (everything the profile exposes, still OPA-gated).
@@ -962,7 +975,7 @@ cap-setting to Governance, and infra health to Components.
 
 **What it's for.** Consolidate, decide, record. Governance *enforces* policy and *executes the effect
 behind a decision* — but it doesn't author tenant structure (that's Admin). Its sidebar tab sits at
-the **top of the Platform group**, visible from **Builder rank up** — Builders, **Domain admins** and
+the **top of the Admin section**, visible from **Builder rank up** — Builders, **Domain admins** and
 Administrators, the people who approve. Creators don't need the tab: their own request status is
 shown **in context** (the Promote / Certify panels on the artifact itself).
 
@@ -997,9 +1010,9 @@ here; **Admin** compiles the identity Governance reflects; **Monitoring** watche
 
 ## The Platform section
 
-The sidebar closes with a small **Platform** group of operational consoles. **Governance** is
-visible from Builder rank up; the remaining entries (**Admin**, **Components**, **Terminal**,
-**About / Licenses**) are Administrator-only.
+The sidebar's **Monitor** and **Admin** sections contain the operational consoles. **Governance**
+(in Monitor) is visible from Builder rank up. The **Admin** section entries (**Components**,
+**Admin**, **Terminal**, **About / Licenses**) are Administrator-only.
 
 ### Admin — the tenant control room
 
@@ -1016,10 +1029,11 @@ through to OPA. Labelled **Admin** in the sidebar (the conceptual "Platform Admi
    already-provisioned workloads 0↔1; the UI never provisions cloud resources).
 4. **Users & Access** — invite by email (email = username; the credential is never returned), set
    domain memberships and roles; archive/restore/delete run behind confirmations.
-5. **Models & Providers** — configure the platform's single **assistant LLM**: the endpoint and
-   key for the STACKIT managed model (or any compatible provider) that powers the built-in
-   artifact-building assistants across every tab. Provider keys are stored as a **reference +
-   fingerprint**, never raw.
+5. **Models & Providers** — configure the platform's **three inference roles** (Standard / Reasoning /
+   Embeddings) from a **single, live-sourced store**. The catalog is populated from the LiteLLM
+   gateway; operators register their own models, and the helm defaults (gpt-oss-20b / Qwen3-VL-235B /
+   Qwen3-VL-Embedding-8B) are the STACKIT-managed starting point. Provider keys are stored as a
+   **reference + fingerprint**, never raw.
 6. **Drive OAuth apps** — register the tenant's **Google Drive and OneDrive OAuth apps** once
    (client ID + secret for each; the secret is stored as a reference + fingerprint, never raw) so
    users can connect their **own** accounts from the **Connections** tab. See *Connecting Google Drive /
@@ -1174,8 +1188,8 @@ with how much data you have.
 
 | Resource | This deploy | Holds | How it scales |
 | --- | --- | --- | --- |
-| **Node RAM** | 128 GB (`m3i.16`, 16 vCPU) | Running pods — Trino's JVM heap, OpenSearch, the in-box model | With **concurrency / workload**, not data. Ran ~2–4% here. |
-| **Node disk** | **200 GB** (was 80) | **Container images + local model weights** — all Layer 1–4 images (~40–60 GB) + the in-box model (Ministral ~3 GB; a Magistral 24B would add ~15 GB) + image-churn headroom | **FIXED.** It does **not** grow with your dataset. Size it once for images + models. |
+| **Node RAM** | 128 GB (`m3i.16`, 16 vCPU) | Running pods — Trino's JVM heap, OpenSearch (inference runs on STACKIT, off-node) | With **concurrency / workload**, not data. Ran ~2–4% here. |
+| **Node disk** | **200 GB** (was 80) | **Container images** — all Layer 1–4 images (~40–60 GB) + image-churn headroom (inference is on STACKIT managed models, so no local model weights on disk) | **FIXED.** It does **not** grow with your dataset. Size it once for images. |
 | **Data storage** | Object storage + PVCs | The **Iceberg lakehouse on object storage** (in-cluster MinIO for the demo → **STACKIT Object Storage / S3** for real scale → **TBs**), plus PVCs for **OpenSearch** (indices + embeddings), **Postgres** (metadata), **ClickHouse** (traces), **MLflow** (artifacts) | **Independently**, with the dataset. "More data" lands here. |
 
 The one gotcha worth internalizing: **don't confuse node RAM (128 GB) with the node disk** (the small
@@ -1287,19 +1301,24 @@ sovereign, offline posture.
 ## Models & the LLM gateway
 
 Every model call goes through **LiteLLM** — the one gateway that enforces the model allowlist,
-per-key spend caps, tracing and graceful back-pressure. The self-hosted default routes are **free**;
-a live STACKIT deployment fronts two pay-per-token open-weight **Qwen** tiers on **STACKIT AI Model
-Serving**, matching the assistants' two phases:
+per-key spend caps, tracing and graceful back-pressure. Inference runs entirely on **STACKIT AI Model
+Serving** as an EU-sovereign, pay-per-token, three-tier set. An Administrator configures each role
+independently in **Admin → Models & Providers** (a single live-sourced store; the catalog is
+populated from the gateway, so operators register their own models — the three below are the helm
+defaults). The in-cluster Mistral models (Ministral/Magistral) and the model-server component have
+been removed; no local model weights sit on the node disk.
 
 - **Reasoning / planning** — `Qwen/Qwen3-VL-235B-A22B-Instruct-FP8` (LiteLLM `sovereign-reasoning`),
   the PLAN phase of every assistant.
-- **Execution / default** — `Qwen/Qwen3.6-27B` (`sovereign-default`), tool-calling and general chat.
+- **Standard / worker** — `openai/gpt-oss-20b` (`sovereign-default`), the lightweight worker for
+  non-reasoning tasks: tool-calling, coding and general chat.
+- **Embeddings** — `Qwen/Qwen3-VL-Embedding-8B` (`sovereign-embed`), **4096-dim**, EU-sovereign.
+  The OpenSearch knowledge and files indices are sized to this dimension
+  (`KNOWLEDGE_EMBED_DIM` / `FILES_EMBED_DIM` from `retrieval.knnDimension`).
 
-Qwen "thinking" is disabled (`chat_template_kwargs.enable_thinking=false`) so replies come back
-direct. The local **Ministral** model stays as an **offline fallback** — it currently wedges on this
-CPU node's llama.cpp warmup, so STACKIT Qwen is the live default. All STACKIT usage draws on one
-shared **€250/week** budget (LiteLLM `budget_duration: 7d`): once it is exhausted the gateway returns
-a **graceful budget error (HTTP 429)** rather than failing hard, and the pool auto-resets weekly.
+All STACKIT usage draws on one shared **€250/week** budget (LiteLLM `budget_duration: 7d`): once it is
+exhausted the gateway returns a **graceful budget error (HTTP 429)** rather than failing hard, and the
+pool auto-resets weekly.
 
 **WireGuard (optional, off by default).** A first-class, durable in-cluster tunnel component (a UDP
 LoadBalancer) lets LiteLLM reach an **external** Ollama model — e.g. a Mac-Mini `qwen3:14b` on the
@@ -1406,7 +1425,7 @@ Grouped by layer — see `docs/components/<id>.md` for the full per-component gu
 
 | Layer | Components |
 |---|---|
-| **L1 — Agent core** | LiteLLM (model + MCP gateway, per-key budget cap) · model-server (self-hosted Ministral 3 / Magistral 24B; two-tier STACKIT Qwen reasoning/execution on the live deploy) · mock-model (offline embeddings + fallback) · OpenSearch (retrieval) · Langfuse (tracing) · query-tool (Trino MCP) · system agents (Domain RAG · ML pipeline · Hermes runtime) |
+| **L1 — Agent core** | LiteLLM (model + MCP gateway, per-key budget cap; routes to the STACKIT managed three-tier set — reasoning Qwen3-VL-235B · standard/worker gpt-oss-20b · embeddings Qwen3-VL-Embedding-8B) · mock-model (offline embeddings on kind/local) · OpenSearch (retrieval) · Langfuse (tracing) · query-tool (Trino MCP) · system agents (Domain RAG · ML pipeline · Hermes runtime) |
 | **L2 — Foundations** | OPA · Docling · Haystack · Dagster · dbt · Cube · OpenMetadata |
 | **Infra** | Postgres (CloudNativePG) · ClickHouse · Valkey · MinIO (object storage, PVC-backed) · Polaris (Iceberg catalog, durable relational-JDBC metastore) |
 | **L3 — Self-service** | central Trino · Superset · Forgejo (sovereign git) · Argo CD · CI runner/build · OpenSearch Dashboards · Workbench (workload only — retired from the nav) · Terminal |
@@ -1441,8 +1460,8 @@ Grouped by layer — see `docs/components/<id>.md` for the full per-component gu
 - **Where do I log in first?** Locally the OS UI needs no login; Langfuse
   (`admin@datamasterclass.com` / `langfuse-local-dev-admin`) is the default admin-style back-end
   console.
-- **Agent answers look canned** → the self-hosted model (`model-server`) is disabled, so the offline
-  mock model is answering. Enable `modelServer` or point LiteLLM at any model — no agent change.
+- **Agent answers look canned** → STACKIT AI Model Serving isn't wired (no `STACKIT_API_KEY`), so
+  chat has no live model. Configure `stackitPremium` / the key, or point LiteLLM at any model — no agent change.
 - **`web_fetch` returns 403 / 502** → 403 means OPA hasn't granted the principal `web_fetch`; 502
   means the domain isn't on the egress allowlist. Both are by design.
 - **No verification/invite email is sent** → no mailer is configured. The bootstrap admin
@@ -1480,7 +1499,7 @@ Grouped by layer — see `docs/components/<id>.md` for the full per-component gu
   administering the users of their own domain(s) only (invite, edit, deactivate, roles up to
   Builder — never another Domain admin or an Administrator; only the platform Administrator
   appoints Domain admins). Builders are approvers, **not** people-admins. Governance stays
-  Builder-rank-and-up; the rest of the Platform group stays Administrator-only; nobody is
+  Builder-rank-and-up; the rest of the Admin section stays Administrator-only; nobody is
   auto-promoted on upgrade. **Durability shipped**: every user-facing in-process store now mirrors
   to OpenSearch through the one shared `lib/os-mirror.ts` core (write-through + boot hydration,
   self-healing index bootstrap) — artifacts survive redeploys; requires the OpenSearch PVC. **The
@@ -1493,7 +1512,7 @@ Grouped by layer — see `docs/components/<id>.md` for the full per-component gu
   reads (`list_models`/`get_model`), Big Bet updates, Connections tools and read-back parity
   (`list_*`/`get_*` for every buildable artifact) — and internal Agent-tab systems now dispatch
   through the **same governed toolset** under their owner's identity. **Nav consolidation**:
-  Tutorials in the main tab group; Governance atop the Platform group (Builder+); Workbench
+  Tutorials in the main tab group; Governance atop the Admin section (Builder+); Workbench
   retired from the nav (the workload remains chart-optional). **Console UX**: Terminal
   auto-connects and re-attaches to a live session; Dagster's public ingress gained operator
   basic-auth. **Backups**: the Tier 0–2 system (nightly pg-dump CronJob · nightly Velero
@@ -1530,9 +1549,9 @@ Grouped by layer — see `docs/components/<id>.md` for the full per-component gu
   now embed **same-origin** through the OS UI (`/tools/<tool>`) with **Level-1 header SSO** that
   auto-provisions per-role accounts. The **lakehouse is durable** — MinIO on a PVC, Polaris on a
   relational-JDBC (Postgres) metastore, and a `polaris-catalog-init` Job that registers the
-  `lakehouse` catalog on deploy. On STACKIT, LiteLLM serves a **two-tier Qwen** stack
-  (`sovereign-reasoning` = Qwen3-VL-235B, `sovereign-default` = Qwen3.6-27B; thinking disabled) under
-  a shared **€250/week** budget cap with graceful 429, local Ministral kept as offline fallback; an
+  `lakehouse` catalog on deploy. On STACKIT, LiteLLM serves the **managed three-tier** set
+  (`sovereign-reasoning` = Qwen3-VL-235B, `sovereign-default` = gpt-oss-20b, `sovereign-embed` =
+  Qwen3-VL-Embedding-8B) under a shared **€250/week** budget cap with graceful 429; an
   optional durable **WireGuard** tunnel can bridge LiteLLM to an external Ollama model. New in
   this guide pass: **Platform → MCPs & APIs** (four-group governed tool-registry with per-entry
   Claude/ChatGPT import links); **Northpeak Commerce live metrics** — `iceberg.sales.gold_northpeak_commerce`
@@ -1551,6 +1570,21 @@ Grouped by layer — see `docs/components/<id>.md` for the full per-component gu
   (Home, Cockpit, Strategy, Big Bets, Agents, Software, Science, Knowledge, Files, Data, Metrics,
   Dashboards, Connections, Marketplace, Monitoring, Governance, Settings); and first-run gained an
   **auto-verifying bootstrap admin** with optional email via **Microsoft Graph `sendMail`** or **SMTP**.
+- **os-ui 0.1.62.** STACKIT three-tier model set finalized — **Ministral/Magistral and the
+  model-server deleted**; all inference is STACKIT-managed (`gpt-oss-20b` standard ·
+  `Qwen3-VL-235B` reasoning · `Qwen3-VL-Embedding-8B` embeddings, 4096-dim). **Models & Providers**
+  unified to a single live-sourced admin store (Standard / Reasoning / Embeddings roles,
+  operator-configurable). **Embeddings migration**: OpenSearch knowledge and files indices
+  recreated at 4096 dimensions. **OS-wide lifecycle UX**: tiles show only "Open"; Archive/Restore
+  and History live in the detail; Delete gated to already-archived items; "Show archived" keeps
+  Delete reachable. **Data + Metrics collapsed** to one screen (subtabs gone; query below tiles);
+  dataset detail gains a governed 50-row preview. **Knowledge** tab: prominent "New knowledge",
+  My-knowledge focal, git-backed versioning, full Personal→Domain→Marketplace promotion ladder.
+  **Source-domain provenance tags** on every Shared/Marketplace artifact across all tabs. **Sidebar
+  restructured into 5 sections**: Plan / Context / Build / Monitor / Admin. **Components tab**:
+  Postgres detected via StatefulSet fallback, dbt shows "on-demand", Sample RAG agent and "Seed demo
+  queue" button removed. **Software pipeline**: `appImageRef` serves the real CI image; `ci-runner`
+  gains `fsGroup:1000` (fixes CrashLoopBackOff). **User & Access** edit path: 6 new route tests.
 - **Next** — real external tool execution beyond Drive/OneDrive; the in-cluster live-app runner
   for Software; broader tutorial anchors; full per-domain spaces; Science/Layer-4 wiring. Bump
   this section additively as the OS evolves and re-run `scripts/build-docs.sh`.

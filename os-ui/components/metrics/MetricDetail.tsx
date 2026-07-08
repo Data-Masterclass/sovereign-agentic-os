@@ -10,6 +10,7 @@ import Alerts from './Alerts';
 import { type MetricGroups, type MetricSummary, TIER_BADGE, TIER_WORD } from './shared';
 import { useUser } from '@/lib/useUser';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
+import DomainTag from '@/components/DomainTag';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import type { Visibility } from '@/lib/lifecycle';
 
@@ -55,6 +56,9 @@ export default function MetricDetail({
       <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <h2 style={{ margin: 0 }}>{metric.name}</h2>
         <span className={`badge ${TIER_BADGE[metric.tier]}`}>{TIER_WORD[metric.tier]}</span>
+        {(metric.tier === 'domain' || metric.tier === 'marketplace') ? (
+          <DomainTag domain={metric.domain} />
+        ) : null}
         {canManage ? (
           <div style={{ marginLeft: 'auto' }}>
             <LifecycleActions
@@ -62,7 +66,7 @@ export default function MetricDetail({
               name={metric.name}
               kind="metric"
               visibility={lcVis(metric.tier)}
-              archived={false}
+              archived={!!metric.archived}
               api={`/api/metrics/${metric.id}`}
               onChanged={onLifecycle}
               compact

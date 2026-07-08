@@ -28,8 +28,8 @@ import { newMockBackends, makeMockAdapters, registerGrants, gatewayFor } from '.
  * 2-agent system (supervisor + sub-agent) BOTH ways — by editor/canvas mutations
  * AND by asking the agent-system helper — committing through the SAME store file
  * write (one source). It then executes each into the mocked LangGraph / LiteLLM /
- * OPA / Langfuse adapters and asserts: verification passes; routing hits Ministral
- * (light) and STACKIT Qwen (reasoning); a granted connection works while a
+ * OPA / Langfuse adapters and asserts: verification passes; routing hits the
+ * Standard tier (light) and the Reasoning tier; a granted connection works while a
  * non-granted one is blocked and a write is held for approval; and
  * run/schedule/toggle work. (Everything is mocked in-process per the locked
  * design — no STACKIT, no real kind workloads.)

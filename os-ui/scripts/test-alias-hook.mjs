@@ -13,6 +13,7 @@ const STUB = pathToFileURL(rp(ROOT, 'scripts/test-empty.mjs')).href;
 
 export async function resolve(spec, ctx, next) {
   if (spec === 'server-only' || spec === 'client-only') return { url: STUB, shortCircuit: true };
+  if (spec === 'next/server') return { url: pathToFileURL(rp(ROOT, 'scripts/test-next-server.mjs')).href, shortCircuit: true };
   if (spec.startsWith('@/')) {
     let p = rp(ROOT, spec.slice(2));
     if (existsSync(p + '.ts')) p += '.ts';

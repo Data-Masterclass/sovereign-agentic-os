@@ -32,7 +32,7 @@ Edit `values.stackit-managed.yaml` (or let `install.sh` write `values.generated.
   secret (via External Secrets), `objectStorage.enabled: false`.
 - **Postgres** → STACKIT Postgres Flex (or keep CloudNativePG in-cluster).
 - **LLM** → **STACKIT AI Model Serving** (`llm.mode: external`, `provider: stackit`,
-  `secretRef: stackit-ai-model-serving-key`), or an API key (Azure OpenAI / Mistral / Kimi).
+  `secretRef: stackit-ai-model-serving-key`), or an API key for another OpenAI-compatible provider.
 - **Ingress hostnames + TLS issuer**, the **egress allowlist**, per-domain quotas.
 
 ## 4. Secrets — never in git

@@ -14,10 +14,13 @@ export const dynamic = 'force-dynamic';
 
 /** The file browser: GET lists the user's drive (mine/domain/marketplace + facets);
  *  POST uploads a new file into the governed object store (a private file at v1). */
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const user = await requirePrincipal();
-    return NextResponse.json(listFiles(user));
+    // ?archived=1 additionally returns soft-archived files (their own section), so an
+    // archived file stays openable → its preview exposes Restore + Delete (OS-wide rule).
+    const includeArchived = new URL(req.url).searchParams.get('archived') === '1';
+    return NextResponse.json(listFiles(user, { includeArchived }));
   } catch (e) {
     return errorResponse(e);
   }

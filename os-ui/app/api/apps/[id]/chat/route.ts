@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { config } from '@/lib/config';
+import { roleModel } from '@/lib/models/roles';
 import { requireUser } from '@/lib/auth';
 import { getAppForUser, saveChat } from '@/lib/apps';
 import { runTabAgent, renderAssistantText } from '@/lib/assistant/runtime';
@@ -87,7 +87,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (clean.length === 0) return NextResponse.json({ error: 'No message to send' }, { status: 400 });
 
   let content = '';
-  const model = config.litellmExecModel;
+  const model = roleModel('standard');
   try {
     const result = await runTabAgent({
       user,

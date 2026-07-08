@@ -36,8 +36,3 @@ trino:
   enabled: false        # tiny-node override; set true (or size the node) for the governed path
 spark:
   enabled: false
-
-# Self-hosted default LLM (Ministral 3 3B) — ONE replica to fit a single kind node
-# (~3 GB working set). Product default (values.yaml) is 2+ on a sized node.
-modelServer:
-  replicas: 1

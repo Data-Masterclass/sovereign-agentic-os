@@ -57,7 +57,7 @@ should be up:
 | --- | --- |
 | Metrics resolve / explore | Cube (`cube`) reading the Trino Gold mart |
 | Dashboards render | Superset |
-| Agents execute tool calls live | LiteLLM → model-server + `agent-runtime` |
+| Agents execute tool calls live | LiteLLM → STACKIT managed models + `agent-runtime` |
 | Science train / predict | `science.ml.enabled=true` (per domain) + ml-agent / MLflow / KServe |
 | Knowledge / Files indexing | OpenSearch (+ Docling/transcribe for Files) |
 | Connections to external hosts | egress proxy + Admin-approved egress allowlist |

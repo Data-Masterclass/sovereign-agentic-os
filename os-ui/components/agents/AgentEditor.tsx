@@ -8,7 +8,7 @@ import MonacoFile from './MonacoFile';
 import { commitSystem } from './commitSystem';
 import { type System } from '@/lib/agents/system-schema';
 import { setAgentModel, setAgentTools } from '@/lib/agents/canvas-edit';
-import { MODEL_MODES, modeForModel, modelInfo, type ModelInfo, type ModelMode } from '@/lib/agents/routing';
+import { MODEL_MODES, modeForModel, modelInfo, type ModelMode } from '@/lib/agents/routing';
 
 /**
  * Level 3 — the agent editor (one agent's native inputs): AGENT.md (behaviour),
@@ -26,8 +26,7 @@ export default function AgentEditor({
   system,
   agentId,
   canEdit,
-  models,
-  modelsSource,
+  roles,
   isEntrypoint,
   onSetEntrypoint,
   onChanged,
@@ -37,8 +36,8 @@ export default function AgentEditor({
   system: System;
   agentId: string;
   canEdit: boolean;
-  models: ModelInfo[];
-  modelsSource: 'litellm' | 'offline' | null;
+  /** The LIVE platform-admin role models the Standard/Reasoning segments pin to. */
+  roles: { reasoning: string; standard: string };
   isEntrypoint?: boolean;
   onSetEntrypoint?: () => void;
   onChanged: () => void | Promise<void>;
@@ -158,11 +157,23 @@ export default function AgentEditor({
             Choose the thinking mode — we handle the model routing and fallback for you.
           </p>
           {(() => {
-            const activeMode: ModelMode = modeForModel(agent.model);
+            // The pin each segment writes = the LIVE platform-admin role model
+            // (Standard / Reasoning), so an agent tracks the admin's role→alias
+            // choice. Auto clears the pin (workspace routing decides).
+            const pinFor = (mode: ModelMode): string | null =>
+              mode === 'reasoning' ? roles.reasoning : mode === 'execution' ? roles.standard : null;
+            // Which segment the agent's current pin lights up: match the effective
+            // role aliases first (admin may re-point them), else the tier heuristic.
+            const activeMode: ModelMode = !agent.model
+              ? 'auto'
+              : agent.model === roles.reasoning
+                ? 'reasoning'
+                : agent.model === roles.standard
+                  ? 'execution'
+                  : modeForModel(agent.model);
             const activeChoice = MODEL_MODES.find((m) => m.mode === activeMode)!;
-            // The real model behind the active choice: Auto has no pin (workspace
-            // routing decides), the pins resolve to a real LiteLLM model_name.
-            const shown = activeChoice.model ? modelInfo(activeChoice.model) : null;
+            const activePin = pinFor(activeMode);
+            const shown = activePin ? modelInfo(activePin) : null;
             return (
               <>
                 <div className="rt-seg" role="group" aria-label="Thinking mode">
@@ -175,7 +186,7 @@ export default function AgentEditor({
                         className={`rt-seg-opt${active ? ' active' : ''}`}
                         aria-pressed={active}
                         disabled={!canEdit || busy}
-                        onClick={() => { if (!active) changeModel(m.model ?? ''); }}
+                        onClick={() => { if (!active) changeModel(pinFor(m.mode) ?? ''); }}
                       >
                         {m.label}
                       </button>
@@ -191,37 +202,12 @@ export default function AgentEditor({
                     </div>
                   ) : (
                     <div className="muted" style={{ fontSize: 12.5 }}>
-                      Workspace routing decides per task — cheap-first (Ministral for light work, in-box
-                      Magistral for reasoning).
+                      Workspace routing decides per task — cheap-first (Standard for light work, in-box
+                      Reasoning for planning).
                     </div>
                   )}
                   <p className="hint rt-seg-hint" style={{ marginTop: 6 }}>{activeChoice.hint}</p>
                 </div>
-
-                <details className="model-advanced" style={{ marginTop: 10 }}>
-                  <summary>Advanced: pin an exact model</summary>
-                  <p className="hint" style={{ marginTop: 8 }}>
-                    Pin a specific LiteLLM <span className="mono">model_name</span> (no endpoint in the UI).
-                    Leave on <strong>Auto</strong> for cheap-first workspace routing.
-                    {modelsSource === 'offline' ? ' LiteLLM is unreachable — showing the install catalog.' : ''}
-                  </p>
-                  <select
-                    value={agent.model ?? ''}
-                    disabled={!canEdit || busy}
-                    onChange={(e) => changeModel(e.target.value)}
-                    style={{ minWidth: 280 }}
-                  >
-                    <option value="">Auto — workspace activity routing</option>
-                    {models.map((m) => (
-                      <option key={m.model_name} value={m.model_name}>
-                        {m.display} — {m.provenance === 'internal' ? 'in-box' : 'hosted'} ({m.model_name})
-                      </option>
-                    ))}
-                    {agent.model && !models.some((m) => m.model_name === agent.model) ? (
-                      <option value={agent.model}>{agent.model} (current)</option>
-                    ) : null}
-                  </select>
-                </details>
               </>
             );
           })()}

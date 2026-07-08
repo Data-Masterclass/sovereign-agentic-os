@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../../_ctx';
 import { recompile } from '../../_compile';
-import { setEnabled, setCap, setDefault, setAssistantModel, type ModelTask } from '@/lib/platform-admin/models';
+import { setEnabled, setCap, setAssistantModel, clearAssistantModel } from '@/lib/platform-admin/models';
 import { audit } from '@/lib/platform-admin/audit';
 
 export const dynamic = 'force-dynamic';
@@ -26,13 +26,14 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         result = setCap(id, body?.capEUR === null ? null : Number(body?.capEUR));
         detail = `Set per-model cap on ${id} to ${body?.capEUR === null ? 'none' : `€${body?.capEUR}`}`;
         break;
-      case 'default':
-        result = setDefault(String(body?.task) as ModelTask, id);
-        detail = `Set default ${String(body?.task)} model to ${id}`;
-        break;
       case 'assistant':
         result = setAssistantModel(id);
         detail = `Set the assistant model (the ONE LLM powering every built-in assistant) to ${id}`;
+        break;
+      case 'assistant-clear':
+        clearAssistantModel();
+        result = { cleared: true };
+        detail = 'Cleared the assistant override — the assistant follows the Standard role default';
         break;
       default:
         return NextResponse.json({ error: 'Unknown op' }, { status: 400 });

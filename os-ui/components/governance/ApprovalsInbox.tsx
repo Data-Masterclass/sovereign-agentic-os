@@ -97,25 +97,6 @@ export default function ApprovalsInbox() {
     [load],
   );
 
-  const seed = useCallback(async () => {
-    setBusy('seed');
-    setError('');
-    try {
-      const res = await fetch('/api/governance/approvals/seed', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Seed failed');
-      else await load();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy('');
-    }
-  }, [load]);
-
   const pending = (items ?? []).filter((a) => a.status === 'pending').length;
 
   return (
@@ -134,16 +115,6 @@ export default function ApprovalsInbox() {
         >
           Refresh
         </button>
-        {isBuilderOrAdmin && (
-          <button
-            className="btn ghost"
-            style={{ padding: '4px 12px' }}
-            disabled={busy === 'seed'}
-            onClick={seed}
-          >
-            {busy === 'seed' ? <span className="spin" /> : 'Seed demo queue'}
-          </button>
-        )}
       </div>
 
       {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
@@ -157,7 +128,7 @@ export default function ApprovalsInbox() {
 
       {items !== null && items.length === 0 && (
         <div className="stub-page">
-          Queue is empty. Use &ldquo;Seed demo queue&rdquo; to populate with sample requests.
+          Queue is empty — no pending approval requests.
         </div>
       )}
 

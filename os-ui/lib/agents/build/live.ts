@@ -36,7 +36,7 @@ import {
  *                merged into requires_approval); verify probes allow/deny/approval.
  *   • litellm  — idempotent /key/generate (alias os-<id>, routed models, budget +
  *                per-model caps, rpm/tpm); verify /key/info + routing resolves
- *                light→Ministral, reasoning→Qwen.
+ *                light→Standard, reasoning→Reasoning.
  *   • langgraph— compile()→IR→runtime /reload; verify runtime /run reaches END with
  *                every tool call governed and no granted tool denied.
  *   • langfuse — ensure the project; verify a trace landed for the test invocation.

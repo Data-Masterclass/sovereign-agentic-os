@@ -140,9 +140,10 @@ export const config = {
   // when the service is unreachable (kind), so the golden path runs offline. ----
   filesIndex: env('FILES_INDEX', 'files'),
   // The SHARED embedding model fronted by LiteLLM (kind: sovereign-embed@384;
-  // STACKIT: bge-m3@1024 via TEI-through-LiteLLM). NEVER hardcode the dim — the
-  // helm template wires FILES_EMBED_DIM from `retrieval.knnDimension` (the single
-  // source), so changing the model + dim reindexes consistently.
+  // STACKIT: Qwen3-VL-Embedding-8B@4096 via STACKIT-managed inference). NEVER
+  // hardcode the dim — the helm template wires FILES_EMBED_DIM from
+  // `retrieval.knnDimension` (the single source), so changing the model + dim
+  // reindexes consistently.
   filesEmbedModel: env('FILES_EMBED_MODEL', 'sovereign-embed'),
   filesEmbedDim: Number(env('FILES_EMBED_DIM', '384')),
   // Ingest-by-type services (Phase 3). Docling (docs), a transcriber (audio/video),

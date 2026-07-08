@@ -11,20 +11,32 @@ import { listTutorials, TUTORIAL_EXEMPT_ROUTES } from './registry.ts';
  *
  * Source of truth on both sides is real: the sidebar's `TAB_GROUPS` (what
  * students actually see) vs the tutorial registry (matched by route). Every
- * canonical OS tab must have a tutorial OR a documented exemption in
- * `TUTORIAL_EXEMPT_ROUTES`. Platform-group tabs are exempt as a class — they
- * are operator consoles (admins/builders running the OS), not student golden
+ * student-facing tab must have a tutorial OR a documented exemption in
+ * `TUTORIAL_EXEMPT_ROUTES`. Admin-group tabs (Components, Terminal, Admin,
+ * About / Licenses — those with minRole='admin') are exempt as a class:
+ * they are operator consoles for admins running the OS, not student golden
  * paths; see the note on `TUTORIAL_EXEMPT_ROUTES` in registry.ts.
+ * Settings and Tutorials (no minRole, but in the Admin group) are listed
+ * in TUTORIAL_EXEMPT_ROUTES individually.
  */
 
 const tutorialRoutes = new Set(listTutorials().map((t) => t.route));
-const osGroup = TAB_GROUPS.find((g) => !g.heading);
-const platformGroup = TAB_GROUPS.find((g) => g.heading === 'Platform');
 
-test('TRIPWIRE: every canonical OS tab has a tutorial or a documented exemption', () => {
-  assert.ok(osGroup, 'canonical OS tab group (the heading-less first group) not found');
-  for (const tab of osGroup!.tabs) {
-    if (!tab.href) continue; // stub ("soon") — gets a tutorial when it ships a surface
+// All groups that contain student-facing tabs (excludes operator-only consoles).
+// Admin-only tabs (minRole='admin') are class-exempt; Settings/Tutorials are
+// individually exempt via TUTORIAL_EXEMPT_ROUTES.
+const allStudentTabs = TAB_GROUPS
+  .flatMap((g) => g.tabs)
+  .filter((t) => t.minRole !== 'admin');
+
+// The operator-console tabs that are class-exempt from the tutorial requirement.
+const adminConsoleTabs = TAB_GROUPS
+  .flatMap((g) => g.tabs)
+  .filter((t) => t.minRole === 'admin');
+
+test('TRIPWIRE: every student-facing nav tab has a tutorial or a documented exemption', () => {
+  for (const tab of allStudentTabs) {
+    if (!tab.href) continue; // stub ("soon") — gets a tutorial when it ships
     const covered = tutorialRoutes.has(tab.href);
     const exempt = tab.href in TUTORIAL_EXEMPT_ROUTES;
     assert.ok(
@@ -55,15 +67,15 @@ test('every exemption is a real nav tab with a real reason (no stale entries)', 
   }
 });
 
-test('platform-group class exemption stays honest: a console with a tutorial is not double-listed', () => {
-  assert.ok(platformGroup, 'Platform tab group not found');
-  for (const tab of platformGroup!.tabs) {
+test('admin-console class exemption stays honest: a console with a tutorial is not double-listed', () => {
+  assert.ok(adminConsoleTabs.length > 0, 'admin-only console tabs must exist (minRole=admin)');
+  for (const tab of adminConsoleTabs) {
     if (!tab.href) continue;
     // Class-exempt consoles must not ALSO sit in the explicit exemption list —
     // one documented mechanism per tab, so the picture stays auditable.
     assert.ok(
       !(tab.href in TUTORIAL_EXEMPT_ROUTES),
-      `platform console "${tab.label}" is class-exempt; remove it from TUTORIAL_EXEMPT_ROUTES`,
+      `admin console "${tab.label}" is class-exempt; remove it from TUTORIAL_EXEMPT_ROUTES`,
     );
   }
 });

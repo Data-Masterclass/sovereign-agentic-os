@@ -3,9 +3,10 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
+import { roleAtLeast } from '@/lib/session';
 import { getWorkflow, getDomainKnowledge } from '@/lib/knowledge/store';
 import { indexWorkflow, indexDomain } from '@/lib/knowledge/index-pipeline';
-import { promoteThroughSeam } from '@/lib/governance/ladder';
+import { promoteThroughSeam, fileArtifactPromotion, fileArtifactCertification } from '@/lib/governance/ladder';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,8 +21,11 @@ type Params = { params: Promise<{ id: string }> };
  * POST → publish (draft→live, Personal→Shared) or certify (Shared→Marketplace).
  * The rung is derived from the workflow's current tier and applied THROUGH the
  * governance effect seam (never a direct publishWorkflow/certifyWorkflow — the
- * former back door is closed). Gate: publish needs Builder+; certify needs Admin
- * (both re-enforced inside the seam's per-kind applier).
+ * former back door is closed).
+ *
+ * Separation of duties (docs-first): a Builder+ promotes / an Admin certifies in
+ * one shot; a creator (owner without the gate) FILES request_promotion for a
+ * Builder to approve — the same ladder every artifact rides.
  */
 export async function POST(req: Request, { params }: Params) {
   try {
@@ -31,6 +35,17 @@ export async function POST(req: Request, { params }: Params) {
     // Honour the caller's INTENT: publish→rung 1, certify→rung 2. A mismatch with
     // the workflow's tier is a typed conflict, never a silent tier jump.
     const rung = body.action === 'certify' ? 'certify' : 'promote';
+
+    // A creator lacks the promote/certify gate → file the governed request and
+    // hand off, rather than 403. Builder+ (promote) / Admin (certify) one-shot.
+    const canAct = rung === 'certify' ? roleAtLeast(user.role, 'admin') : roleAtLeast(user.role, 'builder');
+    if (!canAct) {
+      const approval = rung === 'certify'
+        ? await fileArtifactCertification('knowledge', id, user)
+        : await fileArtifactPromotion('knowledge', id, user);
+      return NextResponse.json({ requested: true, approval });
+    }
+
     await promoteThroughSeam('knowledge', id, user, { rung });
     const rec = getWorkflow(id, user);
 

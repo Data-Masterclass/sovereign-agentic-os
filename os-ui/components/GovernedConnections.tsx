@@ -12,6 +12,7 @@ import { driveConnectionStatus, driveAuthorizePath } from '@/lib/oauth/drive-sta
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import type { Visibility } from '@/lib/lifecycle';
+import DomainTag from '@/components/DomainTag';
 
 /**
  * Governed Connections surface (Connections golden path). A Builder/Admin creates
@@ -701,6 +702,7 @@ function ConnectionCard({
           {c.archived ? <span className="badge muted">archived</span> : null}
           {dataUsage === 'bronze' && <span className="badge warn">Bronze source</span>}
           {dataUsage === 'files' && <span className="badge warn">Files index</span>}
+          {(c.visibility === 'Shared' || c.visibility === 'Certified') ? <DomainTag domain={c.domain} /> : null}
           <span className={badge(c.visibility)}>{c.visibility}</span>
         </div>
       </div>
@@ -830,19 +832,6 @@ function ConnectionCard({
             Same connection — agent tool + {dataUsage === 'files' ? 'Files index' : 'Bronze source'}
           </span>
         )}
-        {/* The OS-wide lifecycle cluster: Archive/Restore · Delete · Version history. */}
-        {canManage ? (
-          <LifecycleActions
-            id={c.id}
-            name={c.name}
-            kind="connection"
-            visibility={connVisibility(c.visibility)}
-            archived={!!c.archived}
-            api={`/api/connections/${c.id}`}
-            onChanged={onChange}
-            compact
-          />
-        ) : null}
       </div>
 
       {msg ? <div className={msg.startsWith('✗') ? 'error' : 'answer'} style={{ marginTop: 10 }}>{msg}</div> : null}
@@ -895,6 +884,24 @@ function ConnectionCard({
       {/* Capabilities table + autonomous preset */}
       {open ? (
         <div style={{ marginTop: 12 }}>
+          {/* OS-wide rule: lifecycle lives inside the opened detail (the expanded
+              capabilities view) — live → Archive + Version; archived → Restore +
+              Delete + Version. `c.archived` carries the real state so Delete is
+              reachable only after archiving. */}
+          {canManage ? (
+            <div className="row" style={{ gap: 8, marginBottom: 12, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <LifecycleActions
+                id={c.id}
+                name={c.name}
+                kind="connection"
+                visibility={connVisibility(c.visibility)}
+                archived={!!c.archived}
+                api={`/api/connections/${c.id}`}
+                onChanged={onChange}
+                compact
+              />
+            </div>
+          ) : null}
           <div className="table-wrap">
             <table>
               <thead>

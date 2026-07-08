@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { config } from '@/lib/config';
+import { roleModel } from '@/lib/models/roles';
 import { contextForAgentKey, tabForAgentKey } from '@/lib/tabs/context';
 import { currentUser } from '@/lib/auth';
 import { runTabAgent, renderAssistantText } from '@/lib/assistant/runtime';
@@ -142,7 +142,7 @@ export async function POST(req: Request) {
       return NextResponse.json({
         role: 'assistant',
         content: renderAssistantText(result),
-        model: config.litellmExecModel,
+        model: roleModel('standard'),
       });
     } catch (e) {
       if (e instanceof AssistantNotConfiguredError) {

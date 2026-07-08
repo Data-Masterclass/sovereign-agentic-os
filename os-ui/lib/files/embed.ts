@@ -2,12 +2,14 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { config } from '../config.ts';
+import { roleModel } from '../models/roles.ts';
 
 /**
  * The shared embedding step (deep-design A3 / B2 — the model fires once per chunk
  * at index time, once per query at search time). LIVE it calls the SHARED model
- * through LiteLLM (`/v1/embeddings`, model = `filesEmbedModel`: sovereign-embed@384
- * in kind, bge-m3@1024 via TEI on STACKIT). MOCK it returns a deterministic vector.
+ * through LiteLLM (`/v1/embeddings`, model = the Embeddings role, roleModel('embeddings'):
+ * sovereign-embed@384 in kind, Qwen3-VL-Embedding-8B@4096 on STACKIT). MOCK it
+ * returns a deterministic vector.
  *
  * CRITICAL invariant: the vector dimension is NEVER hardcoded — it comes from
  * `config.filesEmbedDim`, which the helm chart wires from `retrieval.knnDimension`
@@ -60,20 +62,24 @@ export function mockEmbed(text: string, dim = config.filesEmbedDim): number[] {
  * index-time and query-time vectors always match. Returns the mode honestly.
  */
 export async function embedTexts(texts: string[]): Promise<EmbedResult> {
-  if (texts.length === 0) return { vectors: [], model: config.filesEmbedModel, dim: config.filesEmbedDim, mode: 'mock' };
-  const res = await post(`${config.litellmUrl}/v1/embeddings`, { model: config.filesEmbedModel, input: texts });
+  // The embeddings ROLE selects the live model_name (admin override else the
+  // sovereign-embed env default). The vector dim stays config.filesEmbedDim — the
+  // helm-wired single source that MUST match the model behind the alias.
+  const model = roleModel('embeddings');
+  if (texts.length === 0) return { vectors: [], model, dim: config.filesEmbedDim, mode: 'mock' };
+  const res = await post(`${config.litellmUrl}/v1/embeddings`, { model, input: texts });
   if (res && res.ok) {
     try {
       const json = (await res.json()) as { data?: { embedding: number[] }[] };
       const data = json.data ?? [];
       if (data.length === texts.length && Array.isArray(data[0]?.embedding) && data[0].embedding.length > 0) {
-        return { vectors: data.map((d) => d.embedding), model: config.filesEmbedModel, dim: data[0].embedding.length, mode: 'live' };
+        return { vectors: data.map((d) => d.embedding), model, dim: data[0].embedding.length, mode: 'live' };
       }
     } catch {
       /* fall through to mock */
     }
   }
-  return { vectors: texts.map((t) => mockEmbed(t)), model: config.filesEmbedModel, dim: config.filesEmbedDim, mode: 'mock' };
+  return { vectors: texts.map((t) => mockEmbed(t)), model, dim: config.filesEmbedDim, mode: 'mock' };
 }
 
 /** Embed a single query (deep-design B2). */

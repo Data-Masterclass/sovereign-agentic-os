@@ -112,24 +112,14 @@ Licenses in use and their bundled full text:
 | traefik/whoami | 1.10.3 | MIT | `licenses/MIT.txt` | Software-delivery demo app |
 | Docker-in-Docker (dind) | 27 | Apache-2.0 | `licenses/Apache-2.0.txt` | CI build sidecar (Moby/Docker) |
 
-### Model serving (engine + model weights)
+### Model serving
 
-| Component | Version | License (SPDX) | Full text | Notes |
-|---|---|---|---|---|
-| Ollama (engine) | 0.6.8 | MIT | `licenses/MIT.txt` | Self-hosted model runtime (`modelServer`); OpenAI-compatible. We ship the **engine only**. |
-| Ministral 3 3B (weights) | `ministral-3:3b-instruct-2512-q4_K_M` | Apache-2.0 | `licenses/Apache-2.0.txt` | **DEFAULT self-hosted chat weights.** **Apache-2.0** (OSI-permissive). Pulled at runtime by Ollama, **not redistributed here** (`bundled=no`). |
-| llama.cpp (engine) | `server` | MIT | `licenses/MIT.txt` | Self-hosted **reasoning** runtime (`modelServer.reasoning`, `llama-server`); OpenAI-compatible `/v1`. We ship the **engine only** — the GGUF is provided on the box. |
-| Magistral Small 24B (weights) | `Magistral-Small-2506-Q4_K_M.gguf` | Apache-2.0 | `licenses/Apache-2.0.txt` | **SOVEREIGN reasoning weights** (`sovereign-reasoning`, Mistral AI). **Apache-2.0** (OSI-permissive). GGUF mounted at runtime on the box, **not redistributed here** (`bundled=no`). |
-
-> ✅ **The self-hosted model weights are Apache-2.0.** The default `modelServer.model`
-> is **Ministral 3 3B** (`ministral-3:3b-instruct-2512-q4_K_M`, Mistral AI) and the
-> sovereign reasoning model is **Magistral Small 24B** (`Magistral-Small-2506-Q4_K_M.gguf`,
-> Mistral AI) — both distributed under **Apache-2.0**, an OSI-permissive license. The
-> weights are **pulled/mounted at runtime** (by Ollama and `llama-server` respectively)
-> and are **NOT redistributed** by this project (hence `bundled=no` in
-> `licenses/components.tsv`). The self-hosted tiers are therefore **Apache-clean**.
-> STACKIT premium routes (`stackitPremium`, off by default — including the fast
-> `sovereign-reasoning-fast` fallback) call a managed API and ship **no** model weights.
+> Inference runs entirely on **STACKIT AI Model Serving** (a managed, EU-sovereign
+> API — three-tier set: reasoning `Qwen/Qwen3-VL-235B-A22B-Instruct-FP8`,
+> standard/worker `openai/gpt-oss-20b`, embeddings `Qwen/Qwen3-VL-Embedding-8B`).
+> No model engines or model weights are bundled or redistributed by this project;
+> LiteLLM calls the managed API. On kind/local the bundled `mock-model` (our own
+> Apache-2.0 image) serves deterministic offline embeddings only.
 
 ### Referenced but NOT bundled
 

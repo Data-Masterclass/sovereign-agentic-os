@@ -6,7 +6,7 @@ import { ACTIVITIES, TIER_MODELS, defaultRoutingTable } from '@/lib/agents/routi
 
 export const dynamic = 'force-dynamic';
 
-/** GET → the workspace default activity→model routing table (Ministral/Qwen tiers). */
+/** GET → the workspace default activity→model routing table (standard/reasoning/vision tiers). */
 export async function GET() {
   return NextResponse.json({
     activities: ACTIVITIES,

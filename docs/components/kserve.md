@@ -34,5 +34,5 @@ Deployments, fine for the lab and a lean prod.
 **Q: Where does the model come from?** The MLflow registry; the artifact lives in
 `s3://mlflow/...` and KServe's storage-initializer fetches it using `kserve-s3-credentials`.
 **Q: arm64?** The InferenceService is just a CR (arch-neutral). The KServe controller images
-and the model-server runtimes (sklearn/MLServer) are multi-arch.
+and the model-serving runtimes (sklearn/MLServer) are multi-arch.
 **Q: GPU?** Add a GPU node pool + GPU resource requests on the predictor; CPU-only by default.

@@ -20,7 +20,7 @@ import { type BuildAdapter, type StepResult } from './adapter.ts';
  *
  *   • forgejo  — writes system.yaml + AGENT.md/MEMORY.md; verify reads back + parses.
  *   • opa      — registers grants; verify probes granted=allow, non-granted=deny.
- *   • litellm  — registers key + routing; verify probes light→Ministral, reason→Qwen.
+ *   • litellm  — registers key + routing; verify probes light→Standard, reason→Reasoning.
  *   • langgraph— "reloads" the graph; verify runs a test invocation through the
  *                governed gateway (which traces into the langfuse mock).
  *   • langfuse — links the project; verify checks a trace landed for the invocation.

@@ -72,9 +72,6 @@ export const REGISTRY: Component[] = [
   { id: 'opensearch', name: 'OpenSearch (retrieval)', layer: 'Layer 1 — Agent core', kind: 'sts',
     workload: 'opensearch-master', svc: 'opensearch', port: 9200, ui: false, login: 'none (security disabled locally)',
     toggle: true, summary: 'Vector + lexical retrieval backbone for RAG.' },
-  { id: 'sample-agent', name: 'Sample RAG agent', layer: 'Layer 1 — Agent core', kind: 'deploy',
-    workload: 'sample-agent', svc: 'sample-agent', port: 8000, ui: false, login: 'none',
-    toggle: true, summary: 'LangGraph agent: retrieve (OpenSearch) -> generate (LiteLLM) -> trace.' },
   // NB: system agents (domain RAG, ML agent, Hermes) are NOT platform components —
   // they live in lib/agents/system-agents.ts. This registry is infrastructure only.
   // Layer 2 — context
@@ -170,12 +167,26 @@ export async function statusOf(c: Component): Promise<string> {
       'GET',
       `/apis/postgresql.cnpg.io/v1/namespaces/${NS}/clusters/${c.workload}`,
     );
-    if (status !== 200) return 'unknown';
-    const st = (body.status ?? {}) as Record<string, unknown>;
-    const ready = Number(st.readyInstances ?? 0) || 0;
-    return ready > 0 ? 'running' : 'stopped';
+    if (status === 200) {
+      const st = (body.status ?? {}) as Record<string, unknown>;
+      const ready = Number(st.readyInstances ?? 0) || 0;
+      return ready > 0 ? 'running' : 'stopped';
+    }
+    // No CloudNativePG Cluster of this name — the self-contained / STACKIT profiles
+    // ship Postgres as a plain StatefulSet of the same name. Fall back to a STS check
+    // so a healthy `pg` isn't mislabeled "not deployed".
+    const sts = await k8s('GET', `/apis/apps/v1/namespaces/${NS}/statefulsets/${c.workload}`);
+    if (sts.status === 200) {
+      const st = (sts.body.status ?? {}) as Record<string, unknown>;
+      const ready = Number(st.readyReplicas ?? 0) || 0;
+      return ready > 0 ? 'running' : 'stopped';
+    }
+    return 'unknown';
   }
-  if (c.kind === 'job' || !c.workload) return 'n/a';
+  // Job-based components (e.g. dbt via Dagster) have no standing workload — they run
+  // on demand, so "on-demand" is the honest status, not "not deployed".
+  if (c.kind === 'job') return 'on-demand';
+  if (!c.workload) return 'n/a';
 
   const p = workloadPath(c);
   if (!p) return 'unknown';

@@ -25,6 +25,8 @@ export type MetricSummary = {
   tier: 'personal' | 'domain' | 'marketplace';
   owner: string;
   type: string;
+  /** Source domain — set on shared/marketplace metrics for provenance display. */
+  domain?: string;
   /** Soft-archived (retained, reversible). Absent/false = live. */
   archived?: boolean;
 };
@@ -42,6 +44,7 @@ function summariesFor(datasetId: string, user: Principal): MetricSummary[] {
       tier: TIER_OF[d.tier],
       owner: d.owner,
       type: m.type,
+      domain: d.domain || undefined,
       archived: isMetricArchived(id),
     };
   });

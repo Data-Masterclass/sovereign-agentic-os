@@ -11,7 +11,7 @@
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "next lint",
-    "test": "node --import ./scripts/test-setup.mjs --test 'lib/**/*.test.ts'"
+    "test": "node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test 'lib/**/*.test.ts'"
   },
   "dependencies": {
     "@dagrejs/dagre": "^1.1.8",

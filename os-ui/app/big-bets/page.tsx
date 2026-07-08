@@ -17,6 +17,7 @@ import { ProgressBar, SignalBadge } from './ui';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import type { Visibility as LcVisibility } from '@/lib/lifecycle';
+import DomainTag from '@/components/DomainTag';
 
 /** A bet's reach → the OS-wide lifecycle visibility (cross-domain bets affect others). */
 const betVisibility = (b: BetSummary): LcVisibility => (b.crossDomain ? 'shared' : 'personal');
@@ -209,6 +210,7 @@ function BetCard({
             <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <h3 style={{ margin: 0, fontSize: 15, color: 'var(--text)' }}>{b.name}</h3>
               {archived ? <span className="chip">archived</span> : <SignalBadge signal={b.signal} />}
+              {b.crossDomain ? <DomainTag domain={b.domain} /> : null}
               {b.crossDomain ? <span className="chip">cross-domain</span> : null}
             </div>
             <p className="muted" style={{ marginTop: 8, marginBottom: 0, maxWidth: 640, lineHeight: 1.5 }}>
@@ -253,6 +255,7 @@ function BetCard({
             api={`/api/big-bets/${b.id}`}
             onChanged={onChanged}
             compact
+            surface="tile"
           />
         </div>
       ) : null}

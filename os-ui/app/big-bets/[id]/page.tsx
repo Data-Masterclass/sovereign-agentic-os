@@ -7,6 +7,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
+import LifecycleActions from '@/components/lifecycle/LifecycleActions';
+import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import {
   type BetView, type ValueBasis, type AllocationMethod, eur, fmtDate, problemLine,
 } from '../types';
@@ -15,6 +17,7 @@ import Roadmap from './Roadmap';
 import Components from './Components';
 import Planner from './Planner';
 import ValuePanel from './ValuePanel';
+import DomainTag from '@/components/DomainTag';
 
 /**
  * The bet detail — consistent with Strategy's BetDetail. One column, four
@@ -32,7 +35,6 @@ export default function BetDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showAudit, setShowAudit] = useState(false);
-  const [archiving, setArchiving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -53,30 +55,8 @@ export default function BetDetailPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const archive = async () => {
-    if (!view || archiving) return;
-    if (!confirm(`Archive “${view.bet.name}”? It moves out of the active portfolio; nothing is deleted.`)) return;
-    setArchiving(true);
-    try {
-      const res = await fetch(`/api/big-bets/${id}`, {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ status: 'archived' }),
-        cache: 'no-store',
-      });
-      if (!res.ok) {
-        const b = await res.json().catch(() => ({}));
-        throw new Error(b.error ?? `Request failed (${res.status})`);
-      }
-      router.push('/big-bets');
-    } catch (e) {
-      setError((e as Error).message);
-      setArchiving(false);
-    }
-  };
-
   return (
-    <>
+    <ConfirmProvider>
       <PageHeader title={view ? view.bet.name : 'Big Bet'} crumb="initiative roadmap over real components" />
       <div className="content">
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
@@ -147,16 +127,25 @@ export default function BetDetailPage() {
                 Source: <span className="mono">{view.sourceMode}</span>. The bet shows delivery;{' '}
                 <Link href="/monitoring" style={{ color: 'var(--teal)' }}>Monitoring</Link> shows runtime health.
               </div>
-              {view.canEdit && view.bet.status !== 'archived' ? (
-                <button className="btn ghost sm" onClick={archive} disabled={archiving} style={{ color: 'var(--danger)' }}>
-                  {archiving ? <span className="spin" /> : 'Archive bet'}
-                </button>
+              {view.canEdit ? (
+                // OS-wide rule: live → Archive; only an ARCHIVED bet exposes Delete.
+                <LifecycleActions
+                  id={view.bet.id}
+                  name={view.bet.name}
+                  kind="bigbet"
+                  visibility={view.bet.crossDomain ? 'shared' : 'personal'}
+                  archived={view.bet.status === 'archived'}
+                  api={`/api/big-bets/${view.bet.id}`}
+                  onChanged={() => { router.push('/big-bets'); }}
+                  showVersions={false}
+                  compact
+                />
               ) : null}
             </div>
           </>
         ) : null}
       </div>
-    </>
+    </ConfirmProvider>
   );
 }
 
@@ -210,7 +199,7 @@ function HeaderBand({ view, onMutate }: { view: BetView; onMutate: () => void })
         <div style={{ flex: 1, minWidth: 280 }}>
           <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             {archived ? <span className="chip">archived</span> : <SignalBadge signal={r.signal} />}
-            <span className="chip">{b.domain}</span>
+            {b.crossDomain ? <DomainTag domain={b.domain} /> : <span className="chip">{b.domain}</span>}
             {b.crossDomain ? <span className="chip">cross-domain</span> : null}
             <span className="muted" style={{ fontSize: 11.5 }}>owner {b.problem.who || b.owner}</span>
           </div>

@@ -945,10 +945,22 @@ tbody tr:hover {
 }
 
 /* ---- Sidebar groups ---- */
-.nav-group + .nav-group {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
+/* Ungrouped entry-points (Home + Cockpit) — no separator above the first */
+.nav-entry + .nav-section {
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+/* Between sections: a hair-thin line for rhythm, not weight */
+.nav-section + .nav-section {
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Collapsible section wrapper */
+.nav-section {
+  /* Suppress <details> default marker on some browsers */
 }
 
 .nav-heading {
@@ -959,6 +971,46 @@ tbody tr:hover {
   font-weight: 600;
   color: var(--text-faint);
   padding: 10px 11px 5px;
+}
+
+/* Toggle-capable heading (used on <summary> inside <details>) */
+.nav-heading-toggle {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+  border-radius: 5px;
+  transition: color 0.14s;
+}
+
+/* Remove default triangle in WebKit/Blink */
+.nav-heading-toggle::-webkit-details-marker { display: none; }
+.nav-heading-toggle::marker { display: none; }
+
+/* Subtle chevron via ::after */
+.nav-heading-toggle::after {
+  content: '›';
+  margin-left: auto;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-faint);
+  opacity: 0.5;
+  transition: transform 0.16s ease, opacity 0.14s;
+}
+
+details[open] > .nav-heading-toggle::after {
+  transform: rotate(90deg);
+  opacity: 0.7;
+}
+
+.nav-heading-toggle:hover {
+  color: var(--text-muted);
+}
+
+.nav-heading-toggle:hover::after {
+  opacity: 0.8;
 }
 
 /* ---- Stack status strip ---- */

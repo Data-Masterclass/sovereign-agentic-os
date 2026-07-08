@@ -13,11 +13,15 @@ import {
   archivePersonalKnowledge,
   unarchivePersonalKnowledge,
   listPersonalKnowledgeVersions,
+  restorePersonalKnowledgeVersion,
+  promotePersonalKnowledge,
+  certifyPersonalKnowledge,
 } from './personal-store.ts';
 
 const amir = { id: 'amir', domains: ['sales'], role: 'creator' as const };
 const bea = { id: 'bea', domains: ['sales'], role: 'builder' as const };
 const kenji = { id: 'kenji', domains: ['finance'], role: 'builder' as const };
+const ada = { id: 'ada', domains: ['sales'], role: 'admin' as const };
 
 test('a fresh tenant has no personal knowledge', () => {
   __resetStore();
@@ -84,4 +88,43 @@ test('delete removes the entry and its history', () => {
   const rec = createPersonalKnowledge(amir, { title: 'Temp' });
   deletePersonalKnowledge(rec.id, amir);
   assert.throws(() => getPersonalKnowledge(rec.id, amir), /not found/);
+});
+
+test('restore: reverts to a prior version and snapshots the live state first (reversible)', () => {
+  __resetStore();
+  const rec = createPersonalKnowledge(amir, { title: 'T', md: 'v1' });
+  updatePersonalKnowledge(rec.id, amir, { md: 'v2' }); // snapshots v1 → version #1
+  const restored = restorePersonalKnowledgeVersion(rec.id, amir, 1);
+  assert.equal(restored.md, 'v1');
+  // Two versions now: the original v1 snapshot + the pre-restore v2 snapshot.
+  assert.equal(listPersonalKnowledgeVersions(rec.id, amir).length, 2);
+});
+
+test('promotion ladder: builder promotes Personal→Shared; a creator cannot', () => {
+  __resetStore();
+  const rec = createPersonalKnowledge(bea, { title: 'Playbook', md: 'x' });
+  // A creator (no promote gate) is refused the direct flip.
+  assert.throws(() => promotePersonalKnowledge(rec.id, amir), /builders and admins/);
+  const promoted = promotePersonalKnowledge(rec.id, bea);
+  assert.equal(promoted.visibility, 'Shared');
+  // Now visible to same-domain peers under the domain group.
+  assert.equal(listPersonalKnowledge(amir).domain.map((e) => e.title).includes('Playbook'), true);
+});
+
+test('certification ladder: only an admin certifies Shared→Marketplace', () => {
+  __resetStore();
+  const rec = createPersonalKnowledge(bea, { title: 'Certifiable', md: 'x' });
+  promotePersonalKnowledge(rec.id, bea); // → Shared
+  assert.throws(() => certifyPersonalKnowledge(rec.id, bea), /admins can certify/);
+  const certified = certifyPersonalKnowledge(rec.id, ada);
+  assert.equal(certified.visibility, 'Marketplace');
+});
+
+test('promotion guards: cannot re-promote an already-Shared entry, cannot certify a Personal one', () => {
+  __resetStore();
+  const rec = createPersonalKnowledge(bea, { title: 'Guarded', md: 'x' });
+  promotePersonalKnowledge(rec.id, bea); // → Shared
+  assert.throws(() => promotePersonalKnowledge(rec.id, bea), /already promoted/);
+  const rec2 = createPersonalKnowledge(ada, { title: 'Skip', md: 'x' });
+  assert.throws(() => certifyPersonalKnowledge(rec2.id, ada), /Promote this knowledge to the domain/);
 });

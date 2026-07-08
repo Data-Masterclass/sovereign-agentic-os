@@ -124,11 +124,11 @@ variable "node_volume_size_gb" {
   description = <<-EOT
     Per-node root/data volume size in GB. DEFAULT 200.
 
-    This disk holds CONTAINER IMAGES + LOCAL MODEL WEIGHTS, not user data: all
-    Layer 1–4 images (~40–60 GB) + the in-box model (Ministral ~3 GB; a Magistral
-    24B would add ~15 GB) + image-churn headroom. 80 GB filled during deploy →
-    disk-pressure → the node was cordoned → pods couldn't schedule; 200 GB is the
-    verified floor.
+    This disk holds CONTAINER IMAGES, not user data: all Layer 1–4 images
+    (~40–60 GB) + image-churn headroom. Inference runs on STACKIT managed models,
+    so there are no local model weights on the node disk. 80 GB filled during
+    deploy → disk-pressure → the node was cordoned → pods couldn't schedule;
+    200 GB is the verified floor.
 
     It is FIXED capacity — it does NOT grow with the dataset. Real DATA lives on
     separate, independently-scalable storage (the Iceberg lakehouse on object

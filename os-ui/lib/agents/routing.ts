@@ -12,9 +12,12 @@
  *                 reasoning-fast` is the explicit fast alternative AND fallback.
  *   • vision    → `sovereign-vision` — the rare vision/video need + failover.
  *
- * ALL of these are sovereign (in-box / STACKIT-EU) → provenance `internal`. There
- * is NO `ministral-*` or `stackit-*` model_name on the live gateway — a per-agent
- * pin MUST be one of these real aliases or Build/run 404s at the gateway.
+ * The live model set behind these fixed aliases is now ALL STACKIT-managed
+ * inference (sovereign-default→gpt-oss-20b; sovereign-reasoning/vision/premium→
+ * Qwen3-VL-235B; sovereign-embed→Qwen3-VL-Embedding-8B). There is no in-box
+ * self-hosted model server anymore, so provenance for every alias is `external`
+ * (STACKIT-EU). A per-agent pin MUST be one of these real aliases or Build/run
+ * 404s at the gateway.
  *
  * PURE module: editing the table writes LiteLLM routing config (the LiteLLM build
  * adapter), but no endpoint is ever hardcoded in the UI — a per-agent model is a
@@ -46,7 +49,7 @@ export type Provenance = 'internal' | 'external';
 /** One catalog row: the real LiteLLM model_name + human-facing metadata. */
 export type ModelInfo = {
   model_name: string;
-  /** Human display name, e.g. "Magistral Small 24B". */
+  /** Human display name, e.g. "Qwen3-VL-235B". */
   display: string;
   /** Parameter size for context, e.g. "24B" (optional). */
   params?: string;
@@ -61,20 +64,23 @@ export type ModelInfo = {
  * not listed falls back to prefix heuristics ({@link provenanceOf} / {@link tierOf}).
  */
 export const MODEL_CATALOG: Record<string, ModelInfo> = {
-  'sovereign-default': { model_name: 'sovereign-default', display: 'Sovereign Default', tier: 'light', provenance: 'internal' },
-  'sovereign-reasoning': { model_name: 'sovereign-reasoning', display: 'Sovereign Reasoning', tier: 'reasoning', provenance: 'internal' },
-  'sovereign-reasoning-fast': { model_name: 'sovereign-reasoning-fast', display: 'Sovereign Reasoning (fast)', tier: 'reasoning', provenance: 'internal' },
-  'sovereign-vision': { model_name: 'sovereign-vision', display: 'Sovereign Vision', tier: 'vision', provenance: 'internal' },
-  'sovereign-premium': { model_name: 'sovereign-premium', display: 'Sovereign Premium', tier: 'reasoning', provenance: 'internal' },
+  'sovereign-default': { model_name: 'sovereign-default', display: 'gpt-oss-20b', params: '20B', tier: 'light', provenance: 'external' },
+  'sovereign-reasoning': { model_name: 'sovereign-reasoning', display: 'Qwen3-VL-235B', params: '235B', tier: 'reasoning', provenance: 'external' },
+  'sovereign-reasoning-fast': { model_name: 'sovereign-reasoning-fast', display: 'Qwen3-VL-235B (fast)', params: '235B', tier: 'reasoning', provenance: 'external' },
+  'sovereign-vision': { model_name: 'sovereign-vision', display: 'Qwen3-VL-235B', params: '235B', tier: 'vision', provenance: 'external' },
+  'sovereign-premium': { model_name: 'sovereign-premium', display: 'Qwen3-VL-235B', params: '235B', tier: 'reasoning', provenance: 'external' },
+  'sovereign-embed': { model_name: 'sovereign-embed', display: 'Qwen3-VL-Embedding-8B', params: '8B', tier: 'light', provenance: 'external' },
 };
 
-/** Classify a model_name as in-box (internal) or hosted (external). */
+/**
+ * Classify a model_name as in-box (internal) or hosted (external). The catalog is
+ * authoritative; unknown names default to `external`. There is no in-box model
+ * server anymore — every live alias is STACKIT-managed inference — so nothing
+ * should render as `internal` unless a future catalog entry explicitly says so.
+ */
 export function provenanceOf(model: string): Provenance {
   const known = MODEL_CATALOG[model];
   if (known) return known.provenance;
-  const m = model.toLowerCase();
-  if (m.startsWith('stackit') || m.includes('stackit')) return 'external';
-  if (m.startsWith('ministral') || m.startsWith('sovereign') || m.startsWith('magistral')) return 'internal';
   // Unknown provider: assume hosted (safer to over-warn than to imply in-box).
   return 'external';
 }
@@ -92,19 +98,25 @@ export function modelInfo(model: string): ModelInfo {
 }
 
 /**
- * The per-agent thinking control — LOCKED as a 3-state toggle.
+ * The per-agent thinking control — LOCKED as a 3-state toggle: Auto / Standard /
+ * Reasoning.
  *   • Auto (default)  → no per-agent pin; the workspace activity routing decides
  *                        (cheap-first). This is the recommended default.
- *   • Reasoning       → pin the in-box Magistral 24B for planning / deep thinking.
- *   • Execution       → pin the in-box Ministral 3 for fast tool-running work.
- * `model === null` clears the pin (Auto); the others write a real LiteLLM
- * model_name via setAgentModel.
+ *   • Reasoning       → the platform-admin REASONING role model (default
+ *                        `sovereign-reasoning`) for planning / deep thinking.
+ *   • Standard        → the platform-admin STANDARD role model (default
+ *                        `sovereign-default`) for fast tool-running work.
+ * The `model` here is the INSTALL-BASELINE alias; the agent builder overrides it
+ * with the live admin-configured role model (the /api/agents/models `roles`
+ * payload). The stored `mode` id stays `execution` (unchanged agent-pin
+ * semantics) — only the label is "Standard". `model === null` clears the pin
+ * (Auto); the others write a real LiteLLM model_name via setAgentModel.
  */
 export type ModelMode = 'auto' | 'reasoning' | 'execution';
 export const MODEL_MODES: { mode: ModelMode; label: string; model: string | null; hint: string }[] = [
   { mode: 'auto', label: 'Auto', model: null, hint: 'Picks the right model for each task — cheap-first. Recommended.' },
   { mode: 'reasoning', label: 'Reasoning', model: TIER_MODELS.reasoning, hint: 'Deep thinking and planning. Slower, most capable.' },
-  { mode: 'execution', label: 'Execution', model: TIER_MODELS.light, hint: 'Fast tool-running and short, direct tasks.' },
+  { mode: 'execution', label: 'Standard', model: TIER_MODELS.light, hint: 'Fast tool-running and short, direct tasks.' },
 ];
 
 /** Which toggle state an agent's current `model` pin corresponds to. */

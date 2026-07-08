@@ -4,24 +4,34 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  _reset, listModels, getDefaults, setDefault, setEnabled, registerProviderKey, listProviderKeys,
+  _reset, listModels, getDefaults, setEnabled, registerProviderKey, listProviderKeys,
   registerAssistantModel, getAssistantModel, getAssistantModelId, setAssistantModel,
 } from './models.ts';
+import { _reset as resetSettings } from './settings.ts';
 
-beforeEach(() => _reset());
+beforeEach(() => { _reset(); resetSettings(); });
 
-test('listModels seeds catalog on first call', () => {
+test('listModels seeds the live STACKIT alias catalog (no stale self-hosted ids)', () => {
   const models = listModels();
   assert.ok(models.length > 0);
-  assert.ok(models.some((m) => m.id === 'ministral-8b'));
+  assert.ok(models.some((m) => m.id === 'sovereign-default'));
+  assert.ok(models.some((m) => m.id === 'sovereign-embed'));
+  // The deleted self-hosted seed ids must be gone.
+  assert.ok(!models.some((m) => m.id === 'ministral-8b'));
+  assert.ok(!models.some((m) => m.id === 'magistral-small'));
+  assert.ok(!models.some((m) => m.id === 'bge-m3'));
 });
 
-test('setDefault rejects a mismatched task', () => {
-  assert.throws(() => setDefault('embedding', 'ministral-8b'), (e: { status?: number }) => e.status === 400);
+test('getDefaults projects the ONE role store (settings modelRoles via roles.ts)', () => {
+  // Unset roles → the config baselines; there is no separate defaults record.
+  assert.equal(getDefaults().chat, 'sovereign-default');
+  assert.equal(getDefaults().reasoning, 'sovereign-reasoning');
+  assert.equal(getDefaults().embedding, 'sovereign-embed');
 });
 
-test('setEnabled blocks disabling a current default', () => {
-  assert.throws(() => setEnabled('ministral-8b', false), (e: { status?: number }) => e.status === 409);
+test('setEnabled blocks disabling a current role default', () => {
+  // sovereign-default is the STANDARD role default out of the box.
+  assert.throws(() => setEnabled('sovereign-default', false), (e: { status?: number }) => e.status === 409);
 });
 
 test('registerProviderKey stores ref+fingerprint only', () => {
@@ -31,9 +41,9 @@ test('registerProviderKey stores ref+fingerprint only', () => {
   assert.equal(listProviderKeys().length, 1);
 });
 
-test('assistant model defaults to the sovereign chat route out of the box', () => {
-  // sovereign-default is defined in every LiteLLM config, so the assistant works
-  // against a real model without admin action (live → Qwen3.6-27B on STACKIT).
+test('assistant follows the STANDARD role out of the box (no explicit override)', () => {
+  // With no explicit override the assistant tracks the STANDARD role default
+  // (roleModel('standard') → sovereign-default), so it works without admin action.
   assert.equal(getAssistantModelId(), 'sovereign-default');
   assert.equal(getAssistantModel()?.id, 'sovereign-default');
 });
@@ -63,7 +73,7 @@ test('setAssistantModel points the ONE assistant at the registered model', () =>
 
 test('setAssistantModel rejects unknown, non-chat and disabled models', () => {
   assert.throws(() => setAssistantModel('nope'), (e: { status?: number }) => e.status === 404);
-  assert.throws(() => setAssistantModel('magistral-small'), (e: { status?: number }) => e.status === 400); // reasoning, not chat
+  assert.throws(() => setAssistantModel('sovereign-reasoning'), (e: { status?: number }) => e.status === 400); // reasoning, not chat
 });
 
 test('setEnabled blocks disabling the current assistant model', () => {
@@ -74,8 +84,8 @@ test('setEnabled blocks disabling the current assistant model', () => {
 
 test('globalThis pin: modelsState is shared under soa.platform.models', () => {
   listModels(); // trigger seed
-  const pinned = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.platform.models')] as { catalog: Map<string, unknown>; defaults: Record<string, string> };
+  const pinned = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.platform.models')] as { catalog: Map<string, unknown>; assistant: string };
   assert.ok(pinned, 'state must be present on globalThis');
   assert.ok(pinned.catalog.size > 0, 'seeded catalog must appear in globalThis state');
-  assert.equal(pinned.defaults.chat, getDefaults().chat, 'defaults must match');
+  assert.equal(typeof pinned.assistant, 'string', 'assistant override lives on the shared state');
 });

@@ -16,7 +16,10 @@ export type DashboardSummary = {
   view: string;
   tier: DashTier;
   owner: string;
+  domain?: string;
   charts: number;
+  /** Soft-archived (retained, reversible). Absent/false = live. */
+  archived?: boolean;
 };
 export type DashboardGroups = {
   mine: DashboardSummary[];

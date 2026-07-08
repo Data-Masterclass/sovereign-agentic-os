@@ -7,6 +7,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 import LineagePanel from './LineagePanel';
+import LifecycleActions from '@/components/lifecycle/LifecycleActions';
+import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
+import DomainTag from '@/components/DomainTag';
+import type { Visibility } from '@/lib/lifecycle';
 
 type Layer = 'bronze' | 'silver' | 'gold';
 type VersionState = { built: boolean; updatedAt: string | null; artifact: string | null };
@@ -20,6 +24,10 @@ type CheckStatus = 'pass' | 'fail' | 'not_run';
 type CheckResult = { id: string; label: string; status: CheckStatus; violations: number | null; reason?: string };
 type QualityBadge = 'passing' | 'failing' | 'unknown';
 type Certification = { level: string; by: string; at: string };
+/** Governed row-preview outcome — mirrors PreviewOutcome from lib/data/preview. */
+type RowPreview =
+  | { available: true; layer: string; fqn: string; limit: number; columns: string[]; rows: string[][]; rowCount: number }
+  | { available: false; layer?: string; fqn?: string; reason: string };
 
 const RULE_LABELS: Record<DataCheckRule, string> = {
   not_null: 'Not null',
@@ -54,7 +62,13 @@ type Dataset = {
   columns: ColumnDoc[];
   measures: { name: string }[];
   certification?: Certification;
+  /** Soft-archived (retained, reversible). Absent/false = live. */
+  archived?: boolean;
 };
+
+/** Tile tier → the OS-wide lifecycle visibility (drives the delete gate). */
+const lcVis = (tier: Dataset['tier']): Visibility =>
+  tier === 'asset' ? 'shared' : tier === 'product' ? 'certified' : 'personal';
 
 /** Inline slug — mirrors store-fqn.ts without importing server code. */
 function slug(name: string): string {
@@ -142,6 +156,11 @@ export default function DatasetDetail({
   const [ranAt, setRanAt] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [runErr, setRunErr] = useState('');
+
+  // ---- row preview (governed SELECT * LIMIT 50) ----
+  const [preview, setPreview] = useState<RowPreview | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewErr, setPreviewErr] = useState('');
 
   const load = useCallback(async () => {
     setLoadErr('');
@@ -266,6 +285,24 @@ export default function DatasetDetail({
     }
   }, [datasetId]);
 
+  // Governed 50-row preview: the SAME OPA-checked read path the profile/ask surfaces
+  // use (GET .../preview → queryRun(SELECT * … LIMIT 50, principal)). We never build or
+  // send SQL from the client; the server resolves the tier-aware FQN and applies masks/
+  // row filters. A denied or unbuilt read comes back as a calm available:false state.
+  const loadPreview = useCallback(async () => {
+    setPreviewErr(''); setPreviewing(true);
+    try {
+      const res = await fetch(`/api/data/datasets/${datasetId}/preview?limit=50`, { cache: 'no-store' });
+      const data = await res.json();
+      if (!res.ok) { setPreviewErr(data.error ?? 'Could not preview rows'); return; }
+      setPreview(data as RowPreview);
+    } catch (e) {
+      setPreviewErr((e as Error).message);
+    } finally {
+      setPreviewing(false);
+    }
+  }, [datasetId]);
+
   if (loadErr) {
     return (
       <>
@@ -283,13 +320,30 @@ export default function DatasetDetail({
   const canEdit = !!user && (user.id === dataset.owner || (user.role === 'admin' && user.domains?.includes(dataset.domain)));
 
   return (
-    <>
+    <ConfirmProvider>
       {/* ── Nav ── */}
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <button className="btn ghost" onClick={onBack}>← Datasets</button>
-        <button className="btn ghost" onClick={() => onOpenStepper(dataset.id)}>
-          Build / refine →
-        </button>
+        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+          {/* OS-wide rule: lifecycle lives in the opened detail — live → Archive;
+              only an ARCHIVED dataset exposes Delete. Real archived state drives it. */}
+          {canEdit ? (
+            <LifecycleActions
+              id={dataset.id}
+              name={dataset.name}
+              kind="dataset"
+              visibility={lcVis(dataset.tier)}
+              archived={!!dataset.archived}
+              api={`/api/data/datasets/${dataset.id}`}
+              onChanged={() => { if (dataset.archived) onBack(); else void load(); }}
+              showVersions={false}
+              compact
+            />
+          ) : null}
+          <button className="btn ghost" onClick={() => onOpenStepper(dataset.id)}>
+            Build / refine →
+          </button>
+        </div>
       </div>
 
       {/* ── Header ── */}
@@ -299,6 +353,8 @@ export default function DatasetDetail({
         </h2>
         <span className={`badge ${TIER_BADGE[dataset.tier]}`}>{TIER_WORD[dataset.tier]}</span>
         <span className="muted" style={{ fontSize: 13 }}>{dataset.owner} · {dataset.domain}</span>
+        {/* Source-domain provenance for cross-domain (Shared asset / Marketplace product) views. */}
+        {dataset.tier !== 'dataset' ? <DomainTag domain={dataset.domain} /> : null}
       </div>
 
       {/* ── Status chips ── */}
@@ -596,6 +652,48 @@ export default function DatasetDetail({
         </div>
       ) : null}
 
+      {/* ── Data preview (governed SELECT * LIMIT 50) ── */}
+      <div className="section-title" style={{ marginTop: 20 }}>
+        Data preview
+        <button className="btn ghost sm" style={{ marginLeft: 10 }} onClick={loadPreview} disabled={previewing}>
+          {previewing ? <span className="spin" /> : preview ? 'Refresh preview' : 'Preview first 50 rows'}
+        </button>
+      </div>
+      <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
+        A read-only scan of the first 50 rows through the governed query path (Trino,
+        OPA-checked) — your row filters and column masks apply, exactly as the agents and
+        dashboards see it. Nothing is previewed until a layer is built.
+      </p>
+      {previewErr ? <div className="error" style={{ marginBottom: 10 }}>{previewErr}</div> : null}
+      {preview ? (
+        preview.available ? (
+          <>
+            <p className="muted" style={{ fontSize: 12.5, margin: '0 0 8px' }}>
+              First {preview.rowCount} row{preview.rowCount === 1 ? '' : 's'} · {preview.layer}
+              {' · '}<span className="mono" style={{ fontSize: 10 }}>{preview.fqn}</span>
+            </p>
+            {preview.columns.length > 0 ? (
+              <div className="table-wrap" style={{ marginBottom: 16 }}>
+                <table>
+                  <thead>
+                    <tr>{preview.columns.map((c) => <th key={c}>{c}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {preview.rows.map((r, i) => (
+                      <tr key={i}>{r.map((cell, j) => <td key={j}>{cell}</td>)}</tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>No rows to show.</p>
+            )}
+          </>
+        ) : (
+          <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>{preview.reason}</p>
+        )
+      ) : null}
+
       {/* ── Lineage (refinement + consumption chain, from the single source) ── */}
       <div className="section-title" style={{ marginTop: 20 }}>Lineage</div>
       <LineagePanel datasetId={dataset.id} />
@@ -626,6 +724,6 @@ export default function DatasetDetail({
           </span>
         </div>
       ) : null}
-    </>
+    </ConfirmProvider>
   );
 }

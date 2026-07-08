@@ -21,7 +21,7 @@ agents:
     agent_md: "# Worker"
     memory_md: ""
     tools: [retrieve]
-    model: ministral-3
+    model: sovereign-default
 edges:
   - { from: supervisor, to: worker, type: supervise }
 `;
@@ -40,7 +40,7 @@ test('compiles a supervisor + worker to the expected IR', () => {
   const worker = ir.nodes.find((n) => n.id === 'worker')!;
   assert.equal(worker.supervisor, false);
   assert.deepEqual(worker.tools, ['retrieve']); // narrowed
-  assert.equal(worker.model, 'ministral-3');
+  assert.equal(worker.model, 'sovereign-default');
 
   // router: members ∪ END
   assert.deepEqual(ir.conditionalEdges, [{ source: 'supervisor', targets: ['worker', 'END'] }]);

@@ -164,10 +164,10 @@ Three things scale for different reasons — keep them separate:
 - **Node RAM — 128 GB (`m3i.16`).** Ran ~2–4% this deploy; plenty. Scales with
   concurrency, not data.
 - **Node disk — `node_volume_size_gb`, default 200 GB (was 80).** Holds container
-  **images + local model weights** (all Layer 1–4 images ~40–60 GB + the in-box
-  model: Ministral ~3 GB, a Magistral 24B would add ~15 GB) + image-churn
-  headroom. 80 GB filled → **disk-pressure** → node **cordoned** → pods
-  unschedulable. **FIXED capacity — it does NOT grow with the dataset.**
+  **images** (all Layer 1–4 images ~40–60 GB) + image-churn headroom. Inference runs
+  on STACKIT managed models, so there are **no local model weights** on the node
+  disk. 80 GB filled → **disk-pressure** → node **cordoned** → pods unschedulable.
+  **FIXED capacity — it does NOT grow with the dataset.**
 - **Data storage — object storage + PVCs.** Real DATA lives here, never on the
   node disk: the **Iceberg lakehouse on object storage** (in-cluster MinIO for the
   demo → **STACKIT Object Storage / S3** for TB-scale), plus PVCs for OpenSearch

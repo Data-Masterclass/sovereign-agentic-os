@@ -61,8 +61,6 @@ mockModel:
   image:
     repository: ghcr.io/aborek/sovereign-os/mock-model
     tag: "0.1.1@sha256:fee2cf404759e43ee64b3cf4c169475cb5b96136ee848afa852248caad1369eb"
-modelServer:
-  enabled: false
 
 # STACKIT premium ON in Mode B: the key comes from STACKIT Secrets Manager via
 # External Secrets (never inline). The dedicated per-model spend cap on the agent
@@ -87,22 +85,22 @@ litellm:
     - stackit-ai-model-serving-key # External-Secrets-synced STACKIT_API_KEY
   proxy_config:
     model_list:
-      # Default/light chat -> Gemma family on STACKIT (cheap-first).
+      # Standard/worker tier -> gpt-oss-20b on STACKIT (lightweight, non-reasoning).
       - model_name: sovereign-default
         litellm_params:
-          model: openai/google/gemma-3-27b-it
+          model: openai/gpt-oss-20b
           api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
           api_key: os.environ/STACKIT_API_KEY
-      - model_name: sovereign-mock # back-compat alias
+      - model_name: sovereign-mock # back-compat alias -> worker tier
         litellm_params:
-          model: openai/google/gemma-3-27b-it
+          model: openai/gpt-oss-20b
           api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
           api_key: os.environ/STACKIT_API_KEY
-      - model_name: sovereign-embed # embeddings for RAG
-        # NOTE: e5-mistral is 4096-dim — set opensearch.knnDimension to match and
-        # reindex, OR keep a 384-dim model. Dimension MUST match the index.
+      - model_name: sovereign-embed # embeddings for RAG (EU-sovereign)
+        # NOTE: Qwen3-VL-Embedding-8B is 4096-dim — set opensearch.knnDimension to
+        # match (retrieval.knnDimension: 4096) and reindex. Dimension MUST match.
         litellm_params:
-          model: openai/intfloat/e5-mistral-7b-instruct
+          model: openai/Qwen/Qwen3-VL-Embedding-8B
           api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
           api_key: os.environ/STACKIT_API_KEY
       # Vision + heavy escalation -> Qwen3-VL 235B (the confirmed VLM).
@@ -116,10 +114,8 @@ litellm:
           model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
           api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
           api_key: os.environ/STACKIT_API_KEY
-      # Reasoning contract (keeps routing.ts' `sovereign-reasoning` default valid in
-      # pure Mode B). There is NO in-box self-host here, so BOTH the sovereign and
-      # the fast reasoning names map to STACKIT Qwen — the local/fast distinction
-      # only exists where the m3i.16 box runs Magistral (Mode A / self-hosted).
+      # Reasoning tier (keeps routing.ts' `sovereign-reasoning` default valid).
+      # BOTH the sovereign and the fast reasoning names map to STACKIT Qwen3-VL-235B.
       - model_name: sovereign-reasoning
         litellm_params:
           model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
