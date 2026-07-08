@@ -1,19 +1,19 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { measureMember } from '../metrics/model.ts';
+import { measureMember } from './model.ts';
 import type { Dataset, Measure } from '../data/dataset-schema.ts';
 
 /**
- * Alerts + scheduled reports on governed metrics. An alert sets a THRESHOLD on a metric
- * member; on breach it NOTIFIES (email/Slack/in-app) AND can TRIGGER a governed agent —
- * an event → a LangGraph run (Langfuse-traced). Reports send a dashboard snapshot on a
- * cadence. Both evaluate the SAME member the explorer/dashboard/agent resolve, so an
- * alert fires on the same number a viewer sees.
+ * Alerts on governed metrics. An alert sets a THRESHOLD on a metric member; on breach it
+ * NOTIFIES (email/Slack/in-app) AND can TRIGGER a governed agent — an event → a LangGraph
+ * run (Langfuse-traced). An alert evaluates the SAME member the explorer/dashboard/agent
+ * resolve, so it fires on the same number a viewer sees. Alerts belong with Metrics (a
+ * threshold on a metric), not Dashboards.
  *
- * Pure: {@link evaluateAlert} decides; the live wiring (notify, enqueue the agent run,
- * render the PDF) is injected at the route. Modelled so the kind-gate "an alert notifies
- * AND triggers an agent run, a scheduled report sends" is exercised deterministically.
+ * Pure: {@link evaluateAlert} decides; the live wiring (notify, enqueue the agent run) is
+ * injected at the route. Modelled so the kind-gate "an alert notifies AND triggers an
+ * agent run" is exercised deterministically.
  */
 
 export type Comparator = 'lt' | 'lte' | 'gt' | 'gte';
@@ -74,37 +74,4 @@ export function evaluateAlert(rule: AlertRule, value: number): AlertEvaluation {
     ? { systemId: rule.triggerAgent.systemId, agent: rule.triggerAgent.agent, preset: rule.triggerAgent.preset, reason, traced: true }
     : null;
   return { breached: true, value, notifications, agentRun };
-}
-
-// --------------------------------------------------------------- scheduled reports ---
-
-export type Cadence = 'daily' | 'weekly' | 'monthly';
-export type ScheduledReport = {
-  id: string;
-  dashboardId: string;
-  cadence: Cadence;
-  channel: Channel;
-  /** Epoch ms of the last send (0 = never). */
-  lastSentAt: number;
-};
-
-const PERIOD_MS: Record<Cadence, number> = {
-  daily: 24 * 60 * 60 * 1000,
-  weekly: 7 * 24 * 60 * 60 * 1000,
-  monthly: 30 * 24 * 60 * 60 * 1000,
-};
-
-/** Which reports are due to send at `now` (cadence elapsed since the last send). */
-export function dueReports(reports: ScheduledReport[], now: number): ScheduledReport[] {
-  return reports.filter((r) => now - r.lastSentAt >= PERIOD_MS[r.cadence]);
-}
-
-export type ReportSend = { reportId: string; dashboardId: string; channel: Channel; sentAt: number };
-
-/** Mark a report sent (the route renders the snapshot + delivers; this records it). */
-export function sendReport(report: ScheduledReport, now: number): { report: ScheduledReport; send: ReportSend } {
-  return {
-    report: { ...report, lastSentAt: now },
-    send: { reportId: report.id, dashboardId: report.dashboardId, channel: report.channel, sentAt: now },
-  };
 }

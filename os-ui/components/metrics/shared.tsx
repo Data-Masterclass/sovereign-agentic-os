@@ -74,6 +74,44 @@ export function leaf(member: string): string {
   return member.includes('.') ? member.split('.').pop()! : member;
 }
 
+// ---------------------------------------------------------------------- alerts ---
+// An alert is a threshold on a governed metric member — it lives with Metrics.
+
+export type Comparator = 'lt' | 'lte' | 'gt' | 'gte';
+export type Channel = 'email' | 'slack' | 'in_app';
+export type Notification = { channel: Channel; message: string };
+export type AgentRun = { systemId: string; agent: string; preset: string; reason: string; traced: true };
+export type AlertResponse = {
+  breached: boolean;
+  value: number;
+  notifications: Notification[];
+  agentRun: AgentRun | null;
+  traced: boolean;
+};
+
+export const CHANNELS: Channel[] = ['email', 'slack', 'in_app'];
+
+/** Flatten the grouped metric payload into one palette (member pickers). */
+export function flatMetrics(g: MetricGroups | null): MetricSummary[] {
+  return g ? [...g.mine, ...g.domain, ...g.marketplace] : [];
+}
+
+/** POST JSON and surface the route's `error` field as a thrown Error. */
+export async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error ?? `Request failed (${res.status})`);
+  return data as T;
+}
+
+export function slug(s: string): string {
+  return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+}
+
 /** The ✓/✗ check rows shared by define-convergence and the govern consistency gate. */
 export function ChecksList({ rows }: { rows: CheckRow[] }) {
   return (

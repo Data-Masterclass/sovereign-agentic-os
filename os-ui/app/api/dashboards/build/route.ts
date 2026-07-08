@@ -6,7 +6,7 @@ import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { delegatedToken } from '@/lib/identity-server';
 import { saveDashboard } from '@/lib/dashboards/store';
 import { type ChartSpec, fromAgent, fromTiles } from '@/lib/dashboards/model';
-import { type AlertRule } from '@/lib/dashboards/alerts';
+import { type AlertRule } from '@/lib/metrics/alerts';
 import { buildDashboard } from '@/lib/dashboards/build/server';
 
 export const dynamic = 'force-dynamic';

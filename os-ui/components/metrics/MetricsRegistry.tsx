@@ -3,7 +3,7 @@
  */
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/scopes';
 import {
@@ -14,84 +14,52 @@ import {
 } from './shared';
 
 /**
- * The governed metric registry — every measure the user can see, grouped Mine / Domain /
- * Marketplace. Each tile shows the one canonical `member` (the single definition of the
- * number), the owner, a tier badge, and the aggregation. Clicking a tile selects it; the
- * selected tile reveals jump-actions into Explore / Govern.
+ * The governed metric registry — every measure the user can see, grouped All · My · Shared ·
+ * Marketplace via the OS-wide scope helper. Each tile shows the one canonical `member` (the
+ * single definition of the number), the owner, a tier badge, and the aggregation. Clicking a
+ * tile OPENS its detail, where explore / govern / alert fold in. The parent owns the fetch so
+ * the same grouped payload warms the alert palette.
  */
-function MetricCard({
-  m,
-  selected,
-  onSelect,
-  onExplore,
-  onGovern,
-}: {
-  m: MetricSummary;
-  selected: boolean;
-  onSelect: (m: MetricSummary) => void;
-  onExplore: (m: MetricSummary) => void;
-  onGovern: (m: MetricSummary) => void;
-}) {
+function MetricCard({ m, onOpen }: { m: MetricSummary; onOpen: (m: MetricSummary) => void }) {
   return (
-    <div
-      className={`card tile${selected ? ' sel' : ''}`}
-      style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 132, ...(selected ? { borderColor: 'var(--gold)' } : {}) }}
+    <button
+      type="button"
+      onClick={() => onOpen(m)}
+      className="card tile"
+      style={{ all: 'unset', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 120, boxSizing: 'border-box' }}
+      title="Open this metric — explore, govern, or set an alert"
     >
-      <button
-        type="button"
-        onClick={() => onSelect(m)}
-        style={{ all: 'unset', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 12, flex: 1 }}
-        title="Select this metric for Explore / Govern"
-      >
-        <div className="tile-top">
-          <span className="tile-name">{m.name}</span>
-          <span className={`badge ${TIER_BADGE[m.tier]}`}>{TIER_WORD[m.tier]}</span>
-        </div>
-        <div className="muted mono" style={{ fontSize: 12 }}>{m.member}</div>
-        <div className="tile-meta">
-          <span className="muted">{m.owner}</span>
-          <span className="dot-sep">·</span>
-          <span className="muted">{m.datasetName}</span>
-          <span className="dot-sep">·</span>
-          <span className="badge muted">{m.type}</span>
-        </div>
-      </button>
-      {selected ? (
-        <div className="row" style={{ gap: 8, marginTop: 'auto', paddingTop: 4 }}>
-          <button className="btn ghost sm" onClick={() => onExplore(m)}>Explore →</button>
-          <button className="btn ghost sm" onClick={() => onGovern(m)}>Govern →</button>
-        </div>
-      ) : null}
-    </div>
+      <div className="tile-top">
+        <span className="tile-name">{m.name}</span>
+        <span className={`badge ${TIER_BADGE[m.tier]}`}>{TIER_WORD[m.tier]}</span>
+      </div>
+      <div className="muted mono" style={{ fontSize: 12 }}>{m.member}</div>
+      <div className="tile-meta" style={{ marginTop: 'auto' }}>
+        <span className="muted">{m.owner}</span>
+        <span className="dot-sep">·</span>
+        <span className="muted">{m.datasetName}</span>
+        <span className="dot-sep">·</span>
+        <span className="badge muted">{m.type}</span>
+      </div>
+    </button>
   );
 }
 
 export default function MetricsRegistry({
-  selectedId,
-  onSelect,
-  onExplore,
-  onGovern,
+  groups,
+  loading,
+  error,
+  onOpen,
+  onDefine,
 }: {
-  selectedId: string | null;
-  onSelect: (m: MetricSummary) => void;
-  onExplore: (m: MetricSummary) => void;
-  onGovern: (m: MetricSummary) => void;
+  groups: MetricGroups | null;
+  loading: boolean;
+  error: string;
+  onOpen: (m: MetricSummary) => void;
+  onDefine: () => void;
 }) {
   const { user } = useUser();
   const [scope, setScope] = useState<ScopeKey>('all');
-  const [groups, setGroups] = useState<MetricGroups | null>(null);
-  const [err, setErr] = useState('');
-
-  const refresh = useCallback(async () => {
-    setErr('');
-    try {
-      const res = await fetch('/api/metrics', { cache: 'no-store' });
-      const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Failed to load metrics'); return; }
-      setGroups(data);
-    } catch (e) { setErr((e as Error).message); }
-  }, []);
-  useEffect(() => { refresh(); }, [refresh]);
 
   const uid = user?.id ?? '';
   const scoped = groups ? groupByScope(groups, uid) : null;
@@ -100,11 +68,14 @@ export default function MetricsRegistry({
 
   return (
     <>
-      <p className="lead" style={{ marginTop: 4 }}>
-        Every business metric, defined once. Each card carries its single canonical
-        definition — the Cube <strong>member</strong> the explorer, dashboards and the agent
-        all resolve. Select one to explore it under your own identity, or govern its tier.
-      </p>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+        <p className="lead" style={{ marginTop: 4, flex: 1, minWidth: 280 }}>
+          Every business metric, defined once. Each card carries its single canonical
+          definition — the Cube <strong>member</strong> the explorer, dashboards and the agent
+          all resolve. Open one to explore it under your own identity, govern its tier, or set an alert.
+        </p>
+        <button className="btn" onClick={onDefine} style={{ marginTop: 4 }}>＋ Define metric</button>
+      </div>
 
       {/* Scope switcher — the OS-wide four groups: All · My · Shared · Marketplace. */}
       <div className="seg" style={{ marginTop: 14 }}>
@@ -115,7 +86,7 @@ export default function MetricsRegistry({
         ))}
       </div>
 
-      {err ? <div className="error" style={{ marginTop: 14 }}>{err}</div> : null}
+      {error ? <div className="error" style={{ marginTop: 14 }}>{error}</div> : null}
 
       {groups && visible.length === 0 ? (
         <div className="stub-page" style={{ marginTop: 20 }}>
@@ -131,11 +102,11 @@ export default function MetricsRegistry({
         visible.length > 0 ? (
           <div className="tile-grid" style={{ marginTop: 16 }}>
             {visible.map((m) => (
-              <MetricCard key={m.id} m={m} selected={m.id === selectedId} onSelect={onSelect} onExplore={onExplore} onGovern={onGovern} />
+              <MetricCard key={m.id} m={m} onOpen={onOpen} />
             ))}
           </div>
         ) : null
-      ) : !err ? <div className="stub-page" style={{ marginTop: 20 }}>Loading metrics…</div> : null}
+      ) : loading && !error ? <div className="stub-page" style={{ marginTop: 20 }}>Loading metrics…</div> : null}
     </>
   );
 }

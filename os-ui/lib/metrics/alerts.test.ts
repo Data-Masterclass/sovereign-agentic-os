@@ -3,9 +3,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { alertOn, evaluateAlert, dueReports, sendReport, type ScheduledReport } from './alerts.ts';
-import { measureFromForm } from '../metrics/model.ts';
-import { goldSales } from '../metrics/fixtures.ts';
+import { alertOn, evaluateAlert } from './alerts.ts';
+import { measureFromForm } from './model.ts';
+import { goldSales } from './fixtures.ts';
 
 const measure = measureFromForm({ name: 'Revenue', aggregation: 'sum', column: 'net_amount', dimensions: [] });
 
@@ -30,18 +30,4 @@ test('breach notifies AND triggers a governed agent run (traced)', () => {
   assert.equal(fine.breached, false);
   assert.equal(fine.agentRun, null);
   assert.equal(fine.notifications.length, 0);
-});
-
-test('scheduled report sends when its cadence has elapsed, then resets', () => {
-  const now = 10_000_000_000_000;
-  const reports: ScheduledReport[] = [
-    { id: 'r-weekly', dashboardId: 'd1', cadence: 'weekly', channel: 'email', lastSentAt: now - 8 * 24 * 3600 * 1000 },
-    { id: 'r-fresh', dashboardId: 'd1', cadence: 'weekly', channel: 'email', lastSentAt: now - 1 * 24 * 3600 * 1000 },
-  ];
-  const due = dueReports(reports, now);
-  assert.deepEqual(due.map((r) => r.id), ['r-weekly']);
-  const { report, send } = sendReport(due[0], now);
-  assert.equal(report.lastSentAt, now);
-  assert.equal(send.dashboardId, 'd1');
-  assert.equal(dueReports([report], now).length, 0);
 });

@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import { __setMailTransportForTests, type OutgoingMail } from '../mailer.ts';
 import { __resetNotifications, listNotifications } from '../notifications/store.ts';
 import { deliverAlert, deliverReport } from './delivery.ts';
-import { evaluateAlert, type AlertRule, type ScheduledReport } from './alerts.ts';
+import { evaluateAlert, type AlertRule } from '../metrics/alerts.ts';
+import { type ScheduledReport } from './reports.ts';
 
 const report: ScheduledReport = { id: 'r1', dashboardId: 'sales-overview', cadence: 'weekly', channel: 'email', lastSentAt: 0 };
 const rule: AlertRule = { id: 'a1', member: 'Sales.revenue', comparator: 'lt', threshold: 50000, notify: ['email', 'slack'] };

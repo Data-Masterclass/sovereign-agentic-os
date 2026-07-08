@@ -6,7 +6,7 @@ import { type DelegatedToken } from '../../data/identity.ts';
 import { type BuildRow, runAdapter } from '../../metrics/build/adapter.ts';
 import { type DashboardSpec } from '../model.ts';
 import { guestTokenRequest } from '../embed.ts';
-import { type AlertRule } from '../alerts.ts';
+import { type AlertRule } from '../../metrics/alerts.ts';
 import { type DashboardBuildContext, makeDashboardAdapters } from './live.ts';
 import { makeMockDashboardAdapters, mockDashboardDeps, newDashboardMock } from './mocks.ts';
 import { makeRealDashboardClients, liveDashboardsReachable } from './live-clients.ts';

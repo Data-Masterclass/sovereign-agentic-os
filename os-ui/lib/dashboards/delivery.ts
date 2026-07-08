@@ -4,7 +4,8 @@
 import 'server-only';
 import { mailerConfigured, sendNotificationEmail } from '../mailer.ts';
 import { addNotification } from '../notifications/store.ts';
-import type { AlertEvaluation, Cadence, Channel, ScheduledReport } from './alerts.ts';
+import type { AlertEvaluation } from '../metrics/alerts.ts';
+import type { Cadence, Channel, ScheduledReport } from './reports.ts';
 
 /**
  * The REAL delivery boundary for scheduled reports and fired alerts. Previously

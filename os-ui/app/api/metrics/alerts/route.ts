@@ -6,7 +6,7 @@ import { trace as gvTrace } from '@/lib/agent-governed';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { roleAtLeast } from '@/lib/session';
 import { getPublicUser } from '@/lib/users';
-import { type AlertRule, evaluateAlert } from '@/lib/dashboards/alerts';
+import { type AlertRule, evaluateAlert } from '@/lib/metrics/alerts';
 import { deliverAlert } from '@/lib/dashboards/delivery';
 
 export const dynamic = 'force-dynamic';

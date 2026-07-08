@@ -5,63 +5,50 @@
 
 import { useState } from 'react';
 import PageHeader from '@/components/PageHeader';
-import MetricsRegistry from '@/components/metrics/MetricsRegistry';
-import DefineMetric from '@/components/metrics/DefineMetric';
-import ExploreMetric from '@/components/metrics/ExploreMetric';
-import GovernMetric from '@/components/metrics/GovernMetric';
+import MetricsTab from '@/components/metrics/MetricsTab';
 import LiveCube from '@/components/metrics/LiveCube';
-import type { MetricSummary } from '@/components/metrics/shared';
 import { useTabNavReset } from '@/lib/tab-nav';
 
 /**
- * The Metrics tab — one definition of every number. Four governed surfaces (registry,
- * define, explore, govern) over the metrics route contracts, plus a quiet Live Cube
- * inspection. The selected metric is shared so registry → explore / govern flows feel
- * like one surface; defining or governing bumps the registry so tiers stay honest.
+ * The Metrics tab — one definition of every number, on TWO surfaces (mirroring the Data tab):
+ *
+ *   Metrics — the unified metric home: the grouped list (All · My · Shared · Marketplace),
+ *             where opening a metric folds explore / govern / alert into its detail, and
+ *             "＋ Define metric" creates a new one.
+ *   Query   — the power-user surface: the live Cube inspection the metrics resolve against.
+ *
+ * Conversational metric Q&A lives in the global Ask-the-OS assistant, not here.
  */
-type View = 'registry' | 'define' | 'explore' | 'govern' | 'cube';
+type View = 'metrics' | 'query';
 
 export default function MetricsPage() {
-  const [view, setView] = useState<View>('registry');
-  const [selected, setSelected] = useState<MetricSummary | null>(null);
-  const [registryKey, setRegistryKey] = useState(0);
+  const [view, setView] = useState<View>('metrics');
 
-  const select = (m: MetricSummary, go?: View) => { setSelected(m); if (go) setView(go); };
-  const refreshRegistry = () => setRegistryKey((k) => k + 1);
-
-  // Clicking the Metrics sidebar link returns to the Registry list from any detail
-  // sub-view (Explore/Govern) — same-route client nav wouldn't re-mount this page.
-  useTabNavReset(() => { setSelected(null); setView('registry'); });
+  // Clicking the Metrics sidebar link returns to the primary Metrics surface. MetricsTab
+  // separately resets any open detail/define back to the list.
+  useTabNavReset(() => setView('metrics'));
 
   return (
     <>
-      <PageHeader title="Metrics" crumb="registry · define · explore · govern — one definition of every number" tutorial="metrics" />
+      <PageHeader title="Metrics" crumb="metrics · query — one definition of every number" tutorial="metrics" />
       <div className="content">
         <div className="tabstrip">
-          <button className={view === 'registry' ? 'active' : ''} onClick={() => setView('registry')}>Registry</button>
-          <button className={view === 'define' ? 'active' : ''} onClick={() => setView('define')}>Define</button>
-          <button className={view === 'explore' ? 'active' : ''} onClick={() => setView('explore')}>Explore</button>
-          <button className={view === 'govern' ? 'active' : ''} onClick={() => setView('govern')}>Govern</button>
-          <button className={view === 'cube' ? 'active' : ''} onClick={() => setView('cube')}>Live Cube</button>
+          <button className={view === 'metrics' ? 'active' : ''} onClick={() => setView('metrics')}>Metrics</button>
+          <button className={view === 'query' ? 'active' : ''} onClick={() => setView('query')}>Query</button>
         </div>
 
-        {view === 'registry' ? (
-          <MetricsRegistry
-            key={registryKey}
-            selectedId={selected?.id ?? null}
-            onSelect={(m) => select(m)}
-            onExplore={(m) => select(m, 'explore')}
-            onGovern={(m) => select(m, 'govern')}
-          />
+        {view === 'metrics' ? <MetricsTab /> : null}
+
+        {view === 'query' ? (
+          <>
+            <p className="lead" style={{ marginTop: 4 }}>
+              The power-user surface — inspect the live semantic layer your metrics resolve against.
+              Every measure and dimension below is the governed source of a number, served read-only
+              under your own identity.
+            </p>
+            <LiveCube />
+          </>
         ) : null}
-
-        {view === 'define' ? <DefineMetric onDefined={refreshRegistry} /> : null}
-
-        {view === 'explore' ? <ExploreMetric metric={selected} /> : null}
-
-        {view === 'govern' ? <GovernMetric metric={selected} onGoverned={refreshRegistry} /> : null}
-
-        {view === 'cube' ? <LiveCube /> : null}
       </div>
     </>
   );

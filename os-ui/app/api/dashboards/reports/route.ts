@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { roleAtLeast } from '@/lib/session';
 import { getPublicUser } from '@/lib/users';
-import { type ScheduledReport, sendReport } from '@/lib/dashboards/alerts';
+import { type ScheduledReport, sendReport } from '@/lib/dashboards/reports';
 import { deliverReport } from '@/lib/dashboards/delivery';
 
 export const dynamic = 'force-dynamic';

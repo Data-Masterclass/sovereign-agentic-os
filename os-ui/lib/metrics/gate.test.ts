@@ -16,7 +16,8 @@ import { newMetricMock, makeMockMetricAdapters, mockMetricDeps } from './build/m
 // dashboards
 import { fromTiles, fromAgent, sameDashboard, viewFor, type ChartSpec } from '../dashboards/model.ts';
 import { guestTokenRequest } from '../dashboards/embed.ts';
-import { alertOn, evaluateAlert, dueReports, sendReport, type ScheduledReport } from '../dashboards/alerts.ts';
+import { alertOn, evaluateAlert } from './alerts.ts';
+import { dueReports, sendReport, type ScheduledReport } from '../dashboards/reports.ts';
 import { governDashboard, dashboardRecord } from '../dashboards/governance.ts';
 import { makeMockDashboardAdapters, newDashboardMock } from '../dashboards/build/mocks.ts';
 import { type DashboardBuildContext } from '../dashboards/build/live.ts';

@@ -19,10 +19,22 @@ const CHANNEL_LABEL: Record<Channel, string> = { email: 'Email', slack: 'Slack',
  * Alerts — a threshold on a governed metric member. On breach the route NOTIFIES the
  * chosen channels AND, if a governed agent is wired, triggers a Langfuse-traced agent run
  * (event → LangGraph). `value` is the metric's current value, supplied here for the demo.
+ *
+ * Two ways in: the Metrics surface renders this over the whole `metrics` palette; a metric's
+ * DETAIL renders it with `presetMember` locked to that one member ("set an alert on this
+ * metric"), so the picker collapses to a fixed label.
  */
-export default function Alerts({ metrics, loading }: { metrics: MetricGroups | null; loading: boolean }) {
+export default function Alerts({
+  metrics,
+  loading,
+  presetMember,
+}: {
+  metrics: MetricGroups | null;
+  loading: boolean;
+  presetMember?: string;
+}) {
   const palette = flatMetrics(metrics);
-  const [member, setMember] = useState('');
+  const [member, setMember] = useState(presetMember ?? '');
   const [comparator, setComparator] = useState<Comparator>('lt');
   const [threshold, setThreshold] = useState('1000');
   const [value, setValue] = useState('800');
@@ -35,7 +47,7 @@ export default function Alerts({ metrics, loading }: { metrics: MetricGroups | n
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const effectiveMember = member || palette[0]?.member || '';
+  const effectiveMember = presetMember || member || palette[0]?.member || '';
 
   const toggleChannel = (c: Channel) =>
     setNotify((ns) => (ns.includes(c) ? ns.filter((x) => x !== c) : [...ns, c]));
@@ -55,7 +67,7 @@ export default function Alerts({ metrics, loading }: { metrics: MetricGroups | n
         notify,
         triggerAgent: agentOn ? { systemId, agent, preset } : undefined,
       };
-      const res = await postJson<AlertResponse>('/api/dashboards/alerts', { rule, value: Number(value) });
+      const res = await postJson<AlertResponse>('/api/metrics/alerts', { rule, value: Number(value) });
       setResult(res);
     } catch (e) {
       setError((e as Error).message);
@@ -76,7 +88,9 @@ export default function Alerts({ metrics, loading }: { metrics: MetricGroups | n
       <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginTop: 12 }}>
         <label>
           <span className="comp-label">Metric member</span>
-          {loading && palette.length === 0 ? (
+          {presetMember ? (
+            <div className="mono" style={{ fontSize: 12, paddingTop: 6 }}>{presetMember}</div>
+          ) : loading && palette.length === 0 ? (
             <div className="hint">Loading metrics…</div>
           ) : (
             <select value={effectiveMember} onChange={(e) => setMember(e.target.value)} style={{ width: '100%' }}>

@@ -15,24 +15,16 @@ import { roleAtLeast } from '@/lib/session';
  * certified dashboard stays per-viewer RLS-scoped via the guest token.
  */
 export default function Govern({
-  selected,
+  dashboard,
   onGoverned,
 }: {
-  selected: DashboardSummary | null;
+  dashboard: DashboardSummary;
   onGoverned: (tier: DashTier) => void;
 }) {
   const { user } = useUser();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<'promote' | 'certify' | null>(null);
   const [ok, setOk] = useState('');
-
-  if (!selected) {
-    return (
-      <div className="stub-page" style={{ marginTop: 18 }}>
-        Select or open a dashboard in the Tiles tab to govern it.
-      </div>
-    );
-  }
 
   const role = user?.role;
   const canPromote = !!role && roleAtLeast(role, 'builder');
@@ -44,7 +36,7 @@ export default function Govern({
     setBusy(transition);
     try {
       const res = await postJson<GovernResponse>('/api/dashboards/govern', {
-        dashboardId: selected.id,
+        dashboardId: dashboard.id,
         transition,
       });
       onGoverned(res.tier);
@@ -60,9 +52,9 @@ export default function Govern({
     <div className="agent-editor" style={{ marginTop: 18 }}>
       <div className="agent-editor-head">
         <div>
-          <div className="agent-editor-title">Govern — {selected.name}</div>
+          <div className="agent-editor-title">Govern — {dashboard.name}</div>
           <div className="hint" style={{ marginTop: 2 }}>
-            Current tier: <span className={`badge vis-${selected.tier === 'personal' ? 'personal' : selected.tier === 'domain' ? 'shared' : 'certified'}`}>{TIER_LABEL[selected.tier]}</span>
+            Current tier: <span className={`badge vis-${dashboard.tier === 'personal' ? 'personal' : dashboard.tier === 'domain' ? 'shared' : 'certified'}`}>{TIER_LABEL[dashboard.tier]}</span>
             {role ? <> · signed in as <strong>{role}</strong></> : null}
           </div>
         </div>

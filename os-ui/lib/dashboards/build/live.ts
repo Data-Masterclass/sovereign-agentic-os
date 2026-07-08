@@ -4,7 +4,7 @@
 import { type BuildAdapter, ok, fail } from '../../metrics/build/adapter.ts';
 import { type DashboardSpec, supersetBundle } from '../model.ts';
 import { type GuestTokenRequest } from '../embed.ts';
-import { type AlertRule } from '../alerts.ts';
+import { type AlertRule } from '../../metrics/alerts.ts';
 
 /**
  * The LIVE Dashboard build adapters — real apply→verify against Superset (REST/MCP) +

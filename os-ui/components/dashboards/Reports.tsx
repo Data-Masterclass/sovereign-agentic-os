@@ -15,20 +15,12 @@ const CHANNEL_OPTS: Channel[] = ['email', 'slack', 'in_app'];
  * trigger the scheduler also calls; the route advances the report's lastSentAt and returns
  * the send record.
  */
-export default function Reports({ selected }: { selected: DashboardSummary | null }) {
+export default function Reports({ dashboard }: { dashboard: DashboardSummary }) {
   const [cadence, setCadence] = useState<Cadence>('weekly');
   const [channel, setChannel] = useState<Channel>('email');
   const [result, setResult] = useState<ReportResponse | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-
-  if (!selected) {
-    return (
-      <div className="stub-page" style={{ marginTop: 18 }}>
-        Select or open a dashboard in the Tiles tab to schedule a report.
-      </div>
-    );
-  }
 
   const sendNow = async () => {
     setError('');
@@ -36,8 +28,8 @@ export default function Reports({ selected }: { selected: DashboardSummary | nul
     setBusy(true);
     try {
       const report = {
-        id: `${selected.id}-${cadence}`,
-        dashboardId: selected.id,
+        id: `${dashboard.id}-${cadence}`,
+        dashboardId: dashboard.id,
         cadence,
         channel,
         lastSentAt: 0,
@@ -53,7 +45,7 @@ export default function Reports({ selected }: { selected: DashboardSummary | nul
 
   return (
     <div className="agent-editor" style={{ marginTop: 18 }}>
-      <div className="agent-editor-title">Scheduled report — {selected.name}</div>
+      <div className="agent-editor-title">Scheduled report — {dashboard.name}</div>
       <p className="hint" style={{ marginTop: 4 }}>A snapshot of this dashboard, delivered on a cadence.</p>
 
       <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', marginTop: 12 }}>
@@ -81,7 +73,7 @@ export default function Reports({ selected }: { selected: DashboardSummary | nul
 
       {result ? (
         <div className="passthrough-note" style={{ marginTop: 14 }}>
-          ✓ Sent <strong>{selected.name}</strong> via <strong>{result.send.channel}</strong> at{' '}
+          ✓ Sent <strong>{dashboard.name}</strong> via <strong>{result.send.channel}</strong> at{' '}
           {new Date(result.send.sentAt).toLocaleString()} — cadence <strong>{result.report.cadence}</strong>.
         </div>
       ) : null}

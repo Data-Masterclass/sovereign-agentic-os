@@ -7,7 +7,7 @@ import { runAdapter } from '../../metrics/build/adapter.ts';
 import { type DashboardBuildContext } from './live.ts';
 import { makeMockDashboardAdapters, newDashboardMock } from './mocks.ts';
 import { fromTiles, viewFor } from '../model.ts';
-import { alertOn } from '../alerts.ts';
+import { alertOn } from '../../metrics/alerts.ts';
 import { guestTokenRequest } from '../embed.ts';
 import { measureFromForm } from '../../metrics/model.ts';
 import { claimsFromUser, delegate } from '../../data/identity.ts';

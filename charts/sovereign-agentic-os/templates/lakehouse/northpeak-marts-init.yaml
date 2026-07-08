@@ -228,7 +228,7 @@ metadata:
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "marts-init") | nindent 4 }}
   annotations:
     # Runs AFTER polaris-catalog-init (weight 10) so the lakehouse warehouse exists.
-    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook": post-install       # post-install ONLY: this is an idempotent skip-if-exists DATA SEED; re-applying its Job on every upgrade only risks a flaky-network hang and adds nothing (reseed manually if needed)
     "helm.sh/hook-weight": "20"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
