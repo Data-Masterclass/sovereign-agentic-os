@@ -16,13 +16,13 @@ import {
   type DataUsage,
   templateByKey,
   isPersonalConnectable,
-} from '@/lib/connection-model';
+} from '@/lib/connections/schema';
 import { putSecret, secretFingerprint, getSecretServerSide, isEgressAllowed, deleteSecret, hasSecret } from '@/lib/secrets';
 import { type ArtifactVersion, versionLog } from '@/lib/versioning';
 import {
   type PhysicalDeleteReport,
   purgeConnectionSecrets,
-} from '@/lib/connections-physical-delete';
+} from '@/lib/connections/connections-physical-delete';
 import {
   registerConnectionProfile,
   unregisterConnectionProfile,
@@ -33,7 +33,7 @@ import {
   type ConnToolPolicy,
 } from '@/lib/agent-governed';
 import { enqueue } from '@/lib/approvals';
-import { adapterFor } from '@/lib/connection-adapters';
+import { adapterFor } from '@/lib/connections/connection-adapters';
 import {
   buildPreview,
   matchStandingPolicy,
@@ -42,7 +42,7 @@ import {
   effectivePreset,
 } from '@/lib/governance';
 import { registerBronzeSource, indexToFiles } from '@/lib/data-handoff';
-import { logEgress } from '@/lib/egress-requests';
+import { logEgress } from '@/lib/connections/egress-requests';
 import { providerForTemplate } from '@/lib/oauth/providers';
 import { storeTokens, readTokens, resolveAccessToken } from '@/lib/oauth/connection-token';
 import { isExpired, type TokenSet } from '@/lib/oauth/token-set';

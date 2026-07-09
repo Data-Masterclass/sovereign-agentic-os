@@ -211,7 +211,7 @@ test('P0.4 the ladder is the ONLY promotion path: no direct promote/certify/tier
   };
   // fn → the ONLY files allowed to call it (definition + seam + documented cascade).
   const ALLOW: Record<string, string[]> = {
-    promoteConnection: ['lib/connections.ts', 'lib/governance/ladder.ts'],
+    promoteConnection: ['lib/connections/store.ts', 'lib/governance/ladder.ts'],
     publishWorkflow: ['lib/knowledge/store.ts', 'lib/governance/effects.ts'],
     certifyWorkflow: ['lib/knowledge/store.ts', 'lib/governance/effects.ts'],
     promoteApp: ['lib/apps.ts', 'lib/governance/ladder.ts'],
@@ -349,4 +349,88 @@ test('FIX5 rung intent: publish_knowledge on an already-Shared workflow is a CON
   assert.equal(e.code, 'conflict');
   const seen = await call<{ workflow: { visibility: string } }>(ben, 'get_knowledge', { workflowId: wf.id });
   assert.notEqual(seen.workflow.visibility, 'Marketplace', 'a promote-intent call never jumps to the marketplace');
+});
+
+// ===================== TACIT KNOWLEDGE — MCP surface =========================
+
+import { __resetStore as resetKnowledgeForTacit } from '@/lib/knowledge/store';
+import { getTacit } from '@/lib/knowledge/store';
+import { chunkWorkflow } from '@/lib/knowledge/chunk';
+
+test('TACIT.1 author_knowledge with per-step tacit persists inline and is parseable', async () => {
+  resetAll();
+  const wf = await call<{ id: string }>(cara, 'author_knowledge', {
+    title: 'Invoice reconciliation',
+    domain: 'sales',
+    steps: [
+      {
+        title: 'Pull flagged invoices',
+        actor: 'Software',
+        outputs: ['Flagged invoice list'],
+        tacit: 'Run after 10 AM — the ERP export misses invoices created before 9 AM on the same day.',
+      },
+      {
+        title: 'Review and resolve',
+        actor: 'Human',
+        inputs: ['Flagged invoice list'],
+        actor_name: 'Finance Analyst',
+      },
+    ],
+  });
+
+  // The workflow parses and the per-step tacit is round-tripped through workflow.md.
+  const view = await call<{ workflow: { steps: { title: string; tacit: string }[] } }>(cara, 'get_knowledge', { workflowId: wf.id });
+  const step0 = view.workflow.steps[0];
+  assert.ok(step0.tacit.includes('ERP export'), 'per-step tacit is persisted and round-trips through workflow.md');
+  assert.equal(view.workflow.steps[1].tacit, '', 'step without tacit has empty string');
+});
+
+test('TACIT.2 author_knowledge with workflow-level tacit persists in the sibling tacit.md', async () => {
+  resetAll();
+  const wfTacit = '## Seasonal note\nVolume spikes 3× in December.\n\n## System quirk\nAuto-closes after 90 days.';
+  const wf = await call<{ id: string }>(cara, 'author_knowledge', {
+    title: 'Refund escalation',
+    domain: 'sales',
+    tacit: wfTacit,
+  });
+
+  // Access the store directly to verify the tacit.md was written.
+  const { tacit } = getTacit(wf.id, { id: 'cara', domains: ['sales'], role: 'creator' });
+  assert.ok(tacit.includes('Volume spikes'), 'workflow-level tacit is stored in the sibling tacit.md');
+  assert.ok(tacit.includes('Auto-closes'), 'second heading section is present');
+});
+
+test('TACIT.3 per-step tacit and workflow-level tacit both produce indexable tacit units', async () => {
+  resetAll();
+  const wfTacit = '## Cultural note\nThe support team calls this the "Friday problem" — volume drops 40% on Fridays.';
+  const wf = await call<{ id: string }>(cara, 'author_knowledge', {
+    title: 'Support triage',
+    domain: 'sales',
+    steps: [
+      {
+        title: 'Classify ticket',
+        actor: 'Human',
+        tacit: 'Check the priority field — it defaults to "medium" even for critical issues.',
+      },
+    ],
+    tacit: wfTacit,
+  });
+
+  // Retrieve the workflow view to get the parsed Workflow object for chunking.
+  const view = await call<{ workflow: { id: string; title: string; steps: { id: string; title: string; actor: string; actor_name: string; inputs: string[]; outputs: string[]; links: unknown[]; rules: unknown[]; tacit: string }[]; rules: unknown[]; visibility: string; status: string; domain: string; version: string; body: string } }>(cara, 'get_knowledge', { workflowId: wf.id });
+  const { tacit } = getTacit(wf.id, { id: 'cara', domains: ['sales'], role: 'creator' });
+
+  const units = chunkWorkflow({ workflow: view.workflow as Parameters<typeof chunkWorkflow>[0]['workflow'], owner: 'cara', tacit, updatedAt: new Date().toISOString() });
+  const tacitUnits = units.filter((u) => u.provenance.type === 'tacit');
+
+  // Expect at least 2 tacit units: 1 per-step + 1 workflow-level (the "Cultural note" section).
+  assert.ok(tacitUnits.length >= 2, `expected at least 2 tacit units, got ${tacitUnits.length}: ${tacitUnits.map((u) => u.id).join(', ')}`);
+
+  const stepTacit = tacitUnits.find((u) => u.provenance.stepId !== null);
+  assert.ok(stepTacit, 'per-step tacit unit carries a stepId in provenance');
+  assert.ok(stepTacit!.text.includes('priority field'), 'per-step tacit text is preserved');
+
+  const wfTacitUnit = tacitUnits.find((u) => u.provenance.stepId === null);
+  assert.ok(wfTacitUnit, 'workflow-level tacit unit has null stepId');
+  assert.ok(wfTacitUnit!.text.includes('Friday problem'), 'workflow-level tacit text is preserved');
 });

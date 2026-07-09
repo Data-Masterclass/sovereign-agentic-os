@@ -2,6 +2,11 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { stripThinking } from '@/lib/agent-chat-response';
+import {
+  estimateTokens,
+  compactToolResult,
+  truncateToTokens,
+} from '@/lib/infra/context/context-assembler';
 
 /**
  * THE AGENTIC ASSISTANT HARNESS (pure core).
@@ -50,6 +55,8 @@ export type LlmRequest = {
   messages: LlmMessage[];
   tools?: OpenAiTool[];
   temperature?: number;
+  /** Cap on the model's OWN output (the model window's reserved tail). */
+  maxTokens?: number;
 };
 export type LlmCall = (req: LlmRequest) => Promise<LlmCompletion>;
 
@@ -127,6 +134,38 @@ function planPrompt(system: string): string {
   ].join('\n');
 }
 
+/**
+ * DISCOVER-THEN-ACT directive (#97): agents were GUESSING table FQNs and querying
+ * non-existent tables. This tells the model to LEARN the exact resource via the
+ * read-only discovery tools before acting. Included only when a relevant action or
+ * discovery tool is actually available, so it never clutters an unrelated agent.
+ */
+function discoveryDirective(tools: ToolSpec[]): string {
+  const names = new Set(tools.map((t) => t.name));
+  const has = (...t: string[]) => t.some((n) => names.has(n));
+  const lines: string[] = [];
+  if (has('query_data', 'list_datasets', 'get_dataset', 'profile_dataset')) {
+    lines.push(
+      '- DATA: before query_data, call list_datasets then get_dataset to obtain the',
+      '  EXACT fully-qualified table name (iceberg.<schema>.<table>) — never guess a',
+      '  schema or table name. Use profile_dataset to learn the columns before querying.',
+      '  Any table name in your role/instructions is a HINT that may be STALE — a dataset',
+      "  promoted since then lives at iceberg.<domain>.gold_<slug>, NOT the owner's",
+      '  personal_<uid> lane. The FQN get_dataset/profile_dataset return for YOU is the',
+      '  only authoritative one; re-resolve it every run and query exactly that, never a',
+      '  remembered personal_* path.',
+    );
+  }
+  if (has('search_knowledge', 'list_knowledge')) {
+    lines.push('- KNOWLEDGE: use list_knowledge to see what exists, then search_knowledge to retrieve it.');
+  }
+  if (has('search_files', 'list_files', 'get_file', 'read_app_files')) {
+    lines.push('- FILES: use list_files / search_files to find the exact file before reading it.');
+  }
+  if (lines.length === 0) return '';
+  return ['', 'DISCOVER BEFORE YOU ACT — never guess identifiers:', ...lines].join('\n');
+}
+
 function actSystem(system: string, plan: string, tools: ToolSpec[], react: boolean): string {
   const toolList = tools.map((t) => `- ${t.name}: ${t.description}`).join('\n');
   return [
@@ -136,6 +175,7 @@ function actSystem(system: string, plan: string, tools: ToolSpec[], react: boole
     'just describe it. Call one tool at a time; use each result to decide the next',
     'step. When the goal is met, stop and give a concise final summary of what you',
     'did (files committed, preview URL, deploy-review status).',
+    discoveryDirective(tools),
     '',
     'Your plan:',
     plan,
@@ -144,6 +184,88 @@ function actSystem(system: string, plan: string, tools: ToolSpec[], react: boole
     toolList,
     react ? REACT_INSTRUCTIONS : '',
   ].join('\n');
+}
+
+const DEFAULT_MESSAGE_BUDGET = 24_000;
+
+function messagesTokens(messages: LlmMessage[]): number {
+  return messages.reduce((n, m) => n + estimateTokens(m.content ?? ''), 0);
+}
+
+/**
+ * Bound an ACT-loop `messages[]` to `budget` tokens — the fix for the LiteLLM 400
+ * ContextWindowExceededError. The loop appended full, uncapped tool results, and
+ * (in the multi-node graph) inherited the whole transcript, compounding past the
+ * model window. This caps every model call at a hard input ceiling.
+ *
+ * PROTOCOL-SAFE: the leading `system` + `user` turns are PINNED (the task spine),
+ * and the conversation tail is bounded WITHOUT breaking the OpenAI tool-call
+ * contract — a `role:'tool'` result must stay paired with the `assistant` turn
+ * that requested it. So we (1) COMPACT every oversized tool/assistant body in
+ * place (row-set → header+first-N; long text → head+tail), then (2) if still over,
+ * drop OLDEST turns first while always keeping the pinned head and the most recent
+ * turn. As a last resort the pinned head itself is truncated so the ceiling holds.
+ */
+export function budgetMessages(messages: LlmMessage[], budget: number): LlmMessage[] {
+  if (messagesTokens(messages) <= budget) return messages;
+
+  // Pinned head: the leading system message(s) + the initial user turn(s), before
+  // the first assistant/tool turn. These are the task spine and are never dropped.
+  let head = 0;
+  while (head < messages.length && (messages[head].role === 'system' || messages[head].role === 'user')) {
+    head += 1;
+  }
+  const pinned = messages.slice(0, head);
+  const tail = messages.slice(head);
+
+  // (1) Compact oversized tool/assistant bodies in place.
+  const compacted = tail.map((m) =>
+    (m.role === 'tool' || m.role === 'assistant') && m.content
+      ? { ...m, content: compactToolResult(m.content) }
+      : m,
+  );
+
+  // (2) Drop oldest tail turns until it fits, but keep at least the last message.
+  const pinnedTokens = messagesTokens(pinned);
+  let start = 0;
+  while (
+    start < compacted.length - 1 &&
+    pinnedTokens + messagesTokens(compacted.slice(start)) > budget
+  ) {
+    // Advance past a whole turn: an assistant(tool_calls) + its trailing tool msgs.
+    start += 1;
+    while (start < compacted.length - 1 && compacted[start].role === 'tool') start += 1;
+  }
+  const keptTail = compacted.slice(start);
+
+  // (2b) If the pinned head fits but head + kept tail still overflows (a single
+  // large last turn that compaction couldn't shrink enough), truncate the last
+  // kept message to close the remaining gap — the ceiling is non-negotiable.
+  if (pinnedTokens <= budget && keptTail.length > 0) {
+    const overflow = pinnedTokens + messagesTokens(keptTail) - budget;
+    if (overflow > 0) {
+      const lastIdx = keptTail.length - 1;
+      const last = keptTail[lastIdx];
+      const allowed = Math.max(0, estimateTokens(last.content) - overflow);
+      keptTail[lastIdx] = { ...last, content: truncateToTokens(last.content, allowed) };
+    }
+  }
+
+  // (3) Last resort: pinned head alone still over budget → truncate it to fit.
+  if (pinnedTokens > budget) {
+    const shrunk: LlmMessage[] = [];
+    let used = 0;
+    for (const m of pinned) {
+      const remaining = budget - used;
+      if (remaining <= 0) break;
+      const text = estimateTokens(m.content) > remaining ? truncateToTokens(m.content, remaining) : m.content;
+      shrunk.push({ ...m, content: text });
+      used += estimateTokens(text);
+    }
+    return shrunk;
+  }
+
+  return [...pinned, ...keptTail];
 }
 
 /**
@@ -162,17 +284,28 @@ export async function runAgentic(opts: {
   planModel: string;
   actModel: string;
   maxIterations?: number;
+  /**
+   * Input token budget for EVERY model call — the hard ceiling the assembled
+   * messages are bounded to (fixes the LiteLLM 400 ContextWindowExceededError).
+   * The server wiring passes the model window minus reserved output; unset uses a
+   * safe default.
+   */
+  budget?: number;
+  /** Cap on the model's own output per call (the reserved-output tail). */
+  maxOutputTokens?: number;
   /** Optional progress hook — called after each governed tool step executes. */
   onStep?: (step: AgenticStep) => void;
 }): Promise<AgenticResult> {
   const maxIterations = opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+  const budget = opts.budget ?? DEFAULT_MESSAGE_BUDGET;
   const user = opts.userMessages.map((m) => ({ role: m.role, content: m.content }));
 
-  // (a) PLAN — reasoning tier, no tools.
+  // (a) PLAN — reasoning tier, no tools. Budget the plan prompt too.
   const planCompletion = await opts.llm({
     model: opts.planModel,
-    messages: [{ role: 'system', content: planPrompt(opts.system) }, ...user],
+    messages: budgetMessages([{ role: 'system', content: planPrompt(opts.system) }, ...user], budget),
     temperature: 0.2,
+    maxTokens: opts.maxOutputTokens,
   });
   const plan = stripThinking(planCompletion.content) || '(no plan produced)';
 
@@ -192,9 +325,10 @@ export async function runAgentic(opts: {
     try {
       completion = await opts.llm({
         model: opts.actModel,
-        messages,
+        messages: budgetMessages(messages, budget),
         tools: react ? undefined : wire,
         temperature: 0.2,
+        maxTokens: opts.maxOutputTokens,
       });
     } catch (e) {
       // Native tool-calling unsupported → rebuild the system prompt with the ReAct

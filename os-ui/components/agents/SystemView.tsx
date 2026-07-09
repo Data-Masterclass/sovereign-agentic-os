@@ -39,6 +39,20 @@ const GraphCanvas = dynamic(() => import('./GraphCanvas'), {
 
 type LastBuildRow = { tool: string; applied: boolean; verified: boolean; status: 'ok' | 'fail'; detail: string; error?: string };
 type LastBuild = { ok: boolean; at: number; rows: LastBuildRow[] };
+type ActivityMarker = { kind: 'building' | 'running'; startedAt: number };
+type LastRun = {
+  at: number;
+  running: boolean;
+  ok: boolean;
+  path: string[];
+  traces: number;
+  held: number;
+  steps: { node: string; tool: string; effect: string; ran?: boolean }[];
+  output?: string;
+  mode?: 'live' | 'offline-mock';
+  traceStoreAvailable?: boolean;
+  traceUrl?: string;
+};
 
 type SystemViewData = {
   id: string;
@@ -52,6 +66,8 @@ type SystemViewData = {
   disabledAgents: string[];
   lastActivity: string | null;
   lastBuild: LastBuild | null;
+  activity: ActivityMarker | null;
+  lastRun: LastRun | null;
   system: System;
   ir: unknown;
   compileError: string | null;
@@ -338,10 +354,10 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
           <MonacoFile systemId={systemId} path="system.yaml" canEdit={data.canEdit} height={420} reloadSignal={reloadKey} onSaved={reloadAll} />
         ) : null}
         {panel === 'grants' ? (
-          <GrantsRouting systemId={systemId} system={sys} canEdit={data.canEdit} canDirectWrite={roleAtLeast(data.role, 'builder')} models={models} routing={routingData} onChanged={reloadAll} />
+          <GrantsRouting systemId={systemId} system={sys} canEdit={data.canEdit} canDirectWrite={roleAtLeast(data.role, 'builder')} roles={{ reasoning: modelsData?.roles?.reasoning || 'sovereign-reasoning', standard: modelsData?.roles?.standard || 'sovereign-default' }} routing={routingData} onChanged={reloadAll} />
         ) : null}
         {panel === 'build' ? (
-          <BuildRunPanel systemId={systemId} running={data.running} canEdit={data.canEdit} lastBuild={data.lastBuild} onStateChange={reloadAll} />
+          <BuildRunPanel systemId={systemId} running={data.running} canEdit={data.canEdit} lastBuild={data.lastBuild} activity={data.activity} lastRun={data.lastRun} onStateChange={reloadAll} />
         ) : null}
       </div>
 

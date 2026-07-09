@@ -151,6 +151,24 @@ export function chunkWorkflow(input: IndexInputs): KnowledgeUnit[] {
     });
   }
 
+  // 4) Workflow markdown body — prose sections not already captured as steps/rules/tacit.
+  //    Strip fenced step blocks and inline tacit blockquotes (already indexed above),
+  //    then split the remainder by heading so each prose section becomes a citable unit.
+  if (workflow.body && workflow.body.trim()) {
+    const prose = stripStructuredBlocks(workflow.body);
+    if (prose) {
+      const sections = splitTacit(prose);
+      sections.forEach((sec, i) => {
+        units.push({
+          id: `${workflow.id}:body:${i}`,
+          title: `${workflow.title}${sec.heading ? ` — ${sec.heading}` : ''}`,
+          text: sec.text,
+          provenance: prov({ type: 'workflow', trust: baseTrust, authority: 0.65 }),
+        });
+      });
+    }
+  }
+
   return units;
 }
 
@@ -176,6 +194,32 @@ export function chunkDomain(dk: DomainKnowledge, owner = 'domain'): KnowledgeUni
         authority: 0.7,
       },
     }));
+}
+
+/**
+ * Remove structured blocks already captured by step/rule/tacit chunking:
+ * - fenced ```step … ``` blocks
+ * - inline tacit blockquotes (lines starting with `> tacit:`)
+ * Returns the remaining prose (headings + free text), trimmed of leading/trailing blank lines.
+ */
+export function stripStructuredBlocks(body: string): string {
+  const lines = body.replace(/\r\n/g, '\n').split('\n');
+  const out: string[] = [];
+  let inStep = false;
+  for (const line of lines) {
+    if (!inStep && /^```step\s*$/.test(line.trim())) {
+      inStep = true;
+      continue;
+    }
+    if (inStep) {
+      if (/^```\s*$/.test(line.trim())) inStep = false;
+      continue;
+    }
+    // Skip inline tacit blockquotes (already emitted as tacit units).
+    if (/^>\s*tacit:/i.test(line.trim())) continue;
+    out.push(line);
+  }
+  return out.join('\n').trim();
 }
 
 /** Split a tacit markdown doc into heading-delimited sections (pure). */

@@ -3,8 +3,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { Connection } from './connection-model.ts';
-import type { SecretRef } from './secrets.ts';
+import type { Connection } from './schema.ts';
+import type { SecretRef } from '../secrets.ts';
 import { purgePlan, purgeConnectionSecrets } from './connections-physical-delete.ts';
 
 function conn(over: Partial<Connection> = {}): Connection {

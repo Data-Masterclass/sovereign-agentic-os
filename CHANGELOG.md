@@ -15,6 +15,27 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.71] — 2026-07-10
+
+### Agents / context (the 200K fix)
+- **Context Assembler** — a first-class, budget-aware context builder (`lib/infra/context/`) with a model-context registry (per-model window + reserved output, admin/env-overridable), tool-result **compaction** (row-sets → header + sample + "…N more", long text → head/tail), and a greedy pinned-first pack that **guarantees the prompt never exceeds the model window**. Wired into the single-agent harness, the multi-node graph handoff (assembled summary, not the full transcript), **and Ask the OS**. Fixes the `ContextWindowExceededError` (200K) agent-run failures. Ships with an embedding-relevance seam for Phase 2.
+- **Agent data discovery** — an agent granted `query_data` now auto-gets `list_datasets`/`get_dataset`/`profile_dataset` (and knowledge/files equivalents), plus a "discover-before-you-act, never guess identifiers" directive, so agents resolve real FQNs instead of hallucinating table names.
+- **Stale-FQN defense** — the ACT prompt now treats any table name in an agent's stored instructions as possibly stale and re-resolves to the current domain-gold FQN (a promoted dataset lives at `iceberg.<domain>.gold_<slug>`, never the owner's `personal_<uid>` lane).
+- **Workspace default routing** now offers only **Standard / Reasoning** (the live admin role models), not the raw LiteLLM catalog.
+- **Build/Run persistence** — a persisted activity marker + last-run report, so returning to the Agents tab shows "building/running…" or the last outcome instead of a blank slate.
+
+### Knowledge
+- **Tacit knowledge over MCP** — `author_knowledge` now takes per-step **and** workflow-level (`TACIT.md`) `tacit`; the knowledge guide (which described a non-existent `type`/`body`/`actors` API) is rewritten to the real tool.
+- **Markdown-only knowledge is retrievable** — the chunker now chunks the workflow's prose body into citable units (previously prose-only workflows indexed 0 units).
+- Knowledge tab sub-area **"Knowledge" → "General"** (siblings: General + Workflows).
+
+### Data / Nav
+- **Data tab: "Talk to Data"** replaces the raw Query-the-Lakehouse SQL editor (raw SQL lives in the Admin **Query** console); NL question → governed `/api/data/ask` → answer + results + the SQL it ran.
+- **Users & Access** now lives only under **Admin** (removed the duplicate from Governance).
+
+### Refactor (Phase 1a)
+- **Connections** consolidated into `lib/connections/` as the reference **tab-module** (index/schema/store/README) per the new `ARCHITECTURE.md` contract.
+
 ## [os-ui 0.1.70] — 2026-07-09
 
 Agent data-plane hardening — from a live end-to-end test of an agent reading/writing data, files, and knowledge through Trino/dbt/OPA.

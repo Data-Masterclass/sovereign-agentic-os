@@ -16,7 +16,7 @@
  * for write access.
  */
 
-import type { ConnectionTemplateKey } from '@/lib/connection-model';
+import type { ConnectionTemplateKey } from '@/lib/connections/schema';
 import type { Provider as FilesProvider } from '@/lib/files/connectors';
 
 export type OAuthProvider = 'google' | 'microsoft';

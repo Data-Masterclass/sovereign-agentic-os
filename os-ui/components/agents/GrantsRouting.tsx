@@ -6,7 +6,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { commitSystem } from './commitSystem';
 import type { ArtifactGrant, Capability, System } from '@/lib/agents/system-schema';
-import { modelInfo, type ModelInfo } from '@/lib/agents/routing';
+import { modelInfo } from '@/lib/agents/routing';
 
 /** Mirrors CatalogEntry from lib/agents/tool-catalog — client-safe (no server import). */
 type CatalogEntry = {
@@ -77,7 +77,7 @@ export default function GrantsRouting({
   system,
   canEdit,
   canDirectWrite,
-  models,
+  roles,
   routing,
   onChanged,
 }: {
@@ -86,7 +86,9 @@ export default function GrantsRouting({
   canEdit: boolean;
   /** True when the current user ranks builder+ (may select Write (direct)). */
   canDirectWrite: boolean;
-  models: ModelInfo[];
+  /** The LIVE platform-admin role models the Standard/Reasoning options pin to —
+   *  the only two choices agent routing offers (same as the per-agent picker). */
+  roles: { reasoning: string; standard: string };
   routing: RoutingData | null;
   onChanged: () => void | Promise<void>;
 }) {
@@ -357,11 +359,11 @@ export default function GrantsRouting({
 
       <div className="section-title">Workspace default routing</div>
       <p className="hint" style={{ marginTop: 0 }}>
-        The <strong>Auto</strong> fallback every agent uses when it isn’t pinned to a specific model.
-        Cheap-first: light work → Standard, reasoning → Reasoning, vision → the vision model. An individual
+        The default an agent uses when it isn’t pinned to a specific tier. Cheap-first:
+        light work → <strong>Standard</strong>, deep reasoning → <strong>Reasoning</strong>. An individual
         agent can override this from its own <strong>How this agent thinks</strong> toggle
-        (Auto / Standard / Reasoning). A per-activity override here writes the system’s LiteLLM routing
-        config, applied on Build.
+        (Auto / Standard / Reasoning). A per-activity override here — Standard or Reasoning —
+        writes the system’s routing config, applied on Build.
       </p>
       <div className="table-wrap">
         <table>
@@ -392,12 +394,12 @@ export default function GrantsRouting({
                         })}
                         style={{ minWidth: 240 }}
                       >
+                        {/* Agent routing offers only the two governed tiers —
+                            Standard + Reasoning — pinned to the LIVE admin role
+                            models (never the raw LiteLLM catalog). */}
                         <option value="">— default —</option>
-                        {models.map((m) => (
-                          <option key={m.model_name} value={m.model_name}>
-                            {m.display} — {m.provenance === 'internal' ? 'in-box' : 'hosted'}
-                          </option>
-                        ))}
+                        <option value={roles.standard}>Standard</option>
+                        <option value={roles.reasoning}>Reasoning</option>
                       </select>
                     ) : (
                       <span className="mono" style={{ fontSize: 12 }}>{override ?? '—'}</span>

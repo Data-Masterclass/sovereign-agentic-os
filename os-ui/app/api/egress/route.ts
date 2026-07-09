@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { requestEgress, listEgressRequests, egressLog, ensureHydrated } from '@/lib/egress-requests';
+import { requestEgress, listEgressRequests, egressLog, ensureHydrated } from '@/lib/connections';
 import { egressHost } from '@/lib/secrets';
 import { roleAtLeast } from '@/lib/session';
 

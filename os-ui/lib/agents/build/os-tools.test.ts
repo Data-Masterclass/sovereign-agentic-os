@@ -75,8 +75,39 @@ test('alias map resolves legacy names to MCP names', () => {
 
 test('resolveGrantedTools maps legacy grants and flags unmapped, deduped', () => {
   const r = resolveGrantedTools(sysWith(['retrieve', 'metrics', 'query_data', 'retrieve', 'web_fetch']));
-  assert.deepEqual(r.mcpNames, ['search_knowledge', 'list_metrics', 'query_data']); // deduped, order-preserved
+  // deduped, order-preserved, then discovery companions appended (search_knowledge→
+  // list_knowledge; query_data→list_datasets/get_dataset/profile_dataset).
+  assert.deepEqual(r.mcpNames, [
+    'search_knowledge',
+    'list_metrics',
+    'query_data',
+    'list_knowledge',
+    'list_datasets',
+    'get_dataset',
+    'profile_dataset',
+  ]);
   assert.deepEqual(r.unmapped, ['web_fetch']);
+});
+
+// --- discovery companions (#97: discover, don't guess) -----------------------
+
+test('resolveGrantedTools auto-grants discovery companions for a data/query tool', () => {
+  const r = resolveGrantedTools(sysWith(['query_data']));
+  for (const companion of ['list_datasets', 'get_dataset', 'profile_dataset']) {
+    assert.ok(r.mcpNames.includes(companion), `query_data auto-grants ${companion}`);
+  }
+});
+
+test('resolveGrantedTools auto-grants list_knowledge with search_knowledge and file discovery with a file read', () => {
+  assert.ok(resolveGrantedTools(sysWith(['search_knowledge'])).mcpNames.includes('list_knowledge'));
+  const files = resolveGrantedTools(sysWith(['get_file'])).mcpNames;
+  assert.ok(files.includes('list_files') && files.includes('search_files'));
+});
+
+test('discovery companions are grant-scoped: an agent with no action tool gets no companions', () => {
+  // Granting ONLY list_datasets (a discovery tool) pulls in nothing extra — the
+  // expansion never introduces a tool not earned by an already-granted action tool.
+  assert.deepEqual(resolveGrantedTools(sysWith(['list_datasets'])).mcpNames, ['list_datasets']);
 });
 
 // --- isAgenticOsTeam ---------------------------------------------------------
@@ -101,9 +132,19 @@ test('grantedToolSpecs role-scopes and narrows to node tools', () => {
   assert.ok(!creatorSpecs.includes('approve_promotion'));
   // A builder sees it.
   assert.ok(grantedToolSpecs(BUILDER, sys).map((s) => s.name).includes('approve_promotion'));
-  // Node narrowing (alias-resolved) keeps only the node's own tools.
+  // Node narrowing (alias-resolved) keeps the node's own tools + their discovery
+  // companions (search_knowledge → list_knowledge).
   const narrowed = grantedToolSpecs(CREATOR, sys, ['retrieve']).map((s) => s.name);
-  assert.deepEqual(narrowed, ['search_knowledge']);
+  assert.deepEqual(narrowed, ['search_knowledge', 'list_knowledge']);
+});
+
+test('grantedToolSpecs: a node granted query_data also sees the discovery companions', () => {
+  const sys = sysWith(['query_data']);
+  const specs = grantedToolSpecs(CREATOR, sys, ['query_data']).map((s) => s.name);
+  assert.ok(specs.includes('query_data'));
+  for (const companion of ['list_datasets', 'get_dataset', 'profile_dataset']) {
+    assert.ok(specs.includes(companion), `node sees ${companion}`);
+  }
 });
 
 // --- executor: the double gate ----------------------------------------------

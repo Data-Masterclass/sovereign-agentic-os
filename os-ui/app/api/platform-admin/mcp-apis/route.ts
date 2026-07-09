@@ -8,7 +8,7 @@ import { ALL_MCP_TOOLS, MCP_TABS } from '@/lib/mcp/server';
 import { listAppsForUser } from '@/lib/apps';
 import { getConnectionByApp } from '@/lib/app-registry';
 import { listConnectionsForUser } from '@/lib/connections';
-import { isExposed } from '@/lib/connection-model';
+import { isExposed } from '@/lib/connections';
 import {
   buildMcpRegistry,
   STACK_MCP_SERVERS,

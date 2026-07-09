@@ -4,8 +4,7 @@
 import 'server-only';
 import { config } from '@/lib/config';
 import { listMarketplace, getArtifact, addFromMarketplace, createArtifact } from '@/lib/artifacts';
-import { createConnection } from '@/lib/connections';
-import { templateByKey, type ConnectionTemplateKey } from '@/lib/connection-model';
+import { createConnection, templateByKey, type ConnectionTemplateKey } from '@/lib/connections';
 import { enqueue } from '@/lib/approvals';
 import type { CurrentUser } from '@/lib/auth';
 import { roleAtLeast } from '@/lib/session';

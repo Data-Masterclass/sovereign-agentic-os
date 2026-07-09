@@ -9,9 +9,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { templateByKey } from './connection-model.ts';
+import { templateByKey } from './schema.ts';
 import { adapterFor } from './connection-adapters.ts';
-import { compileConnectionProfile, decide, exposedTools } from './capability-compiler.ts';
+import { compileConnectionProfile, decide, exposedTools } from '../capability-compiler.ts';
 import {
   rememberPolicy,
   matchStandingPolicy,
@@ -20,8 +20,8 @@ import {
   setAgentPreset,
   _clearStandingPolicies,
   _clearPresets,
-} from './governance.ts';
-import { registerBronzeSource, bronzeFor, _clearHandoffs } from './data-handoff.ts';
+} from '../governance.ts';
+import { registerBronzeSource, bronzeFor, _clearHandoffs } from '../data-handoff.ts';
 import { requestEgress, decideEgress, isHostApproved, _clearEgress } from './egress-requests.ts';
 
 function bundleFor(templateKey: string, grants: { agent: string; tools: string[] }[] = []) {

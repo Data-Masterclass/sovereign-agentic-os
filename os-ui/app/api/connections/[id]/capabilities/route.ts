@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { updateCapabilities } from '@/lib/connections';
-import type { CapabilityMode, CapabilityLimits } from '@/lib/connection-model';
+import type { CapabilityMode, CapabilityLimits } from '@/lib/connections';
 
 export const dynamic = 'force-dynamic';
 

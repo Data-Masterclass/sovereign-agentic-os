@@ -178,6 +178,92 @@ test('falls back to the ReAct JSON protocol when the model rejects the tools par
   assert.equal(res.finalText, 'All set via ReAct.');
 });
 
+test('the ACT system prompt carries the discover-then-query directive when a data tool is present', async () => {
+  // Capture the system message the ACT call sees. With query_data available the
+  // prompt must tell the model to list_datasets→get_dataset for the EXACT FQN and
+  // never guess a schema/table (#97).
+  const actSystems: string[] = [];
+  const llm: LlmCall = async (req) => {
+    if (req.tools) actSystems.push(req.messages.find((m) => m.role === 'system')?.content ?? '');
+    return { content: req.tools ? 'done' : 'plan', toolCalls: [] };
+  };
+  const dataTools: ToolSpec[] = [
+    { name: 'query_data', description: 'Run a SQL query.', inputSchema: { type: 'object', properties: {} } },
+    { name: 'list_datasets', description: 'List datasets.', inputSchema: { type: 'object', properties: {} } },
+    { name: 'get_dataset', description: 'Get a dataset.', inputSchema: { type: 'object', properties: {} } },
+  ];
+  await runAgentic({
+    system: 'sys',
+    userMessages: [{ role: 'user', content: 'how many rows?' }],
+    tools: dataTools,
+    callTool: async () => ({ text: 'ok', isError: false }),
+    llm,
+    planModel: 'r',
+    actModel: 'e',
+  });
+  const prompt = actSystems[0] ?? '';
+  assert.match(prompt, /DISCOVER BEFORE YOU ACT/);
+  assert.match(prompt, /list_datasets/);
+  assert.match(prompt, /get_dataset/);
+  assert.match(prompt, /iceberg\.<schema>\.<table>/);
+  assert.match(prompt, /never guess/i);
+});
+
+test('the ACT prompt overrides a STALE personal_<uid> FQN toward the promoted domain gold', async () => {
+  // Cowork #0.1.70: agents kept querying a remembered `personal_aborek.*` (or a
+  // hallucinated table) after a dataset was promoted to a DOMAIN gold asset. The
+  // runtime never injects an FQN itself — but a stale one baked into the role prompt
+  // (AGENT.md) would mislead. The DATA directive must tell the model to treat any such
+  // name as a hint, re-resolve via get_dataset/profile_dataset, and query the domain
+  // gold path (iceberg.<domain>.gold_<slug>), NEVER the owner's personal_<uid> lane.
+  const actSystems: string[] = [];
+  const llm: LlmCall = async (req) => {
+    if (req.tools) actSystems.push(req.messages.find((m) => m.role === 'system')?.content ?? '');
+    return { content: req.tools ? 'done' : 'plan', toolCalls: [] };
+  };
+  const dataTools: ToolSpec[] = [
+    { name: 'query_data', description: 'Run a SQL query.', inputSchema: { type: 'object', properties: {} } },
+    { name: 'list_datasets', description: 'List datasets.', inputSchema: { type: 'object', properties: {} } },
+    { name: 'get_dataset', description: 'Get a dataset.', inputSchema: { type: 'object', properties: {} } },
+    { name: 'profile_dataset', description: 'Profile a dataset.', inputSchema: { type: 'object', properties: {} } },
+  ];
+  await runAgentic({
+    // A role prompt carrying the exact stale FQN from the live incident.
+    system: 'Query iceberg.personal_aborek.gold_campaign_data for the totals.',
+    userMessages: [{ role: 'user', content: 'how many rows?' }],
+    tools: dataTools,
+    callTool: async () => ({ text: 'ok', isError: false }),
+    llm,
+    planModel: 'r',
+    actModel: 'e',
+  });
+  const prompt = actSystems[0] ?? '';
+  // The directive names the CORRECT promoted target shape and warns off the stale lane.
+  assert.match(prompt, /iceberg\.<domain>\.gold_<slug>/);
+  assert.match(prompt, /STALE/);
+  assert.match(prompt, /personal_<uid>/);
+  assert.match(prompt, /re-resolve/i);
+});
+
+test('the discovery directive is omitted when no data/knowledge/files tool is present', async () => {
+  // A software-only agent (commit/request_deploy) gets no data directive clutter.
+  const actSystems: string[] = [];
+  const llm: LlmCall = async (req) => {
+    if (req.tools) actSystems.push(req.messages.find((m) => m.role === 'system')?.content ?? '');
+    return { content: req.tools ? 'done' : 'plan', toolCalls: [] };
+  };
+  await runAgentic({
+    system: 'sys',
+    userMessages: [{ role: 'user', content: 'ship' }],
+    tools: TOOLS,
+    callTool: async () => ({ text: 'ok', isError: false }),
+    llm,
+    planModel: 'r',
+    actModel: 'e',
+  });
+  assert.doesNotMatch(actSystems[0] ?? '', /DISCOVER BEFORE YOU ACT/);
+});
+
 test('displayed text is guarded — leaked <think> reasoning is stripped', async () => {
   const { llm } = scriptLlm([
     { content: '<think>secret plan</think>1. do it' },

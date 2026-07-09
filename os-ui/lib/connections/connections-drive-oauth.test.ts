@@ -17,8 +17,8 @@ import assert from 'node:assert/strict';
 const _realFetch = globalThis.fetch;
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 
-const { createConnection, storeConnectionTokens, resolveConnectionAccessToken, __resetConnections } = await import('./connections.ts');
-const { liveClientFor } = await import('./files/connectors-live.ts');
+const { createConnection, storeConnectionTokens, resolveConnectionAccessToken, __resetConnections } = await import('./store.ts');
+const { liveClientFor } = await import('../files/connectors-live.ts');
 
 const owner = { id: 'amir', name: 'Amir', domains: ['sales'], role: 'creator' as const };
 const nowSec = () => Math.floor(Date.now() / 1000);

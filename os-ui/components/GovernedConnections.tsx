@@ -5,7 +5,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { CAPABILITY_MODES, type CapabilityMode, type ConnectionTemplateKey } from '@/lib/connection-model';
+import { CAPABILITY_MODES, type CapabilityMode, type ConnectionTemplateKey } from '@/lib/connections/schema';
 import { roleAtLeast, type Role } from '@/lib/session';
 import { SCOPE_GROUPS, groupByScope, groupsFromVisibility, scopeCounts, type ScopeKey } from '@/lib/scopes';
 import { providerForTemplate, providerConfig, type OAuthProvider } from '@/lib/oauth/providers';
@@ -14,7 +14,7 @@ import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import type { Visibility } from '@/lib/lifecycle';
 import DomainTag from '@/components/DomainTag';
-import { CONNECTORS, CONNECTOR_CATEGORIES } from '@/lib/connectors';
+import { CONNECTORS, CONNECTOR_CATEGORIES } from '@/lib/connections/connectors';
 import { useApi } from '@/lib/useApi';
 
 /**

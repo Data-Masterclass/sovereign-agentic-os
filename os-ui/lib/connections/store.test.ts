@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 // and getCache() initialises an empty in-process Map (offline mode).
 const _realFetch = globalThis.fetch;
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
-const { listConnectionsForUser, __resetConnections } = await import('./connections.ts');
+const { listConnectionsForUser, __resetConnections } = await import('./store.ts');
 
 const CONN_KEY = Symbol.for('soa.connections.cache');
 const user = { id: 'u1', name: 'U1', domains: ['sales'], role: 'admin' as const };

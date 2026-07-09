@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/auth';
-import { decideEgress } from '@/lib/egress-requests';
+import { decideEgress } from '@/lib/connections';
 
 export const dynamic = 'force-dynamic';
 

@@ -29,13 +29,11 @@ import {
   getConnectionForUser,
   createConnection,
   testConnection,
-} from '@/lib/connections';
-import { promoteThroughSeam } from '@/lib/governance/ladder';
-import {
   CONNECTION_TEMPLATES,
   isPersonalConnectable,
   type ConnectionTemplateKey,
-} from '@/lib/connection-model';
+} from '@/lib/connections';
+import { promoteThroughSeam } from '@/lib/governance/ladder';
 import { scaffoldCubeYaml, cubeViewName } from '@/lib/data/metrics';
 import { cubeDeliverable } from '@/lib/data/cube-models';
 import { loadGuide, isGuidePath, GUIDE_PATHS } from '@/lib/tabs/guides';

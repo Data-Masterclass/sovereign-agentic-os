@@ -48,6 +48,28 @@ export type LastBuildRow = {
 /** The last build outcome persisted server-side so it survives tab-switches + reloads. */
 export type LastBuild = { ok: boolean; at: number; rows: LastBuildRow[] };
 
+/**
+ * Lightweight in-progress marker written at the START of a build or run and
+ * cleared in the route's `finally` block. A returning user sees "building since
+ * …" / "running since …" rather than a stale blank slate.
+ */
+export type ActivityMarker = { kind: 'building' | 'running'; startedAt: number };
+
+/** The last interactive run report — persisted so navigating away and back does not wipe it. */
+export type LastRun = {
+  at: number;
+  running: boolean;
+  ok: boolean;
+  path: string[];
+  traces: number;
+  held: number;
+  steps: { node: string; tool: string; effect: string; ran?: boolean }[];
+  output?: string;
+  mode?: 'live' | 'offline-mock';
+  traceStoreAvailable?: boolean;
+  traceUrl?: string;
+};
+
 export type SystemRecord = {
   id: string;
   name: string;
@@ -66,6 +88,10 @@ export type SystemRecord = {
   lastActivity: string | null;
   /** Last build outcome. Absent on records created before this field was added. */
   lastBuild?: LastBuild;
+  /** In-progress marker: set at start of build/run, cleared in finally. */
+  activity?: ActivityMarker;
+  /** Last interactive run report. Absent until the first run completes. */
+  lastRun?: LastRun;
   /** Soft-archived: hidden from the working lists, reversible, retained. */
   archived?: boolean;
 };
@@ -134,6 +160,8 @@ const mirror = osMirror({
         schedule: { type: 'object', enabled: false },
         disabledAgents: { type: 'keyword' },
         lastBuild: { type: 'object', enabled: false },
+        activity: { type: 'object', enabled: false },
+        lastRun: { type: 'object', enabled: false },
         archived: { type: 'boolean' },
       },
     },
@@ -593,6 +621,41 @@ export function recordActivity(systemId: string): void {
 export function setLastBuild(systemId: string, user: Principal, build: LastBuild): SystemRecord {
   const rec = requireEdit(systemId, user);
   rec.lastBuild = build;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+/**
+ * Mark a build or run as in-progress. Written at the START of the operation so a
+ * returning user sees the "building since…/running since…" state even before the
+ * operation finishes. The corresponding route clears it in `finally` via
+ * {@link clearActivity}.
+ */
+export function setActivity(systemId: string, marker: ActivityMarker): void {
+  const rec = state().store.get(systemId);
+  if (!rec) return;
+  rec.activity = marker;
+  writeThrough(rec);
+}
+
+/** Clear the in-progress marker once a build or run completes (or errors). */
+export function clearActivity(systemId: string): void {
+  const rec = state().store.get(systemId);
+  if (!rec) return;
+  delete rec.activity;
+  writeThrough(rec);
+}
+
+/**
+ * Persist the last interactive run report so it survives tab-switches and page
+ * reloads. Mirrored the same way as {@link setLastBuild}: edit-scoped so a mere
+ * viewer or run-only consumer cannot overwrite the record. The route calls this
+ * immediately after a successful run.
+ */
+export function setLastRun(systemId: string, user: Principal, run: LastRun): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  rec.lastRun = run;
   rec.updatedAt = now();
   writeThrough(rec);
   return rec;

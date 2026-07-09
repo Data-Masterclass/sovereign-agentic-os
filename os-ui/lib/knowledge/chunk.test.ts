@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseWorkflow, emptyDomainKnowledge } from './schema.ts';
-import { chunkWorkflow, chunkDomain, splitTacit } from './chunk.ts';
+import { chunkWorkflow, chunkDomain, splitTacit, stripStructuredBlocks } from './chunk.ts';
 
 const WF = `---
 id: bank-submission
@@ -101,4 +101,69 @@ test('splitTacit returns one section when there are no headings', () => {
   const out = splitTacit('just a paragraph with no heading');
   assert.equal(out.length, 1);
   assert.equal(out[0].heading, '');
+});
+
+// ---------------------------------------------------------------- body chunking ---
+
+const MARKDOWN_ONLY_WF = `---
+id: wf-briefing
+title: Team Briefing
+domain: ops
+visibility: Shared
+status: live
+version: "1"
+rules: []
+---
+
+# Purpose
+
+This briefing explains the quarterly review cadence and expectations for all team leads.
+
+# Key Dates
+
+Review windows open on the first Monday of each quarter and close within five business days.
+`;
+
+test('markdown-only workflow (no steps/rules) yields ≥1 body unit whose text contains the prose', () => {
+  const units = chunkWorkflow({ workflow: parseWorkflow(MARKDOWN_ONLY_WF), owner: 'alex' });
+  const bodyUnits = units.filter((u) => u.id.startsWith('wf-briefing:body:'));
+  assert.ok(bodyUnits.length >= 1, 'expected at least 1 body unit');
+  const allText = bodyUnits.map((u) => u.text).join('\n');
+  assert.ok(allText.includes('quarterly review cadence'), 'prose text must be present in body units');
+});
+
+test('markdown-only workflow body units carry workflow provenance type', () => {
+  const units = chunkWorkflow({ workflow: parseWorkflow(MARKDOWN_ONLY_WF), owner: 'alex' });
+  const bodyUnits = units.filter((u) => u.id.startsWith('wf-briefing:body:'));
+  assert.ok(bodyUnits.every((u) => u.provenance.type === 'workflow'));
+});
+
+test('workflow with steps + markdown intro emits both step units and body-section units, no duplication', () => {
+  const wf = parseWorkflow(WF);
+  const units = chunkWorkflow({ workflow: wf, owner: 'amir' });
+
+  const stepUnits = units.filter((u) => /^bank-submission:step:/.test(u.id));
+  const bodyUnits = units.filter((u) => /^bank-submission:body:/.test(u.id));
+
+  // Should still have the two step units.
+  assert.equal(stepUnits.length, 2, 'step units must be preserved');
+
+  // The WF fixture has no prose heading sections outside step blocks,
+  // so body units may be 0 — but NO unit text should contain raw ```step fences.
+  const allText = units.map((u) => u.text).join('\n');
+  assert.ok(!allText.includes('```step'), 'raw step fences must not appear in any unit text');
+
+  // No unit id should appear twice.
+  const ids = units.map((u) => u.id);
+  const unique = new Set(ids);
+  assert.equal(ids.length, unique.size, 'unit ids must be unique (no duplication)');
+});
+
+test('stripStructuredBlocks removes step fences and tacit blockquotes but keeps prose', () => {
+  const body = '# Intro\nSome prose.\n\n```step\nid: s1\ntitle: Do it\n```\n\n> tacit: Watch out.\n\n# Notes\nMore prose.';
+  const result = stripStructuredBlocks(body);
+  assert.ok(!result.includes('```step'), 'step fences removed');
+  assert.ok(!result.includes('tacit:'), 'tacit blockquotes removed');
+  assert.ok(result.includes('Some prose.'), 'prose kept');
+  assert.ok(result.includes('More prose.'), 'trailing prose kept');
 });

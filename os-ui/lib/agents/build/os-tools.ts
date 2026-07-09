@@ -69,6 +69,48 @@ export function resolveAlias(name: string): string {
   return OS_TOOL_ALIASES[name] ?? name;
 }
 
+/**
+ * DISCOVERY COMPANIONS — the read-only, governed tools an agent needs to LEARN
+ * what to query instead of GUESSING it (#97). Whenever an action tool is granted,
+ * its discovery siblings are auto-granted so the agent can list→inspect the exact
+ * resource (e.g. the fully-qualified `iceberg.<schema>.<table>`) before acting.
+ * Every companion is a read tool (no write-approval hold), stays grant-scoped
+ * (added only alongside a tool that was already granted, never blanket), and is
+ * still double-gated at execution — so this only widens *discovery*, never authority.
+ */
+export const DISCOVERY_COMPANIONS: Record<string, string[]> = {
+  // Data: to query a table you must first learn its exact FQN + columns.
+  query_data: ['list_datasets', 'get_dataset', 'profile_dataset'],
+  // Knowledge: browse the catalog before a semantic search.
+  search_knowledge: ['list_knowledge'],
+  // Files: enumerate/search before reading a specific file.
+  get_file: ['list_files', 'search_files'],
+  read_app_files: ['list_files', 'search_files'],
+};
+
+/**
+ * Expand a list of resolved MCP tool names to include their discovery companions,
+ * order-preserved and deduped (companions appended after the tool that pulled them
+ * in). A companion is added only if the tool that triggers it is present — the
+ * expansion never introduces a tool that wasn't earned by an already-granted action
+ * tool, so it stays grant-scoped.
+ */
+export function withDiscoveryCompanions(mcpNames: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (n: string) => {
+    if (!seen.has(n)) {
+      seen.add(n);
+      out.push(n);
+    }
+  };
+  for (const name of mcpNames) push(name);
+  for (const name of mcpNames) {
+    for (const companion of DISCOVERY_COMPANIONS[name] ?? []) push(companion);
+  }
+  return out;
+}
+
 const MCP_NAMES = new Set(ALL_MCP_TOOLS.map((t) => t.name));
 
 /**
@@ -100,7 +142,7 @@ export function resolveGrantedTools(sys: System): { mcpNames: string[]; unmapped
       unmapped.push(g);
     }
   }
-  return { mcpNames, unmapped };
+  return { mcpNames: withDiscoveryCompanions(mcpNames), unmapped };
 }
 
 /**
@@ -132,7 +174,10 @@ function grantedMcpTools(sys: System): McpTool[] {
 export function grantedToolSpecs(user: CurrentUser, sys: System, nodeTools?: string[]): ToolSpec[] {
   let pool = grantedMcpTools(sys);
   if (nodeTools && nodeTools.length > 0) {
-    const nodeSet = new Set(nodeTools.map(resolveAlias));
+    // A node granted an action tool (e.g. query_data) also drives its discovery
+    // companions (list_datasets/get_dataset/profile_dataset), so it can learn the
+    // exact resource before acting — same rule as the system-level grant scope.
+    const nodeSet = new Set(withDiscoveryCompanions(nodeTools.map(resolveAlias)));
     pool = pool.filter((t) => nodeSet.has(t.name));
   }
   return listToolsForRole(user.role, pool).map((t) => ({

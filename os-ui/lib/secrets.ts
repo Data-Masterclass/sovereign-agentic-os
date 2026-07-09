@@ -4,7 +4,7 @@
 import 'server-only';
 import { createHash } from 'crypto';
 import { config } from '@/lib/config';
-import { isHostApproved } from '@/lib/egress-requests';
+import { isHostApproved } from '@/lib/connections/egress-requests';
 
 /**
  * Mock STACKIT Secrets Manager + External Secrets (Connections golden path §2,

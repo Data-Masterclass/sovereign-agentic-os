@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { createConnection, listConnectionsForUser } from '@/lib/connections';
-import { userFacingTemplates, isUserFacingTemplate, type ConnectionTemplateKey } from '@/lib/connection-model';
+import { userFacingTemplates, isUserFacingTemplate, type ConnectionTemplateKey } from '@/lib/connections';
 import { roleAtLeast } from '@/lib/session';
 import { providerCatalog, ensureHydrated as ensureOAuthAppsHydrated } from '@/lib/oauth/oauth-apps';
 

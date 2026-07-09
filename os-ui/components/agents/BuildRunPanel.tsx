@@ -17,6 +17,20 @@ import { useState } from 'react';
 type BuildRow = { tool: string; applied: boolean; verified: boolean; status: 'ok' | 'fail'; detail: string; error?: string };
 type BuildReport = { ok: boolean; rows: BuildRow[] };
 type LastBuild = { ok: boolean; at: number; rows: BuildRow[] };
+type ActivityMarker = { kind: 'building' | 'running'; startedAt: number };
+type LastRun = {
+  at: number;
+  running: boolean;
+  ok: boolean;
+  path: string[];
+  traces: number;
+  held: number;
+  steps: RunStep[];
+  output?: string;
+  mode?: 'live' | 'offline-mock';
+  traceStoreAvailable?: boolean;
+  traceUrl?: string;
+};
 
 /** Formats a Unix-ms timestamp as a compact relative time string. */
 function timeAgo(atMs: number): string {
@@ -82,12 +96,16 @@ export default function BuildRunPanel({
   running,
   canEdit,
   lastBuild,
+  activity,
+  lastRun,
   onStateChange,
 }: {
   systemId: string;
   running: boolean;
   canEdit: boolean;
   lastBuild?: LastBuild | null;
+  activity?: ActivityMarker | null;
+  lastRun?: LastRun | null;
   onStateChange: () => void;
 }) {
   const [building, setBuilding] = useState(false);
@@ -99,7 +117,8 @@ export default function BuildRunPanel({
 
   const [prompt, setPrompt] = useState('Test invocation');
   const [runningNow, setRunningNow] = useState(false);
-  const [run, setRun] = useState<RunReport | null>(null);
+  // Seed from server-persisted lastRun so the panel survives tab-switches.
+  const [run, setRun] = useState<RunReport | null>(lastRun ?? null);
   const [runErr, setRunErr] = useState('');
 
   const doBuild = async () => {
@@ -145,6 +164,13 @@ export default function BuildRunPanel({
           {building ? <span className="spin" /> : 'Build'}
         </button>
       </div>
+      {/* In-progress marker: shown to a returning user while the build is still running. */}
+      {activity?.kind === 'building' && !building ? (
+        <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
+          <span className="spin" style={{ marginRight: 6 }} />
+          Building since {timeAgo(activity.startedAt)} — in progress on another tab or session
+        </div>
+      ) : null}
       {builtAt ? (
         <div className="hint" style={{ marginTop: 2, marginBottom: 4 }}>
           Last built {timeAgo(builtAt)}
@@ -190,6 +216,19 @@ export default function BuildRunPanel({
       ) : null}
 
       <div className="section-title">Run</div>
+      {/* In-progress marker: shown to a returning user while the run is still going. */}
+      {activity?.kind === 'running' && !runningNow ? (
+        <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
+          <span className="spin" style={{ marginRight: 6 }} />
+          Running since {timeAgo(activity.startedAt)} — in progress on another tab or session
+        </div>
+      ) : null}
+      {/* Seed timestamp for the persisted run result. */}
+      {run && lastRun && !runningNow ? (
+        <div className="hint" style={{ marginTop: 2, marginBottom: 4 }}>
+          Last run {timeAgo(lastRun.at)}
+        </div>
+      ) : null}
       <p className="hint" style={{ marginTop: 0 }}>
         A test invocation walks the graph from the entrypoint; every tool call is forced through the
         governed gateway (LiteLLM → OPA → Langfuse). Approvals land in Governance.

@@ -10,16 +10,14 @@ import ApprovalsInbox from '@/components/governance/ApprovalsInbox';
 import PoliciesView from '@/components/governance/PoliciesView';
 import AuditLog from '@/components/governance/AuditLog';
 import CostLimits from '@/components/governance/CostLimits';
-import UsersAccess from '@/components/governance/UsersAccess';
 
-type Section = 'inbox' | 'policies' | 'audit' | 'cost' | 'users';
+type Section = 'inbox' | 'policies' | 'audit' | 'cost';
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'inbox', label: 'Inbox' },
   { id: 'policies', label: 'Policies' },
   { id: 'audit', label: 'Audit' },
   { id: 'cost', label: 'Cost & limits' },
-  { id: 'users', label: 'Users & access' },
 ];
 
 /** Stable tutorial coach-mark targets on the section switcher. */
@@ -36,7 +34,7 @@ export default function GovernancePage() {
     <>
       <PageHeader
         title="Governance"
-        crumb="control plane · approve · policy · audit · cost · access"
+        crumb="control plane · approve · policy · audit · cost"
         tutorial="governance"
       />
       <div className="content">
@@ -57,7 +55,6 @@ export default function GovernancePage() {
         {section === 'policies' && <PoliciesView />}
         {section === 'audit' && <AuditLog />}
         {section === 'cost' && <CostLimits />}
-        {section === 'users' && <UsersAccess />}
       </div>
     </>
   );

@@ -174,7 +174,7 @@ test('apps (os-apps): fresh-boot bootstrap + round-trip hydration', async () => 
 
 test('connections (os-connections): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const conns = await import('./connections.ts');
+  const conns = await import('./connections/store.ts');
   try {
     conns.__resetConnections();
     const c = await conns.createConnection(admin, {
@@ -549,7 +549,7 @@ test('tenant user status (os-tenant-user-status): pre-seeded status survives rou
 
 test('egress requests (os-egress-requests): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const egress = await import('./egress-requests.ts');
+  const egress = await import('./connections/egress-requests.ts');
   try {
     egress.__resetEgress();
     await egress.ensureHydrated();

@@ -22,7 +22,7 @@ const {
   verifyNotionConnection,
   getNotionClientReg,
   __resetConnections,
-} = await import('./connections.ts');
+} = await import('./store.ts');
 
 const owner = { id: 'nora', name: 'Nora', domains: ['sales'], role: 'creator' as const };
 const nowSec = () => Math.floor(Date.now() / 1000);

@@ -16,6 +16,7 @@ import {
   type ToolSpec,
 } from './agentic.ts';
 import { resolveAssistantModelId } from './complete.ts';
+import { inputBudget, modelContext } from '@/lib/models/context-windows';
 
 /**
  * Server wiring for the agentic assistant harness. Binds the pure PLAN→ACT loop
@@ -107,6 +108,9 @@ export function liteLlmCaller(): LlmCall {
       messages: req.messages,
       temperature: req.temperature ?? 0.2,
     };
+    // Cap the model's own output at the model window's reserved tail — the other
+    // half of the context-budget guarantee (input is bounded by the assembler).
+    if (req.maxTokens && req.maxTokens > 0) body.max_tokens = req.maxTokens;
     if (req.tools && req.tools.length > 0) {
       body.tools = req.tools;
       body.tool_choice = 'auto';
@@ -252,6 +256,7 @@ export async function runTabAgent(input: RunTabAgentInput): Promise<AgenticResul
   // config tiers as opaque ids the fake caller ignores.
   const injected = input.llm;
   const assistantId = injected ? config.litellmExecModel : resolveAssistantModelId();
+  const ctx = modelContext(assistantId);
   return runAgentic({
     system: osSystem(input.tab, input.extraContext),
     userMessages: input.messages,
@@ -261,6 +266,8 @@ export async function runTabAgent(input: RunTabAgentInput): Promise<AgenticResul
     planModel: injected ? config.litellmReasoningModel : assistantId,
     actModel: assistantId,
     maxIterations: input.maxIterations,
+    budget: inputBudget(assistantId),
+    maxOutputTokens: ctx.reservedOutput,
   });
 }
 

@@ -85,8 +85,8 @@ const data: TutorialDef = {
     {
       anchor: ANCHORS.data.query,
       sandboxAnchor: ANCHORS.data.sandbox,
-      title: 'Query and verify',
-      body: 'Run a quick query to confirm the numbers look right. This is the same table your dashboards and agents will use — check it before publishing.',
+      title: 'Ask your data',
+      body: 'Ask a question in plain language — "What was revenue last month?" The OS turns it into a governed read-only query, runs it, and answers from the actual rows. Check the numbers before you publish.',
       route: '/data',
     },
     {

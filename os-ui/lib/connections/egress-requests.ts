@@ -13,7 +13,7 @@
  * request→approve→logged flow demonstrable in kind.
  */
 
-import { osMirror } from './os-mirror.ts';
+import { osMirror } from '../os-mirror.ts';
 
 export type EgressStatus = 'pending' | 'approved' | 'rejected';
 

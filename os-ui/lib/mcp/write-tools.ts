@@ -50,6 +50,7 @@ import type { MeasureType } from '@/lib/data/metrics';
 import {
   createWorkflow,
   updateWorkflow,
+  updateTacit,
   getWorkflow,
   getDomainKnowledge,
 } from '@/lib/knowledge/store';
@@ -633,7 +634,7 @@ export const knowledgeWriteTools: McpTool[] = [
     tab: 'knowledge',
     minRole: 'creator',
     description:
-      'Author a Personal (draft) knowledge workflow — the operating manual for a task: an optional markdown body, ordered `steps` (each with an actor), and workflow `rules`. Same governed store as the Knowledge tab. Publish it later with `publish_knowledge`.',
+      'Author a Personal (draft) knowledge workflow — the operating manual for a task: an optional markdown body, ordered `steps` (each with an actor and optional per-step `tacit` note), workflow `rules`, and an optional workflow-level `tacit` string (the TACIT.md companion — unstructured know-how that resists formalization: the gotchas, the "why", the tribal memory). Same governed store as the Knowledge tab. Publish it later with `publish_knowledge`.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -651,6 +652,11 @@ export const knowledgeWriteTools: McpTool[] = [
               actor_name: { type: 'string' },
               inputs: { type: 'array', items: { type: 'string' } },
               outputs: { type: 'array', items: { type: 'string' } },
+              tacit: {
+                type: 'string',
+                description:
+                  'Per-step tacit note — the inline know-how for this step: gotchas, edge cases, undocumented nuances. Stored as a `> tacit:` blockquote in the workflow.md and indexed as a separate retrieval unit.',
+              },
             },
             required: ['title'],
           },
@@ -660,6 +666,11 @@ export const knowledgeWriteTools: McpTool[] = [
           description: 'Workflow decision rules.',
           items: { type: 'object', properties: { text: { type: 'string' }, hard: { type: 'boolean' } }, required: ['text'] },
         },
+        tacit: {
+          type: 'string',
+          description:
+            'Workflow-level tacit knowledge (the sibling TACIT.md). Use this for unstructured know-how that resists formalization — the gotchas, the "why behind the why", institutional memory, cultural nuances that don\'t fit into steps or rules. Markdown is fine; headings split it into separately-retrievable chunks. Per-step inline notes go in `steps[].tacit` instead.',
+        },
       },
       required: ['title'],
       examples: [
@@ -667,10 +678,11 @@ export const knowledgeWriteTools: McpTool[] = [
           title: 'Refund handling',
           domain: 'support',
           steps: [
-            { title: 'Verify order', actor: 'Human', outputs: ['Verified order'] },
+            { title: 'Verify order', actor: 'Human', outputs: ['Verified order'], tacit: 'Check section 4 — the date field is frequently missed by new agents.' },
             { title: 'Issue refund', actor: 'Software', inputs: ['Verified order'] },
           ],
           rules: [{ text: 'Refunds over 500 EUR need a manager', hard: true }],
+          tacit: '## Edge cases\nHigh-value refunds (> 1 000 EUR) route to the finance team even on weekends — the on-call number is in the finance Notion.\n\n## Cultural note\nThe support team uses "RT" as shorthand for "refund ticket" in Slack.',
         },
       ],
     },
@@ -685,12 +697,17 @@ export const knowledgeWriteTools: McpTool[] = [
       if (body || steps.length || rules.length) {
         const view = getWorkflow(rec.id, p);
         const w: Workflow = { ...view.workflow, steps: steps.length ? steps : view.workflow.steps, rules: rules.length ? rules : view.workflow.rules };
-        // serializeWorkflow emits frontmatter + step blocks; splice the prose body
-        // back in right after the frontmatter so it round-trips through the store.
+        // serializeWorkflow emits frontmatter + step blocks (including > tacit: blockquotes
+        // for any step with a tacit note); splice the prose body back in right after the
+        // frontmatter so it round-trips through the store.
         let md = serializeWorkflow(w);
         if (body) md = md.replace(/^(---\n[\s\S]*?\n---\n\n)/, `$1${body}\n\n`);
         updateWorkflow(rec.id, p, { md });
       }
+      // Workflow-level tacit doc (sibling TACIT.md) — stored separately from the
+      // workflow.md so it can be versioned, compressed, and chunked independently.
+      const tacit = str(args.tacit).trim();
+      if (tacit) updateTacit(rec.id, p, tacit);
       return { id: rec.id, title: rec.title, domain: rec.domain, status: rec.status, visibility: rec.visibility };
     },
   },

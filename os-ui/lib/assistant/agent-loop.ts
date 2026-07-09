@@ -17,6 +17,7 @@ import { buildInstructions } from '@/lib/mcp/instructions';
 import { runAgentic, type AgenticResult, type LlmCall, type ToolExecutor, type ToolSpec } from './agentic.ts';
 import { liteLlmCaller } from './runtime.ts';
 import { resolveAssistantModelId } from './complete.ts';
+import { inputBudget, modelContext } from '@/lib/models/context-windows';
 
 /**
  * THE ONE OVERARCHING SOVEREIGN OS ASSISTANT (server wiring).
@@ -193,6 +194,7 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
   // Production: the ONE assistant model for both plan + act. Tests inject `llm`
   // and own model selection, so the config tier ids are opaque placeholders.
   const assistantId = injected ? config.litellmExecModel : resolveAssistantModelId();
+  const ctx = modelContext(assistantId);
   const result = await runAgentic({
     system: osAssistantSystem(input.tab),
     userMessages: input.messages,
@@ -202,6 +204,8 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
     planModel: injected ? config.litellmReasoningModel : assistantId,
     actModel: assistantId,
     maxIterations: input.maxIterations ?? config.assistantMaxSteps,
+    budget: inputBudget(assistantId),
+    maxOutputTokens: ctx.reservedOutput,
   });
   return { ...result, tab: input.tab };
 }

@@ -432,7 +432,7 @@ export default function KnowledgePage() {
             className={view === 'overview' ? 'active' : ''}
             onClick={() => setView('overview')}
           >
-            Knowledge
+            General
           </button>
           <button
             className={view === 'workflows' || view === 'new' ? 'active' : ''}

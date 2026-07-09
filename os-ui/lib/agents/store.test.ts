@@ -18,6 +18,9 @@ import {
   forkSystem,
   setSchedule,
   setLastBuild,
+  setActivity,
+  clearActivity,
+  setLastRun,
   setRunning,
   toggleAgent,
   archiveSystem,
@@ -27,7 +30,7 @@ import {
   restoreSystemVersion,
   WHITELIST_HINT,
 } from './store.ts';
-import type { Principal, LastBuild } from './store.ts';
+import type { Principal, LastBuild, ActivityMarker, LastRun } from './store.ts';
 
 const sara = { id: 'sara', domains: ['sales'], role: 'builder' as const };
 const amir = { id: 'amir', domains: ['sales'], role: 'creator' as const };
@@ -542,4 +545,128 @@ test('archive / delete / restore obey edit authz (a viewer is rejected 403)', ()
 
   // A same-domain Admin (builder+ over the domain) may archive it.
   assert.doesNotThrow(() => archiveSystem(sys.id, admin));
+});
+
+// ------------------------------------------------ activity marker + lastRun --
+
+test('activity marker round-trips: setActivity is visible on getSystem; clearActivity removes it', () => {
+  __resetStore();
+  const sys = createSystem(sara, { name: 'InProgress', domain: 'sales' });
+
+  // No activity initially.
+  assert.equal(getSystem(sys.id, sara).activity, undefined);
+
+  const marker: ActivityMarker = { kind: 'building', startedAt: Date.now() };
+  setActivity(sys.id, marker);
+
+  const view = getSystem(sys.id, sara);
+  assert.ok(view.activity, 'activity is present after setActivity');
+  assert.equal(view.activity!.kind, 'building');
+  assert.ok(view.activity!.startedAt > 0);
+
+  // clearActivity removes the marker (the "finally" path).
+  clearActivity(sys.id);
+  assert.equal(getSystem(sys.id, sara).activity, undefined, 'activity cleared after clearActivity');
+});
+
+test('activity marker: running kind persists and clears correctly', () => {
+  __resetStore();
+  const sys = createSystem(sara, { name: 'RunInProgress', domain: 'sales' });
+
+  setActivity(sys.id, { kind: 'running', startedAt: 1_000_000 });
+  const view = getSystem(sys.id, sara);
+  assert.equal(view.activity!.kind, 'running');
+  assert.equal(view.activity!.startedAt, 1_000_000);
+
+  clearActivity(sys.id);
+  assert.equal(getSystem(sys.id, sara).activity, undefined);
+});
+
+test('activity marker: setActivity on an unknown system is a no-op (no throw)', () => {
+  __resetStore();
+  assert.doesNotThrow(() => setActivity('does-not-exist', { kind: 'building', startedAt: 1 }));
+  assert.doesNotThrow(() => clearActivity('does-not-exist'));
+});
+
+test('lastRun round-trips: persisted run result loads on getSystem; absent before first run', () => {
+  __resetStore();
+  const sys = createSystem(sara, { name: 'RunPersist', domain: 'sales' });
+
+  // No lastRun on a fresh system.
+  assert.equal(getSystem(sys.id, sara).lastRun, undefined);
+
+  const runReport: LastRun = {
+    at: Date.now(),
+    running: false,
+    ok: true,
+    path: ['assistant', 'END'],
+    traces: 1,
+    held: 0,
+    steps: [{ node: 'assistant', tool: 'search_knowledge', effect: 'allow', ran: true }],
+    output: 'Here is the answer.',
+    mode: 'live',
+    traceStoreAvailable: true,
+    traceUrl: 'https://langfuse.example.com/trace/abc',
+  };
+  setLastRun(sys.id, sara, runReport);
+
+  const view = getSystem(sys.id, sara);
+  assert.ok(view.lastRun, 'lastRun is present after setLastRun');
+  assert.equal(view.lastRun!.ok, true);
+  assert.equal(view.lastRun!.output, 'Here is the answer.');
+  assert.equal(view.lastRun!.traces, 1);
+  assert.equal(view.lastRun!.held, 0);
+  assert.deepEqual(view.lastRun!.path, ['assistant', 'END']);
+  assert.equal(view.lastRun!.steps.length, 1);
+  assert.equal(view.lastRun!.steps[0].tool, 'search_knowledge');
+  assert.equal(view.lastRun!.traceUrl, 'https://langfuse.example.com/trace/abc');
+  assert.ok(view.lastRun!.at > 0);
+
+  // Overwriting with a new run replaces the previous result.
+  const runReport2: LastRun = {
+    at: Date.now(),
+    running: false,
+    ok: false,
+    path: ['assistant'],
+    traces: 0,
+    held: 1,
+    steps: [{ node: 'assistant', tool: 'write_data', effect: 'requires_approval' }],
+    output: 'Queued for approval.',
+    mode: 'live',
+  };
+  setLastRun(sys.id, sara, runReport2);
+  const view2 = getSystem(sys.id, sara);
+  assert.equal(view2.lastRun!.ok, false);
+  assert.equal(view2.lastRun!.held, 1);
+  assert.equal(view2.lastRun!.output, 'Queued for approval.');
+
+  // A non-editor cannot overwrite the run result.
+  assert.throws(() => setLastRun(sys.id, amir, runReport), /not permitted to edit/i);
+});
+
+test('lastRun and activity are independent: one can be set without affecting the other', () => {
+  __resetStore();
+  const sys = createSystem(sara, { name: 'IndependentFields', domain: 'sales' });
+
+  const run: LastRun = {
+    at: 1_000,
+    running: false,
+    ok: true,
+    path: ['a'],
+    traces: 0,
+    held: 0,
+    steps: [],
+  };
+  setLastRun(sys.id, sara, run);
+  setActivity(sys.id, { kind: 'running', startedAt: 2_000 });
+
+  const v1 = getSystem(sys.id, sara);
+  assert.ok(v1.lastRun, 'lastRun set');
+  assert.ok(v1.activity, 'activity set');
+
+  // clearActivity leaves lastRun intact.
+  clearActivity(sys.id);
+  const v2 = getSystem(sys.id, sara);
+  assert.ok(v2.lastRun, 'lastRun survives clearActivity');
+  assert.equal(v2.activity, undefined, 'activity cleared');
 });

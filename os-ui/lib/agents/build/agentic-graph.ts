@@ -60,6 +60,15 @@ export type AgenticGraphDeps = {
   /** Fallback ACT model when a node pins none. */
   execModel: string;
   maxIterations?: number;
+  /**
+   * Input token ceiling for every node's model call — the bound each node's
+   * (growing) transcript is assembled to before it reaches the gateway. Fixes the
+   * multi-node LiteLLM 400 ContextWindowExceededError. Forwarded to `runAgentic`;
+   * unset uses the harness default.
+   */
+  budget?: number;
+  /** Cap on each node's own model output (the reserved-output tail). */
+  maxOutputTokens?: number;
   /** Toggled-off agents: skipped, their tools never run. */
   disabled?: string[];
 };
@@ -137,6 +146,8 @@ export async function runAgenticGraph(
       planModel: deps.reasoningModel,
       actModel,
       maxIterations: deps.maxIterations,
+      budget: deps.budget,
+      maxOutputTokens: deps.maxOutputTokens,
     });
     runs.push({ node: id, model: actModel, result });
     transcript.push(`## ${node.id}\n${result.finalText}`);
@@ -176,6 +187,8 @@ export async function runNode(
     planModel: deps.reasoningModel,
     actModel,
     maxIterations: deps.maxIterations,
+    budget: deps.budget,
+    maxOutputTokens: deps.maxOutputTokens,
     onStep: opts.onStep,
   });
   return { node: nodeId, model: actModel, result };
