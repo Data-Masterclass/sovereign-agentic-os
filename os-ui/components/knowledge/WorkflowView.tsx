@@ -14,6 +14,7 @@ import ContextPanel from './ContextPanel';
 import HandoverPanel from './HandoverPanel';
 import { commitWorkflow } from './commitWorkflow';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
+import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import DomainTag from '@/components/DomainTag';
 import { addStep } from '@/lib/knowledge/step-edit';
 import type { Workflow, ActorType } from '@/lib/knowledge/schema';
@@ -201,7 +202,7 @@ export default function WorkflowView({
   const dirty = mdDraft !== data.md;
 
   return (
-    <>
+    <ConfirmProvider>
       <PageHeader title="Knowledge" crumb={data.title} tutorial="knowledge" />
       <div className="content">
         {/* Header */}
@@ -405,7 +406,7 @@ export default function WorkflowView({
       </div>
 
       <style>{WorkflowViewStyles}</style>
-    </>
+    </ConfirmProvider>
   );
 }
 

@@ -15,6 +15,28 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.63–0.1.66 · query-tool 0.4.1] — 2026-07-09
+
+### Data
+- Radically simplified **Bronze→Silver→Gold** refinement: two guided CTAs ("Turn into clean Silver Dataset" / "Turn into a harmonized Gold dataset"), key **auto-match + adapt** (text-normalize / cast reconcile), a **visual join graph**, and Bronze can no longer be promoted to Shared. Dataset preview auto-loads on detail open. **DuckDB removed** from the stack (Trino-only; docs + PDF updated).
+- **Fix (query_data):** the `query_data` handler ran Trino as the caller's *first domain*, so a user was denied on their own `personal_<uid>` schema — now uses the uid for the owner's personal lane (cross-user isolation intact). *(os-ui 0.1.66; live-verified: owner reads own rows, others denied.)*
+- **Fix (promotion):** the query-tool write guard compared the underscore schema to the dash domain → 403 on hyphenated-domain mart writes — now `sanitize_ident`s the domain. *(query-tool 0.4.1.)*
+
+### Metrics
+- Guided **Cube.js metric editor** (count/count-distinct[-approx]/sum/avg/min/max, ratio/derived, filtered measures, rolling/running windows, format, drill members, time granularity) with **live preview**.
+
+### Nav / UX
+- **5-section sidebar** (Plan · Context · Build · Monitor · Admin; Governance→Admin, Admin-first); standalone Settings tab removed. Shared-count badge counts promoted items.
+- **Fix:** knowledge workflow detail crashed (`useConfirm` outside `ConfirmProvider`) — `WorkflowView` now self-wraps. *(os-ui 0.1.66.)*
+
+### Admin / platform
+- Domains **rename** control; dead **Spark toggle removed** (ML kept). Components status fixes; Sample-RAG entry + Seed-demo-queue button removed.
+- Software: app creation now seeds a **real build→push CI workflow** + `REGISTRY_PASS` (fixes the app-image / UI-button pipeline for new apps).
+- **Langfuse** ClickHouse schema migrated — traces persist. LiteLLM restored to the STACKIT 3-tier runtime (`sovereign-default` → gpt-oss-20b).
+
+### MCP + Ask-the-OS
+- MCP `build_gold_join` key-adapt + `define_metric` rich measures; guides/prompts + Ask-the-OS context brought to UI parity.
+
 ## [os-ui 0.1.62] — 2026-07-08
 
 The deployed **os-ui image** carries its own version line (`osUI.image.tag` in

@@ -16,6 +16,7 @@ import { ensureHydrated as filesHydrated } from '@/lib/files/store';
 import { ensureHydrated as knowledgeHydrated } from '@/lib/knowledge/store';
 import { ensureHydrated as betsHydrated } from '@/lib/bigbets/store';
 import { principalFor } from '@/lib/governance/roles';
+import { readPrincipalFor } from '@/lib/data/store-fqn';
 import { ALL_WRITE_TOOLS } from '@/lib/mcp/write-tools';
 import { DISCOVERY_TOOLS } from '@/lib/mcp/discovery-tools';
 import { governanceTools } from '@/lib/mcp/governance-tools';
@@ -216,12 +217,24 @@ const crossTools: McpTool[] = [
     call: async (user, args) => {
       const sql = str(args.sql).trim();
       if (!sql) fail('query_data needs a `sql` string', 400);
-      const principal = user.domains[0] ?? user.id;
-      const authz = await authorize(principal, 'query');
-      if (!authz.allowed) fail(`OPA denied ${principal} → query (${authz.policy})`, 403);
-      const result = await queryRun(sql, principal);
-      const traced = await trace({ principal, tool: 'query', input: sql, output: result.rows });
-      return { principal, authorized: true, policy: authz.policy, traced, ...result };
+      // TWO distinct principals here:
+      //  - TOOL-ACCESS authz (`agentic.authz`) is granted by DOMAIN/agent-key —
+      //    `data.grants[<domain>]` holds `query` — so the access gate runs on the
+      //    caller's domain principal (a uid has no grant of its own).
+      //  - The TRINO SESSION USER (data-governance principal for row/column + the
+      //    personal-lane `is_owned_personal` hard-deny) MUST be the OWNER uid when the
+      //    SQL touches the caller's OWN personal lane (`personal_<uid>.*`) — even the
+      //    owner is DENIED reading their own personal table under the domain principal.
+      //    Every other read stays on the domain principal so cross-domain governance is
+      //    intact. Derived server-side from session + SQL text (same rule preview/profile
+      //    use), never from the request body; only the caller's OWN lane flips it.
+      const domainPrincipal = user.domains[0] ?? user.id;
+      const trinoPrincipal = readPrincipalFor(sql, { id: user.id, domains: user.domains });
+      const authz = await authorize(domainPrincipal, 'query');
+      if (!authz.allowed) fail(`OPA denied ${domainPrincipal} → query (${authz.policy})`, 403);
+      const result = await queryRun(sql, trinoPrincipal);
+      const traced = await trace({ principal: trinoPrincipal, tool: 'query', input: sql, output: result.rows });
+      return { principal: trinoPrincipal, authorized: true, policy: authz.policy, traced, ...result };
     },
   },
   {

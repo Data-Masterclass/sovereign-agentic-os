@@ -78,11 +78,20 @@ class ParsedWrite:
     table: Optional[str] # None for create_schema
 
 
+def sanitize_ident(value: str) -> str:
+    """Normalize an identity/domain to the stable schema identifier os-ui mints —
+    lowercase, collapse each run of non-[a-z0-9] to '_', strip leading/trailing '_',
+    empty -> 'user'. Byte-identical to os-ui `sanitizeIdent` / `domainSchema` and the
+    trino.rego `sanitize_ident`, so a hyphenated domain (`agentic-leader-q3-2026`)
+    maps to its mart schema (`agentic_leader_q3_2026`) on EVERY side."""
+    core = re.sub(r"[^a-z0-9]+", "_", (value or "").lower()).strip("_")
+    return core or "user"
+
+
 def personal_schema(uid: str) -> str:
     """The caller's private sandbox schema. Sanitized identically on both sides so
     a uid that isn't a bare identifier (e.g. an email) maps to a stable schema."""
-    core = re.sub(r"[^a-z0-9]+", "_", (uid or "").lower()).strip("_")
-    return "personal_" + (core or "user")
+    return "personal_" + sanitize_ident(uid)
 
 
 def parse_statement(sql: str) -> ParsedWrite:
@@ -128,7 +137,13 @@ def authorize_target(parsed: ParsedWrite, uid: str, domains: List[str], role: st
     """Enforce the write-target floor. Raises ExecuteError(403) on a cross-schema
     write or an under-privileged domain write."""
     target = parsed.schema
-    if target in set(domains or []):
+    # os-ui mints a domain's mart SCHEMA as sanitizeIdent(domain) (store-fqn.domainSchema),
+    # so a hyphenated domain `agentic-leader-q3-2026` writes to schema
+    # `agentic_leader_q3_2026`. The caller's `domains` carry the RAW domain ids, so match
+    # on the SANITIZED form (byte-identical to the minting rule) — otherwise a builder
+    # could never write its own domain mart when the domain id isn't a bare identifier.
+    entitled_schemas = {sanitize_ident(d) for d in (domains or [])}
+    if target in entitled_schemas:
         # Domain schema: role floor is builder (admin >= builder).
         if role not in BUILDER_ROLES:
             raise ExecuteError(
