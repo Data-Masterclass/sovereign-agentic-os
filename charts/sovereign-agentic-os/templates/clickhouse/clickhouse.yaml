@@ -84,9 +84,35 @@ spec:
             - { name: logs, mountPath: /var/log/clickhouse-server }
       volumes:
         - name: data
+        {{- if $ch.persistence.enabled }}
+          # Durable CH data (tables + Langfuse schema). RWO PVC — safe with the
+          # Recreate strategy above (old pod torn down before new one binds).
+          persistentVolumeClaim:
+            claimName: clickhouse-data
+        {{- else }}
           emptyDir: {}
+        {{- end }}
         - name: logs
           emptyDir: {}
+{{- if $ch.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: clickhouse-data
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "infra") | nindent 4 }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "clickhouse") | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- include "soa.storageClass" . | nindent 2 }}
+  resources:
+    requests:
+      storage: {{ $ch.persistence.size | quote }}
+{{- end }}
 ---
 apiVersion: v1
 kind: Service

@@ -17,6 +17,8 @@ import type { QueryResult } from '../governed.ts';
 
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' };
 const bea: Principal = { id: 'bea', domains: ['sales'], role: 'admin' };
+// A domain PEER who does NOT own the dataset — reads the promoted domain copy, never a lane.
+const cara: Principal = { id: 'cara', domains: ['sales'], role: 'creator' };
 
 beforeEach(() => __resetStore());
 
@@ -54,14 +56,30 @@ test('runPreview runs a bounded SELECT * over the resolved FQN and returns the r
   }
 });
 
-test('runPreview resolves a promoted asset to its DOMAIN schema (governed lane)', async () => {
+test('runPreview: a NON-owner peer resolves a promoted asset to its DOMAIN schema (governed lane)', async () => {
   const d = createDataset(amir, { name: 'Orders' });
   buildVersion(d.id, amir, 'silver', { quality: 'passing', artifact: 'silver/stg_orders.sql' });
   transition(d.id, bea, 'promote', { visibility: 'domain' }); // admin promotes → tier asset (sales)
 
-  const target = builtLayerFqn(getDataset(d.id, amir), amir);
+  // A domain peer (not the owner) reads the promoted COPY in the domain schema, as the domain.
+  const target = builtLayerFqn(getDataset(d.id, cara), cara);
   assert.ok(target);
   assert.match(target!.fqn, /^iceberg\.sales\.silver_orders$/); // domain schema, not personal lane
+  assert.equal(target!.principal, 'sales');
+});
+
+test('runPreview: the OWNER of a promoted asset reads their OWN personal lane (holds every layer)', async () => {
+  const d = createDataset(amir, { name: 'Orders' });
+  buildVersion(d.id, amir, 'silver', { quality: 'passing', artifact: 'silver/stg_orders.sql' });
+  transition(d.id, bea, 'promote', { visibility: 'domain' }); // now tier asset (sales)
+
+  // The owner's personal lane physically holds every layer — read it AS the owner. This is
+  // the fix for the live TABLE_NOT_FOUND: an un-promoted (e.g. bronze) layer never lands in
+  // the domain schema, so the owner must resolve to personal_<owner>, not the domain.
+  const target = builtLayerFqn(getDataset(d.id, amir), amir);
+  assert.ok(target);
+  assert.match(target!.fqn, /^iceberg\.personal_amir\.silver_orders$/);
+  assert.equal(target!.principal, 'amir');
 });
 
 test('runPreview: nothing built → calm not-materialized, never a query', async () => {

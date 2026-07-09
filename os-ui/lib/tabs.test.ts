@@ -8,7 +8,7 @@
  *   Context:    Knowledge, Files, Data, Connections, Metrics
  *   Build:      Agents, Software, Science, Dashboards
  *   Monitor:    Governance (builder+), Monitoring, Components (admin), LLM Gateway
- *   Admin:      Admin (admin), Terminal (admin), About / Licenses (admin)
+ *   Admin:      Admin (admin), Terminal (admin), Query (admin), About / Licenses (admin)
  *
  * Governance (builders approve promotions — the sharing ladder) is oversight, so
  * it lives under Monitor (first tab), visible to builder+.
@@ -79,10 +79,10 @@ test('TAB-SET Monitor group contains Governance, Monitoring, Components, LLM Gat
   );
 });
 
-test('TAB-SET Admin group contains Admin, Terminal, About / Licenses (no standalone Settings)', () => {
+test('TAB-SET Admin group contains Admin, Terminal, Query, About / Licenses (no standalone Settings)', () => {
   assert.deepEqual(
     ADMIN_GROUP.tabs.map((t) => t.label),
-    ['Admin', 'Terminal', 'About / Licenses'],
+    ['Admin', 'Terminal', 'Query', 'About / Licenses'],
   );
 });
 
@@ -108,11 +108,22 @@ test('TAB-VIS creator: sees no admin-only tabs at all', () => {
     assert.ok(!labels.includes(l), `creator must not see admin-only tab: ${l}`);
   }
   assert.ok(labels.includes('Tutorials'), 'creator must still see Tutorials');
-  assert.ok(labels.includes('Monitoring'), 'creator must still see Monitoring');
+  assert.ok(!labels.includes('Monitoring'), 'creator must not see Monitoring (builder+)');
+  assert.ok(!labels.includes('LLM Gateway'), 'creator must not see LLM Gateway (builder+)');
+  assert.ok(!labels.includes('MCP'), 'creator must not see the MCP setup tab (builder+); MCP connectivity is unaffected');
   assert.ok(!labels.includes('Governance'), 'creator must not see Governance (builder+)');
 });
 
-test('TAB-VIS creator: Admin group is hidden entirely (all three tabs are admin-only)', () => {
+test('TAB-VIS builder sees the builder-gated tabs (Monitoring, LLM Gateway, MCP) that creators do not', () => {
+  const b = visibleLabels('builder');
+  const c = visibleLabels('creator');
+  for (const l of ['Monitoring', 'LLM Gateway', 'MCP']) {
+    assert.ok(b.includes(l), `builder must see ${l}`);
+    assert.ok(!c.includes(l), `creator must not see ${l}`);
+  }
+});
+
+test('TAB-VIS creator: Admin group is hidden entirely (all tabs are admin-only)', () => {
   const groups = filterTabGroups(TAB_GROUPS, 'creator');
   const admin = groups.find((g) => g.heading === 'Admin');
   assert.ok(!admin, 'Admin group must be absent for creator (all tabs are admin-gated)');
@@ -129,6 +140,22 @@ test('TAB-VIS builder: Admin group is hidden entirely (all tabs are admin-only)'
   const groups = filterTabGroups(TAB_GROUPS, 'builder');
   const admin = groups.find((g) => g.heading === 'Admin');
   assert.ok(!admin, 'Admin group must be absent for builder (all tabs are admin-gated)');
+});
+
+test('TAB-SET Query tab is in the Admin group between Terminal and About / Licenses', () => {
+  const labels = ADMIN_GROUP.tabs.map((t) => t.label);
+  const terminalIdx = labels.indexOf('Terminal');
+  const queryIdx = labels.indexOf('Query');
+  const aboutIdx = labels.indexOf('About / Licenses');
+  assert.ok(queryIdx > terminalIdx, 'Query must come after Terminal');
+  assert.ok(queryIdx < aboutIdx, 'Query must come before About / Licenses');
+});
+
+test('TAB-SET Query tab has minRole=admin and href=/admin-query', () => {
+  const q = ADMIN_GROUP.tabs.find((t) => t.label === 'Query');
+  assert.ok(q, 'Query tab must exist in Admin group');
+  assert.equal(q!.minRole, 'admin', 'Query tab must have minRole: admin');
+  assert.equal(q!.href, '/admin-query', 'Query tab must link to /admin-query');
 });
 
 test('TAB-VIS domain_admin: sees no admin-only tabs', () => {
@@ -158,12 +185,14 @@ test('TAB-VIS Governance carries minRole=builder (builders approve promotions)',
   assert.equal(tabVisible(gov!, 'creator'), false);
 });
 
-test('TAB-VIS admin-only console tabs all have minRole=admin', () => {
+test('TAB-VIS every gated tab carries a valid minRole (builder or admin)', () => {
   const allTabs = TAB_GROUPS.flatMap((g) => g.tabs);
   for (const tab of allTabs) {
-    if (!tab.minRole) continue; // tabs with no minRole — that's correct
-    if (tab.label === 'Governance') continue; // builder-level oversight, not an admin-only console
-    assert.equal(tab.minRole, 'admin', `Admin console "${tab.label}" must have minRole: 'admin'`);
+    if (!tab.minRole) continue; // ungated — visible to all
+    assert.ok(
+      tab.minRole === 'builder' || tab.minRole === 'admin',
+      `gated tab "${tab.label}" must have minRole builder or admin, got ${tab.minRole}`,
+    );
   }
 });
 
@@ -190,14 +219,23 @@ test('TAB-VIS tabVisible: null/undefined userRole passes (middleware handles aut
   assert.equal(tabVisible(adminTab, undefined), true);
 });
 
-test('TAB-VIS entry + Plan + Context + Build tabs have no minRole (visible to all)', () => {
-  const alwaysVisibleGroups = [ENTRY_GROUP, PLAN_GROUP, CONTEXT_GROUP, BUILD_GROUP];
-  for (const group of alwaysVisibleGroups) {
+test('TAB-VIS entry + Context + Build tabs have no minRole; Plan is all-open to creators except the MCP setup tab', () => {
+  const allOpenGroups = [ENTRY_GROUP, CONTEXT_GROUP, BUILD_GROUP];
+  for (const group of allOpenGroups) {
     for (const tab of group.tabs) {
       assert.equal(tab.minRole, undefined,
         `${group.heading ?? 'Entry'} group tab "${tab.label}" must not have minRole`);
       assert.equal(tabVisible(tab, 'creator'), true,
         `${group.heading ?? 'Entry'} group tab "${tab.label}" hidden from creator`);
     }
+  }
+  // Plan: open to creators EXCEPT MCP (a builder+ setup tab; creators still connect via /api/mcp).
+  for (const tab of PLAN_GROUP.tabs) {
+    if (tab.label === 'MCP') {
+      assert.equal(tab.minRole, 'builder', 'MCP setup tab is builder-gated');
+      continue;
+    }
+    assert.equal(tab.minRole, undefined, `Plan tab "${tab.label}" must not have minRole`);
+    assert.equal(tabVisible(tab, 'creator'), true, `Plan tab "${tab.label}" hidden from creator`);
   }
 });

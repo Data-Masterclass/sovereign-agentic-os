@@ -227,7 +227,7 @@ export default function NewDataProduct({ onDone }: { onDone?: () => void }) {
           <div className="row" style={{ gap: 10, marginTop: 10, alignItems: 'center' }}>
             <span className="hint" style={{ marginTop: 0 }}>Target visibility:</span>
             {(['Personal', 'Shared'] as const).map((v) => (
-              <button key={v} className={`chip${visibility === v ? '' : ''}`} style={{ cursor: 'pointer', background: visibility === v ? undefined : 'transparent' }} onClick={() => setVisibility(v)}>{v}</button>
+              <button key={v} className={`chip${visibility === v ? '' : ''}`} style={{ cursor: 'pointer', background: visibility === v ? undefined : 'transparent' }} onClick={() => setVisibility(v)}>{v === 'Shared' ? 'Shared in Domain' : v}</button>
             ))}
             <button className="btn" style={{ marginLeft: 'auto' }} onClick={runDocument} disabled={busy}>{busy ? <span className="spin" /> : 'Register data product'}</button>
           </div>

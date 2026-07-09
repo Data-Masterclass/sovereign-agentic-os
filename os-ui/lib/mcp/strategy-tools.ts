@@ -12,6 +12,7 @@ import {
   createPillar,
   updatePillar,
   setValueMetric,
+  setHeadlineTarget,
   linkBet,
   unlinkBet,
   addValueEntry,
@@ -19,7 +20,15 @@ import {
 import { rollupForPillar, valueHistory } from '@/lib/strategy/value-rollup';
 import { snapshotHistory } from '@/lib/strategy/snapshots';
 import { recentStrategyAudit } from '@/lib/strategy/audit';
-import { canEditPillar, type PillarScope, type ValueMode } from '@/lib/strategy/model';
+import {
+  canEditPillar,
+  METRIC_TYPES,
+  HORIZONS,
+  type PillarScope,
+  type ValueMode,
+  type MetricType,
+  type Horizon,
+} from '@/lib/strategy/model';
 import { STUB_BET_CATALOGUE } from '@/lib/strategy/bets-bridge';
 
 /**
@@ -143,11 +152,14 @@ export const strategyWriteTools: McpTool[] = [
         description: { type: 'string', description: 'New description.' },
         valueMetric: {
           type: 'object',
-          description: 'Value-metric patch: name, description, and/or mode.',
+          description: 'Value-metric patch: name, description, mode, and/or metricType.',
           properties: {
             name: { type: 'string' },
             description: { type: 'string' },
             mode: { type: 'string', enum: ['describe', 'governed', 'manual'], description: 'How the value number is kept.' },
+            metricType: { type: 'string', enum: METRIC_TYPES as string[], description: 'Headline value-metric type (drives target formatting).' },
+            customUnit: { type: 'string', description: 'For metricType=custom: unit label (e.g. tickets).' },
+            customMonetary: { type: 'boolean', description: 'For metricType=custom: whether it is monetary (→ tenant currency).' },
           },
         },
       },
@@ -155,13 +167,16 @@ export const strategyWriteTools: McpTool[] = [
       examples: [
         { pillarId: 'pillar_ab12cd3', description: 'Revised framing for FY26.' },
         { pillarId: 'pillar_ab12cd3', valueMetric: { name: 'NRR', mode: 'manual' } },
+        { pillarId: 'pillar_ab12cd3', valueMetric: { metricType: 'time-back-hours' } },
       ],
     },
     call: async (user, args) => {
       const id = str(args.pillarId).trim();
       if (!id) fail('update_pillar needs a `pillarId`', 400);
       const hasCore = args.name !== undefined || args.description !== undefined;
-      const vm = args.valueMetric as { name?: unknown; description?: unknown; mode?: unknown } | undefined;
+      const vm = args.valueMetric as
+        | { name?: unknown; description?: unknown; mode?: unknown; metricType?: unknown; customUnit?: unknown; customMonetary?: unknown }
+        | undefined;
       if (!hasCore && !vm) fail('update_pillar needs at least `name`, `description`, or `valueMetric`', 400);
       let pillar;
       if (hasCore) {
@@ -172,10 +187,14 @@ export const strategyWriteTools: McpTool[] = [
       }
       if (vm) {
         const mode = VALUE_MODES.includes(str(vm.mode) as ValueMode) ? (str(vm.mode) as ValueMode) : undefined;
+        const metricType = METRIC_TYPES.includes(str(vm.metricType) as MetricType) ? (str(vm.metricType) as MetricType) : undefined;
         pillar = await setValueMetric(user, id, {
           name: vm.name !== undefined ? str(vm.name) : undefined,
           description: vm.description !== undefined ? str(vm.description) : undefined,
           mode,
+          metricType,
+          customUnit: vm.customUnit !== undefined ? str(vm.customUnit) : undefined,
+          customMonetary: vm.customMonetary !== undefined ? Boolean(vm.customMonetary) : undefined,
         });
       }
       return pillar;
@@ -228,6 +247,40 @@ export const strategyWriteTools: McpTool[] = [
       if (!Number.isFinite(value)) fail('record_value_entry needs a numeric `value`', 400);
       const month = str(args.month).trim() || undefined;
       return addValueEntry(user, id, { value, month });
+    },
+  },
+  {
+    name: 'set_pillar_target',
+    tab: 'strategy',
+    minRole: 'builder',
+    description:
+      'Set a pillar’s HEADLINE target — the card’s big number: a target `value` measured by a `metricType` (ebit · revenue · time-back-hours · risks-mitigated · custom) over a `horizon` (year-end · 6/12/24/36-month). The server derives the end date (year-end = Dec 31 this year; N-month = today + N months) and stamps the metricType onto the value metric so the total formats to match (monetary → the tenant currency set in Admin; hours → "h"; risks → count). The "so far" figure flows from record_value_entry / the governed value. Before: get_pillar. After: record_value_entry to report progress, get_pillar to read it back. Governance: canEditPillar re-gates (Builder domain / Admin tenant); a creator is refused (forbidden).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pillarId: { type: 'string', description: 'Pillar id from list_pillars.' },
+        value: { type: 'number', description: 'The target value (e.g. 2500000 for €2.5M, or 1200 hours).' },
+        metricType: { type: 'string', enum: METRIC_TYPES as string[], description: 'What the number measures. Default: ebit.' },
+        horizon: { type: 'string', enum: HORIZONS as string[], description: 'Target horizon. Default: year-end (Dec 31 this year).' },
+      },
+      required: ['pillarId', 'value'],
+      examples: [
+        { pillarId: 'pillar_ab12cd3', value: 2500000, metricType: 'ebit', horizon: 'year-end' },
+        { pillarId: 'pillar_ab12cd3', value: 1200, metricType: 'time-back-hours', horizon: '12-month' },
+      ],
+    },
+    call: async (user, args) => {
+      const id = str(args.pillarId).trim();
+      if (!id) fail('set_pillar_target needs a `pillarId`', 400);
+      const value = Number(args.value);
+      if (!Number.isFinite(value)) fail('set_pillar_target needs a numeric `value`', 400);
+      const metricType = METRIC_TYPES.includes(str(args.metricType) as MetricType)
+        ? (str(args.metricType) as MetricType)
+        : 'ebit';
+      const horizon = HORIZONS.includes(str(args.horizon) as Horizon)
+        ? (str(args.horizon) as Horizon)
+        : 'year-end';
+      return setHeadlineTarget(user, id, { value, metricType, horizon });
     },
   },
 ];

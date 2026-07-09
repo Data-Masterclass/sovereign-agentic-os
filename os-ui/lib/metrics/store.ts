@@ -29,6 +29,9 @@ export type MetricSummary = {
   domain?: string;
   /** Soft-archived (retained, reversible). Absent/false = live. */
   archived?: boolean;
+  /** FAIL-SOFT (#91): set when this one metric/model couldn't be loaded — the tile
+   *  renders its reason inline while the rest of the registry stays live. */
+  error?: string;
 };
 
 function summariesFor(datasetId: string, user: Principal): MetricSummary[] {
@@ -50,6 +53,31 @@ function summariesFor(datasetId: string, user: Principal): MetricSummary[] {
   });
 }
 
+/**
+ * FAIL-SOFT (#91): resolve one dataset's metric summaries, NEVER letting a single bad
+ * model take down the whole registry. If a dataset can't be read or a measure can't be
+ * lifted (a broken/invalid model), we return a single placeholder summary carrying the
+ * inline `error` instead of throwing — so the Metrics surface still renders every other
+ * metric and shows this one's reason inline (never a whole-tab 500 on one bad cube).
+ */
+export function safeSummariesFor(datasetId: string, user: Principal): MetricSummary[] {
+  try {
+    return summariesFor(datasetId, user);
+  } catch (e) {
+    return [{
+      id: datasetId,
+      name: datasetId,
+      datasetId,
+      datasetName: datasetId,
+      member: '—',
+      tier: 'personal',
+      owner: user.id,
+      type: 'error',
+      error: e instanceof Error ? e.message : 'this metric could not be loaded',
+    }];
+  }
+}
+
 export type MetricGroups = { mine: MetricSummary[]; domain: MetricSummary[]; marketplace: MetricSummary[] };
 
 /** List every metric visible to the user, grouped like the other governed surfaces.
@@ -59,7 +87,7 @@ export function listMetrics(user: Principal, opts: { includeArchived?: boolean }
   const ids = [...groups.mine, ...groups.domain, ...groups.marketplace].map((s) => s.id);
   const out: MetricGroups = { mine: [], domain: [], marketplace: [] };
   for (const id of ids) {
-    for (const s of summariesFor(id, user)) {
+    for (const s of safeSummariesFor(id, user)) {
       if (s.archived && !opts.includeArchived) continue;
       // The metric tier is personal|domain|marketplace; the registry group keys are
       // mine|domain|marketplace — map personal → mine (a personal metric is "mine").

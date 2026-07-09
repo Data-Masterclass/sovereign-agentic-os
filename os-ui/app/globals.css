@@ -4271,6 +4271,30 @@ button.card.tile:hover .tile-action { opacity: 1; }
 }
 .strat-pillar-metric { font-size: 11.5px; color: var(--text-muted); }
 
+/* Headline target — big number + "so far" achieved value + on-track cue. */
+.strat-target-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.strat-target-sofar { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.strat-target-sofar-val {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.strat-target-set {
+  align-self: flex-start;
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--gold-text);
+  cursor: pointer;
+}
+.strat-target-set:hover { border-color: var(--gold-text); }
+.strat-target-edit { display: flex; flex-direction: column; gap: 6px; padding: 10px 0 4px; border-bottom: 1px solid var(--border); }
+.strat-target-edit select, .strat-target-edit input { width: 100%; }
+
 .strat-vm { display: flex; flex-direction: column; gap: 8px; }
 .strat-vm-desc { margin: 0; font-size: 11.5px; color: var(--text-muted); line-height: 1.45; }
 .strat-vm-entry { display: flex; gap: 6px; }

@@ -233,6 +233,11 @@ export const config = {
   // fall back to the mock chat model so the loop still runs on a laptop.
   litellmReasoningModel: env('LITELLM_REASONING_MODEL', env('LITELLM_CHAT_MODEL', 'sovereign-reasoning')),
   litellmExecModel: env('LITELLM_EXEC_MODEL', env('LITELLM_CHAT_MODEL', 'sovereign-default')),
+  // Agent tool-calling (function-calling) model. Defaults to the reasoning tier
+  // (Qwen), which emits clean OpenAI `tool_calls`; the light default (gpt-oss-20b)
+  // uses the "harmony" response format whose tool calls parse unreliably. This is
+  // just the install baseline — admin-overridable via the `tools` model role.
+  litellmToolsModel: env('LITELLM_TOOLS_MODEL', env('LITELLM_REASONING_MODEL', 'sovereign-reasoning')),
   // Ask-the-OS assistant: max PLAN→ACT tool-call rounds per turn. Raised from the
   // original 8 so multi-step builds (ingest → silver → gold → metric → publish) can
   // complete in one conversation. Tunable via env without a rebuild.

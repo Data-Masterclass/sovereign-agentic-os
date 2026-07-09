@@ -101,7 +101,7 @@ const DEFAULT_ASSISTANT = '';
 
 /** The effective model_names that are current ROLE defaults (from roles.ts). */
 function roleDefaultIds(): string[] {
-  return [roleModel('standard'), roleModel('reasoning'), roleModel('embeddings')];
+  return [roleModel('standard'), roleModel('reasoning'), roleModel('tools'), roleModel('embeddings')];
 }
 
 function modelsState(): ModelsState {

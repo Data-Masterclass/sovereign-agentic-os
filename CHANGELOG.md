@@ -15,6 +15,53 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.70] — 2026-07-09
+
+Agent data-plane hardening — from a live end-to-end test of an agent reading/writing data, files, and knowledge through Trino/dbt/OPA.
+
+### Governance / OPA (the recurring `query_data` deny — root-caused + fixed)
+- **OPA no longer serves stale grants.** OPA loaded `/policies/data.json` once at boot with no reload and the Deployment's checksum annotation omitted `requiresApproval` — so a grant change (e.g. the cohort's `query`/`retrieve`) could silently never take effect, denying `query_data`/`search_knowledge` until a manual restart (the "flip-flop"). Now: the checksum annotation covers all policy/data fields **and** OPA runs with `--watch` (hot-reload). *(Live-confirmed: after reload, `query_data` returns rows and the cohort grant is present.)*
+- **Fix (knowledge retrieval always denied):** `search_knowledge`/`retrieve` authorized on the **user id** instead of the **domain** (grants are domain-keyed), so it fell to an empty offline mock for everyone. Now gates on the domain principal, exactly like `query_data`.
+
+### Agents
+- **Reliable tool-calling on gpt-oss.** The worker model (`gpt-oss-20b`, OpenAI "harmony" format) leaked channel control tokens into tool names (`query_data<|channel|>commentary`) → intermittent tool errors that exhausted the agent's step budget. The tool-call parser now **strips harmony tokens** and **recovers commentary-channel tool calls**, and agent tool-calling routes to a new **admin-configurable `tools` model role** (defaults to the Qwen tier for native tool-calls; `LITELLM_TOOLS_MODEL` / Admin settings override).
+
+### Data / Metrics (Cube)
+- **Promotion is fail-closed.** Publishing a dataset to a domain asset now **independently verifies the physical gold materialized in the domain schema** before flipping the tier (502, tier untouched, if absent) — no more "promoted" assets whose gold only exists in the owner's personal lane. Added a governed **re-materialize/repair** path for an already-promoted-but-missing asset.
+- **Cube fixes:** defining a metric requires a **promoted (domain-schema) gold** with a clear "promote to Shared first" message (a cube can only read the domain schema its `cube-sales` principal is entitled to); cube dimensions/`drill_members` are **reconciled to real mart columns** (can't reference a missing column like `region`); and the **Metrics tab is fail-soft** — one broken model renders an inline "unavailable" tile instead of 500-ing the whole tab.
+
+### Infra
+- **ClickHouse (Langfuse) is PVC-backed** with a `wait-for-clickhouse` init-container gating langfuse-web, so trace-schema migrations always run against a ready CH across redeploys. *(Deployed in 0.1.69; PVC live.)*
+
+## [os-ui 0.1.69] — 2026-07-09
+
+### Navigation / access
+- **Menu now hides what a role can't use.** `LLM Gateway`, `Monitoring`, and the `MCP` setup tab are **builder+/admin only** (hidden from creators/students). Creators still connect over MCP — the `/api/mcp` endpoint + their per-user token are unaffected; only the configuration tab is hidden. (Governance was already builder+, and Admin/Components/Terminal/Query/About already admin-only.)
+- **New Admin "Query" console** (Admin → Terminal → **Query** → About) — dual-mode **Lakehouse SQL + Cube** console for admins, over the governed read path (admin-scoped, 403 for non-admins).
+- **Rename:** the visibility label **"Shared" → "Shared in Domain"** across every tab (scope switcher, badges, tiles) — internal keys/enums unchanged.
+
+### Data (detail rework)
+- **Removed the confusing "Advanced Build Rail."** Everything is now inline on one screen with section-level **Edit** (Documentation, Data quality, Metrics, Bring-in-data/Bronze, Configuration/dbt SQL). The three primary actions — **Turn into Silver · Turn into Gold · Archive** — moved to a single **action row at the bottom**.
+
+### Strategy
+- **Strategic-pillar headline target.** Each pillar now shows a **big target number** tied to a value-metric type — **EBIT · Revenue · Time Back Hours · # Risks Mitigated · Custom** (user-named, with an optional unit + monetary flag) — and a smaller **"so far: …"** achieved-to-date figure below it, with a subtle on-track/behind cue. Targets carry a **horizon** (year-end · 6 · 12 · 24 · 36-month) that computes a clear **end date** (default: year-end of the current calendar year). Only Builder/Admin set targets; creators view. New MCP tool `set_pillar_target` keeps agents in lockstep.
+- **Currency is a tenant Admin setting** (EUR/CHF/USD + other ISO currencies), applied to monetary metrics only (Hours → `h`, Risks → integer count) — the Strategy tab never picks currency locally.
+
+### Governance / Admin
+- **Fix (User & Access edit):** the Platform Admin users surface had **no edit form** — only deactivate/reactivate/tenant-admin. Added an edit panel + `edit` op so an admin can change a user's **name/email/role/domains** and have it persist to the `os-users` mirror (admin-gated).
+
+### Versioning
+- **Software** version history is now **git-backed** — the app's Forgejo commit log is the version list, and *restore* re-commits a prior commit's files onto HEAD as a new auditable commit (non-destructive, governed). Version panel now shown on Software detail.
+- **Data** datasets (no per-dataset repo) get an **append-only snapshot history** — each edit snapshots the prior `dataset.yaml`; restore is reversible. Version panel now shown on Dataset detail.
+- **Knowledge:** a creator on a live + Shared **workflow** can now file **Request certification** (Marketplace rung) — admin-gated, no self-publish. (Personal-knowledge promote ladder already existed.)
+
+### LLM Gateway
+- **Fix (usage showed 0 requests / 0 tokens):** the usage panel called LiteLLM `/global/activity` **without a date range** (a bare call 400s) and read a `sum_*` shape this LiteLLM version doesn't return. Now passes a rolling 30-day window and sums the `daily_data[]` rollup (keeps `sum_*` back-compat) — real tenant totals show again.
+- **Fix (Model Hub blank `[]`):** replaced the iframe to LiteLLM's empty `/public/model_hub` with an **OS-native model list** rendered from `/v1/models` (server-side, key-free) — the brokered models always show.
+
+### Durability (infra)
+- **Langfuse ClickHouse hardening.** ClickHouse was `emptyDir` (a pod/node roll wiped all trace tables); it is now **PVC-backed** (10Gi) on STACKIT. Added a `wait-for-clickhouse` **initContainer** on langfuse-web that polls CH `/ping` before the web container starts, so the schema migration always runs against a ready ClickHouse on every redeploy — no manual web-pod bounce. *(Enabling the PVC on an existing cluster needs a one-time `kubectl delete deployment clickhouse`.)*
+
 ## [os-ui 0.1.68] — 2026-07-09
 
 ### Agents / Governance (durability fix)

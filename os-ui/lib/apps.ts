@@ -32,6 +32,8 @@ import { generateAndCompile } from '@/lib/software/auto-mcp';
 import { parseAppManifest, renderAppYaml, defaultOpenApi, detectSurface } from '@/lib/software/metadata';
 import { osMirror } from '@/lib/os-mirror';
 import { type ArtifactVersion, versionLog } from '@/lib/versioning';
+import { listGitVersions, restoreGitVersion, shaForVersion, type GitVersion } from '@/lib/git-versioning';
+import type { ForgejoClient, ForgejoCommit, ForgejoCommitFiles } from '@/lib/agents/build/live';
 
 /**
  * App registry — the home of record for every application built in the Software
@@ -1019,6 +1021,125 @@ export async function restoreAppVersion(appId: string, user: CurrentUser, versio
   map.set(a.id, a);
   writeThrough(a);
   return a;
+}
+
+// ------------------------------------------------------ Git-backed versions ---
+//
+// Software apps are GIT-backed: every save/build is a real commit to the app's
+// Forgejo repo. So the version history + "restore a prior version" reflect the
+// repo's COMMIT log (via the shared `git-versioning` helper) rather than only the
+// snapshot log above. When Forgejo is unreachable / the repo has no history yet we
+// fall back to the snapshot log honestly (never a faked empty git list). The
+// manifest file that must be present for a restore to be meaningful is `app.yaml`.
+
+const APP_MANIFEST = 'app.yaml';
+
+/** A ForgejoClient scoped to one app's repo, backed by the app store's own
+ *  `forgejoApi`. Only the read/commit surface the version helper needs is real;
+ *  the create/delete methods are unused here and throw if called. `getCommitFiles`
+ *  reads the WHOLE repo tree at the ref so a restore re-commits the exact build. */
+function appForgejoClient(app: App): ForgejoClient {
+  const { owner, repo } = repoCoords(app);
+  const path = (p: string) => encodeRepoPath(sanitizeRepoPath(p));
+  return {
+    async ensureRepo() {/* app repos are provisioned by scaffoldRepo, not here */},
+    async readFile(_repo, p) {
+      const res = await forgejoApi('GET', `/repos/${owner}/${repo}/contents/${path(p)}?ref=main`);
+      if (!res.ok) return null;
+      const d = res.data as { content?: string; encoding?: string; sha?: string } | null;
+      if (!d || typeof d.content !== 'string') return null;
+      const content = d.encoding === 'base64' ? Buffer.from(d.content, 'base64').toString('utf8') : d.content;
+      return { content, sha: String(d.sha ?? '') };
+    },
+    async writeFile(_repo, p, content, sha, message) {
+      const res = await forgejoApi('PUT', `/repos/${owner}/${repo}/contents/${path(p)}`, {
+        content: Buffer.from(content, 'utf8').toString('base64'),
+        message: message ?? `Restore ${p}`,
+        sha: sha || undefined,
+        branch: 'main',
+      });
+      if (!res.ok) throw withStatus(new Error(`Forgejo write ${p} failed (${res.status || 'unreachable'}).`), 502);
+      const d = res.data as { content?: { sha?: string } };
+      return { sha: String(d?.content?.sha ?? '') };
+    },
+    async deleteRepo() { return { deleted: false }; },
+    async listCommits(_repo, opts): Promise<ForgejoCommit[] | null> {
+      const limit = opts?.limit ?? 30;
+      const res = await forgejoApi('GET', `/repos/${owner}/${repo}/commits?sha=main&limit=${limit}`);
+      if (!res.ok || !Array.isArray(res.data)) return null;
+      const rows = res.data as { sha?: string; commit?: { message?: string; author?: { name?: string; date?: string } } }[];
+      return rows
+        .map((c) => ({
+          sha: String(c.sha ?? ''),
+          message: String(c.commit?.message ?? '').trim(),
+          author: String(c.commit?.author?.name ?? 'unknown'),
+          date: String(c.commit?.author?.date ?? ''),
+        }))
+        .filter((c) => c.sha);
+    },
+    async getCommitFiles(_repo, sha): Promise<ForgejoCommitFiles | null> {
+      // The whole repo tree AT `sha` (so a restore re-commits the exact build).
+      const tree = await forgejoApi('GET', `/repos/${owner}/${repo}/git/trees/${sha}?recursive=true&per_page=1000`);
+      if (!tree.ok) return null;
+      const blobs = ((tree.data as { tree?: { path: string; type: string }[] })?.tree ?? [])
+        .filter((t) => t.type === 'blob' && typeof t.path === 'string')
+        .map((t) => t.path);
+      const files: ForgejoCommitFiles = {};
+      for (const p of blobs) {
+        const res = await forgejoApi('GET', `/repos/${owner}/${repo}/contents/${path(p)}?ref=${encodeURIComponent(sha)}`);
+        if (!res.ok) continue;
+        const d = res.data as { content?: string; encoding?: string } | null;
+        if (!d || typeof d.content !== 'string') continue;
+        files[p] = d.encoding === 'base64' ? Buffer.from(d.content, 'base64').toString('utf8') : d.content;
+      }
+      return Object.keys(files).length > 0 ? files : null;
+    },
+  };
+}
+
+/**
+ * Git commit history for an app's repo, newest first, in the VersionHistory shape.
+ * Returns `null` when the repo has no git history yet OR Forgejo is unreachable, so
+ * the route falls back to the snapshot log honestly. View-scoped.
+ */
+export async function listAppGitVersions(appId: string, user: CurrentUser): Promise<GitVersion[] | null> {
+  const app = await getAppForUser(appId, user); // view gate — throws 404 if not visible
+  const { repo } = repoCoords(app);
+  return listGitVersions(appForgejoClient(app), repo);
+}
+
+/**
+ * Restore a prior build of an app by RE-COMMITTING that commit's files onto HEAD
+ * (a new, auditable "restore of <sha>" commit — never a destructive reset), then
+ * re-arming its MCP profile from the restored manifest. Edit-scoped (owner/admin);
+ * a state change on the same governed spine (trace). Returns the sha restored, or
+ * `null` when there is no git history to restore against (→ snapshot fallback).
+ */
+export async function restoreAppGitVersion(
+  appId: string,
+  user: CurrentUser,
+  version: number,
+): Promise<{ app: App; sha: string } | null> {
+  const map = await getCache();
+  const a = map.get(appId);
+  if (!a || !visibleToUser(a, user)) throw withStatus(new Error('App not found'), 404);
+  if (!isOwnerOrAdminApp(a, user)) throw withStatus(new Error('Not permitted to edit this app'), 403);
+  const client = appForgejoClient(a);
+  const { repo } = repoCoords(a);
+  const sha = await shaForVersion(client, repo, version);
+  if (!sha) return null; // no git history / out of range → caller uses snapshot restore
+  const { sha: newSha } = await restoreGitVersion(client, repo, sha, user.id, { manifestPath: APP_MANIFEST });
+  a.updatedAt = now();
+  map.set(a.id, a);
+  writeThrough(a);
+  void trace({
+    principal: a.mcpPrincipal,
+    tool: 'generate',
+    input: { action: 'restore_version', restoredFrom: sha.slice(0, 8), by: user.id, role: user.role },
+    output: { repo: a.repo.fullName, commit: newSha },
+    decision: 'allow',
+  });
+  return { app: a, sha: newSha };
 }
 
 // ------------------------------------------------------- Server accessors -----

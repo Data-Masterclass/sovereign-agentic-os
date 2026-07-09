@@ -11,10 +11,13 @@
  * sees this shaped, key-free object.
  */
 
-/** LiteLLM `/global/activity` — daily rollup with `sum_*` tenant totals. */
+/** LiteLLM `/global/activity` — tenant totals. Older builds expose top-level
+ *  `sum_*`; current builds return a `daily_data[]` rollup we sum ourselves. We
+ *  handle BOTH so a version drift can't silently zero the panel. */
 export type RawActivity = {
   sum_api_requests?: number;
   sum_total_tokens?: number;
+  daily_data?: Array<{ api_requests?: number; total_tokens?: number }>;
 } | null | undefined;
 
 /** LiteLLM `/global/spend` — a `{spend}` object, an array of them, or a number. */
@@ -54,8 +57,13 @@ export function shapeUsage(args: {
   budgetUsd: number;
   budgetWindow: string;
 }): Usage {
-  const requests = num(args.activity?.sum_api_requests);
-  const tokens = num(args.activity?.sum_total_tokens);
+  // Prefer the top-level tenant sums; fall back to summing the daily rollup
+  // (the shape current LiteLLM returns for `/global/activity`).
+  const daily = Array.isArray(args.activity?.daily_data) ? args.activity!.daily_data! : [];
+  const requests =
+    num(args.activity?.sum_api_requests) || daily.reduce((s, d) => s + num(d?.api_requests), 0);
+  const tokens =
+    num(args.activity?.sum_total_tokens) || daily.reduce((s, d) => s + num(d?.total_tokens), 0);
   const spendUsd = totalSpend(args.spend);
   const budgetUsd = num(args.budgetUsd);
   const pctUsed = budgetUsd > 0 ? Math.min(100, Math.round((spendUsd / budgetUsd) * 100)) : 0;

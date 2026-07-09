@@ -105,7 +105,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/policy: {{ printf "%s-%s-%s-%s" ($opa.grants | toJson) (($opa.governance | default dict) | toJson) (.Files.Get "policies/trino.rego") (.Files.Get "policies/marketplace.rego") | sha256sum }}
+        checksum/policy: {{ printf "%s-%s-%s-%s-%s" ($opa.grants | toJson) (($opa.requiresApproval | default list) | toJson) (($opa.governance | default dict) | toJson) (.Files.Get "policies/trino.rego") (.Files.Get "policies/marketplace.rego") | sha256sum }}
       labels:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa") | nindent 8 }}
@@ -126,6 +126,7 @@ spec:
             - "--server"
             - "--addr=0.0.0.0:8181"
             - "--log-level=info"
+            - "--watch"
             # Explicit files, not the dir: ConfigMap volumes add ..data symlinks
             # that make a recursive dir load see each file multiple times.
             - "/policies/authz.rego"

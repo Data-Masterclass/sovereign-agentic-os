@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { setValueMetric } from '@/lib/strategy/pillars';
-import type { ValueMode } from '@/lib/strategy/model';
+import { METRIC_TYPES, type ValueMode, type MetricType } from '@/lib/strategy/model';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,10 +21,16 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
     const { id } = await ctx.params;
     const body = await req.json().catch(() => ({} as Record<string, unknown>));
     const mode = MODES.includes(body?.mode as ValueMode) ? (body.mode as ValueMode) : undefined;
+    const metricType = METRIC_TYPES.includes(body?.metricType as MetricType)
+      ? (body.metricType as MetricType)
+      : undefined;
     const item = await setValueMetric(user, id, {
       name: body?.name !== undefined ? String(body.name) : undefined,
       description: body?.description !== undefined ? String(body.description) : undefined,
       mode,
+      metricType,
+      customUnit: body?.customUnit !== undefined ? String(body.customUnit) : undefined,
+      customMonetary: body?.customMonetary !== undefined ? Boolean(body.customMonetary) : undefined,
     });
     return NextResponse.json({ item });
   } catch (e) {

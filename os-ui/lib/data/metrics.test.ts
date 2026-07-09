@@ -10,6 +10,8 @@ import {
   inferDimType,
   cubeViewName,
   goldMartFqn,
+  metricGoldReady,
+  PROMOTE_FIRST_MESSAGE,
 } from './metrics.ts';
 import { emptyVersions, type Dataset } from './dataset-schema.ts';
 
@@ -91,4 +93,40 @@ test('handover names line up across cube + exposure + dashboard', () => {
   const d = gold();
   assert.equal(goldMartFqn(d), 'iceberg.sales.gold_orders');
   assert.equal(cubeViewName(d), 'Orders');
+});
+
+test('#91 metric guard FAIL-CLOSED: unpromoted personal gold is rejected with the clear message', () => {
+  // A built Gold that is still tier=dataset (personal lane) — Cube can't read it.
+  const personal = gold({ tier: 'dataset', visibility: 'private' });
+  const r = metricGoldReady(personal);
+  assert.equal(r.ok, false);
+  assert.equal(r.message, PROMOTE_FIRST_MESSAGE);
+  assert.match(r.message!, /Promote this dataset to Shared first/);
+});
+
+test('#91 metric guard: a governed (asset) built Gold is ready', () => {
+  assert.deepEqual(metricGoldReady(gold()), { ok: true });
+});
+
+test('#91 metric guard: a governed dataset without a built Gold is rejected', () => {
+  const noGold = gold();
+  noGold.versions.gold.built = false;
+  assert.equal(metricGoldReady(noGold).ok, false);
+  assert.match(metricGoldReady(noGold).message!, /built Gold/);
+});
+
+test('#91 dim reconciliation: drill_members naming a NON-mart column are dropped from the cube', () => {
+  // net_amount + region are mart columns; ghost_col is NOT — it must never be emitted.
+  const y = scaffoldCubeYaml(gold({
+    measures: [{ name: 'revenue', type: 'sum', sql: 'net_amount', drillMembers: ['region', 'ghost_col', 'net_amount'] }],
+  }));
+  assert.match(y, /drill_members: \[region, net_amount\]/); // known members kept, in order
+  assert.doesNotMatch(y, /ghost_col/); // the unknown column never reaches the YAML
+});
+
+test('#91 dim reconciliation: an all-unknown drill_members list emits NO drill_members block', () => {
+  const y = scaffoldCubeYaml(gold({
+    measures: [{ name: 'revenue', type: 'sum', sql: 'net_amount', drillMembers: ['nope', 'gone'] }],
+  }));
+  assert.doesNotMatch(y, /drill_members:/);
 });

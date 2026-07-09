@@ -39,7 +39,7 @@ export type ScopeKey = 'all' | 'mine' | 'shared' | 'marketplace';
 export const SCOPE_GROUPS: { key: ScopeKey; label: (kind?: string) => string }[] = [
   { key: 'all', label: () => 'All' },
   { key: 'mine', label: (kind) => (kind ? `My ${kind}` : 'My') },
-  { key: 'shared', label: () => 'Shared' },
+  { key: 'shared', label: () => 'Shared in Domain' },
   { key: 'marketplace', label: () => 'Marketplace' },
 ];
 

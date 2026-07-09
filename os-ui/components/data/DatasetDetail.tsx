@@ -10,6 +10,8 @@ import LineagePanel from './LineagePanel';
 import RefinePanel from './RefinePanel';
 import GoldJoinPanel from './GoldJoinPanel';
 import ExplorePanel from './ExplorePanel';
+import BronzePanel from './BronzePanel';
+import MetricsPanel from './MetricsPanel';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import DomainTag from '@/components/DomainTag';
@@ -27,6 +29,9 @@ type CheckStatus = 'pass' | 'fail' | 'not_run';
 type CheckResult = { id: string; label: string; status: CheckStatus; violations: number | null; reason?: string };
 type QualityBadge = 'passing' | 'failing' | 'unknown';
 type Certification = { level: string; by: string; at: string };
+/** Promotion gate + in-flight request — mirrors the promote route's GET payload. */
+type Gate = { ok: boolean; missing: string[] };
+type PromoteStatus = { tier: Dataset['tier']; gate: Gate; request: { status: string; detail?: string } | null };
 /** Governed row-preview outcome — mirrors PreviewOutcome from lib/data/preview. */
 type RowPreview =
   | { available: true; layer: string; fqn: string; limit: number; columns: string[]; rows: string[][]; rowCount: number }
@@ -108,25 +113,100 @@ function formatDate(iso: string): string {
 
 const TIER_BADGE: Record<Dataset['tier'], string> = { dataset: 'vis-personal', asset: 'vis-shared', product: 'vis-certified' };
 const TIER_WORD: Record<Dataset['tier'], string> = { dataset: 'Personal dataset', asset: 'Data asset', product: 'Data product' };
-const VIS_WORD: Record<string, string> = { private: 'Private', domain: 'Domain', shared: 'Shared', public: 'Public' };
+const VIS_WORD: Record<string, string> = { private: 'Private', domain: 'Domain', shared: 'Shared in Domain', public: 'Public' };
+
+/** "Show the code" — the same Forgejo-versioned files the panels + agent edit.
+ *  Inlined from DatasetStepper so the dbt SQL editor lives in the detail. */
+function CodeDrawer({ datasetId }: { datasetId: string }) {
+  const [files, setFiles] = useState<string[]>([]);
+  const [path, setPath] = useState('dataset.yaml');
+  const [content, setContent] = useState('');
+  const [sha, setSha] = useState('');
+  const [err, setErr] = useState('');
+  const [savedNote, setSavedNote] = useState('');
+
+  const loadFile = useCallback(async (p: string) => {
+    setErr(''); setSavedNote('');
+    try {
+      const res = await fetch(`/api/data/datasets/${datasetId}/files?path=${encodeURIComponent(p)}`, { cache: 'no-store' });
+      const data = await res.json();
+      if (!res.ok) { setErr(data.error ?? 'Could not read file'); return; }
+      setPath(p); setContent(data.content); setSha(data.sha);
+    } catch (e) { setErr((e as Error).message); }
+  }, [datasetId]);
+
+  useEffect(() => {
+    (async () => {
+      const res = await fetch(`/api/data/datasets/${datasetId}/files`, { cache: 'no-store' });
+      const data = await res.json();
+      if (res.ok) { setFiles(data.files ?? []); loadFile('dataset.yaml'); }
+    })();
+  }, [datasetId, loadFile]);
+
+  const editable = path === 'dataset.yaml';
+  const save = useCallback(async () => {
+    setErr(''); setSavedNote('');
+    try {
+      const res = await fetch(`/api/data/datasets/${datasetId}/files`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path, content, sha }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setErr(data.error ?? 'Save failed'); return; }
+      setSha(data.sha); setSavedNote('✓ saved — same source the panels and agent use');
+    } catch (e) { setErr((e as Error).message); }
+  }, [datasetId, path, content, sha]);
+
+  return (
+    <div className="code-drawer">
+      <div className="chip-row" style={{ marginBottom: 8 }}>
+        {files.map((f) => (
+          <button key={f} className={`chip${f === path ? ' on' : ''}`} style={{ cursor: 'pointer' }} onClick={() => loadFile(f)}>{f}</button>
+        ))}
+      </div>
+      <textarea className="mono" rows={14} value={content} readOnly={!editable}
+        onChange={(e) => setContent(e.target.value)} spellCheck={false} />
+      <div className="row" style={{ marginTop: 8, justifyContent: 'space-between' }}>
+        <div className="hint" style={{ marginTop: 0 }}>
+          {editable ? 'dataset.yaml is the single source — edit here, the tiles + stepper follow.' : 'Build materialises this native file; edit via the guided panel or the data agent.'}
+          {savedNote ? <span className="ok-note"> {savedNote}</span> : null}
+        </div>
+        {editable ? <button className="btn" onClick={save}>Save</button> : null}
+      </div>
+      {err ? <div className="error" style={{ marginTop: 10 }}>{err}</div> : null}
+    </div>
+  );
+}
 
 /**
  * Dataset detail panel — the "look at and document this dataset" surface.
  * Surfaces materialization status, tier/visibility, Cube readiness, and published
  * state as honest status chips; lets the owner edit description + column docs and
- * add data-quality check intentions; links through to the build flow.
+ * add data-quality check intentions; exposes all build + governance actions inline.
  *
- * NO Cube registration state is read from the backend (no endpoint exists yet) —
- * "Cube model ready" is derived client-side from the governed-tier + gold-built
- * rule that `cubeDeliverable` enforces on the server, and labelled as such.
+ * Section order (top → bottom):
+ *   Header (name + badges + provenance)
+ *   Status chips
+ *   Data preview
+ *   Explore / profile
+ *   Lineage
+ *   Documentation  [Edit]
+ *   Data quality   [Add rule inline]
+ *   Metrics (governed Gold assets)
+ *   Bring in data — Bronze  [expand/collapse]
+ *   Configuration — dbt SQL / dataset.yaml  [Show/hide]
+ *   Sharing / promotion
+ *   Bottom action row: Silver build | Gold build | LifecycleActions (Archive/Delete)
  */
 export default function DatasetDetail({
   datasetId,
   onBack,
-  onOpenStepper,
+  onOpenStepper: _onOpenStepper,
 }: {
   datasetId: string;
   onBack: () => void;
+  /** Kept for interface compat with DataTab — the "Advanced Build Rail" button
+   *  is gone; all build actions are now inline in this detail. */
   onOpenStepper: (id: string) => void;
 }) {
   const { user } = useUser();
@@ -165,9 +245,19 @@ export default function DatasetDetail({
   const [previewing, setPreviewing] = useState(false);
   const [previewErr, setPreviewErr] = useState('');
 
-  // ---- guided refinement flow open in-detail (the two CTAs) ----
-  // 'silver' → the guided Silver builder; 'gold' → the guided harmonize/join builder.
-  const [flow, setFlow] = useState<'silver' | 'gold' | null>(null);
+  // ---- build flows (bottom action row) ----
+  // 'bronze' → inline BronzePanel; 'silver' → RefinePanel; 'gold' → GoldJoinPanel.
+  const [flow, setFlow] = useState<'bronze' | 'silver' | 'gold' | null>(null);
+
+  // ---- configuration drawer (dbt SQL / dataset.yaml) ----
+  const [showCode, setShowCode] = useState(false);
+
+  // ---- sharing / promotion (mirrors Files: gate hint + button + request status) ----
+  const [promote, setPromote] = useState<PromoteStatus | null>(null);
+  // A pending certification request (asset → marketplace), from the certify route.
+  const [certifyPending, setCertifyPending] = useState(false);
+  const [shareErr, setShareErr] = useState('');
+  const [shareBusy, setShareBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoadErr('');
@@ -195,6 +285,48 @@ export default function DatasetDetail({
   }, [datasetId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Sharing gate + in-flight request — the SAME source the Promote panel uses, so
+  // the button here is gated (disabled until green) and shows any pending request.
+  const loadPromote = useCallback(async () => {
+    try {
+      const [pRes, cRes] = await Promise.all([
+        fetch(`/api/data/datasets/${datasetId}/promote`, { cache: 'no-store' }),
+        fetch(`/api/data/datasets/${datasetId}/certify`, { cache: 'no-store' }),
+      ]);
+      if (pRes.ok) setPromote(await pRes.json());
+      if (cRes.ok) setCertifyPending((await cRes.json()).request?.status === 'pending');
+    } catch { /* sharing status is best-effort; the detail stands without it */ }
+  }, [datasetId]);
+  useEffect(() => { loadPromote(); }, [loadPromote]);
+
+  // Creator/Builder file a promotion REQUEST (a different Builder approves in
+  // Governance — you can't promote your own; the server enforces this too).
+  const requestPromote = useCallback(async () => {
+    setShareErr(''); setShareBusy(true);
+    try {
+      const res = await fetch(`/api/data/datasets/${datasetId}/promote`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+      });
+      const data = await res.json();
+      if (!res.ok) { setShareErr(data.error ?? 'Could not request promotion'); return; }
+      await Promise.all([loadPromote(), load()]);
+    } catch (e) { setShareErr((e as Error).message); } finally { setShareBusy(false); }
+  }, [datasetId, loadPromote, load]);
+
+  // An Admin certifies a Shared asset to the marketplace directly; a Creator/Builder
+  // files a certification request for an Admin to approve.
+  const certifyAsset = useCallback(async (mode: 'certify' | 'request') => {
+    setShareErr(''); setShareBusy(true);
+    try {
+      const res = await fetch(`/api/data/datasets/${datasetId}/certify`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: mode }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setShareErr(data.error ?? 'Could not certify'); return; }
+      await Promise.all([loadPromote(), load()]);
+    } catch (e) { setShareErr((e as Error).message); } finally { setShareBusy(false); }
+  }, [datasetId, loadPromote, load]);
 
   // Best-effort: surface this dataset's OpenMetadata entry (deep link) from the
   // catalog union. A missing catalog/OM never blocks the detail view.
@@ -331,12 +463,12 @@ export default function DatasetDetail({
   const cubeReady = isCubeReady(dataset);
   const published = !!dataset.certification;
   const canEdit = !!user && (user.id === dataset.owner || (user.role === 'admin' && user.domains?.includes(dataset.domain)));
+  // Certification (asset → marketplace) is Admin-only; only an Admin certifies directly.
+  const isAdmin = user?.role === 'admin';
 
   const builtLayers = (['bronze', 'silver', 'gold'] as Layer[]).filter((l) => dataset.versions[l].built);
   const colNames = dataset.columns.map((c) => c.name).filter(Boolean);
-  // The two guided next-steps, gated on what already exists:
-  //  • a Bronze (raw) dataset → clean it into Silver;
-  //  • a Silver dataset → harmonize it into Gold by joining trusted datasets.
+  // Build gating (Bronze → Silver → Gold, each layer unlocks the next):
   const canRefineSilver = dataset.versions.bronze.built;
   const canHarmonizeGold = dataset.versions.silver.built;
   // A guided build committed → close the flow and reload the honest built state.
@@ -347,28 +479,6 @@ export default function DatasetDetail({
       {/* ── Nav ── */}
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <button className="btn ghost" onClick={onBack}>← Datasets</button>
-        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-          {/* OS-wide rule: lifecycle lives in the opened detail — live → Archive;
-              only an ARCHIVED dataset exposes Delete. Real archived state drives it. */}
-          {canEdit ? (
-            <LifecycleActions
-              id={dataset.id}
-              name={dataset.name}
-              kind="dataset"
-              visibility={lcVis(dataset.tier)}
-              archived={!!dataset.archived}
-              api={`/api/data/datasets/${dataset.id}`}
-              onChanged={() => { if (dataset.archived) onBack(); else void load(); }}
-              showVersions={false}
-              compact
-            />
-          ) : null}
-          {canEdit ? (
-            <button className="btn ghost" onClick={() => onOpenStepper(dataset.id)} title="The full Bronze → Silver → Gold build rail">
-              Advanced build rail →
-            </button>
-          ) : null}
-        </div>
       </div>
 
       {/* ── Header ── */}
@@ -396,7 +506,7 @@ export default function DatasetDetail({
         ) : (
           <span
             className="status-chip s-stored"
-            title="No medallion layer built yet — open Build / refine to materialise it"
+            title="No medallion layer built yet — use Bring in data below to upload a file or pull an extract"
             style={{ cursor: 'default' }}
           >
             not materialized — no layer built yet
@@ -466,74 +576,64 @@ export default function DatasetDetail({
         )}
       </div>
 
-      {/* ── Refine: the two guided next-steps (the primary CTAs) ── */}
-      {canEdit ? (
-        <div style={{ marginBottom: 18 }}>
-          {!canRefineSilver ? (
-            <div className="gate-check">
-              <span className="muted" style={{ fontSize: 13 }}>
-                Bring in a Bronze version first — open the <strong>Advanced build rail →</strong> to upload a file or pull an extract.
-                Once it&apos;s in, you can turn it into a clean Silver dataset here.
-              </span>
-            </div>
-          ) : (
-            <div className="refine-cta">
-              {/* Bronze → Silver: the single primary action for a raw dataset. */}
-              {!dataset.versions.silver.built ? (
-                <button className={`btn${flow === 'silver' ? ' ghost' : ''}`} onClick={() => setFlow(flow === 'silver' ? null : 'silver')}>
-                  {flow === 'silver' ? 'Close' : 'Turn into clean Silver Dataset'}
-                </button>
-              ) : (
-                <button className={`btn${flow === 'silver' ? '' : ' ghost'}`} onClick={() => setFlow(flow === 'silver' ? null : 'silver')}>
-                  {flow === 'silver' ? 'Close' : 'Re-clean the Silver version'}
-                </button>
-              )}
-              {/* Silver → Gold: harmonize by joining trusted datasets. */}
-              {canHarmonizeGold ? (
-                <button className={`btn${flow === 'gold' ? '' : ' ghost'}`} onClick={() => setFlow(flow === 'gold' ? null : 'gold')}>
-                  {flow === 'gold' ? 'Close' : 'Turn into a harmonized Gold dataset'}
-                </button>
-              ) : (
-                <span className="hint" style={{ margin: 0, alignSelf: 'center' }}>
-                  Clean it to Silver first, then you can harmonize it into Gold.
-                </span>
-              )}
-            </div>
-          )}
-
-          {flow === 'silver' && canRefineSilver ? (
-            <div style={{ marginTop: 12 }}>
-              <RefinePanel
-                datasetId={dataset.id}
-                datasetName={dataset.name}
-                owner={dataset.owner}
-                domain={dataset.domain}
-                tier={dataset.tier}
-                columns={colNames}
-                stage={{ layer: 'silver', copy: { title: 'Clean it up', subtitle: '', tool: '' } }}
-                onCommitted={onFlowCommitted}
-              />
-            </div>
-          ) : null}
-
-          {flow === 'gold' && canHarmonizeGold ? (
-            <div style={{ marginTop: 12 }}>
-              <GoldJoinPanel
-                datasetId={dataset.id}
-                datasetName={dataset.name}
-                owner={dataset.owner}
-                domain={dataset.domain}
-                tier={dataset.tier}
-                columns={colNames}
-                onCommitted={onFlowCommitted}
-              />
-            </div>
-          ) : null}
-        </div>
+      {/* ── Data preview (governed SELECT * LIMIT 50) ── */}
+      <div className="section-title" style={{ marginTop: 4 }}>
+        Data preview
+        <button className="btn ghost sm" style={{ marginLeft: 10 }} onClick={loadPreview} disabled={previewing}>
+          {previewing ? <span className="spin" /> : 'Refresh preview'}
+        </button>
+      </div>
+      <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
+        A read-only scan of the first 50 rows through the governed query path (Trino,
+        OPA-checked) — your row filters and column masks apply, exactly as the agents and
+        dashboards see it. Nothing is previewed until a layer is built.
+      </p>
+      {previewErr ? <div className="error" style={{ marginBottom: 10 }}>{previewErr}</div> : null}
+      {preview ? (
+        preview.available ? (
+          <>
+            <p className="muted" style={{ fontSize: 12.5, margin: '0 0 8px' }}>
+              First {preview.rowCount} row{preview.rowCount === 1 ? '' : 's'} · {preview.layer}
+              {' · '}<span className="mono" style={{ fontSize: 10 }}>{preview.fqn}</span>
+            </p>
+            {preview.columns.length > 0 ? (
+              <div className="table-wrap" style={{ marginBottom: 16 }}>
+                <table>
+                  <thead>
+                    <tr>{preview.columns.map((c) => <th key={c}>{c}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {preview.rows.map((r, i) => (
+                      <tr key={i}>{r.map((cell, j) => <td key={j}>{cell}</td>)}</tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>No rows to show.</p>
+            )}
+          </>
+        ) : (
+          <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>{preview.reason}</p>
+        )
       ) : null}
 
+      {/* ── Explore (quiet profile of a built version — governed reads, masked) ── */}
+      {builtLayers.length > 0 ? (
+        <>
+          <div className="section-title" style={{ marginTop: 20 }}>Explore</div>
+          {/* The row preview lives ONCE in the "Data preview" section above — Explore
+              here shows the profile only, so the same rows aren't rendered twice. */}
+          <ExplorePanel datasetId={dataset.id} builtLayers={builtLayers} showPreview={false} />
+        </>
+      ) : null}
+
+      {/* ── Lineage (refinement + consumption chain, from the single source) ── */}
+      <div className="section-title" style={{ marginTop: 20 }}>Lineage</div>
+      <LineagePanel datasetId={dataset.id} />
+
       {/* ── Documentation ── */}
-      <div className="section-title" style={{ marginTop: 4 }} {...anchorAttr(ANCHORS.data.document)}>
+      <div className="section-title" style={{ marginTop: 20 }} {...anchorAttr(ANCHORS.data.document)}>
         Documentation
         {!editingDocs && canEdit ? (
           <button className="btn ghost sm" style={{ marginLeft: 10 }} onClick={() => { setEditingDocs(true); setDocsOk(''); }}>
@@ -615,19 +715,6 @@ export default function DatasetDetail({
           )}
         </>
       )}
-
-      {/* ── Metrics (defined measures — the Cube handover) ── */}
-      {dataset.measures.length > 0 ? (
-        <>
-          <div className="section-title" style={{ marginTop: 4 }}>
-            Metrics
-            <span className="count-pill">{dataset.measures.length}</span>
-          </div>
-          <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
-            {dataset.measures.map((m) => <span className="chip" key={m.name}>{m.name}</span>)}
-          </div>
-        </>
-      ) : null}
 
       {/* ── Data quality ── */}
       <div className="section-title" style={{ marginTop: 4 }}>
@@ -743,96 +830,270 @@ export default function DatasetDetail({
         </div>
       ) : null}
 
-      {/* ── Data preview (governed SELECT * LIMIT 50) ── */}
-      <div className="section-title" style={{ marginTop: 20 }}>
-        Data preview
-        <button className="btn ghost sm" style={{ marginLeft: 10 }} onClick={loadPreview} disabled={previewing}>
-          {previewing ? <span className="spin" /> : 'Refresh preview'}
-        </button>
-      </div>
-      <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-        A read-only scan of the first 50 rows through the governed query path (Trino,
-        OPA-checked) — your row filters and column masks apply, exactly as the agents and
-        dashboards see it. Nothing is previewed until a layer is built.
-      </p>
-      {previewErr ? <div className="error" style={{ marginBottom: 10 }}>{previewErr}</div> : null}
-      {preview ? (
-        preview.available ? (
-          <>
-            <p className="muted" style={{ fontSize: 12.5, margin: '0 0 8px' }}>
-              First {preview.rowCount} row{preview.rowCount === 1 ? '' : 's'} · {preview.layer}
-              {' · '}<span className="mono" style={{ fontSize: 10 }}>{preview.fqn}</span>
-            </p>
-            {preview.columns.length > 0 ? (
-              <div className="table-wrap" style={{ marginBottom: 16 }}>
-                <table>
-                  <thead>
-                    <tr>{preview.columns.map((c) => <th key={c}>{c}</th>)}</tr>
-                  </thead>
-                  <tbody>
-                    {preview.rows.map((r, i) => (
-                      <tr key={i}>{r.map((cell, j) => <td key={j}>{cell}</td>)}</tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>No rows to show.</p>
-            )}
-          </>
-        ) : (
-          <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>{preview.reason}</p>
-        )
-      ) : null}
-
-      {/* ── Explore (quiet profile of a built version — governed reads, masked) ── */}
-      {builtLayers.length > 0 ? (
+      {/* ── Metrics (defined measures — the Cube handover, governed Gold assets only) ── */}
+      {dataset.measures.length > 0 || (dataset.tier !== 'dataset' && dataset.versions.gold.built) ? (
         <>
-          <div className="section-title" style={{ marginTop: 20 }}>Explore</div>
-          {/* The row preview lives ONCE in the "Data preview" section above — Explore
-              here shows the profile only, so the same rows aren't rendered twice. */}
-          <ExplorePanel datasetId={dataset.id} builtLayers={builtLayers} showPreview={false} />
+          <div className="section-title" style={{ marginTop: 20 }}>
+            Metrics
+            {dataset.measures.length > 0 ? <span className="count-pill">{dataset.measures.length}</span> : null}
+          </div>
+          {dataset.measures.length > 0 ? (
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+              {dataset.measures.map((m) => <span className="chip" key={m.name}>{m.name}</span>)}
+            </div>
+          ) : null}
+          {dataset.tier !== 'dataset' && dataset.versions.gold.built ? (
+            <MetricsPanel datasetId={dataset.id} />
+          ) : dataset.tier === 'dataset' && dataset.versions.gold.built ? (
+            <div className="guided-panel" style={{ marginBottom: 12 }}>
+              <p className="muted" style={{ marginTop: 0 }}>
+                Metrics are defined on the <strong>governed</strong> Gold table (Cube reads the Trino mart).
+                Share this dataset above first — then define metrics on the asset/product.
+              </p>
+            </div>
+          ) : null}
         </>
       ) : null}
 
-      {/* ── Lineage (refinement + consumption chain, from the single source) ── */}
-      <div className="section-title" style={{ marginTop: 20 }}>Lineage</div>
-      <LineagePanel datasetId={dataset.id} />
+      {/* ── Bring in data — Bronze ── */}
+      {canEdit ? (
+        <>
+          <div className="section-title" style={{ marginTop: 20 }}>
+            Bring in data
+            <button
+              className="btn ghost sm"
+              style={{ marginLeft: 10 }}
+              onClick={() => setFlow(flow === 'bronze' ? null : 'bronze')}
+            >
+              {flow === 'bronze' ? 'Close' : dataset.versions.bronze.built ? 'Re-upload / replace' : 'Upload or extract'}
+            </button>
+            {dataset.versions.bronze.built ? (
+              <span className="status-chip s-searchable" style={{ cursor: 'default', marginLeft: 10 }}>✓ Bronze built</span>
+            ) : null}
+          </div>
+          <p className="hint" style={{ marginTop: 0, marginBottom: flow === 'bronze' ? 10 : 14 }}>
+            {dataset.versions.bronze.built
+              ? 'Raw Bronze layer is in. Refine it into Silver using the action below.'
+              : 'Upload a file or pull a masked extract from a governed product to create the raw Bronze layer.'}
+          </p>
+          {flow === 'bronze' ? (
+            <div style={{ marginBottom: 14 }}>
+              <BronzePanel
+                datasetId={dataset.id}
+                datasetName={dataset.name}
+                onCommitted={onFlowCommitted}
+              />
+            </div>
+          ) : null}
+        </>
+      ) : null}
 
-      {/* ── Sharing / promotion hint ── */}
+      {/* ── Configuration — dbt SQL / dataset.yaml ── */}
+      {canEdit ? (
+        <>
+          <div className="section-title" style={{ marginTop: 4 }}>
+            Configuration
+            <button
+              className={`btn ghost sm${showCode ? ' on' : ''}`}
+              style={{ marginLeft: 10 }}
+              onClick={() => setShowCode((v) => !v)}
+            >
+              {showCode ? 'Hide the code' : '‹ › Show the code'}
+            </button>
+          </div>
+          {showCode ? (
+            <div style={{ marginBottom: 14 }}>
+              <p className="hint" style={{ marginTop: 0 }}>
+                dataset.yaml is the single source — the tiles, build panels, and the data agent all read from and write to these files.
+              </p>
+              <CodeDrawer datasetId={dataset.id} />
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
+      {/* ── Sharing / promotion (governed like Files: a Creator/Builder REQUESTS a
+              promotion — a different Builder approves; an Admin certifies to the
+              marketplace). Explicit, role-gated buttons — never a dead control. ── */}
+      <div className="section-title" style={{ marginTop: 20 }}>Sharing</div>
       {dataset.tier === 'dataset' ? (
-        <div className="gate-check" style={{ marginTop: 20 }}>
-          <span className="badge vis-personal">Personal</span>{' '}
-          {canHarmonizeGold ? (
-            <span className="muted" style={{ fontSize: 13 }}>
-              This dataset is in your private space — only you can see it. It&apos;s refined past Bronze,
-              so you can request promotion to share it with your domain (a Builder approves).
-              {canEdit ? <> Use the <strong>Advanced build rail →</strong> to request promotion.</> : null}
-            </span>
-          ) : (
-            // Bronze-only: promotion to Shared is NOT available — mirror the server's
-            // fail-closed rule (requestPromotion blocks Bronze) with a clear, calm hint.
+        canHarmonizeGold ? (
+          // Refined past Bronze → shareable. Mirror FilePreview: pending wins; else a
+          // gate hint + a button disabled until the transparency gate is green.
+          <div className="gate-check" style={{ marginTop: 4 }}>
+            <span className="badge vis-personal">Personal</span>{' '}
+            {promote?.request?.status === 'pending' ? (
+              <span className="muted" style={{ fontSize: 13 }}>
+                Promotion requested — a domain <strong>Builder</strong> approves it in the{' '}
+                <strong>Governance</strong> tab, which moves it into Trino.
+              </span>
+            ) : canEdit ? (
+              <>
+                <span className="muted" style={{ fontSize: 13 }}>
+                  In your private space — only you can see it. Promote it to share with your domain.
+                </span>
+                {promote && !promote.gate.ok ? (
+                  <div className="hint" style={{ margin: '6px 0 0' }}>To share, add {promote.gate.missing.join(', ')}.</div>
+                ) : null}
+                <div className="row" style={{ marginTop: 8 }}>
+                  <button className="btn" disabled={shareBusy || !!(promote && !promote.gate.ok)} onClick={requestPromote}
+                    title={promote && !promote.gate.ok ? 'Complete the transparency gate first' : 'A domain Builder approves this and moves it into Trino'}>
+                    {shareBusy ? <span className="spin" /> : 'Promote to Shared →'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <span className="muted" style={{ fontSize: 13 }}>Private to {dataset.owner}.</span>
+            )}
+          </div>
+        ) : (
+          // Bronze-only: promotion to Shared is NOT available — mirror the server's
+          // fail-closed rule (requestPromotion blocks Bronze) with a clear, calm hint.
+          <div className="gate-check" style={{ marginTop: 4 }}>
+            <span className="badge vis-personal">Personal</span>{' '}
             <span className="muted" style={{ fontSize: 13 }}>
               This raw <strong>Bronze</strong> dataset can&apos;t be shared yet —
               <strong> promote after refining to Silver/Gold</strong>.
-              {canEdit ? <> Use <strong>Turn into clean Silver Dataset</strong> above to refine it first.</> : null}
+              {canEdit ? <> Use <strong>Turn into clean Silver Dataset</strong> below to refine it first.</> : null}
             </span>
-          )}
-        </div>
+          </div>
+        )
       ) : dataset.tier === 'asset' ? (
-        <div className="gate-check gate-ok" style={{ marginTop: 20 }}>
-          <span className="badge vis-shared">Shared</span>{' '}
+        <div className="gate-check gate-ok" style={{ marginTop: 4 }}>
+          <span className="badge vis-shared">Shared in Domain</span>{' '}
           <span className="muted" style={{ fontSize: 13 }}>
             Promoted data asset in <strong>Trino/Iceberg</strong> ({dataset.domain} domain).
-            An Admin can certify it as a data product to list it in the marketplace.
           </span>
+          {certifyPending ? (
+            <div className="hint" style={{ marginTop: 6 }}>
+              Certification requested — a platform <strong>Admin</strong> approves it in the <strong>Governance</strong> tab.
+            </div>
+          ) : (
+            <div className="row" style={{ marginTop: 8 }}>
+              {isAdmin ? (
+                <button className="btn" disabled={shareBusy} onClick={() => certifyAsset('certify')}
+                  title="Certify this asset as a data product and list it in the marketplace">
+                  {shareBusy ? <span className="spin" /> : 'Promote to Marketplace →'}
+                </button>
+              ) : canEdit ? (
+                <button className="btn ghost" disabled={shareBusy} onClick={() => certifyAsset('request')}
+                  title="Ask a platform Admin to certify this as a marketplace data product">
+                  {shareBusy ? <span className="spin" /> : 'Request certification →'}
+                </button>
+              ) : (
+                <span className="muted" style={{ fontSize: 13 }}>An Admin certifies it as a marketplace data product.</span>
+              )}
+            </div>
+          )}
         </div>
       ) : dataset.tier === 'product' ? (
-        <div className="gate-check gate-ok" style={{ marginTop: 20 }}>
+        <div className="gate-check gate-ok" style={{ marginTop: 4 }}>
           <span className="badge vis-certified">Certified</span>{' '}
           <span className="muted" style={{ fontSize: 13 }}>
             Certified data product — discoverable across the marketplace.
           </span>
+        </div>
+      ) : null}
+      {shareErr ? <div className="error" style={{ marginTop: 8 }}>{shareErr}</div> : null}
+
+      {/* ── Bottom action row ──
+           The three primary build CTAs + lifecycle. Bronze→Silver / Silver→Gold gating
+           preserved: show the right button for the current layer; disabled/hint when not
+           applicable. The flow panels expand inline just above this row. */}
+      {canEdit ? (
+        <div style={{ marginTop: 32, borderTop: '1px solid var(--border)', paddingTop: 20 }}>
+          {/* Inline flow panels — expand above the action row */}
+          {flow === 'silver' && canRefineSilver ? (
+            <div style={{ marginBottom: 16 }}>
+              <div className="section-title" style={{ marginTop: 0 }}>
+                Clean it up — Silver
+                <span className="hint" style={{ margin: '0 0 0 10px' }}>dbt transformations on your Bronze data</span>
+              </div>
+              <RefinePanel
+                datasetId={dataset.id}
+                datasetName={dataset.name}
+                owner={dataset.owner}
+                domain={dataset.domain}
+                tier={dataset.tier}
+                columns={colNames}
+                stage={{ layer: 'silver', copy: { title: 'Clean it up', subtitle: '', tool: '' } }}
+                onCommitted={onFlowCommitted}
+              />
+            </div>
+          ) : null}
+
+          {flow === 'gold' && canHarmonizeGold ? (
+            <div style={{ marginBottom: 16 }}>
+              <div className="section-title" style={{ marginTop: 0 }}>
+                Harmonize — Gold
+                <span className="hint" style={{ margin: '0 0 0 10px' }}>join trusted datasets into one governed Gold table</span>
+              </div>
+              <GoldJoinPanel
+                datasetId={dataset.id}
+                datasetName={dataset.name}
+                owner={dataset.owner}
+                domain={dataset.domain}
+                tier={dataset.tier}
+                columns={colNames}
+                onCommitted={onFlowCommitted}
+              />
+            </div>
+          ) : null}
+
+          {/* Action buttons */}
+          <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            {/* Bronze → Silver */}
+            {canRefineSilver ? (
+              <button
+                className={`btn${flow === 'silver' ? ' ghost' : ''}`}
+                onClick={() => setFlow(flow === 'silver' ? null : 'silver')}
+              >
+                {flow === 'silver'
+                  ? 'Close Silver build'
+                  : dataset.versions.silver.built
+                    ? 'Re-clean the Silver version'
+                    : 'Turn into clean Silver Dataset'}
+              </button>
+            ) : (
+              <button className="btn" disabled title="Bring in a Bronze layer first (use Bring in data above)">
+                Turn into clean Silver Dataset
+              </button>
+            )}
+
+            {/* Silver → Gold */}
+            {canHarmonizeGold ? (
+              <button
+                className={`btn${flow === 'gold' ? ' ghost' : ''}`}
+                onClick={() => setFlow(flow === 'gold' ? null : 'gold')}
+              >
+                {flow === 'gold'
+                  ? 'Close Gold build'
+                  : dataset.versions.gold.built
+                    ? 'Re-harmonize the Gold version'
+                    : 'Turn into harmonized Gold dataset'}
+              </button>
+            ) : (
+              <button className="btn ghost" disabled title="Clean it to Silver first, then you can harmonize into Gold">
+                Turn into harmonized Gold dataset
+              </button>
+            )}
+
+            {/* Archive / Restore / Delete — OS-wide lifecycle. Only an archived
+                dataset exposes Delete. Real archived state drives it. */}
+            <div style={{ marginLeft: 'auto' }}>
+              <LifecycleActions
+                id={dataset.id}
+                name={dataset.name}
+                kind="dataset"
+                visibility={lcVis(dataset.tier)}
+                archived={!!dataset.archived}
+                api={`/api/data/datasets/${dataset.id}`}
+                onChanged={() => { if (dataset.archived) onBack(); else void load(); }}
+                showVersions
+                compact
+              />
+            </div>
+          </div>
         </div>
       ) : null}
     </ConfirmProvider>

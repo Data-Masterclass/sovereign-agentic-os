@@ -74,7 +74,7 @@ export default function Cockpit({ feed }: { feed: HomeFeed }) {
                     <span className="cm-item-detail">{w.type}</span>
                   </span>
                 </Link>
-                <span className="badge vis-personal">{w.visibility}</span>
+                <span className="badge vis-personal">{w.visibility === 'Shared' ? 'Shared in Domain' : w.visibility}</span>
               </li>
             ))}
           </ul>
@@ -167,7 +167,7 @@ export default function Cockpit({ feed }: { feed: HomeFeed }) {
                   <span>
                     <span className="cm-item-label">{a.name}</span>
                     <span className="cm-item-detail">
-                      {a.event === 'certified' ? 'Certified' : 'Shared'} · {a.type} · {a.domain}
+                      {a.event === 'certified' ? 'Certified' : 'Shared in Domain'} · {a.type} · {a.domain}
                     </span>
                   </span>
                 </Link>

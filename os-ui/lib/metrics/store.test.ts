@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { __resetStore, createDataset, buildVersion, defineMeasure, transition, type Principal } from '../data/store.ts';
-import { listMetrics, getMetric } from './store.ts';
+import { listMetrics, getMetric, safeSummariesFor } from './store.ts';
 
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'builder' };
 
@@ -52,4 +52,25 @@ test('getMetric resolves datasetId.measure into a record', () => {
   const rec = getMetric(`${id}.revenue`, amir);
   assert.equal(rec.measure.name, 'revenue');
   assert.equal(rec.member, 'Orders.revenue');
+});
+
+test('#91 FAIL-SOFT: a broken model yields an inline-error summary, never a throw', () => {
+  // A datasetId that can't be read (removed/invalid) models a bad cube: safeSummariesFor
+  // must return ONE error-tile summary instead of throwing, so listMetrics keeps rendering.
+  seedRevenueMetric();
+  let out: ReturnType<typeof safeSummariesFor> | null = null;
+  assert.doesNotThrow(() => { out = safeSummariesFor('ds_does_not_exist', amir); });
+  assert.equal(out!.length, 1);
+  assert.equal(out![0].type, 'error');
+  assert.ok(out![0].error, 'the tile carries the inline reason');
+});
+
+test('#91 FAIL-SOFT: listMetrics renders the good metrics even alongside a bad model', () => {
+  // The good Revenue metric must still list; a bad one would render as an error tile,
+  // never a 500 — one bad cube can never take down the whole surface.
+  seedRevenueMetric();
+  let groups: ReturnType<typeof listMetrics> | null = null;
+  assert.doesNotThrow(() => { groups = listMetrics(amir); });
+  const all = [...groups!.mine, ...groups!.domain, ...groups!.marketplace];
+  assert.ok(all.find((m) => m.name === 'revenue' && !m.error), 'the healthy metric still renders');
 });

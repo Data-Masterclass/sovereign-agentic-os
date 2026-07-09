@@ -395,6 +395,14 @@ clickhouse:
     # the headroom to stay green through boot and steady state.
     requests: { cpu: 200m, memory: 2Gi }
     limits: { cpu: "2", memory: 6Gi }
+  # Data volume. Off by default so a local kind tenant stays ephemeral (fast
+  # teardown). Turn ON for any DURABLE deploy (STACKIT) so Langfuse trace tables
+  # survive a pod roll — without this a CH restart silently wipes all traces and
+  # forces a full re-migration. RWO PVC + Recreate strategy (no two writers).
+  # storageClass falls back to global.storageClass (soa.storageClass helper).
+  persistence:
+    enabled: false
+    size: 10Gi
   local:
     password: clickhouse-local-dev
 
@@ -436,6 +444,32 @@ langfuse:
     additionalEnvFrom:
       - secretRef:
           name: langfuse-init
+
+    # ---- CH readiness gate ----
+    # initContainer that polls ClickHouse HTTP /ping before langfuse-web starts.
+    # This ensures CH is fully up and accepting connections BEFORE Langfuse's
+    # startup migration runs (CLICKHOUSE_MIGRATION_URL → native port 9000), so
+    # the migration cannot silently no-op against an unready CH.
+    # Uses busybox wget (tiny, no extra image pull). Safe to run every redeploy:
+    # Langfuse's CH migration is idempotent (it checks schema versions first).
+    extraInitContainers:
+      - name: wait-for-clickhouse
+        image: busybox:1.36
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        command:
+          - sh
+          - -c
+          - |
+            echo "Waiting for ClickHouse HTTP /ping …"
+            until wget -qO- http://clickhouse:8123/ping 2>/dev/null | grep -q Ok; do
+              echo "  CH not ready, retrying in 5s"
+              sleep 5
+            done
+            echo "ClickHouse is ready."
 
     # Middleware tier — wave 1. Applies to BOTH langfuse deployments (web + worker)
     # via the subchart's shared deployment annotations. NOTE: langfuse-k8s exposes

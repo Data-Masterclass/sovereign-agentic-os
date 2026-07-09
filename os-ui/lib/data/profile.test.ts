@@ -92,10 +92,12 @@ test('identifier + literal escaping — a hostile column name cannot break the s
 });
 
 test('versionTarget resolves the physical FQN per layer (same name the adapters write)', () => {
-  const d = parseDataset({ name: 'North Peak Orders', domain: 'sales' });
-  assert.equal(versionTarget(d, 'bronze'), 'iceberg.sales.bronze_north_peak_orders');
-  assert.equal(versionTarget(d, 'silver'), 'iceberg.sales.silver_north_peak_orders');
-  assert.equal(versionTarget(d, 'gold'), 'iceberg.sales.gold_north_peak_orders');
+  // A NON-owner viewing a domain asset reads the promoted copy from the domain schema.
+  const d = parseDataset({ name: 'North Peak Orders', domain: 'sales', owner: 'amir', tier: 'asset' });
+  const other = { id: 'someone_else' };
+  assert.equal(versionTarget(d, 'bronze', other), 'iceberg.sales.bronze_north_peak_orders');
+  assert.equal(versionTarget(d, 'silver', other), 'iceberg.sales.silver_north_peak_orders');
+  assert.equal(versionTarget(d, 'gold', other), 'iceberg.sales.gold_north_peak_orders');
 });
 
 test('parseDescribe + assembleProfile fold raw query rows into a governed Profile', () => {

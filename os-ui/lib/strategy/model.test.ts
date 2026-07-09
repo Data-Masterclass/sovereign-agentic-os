@@ -17,6 +17,12 @@ import {
   emptyValueMetric,
   latestManualValue,
   euro,
+  formatMoney,
+  formatMetricValue,
+  isMonetaryMetric,
+  metricUnitOf,
+  computeEndDate,
+  emptyHorizonTarget,
   type DistributableBet,
   type ValueMetric,
 } from './model.ts';
@@ -198,6 +204,68 @@ test('latestManualValue returns the newest monthly entry (or 0)', () => {
     ],
   };
   assert.equal(latestManualValue(vm), 610_000);
+});
+
+// ---- headline target: metric type, currency, horizon, achieved-so-far ------
+
+test('metricType: EBIT/Revenue are monetary; hours/risks/custom-unit are not', () => {
+  const ebit: ValueMetric = { name: 'EBIT', description: '', mode: 'manual', entries: [], metricType: 'ebit' };
+  const hours: ValueMetric = { name: 'Time saved', description: '', mode: 'manual', entries: [], metricType: 'time-back-hours' };
+  const risks: ValueMetric = { name: 'Risks', description: '', mode: 'manual', entries: [], metricType: 'risks-mitigated' };
+  assert.equal(isMonetaryMetric(ebit), true);
+  assert.equal(isMonetaryMetric(hours), false);
+  assert.equal(isMonetaryMetric(risks), false);
+  // A legacy pillar with no metricType defaults to monetary (the € roll-up).
+  assert.equal(isMonetaryMetric(emptyValueMetric('NRR')), true);
+  assert.equal(metricUnitOf(hours), 'h');
+});
+
+test('custom metric: user marks it monetary or gives a unit label', () => {
+  const monetary: ValueMetric = { name: 'Grants', description: '', mode: 'manual', entries: [], metricType: 'custom', customMonetary: true };
+  const unit: ValueMetric = { name: 'Tickets', description: '', mode: 'manual', entries: [], metricType: 'custom', customUnit: 'tickets', customMonetary: false };
+  assert.equal(isMonetaryMetric(monetary), true);
+  assert.equal(isMonetaryMetric(unit), false);
+  assert.equal(metricUnitOf(unit), 'tickets');
+});
+
+test('formatMoney uses the tenant currency symbol (EUR/USD/CHF/other)', () => {
+  assert.equal(formatMoney(2_500_000, 'EUR'), '€2.5M');
+  assert.equal(formatMoney(540_000, 'USD'), '$540k');
+  assert.equal(formatMoney(820, 'CHF'), 'CHF 820');
+  assert.equal(formatMoney(1_000, 'SEK'), 'SEK 1k');
+  assert.equal(formatMoney(null, 'EUR'), '—');
+});
+
+test('formatMetricValue: monetary → currency; hours → "h"; risks → integer count', () => {
+  const ebit: ValueMetric = { name: 'EBIT', description: '', mode: 'manual', entries: [], metricType: 'ebit' };
+  const revenue: ValueMetric = { name: 'Revenue', description: '', mode: 'manual', entries: [], metricType: 'revenue' };
+  const hours: ValueMetric = { name: 'Time', description: '', mode: 'manual', entries: [], metricType: 'time-back-hours' };
+  const risks: ValueMetric = { name: 'Risks', description: '', mode: 'manual', entries: [], metricType: 'risks-mitigated' };
+  const unit: ValueMetric = { name: 'Tickets', description: '', mode: 'manual', entries: [], metricType: 'custom', customUnit: 'tickets', customMonetary: false };
+  // Currency IS used for monetary and IGNORED for non-monetary.
+  assert.equal(formatMetricValue(2_500_000, ebit, 'EUR'), '€2.5M');
+  assert.equal(formatMetricValue(2_500_000, revenue, 'USD'), '$2.5M');
+  assert.equal(formatMetricValue(1_200, hours, 'EUR'), '1,200 h');
+  assert.equal(formatMetricValue(18, risks, 'USD'), '18 risks');
+  assert.equal(formatMetricValue(42, unit, 'EUR'), '42 tickets');
+});
+
+test('computeEndDate: year-end = Dec 31 this year; N-month = setAt + N months', () => {
+  const setAt = new Date('2026-06-27T00:00:00Z');
+  assert.equal(computeEndDate('year-end', setAt), '2026-12-31');
+  assert.equal(computeEndDate('6-month', setAt), '2026-12-27');
+  assert.equal(computeEndDate('12-month', setAt), '2027-06-27');
+  assert.equal(computeEndDate('24-month', setAt), '2028-06-27');
+  assert.equal(computeEndDate('36-month', setAt), '2029-06-27');
+});
+
+test('emptyHorizonTarget defaults to a year-end target for the current year', () => {
+  const setAt = new Date('2026-03-01T00:00:00Z');
+  const t = emptyHorizonTarget(setAt);
+  assert.equal(t.horizon, 'year-end');
+  assert.equal(t.endDate, '2026-12-31');
+  assert.equal(t.metricType, 'ebit');
+  assert.equal(t.value, 0);
 });
 
 test('distributeValue threads component status/dueDate/artifactId (defaults to planned)', () => {

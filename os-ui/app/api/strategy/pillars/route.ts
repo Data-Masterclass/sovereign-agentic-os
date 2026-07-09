@@ -8,6 +8,7 @@ import { rollupForPillar, valueHistory } from '@/lib/strategy/value-rollup';
 import { snapshotHistory, ensureHydrated } from '@/lib/strategy/snapshots';
 import { recentStrategyAudit } from '@/lib/strategy/audit';
 import { canCreatePillar, canEditPillar, type PillarScope } from '@/lib/strategy/model';
+import { getSettings } from '@/lib/platform-admin/settings';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,6 +43,8 @@ export async function GET() {
     return NextResponse.json({
       user,
       items,
+      // The tenant currency (set in Admin) the card uses to format monetary metrics.
+      currency: getSettings().currency,
       // Surface what the caller may create so the UI can gate the buttons.
       canCreateTenant: canCreatePillar(user, 'tenant', 'tenant'),
       canCreateDomain: user.domains.some((d) => canCreatePillar(user, 'domain', d)),

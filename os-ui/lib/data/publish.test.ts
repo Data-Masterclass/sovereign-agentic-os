@@ -39,18 +39,30 @@ function ready(layers: ('silver' | 'gold')[] = ['silver', 'gold']): { id: string
 
 type BuildCall = { dataset: Dataset; principal: string; write: PublishWrite };
 
-/** A fake build runner capturing what the publish threads into the promote stage. */
-function fakeBuild(ok: boolean, error = 'Trino: TABLE_NOT_FOUND iceberg.personal_amir.gold_orders') {
+/** A fake build runner capturing what the publish threads into the promote stage.
+ *  `domainTableLive` models the independent #96 post-CTAS probe: true ⇒ the governed
+ *  gold really landed in the domain schema; false ⇒ the flip must be refused. */
+function fakeBuild(
+  ok: boolean,
+  error = 'Trino: TABLE_NOT_FOUND iceberg.personal_amir.gold_orders',
+  domainTableLive = true,
+) {
   const calls: BuildCall[] = [];
+  const probes: { fqn: string; principal: string }[] = [];
   const report: DataBuildReport & { mode: string } = ok
     ? { ok: true, rows: [{ tool: 'dbt-trino', applied: true, verified: true, status: 'ok', detail: 'ok' }], skipped: [], mode: 'live' }
     : { ok: false, rows: [{ tool: 'dbt-trino', applied: false, verified: false, status: 'fail', detail: error, error }], skipped: [], mode: 'live' };
   return {
     calls,
+    probes,
     deps: {
       async buildPromote(dataset: Dataset, principal: string, write: PublishWrite) {
         calls.push({ dataset, principal, write });
         return report;
+      },
+      async verifyDomainTable(fqn: string, principal: string) {
+        probes.push({ fqn, principal });
+        return domainTableLive;
       },
     },
   };
@@ -98,6 +110,21 @@ test('HONESTY: a failed materialization leaves the tier unchanged + surfaces the
   assert.equal(out.ok, false);
   assert.match((out as { error: string }).error, /TABLE_NOT_FOUND/);
   assert.equal(getDataset(id, amir).tier, 'dataset', 'tier must NOT flip on a failed publish');
+});
+
+test('#96 FAIL-CLOSED: a build ✓ but an ABSENT domain table refuses the flip (tier unchanged)', async () => {
+  // The Northpeak gap: the build report is ✓ but the governed CTAS never landed the
+  // gold in the domain schema (it lived only in personal_<owner>). The independent
+  // post-CTAS probe returns false → the promotion is refused and the tier stays dataset.
+  const { id, req } = ready();
+  const fb = fakeBuild(true, undefined, /* domainTableLive */ false);
+  await assert.rejects(
+    () => publishApprovedPromotion(req, bea, fb.deps),
+    (e: DatasetError) => e.status === 502 && /did not land iceberg\.sales\.gold_orders/.test(e.message),
+  );
+  assert.equal(getDataset(id, amir).tier, 'dataset', 'tier must NOT flip when the domain table is absent');
+  // The probe targeted the exact promoted domain FQN, as the approving Builder.
+  assert.deepEqual(fb.probes, [{ fqn: 'iceberg.sales.gold_orders', principal: 'sales' }]);
 });
 
 test('success: the tier flips AND the Cube models payload includes the new view', async () => {

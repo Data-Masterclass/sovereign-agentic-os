@@ -161,9 +161,13 @@ const readTools: McpTool[] = [
         return { datasetId: id, name: dataset.name, available: false, reason: 'Nothing built yet — bring in a Bronze version first (ingest_dataset).' };
       }
 
-      const fqn = versionTarget(dataset, layer);
-      // The principal Trino's OPA plugin governs row/column on — same as /api/query.
-      const principal = user.domains[0] ?? user.id;
+      // Viewer-aware FQN: the OWNER profiles their personal lane (which holds every
+      // layer, promoted or not); a non-owner profiles the promoted copy in the domain
+      // schema. The read PRINCIPAL must OWN that schema (readPrincipalFor's contract):
+      // the owner's personal lane is read AS the owner, the domain copy AS the domain.
+      const fqn = versionTarget(dataset, layer, { id: user.id });
+      const isOwner = user.id === dataset.owner;
+      const principal = isOwner ? user.id : (user.domains[0] ?? user.id);
       let columns: ProfileColumn[];
       try {
         columns = parseDescribe(await queryRun(`describe ${fqn}`, principal));

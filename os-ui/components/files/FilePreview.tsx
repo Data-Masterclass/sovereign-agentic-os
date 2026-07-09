@@ -34,7 +34,7 @@ const KIND_LABEL: Record<Asset['kind'], string> = {
   doc: 'DOC', image: 'IMG', audio: 'AUD', video: 'VID', table: 'TAB', archive: 'ZIP', other: 'FILE',
 };
 const SENSITIVITIES = ['public', 'internal', 'confidential', 'restricted'] as const;
-const TIER_WORD: Record<Asset['tier'], string> = { dataset: 'Private', asset: 'Shared · domain', product: 'Marketplace' };
+const TIER_WORD: Record<Asset['tier'], string> = { dataset: 'Private', asset: 'Shared in Domain', product: 'Marketplace' };
 
 function bytesLabel(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -203,7 +203,7 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         <dt>Owner</dt><dd>{a.owner}</dd>
         <dt>Folder</dt><dd>{a.folder}</dd>
         <dt>Updated</dt><dd>{fresh(a.freshness)}</dd>
-        <dt>Sharing</dt><dd>{a.visibility}</dd>
+        <dt>Sharing</dt><dd>{a.visibility === 'Shared' ? 'Shared in Domain' : a.visibility}</dd>
         <dt>Storage</dt><dd>{a.storage}</dd>
         <dt>Link</dt><dd className="deep-link">{a.deepLink}</dd>
       </dl>
@@ -253,7 +253,7 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
           ) : <p className="hint" style={{ margin: 0 }}>Private to {a.owner}.</p>
         ) : a.tier === 'asset' ? (
           <div className="preview-row">
-            <span className="hint" style={{ margin: 0 }}>Shared with the domain.</span>
+            <span className="hint" style={{ margin: 0 }}>Shared in domain.</span>
             {isAdmin ? <button className="btn ghost sm" onClick={certify}>Certify to marketplace →</button> : null}
           </div>
         ) : (

@@ -198,9 +198,9 @@ export default function GovernedConnections() {
         const c = resp.connection;
         const ref = `${c.secretRef.name}/${c.secretRef.key}`;
         if (isOAuth) {
-          setCreateMsg(`✓ Created "${c.name}" — ${c.visibility}. Now click Connect on its card below to sign in and authorize your own account. The token goes to Secrets Manager as ref ${ref} (never the value).`);
+          setCreateMsg(`✓ Created "${c.name}" — ${c.visibility === 'Shared' ? 'Shared in Domain' : c.visibility}. Now click Connect on its card below to sign in and authorize your own account. The token goes to Secrets Manager as ref ${ref} (never the value).`);
         } else {
-          setCreateMsg(`✓ Created "${c.name}" — ${c.visibility}. Credential stored as ref ${ref} (never the value).`);
+          setCreateMsg(`✓ Created "${c.name}" — ${c.visibility === 'Shared' ? 'Shared in Domain' : c.visibility}. Credential stored as ref ${ref} (never the value).`);
         }
         setName('');
         setCredential('');
@@ -304,7 +304,7 @@ export default function GovernedConnections() {
                 </optgroup>
               )}
               {serviceTemplates.length > 0 && (
-                <optgroup label="Shared connection (service credentials — Builder / Admin)">
+                <optgroup label="Shared in Domain connection (service credentials — Builder / Admin)">
                   {serviceTemplates.map((t) => (
                     <option key={t.key} value={t.key}>{t.label} · {t.type}</option>
                   ))}
@@ -398,7 +398,7 @@ export default function GovernedConnections() {
                   <td style={{ fontWeight: 600 }}>{c.name}</td>
                   <td className="mono">{c.principal}</td>
                   <td className="muted mono" style={{ fontSize: 11.5, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.tools.map((t) => t.name).join(', ')}>{c.tools.map((t) => t.name).join(', ')}</td>
-                  <td><span className={`badge vis-${c.visibility.toLowerCase()}`}>{c.visibility}</span></td>
+                  <td><span className={`badge vis-${c.visibility.toLowerCase()}`}>{c.visibility === 'Shared' ? 'Shared in Domain' : c.visibility}</span></td>
                   <td><Link className="btn ghost" href={`/software/${c.appId}`}>Open →</Link></td>
                 </tr>
               ))}
@@ -804,7 +804,7 @@ function ConnectionCard({
           {dataUsage === 'bronze' && <span className="badge warn">Bronze source</span>}
           {dataUsage === 'files' && <span className="badge warn">Files index</span>}
           {(c.visibility === 'Shared' || c.visibility === 'Certified') ? <DomainTag domain={c.domain} /> : null}
-          <span className={badge(c.visibility)}>{c.visibility}</span>
+          <span className={badge(c.visibility)}>{c.visibility === 'Shared' ? 'Shared in Domain' : c.visibility}</span>
         </div>
       </div>
 

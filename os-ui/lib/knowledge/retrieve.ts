@@ -169,8 +169,11 @@ export async function retrieveKnowledge(
 ): Promise<RetrieveResult> {
   const k = opts.k ?? 6;
 
-  // (1) OPA tool gate — default-deny. A denied principal gets NO retrieval.
-  const authz = await authorize(principal.id, 'retrieve');
+  // (1) OPA tool gate — default-deny. Tool grants are keyed by DOMAIN (a uid has
+  // no grant of its own), so gate on the caller's domain principal — the same
+  // principal query_data authorizes on. (DLS row-filtering below still scopes by
+  // the full principal.domains set.)
+  const authz = await authorize(principal.domains[0] ?? principal.id, 'retrieve');
   if (authz.effect === 'deny') {
     return { decision: 'deny', policy: authz.policy, reason: authz.reason, store: 'memory', mode: 'offline', embedSource: 'offline-hash', hits: [] };
   }

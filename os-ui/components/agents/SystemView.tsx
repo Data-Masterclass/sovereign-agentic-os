@@ -68,6 +68,7 @@ type RoutingData = { activities: string[]; tiers: Record<string, string>; table:
 type Panel = 'yaml' | 'grants' | 'build';
 
 const visClass = (v: string) => (v === 'Shared' ? 'vis-shared' : v === 'Marketplace' ? 'vis-certified' : 'vis-personal');
+const visLabel = (v: string) => (v === 'Shared' ? 'Shared in Domain' : v);
 
 /** Systems visibility → the OS-wide lifecycle visibility (drives the delete gate). */
 const lcVis = (v: SystemViewData['visibility']): Visibility =>
@@ -229,7 +230,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
         <div className="system-title-block">
           <span className="system-title">{data.name}</span>
           {(data.visibility === 'Shared' || data.visibility === 'Marketplace') ? <DomainTag domain={data.domain} /> : null}
-          <span className={`badge ${visClass(data.visibility)}`}>{data.visibility}</span>
+          <span className={`badge ${visClass(data.visibility)}`}>{visLabel(data.visibility)}</span>
           {data.origin === 'forked' ? <span className="badge muted">forked copy</span> : null}
           <span className={`badge ${data.running ? 'ok' : 'muted'}`}>{data.running ? 'running' : 'stopped'}</span>
           {data.schedule.kind !== 'manual' ? <span className="badge warn">{data.schedule.kind}</span> : null}

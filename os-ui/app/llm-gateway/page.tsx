@@ -11,9 +11,8 @@ import type { Usage } from '@/lib/gateway-usage';
  * LLM Gateway — read-only, for ALL users. Two safe surfaces over LiteLLM:
  *   • an OS-native usage panel: tenant-TOTAL requests/tokens/spend + budget used,
  *     read server-side (the master key never leaves the server, no per-user rows).
- *   • the embedded, key-free Model Hub (the public models list), framed
- *     same-origin through the /tools/litellm proxy — no admin UI, no keys, no spend
- *     per key. Strictly read-only.
+ *   • an OS-native Model Hub — the models the gateway brokers, read from
+ *     `/api/gateway` (`/v1/models` server-side). No keys, no admin UI. Read-only.
  */
 
 const fmt = new Intl.NumberFormat('en-US');
@@ -55,9 +54,13 @@ function BudgetCard({ usage }: { usage: Usage }) {
   );
 }
 
+type GatewayModel = { id: string; ownedBy: string };
+
 export default function LlmGatewayPage() {
   const { data, loading, error } = useApi<{ usage: Usage }>('/api/gateway/usage');
   const usage = data?.usage;
+  const gw = useApi<{ models: GatewayModel[]; modelsError?: string }>('/api/gateway');
+  const models = gw.data?.models ?? [];
 
   return (
     <>
@@ -71,7 +74,7 @@ export default function LlmGatewayPage() {
 
         {error ? <div className="error" style={{ marginTop: 16 }}>{error}</div> : null}
 
-        <div className="section-title">Usage this {usage?.budgetWindow ?? 'period'}</div>
+        <div className="section-title">Usage (last 30 days)</div>
         {loading && !usage ? (
           <div className="hint">Reading gateway usage…</div>
         ) : usage ? (
@@ -85,22 +88,23 @@ export default function LlmGatewayPage() {
         )}
 
         <div className="section-title">Model Hub</div>
-        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-          <div className="hint" style={{ margin: 0 }}>
-            The gateway&apos;s public model catalogue, embedded same-origin with your OS session. Read-only.
+        <div className="hint" style={{ marginBottom: 10 }}>
+          The models this gateway brokers — every OS model call routes to one of these. Read-only.
+        </div>
+        {gw.loading && !models.length ? (
+          <div className="hint">Loading models…</div>
+        ) : models.length ? (
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
+            {models.map((m) => (
+              <div className="card" key={m.id}>
+                <div style={{ fontFamily: 'var(--font-head)', fontWeight: 600 }}>{m.id}</div>
+                <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{m.ownedBy || 'gateway'}</div>
+              </div>
+            ))}
           </div>
-          <a className="btn ghost" style={{ padding: '5px 12px' }} href="/tools/litellm/public/model_hub" target="_blank" rel="noreferrer">
-            Open ↗
-          </a>
-        </div>
-        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <iframe
-            src="/tools/litellm/public/model_hub"
-            title="LiteLLM Model Hub"
-            style={{ width: '100%', height: 640, border: 0, display: 'block' }}
-            sandbox="allow-same-origin allow-scripts allow-popups"
-          />
-        </div>
+        ) : (
+          <div className="hint">{gw.data?.modelsError || 'No models registered on the gateway.'}</div>
+        )}
       </div>
     </>
   );

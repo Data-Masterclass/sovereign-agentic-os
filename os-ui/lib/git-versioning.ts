@@ -75,19 +75,25 @@ export async function shaForVersion(
  * back onto HEAD as a NEW commit ("restore of <sha>"). Non-destructive — the whole
  * history (including the state before this restore, which is still HEAD's parent)
  * is retained, so the restore is itself an auditable, reversible commit. Returns
- * the restored `system.yaml` so the caller can reload the live record from it.
+ * the restored `manifest` file's content so the caller can reload the live record
+ * from it.
  *
- * Throws when the commit's files can't be read (unreachable Forgejo / missing
- * system.yaml) so the caller reports the failure instead of clobbering HEAD.
+ * `manifestPath` is the repo file that MUST be present at the commit for a restore
+ * to be meaningful — `system.yaml` for agent systems (the default), `app.yaml` for
+ * Software apps, etc. Throws when the commit's files can't be read (unreachable
+ * Forgejo / missing manifest) so the caller reports the failure instead of
+ * clobbering HEAD.
  */
 export async function restoreGitVersion(
   forgejo: ForgejoClient,
   repo: string,
   sha: string,
   author: string,
+  opts: { manifestPath?: string } = {},
 ): Promise<{ yaml: string; sha: string }> {
+  const manifestPath = opts.manifestPath ?? 'system.yaml';
   const files = await forgejo.getCommitFiles(repo, sha);
-  if (!files || typeof files['system.yaml'] !== 'string') {
+  if (!files || typeof files[manifestPath] !== 'string') {
     throw new Error(`Could not read commit ${sha.slice(0, 8)} from ${repo} to restore.`);
   }
   const short = sha.slice(0, 8);
@@ -99,9 +105,9 @@ export async function restoreGitVersion(
   for (const [path, content] of Object.entries(files)) {
     const cur = await forgejo.readFile(repo, path);
     const res = await forgejo.writeFile(repo, path, content, cur?.sha, message);
-    if (path === 'system.yaml') lastSha = res.sha;
+    if (path === manifestPath) lastSha = res.sha;
   }
-  return { yaml: files['system.yaml'], sha: lastSha };
+  return { yaml: files[manifestPath], sha: lastSha };
 }
 
 function firstLine(s: string): string {

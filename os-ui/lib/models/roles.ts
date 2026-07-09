@@ -7,6 +7,11 @@
  *
  *   • reasoning  → planning / deep reasoning (default `config.litellmReasoningModel`)
  *   • standard   → assistant / agent execution, light work (default `config.litellmExecModel`)
+ *   • tools      → agent tool-calling / function-calling execution. Defaults to the
+ *                  REASONING model (Qwen), which emits clean OpenAI `tool_calls`,
+ *                  because the light default (gpt-oss-20b) uses the "harmony"
+ *                  response format whose tool calls parse unreliably. Admin-
+ *                  overridable like every other role.
  *   • embeddings → the shared embedding model (default `config.embedModel`)
  *
  * Resolution order (per role): the persisted PLATFORM-ADMIN setting
@@ -22,7 +27,7 @@
 import { config } from '../config.ts';
 import { getSettings } from '../platform-admin/settings.ts';
 
-export type ModelRole = 'reasoning' | 'standard' | 'embeddings';
+export type ModelRole = 'reasoning' | 'standard' | 'tools' | 'embeddings';
 
 /** The env default for a role (the resolution fallback when no admin override). */
 export function roleDefault(role: ModelRole): string {
@@ -31,6 +36,8 @@ export function roleDefault(role: ModelRole): string {
       return config.litellmReasoningModel;
     case 'standard':
       return config.litellmExecModel;
+    case 'tools':
+      return config.litellmToolsModel;
     case 'embeddings':
       return config.embedModel;
   }
@@ -42,7 +49,12 @@ export function roleModel(role: ModelRole): string {
   return override && override.trim().length > 0 ? override : roleDefault(role);
 }
 
-/** All three effective role models — surfaced to the agent builder + admin panel. */
+/** All effective role models — surfaced to the agent builder + admin panel. */
 export function roleModels(): Record<ModelRole, string> {
-  return { reasoning: roleModel('reasoning'), standard: roleModel('standard'), embeddings: roleModel('embeddings') };
+  return {
+    reasoning: roleModel('reasoning'),
+    standard: roleModel('standard'),
+    tools: roleModel('tools'),
+    embeddings: roleModel('embeddings'),
+  };
 }

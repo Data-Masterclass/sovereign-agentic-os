@@ -165,7 +165,10 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<AgenticGraphResu
     callTool: grantedToolExecutor(input.user, sys, input.systemId, input.toolDeps),
     preamble: osPreamble(sys),
     reasoningModel: roleModel('reasoning'),
-    execModel: roleModel('standard'),
+    // ACT/tool-calling fallback model (a per-agent pin still wins). The `tools`
+    // role defaults to Qwen for clean OpenAI tool_calls; the harmony-format
+    // light default mangles tool names. Admin-overridable.
+    execModel: roleModel('tools'),
     maxIterations: input.maxIterations,
     disabled: input.disabledAgents,
   });
@@ -217,7 +220,9 @@ export async function runPhaseTurn(input: RunPhaseTurnInput): Promise<PhaseTurnR
       callTool: tabToolExecutor(input.user, 'software'),
       preamble: preamble(),
       reasoningModel: roleModel('reasoning'),
-      execModel: roleModel('standard'),
+      // Tool-calling fallback model (per-agent pin still wins) — Qwen by default
+      // for clean OpenAI tool_calls, not the harmony-format light model.
+      execModel: roleModel('tools'),
     },
     { extraGuidance: phaseGuidance(phase, session.appId), onStep: input.onStep },
   );

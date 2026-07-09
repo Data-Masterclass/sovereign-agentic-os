@@ -25,6 +25,9 @@ export type MetricSummary = {
   domain?: string;
   /** Soft-archived (retained, reversible). Absent/false = live. */
   archived?: boolean;
+  /** FAIL-SOFT: set when this metric's model couldn't load — rendered inline so the
+   *  rest of the registry still shows (one bad cube never 500s the whole surface). */
+  error?: string;
 };
 export type MetricGroups = { mine: MetricSummary[]; domain: MetricSummary[]; marketplace: MetricSummary[] };
 

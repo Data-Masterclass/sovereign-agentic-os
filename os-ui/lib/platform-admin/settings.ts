@@ -15,21 +15,26 @@ export type Settings = {
   sso: { enabled: boolean; provider: string; issuerUrl: string; scim: boolean };
   branding: { displayName: string; accent: string; whiteLabel: boolean };
   defaults: { domainTemplate: string; newUserRole: 'creator' | 'builder' };
+  /** Tenant-wide currency (ISO-4217). The Strategy tab READS this to format
+   * monetary metrics; it is never picked locally in Strategy. Default 'EUR'. */
+  currency: string;
   localization: { locale: 'en' | 'de'; available: ('en' | 'de')[] };
   notifications: { email: string; backupFailure: boolean; costThreshold: boolean };
-  // The three default model ROLES the OS resolves at runtime. Each is a live
-  // LiteLLM `model_name` (e.g. `sovereign-reasoning`); an EMPTY string means
-  // "unset — fall back to the config.ts env default" (see lib/models/roles.ts).
-  // The panel re-points ROLE→alias; it never rewrites the fixed LiteLLM aliases.
-  modelRoles: { reasoning: string; standard: string; embeddings: string };
+  // The default model ROLES the OS resolves at runtime. Each is a live LiteLLM
+  // `model_name` (e.g. `sovereign-reasoning`); an EMPTY string means "unset —
+  // fall back to the config.ts env default" (see lib/models/roles.ts). The panel
+  // re-points ROLE→alias; it never rewrites the fixed LiteLLM aliases. `tools` is
+  // the agent tool-calling model (default Qwen, for clean OpenAI tool_calls).
+  modelRoles: { reasoning: string; standard: string; tools: string; embeddings: string };
 };
 
-const EMPTY_ROLES = { reasoning: '', standard: '', embeddings: '' };
+const EMPTY_ROLES = { reasoning: '', standard: '', tools: '', embeddings: '' };
 
 let settings: Settings = {
   sso: { enabled: false, provider: 'ory', issuerUrl: '', scim: false },
   branding: { displayName: 'Sovereign Agentic OS', accent: '#2aa39b', whiteLabel: false },
   defaults: { domainTemplate: 'analytics', newUserRole: 'creator' },
+  currency: 'EUR',
   localization: { locale: 'en', available: ['en', 'de'] },
   notifications: { email: 'admin@datamasterclass.com', backupFailure: true, costThreshold: true },
   modelRoles: { ...EMPTY_ROLES },
@@ -54,6 +59,7 @@ export function updateSettings(patch: Partial<Settings> & Record<string, unknown
     sso: { ...settings.sso, ...(patch.sso ?? {}) },
     branding: { ...settings.branding, ...(patch.branding ?? {}) },
     defaults: { ...settings.defaults, ...(patch.defaults ?? {}) },
+    currency: typeof patch.currency === 'string' && patch.currency ? patch.currency : settings.currency,
     localization: { ...settings.localization, ...(patch.localization ?? {}) },
     notifications: { ...settings.notifications, ...(patch.notifications ?? {}) },
     modelRoles: { ...settings.modelRoles, ...(patch.modelRoles ?? {}) },
@@ -66,6 +72,7 @@ export function _reset(): void {
     sso: { enabled: false, provider: 'ory', issuerUrl: '', scim: false },
     branding: { displayName: 'Sovereign Agentic OS', accent: '#2aa39b', whiteLabel: false },
     defaults: { domainTemplate: 'analytics', newUserRole: 'creator' },
+    currency: 'EUR',
     localization: { locale: 'en', available: ['en', 'de'] },
     notifications: { email: 'admin@datamasterclass.com', backupFailure: true, costThreshold: true },
     modelRoles: { ...EMPTY_ROLES },

@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/auth';
 import { toolsForTab } from '@/lib/mcp/server';
-import { runTabAgent, parseLlmMessage, renderAssistantText } from './runtime.ts';
+import { runTabAgent, parseLlmMessage, parseHarmonyToolCall, renderAssistantText } from './runtime.ts';
 import type { LlmCall } from './agentic.ts';
 
 const participant: CurrentUser = { id: 'u-part', name: 'Pat', domains: ['sales'], role: 'creator' };
@@ -23,6 +23,38 @@ test('parseLlmMessage extracts content and native tool_calls (arguments JSON-dec
 test('parseLlmMessage tolerates malformed tool arguments (never throws)', () => {
   const c = parseLlmMessage({ tool_calls: [{ id: 'x', function: { name: 'f', arguments: 'not json' } }] });
   assert.deepEqual(c.toolCalls[0].args, {});
+});
+
+test('parseLlmMessage strips harmony channel tokens leaked into the tool name', () => {
+  // gpt-oss (harmony format) can emit `query_data<|channel|>commentary` as the
+  // function name; the parser must recover the bare `query_data` and keep args.
+  const c = parseLlmMessage({
+    content: '',
+    tool_calls: [
+      {
+        id: 'h1',
+        type: 'function',
+        function: { name: 'query_data<|channel|>commentary', arguments: '{"question":"top campaigns"}' },
+      },
+    ],
+  });
+  assert.equal(c.toolCalls.length, 1);
+  assert.equal(c.toolCalls[0].name, 'query_data'); // NOT `query_data<|channel|>commentary`
+  assert.deepEqual(c.toolCalls[0].args, { question: 'top campaigns' });
+});
+
+test('parseLlmMessage recovers a tool call emitted as harmony commentary TEXT', () => {
+  // No structured tool_calls — the model wrote the call in the commentary channel.
+  const content =
+    '<|start|>assistant<|channel|>commentary to=query_data<|message|>{"question":"revenue by month"}<|call|>';
+  const c = parseLlmMessage({ content });
+  assert.equal(c.toolCalls.length, 1);
+  assert.equal(c.toolCalls[0].name, 'query_data');
+  assert.deepEqual(c.toolCalls[0].args, { question: 'revenue by month' });
+});
+
+test('parseHarmonyToolCall returns null for plain final-answer text (no false calls)', () => {
+  assert.equal(parseHarmonyToolCall('Here is your final summary of the campaign performance.'), null);
 });
 
 test('the deploy path is a GATE, not an ungoverned deploy', () => {

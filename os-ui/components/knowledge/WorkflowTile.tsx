@@ -23,6 +23,11 @@ const VIS_CLASS: Record<string, string> = {
   Shared: 'vis-shared',
   Marketplace: 'vis-certified',
 };
+const VIS_LABEL: Record<string, string> = {
+  Personal: 'Personal',
+  Shared: 'Shared in Domain',
+  Marketplace: 'Marketplace',
+};
 
 export default function WorkflowTile({ workflow: w, onClick }: Props) {
   return (
@@ -34,7 +39,7 @@ export default function WorkflowTile({ workflow: w, onClick }: Props) {
       <div className="workflow-tile-head">
         <span className="workflow-tile-title">{w.title}</span>
         <span className={`badge ${VIS_CLASS[w.visibility] ?? 'muted'}`}>
-          {w.visibility}
+          {VIS_LABEL[w.visibility] ?? w.visibility}
         </span>
       </div>
       <div className="workflow-tile-meta">

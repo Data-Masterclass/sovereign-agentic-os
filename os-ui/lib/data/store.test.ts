@@ -20,6 +20,9 @@ import {
   archiveDataset,
   unarchiveDataset,
   deleteDataset,
+  setDocs,
+  listDatasetVersions,
+  restoreDatasetVersion,
   type Principal,
 } from './store.ts';
 import { DatasetError } from './dataset-schema.ts';
@@ -235,27 +238,38 @@ test('unshare drops grants and returns the asset to a private dataset', () => {
 // installed over global.fetch. `docs` survives an in-process `__resetStore()`,
 // so we can simulate an os-ui restart hydrating from the durable backend.
 function fakeOpenSearch() {
+  // Index-AWARE: keyed by `${index}\n${id}` so the datasets index and the
+  // `os-versions-dataset` snapshot index (which the version log mirrors to) stay
+  // isolated — the same discipline real OpenSearch enforces. `datasetDocs()` counts
+  // only the datasets index, so version snapshots never inflate the dataset count.
   const docs = new Map<string, unknown>();
   const orig = globalThis.fetch;
   const json = (body: unknown) =>
     new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  // The index segment lives between the host and the `/_doc|_search|_count` op.
+  const indexOf = (u: string) => (u.split('/').find((seg) => seg.startsWith('os-')) ?? '');
+  const inIndex = (idx: string) =>
+    [...docs.entries()].filter(([k]) => k.startsWith(`${idx}\n`)).map(([, v]) => v);
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const u = String(input);
     const method = init?.method ?? 'GET';
-    if (u.endsWith('/_count')) return json({ count: docs.size });
+    const idx = indexOf(u);
+    if (u.endsWith('/_count')) return json({ count: inIndex(idx).length });
     if (method === 'HEAD') return new Response(null, { status: 200 });
     if (u.includes('/_search')) {
-      return json({ hits: { hits: [...docs.values()].map((_source) => ({ _source })) } });
+      return json({ hits: { hits: inIndex(idx).map((_source) => ({ _source })) } });
     }
     if (u.includes('/_doc/')) {
       const id = decodeURIComponent(u.split('/_doc/')[1].split('?')[0]);
-      if (method === 'DELETE') docs.delete(id);
-      else docs.set(id, JSON.parse(String(init?.body ?? '{}')));
+      const key = `${idx}\n${id}`;
+      if (method === 'DELETE') docs.delete(key);
+      else docs.set(key, JSON.parse(String(init?.body ?? '{}')));
       return json({ result: 'ok' });
     }
     return json({});
   }) as typeof fetch;
-  return { docs, restore: () => { globalThis.fetch = orig; } };
+  const datasetDocs = () => inIndex('os-datasets');
+  return { docs, datasetDocs, restore: () => { globalThis.fetch = orig; } };
 }
 
 test('the data store mirrors writes to the backend and hydrates from it after a restart', async () => {
@@ -265,7 +279,7 @@ test('the data store mirrors writes to the backend and hydrates from it after a 
     const id = seedOrders(); // create + build → mirrored fire-and-forget
     // Fire-and-forget writes settle on the next tick.
     await new Promise((r) => setTimeout(r, 0));
-    assert.equal(os.docs.size, 1, 'the write was mirrored to the durable backend');
+    assert.equal(os.datasetDocs().length, 1, 'the write was mirrored to the durable backend');
 
     // Simulate an os-ui restart: wipe the in-process cache, keep the backend.
     __resetStore();
@@ -353,4 +367,51 @@ test('delete is refused while other domains import the product (no orphaned depe
   assert.throws(() => deleteDataset(id, sara), (e: DatasetError) => e.status === 409);
   // Archive stays available even for a governed product (reversible hide).
   assert.equal(archiveDataset(id, sara).archived, true);
+});
+
+// ---------------------------------------------------------- version history --
+
+test('VERSIONS: each edit snapshots the PRIOR dataset.yaml, newest first', () => {
+  const d = createDataset(amir, { name: 'Orders' });
+  // A fresh dataset has no history yet — the first edit starts it.
+  assert.equal(listDatasetVersions(d.id, amir).length, 0);
+  buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'bronze/orders.dlt.yml' });
+  setDocs(d.id, amir, { description: 'first' });
+  setDocs(d.id, amir, { description: 'second' });
+  const hist = listDatasetVersions(d.id, amir);
+  // 3 edits after creation → 3 snapshots of the superseded states, newest first.
+  assert.equal(hist.length, 3);
+  assert.equal(hist[0].summary, 'edit docs');
+  assert.equal(hist[0].author, 'amir');
+  assert.deepEqual(hist.map((v) => v.version), [3, 2, 1]);
+});
+
+test('VERSIONS: restore reverts the definition and is itself an undoable version', () => {
+  const d = createDataset(amir, { name: 'Orders' });
+  setDocs(d.id, amir, { description: 'v1 description' });
+  setDocs(d.id, amir, { description: 'v2 description' });
+  assert.equal(getDataset(d.id, amir).description, 'v2 description');
+  // Version 2 snapshotted the state right before the 2nd edit → description 'v1'.
+  const before = listDatasetVersions(d.id, amir).length;
+  const restored = restoreDatasetVersion(d.id, amir, 2);
+  assert.equal(restored.description, 'v1 description');
+  assert.equal(getDataset(d.id, amir).description, 'v1 description');
+  // Restore snapshotted the live state first, so history GREW (reversible).
+  assert.equal(listDatasetVersions(d.id, amir).length, before + 1);
+  assert.match(listDatasetVersions(d.id, amir)[0].summary, /restore of v2/);
+});
+
+test('VERSIONS: history is view-scoped; a non-viewer is refused', () => {
+  const d = createDataset(amir, { name: 'Orders' });
+  setDocs(d.id, amir, { description: 'private' });
+  // kenji (finance) cannot see amir's private dataset → cannot read its history.
+  assert.throws(() => listDatasetVersions(d.id, kenji), (e: DatasetError) => e.status === 403);
+  // And a creator cannot restore a dataset they cannot edit.
+  assert.throws(() => restoreDatasetVersion(d.id, kenji, 1), (e: DatasetError) => e.status === 403);
+});
+
+test('VERSIONS: a missing version number is refused (404)', () => {
+  const d = createDataset(amir, { name: 'Orders' });
+  setDocs(d.id, amir, { description: 'x' });
+  assert.throws(() => restoreDatasetVersion(d.id, amir, 99), (e: DatasetError) => e.status === 404);
 });

@@ -40,7 +40,7 @@ function EntryCard({
 
       <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 10, alignItems: 'center' }}>
         <span className="badge muted">{entry.scope}</span>
-        {entry.visibility ? <span className="badge">{entry.visibility}</span> : null}
+        {entry.visibility ? <span className="badge">{entry.visibility === 'Shared' ? 'Shared in Domain' : entry.visibility}</span> : null}
         {entry.live === false ? <span className="badge warn">not live yet</span> : null}
       </div>
 

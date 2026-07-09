@@ -74,6 +74,18 @@ opensearch:
     enabled: true
     size: 8Gi
 
+# ClickHouse Langfuse analytics store. PVC-backed so trace tables survive a pod
+# roll or node restart. Without persistence a CH restart wipes all Langfuse data
+# and the schema migration must re-run from scratch next web boot. size: 10Gi
+# covers a healthy trace volume before Langfuse's own retention cleanup runs.
+# NOTE: enabling persistence on a cluster that already has a CH Deployment using
+# emptyDir requires a one-time `kubectl delete deployment clickhouse` (the new
+# PVC-backed pod will start fresh; trace history before this change is lost).
+clickhouse:
+  persistence:
+    enabled: true
+    size: 10Gi
+
 # Embedding vector dimension — single source for the knowledge + files knn_vector
 # mappings AND the app's KNOWLEDGE_EMBED_DIM/FILES_EMBED_DIM. Currently 384 (mock).
 # STAGED: flip to 4096 (EU-sovereign STACKIT Qwen3-VL-Embedding-8B) TOGETHER with
@@ -232,7 +244,7 @@ osUI:
     # 0.1.11 = Agents-tab builder rebuild: globalThis store fix (AGENT.md/MEMORY.md
     # now load), single Auto/Reasoning/Execution model toggle (real sovereign-*
     # ids), React Flow drag-and-drop graph builder, master-detail rail + templates.
-    tag: "0.1.68"
+    tag: "0.1.70"
   # CANONICAL PUBLIC URL — the apex host. OS_PUBLIC_URL derives from this (os-ui.yaml
   # reads `.Values.osUI.publicUrl` first, only falling back to the `os.<zone>` ingress
   # host). Pinning it here makes the apex authoritative so a `helm upgrade` can NEVER

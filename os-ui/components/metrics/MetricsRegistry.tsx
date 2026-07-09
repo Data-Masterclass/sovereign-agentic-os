@@ -23,6 +23,23 @@ import {
  */
 function MetricCard({ m, onOpen, scope }: { m: MetricSummary; onOpen: (m: MetricSummary) => void; scope: ScopeKey }) {
   const showDomain = scope === 'shared' || scope === 'marketplace' || scope === 'all';
+  // FAIL-SOFT: one metric's model couldn't load — render its reason inline, non-clickable,
+  // so the rest of the registry stays live (one bad cube never 500s the whole surface).
+  if (m.error) {
+    return (
+      <div
+        className="card tile"
+        style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: 120, boxSizing: 'border-box', opacity: 0.85 }}
+        title="This metric's model could not be loaded"
+      >
+        <div className="tile-top">
+          <span className="tile-name">{m.name}</span>
+          <span className="badge warn">unavailable</span>
+        </div>
+        <div className="error" style={{ marginTop: 4, fontSize: 12 }}>{m.error}</div>
+      </div>
+    );
+  }
   return (
     <button
       type="button"

@@ -6,7 +6,9 @@ import { visibilityFor, type Dataset } from './dataset-schema.ts';
 import {
   applyApprovedPromotion,
   listGovernedDatasets,
+  requireDomainTableMaterialized,
   validatePromotion,
+  type MaterializationVerifier,
   type Principal,
   type PromotionRequest,
 } from './store.ts';
@@ -48,6 +50,11 @@ export type PublishDeps = {
     principal: string,
     write: PublishWrite,
   ): Promise<DataBuildReport & { mode: string }>;
+  /** FAIL-CLOSED (#96): an INDEPENDENT probe that the promoted DOMAIN table is
+   *  queryable via the governed query path — run right before the tier flip, so a
+   *  vacuous/mismatched build ✓ can't leak an un-materialized asset. Wired to the real
+   *  Trino `tableQueryable` server-side; a test may inject a fake to prove the gate. */
+  verifyDomainTable: MaterializationVerifier;
 };
 
 export type PublishOutcome =
@@ -117,10 +124,15 @@ export async function publishApprovedPromotion(
     };
   }
 
-  // 6. ✓ only: flip the registry tier (re-validates; 409 on a concurrent flip).
+  // 6. FAIL-CLOSED (#96): re-probe the EXACT domain target independently of the build
+  //    report — a promotion never flips while the gold lives only in `personal_<owner>`
+  //    (the Northpeak gap). Throws 502 (tier untouched) if the domain table is absent.
+  await requireDomainTableMaterialized(plan.target, approver, deps.verifyDomainTable);
+
+  // 7. ✓ only: flip the registry tier (re-validates; 409 on a concurrent flip).
   const dataset = applyApprovedPromotion(req, approver);
 
-  // 7. The Cube leg (T7): governed datasets with a built Gold now appear in the
+  // 8. The Cube leg (T7): governed datasets with a built Gold now appear in the
   //    `/api/cube/models` payload the sync sidecar delivers (≤60s on the cluster).
   const view = buildCubeModels(listGovernedDatasets()).models.find(
     (m) => m.name === slug(dataset.name),

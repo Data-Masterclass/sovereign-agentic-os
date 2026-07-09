@@ -37,7 +37,14 @@ export async function GET() {
   }
 
   // Tenant totals (requests + tokens) and total spend. Both fail soft to null.
-  const activity = await getJson<RawActivity>('/global/activity');
+  // `/global/activity` REQUIRES a start_date/end_date (a bare call 400s) — pass a
+  // rolling 30-day window (YYYY-MM-DD, UTC).
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const end = new Date();
+  const start = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const activity = await getJson<RawActivity>(
+    `/global/activity?start_date=${iso(start)}&end_date=${iso(end)}`,
+  );
   const spend = await getJson<RawSpend>('/global/spend');
 
   if (activity == null && spend == null) {

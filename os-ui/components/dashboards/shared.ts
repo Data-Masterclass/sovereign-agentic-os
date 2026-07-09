@@ -123,7 +123,7 @@ export function flatMetrics(g: MetricGroups | null): MetricSummary[] {
 
 export const VIZ_TYPES: VizType[] = ['big_number_total', 'line', 'bar', 'table'];
 export const CHANNELS: Channel[] = ['email', 'slack', 'in_app'];
-export const TIER_LABEL: Record<DashTier, string> = { personal: 'Personal', domain: 'Shared', marketplace: 'Certified' };
+export const TIER_LABEL: Record<DashTier, string> = { personal: 'Personal', domain: 'Shared in Domain', marketplace: 'Certified' };
 export const TIER_BADGE: Record<DashTier, string> = {
   personal: 'vis-personal',
   domain: 'vis-shared',

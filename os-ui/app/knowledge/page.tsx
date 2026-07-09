@@ -347,7 +347,7 @@ export default function KnowledgePage() {
           <span className="k-section-label">{e.title}</span>
           <div className="row" style={{ gap: 6, alignItems: 'center' }}>
             {shared && <DomainTag domain={e.domain} />}
-            {e.visibility === 'Shared' && <span className="badge vis-shared">Shared</span>}
+            {e.visibility === 'Shared' && <span className="badge vis-shared">Shared in Domain</span>}
             {e.visibility === 'Marketplace' && <span className="badge vis-certified">Certified</span>}
             <button className="btn ghost sm" onClick={() => void (open ? setPkOpenId(null) : openPersonal(e.id))}>
               {open ? 'Close' : 'Open'}
@@ -457,7 +457,7 @@ export default function KnowledgePage() {
           <>
             <p className="lead" style={{ marginTop: 18 }}>
               General knowledge that grounds your agents. <strong>My knowledge</strong> is
-              personal context about how you work; <strong>Shared</strong> is the
+              personal context about how you work; <strong>Shared in Domain</strong> is the
               domain&rsquo;s operating manual; <strong>Marketplace</strong> is certified
               knowledge from across the org.
             </p>
@@ -522,7 +522,7 @@ export default function KnowledgePage() {
             {/* ── SHARED: the domain operating manual (four guided sections) ── */}
             {(kScope === 'all' || kScope === 'shared') && (
               <div style={{ marginTop: 20, order: 2 }}>
-                <div className="section-title">Shared · the domain operating manual</div>
+                <div className="section-title">Shared in Domain · the domain operating manual</div>
                 <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
                   Pinned as base context for every agent in this domain. Keep it short and current.
                 </p>

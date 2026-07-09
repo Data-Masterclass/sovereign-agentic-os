@@ -10,6 +10,8 @@ import {
   setDocs,
   requestPromotion,
   applyApprovedPromotion,
+  requireDomainTableMaterialized,
+  verifyPromotedMaterialization,
   getDataset,
   assetTarget,
   type Principal,
@@ -113,4 +115,54 @@ test('double-apply is rejected once the dataset is already an asset', () => {
   const req = requestPromotion(id, amir);
   applyApprovedPromotion(req, bea);
   assert.throws(() => applyApprovedPromotion(req, bea), (e: DatasetError) => e.status === 409);
+});
+
+test('#96 FAIL-CLOSED gate: an ABSENT domain table refuses the flip (502, tier untouched)', async () => {
+  const id = readyDataset();
+  const req = requestPromotion(id, amir, { visibility: 'domain' });
+  // The governed CTAS did not land the table in the domain schema → probe returns false.
+  const absent = async () => false;
+  await assert.rejects(
+    () => requireDomainTableMaterialized(req.target, bea, absent),
+    (e: DatasetError) => e.status === 502 && /Re-materialize before flipping/.test(e.message),
+  );
+  // The gate does NOT itself flip the tier — the caller flips only after it passes.
+  assert.equal(getDataset(id, amir).tier, 'dataset');
+});
+
+test('#96 FAIL-CLOSED gate: a queryable domain table passes; the caller then flips', async () => {
+  const id = readyDataset();
+  const req = requestPromotion(id, amir, { visibility: 'domain' });
+  const probes: { fqn: string; principal: string }[] = [];
+  const present = async (fqn: string, principal: string) => { probes.push({ fqn, principal }); return true; };
+  await requireDomainTableMaterialized(req.target, bea, present); // does not throw
+  assert.deepEqual(probes, [{ fqn: assetTarget(getDataset(id, amir)), principal: 'sales' }]);
+  const asset = applyApprovedPromotion(req, bea);
+  assert.equal(asset.tier, 'asset');
+});
+
+test('#96 RE-MATERIALIZE repair: a promoted asset with a MISSING domain gold fails until the CTAS lands', async () => {
+  // Simulate the Northpeak state: tier already flipped to asset, but the domain gold
+  // is absent. The repair probe must fail (502) until a re-run makes it queryable.
+  const id = readyDataset();
+  const req = requestPromotion(id, amir, { visibility: 'domain' });
+  const asset = applyApprovedPromotion(req, bea); // flipped (the buggy path did this without a landed CTAS)
+  assert.equal(asset.tier, 'asset');
+
+  // Repair is edit-scoped (owner or domain admin) — the owner re-materializes.
+  await assert.rejects(
+    () => verifyPromotedMaterialization(id, amir, async () => false),
+    (e: DatasetError) => e.status === 502 && /did not land/.test(e.message),
+  );
+  // After the operator re-runs the publish CTAS, the probe resolves → repair confirmed.
+  const repaired = await verifyPromotedMaterialization(id, amir, async () => true);
+  assert.equal(repaired.tier, 'asset');
+});
+
+test('#96 repair refuses a dataset that was never promoted (409)', async () => {
+  const id = readyDataset(); // still tier=dataset
+  await assert.rejects(
+    () => verifyPromotedMaterialization(id, amir, async () => true),
+    (e: DatasetError) => e.status === 409,
+  );
 });

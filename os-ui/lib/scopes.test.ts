@@ -34,7 +34,7 @@ test('scopeLabel renders "My <kind>" and plain group nouns', () => {
   assert.equal(scopeLabel('mine', 'Data'), 'My Data');
   assert.equal(scopeLabel('mine', 'Files'), 'My Files');
   assert.equal(scopeLabel('mine'), 'My');
-  assert.equal(scopeLabel('shared'), 'Shared');
+  assert.equal(scopeLabel('shared'), 'Shared in Domain');
   assert.equal(scopeLabel('marketplace'), 'Marketplace');
 });
 

@@ -26,10 +26,11 @@ import {
   visibilityFor,
 } from './dataset-schema.ts';
 import { transparencyGate, gateReason } from './transparency.ts';
-import { CUBE_ARTIFACT, EXPOSURE_ARTIFACT, scaffoldCubeYaml, scaffoldExposureYaml } from './metrics.ts';
-import { assetTarget, productTarget, personalSchema, domainSchema, slug } from './store-fqn.ts';
+import { CUBE_ARTIFACT, EXPOSURE_ARTIFACT, scaffoldCubeYaml, scaffoldExposureYaml, metricGoldReady } from './metrics.ts';
+import { assetTarget, productTarget, personalSchema, domainSchema, slug, versionTarget } from './store-fqn.ts';
 import { config } from '../config.ts';
 import { osMirror } from '../os-mirror.ts';
+import { type ArtifactVersion, versionLog } from '../versioning.ts';
 
 // Re-export the FQN helpers so existing consumers keep importing them from the store.
 export { assetTarget, productTarget } from './store-fqn.ts';
@@ -137,6 +138,20 @@ function writeThrough(rec: DatasetRecord): void {
 }
 
 /**
+ * Version history for datasets. Datasets are NOT git-backed (no per-dataset Forgejo
+ * repo — the medallion builds live in the store + durable mirror), so they ride the
+ * SAME append-only snapshot log every non-git artifact shares (files/dashboards/…).
+ * Each meaningful edit snapshots the PRIOR `dataset.yaml` before it is overwritten,
+ * so "restore a previous version" reverts the dataset definition (and is itself an
+ * auditable, reversible version). Its own `os-versions-dataset` mirror.
+ */
+const versions = versionLog('dataset');
+
+function snapshotState(rec: DatasetRecord): { yaml: string } {
+  return { yaml: rec.yaml };
+}
+
+/**
  * Hydrate the in-process cache from the durable mirror, once per process. Awaited
  * at the server boundary (requirePrincipal) BEFORE any read, so a restarted os-ui
  * serves the persisted datasets. Idempotent + graceful (offline → in-memory only).
@@ -172,6 +187,8 @@ async function hydrate(): Promise<void> {
     // Don't clobber records created in-process before hydration completed.
     if (rec && rec.id && !s.store.has(rec.id)) s.store.set(rec.id, rec);
   }
+  // Hydrate the snapshot version log alongside the datasets (best-effort).
+  await versions.ensureHydrated();
   s.seeded = true;
 }
 
@@ -207,6 +224,7 @@ export function __resetStore(): void {
   s.hydration = null;
   s.hydrateFailedAt = undefined;
   mirror.__reset();
+  versions.__reset();
 }
 
 // ------------------------------------------------------------------- scoping --
@@ -247,7 +265,12 @@ function editOf(rec: DatasetRecord, user: Principal): Dataset {
   return d;
 }
 
-function persist(rec: DatasetRecord, d: Dataset): DatasetRecord {
+function persist(rec: DatasetRecord, d: Dataset, snap?: { author: string; summary: string }): DatasetRecord {
+  // Capture the PRIOR dataset.yaml as a version BEFORE overwriting it, so the
+  // history holds every superseded definition (mirrors lib/files/store.ts). Only
+  // user-facing edits pass `snap`; lifecycle/promotion flips (own governance trail)
+  // don't churn the version log.
+  if (snap && rec.yaml) versions.record(rec.id, snap.author, snapshotState(rec), snap.summary);
   rec.yaml = serializeDataset(d);
   rec.owner = d.owner;
   rec.domain = d.domain;
@@ -322,10 +345,15 @@ export function requireDatasetEditable(id: string, user: Principal): Dataset {
 }
 
 /**
- * The physical Trino FQN of a dataset's built medallion layer, resolved tier-aware:
- * a private `dataset` lives in the caller's OWN `personal_<uid>` schema, a governed
- * asset/product in its domain schema — the SAME resolution {@link listAskable} uses, so
- * a governed row preview targets exactly the table the ask/query surface would. Returns
+ * The physical Trino FQN of a dataset's built medallion layer, resolved VIEWER-AWARE
+ * (the SAME rule as {@link versionTarget}, so preview/profile target the exact table the
+ * ask/query surface would): the OWNER reads EVERY layer from their own `personal_<uid>`
+ * lane — that lane physically holds bronze plus any un-promoted silver/gold, so an
+ * un-promoted layer read must NOT target the domain schema (TABLE_NOT_FOUND); a non-owner
+ * reads the promoted copy from the domain schema (bronze is never shared there → it simply
+ * won't resolve, fail-closed). The FQN's schema and the returned principal ALWAYS agree —
+ * the read runs AS the identity that owns the schema (personal lane ⇒ owner, domain ⇒
+ * domain principal). We NEVER build a `personal_<otherUser>` FQN for a non-owner. Returns
  * null when the requested layer (or, absent one, the furthest built layer) isn't built —
  * the caller then answers "not materialized yet" instead of building a doomed FQN.
  */
@@ -336,14 +364,13 @@ export function builtLayerFqn(
 ): { layer: Layer; fqn: string; principal: string } | null {
   const chosen = layer && d.versions[layer]?.built ? layer : furthest(d).layer;
   if (!chosen) return null;
-  // A private `dataset` lives in the OWNER's personal lane and must be READ AS the
-  // owner (personal_<uid> ownership); a governed asset/product lives in its domain
-  // schema, read as the domain principal. domainSchema() keeps a hyphenated domain a
-  // VALID Trino identifier (raw `agentic-leader-q3-2026` is a SYNTAX_ERROR).
-  const personal = d.tier === 'dataset';
-  const schema = personal ? personalSchema(user.id) : domainSchema(d.domain);
-  const principal = personal ? user.id : (user.domains[0] ?? user.id);
-  return { layer: chosen, fqn: `iceberg.${schema}.${chosen}_${slug(d.name)}`, principal };
+  // FAIL-CLOSED, owner-aware: only the OWNER resolves to the personal lane and is read AS
+  // the owner; everyone else resolves to the domain schema and is read as the domain
+  // principal. versionTarget encodes the SAME schema rule so the two never drift.
+  const isOwner = user.id === d.owner;
+  const fqn = versionTarget(d, chosen, { id: user.id });
+  const principal = isOwner ? user.id : (user.domains[0] ?? user.id);
+  return { layer: chosen, fqn, principal };
 }
 
 /**
@@ -478,7 +505,7 @@ export function buildVersion(
   if (patch.body !== undefined && next.artifact) {
     rec.artifacts = { ...(rec.artifacts ?? {}), [next.artifact]: patch.body };
   }
-  persist(rec, d);
+  persist(rec, d, { author: user.id, summary: `build ${layer}` });
   return d;
 }
 
@@ -500,7 +527,7 @@ export function buildGoldJoin(
   rec.artifacts = { ...(rec.artifacts ?? {}), [input.artifact]: input.body };
   d.measures = input.measures;
   d.upstreams = input.upstreams;
-  persist(rec, d);
+  persist(rec, d, { author: user.id, summary: 'build gold join' });
   return d;
 }
 
@@ -518,7 +545,7 @@ export function setDocs(
   if (docs.columns !== undefined) {
     d.columns = docs.columns.filter((c) => c.name.trim()).map((c) => ({ name: c.name.trim(), description: c.description ?? '' }));
   }
-  persist(rec, d);
+  persist(rec, d, { author: user.id, summary: 'edit docs' });
   return d;
 }
 
@@ -557,7 +584,7 @@ export function addCheck(
     ...(typeof input.max === 'number' ? { max: input.max } : {}),
   };
   d.checks = [...(d.checks ?? []), check];
-  persist(rec, d);
+  persist(rec, d, { author: user.id, summary: 'add check' });
   return d;
 }
 
@@ -566,7 +593,7 @@ export function removeCheck(id: string, user: Principal, checkId: string): Datas
   const rec = get(id);
   const d = editOf(rec, user);
   d.checks = (d.checks ?? []).filter((c) => c.id !== checkId);
-  persist(rec, d);
+  persist(rec, d, { author: user.id, summary: 'remove check' });
   return d;
 }
 
@@ -587,10 +614,11 @@ function carryQuality(d: Dataset, layer: Layer): Quality {
 export function defineMeasure(id: string, user: Principal, measure: Measure): Dataset {
   const rec = get(id);
   const d = editOf(rec, user);
-  if (!d.versions.gold.built) fail('Define a metric only on a built Gold version', 400);
-  if (d.tier === 'dataset') {
-    fail('Define a metric on a governed Gold asset/product — promote it first (Cube reads the Trino mart)', 400);
-  }
+  // FAIL-CLOSED metric gate (#91): a cube can only bind to a governed DOMAIN gold mart.
+  // Registering a metric on un-promoted personal gold builds a broken cube (Cube's
+  // `cube-*` principal can't read the personal lane). Refuse with the clear message.
+  const ready = metricGoldReady(d);
+  if (!ready.ok) fail(ready.message ?? 'This dataset is not ready for a metric', 400);
   if (d.measures.some((m) => m.name === measure.name)) fail(`Measure '${measure.name}' already defined`, 409);
   d.measures.push(measure);
   // Regenerate the tool-native artifacts from the updated dataset (cube_dbt + exposure).
@@ -599,7 +627,7 @@ export function defineMeasure(id: string, user: Principal, measure: Measure): Da
     [CUBE_ARTIFACT(d)]: scaffoldCubeYaml(d),
     [EXPOSURE_ARTIFACT]: scaffoldExposureYaml(d),
   };
-  persist(rec, d);
+  persist(rec, d, { author: user.id, summary: `define metric ${measure.name}` });
   return d;
 }
 
@@ -629,7 +657,7 @@ export function removeMeasure(id: string, user: Principal, measureName: string):
     delete artifacts[EXPOSURE_ARTIFACT];
   }
   rec.artifacts = artifacts;
-  persist(rec, d);
+  persist(rec, d, { author: user.id, summary: `remove metric ${measureName}` });
   return { removed: true };
 }
 
@@ -747,10 +775,25 @@ export function validatePromotion(req: PromotionRequest, approver: Principal): D
 }
 
 /**
+ * A post-CTAS existence probe of the promoted domain table, run through the governed
+ * query path. Returns whether `iceberg.<domain>.<layer>_<slug>` is queryable AS the
+ * approving Builder. Injected so the pure store stays unit-testable (the server wires
+ * the real Trino `tableQueryable`).
+ */
+export type MaterializationVerifier = (fqn: string, principal: string) => Promise<boolean>;
+
+/**
  * Apply an APPROVED promotion. The approval IS the authorization, so ownership is
  * NOT required here — but the approver must be a domain Builder/Admin (the role
  * gate) and the transparency gate is re-checked. This is the Creator→Builder
  * handoff: the Builder's approval promotes a dataset they don't own into Trino.
+ *
+ * PURE registry flip — no physical I/O. The FAIL-CLOSED materialization gate (#96)
+ * that guarantees the governed CTAS actually landed in the domain schema BEFORE this
+ * flip lives in {@link requireDomainTableMaterialized}, which the physical publish path
+ * ({@link publishApprovedPromotion}) runs first. Never call this without that check on
+ * a live publish, or a tier can flip while the gold lives only in `personal_<owner>`
+ * (the Northpeak gap).
  */
 export function applyApprovedPromotion(req: PromotionRequest, approver: Principal): Dataset {
   const rec = get(req.datasetId);
@@ -760,6 +803,53 @@ export function applyApprovedPromotion(req: PromotionRequest, approver: Principa
   d.visibility = visibilityFor('asset', req.visibility);
   d.grants = req.grants;
   persist(rec, d);
+  return d;
+}
+
+/**
+ * FAIL-CLOSED materialization gate (#96): confirm the promoted domain table physically
+ * exists + is queryable in the DOMAIN schema via the governed query path, BEFORE the
+ * tier flips. Throws an honest 502 (tier untouched) when the governed CTAS did not land
+ * `iceberg.<domain>.<layer>_<slug>` — so a promotion can NEVER flip the tier while the
+ * gold lives only in `personal_<owner>` (the Northpeak gap: tier=asset but no domain
+ * gold). This is a SECOND, independent probe of the exact target the caller is about to
+ * flip — not a re-read of the build report — so a vacuous/mismatched build ✓ can't leak
+ * an un-materialized asset through. Also the REPAIR primitive: re-run the publish CTAS
+ * out-of-band, then call this to prove the domain table now resolves.
+ */
+export async function requireDomainTableMaterialized(
+  target: string,
+  approver: Principal,
+  verify: MaterializationVerifier,
+): Promise<void> {
+  const principal = approver.domains[0] ?? approver.id;
+  const live = await verify(target, principal);
+  if (!live) {
+    fail(
+      `Promotion refused (tier unchanged) — the governed CTAS did not land ${target} in the domain schema. Re-materialize before flipping.`,
+      502,
+    );
+  }
+}
+
+/**
+ * REPAIR a promoted-but-missing asset (#96): a dataset whose tier is already
+ * `asset`/`product` but whose governed gold is absent from the domain schema (a flip
+ * that landed without the CTAS). The caller re-runs the publish CTAS out-of-band, then
+ * calls this to CONFIRM the domain table is now queryable — throws 502 if it still
+ * isn't, so a repair can't silently claim success. Idempotent: it only reads/verifies,
+ * never re-flips a tier (the tier is already governed). Returns the dataset unchanged
+ * on success so the caller can report an honest ✓.
+ */
+export async function verifyPromotedMaterialization(
+  id: string,
+  user: Principal,
+  verify: MaterializationVerifier,
+): Promise<Dataset> {
+  const rec = get(id);
+  const d = editOf(rec, user); // owner or domain admin — edit authority to repair
+  if (d.tier === 'dataset') fail('This dataset is not promoted — nothing to re-materialize', 409);
+  await requireDomainTableMaterialized(assetTarget(d), user, verify);
   return d;
 }
 
@@ -914,7 +1004,42 @@ export function deleteDataset(id: string, user: Principal): Dataset {
   }
   ds().store.delete(id);
   mirror.deleteThrough(id);
+  versions.purge(id); // forget + delete-through the snapshot history
   return d;
+}
+
+// ----------------------------------------------------------- version history --
+
+/** Version history for a dataset, newest first (view-scoped). Snapshot-backed —
+ *  datasets are not git-backed, so this is the honest fallback log. */
+export function listDatasetVersions(id: string, user: Principal): ArtifactVersion[] {
+  const rec = get(id);
+  viewOf(rec, user); // view-scoped: any viewer may see the history
+  return versions.list(id);
+}
+
+/**
+ * Restore a prior version of a dataset's definition (`dataset.yaml`). Auditable +
+ * reversible: the CURRENT state is snapshotted as a new version FIRST, then the
+ * chosen version's yaml is validated and applied. Edit-scoped (owner or domain
+ * admin) — a governed state change on the same authorize/trace spine as every edit.
+ */
+export function restoreDatasetVersion(id: string, user: Principal, version: number): Dataset {
+  const rec = get(id);
+  editOf(rec, user); // edit gate (throws 403 if not permitted)
+  const snap = versions.get(id, version);
+  if (!snap) fail(`Version ${version} not found`, 404);
+  const s = snap.state as { yaml?: string };
+  if (typeof s.yaml !== 'string') fail(`Version ${version} has no restorable source`, 422);
+  const restored = parseDataset(s.yaml); // validate before applying — never go live with corrupt state
+  // Snapshot the live state first so the restore can itself be undone.
+  versions.record(id, user.id, snapshotState(rec), `restore of v${version}`);
+  rec.yaml = s.yaml;
+  rec.owner = restored.owner;
+  rec.domain = restored.domain;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return restored;
 }
 
 // --------------------------------------------------------------------- files --

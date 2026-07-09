@@ -34,6 +34,7 @@ type Summary = {
 type Groups = { mine: Summary[]; domain: Summary[]; marketplace: Summary[] };
 
 const visClass = (v: string) => (v === 'Shared' ? 'vis-shared' : v === 'Marketplace' ? 'vis-certified' : 'vis-personal');
+const visLabel = (v: string) => (v === 'Shared' ? 'Shared in Domain' : v);
 
 /** Systems visibility → the OS-wide lifecycle visibility (drives the delete gate). */
 const lcVis = (v: Summary['visibility']): Visibility =>
@@ -72,7 +73,7 @@ export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }
         <div className="row" style={{ gap: 6, alignItems: 'center' }}>
           {(s.visibility === 'Shared' || s.visibility === 'Marketplace') ? <DomainTag domain={s.domain} /> : null}
           {s.archived ? <span className="badge muted">archived</span> : null}
-          <span className={`badge ${visClass(s.visibility)}`}>{s.visibility}</span>
+          <span className={`badge ${visClass(s.visibility)}`}>{visLabel(s.visibility)}</span>
         </div>
       </div>
       <div className="row" style={{ gap: 6, marginTop: 10, flexWrap: 'wrap' }}>

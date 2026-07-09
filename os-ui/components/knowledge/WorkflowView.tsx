@@ -58,6 +58,11 @@ const VIS_CLASS: Record<string, string> = {
   Shared: 'vis-shared',
   Marketplace: 'vis-certified',
 };
+const VIS_LABEL: Record<string, string> = {
+  Personal: 'Personal',
+  Shared: 'Shared in Domain',
+  Marketplace: 'Marketplace',
+};
 
 const ACTORS: ActorType[] = ['Human', 'Software', 'Agent'];
 
@@ -209,7 +214,7 @@ export default function WorkflowView({
         <div className="k-detail-head">
           <button className="btn ghost sm" onClick={onBack}>← Workflows</button>
           <h2 className="k-detail-title">{data.title}</h2>
-          <span className={`badge ${VIS_CLASS[data.visibility] ?? 'muted'}`}>{data.visibility}</span>
+          <span className={`badge ${VIS_CLASS[data.visibility] ?? 'muted'}`}>{VIS_LABEL[data.visibility] ?? data.visibility}</span>
           {/* Source-domain provenance — shown only in Shared/Marketplace tiers. */}
           {(data.visibility === 'Shared' || data.visibility === 'Marketplace') && (
             <DomainTag domain={data.domain} />
@@ -238,6 +243,13 @@ export default function WorkflowView({
           {!data.canPublish && data.canEdit && data.status === 'draft' && (
             <button className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={() => void publish('publish')} disabled={publishing}>
               {publishing ? <span className="spin" /> : 'Request promotion'}
+            </button>
+          )}
+          {/* Live & Shared but not a publisher → file a certification request for a
+              platform admin (the Marketplace rung of the ladder — creators can ask). */}
+          {!data.canPublish && data.canEdit && data.status === 'live' && data.visibility === 'Shared' && (
+            <button className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={() => void publish('certify')} disabled={publishing}>
+              {publishing ? <span className="spin" /> : 'Request certification'}
             </button>
           )}
         </div>

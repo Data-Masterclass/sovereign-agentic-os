@@ -82,11 +82,28 @@ export function productTarget(d: Dataset): string {
 }
 
 /**
- * The physical Iceberg FQN of ONE specific medallion version — the same
- * `iceberg.<domainSchema>.<layer>_<slug>` name the Build adapters materialise
- * (`live.ts` bronze/silver/gold targets). The Explore/profile panel resolves
- * against this so it profiles the exact table a version wrote — no new naming.
+ * The physical Iceberg FQN of ONE specific medallion version, resolved VIEWER-AWARE —
+ * mirroring {@link readPrincipalFor} so the FQN's SCHEMA and the Trino session principal
+ * always agree (Trino runs the query AS the identity that OWNS the schema).
+ *
+ * Physical lane model (data-architecture-model.md): the OWNER's personal lane
+ * (`personal_<owner>`) physically holds EVERY layer they built — bronze and any
+ * un-promoted silver/gold. A governed PROMOTION (dbt-trino CTAS) copies only the promoted
+ * gold/silver into the domain schema; bronze is NEVER shared. So:
+ *   - the OWNER viewing their own dataset reads ALL layers from their personal lane
+ *     (`personal_<owner>.<layer>_<slug>`) — this is why an un-promoted bronze/silver/gold
+ *     read must NOT target the domain schema (that table doesn't exist there → TABLE_NOT_FOUND);
+ *   - a NON-OWNER viewing a Shared/Certified dataset reads the promoted copy from the
+ *     domain schema (`domainSchema(d.domain).<layer>_<slug>`). A non-owner's bronze read
+ *     resolves to the domain schema and simply won't find a table there — correct,
+ *     fail-closed: bronze is never shared, and we NEVER build a `personal_<owner>` FQN for
+ *     someone who isn't the owner (OPA would deny it anyway; we don't even construct it).
  */
-export function versionTarget(d: Dataset, layer: Layer): string {
-  return `iceberg.${domainSchema(d.domain)}.${layer}_${slug(d.name)}`;
+export function versionTarget(d: Dataset, layer: Layer, viewer: { id: string }): string {
+  // FAIL-CLOSED: only the OWNER resolves to the personal lane. Everyone else resolves to
+  // the domain schema — never `personal_<otherUser>` (see readPrincipalFor: the schema and
+  // the read principal must be the identity that owns the schema).
+  const isOwner = viewer.id === d.owner;
+  const schema = isOwner ? personalSchema(d.owner) : domainSchema(d.domain);
+  return `iceberg.${schema}.${layer}_${slug(d.name)}`;
 }

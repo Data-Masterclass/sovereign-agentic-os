@@ -10,6 +10,7 @@ type Settings = {
   sso: { enabled: boolean; provider: string; issuerUrl: string; scim: boolean };
   branding: { displayName: string; accent: string; whiteLabel: boolean };
   defaults: { domainTemplate: string; newUserRole: string };
+  currency: string;
   localization: { locale: 'en' | 'de'; available: string[] };
   notifications: { email: string; backupFailure: boolean; costThreshold: boolean };
   modelRoles: { reasoning: string; standard: string; embeddings: string };
@@ -17,6 +18,11 @@ type Settings = {
 
 type CatalogModel = { model_name: string; display: string; provenance: 'internal' | 'external' };
 type ModelsResponse = { models: CatalogModel[]; source: 'litellm' | 'offline'; roles: { reasoning: string; standard: string; embeddings: string } };
+
+// Prominent currencies as quick-pick chips; the dropdown covers the rest.
+const PROMINENT_CURRENCIES = ['EUR', 'CHF', 'USD'] as const;
+// A pragmatic slice of common ISO-4217 codes for the "other" dropdown.
+const OTHER_CURRENCIES = ['GBP', 'JPY', 'CAD', 'AUD', 'CNY', 'INR', 'SEK', 'NOK', 'DKK', 'PLN', 'SGD', 'HKD', 'NZD', 'ZAR', 'BRL', 'AED'] as const;
 
 const ROLE_META: { key: keyof Settings['modelRoles']; label: string; help: string }[] = [
   { key: 'reasoning', label: 'Reasoning', help: 'Planning and deep reasoning across the OS. Default: sovereign-reasoning.' },
@@ -176,6 +182,41 @@ export default function SettingsPage() {
             </label>
             <button className="btn" disabled={busy === 'defaults'} onClick={() => save('defaults', { defaults: s.defaults })}>
               {busy === 'defaults' ? <span className="spin" /> : 'Save'}
+            </button>
+          </div>
+        </div>
+
+        <div className="section-title">Currency</div>
+        <div className="card" style={{ marginBottom: 18 }}>
+          <div className="hint" style={{ marginBottom: 12 }}>
+            The tenant-wide currency. The Strategy tab reads this to format monetary targets
+            (EBIT, Revenue and custom-monetary metrics); non-monetary metrics ignore it.
+          </div>
+          <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div className="rt-seg">
+              {PROMINENT_CURRENCIES.map((c) => (
+                <button
+                  key={c}
+                  className={`rt-seg-opt${s.currency === c ? ' active' : ''}`}
+                  onClick={() => set('currency', c)}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+            <label className="hint" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              Other
+              <select
+                value={(PROMINENT_CURRENCIES as readonly string[]).includes(s.currency) ? '' : s.currency}
+                onChange={(e) => e.target.value && set('currency', e.target.value)}
+              >
+                <option value="">select…</option>
+                {OTHER_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </label>
+            <span className="hint">current: <span className="mono">{s.currency}</span></span>
+            <button className="btn" disabled={busy === 'currency'} onClick={() => save('currency', { currency: s.currency })}>
+              {busy === 'currency' ? <span className="spin" /> : 'Save'}
             </button>
           </div>
         </div>

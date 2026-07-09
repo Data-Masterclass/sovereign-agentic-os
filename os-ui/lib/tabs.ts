@@ -11,7 +11,7 @@
  *   Context: Knowledge, Files, Data, Connections, Metrics, Marketplace
  *   Build:   Agents, Software, Science, Dashboards
  *   Monitor: Governance (builder+), Monitoring, Components (admin), LLM Gateway
- *   Admin:   Admin (admin), Terminal (admin), About / Licenses (admin)
+ *   Admin:   Admin (admin), Terminal (admin), Query (admin), About / Licenses (admin)
  *
  * The former Users / Gateway / Orchestration / Consoles / Workbench tabs were
  * consolidated: Users & Access lives in Admin (/platform), and the gateway /
@@ -48,7 +48,10 @@ export const TAB_GROUPS: TabGroup[] = [
     tabs: [
       { label: 'Strategy', icon: '▲', href: '/strategy' },
       { label: 'Big Bets', icon: '◆', href: '/big-bets' },
-      { label: 'MCP', icon: '⌗', href: '/mcp' },
+      // MCP setup UI is builder+/admin. Creators still CONNECT via MCP (the
+      // /api/mcp endpoint + their per-user token are unaffected) — only this
+      // configuration tab is hidden from the creator menu.
+      { label: 'MCP', icon: '⌗', href: '/mcp', role: 'Builder / Administrator', minRole: 'builder' },
       { label: 'Tutorials', icon: '◎', href: '/tutorials' },
     ],
   },
@@ -77,9 +80,9 @@ export const TAB_GROUPS: TabGroup[] = [
       // Governance (approvals / the sharing ladder) is oversight — it lives in Monitor.
       // Builder+ (its own minRole) see it here.
       { label: 'Governance', icon: '⚖', href: '/governance', role: 'Builder / Administrator', minRole: 'builder' },
-      { label: 'Monitoring', icon: '◷', href: '/monitoring' },
+      { label: 'Monitoring', icon: '◷', href: '/monitoring', role: 'Builder / Administrator', minRole: 'builder' },
       { label: 'Components', icon: '▥', href: '/components', role: 'Administrator', minRole: 'admin' },
-      { label: 'LLM Gateway', icon: '⌁', href: '/llm-gateway' },
+      { label: 'LLM Gateway', icon: '⌁', href: '/llm-gateway', role: 'Builder / Administrator', minRole: 'builder' },
     ],
   },
   {
@@ -87,6 +90,7 @@ export const TAB_GROUPS: TabGroup[] = [
     tabs: [
       { label: 'Admin', icon: '❖', href: '/platform', role: 'Administrator', minRole: 'admin' },
       { label: 'Terminal', icon: '▮', href: '/terminal', role: 'Administrator', minRole: 'admin' },
+      { label: 'Query', icon: '⌥', href: '/admin-query', role: 'Administrator', minRole: 'admin' },
       { label: 'About / Licenses', icon: '©', href: '/about', role: 'Administrator', minRole: 'admin' },
     ],
   },

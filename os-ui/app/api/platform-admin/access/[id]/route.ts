@@ -4,8 +4,9 @@
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../../_ctx';
 import { recompile } from '../../_compile';
-import { deactivateUser, reactivateUser, setTenantAdmin, setMemberships, offboardUser } from '@/lib/platform-admin/tenant-users';
+import { deactivateUser, reactivateUser, setTenantAdmin, setMemberships, offboardUser, editUser } from '@/lib/platform-admin/tenant-users';
 import { audit } from '@/lib/platform-admin/audit';
+import { ROLES, type Role } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,6 +38,21 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         result = await setMemberships(id, Array.isArray(body?.domains) ? body.domains.map(String) : []);
         detail = `Set initial memberships for ${id}: ${(body?.domains ?? []).join(', ')}`;
         break;
+      case 'edit': {
+        const patch: { name?: string; email?: string; role?: Role; domains?: string[] } = {};
+        if (body?.name !== undefined) patch.name = String(body.name);
+        if (body?.email !== undefined) patch.email = String(body.email);
+        if (ROLES.includes(body?.role)) patch.role = body.role as Role;
+        if (Array.isArray(body?.domains)) patch.domains = body.domains.map(String).filter(Boolean);
+        result = await editUser(id, patch);
+        const parts: string[] = [];
+        if (patch.name !== undefined) parts.push(`name="${patch.name}"`);
+        if (patch.email !== undefined) parts.push(`email="${patch.email}"`);
+        if (patch.role !== undefined) parts.push(`role=${patch.role}`);
+        if (patch.domains !== undefined) parts.push(`domains=[${patch.domains.join(', ')}]`);
+        detail = `Edited ${id}: ${parts.join(', ')}`;
+        break;
+      }
       default:
         return NextResponse.json({ error: 'Unknown op' }, { status: 400 });
     }

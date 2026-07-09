@@ -17,7 +17,7 @@ const groups = {
 };
 
 test('the scope switcher offers exactly All · My · Shared · Marketplace', () => {
-  assert.deepEqual(DATASET_SCOPES.map((s) => s.label), ['All Data', 'My Data', 'Shared Data', 'Marketplace Data']);
+  assert.deepEqual(DATASET_SCOPES.map((s) => s.label), ['All Data', 'My Data', 'Shared in Domain Data', 'Marketplace Data']);
 });
 
 test('All Data = the union of every group (sorted, archived split out)', () => {

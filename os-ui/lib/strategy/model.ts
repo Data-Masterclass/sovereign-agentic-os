@@ -118,6 +118,45 @@ export type ValueEntry = {
   by: string;
 };
 
+// ------------------------------------------------ Value-metric TYPE ------------
+//
+// A pillar's headline value is tied to a value-metric TYPE. Four SUGGESTED types
+// plus a Custom one where the user types the metric name + an optional unit label
+// and marks whether it is monetary. The type decides how the big target number is
+// FORMATTED (monetary → tenant currency; hours → "h"; count → integer; custom →
+// its own unit label). The governed METRIC_CATALOGUE link stays available; this is
+// the pillar's headline value-metric type.
+
+export type MetricType = 'ebit' | 'revenue' | 'time-back-hours' | 'risks-mitigated' | 'custom';
+
+export const METRIC_TYPES: MetricType[] = ['ebit', 'revenue', 'time-back-hours', 'risks-mitigated', 'custom'];
+
+/** Static shape of a suggested metric type (Custom is described on the pillar). */
+export type MetricTypeSpec = {
+  label: string;
+  /** Non-currency unit suffix (e.g. 'h'); '' for monetary or count. */
+  unit: string;
+  /** Whether the number is money (→ tenant currency) rather than a plain unit. */
+  monetary: boolean;
+  /** Round to a whole integer when displaying (counts). */
+  integer: boolean;
+};
+
+export const METRIC_TYPE_SPECS: Record<Exclude<MetricType, 'custom'>, MetricTypeSpec> = {
+  ebit: { label: 'EBIT', unit: '', monetary: true, integer: false },
+  revenue: { label: 'Revenue', unit: '', monetary: true, integer: false },
+  'time-back-hours': { label: 'Time Back Hours', unit: 'h', monetary: false, integer: false },
+  'risks-mitigated': { label: '# Risks Mitigated', unit: '', monetary: false, integer: true },
+};
+
+export const METRIC_TYPE_LABEL: Record<MetricType, string> = {
+  ebit: 'EBIT',
+  revenue: 'Revenue',
+  'time-back-hours': 'Time Back Hours',
+  'risks-mitigated': '# Risks Mitigated',
+  custom: 'Custom',
+};
+
 /** A pillar's described value metric + how its number is kept. */
 export type ValueMetric = {
   name: string;
@@ -125,10 +164,31 @@ export type ValueMetric = {
   mode: ValueMode;
   /** Manual monthly entries (mode='manual'); oldest → newest. */
   entries: ValueEntry[];
+  /** Headline value-metric TYPE (drives target formatting). Legacy pillars omit it. */
+  metricType?: MetricType;
+  /** For metricType='custom': the unit label the user typed (e.g. 'tickets'), or ''. */
+  customUnit?: string;
+  /** For metricType='custom': whether the custom metric is monetary (→ tenant currency). */
+  customMonetary?: boolean;
 };
 
 export function emptyValueMetric(name = '', description = ''): ValueMetric {
   return { name, description, mode: 'describe', entries: [] };
+}
+
+/** Whether the value metric is monetary (→ formatted in the tenant currency). */
+export function isMonetaryMetric(vm: ValueMetric | undefined): boolean {
+  const t = vm?.metricType;
+  if (!t) return true; // legacy default: monetary (€ roll-up)
+  if (t === 'custom') return Boolean(vm?.customMonetary);
+  return METRIC_TYPE_SPECS[t].monetary;
+}
+
+/** The non-currency unit suffix for a value metric ('' when monetary). */
+export function metricUnitOf(vm: ValueMetric | undefined): string {
+  const t = vm?.metricType;
+  if (!t || t === 'custom') return t === 'custom' && !vm?.customMonetary ? (vm?.customUnit ?? '') : '';
+  return METRIC_TYPE_SPECS[t].unit;
 }
 
 /** The latest manual value (the headline total when mode='manual'), or 0. */
@@ -176,6 +236,64 @@ export function emptyTargetSet(): TargetSet {
   };
 }
 
+// ----------------------------------------------- Headline horizon target -------
+//
+// The pillar card's BIG NUMBER: a target `value`, measured by a `metricType`,
+// against a HORIZON with a clear end date. Year-end defaults to Dec 31 of the
+// current calendar year; the N-month horizons compute endDate = setAt + N months.
+
+export type Horizon = 'year-end' | '6-month' | '12-month' | '24-month' | '36-month';
+
+export const HORIZONS: Horizon[] = ['year-end', '6-month', '12-month', '24-month', '36-month'];
+
+export const HORIZON_LABEL: Record<Horizon, string> = {
+  'year-end': 'Year-end',
+  '6-month': '6-month',
+  '12-month': '12-month',
+  '24-month': '24-month',
+  '36-month': '36-month',
+};
+
+/** Months to add for each N-month horizon ('year-end' is special-cased). */
+const HORIZON_MONTHS: Record<Exclude<Horizon, 'year-end'>, number> = {
+  '6-month': 6,
+  '12-month': 12,
+  '24-month': 24,
+  '36-month': 36,
+};
+
+/** The pillar's headline target: big number + metric type + horizon end date. */
+export type HorizonTarget = {
+  value: number;
+  metricType: MetricType;
+  horizon: Horizon;
+  /** ISO yyyy-mm-dd the target runs to (year-end = Dec 31 this year; else setAt + N months). */
+  endDate: string;
+  /** ISO datetime the target was set (the clock the N-month horizons count from). */
+  setAt: string;
+};
+
+/** ISO yyyy-mm-dd for a horizon, counted from `setAt` (default now). */
+export function computeEndDate(horizon: Horizon, setAt: Date = new Date()): string {
+  if (horizon === 'year-end') {
+    return `${setAt.getUTCFullYear()}-12-31`;
+  }
+  const months = HORIZON_MONTHS[horizon];
+  const d = new Date(Date.UTC(setAt.getUTCFullYear(), setAt.getUTCMonth() + months, setAt.getUTCDate()));
+  return d.toISOString().slice(0, 10);
+}
+
+/** A fresh year-end target for the current year (the default when none is set). */
+export function emptyHorizonTarget(setAt: Date = new Date()): HorizonTarget {
+  return {
+    value: 0,
+    metricType: 'ebit',
+    horizon: 'year-end',
+    endDate: computeEndDate('year-end', setAt),
+    setAt: setAt.toISOString(),
+  };
+}
+
 // --------------------------------------------------------------- Pillar --------
 
 export type Pillar = {
@@ -201,6 +319,8 @@ export type Pillar = {
   betIds: string[];
   /** Annual + quarterly targets; absent until a Builder/Admin sets them. */
   targets?: TargetSet;
+  /** The pillar's headline target (the card's big number); absent until set. */
+  headlineTarget?: HorizonTarget;
   createdAt: string;
   updatedAt: string;
 };
@@ -450,4 +570,64 @@ export function euro(value: number | null | undefined): string {
   if (abs >= 999_500) return `€${(value / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
   if (abs >= 1_000) return `€${Math.round(value / 1000)}k`;
   return `€${Math.round(value)}`;
+}
+
+// ----------------------------------------------------- Currency formatting -----
+//
+// The tenant currency is set in ADMIN (lib/platform-admin/settings.ts). The
+// Strategy card READS it to format monetary metrics; non-monetary metrics ignore
+// it. The Strategy tab never lets a user pick currency locally.
+
+/** ISO-4217 currency code (EUR/CHF/USD are prominent; any code is accepted). */
+export type Currency = string;
+
+/** The symbol prefix for the common currencies; falls back to the code + space. */
+export const CURRENCY_SYMBOL: Record<string, string> = {
+  EUR: '€',
+  CHF: 'CHF ',
+  USD: '$',
+  GBP: '£',
+  JPY: '¥',
+};
+
+export function currencySymbol(currency: Currency): string {
+  return CURRENCY_SYMBOL[currency] ?? `${currency} `;
+}
+
+/** Format a monetary value compactly in the given tenant currency (e.g. €2.5M, $540k). */
+export function formatMoney(value: number | null | undefined, currency: Currency): string {
+  if (value === null || value === undefined) return '—';
+  const sym = currencySymbol(currency);
+  const abs = Math.abs(value);
+  if (abs >= 999_500) return `${sym}${(value / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
+  if (abs >= 1_000) return `${sym}${Math.round(value / 1000)}k`;
+  return `${sym}${Math.round(value)}`;
+}
+
+/** Group a plain number with thousands separators (e.g. 1,200). */
+function grouped(value: number, integer: boolean): string {
+  const n = integer ? Math.round(value) : value;
+  return n.toLocaleString('en-US', integer ? { maximumFractionDigits: 0 } : {});
+}
+
+/**
+ * Format a headline value per the pillar's value-metric type + tenant currency.
+ * Monetary (EBIT/Revenue/custom-monetary) → currency (e.g. €2.5M). Hours →
+ * "1,200 h". Risks → integer count (e.g. "18 risks"). Custom (non-monetary) →
+ * its own unit label. Currency is IGNORED for non-monetary metrics.
+ */
+export function formatMetricValue(
+  value: number | null | undefined,
+  vm: ValueMetric | undefined,
+  currency: Currency,
+): string {
+  if (value === null || value === undefined) return '—';
+  if (isMonetaryMetric(vm)) return formatMoney(value, currency);
+  const t = vm?.metricType;
+  const integer = t === 'risks-mitigated' || (t !== 'custom' && !!t && METRIC_TYPE_SPECS[t].integer);
+  const unit = metricUnitOf(vm);
+  // "# Risks Mitigated" reads best as a bare count with a "risks" noun.
+  if (t === 'risks-mitigated') return `${grouped(value, true)} risks`;
+  const num = grouped(value, integer);
+  return unit ? `${num} ${unit}` : num;
 }

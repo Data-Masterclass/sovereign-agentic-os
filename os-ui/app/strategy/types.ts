@@ -12,10 +12,13 @@ import type {
   ComponentBuildStatus,
   ValueMode,
   ValueMetric,
+  MetricType,
+  Horizon,
+  HorizonTarget,
   Pillar,
 } from '@/lib/strategy/model';
 
-export type { ArtifactKind, ComponentBuildStatus, ValueMode, ValueMetric, Pillar };
+export type { ArtifactKind, ComponentBuildStatus, ValueMode, ValueMetric, MetricType, Horizon, HorizonTarget, Pillar };
 
 export type DComponent = {
   id: string;
@@ -67,6 +70,8 @@ export type PillarCard = {
 export type ListResp = {
   user: { id: string; name: string; domains: string[]; role: string };
   items: PillarCard[];
+  /** Tenant currency (from Admin) used to format monetary headline targets. */
+  currency: string;
   canCreateTenant: boolean;
   canCreateDomain: boolean;
 };

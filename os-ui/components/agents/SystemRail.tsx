@@ -59,7 +59,7 @@ export default function SystemRail({
       <div className="rail-scroll">
         {mine.length > 0 ? <div className="rail-group">Personal</div> : null}
         {mine.map(item)}
-        {domain.length > 0 ? <div className="rail-group">Shared</div> : null}
+        {domain.length > 0 ? <div className="rail-group">Shared in Domain</div> : null}
         {domain.map(item)}
         {!loading && mine.length === 0 && domain.length === 0 ? (
           <div className="rail-empty">No systems yet.</div>

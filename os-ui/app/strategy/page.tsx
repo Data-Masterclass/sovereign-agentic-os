@@ -8,7 +8,18 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
-import { euro } from '@/lib/strategy/model';
+import {
+  euro,
+  formatMetricValue,
+  trendFor,
+  yearFraction,
+  METRIC_TYPES,
+  METRIC_TYPE_LABEL,
+  HORIZONS,
+  HORIZON_LABEL,
+  type MetricType,
+  type Horizon,
+} from '@/lib/strategy/model';
 import {
   FOUNDATION_TYPES,
   FOUNDATION_LABEL,
@@ -119,6 +130,7 @@ export default function StrategyPage() {
                   <PillarColumn
                     key={card.pillar.id}
                     card={card}
+                    currency={resp.currency}
                     onChanged={reload}
                     onOpenBet={(bet) => setOpen({ card, bet })}
                     dragProps={itemDragProps(card)}
@@ -220,12 +232,14 @@ type ItemDragProps = ReturnType<ReturnType<typeof useTileOrder>['itemDragProps']
 
 function PillarColumn({
   card,
+  currency,
   onChanged,
   onOpenBet,
   dragProps,
   dragHandleProps,
 }: {
   card: PillarCard;
+  currency: string;
   onChanged: () => void;
   onOpenBet: (bet: DBet) => void;
   dragProps?: ItemDragProps;
@@ -266,10 +280,7 @@ function PillarColumn({
           <h2 className="strat-pillar-name">{pillar.name}</h2>
           {pillar.description ? <p className="strat-pillar-desc">{pillar.description}</p> : null}
 
-          <div className="strat-pillar-value" {...anchorAttr(ANCHORS.strategy.rollup)}>
-            <span className="strat-pillar-amount">{euro(rollup.total)}</span>
-            <span className="strat-pillar-metric">{rollup.metricTitle}</span>
-          </div>
+          <HeadlineTarget card={card} currency={currency} onChanged={onChanged} />
 
           <ValueMetricBlock card={card} onChanged={onChanged} />
 
@@ -310,6 +321,145 @@ function PillarColumn({
         </>
       )}
     </section>
+  );
+}
+
+/* --------------------------------------------------------- Headline target ---- */
+
+/** Compact "27 Jun 2026" for the horizon end date. */
+function fmtEnd(iso: string): string {
+  const t = Date.parse(iso.length === 10 ? iso + 'T00:00:00Z' : iso);
+  if (Number.isNaN(t)) return iso;
+  return new Date(t).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+/**
+ * The pillar card's centerpiece: the BIG target number (formatted per the metric
+ * type + tenant currency) with its horizon end date, and directly beneath a
+ * smaller "so far" = the latest reported/achieved value, plus a subtle on-track /
+ * behind cue derived from the existing trend pacing.
+ */
+function HeadlineTarget({ card, currency, onChanged }: { card: PillarCard; currency: string; onChanged: () => void }) {
+  const { pillar, rollup, canEdit } = card;
+  const [editing, setEditing] = useState(false);
+  const target = pillar.headlineTarget;
+  const vm = pillar.valueMetric;
+  const achieved = rollup.total; // latest reported/governed/manual value (the value spine)
+
+  if (editing) {
+    return <TargetEditor card={card} onDone={() => { setEditing(false); onChanged(); }} onCancel={() => setEditing(false)} />;
+  }
+
+  if (!target) {
+    return (
+      <div className="strat-pillar-value" {...anchorAttr(ANCHORS.strategy.rollup)}>
+        {canEdit ? (
+          <button className="strat-target-set" onClick={() => setEditing(true)}>+ Set a target</button>
+        ) : (
+          <>
+            <span className="strat-pillar-amount">{formatMetricValue(achieved, vm, currency)}</span>
+            <span className="strat-pillar-metric">{rollup.metricTitle}</span>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  // On-track cue: pace the achieved value against the target over the horizon
+  // (year-end uses the elapsed calendar year; other horizons pace over their span).
+  const trend = target.value > 0
+    ? trendFor(achieved, target.value, horizonFraction(target.horizon, target.setAt, target.endDate))
+    : 'no-target';
+  const cue = trend === 'on-track' ? 'ok' : trend === 'behind' ? 'warn' : 'muted';
+  const cueLabel = trend === 'on-track' ? 'On track' : trend === 'behind' ? 'Behind' : '';
+
+  return (
+    <div className="strat-pillar-value" {...anchorAttr(ANCHORS.strategy.rollup)}>
+      <div className="strat-target-head">
+        <span className="strat-pillar-amount">{formatMetricValue(target.value, vm, currency)}</span>
+        {canEdit ? (
+          <button className="strat-icon-btn" onClick={() => setEditing(true)} aria-label="Edit target">✎</button>
+        ) : null}
+      </div>
+      <span className="strat-pillar-metric">
+        {rollup.metricTitle} · {HORIZON_LABEL[target.horizon]} target by {fmtEnd(target.endDate)}
+      </span>
+      <div className="strat-target-sofar">
+        <span className="strat-target-sofar-val">so far: {formatMetricValue(achieved, vm, currency)}</span>
+        {cueLabel ? <span className={`badge ${cue}`}>{cueLabel}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+/** Fraction of the horizon elapsed (year-end → elapsed calendar year; else span). */
+function horizonFraction(horizon: Horizon, setAtIso: string, endIso: string): number {
+  if (horizon === 'year-end') return yearFraction(new Date());
+  const start = Date.parse(setAtIso);
+  const end = Date.parse(endIso.length === 10 ? endIso + 'T00:00:00Z' : endIso);
+  const now = Date.now();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
+  return Math.min(1, Math.max(0, (now - start) / (end - start)));
+}
+
+function TargetEditor({ card, onDone, onCancel }: { card: PillarCard; onDone: () => void; onCancel: () => void }) {
+  const { pillar } = card;
+  const t = pillar.headlineTarget;
+  const vm = pillar.valueMetric;
+  const [value, setValue] = useState(t ? String(t.value) : '');
+  const [metricType, setMetricType] = useState<MetricType>(t?.metricType ?? vm?.metricType ?? 'ebit');
+  const [horizon, setHorizon] = useState<Horizon>(t?.horizon ?? 'year-end');
+  const [customUnit, setCustomUnit] = useState(vm?.customUnit ?? '');
+  const [customMonetary, setCustomMonetary] = useState(Boolean(vm?.customMonetary));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const save = async () => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) { setErr('Enter a number'); return; }
+    setBusy(true); setErr('');
+    try {
+      // Custom metric: persist the unit label + monetary flag on the value metric first.
+      if (metricType === 'custom') {
+        await api(`/api/strategy/pillars/${pillar.id}/value-metric`, 'PUT', {
+          metricType: 'custom', customUnit, customMonetary,
+        });
+      }
+      await api(`/api/strategy/pillars/${pillar.id}/target`, 'PUT', { value: n, metricType, horizon });
+      onDone();
+    } catch (e) { setErr((e as Error).message); setBusy(false); }
+  };
+
+  return (
+    <div className="strat-target-edit">
+      <span className="muted" style={{ fontSize: 11, fontWeight: 600 }}>What does this pillar measure?</span>
+      <select value={metricType} onChange={(e) => setMetricType(e.target.value as MetricType)}>
+        {METRIC_TYPES.map((m) => <option key={m} value={m}>{METRIC_TYPE_LABEL[m]}</option>)}
+      </select>
+      {metricType === 'custom' ? (
+        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+          <input style={{ flex: '1 1 auto' }} value={customUnit} onChange={(e) => setCustomUnit(e.target.value)} placeholder="Unit label (e.g. tickets)" disabled={customMonetary} />
+          <label className="hint" style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 11.5 }}>
+            <input type="checkbox" checked={customMonetary} onChange={(e) => setCustomMonetary(e.target.checked)} /> monetary
+          </label>
+        </div>
+      ) : null}
+      <span className="muted" style={{ fontSize: 11, fontWeight: 600 }}>Target value</span>
+      <input type="number" inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} placeholder="e.g. 2500000" />
+      <span className="muted" style={{ fontSize: 11, fontWeight: 600 }}>Horizon</span>
+      <div className="rt-seg">
+        {HORIZONS.map((h) => (
+          <button key={h} className={`rt-seg-opt${horizon === h ? ' active' : ''}`} onClick={() => setHorizon(h)}>
+            {HORIZON_LABEL[h]}
+          </button>
+        ))}
+      </div>
+      {err ? <div className="error" style={{ fontSize: 11.5 }}>{err}</div> : null}
+      <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+        <button className="btn ghost sm" onClick={onCancel} disabled={busy}>Cancel</button>
+        <button className="btn sm" onClick={save} disabled={busy || !value.trim()}>Save target</button>
+      </div>
+    </div>
   );
 }
 

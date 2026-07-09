@@ -70,6 +70,9 @@ function stageClass(s: string): string {
 function visBadge(v: Visibility): string {
   return `badge vis-${v.toLowerCase()}`;
 }
+function visDisplayLabel(v: Visibility): string {
+  return v === 'Shared' ? 'Shared in Domain' : v;
+}
 function deployBadge(state: App['deploy']['state']): { cls: string; label: string } {
   if (state === 'live') return { cls: 'badge ok', label: 'Live' };
   if (state === 'review') return { cls: 'badge warn', label: 'In review' };
@@ -147,7 +150,7 @@ export default function AppPage() {
     try {
       const res = await fetch(`/api/apps/${id}/promote`, { method: 'POST' });
       const body = await res.json();
-      setMsg(res.ok ? `✓ Promoted to ${body.app.visibility}.` : `✗ ${body.error}`);
+      setMsg(res.ok ? `✓ Promoted to ${body.app.visibility === 'Shared' ? 'Shared in Domain' : body.app.visibility}.` : `✗ ${body.error}`);
       reload();
     } catch (e) {
       setMsg((e as Error).message);
@@ -241,7 +244,7 @@ export default function AppPage() {
       <div className="content sw">
         <div className="sw-app-head">
           <div className="sw-app-head-meta">
-            <span className={visBadge(app.visibility)}>{app.visibility}</span>
+            <span className={visBadge(app.visibility)}>{visDisplayLabel(app.visibility)}</span>
             {(app.visibility === 'Shared' || app.visibility === 'Certified') ? <DomainTag domain={app.domain} /> : null}
             <span className={dep.cls}>{dep.label}</span>
             <span className="badge muted">{version}</span>
@@ -425,7 +428,11 @@ export default function AppPage() {
                       onRestore: () => lifecycle('unarchive'),
                       onDelete: () => lifecycle('delete'),
                     }}
-                    showVersions={false}
+                    // Archive/Delete run through the handlers above; `api` is here
+                    // ONLY so Version history reads the git-backed /versions route.
+                    api={`/api/apps/${app.id}`}
+                    onChanged={() => reload()}
+                    showVersions
                   />
                   <span className={`badge ${app.status === 'active' ? 'ok' : 'muted'}`}>{app.status}</span>
                 </div>

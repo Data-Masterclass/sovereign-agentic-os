@@ -57,3 +57,31 @@ test('shapeUsage with no budget reports 0% (no divide-by-zero) and a default win
   assert.equal(u.pctUsed, 0);
   assert.equal(u.budgetWindow, 'weekly');
 });
+
+test('shapeUsage sums the daily_data rollup when top-level sum_* are absent', () => {
+  const u = shapeUsage({
+    activity: {
+      daily_data: [
+        { api_requests: 196, total_tokens: 28_327 },
+        { api_requests: 67, total_tokens: 44_143 },
+        { api_requests: 138, total_tokens: 886_166 },
+      ],
+    },
+    spend: { spend: 0 },
+    budgetUsd: 250,
+    budgetWindow: 'weekly',
+  });
+  assert.equal(u.requests, 401);
+  assert.equal(u.tokens, 958_636);
+});
+
+test('shapeUsage prefers top-level sum_* over the daily rollup when present', () => {
+  const u = shapeUsage({
+    activity: { sum_api_requests: 10, sum_total_tokens: 20, daily_data: [{ api_requests: 999, total_tokens: 999 }] },
+    spend: null,
+    budgetUsd: 0,
+    budgetWindow: 'weekly',
+  });
+  assert.equal(u.requests, 10);
+  assert.equal(u.tokens, 20);
+});

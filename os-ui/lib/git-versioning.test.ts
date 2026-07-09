@@ -132,3 +132,36 @@ test('restoreGitVersion throws when the commit is unreadable (unreachable Forgej
   const fj = fakeForgejo(new Map()); // unreachable
   await assert.rejects(() => restoreGitVersion(fj, systemRepo('sys1'), 'sha0001', 'alex'), /Could not read commit/);
 });
+
+test('restoreGitVersion honours a custom manifestPath (app.yaml) — Software apps', async () => {
+  // A Software app repo: its manifest is `app.yaml`, NOT `system.yaml`. The helper
+  // must restore against the passed manifest, not the agent-system default.
+  const repo = 'my-app';
+  const r: FakeRepo = { tip: new Map(), commits: [], snapshots: new Map() };
+  const repos = new Map([[repo, r]]);
+  const seed = fakeForgejo(repos);
+  void seed.writeFile(repo, 'app.yaml', 'name: my-app\n# build A', undefined, 'Build A');
+  void seed.writeFile(repo, 'app.yaml', 'name: my-app\n# build B', undefined, 'Build B');
+
+  const fj = fakeForgejo(repos);
+  const list = (await listGitVersions(fj, repo))!;
+  assert.equal(list[0].summary, 'Build B', 'newest first');
+  // Restore the older build; the default manifest (system.yaml) would throw here.
+  const targetSha = await shaForVersion(fj, repo, list.length - 1);
+  const { yaml } = await restoreGitVersion(fj, repo, targetSha!, 'alex', { manifestPath: 'app.yaml' });
+  assert.match(yaml, /build A/, 'returned the restored app.yaml');
+  assert.equal(repos.get(repo)!.tip.get('app.yaml'), 'name: my-app\n# build A');
+  assert.match(repos.get(repo)!.commits[0].message, /restore of/, 'non-destructive restore commit');
+});
+
+test('restoreGitVersion (default manifest) still throws for a repo without system.yaml', async () => {
+  // An app repo has no system.yaml → the agent-system default correctly refuses.
+  const repo = 'my-app';
+  const r: FakeRepo = { tip: new Map(), commits: [], snapshots: new Map() };
+  const repos = new Map([[repo, r]]);
+  const seed = fakeForgejo(repos);
+  void seed.writeFile(repo, 'app.yaml', 'name: my-app', undefined, 'Build A');
+  const fj = fakeForgejo(repos);
+  const sha = await shaForVersion(fj, repo, 0);
+  await assert.rejects(() => restoreGitVersion(fj, repo, sha!, 'alex'), /Could not read commit/);
+});

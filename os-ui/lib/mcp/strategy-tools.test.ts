@@ -34,7 +34,7 @@ function errorOf(r: Record<string, unknown>): ToolError {
   return (r.structuredContent as { error: ToolError }).error;
 }
 
-const WRITE = ['create_pillar', 'update_pillar', 'link_bet_to_pillar', 'record_value_entry'];
+const WRITE = ['create_pillar', 'update_pillar', 'link_bet_to_pillar', 'record_value_entry', 'set_pillar_target'];
 const READ = ['list_pillars', 'get_pillar'];
 
 test('STRATEGY registry: tools present, exampled, floored, and W-classified under the strategy tab', () => {
@@ -116,4 +116,48 @@ test('STRATEGY negative — linking an unknown bet is not_found', async () => {
   const p = payload<{ id: string }>(await call(salesBuilder, 'create_pillar', { name: 'P', scope: 'domain', domain: 'sales' }));
   const err = errorOf(await call(salesBuilder, 'link_bet_to_pillar', { pillarId: p.id, betId: 'bet_does_not_exist' }));
   assert.equal(err.code, 'not_found');
+});
+
+test('STRATEGY set_pillar_target: builder sets a year-end EBIT target → endDate = Dec 31 this year', async () => {
+  resetPillars();
+  const p = payload<{ id: string }>(await call(salesBuilder, 'create_pillar', { name: 'Grow EBIT', scope: 'domain', domain: 'sales' }));
+  const updated = payload<{ headlineTarget: { value: number; metricType: string; horizon: string; endDate: string }; valueMetric: { metricType: string } }>(
+    await call(salesBuilder, 'set_pillar_target', { pillarId: p.id, value: 2_500_000, metricType: 'ebit', horizon: 'year-end' }),
+  );
+  assert.equal(updated.headlineTarget.value, 2_500_000);
+  assert.equal(updated.headlineTarget.metricType, 'ebit');
+  assert.equal(updated.headlineTarget.horizon, 'year-end');
+  assert.equal(updated.headlineTarget.endDate, `${new Date().getUTCFullYear()}-12-31`);
+  // The metric type is stamped onto the value metric so the total formats to match.
+  assert.equal(updated.valueMetric.metricType, 'ebit');
+});
+
+test('STRATEGY set_pillar_target: a 12-month hours target derives its own end date', async () => {
+  resetPillars();
+  const p = payload<{ id: string }>(await call(salesBuilder, 'create_pillar', { name: 'Time back', scope: 'domain', domain: 'sales' }));
+  const updated = payload<{ headlineTarget: { metricType: string; horizon: string; endDate: string } }>(
+    await call(salesBuilder, 'set_pillar_target', { pillarId: p.id, value: 1200, metricType: 'time-back-hours', horizon: '12-month' }),
+  );
+  assert.equal(updated.headlineTarget.metricType, 'time-back-hours');
+  assert.equal(updated.headlineTarget.horizon, '12-month');
+  // ~12 months out from today (not Dec 31): a real derived date, year advanced.
+  assert.ok(updated.headlineTarget.endDate > new Date().toISOString().slice(0, 10), 'end date is in the future');
+});
+
+test('STRATEGY set_pillar_target: creator is forbidden at the builder floor', async () => {
+  resetPillars();
+  const p = payload<{ id: string }>(await call(salesBuilder, 'create_pillar', { name: 'P', scope: 'domain', domain: 'sales' }));
+  const err = errorOf(await call(salesCreator, 'set_pillar_target', { pillarId: p.id, value: 100, metricType: 'ebit', horizon: 'year-end' }));
+  assert.equal(err.code, 'forbidden');
+});
+
+test('STRATEGY update_pillar: metricType flows onto the value metric (custom unit + monetary)', async () => {
+  resetPillars();
+  const p = payload<{ id: string }>(await call(salesBuilder, 'create_pillar', { name: 'Support', scope: 'domain', domain: 'sales' }));
+  const updated = payload<{ valueMetric: { metricType: string; customUnit: string; customMonetary: boolean } }>(
+    await call(salesBuilder, 'update_pillar', { pillarId: p.id, valueMetric: { metricType: 'custom', customUnit: 'tickets', customMonetary: false } }),
+  );
+  assert.equal(updated.valueMetric.metricType, 'custom');
+  assert.equal(updated.valueMetric.customUnit, 'tickets');
+  assert.equal(updated.valueMetric.customMonetary, false);
 });

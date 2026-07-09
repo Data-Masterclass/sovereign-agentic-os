@@ -11,7 +11,11 @@ import {
   type TargetSet,
   type ValueMetric,
   type ValueMode,
+  type MetricType,
+  type Horizon,
+  type HorizonTarget,
   monthKey,
+  computeEndDate,
   emptyValueMetric,
   canCreatePillar,
   canEditPillar,
@@ -277,6 +281,45 @@ export async function setTargets(user: CurrentUser, pid: string, targets: Target
 }
 
 /**
+ * Set (or update) the pillar's HEADLINE target — the card's big number. Ties a
+ * target `value` to a `metricType` and a `horizon`, deriving the end date
+ * (year-end = Dec 31 this year; N-month = today + N months). Also stamps the
+ * chosen metricType onto the pillar's value metric so the total formats to match.
+ */
+export async function setHeadlineTarget(
+  user: CurrentUser,
+  pid: string,
+  input: { value: number; metricType: MetricType; horizon: Horizon },
+): Promise<Pillar> {
+  const { map, p } = await requireEditable(user, pid);
+  if (!Number.isFinite(input.value)) throw withStatus(new Error('A numeric target value is required'), 400);
+  const setAt = new Date();
+  const target: HorizonTarget = {
+    value: input.value,
+    metricType: input.metricType,
+    horizon: input.horizon,
+    endDate: computeEndDate(input.horizon, setAt),
+    setAt: setAt.toISOString(),
+  };
+  p.headlineTarget = target;
+  // Keep the value metric's formatting type in lockstep with the target's type.
+  const vm: ValueMetric = p.valueMetric ?? emptyValueMetric();
+  p.valueMetric = { ...vm, metricType: input.metricType };
+  p.updatedAt = now();
+  map.set(p.id, p);
+  writeThrough(p);
+  await auditStrategy({
+    action: 'headline-target.set',
+    actor: user.id,
+    domain: p.domain,
+    pillarId: p.id,
+    pillarName: p.name,
+    detail: { value: input.value, metricType: input.metricType, horizon: input.horizon, endDate: target.endDate },
+  });
+  return p;
+}
+
+/**
  * Set (or update) the pillar's value metric: its name, one-line description, and
  * how its number is kept — described-only, a governed Cube metric (Metrics tab),
  * or manual monthly entries. Switching to/from manual preserves existing entries.
@@ -284,7 +327,16 @@ export async function setTargets(user: CurrentUser, pid: string, targets: Target
 export async function setValueMetric(
   user: CurrentUser,
   pid: string,
-  patch: { name?: string; description?: string; mode?: ValueMode },
+  patch: {
+    name?: string;
+    description?: string;
+    mode?: ValueMode;
+    /** Headline value-metric TYPE (EBIT/Revenue/Time Back Hours/# Risks Mitigated/Custom). */
+    metricType?: MetricType;
+    /** For metricType='custom': the unit label + whether it is monetary. */
+    customUnit?: string;
+    customMonetary?: boolean;
+  },
 ): Promise<Pillar> {
   const { map, p } = await requireEditable(user, pid);
   const current: ValueMetric = p.valueMetric ?? emptyValueMetric();
@@ -293,6 +345,9 @@ export async function setValueMetric(
     description: patch.description !== undefined ? patch.description.trim() : current.description,
     mode: patch.mode ?? current.mode,
     entries: current.entries,
+    metricType: patch.metricType ?? current.metricType,
+    customUnit: patch.customUnit !== undefined ? patch.customUnit.trim() : current.customUnit,
+    customMonetary: patch.customMonetary !== undefined ? patch.customMonetary : current.customMonetary,
   };
   p.updatedAt = now();
   map.set(p.id, p);

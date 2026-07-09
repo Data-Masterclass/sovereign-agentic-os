@@ -41,6 +41,27 @@ export function goldMartFqn(d: Dataset): string {
   return `iceberg.${domainSchema(d.domain)}.gold_${slug(d.name)}`;
 }
 
+/** The clear, single-source message a metric guard returns when the gold isn't governed. */
+export const PROMOTE_FIRST_MESSAGE =
+  'Promote this dataset to Shared first — a metric needs a governed Gold in the domain schema (Cube reads the domain mart, not your personal lane).';
+
+/**
+ * FAIL-CLOSED metric/cube gate (#91): a Cube binds to `iceberg.<domain>.gold_<slug>`
+ * — a table that exists ONLY once the dataset is a PROMOTED asset/product (the
+ * governed CTAS landed the gold in the domain schema). Cube reads Trino as `cube-sales`,
+ * entitled only to governed DOMAIN schemas, so a metric on an un-promoted personal
+ * dataset points at a non-existent domain table and the cube can't compile/read.
+ * Returns `{ ok:false, message }` (never throws — callers decide 400 vs skip) so a
+ * broken cube is NEVER registered. Requires BOTH a built Gold AND a governed tier.
+ */
+export function metricGoldReady(d: Dataset): { ok: boolean; message?: string } {
+  if (!d.versions.gold.built) {
+    return { ok: false, message: 'Define a metric only on a built Gold version.' };
+  }
+  if (d.tier === 'dataset') return { ok: false, message: PROMOTE_FIRST_MESSAGE };
+  return { ok: true };
+}
+
 /** cube_dbt's dbt data_type → Cube dimension type. We have no live manifest in kind,
  *  so infer the column's type from its documented name the way cube_dbt would from the
  *  mart schema. The first `*_id` (or the first column) becomes the primary key. */
@@ -60,8 +81,13 @@ function primaryKeyColumn(columns: ColumnDoc[]): string | null {
 /** One measure's YAML block — the base (`name`/`type`/`sql`) plus, only when present,
  *  the richer Cube fields (filters / rolling_window / format / drill_members). A plain
  *  `{name,type,sql}` measure emits BYTE-FOR-BYTE what it did before these fields existed,
- *  so the live Cube auto-registration and every existing test are unchanged. */
-function measureYaml(m: Measure): string {
+ *  so the live Cube auto-registration and every existing test are unchanged.
+ *
+ *  `knownMembers` is the reconciled set of members that ACTUALLY exist on this cube
+ *  (mart columns + measure names). A `drill_members` entry naming a member NOT in the
+ *  cube makes Cube reject the whole schema, so unknown drill members are DROPPED (#91):
+ *  we never emit a reference to a column/member that isn't in the mart. */
+function measureYaml(m: Measure, knownMembers: Set<string>): string {
   const out = [`      - name: ${m.name}`, `        type: ${m.type}`];
   if (m.sql && m.type !== 'count') out.push(`        sql: ${m.sql}`);
   if (m.filters && m.filters.length > 0) {
@@ -76,7 +102,9 @@ function measureYaml(m: Measure): string {
   }
   if (m.format) out.push(`        format: ${m.format}`);
   if (m.drillMembers && m.drillMembers.length > 0) {
-    out.push(`        drill_members: [${m.drillMembers.join(', ')}]`);
+    // Reconcile: only drill into members that exist on this cube (drop unknown columns).
+    const drill = m.drillMembers.filter((d) => knownMembers.has(d));
+    if (drill.length > 0) out.push(`        drill_members: [${drill.join(', ')}]`);
   }
   return out.join('\n');
 }
@@ -96,7 +124,12 @@ export function scaffoldCubeYaml(d: Dataset): string {
     const pkLine = c.name === pk ? '\n        primary_key: true' : '';
     return `      - name: ${c.name}\n        sql: ${c.name}\n        type: ${type}${pkLine}`;
   });
-  const measures = (d.measures.length ? d.measures : [{ name: 'count', type: 'count', sql: '' } as Measure]).map(measureYaml);
+  // The reconciled member set actually present on this cube: every emitted dimension
+  // column + every measure name. Cube rejects the whole schema if a `drill_members`
+  // entry names a member that isn't here — so measureYaml drops unknown drill members
+  // against this set (never emit a reference to a column not in the mart, #91).
+  const knownMembers = new Set<string>([...dimCols.map((c) => c.name), ...measureNames]);
+  const measures = (d.measures.length ? d.measures : [{ name: 'count', type: 'count', sql: '' } as Measure]).map((m) => measureYaml(m, knownMembers));
   const includes = [...d.measures.map((m) => m.name), ...dimCols.filter((c) => c.name !== pk).map((c) => c.name)];
   return [
     'cubes:',
