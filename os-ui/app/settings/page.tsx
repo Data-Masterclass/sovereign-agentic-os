@@ -5,7 +5,7 @@ import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
 import StackStatus from '@/components/StackStatus';
 import ThemeToggle from '@/components/ThemeToggle';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 
 // Server component: a read-only view of this deployment's configuration. Only
 // non-secret values are read from config (no keys/passwords); live enabled

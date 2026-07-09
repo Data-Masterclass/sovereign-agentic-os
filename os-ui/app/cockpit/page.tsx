@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import Link from 'next/link';
-import { currentUser } from '@/lib/auth';
+import { currentUser } from '@/lib/core/auth';
 import { cockpitFeed } from '@/lib/home/feed';
 import Cockpit from '@/components/home/Cockpit';
 import TopItems from '@/components/home/TopItems';

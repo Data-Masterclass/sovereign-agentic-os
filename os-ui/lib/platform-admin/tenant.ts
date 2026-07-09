@@ -16,7 +16,7 @@
  * `server-only` + `@/` imports so the pure logic stays unit-testable under
  * `node --test`.
  */
-import { config } from '../config.ts';
+import { config } from '../core/config.ts';
 
 export type Residency = 'eu-germany-west-central' | 'eu' | 'other';
 export type Plan = 'sovereign-self-hosted' | 'stackit-managed' | 'stackit-premium';

@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { config } from '../config.ts';
-import { k8s as liveK8s } from '../k8s.ts';
+import { config } from '../core/config.ts';
+import { k8s as liveK8s } from '../infra/k8s.ts';
 import type { Schedule } from './system-schema.ts';
 
 /**

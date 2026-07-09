@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth';
+import { requireUser } from '@/lib/core/auth';
 import { errorResponse } from '@/lib/data/server';
-import { queryRun } from '@/lib/governed';
-import { cubeLoad, type CubeQuery } from '@/lib/governed';
+import { queryRun } from '@/lib/infra/governed';
+import { cubeLoad, type CubeQuery } from '@/lib/infra/governed';
 
 export const dynamic = 'force-dynamic';
 

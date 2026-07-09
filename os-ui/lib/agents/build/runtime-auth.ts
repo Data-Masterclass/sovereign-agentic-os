@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { timingSafeEqual } from 'node:crypto';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 
 /**
  * Service-to-service auth for the runtime-facing endpoints (the governed-tool

@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth';
-import { authorize, cubeLoad, queryRun, trace, type CubeQuery } from '@/lib/governed';
+import { requireUser } from '@/lib/core/auth';
+import { authorize, cubeLoad, queryRun, trace, type CubeQuery } from '@/lib/infra/governed';
 import { privatePrefix } from '@/lib/data/personal-lane';
 import { claimsFromUser } from '@/lib/data/identity';
 import { runAgentTool, type AgentScope, type Executors, type ToolKind } from '@/lib/data/agent-tools';

@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/auth';
-import { config } from '@/lib/config';
+import { requireAdmin } from '@/lib/core/auth';
+import { config } from '@/lib/core/config';
 import { generateMasterKey, recoveryFileBody } from '@/lib/recovery';
 import { recoveryConfigured, setRecoveryKey } from '@/lib/users';
 

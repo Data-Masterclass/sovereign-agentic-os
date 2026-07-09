@@ -18,7 +18,7 @@
  * orchestrator / console launchers merged into the one Components surface
  * (/components); the old routes redirect.
  */
-import type { Role } from '@/lib/session';
+import type { Role } from '@/lib/core/session';
 
 export type Tab = {
   label: string;

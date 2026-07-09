@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 import { getAssistantModel } from '@/lib/platform-admin/models';
 
 /**

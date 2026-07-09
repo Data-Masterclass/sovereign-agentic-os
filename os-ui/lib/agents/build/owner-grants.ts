@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { getPublicUser } from '@/lib/users';
-import type { Role } from '@/lib/session';
+import type { Role } from '@/lib/core/session';
 import { parseSystem, serializeSystem, downgradeGrantsForRole, type System } from '../system-schema.ts';
 
 /**

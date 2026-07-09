@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { stepperStages } from '@/lib/data/panels';
 import { ingestAndRegisterBronze } from '@/lib/data/ingest';

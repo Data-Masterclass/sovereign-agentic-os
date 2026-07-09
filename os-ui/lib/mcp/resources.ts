@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { CurrentUser } from '@/lib/auth';
-import type { Role } from '@/lib/session';
+import type { CurrentUser } from '@/lib/core/auth';
+import type { Role } from '@/lib/core/session';
 import type { ToolTab, McpTab } from './server';
 
 // --- Governed read/list lib functions (the SAME the UI + discovery tools call) --
@@ -18,7 +18,7 @@ import { listAppsForUser, getAppForUser } from '@/lib/apps';
 import { listConnectionsForUser, getConnectionForUser } from '@/lib/connections';
 import { listModelsForUser } from '@/lib/science/model-service';
 import { listPillars } from '@/lib/strategy/pillars';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 import { loadGuide, guideTitle, type GuidePath } from '@/lib/tabs/guides';
 import { loadBuildSpec } from '@/lib/tabs/build-spec';
 

@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { roleModel } from '@/lib/models/roles';
-import { requireUser } from '@/lib/auth';
+import { requireUser } from '@/lib/core/auth';
 import { mcpTabForPath, runOsAssistant } from '@/lib/assistant/agent-loop';
 import { AssistantNotConfiguredError } from '@/lib/assistant/complete';
 

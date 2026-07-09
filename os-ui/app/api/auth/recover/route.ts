@@ -3,9 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { resetPasswordWithRecovery } from '@/lib/users';
-import { assessPasswordStrength } from '@/lib/password';
+import { assessPasswordStrength } from '@/lib/core/password';
 import { normalizeMasterKey } from '@/lib/recovery';
-import { rateLimit, clientIp } from '@/lib/ratelimit';
+import { rateLimit, clientIp } from '@/lib/core/ratelimit';
 
 export const dynamic = 'force-dynamic';
 

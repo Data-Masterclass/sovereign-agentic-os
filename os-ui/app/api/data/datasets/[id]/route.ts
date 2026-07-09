@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { getDataset, archiveDataset, unarchiveDataset, deleteDataset } from '@/lib/data/store';
 import { dropPhysicalTables } from '@/lib/data/physical-delete';
-import { executeRun } from '@/lib/governed';
+import { executeRun } from '@/lib/infra/governed';
 import { stepperStages } from '@/lib/data/panels';
 
 export const dynamic = 'force-dynamic';

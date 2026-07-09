@@ -22,7 +22,7 @@
 import { useCallback, useState } from 'react';
 import { useConfirm } from './ConfirmDialog';
 import VersionHistory from './VersionHistory';
-import { archiveCopy, deleteCopy, type ArtifactKind, type Visibility } from '@/lib/lifecycle';
+import { archiveCopy, deleteCopy, type ArtifactKind, type Visibility } from '@/lib/core/lifecycle';
 
 type Handlers = {
   onArchive?: () => Promise<void> | void;

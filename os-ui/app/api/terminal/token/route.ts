@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { createHmac, randomBytes } from 'node:crypto';
-import { config } from '@/lib/config';
-import { currentUser } from '@/lib/auth';
+import { config } from '@/lib/core/config';
+import { currentUser } from '@/lib/core/auth';
 
 export const dynamic = 'force-dynamic';
 

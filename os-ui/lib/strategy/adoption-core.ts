@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { Artifact, ArtifactType } from '@/lib/artifact-model';
-import type { Role } from '@/lib/session';
+import type { Artifact, ArtifactType } from '@/lib/core/artifact-model';
+import type { Role } from '@/lib/core/session';
 import { type ArtifactKind, ARTIFACT_KINDS } from './model.ts';
 
 /**

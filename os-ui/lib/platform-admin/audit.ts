@@ -13,7 +13,7 @@
  * for durability in a real deploy. Pure imports only (config) so it stays
  * unit-testable.
  */
-import { osMirror } from '../os-mirror.ts';
+import { osMirror } from '../infra/os-mirror.ts';
 
 export type AuditResult = 'ok' | 'denied' | 'error';
 

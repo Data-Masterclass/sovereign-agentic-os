@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { CurrentUser } from '@/lib/auth';
-import { ROLES, type Role } from '@/lib/session';
+import type { CurrentUser } from '@/lib/core/auth';
+import { ROLES, type Role } from '@/lib/core/session';
 import type { ToolTab, McpTab } from './server';
 import { loadGuide, type GuidePath } from '@/lib/tabs/guides';
 

@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth';
+import { requireUser } from '@/lib/core/auth';
 import { createConnection, listConnectionsForUser } from '@/lib/connections';
 import { userFacingTemplates, isUserFacingTemplate, type ConnectionTemplateKey } from '@/lib/connections';
-import { roleAtLeast } from '@/lib/session';
+import { roleAtLeast } from '@/lib/core/session';
 import { providerCatalog, ensureHydrated as ensureOAuthAppsHydrated } from '@/lib/oauth/oauth-apps';
 
 export const dynamic = 'force-dynamic';

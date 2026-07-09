@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { osMirror } from '@/lib/os-mirror';
+import { osMirror } from '@/lib/infra/os-mirror';
 
 /**
  * Agent memory (golden path §6) — short-term + long-term, domain-scoped.

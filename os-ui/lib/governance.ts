@@ -22,7 +22,7 @@
  * approvals queue and Langfuse trace.
  */
 
-import { type Decision, type CapMode } from './capability-compiler.ts';
+import { type Decision, type CapMode } from './infra/capability-compiler.ts';
 
 // =================================================================== Mode A =====
 

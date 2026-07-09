@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
-import { osMirror } from '@/lib/os-mirror';
+import { config } from '@/lib/core/config';
+import { osMirror } from '@/lib/infra/os-mirror';
 import type {
   Grant,
   Listing,

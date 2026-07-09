@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth';
+import { requireUser } from '@/lib/core/auth';
 import {
   ensureHydrated,
   listSystemVersions,
@@ -17,7 +17,7 @@ import {
   restoreGitVersion,
   shaForVersion,
   systemRepo,
-} from '@/lib/git-versioning';
+} from '@/lib/core/git-versioning';
 
 export const dynamic = 'force-dynamic';
 

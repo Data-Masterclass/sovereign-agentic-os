@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
-import { roleAtLeast } from '@/lib/session';
-import { authorize } from '@/lib/agent-governed';
+import { config } from '@/lib/core/config';
+import { roleAtLeast } from '@/lib/core/session';
+import { authorize } from '@/lib/infra/agent-governed';
 import { type KnowledgeUnit, type Provenance, type UnitType } from './chunk.ts';
 import { embedQuery } from './embed.ts';
 import { allUnits } from './index-store.ts';

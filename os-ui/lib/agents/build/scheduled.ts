@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import { getPublicUser } from '@/lib/users';
 import { parseSystem, serializeSystem, downgradeGrantsForRole } from '../system-schema.ts';
 import { governSystemForOwner } from './owner-grants.ts';

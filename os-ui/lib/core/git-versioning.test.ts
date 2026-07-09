@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { ForgejoClient, ForgejoCommit, ForgejoCommitFiles } from './agents/build/live.ts';
+import type { ForgejoClient, ForgejoCommit, ForgejoCommitFiles } from '../agents/build/live.ts';
 import { listGitVersions, restoreGitVersion, shaForVersion, systemRepo } from './git-versioning.ts';
 
 /**

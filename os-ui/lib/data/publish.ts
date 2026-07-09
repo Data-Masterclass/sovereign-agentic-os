@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { ExecuteIdentity } from '@/lib/governed';
+import type { ExecuteIdentity } from '@/lib/infra/governed';
 import { visibilityFor, type Dataset } from './dataset-schema.ts';
 import {
   applyApprovedPromotion,

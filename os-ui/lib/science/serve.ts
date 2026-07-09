@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { trace } from '@/lib/agent-governed';
+import { trace } from '@/lib/infra/agent-governed';
 import { authorizePredict } from './model-service.ts';
 import { predictTool, CHURN, DEFAULT_FEATURES, type ChurnFeatures } from './churn.ts';
 

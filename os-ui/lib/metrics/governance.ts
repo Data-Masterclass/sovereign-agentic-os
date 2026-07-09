@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { Dataset, Measure, Tier } from '../data/dataset-schema.ts';
-import type { Role } from '../session.ts';
+import type { Role } from '../core/session.ts';
 import { canTransition, tierAfter } from '../data/dataset-schema.ts';
 import { type ConsistencyResult, type MemberResolver, consistencyCheck } from './consistency.ts';
 import { measureMember } from './model.ts';

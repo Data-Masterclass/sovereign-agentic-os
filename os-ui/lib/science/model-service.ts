@@ -7,7 +7,7 @@
 // live dependency (OPA `authorize`) is dependency-injected into
 // `authorizePredict` and dynamically imported by default, so tests inject a stub
 // and never touch the alias chain. Type-only `@/` imports are stripped by Node.
-import type { Authz } from '@/lib/agent-governed';
+import type { Authz } from '@/lib/infra/agent-governed';
 import type {
   Actor,
   Caller,
@@ -185,7 +185,7 @@ export type ToolAuthorizer = (principal: string) => Promise<Authz>;
 
 /** Default: the live OPA decision via the agent-tool spine (dynamic so node tests skip it). */
 async function defaultToolAuthorizer(principal: string): Promise<Authz> {
-  const { authorize } = await import('@/lib/agent-governed');
+  const { authorize } = await import('@/lib/infra/agent-governed');
   return authorize(principal, 'predict');
 }
 

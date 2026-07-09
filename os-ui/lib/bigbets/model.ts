@@ -21,8 +21,8 @@
 
 // Single-sourced from the session module (itself pure/edge-safe, so this file
 // stays free of `server-only`/Next imports and unit-testable).
-export { roleAtLeast, type Role } from '../session.ts';
-import type { Role as R } from '../session.ts';
+export { roleAtLeast, type Role } from '../core/session.ts';
+import type { Role as R } from '../core/session.ts';
 export type Principal = { id: string; domains: string[]; role: R };
 
 /**

@@ -4,7 +4,7 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mockEmbed, embedTexts, embedQuery, cosine } from './embed.ts';
-import { config } from '../config.ts';
+import { config } from '../core/config.ts';
 
 const realFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = realFetch; });

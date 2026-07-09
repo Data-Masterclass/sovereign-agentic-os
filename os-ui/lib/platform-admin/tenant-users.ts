@@ -9,8 +9,8 @@ import {
   updateUser,
   type PublicUser,
 } from '@/lib/users';
-import type { Role } from '@/lib/session';
-import { osMirror } from '../os-mirror.ts';
+import type { Role } from '@/lib/core/session';
+import { osMirror } from '../infra/os-mirror.ts';
 
 /**
  * Tenant-user adapter (Ory seam) for Platform Admin → Users & Access.

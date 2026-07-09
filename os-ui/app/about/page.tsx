@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import PageHeader from '@/components/PageHeader';
-import { byLicense, COMPONENTS, TRADEMARK_NOTE } from '@/lib/licenses';
-import { currentUser } from '@/lib/auth';
+import { byLicense, COMPONENTS, TRADEMARK_NOTE } from '@/lib/core/licenses';
+import { currentUser } from '@/lib/core/auth';
 
 // Server component: the About / Licenses page. Admin-only (Platform group).
 // Lists every bundled component grouped by SPDX license, with the trademark +

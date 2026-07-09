@@ -3,7 +3,7 @@
  */
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { hashPassword } from '../password.ts';
+import { hashPassword } from '../core/password.ts';
 
 /**
  * /api/governance/users PATCH — the "Edit user" flow behind the Admin →
@@ -27,7 +27,7 @@ type Actor = { id: string; name: string; domains: string[]; role: string };
 // `mock.module` may register a specifier only ONCE per process, so mock
 // `@/lib/auth` a single time and swap the acting user through a mutable holder.
 let ACTING: Actor = { id: 'ada', name: 'Ada', domains: ['platform'], role: 'admin' };
-mock.module('@/lib/auth', { namedExports: { currentUser: async () => ACTING } });
+mock.module('@/lib/core/auth', { namedExports: { currentUser: async () => ACTING } });
 
 async function patch(actor: Actor, body: Record<string, unknown>, tag: string) {
   ACTING = actor;

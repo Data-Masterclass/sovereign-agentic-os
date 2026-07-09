@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { postJson, TIER_LABEL } from './shared';
 import type { DashboardSummary, DashTier, GovernResponse } from './shared';
-import { roleAtLeast } from '@/lib/session';
+import { roleAtLeast } from '@/lib/core/session';
 
 /**
  * Govern — promote (Builder → Domain) / certify (Admin → Marketplace) the selected

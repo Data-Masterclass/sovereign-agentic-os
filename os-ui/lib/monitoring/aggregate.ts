@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { CurrentUser } from '@/lib/auth';
-import { recentTraces } from '@/lib/agent-governed';
+import type { CurrentUser } from '@/lib/core/auth';
+import { recentTraces } from '@/lib/infra/agent-governed';
 import { listCaps, getSpend } from '@/lib/governance/cost';
 import { collectRuns } from './adapters/run-trace';
 import { collectPipelines } from './adapters/pipeline-health';

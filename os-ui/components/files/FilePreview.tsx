@@ -9,7 +9,7 @@ import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 import { previewText } from '@/lib/files/preview';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
-import type { Visibility } from '@/lib/lifecycle';
+import type { Visibility } from '@/lib/core/lifecycle';
 
 /** File tier → the OS-wide lifecycle visibility (drives the delete gate). */
 const lcVis = (tier: Asset['tier']): Visibility =>

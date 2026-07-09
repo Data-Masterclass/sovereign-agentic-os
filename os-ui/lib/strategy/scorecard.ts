@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { allArtifacts } from '@/lib/artifacts';
+import { allArtifacts } from '@/lib/core/artifacts';
 import { listUsers } from '@/lib/users';
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import { entitledToDomain } from '@/lib/strategy/model';
 import { buildScorecard, type Scorecard } from '@/lib/strategy/scorecard-core';
 

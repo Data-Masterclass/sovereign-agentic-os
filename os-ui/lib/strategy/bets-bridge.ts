@@ -4,7 +4,7 @@
 import 'server-only';
 import type { ArtifactKind, ComponentBuildStatus } from '@/lib/strategy/model';
 import { entitledToDomain } from '@/lib/strategy/model';
-import type { Role } from '@/lib/session';
+import type { Role } from '@/lib/core/session';
 import type { BigBet, Tab } from '@/lib/bigbets/model';
 import { _allBets, canView } from '@/lib/bigbets/store';
 import { resolveArtifact } from '@/lib/bigbets/sources';

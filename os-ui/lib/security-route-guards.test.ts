@@ -33,9 +33,9 @@ test('GAP 2: the agents-systems create route no longer accepts a client visibili
 
 test('GAP 3: marketplace import paths gate on Builder+ (rank-based — domain_admin inherits)', () => {
   assert.match(read('lib/marketplace/adapters.ts'), /!roleAtLeast\(viewer\.role, 'builder'\)/, 'GovernedImportAdapter.import gates Builder+');
-  assert.match(read('lib/artifacts.ts'), /roleRank\(user\.role\) < roleRank\('builder'\)/, 'addFromMarketplace gates Builder+');
+  assert.match(read('lib/core/artifacts.ts'), /roleRank\(user\.role\) < roleRank\('builder'\)/, 'addFromMarketplace gates Builder+');
   assert.match(read('lib/data/store.ts'), /!roleAtLeast\(importer\.role, 'builder'\)/, 'importProduct gates Builder+');
-  assert.match(read('lib/tabs.ts'), /Marketplace'[^\n]*role: 'Builder/, 'Marketplace tab carries a role hint');
+  assert.match(read('lib/core/tabs.ts'), /Marketplace'[^\n]*role: 'Builder/, 'Marketplace tab carries a role hint');
 });
 
 test('GAP 7 (4-rank migration): the governance users route enforces the domain_admin scoping predicates server-side', () => {
@@ -135,7 +135,7 @@ test('LOCKDOWN 5: the remaining proxy read routes require a session', () => {
 });
 
 test('LOCKDOWN 6: the governed DATA authz spine fails CLOSED on OPA-unreachable', () => {
-  const src = read('lib/governed.ts');
+  const src = read('lib/infra/governed.ts');
   assert.doesNotMatch(src, /return \{ allowed: true, policy: 'opa-unreachable' \}/, 'no hard-coded fail-open');
   assert.match(src, /allowed: config\.opaFailOpen/, 'fail-open is gated behind an explicit flag (default deny)');
 });
@@ -217,7 +217,7 @@ test('PLATFORM-GATE 3: /about has a server-side admin gate in the page', () => {
 });
 
 test('PLATFORM-GATE 4: consolidated Platform tabs — Governance is builder+, the rest admin', () => {
-  const src = read('lib/tabs.ts');
+  const src = read('lib/core/tabs.ts');
   for (const label of ['Admin', 'Components', 'Terminal', 'About / Licenses']) {
     assert.match(src, new RegExp(`label: '${label.replace('/', '\\/')}[^']*'[^}]*minRole: 'admin'`, 's'),
       `Platform tab "${label}" must declare minRole: 'admin'`);

@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@/lib/useUser';
-import { roleAtLeast } from '@/lib/session';
+import { roleAtLeast } from '@/lib/core/session';
 
 type Trust = 'bronze' | 'silver' | 'gold';
 type Certification = { level: Trust; by: string; at: string };

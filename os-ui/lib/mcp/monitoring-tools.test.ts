@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import { handleRpc, ALL_MCP_TOOLS, toolsForTab, type JsonRpcResponse, type ToolError } from './server.ts';
 import { ALL_WRITE_TOOLS } from './write-tools.ts';
 import { SALES_OWNER, OTHER_OWNER } from '@/lib/monitoring/mock';

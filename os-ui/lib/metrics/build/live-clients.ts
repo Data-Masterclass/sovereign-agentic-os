@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
-import { cubeLoad, cubeScalar } from '@/lib/governed';
+import { config } from '@/lib/core/config';
+import { cubeLoad, cubeScalar } from '@/lib/infra/governed';
 import { type MetricCubeClient, type MetricLiveDeps } from './live.ts';
 
 /**

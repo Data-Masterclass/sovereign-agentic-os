@@ -2,11 +2,11 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { authorize } from '@/lib/governed';
-import { config } from '@/lib/config';
+import { authorize } from '@/lib/infra/governed';
+import { config } from '@/lib/core/config';
 // Type-only ON PURPOSE: a value-import of lib/auth would drag next/headers into
 // every consumer (and break the node --test runner). Nothing here needs it at runtime.
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import {
   type Actor,
   type BigBet,

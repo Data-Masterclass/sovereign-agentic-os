@@ -8,8 +8,8 @@ import SystemsList from './SystemsList';
 import SystemView from './SystemView';
 import SystemRail from './SystemRail';
 import NewSystemPanel from './NewSystemPanel';
-import { getUrlParam, patchUrl } from '@/lib/url-params';
-import { useTabNavReset } from '@/lib/tab-nav';
+import { getUrlParam, patchUrl } from '@/lib/core/url-params';
+import { useTabNavReset } from '@/lib/core/tab-nav';
 
 /**
  * The Agents tab experience. Master–detail: the landing shows the grouped systems

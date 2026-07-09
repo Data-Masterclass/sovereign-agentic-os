@@ -2,17 +2,17 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
-import { grantsForDurable as appGrantsForDurable } from '@/lib/app-registry';
+import { config } from '@/lib/core/config';
+import { grantsForDurable as appGrantsForDurable } from '@/lib/infra/app-registry';
 import {
   compileConnectionProfile,
   decide,
   exposedTools,
   type OpaConnectionBundle,
   type CapMode,
-} from '@/lib/capability-compiler';
+} from '@/lib/infra/capability-compiler';
 import { type Principal as DlsPrincipal, canSee } from '@/lib/knowledge/retrieve-core';
-import { roleAtLeast } from '@/lib/session';
+import { roleAtLeast } from '@/lib/core/session';
 import type { Provenance } from '@/lib/knowledge/chunk';
 
 /**

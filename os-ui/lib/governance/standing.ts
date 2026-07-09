@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { ApprovalKind } from '../approvals.ts';
-import { osMirror } from '../os-mirror.ts';
+import { osMirror } from '../infra/os-mirror.ts';
 
 /**
  * Standing policies — the "approve & remember" half of an approval (governance-

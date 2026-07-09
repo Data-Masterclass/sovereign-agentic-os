@@ -3,8 +3,8 @@
  */
 import 'server-only';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { config } from '@/lib/config';
-import type { CurrentUser } from '@/lib/auth';
+import { config } from '@/lib/core/config';
+import type { CurrentUser } from '@/lib/core/auth';
 import { getPublicUser } from '@/lib/users';
 
 /**

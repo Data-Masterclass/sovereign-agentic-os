@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import { getDataset } from '@/lib/data/store';
 import { lineageFor } from '@/lib/data/lineage';
 import { getDashboard } from '@/lib/dashboards/store';

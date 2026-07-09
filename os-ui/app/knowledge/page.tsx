@@ -9,14 +9,14 @@ import WorkflowTile from '@/components/knowledge/WorkflowTile';
 import WorkflowView from '@/components/knowledge/WorkflowView';
 import type { WorkflowSummary } from '@/lib/knowledge/store';
 import type { DomainKnowledge } from '@/lib/knowledge/schema';
-import { roleAtLeast, type Role } from '@/lib/session';
-import { useTabNavReset } from '@/lib/tab-nav';
-import { SCOPE_GROUPS, groupByScope, activeScopeCounts, type ScopeKey } from '@/lib/scopes';
+import { roleAtLeast, type Role } from '@/lib/core/session';
+import { useTabNavReset } from '@/lib/core/tab-nav';
+import { SCOPE_GROUPS, groupByScope, activeScopeCounts, type ScopeKey } from '@/lib/core/scopes';
 import type { PersonalKnowledgeSummary } from '@/lib/knowledge/personal-store';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import DomainTag from '@/components/DomainTag';
-import type { Visibility as LcVisibility } from '@/lib/lifecycle';
+import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
 
 /** Knowledge visibility (Personal/Shared/Marketplace) → OS-wide lifecycle visibility. */
 const lcVis = (v: 'Personal' | 'Shared' | 'Marketplace'): LcVisibility =>

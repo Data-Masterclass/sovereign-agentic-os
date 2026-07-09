@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { type DataAdapter, type DataStage, type StepResult } from './adapter.ts';
-import type { ExecuteIdentity } from '@/lib/governed';
+import type { ExecuteIdentity } from '@/lib/infra/governed';
 import { transparencyGate, gateReason } from '../transparency.ts';
 import {
   CUBE_ARTIFACT,

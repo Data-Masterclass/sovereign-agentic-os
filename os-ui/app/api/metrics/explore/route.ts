@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
-import { delegatedToken } from '@/lib/identity-server';
+import { delegatedToken } from '@/lib/infra/identity-server';
 import { getMetric } from '@/lib/metrics/store';
 import { exploreMetric } from '@/lib/metrics/build/explore-server';
 import type { Granularity } from '@/lib/metrics/explorer';

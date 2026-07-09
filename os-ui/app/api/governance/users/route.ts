@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { currentUser } from '@/lib/auth';
+import { currentUser } from '@/lib/core/auth';
 import { archiveUser, createUser, deleteUser, knownDomains, listUsers, restoreUser, updateUser } from '@/lib/users';
-import { generateTempPassword } from '@/lib/password';
-import { ROLES, type Role } from '@/lib/session';
+import { generateTempPassword } from '@/lib/core/password';
+import { ROLES, type Role } from '@/lib/core/session';
 import { canAdministerUsers, canManageRole, canTouchUser, compileRoleToGrants, roleLabel, userAdminInScope } from '@/lib/governance/roles';
 import { record as audit } from '@/lib/governance/audit';
 

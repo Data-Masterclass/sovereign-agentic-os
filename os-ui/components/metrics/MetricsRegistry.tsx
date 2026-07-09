@@ -5,7 +5,7 @@
 
 import { useState } from 'react';
 import { useUser } from '@/lib/useUser';
-import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/scopes';
+import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/core/scopes';
 import DomainTag from '@/components/DomainTag';
 import {
   type MetricGroups,

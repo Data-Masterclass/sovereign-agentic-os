@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { dropPlan, dropPhysicalTables } from './physical-delete.ts';
 import { emptyVersions, type Dataset } from './dataset-schema.ts';
 import type { Principal } from './store.ts';
-import type { ExecuteIdentity } from '@/lib/governed';
+import type { ExecuteIdentity } from '@/lib/infra/governed';
 
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' };
 

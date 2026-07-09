@@ -16,7 +16,7 @@ import {
   setAgentToolPreset,
   _clearPresets,
 } from './governance.ts';
-import { evaluateRule } from './capability-compiler.ts';
+import { evaluateRule } from './infra/capability-compiler.ts';
 
 // -------- Mode A: full preview + approve & remember -> standing policy --------
 

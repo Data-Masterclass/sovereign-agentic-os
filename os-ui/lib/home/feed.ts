@@ -20,9 +20,9 @@ import 'server-only';
  * The two live feeds read from real in-process stores and return `source:'live'`.
  */
 
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import { listApprovals } from '@/lib/approvals';
-import { listForUser, listMarketplace } from '@/lib/artifacts';
+import { listForUser, listMarketplace } from '@/lib/core/artifacts';
 import { listAppsForUser } from '@/lib/apps';
 import { listBets } from '@/lib/bigbets/store';
 import { listPillars } from '@/lib/strategy/pillars';

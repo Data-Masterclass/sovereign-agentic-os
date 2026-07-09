@@ -5,7 +5,7 @@
 
 import { useCallback, useState } from 'react';
 import { useUser } from '@/lib/useUser';
-import { roleAtLeast } from '@/lib/session';
+import { roleAtLeast } from '@/lib/core/session';
 import {
   type GovernResult,
   type MetricSummary,

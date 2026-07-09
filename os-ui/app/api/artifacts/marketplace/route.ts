@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth';
-import { listForUser, listMarketplace } from '@/lib/artifacts';
-import { ARTIFACT_TYPES, type ArtifactType } from '@/lib/artifact-model';
+import { requireUser } from '@/lib/core/auth';
+import { listForUser, listMarketplace } from '@/lib/core/artifacts';
+import { ARTIFACT_TYPES, type ArtifactType } from '@/lib/core/artifact-model';
 
 export const dynamic = 'force-dynamic';
 

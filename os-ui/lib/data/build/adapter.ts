@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { Dataset } from '../dataset-schema.ts';
-import type { ExecuteIdentity } from '@/lib/governed';
+import type { ExecuteIdentity } from '@/lib/infra/governed';
 
 /**
  * The ONE Data Build adapter interface (clone of lib/agents/build/adapter.ts). Each

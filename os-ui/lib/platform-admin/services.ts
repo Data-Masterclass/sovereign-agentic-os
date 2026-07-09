@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import 'server-only';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 
 /**
  * Platform-service connectivity probes — the internal control-plane backends the

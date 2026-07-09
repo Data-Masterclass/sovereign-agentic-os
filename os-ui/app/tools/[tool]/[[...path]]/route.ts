@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth';
-import { proxy, resolveTool, roleAllowed, type SessionSso } from '@/lib/tool-proxy';
-import { getLangfuseSessionCookies, hasLangfuseSession } from '@/lib/tool-sso-langfuse';
+import { requireUser } from '@/lib/core/auth';
+import { proxy, resolveTool, roleAllowed, type SessionSso } from '@/lib/infra/tool-proxy';
+import { getLangfuseSessionCookies, hasLangfuseSession } from '@/lib/infra/tool-sso-langfuse';
 
 /**
  * Same-origin reverse proxy for embedded tools:

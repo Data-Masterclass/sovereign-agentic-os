@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 import { ensureHydrated, listGovernedDatasets } from '@/lib/data/store';
 import { buildCubeModels } from '@/lib/data/cube-models';
 

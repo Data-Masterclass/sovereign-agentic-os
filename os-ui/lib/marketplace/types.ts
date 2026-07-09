@@ -16,7 +16,7 @@
  * instance / creds / editable copy.
  */
 
-import type { ArtifactType } from '@/lib/artifact-model';
+import type { ArtifactType } from '@/lib/core/artifact-model';
 
 /**
  * Product types listable in the marketplace. Reuses the artifact lifecycle types

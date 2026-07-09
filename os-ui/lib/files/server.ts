@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth';
+import { requireUser } from '@/lib/core/auth';
 import { ensureHydrated, type Principal } from '@/lib/files/store';
 
 /**

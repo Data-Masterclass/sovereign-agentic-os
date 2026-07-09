@@ -22,7 +22,7 @@ import {
 } from './profile.ts';
 import { versionTarget } from './store-fqn.ts';
 import { parseDataset } from './dataset-schema.ts';
-import type { QueryResult } from '../governed.ts';
+import type { QueryResult } from '../infra/governed.ts';
 
 const COLS: ProfileColumn[] = [
   { name: 'order_id', type: 'bigint' },

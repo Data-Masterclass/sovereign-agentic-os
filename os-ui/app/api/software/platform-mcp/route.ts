@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth';
+import { requireUser } from '@/lib/core/auth';
 import { callPlatformMcp, PLATFORM_MCP_TOOLS } from '@/lib/software/platform-mcp';
 
 export const dynamic = 'force-dynamic';

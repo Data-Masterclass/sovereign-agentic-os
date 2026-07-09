@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { SESSION_COOKIE } from '@/lib/session';
+import { SESSION_COOKIE } from '@/lib/core/session';
 
 export const dynamic = 'force-dynamic';
 

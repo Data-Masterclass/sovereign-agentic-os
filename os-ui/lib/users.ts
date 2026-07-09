@@ -2,12 +2,12 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import 'server-only';
-import { config } from '@/lib/config';
-import { osMirror } from '@/lib/os-mirror';
-import { ROLES, type Role } from '@/lib/session';
+import { config } from '@/lib/core/config';
+import { osMirror } from '@/lib/infra/os-mirror';
+import { ROLES, type Role } from '@/lib/core/session';
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { hashPassword, verifyPassword, isHashed } from '@/lib/password';
-import { emailVerificationEnabled, sendVerificationEmail } from '@/lib/mailer';
+import { hashPassword, verifyPassword, isHashed } from '@/lib/core/password';
+import { emailVerificationEnabled, sendVerificationEmail } from '@/lib/infra/mailer';
 
 /**
  * User directory — a pragmatic, self-hosted identity store (the seam Ory would

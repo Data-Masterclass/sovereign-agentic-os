@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { cubeScalar } from '@/lib/governed';
+import { cubeScalar } from '@/lib/infra/governed';
 import {
   type Pillar,
   type MetricLink,
@@ -14,7 +14,7 @@ import {
   eur,
 } from '@/lib/strategy/model';
 import { defaultBetShareSource, type BetShareSource } from '@/lib/strategy/bets-bridge';
-import type { Role } from '@/lib/session';
+import type { Role } from '@/lib/core/session';
 
 /**
  * Value roll-up — the RLS-correct, top-down value spine (Opus-owned).

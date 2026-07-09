@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import type { McpTool } from './server';
 import { pendingHandle, whoCanApprove } from './pending';
 import { decide, getApproval, listApprovals, recordEffect, type Approval, type ApprovalStatus, type ApprovalKind } from '@/lib/approvals';
@@ -18,7 +18,7 @@ import { canViewPolicyPlane, consolidatedPlane, listEgress, policySources } from
 import { listStanding } from '@/lib/governance/standing';
 import { listCaps, checkCap } from '@/lib/governance/cost';
 import { listUsers } from '@/lib/users';
-import { roleAtLeast } from '@/lib/session';
+import { roleAtLeast } from '@/lib/core/session';
 
 /**
  * THE GOVERNANCE QUEUE + LADDER META-TOOLS (mcp-v2 P0). These wrap the EXISTING

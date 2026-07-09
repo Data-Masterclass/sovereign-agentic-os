@@ -15,10 +15,10 @@ import { commitSystem } from './commitSystem';
 import { addAgent, addHandoffEdge, addSuperviseEdge, removeAgent, removeEdge, setEntrypoint, setNodePositions } from '@/lib/agents/canvas-edit';
 import type { Schedule, System } from '@/lib/agents/system-schema';
 import type { ModelInfo } from '@/lib/agents/routing';
-import { roleAtLeast, type Role } from '@/lib/session';
+import { roleAtLeast, type Role } from '@/lib/core/session';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
-import type { Visibility } from '@/lib/lifecycle';
+import type { Visibility } from '@/lib/core/lifecycle';
 import DomainTag from '@/components/DomainTag';
 
 // React Flow + Monaco are heavy, client-only, and SSR-tolerant only when lazy —

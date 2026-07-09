@@ -9,7 +9,7 @@ import {
   retrieveTool,
   SALES,
   type DlsPrincipal,
-} from '@/lib/agent-governed';
+} from '@/lib/infra/agent-governed';
 import { principalFor, type GovernedToolResponse } from '@/lib/agents/build/runtime-contract';
 import { runtimeTokenOk } from '@/lib/agents/build/runtime-auth';
 import { ensureHydrated, systemForScheduler } from '@/lib/agents/store';

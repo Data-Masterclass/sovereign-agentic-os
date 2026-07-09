@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { createHash, createHmac } from 'node:crypto';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 import { sanitizeIdent } from './store-fqn.ts';
 
 /**

@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth';
+import { requireUser } from '@/lib/core/auth';
 import { listingAdapter } from '@/lib/marketplace';
 import { PRODUCT_TYPES, type ProductType, type ListingFilter } from '@/lib/marketplace';
 import { ensureHydrated } from '@/lib/marketplace/store';

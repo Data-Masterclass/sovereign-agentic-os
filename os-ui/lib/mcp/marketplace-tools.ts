@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import type { McpTool, JsonSchema } from './server';
 
 // --- The EXACT governed marketplace lib the UI + /api/marketplace call ---------

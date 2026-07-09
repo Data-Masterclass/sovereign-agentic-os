@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { Visibility } from '@/lib/artifact-model';
+import type { Visibility } from '@/lib/core/artifact-model';
 
 /**
  * Auto-generated MCP / app-connection registry (Software golden path §4).

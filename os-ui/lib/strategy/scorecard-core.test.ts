@@ -9,8 +9,8 @@ import {
   foundationType,
   FOUNDATION_TYPES,
 } from './scorecard-core.ts';
-import type { Artifact } from '@/lib/artifact-model';
-import type { Role } from '@/lib/session';
+import type { Artifact } from '@/lib/core/artifact-model';
+import type { Role } from '@/lib/core/session';
 
 function art(p: Partial<Artifact> & Pick<Artifact, 'id' | 'type' | 'owner' | 'domain' | 'visibility'>): Artifact {
   return {

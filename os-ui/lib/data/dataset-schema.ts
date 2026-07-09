@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import yaml from 'js-yaml';
-import { roleAtLeast } from '../session.ts';
-import type { Role } from '../session.ts';
+import { roleAtLeast } from '../core/session.ts';
+import type { Role } from '../core/session.ts';
 
 /**
  * `dataset.yaml` — the SINGLE source of truth for one logical dataset (Data tab).

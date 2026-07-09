@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
-import { cubeLoad, executeRun, queryRun } from '@/lib/governed';
+import { config } from '@/lib/core/config';
+import { cubeLoad, executeRun, queryRun } from '@/lib/infra/governed';
 import { listUsers as userRoster } from '@/lib/users';
 import { importDashboardBundle } from '@/lib/superset/client';
 import {

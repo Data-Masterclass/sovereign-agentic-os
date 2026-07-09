@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { Role } from '../session.ts';
-import { ROLES } from '../session.ts';
-import { osMirror } from '../os-mirror.ts';
+import type { Role } from '../core/session.ts';
+import { ROLES } from '../core/session.ts';
+import { osMirror } from '../infra/os-mirror.ts';
 
 /**
  * Role-permissions store — the ADMIN-EDITABLE source for "what each role may do,

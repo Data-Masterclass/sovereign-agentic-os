@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth';
+import { requireUser } from '@/lib/core/auth';
 import { proposePlan, approvePlan, type Mode, type PlanCompleter } from '@/lib/bigbets/planner';
 import { principal, plannerHooks } from '@/lib/bigbets/server';
 import { assistantComplete } from '@/lib/assistant/complete';

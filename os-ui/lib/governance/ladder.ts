@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { CurrentUser } from '@/lib/auth';
-import { roleAtLeast } from '@/lib/session';
+import type { CurrentUser } from '@/lib/core/auth';
+import { roleAtLeast } from '@/lib/core/session';
 import { decide, enqueue, listApprovals, recordEffect, type Approval } from '@/lib/approvals';
 import { applyEffect, type EffectDeps, type EffectResult } from '@/lib/governance/effects';
 import { publishPromotionLive } from '@/lib/data/publish-server';
@@ -12,7 +12,7 @@ import { getPersonalKnowledge } from '@/lib/knowledge/personal-store';
 import { getDashboard } from '@/lib/dashboards/store';
 import { getConnectionForUser, promoteConnection } from '@/lib/connections';
 import { getModel } from '@/lib/science/model-service';
-import { getArtifact, promoteArtifact } from '@/lib/artifacts';
+import { getArtifact, promoteArtifact } from '@/lib/core/artifacts';
 import { getAppForUser, promoteApp } from '@/lib/apps';
 import { getSystem } from '@/lib/agents/store';
 

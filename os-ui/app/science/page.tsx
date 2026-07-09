@@ -12,7 +12,7 @@ import { useToolWindow } from '@/components/ToolWindowProvider';
 // Layer-4 tools embeddable same-origin (lib/tool-proxy.ts). JupyterHub needs
 // WebSockets (kernels) and KServe has no human UI, so those keep native links.
 const EMBEDDABLE_SCIENCE: Record<string, string> = { mlflow: 'MLflow', featureform: 'Featureform' };
-import { roleAtLeast } from '@/lib/session';
+import { roleAtLeast } from '@/lib/core/session';
 import type {
   ServiceModel,
   CompiledPredictPolicy,

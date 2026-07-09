@@ -24,7 +24,7 @@
  * Server-only (reads the in-process admin settings store).
  */
 
-import { config } from '../config.ts';
+import { config } from '../core/config.ts';
 import { getSettings } from '../platform-admin/settings.ts';
 
 export type ModelRole = 'reasoning' | 'standard' | 'tools' | 'embeddings';

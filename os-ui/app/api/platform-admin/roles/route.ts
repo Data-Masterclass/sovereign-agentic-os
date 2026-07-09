@@ -16,7 +16,7 @@ import { resolveRoleRights } from '@/lib/governance/role-config';
 import { rightsToTools, roleLabel, compileRoleToGrants } from '@/lib/governance/roles';
 import { audit } from '@/lib/platform-admin/audit';
 import { listUsers } from '@/lib/users';
-import { ROLES, type Role } from '@/lib/session';
+import { ROLES, type Role } from '@/lib/core/session';
 
 export const dynamic = 'force-dynamic';
 

@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@/lib/useUser';
-import { roleAtLeast } from '@/lib/session';
+import { roleAtLeast } from '@/lib/core/session';
 
 /**
  * Governance approval queue (golden path §7). Held write-backs — connection

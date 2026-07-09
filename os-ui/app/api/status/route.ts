@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { probeServices } from '@/lib/platform-admin/services';
-import { requireUser } from '@/lib/auth';
+import { requireUser } from '@/lib/core/auth';
 
 export const dynamic = 'force-dynamic';
 

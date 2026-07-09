@@ -11,7 +11,7 @@ import {
   type AdapterCtx,
 } from './connection-adapters.ts';
 import { templateByKey } from './schema.ts';
-import { decide } from '../capability-compiler.ts';
+import { decide } from '../infra/capability-compiler.ts';
 
 function ctx(templateKey: string, over: Partial<AdapterCtx> = {}): AdapterCtx {
   const template = templateByKey(templateKey)!;

@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { registerConnectionProfile, type ConnToolPolicy } from '@/lib/agent-governed';
+import { registerConnectionProfile, type ConnToolPolicy } from '@/lib/infra/agent-governed';
 import type { GeneratedTool, OpenApiSpec } from './model.ts';
 
 /**

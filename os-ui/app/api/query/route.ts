@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth';
+import { requireUser } from '@/lib/core/auth';
 import { errorResponse } from '@/lib/data/server';
-import { queryRun } from '@/lib/governed';
+import { queryRun } from '@/lib/infra/governed';
 import { readPrincipalFor } from '@/lib/data/store-fqn';
 
 export const dynamic = 'force-dynamic';

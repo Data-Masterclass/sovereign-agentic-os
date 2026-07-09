@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import yaml from 'js-yaml';
-import { roleAtLeast, type Role } from '../session';
+import { roleAtLeast, type Role } from '../core/session';
 
 /**
  * `system.yaml` — the SINGLE source of truth for an agent system (Agents tab,

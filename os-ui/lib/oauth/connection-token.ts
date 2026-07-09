@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { putSecret, getSecretServerSide, type SecretRef } from '@/lib/secrets';
+import { putSecret, getSecretServerSide, type SecretRef } from '@/lib/infra/secrets';
 import {
   type TokenSet,
   parseTokenSet,

@@ -16,7 +16,7 @@
  * connection's OPA policy; ALSO honor it in the offline mirror").
  */
 
-import type { Visibility } from '@/lib/artifact-model';
+import type { Visibility } from '@/lib/core/artifact-model';
 
 export type ConnectionType = 'API' | 'MCP' | 'Database' | 'SaaS' | 'Drive';
 

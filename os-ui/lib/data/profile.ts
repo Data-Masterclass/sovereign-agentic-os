@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { QueryResult } from '../governed.ts';
+import type { QueryResult } from '../infra/governed.ts';
 
 /**
  * Pure profiling-SQL generator for the Explore panel (data-tab-plan.md §B2 / T4).

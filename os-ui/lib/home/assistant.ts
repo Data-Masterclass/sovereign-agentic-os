@@ -23,11 +23,11 @@ import 'server-only';
  *     is auditable in Monitoring like any other governed action.
  */
 
-import type { CurrentUser } from '@/lib/auth';
-import { createArtifact } from '@/lib/artifacts';
-import { trace } from '@/lib/agent-governed';
+import type { CurrentUser } from '@/lib/core/auth';
+import { createArtifact } from '@/lib/core/artifacts';
+import { trace } from '@/lib/infra/agent-governed';
 import { classifyAsk, type AskIntent } from './intents.ts';
-import { TYPE_LABELS } from '@/lib/artifact-model';
+import { TYPE_LABELS } from '@/lib/core/artifact-model';
 
 export type AskResult = {
   mode: 'answer' | 'scaffold' | 'human-gate';

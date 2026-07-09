@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import {
   type Pillar,
   type ArtifactKind,
@@ -18,7 +18,7 @@ import {
 import { rollupForPillar } from '@/lib/strategy/value-rollup';
 import { adoptionActuals } from '@/lib/strategy/adoption';
 import { auditStrategy } from '@/lib/strategy/audit';
-import { osMirror } from '../os-mirror.ts';
+import { osMirror } from '../infra/os-mirror.ts';
 
 /**
  * Monthly actuals snapshots + the target-vs-actual view (annual + quarterly).

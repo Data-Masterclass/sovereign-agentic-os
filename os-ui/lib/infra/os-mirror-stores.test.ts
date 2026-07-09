@@ -100,7 +100,7 @@ const admin = { id: 'admin', name: 'Admin', domains: ['sales'], role: 'admin' as
 
 test('datasets (os-datasets): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const { createDataset, listDatasets, ensureHydrated, __resetStore } = await import('./data/store.ts');
+  const { createDataset, listDatasets, ensureHydrated, __resetStore } = await import('../data/store.ts');
   try {
     __resetStore();
     await ensureHydrated();
@@ -127,7 +127,7 @@ test('datasets (os-datasets): fresh-boot bootstrap + round-trip hydration', asyn
 
 test('artifacts (os-artifacts): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const { createArtifact, getArtifact, __resetArtifactsCache } = await import('./artifacts.ts');
+  const { createArtifact, getArtifact, __resetArtifactsCache } = await import('../core/artifacts.ts');
   try {
     __resetArtifactsCache();
     const a = await createArtifact(admin, { type: 'dataset', name: 'Raw orders' });
@@ -147,7 +147,7 @@ test('artifacts (os-artifacts): fresh-boot bootstrap + round-trip hydration', as
 
 test('apps (os-apps): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const apps = await import('./apps.ts');
+  const apps = await import('../apps.ts');
   const app = {
     id: 'app_test1', name: 'Test app', slug: 'test-app', template: 'service', surface: 'api',
     owner: 'admin', domain: 'sales', visibility: 'Personal',
@@ -174,7 +174,7 @@ test('apps (os-apps): fresh-boot bootstrap + round-trip hydration', async () => 
 
 test('connections (os-connections): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const conns = await import('./connections/store.ts');
+  const conns = await import('../connections/store.ts');
   try {
     conns.__resetConnections();
     const c = await conns.createConnection(admin, {
@@ -198,7 +198,7 @@ test('connections (os-connections): fresh-boot bootstrap + round-trip hydration'
 
 test('users (os-users): fresh boot seeds the bootstrap admin DURABLY + round-trip', async () => {
   const os = fakeCluster();
-  const users = await import('./users.ts');
+  const users = await import('../users.ts');
   try {
     users.__resetUsers();
     const list = await users.listUsers(); // triggers hydration + first-run seed
@@ -222,7 +222,7 @@ test('users (os-users): fresh boot seeds the bootstrap admin DURABLY + round-tri
 
 test('strategy pillars (os-strategy-pillars): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const pillars = await import('./strategy/pillars.ts');
+  const pillars = await import('../strategy/pillars.ts');
   try {
     pillars.__resetForTests();
     const p = await pillars.createPillar(admin, { name: 'Grow NRR', scope: 'tenant' });
@@ -244,7 +244,7 @@ test('strategy pillars (os-strategy-pillars): fresh-boot bootstrap + round-trip 
 
 test('tile-order prefs (os-user-prefs): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const prefs = await import('./prefs/tile-order.ts');
+  const prefs = await import('../prefs/tile-order.ts');
   const surface = prefs.TILE_ORDER_SURFACES[0];
   try {
     prefs.__resetForTests();
@@ -264,7 +264,7 @@ test('tile-order prefs (os-user-prefs): fresh-boot bootstrap + round-trip hydrat
 
 test('platform domains (os-domains): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const domains = await import('./platform-admin/domains.ts');
+  const domains = await import('../platform-admin/domains.ts');
   try {
     domains._reset();
     await domains.ensureHydrated(async () => []);
@@ -288,7 +288,7 @@ test('platform domains (os-domains): fresh-boot bootstrap + round-trip hydration
 
 test('governance role-config (os-role-config): fresh boot seeds the default matrix DURABLY + round-trip of an edit', async () => {
   const os = fakeCluster();
-  const rc = await import('./governance/role-config.ts');
+  const rc = await import('../governance/role-config.ts');
   try {
     rc.__resetRoleConfig();
     await rc.getMatrix(); // fresh boot → bootstrap index + seed the default
@@ -311,7 +311,7 @@ test('governance role-config (os-role-config): fresh boot seeds the default matr
 
 test('agent systems (os-agent-systems): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const agents = await import('./agents/store.ts');
+  const agents = await import('../agents/store.ts');
   try {
     agents.__resetStore();
     await agents.ensureHydrated();
@@ -335,7 +335,7 @@ test('agent systems (os-agent-systems): fresh-boot bootstrap + round-trip hydrat
 
 test('dashboards (os-dashboards): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const dash = await import('./dashboards/store.ts');
+  const dash = await import('../dashboards/store.ts');
   try {
     dash.__resetDashboards();
     await dash.ensureHydrated();
@@ -360,7 +360,7 @@ test('dashboards (os-dashboards): fresh-boot bootstrap + round-trip hydration', 
 
 test('big bets (os-bigbets): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const bets = await import('./bigbets/store.ts');
+  const bets = await import('../bigbets/store.ts');
   try {
     bets.__resetBets();
     await bets.ensureHydrated();
@@ -392,7 +392,7 @@ test('big bets (os-bigbets): fresh-boot bootstrap + round-trip hydration', async
 
 test('knowledge workflows (os-knowledge-records): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const know = await import('./knowledge/store.ts');
+  const know = await import('../knowledge/store.ts');
   try {
     know.__resetStore();
     await know.ensureHydrated();
@@ -416,7 +416,7 @@ test('knowledge workflows (os-knowledge-records): fresh-boot bootstrap + round-t
 
 test('file records (os-file-records): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const files = await import('./files/store.ts');
+  const files = await import('../files/store.ts');
   try {
     files.__resetStore();
     await files.ensureHydrated();
@@ -440,7 +440,7 @@ test('file records (os-file-records): fresh-boot bootstrap + round-trip hydratio
 
 test('standing policies (os-standing-policies): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const standing = await import('./governance/standing.ts');
+  const standing = await import('../governance/standing.ts');
   try {
     standing.__resetStanding();
     await standing.ensureHydrated();
@@ -468,7 +468,7 @@ test('standing policies (os-standing-policies): fresh-boot bootstrap + round-tri
 
 test('strategy snapshots (os-strategy-snapshots): pre-seeded doc survives round-trip hydration', async () => {
   const os = fakeCluster();
-  const snaps = await import('./strategy/snapshots.ts');
+  const snaps = await import('../strategy/snapshots.ts');
   try {
     snaps.__resetSnapshotsForTests();
     // Pre-seed the cluster (simulates a prior run's write-through).
@@ -490,7 +490,7 @@ test('strategy snapshots (os-strategy-snapshots): pre-seeded doc survives round-
 
 test('model config (os-model-config): fresh-boot bootstrap + round-trip of a mutation', async () => {
   const os = fakeCluster();
-  const models = await import('./platform-admin/models.ts');
+  const models = await import('../platform-admin/models.ts');
   try {
     models._reset();
     await models.ensureHydrated();
@@ -519,7 +519,7 @@ test('model config (os-model-config): fresh-boot bootstrap + round-trip of a mut
 
 test('tenant user status (os-tenant-user-status): pre-seeded status survives round-trip hydration', async () => {
   const os = fakeCluster();
-  const tu = await import('./platform-admin/tenant-users.ts');
+  const tu = await import('../platform-admin/tenant-users.ts');
   try {
     tu._resetTenantUsers();
     // Pre-seed the cluster (simulates a prior run's invite write-through).
@@ -549,7 +549,7 @@ test('tenant user status (os-tenant-user-status): pre-seeded status survives rou
 
 test('egress requests (os-egress-requests): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const egress = await import('./connections/egress-requests.ts');
+  const egress = await import('../connections/egress-requests.ts');
   try {
     egress.__resetEgress();
     await egress.ensureHydrated();
@@ -580,7 +580,7 @@ test('egress requests (os-egress-requests): fresh-boot bootstrap + round-trip hy
 
 test('approvals (os-approvals): decided approval survives pod roll via hydration', async () => {
   const os = fakeCluster();
-  const approvals = await import('./approvals.ts');
+  const approvals = await import('../approvals.ts');
   try {
     approvals.__resetApprovals();
     const a = approvals.enqueue({
@@ -606,7 +606,7 @@ test('approvals (os-approvals): decided approval survives pod roll via hydration
 
 test('platform audit (os-audit): audit ring order preserved + entries survive pod roll', async () => {
   const os = fakeCluster();
-  const audit = await import('./platform-admin/audit.ts');
+  const audit = await import('../platform-admin/audit.ts');
   try {
     audit._resetAudit();
     const e1 = audit.audit({ tenant: 't1', actor: 'admin', role: 'admin', action: 'domain.create', target: 'domain:sales', detail: 'first' });
@@ -630,7 +630,7 @@ test('platform audit (os-audit): audit ring order preserved + entries survive po
 
 test('agent memory (os-agent-memory): curated fact survives pod roll via hydration', async () => {
   const os = fakeCluster();
-  const mem = await import('./agent-memory.ts');
+  const mem = await import('../agent-memory.ts');
   try {
     mem.__resetMemory();
     const f = mem.proposeFact({ domain: 'sales', agent: 'crm-agent', kind: 'semantic', text: 'Prefers EUR', provenance: 'thread-1' });
@@ -653,7 +653,7 @@ test('agent memory (os-agent-memory): curated fact survives pod roll via hydrati
 
 test('marketplace (os-marketplace-*): grant + deprecated survive pod roll via hydration', async () => {
   const os = fakeCluster();
-  const mkt = await import('./marketplace/store.ts');
+  const mkt = await import('../marketplace/store.ts');
   try {
     mkt.__resetMarketplace();
     mkt.putGrant({ id: 'grant_t1', listingId: 'mock-1', grantee: { kind: 'domain', id: 'sales' }, mode: 'reference', grantedBy: 'admin', grantedAt: new Date().toISOString() } as Parameters<typeof mkt.putGrant>[0]);
@@ -683,7 +683,7 @@ test('marketplace (os-marketplace-*): grant + deprecated survive pod roll via hy
 
 test('approvals (os-approvals): first enqueue on a fresh cluster bootstraps the index and persists the doc', async () => {
   const os = fakeCluster();
-  const approvals = await import('./approvals.ts');
+  const approvals = await import('../approvals.ts');
   try {
     osMirror({ index: 'os-approvals' }).__reset(); // fresh-process mirror state
     approvals.__resetApprovals();
@@ -702,7 +702,7 @@ test('approvals (os-approvals): first enqueue on a fresh cluster bootstraps the 
 
 test('platform audit (os-audit): first audit entry on a fresh cluster bootstraps the index and persists the doc', async () => {
   const os = fakeCluster();
-  const audit = await import('./platform-admin/audit.ts');
+  const audit = await import('../platform-admin/audit.ts');
   try {
     osMirror({ index: 'os-audit' }).__reset();
     const e = audit.audit({ tenant: 't1', actor: 'admin', role: 'admin', action: 'domain.create', target: 'domain:sales', detail: 'created' });
@@ -717,7 +717,7 @@ test('platform audit (os-audit): first audit entry on a fresh cluster bootstraps
 
 test('agent memory (os-agent-memory): first fact on a fresh cluster bootstraps the index and persists the doc', async () => {
   const os = fakeCluster();
-  const mem = await import('./agent-memory.ts');
+  const mem = await import('../agent-memory.ts');
   try {
     osMirror({ index: 'os-agent-memory' }).__reset();
     const f = mem.proposeFact({ domain: 'sales', agent: 'crm-agent', kind: 'semantic', text: 'Prefers EUR', provenance: 'thread-1' });
@@ -731,7 +731,7 @@ test('agent memory (os-agent-memory): first fact on a fresh cluster bootstraps t
 
 test('marketplace (os-marketplace-*): first grant/audit on a fresh cluster bootstraps their indices and persists', async () => {
   const os = fakeCluster();
-  const mkt = await import('./marketplace/store.ts');
+  const mkt = await import('../marketplace/store.ts');
   try {
     osMirror({ index: 'os-marketplace-grants' }).__reset();
     osMirror({ index: 'os-marketplace-audit' }).__reset();

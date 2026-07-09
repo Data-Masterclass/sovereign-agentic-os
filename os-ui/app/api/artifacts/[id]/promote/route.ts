@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth';
-import { getArtifact } from '@/lib/artifacts';
+import { requireUser } from '@/lib/core/auth';
+import { getArtifact } from '@/lib/core/artifacts';
 import { promoteThroughSeam } from '@/lib/governance/ladder';
 
 export const dynamic = 'force-dynamic';

@@ -33,8 +33,8 @@ import {
   roleAtLeast,
 } from './model.ts';
 import { resolveArtifact, sourceFor } from './sources.ts';
-import { osMirror } from '../os-mirror.ts';
-import { type ArtifactVersion, versionLog } from '../versioning.ts';
+import { osMirror } from '../infra/os-mirror.ts';
+import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
 
 /**
  * State pinned to `globalThis` so it is a TRUE singleton across all Next.js

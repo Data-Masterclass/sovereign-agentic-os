@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { currentUser } from '@/lib/auth';
+import { currentUser } from '@/lib/core/auth';
 import { decide, ensureHydrated, getApproval, listApprovals, recordEffect } from '@/lib/approvals';
 import { canApprove, canSee, roleLabel } from '@/lib/governance/roles';
 import { applyEffect } from '@/lib/governance/effects';

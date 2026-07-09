@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
 import { listModels, getDefaults, getAssistantModelId, isAssistantExplicit, listProviderKeys, registerProviderKey } from '@/lib/platform-admin/models';
-import { putSecret, secretFingerprint } from '@/lib/secrets';
+import { putSecret, secretFingerprint } from '@/lib/infra/secrets';
 import { audit } from '@/lib/platform-admin/audit';
 
 export const dynamic = 'force-dynamic';

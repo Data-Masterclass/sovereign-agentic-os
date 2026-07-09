@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { templateByKey } from './schema.ts';
 import { adapterFor } from './connection-adapters.ts';
-import { compileConnectionProfile, decide, exposedTools } from '../capability-compiler.ts';
+import { compileConnectionProfile, decide, exposedTools } from '../infra/capability-compiler.ts';
 import {
   rememberPolicy,
   matchStandingPolicy,

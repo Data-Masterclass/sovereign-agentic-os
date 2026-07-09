@@ -25,7 +25,7 @@ globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof f
 const { importAdapter, myImports } = await import('./adapters.ts');
 const { mockCatalog } = await import('./store.ts');
 const { listConnectionsForUser } = await import('@/lib/connections');
-const { listForUser } = await import('@/lib/artifacts');
+const { listForUser } = await import('@/lib/core/artifacts');
 import type { MockProduct } from './store.ts';
 import type { Viewer } from './types.ts';
 

@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react';
 import DatasetTiles from './DatasetTiles';
 import DatasetDetail from './DatasetDetail';
 import DatasetStepper from './DatasetStepper';
-import { useTabNavReset } from '@/lib/tab-nav';
+import { useTabNavReset } from '@/lib/core/tab-nav';
 
 type TabView =
   | { kind: 'tiles' }

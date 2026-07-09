@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { requireUser, type CurrentUser } from '@/lib/auth';
+import { requireUser, type CurrentUser } from '@/lib/core/auth';
 import { type AgentScope, type DelegatedToken, claimsFromUser, delegate } from '@/lib/data/identity';
 
 /**

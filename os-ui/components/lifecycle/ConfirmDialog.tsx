@@ -17,8 +17,8 @@
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import type { ConfirmCopy } from '@/lib/lifecycle';
-import { phraseSatisfied } from '@/lib/lifecycle';
+import type { ConfirmCopy } from '@/lib/core/lifecycle';
+import { phraseSatisfied } from '@/lib/core/lifecycle';
 
 type Pending = ConfirmCopy & { resolve: (ok: boolean) => void };
 

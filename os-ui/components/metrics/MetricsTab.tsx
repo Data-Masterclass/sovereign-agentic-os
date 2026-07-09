@@ -5,7 +5,7 @@
 
 import { useState } from 'react';
 import { useApi } from '@/lib/useApi';
-import { useTabNavReset } from '@/lib/tab-nav';
+import { useTabNavReset } from '@/lib/core/tab-nav';
 import MetricsRegistry from './MetricsRegistry';
 import MetricDetail from './MetricDetail';
 import DefineMetric from './DefineMetric';

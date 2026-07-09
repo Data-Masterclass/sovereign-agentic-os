@@ -51,7 +51,7 @@ function openSearchStub(): Stub {
 let v = 0;
 async function freshUsers() {
   v += 1;
-  return import(`./users.ts?email-case=${v}`);
+  return import(`../users.ts?email-case=${v}`);
 }
 
 const STRONG = 'Tr0ub4dour&3-horses';

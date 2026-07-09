@@ -11,7 +11,7 @@ import Govern from './Govern';
 import { type DashboardSummary, type DashTier, TIER_BADGE, TIER_LABEL } from './shared';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
-import type { Visibility } from '@/lib/lifecycle';
+import type { Visibility } from '@/lib/core/lifecycle';
 import DomainTag from '@/components/DomainTag';
 
 type Facet = 'view' | 'reports' | 'govern';

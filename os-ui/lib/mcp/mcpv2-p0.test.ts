@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import { handleRpc, type JsonRpcResponse, type ToolError } from './server.ts';
 
 import { __resetStore as resetData } from '@/lib/data/store';
@@ -215,7 +215,7 @@ test('P0.4 the ladder is the ONLY promotion path: no direct promote/certify/tier
     publishWorkflow: ['lib/knowledge/store.ts', 'lib/governance/effects.ts'],
     certifyWorkflow: ['lib/knowledge/store.ts', 'lib/governance/effects.ts'],
     promoteApp: ['lib/apps.ts', 'lib/governance/ladder.ts'],
-    promoteArtifact: ['lib/artifacts.ts', 'lib/apps.ts', 'lib/governance/ladder.ts'], // apps.ts = documented cascade
+    promoteArtifact: ['lib/core/artifacts.ts', 'lib/apps.ts', 'lib/governance/ladder.ts'], // apps.ts = documented cascade
     transitionDashboard: ['lib/dashboards/store.ts', 'lib/governance/effects.ts'],
     promoteModel: ['lib/science/model-service.ts', 'lib/governance/effects.ts'],
     certifyModel: ['lib/science/model-service.ts', 'lib/governance/effects.ts'],

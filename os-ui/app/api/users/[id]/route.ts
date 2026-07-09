@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/auth';
+import { requireAdmin } from '@/lib/core/auth';
 import { archiveUser, deleteUser, restoreUser, updateUser } from '@/lib/users';
-import { ROLES, type Role } from '@/lib/session';
+import { ROLES, type Role } from '@/lib/core/session';
 
 export const dynamic = 'force-dynamic';
 

@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import {
   ALL_MCP_TOOLS,
   handleRpc as realHandleRpc,
@@ -14,7 +14,7 @@ import type { ToolExecutor, ToolSpec } from '@/lib/assistant/agentic';
 import type { System } from '../system-schema.ts';
 import { type Effect } from '../gateway.ts';
 import { principalFor } from './runtime-contract.ts';
-import { trace as realTrace } from '@/lib/agent-governed';
+import { trace as realTrace } from '@/lib/infra/agent-governed';
 import { enqueue as realEnqueue } from '@/lib/approvals';
 
 /**

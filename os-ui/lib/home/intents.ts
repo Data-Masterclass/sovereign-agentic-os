@@ -22,7 +22,7 @@
  * never broaden visibility or skip the human promote/certify gate.
  */
 
-import type { ArtifactType } from '../artifact-model.ts';
+import type { ArtifactType } from '../core/artifact-model.ts';
 
 export type AskIntent =
   | { kind: 'scaffold'; type: ArtifactType; name: string }

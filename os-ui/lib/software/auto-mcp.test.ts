@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { toolsFromOpenApi, applyReadsOnWritesOff, generateAndCompile } from './auto-mcp.ts';
-import { authorizeConnectionCall } from '@/lib/agent-governed';
+import { authorizeConnectionCall } from '@/lib/infra/agent-governed';
 
 const SPEC = {
   paths: {

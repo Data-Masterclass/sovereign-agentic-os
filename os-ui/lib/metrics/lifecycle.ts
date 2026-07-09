@@ -10,8 +10,8 @@ import {
   requireDatasetEditable,
 } from '../data/store.ts';
 import { MetricError } from './model.ts';
-import { osMirror } from '../os-mirror.ts';
-import { type ArtifactVersion, versionLog } from '../versioning.ts';
+import { osMirror } from '../infra/os-mirror.ts';
+import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
 import {
   type PhysicalDeleteReport,
   deregisterCubeMembers,

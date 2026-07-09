@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/files/server';
 import { addSource, listSources, CONNECTOR_TEMPLATES, type Provider, type SyncMode, type SyncScope } from '@/lib/files/connectors';
 import type { Sensitivity } from '@/lib/files/asset-schema';
-import { requireUser } from '@/lib/auth';
+import { requireUser } from '@/lib/core/auth';
 import { getConnectionForUser } from '@/lib/connections';
 import { providerForTemplate, filesProviderFor } from '@/lib/oauth/providers';
 

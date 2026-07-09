@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import Link from 'next/link';
-import { currentUser } from '@/lib/auth';
+import { currentUser } from '@/lib/core/auth';
 import { homeFeed } from '@/lib/home/feed';
 import HomeLauncher from '@/components/home/HomeLauncher';
 import McpDrawer from '@/components/McpDrawer';

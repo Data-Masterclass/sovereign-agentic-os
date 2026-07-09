@@ -12,8 +12,8 @@ import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import { useToolWindow } from '@/components/ToolWindowProvider';
 import { useApi } from '@/lib/useApi';
-import { getUrlParam, patchUrl } from '@/lib/url-params';
-import { roleAtLeast, type Role as SessionRole } from '@/lib/session';
+import { getUrlParam, patchUrl } from '@/lib/core/url-params';
+import { roleAtLeast, type Role as SessionRole } from '@/lib/core/session';
 import DomainTag from '@/components/DomainTag';
 
 type Visibility = 'Personal' | 'Shared' | 'Certified';

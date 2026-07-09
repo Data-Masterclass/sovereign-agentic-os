@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { config } from '@/lib/config';
-import { requireUser } from '@/lib/auth';
+import { config } from '@/lib/core/config';
+import { requireUser } from '@/lib/core/auth';
 import { MODEL_CATALOG, modelInfo, type ModelInfo } from '@/lib/agents/routing';
 import { roleModels } from '@/lib/models/roles';
 

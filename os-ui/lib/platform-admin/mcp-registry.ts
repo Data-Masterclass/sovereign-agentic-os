@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { ROLES, type Role } from '@/lib/session';
-import type { Visibility } from '@/lib/artifact-model';
+import { ROLES, type Role } from '@/lib/core/session';
+import type { Visibility } from '@/lib/core/artifact-model';
 
 /**
  * MCPs & APIs registry aggregator (Platform → MCPs & APIs).

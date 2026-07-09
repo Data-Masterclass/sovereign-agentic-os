@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import { handleRpc, type JsonRpcResponse } from './server.ts';
 import { PROMPTS } from './prompts.ts';
 

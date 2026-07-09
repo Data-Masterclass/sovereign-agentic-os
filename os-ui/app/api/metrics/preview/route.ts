@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { getDataset } from '@/lib/data/store';
-import { delegatedToken } from '@/lib/identity-server';
+import { delegatedToken } from '@/lib/infra/identity-server';
 import { measureFromForm, type MetricForm } from '@/lib/metrics/model';
 import { exploreMetric } from '@/lib/metrics/build/explore-server';
 import type { Granularity } from '@/lib/metrics/explorer';

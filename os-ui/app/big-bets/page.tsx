@@ -16,7 +16,7 @@ import {
 import { ProgressBar, SignalBadge } from './ui';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
-import type { Visibility as LcVisibility } from '@/lib/lifecycle';
+import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
 import DomainTag from '@/components/DomainTag';
 
 /** A bet's reach → the OS-wide lifecycle visibility (cross-domain bets affect others). */

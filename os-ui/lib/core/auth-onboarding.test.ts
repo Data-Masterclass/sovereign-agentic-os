@@ -12,8 +12,8 @@ import {
   selectMailer,
   sendVerificationEmail,
   type OutgoingMail,
-} from './mailer.ts';
-import { __resetUsers } from './users.ts';
+} from '../infra/mailer.ts';
+import { __resetUsers } from '../users.ts';
 
 /**
  * Self-hosted onboarding security: the bootstrap admin must become active with
@@ -86,7 +86,7 @@ beforeEach(() => __resetUsers());
 let v = 0;
 async function freshUsers() {
   v += 1;
-  return import(`./users.ts?case=${v}`);
+  return import(`../users.ts?case=${v}`);
 }
 
 const STRONG = 'Tr0ub4dour&3-horses';

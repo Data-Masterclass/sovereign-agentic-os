@@ -2,24 +2,24 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
-import type { CurrentUser } from '@/lib/auth';
-import { canPromote, roleAtLeast } from '@/lib/session';
-import type { Visibility } from '@/lib/artifact-model';
+import { config } from '@/lib/core/config';
+import type { CurrentUser } from '@/lib/core/auth';
+import { canPromote, roleAtLeast } from '@/lib/core/session';
+import type { Visibility } from '@/lib/core/artifact-model';
 import {
   createArtifact,
   promoteArtifact,
   getArtifact,
   type Artifact,
-} from '@/lib/artifacts';
+} from '@/lib/core/artifacts';
 import {
   registerConnection,
   setConnectionVisibility,
   getConnectionByApp,
   type AppConnection,
   type AppTool,
-} from '@/lib/app-registry';
-import { trace } from '@/lib/agent-governed';
+} from '@/lib/infra/app-registry';
+import { trace } from '@/lib/infra/agent-governed';
 import type {
   AppStatus,
   DeployState,
@@ -30,9 +30,9 @@ import type {
 } from '@/lib/software/model';
 import { generateAndCompile } from '@/lib/software/auto-mcp';
 import { parseAppManifest, renderAppYaml, defaultOpenApi, detectSurface } from '@/lib/software/metadata';
-import { osMirror } from '@/lib/os-mirror';
-import { type ArtifactVersion, versionLog } from '@/lib/versioning';
-import { listGitVersions, restoreGitVersion, shaForVersion, type GitVersion } from '@/lib/git-versioning';
+import { osMirror } from '@/lib/infra/os-mirror';
+import { type ArtifactVersion, versionLog } from '@/lib/core/versioning';
+import { listGitVersions, restoreGitVersion, shaForVersion, type GitVersion } from '@/lib/core/git-versioning';
 import type { ForgejoClient, ForgejoCommit, ForgejoCommitFiles } from '@/lib/agents/build/live';
 
 /**

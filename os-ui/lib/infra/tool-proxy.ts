@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
-import { ROLES, SESSION_COOKIE, type Role } from '@/lib/session';
+import { config } from '@/lib/core/config';
+import { ROLES, SESSION_COOKIE, type Role } from '@/lib/core/session';
 
 /**
  * Same-origin, server-proxied tool embedding.

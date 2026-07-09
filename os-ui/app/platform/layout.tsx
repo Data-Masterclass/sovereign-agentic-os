@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
  */
-import { currentUser } from '@/lib/auth';
+import { currentUser } from '@/lib/core/auth';
 import PlatformNav from '@/components/PlatformNav';
 
 /**

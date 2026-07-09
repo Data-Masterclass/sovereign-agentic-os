@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import { callPlatformMcp, platformMcpToolNames } from './platform-mcp.ts';
 import type { App } from '@/lib/apps';
 import type { DeployRequestResult } from './review.ts';

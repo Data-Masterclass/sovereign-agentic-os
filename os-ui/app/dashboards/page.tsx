@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import DashboardsTab from '@/components/dashboards/DashboardsTab';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 
 // Thin server wrapper: reads the browser-reachable Superset console URL from the RUNTIME
 // env (force-dynamic — same reasoning as the former stub) and hands it to the client

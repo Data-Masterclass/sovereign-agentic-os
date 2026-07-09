@@ -22,7 +22,7 @@
  * map to OPA and is honest when OPA is unreachable (offline kind) — the compiled
  * view still renders so the teaching flow works.
  */
-import { config } from '../config.ts';
+import { config } from '../core/config.ts';
 
 export type Role = 'creator' | 'builder' | 'domain_admin' | 'admin';
 

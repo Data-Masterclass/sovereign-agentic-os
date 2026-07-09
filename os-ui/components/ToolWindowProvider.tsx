@@ -5,7 +5,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import ToolWindow, { type OpenToolTarget } from '@/components/ToolWindow';
-import { getUrlParam, patchUrl } from '@/lib/url-params';
+import { getUrlParam, patchUrl } from '@/lib/core/url-params';
 
 /**
  * App-wide host for the embedded-tool overlay. Mounted once in the root layout

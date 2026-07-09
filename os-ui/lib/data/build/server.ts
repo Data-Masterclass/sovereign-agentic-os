@@ -4,7 +4,7 @@
 import 'server-only';
 import { type Dataset, type Layer, type Quality } from '../dataset-schema.ts';
 import { type DataStage } from './adapter.ts';
-import type { ExecuteIdentity } from '@/lib/governed';
+import type { ExecuteIdentity } from '@/lib/infra/governed';
 import { orchestrateStage, type DataBuildReport } from './orchestrate.ts';
 import { makeMockAdapters, newMockBackends } from './mocks.ts';
 import { makeRealClients, liveDataReachable } from './live-clients.ts';

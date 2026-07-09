@@ -2,11 +2,11 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
-import { osMirror } from '@/lib/os-mirror';
-import type { CurrentUser } from '@/lib/auth';
-import { canPromote, roleAtLeast } from '@/lib/session';
-import type { Visibility } from '@/lib/artifact-model';
+import { config } from '@/lib/core/config';
+import { osMirror } from '@/lib/infra/os-mirror';
+import type { CurrentUser } from '@/lib/core/auth';
+import { canPromote, roleAtLeast } from '@/lib/core/session';
+import type { Visibility } from '@/lib/core/artifact-model';
 import {
   type Connection,
   type ConnectionTool,
@@ -17,8 +17,8 @@ import {
   templateByKey,
   isPersonalConnectable,
 } from '@/lib/connections/schema';
-import { putSecret, secretFingerprint, getSecretServerSide, isEgressAllowed, deleteSecret, hasSecret } from '@/lib/secrets';
-import { type ArtifactVersion, versionLog } from '@/lib/versioning';
+import { putSecret, secretFingerprint, getSecretServerSide, isEgressAllowed, deleteSecret, hasSecret } from '@/lib/infra/secrets';
+import { type ArtifactVersion, versionLog } from '@/lib/core/versioning';
 import {
   type PhysicalDeleteReport,
   purgeConnectionSecrets,
@@ -31,7 +31,7 @@ import {
   exposedConnectionTools,
   trace,
   type ConnToolPolicy,
-} from '@/lib/agent-governed';
+} from '@/lib/infra/agent-governed';
 import { enqueue } from '@/lib/approvals';
 import { adapterFor } from '@/lib/connections/connection-adapters';
 import {

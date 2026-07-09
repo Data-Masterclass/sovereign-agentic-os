@@ -8,11 +8,11 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
 import { useApi } from '@/lib/useApi';
-import { SCOPE_GROUPS, groupByScope, groupsFromVisibility, scopeCounts, type ScopeKey } from '@/lib/scopes';
+import { SCOPE_GROUPS, groupByScope, groupsFromVisibility, scopeCounts, type ScopeKey } from '@/lib/core/scopes';
 import TeamPanel from './TeamPanel';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
-import type { Visibility as LcVisibility } from '@/lib/lifecycle';
+import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
 import DomainTag from '@/components/DomainTag';
 
 type Visibility = 'Personal' | 'Shared' | 'Certified';

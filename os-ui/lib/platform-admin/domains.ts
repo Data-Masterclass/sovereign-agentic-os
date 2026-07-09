@@ -17,8 +17,8 @@
  * step is INJECTED (see {@link ensureHydrated}).
  */
 
-import { config } from '../config.ts';
-import { osMirror } from '../os-mirror.ts';
+import { config } from '../core/config.ts';
+import { osMirror } from '../infra/os-mirror.ts';
 
 export type DomainLayers = { ml: boolean };
 

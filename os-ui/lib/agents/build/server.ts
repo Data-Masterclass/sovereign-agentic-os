@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
-import { trace as gvTrace } from '@/lib/agent-governed';
+import { config } from '@/lib/core/config';
+import { trace as gvTrace } from '@/lib/infra/agent-governed';
 import { enqueue } from '@/lib/approvals';
 import { parseSystem, type System } from '../system-schema.ts';
 import { compile } from '../langgraph-compile.ts';

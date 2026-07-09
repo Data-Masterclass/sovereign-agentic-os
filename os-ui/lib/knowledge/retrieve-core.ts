@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { type KnowledgeUnit, type Provenance } from './chunk.ts';
-import { roleAtLeast, type Role } from '../session.ts';
+import { roleAtLeast, type Role } from '../core/session.ts';
 
 /**
  * Pure retrieval core — the parts that must be deterministic + unit-testable:

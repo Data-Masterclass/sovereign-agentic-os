@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 
 /**
  * Langfuse trace of what entered an agent's context window for a knowledge query:

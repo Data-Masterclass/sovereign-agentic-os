@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { transition as transitionDataset } from '@/lib/data/store';
-import { delegatedToken } from '@/lib/identity-server';
+import { delegatedToken } from '@/lib/infra/identity-server';
 import { getMetric } from '@/lib/metrics/store';
 import { governMetric } from '@/lib/metrics/governance';
 import { exploreMetric } from '@/lib/metrics/build/explore-server';

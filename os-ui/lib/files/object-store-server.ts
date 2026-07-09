@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 import { putObject, getObject, deleteObject } from '@/lib/data/object-store';
 import { memoryBackend, setBlobBackend, type BlobBackend } from './object-store.ts';
 

@@ -17,7 +17,7 @@
  * PURE module (no server-only): `lib/artifacts.ts` persists the returned artifact.
  */
 
-import type { Artifact } from '../artifact-model.ts';
+import type { Artifact } from '../core/artifact-model.ts';
 
 export type HermesSkill = {
   /** Skill id (agentskills.io slug). */

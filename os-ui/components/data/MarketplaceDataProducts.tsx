@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useUser } from '@/lib/useUser';
-import { roleAtLeast } from '@/lib/session';
+import { roleAtLeast } from '@/lib/core/session';
 
 type Tile = { id: string; name: string; owner: string; domain: string; quality: string };
 

@@ -7,7 +7,7 @@ import { listFiles, createFile, attachObject, objectKeyForAsset, type UploadInpu
 import { putBlob } from '@/lib/files/object-store';
 import '@/lib/files/object-store-server'; // registers the durable MinIO backend
 import { reindexFile } from '@/lib/files/pipeline-server';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 import type { Sensitivity, Storage } from '@/lib/files/asset-schema';
 
 export const dynamic = 'force-dynamic';

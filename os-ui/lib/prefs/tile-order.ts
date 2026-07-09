@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { osMirror } from '@/lib/os-mirror';
+import { osMirror } from '@/lib/infra/os-mirror';
 export { applyTileOrder, TILE_ORDER_SURFACES, ORDER_LIMIT } from './tile-order-pure';
 export type { TileOrderSurface } from './tile-order-pure';
 import { type TileOrderSurface, ORDER_LIMIT } from './tile-order-pure';

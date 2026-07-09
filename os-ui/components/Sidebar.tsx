@@ -2,9 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { TAB_GROUPS, filterTabGroups, type Tab } from '@/lib/tabs';
+import { TAB_GROUPS, filterTabGroups, type Tab } from '@/lib/core/tabs';
 import { useUser } from '@/lib/useUser';
-import { emitTabNav } from '@/lib/tab-nav';
+import { emitTabNav } from '@/lib/core/tab-nav';
 // Static import so the brand mark is emitted into .next/static (served in the
 // standalone container, where public/ is not copied).
 import lotus from './lotus.svg';

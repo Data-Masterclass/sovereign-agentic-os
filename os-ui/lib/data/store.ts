@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { type Role, roleAtLeast } from '../session.ts';
+import { type Role, roleAtLeast } from '../core/session.ts';
 import {
   type Dataset,
   type DataVisibility,
@@ -28,9 +28,9 @@ import {
 import { transparencyGate, gateReason } from './transparency.ts';
 import { CUBE_ARTIFACT, EXPOSURE_ARTIFACT, scaffoldCubeYaml, scaffoldExposureYaml, metricGoldReady } from './metrics.ts';
 import { assetTarget, productTarget, personalSchema, domainSchema, slug, versionTarget } from './store-fqn.ts';
-import { config } from '../config.ts';
-import { osMirror } from '../os-mirror.ts';
-import { type ArtifactVersion, versionLog } from '../versioning.ts';
+import { config } from '../core/config.ts';
+import { osMirror } from '../infra/os-mirror.ts';
+import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
 
 // Re-export the FQN helpers so existing consumers keep importing them from the store.
 export { assetTarget, productTarget } from './store-fqn.ts';

@@ -6,7 +6,7 @@
 import { useState } from 'react';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 import { TEMPLATES, type TemplateKey } from '@/lib/agents/templates';
-import { getUrlParam } from '@/lib/url-params';
+import { getUrlParam } from '@/lib/core/url-params';
 
 /**
  * Create a new agent system, guided. Pick a plain-language starter template

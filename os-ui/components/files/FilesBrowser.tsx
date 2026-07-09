@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
-import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/scopes';
+import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/core/scopes';
 import FilePreview from './FilePreview';
 
 type Summary = {

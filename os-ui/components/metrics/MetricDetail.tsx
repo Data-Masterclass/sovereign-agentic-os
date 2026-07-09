@@ -12,7 +12,7 @@ import { useUser } from '@/lib/useUser';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import DomainTag from '@/components/DomainTag';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
-import type { Visibility } from '@/lib/lifecycle';
+import type { Visibility } from '@/lib/core/lifecycle';
 
 type Facet = 'explore' | 'govern' | 'alert';
 

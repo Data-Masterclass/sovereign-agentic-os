@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { QueryResult } from '../governed.ts';
+import type { QueryResult } from '../infra/governed.ts';
 import { previewSql } from './profile.ts';
 import { isNotMaterialized, notMaterializedReason } from './materialized.ts';
 

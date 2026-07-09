@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { Role } from '../session.ts';
+import type { Role } from '../core/session.ts';
 import { privatePrefix } from './personal-lane.ts';
 
 /**

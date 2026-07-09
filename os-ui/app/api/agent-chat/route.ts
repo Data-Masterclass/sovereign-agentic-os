@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { roleModel } from '@/lib/models/roles';
 import { contextForAgentKey, tabForAgentKey } from '@/lib/tabs/context';
-import { currentUser } from '@/lib/auth';
+import { currentUser } from '@/lib/core/auth';
 import { runTabAgent, renderAssistantText } from '@/lib/assistant/runtime';
 import { assistantComplete, AssistantNotConfiguredError } from '@/lib/assistant/complete';
 

@@ -3,10 +3,10 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import { handleRpc, toolsForTab, ALL_MCP_TOOLS, type JsonRpcResponse } from './server.ts';
 import { GUIDE_PATHS, loadGuide, type GuidePath } from '@/lib/tabs/guides';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 import { __resetStore as resetData } from '@/lib/data/store';
 
 /**

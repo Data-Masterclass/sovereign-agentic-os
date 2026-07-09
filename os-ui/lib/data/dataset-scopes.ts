@@ -19,7 +19,7 @@ import {
   activeScopeCounts,
   type ScopeGroups as CoreScopeGroups,
   type ScopedTiles,
-} from '../scopes.ts';
+} from '../core/scopes.ts';
 
 export type DatasetScope = ScopeKey;
 

@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import type { Role } from '@/lib/session';
+import type { Role } from '@/lib/core/session';
 import OnboardingWizard from '@/components/OnboardingWizard';
 
 type Me = {

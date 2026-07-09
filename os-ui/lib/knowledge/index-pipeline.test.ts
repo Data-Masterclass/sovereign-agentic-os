@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 import { knowledgeIndexMapping } from './index-pipeline.ts';
 
 /**

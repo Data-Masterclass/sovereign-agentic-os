@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { TAB_GROUPS } from '@/lib/tabs';
+import { TAB_GROUPS } from '@/lib/core/tabs';
 import { listTutorials, TUTORIAL_EXEMPT_ROUTES } from './registry.ts';
 
 /**

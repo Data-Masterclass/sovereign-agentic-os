@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth';
-import { config } from '@/lib/config';
+import { requireUser } from '@/lib/core/auth';
+import { config } from '@/lib/core/config';
 import { getConnectionForUser } from '@/lib/connections';
 import { asOAuthProvider, providerForTemplate, providerConfig } from '@/lib/oauth/providers';
 import { getOAuthApp, isConfigured, ensureHydrated } from '@/lib/oauth/oauth-apps';

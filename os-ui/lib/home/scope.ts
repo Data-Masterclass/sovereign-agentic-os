@@ -17,7 +17,7 @@
  */
 
 import type { HomePersona } from './launcher.ts';
-import { roleAtLeast, type Role } from '../session.ts';
+import { roleAtLeast, type Role } from '../core/session.ts';
 
 export type Viewer = { id: string; domains: string[]; role: Role };
 

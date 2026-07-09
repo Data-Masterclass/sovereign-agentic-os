@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { Role } from '../session.ts';
+import type { Role } from '../core/session.ts';
 import { type DashTier, type DashboardRecord, dashboardRecord, governDashboard } from './governance.ts';
 import { type DashboardSpec } from './model.ts';
-import { osMirror } from '../os-mirror.ts';
-import { type ArtifactVersion, versionLog } from '../versioning.ts';
+import { osMirror } from '../infra/os-mirror.ts';
+import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
 
 /**
  * A small in-memory dashboard registry (mirrors lib/data/store's shape + discipline:

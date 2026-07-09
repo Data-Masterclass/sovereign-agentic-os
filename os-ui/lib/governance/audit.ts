@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { config } from '../config.ts';
+import { config } from '../core/config.ts';
 
 /**
  * Audit integrity (governance-golden-path.md §3) — the trustworthy record of

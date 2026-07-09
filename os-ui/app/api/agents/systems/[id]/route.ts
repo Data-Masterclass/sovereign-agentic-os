@@ -2,13 +2,13 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth';
+import { requireUser } from '@/lib/core/auth';
 import { getSystem, archiveSystem, unarchiveSystem, deleteSystem, ensureHydrated } from '@/lib/agents/store';
 import { purgeSystemResources } from '@/lib/agents/physical-delete';
 import { realForgejo } from '@/lib/agents/build/live-clients';
 import { reconcileScheduleCron } from '@/lib/agents/schedule-cron';
 import { compile } from '@/lib/agents/langgraph-compile';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 
 export const dynamic = 'force-dynamic';
 

@@ -3,10 +3,10 @@
  */
 import { KnowledgeError } from './schema.ts';
 import type { Visibility } from './schema.ts';
-import { roleAtLeast } from '../session.ts';
-import type { Role } from '../session.ts';
-import { osMirror } from '../os-mirror.ts';
-import { type ArtifactVersion, versionLog } from '../versioning.ts';
+import { roleAtLeast } from '../core/session.ts';
+import type { Role } from '../core/session.ts';
+import { osMirror } from '../infra/os-mirror.ts';
+import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
 
 /**
  * PERSONAL general-knowledge store — the "My knowledge" layer of the Knowledge

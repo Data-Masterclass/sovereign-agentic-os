@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { hashPassword, verifyPassword, isHashed, assessPasswordStrength } from './password.ts';
-import { generateMasterKey, normalizeMasterKey } from './recovery.ts';
+import { generateMasterKey, normalizeMasterKey } from '../recovery.ts';
 
 test('passwords are scrypt-hashed, salted, and never stored in plaintext', async () => {
   const plain = 'Correct-Horse-9!battery';

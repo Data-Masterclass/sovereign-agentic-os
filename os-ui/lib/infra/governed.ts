@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
-import type { Role } from '@/lib/session';
+import { config } from '@/lib/core/config';
+import type { Role } from '@/lib/core/session';
 
 /**
  * Governed data-tool spine. Every data access an agent makes — the Cube `metrics`

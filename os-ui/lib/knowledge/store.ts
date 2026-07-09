@@ -11,10 +11,10 @@ import {
   serializeWorkflow,
   emptyDomainKnowledge,
 } from './schema.ts';
-import { canPromote, roleAtLeast } from '../session.ts';
-import type { Role } from '../session.ts';
-import { osMirror } from '../os-mirror.ts';
-import { type ArtifactVersion, versionLog } from '../versioning.ts';
+import { canPromote, roleAtLeast } from '../core/session.ts';
+import type { Role } from '../core/session.ts';
+import { osMirror } from '../infra/os-mirror.ts';
+import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
 
 export type { ArtifactVersion };
 

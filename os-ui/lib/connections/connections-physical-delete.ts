@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { Connection } from './schema.ts';
-import type { SecretRef } from '../secrets.ts';
+import type { SecretRef } from '../infra/secrets.ts';
 
 /**
  * PHYSICAL cleanup for a connection DELETE (never for archive — archive is a reversible

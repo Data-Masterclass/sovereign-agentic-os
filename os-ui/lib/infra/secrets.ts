@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { createHash } from 'crypto';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 import { isHostApproved } from '@/lib/connections/egress-requests';
 
 /**

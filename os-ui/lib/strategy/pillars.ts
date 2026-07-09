@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { osMirror } from '@/lib/os-mirror';
-import type { CurrentUser } from '@/lib/auth';
+import { osMirror } from '@/lib/infra/os-mirror';
+import type { CurrentUser } from '@/lib/core/auth';
 import {
   type Pillar,
   type PillarScope,

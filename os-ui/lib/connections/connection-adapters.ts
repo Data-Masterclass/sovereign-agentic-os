@@ -32,7 +32,7 @@ import {
   compileConnectionProfile,
   type OpaConnectionBundle,
   type CompilerGrant,
-} from '../capability-compiler.ts';
+} from '../infra/capability-compiler.ts';
 import type { ConnectionTool, ConnectionTemplate, CapabilityMode, ConnectorKind } from './schema.ts';
 
 export type { ConnectorKind };

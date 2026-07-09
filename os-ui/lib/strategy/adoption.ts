@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { allArtifacts } from '@/lib/artifacts';
+import { allArtifacts } from '@/lib/core/artifacts';
 import { listUsers } from '@/lib/users';
-import type { Role } from '@/lib/session';
+import type { Role } from '@/lib/core/session';
 import { type ArtifactKind, ARTIFACT_KINDS } from '@/lib/strategy/model';
 import {
   tallyAdoption,

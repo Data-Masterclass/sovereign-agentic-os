@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import {
   createApp,
   getAppByIdInternal,
@@ -10,7 +10,7 @@ import {
   type AppTemplateKey,
 } from '@/lib/apps';
 import { promoteThroughSeam } from '@/lib/governance/ladder';
-import { trace } from '@/lib/agent-governed';
+import { trace } from '@/lib/infra/agent-governed';
 import { startPreview, requestDeploy, decideDeploy } from './review.ts';
 import { archiveApp, deleteApp, useAsData, consumeResource } from './lifecycle.ts';
 import { authorThroughFrontDoor, commitToApp } from './server.ts';

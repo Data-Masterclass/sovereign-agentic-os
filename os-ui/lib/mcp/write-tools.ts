@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { CurrentUser } from '@/lib/auth';
-import type { Role } from '@/lib/session';
+import type { CurrentUser } from '@/lib/core/auth';
+import type { Role } from '@/lib/core/session';
 import type { McpTool, JsonSchema } from './server';
 import { strategyWriteTools } from './strategy-tools';
 import { marketplaceWriteTools } from './marketplace-tools';
@@ -23,7 +23,7 @@ import {
 } from '@/lib/data/store';
 import { runQualityChecks } from '@/lib/data/dq-run';
 import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/data/dataset-schema';
-import { queryRun } from '@/lib/governed';
+import { queryRun } from '@/lib/infra/governed';
 import { publishPromotionLive } from '@/lib/data/publish-server';
 import { enqueue, getApproval, decide, listApprovals } from '@/lib/approvals';
 import { canBuildStage, canPassThrough, stageArtifact } from '@/lib/data/panels';
@@ -42,7 +42,7 @@ import {
   type JoinType,
 } from '@/lib/data/transform';
 import { assetTarget } from '@/lib/data/store-fqn';
-import type { ExecuteIdentity } from '@/lib/governed';
+import type { ExecuteIdentity } from '@/lib/infra/governed';
 import type { Layer, Quality, DataVisibility, Grant, ColumnDoc, DatasetUpstream } from '@/lib/data/dataset-schema';
 import { measureFromForm, measureMember, type MetricForm, type GuidedFilter, type GuidedWindow } from '@/lib/metrics/model';
 import type { MeasureType } from '@/lib/data/metrics';

@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
-import { delegatedToken } from '@/lib/identity-server';
+import { delegatedToken } from '@/lib/infra/identity-server';
 import { getDashboard } from '@/lib/dashboards/store';
 import { mintEmbed } from '@/lib/dashboards/build/server';
 

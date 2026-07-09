@@ -4,7 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import type { Role } from '@/lib/session';
+import type { Role } from '@/lib/core/session';
 
 export type Me = { id: string; name: string; domains: string[]; role: Role };
 

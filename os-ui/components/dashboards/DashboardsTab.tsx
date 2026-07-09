@@ -7,7 +7,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
 import { useApi } from '@/lib/useApi';
-import { useTabNavReset } from '@/lib/tab-nav';
+import { useTabNavReset } from '@/lib/core/tab-nav';
 import type { DashboardGroups, MetricGroups, DashboardSummary, DashTier } from './shared';
 import Tiles from './Tiles';
 import NewDashboard from './NewDashboard';

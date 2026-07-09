@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import { toolsForTab } from '@/lib/mcp/server';
 import { runTabAgent, parseLlmMessage, parseHarmonyToolCall, renderAssistantText } from './runtime.ts';
 import type { LlmCall } from './agentic.ts';

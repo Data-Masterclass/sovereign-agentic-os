@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse, type NextRequest } from 'next/server';
-import { currentUser, type CurrentUser } from '@/lib/auth';
+import { currentUser, type CurrentUser } from '@/lib/core/auth';
 import { validateAuthorizeRequest, issueCode, getClient, issuer, OAuthError, type AuthorizeRequest } from '@/lib/mcp/oauth';
 
 export const dynamic = 'force-dynamic';

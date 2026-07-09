@@ -13,7 +13,7 @@ import {
   type Principal,
 } from './store.ts';
 import { runPreview, clampLimit, PREVIEW_MAX_LIMIT, PREVIEW_DEFAULT_LIMIT } from './preview.ts';
-import type { QueryResult } from '../governed.ts';
+import type { QueryResult } from '../infra/governed.ts';
 
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' };
 const bea: Principal = { id: 'bea', domains: ['sales'], role: 'admin' };

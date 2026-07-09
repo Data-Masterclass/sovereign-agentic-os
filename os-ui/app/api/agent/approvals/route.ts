@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth';
+import { requireUser } from '@/lib/core/auth';
 import { decide, getApproval, listApprovals } from '@/lib/approvals';
 import { curateFact, proposeFact } from '@/lib/agent-memory';
-import { trace } from '@/lib/agent-governed';
+import { trace } from '@/lib/infra/agent-governed';
 import {
   applyApprovedCertification,
   type PromotionRequest,
@@ -17,7 +17,7 @@ import { reindexById } from '@/lib/files/pipeline-server';
 import { listLineage } from '@/lib/files/lineage';
 import { pushLineage } from '@/lib/files/catalog';
 import { onApprovalDecided } from '@/lib/marketplace';
-import { roleAtLeast } from '@/lib/session';
+import { roleAtLeast } from '@/lib/core/session';
 
 export const dynamic = 'force-dynamic';
 

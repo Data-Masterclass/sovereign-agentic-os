@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse, type NextRequest } from 'next/server';
-import { config as appConfig } from '@/lib/config';
-import { SESSION_COOKIE, verifySession } from '@/lib/session';
+import { config as appConfig } from '@/lib/core/config';
+import { SESSION_COOKIE, verifySession } from '@/lib/core/session';
 
 /**
  * Edge gate. Page navigations require a valid signed session (else → /signin).

@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { getDataset } from '@/lib/data/store';
 import { builtLayerFqn } from '@/lib/data/store';
-import { queryRun } from '@/lib/governed';
+import { queryRun } from '@/lib/infra/governed';
 import type { Layer } from '@/lib/data/dataset-schema';
 import {
   assembleProfile,

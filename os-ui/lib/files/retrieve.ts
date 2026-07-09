@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
-import { authorize, trace } from '@/lib/agent-governed';
+import { config } from '@/lib/core/config';
+import { authorize, trace } from '@/lib/infra/agent-governed';
 import { compileDls, type Reader } from '@/lib/files/dls';
 import { embedQuery } from '@/lib/files/embed';
 import { hybridQuery, buildOpenSearchQuery, type Hit, type ChunkMeta } from '@/lib/files/index-store';

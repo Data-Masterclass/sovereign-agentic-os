@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
-import { delegatedToken } from '@/lib/identity-server';
+import { delegatedToken } from '@/lib/infra/identity-server';
 import { saveDashboard } from '@/lib/dashboards/store';
 import { type ChartSpec, fromAgent, fromTiles } from '@/lib/dashboards/model';
 import { type AlertRule } from '@/lib/metrics/alerts';

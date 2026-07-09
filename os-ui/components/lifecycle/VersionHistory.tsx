@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useConfirm } from './ConfirmDialog';
-import { restoreVersionCopy } from '@/lib/lifecycle';
+import { restoreVersionCopy } from '@/lib/core/lifecycle';
 
 type Version = { version: number; at: string; author: string; summary: string };
 

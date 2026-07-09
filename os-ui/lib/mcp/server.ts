@@ -2,11 +2,11 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { CurrentUser } from '@/lib/auth';
-import { ROLES, type Role } from '@/lib/session';
-import { config } from '@/lib/config';
+import type { CurrentUser } from '@/lib/core/auth';
+import { ROLES, type Role } from '@/lib/core/session';
+import { config } from '@/lib/core/config';
 import { PLATFORM_MCP_TOOLS, callPlatformMcp } from '@/lib/software/platform-mcp';
-import { authorize, queryRun, trace } from '@/lib/governed';
+import { authorize, queryRun, trace } from '@/lib/infra/governed';
 import { servePredict } from '@/lib/science/serve';
 import type { ChurnFeatures } from '@/lib/science';
 import { retrieveKnowledge } from '@/lib/knowledge/retrieve';

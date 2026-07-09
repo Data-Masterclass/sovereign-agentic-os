@@ -16,7 +16,7 @@ import {
   type JoinType,
 } from '@/lib/data/transform';
 import type { DatasetUpstream } from '@/lib/data/dataset-schema';
-import type { ExecuteIdentity } from '@/lib/governed';
+import type { ExecuteIdentity } from '@/lib/infra/governed';
 
 export const dynamic = 'force-dynamic';
 

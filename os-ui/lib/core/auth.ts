@@ -3,8 +3,8 @@
  */
 import 'server-only';
 import { cookies } from 'next/headers';
-import { config } from '@/lib/config';
-import { SESSION_COOKIE, type Role, verifySession } from '@/lib/session';
+import { config } from '@/lib/core/config';
+import { SESSION_COOKIE, type Role, verifySession } from '@/lib/core/session';
 import { authenticate as authUser, getPublicUser } from '@/lib/users';
 import { activeDomainIds } from '@/lib/platform-admin/domains';
 

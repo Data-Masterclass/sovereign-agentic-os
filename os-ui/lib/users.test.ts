@@ -3,8 +3,8 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { assessPasswordStrength, generateTempPassword, hashPassword, isHashed } from './password.ts';
-import { ROLES } from './session.ts';
+import { assessPasswordStrength, generateTempPassword, hashPassword, isHashed } from './core/password.ts';
+import { ROLES } from './core/session.ts';
 import { ROLE_RIGHTS } from './governance/roles.ts';
 import { __resetUsers } from './users.ts';
 

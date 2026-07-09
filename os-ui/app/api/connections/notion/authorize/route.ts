@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth';
-import { config } from '@/lib/config';
+import { requireUser } from '@/lib/core/auth';
+import { config } from '@/lib/core/config';
 import { getConnectionForUser } from '@/lib/connections';
 import { discoverMetadata, registerClient, buildNotionAuthorizeUrl } from '@/lib/oauth/notion-mcp';
 import { createPkcePair } from '@/lib/oauth/pkce';

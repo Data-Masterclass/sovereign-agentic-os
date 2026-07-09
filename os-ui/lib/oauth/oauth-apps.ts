@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { osMirror } from '@/lib/os-mirror';
-import { putSecret, secretFingerprint, getSecretServerSide, type SecretRef } from '@/lib/secrets';
+import { osMirror } from '@/lib/infra/os-mirror';
+import { putSecret, secretFingerprint, getSecretServerSide, type SecretRef } from '@/lib/infra/secrets';
 import { type OAuthProvider, OAUTH_PROVIDERS } from './providers.ts';
 
 /**

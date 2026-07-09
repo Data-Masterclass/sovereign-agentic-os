@@ -8,7 +8,7 @@ import { listAccess, inviteUser } from '@/lib/platform-admin/tenant-users';
 import { listDomains } from '@/lib/platform-admin/domains';
 import { getSettings } from '@/lib/platform-admin/settings';
 import { audit } from '@/lib/platform-admin/audit';
-import { ROLES, type Role } from '@/lib/session';
+import { ROLES, type Role } from '@/lib/core/session';
 
 export const dynamic = 'force-dynamic';
 

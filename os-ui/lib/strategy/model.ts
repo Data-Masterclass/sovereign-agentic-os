@@ -22,7 +22,7 @@
  * `adoption.ts`; persistence + governance in `pillars.ts`.
  */
 
-import { roleAtLeast, type Role } from '@/lib/session';
+import { roleAtLeast, type Role } from '@/lib/core/session';
 
 // ---------------------------------------------------------------- Scope --------
 

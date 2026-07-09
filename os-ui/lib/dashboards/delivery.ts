@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { mailerConfigured, sendNotificationEmail } from '../mailer.ts';
+import { mailerConfigured, sendNotificationEmail } from '../infra/mailer.ts';
 import { addNotification } from '../notifications/store.ts';
 import type { AlertEvaluation } from '../metrics/alerts.ts';
 import type { Cadence, Channel, ScheduledReport } from './reports.ts';

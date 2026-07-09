@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import {
   getAppByIdInternal,
   persistApp,
@@ -12,12 +12,12 @@ import {
   withStatus,
   type App,
 } from '@/lib/apps';
-import { removeConnection } from '@/lib/app-registry';
-import { unregisterConnectionProfile, trace } from '@/lib/agent-governed';
+import { removeConnection } from '@/lib/infra/app-registry';
+import { unregisterConnectionProfile, trace } from '@/lib/infra/agent-governed';
 import { generateAndCompile } from './auto-mcp.ts';
 import { stopApp as stopRunner, deleteApp as deleteRunner } from './runner.ts';
 import type { ConsumedResource } from './model.ts';
-import { roleAtLeast } from '@/lib/session';
+import { roleAtLeast } from '@/lib/core/session';
 
 /**
  * App lifecycle + resource consumption (Software golden path §F).

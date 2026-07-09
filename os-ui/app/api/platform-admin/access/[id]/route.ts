@@ -6,7 +6,7 @@ import { adminCtx, fail } from '../../_ctx';
 import { recompile } from '../../_compile';
 import { deactivateUser, reactivateUser, setTenantAdmin, setMemberships, offboardUser, editUser } from '@/lib/platform-admin/tenant-users';
 import { audit } from '@/lib/platform-admin/audit';
-import { ROLES, type Role } from '@/lib/session';
+import { ROLES, type Role } from '@/lib/core/session';
 
 export const dynamic = 'force-dynamic';
 

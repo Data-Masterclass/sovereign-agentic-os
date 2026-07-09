@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
-import type { CurrentUser } from '@/lib/auth';
+import { config } from '@/lib/core/config';
+import type { CurrentUser } from '@/lib/core/auth';
 import type { Scope } from './types';
 import { deriveScope } from './scope-core';
 

@@ -10,10 +10,10 @@ import {
   serializeSystem,
   assertGrantsWithinRole,
 } from './system-schema.ts';
-import { canPromote, roleAtLeast } from '../session.ts';
+import { canPromote, roleAtLeast } from '../core/session.ts';
 import { type TemplateKey, templateYaml } from './templates.ts';
-import { osMirror } from '../os-mirror.ts';
-import { type ArtifactVersion, versionLog } from '../versioning.ts';
+import { osMirror } from '../infra/os-mirror.ts';
+import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
 
 /**
  * The agent-system store — the MOCK Forgejo repo behind the Agents tab (kind-only,
@@ -32,7 +32,7 @@ import { type ArtifactVersion, versionLog } from '../versioning.ts';
 
 // Single source of truth for roles (now User/Creator/Builder/Admin). Re-exported
 // so existing `store.Role` consumers keep working after Governance widened it.
-export type Role = import('../session.ts').Role;
+export type Role = import('../core/session.ts').Role;
 export type Principal = { id: string; domains: string[]; role: Role };
 
 /** One row in the per-tool build report (mirrors BuildRow from lib/agents/build/adapter.ts). */

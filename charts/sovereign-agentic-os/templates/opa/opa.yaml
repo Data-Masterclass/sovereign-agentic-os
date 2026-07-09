@@ -27,8 +27,29 @@ data:
 
     # A principal may use a tool only if it has been granted that tool.
     # Internet tools (e.g. web_fetch) are absent from grants -> denied.
+    #
+    # Grants live in TWO documents that must both authorize, deterministically:
+    #  - data.seed_grants — the chart-baked defaults (data.json), keyed BARE
+    #    (e.g. "agentic-leader-q3-2026"). OWNED by the chart; os-ui never PUTs it,
+    #    so an OPA (re)start / file re-read always restores it (no flip-flop).
+    #  - data.grants — the runtime document Platform Admin's policy compiler
+    #    replaces wholesale via `PUT /v1/data/grants`, keyed PREFIXED
+    #    ("domain:<id>" / "user:<id>"). A full PUT here can never clobber the
+    #    seed, because the seed lives at a DISTINCT path.
+    # os-ui authorizes with a BARE principal on some paths (domain query/retrieve)
+    # and a PREFIXED one on others (user:<id> admin), and either document may hold
+    # either key form — so we resolve the principal under ALL forms in BOTH docs
+    # and allow if ANY of them grants the tool. Union of grants; still default-deny
+    # for a principal absent from every form in both docs.
+    granted_tools contains tool if some tool in data.grants[input.principal]
+    granted_tools contains tool if some tool in data.grants[sprintf("domain:%s", [input.principal])]
+    granted_tools contains tool if some tool in data.grants[sprintf("user:%s", [input.principal])]
+    granted_tools contains tool if some tool in data.seed_grants[input.principal]
+    granted_tools contains tool if some tool in data.seed_grants[sprintf("domain:%s", [input.principal])]
+    granted_tools contains tool if some tool in data.seed_grants[sprintf("user:%s", [input.principal])]
+
     allow if {
-        some tool in data.grants[input.principal]
+        some tool in granted_tools
         tool == input.tool
     }
 
@@ -70,8 +91,14 @@ data:
         "principal": input.principal,
         "tool": input.tool,
     }
+  # Chart-baked defaults. The grants seed is written under `seed_grants` — a path
+  # DISTINCT from the runtime `data.grants` that os-ui's policy compiler replaces
+  # wholesale (`PUT /v1/data/grants`). This makes authorization deterministic: the
+  # seed is never clobbered by a runtime PUT, and an OPA restart / file re-read
+  # always restores it (killing the query_data/retrieve deny flip-flop). authz.rego
+  # reads BOTH `data.grants` and `data.seed_grants` (bare + domain:/user: forms).
   data.json: |
-    {{ dict "grants" $opa.grants "requires_approval" ($opa.requiresApproval | default list) | toJson }}
+    {{ dict "seed_grants" $opa.grants "requires_approval" ($opa.requiresApproval | default list) | toJson }}
   # SECOND policy doc — Trino data governance (row filter by domain + column mask
   # by sensitivity). Same OPA, different package (`trino`); agentic.authz untouched.
   trino.rego: |

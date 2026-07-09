@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth';
+import { requireUser } from '@/lib/core/auth';
 import { getPillar, updatePillar, deletePillar } from '@/lib/strategy/pillars';
 import { rollupForPillar } from '@/lib/strategy/value-rollup';
 import { targetsVsActuals } from '@/lib/strategy/snapshots';

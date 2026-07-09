@@ -5,14 +5,14 @@
 
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { useUser } from '@/lib/useUser';
-import { canPromote } from '@/lib/session';
+import { canPromote } from '@/lib/core/session';
 import {
   type Artifact,
   type ArtifactType,
   type Visibility,
   badgeClass,
   TYPE_LABELS,
-} from '@/lib/artifact-model';
+} from '@/lib/core/artifact-model';
 
 export type SpecField = {
   key: string;

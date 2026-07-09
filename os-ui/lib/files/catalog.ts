@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 import type { LineageEdge } from '@/lib/files/lineage';
 import type { FileAsset } from '@/lib/files/asset-schema';
 

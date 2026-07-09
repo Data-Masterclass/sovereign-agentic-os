@@ -4,7 +4,7 @@
 import 'server-only';
 import { roleModel } from '@/lib/models/roles';
 import { inputBudget, modelContext } from '@/lib/models/context-windows';
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import { ALL_MCP_TOOLS, isMcpTab, listToolsForRole, toolsForTab, type McpTab } from '@/lib/mcp/server';
 import { loadTabContext, tabTitle } from '@/lib/tabs/context';
 import { tabToolExecutor, liteLlmCaller } from '@/lib/assistant/runtime';

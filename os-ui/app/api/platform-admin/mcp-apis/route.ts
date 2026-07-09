@@ -3,10 +3,10 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 import { ALL_MCP_TOOLS, MCP_TABS } from '@/lib/mcp/server';
 import { listAppsForUser } from '@/lib/apps';
-import { getConnectionByApp } from '@/lib/app-registry';
+import { getConnectionByApp } from '@/lib/infra/app-registry';
 import { listConnectionsForUser } from '@/lib/connections';
 import { isExposed } from '@/lib/connections';
 import {

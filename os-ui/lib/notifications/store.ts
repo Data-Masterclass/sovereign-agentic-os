@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { osMirror } from '../os-mirror.ts';
+import { osMirror } from '../infra/os-mirror.ts';
 
 /**
  * A small, principal-scoped in-app notification inbox (same in-memory + durable-mirror

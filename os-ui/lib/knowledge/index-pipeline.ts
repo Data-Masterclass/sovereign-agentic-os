@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 import { type Workflow, type DomainKnowledge } from './schema.ts';
 import { chunkWorkflow, chunkDomain, type KnowledgeUnit } from './chunk.ts';
 import { embed } from './embed.ts';

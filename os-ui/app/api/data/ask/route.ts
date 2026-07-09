@@ -6,7 +6,7 @@ import { roleModel } from '@/lib/models/roles';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { listAskable } from '@/lib/data/store';
 import { readPrincipalFor } from '@/lib/data/store-fqn';
-import { queryRun, trace } from '@/lib/governed';
+import { queryRun, trace } from '@/lib/infra/governed';
 import { liteLlmCaller } from '@/lib/assistant/runtime';
 import { runAsk, type AskMessage } from '@/lib/data/ask';
 

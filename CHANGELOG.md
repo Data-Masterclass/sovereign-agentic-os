@@ -15,6 +15,14 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.72] — 2026-07-10
+
+### Governance / OPA (the definitive flip-flop fix)
+- **Fix (the recurring `query_data`/`retrieve` OPA-deny "flip-flop") — root-caused and made durable.** The chart seeds `data.grants` with **bare** principal keys, but os-ui's policy-compiler publishes at runtime via `PUT /v1/data/grants` with **`domain:`/`user:`-prefixed** keys — and a PUT is a *full-document replace*, so publishing **wiped the chart's bare seed**, after which `authz.rego`'s bare lookup missed → deny (until the next OPA restart re-read the seed → allow: the nondeterministic flip-flop). Now the chart seed lives at a **disjoint `seed_grants` path** (the runtime PUT to `data.grants` can never clobber it) and **`authz.rego` unions both documents**, resolving each principal under bare + `domain:` + `user:` forms. Fail-closed preserved. Verified with the real `opa` CLI (9/9 authz + 29/29 full policy suite). *(Also on the chart: OPA `--watch` + a complete `checksum/policy` annotation so a grant change reloads deterministically.)*
+
+### Refactor (Phase 1b)
+- **`lib/core` + `lib/infra` carved out** of the loose `lib/*.ts` files, per `ARCHITECTURE.md`: 48 files moved (history-preserving `git mv`) into `lib/core/` (config · session · auth · scopes · lifecycle · versioning · artifact-model · tabs · …) and `lib/infra/` (governed spine + clients: governed · agent-governed · os-mirror · secrets · k8s · …), 414 importers rewritten. Pure structural change — behavior identical (1857 tests unchanged). Establishes the one-way `tab → infra → core` dependency layering.
+
 ## [os-ui 0.1.71] — 2026-07-10
 
 ### Agents / context (the 200K fix)

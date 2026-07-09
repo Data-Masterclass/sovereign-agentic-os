@@ -5,12 +5,12 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@/lib/useUser';
-import { roleAtLeast } from '@/lib/session';
+import { roleAtLeast } from '@/lib/core/session';
 import { DATASET_SCOPES, tilesForScope, scopeCounts, type DatasetScope } from '@/lib/data/dataset-scopes';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import DomainTag from '@/components/DomainTag';
-import type { Visibility } from '@/lib/lifecycle';
+import type { Visibility } from '@/lib/core/lifecycle';
 
 /** Mirrors lib/data/store `DatasetSummary`. */
 type Tile = {

@@ -15,7 +15,7 @@ import MetricsPanel from './MetricsPanel';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import DomainTag from '@/components/DomainTag';
-import type { Visibility } from '@/lib/lifecycle';
+import type { Visibility } from '@/lib/core/lifecycle';
 
 type Layer = 'bronze' | 'silver' | 'gold';
 type VersionState = { built: boolean; updatedAt: string | null; artifact: string | null };

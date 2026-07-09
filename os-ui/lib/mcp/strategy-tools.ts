@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import type { McpTool, JsonSchema } from './server';
 
 // --- The EXACT governed lib fns the Strategy UI + /api/strategy routes call ----

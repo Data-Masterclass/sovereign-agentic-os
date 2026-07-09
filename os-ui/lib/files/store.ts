@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { Role } from '../session.ts';
+import type { Role } from '../core/session.ts';
 import {
   type FileAsset,
   type FileKind,
@@ -30,8 +30,8 @@ import {
 import { canRead } from './dls.ts';
 import { promotionGate, gateReason } from './promotion.ts';
 import { recordLineage } from './lineage.ts';
-import { osMirror } from '../os-mirror.ts';
-import { type ArtifactVersion, versionLog } from '../versioning.ts';
+import { osMirror } from '../infra/os-mirror.ts';
+import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
 
 /**
  * The file registry — the MOCK store behind the Files tab (kind-only, in-process;

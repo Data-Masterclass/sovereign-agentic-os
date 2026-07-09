@@ -3,9 +3,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { CurrentUser } from '@/lib/auth';
+import type { CurrentUser } from '@/lib/core/auth';
 import { createApp, deleteAppRepo } from '@/lib/apps';
-import { authorizeConnectionCall } from '@/lib/agent-governed';
+import { authorizeConnectionCall } from '@/lib/infra/agent-governed';
 import { archiveApp, unarchiveApp, deleteApp, useAsData, consumeResource, dependentsOf } from './lifecycle.ts';
 import { getAppByIdInternal } from '@/lib/apps';
 

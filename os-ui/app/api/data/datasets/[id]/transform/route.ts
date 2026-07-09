@@ -7,7 +7,7 @@ import { getDataset, buildVersion } from '@/lib/data/store';
 import { stepperStages, stageArtifact, canBuildStage } from '@/lib/data/panels';
 import { buildStage } from '@/lib/data/build/server';
 import { silverPlan, type TransformOp } from '@/lib/data/transform';
-import type { ExecuteIdentity } from '@/lib/governed';
+import type { ExecuteIdentity } from '@/lib/infra/governed';
 
 export const dynamic = 'force-dynamic';
 

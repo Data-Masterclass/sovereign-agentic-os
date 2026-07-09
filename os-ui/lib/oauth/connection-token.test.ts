@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { putSecret } from '@/lib/secrets';
+import { putSecret } from '@/lib/infra/secrets';
 import { storeTokens, readTokens, resolveAccessToken } from './connection-token.ts';
 import type { TokenSet } from './token-set.ts';
 

@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { Artifact } from '@/lib/artifact-model';
-import type { Role } from '@/lib/session';
+import type { Artifact } from '@/lib/core/artifact-model';
+import type { Role } from '@/lib/core/session';
 
 /**
  * PURE derivations for the Strategy tab's two adoption sections (no server

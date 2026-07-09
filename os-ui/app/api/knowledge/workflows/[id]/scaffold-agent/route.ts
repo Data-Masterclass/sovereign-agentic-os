@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth';
+import { requireUser } from '@/lib/core/auth';
 import { getWorkflow } from '@/lib/knowledge/store';
 import { scaffoldSystem, type Disposition } from '@/lib/knowledge/agent-scaffold';
 import { createSystem } from '@/lib/agents/store';

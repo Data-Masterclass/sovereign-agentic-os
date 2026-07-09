@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth';
+import { requireUser } from '@/lib/core/auth';
 import { addComponent } from '@/lib/bigbets/store';
 import { actor } from '@/lib/bigbets/server';
 import { type Tab } from '@/lib/bigbets/model';

@@ -4,7 +4,7 @@
 import 'server-only';
 import { ALL_MCP_TOOLS, roleCanUse, type ToolTab } from '@/lib/mcp/server';
 import { ALL_WRITE_TOOLS } from '@/lib/mcp/write-tools';
-import type { Role } from '@/lib/session';
+import type { Role } from '@/lib/core/session';
 
 /** Write-tool names — these are state-modifying calls that may be held by Governance. */
 const WRITE_NAMES = new Set(ALL_WRITE_TOOLS.map((t) => t.name));

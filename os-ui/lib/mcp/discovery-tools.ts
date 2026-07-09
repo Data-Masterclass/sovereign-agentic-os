@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { CurrentUser } from '@/lib/auth';
-import type { Role } from '@/lib/session';
+import type { CurrentUser } from '@/lib/core/auth';
+import type { Role } from '@/lib/core/session';
 import type { McpTool, JsonSchema } from './server';
 
 // --- Governed read/list lib functions (the EXACT same the UI + /api call) ------
@@ -37,8 +37,8 @@ import { promoteThroughSeam } from '@/lib/governance/ladder';
 import { scaffoldCubeYaml, cubeViewName } from '@/lib/data/metrics';
 import { cubeDeliverable } from '@/lib/data/cube-models';
 import { loadGuide, isGuidePath, GUIDE_PATHS } from '@/lib/tabs/guides';
-import { config } from '@/lib/config';
-import { queryRun } from '@/lib/governed';
+import { config } from '@/lib/core/config';
+import { queryRun } from '@/lib/infra/governed';
 import { versionTarget } from '@/lib/data/store-fqn';
 import type { Layer } from '@/lib/data/dataset-schema';
 import {

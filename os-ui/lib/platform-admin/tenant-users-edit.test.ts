@@ -16,7 +16,7 @@
 
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { hashPassword } from '../password.ts';
+import { hashPassword } from '../core/password.ts';
 import { __resetUsers } from '../users.ts';
 
 // ---------------------------------------------------------------------------

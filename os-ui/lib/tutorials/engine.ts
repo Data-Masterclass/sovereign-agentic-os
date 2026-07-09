@@ -19,7 +19,7 @@
  * still governs every click; in sandbox mode we only ever point at the lane.
  */
 
-import type { Role } from '@/lib/session';
+import type { Role } from '@/lib/core/session';
 import type {
   FramingRole,
   Panel,

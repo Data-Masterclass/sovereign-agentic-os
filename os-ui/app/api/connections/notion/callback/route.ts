@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { currentUser } from '@/lib/auth';
-import { config } from '@/lib/config';
+import { currentUser } from '@/lib/core/auth';
+import { config } from '@/lib/core/config';
 import { storeNotionConnection } from '@/lib/connections';
 import { exchangeNotionCode } from '@/lib/oauth/notion-mcp';
 import { verifyState, nonceMatches, OAUTH_STATE_COOKIE } from '@/lib/oauth/state';

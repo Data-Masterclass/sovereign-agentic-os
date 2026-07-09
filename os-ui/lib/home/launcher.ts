@@ -24,7 +24,7 @@
  * unchanged while giving the four-way emphasis the design calls for.
  */
 
-import type { Role } from '../session.ts';
+import type { Role } from '../core/session.ts';
 
 export type HomePersona = 'user' | 'creator' | 'builder' | 'admin';
 

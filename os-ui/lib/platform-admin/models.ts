@@ -25,7 +25,7 @@
  * unit-testable.
  */
 
-import { osMirror } from '../os-mirror.ts';
+import { osMirror } from '../infra/os-mirror.ts';
 import { roleModel } from '../models/roles.ts';
 
 export type ModelTask = 'chat' | 'reasoning' | 'embedding';

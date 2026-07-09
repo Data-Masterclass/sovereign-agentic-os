@@ -3,8 +3,8 @@
  */
 import PageHeader from '@/components/PageHeader';
 import Terminal from '@/components/Terminal';
-import { config } from '@/lib/config';
-import { currentUser } from '@/lib/auth';
+import { config } from '@/lib/core/config';
+import { currentUser } from '@/lib/core/auth';
 
 // Server component: gates the Terminal tab on the OS role (admin-only) + the
 // feature flag BEFORE shipping any client code, then hands off to the xterm.js

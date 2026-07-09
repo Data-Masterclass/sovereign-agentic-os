@@ -3,7 +3,7 @@
  */
 import type { Dataset, Layer } from './dataset-schema.ts';
 import type { Principal } from './store.ts';
-import type { ExecuteIdentity } from '@/lib/governed';
+import type { ExecuteIdentity } from '@/lib/infra/governed';
 import { domainSchema, personalSchema, slug } from './store-fqn.ts';
 
 /**

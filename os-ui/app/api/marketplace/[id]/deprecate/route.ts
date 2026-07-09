@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/auth';
+import { requireAdmin } from '@/lib/core/auth';
 import { publishAdapter, type Viewer } from '@/lib/marketplace';
 
 export const dynamic = 'force-dynamic';

@@ -15,8 +15,8 @@
  *   kind:   deploy | sts | cluster | job   (how to read/scale it)
  *   toggle: whether the UI may scale it 0<->1 (false = core / not a workload)
  */
-import { config } from '@/lib/config';
-import { k8s } from '@/lib/k8s';
+import { config } from '@/lib/core/config';
+import { k8s } from '@/lib/infra/k8s';
 
 const NS = config.platformNamespace;
 

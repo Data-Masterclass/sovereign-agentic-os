@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { templateAdapter, TEMPLATE_KEYS, FRONT_DOORS } from './adapters.ts';
 import { authorThroughFrontDoor } from './server.ts';
-import { authorizeConnectionCall } from '@/lib/agent-governed';
+import { authorizeConnectionCall } from '@/lib/infra/agent-governed';
 
 test('all 4 template adapters expose the 7 capabilities + a footprint', () => {
   assert.equal(TEMPLATE_KEYS.length, 4);

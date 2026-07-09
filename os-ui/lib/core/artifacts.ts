@@ -2,18 +2,18 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import 'server-only';
-import { config } from '@/lib/config';
+import { config } from '@/lib/core/config';
 import {
   type Artifact,
   type ArtifactType,
   type Visibility,
   type ArtifactOrigin,
-} from '@/lib/artifact-model';
-import { canPromote } from '@/lib/session';
+} from '@/lib/core/artifact-model';
+import { canPromote } from '@/lib/core/session';
 import { roleRank } from '@/lib/governance/roles';
-import type { CurrentUser } from '@/lib/auth';
-import { osMirror } from '@/lib/os-mirror';
-import { type ArtifactVersion, versionLog } from '@/lib/versioning';
+import type { CurrentUser } from '@/lib/core/auth';
+import { osMirror } from '@/lib/infra/os-mirror';
+import { type ArtifactVersion, versionLog } from '@/lib/core/versioning';
 
 /**
  * Artifact registry + scoping logic — the server-side enforcement point for the

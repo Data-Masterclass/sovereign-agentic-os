@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
-import { roleAtLeast } from '@/lib/session';
+import { roleAtLeast } from '@/lib/core/session';
 import { getPublicUser } from '@/lib/users';
 import { type ScheduledReport, sendReport } from '@/lib/dashboards/reports';
 import { deliverReport } from '@/lib/dashboards/delivery';
