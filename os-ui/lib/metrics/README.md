@@ -54,7 +54,7 @@ enforced **once at Cube** and can't collapse to a shared identity.
 ## Routes
 `/api/metrics` (list) · `/api/metrics/define` (form/agent/YAML → convergence + build) ·
 `/api/metrics/explore` (per-viewer RLS + drop-to-SQL) · `/api/metrics/govern`
-(promote/certify, role + consistency gate) · `/api/metrics/cube-preview` (live Cube).
+(promote/certify, role + consistency gate).
 
 ## Tests
 `node --test 'lib/metrics/**/*.test.ts'`. `gate.test.ts` walks the **whole kind-gate**

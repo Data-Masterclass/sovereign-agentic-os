@@ -3,9 +3,9 @@
  */
 /**
  * Tab visibility gate tests for the consolidated nav. The six-section matrix:
- *   Ungrouped:  Home, Cockpit (entry-points, always visible, no heading)
+ *   Ungrouped:  Home, Cockpit, Marketplace (entry-points, always visible, no heading)
  *   Plan:       Strategy, Big Bets, MCP, Tutorials
- *   Context:    Knowledge, Files, Data, Connections, Metrics, Marketplace
+ *   Context:    Knowledge, Files, Data, Connections, Metrics
  *   Build:      Agents, Software, Science, Dashboards
  *   Monitor:    Governance (builder+), Monitoring, Components (admin), LLM Gateway
  *   Admin:      Admin (admin), Terminal (admin), About / Licenses (admin)
@@ -44,10 +44,10 @@ const ADMIN_ONLY_LABELS = TAB_GROUPS
   .filter((t) => t.minRole === 'admin')
   .map((t) => t.label);
 
-test('TAB-SET entry group is exactly Home + Cockpit', () => {
+test('TAB-SET entry group is exactly Home + Cockpit + Marketplace', () => {
   assert.deepEqual(
     ENTRY_GROUP.tabs.map((t) => t.label),
-    ['Home', 'Cockpit'],
+    ['Home', 'Cockpit', 'Marketplace'],
   );
 });
 
@@ -58,10 +58,10 @@ test('TAB-SET Plan group is Strategy, Big Bets, MCP, Tutorials', () => {
   );
 });
 
-test('TAB-SET Context group is Knowledge, Files, Data, Connections, Metrics, Marketplace', () => {
+test('TAB-SET Context group is Knowledge, Files, Data, Connections, Metrics', () => {
   assert.deepEqual(
     CONTEXT_GROUP.tabs.map((t) => t.label),
-    ['Knowledge', 'Files', 'Data', 'Connections', 'Metrics', 'Marketplace'],
+    ['Knowledge', 'Files', 'Data', 'Connections', 'Metrics'],
   );
 });
 

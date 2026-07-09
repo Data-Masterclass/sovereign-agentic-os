@@ -40,6 +40,7 @@ export const TAB_GROUPS: TabGroup[] = [
     tabs: [
       { label: 'Home', icon: '◇', href: '/' },
       { label: 'Cockpit', icon: '◉', href: '/cockpit' },
+      { label: 'Marketplace', icon: '⊞', href: '/marketplace', role: 'Builder / Administrator' },
     ],
   },
   {
@@ -59,7 +60,6 @@ export const TAB_GROUPS: TabGroup[] = [
       { label: 'Data', icon: '▤', href: '/data' },
       { label: 'Connections', icon: '⇄', href: '/connections' },
       { label: 'Metrics', icon: '∑', href: '/metrics' },
-      { label: 'Marketplace', icon: '⊞', href: '/marketplace', role: 'Builder / Administrator' },
     ],
   },
   {

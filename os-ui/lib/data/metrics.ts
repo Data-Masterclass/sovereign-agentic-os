@@ -29,9 +29,11 @@ export function cubeName(d: Dataset): string {
   return slug(d.name);
 }
 
-/** The user-facing Cube VIEW name dashboards + the agent metrics tool resolve. */
+/** The Cube VIEW name dashboards + the agent metrics tool resolve. MUST be a valid
+ *  Cube identifier — letters/digits/underscore, no spaces — or the WHOLE Cube schema
+ *  fails to compile ("fails to match the identifier pattern"). Underscores, readable case. */
 export function cubeViewName(d: Dataset): string {
-  return d.name.replace(/[^A-Za-z0-9]+/g, ' ').trim() || 'View';
+  return d.name.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'View';
 }
 
 /** The Gold mart FQN the cube binds to via `sql_table` (the handover contract). */
@@ -84,13 +86,18 @@ function measureYaml(m: Measure): string {
 export function scaffoldCubeYaml(d: Dataset): string {
   const cube = cubeName(d);
   const pk = primaryKeyColumn(d.columns);
-  const dims = d.columns.map((c) => {
+  // A measure and a dimension may NOT share a name in a Cube (Cube rejects it with
+  // "defined more than once" → the whole schema 500s). When a gold column is also a
+  // measure name, the measure wins — skip the colliding dimension (keep the pk).
+  const measureNames = new Set(d.measures.map((m) => m.name));
+  const dimCols = d.columns.filter((c) => c.name === pk || !measureNames.has(c.name));
+  const dims = dimCols.map((c) => {
     const type = c.name === pk ? 'number' : inferDimType(c.name);
     const pkLine = c.name === pk ? '\n        primary_key: true' : '';
     return `      - name: ${c.name}\n        sql: ${c.name}\n        type: ${type}${pkLine}`;
   });
   const measures = (d.measures.length ? d.measures : [{ name: 'count', type: 'count', sql: '' } as Measure]).map(measureYaml);
-  const includes = [...d.measures.map((m) => m.name), ...d.columns.filter((c) => c.name !== pk).map((c) => c.name)];
+  const includes = [...d.measures.map((m) => m.name), ...dimCols.filter((c) => c.name !== pk).map((c) => c.name)];
   return [
     'cubes:',
     `  - name: ${cube}`,

@@ -15,6 +15,15 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.67] — 2026-07-09
+
+### Metrics / Cube
+- **Fix (Cube 500):** generated Cube **view names contained spaces** (invalid Cube identifier) → the whole schema failed to compile and the Metrics tab 500'd. `cubeViewName` now emits a valid identifier; the gold→Cube scaffold also **skips a dimension whose name collides with a measure** ("defined more than once"). *(Live-verified: cube `/meta` returns 200.)*
+- Removed a leftover demo **"Query" panel hardcoded to `daily_revenue`** (the phantom metric users never defined); the governed metric registry is the metric surface. `daily_revenue` stays in Cube (Superset + sales-agent depend on it).
+
+### Nav
+- **Marketplace** moved to the top entry row (after Cockpit), out of the Context section.
+
 ## [os-ui 0.1.63–0.1.66 · query-tool 0.4.1] — 2026-07-09
 
 ### Data
