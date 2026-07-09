@@ -3,19 +3,26 @@
  */
 import { NextResponse } from 'next/server';
 import {
-  authorize,
+  authorizeAppTool,
   trace,
   metricsTool,
   retrieveTool,
   SALES,
-  type ToolName,
   type DlsPrincipal,
 } from '@/lib/agent-governed';
 import { principalFor, type GovernedToolResponse } from '@/lib/agents/build/runtime-contract';
 import { runtimeTokenOk } from '@/lib/agents/build/runtime-auth';
-import { systemForScheduler } from '@/lib/agents/store';
+import { ensureHydrated, systemForScheduler } from '@/lib/agents/store';
+import { registerDurableAgentGrantResolver } from '@/lib/agents/build/grant-rehydrate';
 
 export const dynamic = 'force-dynamic';
+
+// Self-healing grants (durability across pod restarts): teach the app-registry how
+// to read an agent system's granted tools back from the DURABLE agent-system store
+// so a `os-<id>` principal's grants rehydrate on the first tool call after a
+// restart wiped the in-memory registry — no rebuild needed. Fail-closed: an unknown
+// system resolves to no grants, so authorization falls through to OPA/deny.
+registerDurableAgentGrantResolver();
 
 /**
  * The GOVERNED TOOL endpoint (Approach A). The shared agent-runtime holds NO
@@ -70,8 +77,16 @@ export async function POST(req: Request) {
   const write = body.write === true;
   const principal = principalFor(systemId);
 
+  // Ensure the durable store is hydrated so the grant resolver can read this
+  // system's persisted record even on the first request after a cold start.
+  await ensureHydrated();
+
   // Authorize BEFORE any side effect (honoring read/write); never run-then-check.
-  const authz = await authorize(principal, tool as ToolName);
+  // `authorizeAppTool` first consults the dynamic grant registry (rehydrated from
+  // the durable agent-system record when the in-memory copy was wiped by a restart),
+  // then falls through to OPA — so a built agent's granted tool self-heals instead of
+  // denying until rebuilt, while an ungranted tool still hits OPA/deny (fail-closed).
+  const authz = await authorizeAppTool(principal, tool);
 
   if (authz.effect !== 'allow') {
     // Denied or held: the side effect is NOT executed; the attempt is still traced.

@@ -15,6 +15,17 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.68] — 2026-07-09
+
+### Agents / Governance (durability fix)
+- **Fix (agent `query_data` flip-flop):** an agent-run's tool grants (`os-<systemId>` principal) lived only in an **in-memory registry** set at build time, so every os-ui pod restart (any redeploy) wiped them and the agent lost `query_data`/`query` until it was rebuilt — the recurring "works today, denied tomorrow" OPA-deny. The governed-tool endpoint (`/api/agents/tool`) now **lazily rehydrates a principal's grants from the persisted agent record** (the durable `os-agent-systems` mirror) on the first cold-start request, reproducing the exact Build grant vocabulary. **Fail-closed:** a missing/corrupt record grants nothing and falls through to OPA-deny; rehydration never broadens a grant. (App-MCP `app-<slug>` principals already self-healed via `rehydrateConnection`.) *(6 new fail-closed tests.)*
+
+### Connections
+- **Consolidated the three Connections sub-tabs into one screen** (matching Data/Metrics): existing connections grouped **All · My · Shared · Marketplace** at the top (with counts + source-domain tags), the **new-connection** flow below, then App-MCP connections, the connector catalog, and outbound access. Tile Open-only lifecycle preserved.
+
+### LLM Gateway (STACKIT)
+- **Fix (`sovereign-default` 404):** STACKIT's model id keeps its org prefix (`openai/gpt-oss-20b`); LiteLLM strips the first path segment as the provider, so it was sending bare `gpt-oss-20b` upstream → STACKIT 404 ("no fallback model group"). Model refs now doubled to `openai/openai/gpt-oss-20b`. *(Live-verified: `sovereign-default` + `sovereign-reasoning` return 200 through the gateway.)*
+
 ## [os-ui 0.1.67] — 2026-07-09
 
 ### Metrics / Cube

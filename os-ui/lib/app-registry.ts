@@ -67,9 +67,63 @@ export function registerConnection(conn: AppConnection): AppConnection {
   return conn;
 }
 
+/**
+ * SELF-HEALING GRANT REHYDRATION (durability across pod restarts).
+ *
+ * The {@link GRANTS} map is in-memory: it survives dev HMR (globalThis pin) but is
+ * EMPTY after a pod restart, so every os-ui redeploy wipes the dynamic grants a
+ * Build wrote for an agent system's principal (`os-<id>`). Without this, the first
+ * governed tool call after a restart falls through to the offline OPA mirror, which
+ * only knows the STATIC chart grants — so a dynamically-built agent's `query_data`
+ * denies until it is rebuilt (the observed flip-flop).
+ *
+ * A DurableGrantResolver reads the principal's grant set back from the persisted
+ * agent-system record (the SAME OpenSearch os-mirror `list_agent_systems` reads),
+ * so the first tool call after a restart RE-REGISTERS the grants from the durable
+ * record — no rebuild needed. Injected (not imported) so this module stays
+ * dependency-free and free of an import cycle with the store.
+ *
+ * FAIL-CLOSED: a resolver that returns `null`/`[]` grants NOTHING — the authorize
+ * path then falls to the existing OPA/deny. Rehydration can only re-register EXACTLY
+ * what the persisted record already lists; it never broadens a grant.
+ */
+export type DurableGrantResolver = (principal: string) => Promise<string[] | null>;
+
+const RESOLVER_KEY = Symbol.for('soa.app-registry.grantResolver');
+export function registerDurableGrantResolver(resolver: DurableGrantResolver): void {
+  (globalThis as unknown as Record<symbol, DurableGrantResolver | undefined>)[RESOLVER_KEY] = resolver;
+}
+function durableGrantResolver(): DurableGrantResolver | undefined {
+  return (globalThis as unknown as Record<symbol, DurableGrantResolver | undefined>)[RESOLVER_KEY];
+}
+
 /** Tools granted to a principal (offline OPA mirror for app MCPs). */
 export function grantsFor(principal: string): string[] {
   return [...(GRANTS.get(principal) ?? new Set<string>())];
+}
+
+/**
+ * Tools granted to a principal, LAZILY REHYDRATED from the durable store when the
+ * in-memory grant set is empty/missing (e.g. right after a pod restart). On a hit
+ * the resolved grants are cached back into {@link GRANTS} so subsequent calls are
+ * the fast sync path again. Fail-closed: an absent resolver or a record with no
+ * grants leaves the principal ungranted (`[]`).
+ */
+export async function grantsForDurable(principal: string): Promise<string[]> {
+  const existing = grantsFor(principal);
+  if (existing.length > 0) return existing;
+  const resolver = durableGrantResolver();
+  if (!resolver) return existing;
+  let tools: string[] | null = null;
+  try {
+    tools = await resolver(principal);
+  } catch {
+    // A failed lookup must NEVER grant — fall through to the empty (deny) set.
+    return existing;
+  }
+  if (!tools || tools.length === 0) return existing;
+  GRANTS.set(principal, new Set(tools));
+  return [...tools];
 }
 
 export function getConnection(id: string): AppConnection | null {

@@ -3,6 +3,7 @@
  */
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { CAPABILITY_MODES, type CapabilityMode, type ConnectionTemplateKey } from '@/lib/connection-model';
 import { roleAtLeast, type Role } from '@/lib/session';
@@ -13,13 +14,22 @@ import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import type { Visibility } from '@/lib/lifecycle';
 import DomainTag from '@/components/DomainTag';
+import { CONNECTORS, CONNECTOR_CATEGORIES } from '@/lib/connectors';
+import { useApi } from '@/lib/useApi';
 
 /**
- * Governed Connections surface (Connections golden path). A Builder/Admin creates
- * a Connection (API/MCP/Database/SaaS) → endpoint + credential (to Secrets
- * Manager, never the record) → tests it → tunes the per-tool capability profile
- * (Off/Read/Write-approval/Write-bounded/Blocked + limits) → promotes it up the
- * Personal→Shared→Marketplace ladder. Participants see a read-only consume view.
+ * Governed Connections surface — ONE scroll, no sub-tabs.
+ *
+ * Layout (top → bottom):
+ *   1. Governed connections grouped All · My · Shared · Marketplace (scope switcher).
+ *   2. Create a new connection (OAuth templates + service connectors).
+ *   3. App MCP connections (auto-generated from Software tab).
+ *   4. Supported connector catalog.
+ *   5. Outbound access / egress allowlist (Builder/Admin only).
+ *
+ * Builder/Admin creates a Connection → endpoint + credential (to Secrets Manager,
+ * never the record) → tests it → tunes the per-tool capability profile → promotes it
+ * up the Personal→Shared→Marketplace ladder. Participants see a read-only consume view.
  */
 
 // ---- Types -----------------------------------------------------------------
@@ -83,6 +93,20 @@ type ApprovalPreview = {
 };
 type EgressRequest = { id: string; host: string; reason: string; status: string; requestedBy?: string; at?: string };
 
+type AppTool = { name: string; description: string; write: boolean };
+type AppConn = {
+  id: string;
+  appId: string;
+  appSlug: string;
+  name: string;
+  principal: string;
+  owner: string;
+  domain: string;
+  visibility: 'Personal' | 'Shared' | 'Certified';
+  tools: AppTool[];
+};
+type AppConns = { connections: AppConn[] };
+
 // ---- Helpers ---------------------------------------------------------------
 
 function badge(v: string) { return `badge vis-${v.toLowerCase()}`; }
@@ -126,6 +150,9 @@ export default function GovernedConnections() {
   }, [showArchived]);
 
   useEffect(() => { load(); }, [load]);
+
+  // ---- App MCP connections (auto-generated from Software tab) ----
+  const { data: appConns } = useApi<AppConns>('/api/connections/apps');
 
   // ---- New connection form ----
   const [name, setName] = useState('');
@@ -191,7 +218,62 @@ export default function GovernedConnections() {
 
   return (
     <ConfirmProvider>
-      <div className="section-title">New connection</div>
+
+      {/* ── 1. Governed connections (scope-grouped) ── */}
+      <div className="section-title">
+        Governed connections
+        <button
+          className="btn ghost"
+          style={{ marginLeft: 'auto', padding: '4px 12px', opacity: showArchived ? 1 : 0.7 }}
+          onClick={() => setShowArchived((v) => !v)}
+          title="Archived connections are hidden by default"
+        >
+          {showArchived ? 'Hide archived' : 'Show archived'}
+        </button>
+      </div>
+      {error ? <div className="error">{error}</div> : null}
+
+      {(() => {
+        if (!data) return null;
+        const groups = groupsFromVisibility(data.connections);
+        const scoped = groupByScope(groups, data.user.id);
+        const counts = scopeCounts(groups, data.user.id);
+        const visible = scoped[scope];
+        return (
+          <>
+            {/* Scope switcher — the OS-wide four groups: All · My · Shared · Marketplace. */}
+            <div className="seg" style={{ marginBottom: 14 }}>
+              {SCOPE_GROUPS.map((g) => (
+                <button key={g.key} type="button" className={scope === g.key ? 'on' : ''} onClick={() => setScope(g.key)}>
+                  {g.label('Connections')} ({counts[g.key]})
+                </button>
+              ))}
+            </div>
+            {visible.length === 0 ? (
+              <div className="stub-page">
+                {scope === 'mine' || scope === 'all'
+                  ? <>No governed connections yet{canCreate ? ' — create one below.' : '.'}</>
+                  : scope === 'shared' ? 'Nothing shared in your domain yet.' : 'Nothing in the marketplace yet.'}
+              </div>
+            ) : (
+              visible.map((c) => (
+                <ConnectionCard
+                  key={c.id}
+                  c={c}
+                  role={data.user.role}
+                  oauthProviders={data.oauthProviders ?? []}
+                  open={open === c.id}
+                  onToggle={() => setOpen(open === c.id ? '' : c.id)}
+                  onChange={load}
+                />
+              ))
+            )}
+          </>
+        );
+      })()}
+
+      {/* ── 2. Create a new connection ── */}
+      <div className="section-title" style={{ marginTop: 28 }}>New connection</div>
       {(canCreate || canCreatePersonal) ? (
         <>
           <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
@@ -234,7 +316,7 @@ export default function GovernedConnections() {
           {showOAuthForm ? (
             <>
               <p className="hint" style={{ marginTop: 10, marginBottom: 6 }}>
-                Add the drive, then click <strong>Connect</strong> on its card to sign in through
+                Add the drive, then click <strong>Connect</strong> on its card above to sign in through
                 {tpl ? ` ${tpl.label}` : ' the provider'} and authorize your own account. We complete OAuth
                 and store the token in Secrets Manager — never in the browser or the record. This
                 connection is private to you (<strong>Personal</strong>).
@@ -296,59 +378,78 @@ export default function GovernedConnections() {
         </div>
       )}
 
-      <div className="section-title">
-        Your governed connections
-        <button
-          className="btn ghost"
-          style={{ marginLeft: 'auto', padding: '4px 12px', opacity: showArchived ? 1 : 0.7 }}
-          onClick={() => setShowArchived((v) => !v)}
-          title="Archived connections are hidden by default"
-        >
-          {showArchived ? 'Hide archived' : 'Show archived'}
-        </button>
-      </div>
-      {error ? <div className="error">{error}</div> : null}
+      {/* ── 3. App MCP connections (auto-generated) ── */}
+      <div className="section-title" style={{ marginTop: 28 }}>App MCP connections</div>
+      <p className="hint" style={{ marginTop: 0, marginBottom: 14 }}>
+        Every app you build in the Software tab auto-generates an MCP, registered here as a
+        governed connection + agent tool. Building an app and creating a connection are one act.
+      </p>
+      {(appConns?.connections?.length ?? 0) === 0 ? (
+        <div className="stub-page">No app connections yet — build one in the Software tab.</div>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Connection</th><th>Principal</th><th>Tools</th><th>Visibility</th><th>App</th></tr>
+            </thead>
+            <tbody>
+              {appConns!.connections.map((c) => (
+                <tr key={c.id}>
+                  <td style={{ fontWeight: 600 }}>{c.name}</td>
+                  <td className="mono">{c.principal}</td>
+                  <td className="muted mono" style={{ fontSize: 11.5, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.tools.map((t) => t.name).join(', ')}>{c.tools.map((t) => t.name).join(', ')}</td>
+                  <td><span className={`badge vis-${c.visibility.toLowerCase()}`}>{c.visibility}</span></td>
+                  <td><Link className="btn ghost" href={`/software/${c.appId}`}>Open →</Link></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-      {(() => {
-        if (!data) return null;
-        const groups = groupsFromVisibility(data.connections);
-        const scoped = groupByScope(groups, data.user.id);
-        const counts = scopeCounts(groups, data.user.id);
-        const visible = scoped[scope];
+      {/* ── 4. Supported connector catalog ── */}
+      <div className="section-title" style={{ marginTop: 28 }}>Supported connectors</div>
+      <p className="hint" style={{ marginTop: 0, marginBottom: 14 }}>
+        These connectors are wired end-to-end: you sign in with your own account and only a
+        token <em>reference</em> is stored (never a raw secret). Connect any of them using
+        the <strong>New connection</strong> form above.
+      </p>
+      {CONNECTOR_CATEGORIES.map((cat) => {
+        const items = CONNECTORS.filter((c) => c.category === cat);
+        if (items.length === 0) return null;
         return (
-          <>
-            {/* Scope switcher — the OS-wide four groups: All · My · Shared · Marketplace. */}
-            <div className="seg" style={{ marginBottom: 14 }}>
-              {SCOPE_GROUPS.map((g) => (
-                <button key={g.key} type="button" className={scope === g.key ? 'on' : ''} onClick={() => setScope(g.key)}>
-                  {g.label('Connections')} ({counts[g.key]})
-                </button>
+          <div key={cat} style={{ marginBottom: 18 }}>
+            <div className="mono" style={{ color: 'var(--text-faint)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>{cat}</div>
+            <div className="grid">
+              {items.map((c) => (
+                <div className="card" key={c.name}>
+                  <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3 style={{ margin: 0 }}>{c.name}</h3>
+                    <span className="badge ok">available</span>
+                  </div>
+                  <div className="muted" style={{ marginTop: 8 }}>Auth: {c.auth}</div>
+                  <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
+                    <button
+                      className="btn ghost"
+                      onClick={() => {
+                        // Scroll to the new connection form above (smooth UX).
+                        document.querySelector<HTMLElement>('input[placeholder*="Connection name"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        setTemplate(c.template);
+                      }}
+                    >
+                      Connect →
+                    </button>
+                  </div>
+                </div>
               ))}
             </div>
-            {visible.length === 0 ? (
-              <div className="stub-page">
-                {scope === 'mine' || scope === 'all'
-                  ? <>No governed connections yet{canCreate ? ' — create one above.' : '.'}</>
-                  : scope === 'shared' ? 'Nothing shared in your domain yet.' : 'Nothing in the marketplace yet.'}
-              </div>
-            ) : (
-              visible.map((c) => (
-                <ConnectionCard
-                  key={c.id}
-                  c={c}
-                  role={data.user.role}
-                  oauthProviders={data.oauthProviders ?? []}
-                  open={open === c.id}
-                  onToggle={() => setOpen(open === c.id ? '' : c.id)}
-                  onChange={load}
-                />
-              ))
-            )}
-          </>
+          </div>
         );
-      })()}
+      })}
 
+      {/* ── 5. Outbound access (Builder/Admin only) ── */}
       {canCreate ? <EgressSection /> : null}
+
     </ConfirmProvider>
   );
 }
@@ -394,7 +495,7 @@ function EgressSection() {
 
   return (
     <>
-      <div className="section-title">Outbound access</div>
+      <div className="section-title" style={{ marginTop: 28 }}>Outbound access</div>
       <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
         External endpoints must be on the egress allowlist before a connection can reach them.
         Request access below — an Administrator approves in the Governance tab.

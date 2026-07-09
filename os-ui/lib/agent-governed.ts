@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { config } from '@/lib/config';
-import { grantsFor as appGrantsFor } from '@/lib/app-registry';
+import { grantsForDurable as appGrantsForDurable } from '@/lib/app-registry';
 import {
   compileConnectionProfile,
   decide,
@@ -153,7 +153,13 @@ export async function authorize(principal: string, tool: ToolName): Promise<Auth
  * fall back to the OPA decision API for completeness (and honest default-deny).
  */
 export async function authorizeAppTool(principal: string, tool: string): Promise<Authz> {
-  if (appGrantsFor(principal).includes(tool)) {
+  // `grantsForDurable` returns the in-memory grant set, LAZILY REHYDRATED from the
+  // durable store when it is empty (e.g. right after a pod restart wiped the
+  // in-memory registry). This is what makes an auto-built app/agent principal's
+  // grants self-heal — the first tool call re-registers them from the persisted
+  // record instead of denying until a rebuild. Fail-closed: no persisted record ⇒
+  // empty grants ⇒ we fall through to the OPA/deny path below (never a broad grant).
+  if ((await appGrantsForDurable(principal)).includes(tool)) {
     return { effect: 'allow', policy: 'app-grant', reason: 'granted by the app MCP connection' };
   }
   // Not a known app grant — ask OPA (will deny offline unless statically granted).
