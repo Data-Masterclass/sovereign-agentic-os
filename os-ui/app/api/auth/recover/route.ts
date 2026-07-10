@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { resetPasswordWithRecovery } from '@/lib/users';
+import { resetPasswordWithRecovery } from '@/lib/platform-admin/users';
 import { assessPasswordStrength } from '@/lib/core/password';
-import { normalizeMasterKey } from '@/lib/recovery';
+import { normalizeMasterKey } from '@/lib/platform-admin/recovery';
 import { rateLimit, clientIp } from '@/lib/core/ratelimit';
 
 export const dynamic = 'force-dynamic';

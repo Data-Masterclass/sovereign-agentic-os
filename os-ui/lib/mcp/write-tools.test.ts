@@ -12,7 +12,7 @@ import { __resetStore as resetFiles } from '@/lib/files/store';
 import { __resetDashboards } from '@/lib/dashboards/store';
 import { __resetBets } from '@/lib/bigbets/store';
 import { __resetStore as resetAgents } from '@/lib/agents/store';
-import { __resetApprovals } from '@/lib/approvals';
+import { __resetApprovals } from '@/lib/governance/approvals';
 
 /**
  * The governed MCP WRITE tools: each must delegate to the SAME lib function the UI

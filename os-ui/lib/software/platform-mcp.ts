@@ -8,7 +8,7 @@ import {
   getAppByIdInternal,
   withStatus,
   type AppTemplateKey,
-} from '@/lib/apps';
+} from '@/lib/software/apps';
 import { promoteThroughSeam } from '@/lib/governance/ladder';
 import { trace } from '@/lib/infra/agent-governed';
 import { startPreview, requestDeploy, decideDeploy } from './review.ts';

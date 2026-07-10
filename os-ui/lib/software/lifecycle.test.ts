@@ -4,10 +4,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
-import { createApp, deleteAppRepo } from '@/lib/apps';
+import { createApp, deleteAppRepo } from '@/lib/software/apps';
 import { authorizeConnectionCall } from '@/lib/infra/agent-governed';
 import { archiveApp, unarchiveApp, deleteApp, useAsData, consumeResource, dependentsOf } from './lifecycle.ts';
-import { getAppByIdInternal } from '@/lib/apps';
+import { getAppByIdInternal } from '@/lib/software/apps';
 
 const owner: CurrentUser = { id: 'carol', name: 'Carol', domains: ['ops'], role: 'creator' };
 

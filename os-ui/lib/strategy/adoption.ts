@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { allArtifacts } from '@/lib/core/artifacts';
-import { listUsers } from '@/lib/users';
+import { listUsers } from '@/lib/platform-admin/users';
 import type { Role } from '@/lib/core/session';
 import { type ArtifactKind, ARTIFACT_KINDS } from '@/lib/strategy/model';
 import {

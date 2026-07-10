@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { ApprovalKind } from '../approvals.ts';
+import type { ApprovalKind } from './approvals.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 
 /**

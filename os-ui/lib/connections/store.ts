@@ -32,7 +32,7 @@ import {
   trace,
   type ConnToolPolicy,
 } from '@/lib/infra/agent-governed';
-import { enqueue } from '@/lib/approvals';
+import { enqueue } from '@/lib/governance/approvals';
 import { adapterFor } from '@/lib/connections/connection-adapters';
 import {
   buildPreview,
@@ -40,8 +40,8 @@ import {
   rememberPolicy,
   resolveAutonomous,
   effectivePreset,
-} from '@/lib/governance';
-import { registerBronzeSource, indexToFiles } from '@/lib/data-handoff';
+} from '@/lib/governance/governance';
+import { registerBronzeSource, indexToFiles } from '@/lib/data/data-handoff';
 import { logEgress } from '@/lib/connections/egress-requests';
 import { providerForTemplate } from '@/lib/oauth/providers';
 import { storeTokens, readTokens, resolveAccessToken } from '@/lib/oauth/connection-token';

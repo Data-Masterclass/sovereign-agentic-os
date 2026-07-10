@@ -15,7 +15,7 @@ import type { System } from '../system-schema.ts';
 import { type Effect } from '../gateway.ts';
 import { principalFor } from './runtime-contract.ts';
 import { trace as realTrace } from '@/lib/infra/agent-governed';
-import { enqueue as realEnqueue } from '@/lib/approvals';
+import { enqueue as realEnqueue } from '@/lib/governance/approvals';
 
 /**
  * THE ONE reusable core that lets an INTERNAL agent (Agents tab) call the SAME

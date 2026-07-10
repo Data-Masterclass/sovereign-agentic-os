@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { currentUser } from '@/lib/core/auth';
-import { decide, ensureHydrated, getApproval, listApprovals, recordEffect } from '@/lib/approvals';
+import { decide, ensureHydrated, getApproval, listApprovals, recordEffect } from '@/lib/governance/approvals';
 import { canApprove, canSee, roleLabel } from '@/lib/governance/roles';
 import { applyEffect } from '@/lib/governance/effects';
 import { buildEffectDeps } from '@/lib/governance/ladder';

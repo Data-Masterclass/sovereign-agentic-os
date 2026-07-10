@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/core/auth';
-import { listComponentsWithStatus } from '@/lib/platform';
+import { listComponentsWithStatus } from '@/lib/platform-admin/platform';
 import { versionFor } from '@/lib/platform-admin/components-extra';
 import { config } from '@/lib/core/config';
 

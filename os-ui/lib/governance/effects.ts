@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { Approval } from '../approvals.ts';
+import type { Approval } from './approvals.ts';
 import type { AuditAction } from './audit.ts';
 import { addAccessGrant, addEgressEndpoint, isEgressAllowed } from './policy-view.ts';
 import { writeGrantsToOpa } from './roles.ts';

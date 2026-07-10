@@ -4,7 +4,7 @@
 import 'server-only';
 import { config } from '@/lib/core/config';
 import { trace as gvTrace } from '@/lib/infra/agent-governed';
-import { enqueue } from '@/lib/approvals';
+import { enqueue } from '@/lib/governance/approvals';
 import { parseSystem, type System } from '../system-schema.ts';
 import { compile } from '../langgraph-compile.ts';
 import { type Effect, type Gateway } from '../gateway.ts';

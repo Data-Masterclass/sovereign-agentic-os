@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { Role } from '../core/session.ts';
-import type { Approval } from '../approvals.ts';
+import type { Approval } from './approvals.ts';
 import { config } from '../core/config.ts';
 import { resolveRoleRights, ensureRoleConfigLoaded } from './role-config.ts';
 

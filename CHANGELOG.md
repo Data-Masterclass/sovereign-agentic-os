@@ -15,6 +15,15 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.73] — 2026-07-10
+
+### Infra
+- **OpenSearch Backup & Restore now works.** The cluster had no snapshot repository (and couldn't register one — no `repository-s3` plugin, no `path.repo`). Added `path.repo` + a dedicated 20Gi snapshot PVC, an idempotent `register-opensearch-snapshot-repo` Job (fs repo `sovereign-fs`), and a daily 03:00 snapshot CronJob (gated on `opensearchSnapshots.enabled`, on for STACKIT). *(Deploying it rolls the OpenSearch StatefulSet once so the snapshot volume + `path.repo` take effect.)*
+- **App image pull from the in-cluster Forgejo registry fixed** (node-level): a small additive DaemonSet configures each node's containerd to resolve `forgejo-http` + use plain HTTP for that one registry — so OS-built apps (e.g. the Campaign Manager) actually deploy instead of `ImagePullBackOff`.
+
+### Refactor (Phase 2)
+- **Tab-loose files consolidated into their modules** (per `ARCHITECTURE.md`): `apps.ts`→software · `governance.ts`/`approvals.ts`→governance · `platform*.ts`/`users.ts`/`recovery.ts`/`terminal-session.ts`→platform-admin · `gateway-usage.ts`→monitoring · `agent-*.ts`→agents · `data-handoff.ts`→data · `planning.ts`→strategy. 15 history-preserving `git mv`s; behavior identical (1857 tests). The `lib/` root is now essentially free of tab-loose files (only the two client hooks remain for Phase 3).
+
 ## [os-ui 0.1.72] — 2026-07-10
 
 ### Governance / OPA (the definitive flip-flop fix)

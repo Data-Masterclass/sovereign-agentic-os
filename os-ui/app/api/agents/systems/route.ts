@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { listSystems, createSystem, ensureHydrated, markPendingShares } from '@/lib/agents/store';
 import { isTemplateKey } from '@/lib/agents/templates';
-import { listApprovals } from '@/lib/approvals';
+import { listApprovals } from '@/lib/governance/approvals';
 
 export const dynamic = 'force-dynamic';
 

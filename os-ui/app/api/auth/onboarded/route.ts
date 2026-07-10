@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
-import { markOnboarded } from '@/lib/users';
+import { markOnboarded } from '@/lib/platform-admin/users';
 
 export const dynamic = 'force-dynamic';
 

@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/core/config';
 import { currentUser } from '@/lib/core/auth';
-import { completeFirstLogin, getPublicUser, setupAdmin } from '@/lib/users';
+import { completeFirstLogin, getPublicUser, setupAdmin } from '@/lib/platform-admin/users';
 import { assessPasswordStrength, hashPassword } from '@/lib/core/password';
 import { SESSION_COOKIE, SESSION_MAX_AGE, signSession } from '@/lib/core/session';
 

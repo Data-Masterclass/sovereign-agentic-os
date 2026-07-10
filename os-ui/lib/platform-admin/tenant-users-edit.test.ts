@@ -17,7 +17,7 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { hashPassword } from '../core/password.ts';
-import { __resetUsers } from '../users.ts';
+import { __resetUsers } from './users.ts';
 
 // ---------------------------------------------------------------------------
 // Stubs
@@ -95,13 +95,13 @@ let routeTag = 0;
 async function editViaRoute(
   targetId: string,
   body: Record<string, unknown>,
-): Promise<{ status: number; body: Record<string, unknown>; users: typeof import('../users.ts') }> {
+): Promise<{ status: number; body: Record<string, unknown>; users: typeof import('./users.ts') }> {
   routeTag += 1;
   const { stub } = openSearchStub();
   activeFetch = stub;
 
   __resetUsers();
-  const users = await import('../users.ts');
+  const users = await import('./users.ts');
 
   await users.setupAdmin({
     bootstrapId: 'admin',

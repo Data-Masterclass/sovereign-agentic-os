@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { templateFiles, type AppTemplateKey, TEMPLATE_RUNTIME } from '@/lib/apps';
+import { templateFiles, type AppTemplateKey, TEMPLATE_RUNTIME } from '@/lib/software/apps';
 import { generateAndCompile, applyReadsOnWritesOff } from './auto-mcp.ts';
 import { securityScan } from './scan.ts';
 import type {

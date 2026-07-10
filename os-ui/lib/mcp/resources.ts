@@ -14,7 +14,7 @@ import { listMetrics } from '@/lib/metrics/store';
 import { listDashboards, getDashboard } from '@/lib/dashboards/store';
 import { listBets, getBet } from '@/lib/bigbets/store';
 import { listSystems, getSystem } from '@/lib/agents/store';
-import { listAppsForUser, getAppForUser } from '@/lib/apps';
+import { listAppsForUser, getAppForUser } from '@/lib/software/apps';
 import { listConnectionsForUser, getConnectionForUser } from '@/lib/connections';
 import { listModelsForUser } from '@/lib/science/model-service';
 import { listPillars } from '@/lib/strategy/pillars';

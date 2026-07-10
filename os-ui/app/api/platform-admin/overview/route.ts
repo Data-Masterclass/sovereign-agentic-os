@@ -10,7 +10,7 @@ import { billingView, offlineSpend } from '@/lib/platform-admin/billing';
 import { listRequests } from '@/lib/platform-admin/security';
 import { listTargets } from '@/lib/platform-admin/backups';
 import { listAudit } from '@/lib/platform-admin/audit';
-import { REGISTRY, listComponentsWithStatus } from '@/lib/platform';
+import { REGISTRY, listComponentsWithStatus } from '@/lib/platform-admin/platform';
 
 export const dynamic = 'force-dynamic';
 

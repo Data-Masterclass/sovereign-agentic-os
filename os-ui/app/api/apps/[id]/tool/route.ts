@@ -3,10 +3,10 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
-import { getAppForUser } from '@/lib/apps';
+import { getAppForUser } from '@/lib/software/apps';
 import { getConnectionByApp } from '@/lib/infra/app-registry';
 import { authorizeAppTool, authorizeConnectionCall, trace } from '@/lib/infra/agent-governed';
-import { enqueue } from '@/lib/approvals';
+import { enqueue } from '@/lib/governance/approvals';
 
 export const dynamic = 'force-dynamic';
 

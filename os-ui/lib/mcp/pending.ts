@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { Approval, ApprovalKind } from '@/lib/approvals';
+import type { Approval, ApprovalKind } from '@/lib/governance/approvals';
 
 /**
  * THE CANONICAL PENDING HANDLE (mcp-v2 P0.1). Every write tool that reaches a

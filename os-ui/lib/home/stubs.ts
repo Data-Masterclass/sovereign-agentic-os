@@ -19,7 +19,7 @@ import 'server-only';
  *     a direct listUsers() call (in-process, fast).
  */
 
-import { listUsers } from '@/lib/users';
+import { listUsers } from '@/lib/platform-admin/users';
 import { listCaps, getSpend } from '@/lib/governance/cost';
 import { latestManualValue } from '@/lib/strategy/model';
 import type { Pillar } from '@/lib/strategy/model';

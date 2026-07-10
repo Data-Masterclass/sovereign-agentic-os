@@ -21,7 +21,7 @@ import {
   listAppFilesForViewer,
   readAppFileForViewer,
   templateFiles,
-} from '@/lib/apps';
+} from '@/lib/software/apps';
 import { forgejoReachable, getSnapshot } from '@/lib/software/server';
 import { getReviewCard, listReviewCards, PREVIEW_PENDING_NOTE } from '@/lib/software/review';
 import {

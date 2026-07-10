@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { config } from '@/lib/core/config';
 import { requireUser } from '@/lib/core/auth';
 import { errorResponse } from '@/lib/data/server';
-import { shapeUsage, type RawActivity, type RawSpend } from '@/lib/gateway-usage';
+import { shapeUsage, type RawActivity, type RawSpend } from '@/lib/monitoring/gateway-usage';
 
 export const dynamic = 'force-dynamic';
 

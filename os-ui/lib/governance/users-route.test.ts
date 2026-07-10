@@ -34,7 +34,7 @@ async function patch(actor: Actor, body: Record<string, unknown>, tag: string) {
   // Offline mirror → in-memory users store (no cluster needed).
   (globalThis as { fetch: unknown }).fetch = async () => { throw new Error('offline'); };
 
-  const users = await import('../users.ts');
+  const users = await import('../platform-admin/users.ts');
   users.__resetUsers();
   // A real admin (via the forced first-run setup) + a couple of targets.
   await users.setupAdmin({

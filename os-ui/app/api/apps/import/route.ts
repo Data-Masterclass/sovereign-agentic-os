@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
-import { createApp, type AppTemplateKey } from '@/lib/apps';
+import { createApp, type AppTemplateKey } from '@/lib/software/apps';
 import { authorThroughFrontDoor, commitToApp } from '@/lib/software/server';
 
 export const dynamic = 'force-dynamic';

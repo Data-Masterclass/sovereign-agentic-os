@@ -12,8 +12,8 @@ import { __resetStore as resetFiles } from '@/lib/files/store';
 import { __resetDashboards } from '@/lib/dashboards/store';
 import { __resetBets, auditLog } from '@/lib/bigbets/store';
 import { __resetSources, __resetStrategy, __seedStrategy } from '@/lib/bigbets/sources';
-import { __resetApprovals } from '@/lib/approvals';
-import { __resetAppsCache } from '@/lib/apps';
+import { __resetApprovals } from '@/lib/governance/approvals';
+import { __resetAppsCache } from '@/lib/software/apps';
 
 /**
  * MCP WAVE B — operate & read-back parity. Seven single-reads (get_metric,

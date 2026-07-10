@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
-import { createApp } from '@/lib/apps';
+import { createApp } from '@/lib/software/apps';
 import { startPreview, requestDeploy, decideDeploy, scopeBroadened } from './review.ts';
 import { consumeResource } from './lifecycle.ts';
 import { commitToApp } from './server.ts';

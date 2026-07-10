@@ -26,7 +26,7 @@
  * the API route/chart wire the real secrets, MCP URL and sandbox RuntimeClass.
  */
 
-import type { SafetyPreset } from '../governance.ts';
+import type { SafetyPreset } from '../governance/governance.ts';
 
 /** A Platform-MCP tool as the provisioner sees it (name + whether it writes). */
 export type ToolDescriptor = { name: string; write: boolean };

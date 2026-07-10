@@ -4,7 +4,7 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import { parseAgentChatResponse, stripThinking } from '@/lib/agent-chat-response';
+import { parseAgentChatResponse, stripThinking } from '@/lib/agents/agent-chat-response';
 
 export type ChatMessage = { role: 'user' | 'assistant'; content: string };
 

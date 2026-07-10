@@ -147,7 +147,7 @@ test('artifacts (os-artifacts): fresh-boot bootstrap + round-trip hydration', as
 
 test('apps (os-apps): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const apps = await import('../apps.ts');
+  const apps = await import('../software/apps.ts');
   const app = {
     id: 'app_test1', name: 'Test app', slug: 'test-app', template: 'service', surface: 'api',
     owner: 'admin', domain: 'sales', visibility: 'Personal',
@@ -198,7 +198,7 @@ test('connections (os-connections): fresh-boot bootstrap + round-trip hydration'
 
 test('users (os-users): fresh boot seeds the bootstrap admin DURABLY + round-trip', async () => {
   const os = fakeCluster();
-  const users = await import('../users.ts');
+  const users = await import('../platform-admin/users.ts');
   try {
     users.__resetUsers();
     const list = await users.listUsers(); // triggers hydration + first-run seed
@@ -580,7 +580,7 @@ test('egress requests (os-egress-requests): fresh-boot bootstrap + round-trip hy
 
 test('approvals (os-approvals): decided approval survives pod roll via hydration', async () => {
   const os = fakeCluster();
-  const approvals = await import('../approvals.ts');
+  const approvals = await import('../governance/approvals.ts');
   try {
     approvals.__resetApprovals();
     const a = approvals.enqueue({
@@ -630,7 +630,7 @@ test('platform audit (os-audit): audit ring order preserved + entries survive po
 
 test('agent memory (os-agent-memory): curated fact survives pod roll via hydration', async () => {
   const os = fakeCluster();
-  const mem = await import('../agent-memory.ts');
+  const mem = await import('../agents/agent-memory.ts');
   try {
     mem.__resetMemory();
     const f = mem.proposeFact({ domain: 'sales', agent: 'crm-agent', kind: 'semantic', text: 'Prefers EUR', provenance: 'thread-1' });
@@ -683,7 +683,7 @@ test('marketplace (os-marketplace-*): grant + deprecated survive pod roll via hy
 
 test('approvals (os-approvals): first enqueue on a fresh cluster bootstraps the index and persists the doc', async () => {
   const os = fakeCluster();
-  const approvals = await import('../approvals.ts');
+  const approvals = await import('../governance/approvals.ts');
   try {
     osMirror({ index: 'os-approvals' }).__reset(); // fresh-process mirror state
     approvals.__resetApprovals();
@@ -717,7 +717,7 @@ test('platform audit (os-audit): first audit entry on a fresh cluster bootstraps
 
 test('agent memory (os-agent-memory): first fact on a fresh cluster bootstraps the index and persists the doc', async () => {
   const os = fakeCluster();
-  const mem = await import('../agent-memory.ts');
+  const mem = await import('../agents/agent-memory.ts');
   try {
     osMirror({ index: 'os-agent-memory' }).__reset();
     const f = mem.proposeFact({ domain: 'sales', agent: 'crm-agent', kind: 'semantic', text: 'Prefers EUR', provenance: 'thread-1' });

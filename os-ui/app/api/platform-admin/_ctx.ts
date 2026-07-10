@@ -9,7 +9,7 @@ import { assertTenantAccess, currentTenantId, type Tenant } from '@/lib/platform
 import { ensureHydrated as ensureDomainsHydrated } from '@/lib/platform-admin/domains';
 import { ensureHydrated as ensureModelsHydrated } from '@/lib/platform-admin/models';
 import { ensureHydrated as ensureTenantUsersHydrated } from '@/lib/platform-admin/tenant-users';
-import { knownDomains } from '@/lib/users';
+import { knownDomains } from '@/lib/platform-admin/users';
 import type { CurrentUser } from '@/lib/core/auth';
 
 /**

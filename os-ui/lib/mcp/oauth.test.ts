@@ -24,7 +24,7 @@ import {
 } from './oauth.ts';
 import { verifyMcpToken, resolveMcpUser } from './token.ts';
 import { handleRpc, type JsonRpcResponse } from './server.ts';
-import { createUser } from '@/lib/users';
+import { createUser } from '@/lib/platform-admin/users';
 
 /**
  * The OAuth 2.1 Authorization-Server core (PKCE codes, refresh rotation, DCR,

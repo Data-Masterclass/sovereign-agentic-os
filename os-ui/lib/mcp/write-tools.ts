@@ -25,7 +25,7 @@ import { runQualityChecks } from '@/lib/data/dq-run';
 import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/data/dataset-schema';
 import { queryRun } from '@/lib/infra/governed';
 import { publishPromotionLive } from '@/lib/data/publish-server';
-import { enqueue, getApproval, decide, listApprovals } from '@/lib/approvals';
+import { enqueue, getApproval, decide, listApprovals } from '@/lib/governance/approvals';
 import { canBuildStage, canPassThrough, stageArtifact } from '@/lib/data/panels';
 import { scaffoldCubeYaml } from '@/lib/data/metrics';
 import { ingestAndRegisterBronze } from '@/lib/data/ingest';

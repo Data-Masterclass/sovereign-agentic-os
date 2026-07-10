@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { type Approval } from '@/lib/approvals';
+import { type Approval } from '@/lib/governance/approvals';
 
 /**
  * Governance approvals seeding hook. A fresh tenant starts EMPTY — there are no

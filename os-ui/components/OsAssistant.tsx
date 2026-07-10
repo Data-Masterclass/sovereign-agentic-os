@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { useUser } from '@/lib/useUser';
-import { parseAgentChatResponse } from '@/lib/agent-chat-response';
+import { parseAgentChatResponse } from '@/lib/agents/agent-chat-response';
 
 /**
  * THE SOVEREIGN OS ASSISTANT — one overarching, globally-available assistant.

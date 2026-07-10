@@ -9,7 +9,7 @@ import { getDashboard } from '@/lib/dashboards/store';
 import { getModel } from '@/lib/science/model-service';
 import { getBet, canViewComponentDetail } from '@/lib/bigbets/store';
 import { buildComposition } from '@/lib/bigbets/composition';
-import { getAppForUser } from '@/lib/apps';
+import { getAppForUser } from '@/lib/software/apps';
 import { listingAdapter } from '@/lib/marketplace';
 
 /**

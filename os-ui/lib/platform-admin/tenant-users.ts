@@ -8,7 +8,7 @@ import {
   listUsers,
   updateUser,
   type PublicUser,
-} from '@/lib/users';
+} from '@/lib/platform-admin/users';
 import type { Role } from '@/lib/core/session';
 import { osMirror } from '../infra/os-mirror.ts';
 

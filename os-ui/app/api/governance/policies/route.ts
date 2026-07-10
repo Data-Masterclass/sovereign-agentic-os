@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { currentUser } from '@/lib/core/auth';
-import { listUsers } from '@/lib/users';
+import { listUsers } from '@/lib/platform-admin/users';
 import { canViewPolicyPlane, consolidatedPlane, listEgress, overrideRevoke, policySources, readOpaGrants } from '@/lib/governance/policy-view';
 import { listStanding, ensureHydrated } from '@/lib/governance/standing';
 import { record as audit } from '@/lib/governance/audit';

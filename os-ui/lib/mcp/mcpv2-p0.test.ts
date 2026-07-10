@@ -13,7 +13,7 @@ import { __resetStore as resetFiles } from '@/lib/files/store';
 import { __resetDashboards } from '@/lib/dashboards/store';
 import { __resetBets } from '@/lib/bigbets/store';
 import { __resetStore as resetAgents } from '@/lib/agents/store';
-import { __resetApprovals } from '@/lib/approvals';
+import { __resetApprovals } from '@/lib/governance/approvals';
 
 /**
  * MCP v2 — P0 (the cross-cutting primitives). The SECURITY-CRITICAL foundation:
@@ -214,8 +214,8 @@ test('P0.4 the ladder is the ONLY promotion path: no direct promote/certify/tier
     promoteConnection: ['lib/connections/store.ts', 'lib/governance/ladder.ts'],
     publishWorkflow: ['lib/knowledge/store.ts', 'lib/governance/effects.ts'],
     certifyWorkflow: ['lib/knowledge/store.ts', 'lib/governance/effects.ts'],
-    promoteApp: ['lib/apps.ts', 'lib/governance/ladder.ts'],
-    promoteArtifact: ['lib/core/artifacts.ts', 'lib/apps.ts', 'lib/governance/ladder.ts'], // apps.ts = documented cascade
+    promoteApp: ['lib/software/apps.ts', 'lib/governance/ladder.ts'],
+    promoteArtifact: ['lib/core/artifacts.ts', 'lib/software/apps.ts', 'lib/governance/ladder.ts'], // apps.ts = documented cascade
     transitionDashboard: ['lib/dashboards/store.ts', 'lib/governance/effects.ts'],
     promoteModel: ['lib/science/model-service.ts', 'lib/governance/effects.ts'],
     certifyModel: ['lib/science/model-service.ts', 'lib/governance/effects.ts'],

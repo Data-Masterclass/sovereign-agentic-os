@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/core/auth';
-import { archiveUser, deleteUser, restoreUser, updateUser } from '@/lib/users';
+import { archiveUser, deleteUser, restoreUser, updateUser } from '@/lib/platform-admin/users';
 import { ROLES, type Role } from '@/lib/core/session';
 
 export const dynamic = 'force-dynamic';

@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { listComponentsWithStatus, statusOf, toggleComponent, BY_ID } from '@/lib/platform';
+import { listComponentsWithStatus, statusOf, toggleComponent, BY_ID } from '@/lib/platform-admin/platform';
 import { selfHealFor, versionFor, nodes, pools, OPTIONAL_LAYERS } from '@/lib/platform-admin/components-extra';
 import { assertGuarded } from '@/lib/platform-admin/guard';
 import { audit } from '@/lib/platform-admin/audit';

@@ -20,8 +20,8 @@ import {
   setAgentPreset,
   _clearStandingPolicies,
   _clearPresets,
-} from '../governance.ts';
-import { registerBronzeSource, bronzeFor, _clearHandoffs } from '../data-handoff.ts';
+} from '../governance/governance.ts';
+import { registerBronzeSource, bronzeFor, _clearHandoffs } from '../data/data-handoff.ts';
 import { requestEgress, decideEgress, isHostApproved, _clearEgress } from './egress-requests.ts';
 
 function bundleFor(templateKey: string, grants: { agent: string; tools: string[] }[] = []) {

@@ -11,7 +11,7 @@ import {
   deleteAppRepo,
   withStatus,
   type App,
-} from '@/lib/apps';
+} from '@/lib/software/apps';
 import { removeConnection } from '@/lib/infra/app-registry';
 import { unregisterConnectionProfile, trace } from '@/lib/infra/agent-governed';
 import { generateAndCompile } from './auto-mcp.ts';

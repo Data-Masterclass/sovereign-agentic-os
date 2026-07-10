@@ -8,7 +8,7 @@ import { listAllowlist } from '@/lib/platform-admin/security';
 import { enabledMap } from '@/lib/platform-admin/models';
 import { compileUsers } from '@/lib/platform-admin/tenant-users';
 import { currentTenantId } from '@/lib/platform-admin/tenant';
-import { knownDomains } from '@/lib/users';
+import { knownDomains } from '@/lib/platform-admin/users';
 
 /**
  * Gather the one identity/structure source and compile it to OPA. Called after

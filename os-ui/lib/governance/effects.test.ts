@@ -3,7 +3,7 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import type { Approval } from '../approvals.ts';
+import type { Approval } from './approvals.ts';
 import { applyEffect } from './effects.ts';
 import {
   __resetPlane,

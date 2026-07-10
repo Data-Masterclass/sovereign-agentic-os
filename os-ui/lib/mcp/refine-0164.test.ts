@@ -7,7 +7,7 @@ import type { CurrentUser } from '@/lib/core/auth';
 import { handleRpc, ALL_MCP_TOOLS, type JsonRpcResponse, type ToolError } from './server.ts';
 import { __resetStore as resetData } from '@/lib/data/store';
 import { __resetStore as resetAgents } from '@/lib/agents/store';
-import { __resetApprovals } from '@/lib/approvals';
+import { __resetApprovals } from '@/lib/governance/approvals';
 
 /**
  * MCP 0.1.64 PARITY — the new refinement/metric capabilities the UI gained, now

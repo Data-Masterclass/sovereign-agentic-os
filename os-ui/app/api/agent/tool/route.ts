@@ -11,7 +11,7 @@ import {
   SALES,
   type ToolName,
 } from '@/lib/infra/agent-governed';
-import { enqueue } from '@/lib/approvals';
+import { enqueue } from '@/lib/governance/approvals';
 
 export const dynamic = 'force-dynamic';
 

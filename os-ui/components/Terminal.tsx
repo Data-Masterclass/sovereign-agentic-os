@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import '@xterm/xterm/css/xterm.css';
-import { getTerminalSession, type TerminalState } from '@/lib/terminal-session';
+import { getTerminalSession, type TerminalState } from '@/lib/platform-admin/terminal-session';
 
 /**
  * Terminal tab view. The actual shell (WebSocket + xterm + scrollback) lives in

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { stripThinking } from '@/lib/agent-chat-response';
+import { stripThinking } from '@/lib/agents/agent-chat-response';
 import {
   estimateTokens,
   compactToolResult,

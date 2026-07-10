@@ -10,9 +10,9 @@ import {
   newId,
   withStatus,
   type App,
-} from '@/lib/apps';
+} from '@/lib/software/apps';
 import { trace } from '@/lib/infra/agent-governed';
-import { enqueue, decide as decideApproval, listApprovals } from '@/lib/approvals';
+import { enqueue, decide as decideApproval, listApprovals } from '@/lib/governance/approvals';
 import { securityScan } from './scan.ts';
 import { detectSurface } from './metadata.ts';
 import { getSnapshot } from './server.ts';

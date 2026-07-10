@@ -9,7 +9,7 @@ import {
   templateFiles,
   withStatus,
   type App,
-} from '@/lib/apps';
+} from '@/lib/software/apps';
 import { generateAndCompile } from './auto-mcp.ts';
 import { parseAppManifest, parseOpenApi, detectSurface } from './metadata.ts';
 import type { PipelineBackend, AuthorInput, AuthorResult, FrontDoorKey } from './adapters.ts';

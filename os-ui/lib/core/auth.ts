@@ -5,7 +5,7 @@ import 'server-only';
 import { cookies } from 'next/headers';
 import { config } from '@/lib/core/config';
 import { SESSION_COOKIE, type Role, verifySession } from '@/lib/core/session';
-import { authenticate as authUser, getPublicUser } from '@/lib/users';
+import { authenticate as authUser, getPublicUser } from '@/lib/platform-admin/users';
 import { activeDomainIds } from '@/lib/platform-admin/domains';
 
 /**

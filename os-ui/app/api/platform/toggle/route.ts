@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/core/auth';
-import { toggleComponent } from '@/lib/platform';
+import { toggleComponent } from '@/lib/platform-admin/platform';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';

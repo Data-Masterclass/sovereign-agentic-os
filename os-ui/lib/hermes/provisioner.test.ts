@@ -10,7 +10,7 @@ import {
   type ProvisionInput,
   type ProfilePreset,
 } from './provisioner.ts';
-import { resolveAutonomous } from '../governance.ts';
+import { resolveAutonomous } from '../governance/governance.ts';
 
 const TOOLS = [
   { name: 'query_data', write: false },

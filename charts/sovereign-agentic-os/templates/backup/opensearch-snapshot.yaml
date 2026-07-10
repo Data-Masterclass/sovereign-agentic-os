@@ -1,0 +1,185 @@
+{{- /*
+  OpenSearch filesystem snapshot repository (see values.yaml `opensearchSnapshots`).
+
+  What this emits (all gated behind opensearch.enabled AND opensearchSnapshots.enabled):
+
+  1. PVC  — durable, RWO, mounted at opensearchSnapshots.mountPath inside the
+     OpenSearch StatefulSet via opensearch.extraVolumes / extraVolumeMounts.
+     Size and storageClass follow the same pattern as all other PVCs in the chart.
+
+  2. register-opensearch-snapshot-repo  (post-install/post-upgrade Job, wave 0+)
+     Idempotently PUTs `_snapshot/<repositoryName>` with type=fs and
+     location=<mountPath>. Runs every deploy so the repo survives pod restarts
+     and PVC re-mounts. Uses curl from curlimages/curl (no extra image needed).
+
+  3. opensearch-snapshot (CronJob, optional via opensearchSnapshots.cronJob.enabled)
+     Daily snapshot of all indices to the registered repo, named by UTC date.
+     Existing snapshots with the same name are skipped (idempotent).
+
+  IMPORTANT: adding `path.repo` to opensearch.yml (done in the STACKIT overlay)
+  requires an OpenSearch pod restart to take effect. Plan for one StatefulSet
+  rolling update when deploying the version that introduces this config.
+
+  The repository name `sovereign-fs` is the canonical name surfaced in the
+  os-ui Backup & Restore feature (lib/platform-admin/backups.ts, id=opensearch).
+*/}}
+{{- $snap := .Values.opensearchSnapshots }}
+{{- if and .Values.opensearch.enabled $snap.enabled }}
+{{- $repoName := $snap.repositoryName | default "sovereign-fs" }}
+{{- $mountPath := $snap.mountPath | default "/usr/share/opensearch/snapshots" }}
+{{- $osUrl := "http://opensearch:9200" }}
+---
+# PVC that backs the snapshot directory mounted into the OpenSearch pod.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: opensearch-snapshots
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: opensearch-snapshots
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  accessModes:
+    - {{ $snap.pvc.accessMode | default "ReadWriteOnce" }}
+  {{- include "soa.storageClass" . | nindent 2 }}
+  resources:
+    requests:
+      storage: {{ $snap.pvc.size | default "20Gi" | quote }}
+---
+# Post-install/post-upgrade Job: idempotently register the fs snapshot repo.
+# Wave 1 (after OpenSearch wave 0 is ready). The Job retries for up to 5 min
+# so a slow OpenSearch startup doesn't cause a permanent failure.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: register-opensearch-snapshot-repo
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: opensearch-snapshot-register
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "opensearch-snapshot-register") | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: register
+          image: "{{ $snap.registerJob.image.repository }}:{{ $snap.registerJob.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          resources:
+            {{- toYaml $snap.registerJob.resources | nindent 12 }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              OS={{ $osUrl | quote }}
+              REPO={{ $repoName | quote }}
+              LOCATION={{ $mountPath | quote }}
+
+              echo "Waiting for OpenSearch to be ready ..."
+              for i in $(seq 1 30); do
+                STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "$OS/_cluster/health" 2>/dev/null || echo "000")
+                [ "$STATUS" = "200" ] && break
+                [ "$i" = "30" ] && { echo "FATAL: OpenSearch not ready after 60s"; exit 1; }
+                sleep 2
+              done
+              echo "OpenSearch ready (HTTP 200)."
+
+              # Idempotent: check if repo already exists with the right settings.
+              EXISTING=$(curl -sf "$OS/_snapshot/$REPO" 2>/dev/null || echo "{}")
+              if echo "$EXISTING" | grep -q '"type":"fs"'; then
+                echo "Snapshot repo '$REPO' already registered as fs — nothing to do."
+                exit 0
+              fi
+
+              echo "Registering snapshot repository '$REPO' (type=fs, location=$LOCATION) ..."
+              RESULT=$(curl -sf -X PUT "$OS/_snapshot/$REPO" \
+                -H 'Content-Type: application/json' \
+                -d "{\"type\":\"fs\",\"settings\":{\"location\":\"$LOCATION\",\"compress\":true}}")
+              echo "$RESULT"
+              echo "$RESULT" | grep -q '"acknowledged":true' || { echo "FATAL: registration not acknowledged"; exit 1; }
+              echo "Snapshot repository '$REPO' registered successfully."
+{{- if $snap.cronJob.enabled }}
+---
+# Daily CronJob: snapshot all indices to the registered repo.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: opensearch-snapshot
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: opensearch-snapshot-cron
+spec:
+  schedule: {{ $snap.cronJob.schedule | default "0 3 * * *" | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            {{- include "soa.selectorLabels" (dict "ctx" . "component" "opensearch-snapshot-cron") | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          securityContext:
+            {{- include "soa.podSecurityContext" . | nindent 12 }}
+          containers:
+            - name: snapshot
+              image: "{{ $snap.registerJob.image.repository }}:{{ $snap.registerJob.image.tag }}"
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "soa.containerSecurityContext" . | nindent 16 }}
+              resources:
+                {{- toYaml $snap.cronJob.resources | nindent 16 }}
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  OS={{ $osUrl | quote }}
+                  REPO={{ $repoName | quote }}
+                  STAMP=$(date -u +%Y-%m-%d)
+                  SNAP_NAME="auto-$STAMP"
+
+                  echo "Waiting for OpenSearch ..."
+                  for i in $(seq 1 20); do
+                    STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "$OS/_cluster/health" 2>/dev/null || echo "000")
+                    [ "$STATUS" = "200" ] && break
+                    [ "$i" = "20" ] && { echo "FATAL: OpenSearch not ready"; exit 1; }
+                    sleep 3
+                  done
+
+                  # Skip if today's snapshot already exists (idempotent on re-runs).
+                  EXISTING=$(curl -sf "$OS/_snapshot/$REPO/$SNAP_NAME" 2>/dev/null || echo "{}")
+                  if echo "$EXISTING" | grep -q '"state":"SUCCESS"'; then
+                    echo "Snapshot '$SNAP_NAME' already successful — skipping."
+                    exit 0
+                  fi
+
+                  echo "Taking snapshot '$SNAP_NAME' from repo '$REPO' ..."
+                  # wait_for_completion=true blocks until done (single-node, usually fast).
+                  RESULT=$(curl -sf -X PUT "$OS/_snapshot/$REPO/$SNAP_NAME?wait_for_completion=true" \
+                    -H 'Content-Type: application/json' \
+                    -d '{"indices":"*","ignore_unavailable":true,"include_global_state":false}')
+                  echo "$RESULT"
+                  echo "$RESULT" | grep -q '"state":"SUCCESS"' || { echo "FATAL: snapshot did not complete successfully"; exit 1; }
+                  echo "Snapshot '$SNAP_NAME' complete."
+{{- end }}
+{{- end }}

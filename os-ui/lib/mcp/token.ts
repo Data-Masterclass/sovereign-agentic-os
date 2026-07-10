@@ -5,7 +5,7 @@ import 'server-only';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { config } from '@/lib/core/config';
 import type { CurrentUser } from '@/lib/core/auth';
-import { getPublicUser } from '@/lib/users';
+import { getPublicUser } from '@/lib/platform-admin/users';
 
 /**
  * Per-user bearer token for the remote MCP endpoint (`/api/mcp`).

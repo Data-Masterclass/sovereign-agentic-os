@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { signMcpToken, resolveMcpUser } from './token.ts';
 import { handleRpc, type JsonRpcResponse } from './server.ts';
-import { createUser } from '@/lib/users';
+import { createUser } from '@/lib/platform-admin/users';
 
 /**
  * The route's authentication boundary is `resolveMcpUser` (the route shell that

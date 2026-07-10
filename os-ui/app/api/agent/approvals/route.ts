@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
-import { decide, getApproval, listApprovals } from '@/lib/approvals';
-import { curateFact, proposeFact } from '@/lib/agent-memory';
+import { decide, getApproval, listApprovals } from '@/lib/governance/approvals';
+import { curateFact, proposeFact } from '@/lib/agents/agent-memory';
 import { trace } from '@/lib/infra/agent-governed';
 import {
   applyApprovedCertification,

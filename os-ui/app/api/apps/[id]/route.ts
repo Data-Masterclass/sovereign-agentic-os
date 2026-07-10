@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
-import { getAppForUser, updateAppDocs } from '@/lib/apps';
+import { getAppForUser, updateAppDocs } from '@/lib/software/apps';
 import { getConnectionByApp } from '@/lib/infra/app-registry';
 
 export const dynamic = 'force-dynamic';
