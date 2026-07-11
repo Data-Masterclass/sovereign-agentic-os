@@ -63,6 +63,12 @@ metadata:
     argocd.argoproj.io/sync-wave: "1"
     argocd.argoproj.io/hook: PostSync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    # Helm deploys run this AS A HOOK: a Job is immutable, so a plain re-apply on
+    # every `helm upgrade` fails. post-install,post-upgrade + before-hook-creation
+    # recreates it each release (the last run stays for debugging).
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation
 spec:
   backoffLimit: 5
   ttlSecondsAfterFinished: 86400
@@ -74,6 +80,12 @@ spec:
       restartPolicy: OnFailure
       securityContext:
         {{- include "soa.podSecurityContext" . | nindent 8 }}
+        # curlimages/curl runs as the NAMED user `curl_user` (uid/gid 100); with
+        # runAsNonRoot the kubelet needs a NUMERIC uid to verify non-root, and 100
+        # also lets curl_user write the snapshot repo PVC (fsGroup).
+        runAsUser: 100
+        runAsGroup: 100
+        fsGroup: 100
       containers:
         - name: register
           image: "{{ $snap.registerJob.image.repository }}:{{ $snap.registerJob.image.tag }}"
@@ -141,6 +153,11 @@ spec:
           restartPolicy: Never
           securityContext:
             {{- include "soa.podSecurityContext" . | nindent 12 }}
+            # curlimages/curl runs as named user `curl_user` (uid/gid 100) — a
+            # numeric uid is required under runAsNonRoot + writes the snapshot PVC.
+            runAsUser: 100
+            runAsGroup: 100
+            fsGroup: 100
           containers:
             - name: snapshot
               image: "{{ $snap.registerJob.image.repository }}:{{ $snap.registerJob.image.tag }}"

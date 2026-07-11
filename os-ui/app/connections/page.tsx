@@ -5,6 +5,8 @@
 
 import PageHeader from '@/components/PageHeader';
 import GovernedConnections from '@/components/GovernedConnections';
+import TalkTo from '@/components/talk/TalkTo';
+import { TALK_PRESENTATION } from '@/lib/talk/schema';
 
 /**
  * The Connections page — one scroll, no sub-tabs.
@@ -15,6 +17,7 @@ import GovernedConnections from '@/components/GovernedConnections';
  *   Then:   outbound access (egress allowlist requests).
  */
 export default function ConnectionsPage() {
+  const talk = TALK_PRESENTATION.connections;
   return (
     <>
       <PageHeader title="Connections" crumb="external systems · governed connections" tutorial="connections" />
@@ -26,6 +29,11 @@ export default function ConnectionsPage() {
           secret, under policy.
         </p>
         <GovernedConnections />
+
+        {/* Talk to Connections — metadata-grounded Q&A over connection capabilities. */}
+        <div style={{ marginTop: 40 }}>
+          <TalkTo tab="connections" title={talk.title} blurb={talk.blurb} examples={talk.examples} />
+        </div>
       </div>
     </>
   );

@@ -209,6 +209,14 @@ there.
   resolves to the *same* number in the explorer, in dashboards, and in an agent's `metrics`
   tool — each under the viewer's own row-level security.
 
+**Talk to any Context tab.** Every tab above carries a read-only **"Talk to X"** copilot. It
+builds a security-scoped overview of what *you* can see on that tab, runs the tab's own governed
+retrieval **as you** (Data → NL→SQL, Knowledge → knn retrieval, Files → file search; Metrics and
+Connections grounded on their catalog), and packs it within the model window via the [Context
+Assembler](#the-context-assembler). Answers arrive with the model's **reasoning shown separately**
+(a collapsible "thinking" panel), real citations, and a "what ran" disclosure — and it degrades
+honestly rather than inventing an answer when retrieval comes back empty.
+
 ## Build
 
 - **Agents — compose, govern, run.** One page where a domain's **agent systems** (instructions

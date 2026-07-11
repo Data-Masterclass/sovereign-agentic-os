@@ -24,7 +24,7 @@ import type { Role } from '@/lib/core/session';
  * same Cube metric + the same Iceberg mart as Superset, the numbers can't drift.
  */
 
-export type ToolName = 'metrics' | 'query' | 'ask';
+export type ToolName = 'metrics' | 'query' | 'ask' | 'talk';
 
 export type Authz = { allowed: boolean; policy: 'opa-allow' | 'opa-deny' | 'opa-unreachable' };
 

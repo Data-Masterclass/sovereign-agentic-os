@@ -7,6 +7,8 @@ import { useState } from 'react';
 import PageHeader from '@/components/PageHeader';
 import FilesBrowser from '@/components/files/FilesBrowser';
 import FilesSources from '@/components/files/FilesSources';
+import TalkTo from '@/components/talk/TalkTo';
+import { TALK_PRESENTATION } from '@/lib/talk/schema';
 
 /**
  * The Files tab — a calm governed drive. Any file (docs, images, video, audio,
@@ -20,6 +22,7 @@ export default function FilesPage() {
   const [view, setView] = useState<'browser' | 'sources'>('browser');
   // A bump key remounts the browser after a sync so freshly-synced files appear.
   const [bump, setBump] = useState(0);
+  const talk = TALK_PRESENTATION.files;
   return (
     <>
       <PageHeader title="Files" crumb="a governed drive · folders · tags · search" tutorial="files" />
@@ -29,6 +32,11 @@ export default function FilesPage() {
           <button className={view === 'sources' ? 'active' : ''} onClick={() => setView('sources')}>Sources</button>
         </div>
         {view === 'browser' ? <FilesBrowser key={bump} /> : <FilesSources onSynced={() => setBump((b) => b + 1)} />}
+
+        {/* Talk to Files — governed retrieval across searchable file content. */}
+        <div style={{ marginTop: 40 }}>
+          <TalkTo tab="files" title={talk.title} blurb={talk.blurb} examples={talk.examples} />
+        </div>
       </div>
     </>
   );

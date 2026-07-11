@@ -28,6 +28,7 @@ import {
   betCatalogue,
   type BetShare,
 } from '@/lib/strategy/bets-bridge';
+import { _setPillarId } from '@/lib/bigbets/store';
 
 /**
  * Pillar/target adapter — the registry seam for the Strategy tab. CRUD on
@@ -408,6 +409,10 @@ export async function linkBet(user: CurrentUser, pid: string, betId: string): Pr
   const bet: BetShare | undefined = betCatalogue(user).find((b) => b.id === betId);
   if (!bet) throw withStatus(new Error('Unknown Big Bet'), 404);
   if (!p.betIds.includes(betId)) p.betIds.push(betId);
+  // Stamp the bet's pillarId so the two-way index stays consistent. Any previous
+  // pillar the bet was linked to will no longer claim it via bet.pillarId (the old
+  // pillar's betIds still contains it until explicitly unlinked — a builder action).
+  _setPillarId(betId, pid);
   // Register a fresh share for the stub source (default share until Big Bets owns it).
   linkBetStub(pid, { ...bet, sharePct: bet.sharePct || 1 });
   p.updatedAt = now();
@@ -427,6 +432,9 @@ export async function linkBet(user: CurrentUser, pid: string, betId: string): Pr
 export async function unlinkBet(user: CurrentUser, pid: string, betId: string): Promise<Pillar> {
   const { map, p } = await requireEditable(user, pid);
   p.betIds = p.betIds.filter((b) => b !== betId);
+  // Clear the bet's pillarId so the two-way index stays consistent (only when the
+  // bet actually pointed to THIS pillar — a bet may have been re-linked elsewhere).
+  _setPillarId(betId, undefined);
   unlinkBetStub(pid, betId);
   p.updatedAt = now();
   map.set(p.id, p);

@@ -15,6 +15,19 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.74] — 2026-07-10
+
+### Feature — "Talk to…" Context Copilots (all 5 Context tabs)
+- **A governed, read-only copilot on every Context tab** (Data · Knowledge · Files · Metrics · Connections). Each `Talk to X` panel assembles a DLS-scoped, metadata-driven overview of what *you* can see on that tab, runs the tab's existing governed retrieval **as the caller** (Data → NL→SQL over the lakehouse, Knowledge → knn retrieval, Files → file search; Metrics/Connections grounded on their catalog), packs it within the reasoning model's window via the **Context Assembler** (hard ceiling — no more 200K blow-ups), and answers with the reasoning model. New tab-module `lib/talk/` (contract-compliant) + `POST /api/talk/[tab]` (session-gated). Degrades honestly on retrieval/model failure — never fabricates.
+- **Reasoning shown *separately* from the answer.** A dedicated reasoner keeps `reasoning_content` intact; the UI puts it behind a muted, collapsible "Show thinking" panel above the prominent answer, with real citation chips (only entitled ids, real deep links) and a collapsible "what ran" (SQL/retrieval) disclosure below.
+
+### Fix
+- **Pillar↔bet link is now two-way.** Linking a Big Bet to a Strategy pillar stamped only one side (`pillar.betIds`) and left `bet.pillarId` unset (and unlink didn't clear it); both directions now stay consistent.
+
+### Infra
+- **OpenSearch snapshot register Job is now a proper Helm hook** (`post-install,post-upgrade` + `before-hook-creation`), so it recreates cleanly on every `helm upgrade` instead of failing on the immutable-Job re-apply.
+- **OpenSearch snapshot Jobs now actually run.** Both the register Job and the daily CronJob used `curlimages/curl` (named user `curl_user`) under `runAsNonRoot`, which the kubelet can't verify without a numeric uid → `CreateContainerConfigError` (the manual `#112` snapshot test passed, but the *automated* Jobs never started). Pinned `runAsUser/runAsGroup/fsGroup: 100` so the container starts and can write the snapshot-repo PVC.
+
 ## [os-ui 0.1.73] — 2026-07-10
 
 ### Infra

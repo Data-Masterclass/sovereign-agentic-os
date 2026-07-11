@@ -17,6 +17,8 @@ import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import DomainTag from '@/components/DomainTag';
 import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
+import TalkTo from '@/components/talk/TalkTo';
+import { TALK_PRESENTATION } from '@/lib/talk/schema';
 
 /** Knowledge visibility (Personal/Shared/Marketplace) → OS-wide lifecycle visibility. */
 const lcVis = (v: 'Personal' | 'Shared' | 'Marketplace'): LcVisibility =>
@@ -744,6 +746,17 @@ export default function KnowledgePage() {
             )}
           </>
         )}
+
+
+        {/* Talk to Knowledge — governed retrieval over workflows + knowledge entries. */}
+        {(() => {
+          const talk = TALK_PRESENTATION.knowledge;
+          return (
+            <div style={{ marginTop: 40 }}>
+              <TalkTo tab="knowledge" title={talk.title} blurb={talk.blurb} examples={talk.examples} />
+            </div>
+          );
+        })()}
       </div>
 
       <style>{KnowledgeStyles}</style>

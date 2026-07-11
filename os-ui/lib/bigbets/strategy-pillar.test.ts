@@ -21,10 +21,12 @@ import {
   __resetStrategy,
   __seedStrategy,
 } from './sources.ts';
-import { createBet, __resetBets } from './store.ts';
+import { createBet, _getBetRaw, __resetBets } from './store.ts';
 import { __resetSources } from './sources.ts';
 import {
   createPillar,
+  linkBet as pillarLinkBet,
+  unlinkBet as pillarUnlinkBet,
   listPillars as stratListPillars,
   __resetForTests,
 } from '../strategy/pillars.ts';
@@ -147,4 +149,54 @@ test('pillar created via strategy store is immediately visible via sources adapt
 
   assert.ok(viaStrategy.some((x) => x.id === p.id), 'strategy listPillars sees new pillar');
   assert.ok(viaSources.some((x) => x.id === p.id), 'sources adapter also sees it via globalThis');
+});
+
+// ------------------------------------------------------------------
+// 5. Pillar ↔ bet backlink: linkBet keeps betIds + bet.pillarId in sync
+// ------------------------------------------------------------------
+
+test('linkBet adds betId to pillar.betIds AND stamps bet.pillarId (two-way index)', async () => {
+  resetAll();
+  const p = await createPillar(builder, { name: 'Backlink Pillar', scope: 'domain' });
+
+  // Create a real bet (pillarId intentionally omitted — simulates a pre-existing bet).
+  const bet = createBet(betBuilder, {
+    name: 'Backlink Bet',
+    problem: { who: 'Sales', need: 'Grow NRR', obstacle: '', impact: '' },
+    targetValue: 300_000,
+    goLive: '2026-12-31',
+  });
+
+  // Before linking: pillar.betIds is empty, bet.pillarId is undefined.
+  const pillarBefore = (await stratListPillars(builder)).find((x) => x.id === p.id)!;
+  assert.equal(pillarBefore.betIds.length, 0, 'pillar.betIds is empty before link');
+  assert.equal(_getBetRaw(bet.id)?.pillarId, undefined, 'bet.pillarId is unset before link');
+
+  // Link bet → pillar via the governed path.
+  const pillarAfter = await pillarLinkBet(builder, p.id, bet.id);
+
+  // Pillar's betIds now includes the bet.
+  assert.ok(pillarAfter.betIds.includes(bet.id), 'pillar.betIds includes the bet after link');
+
+  // Bet's pillarId is now set to the pillar's id (the backlink).
+  assert.equal(_getBetRaw(bet.id)?.pillarId, p.id, 'bet.pillarId is stamped to the pillar after link');
+});
+
+test('unlinkBet removes betId from pillar.betIds AND clears bet.pillarId', async () => {
+  resetAll();
+  const p = await createPillar(builder, { name: 'Unlink Pillar', scope: 'domain' });
+  const bet = createBet(betBuilder, {
+    name: 'Unlink Bet',
+    problem: { who: 'Sales', need: 'Cost savings', obstacle: '', impact: '' },
+    targetValue: 100_000,
+    goLive: '2026-12-31',
+  });
+
+  await pillarLinkBet(builder, p.id, bet.id);
+  assert.ok((await stratListPillars(builder)).find((x) => x.id === p.id)?.betIds.includes(bet.id), 'linked');
+
+  // Unlink.
+  const pillarAfterUnlink = await pillarUnlinkBet(builder, p.id, bet.id);
+  assert.equal(pillarAfterUnlink.betIds.includes(bet.id), false, 'pillar.betIds no longer includes the bet');
+  assert.equal(_getBetRaw(bet.id)?.pillarId, undefined, 'bet.pillarId is cleared after unlink');
 });
