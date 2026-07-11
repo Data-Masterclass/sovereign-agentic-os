@@ -57,6 +57,21 @@ test('an apply failure short-circuits verify and surfaces ✗', async () => {
   assert.match(row.error ?? '', /boom/);
 });
 
+test('a pending verify (ok:true, pending:true) yields a neutral pending row, not ✗', async () => {
+  const a: BuildAdapter = {
+    tool: 'langfuse',
+    apply: async () => ({ ok: true, detail: 'ensured project' }),
+    verify: async () => ({ ok: true, pending: true, detail: 'needs a run first' }),
+  };
+  const row = await runAdapter(a, ctx());
+  assert.equal(row.status, 'pending');
+  assert.equal(row.applied, true);
+  // pending is NOT a verified-pass and NOT a failure.
+  assert.equal(row.verified, false);
+  assert.equal(row.error, undefined);
+  assert.equal(row.detail, 'needs a run first');
+});
+
 test('a thrown adapter is caught and reported as ✗', async () => {
   const a: BuildAdapter = {
     tool: 'fake',

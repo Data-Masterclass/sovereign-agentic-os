@@ -205,7 +205,9 @@ export function makeMockAdapters(backends: MockBackends): BuildAdapter[] {
       return ok(`linked Langfuse project ${backends.langfuse.project}`);
     },
     async verify() {
-      if (backends.langfuse.traces.length === 0) return fail('no trace appeared for the test invocation');
+      if (backends.langfuse.traces.length === 0) {
+        return pending('this component is verified from a run trace — run the agent once, then Build again');
+      }
       return ok(`${backends.langfuse.traces.length} trace(s) landed for the test invocation`);
     },
   };
@@ -220,4 +222,8 @@ function ok(detail: string): StepResult {
 }
 function fail(error: string): StepResult {
   return { ok: false, detail: error, error };
+}
+/** A NEUTRAL "verified from a run trace — needs a run first" result (not a failure). */
+function pending(detail: string): StepResult {
+  return { ok: true, pending: true, detail };
 }

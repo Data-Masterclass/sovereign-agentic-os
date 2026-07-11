@@ -14,7 +14,8 @@ import { useState } from 'react';
  * + Langfuse-traced); any write that needs approval is held in the Governance queue.
  */
 
-type BuildRow = { tool: string; applied: boolean; verified: boolean; status: 'ok' | 'fail'; detail: string; error?: string };
+type BuildStatus = 'ok' | 'fail' | 'pending';
+type BuildRow = { tool: string; applied: boolean; verified: boolean; status: BuildStatus; detail: string; error?: string };
 type BuildReport = { ok: boolean; rows: BuildRow[] };
 type LastBuild = { ok: boolean; at: number; rows: BuildRow[] };
 type ActivityMarker = { kind: 'building' | 'running'; startedAt: number };
@@ -26,6 +27,8 @@ type LastRun = {
   traces: number;
   held: number;
   steps: RunStep[];
+  /** The persisted per-agent drill-down — so the cards survive a tab-switch/reseed. */
+  nodes?: RunNode[];
   output?: string;
   mode?: 'live' | 'offline-mock';
   traceStoreAvailable?: boolean;
@@ -44,14 +47,17 @@ function timeAgo(atMs: number): string {
 }
 type RunStep = { node: string; tool: string; effect: string; ran?: boolean };
 type NodeStatus = 'ok' | 'failed' | 'denied';
-/** A per-node reveal for the multi-agent run: status + what it concluded + its tool calls. */
+/** One tool call in the drill-down: name, denial flag, and (expanded) args → result. */
+type NodeStep = { tool: string; isError?: boolean; summary?: string; args?: string; result?: string };
+/** A per-node reveal for the multi-agent run: input given + output + status + tool calls. */
 type RunNode = {
   node: string;
   model?: string;
   status: NodeStatus;
   error?: string;
+  input?: string;
   finalText?: string;
-  steps: { tool: string; isError?: boolean; summary?: string }[];
+  steps: NodeStep[];
 };
 type RunReport = {
   running: boolean;
@@ -75,8 +81,9 @@ type TeamNode = {
   model?: string;
   status?: NodeStatus;
   error?: string;
+  input?: string;
   finalText?: string;
-  steps?: { tool: string; isError?: boolean; summary?: string }[];
+  steps?: NodeStep[];
 };
 type RawRun = Partial<RunReport> & { team?: boolean; finalText?: string; nodes?: TeamNode[] };
 
@@ -92,14 +99,15 @@ function normalizeRun(body: RawRun): RunReport {
       })),
     ) ??
     [];
-  // Preserve the per-node reveal (status / finalText / step summaries) when present.
+  // Preserve the per-node drill-down (input / status / finalText / step args→result).
   const nodes: RunNode[] | undefined = body.nodes?.map((n) => ({
     node: n.node,
     model: n.model,
     status: n.status ?? 'ok',
     error: n.error,
+    input: n.input,
     finalText: n.finalText,
-    steps: (n.steps ?? []).map((s) => ({ tool: s.tool, isError: s.isError, summary: s.summary })),
+    steps: (n.steps ?? []).map((s) => ({ tool: s.tool, isError: s.isError, summary: s.summary, args: s.args, result: s.result })),
   }));
   const rawOut = body.output ?? body.finalText;
   return {
@@ -153,6 +161,11 @@ export default function BuildRunPanel({
   // Seed from server-persisted lastRun so the panel survives tab-switches.
   const [run, setRun] = useState<RunReport | null>(lastRun ?? null);
   const [runErr, setRunErr] = useState('');
+  // Which agent cards are expanded (drill-down), and which individual tool steps.
+  const [openNodes, setOpenNodes] = useState<Record<string, boolean>>({});
+  const [openSteps, setOpenSteps] = useState<Record<string, boolean>>({});
+  const toggleNode = (k: string) => setOpenNodes((m) => ({ ...m, [k]: !m[k] }));
+  const toggleStep = (k: string) => setOpenSteps((m) => ({ ...m, [k]: !m[k] }));
 
   const doBuild = async () => {
     setBuilding(true);
@@ -217,7 +230,7 @@ export default function BuildRunPanel({
               <span className={`badge ${report.ok ? 'ok' : 'err'}`} style={{ fontSize: 11 }}>
                 {report.ok
                   ? '✓ all green'
-                  : `✗ ${report.rows.filter((r) => r.status !== 'ok').length} failing`}
+                  : `✗ ${report.rows.filter((r) => r.status === 'fail').length} failing`}
               </span>
             </>
           ) : null}
@@ -237,10 +250,14 @@ export default function BuildRunPanel({
                 <tr key={r.tool}>
                   <td className="mono">{r.tool}</td>
                   <td>
-                    <span className={`badge ${r.status === 'ok' ? 'ok' : 'err'}`}>{r.status === 'ok' ? '✓ ok' : '✗ fail'}</span>
+                    {r.status === 'pending' ? (
+                      <span className="badge" style={{ opacity: 0.7 }}>• needs a run first</span>
+                    ) : (
+                      <span className={`badge ${r.status === 'ok' ? 'ok' : 'err'}`}>{r.status === 'ok' ? '✓ ok' : '✗ fail'}</span>
+                    )}
                   </td>
                   <td style={{ whiteSpace: 'normal', fontSize: 12.5 }}>
-                    {r.status === 'ok' ? r.detail : <span className="b-off">{r.error ?? r.detail}</span>}
+                    {r.status === 'fail' ? <span className="b-off">{r.error ?? r.detail}</span> : r.detail}
                   </td>
                 </tr>
               ))}
@@ -307,31 +324,96 @@ export default function BuildRunPanel({
           {run.nodes && run.nodes.length > 0 ? (
             <>
               <div className="section-title" style={{ marginTop: 0 }}>The team, step by step</div>
+              <p className="hint" style={{ marginTop: 0 }}>Click an agent to see what it was given, what it produced, and each tool call.</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
-                {run.nodes.map((n, i) => (
-                  <div key={`${n.node}-${i}`} className="node-card" style={{ border: '1px solid var(--border, #e5e5e5)', borderRadius: 10, padding: '10px 12px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span className="mono" style={{ fontWeight: 600 }}>{n.node}</span>
-                      <span className={`badge ${NODE_STATUS_BADGE[n.status]}`}>{NODE_STATUS_LABEL[n.status]}</span>
-                      {n.model ? <span className="hint mono" style={{ marginLeft: 'auto', fontSize: 11, opacity: 0.7 }}>{n.model}</span> : null}
+                {run.nodes.map((n, i) => {
+                  const nk = `${n.node}-${i}`;
+                  const open = !!openNodes[nk];
+                  return (
+                    <div key={nk} className="node-card" style={{ border: '1px solid var(--border, #e5e5e5)', borderRadius: 10, padding: '10px 12px' }}>
+                      {/* Collapsed header — a clean summary; click to drill in. */}
+                      <button
+                        type="button"
+                        onClick={() => toggleNode(nk)}
+                        aria-expanded={open}
+                        style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}
+                      >
+                        <span style={{ opacity: 0.5, width: 12, display: 'inline-block' }}>{open ? '▾' : '▸'}</span>
+                        <span className="mono" style={{ fontWeight: 600 }}>{n.node}</span>
+                        <span className={`badge ${NODE_STATUS_BADGE[n.status]}`}>{NODE_STATUS_LABEL[n.status]}</span>
+                        {n.steps.length > 0 ? <span className="hint" style={{ fontSize: 11 }}>{n.steps.length} tool call{n.steps.length === 1 ? '' : 's'}</span> : null}
+                        {n.model ? <span className="hint mono" style={{ marginLeft: 'auto', fontSize: 11, opacity: 0.7 }}>{n.model}</span> : null}
+                      </button>
+                      {n.error ? <div className="b-off" style={{ marginTop: 6 }}>{n.error}</div> : null}
+
+                      {open ? (
+                        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                          {/* INPUT — what this agent was given. */}
+                          {n.input ? (
+                            <div>
+                              <div className="hint" style={{ fontWeight: 600, marginBottom: 2 }}>Input — what this agent was given</div>
+                              <pre className="mono" style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 11.5, maxHeight: 200, overflow: 'auto', background: 'var(--surface-2, #f6f6f6)', borderRadius: 8, padding: '8px 10px' }}>{n.input}</pre>
+                            </div>
+                          ) : null}
+                          {/* OUTPUT — what it produced. */}
+                          {n.finalText ? (
+                            <div>
+                              <div className="hint" style={{ fontWeight: 600, marginBottom: 2 }}>Output</div>
+                              <p style={{ margin: 0, whiteSpace: 'pre-wrap', opacity: 0.92 }}>{n.finalText}</p>
+                            </div>
+                          ) : null}
+                          {/* Tool calls — each expandable to args → result. */}
+                          {n.steps.length > 0 ? (
+                            <div>
+                              <div className="hint" style={{ fontWeight: 600, marginBottom: 4 }}>Tool calls</div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                {n.steps.map((s, j) => {
+                                  const sk = `${nk}-${s.tool}-${j}`;
+                                  const sOpen = !!openSteps[sk];
+                                  const inspectable = !!(s.args || s.result);
+                                  return (
+                                    <div key={sk} style={{ fontSize: 12.5 }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => inspectable && toggleStep(sk)}
+                                        aria-expanded={sOpen}
+                                        style={{ all: 'unset', cursor: inspectable ? 'pointer' : 'default', display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}
+                                      >
+                                        {inspectable ? <span style={{ opacity: 0.5, width: 10, display: 'inline-block' }}>{sOpen ? '▾' : '▸'}</span> : <span style={{ width: 10, display: 'inline-block' }} />}
+                                        <span className={`badge ${s.isError ? 'err' : 'ok'}`}>{s.isError ? 'denied' : 'ok'}</span>
+                                        <span className="mono">{s.tool}</span>
+                                        {!sOpen && s.summary ? <span style={{ opacity: 0.7 }}> — {s.summary}</span> : null}
+                                      </button>
+                                      {sOpen ? (
+                                        <div style={{ margin: '4px 0 6px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                          {s.args ? (
+                                            <div>
+                                              <div className="hint" style={{ fontSize: 11 }}>args (input)</div>
+                                              <pre className="mono" style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 11.5, maxHeight: 160, overflow: 'auto', background: 'var(--surface-2, #f6f6f6)', borderRadius: 8, padding: '6px 8px' }}>{s.args}</pre>
+                                            </div>
+                                          ) : null}
+                                          {s.result ? (
+                                            <div>
+                                              <div className="hint" style={{ fontSize: 11 }}>result (output)</div>
+                                              <pre className="mono" style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 11.5, maxHeight: 200, overflow: 'auto', background: 'var(--surface-2, #f6f6f6)', borderRadius: 8, padding: '6px 8px' }}>{s.result}</pre>
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        // Collapsed: keep a one-line taste of the output so the card still reads.
+                        n.finalText ? <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', opacity: 0.75, fontSize: 12.5, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{n.finalText}</p> : null
+                      )}
                     </div>
-                    {n.error ? <div className="b-off" style={{ marginTop: 6 }}>{n.error}</div> : null}
-                    {n.finalText ? (
-                      <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', opacity: 0.92 }}>{n.finalText}</p>
-                    ) : null}
-                    {n.steps.length > 0 ? (
-                      <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        {n.steps.map((s, j) => (
-                          <div key={`${s.tool}-${j}`} style={{ fontSize: 12.5 }}>
-                            <span className={`badge ${s.isError ? 'err' : 'ok'}`} style={{ marginRight: 6 }}>{s.isError ? 'denied' : 'ok'}</span>
-                            <span className="mono">{s.tool}</span>
-                            {s.summary ? <span style={{ opacity: 0.7 }}> — {s.summary}</span> : null}
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </>
           ) : null}

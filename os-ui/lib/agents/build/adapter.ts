@@ -15,7 +15,18 @@ import { type IR } from '../langgraph-compile.ts';
  * can never report success without a passing verification.
  */
 
-export type StepResult = { ok: boolean; detail: string; error?: string };
+export type StepResult = {
+  ok: boolean;
+  detail: string;
+  error?: string;
+  /**
+   * A NEUTRAL "not yet verifiable" outcome (NOT a failure): the component is set up
+   * correctly but its verify probe needs a prior run to observe (e.g. Langfuse checks
+   * a trace landed — there is none before the first invocation). `ok` stays true; the
+   * row renders as pending, and pending NEVER counts as a build failure.
+   */
+  pending?: boolean;
+};
 
 export type BuildContext = {
   system: System;
@@ -33,7 +44,7 @@ export interface BuildAdapter {
   verify(ctx: BuildContext): Promise<StepResult>;
 }
 
-export type BuildStatus = 'ok' | 'fail';
+export type BuildStatus = 'ok' | 'fail' | 'pending';
 
 export type BuildRow = {
   tool: string;
@@ -68,6 +79,12 @@ export async function runAdapter(adapter: BuildAdapter, ctx: BuildContext): Prom
     if (!vr.ok) {
       error = vr.error ?? 'verify failed';
       return { tool: adapter.tool, applied, verified, status: 'fail', detail, error };
+    }
+    // A NEUTRAL pending verify (ok:true, pending:true) is NOT a failure: the setup
+    // applied, but the probe needs a prior run to observe. Surface it as its own
+    // status so the report/UI never renders it as ✗.
+    if (vr.pending) {
+      return { tool: adapter.tool, applied, verified: false, status: 'pending', detail };
     }
     return { tool: adapter.tool, applied, verified, status: 'ok', detail };
   } catch (e) {

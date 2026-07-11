@@ -140,6 +140,37 @@ test('the iteration cap holds — the loop stops after maxIterations tool rounds
   assert.match(res.finalText, /step limit|cap/i);
 });
 
+test('a cap-hit run still emits a BEST final synthesis (not just the bare cap notice)', async () => {
+  // The model keeps calling tools until the cap; the FINAL no-tools synthesis call
+  // (tools param absent) returns a real answer. We assert the node returns that
+  // answer WITH a soft cap note appended — never a bare stub.
+  const llm: LlmCall = async (req) => {
+    if (!req.tools) {
+      // Two no-tools calls happen: the PLAN (first) and the cap-hit synthesis (last).
+      // Distinguish by whether the transcript already contains tool observations.
+      const midRun = req.messages.some((m) => m.role === 'tool' || (m.role === 'user' && m.content.startsWith('You have reached')));
+      return { content: midRun ? 'Best-effort conclusion from the data gathered.' : 'plan', toolCalls: [] };
+    }
+    return { content: '', toolCalls: [{ id: 'x', name: 'commit', args: { appId: 'a1' } }] };
+  };
+  let executed = 0;
+  const res = await runAgentic({
+    system: 'sys',
+    userMessages: [{ role: 'user', content: 'analyze everything' }],
+    tools: TOOLS,
+    callTool: async () => { executed += 1; return { text: 'ok', isError: false }; },
+    llm,
+    planModel: 'r',
+    actModel: 'e',
+    maxIterations: 2,
+  });
+  assert.equal(res.iterations, 2, 'the cap held');
+  assert.equal(executed, 2, 'the synthesis call ran no further tools');
+  assert.match(res.finalText, /Best-effort conclusion/, 'the node returns a real synthesized answer');
+  assert.match(res.finalText, /tool-step budget/i, 'a soft cap note is appended');
+  assert.doesNotMatch(res.finalText, /^Reached the tool step limit/, 'not the bare cap stub');
+});
+
 test('falls back to the ReAct JSON protocol when the model rejects the tools param', async () => {
   // Native attempt throws ToolCallingUnsupportedError once; then the model drives
   // via JSON actions in plain text (no tools param passed after the fallback).

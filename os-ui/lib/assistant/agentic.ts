@@ -388,12 +388,40 @@ export async function runAgentic(opts: {
     }
   }
 
-  if (!finalText) {
-    finalText =
-      iterations >= maxIterations
-        ? 'Reached the tool step limit (cap) before finishing — review the steps above and continue if needed.'
-        : '(no final answer produced)';
+  if (!finalText && iterations >= maxIterations) {
+    // Cap hit mid-work: don't leave the node with a bare notice. Ask the model for
+    // ONE final no-tools synthesis of everything it already gathered (the transcript
+    // holds every tool observation), then append a SOFT cap note. The node returns a
+    // real, useful answer — a downstream teammate/user gets a conclusion, not a stub.
+    try {
+      const synth = await opts.llm({
+        model: opts.actModel,
+        messages: budgetMessages(
+          [
+            ...messages,
+            {
+              role: 'user',
+              content:
+                'You have reached your tool-step budget for this turn. Do NOT call any more tools. ' +
+                'Using ONLY the information already gathered above, write your best, complete final answer now.',
+            },
+          ],
+          budget,
+        ),
+        temperature: 0.2,
+        maxTokens: opts.maxOutputTokens,
+      });
+      finalText = stripThinking(synth.content);
+    } catch {
+      // Synthesis call failed — fall through to the plain note below.
+    }
+    const capNote =
+      '\n\n_(Note: this answer was synthesized after reaching the tool-step budget — ' +
+      'some further checks were skipped. Ask a follow-up to go deeper.)_';
+    finalText = finalText ? `${finalText}${capNote}` : `Reached the tool step limit (cap) before finishing — review the steps above and continue if needed.${capNote}`;
   }
+
+  if (!finalText) finalText = '(no final answer produced)';
 
   return { plan, steps, finalText, iterations, toolCallingSupported: !react };
 }

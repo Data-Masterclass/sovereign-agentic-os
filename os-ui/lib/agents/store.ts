@@ -40,7 +40,7 @@ export type LastBuildRow = {
   tool: string;
   applied: boolean;
   verified: boolean;
-  status: 'ok' | 'fail';
+  status: 'ok' | 'fail' | 'pending';
   detail: string;
   error?: string;
 };
@@ -64,6 +64,21 @@ export type LastRun = {
   traces: number;
   held: number;
   steps: { node: string; tool: string; effect: string; ran?: boolean }[];
+  /**
+   * The per-agent drill-down for a team run (input given, output produced, status,
+   * per-step args→result). Persisted so the per-agent cards survive a tab-switch /
+   * reseed — without it a reload falls back to the flat step table. Absent for
+   * single-agent runs.
+   */
+  nodes?: {
+    node: string;
+    model?: string;
+    status: string;
+    error?: string;
+    input?: string;
+    finalText?: string;
+    steps: { tool: string; isError?: boolean; summary?: string; args?: string; result?: string }[];
+  }[];
   output?: string;
   mode?: 'live' | 'offline-mock';
   traceStoreAvailable?: boolean;

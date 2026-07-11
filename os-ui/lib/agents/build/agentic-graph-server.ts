@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
+import { config } from '@/lib/core/config';
 import { roleModel } from '@/lib/models/roles';
 import { inputBudget, modelContext } from '@/lib/models/context-windows';
 import type { CurrentUser } from '@/lib/core/auth';
@@ -191,7 +192,9 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<AgenticGraphResu
     // role defaults to Qwen for clean OpenAI tool_calls; the harmony-format
     // light default mangles tool names. Admin-overridable.
     execModel: roleModel('tools'),
-    maxIterations: input.maxIterations,
+    // Each TEAM node gets the higher per-node cap (an evaluator/recommender doing
+    // per-campaign work needs more than the single-agent 20). Caller override wins.
+    maxIterations: input.maxIterations ?? config.agentTeamNodeMaxSteps,
     // Bound every node to the smaller live window; cap each node's own output.
     budget: handoffBudget(),
     maxOutputTokens: modelContext(roleModel('tools')).reservedOutput,

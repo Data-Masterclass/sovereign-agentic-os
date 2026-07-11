@@ -15,6 +15,13 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.77] — 2026-07-11
+
+### Agents — Build & Run polish (observability + reliability)
+- **Per-agent run drill-down.** Each agent node in a run is now expandable — click it to see its **input** (the handoff context / role prompt it received), its **output**, its **status** (ok/failed/denied), and each tool call's **args → result**. The per-node cards now also **persist across a tab-switch** (previously a reseed fell back to a flat call table).
+- **Team runs get a higher step cap.** A single analytical node (an evaluator scoring N campaigns, a recommender reasoning over a full scorecard) legitimately needs more than the single-agent one-shot cap of 20. Team runs now use `agentTeamNodeMaxSteps` (env `AGENT_TEAM_NODE_MAX_STEPS`, default **40**). And when a node does hit the cap it now makes one final synthesis pass and returns its **best answer** with a soft cap note, instead of a bare "reached the step limit" stub.
+- **Build: Langfuse check is "needs a run first," not a failure.** Before an agent's first run there is no trace to verify, so the observability row used to show ✗. It now shows a neutral **"needs a run first"** state that does not count against the build; it verifies ✓ once a run has produced a trace.
+
 ## [os-ui 0.1.76] — 2026-07-11
 
 ### Fix — multi-agent "Build & Run" is now observable and correct

@@ -51,6 +51,37 @@ test('a valid system builds all-green across the 5 adapters', async () => {
   assert.ok(backends.langfuse.traces.length > 0);
 });
 
+test('a pending verify row does NOT fail the report (needs-a-run-first is neutral)', async () => {
+  // A langfuse-style adapter whose verify is pending (no trace before the first run),
+  // alongside an all-ok adapter — the report stays ok, and the row is 'pending'.
+  const report = await orchestrateBuild({
+    yaml: SUP,
+    systemId: 'sys_pending',
+    adapters: [
+      { tool: 'forgejo', apply: async () => ({ ok: true, detail: 'wrote' }), verify: async () => ({ ok: true, detail: 'read back' }) },
+      { tool: 'langfuse', apply: async () => ({ ok: true, detail: 'ensured' }), verify: async () => ({ ok: true, pending: true, detail: 'run the agent once, then Build again' }) },
+    ],
+  });
+  assert.equal(report.ok, true, 'a pending row must not fail the build');
+  const lf = report.rows.find((r) => r.tool === 'langfuse')!;
+  assert.equal(lf.status, 'pending');
+  assert.match(lf.detail, /run the agent once/);
+});
+
+test('a pending row alongside a genuine failure still fails the report', async () => {
+  const report = await orchestrateBuild({
+    yaml: SUP,
+    systemId: 'sys_mixed',
+    adapters: [
+      { tool: 'langfuse', apply: async () => ({ ok: true, detail: 'ensured' }), verify: async () => ({ ok: true, pending: true, detail: 'needs a run' }) },
+      { tool: 'opa', apply: async () => ({ ok: true, detail: 'granted' }), verify: async () => ({ ok: false, detail: 'leak', error: 'a non-granted tool was allowed' }) },
+    ],
+  });
+  assert.equal(report.ok, false);
+  assert.equal(report.rows.filter((r) => r.status === 'fail').length, 1);
+  assert.equal(report.rows.filter((r) => r.status === 'pending').length, 1);
+});
+
 test('broken yaml surfaces a ✗ langgraph row carrying the compiler error', async () => {
   const broken = `
 entrypoint: supervisor

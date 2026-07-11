@@ -47,9 +47,32 @@ export type NodeRun = {
   model: string;
   status: NodeStatus;
   result: AgenticResult;
+  /**
+   * A READABLE rendering of what this node was GIVEN: its role prompt + the "TEAM
+   * PROGRESS SO FAR" handoff (prior agents' conclusions and material data) + the
+   * user turn. Captured so the UI can show "what this agent received" in the
+   * drill-down. Size-bounded so a long transcript can't bloat the run response.
+   */
+  input?: string;
   /** Present only when the node threw — the reason, for a node-level failure surface. */
   error?: string;
 };
+
+/** Upper bound on the captured node `input` (chars) so the run response stays lean. */
+const MAX_NODE_INPUT_CHARS = 8_000;
+
+/** Bound a captured input string to its head, marking the elision honestly. */
+function boundInput(text: string): string {
+  return text.length <= MAX_NODE_INPUT_CHARS
+    ? text
+    : `${text.slice(0, MAX_NODE_INPUT_CHARS)}\n… [truncated ${text.length - MAX_NODE_INPUT_CHARS} more chars]`;
+}
+
+/** Render the user turn(s) this node received, appended after its system context. */
+function renderUserTurn(messages: { role: 'user' | 'assistant'; content: string }[]): string {
+  const last = messages.filter((m) => m.role === 'user').at(-1);
+  return last ? `\n\n--- USER TURN ---\n${last.content}` : '';
+}
 
 /** Derive a node's status from its run: threw → failed; any denied/errored tool → denied; else ok. */
 function nodeStatus(result: AgenticResult, threw?: string): NodeStatus {
@@ -142,6 +165,13 @@ const HANDOFF_DIRECTIVE = [
   'NEVER ask the user for information a prior agent already produced; if you need a',
   "prior result, read it from the handoff. Only the most recent agent's output is",
   'pinned in full; older ones may be summarized.',
+  '',
+  'DO NOT re-run a query or re-compute a result a teammate already handed you. A large',
+  'row-set may be shown truncated (e.g. "…(N more rows)") — reason over the rows and',
+  'the prior agent\'s conclusion you WERE given; only fetch a source yourself if a',
+  'specific value you need is genuinely absent from the handoff, and then fetch just',
+  'that one thing. Spend your tool budget on NEW work (your synthesis/recommendation),',
+  'not on re-deriving your teammate\'s output.',
 ].join('\n');
 
 /**
@@ -252,9 +282,13 @@ export async function runAgenticGraph(
     // partial results — never a blank 500 that aborts the whole run. The run stops
     // at the failed node (downstream nodes depend on its output) but every node that
     // ran up to and including it is returned.
+    // Compose the node's system context ONCE so we can both run on it AND capture it
+    // as the node's readable `input` for the drill-down (what this agent was given).
+    const system = nodeSystem(deps.preamble, node, transcript, deps.budget);
+    const input = boundInput(system + renderUserTurn(messages));
     try {
       const result = await runAgentic({
-        system: nodeSystem(deps.preamble, node, transcript, deps.budget),
+        system,
         userMessages: messages,
         tools: deps.toolSpecsFor(node),
         callTool: deps.callTool,
@@ -265,7 +299,7 @@ export async function runAgenticGraph(
         budget: deps.budget,
         maxOutputTokens: deps.maxOutputTokens,
       });
-      runs.push({ node: id, model: actModel, status: nodeStatus(result), result });
+      runs.push({ node: id, model: actModel, status: nodeStatus(result), result, input });
       // Thread this node's finalText AND its material tool outputs forward, so a
       // downstream node has the actual data (scorecard/rows/metrics) to work from.
       transcript.push({ node: id, block: handoffBlock(node.id, result.finalText, result.steps) });
@@ -276,6 +310,7 @@ export async function runAgenticGraph(
         model: actModel,
         status: 'failed',
         error,
+        input,
         result: { plan: '', steps: [], finalText: `(${id} failed: ${error})`, iterations: 0, toolCallingSupported: true },
       });
       break;
@@ -320,5 +355,5 @@ export async function runNode(
     maxOutputTokens: deps.maxOutputTokens,
     onStep: opts.onStep,
   });
-  return { node: nodeId, model: actModel, status: nodeStatus(result), result };
+  return { node: nodeId, model: actModel, status: nodeStatus(result), result, input: boundInput(system + renderUserTurn(messages)) };
 }

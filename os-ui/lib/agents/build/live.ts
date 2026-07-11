@@ -181,6 +181,10 @@ function ok(detail: string): StepResult {
 function fail(error: string): StepResult {
   return { ok: false, detail: error, error };
 }
+/** A NEUTRAL "verified from a run trace — needs a run first" result (not a failure). */
+function pending(detail: string): StepResult {
+  return { ok: true, pending: true, detail };
+}
 
 // ----------------------------------------------------------------- adapters ------
 
@@ -324,7 +328,7 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
     async verify(ctx) {
       const principal = principalFor(ctx.systemId ?? 'sys');
       const n = await deps.langfuse.tracesFor(principal);
-      if (n <= 0) return fail('no trace appeared for the test invocation');
+      if (n <= 0) return pending('this component is verified from a run trace — run the agent once, then Build again');
       return ok(`${n} trace(s) landed for the test invocation`);
     },
   };

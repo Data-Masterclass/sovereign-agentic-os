@@ -197,6 +197,26 @@ test('per-node failure: the run returns partial results with the failing node ma
   assert.equal(res.runs.find((r) => r.node === 'orchestrator')?.status, 'ok', 'earlier nodes ran ok');
 });
 
+// --- FIX 2 (drill-down): each NodeRun captures the readable `input` it received ---
+
+test('each NodeRun captures its input — the role prompt, the handoff, and the user turn', async () => {
+  const { llm } = scriptLlm({});
+  const res = await runAgenticGraph(
+    IR,
+    [{ role: 'user', content: 'evaluate the Q3 campaigns' }],
+    baseDeps({ llm }),
+  );
+  // Every node has a non-empty input, and it contains the user turn + its role marker.
+  for (const r of res.runs) {
+    assert.ok(r.input && r.input.length > 0, `${r.node} captured a non-empty input`);
+    assert.match(r.input!, /evaluate the Q3 campaigns/, `${r.node} input carries the user turn`);
+    assert.match(r.input!, new RegExp(`YOUR ROLE IN THE TEAM: ${r.node}`), `${r.node} input carries its role prompt`);
+  }
+  // A downstream node's input carries the TEAM PROGRESS handoff it received.
+  const downstream = res.runs.find((r) => r.node === 'communication');
+  assert.match(downstream!.input!, /TEAM PROGRESS SO FAR/, 'downstream input carries the handoff it was given');
+});
+
 test('DEPLOY GATE: the seeded team never grants decide_deploy, and a creator is never offered it', () => {
   const sys = parseSystem(SOFTWARE_TEAM_YAML);
   // (a) The system grants exclude the go-live approval tool by construction.

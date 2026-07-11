@@ -10,7 +10,8 @@ import { type BuildAdapter, type BuildRow, runAdapter } from './adapter.ts';
  * apply→verify and collects the inline ✓/✗ rows. A compile failure (bad/over-broad
  * yaml) short-circuits into a single ✗ langgraph row carrying the exact compiler
  * error — the rest of the build never runs against an invalid graph. The report
- * is `ok` only when EVERY row passed both apply AND verify.
+ * is `ok` when NO row failed: a `pending` row (a neutral "needs a run first" probe,
+ * e.g. Langfuse before the first invocation) does NOT count as a failure.
  */
 
 export type BuildReport = { ok: boolean; rows: BuildRow[] };
@@ -47,5 +48,5 @@ export async function orchestrateBuild(input: {
   for (const adapter of input.adapters) {
     rows.push(await runAdapter(adapter, ctx));
   }
-  return { ok: rows.every((r) => r.status === 'ok'), rows };
+  return { ok: rows.every((r) => r.status !== 'fail'), rows };
 }

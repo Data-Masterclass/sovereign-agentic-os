@@ -25,6 +25,39 @@ function summarizeResult(text: string, max = 240): string {
   return flat.length > max ? `${flat.slice(0, max)}…` : flat;
 }
 
+/** Bound a full step field (tool args JSON / raw result) for the drill-down. */
+function boundField(text: string, max = 4_000): string {
+  return text.length > max ? `${text.slice(0, max)}… [truncated]` : text;
+}
+
+/** The per-node reveal shape returned to the UI (and persisted into LastRun). */
+function nodeReveal(r: {
+  node: string;
+  model: string;
+  status: string;
+  error?: string;
+  input?: string;
+  result: { finalText: string; steps: { tool: string; args: Record<string, unknown>; result: string; isError: boolean }[] };
+}) {
+  return {
+    node: r.node,
+    model: r.model,
+    status: r.status,
+    error: r.error,
+    // What this agent was GIVEN (role prompt + team-progress handoff + user turn).
+    input: r.input ? boundField(r.input, 8_000) : undefined,
+    finalText: r.result.finalText,
+    steps: r.result.steps.map((s) => ({
+      tool: s.tool,
+      isError: s.isError,
+      summary: summarizeResult(s.result),
+      // Full INPUT (args) and OUTPUT (result) so a step can be inspected, not just named.
+      args: boundField(JSON.stringify(s.args ?? {})),
+      result: boundField(s.result),
+    })),
+  };
+}
+
 /** A turn's conversation from the request body (`messages`, else `prompt`). */
 function runMessages(body: Record<string, unknown>, prompt: string): ChatMsg[] {
   const raw = Array.isArray(body.messages) ? (body.messages as ChatMsg[]) : [];
@@ -100,6 +133,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       );
       // A run is ok iff no node failed or had a denied/errored tool.
       const teamOk = team.runs.every((r) => r.status === 'ok');
+      // Per-node drill-down: model + STATUS + what that agent was GIVEN (input) + what
+      // it concluded (finalText) + its tool calls with args → result. Built once, and
+      // PERSISTED into LastRun so the per-agent cards survive a tab-switch / reseed
+      // (previously dropped, forcing a fall-back to the flat table on reload).
+      const nodes = team.runs.map(nodeReveal);
       const teamRun: LastRun = {
         at: Date.now(),
         running,
@@ -108,6 +146,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         traces: 0,
         held: 0,
         steps: teamSteps,
+        nodes,
         output: team.finalText,
         mode: 'live',
       };
@@ -119,21 +158,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         ok: teamOk,
         path: team.path,
         finalText: team.finalText,
-        // Per-node reveal: model + STATUS + what that agent concluded (finalText) +
-        // its tool calls WITH a short result summary — so the student sees each
-        // node's output, not just tool names. Full data lives in team.runs[].
-        nodes: team.runs.map((r) => ({
-          node: r.node,
-          model: r.model,
-          status: r.status,
-          error: r.error,
-          finalText: r.result.finalText,
-          steps: r.result.steps.map((s) => ({
-            tool: s.tool,
-            isError: s.isError,
-            summary: summarizeResult(s.result),
-          })),
-        })),
+        nodes,
       });
     }
 
