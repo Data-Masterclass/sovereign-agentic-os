@@ -111,6 +111,92 @@ test('communication node emits the user-facing progress as the single reply', as
   assert.match(res.finalText, /pending Builder review/i);
 });
 
+// --- FIX 3 (correctness): the handoff carries a prior node's STRUCTURED output ---
+
+test('handoff: a downstream node RECEIVES the prior node\'s material tool output, not just narration', async () => {
+  // The orchestrator (first node) runs a tool that produces a scorecard; we then
+  // capture the system prompt every LATER node is given, and assert the builder's
+  // system context CONTAINS that scorecard data — the FIX 3 regression guard.
+  const systemsSeen: { model: string; system: string }[] = [];
+  const spec: ToolSpec = {
+    name: 'query_metric',
+    description: 'Fetch a metric.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  };
+  const scorecard = '{"rows":[{"metric":"gross_margin","value":0.42,"grade":"B"}]}';
+  let orchestratorToolCalled = false;
+  const llm: LlmCall = async (req) => {
+    if (!req.tools) return { content: 'plan', toolCalls: [] };
+    const system = req.messages.find((m) => m.role === 'system')?.content ?? '';
+    systemsSeen.push({ model: req.model, system });
+    // The orchestrator (first node, no TEAM PROGRESS) calls query_metric exactly once,
+    // then finishes; every later node finishes immediately.
+    const isFirstNode = !system.includes('TEAM PROGRESS SO FAR');
+    if (isFirstNode && !orchestratorToolCalled) {
+      orchestratorToolCalled = true;
+      return { content: '', toolCalls: [{ id: 'c1', name: 'query_metric', args: {} }] };
+    }
+    return { content: `done (${req.model})`, toolCalls: [] };
+  };
+  const callTool: ToolExecutor = async (name) =>
+    name === 'query_metric' ? { text: scorecard, isError: false } : { text: 'ok', isError: false };
+
+  await runAgenticGraph(
+    IR,
+    [{ role: 'user', content: 'evaluate margins' }],
+    baseDeps({ llm, toolSpecsFor: (n) => (n.id === 'orchestrator' ? [spec] : []), callTool, maxIterations: 3 }),
+  );
+
+  // At least one LATER node's system prompt must contain the actual scorecard value
+  // the orchestrator produced — proof the structured tool output was threaded forward.
+  const downstream = systemsSeen.filter((s) => s.system.includes('TEAM PROGRESS SO FAR'));
+  assert.ok(downstream.length > 0, 'a later node saw TEAM PROGRESS SO FAR');
+  const carriesData = downstream.some((s) => s.system.includes('gross_margin') && s.system.includes('0.42'));
+  assert.ok(carriesData, 'a downstream node received the prior node\'s scorecard DATA, not just its narration');
+  // And the role preamble instructs the node to USE it and never re-ask the user.
+  assert.ok(downstream[0].system.includes('NEVER ask the user'), 'downstream node is told never to re-ask the user for prior data');
+});
+
+// --- FIX 1 (progress): a node failure yields PARTIAL results, node marked failed ---
+
+test('per-node failure: the run returns partial results with the failing node marked failed', async () => {
+  // The builder (3rd node) throws; the run must return the nodes up to and including
+  // it, with the builder status 'failed' and a reason — never abort the whole run.
+  const llm: LlmCall = async (req) => {
+    if (!req.tools) return { content: 'plan', toolCalls: [] };
+    return { content: `done (${req.model})`, toolCalls: [] };
+  };
+  const callTool: ToolExecutor = async () => {
+    throw new Error('OPA denied: builder tool unavailable');
+  };
+  const spec: ToolSpec = {
+    name: 'create_software',
+    description: 'Create.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  };
+  // Make ONLY the builder call a tool (which throws); others finish cleanly.
+  const scriptLlm2: LlmCall = async (req) => {
+    if (!req.tools) return { content: 'plan', toolCalls: [] };
+    if (req.model === 'sovereign-default') return { content: '', toolCalls: [{ id: 'c1', name: 'create_software', args: {} }] };
+    return { content: `done (${req.model})`, toolCalls: [] };
+  };
+  void llm;
+  const res = await runAgenticGraph(
+    IR,
+    [{ role: 'user', content: 'build it' }],
+    baseDeps({ llm: scriptLlm2, toolSpecsFor: (n) => (n.id === 'builder' ? [spec] : []), callTool, maxIterations: 3 }),
+  );
+
+  const builder = res.runs.find((r) => r.node === 'builder');
+  assert.ok(builder, 'the builder node is present in the partial results');
+  assert.equal(builder!.status, 'failed', 'the builder is marked failed');
+  assert.match(builder!.error ?? '', /OPA denied/, 'the failure reason is carried');
+  // Partial: the run stopped AT the failed node — deployer/communication did not run.
+  assert.ok(!res.runs.some((r) => r.node === 'communication'), 'the run stopped at the failed node (no downstream nodes)');
+  // Earlier nodes still ran and are marked ok.
+  assert.equal(res.runs.find((r) => r.node === 'orchestrator')?.status, 'ok', 'earlier nodes ran ok');
+});
+
 test('DEPLOY GATE: the seeded team never grants decide_deploy, and a creator is never offered it', () => {
   const sys = parseSystem(SOFTWARE_TEAM_YAML);
   // (a) The system grants exclude the go-live approval tool by construction.

@@ -5,10 +5,13 @@ import { type IR, type IRNode } from '../langgraph-compile.ts';
 import {
   runAgentic,
   type AgenticResult,
+  type AgenticStep,
   type LlmCall,
   type ToolExecutor,
   type ToolSpec,
 } from '@/lib/assistant/agentic';
+import { compactToolResult } from '@/lib/infra/context/context-assembler';
+import { estimateTokens } from '@/lib/knowledge/context-pack';
 
 /**
  * THE AGENTIC GRAPH EXECUTOR — the core of the Software Delivery Team.
@@ -36,7 +39,24 @@ import {
  * `communication`) speaks last, and its final text is the user-facing reply.
  */
 
-export type NodeRun = { node: string; model: string; result: AgenticResult };
+/** A node's outcome: 'ok' produced output, 'denied' had a denied/errored tool, 'failed' threw. */
+export type NodeStatus = 'ok' | 'failed' | 'denied';
+
+export type NodeRun = {
+  node: string;
+  model: string;
+  status: NodeStatus;
+  result: AgenticResult;
+  /** Present only when the node threw — the reason, for a node-level failure surface. */
+  error?: string;
+};
+
+/** Derive a node's status from its run: threw → failed; any denied/errored tool → denied; else ok. */
+function nodeStatus(result: AgenticResult, threw?: string): NodeStatus {
+  if (threw) return 'failed';
+  if (result.steps.some((s) => s.isError)) return 'denied';
+  return 'ok';
+}
 
 export type AgenticGraphResult = {
   /** The node ids that ran, in order. */
@@ -107,13 +127,104 @@ export function nodeOrder(ir: IR, disabled: Set<string> = new Set()): string[] {
   return order;
 }
 
-/** Compose one node's system prompt: preamble + its AGENT.md + running progress. */
-function nodeSystem(preamble: string, node: IRNode, transcript: string[]): string {
+/** One prior node's handoff: its narration PLUS the material data it produced. */
+type HandoffEntry = { node: string; block: string };
+
+/**
+ * Instruction to the DOWNSTREAM node: the handoff below carries the prior agents'
+ * ACTUAL outputs (scorecards, metric values, query rows) — use them, never re-ask
+ * the user for data a teammate already produced.
+ */
+const HANDOFF_DIRECTIVE = [
+  'Your teammates have already run before you. "TEAM PROGRESS SO FAR" below carries',
+  'each prior agent\'s conclusion AND the material data it produced (query rows,',
+  'metric values, scorecards). USE that data directly — it is the input to your job.',
+  'NEVER ask the user for information a prior agent already produced; if you need a',
+  "prior result, read it from the handoff. Only the most recent agent's output is",
+  'pinned in full; older ones may be summarized.',
+].join('\n');
+
+/**
+ * Render one node's handoff block: its finalText (narration) followed by a compact
+ * rendering of its MATERIAL tool outputs — the data it fetched/produced (query
+ * result rows, metric values, scorecard) — so a downstream node has the actual
+ * results to work from, not just the narration. Errored/denied steps are noted so
+ * the next node knows what was NOT obtained. Each result is compacted (row-set →
+ * header+first-N; long text → head+tail) so the handoff stays budget-friendly.
+ */
+function handoffBlock(node: string, finalText: string, steps: AgenticStep[]): string {
+  const parts = [`## ${node}`, finalText.trim() || '(no narration)'];
+  const material = steps.filter((s) => !s.isError && s.result.trim());
+  const failed = steps.filter((s) => s.isError);
+  if (material.length > 0) {
+    parts.push('', `### ${node} — data produced (use this directly):`);
+    for (const s of material) {
+      parts.push(`- ${s.tool}: ${compactToolResult(s.result.trim())}`);
+    }
+  }
+  if (failed.length > 0) {
+    parts.push('', `### ${node} — tools that did NOT return data: ${failed.map((s) => s.tool).join(', ')}`);
+  }
+  return parts.join('\n');
+}
+
+/**
+ * The share of a node's input budget the between-node handoff may occupy. The rest
+ * is preamble + role + the node's own ACT loop. Kept modest so the handoff never
+ * crowds out the node's own working context.
+ */
+const HANDOFF_BUDGET_FRACTION = 0.4;
+/** Fallback handoff ceiling (tokens) when no `budget` is supplied by the caller. */
+const DEFAULT_HANDOFF_BUDGET = 6_000;
+
+/**
+ * Bound the running transcript so the handoff can't blow the budget — biased to keep
+ * the MOST RECENT structured output (the thing the next node most needs). Newest
+ * entries are kept in full, first; once the ceiling is reached, OLDER entries are
+ * compacted to their narration line, and the very oldest dropped. Because the newest
+ * is packed first, a downstream node ALWAYS sees the prior node's full data block —
+ * `budgetMessages`' pinned-head truncation (which cuts the tail) can no longer strip it.
+ */
+function budgetTranscript(transcript: HandoffEntry[], ceiling: number): HandoffEntry[] {
+  const total = transcript.reduce((n, e) => n + estimateTokens(e.block), 0);
+  if (total <= ceiling) return transcript;
+  const kept: HandoffEntry[] = [];
+  let used = 0;
+  // Walk newest → oldest; keep full while it fits, else compact to the narration line.
+  for (let i = transcript.length - 1; i >= 0; i -= 1) {
+    const e = transcript[i];
+    const full = estimateTokens(e.block);
+    if (used + full <= ceiling) {
+      kept.unshift(e);
+      used += full;
+      continue;
+    }
+    const line = `## ${e.node}\n${e.block.split('\n').slice(1, 3).join(' ')}`.trim();
+    const lineTokens = estimateTokens(line);
+    if (used + lineTokens <= ceiling) {
+      kept.unshift({ node: e.node, block: line });
+      used += lineTokens;
+    }
+    // else: too full even for a summary line — drop this and any older entry.
+    else break;
+  }
+  return kept;
+}
+
+/**
+ * Compose one node's system prompt: preamble + its AGENT.md + running progress.
+ * The team progress carries each prior node's narration AND its structured tool
+ * outputs (via {@link handoffBlock}); the MOST RECENT entry is listed last (the
+ * budgeter pins recent messages, so the thing this node most needs survives).
+ */
+function nodeSystem(preamble: string, node: IRNode, transcript: HandoffEntry[], budget?: number): string {
+  const ceiling = Math.floor((budget ?? DEFAULT_HANDOFF_BUDGET / HANDOFF_BUDGET_FRACTION) * HANDOFF_BUDGET_FRACTION);
+  transcript = budgetTranscript(transcript, ceiling);
   const parts = [preamble, '', `--- YOUR ROLE IN THE TEAM: ${node.id} ---`, node.prompt];
   const memory = node.memory?.trim();
   if (memory && memory !== '# Memory') parts.push('', memory);
   if (transcript.length > 0) {
-    parts.push('', '--- TEAM PROGRESS SO FAR ---', transcript.join('\n\n'));
+    parts.push('', HANDOFF_DIRECTIVE, '', '--- TEAM PROGRESS SO FAR ---', transcript.map((e) => e.block).join('\n\n'));
   }
   return parts.join('\n');
 }
@@ -133,24 +244,42 @@ export async function runAgenticGraph(
   const order = nodeOrder(ir, new Set(deps.disabled ?? []));
 
   const runs: NodeRun[] = [];
-  const transcript: string[] = [];
+  const transcript: HandoffEntry[] = [];
   for (const id of order) {
     const node = nodeById.get(id)!;
     const actModel = node.model ?? deps.execModel;
-    const result = await runAgentic({
-      system: nodeSystem(deps.preamble, node, transcript),
-      userMessages: messages,
-      tools: deps.toolSpecsFor(node),
-      callTool: deps.callTool,
-      llm: deps.llm,
-      planModel: deps.reasoningModel,
-      actModel,
-      maxIterations: deps.maxIterations,
-      budget: deps.budget,
-      maxOutputTokens: deps.maxOutputTokens,
-    });
-    runs.push({ node: id, model: actModel, result });
-    transcript.push(`## ${node.id}\n${result.finalText}`);
+    // Wrap each node so ONE node's failure is reported as a node-level failure with
+    // partial results — never a blank 500 that aborts the whole run. The run stops
+    // at the failed node (downstream nodes depend on its output) but every node that
+    // ran up to and including it is returned.
+    try {
+      const result = await runAgentic({
+        system: nodeSystem(deps.preamble, node, transcript, deps.budget),
+        userMessages: messages,
+        tools: deps.toolSpecsFor(node),
+        callTool: deps.callTool,
+        llm: deps.llm,
+        planModel: deps.reasoningModel,
+        actModel,
+        maxIterations: deps.maxIterations,
+        budget: deps.budget,
+        maxOutputTokens: deps.maxOutputTokens,
+      });
+      runs.push({ node: id, model: actModel, status: nodeStatus(result), result });
+      // Thread this node's finalText AND its material tool outputs forward, so a
+      // downstream node has the actual data (scorecard/rows/metrics) to work from.
+      transcript.push({ node: id, block: handoffBlock(node.id, result.finalText, result.steps) });
+    } catch (e) {
+      const error = (e as Error)?.message ?? String(e);
+      runs.push({
+        node: id,
+        model: actModel,
+        status: 'failed',
+        error,
+        result: { plan: '', steps: [], finalText: `(${id} failed: ${error})`, iterations: 0, toolCallingSupported: true },
+      });
+      break;
+    }
   }
 
   const finalText = runs.length > 0 ? runs[runs.length - 1].result.finalText : '(no agents ran)';
@@ -191,5 +320,5 @@ export async function runNode(
     maxOutputTokens: deps.maxOutputTokens,
     onStep: opts.onStep,
   });
-  return { node: nodeId, model: actModel, result };
+  return { node: nodeId, model: actModel, status: nodeStatus(result), result };
 }

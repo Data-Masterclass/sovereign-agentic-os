@@ -96,6 +96,34 @@ test('runOsTeam: a MIXED data+knowledge team dispatches as the acting user (neve
   assert.match(res.finalText, /analysed 1 row/);
 });
 
+// --- FIX 2 (observability): the run carries per-node status + finalText ----------
+
+test('runOsTeam: each node run carries a derived STATUS and its finalText (the run-route response shape)', async () => {
+  const deps = spyDeps();
+  const res = await runOsTeam({
+    user: CREATOR,
+    yaml: mixedYaml(),
+    systemId: 'sys-mix',
+    messages: [{ role: 'user', content: 'How many rows?' }],
+    llm: toolCallingLlm('query_data'),
+    toolDeps: deps,
+    maxIterations: 3,
+  });
+
+  // The route maps res.runs[] 1:1 into nodes[]: node + model + status + finalText +
+  // steps. Prove every run object carries those fields the panel now renders.
+  for (const r of res.runs) {
+    assert.ok(typeof r.node === 'string' && r.node, 'node id present');
+    assert.ok(['ok', 'failed', 'denied'].includes(r.status), 'a derived status is present');
+    assert.ok(typeof r.result.finalText === 'string', 'the node finalText (its conclusion) is present');
+  }
+  // The single (successful) node analysed the rows → status ok, finalText carries it.
+  const analyst = res.runs.find((r) => r.node === 'analyst');
+  assert.ok(analyst, 'the analyst node ran');
+  assert.equal(analyst!.status, 'ok', 'a node with no errored tool is ok');
+  assert.match(analyst!.result.finalText, /analysed 1 row/, 'the node output is available per-node, not dropped');
+});
+
 // --- gate: os-team vs hermes fallback ----------------------------------------
 
 test('isAgenticOsTeam gates the live path: mixed + software true, hermes false', () => {

@@ -15,6 +15,13 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.76] — 2026-07-11
+
+### Fix — multi-agent "Build & Run" is now observable and correct
+- **Inter-node handoff no longer drops structured output (the real bug).** In a team graph (e.g. `performance_analyst → margin_analyst → evaluator → recommender`), each node's handoff was built from its *narration* (`finalText`) only — every node's **tool outputs** (`query_metric`/`query_data` rows, the evaluator's scorecard) were discarded, and the narration could be further truncated by the handoff budget. So the recommender asked the user for a scorecard it should have received. Now each node's handoff carries its narration **plus a compact rendering of its material tool results**, the most-recent node's block is **pinned against truncation** (packed newest→oldest), and a directive tells downstream nodes to **use prior data and never ask the user** for what a prior agent already produced.
+- **Per-node observability.** The run response now returns, per node, a `status` (`ok`/`failed`/`denied`), its `finalText`, and each tool call with a one-line result summary — and the Run panel renders a node-by-node card list (status badge · output · tool calls) with a clearly delimited **Final output** section, so you can see what each agent did and what the result is.
+- **Visible progress + no silent failure.** Pressing Run now immediately shows an animated "Running the team… `a → b → c → END`" banner. A node that throws is recorded as `failed` with its reason and returns the **partial** results up to that point, instead of aborting the whole run with an opaque 500.
+
 ## [os-ui 0.1.75] — 2026-07-11
 
 ### Fix — assistant answers now render as formatted markdown

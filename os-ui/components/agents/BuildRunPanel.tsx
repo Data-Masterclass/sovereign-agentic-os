@@ -43,6 +43,16 @@ function timeAgo(atMs: number): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 type RunStep = { node: string; tool: string; effect: string; ran?: boolean };
+type NodeStatus = 'ok' | 'failed' | 'denied';
+/** A per-node reveal for the multi-agent run: status + what it concluded + its tool calls. */
+type RunNode = {
+  node: string;
+  model?: string;
+  status: NodeStatus;
+  error?: string;
+  finalText?: string;
+  steps: { tool: string; isError?: boolean; summary?: string }[];
+};
 type RunReport = {
   running: boolean;
   ok: boolean;
@@ -50,6 +60,7 @@ type RunReport = {
   traces: number;
   held: number;
   steps: RunStep[];
+  nodes?: RunNode[];
   output?: string;
   mode?: 'live' | 'offline-mock';
   traceStoreAvailable?: boolean;
@@ -59,7 +70,14 @@ type RunReport = {
 // The run route returns TWO shapes: a single-agent report (output/steps/traces/held)
 // and a multi-agent "team" run (finalText/nodes, no steps/traces). Normalize both
 // into RunReport so the panel renders either without crashing on a missing field.
-type TeamNode = { node: string; model?: string; steps?: { tool: string; isError?: boolean }[] };
+type TeamNode = {
+  node: string;
+  model?: string;
+  status?: NodeStatus;
+  error?: string;
+  finalText?: string;
+  steps?: { tool: string; isError?: boolean; summary?: string }[];
+};
 type RawRun = Partial<RunReport> & { team?: boolean; finalText?: string; nodes?: TeamNode[] };
 
 function normalizeRun(body: RawRun): RunReport {
@@ -74,6 +92,15 @@ function normalizeRun(body: RawRun): RunReport {
       })),
     ) ??
     [];
+  // Preserve the per-node reveal (status / finalText / step summaries) when present.
+  const nodes: RunNode[] | undefined = body.nodes?.map((n) => ({
+    node: n.node,
+    model: n.model,
+    status: n.status ?? 'ok',
+    error: n.error,
+    finalText: n.finalText,
+    steps: (n.steps ?? []).map((s) => ({ tool: s.tool, isError: s.isError, summary: s.summary })),
+  }));
   const rawOut = body.output ?? body.finalText;
   return {
     running: body.running ?? false,
@@ -82,6 +109,7 @@ function normalizeRun(body: RawRun): RunReport {
     traces: body.traces ?? 0,
     held: body.held ?? 0,
     steps,
+    nodes,
     output: typeof rawOut === 'string' ? rawOut : rawOut ? JSON.stringify(rawOut) : undefined,
     mode: body.mode,
     traceStoreAvailable: body.traceStoreAvailable,
@@ -90,6 +118,8 @@ function normalizeRun(body: RawRun): RunReport {
 }
 
 const EFFECT_BADGE: Record<string, string> = { allow: 'ok', deny: 'err', requires_approval: 'warn' };
+const NODE_STATUS_BADGE: Record<NodeStatus, string> = { ok: 'ok', denied: 'warn', failed: 'err' };
+const NODE_STATUS_LABEL: Record<NodeStatus, string> = { ok: '✓ ok', denied: 'tool denied', failed: '✗ failed' };
 
 export default function BuildRunPanel({
   systemId,
@@ -98,6 +128,7 @@ export default function BuildRunPanel({
   lastBuild,
   activity,
   lastRun,
+  nodePath,
   onStateChange,
 }: {
   systemId: string;
@@ -106,6 +137,8 @@ export default function BuildRunPanel({
   lastBuild?: LastBuild | null;
   activity?: ActivityMarker | null;
   lastRun?: LastRun | null;
+  /** The team's node path — shown as an immediate in-progress affordance on Run. */
+  nodePath?: string[];
   onStateChange: () => void;
 }) {
   const [building, setBuilding] = useState(false);
@@ -139,6 +172,10 @@ export default function BuildRunPanel({
   const doRun = async (stop = false) => {
     setRunningNow(true);
     setRunErr('');
+    // Immediately clear the prior result so the in-progress state is unambiguous —
+    // the student sees "running the team…" the instant they press Run, never a stale
+    // report or a silent spinner. (A stop press keeps the last result visible.)
+    if (!stop) setRun(null);
     try {
       const res = await fetch(`/api/agents/systems/${systemId}/run`, {
         method: 'POST',
@@ -243,10 +280,65 @@ export default function BuildRunPanel({
         ) : null}
       </div>
       {runErr ? <div className="error" style={{ marginTop: 10 }}>{runErr}</div> : null}
+
+      {/* FIX 1 — immediate in-progress: the instant Run is pressed, show an animated
+          indicator + the team's node path so it's obvious the run started and will
+          report back. Replaced by the per-node reveal the moment results arrive. */}
+      {runningNow && !run ? (
+        <div className="answer running-now" style={{ marginTop: 12, fontSize: 13 }} aria-live="polite">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="spin" />
+            <strong>Running the team…</strong>
+          </div>
+          {nodePath && nodePath.length > 0 ? (
+            <div className="mono" style={{ marginTop: 6, opacity: 0.75 }}>
+              {nodePath.join(' → ')} → END
+            </div>
+          ) : null}
+          <p className="hint" style={{ marginTop: 6 }}>Each agent runs in turn, handing its results to the next. This may take a moment.</p>
+        </div>
+      ) : null}
+
       {run ? (
         <div className="answer" style={{ marginTop: 12, fontSize: 13 }}>
-          {/* Final output — always shown, straight from the run (no Langfuse needed). */}
-          <div className="section-title" style={{ marginTop: 0 }}>Run output</div>
+          {/* FIX 2 — node-by-node reveal (multi-agent runs): each agent as a card with
+              its status, what it concluded, and the tool calls it made (with a short
+              result summary + denial/error flags). One scroll, Apple-clean. */}
+          {run.nodes && run.nodes.length > 0 ? (
+            <>
+              <div className="section-title" style={{ marginTop: 0 }}>The team, step by step</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+                {run.nodes.map((n, i) => (
+                  <div key={`${n.node}-${i}`} className="node-card" style={{ border: '1px solid var(--border, #e5e5e5)', borderRadius: 10, padding: '10px 12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span className="mono" style={{ fontWeight: 600 }}>{n.node}</span>
+                      <span className={`badge ${NODE_STATUS_BADGE[n.status]}`}>{NODE_STATUS_LABEL[n.status]}</span>
+                      {n.model ? <span className="hint mono" style={{ marginLeft: 'auto', fontSize: 11, opacity: 0.7 }}>{n.model}</span> : null}
+                    </div>
+                    {n.error ? <div className="b-off" style={{ marginTop: 6 }}>{n.error}</div> : null}
+                    {n.finalText ? (
+                      <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', opacity: 0.92 }}>{n.finalText}</p>
+                    ) : null}
+                    {n.steps.length > 0 ? (
+                      <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {n.steps.map((s, j) => (
+                          <div key={`${s.tool}-${j}`} style={{ fontSize: 12.5 }}>
+                            <span className={`badge ${s.isError ? 'err' : 'ok'}`} style={{ marginRight: 6 }}>{s.isError ? 'denied' : 'ok'}</span>
+                            <span className="mono">{s.tool}</span>
+                            {s.summary ? <span style={{ opacity: 0.7 }}> — {s.summary}</span> : null}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : null}
+
+          {/* Final output — always shown, straight from the run (no Langfuse needed).
+              For a team run this is clearly delimited as THE result the student wants. */}
+          <div className="section-title" style={{ marginTop: 0 }}>{run.nodes && run.nodes.length > 0 ? 'Final output' : 'Run output'}</div>
           <p className="mono" style={{ margin: '2px 0 8px', whiteSpace: 'pre-wrap' }}>
             {run.output || '(the run produced no final text)'}
           </p>

@@ -19,6 +19,12 @@ function fail(e: unknown) {
   return NextResponse.json({ error: (e as Error).message }, { status });
 }
 
+/** A one-line, single-line result summary for a tool step (observability, kept tight). */
+function summarizeResult(text: string, max = 240): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+}
+
 /** A turn's conversation from the request body (`messages`, else `prompt`). */
 function runMessages(body: Record<string, unknown>, prompt: string): ChatMsg[] {
   const raw = Array.isArray(body.messages) ? (body.messages as ChatMsg[]) : [];
@@ -92,10 +98,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       const teamSteps = team.runs.flatMap((r) =>
         r.result.steps.map((s) => ({ node: r.node, tool: s.tool, effect: s.isError ? 'deny' : 'allow', ran: true })),
       );
+      // A run is ok iff no node failed or had a denied/errored tool.
+      const teamOk = team.runs.every((r) => r.status === 'ok');
       const teamRun: LastRun = {
         at: Date.now(),
         running,
-        ok: true,
+        ok: teamOk,
         path: team.path,
         traces: 0,
         held: 0,
@@ -108,13 +116,23 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         running,
         mode: 'live',
         team: true,
+        ok: teamOk,
         path: team.path,
         finalText: team.finalText,
-        // Per-node summary: model + tool steps (no raw model text — keep it tight).
+        // Per-node reveal: model + STATUS + what that agent concluded (finalText) +
+        // its tool calls WITH a short result summary — so the student sees each
+        // node's output, not just tool names. Full data lives in team.runs[].
         nodes: team.runs.map((r) => ({
           node: r.node,
           model: r.model,
-          steps: r.result.steps.map((s) => ({ tool: s.tool, isError: s.isError })),
+          status: r.status,
+          error: r.error,
+          finalText: r.result.finalText,
+          steps: r.result.steps.map((s) => ({
+            tool: s.tool,
+            isError: s.isError,
+            summary: summarizeResult(s.result),
+          })),
         })),
       });
     }

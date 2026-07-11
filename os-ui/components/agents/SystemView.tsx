@@ -357,7 +357,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
           <GrantsRouting systemId={systemId} system={sys} canEdit={data.canEdit} canDirectWrite={roleAtLeast(data.role, 'builder')} roles={{ reasoning: modelsData?.roles?.reasoning || 'sovereign-reasoning', standard: modelsData?.roles?.standard || 'sovereign-default' }} routing={routingData} onChanged={reloadAll} />
         ) : null}
         {panel === 'build' ? (
-          <BuildRunPanel systemId={systemId} running={data.running} canEdit={data.canEdit} lastBuild={data.lastBuild} activity={data.activity} lastRun={data.lastRun} onStateChange={reloadAll} />
+          <BuildRunPanel systemId={systemId} running={data.running} canEdit={data.canEdit} lastBuild={data.lastBuild} activity={data.activity} lastRun={data.lastRun} nodePath={runOrder(sys, data.disabledAgents)} onStateChange={reloadAll} />
         ) : null}
       </div>
 
@@ -392,6 +392,17 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
  * surfaces the exact blocker (from the server-side compile) as a to-fix item so a
  * non-technical builder knows what to do before Run/Build.
  */
+/**
+ * The likely run order (entrypoint first, then the other active agents in declared
+ * order) — used only to show an immediate in-progress node path on Run press, before
+ * the server reports the authoritative walk. Disabled agents are excluded.
+ */
+function runOrder(system: System, disabledAgents: string[]): string[] {
+  const active = system.agents.map((a) => a.id).filter((id) => !disabledAgents.includes(id));
+  const entry = system.entrypoint && active.includes(system.entrypoint) ? [system.entrypoint] : [];
+  return [...entry, ...active.filter((id) => id !== system.entrypoint)];
+}
+
 function BuildChecklist({ system, compileError, disabledAgents }: { system: System; compileError: string | null; disabledAgents: string[] }) {
   const items: { ok: boolean; text: string }[] = [];
   items.push({ ok: system.agents.length > 0, text: system.agents.length > 0 ? `${system.agents.length} agent${system.agents.length === 1 ? '' : 's'}` : 'Add at least one agent' });
