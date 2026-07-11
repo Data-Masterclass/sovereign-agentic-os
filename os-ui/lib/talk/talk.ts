@@ -101,6 +101,12 @@ function systemPrompt(tabId: TalkTabId): string {
     '- Use nothing outside the CONTEXT. Never invent datasets, files, numbers, ids or URLs.',
     '- If the CONTEXT does not answer the question, say so plainly and suggest what the user',
     '  could look at from their scope — do not guess.',
+    '- When the EVIDENCE is a query result with rows, PRESENT THE ACTUAL VALUES: render the',
+    '  returned rows as a compact markdown table (its first line is the tab-separated header,',
+    '  each following line a row). Do not just describe the columns — show the data.',
+    '- If the EVIDENCE says the data query could not run, be honest: tell the user you tried',
+    '  to query the data but hit that reason, and ask them to clarify or name the dataset —',
+    '  never claim no data exists.',
     '- Be concise: a few sentences. Refer to artifacts by the names shown in the context.',
   ].join('\n');
 }

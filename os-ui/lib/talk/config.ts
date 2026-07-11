@@ -22,8 +22,8 @@
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
 import { roleModel } from '@/lib/models/roles';
-import { runAsk, type AskMessage } from '@/lib/data/ask';
-import { listAskable } from '@/lib/data/store';
+import { runAsk, type AskMessage, type AskOutcome } from '@/lib/data/ask';
+import { listAskable, type AskableDataset } from '@/lib/data/store';
 import { readPrincipalFor } from '@/lib/data/store-fqn';
 import { queryRun } from '@/lib/infra/governed';
 import { liteLlmCaller } from '@/lib/assistant/runtime';
@@ -39,6 +39,41 @@ function principal(user: CurrentUser) {
 
 // ------------------------------------------------------ data grounding (NL→SQL) --
 
+type DataGrounding = Awaited<ReturnType<TalkRetrieval>>;
+
+/**
+ * Map a governed NL→SQL {@link AskOutcome} to the copilot's grounding — a PURE function so
+ * the mapping (rows on success, an honest reason on failure) is unit-testable offline.
+ *
+ * On success the returned rows ARE the evidence. On failure we do NOT swallow the outcome:
+ * the failure `kind` + `message` (and the SQL, if one ran) go back as EVIDENCE text so the
+ * copilot can say "I tried to query <dataset> but hit <reason>" and ask the user to clarify —
+ * instead of silently pretending no data exists (which read as "no data rows" to students).
+ * Read-only + governed throughout: this only shapes what already ran; it never re-queries.
+ */
+export function dataResult(outcome: AskOutcome, datasets: AskableDataset[]): DataGrounding {
+  if (!outcome.ok) {
+    return {
+      kind: 'sql',
+      query: outcome.sql,
+      evidence: `the data query could not run — ${outcome.kind}: ${outcome.message}`,
+      citations: [],
+    };
+  }
+  const shown = outcome.rows.slice(0, 20);
+  const evidence = [outcome.columns.join('\t'), ...shown.map((r) => r.join('\t'))].join('\n');
+  // The datasets the SQL actually referenced are the citations (matched by FQN substring).
+  const cited: TalkCitation[] = datasets
+    .filter((d) => outcome.sql.toLowerCase().includes(d.fqn.toLowerCase()))
+    .map((d) => ({ id: d.fqn, label: d.name, kind: 'dataset', href: `/data#${d.id}` }));
+  return {
+    kind: 'sql',
+    query: outcome.sql,
+    evidence: `query result — ${outcome.rowCount} row${outcome.rowCount === 1 ? '' : 's'}:\n${evidence}`,
+    citations: cited,
+  };
+}
+
 const dataRetrieval: TalkRetrieval = async (question, user) => {
   const datasets = listAskable(principal(user));
   const call = liteLlmCaller();
@@ -49,19 +84,7 @@ const dataRetrieval: TalkRetrieval = async (question, user) => {
     models: { generate: roleModel('reasoning'), summarize: roleModel('standard') },
     query: (sql) => queryRun(sql, readPrincipalFor(sql, user)),
   });
-  if (!outcome.ok) return { kind: 'sql', query: outcome.sql, citations: [] };
-  const shown = outcome.rows.slice(0, 20);
-  const evidence = [outcome.columns.join('\t'), ...shown.map((r) => r.join('\t'))].join('\n');
-  // The datasets the SQL actually referenced are the citations (matched by FQN substring).
-  const cited: TalkCitation[] = datasets
-    .filter((d) => outcome.sql.toLowerCase().includes(d.fqn.toLowerCase()))
-    .map((d) => ({ id: d.fqn, label: d.name, kind: 'dataset', href: `/data#${d.id}` }));
-  return {
-    kind: 'sql',
-    query: outcome.sql,
-    evidence: `${outcome.rowCount} row${outcome.rowCount === 1 ? '' : 's'}:\n${evidence}`,
-    citations: cited,
-  };
+  return dataResult(outcome, datasets);
 };
 
 // --------------------------------------------------- knowledge grounding (hybrid) --

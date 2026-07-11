@@ -13,6 +13,7 @@
  * the client only needs the tab id + the examples (passed in for the empty state).
  */
 import { useCallback, useRef, useState } from 'react';
+import Markdown from '@/components/Markdown';
 
 type Citation = { id: string; label: string; href?: string; kind: string };
 type Grounding = { kind: 'sql' | 'retrieval' | 'none'; query?: string; evidence?: string; citations: Citation[] };
@@ -243,12 +244,18 @@ function ResultView({ result }: { result: TalkResult }) {
             <span className="thinking-dot" />
             {showThinking ? 'Hide thinking' : 'Show thinking'}
           </button>
-          {showThinking && <div className="thinking-body">{result.reasoning}</div>}
+          {showThinking && (
+            <div className="thinking-body">
+              <Markdown muted>{result.reasoning}</Markdown>
+            </div>
+          )}
         </div>
       )}
 
       {/* The answer — prominent. */}
-      <div className="answer">{result.answer}</div>
+      <div className="answer">
+        <Markdown>{result.answer}</Markdown>
+      </div>
 
       {/* Real citations. */}
       {result.citations.length > 0 && (
@@ -313,16 +320,11 @@ function ResultView({ result }: { result: TalkResult }) {
           border-left: 2px solid var(--border);
           background: var(--tile, var(--panel));
           border-radius: 6px;
-          color: var(--text-muted);
-          font-size: 0.85rem;
-          line-height: 1.6;
-          white-space: pre-wrap;
         }
         .answer {
           color: var(--text);
           font-size: 1rem;
-          line-height: 1.6;
-          white-space: pre-wrap;
+          line-height: 1.65;
         }
         .cites {
           display: flex;

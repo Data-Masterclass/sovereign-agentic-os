@@ -15,6 +15,14 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.75] — 2026-07-11
+
+### Fix — assistant answers now render as formatted markdown
+- **Ask the OS and every "Talk to X" copilot rendered the model's markdown as RAW TEXT** (literal `**bold**`, `| tables |`, `### headings`) — there was no markdown renderer in the app at all. Added `react-markdown` + `remark-gfm` and a shared, safe `<Markdown>` component (raw-HTML off, links forced to `target=_blank rel=noopener`, wide tables scroll, house typography) used for assistant/copilot answers (user input stays plain).
+
+### Fix — Talk to Data now returns real rows (and never lies about it)
+- **Talk-to-Data answered about columns but never returned actual data.** Root cause: on any NL→SQL failure, the data grounding **silently swallowed the reason** and attached no evidence, so the copilot only saw the schema overview and reported "the context does not include actual data rows" — it couldn't even say a query was attempted. (The marts, the gold FQN `iceberg.<snake_domain>.gold_<slug>`, and the read principal were all verified correct.) Now: a successful query returns the real rows (presented as a compact markdown table); a failed query surfaces its honest `kind: message` so the copilot explains what happened and asks you to clarify — instead of denying the data exists.
+
 ## [os-ui 0.1.74] — 2026-07-10
 
 ### Feature — "Talk to…" Context Copilots (all 5 Context tabs)

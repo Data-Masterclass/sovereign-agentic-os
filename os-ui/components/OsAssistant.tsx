@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { useUser } from '@/lib/useUser';
 import { parseAgentChatResponse } from '@/lib/agents/agent-chat-response';
+import Markdown from '@/components/Markdown';
 
 /**
  * THE SOVEREIGN OS ASSISTANT — one overarching, globally-available assistant.
@@ -169,7 +170,11 @@ export default function OsAssistant() {
                     messages.map((m, i) => (
                       <div key={i} className={`bubble ${m.role}`}>
                         <div className="bubble-role">{m.role === 'user' ? 'You' : 'OS Assistant'}</div>
-                        <div className="bubble-body">{m.content}</div>
+                        <div className="bubble-body">
+                          {m.role === 'user'
+                            ? m.content
+                            : <Markdown>{m.content}</Markdown>}
+                        </div>
                         {m.tools && m.tools.length > 0 ? (
                           <div className="osa-tools" aria-label="Governed tools invoked">
                             {m.tools.map((t, j) => (
