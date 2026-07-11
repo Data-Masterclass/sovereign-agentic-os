@@ -11,7 +11,7 @@ import {
   type App,
 } from '@/lib/software/apps';
 import { generateAndCompile } from './auto-mcp.ts';
-import { parseAppManifest, parseOpenApi, detectSurface } from './metadata.ts';
+import { parseAppManifest, parseOpenApi, detectSurface, reconcileKnowledgeConsumes } from './metadata.ts';
 import type { PipelineBackend, AuthorInput, AuthorResult, FrontDoorKey } from './adapters.ts';
 import type { AdapterStep, RunMode, ScaffoldFile } from './model.ts';
 
@@ -181,6 +181,13 @@ export async function commitToApp(
   // Metadata fidelity: parse the convention over the WHOLE tree on every commit.
   const manifest = parseAppManifest(tree, { name: app.name, owner: app.owner, description: app.description });
   app.manifest = manifest;
+  // Consumes fidelity: `declares.knowledge` is AUTHORITATIVE for the app's KNOWLEDGE
+  // consumes/lineage edges. Reconcile them to exactly match the committed declares —
+  // ADD newly-declared refs AND PRUNE refs no longer declared — so a re-commit that
+  // drops a knowledge ref drops its stale edge (which otherwise blocks deleting the
+  // now-unreferenced knowledge, since the delete is lineage-aware). Data/connection
+  // consumes are recorded through other governed paths and are left untouched here.
+  app.consumes = reconcileKnowledgeConsumes(app.consumes, manifest.knowledge);
   // Surface fidelity: re-detect the UI/API surface from the whole committed tree
   // so the monitor view adapts to what the agent actually built.
   app.surface = detectSurface(tree);

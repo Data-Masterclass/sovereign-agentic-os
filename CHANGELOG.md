@@ -15,6 +15,12 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.85] — 2026-07-12
+
+### Fix — an app's declared knowledge is now authoritative (stale dependency edges are pruned)
+- **Removing a knowledge reference from an app now drops its `consumes`/lineage edge.** Committing an app's `app.yaml` only ever *added* knowledge consumes edges (a union), never removed them — so an undeclared workflow stayed a live dependency and blocked deleting it (delete is lineage-aware). `commitToApp` now **reconciles** the knowledge consumes edges to exactly match `declares.knowledge` (adds new, drops undeclared, keeps labels), on every governed commit including via MCP. Non-knowledge edges (data/connections) are untouched.
+- **Also fixed a latent parse bug:** `findFile` matched a suffix before the exact root path, so `app.yaml` could resolve to `manifests/app.yaml` (the k8s Deployment, which has no `declares`) and silently parse empty declares — which would have undermined the reconcile on real templates. It now prefers an exact root match.
+
 ## [os-ui 0.1.84] — 2026-07-11
 
 ### Feature — a simpler agent-system builder (without taking anything from developers)

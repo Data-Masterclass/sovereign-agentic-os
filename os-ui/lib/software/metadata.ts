@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import yaml from 'js-yaml';
-import type { AppManifest, AppSurface, OpenApiSpec, ScaffoldFile } from './model.ts';
+import type { AppManifest, AppSurface, ConsumedResource, OpenApiSpec, ScaffoldFile } from './model.ts';
 
 /**
  * Metadata fidelity (Software golden path — "commits always show up in the app").
@@ -50,7 +50,10 @@ function asStringArray(v: unknown): string[] {
 }
 
 function findFile(files: ScaffoldFile[], path: string): ScaffoldFile | undefined {
-  return files.find((f) => f.path === path || f.path.endsWith(`/${path}`));
+  // Prefer an EXACT root match (e.g. the metadata `app.yaml`) over a suffix match
+  // (e.g. a k8s `manifests/app.yaml`), so the convention file is never shadowed by
+  // an unrelated repo file that merely shares a basename.
+  return files.find((f) => f.path === path) ?? files.find((f) => f.path.endsWith(`/${path}`));
 }
 
 /** Parse an OpenAPI spec out of the repo files (openapi.yaml/json), if present. */
@@ -122,6 +125,39 @@ export function parseAppManifest(
   if (!findFile(files, '.app/decisions.md')) missing.push('.app/decisions.md');
 
   return { name, owner, description, connections, data, knowledge, hasOpenApi, missing };
+}
+
+/**
+ * Reconcile the app's KNOWLEDGE consumes edges to EXACTLY match `declares.knowledge`
+ * (the app.yaml the owner committed). The declares block is AUTHORITATIVE for the
+ * knowledge the app consumes: a re-commit that DROPS a knowledge ref must drop the
+ * corresponding consumes/lineage edge, not just leave it dangling. Prior behaviour
+ * only ever UNIONED (added) refs, so a removed knowledge ref left a stale `consumes`
+ * edge that blocked deleting the now-unreferenced knowledge (the delete is lineage-
+ * aware) and left inaccurate dependency metadata.
+ *
+ * SCOPE: knowledge edges ONLY. Data/connection/app-mcp consumes are recorded through
+ * other governed paths (e.g. `consumeResource`, which also broadens deploy scope) and
+ * are NOT reconciled away here — only the knowledge contract is declares-driven today.
+ * Retained refs keep their existing label/scope; new refs get a default read grant.
+ * Pure so it runs identically in the commit hook and in-process.
+ */
+export function reconcileKnowledgeConsumes(
+  consumes: ConsumedResource[],
+  declaredKnowledge: string[],
+): ConsumedResource[] {
+  const existingKnowledge = new Map(
+    consumes.filter((c) => c.kind === 'knowledge').map((c) => [c.ref, c]),
+  );
+  // Everything that is NOT a knowledge edge is preserved untouched.
+  const preserved = consumes.filter((c) => c.kind !== 'knowledge');
+  // Rebuild the knowledge edges to exactly match declares: keep declared refs (with
+  // their prior label/scope if we had them), add newly-declared refs, drop the rest.
+  // De-dupe declared refs so a repeated ref in app.yaml yields one edge.
+  const reconciled: ConsumedResource[] = [...new Set(declaredKnowledge)].map(
+    (ref) => existingKnowledge.get(ref) ?? { kind: 'knowledge', ref, label: ref, scope: 'read' },
+  );
+  return [...preserved, ...reconciled];
 }
 
 /**

@@ -3,7 +3,15 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseAppManifest, renderAppYaml, parseOpenApi, defaultOpenApi, detectSurface } from './metadata.ts';
+import {
+  parseAppManifest,
+  renderAppYaml,
+  parseOpenApi,
+  defaultOpenApi,
+  detectSurface,
+  reconcileKnowledgeConsumes,
+} from './metadata.ts';
+import type { ConsumedResource } from './model.ts';
 
 test('app.yaml convention is parsed into the manifest (declared resources)', () => {
   const appYaml = renderAppYaml({
@@ -75,4 +83,43 @@ test('detectSurface: a static HTML site with no API is ui-only', () => {
 test('detectSurface: nothing detectable falls back to a headless api surface', () => {
   const s = detectSurface([{ path: 'README.md', content: '# just docs' }]);
   assert.deepEqual(s, { ui: false, api: true });
+});
+
+test('reconcileKnowledgeConsumes: declares.knowledge is AUTHORITATIVE — adds new, PRUNES removed', () => {
+  const consumes: ConsumedResource[] = [
+    { kind: 'knowledge', ref: 'wf_old', label: 'Old policy', scope: 'read' },
+    { kind: 'knowledge', ref: 'wf_keep', label: 'Kept policy', scope: 'write-bounded' },
+    { kind: 'connection', ref: 'salesforce', label: 'Salesforce', scope: 'read' },
+    { kind: 'data', ref: 'ds_accounts', label: 'Accounts', scope: 'read' },
+  ];
+  // Commit declares only wf_keep + a NEW wf_new; wf_old was removed.
+  const out = reconcileKnowledgeConsumes(consumes, ['wf_keep', 'wf_new']);
+
+  const knowledge = out.filter((c) => c.kind === 'knowledge').map((c) => c.ref).sort();
+  assert.deepEqual(knowledge, ['wf_keep', 'wf_new'], 'wf_old pruned, wf_new added');
+  // Retained ref keeps its prior label + scope (not clobbered to a default).
+  const keep = out.find((c) => c.ref === 'wf_keep')!;
+  assert.equal(keep.label, 'Kept policy');
+  assert.equal(keep.scope, 'write-bounded');
+  // New ref gets a default read grant.
+  const added = out.find((c) => c.ref === 'wf_new')!;
+  assert.equal(added.scope, 'read');
+  // Non-knowledge consumes are untouched.
+  assert.ok(out.some((c) => c.kind === 'connection' && c.ref === 'salesforce'));
+  assert.ok(out.some((c) => c.kind === 'data' && c.ref === 'ds_accounts'));
+});
+
+test('reconcileKnowledgeConsumes: empty declares drops ALL knowledge edges but keeps data/conn', () => {
+  const consumes: ConsumedResource[] = [
+    { kind: 'knowledge', ref: 'wf_a', label: 'A', scope: 'read' },
+    { kind: 'connection', ref: 'salesforce', label: 'Salesforce', scope: 'read' },
+  ];
+  const out = reconcileKnowledgeConsumes(consumes, []);
+  assert.equal(out.filter((c) => c.kind === 'knowledge').length, 0);
+  assert.ok(out.some((c) => c.kind === 'connection'));
+});
+
+test('reconcileKnowledgeConsumes: de-dupes a repeated declared ref into one edge', () => {
+  const out = reconcileKnowledgeConsumes([], ['wf_x', 'wf_x']);
+  assert.equal(out.filter((c) => c.ref === 'wf_x').length, 1);
 });

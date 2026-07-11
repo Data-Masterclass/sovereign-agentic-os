@@ -5,6 +5,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
 import { createApp } from '@/lib/software/apps';
+import { consumeResource } from './lifecycle.ts';
+import { renderAppYaml } from './metadata.ts';
 import { commitToApp, getSnapshot } from './server.ts';
 
 const dev: CurrentUser = { id: 'dan', name: 'Dan', domains: ['eng'], role: 'creator' };
@@ -46,4 +48,43 @@ test('a partial commit preserves the app metadata + full-tree scan (merge, not r
   assert.ok(snap && snap.length > 1, 'snapshot must be the merged tree');
   assert.ok(snap!.some((f) => f.path === 'app/reports/page.tsx'), 'includes the committed file');
   assert.ok(snap!.some((f) => f.path === 'openapi.yaml'), 'still includes the seeded openapi.yaml');
+});
+
+/**
+ * `declares.knowledge` is AUTHORITATIVE for the app's KNOWLEDGE consumes/lineage
+ * edges. A re-commit of app.yaml that DROPS a knowledge ref must drop the stale
+ * consumes edge (previously the commit only ever UNIONED, so the edge persisted and
+ * blocked deleting the now-unreferenced knowledge). Data/connection consumes,
+ * recorded through other governed paths, must be unaffected.
+ */
+test('commit reconciles knowledge consumes to declares — removed ref drops the edge, others intact', async () => {
+  const app = await createApp(dev, { name: 'Declares Authoritative', template: 'service' });
+
+  // Seed two knowledge edges + an unrelated connection edge (as `consumeResource` would).
+  await consumeResource(app.id, dev, { kind: 'knowledge', ref: 'wf_keep', label: 'Keep', scope: 'read' });
+  await consumeResource(app.id, dev, { kind: 'knowledge', ref: 'wf_stale', label: 'Stale', scope: 'read' });
+  await consumeResource(app.id, dev, { kind: 'connection', ref: 'salesforce', label: 'Salesforce', scope: 'read' });
+
+  // Commit app.yaml declaring ONLY wf_keep + a NEW wf_new (wf_stale removed).
+  const appYaml = renderAppYaml({
+    name: app.name,
+    owner: app.owner,
+    description: app.description,
+    knowledge: ['wf_keep', 'wf_new'],
+  });
+  const { app: after } = await commitToApp(
+    app.id,
+    dev,
+    [{ path: 'app.yaml', content: appYaml }],
+    'declare knowledge (drop wf_stale, add wf_new)',
+  );
+
+  const knowledge = after.consumes.filter((c) => c.kind === 'knowledge').map((c) => c.ref).sort();
+  assert.deepEqual(knowledge, ['wf_keep', 'wf_new'], 'wf_stale pruned, wf_new added — declares is authoritative');
+  // Retained ref keeps its prior label (not clobbered).
+  assert.equal(after.consumes.find((c) => c.ref === 'wf_keep')!.label, 'Keep');
+  // Unrelated connection consume is untouched.
+  assert.ok(after.consumes.some((c) => c.kind === 'connection' && c.ref === 'salesforce'));
+  // The manifest agrees.
+  assert.deepEqual([...after.manifest.knowledge].sort(), ['wf_keep', 'wf_new']);
 });
