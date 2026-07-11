@@ -5446,3 +5446,244 @@ button.card.tile:hover .tile-action { opacity: 1; }
   color: var(--text-muted);
 }
 .lc-version-row .btn { grid-area: action; }
+
+/* ============================================================================
+   Simple ⇄ Developer builder — the guided, plain-fields Simple mode.
+   Calm, linear, Apple-clean: generous spacing, one gold accent, complexity
+   hidden. Developer mode reuses the existing surfaces above unchanged.
+   ============================================================================ */
+
+/* The header toggle — a compact segmented control (reuses the rt-seg language). */
+.mode-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.mode-toggle button {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: calc(var(--radius) - 4px);
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+}
+.mode-toggle button:hover:not(.active) { color: var(--text); }
+.mode-toggle button.active {
+  background: var(--gold-soft);
+  border-color: var(--gold-line);
+  color: var(--gold-text);
+}
+
+/* --- guided step rail --- */
+.simple-builder { margin-top: 6px; }
+.sb-steps {
+  list-style: none;
+  display: flex;
+  gap: 8px;
+  padding: 0;
+  margin: 0 0 22px;
+  flex-wrap: wrap;
+}
+.sb-step button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 14px 6px 6px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 13px;
+  transition: border-color 0.16s ease, color 0.16s ease, background 0.16s ease;
+}
+.sb-step button:disabled { opacity: 0.5; cursor: not-allowed; }
+.sb-step button:hover:not(:disabled) { border-color: var(--border-strong); color: var(--text); }
+.sb-step.active button {
+  border-color: var(--gold-line);
+  background: var(--gold-soft);
+  color: var(--text);
+}
+.sb-step-n {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.sb-step.active .sb-step-n { background: var(--gold); border-color: var(--gold-deep); color: #fff; }
+.sb-step.done .sb-step-n { background: var(--teal); border-color: var(--teal-dim); color: #fff; }
+.sb-step-label { font-weight: 600; }
+
+/* --- describe hero --- */
+.sb-hero {
+  border: 1px solid var(--gold-line);
+  background: linear-gradient(180deg, var(--gold-soft), transparent 140px);
+  border-radius: 16px;
+  padding: 24px;
+}
+.sb-hero-title {
+  margin: 0 0 6px;
+  font-family: var(--font-oswald, inherit);
+  font-size: 22px;
+  letter-spacing: 0.2px;
+}
+.sb-hero-sub { margin: 0 0 14px; color: var(--text-muted); font-size: 14px; max-width: 60ch; }
+.sb-hero-input {
+  width: 100%;
+  resize: vertical;
+  font-size: 15px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-input);
+  color: var(--text);
+  box-sizing: border-box;
+}
+.sb-hero-input:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-soft); }
+
+.sb-name-row { margin-top: 22px; display: flex; flex-direction: column; gap: 6px; max-width: 420px; }
+.sb-field-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  display: block;
+  margin-bottom: 5px;
+}
+
+/* --- agents step --- */
+.sb-section-title {
+  margin: 4px 0 2px;
+  font-family: var(--font-oswald, inherit);
+  font-size: 18px;
+}
+.sb-agent-list { display: flex; flex-direction: column; gap: 14px; margin-top: 6px; }
+.sb-empty {
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  padding: 20px;
+  color: var(--text-muted);
+  font-size: 14px;
+  text-align: center;
+}
+.sb-add { margin-top: 14px; }
+
+.sb-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px 18px;
+  background: var(--panel);
+}
+.sb-card.start { border-color: var(--gold-line); }
+.sb-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.sb-card-order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.sb-card-id { font-size: 13px; font-weight: 600; }
+.sb-card-tools { display: inline-flex; gap: 4px; }
+.icon-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-muted);
+  border-radius: 8px;
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  transition: border-color 0.16s ease, color 0.16s ease;
+}
+.icon-btn:hover:not(:disabled) { border-color: var(--border-strong); color: var(--text); }
+.icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.icon-btn.danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+
+.sb-card input[type='text'],
+.sb-card textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 14px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-input);
+  color: var(--text);
+  font-family: inherit;
+}
+.sb-card textarea { resize: vertical; line-height: 1.5; }
+.sb-card input[type='text']:focus,
+.sb-card textarea:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-soft); }
+
+.sb-card-meta { margin-top: 12px; }
+.sb-model { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.sb-tools { margin-top: 14px; }
+.sb-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.sb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+.sb-chip.granted { border-color: var(--teal); background: rgba(31, 143, 136, 0.08); }
+.sb-chip.suggest {
+  appearance: none;
+  cursor: pointer;
+  border-style: dashed;
+  border-color: var(--gold-line);
+  background: transparent;
+  color: var(--text);
+  transition: background 0.16s ease;
+}
+.sb-chip.suggest:hover { background: var(--gold-soft); }
+.sb-chip-why { color: var(--text-faint); font-size: 11px; }
+.sb-chip-x {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 0 0 2px;
+  line-height: 1;
+}
+.sb-chip-x:hover { color: var(--danger); }
+.sb-suggest { margin-top: 10px; }
+.sb-run { margin-top: 4px; }

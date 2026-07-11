@@ -1,0 +1,473 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ */
+'use client';
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import BuildRunPanel from './BuildRunPanel';
+import { commitSystem } from './commitSystem';
+import type { System } from '@/lib/agents/system-schema';
+import { classifyModelNeed } from '@/lib/agents/routing';
+import { instructionsOf } from '@/lib/agents/agent-md';
+import {
+  addSimpleAgent, moveAgent, removeSystemTool, addSystemTool,
+  setAgentInstructions, setAgentRole,
+} from '@/lib/agents/simple-edit';
+import { removeAgent, setEntrypoint } from '@/lib/agents/canvas-edit';
+import { suggestTools } from '@/lib/agents/suggest-tools';
+
+/**
+ * Simple mode — the guided, linear builder for non-coders. It reads and writes the
+ * SAME `system.yaml` / `agents/<id>/AGENT.md` Developer mode does, through the
+ * SAME `commitSystem` file write and `/api/agents` endpoints. There is NO parallel
+ * data model: every action here (describe→scaffold, edit a plain field, accept a
+ * suggested tool, add/remove/reorder an agent) is an ordinary edit to the one
+ * source of truth, so flipping to Developer mode shows exactly what Simple made.
+ *
+ * The flow is a plain ordered path — Describe · Name · Agents · Build · Run — not a
+ * canvas and never Monaco. Build/Run reuse the existing BuildRunPanel unchanged.
+ */
+
+type Step = 'name' | 'agents' | 'run';
+
+type BuildRunProps = {
+  running: boolean;
+  lastBuild: React.ComponentProps<typeof BuildRunPanel>['lastBuild'];
+  activity: React.ComponentProps<typeof BuildRunPanel>['activity'];
+  lastRun: React.ComponentProps<typeof BuildRunPanel>['lastRun'];
+  nodePath: string[];
+};
+
+export default function SimpleBuilder({
+  systemId,
+  system,
+  canEdit,
+  catalog,
+  buildRun,
+  onCommit,
+  onReload,
+}: {
+  systemId: string;
+  system: System;
+  canEdit: boolean;
+  /** Tool names the user may grant (role-scoped catalog); null while loading. */
+  catalog: string[] | null;
+  buildRun: BuildRunProps;
+  /** Commit a mutated System through the shared path (SystemView owns undo/redo). */
+  onCommit: (next: System) => Promise<void> | void;
+  /** Re-fetch the system view after a server-side edit (scaffold). */
+  onReload: () => Promise<void> | void;
+}) {
+  const [step, setStep] = useState<Step>('name');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const editable = canEdit && !busy;
+  const hasAgents = system.agents.length > 0;
+  const ready = hasAgents && !!system.entrypoint;
+
+  // Advance to the Agents step automatically once the system has agents (e.g. after
+  // a scaffold or the first add) — but never yank a user who stepped back.
+  const autoAdvanced = useRef(false);
+  useEffect(() => {
+    if (hasAgents && !autoAdvanced.current) { autoAdvanced.current = true; setStep('agents'); }
+  }, [hasAgents]);
+
+  const guard = useCallback(
+    async (fn: () => Promise<void> | void) => {
+      if (busy) return;
+      setBusy(true);
+      setErr('');
+      try { await fn(); }
+      catch (e) { setErr((e as Error).message); }
+      finally { setBusy(false); }
+    },
+    [busy],
+  );
+
+  const commit = useCallback((next: System) => guard(() => onCommit(next)), [guard, onCommit]);
+
+  return (
+    <div className="simple-builder">
+      <ol className="sb-steps" aria-label="Build steps">
+        {(['name', 'agents', 'run'] as Step[]).map((s, i) => {
+          const label = s === 'name' ? 'Describe & name' : s === 'agents' ? 'Your team' : 'Build & run';
+          const done = s === 'name' ? !!system.system.name : s === 'agents' ? ready : false;
+          return (
+            <li key={s} className={`sb-step${step === s ? ' active' : ''}${done ? ' done' : ''}`}>
+              <button type="button" onClick={() => setStep(s)} disabled={s === 'run' && !ready}>
+                <span className="sb-step-n">{done ? '✓' : i + 1}</span>
+                <span className="sb-step-label">{label}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+
+      {err ? <div className="error" style={{ marginBottom: 12 }}>{err}</div> : null}
+
+      {step === 'name' ? (
+        <DescribeAndName
+          systemId={systemId}
+          system={system}
+          canEdit={editable}
+          onScaffolded={async () => { await onReload(); setStep('agents'); }}
+          onRenamed={(next) => commit(next)}
+          onNext={() => setStep('agents')}
+        />
+      ) : null}
+
+      {step === 'agents' ? (
+        <AgentsStep
+          system={system}
+          canEdit={editable}
+          catalog={catalog}
+          onCommit={commit}
+          onBack={() => setStep('name')}
+          onNext={() => ready && setStep('run')}
+          ready={ready}
+        />
+      ) : null}
+
+      {step === 'run' ? (
+        <div className="sb-run">
+          <p className="hint" style={{ marginTop: 0 }}>
+            Build compiles your team and checks it. Run walks the team from the start agent and shows
+            every step. This is the same engine developers use — nothing is hidden.
+          </p>
+          <BuildRunPanel
+            systemId={systemId}
+            running={buildRun.running}
+            canEdit={canEdit}
+            lastBuild={buildRun.lastBuild}
+            activity={buildRun.activity}
+            lastRun={buildRun.lastRun}
+            nodePath={buildRun.nodePath}
+            onStateChange={onReload}
+          />
+          <button className="btn ghost sm" style={{ marginTop: 12 }} onClick={() => setStep('agents')}>← Back to your team</button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Step 1 — the HERO. A prominent "Describe what your team should do" box that runs
+ * the EXISTING scaffold path (the assistant endpoint that edits system.yaml), plus
+ * a plain Name field. After scaffolding the caller advances to the review step.
+ */
+function DescribeAndName({
+  systemId,
+  system,
+  canEdit,
+  onScaffolded,
+  onRenamed,
+  onNext,
+}: {
+  systemId: string;
+  system: System;
+  canEdit: boolean;
+  onScaffolded: () => Promise<void> | void;
+  onRenamed: (next: System) => void;
+  onNext: () => void;
+}) {
+  const [desc, setDesc] = useState('');
+  const [name, setName] = useState(system.system.name === 'Untitled system' ? '' : system.system.name);
+  const [scaffolding, setScaffolding] = useState(false);
+  const [scaffoldErr, setScaffoldErr] = useState('');
+  const hasAgents = system.agents.length > 0;
+
+  // Persist a name edit on blur (an ordinary system.yaml edit through the shared path).
+  const saveName = () => {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === system.system.name) return;
+    onRenamed({ ...system, system: { ...system.system, name: trimmed } });
+  };
+
+  const describe = async () => {
+    const instruction = desc.trim();
+    if (!instruction || scaffolding) return;
+    setScaffolding(true);
+    setScaffoldErr('');
+    try {
+      // The SAME scaffold endpoint HelperChat uses — edits system.yaml server-side.
+      const res = await fetch(`/api/agents/systems/${systemId}/assistant`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ instruction }),
+      });
+      const raw = await res.text();
+      let body: { error?: string; summary?: string } = {};
+      try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
+      if (!res.ok) { setScaffoldErr(body.error ?? 'The OS could not build that yet.'); return; }
+      setDesc('');
+      await onScaffolded();
+    } catch (e) {
+      setScaffoldErr((e as Error).message);
+    } finally {
+      setScaffolding(false);
+    }
+  };
+
+  return (
+    <div className="sb-describe">
+      <div className="sb-hero">
+        <h2 className="sb-hero-title">Describe what your team should do</h2>
+        <p className="sb-hero-sub">
+          Say it in plain words — the OS builds the agents, wires them up, and picks the right model
+          for each. You review and adjust next.
+        </p>
+        <textarea
+          className="sb-hero-input"
+          rows={3}
+          value={desc}
+          onChange={(e) => setDesc(e.target.value)}
+          disabled={!canEdit || scaffolding}
+          placeholder="e.g. add a research sub-agent that hands off to the writer"
+          onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void describe(); } }}
+        />
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
+          <span className="hint" style={{ marginTop: 0 }}>⌘/Ctrl + Enter. Governed like every agent.</span>
+          <button className="btn" onClick={describe} disabled={!canEdit || scaffolding || !desc.trim()}>
+            {scaffolding ? <span className="spin" /> : hasAgents ? 'Add to my team' : 'Build my team'}
+          </button>
+        </div>
+        {scaffoldErr ? <div className="error" style={{ marginTop: 10 }}>{scaffoldErr}</div> : null}
+      </div>
+
+      <div className="sb-name-row">
+        <label className="sb-field-label" htmlFor="sb-name">Name your team</label>
+        <input
+          id="sb-name"
+          type="text"
+          value={name}
+          disabled={!canEdit}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={saveName}
+          onKeyDown={(e) => { if (e.key === 'Enter') { saveName(); onNext(); } }}
+          placeholder="e.g. Renewals desk"
+        />
+      </div>
+
+      {hasAgents ? (
+        <div className="row" style={{ justifyContent: 'flex-end', marginTop: 4 }}>
+          <button className="btn ghost sm" onClick={() => { saveName(); onNext(); }}>Review your team →</button>
+        </div>
+      ) : (
+        <p className="hint">Or start empty and add agents yourself on the next step.</p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Step 2 — plain per-agent cards. Each agent is a card with a Role field, an
+ * Instructions textarea (mapped losslessly to AGENT.md), the resolved Auto model
+ * tier, and accept/toggle tool chips (deterministic suggestions). Add/remove/
+ * reorder edit system.yaml directly. No Monaco, no canvas.
+ */
+function AgentsStep({
+  system,
+  canEdit,
+  catalog,
+  onCommit,
+  onBack,
+  onNext,
+  ready,
+}: {
+  system: System;
+  canEdit: boolean;
+  catalog: string[] | null;
+  onCommit: (next: System) => void;
+  onBack: () => void;
+  onNext: () => void;
+  ready: boolean;
+}) {
+  return (
+    <div className="sb-agents">
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <div>
+          <h2 className="sb-section-title">Your team</h2>
+          <p className="hint" style={{ marginTop: 0 }}>
+            Each card is one agent. The <strong>START</strong> agent goes first and hands work to the
+            others. Everything here writes the same files developers edit.
+          </p>
+        </div>
+      </div>
+
+      {system.agents.length === 0 ? (
+        <div className="sb-empty">No agents yet — add one below, or go back and describe your team.</div>
+      ) : (
+        <div className="sb-agent-list">
+          {system.agents.map((a, i) => (
+            <AgentCard
+              key={a.id}
+              system={system}
+              agentId={a.id}
+              index={i}
+              count={system.agents.length}
+              canEdit={canEdit}
+              catalog={catalog}
+              onCommit={onCommit}
+            />
+          ))}
+        </div>
+      )}
+
+      <button
+        className="btn ghost sm sb-add"
+        disabled={!canEdit}
+        onClick={() => onCommit(addSimpleAgent(system, {}))}
+      >
+        + Add an agent
+      </button>
+
+      <div className="row" style={{ justifyContent: 'space-between', marginTop: 18 }}>
+        <button className="btn ghost sm" onClick={onBack}>← Describe</button>
+        <button className="btn" onClick={onNext} disabled={!ready} title={ready ? 'Build & run' : 'Add at least one agent first'}>
+          Build &amp; run →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AgentCard({
+  system,
+  agentId,
+  index,
+  count,
+  canEdit,
+  catalog,
+  onCommit,
+}: {
+  system: System;
+  agentId: string;
+  index: number;
+  count: number;
+  canEdit: boolean;
+  catalog: string[] | null;
+  onCommit: (next: System) => void;
+}) {
+  const agent = system.agents.find((a) => a.id === agentId)!;
+  const isStart = system.entrypoint === agentId;
+
+  // Local mirrors for the plain fields so typing is smooth; committed on blur.
+  const [role, setRole] = useState(agent.role);
+  const [instr, setInstr] = useState(() => instructionsOf(agent.agent_md));
+  useEffect(() => { setRole(agent.role); }, [agent.role]);
+  useEffect(() => { setInstr(instructionsOf(agent.agent_md)); }, [agent.agent_md]);
+
+  // The tools this agent effectively sees (inherits the system grants unless narrowed).
+  const effectiveTools = agent.tools ?? system.grants.tools;
+
+  // Deterministic suggestions from the role + instructions, minus what's already granted.
+  const suggestions = useMemo(() => {
+    const text = `${agent.id} ${role} ${instr}`;
+    return suggestTools(text, catalog ?? undefined).filter((s) => !system.grants.tools.includes(s.tool));
+  }, [agent.id, role, instr, catalog, system.grants.tools]);
+
+  // The Auto model tier this agent resolves to (same classifier the run uses).
+  const auto = classifyModelNeed(effectiveTools, `${agent.id} ${role} ${instr}`);
+
+  const saveRole = () => {
+    if (role === agent.role) return;
+    onCommit(setAgentRole(system, agentId, role));
+  };
+  const saveInstr = () => {
+    if (instr === instructionsOf(agent.agent_md)) return;
+    onCommit(setAgentInstructions(system, agentId, instr));
+  };
+
+  return (
+    <div className={`sb-card${isStart ? ' start' : ''}`}>
+      <div className="sb-card-head">
+        <span className="sb-card-order">{index + 1}</span>
+        <span className="mono sb-card-id">{agent.id}</span>
+        {isStart ? (
+          <span className="badge warn">START</span>
+        ) : canEdit ? (
+          <button className="btn ghost sm" onClick={() => onCommit(setEntrypoint(system, agentId))} title="Make this the first agent">Make START</button>
+        ) : null}
+        <div className="sb-card-tools" style={{ marginLeft: 'auto' }}>
+          {canEdit ? (
+            <>
+              <button className="icon-btn" disabled={index === 0} title="Move up" onClick={() => onCommit(moveAgent(system, agentId, -1))}>↑</button>
+              <button className="icon-btn" disabled={index === count - 1} title="Move down" onClick={() => onCommit(moveAgent(system, agentId, 1))}>↓</button>
+              {!isStart ? (
+                <button className="icon-btn danger" title="Remove agent" onClick={() => onCommit(removeAgent(system, agentId))}>✕</button>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      </div>
+
+      <label className="sb-field-label" htmlFor={`role-${agentId}`}>Role — one line</label>
+      <input
+        id={`role-${agentId}`}
+        type="text"
+        value={role}
+        disabled={!canEdit}
+        onChange={(e) => setRole(e.target.value)}
+        onBlur={saveRole}
+        placeholder="e.g. Analyzes sources and explains the findings"
+      />
+
+      <label className="sb-field-label" htmlFor={`instr-${agentId}`} style={{ marginTop: 10 }}>Instructions</label>
+      <textarea
+        id={`instr-${agentId}`}
+        rows={5}
+        value={instr}
+        disabled={!canEdit}
+        onChange={(e) => setInstr(e.target.value)}
+        onBlur={saveInstr}
+        placeholder="Tell the agent how to work, step by step. Plain language."
+      />
+
+      <div className="sb-card-meta">
+        <div className="sb-model">
+          <span className="sb-field-label" style={{ margin: 0 }}>Model</span>
+          <span className="badge">Auto</span>
+          <span className="hint" style={{ marginTop: 0 }}>
+            → {auto.need === 'fast' ? 'fast (Standard)' : 'Reasoning'} · {auto.reason}
+          </span>
+        </div>
+      </div>
+
+      {/* Granted tools (chips) — removable; plus accept-chips for suggestions. */}
+      <div className="sb-tools">
+        <span className="sb-field-label" style={{ margin: '4px 0' }}>Tools this agent can use</span>
+        <div className="sb-chips">
+          {effectiveTools.length === 0 ? <span className="hint" style={{ marginTop: 0 }}>None yet — accept a suggestion below.</span> : null}
+          {effectiveTools.map((t) => (
+            <span key={t} className="sb-chip granted">
+              <span className="mono">{t}</span>
+              {canEdit && system.grants.tools.includes(t) ? (
+                <button className="sb-chip-x" title="Remove" onClick={() => onCommit(removeSystemTool(system, t))}>✕</button>
+              ) : null}
+            </span>
+          ))}
+        </div>
+        {suggestions.length > 0 && canEdit ? (
+          <div className="sb-suggest">
+            <span className="hint" style={{ marginTop: 0 }}>Suggested for this role:</span>
+            <div className="sb-chips">
+              {suggestions.map((s) => (
+                <button
+                  key={s.tool}
+                  className="sb-chip suggest"
+                  title={s.why}
+                  onClick={() => onCommit(addSystemTool(system, s.tool))}
+                >
+                  + <span className="mono">{s.tool}</span>
+                  <span className="sb-chip-why">{s.why}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}

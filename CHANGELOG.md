@@ -15,6 +15,12 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.84] — 2026-07-11
+
+### Feature — a simpler agent-system builder (without taking anything from developers)
+- **Simple ⇄ Developer view toggle on the Agents builder.** Simple mode is a guided, plain-fields flow for non-coders; Developer mode is today's full surface (React-Flow graph, Monaco YAML, raw `AGENT.md`/`MEMORY.md`, explicit tool grants) — unchanged. Both edit the **same `system.yaml` / `AGENT.md`** through the same commit path, so a developer sees exactly what Simple mode produced (a test asserts the two produce byte-identical YAML). Default: Simple for builders/creators, Developer for admins; the choice is remembered.
+- **The four simplifications in Simple mode:** (1) a prominent **"Describe what your team should do"** box that scaffolds the system; (2) a **guided linear flow** (Describe & name → Your team → Build & run) instead of a canvas; (3) **plain per-agent cards** — Role + an Instructions textarea (losslessly mapped to `AGENT.md`) with the model shown as **Auto** (0.1.82) and its resolved tier; (4) **auto-suggested tools** as accept/remove chips derived from each agent's role, intersected with the caller's role-scoped catalog (never offered a tool above their floor). *(The describe-to-scaffold currently recognizes the structured "add a <role> sub-agent…" class; a richer free-form scaffolder is a follow-up.)*
+
 ## [os-ui 0.1.83] — 2026-07-11
 
 ### Fix — the general domain-knowledge card is now versioned too

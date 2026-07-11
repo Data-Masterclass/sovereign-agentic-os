@@ -11,6 +11,7 @@ import GrantsRouting from './GrantsRouting';
 import BuildRunPanel from './BuildRunPanel';
 import MonacoFile from './MonacoFile';
 import RuntimeSelector from './RuntimeSelector';
+import SimpleBuilder from './SimpleBuilder';
 import { commitSystem } from './commitSystem';
 import { addAgent, addHandoffEdge, addSuperviseEdge, removeAgent, removeEdge, setEntrypoint, setNodePositions } from '@/lib/agents/canvas-edit';
 import type { Schedule, System } from '@/lib/agents/system-schema';
@@ -83,6 +84,24 @@ type RoutingData = { activities: string[]; tiers: Record<string, string>; table:
 
 type Panel = 'yaml' | 'grants' | 'build';
 
+/**
+ * Builder view mode. Simple = the guided, plain-fields flow for non-coders;
+ * Developer = today's canvas + Monaco + grants surface, unchanged. Both edit the
+ * SAME system.yaml through the SAME commit path — the toggle only changes the
+ * surface, never the source of truth.
+ */
+type ViewMode = 'simple' | 'developer';
+const MODE_KEY = 'agents.viewMode';
+
+/** The persisted mode, defaulting to Simple for builder/creator (Developer for admins). */
+function resolveInitialMode(role: Role): ViewMode {
+  if (typeof window !== 'undefined') {
+    const saved = window.localStorage.getItem(MODE_KEY);
+    if (saved === 'simple' || saved === 'developer') return saved;
+  }
+  return roleAtLeast(role, 'domain_admin') ? 'developer' : 'simple';
+}
+
 const visClass = (v: string) => (v === 'Shared' ? 'vis-shared' : v === 'Marketplace' ? 'vis-certified' : 'vis-personal');
 const visLabel = (v: string) => (v === 'Shared' ? 'Shared in Domain' : v);
 
@@ -98,6 +117,10 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
   const [panel, setPanel] = useState<Panel>('yaml');
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  // View mode (Simple ⇄ Developer). Initialized from the persisted choice / role
+  // once the system's role is known; remembered in localStorage thereafter.
+  const [mode, setMode] = useState<ViewMode | null>(null);
+  const [catalog, setCatalog] = useState<string[] | null>(null);
   const [actErr, setActErr] = useState('');
   const [acting, setActing] = useState(false);
   // Re-entry guard: state is async, so gate concurrent edits through a ref. This
@@ -174,6 +197,29 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
     return () => window.removeEventListener('keydown', onKey);
   }, [undo, redo]);
 
+  // Initialize the view mode once the role is known (persisted choice wins, else
+  // role default). Runs once — later toggles are user-driven via setModePersisted.
+  const roleForMode = data?.role;
+  useEffect(() => {
+    if (mode === null && roleForMode) setMode(resolveInitialMode(roleForMode));
+  }, [mode, roleForMode]);
+
+  const setModePersisted = useCallback((next: ViewMode) => {
+    setMode(next);
+    try { window.localStorage.setItem(MODE_KEY, next); } catch { /* storage may be unavailable */ }
+  }, []);
+
+  // The role-scoped tool catalog (names only) — feeds Simple mode's suggestion
+  // chips so a creator is never offered a tool above their floor. Loaded once.
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/agents/tool-catalog')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('catalog'))))
+      .then((b: { tools: { name: string }[] }) => { if (!cancelled) setCatalog(b.tools.map((t) => t.name)); })
+      .catch(() => { if (!cancelled) setCatalog([]); });
+    return () => { cancelled = true; };
+  }, []);
+
   const post = useCallback(
     async (path: string, body?: unknown) => {
       if (actingRef.current) return;
@@ -221,6 +267,9 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
       (data.visibility === 'Shared' && data.role === 'admin'));
   const promoteLabel = data.visibility === 'Personal' ? 'Promote to Shared' : 'Publish to Marketplace';
   const editable = data.canEdit && !acting;
+  // The mode to render NOW: the resolved state once known, else the role default
+  // (avoids a Developer-surface flash for a builder while the pref resolves).
+  const effectiveMode: ViewMode = mode ?? (roleAtLeast(data.role, 'domain_admin') ? 'developer' : 'simple');
   const onConnect = (from: string, to: string) => {
     const fromAgent = sys.agents.find((a) => a.id === from);
     const isSupervisor = from === sys.entrypoint || (fromAgent?.members?.length ?? 0) > 0;
@@ -253,6 +302,26 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
           {!data.canEdit ? <span className="badge muted">read-only</span> : null}
         </div>
         <div className="system-actions">
+          <div className="mode-toggle" role="group" aria-label="Builder view mode">
+            <button
+              type="button"
+              className={effectiveMode === 'simple' ? 'active' : ''}
+              aria-pressed={effectiveMode === 'simple'}
+              onClick={() => setModePersisted('simple')}
+              title="Guided, plain-language builder"
+            >
+              Simple
+            </button>
+            <button
+              type="button"
+              className={effectiveMode === 'developer' ? 'active' : ''}
+              aria-pressed={effectiveMode === 'developer'}
+              onClick={() => setModePersisted('developer')}
+              title="Canvas, files and grants — the full surface"
+            >
+              Developer
+            </button>
+          </div>
           {acting ? <span className="spin" title="applying…" /> : null}
           {data.running ? (
             <button className="btn ghost sm" onClick={() => post('run', { stop: true })} disabled={!data.canEdit || acting}>Stop</button>
@@ -287,14 +356,32 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
         {data.lastActivity ? <> · last activity {new Date(data.lastActivity).toLocaleString()}</> : null}
       </div>
 
+      {actErr ? <div className="error" style={{ marginBottom: 12 }}>{actErr}</div> : null}
+
+      {effectiveMode === 'simple' ? (
+        <SimpleBuilder
+          systemId={systemId}
+          system={sys}
+          canEdit={data.canEdit && !acting}
+          catalog={catalog}
+          buildRun={{
+            running: data.running,
+            lastBuild: data.lastBuild,
+            activity: data.activity,
+            lastRun: data.lastRun,
+            nodePath: runOrder(sys, data.disabledAgents),
+          }}
+          onCommit={(next) => commit(next, { snapshot: sys })}
+          onReload={reloadAll}
+        />
+      ) : (
+      <>
       <RuntimeSelector
         system={sys}
         canEdit={data.canEdit && !acting}
         hermesEnabled={data.hermesEnabled}
         onChange={(next) => mutate(next)}
       />
-
-      {actErr ? <div className="error" style={{ marginBottom: 12 }}>{actErr}</div> : null}
 
       <BuildChecklist system={sys} compileError={data.compileError} disabledAgents={data.disabledAgents} />
 
@@ -382,6 +469,8 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
           </aside>
         </div>
       ) : null}
+      </>
+      )}
     </div>
     </ConfirmProvider>
   );
