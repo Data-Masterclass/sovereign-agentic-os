@@ -217,6 +217,62 @@ test('each NodeRun captures its input — the role prompt, the handoff, and the 
   assert.match(downstream!.input!, /TEAM PROGRESS SO FAR/, 'downstream input carries the handoff it was given');
 });
 
+// --- FIX A regression guard: handoff preserves a many-row scorecard (up to 60 rows) whole ---
+
+test('handoff: a 40-row scorecard passes to the downstream node WITHOUT row truncation', async () => {
+  // Build a 40-row scorecard (matches the Northpeak Campaign Optimizer evaluator output size).
+  const rows = Array.from({ length: 40 }, (_, i) => ({
+    campaign: `campaign_${i + 1}`,
+    score: (0.5 + i * 0.01).toFixed(2),
+    grade: i < 10 ? 'A' : i < 25 ? 'B' : 'C',
+  }));
+  const scorecard = JSON.stringify(rows);
+
+  const systemsSeen: string[] = [];
+  let orchestratorToolCalled = false;
+  const spec: ToolSpec = {
+    name: 'query_scorecard',
+    description: 'Fetch campaign scorecard.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  };
+
+  const llm: LlmCall = async (req) => {
+    if (!req.tools) return { content: 'plan', toolCalls: [] };
+    const system = req.messages.find((m) => m.role === 'system')?.content ?? '';
+    systemsSeen.push(system);
+    const isFirstNode = !system.includes('TEAM PROGRESS SO FAR');
+    if (isFirstNode && !orchestratorToolCalled) {
+      orchestratorToolCalled = true;
+      return { content: '', toolCalls: [{ id: 'c1', name: 'query_scorecard', args: {} }] };
+    }
+    return { content: `done (${req.model})`, toolCalls: [] };
+  };
+  const callTool: ToolExecutor = async (name) =>
+    name === 'query_scorecard' ? { text: scorecard, isError: false } : { text: 'ok', isError: false };
+
+  await runAgenticGraph(
+    IR,
+    [{ role: 'user', content: 'recommend campaigns' }],
+    baseDeps({ llm, toolSpecsFor: (n) => (n.id === 'orchestrator' ? [spec] : []), callTool, maxIterations: 3 }),
+  );
+
+  // Every downstream node's system must contain ALL 40 campaign rows — no truncation.
+  const downstream = systemsSeen.filter((s) => s.includes('TEAM PROGRESS SO FAR'));
+  assert.ok(downstream.length > 0, 'at least one downstream node ran');
+  for (const sys of downstream) {
+    // If truncated to the global default (5 rows), rows 6-40 would be absent.
+    // Verify a row from the latter half (row 30) is present.
+    assert.ok(
+      sys.includes('campaign_30'),
+      'downstream node sees campaign_30 — row 30 of 40 was NOT truncated',
+    );
+    assert.ok(
+      !sys.includes('more rows') || sys.includes('campaign_30'),
+      'if a truncation marker appears, campaign_30 must still be present (within HANDOFF_KEEP_ROWS=60)',
+    );
+  }
+});
+
 test('DEPLOY GATE: the seeded team never grants decide_deploy, and a creator is never offered it', () => {
   const sys = parseSystem(SOFTWARE_TEAM_YAML);
   // (a) The system grants exclude the go-live approval tool by construction.

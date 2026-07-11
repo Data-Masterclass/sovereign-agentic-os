@@ -241,12 +241,12 @@ export const config = {
   // Ask-the-OS assistant: max PLAN→ACT tool-call rounds per turn. Raised from the
   // original 8 so multi-step builds (ingest → silver → gold → metric → publish) can
   // complete in one conversation. Tunable via env without a rebuild.
-  assistantMaxSteps: Number(env('ASSISTANT_MAX_STEPS', '')) || 20,
+  assistantMaxSteps: Number(env('ASSISTANT_MAX_STEPS', '')) || 30,
   // Multi-agent TEAM runs: max PLAN→ACT tool-call rounds PER NODE. Higher than the
   // single-agent cap because one analytical node (an evaluator scoring N campaigns,
   // a recommender reasoning over a full scorecard) legitimately needs more rounds
   // than a one-shot assistant turn. Single-agent runs keep `assistantMaxSteps`.
-  agentTeamNodeMaxSteps: Number(env('AGENT_TEAM_NODE_MAX_STEPS', '')) || 40,
+  agentTeamNodeMaxSteps: Number(env('AGENT_TEAM_NODE_MAX_STEPS', '')) || 60,
   // LLM Gateway tab — the read-only, tenant-total usage/spend panel
   // (app/api/gateway/usage). The budget envelope is surfaced for the "budget
   // used" bar; it mirrors the chart's litellmAgentKey.maxBudget / budgetDuration

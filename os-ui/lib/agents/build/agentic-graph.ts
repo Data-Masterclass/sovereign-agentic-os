@@ -175,12 +175,23 @@ const HANDOFF_DIRECTIVE = [
 ].join('\n');
 
 /**
+ * Row allowance for inter-node handoffs. A scorecard from the evaluator can span
+ * many campaigns — the recommender must see ALL rows to reason over them without
+ * re-querying. This is deliberately MUCH larger than the default (5) used for the
+ * in-context assembler so a typical scorecard (≤60 campaigns) passes whole.
+ * The handoff budget ceiling in `budgetTranscript` / `nodeSystem` still applies as
+ * the outer size guard, so this cannot blow the model window.
+ */
+const HANDOFF_KEEP_ROWS = 60;
+
+/**
  * Render one node's handoff block: its finalText (narration) followed by a compact
  * rendering of its MATERIAL tool outputs — the data it fetched/produced (query
  * result rows, metric values, scorecard) — so a downstream node has the actual
  * results to work from, not just the narration. Errored/denied steps are noted so
  * the next node knows what was NOT obtained. Each result is compacted (row-set →
- * header+first-N; long text → head+tail) so the handoff stays budget-friendly.
+ * header+first-N up to HANDOFF_KEEP_ROWS; long text → head+tail) so the handoff
+ * stays budget-friendly while preserving full scorecards for downstream reasoning.
  */
 function handoffBlock(node: string, finalText: string, steps: AgenticStep[]): string {
   const parts = [`## ${node}`, finalText.trim() || '(no narration)'];
@@ -189,7 +200,9 @@ function handoffBlock(node: string, finalText: string, steps: AgenticStep[]): st
   if (material.length > 0) {
     parts.push('', `### ${node} — data produced (use this directly):`);
     for (const s of material) {
-      parts.push(`- ${s.tool}: ${compactToolResult(s.result.trim())}`);
+      // Pass HANDOFF_KEEP_ROWS so a full scorecard (up to 60 rows) is preserved;
+      // the global default (5) is only used elsewhere (in-context assembler).
+      parts.push(`- ${s.tool}: ${compactToolResult(s.result.trim(), {}, HANDOFF_KEEP_ROWS)}`);
     }
   }
   if (failed.length > 0) {

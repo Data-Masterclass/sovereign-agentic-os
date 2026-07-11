@@ -112,9 +112,16 @@ function looksLikeJsonRows(text: string): boolean {
  *   • a JSON row-set → header + first N rows + "…(M more rows)";
  *   • any other long text → head + tail with a "[truncated K chars]" marker.
  * Small inputs are returned unchanged. Deterministic and side-effect-free.
+ *
+ * The optional `keepRows` override lets the HANDOFF path pass a larger allowance
+ * (e.g. HANDOFF_KEEP_ROWS = 60) without touching the global DEFAULT_COMPACTION
+ * used everywhere else. Only the rows limit is overridable this way; the other
+ * compaction knobs still come from `opts` (or the defaults).
  */
-export function compactToolResult(text: string, opts: CompactionOptions = {}): string {
+export function compactToolResult(text: string, opts: CompactionOptions = {}, keepRows?: number): string {
   const o = { ...DEFAULT_COMPACTION, ...opts };
+  // Allow the caller to override keepRows directly (used by the handoff path).
+  if (keepRows !== undefined) o.keepRows = keepRows;
   if (estimateTokens(text) <= o.compactOverTokens) return text;
 
   if (looksLikeJsonRows(text)) {

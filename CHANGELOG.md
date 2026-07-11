@@ -15,6 +15,12 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.78] — 2026-07-11
+
+### Fix — multi-agent handoff carries the full teammate result; more step headroom
+- **A teammate's result is no longer truncated in the handoff.** The inter-node handoff compacted a prior node's row-set to its first 5 rows, so a recommender receiving an evaluator's multi-campaign scorecard saw only the head and re-queried the rest — exhausting its step budget. The handoff now keeps up to **60 rows** whole (still bounded by the overall handoff budget), so a downstream node reasons over the complete scorecard instead of re-deriving it. (A proper embedding-driven context curator — the "Context Librarian" — will supersede this heuristic.)
+- **More step headroom.** Single-agent runs `assistantMaxSteps` 20 → **30**; team-run per-node `agentTeamNodeMaxSteps` 40 → **60** (both still env-overridable; the runaway cap remains finite).
+
 ## [os-ui 0.1.77] — 2026-07-11
 
 ### Agents — Build & Run polish (observability + reliability)
