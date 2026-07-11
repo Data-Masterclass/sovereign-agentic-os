@@ -3,6 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/core/config';
+import { requireUser } from '@/lib/core/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,6 +43,17 @@ function heuristic(title: string, text: string) {
 }
 
 export async function POST(req: Request) {
+  // Requires a session: this proxies to the LLM gateway with the server-side
+  // master key — never expose it to anonymous callers (unmetered model abuse).
+  try {
+    await requireUser();
+  } catch (e) {
+    return NextResponse.json(
+      { error: (e as Error).message },
+      { status: (e as { status?: number }).status ?? 401 },
+    );
+  }
+
   let title = '';
   let text = '';
   try {

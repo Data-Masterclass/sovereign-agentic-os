@@ -179,6 +179,17 @@ function starterFiles(name: string, description: string) {
 }
 
 export async function POST(req: Request) {
+  // Requires a session: this creates a real Forgejo repo and writes files as the
+  // platform service account — never allow an anonymous caller to do that.
+  try {
+    await requireUser();
+  } catch (e) {
+    return NextResponse.json(
+      { error: (e as Error).message },
+      { status: (e as { status?: number }).status ?? 401 },
+    );
+  }
+
   let name = '';
   let description = '';
   let priv = false;

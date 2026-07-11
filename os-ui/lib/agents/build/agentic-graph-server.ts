@@ -13,7 +13,7 @@ import type { ToolSpec, AgenticStep, LlmCall } from '@/lib/assistant/agentic';
 import { loadBuildSpec } from '@/lib/tabs/build-spec';
 import { parseSystem, type System } from '../system-schema.ts';
 import { compile } from '../langgraph-compile.ts';
-import { runAgenticGraph, runNode, type AgenticGraphResult } from './agentic-graph.ts';
+import { runAgenticGraph, runNode, type AgenticGraphResult, type AgenticGraphDeps } from './agentic-graph.ts';
 import { liveEmbedder } from '@/lib/infra/context/librarian-live.ts';
 import {
   grantedToolSpecs,
@@ -171,6 +171,14 @@ export type RunOsTeamInput = {
   llm?: LlmCall;
   /** Injected in tests; the governed executor deps (authorize/enqueue/handleRpc/trace). */
   toolDeps?: OsToolDeps;
+  /**
+   * LIVE PROGRESS hooks (optional) — forwarded straight to the graph executor so the
+   * run route can stream what is happening right now. Absent → the team runs silently
+   * (the fire-and-wait path). See {@link AgenticGraphDeps}.
+   */
+  onNodeStart?: AgenticGraphDeps['onNodeStart'];
+  onStep?: AgenticGraphDeps['onStep'];
+  onNodeComplete?: AgenticGraphDeps['onNodeComplete'];
 };
 
 /**
@@ -209,6 +217,10 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<AgenticGraphResu
     budget: handoffBudget(),
     maxOutputTokens: modelContext(roleModel('tools')).reservedOutput,
     disabled: input.disabledAgents,
+    // LIVE PROGRESS: forwarded to the streaming run route (no-op when unset).
+    onNodeStart: input.onNodeStart,
+    onStep: input.onStep,
+    onNodeComplete: input.onNodeComplete,
   });
 }
 

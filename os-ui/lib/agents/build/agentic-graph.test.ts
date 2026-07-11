@@ -453,3 +453,98 @@ test('node status: a Trino-error step → "error"; an OPA-deny step → "denied"
   );
   assert.equal(rDeny.runs.find((r) => r.node === 'orchestrator')?.status, 'denied', 'a real OPA denial marks the node denied');
 });
+
+// --- LIVE PROGRESS (0.1.81): the executor streams ordered node/step events ---
+
+test('progress callbacks fire in order: every node starts and completes, steps stream per node', async () => {
+  // The orchestrator calls one tool, then finishes; other nodes just finish.
+  const spec: ToolSpec = {
+    name: 'query_data',
+    description: 'Run SQL.',
+    inputSchema: { type: 'object', properties: { sql: { type: 'string' } }, required: ['sql'] },
+  };
+  const drive: LlmCall = async (req) => {
+    if (!req.tools) return { content: 'plan', toolCalls: [] };
+    const system = req.messages.find((m) => m.role === 'system')?.content ?? '';
+    const isFirst = !system.includes('TEAM PROGRESS SO FAR');
+    const alreadyCalled = req.messages.some((m) => m.role === 'tool');
+    if (isFirst && !alreadyCalled) return { content: '', toolCalls: [{ id: 'c1', name: 'query_data', args: { sql: 'select 1' } }] };
+    return { content: `done (${req.model})`, toolCalls: [] };
+  };
+
+  type Ev = { kind: string; node: string; extra?: unknown };
+  const events: Ev[] = [];
+  const res = await runAgenticGraph(
+    IR,
+    [{ role: 'user', content: 'go' }],
+    baseDeps({
+      llm: drive,
+      toolSpecsFor: (n) => (n.id === 'orchestrator' ? [spec] : []),
+      callTool: async () => ({ text: '[{"n":1}]', isError: false }),
+      maxIterations: 3,
+      onNodeStart: (ev) => events.push({ kind: 'node-started', node: ev.node, extra: { index: ev.index, total: ev.total } }),
+      onStep: (ev) => events.push({ kind: 'tool-step', node: ev.node, extra: { tool: ev.step.tool, index: ev.index } }),
+      onNodeComplete: (ev) => events.push({ kind: 'node-completed', node: ev.node, extra: ev.status }),
+    }),
+  );
+
+  // Ordering invariant: each node's start precedes its steps, which precede its complete.
+  const order = res.path;
+  const starts = events.filter((e) => e.kind === 'node-started').map((e) => e.node);
+  const completes = events.filter((e) => e.kind === 'node-completed').map((e) => e.node);
+  assert.deepEqual(starts, order, 'a node-started fired for every node, in path order');
+  assert.deepEqual(completes, order, 'a node-completed fired for every node, in path order');
+
+  // The one tool step streamed under the orchestrator, between its start and complete.
+  const step = events.find((e) => e.kind === 'tool-step');
+  assert.ok(step, 'a tool-step event streamed');
+  assert.equal(step!.node, 'orchestrator');
+  const iStart = events.findIndex((e) => e.kind === 'node-started' && e.node === 'orchestrator');
+  const iStep = events.indexOf(step!);
+  const iDone = events.findIndex((e) => e.kind === 'node-completed' && e.node === 'orchestrator');
+  assert.ok(iStart < iStep && iStep < iDone, 'the step is bracketed by its node start/complete');
+
+  // The index passed to node-started is 1-based over the total path (reconstructable).
+  const firstStart = events.find((e) => e.kind === 'node-started');
+  assert.deepEqual(firstStart!.extra, { index: 1, total: order.length });
+});
+
+test('a consumer of the events reconstructs the same per-node structure as the result', async () => {
+  const drive: LlmCall = async (req) => (req.tools ? { content: `done (${req.model})`, toolCalls: [] } : { content: 'plan', toolCalls: [] });
+  const reconstructed: { node: string; status: string }[] = [];
+  const res = await runAgenticGraph(
+    IR,
+    [{ role: 'user', content: 'go' }],
+    baseDeps({
+      llm: drive,
+      onNodeComplete: (ev) => reconstructed.push({ node: ev.node, status: ev.status }),
+    }),
+  );
+  // The events alone rebuild the same ordered node list + statuses the result carries.
+  assert.deepEqual(reconstructed.map((r) => r.node), res.runs.map((r) => r.node));
+  assert.deepEqual(reconstructed.map((r) => r.status), res.runs.map((r) => r.status));
+});
+
+test('a node failure still emits a terminal node-completed (never a silent stall)', async () => {
+  const boom: LlmCall = async (req) => {
+    if (!req.tools) return { content: 'plan', toolCalls: [] };
+    throw new Error('gateway 400');
+  };
+  const events: { kind: string; node: string; status?: string }[] = [];
+  const res = await runAgenticGraph(
+    IR,
+    [{ role: 'user', content: 'go' }],
+    baseDeps({
+      llm: boom,
+      onNodeStart: (ev) => events.push({ kind: 'started', node: ev.node }),
+      onNodeComplete: (ev) => events.push({ kind: 'completed', node: ev.node, status: ev.status }),
+    }),
+  );
+  // The first node throws; it still reports a 'failed' node-completed, and the run stops.
+  const firstNode = res.path[0];
+  const completed = events.find((e) => e.kind === 'completed');
+  assert.ok(completed, 'a node-completed fired even though the node threw');
+  assert.equal(completed!.node, firstNode);
+  assert.equal(completed!.status, 'failed');
+  assert.equal(res.runs.length, 1, 'the run stopped at the failing node');
+});

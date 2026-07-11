@@ -15,6 +15,16 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.81] — 2026-07-11
+
+### Feature — live progress: "Running the team…" now shows what's happening *now*
+- **A team run streams its progress.** Instead of a static banner, the Run panel now shows the current step live — e.g. `performance_analyst · query_data — running · step 5` — and lights up each agent in the path as it starts (▹) and completes (✓). Implemented over Server-Sent Events (reusing the same streaming grammar as the interactive software-team builder), with the exact same final result on completion and a clean fallback to the non-streaming path if the stream isn't available — never a stuck spinner.
+
+### Security — close two unauthenticated routes (GATE-5 sign-off)
+- **`POST /api/classify`** now requires a session. It proxies to the LLM gateway with the server-side master key; leaving it open allowed anonymous, unmetered use of the paid model. Fixed with `requireUser()` (401 for anon).
+- **`POST /api/software`** now requires a session. It creates a real Forgejo git repository and writes files as the platform service account; the GET was already gated but the POST was not. Fixed with `requireUser()`.
+- (Found by a full cohort security audit; every other area — fail-closed governance, role/DLS isolation, MCP front door, destructive-action gates, secret handling, participant lockdown — passed.)
+
 ## [os-ui 0.1.80] — 2026-07-11
 
 ### Feature — the Context Librarian (need-aware context curation)

@@ -8,10 +8,13 @@ import type { LastRun } from '@/lib/agents/store';
 import { runSystem } from '@/lib/agents/build/server';
 import { runOsTeam } from '@/lib/agents/build/agentic-graph-server';
 import { isAgenticOsTeam } from '@/lib/agents/build/os-tools';
-import { classifyStepError } from '@/lib/agents/build/agentic-graph';
+import { classifyStepError, type AgenticGraphResult } from '@/lib/agents/build/agentic-graph';
 import { governYamlForOwner } from '@/lib/agents/build/owner-grants';
 
 export const dynamic = 'force-dynamic';
+// A multi-node team walk (each node a PLAN→ACT loop on a large model) can run long;
+// give the streamed turn room before the platform kills it (mirrors the software team).
+export const maxDuration = 300;
 
 type ChatMsg = { role: 'user' | 'assistant'; content: string };
 
@@ -78,6 +81,45 @@ function nodeReveal(r: {
   };
 }
 
+/**
+ * Finalize a completed team run into (a) the exact JSON body the non-streaming path
+ * has always returned AND (b) the `LastRun` record persisted so the 0.1.80 legible
+ * render + per-node persistence keep working. Kept as ONE function so the streaming
+ * `done` frame and the non-streaming JSON response are byte-for-byte the same shape.
+ */
+function finalizeTeamRun(team: AgenticGraphResult, running: boolean) {
+  // Normalise team run into LastRun shape and persist it.
+  const teamSteps = team.runs.flatMap((r) =>
+    r.result.steps.map((s) => ({
+      node: r.node,
+      // A real policy block → 'deny'; an execution failure → 'error'; else 'allow'.
+      effect: !s.isError ? 'allow' : classifyStepError(s.result) === 'policy' ? 'deny' : 'error',
+      tool: s.tool,
+      ran: true,
+    })),
+  );
+  // A run is ok iff no node failed or had a denied/errored tool.
+  const teamOk = team.runs.every((r) => r.status === 'ok');
+  // Per-node drill-down: model + STATUS + what that agent was GIVEN (input) + what
+  // it concluded (finalText) + its tool calls with args → result. Built once, and
+  // PERSISTED into LastRun so the per-agent cards survive a tab-switch / reseed.
+  const nodes = team.runs.map(nodeReveal);
+  const lastRun: LastRun = {
+    at: Date.now(),
+    running,
+    ok: teamOk,
+    path: team.path,
+    traces: 0,
+    held: 0,
+    steps: teamSteps,
+    nodes,
+    output: team.finalText,
+    mode: 'live',
+  };
+  const body = { running, mode: 'live' as const, team: true, ok: teamOk, path: team.path, finalText: team.finalText, nodes };
+  return { body, lastRun };
+}
+
 /** A turn's conversation from the request body (`messages`, else `prompt`). */
 function runMessages(body: Record<string, unknown>, prompt: string): ChatMsg[] {
   const raw = Array.isArray(body.messages) ? (body.messages as ChatMsg[]) : [];
@@ -103,9 +145,18 @@ function markRun(id: string, user: Parameters<typeof setRunning>[1]): boolean {
  * tool call OPA-checked + Langfuse-traced), and flip the running flag. `stop:true`
  * just halts the system without an invocation.
  */
+/** The client opts into live SSE progress by asking for `text/event-stream`. */
+function wantsStream(req: Request, body: Record<string, unknown>): boolean {
+  if (body.stream === true) return true;
+  return (req.headers.get('accept') ?? '').includes('text/event-stream');
+}
+
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   let resolvedId: string | undefined;
   let resolvedUser: Awaited<ReturnType<typeof requireUser>> | undefined;
+  // When we hand the run off to an SSE stream, the stream owns activity-cleanup
+  // (it runs after this function returns); the outer finally must NOT clear early.
+  let streamed = false;
   try {
     resolvedUser = await requireUser();
     const { id } = await ctx.params;
@@ -142,53 +193,75 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // acting user, never a system principal. Hermes/unmapped-legacy systems keep the
     // runtime/mock `runSystem` fallback path.
     if (isAgenticOsTeam(view.system)) {
-      const team = await runOsTeam({
-        user: resolvedUser,
-        yaml,
-        systemId: id,
-        messages: runMessages(body, prompt),
-        disabledAgents: view.disabledAgents,
-      });
-      const running = markRun(id, resolvedUser);
-      // Normalise team run into LastRun shape and persist it.
-      const teamSteps = team.runs.flatMap((r) =>
-        r.result.steps.map((s) => ({
-          node: r.node,
-          // A real policy block → 'deny'; an execution failure → 'error'; else 'allow'.
-          effect: !s.isError ? 'allow' : classifyStepError(s.result) === 'policy' ? 'deny' : 'error',
-          tool: s.tool,
-          ran: true,
-        })),
-      );
-      // A run is ok iff no node failed or had a denied/errored tool.
-      const teamOk = team.runs.every((r) => r.status === 'ok');
-      // Per-node drill-down: model + STATUS + what that agent was GIVEN (input) + what
-      // it concluded (finalText) + its tool calls with args → result. Built once, and
-      // PERSISTED into LastRun so the per-agent cards survive a tab-switch / reseed
-      // (previously dropped, forcing a fall-back to the flat table on reload).
-      const nodes = team.runs.map(nodeReveal);
-      const teamRun: LastRun = {
-        at: Date.now(),
-        running,
-        ok: teamOk,
-        path: team.path,
-        traces: 0,
-        held: 0,
-        steps: teamSteps,
-        nodes,
-        output: team.finalText,
-        mode: 'live',
+      const messages = runMessages(body, prompt);
+      const user = resolvedUser;
+
+      // Complete a finished team result: flip the running flag, persist LastRun, and
+      // return the exact JSON body (shared by the stream's `done` frame and the
+      // non-streaming response, so the final render is identical either way).
+      const complete = (team: AgenticGraphResult) => {
+        const running = markRun(id, user);
+        const { body: out, lastRun } = finalizeTeamRun(team, running);
+        try { setLastRun(id, user, lastRun); } catch { /* run-only consumer: persist best-effort */ }
+        return out;
       };
-      try { setLastRun(id, resolvedUser, teamRun); } catch { /* run-only consumer: persist best-effort */ }
-      return NextResponse.json({
-        running,
-        mode: 'live',
-        team: true,
-        ok: teamOk,
-        path: team.path,
-        finalText: team.finalText,
-        nodes,
-      });
+
+      // STREAMING path: the client asked for live progress (Accept: text/event-stream
+      // or {stream:true}). Emit ordered node/step events as the walk happens, then a
+      // terminal `done` carrying the SAME full result the non-stream path returns. On
+      // any run error, emit `error` so the client falls back — never a stuck spinner.
+      if (wantsStream(req, body)) {
+        streamed = true;
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            const send = (event: string, data: unknown) =>
+              controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+            try {
+              const team = await runOsTeam({
+                user,
+                yaml,
+                systemId: id,
+                messages,
+                disabledAgents: view.disabledAgents,
+                onNodeStart: (ev) => send('node-started', ev),
+                onStep: (ev) =>
+                  send('tool-step', {
+                    node: ev.node,
+                    tool: ev.step.tool,
+                    // Match the persisted per-step semantics: a policy block reads
+                    // 'denied', any other tool error 'error', else 'ok'.
+                    status: !ev.step.isError
+                      ? 'ok'
+                      : classifyStepError(ev.step.result) === 'policy'
+                        ? 'denied'
+                        : 'error',
+                    index: ev.index,
+                  }),
+                onNodeComplete: (ev) =>
+                  send('node-completed', { node: ev.node, status: ev.status, finalTextPreview: summarizeResult(ev.finalText) }),
+              });
+              send('done', complete(team));
+            } catch (e) {
+              send('error', { error: (e as Error).message });
+            } finally {
+              clearActivity(id);
+              controller.close();
+            }
+          },
+        });
+        return new Response(stream, {
+          headers: {
+            'content-type': 'text/event-stream; charset=utf-8',
+            'cache-control': 'no-store, no-transform',
+            connection: 'keep-alive',
+          },
+        });
+      }
+
+      // NON-STREAMING fallback: run to completion and return the final JSON as before.
+      const team = await runOsTeam({ user, yaml, systemId: id, messages, disabledAgents: view.disabledAgents });
+      return NextResponse.json(complete(team));
     }
 
     const report = await runSystem(id, yaml, {
@@ -224,6 +297,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   } catch (e) {
     return fail(e);
   } finally {
-    if (resolvedId) clearActivity(resolvedId);
+    // The streaming path clears activity from inside the stream (after this returns).
+    if (resolvedId && !streamed) clearActivity(resolvedId);
   }
 }

@@ -180,6 +180,17 @@ export type AgenticGraphDeps = {
    * keepRows handoff. Pair with {@link AgenticGraphDeps.embed} (see `librarian-live`).
    */
   embedSource?: () => 'litellm' | 'offline-hash' | undefined;
+  /**
+   * LIVE PROGRESS hooks (optional, transport-free). Fired as the walk happens so a
+   * caller can stream what is happening RIGHT NOW — never changes the returned
+   * result. `onNodeStart` fires as a node begins; `onStep` fires after each governed
+   * tool step of that node (forwarded from the harness); `onNodeComplete` fires with
+   * the node's outcome once it settles (including a `failed` node). Absent → the run
+   * is silent (identical to before).
+   */
+  onNodeStart?: (ev: { node: string; index: number; total: number }) => void;
+  onStep?: (ev: { node: string; step: AgenticStep; index: number }) => void;
+  onNodeComplete?: (ev: { node: string; status: NodeStatus; finalText: string }) => void;
 };
 
 /**
@@ -461,9 +472,14 @@ export async function runAgenticGraph(
   const runs: NodeRun[] = [];
   let transcript: HandoffEntry[] = [];
   const userTask = lastUserContent(messages);
-  for (const id of order) {
+  for (let orderIdx = 0; orderIdx < order.length; orderIdx += 1) {
+    const id = order[orderIdx];
     const node = nodeById.get(id)!;
     const actModel = node.model ?? deps.execModel;
+    // LIVE: announce this node is starting (1-based index over the total path).
+    deps.onNodeStart?.({ node: id, index: orderIdx + 1, total: order.length });
+    // Per-node step counter for the live stream (1-based).
+    let stepIdx = 0;
     // Wrap each node so ONE node's failure is reported as a node-level failure with
     // partial results — never a blank 500 that aborts the whole run. The run stops
     // at the failed node (downstream nodes depend on its output) but every node that
@@ -489,8 +505,12 @@ export async function runAgenticGraph(
         maxIterations: deps.maxIterations,
         budget: deps.budget,
         maxOutputTokens: deps.maxOutputTokens,
+        // LIVE: forward each governed tool step out to the caller as it happens.
+        onStep: deps.onStep ? (step) => { stepIdx += 1; deps.onStep!({ node: id, step, index: stepIdx }); } : undefined,
       });
-      runs.push({ node: id, model: actModel, status: nodeStatus(result), result, input });
+      const status = nodeStatus(result);
+      runs.push({ node: id, model: actModel, status, result, input });
+      deps.onNodeComplete?.({ node: id, status, finalText: result.finalText });
       // Thread this node's finalText AND its material tool outputs forward, so a
       // downstream node has the actual data (scorecard/rows/metrics) to work from.
       // Keep the RAW finalText/steps too, so the next node can re-render this entry
@@ -503,14 +523,16 @@ export async function runAgenticGraph(
       });
     } catch (e) {
       const error = (e as Error)?.message ?? String(e);
+      const finalText = `(${id} failed: ${error})`;
       runs.push({
         node: id,
         model: actModel,
         status: 'failed',
         error,
         input,
-        result: { plan: '', steps: [], finalText: `(${id} failed: ${error})`, iterations: 0, toolCallingSupported: true },
+        result: { plan: '', steps: [], finalText, iterations: 0, toolCallingSupported: true },
       });
+      deps.onNodeComplete?.({ node: id, status: 'failed', finalText });
       break;
     }
   }

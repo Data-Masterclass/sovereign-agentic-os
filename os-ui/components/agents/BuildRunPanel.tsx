@@ -173,6 +173,36 @@ function runSummary(run: RunReport): string {
   return `Completed${last ? ` through ${last} → END` : ''} · ${tail}`;
 }
 
+/**
+ * Live streaming state while a team run is in flight — the current tool step, the
+ * agents that have started/finished (to light up the path), and the current node's
+ * step count. Cleared to null the moment the terminal result lands.
+ */
+type LiveStepStatus = 'running' | 'ok' | 'denied' | 'error';
+type LiveProgress = {
+  /** The node running right now, and its 1-based position over the whole path. */
+  node?: string;
+  index?: number;
+  total?: number;
+  /** The current/last tool step of the running node. */
+  tool?: string;
+  stepStatus?: LiveStepStatus;
+  stepIndex?: number;
+  /** Nodes that have started (active or done) and nodes that have completed. */
+  started: string[];
+  completed: string[];
+};
+
+/** A calm one-line "what is happening right now" for the live banner. */
+function liveLine(p: LiveProgress): string {
+  if (!p.node) return 'Starting the team…';
+  const where = p.index && p.total ? ` (agent ${p.index} of ${p.total})` : '';
+  if (!p.tool) return `${p.node} — thinking${where}`;
+  const verb = p.stepStatus === 'running' ? 'running' : p.stepStatus ?? 'done';
+  const step = p.stepIndex ? ` · step ${p.stepIndex}` : '';
+  return `${p.node} · ${p.tool} — ${verb}${step}${where}`;
+}
+
 export default function BuildRunPanel({
   systemId,
   running,
@@ -205,6 +235,8 @@ export default function BuildRunPanel({
   // Seed from server-persisted lastRun so the panel survives tab-switches.
   const [run, setRun] = useState<RunReport | null>(lastRun ?? null);
   const [runErr, setRunErr] = useState('');
+  // LIVE progress (streaming): the current step line + which agents have started/finished.
+  const [live, setLive] = useState<LiveProgress | null>(null);
   // Which agent cards are expanded (drill-down), and which individual tool steps.
   const [openNodes, setOpenNodes] = useState<Record<string, boolean>>({});
   const [openSteps, setOpenSteps] = useState<Record<string, boolean>>({});
@@ -226,29 +258,104 @@ export default function BuildRunPanel({
     }
   };
 
+  /** Fold one streamed progress event into the live banner state. */
+  const applyEvent = (event: string, data: Record<string, unknown>) => {
+    if (event === 'node-started') {
+      const node = String(data.node ?? '');
+      setLive((p) => ({
+        ...(p ?? { started: [], completed: [] }),
+        node,
+        index: typeof data.index === 'number' ? data.index : undefined,
+        total: typeof data.total === 'number' ? data.total : undefined,
+        tool: undefined,
+        stepStatus: undefined,
+        stepIndex: undefined,
+        started: p?.started.includes(node) ? p.started : [...(p?.started ?? []), node],
+      }));
+    } else if (event === 'tool-step') {
+      setLive((p) => ({
+        ...(p ?? { started: [], completed: [] }),
+        node: String(data.node ?? p?.node ?? ''),
+        tool: String(data.tool ?? ''),
+        stepStatus: (data.status as LiveStepStatus) ?? 'running',
+        stepIndex: typeof data.index === 'number' ? data.index : undefined,
+      }));
+    } else if (event === 'node-completed') {
+      const node = String(data.node ?? '');
+      setLive((p) => ({
+        ...(p ?? { started: [], completed: [] }),
+        completed: p?.completed.includes(node) ? p.completed : [...(p?.completed ?? []), node],
+      }));
+    }
+  };
+
   const doRun = async (stop = false) => {
     setRunningNow(true);
     setRunErr('');
     // Immediately clear the prior result so the in-progress state is unambiguous —
     // the student sees "running the team…" the instant they press Run, never a stale
     // report or a silent spinner. (A stop press keeps the last result visible.)
-    if (!stop) setRun(null);
+    if (!stop) { setRun(null); setLive(null); }
     try {
       const res = await fetch(`/api/agents/systems/${systemId}/run`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        // Ask for live SSE progress on a run (not on a stop). The server keeps a
+        // non-streaming JSON fallback for callers that don't request the stream.
+        headers: { 'content-type': 'application/json', ...(stop ? {} : { accept: 'text/event-stream' }) },
         // Send the typed task; an empty prompt lets the server fill a real, purpose-derived
         // default task (NOT "Test invocation"), so the run does the team's actual job.
         body: JSON.stringify(stop ? { stop: true } : prompt.trim() ? { prompt: prompt.trim() } : {}),
       });
-      const body = await res.json();
-      if (!res.ok) setRunErr(body.error ?? 'Run failed');
-      else if (!stop) setRun(normalizeRun(body as RawRun));
+
+      const isStream = (res.headers.get('content-type') ?? '').includes('text/event-stream');
+      if (!stop && isStream && res.body) {
+        // Parse the SSE stream frame-by-frame: light up agents as they run and show
+        // the current step live; `done` carries the SAME full result the non-stream
+        // path returns, so the completed view is byte-for-byte unchanged.
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        let settled = false;
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const frames = buf.split('\n\n');
+          buf = frames.pop() ?? '';
+          for (const frame of frames) {
+            const evLine = frame.split('\n').find((l) => l.startsWith('event:'));
+            const dataLine = frame.split('\n').find((l) => l.startsWith('data:'));
+            if (!evLine || !dataLine) continue;
+            const event = evLine.slice(6).trim();
+            let data: Record<string, unknown> = {};
+            try { data = JSON.parse(dataLine.slice(5).trim()); } catch { continue; }
+            if (event === 'done') {
+              settled = true;
+              setRun(normalizeRun(data as RawRun));
+              setLive(null);
+            } else if (event === 'error') {
+              settled = true;
+              setRunErr(String(data.error ?? 'Run failed'));
+            } else {
+              applyEvent(event, data);
+            }
+          }
+        }
+        // Stream ended without a terminal frame (disconnect): never leave a stuck
+        // spinner — surface an honest message so the student can retry.
+        if (!settled) setRunErr('The run stream ended before a result arrived — please run again.');
+      } else {
+        // Non-streaming (stop press, or a server without the stream): read JSON.
+        const body = await res.json();
+        if (!res.ok) setRunErr(body.error ?? 'Run failed');
+        else if (!stop) setRun(normalizeRun(body as RawRun));
+      }
       onStateChange();
     } catch (e) {
       setRunErr((e as Error).message);
     } finally {
       setRunningNow(false);
+      setLive(null);
     }
   };
 
@@ -354,18 +461,31 @@ export default function BuildRunPanel({
       </div>
       {runErr ? <div className="error" style={{ marginTop: 10 }}>{runErr}</div> : null}
 
-      {/* FIX 1 — immediate in-progress: the instant Run is pressed, show an animated
-          indicator + the team's node path so it's obvious the run started and will
-          report back. Replaced by the per-node reveal the moment results arrive. */}
+      {/* FIX 1 — LIVE in-progress: the instant Run is pressed, show an animated
+          indicator, then update it as events arrive — the CURRENT agent + tool step
+          ("performance_analyst · query_data — running · step 5"), and light up each
+          agent in the path as it starts (▹) and completes (✓). Replaced by the
+          per-node reveal the moment the terminal result lands. */}
       {runningNow && !run ? (
         <div className="answer running-now" style={{ marginTop: 12, fontSize: 13 }} aria-live="polite">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span className="spin" />
-            <strong>Running the team…</strong>
+            <strong>{live ? liveLine(live) : 'Running the team…'}</strong>
           </div>
           {nodePath && nodePath.length > 0 ? (
-            <div className="mono" style={{ marginTop: 6, opacity: 0.75 }}>
-              {nodePath.join(' → ')} → END
+            <div className="mono" style={{ marginTop: 8, opacity: 0.85, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {nodePath.map((n, i) => {
+                const done = live?.completed.includes(n);
+                const active = !done && live?.started.includes(n);
+                return (
+                  <span key={`${n}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, opacity: done ? 0.9 : active ? 1 : 0.4 }}>
+                    <span aria-hidden="true">{done ? '✓' : active ? '▹' : '·'}</span>
+                    <span style={{ fontWeight: active ? 600 : 400 }}>{n}</span>
+                    {i < nodePath.length - 1 ? <span style={{ opacity: 0.4 }}>→</span> : null}
+                  </span>
+                );
+              })}
+              <span style={{ opacity: 0.4 }}>→ END</span>
             </div>
           ) : null}
           <p className="hint" style={{ marginTop: 6 }}>Each agent runs in turn, handing its results to the next. This may take a moment.</p>
