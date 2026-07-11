@@ -15,6 +15,11 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.83] — 2026-07-11
+
+### Fix — the general domain-knowledge card is now versioned too
+- **Everything in the Knowledge tab now has version history.** Workflows and personal "My knowledge" already snapshotted on every edit with a reversible restore; the general **domain-knowledge card** (the pinned, domain-wide operating manual) was the only knowledge artifact without it. It now uses the identical mechanism — a snapshot on every content change (no churn on no-op saves), a newest-first view-scoped history, and an edit-scoped, itself-reversible restore (the current card is snapshotted before a restore) — surfaced via the same shared **Version history** panel and a new `/api/knowledge/domain/[domain]/versions` route.
+
 ## [os-ui 0.1.82] — 2026-07-11
 
 ### Feature — Auto model selection per agent (faster multi-agent runs)

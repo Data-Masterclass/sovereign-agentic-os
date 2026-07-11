@@ -15,6 +15,7 @@ import { SCOPE_GROUPS, groupByScope, activeScopeCounts, type ScopeKey } from '@/
 import type { PersonalKnowledgeSummary } from '@/lib/knowledge/personal-store';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
+import VersionHistory from '@/components/lifecycle/VersionHistory';
 import DomainTag from '@/components/DomainTag';
 import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
 import TalkTo from '@/components/talk/TalkTo';
@@ -77,6 +78,7 @@ export default function KnowledgePage() {
   const [sectionDraft, setSectionDraft] = useState('');
   const [dkSaving, setDkSaving] = useState(false);
   const [dkMsg, setDkMsg] = useState('');
+  const [dkHistory, setDkHistory] = useState(false);
 
   // Knowledge sub-area scope (Shared = domain sections · My = personal entries · Marketplace).
   const [kScope, setKScope] = useState<ScopeKey>('all');
@@ -574,6 +576,27 @@ export default function KnowledgePage() {
                       dkMsg === 'Saved.'
                         ? <div className="hint" style={{ marginTop: 8, color: 'var(--teal)' }}>{dkMsg}</div>
                         : <div className="error" style={{ marginTop: 8 }}>{dkMsg}</div>
+                    )}
+                    {/* Version history for the whole card — the SAME shared panel +
+                        reversible restore every other knowledge artifact has. */}
+                    <div className="lc-actions row" style={{ gap: 8, alignItems: 'center', marginTop: 12 }}>
+                      <button
+                        type="button"
+                        className={`btn ghost sm${dkHistory ? ' on' : ''}`}
+                        onClick={() => setDkHistory((v) => !v)}
+                        aria-expanded={dkHistory}
+                      >
+                        {dkHistory ? 'Hide history' : 'Version history'}
+                      </button>
+                    </div>
+                    {dkHistory && (
+                      <div className="lc-history-panel">
+                        <VersionHistory
+                          basePath={`/api/knowledge/domain/${encodeURIComponent(domainKnowledge.domain)}`}
+                          name="Domain knowledge"
+                          onRestored={() => void loadDomainKnowledge()}
+                        />
+                      </div>
                     )}
                   </>
                 ) : (

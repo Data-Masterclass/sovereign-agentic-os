@@ -14,6 +14,8 @@ import {
   certifyWorkflow,
   getDomainKnowledge,
   updateDomainKnowledge,
+  listDomainKnowledgeVersions,
+  restoreDomainKnowledgeVersion,
   archiveWorkflow,
   unarchiveWorkflow,
   listWorkflowVersions,
@@ -178,6 +180,58 @@ test('outsider cannot update domain knowledge', () => {
     () => updateDomainKnowledge('sales', outsider, { sections: [{ id: 'overview', content: 'x' }] }),
     /permitted/i,
   );
+});
+
+test('updateDomainKnowledge snapshots the prior card; restore reverts + is itself versioned', () => {
+  __resetStore();
+  assert.equal(listDomainKnowledgeVersions('sales', builder).length, 0, 'no history before first edit');
+
+  updateDomainKnowledge('sales', builder, { sections: [{ id: 'overview', content: 'v1 overview' }] });
+  updateDomainKnowledge('sales', builder, { sections: [{ id: 'overview', content: 'v2 overview' }] });
+
+  const history = listDomainKnowledgeVersions('sales', builder);
+  assert.equal(history.length, 2);
+  assert.equal(history[0].version, 2, 'newest first');
+  assert.equal(history[0].author, builder.id);
+  assert.equal(history[1].version, 1);
+
+  // A no-op save (same content) does NOT churn a new version.
+  updateDomainKnowledge('sales', builder, { sections: [{ id: 'overview', content: 'v2 overview' }] });
+  assert.equal(listDomainKnowledgeVersions('sales', builder).length, 2);
+
+  // Restore v1 (prior of the first edit = empty template) → content reverts AND
+  // the pre-restore card is snapshotted as v3, so restore is auditable + reversible.
+  restoreDomainKnowledgeVersion('sales', builder, 1);
+  assert.equal(getDomainKnowledge('sales').sections.find((s) => s.id === 'overview')?.content, '');
+  const after = listDomainKnowledgeVersions('sales', builder);
+  assert.equal(after.length, 3);
+  assert.equal(after[0].version, 3);
+  assert.match(after[0].summary, /restore of v1/);
+
+  // Restoring an unknown version 404s.
+  assert.throws(() => restoreDomainKnowledgeVersion('sales', builder, 99), /not found/i);
+});
+
+test('domain-knowledge history is view-scoped; restore is edit-scoped (outsider rejected)', () => {
+  __resetStore();
+  updateDomainKnowledge('sales', builder, { sections: [{ id: 'overview', content: 'shared' }] });
+
+  // An outsider (finance) is not in the sales domain → cannot view OR restore.
+  assert.throws(() => listDomainKnowledgeVersions('sales', outsider), /permitted/i);
+  assert.throws(() => restoreDomainKnowledgeVersion('sales', outsider, 1), /permitted/i);
+
+  // A same-domain creator can VIEW history but restore still enforces in-domain.
+  assert.doesNotThrow(() => listDomainKnowledgeVersions('sales', participant));
+  assert.doesNotThrow(() => restoreDomainKnowledgeVersion('sales', participant, 1));
+});
+
+test('restoreDomainKnowledgeVersion rejects a corrupt snapshot', () => {
+  __resetStore();
+  updateDomainKnowledge('sales', builder, { sections: [{ id: 'overview', content: 'ok' }] });
+  // Corrupt v1's snapshot in place, then attempt a restore → 422.
+  const v = listDomainKnowledgeVersions('sales', builder)[0];
+  (v.state as { sections: unknown }).sections = [{ id: 'overview', content: 123 }];
+  assert.throws(() => restoreDomainKnowledgeVersion('sales', builder, 1), /no restorable source/i);
 });
 
 // ------------------------------------------ archive / delete / versions -------

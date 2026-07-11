@@ -5,6 +5,7 @@ import {
   type Workflow,
   type WorkflowMeta,
   type DomainKnowledge,
+  type DomainSection,
   type Visibility,
   KnowledgeError,
   parseWorkflow,
@@ -135,6 +136,10 @@ const mirror = osMirror({
 // canonical `md` + `tacit` is snapshotted on every meaningful edit + on restore.
 const versions = versionLog('knowledge-workflow');
 
+// The general DOMAIN-knowledge card (the pinned operating manual) rides the SAME
+// version log primitive, keyed by domain, snapshotted on every meaningful edit.
+const domainVersions = versionLog('domain-knowledge');
+
 function writeThrough(rec: WorkflowRecord): void {
   mirror.writeThrough(rec.id, rec);
 }
@@ -146,7 +151,7 @@ function snapshotState(rec: WorkflowRecord): { md: string; tacit: string } {
 
 export async function ensureHydrated(): Promise<void> {
   const s = ks();
-  if (!s.hydration) s.hydration = Promise.all([hydrate(), versions.ensureHydrated()]).then(() => {});
+  if (!s.hydration) s.hydration = Promise.all([hydrate(), versions.ensureHydrated(), domainVersions.ensureHydrated()]).then(() => {});
   return s.hydration;
 }
 
@@ -176,6 +181,7 @@ export function __resetStore(): void {
   s.hydration = null;
   mirror.__reset();
   versions.__reset();
+  domainVersions.__reset();
 }
 
 // --------------------------------------------------------------- scoping -----
@@ -407,6 +413,11 @@ export type DomainKnowledgePatch = {
   sections?: { id: string; content: string }[];
 };
 
+/** The versioned slice of a domain-knowledge card — its guided sections. */
+function snapshotDomain(dk: DomainKnowledge): { sections: DomainSection[] } {
+  return { sections: dk.sections.map((s) => ({ ...s })) };
+}
+
 export function updateDomainKnowledge(
   domain: string,
   user: Principal,
@@ -417,12 +428,62 @@ export function updateDomainKnowledge(
   const dk = ks().domainKnowledge.get(domain) ?? emptyDomainKnowledge(domain);
 
   if (patch.sections) {
-    for (const s of patch.sections) {
+    // Snapshot the PRIOR card before overwriting it, but only if this edit
+    // actually changes something (no version churn on a no-op save).
+    const changes = patch.sections.some((s) => {
       const sec = dk.sections.find((x) => x.id === s.id);
-      if (sec) sec.content = s.content;
+      return sec !== undefined && sec.content !== s.content;
+    });
+    if (changes) {
+      domainVersions.record(domain, user.id, snapshotDomain(dk), 'edit domain knowledge');
+      for (const s of patch.sections) {
+        const sec = dk.sections.find((x) => x.id === s.id);
+        if (sec) sec.content = s.content;
+      }
+      dk.updatedAt = now();
     }
   }
 
+  ks().domainKnowledge.set(domain, dk);
+  return dk;
+}
+
+/** Version history for a domain-knowledge card, newest first (view-scoped, in-domain). */
+export function listDomainKnowledgeVersions(domain: string, user: Principal): ArtifactVersion[] {
+  if (!user.domains.includes(domain)) fail('Not permitted to view knowledge for this domain', 403);
+  ensureSeeded();
+  return domainVersions.list(domain);
+}
+
+/**
+ * Restore a prior version of a domain-knowledge card's sections. Auditable +
+ * reversible: the CURRENT card is snapshotted as a new version first, THEN the
+ * chosen version is applied. Edit-scoped (in-domain) — mirrors
+ * `restoreWorkflowVersion` / `restorePersonalKnowledgeVersion`.
+ */
+export function restoreDomainKnowledgeVersion(
+  domain: string,
+  user: Principal,
+  version: number,
+): DomainKnowledge {
+  if (!user.domains.includes(domain)) fail('Not permitted to edit knowledge for this domain', 403);
+  ensureSeeded();
+  const snap = domainVersions.get(domain, version);
+  if (!snap) fail(`Version ${version} not found`, 404);
+  const state = snap.state as { sections?: DomainSection[] };
+  const restored = state.sections;
+  // Reject a corrupt snapshot rather than go live with it.
+  if (!Array.isArray(restored) || restored.some((s) => typeof s?.content !== 'string')) {
+    fail(`Version ${version} has no restorable source`, 422);
+  }
+  const dk = ks().domainKnowledge.get(domain) ?? emptyDomainKnowledge(domain);
+  // Snapshot the live card first so the restore can itself be undone.
+  domainVersions.record(domain, user.id, snapshotDomain(dk), `restore of v${version}`);
+  // Apply restored content onto the current section template (keeps ids/titles stable).
+  for (const sec of dk.sections) {
+    const from = restored.find((s) => s.id === sec.id);
+    if (from) sec.content = from.content;
+  }
   dk.updatedAt = now();
   ks().domainKnowledge.set(domain, dk);
   return dk;
