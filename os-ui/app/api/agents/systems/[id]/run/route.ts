@@ -54,6 +54,8 @@ function boundField(text: string, max = 4_000): string {
 function nodeReveal(r: {
   node: string;
   model: string;
+  tier?: 'fast' | 'reasoning';
+  tierReason?: string;
   status: string;
   error?: string;
   input?: string;
@@ -62,6 +64,10 @@ function nodeReveal(r: {
   return {
     node: r.node,
     model: r.model,
+    // AUTO per-node routing decision: which tier, and the deterministic reason —
+    // so the drill-down shows "performance_analyst → fast · read-only gatherer".
+    tier: r.tier,
+    tierReason: r.tierReason,
     status: r.status,
     error: r.error,
     // What this agent was GIVEN (role prompt + team-progress handoff + user turn).

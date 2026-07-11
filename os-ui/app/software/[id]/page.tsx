@@ -246,6 +246,15 @@ export default function AppPage() {
           <div className="sw-app-head-meta">
             <span className={visBadge(app.visibility)}>{visDisplayLabel(app.visibility)}</span>
             {(app.visibility === 'Shared' || app.visibility === 'Certified') ? <DomainTag domain={app.domain} /> : null}
+            {/* Prominent promote — role-gated (Personal→Shared: Builder+, Shared→Marketplace: Admin).
+                The full "cascades to data/files/MCP" context still lives in the Manage panel below. */}
+            {canPromoteUI &&
+            ((app.visibility === 'Personal' && roleAtLeast(data.user.role, 'builder')) ||
+              (app.visibility === 'Shared' && data.user.role === 'admin')) ? (
+              <button className="btn sm" onClick={promote} disabled={busy} title="Promote this app's visibility">
+                {busy ? <span className="spin" /> : canPromoteUI}
+              </button>
+            ) : null}
             <span className={dep.cls}>{dep.label}</span>
             <span className="badge muted">{version}</span>
             {app.mode === 'offline' ? <span className="badge muted">git not ready</span> : null}

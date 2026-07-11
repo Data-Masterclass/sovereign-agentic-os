@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { type IR, type IRNode } from '../langgraph-compile.ts';
+import { classifyModelNeed, type ModelNeed } from '../routing.ts';
 import {
   runAgentic,
   type AgenticResult,
@@ -20,8 +21,9 @@ import { curateContext, type CurateCandidate, type EmbedFn } from '@/lib/infra/c
  * It walks a compiled LangGraph {@link IR} and, per node, runs the EXISTING
  * per-user agentic harness ({@link runAgentic}, the same PLAN→ACT loop the live
  * software build chat uses) with:
- *   • that node's model as the ACT model (`node.model ?? execModel`), reasoning
- *     tier for the PLAN — so per-agent model routing is genuinely live;
+ *   • that node's AUTO-resolved model as the ACT model ({@link resolveNodeModel}:
+ *     a real pin wins, else read-only gatherers → fast, judgment/writers → reasoning),
+ *     reasoning tier for the PLAN — so per-agent model routing is genuinely live;
  *   • that node's narrowed, role-scoped tool specs (injected `toolSpecsFor`);
  *   • the injected governed `callTool` — in production this is
  *     `tabToolExecutor(user,'software')` → `handleRpc(user, …)`, i.e. every tool
@@ -83,6 +85,10 @@ export function classifyStepError(resultText: string): ErrorKind {
 export type NodeRun = {
   node: string;
   model: string;
+  /** The resolved AUTO tier ('fast' | 'reasoning') the ACT model came from. */
+  tier?: 'fast' | 'reasoning';
+  /** Why that tier was chosen (e.g. "read-only gatherer: query_data") — for the drill-down. */
+  tierReason?: string;
   status: NodeStatus;
   result: AgenticResult;
   /**
@@ -149,8 +155,16 @@ export type AgenticGraphDeps = {
   preamble: string;
   /** Reasoning tier used for every node's PLAN step. */
   reasoningModel: string;
-  /** Fallback ACT model when a node pins none. */
+  /** The FAST ACT model an Auto node resolves to when it does read-only gathering. */
   execModel: string;
+  /**
+   * PHASE 2 SEAM (design-only, NOT wired). An optional LLM tie-breaker consulted at
+   * BUILD time for a node whose deterministic tier is genuinely ambiguous — never on
+   * the run hot-path, never called today. When present a future builder may ask it to
+   * settle borderline nodes; absent (always, now) the deterministic classifier decides
+   * alone. Declared here so the seam is a real, typed contract rather than a TODO.
+   */
+  tieBreaker?: ModelTieBreaker;
   maxIterations?: number;
   /**
    * Input token ceiling for every node's model call — the bound each node's
@@ -192,6 +206,45 @@ export type AgenticGraphDeps = {
   onStep?: (ev: { node: string; step: AgenticStep; index: number }) => void;
   onNodeComplete?: (ev: { node: string; status: NodeStatus; finalText: string }) => void;
 };
+
+/**
+ * PHASE 2 SEAM — the LLM tie-breaker contract. Given a node, its granted tool specs
+ * and the deterministic `need` the classifier reached, return the settled tier. This
+ * is the ONLY place a model would ever be consulted for routing, and only for BUILD-
+ * time ambiguity. It is NOT wired: nothing calls this today; {@link resolveNodeModel}
+ * is fully deterministic. Declared so a later phase can drop in an implementation
+ * without changing the executor's shape.
+ */
+export type ModelTieBreaker = (node: IRNode, tools: ToolSpec[], need: ModelNeed) => Promise<ModelNeed>;
+
+/** The resolved routing decision for a node: the model_name plus WHY (for the UI). */
+export type ResolvedModel = { model: string; tier: ModelNeed; reason: string };
+
+/** The sentinel a UI may store to mean "classify me" (equivalent to an unset model). */
+const AUTO_SENTINEL = 'auto';
+
+/**
+ * AUTO per-node model selection (deterministic, pure, tested). Decide the ACT model
+ * for one node:
+ *   • USER OVERRIDE WINS — a real pinned `node.model` (not unset, not the `'auto'`
+ *     sentinel) is honored verbatim; tier is inferred from the alias for display only.
+ *   • Otherwise CLASSIFY from the node's granted tools + role/name/prompt (via
+ *     {@link classifyModelNeed}): read-only gatherer → `execModel` (fast); any
+ *     write/decide tool, or zero tools, → `reasoningModel`.
+ * Zero LLM cost. Returns the model_name, the tier, and a human `reason`.
+ */
+export function resolveNodeModel(node: IRNode, deps: AgenticGraphDeps): ResolvedModel {
+  const pinned = node.model?.trim();
+  if (pinned && pinned.toLowerCase() !== AUTO_SENTINEL) {
+    // User pinned a real model — honor it. Infer a display tier from the alias: the
+    // fast execModel reads as 'fast', anything else as 'reasoning'.
+    const tier: ModelNeed = pinned === deps.execModel ? 'fast' : 'reasoning';
+    return { model: pinned, tier, reason: `pinned by builder: ${pinned}` };
+  }
+  const roleText = `${node.id} ${node.prompt ?? ''}`;
+  const { need, reason } = classifyModelNeed(deps.toolSpecsFor(node).map((t) => t.name), roleText);
+  return { model: need === 'fast' ? deps.execModel : deps.reasoningModel, tier: need, reason };
+}
 
 /**
  * The deterministic visit order over the IR: BFS from the entrypoint, a
@@ -475,7 +528,10 @@ export async function runAgenticGraph(
   for (let orderIdx = 0; orderIdx < order.length; orderIdx += 1) {
     const id = order[orderIdx];
     const node = nodeById.get(id)!;
-    const actModel = node.model ?? deps.execModel;
+    // AUTO per-node routing: honor a real pin, else classify (read-only gatherers →
+    // fast, judgment/writers → reasoning). Zero LLM cost; surfaced in the drill-down.
+    const routed = resolveNodeModel(node, deps);
+    const actModel = routed.model;
     // LIVE: announce this node is starting (1-based index over the total path).
     deps.onNodeStart?.({ node: id, index: orderIdx + 1, total: order.length });
     // Per-node step counter for the live stream (1-based).
@@ -509,7 +565,7 @@ export async function runAgenticGraph(
         onStep: deps.onStep ? (step) => { stepIdx += 1; deps.onStep!({ node: id, step, index: stepIdx }); } : undefined,
       });
       const status = nodeStatus(result);
-      runs.push({ node: id, model: actModel, status, result, input });
+      runs.push({ node: id, model: actModel, tier: routed.tier, tierReason: routed.reason, status, result, input });
       deps.onNodeComplete?.({ node: id, status, finalText: result.finalText });
       // Thread this node's finalText AND its material tool outputs forward, so a
       // downstream node has the actual data (scorecard/rows/metrics) to work from.
@@ -527,6 +583,8 @@ export async function runAgenticGraph(
       runs.push({
         node: id,
         model: actModel,
+        tier: routed.tier,
+        tierReason: routed.reason,
         status: 'failed',
         error,
         input,
@@ -561,7 +619,8 @@ export async function runNode(
   const system = opts.extraGuidance
     ? `${nodeSystem(deps.preamble, node, [])}\n\n--- THIS TURN ---\n${opts.extraGuidance}`
     : nodeSystem(deps.preamble, node, []);
-  const actModel = node.model ?? deps.execModel;
+  const routed = resolveNodeModel(node, deps);
+  const actModel = routed.model;
   const result = await runAgentic({
     system,
     userMessages: messages,
@@ -575,5 +634,5 @@ export async function runNode(
     maxOutputTokens: deps.maxOutputTokens,
     onStep: opts.onStep,
   });
-  return { node: nodeId, model: actModel, status: nodeStatus(result), result, input: boundInput(system + renderUserTurn(messages)) };
+  return { node: nodeId, model: actModel, tier: routed.tier, tierReason: routed.reason, status: nodeStatus(result), result, input: boundInput(system + renderUserTurn(messages)) };
 }

@@ -15,6 +15,14 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.82] — 2026-07-11
+
+### Feature — Auto model selection per agent (faster multi-agent runs)
+- **The OS now picks the right model for each agent automatically.** A node's model defaults to **Auto**, which classifies the agent from its **granted tools** (read-only gatherers — `query_data`, `search_knowledge`, `list_*`… → the **fast** model; agents that write/decide, or have no tools, i.e. pure judgment → the **reasoning** model), with a role/keyword tiebreak. The chosen tier + the reason ("read-only gatherer: …") show in the agent editor and the run drill-down. It's **deterministic** (no LLM call — decided from tools), and an explicit **Reasoning/Standard pin always overrides**. This lets a team put its analysts on the fast model and reserve the big reasoning model for the evaluator/recommender — cutting run time. (An LLM tie-breaker for genuinely ambiguous agents is a defined seam for later.)
+
+### Fix — Software: a visible Promote button
+- **Apps can now be promoted from the header, like every other artifact.** The Promote action existed but was tucked inside the collapsed "Manage" panel, so it looked missing. There's now a prominent, role-gated **Promote to Shared / Promote to Marketplace** button next to the app's visibility badge (Personal→Shared for Builder+, Shared→Marketplace for Admin); the full "cascades to the app's data/files/MCP" context still lives in the Manage panel.
+
 ## [os-ui 0.1.81] — 2026-07-11
 
 ### Feature — live progress: "Running the team…" now shows what's happening *now*

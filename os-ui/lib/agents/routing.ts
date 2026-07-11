@@ -128,6 +128,77 @@ export function modeForModel(model: string | null | undefined): ModelMode {
   return tierOf(model) === 'light' ? 'execution' : 'reasoning';
 }
 
+/**
+ * AUTO per-node model selection — the DETERMINISTIC tier classifier, pure and
+ * client-safe (no server deps), so both the graph executor and the Agents builder
+ * UI share one source of truth. It answers ONE question for an Auto node: does this
+ * agent do READ-ONLY gathering (→ the fast tier) or WRITE/JUDGMENT work (→ reasoning)?
+ *
+ * Signals, strongest first:
+ *   1. Granted tools (primary). Only read/fetch tools → fast. Any write/decide tool,
+ *      or ZERO tools (pure synthesis/judgment), → reasoning.
+ *   2. Role / name / prompt keywords (secondary tiebreak, only used when tools are
+ *      ambiguous — e.g. a mix, or a read-only set whose ROLE clearly says "judge").
+ *
+ * Returns the coarse need — 'fast' | 'reasoning' — NOT a model_name; the caller maps
+ * that to its execModel / reasoningModel so admin role overrides still decide the alias.
+ */
+export type ModelNeed = 'fast' | 'reasoning';
+
+/**
+ * A tool name is READ-ONLY when it only queries/fetches/inspects — never mutates,
+ * decides, or approves. We match by verb PREFIX (the OS tool naming is verb-led:
+ * `query_data`, `search_knowledge`, `list_*`, `get_*`, `profile_*`, `read_*`,
+ * `use_*`), so an unknown read-shaped tool still classifies as read-only.
+ */
+const READ_TOOL_PREFIXES = ['query_', 'search_', 'list_', 'get_', 'profile_', 'use_', 'read_', 'browse_', 'test_'];
+
+function isReadOnlyTool(name: string): boolean {
+  const n = name.toLowerCase();
+  return READ_TOOL_PREFIXES.some((p) => n.startsWith(p));
+}
+
+/** Keywords that pull a node toward FAST (gather/format work). */
+const FAST_KEYWORDS = ['analyst', 'collect', 'fetch', 'gather', 'summariz', 'summaris', 'format', 'extract', 'profile'];
+/** Keywords that pull a node toward REASONING (judgment/decision work). */
+const REASONING_KEYWORDS = ['evaluate', 'judge', 'score', 'recommend', 'decide', 'plan', 'reason', 'critique', 'assess', 'strateg'];
+
+/** Does any keyword occur in the (lowercased) role/name/prompt text? */
+function hasAny(text: string, words: string[]): boolean {
+  const t = text.toLowerCase();
+  return words.some((w) => t.includes(w));
+}
+
+/**
+ * Classify a node's model NEED from its granted tool names + role/name/prompt text.
+ * Pure and deterministic. Returns the need plus a short human `reason` for the UI /
+ * drill-down. `roleText` is any concatenation of the node's id/role/prompt (optional).
+ */
+export function classifyModelNeed(tools: string[], roleText = ''): { need: ModelNeed; reason: string } {
+  const hasReasoningWord = hasAny(roleText, REASONING_KEYWORDS);
+  const hasFastWord = hasAny(roleText, FAST_KEYWORDS);
+
+  // ZERO tools → pure synthesis/judgment → reasoning (a keyword can't downgrade it).
+  if (tools.length === 0) {
+    return { need: 'reasoning', reason: 'no tools: pure synthesis/judgment' };
+  }
+
+  const writeTools = tools.filter((t) => !isReadOnlyTool(t));
+  const readTools = tools.filter((t) => isReadOnlyTool(t));
+
+  // Any write/decide tool → reasoning (it can change state or commit a decision).
+  if (writeTools.length > 0) {
+    return { need: 'reasoning', reason: `has write/decide tools: ${writeTools.slice(0, 3).join(', ')}` };
+  }
+
+  // Read-only tool set. Default fast, but a clear REASONING role keyword overrides
+  // (a read-only "evaluator" still needs judgment); a fast keyword only reinforces.
+  if (hasReasoningWord && !hasFastWord) {
+    return { need: 'reasoning', reason: `read-only tools but judgment role: ${roleText.trim().split(/\s+/)[0] ?? ''}`.trim() };
+  }
+  return { need: 'fast', reason: `read-only gatherer: ${readTools.slice(0, 3).join(', ')}` };
+}
+
 /** Default activity → tier mapping. Cheap-first: only reasoning/vision escalate. */
 const DEFAULT_TIERS: Record<Activity, Tier> = {
   planning: 'reasoning',

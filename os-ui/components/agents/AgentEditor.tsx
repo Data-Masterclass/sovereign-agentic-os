@@ -8,7 +8,7 @@ import MonacoFile from './MonacoFile';
 import { commitSystem } from './commitSystem';
 import { type System } from '@/lib/agents/system-schema';
 import { setAgentModel, setAgentTools } from '@/lib/agents/canvas-edit';
-import { MODEL_MODES, modeForModel, modelInfo, type ModelMode } from '@/lib/agents/routing';
+import { MODEL_MODES, modeForModel, modelInfo, classifyModelNeed, type ModelMode } from '@/lib/agents/routing';
 
 /**
  * Level 3 — the agent editor (one agent's native inputs): AGENT.md (behaviour),
@@ -174,6 +174,12 @@ export default function AgentEditor({
             const activeChoice = MODEL_MODES.find((m) => m.mode === activeMode)!;
             const activePin = pinFor(activeMode);
             const shown = activePin ? modelInfo(activePin) : null;
+            // AUTO: show the DETERMINISTIC tier this agent resolves to (same classifier
+            // the run uses) + the reason — so Auto is transparent, not a black box.
+            const auto =
+              activeMode === 'auto'
+                ? classifyModelNeed(effectiveTools, `${agent.id} ${agent.role ?? ''} ${agent.agent_md ?? ''}`)
+                : null;
             return (
               <>
                 <div className="rt-seg" role="group" aria-label="Thinking mode">
@@ -199,6 +205,12 @@ export default function AgentEditor({
                       <span className="model-name mono">{shown.display}</span>
                       {shown.params && shown.params !== '—' ? <span className="badge muted">{shown.params}</span> : null}
                       <ProvenanceBadge provenance={shown.provenance} />
+                    </div>
+                  ) : auto ? (
+                    <div className="muted" style={{ fontSize: 12.5 }}>
+                      Auto resolves this agent to the{' '}
+                      <strong>{auto.need === 'fast' ? 'fast (execution)' : 'reasoning'}</strong> tier —{' '}
+                      {auto.reason}. Judgment agents get the big model; read-only gatherers stay fast.
                     </div>
                   ) : (
                     <div className="muted" style={{ fontSize: 12.5 }}>

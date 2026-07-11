@@ -56,6 +56,9 @@ type NodeStep = { tool: string; isError?: boolean; errorKind?: ErrorKind; summar
 type RunNode = {
   node: string;
   model?: string;
+  /** AUTO per-node routing: the resolved tier + the deterministic reason it was chosen. */
+  tier?: 'fast' | 'reasoning';
+  tierReason?: string;
   status: NodeStatus;
   error?: string;
   input?: string;
@@ -524,12 +527,19 @@ export default function BuildRunPanel({
                         <span className="mono" style={{ fontWeight: 600 }}>{n.node}</span>
                         <span className={`badge ${NODE_STATUS_BADGE[n.status]}`}>{NODE_STATUS_LABEL[n.status]}</span>
                         {n.steps.length > 0 ? <span className="hint" style={{ fontSize: 11 }}>{n.steps.length} tool call{n.steps.length === 1 ? '' : 's'}</span> : null}
-                        {n.model ? <span className="hint mono" style={{ marginLeft: 'auto', fontSize: 11, opacity: 0.7 }}>{n.model}</span> : null}
+                        {n.tier ? <span className="badge muted" style={{ marginLeft: 'auto', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 0.3 }}>{n.tier}</span> : null}
+                        {n.model ? <span className="hint mono" style={{ marginLeft: n.tier ? 0 : 'auto', fontSize: 11, opacity: 0.7 }}>{n.model}</span> : null}
                       </button>
                       {n.error ? <div className="b-off" style={{ marginTop: 6 }}>{n.error}</div> : null}
 
                       {open ? (
                         <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                          {/* AUTO model routing — why this agent got its tier (zero-cost, deterministic). */}
+                          {n.tierReason ? (
+                            <div className="hint" style={{ fontSize: 11.5 }}>
+                              Model: <strong>{n.tier}</strong> — {n.tierReason}
+                            </div>
+                          ) : null}
                           {/* INPUT — what this agent was given. */}
                           {n.input ? (
                             <div>

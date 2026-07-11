@@ -73,6 +73,9 @@ export type LastRun = {
   nodes?: {
     node: string;
     model?: string;
+    /** AUTO per-node routing: the resolved tier + why, so the drill-down explains the model. */
+    tier?: 'fast' | 'reasoning';
+    tierReason?: string;
     status: string;
     error?: string;
     input?: string;
