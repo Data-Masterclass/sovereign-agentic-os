@@ -84,6 +84,36 @@ export class ToolCallingUnsupportedError extends Error {
 
 const DEFAULT_MAX_ITERATIONS = 6;
 
+/**
+ * Total number of DUPLICATE (already-executed) tool calls a single run tolerates
+ * before we stop the ACT loop and force a final synthesis. A model stuck re-firing
+ * the identical call every turn (the GATE-4 self-query loop) trips this and hands
+ * off with a real answer instead of burning its whole step budget on repeats.
+ */
+const DEFAULT_MAX_REPEATED_CALLS = 4;
+
+/**
+ * Deterministic signature for a tool call: name + args with keys sorted (so arg
+ * order never matters) and string values whitespace-normalized. Only EXACT repeats
+ * collide; genuinely-distinct calls keep their own signature and run normally.
+ */
+export function toolCallSignature(name: string, args: Record<string, unknown>): string {
+  return `${name}:${stableStringify(args)}`;
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return typeof value === 'string' ? JSON.stringify(value.trim().replace(/\s+/g, ' ')) : JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const obj = value as Record<string, unknown>;
+  const body = Object.keys(obj)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`)
+    .join(',');
+  return `{${body}}`;
+}
+
 export function toOpenAiTools(tools: ToolSpec[]): OpenAiTool[] {
   return tools.map((t) => ({
     type: 'function',
@@ -318,8 +348,17 @@ export async function runAgentic(opts: {
     ...user,
   ];
 
+  // Dedup ledger: how many times each EXACT (tool,args) signature has been
+  // requested this run. The first request executes through the governed executor;
+  // every later request for the same signature is answered with a SHORT synthetic
+  // note (the real result is already above in the transcript) so context stays
+  // bounded instead of re-appending the full payload — the 60k-token loop fix.
+  const executedSignatures = new Map<string, number>();
+  let repeatedCalls = 0;
+
   let iterations = 0;
   let finalText = '';
+  let forcedStop = false;
   while (iterations < maxIterations) {
     let completion: LlmCompletion;
     try {
@@ -374,8 +413,30 @@ export async function runAgentic(opts: {
       });
     }
 
-    // Execute each call through the governed executor and feed the result back.
+    // Execute each call through the governed executor and feed the result back —
+    // UNLESS it's an exact repeat, in which case answer with a short synthetic note
+    // (dedup) so we never re-run the tool or re-append its full result.
     for (const call of calls) {
+      const sig = toolCallSignature(call.name, call.args);
+      const priorCount = executedSignatures.get(sig) ?? 0;
+
+      if (priorCount > 0) {
+        // Already ran this exact call this run → do NOT call the tool again.
+        repeatedCalls += 1;
+        executedSignatures.set(sig, priorCount + 1);
+        const note = dedupNote(priorCount);
+        const step: AgenticStep = { tool: call.name, args: call.args, result: note, isError: false };
+        steps.push(step);
+        opts.onStep?.(step);
+        if (react) {
+          messages.push({ role: 'user', content: `Observation: ${note}` });
+        } else {
+          messages.push({ role: 'tool', tool_call_id: call.id, content: note });
+        }
+        continue;
+      }
+
+      executedSignatures.set(sig, 1);
       const out = await opts.callTool(call.name, call.args);
       const step: AgenticStep = { tool: call.name, args: call.args, result: out.text, isError: out.isError };
       steps.push(step);
@@ -386,9 +447,17 @@ export async function runAgentic(opts: {
         messages.push({ role: 'tool', tool_call_id: call.id, content: out.text });
       }
     }
+
+    // A node stuck re-firing identical calls has exhausted its repeat budget: stop
+    // the ACT loop and fall through to the final-synthesis path so it still emits a
+    // real answer from the data already gathered and HANDS OFF.
+    if (repeatedCalls >= DEFAULT_MAX_REPEATED_CALLS) {
+      forcedStop = true;
+      break;
+    }
   }
 
-  if (!finalText && iterations >= maxIterations) {
+  if (!finalText && (iterations >= maxIterations || forcedStop)) {
     // Cap hit mid-work: don't leave the node with a bare notice. Ask the model for
     // ONE final no-tools synthesis of everything it already gathered (the transcript
     // holds every tool observation), then append a SOFT cap note. The node returns a
@@ -424,6 +493,26 @@ export async function runAgentic(opts: {
   if (!finalText) finalText = '(no final answer produced)';
 
   return { plan, steps, finalText, iterations, toolCallingSupported: !react };
+}
+
+/**
+ * The SHORT synthetic result returned in place of re-running an already-executed
+ * call. `priorCount` is how many times it ran before this repeat (1 on the first
+ * repeat). It stays tiny (no re-appended payload) so context stays bounded, and it
+ * escalates in firmness the more the model loops.
+ */
+function dedupNote(priorCount: number): string {
+  if (priorCount >= 2) {
+    return (
+      'You are repeating a tool call in a loop. STOP calling tools now and give your ' +
+      'best final answer using the data already gathered above.'
+    );
+  }
+  return (
+    'You already ran this exact call earlier in this conversation — its result is ' +
+    'above. Do NOT run it again; use that result to compute your answer, then ' +
+    'continue. If you have what you need, produce your final answer now.'
+  );
 }
 
 /** ReAct-mode call resolution: one action per turn, or none (final answer). */

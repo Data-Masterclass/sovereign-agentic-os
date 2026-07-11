@@ -116,10 +116,13 @@ test('native tool-calls are executed through the governed callTool and fed back'
 });
 
 test('the iteration cap holds — the loop stops after maxIterations tool rounds', async () => {
-  // The model never emits a final; it always asks for another tool call.
+  // The model never emits a final; it always asks for another tool call. Each call
+  // is DISTINCT (varying args) so the dedup guard doesn't trip — this exercises the
+  // pure iteration cap, not the repeated-call break.
+  let n = 0;
   const llm: LlmCall = async () => ({
     content: '',
-    toolCalls: [{ id: 'x', name: 'commit', args: { appId: 'a1' } }],
+    toolCalls: [{ id: `x${n}`, name: 'commit', args: { appId: `a${n++}` } }],
   });
   let executed = 0;
   const res = await runAgentic({
@@ -144,6 +147,7 @@ test('a cap-hit run still emits a BEST final synthesis (not just the bare cap no
   // The model keeps calling tools until the cap; the FINAL no-tools synthesis call
   // (tools param absent) returns a real answer. We assert the node returns that
   // answer WITH a soft cap note appended — never a bare stub.
+  let n = 0;
   const llm: LlmCall = async (req) => {
     if (!req.tools) {
       // Two no-tools calls happen: the PLAN (first) and the cap-hit synthesis (last).
@@ -151,7 +155,8 @@ test('a cap-hit run still emits a BEST final synthesis (not just the bare cap no
       const midRun = req.messages.some((m) => m.role === 'tool' || (m.role === 'user' && m.content.startsWith('You have reached')));
       return { content: midRun ? 'Best-effort conclusion from the data gathered.' : 'plan', toolCalls: [] };
     }
-    return { content: '', toolCalls: [{ id: 'x', name: 'commit', args: { appId: 'a1' } }] };
+    // DISTINCT args per turn so the iteration cap (not the dedup guard) is what stops us.
+    return { content: '', toolCalls: [{ id: `x${n}`, name: 'commit', args: { appId: `a${n++}` } }] };
   };
   let executed = 0;
   const res = await runAgentic({
@@ -169,6 +174,79 @@ test('a cap-hit run still emits a BEST final synthesis (not just the bare cap no
   assert.match(res.finalText, /Best-effort conclusion/, 'the node returns a real synthesized answer');
   assert.match(res.finalText, /tool-step budget/i, 'a soft cap note is appended');
   assert.doesNotMatch(res.finalText, /^Reached the tool step limit/, 'not the bare cap stub');
+});
+
+test('an EXACT repeated (tool,args) call executes the tool ONCE; repeats get a short synthetic note', async () => {
+  // The model requests the SAME query_data call 3x, then finalizes. The governed
+  // executor must run only ONCE; the 2 repeats are answered with a short dedup note
+  // that never re-appends the (big) result — keeping context bounded.
+  const BIG = 'ROW,'.repeat(5_000); // a large result the loop must NOT re-append
+  const query: ToolSpec = {
+    name: 'query_data',
+    description: 'Run SQL.',
+    inputSchema: { type: 'object', properties: { sql: { type: 'string' } } },
+  };
+  const dupCall = { id: 'q', name: 'query_data', args: { sql: 'select 1' } };
+  const { llm } = scriptLlm([
+    { content: 'plan' },
+    { content: '', toolCalls: [dupCall] },
+    { content: '', toolCalls: [dupCall] }, // exact repeat
+    { content: '', toolCalls: [dupCall] }, // exact repeat again
+    { content: 'The trend is up.' },
+  ]);
+  let executed = 0;
+  const res = await runAgentic({
+    system: 'sys',
+    userMessages: [{ role: 'user', content: 'compute the trend' }],
+    tools: [query],
+    callTool: async () => { executed += 1; return { text: BIG, isError: false }; },
+    llm,
+    planModel: 'r',
+    actModel: 'e',
+    maxIterations: 8,
+  });
+  assert.equal(executed, 1, 'the underlying tool ran exactly once despite 3 identical requests');
+  assert.equal(res.steps.length, 3, 'all three requests are recorded (drill-down still shows the repeats)');
+  assert.equal(res.steps[0].result, BIG, 'the first step carries the real result');
+  assert.ok(res.steps[1].result.length < 400, 'the deduped repeat is a SHORT note, not the full payload');
+  assert.equal(res.steps[1].isError, false, 'a deduped repeat is recorded as a non-error step');
+  assert.match(res.steps[1].result, /already ran this exact call/i);
+  // Context stays bounded: only ONE copy of the big payload is ever in the transcript.
+  assert.match(res.finalText, /The trend is up/);
+});
+
+test('a node stuck re-firing the identical call breaks to a final synthesis and hands off', async () => {
+  // The model ALWAYS requests the same call and never finalizes on its own. The
+  // repeat budget must trip, stopping the loop and forcing a real final answer.
+  const dupCall = { id: 'q', name: 'query_data', args: { sql: 'select 1' } };
+  const query: ToolSpec = {
+    name: 'query_data',
+    description: 'Run SQL.',
+    inputSchema: { type: 'object', properties: { sql: { type: 'string' } } },
+  };
+  const llm: LlmCall = async (req) => {
+    // The forced final-synthesis call passes NO tools and asks for the final answer.
+    if (!req.tools) {
+      const midRun = req.messages.some((m) => m.role === 'tool' || (m.role === 'user' && m.content.startsWith('You have reached')));
+      return { content: midRun ? 'Best-effort trend from the rows I already have.' : 'plan', toolCalls: [] };
+    }
+    return { content: 'I have the data, now I compute manually…', toolCalls: [dupCall] };
+  };
+  let executed = 0;
+  const res = await runAgentic({
+    system: 'sys',
+    userMessages: [{ role: 'user', content: 'compute the trend' }],
+    tools: [query],
+    callTool: async () => { executed += 1; return { text: 'rows', isError: false }; },
+    llm,
+    planModel: 'r',
+    actModel: 'e',
+    maxIterations: 20, // high, so the REPEAT budget (not the iteration cap) is what stops us
+  });
+  assert.equal(executed, 1, 'the tool ran once; every later identical request was deduped');
+  assert.ok(res.iterations < 20, 'the run stopped well before the iteration cap');
+  assert.match(res.finalText, /Best-effort trend/, 'the node emits a real synthesized answer and hands off');
+  assert.match(res.finalText, /tool-step budget/i, 'a soft cap note is appended');
 });
 
 test('falls back to the ReAct JSON protocol when the model rejects the tools param', async () => {

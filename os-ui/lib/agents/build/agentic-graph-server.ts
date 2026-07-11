@@ -123,6 +123,9 @@ const OS_TEAM_RULES = [
   '- You may use ONLY the tools you are granted; consume granted resources by reference,',
   '  never a raw secret.',
   '- Prefer real action over description: use your tools to actually do the work.',
+  '- Aggregate/compute with a SINGLE SQL query (GROUP BY / window functions) rather',
+  '  than fetching raw rows to "compute manually"; never re-run a query whose result',
+  '  you already have — reason over the result you already fetched.',
 ].join('\n');
 
 /** The distinct OS tabs a system's granted MCP tools live under (for context grounding). */

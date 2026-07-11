@@ -15,6 +15,11 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.79] — 2026-07-11
+
+### Fix — agent loop-breaker (the platform now stops degenerate re-query loops)
+- **An agent that re-fires the identical tool call no longer loops forever.** A node could get stuck ("I have the data, now I'll compute it manually…") re-running the *same* `query_data` every turn, re-appending the full result each time — ballooning context to ~60k tokens and consuming its whole step budget without ever handing off. The ACT loop now **deduplicates identical tool calls**: the first runs normally (OPA-gated as always), and each exact repeat is **not re-executed** — the agent gets a short "you already have this result above; compute and continue" note (progressively firmer), which keeps context bounded. After a small repeated-call budget the node **breaks to a graceful final answer and hands off** instead of thrashing. General harness hardening — it protects every agent a builder creates, not just the seeded example. Also nudges team agents to aggregate in a single SQL query rather than fetch raw rows to "compute manually."
+
 ## [os-ui 0.1.78] — 2026-07-11
 
 ### Fix — multi-agent handoff carries the full teammate result; more step headroom
