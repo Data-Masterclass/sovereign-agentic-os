@@ -17,6 +17,7 @@ import { ensureHydrated as knowledgeHydrated } from '@/lib/knowledge/store';
 import { ensureHydrated as betsHydrated } from '@/lib/bigbets/store';
 import { principalFor } from '@/lib/governance/roles';
 import { readPrincipalFor } from '@/lib/data/store-fqn';
+import { sanitizeSingleStatement } from '@/lib/data/sql-guard';
 import { ALL_WRITE_TOOLS } from '@/lib/mcp/write-tools';
 import { DISCOVERY_TOOLS } from '@/lib/mcp/discovery-tools';
 import { governanceTools } from '@/lib/mcp/governance-tools';
@@ -215,8 +216,14 @@ const crossTools: McpTool[] = [
       required: ['sql'],
     },
     call: async (user, args) => {
-      const sql = str(args.sql).trim();
-      if (!sql) fail('query_data needs a `sql` string', 400);
+      const rawSql = str(args.sql).trim();
+      if (!rawSql) fail('query_data needs a `sql` string', 400);
+      // Normalize a model's trailing `;` (Trino rejects a bare separator) before the
+      // governed read runs; a surviving internal `;` is a real multi-statement request
+      // → a clear, actionable error, NOT a Trino syntax stack trace.
+      const sanitized = sanitizeSingleStatement(rawSql);
+      if (!sanitized.ok) fail(sanitized.reason, 400);
+      const sql = sanitized.sql;
       // TWO distinct principals here:
       //  - TOOL-ACCESS authz (`agentic.authz`) is granted by DOMAIN/agent-key —
       //    `data.grants[<domain>]` holds `query` — so the access gate runs on the

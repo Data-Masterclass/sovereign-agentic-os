@@ -8,6 +8,7 @@ import type { LastRun } from '@/lib/agents/store';
 import { runSystem } from '@/lib/agents/build/server';
 import { runOsTeam } from '@/lib/agents/build/agentic-graph-server';
 import { isAgenticOsTeam } from '@/lib/agents/build/os-tools';
+import { classifyStepError } from '@/lib/agents/build/agentic-graph';
 import { governYamlForOwner } from '@/lib/agents/build/owner-grants';
 
 export const dynamic = 'force-dynamic';
@@ -17,6 +18,22 @@ type ChatMsg = { role: 'user' | 'assistant'; content: string };
 function fail(e: unknown) {
   const status = (e as { status?: number })?.status ?? 500;
   return NextResponse.json({ error: (e as Error).message }, { status });
+}
+
+/**
+ * A sensible DEFAULT run task when the caller supplies no prompt — derived from the
+ * system's own purpose (name + domain) so the team does its real job, NOT the literal
+ * "Test invocation" that made recommenders no-op ("No action needed — this is a test").
+ * The build/verify probe keeps its own "Test invocation" string; this is the RUN path.
+ */
+function defaultRunTask(system: { system: { name: string; domain: string } }): string {
+  const name = system.system.name?.trim() || 'this team';
+  const domain = system.system.domain?.trim();
+  const scope = domain ? ` over the ${domain} domain` : '';
+  return (
+    `Do your standard job as the ${name}${scope}: assess the current state, ` +
+    `then produce your concrete recommended actions with the reasons behind them.`
+  );
 }
 
 /** A one-line, single-line result summary for a tool step (observability, kept tight). */
@@ -50,6 +67,9 @@ function nodeReveal(r: {
     steps: r.result.steps.map((s) => ({
       tool: s.tool,
       isError: s.isError,
+      // Errored steps carry WHY: a real governance block ('policy') vs an execution
+      // failure ('exec'), so the UI shows "DENIED" only for the former.
+      errorKind: s.isError ? classifyStepError(s.result) : undefined,
       summary: summarizeResult(s.result),
       // Full INPUT (args) and OUTPUT (result) so a step can be inspected, not just named.
       args: boundField(JSON.stringify(s.args ?? {})),
@@ -101,7 +121,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // a Creator+ consuming a domain-Shared system (the governed "run the ready-made
     // agent" path). A mere viewer / out-of-domain / participant is rejected here.
     const view = getSystemForRun(id, resolvedUser);
-    const prompt = typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : 'Test invocation';
+    // RUN path: an empty prompt falls back to a real, purpose-derived task — never the
+    // literal "Test invocation" that made recommenders answer "no action needed".
+    const prompt =
+      typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt.trim() : defaultRunTask(view.system);
 
     // Mark in-progress so a returning user sees "running since…" not a blank slate.
     setActivity(id, { kind: 'running', startedAt: Date.now() });
@@ -129,7 +152,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       const running = markRun(id, resolvedUser);
       // Normalise team run into LastRun shape and persist it.
       const teamSteps = team.runs.flatMap((r) =>
-        r.result.steps.map((s) => ({ node: r.node, tool: s.tool, effect: s.isError ? 'deny' : 'allow', ran: true })),
+        r.result.steps.map((s) => ({
+          node: r.node,
+          // A real policy block → 'deny'; an execution failure → 'error'; else 'allow'.
+          effect: !s.isError ? 'allow' : classifyStepError(s.result) === 'policy' ? 'deny' : 'error',
+          tool: s.tool,
+          ran: true,
+        })),
       );
       // A run is ok iff no node failed or had a denied/errored tool.
       const teamOk = team.runs.every((r) => r.status === 'ok');

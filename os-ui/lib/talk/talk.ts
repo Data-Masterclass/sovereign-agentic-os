@@ -28,7 +28,9 @@ import type { CurrentUser } from '@/lib/core/auth';
 import { config } from '@/lib/core/config';
 import { roleModel } from '@/lib/models/roles';
 import { inputBudget } from '@/lib/models/context-windows';
-import { assembleContext, type Candidate } from '@/lib/infra/context/context-assembler';
+import { type Candidate } from '@/lib/infra/context/context-assembler';
+import { curateThenAssemble, type EmbedFn } from '@/lib/infra/context/librarian';
+import { guardedEmbedder } from '@/lib/infra/context/librarian-live';
 import { trace } from '@/lib/infra/governed';
 import { getTabConfig } from './config.ts';
 import { getTabMetadata } from './metadata.ts';
@@ -137,12 +139,17 @@ export async function talkTo(
   question: string,
   user: CurrentUser,
   history: TalkTurn[] = [],
-  deps: { llm?: TalkLlm; now?: () => number } = {},
+  deps: { llm?: TalkLlm; now?: () => number; embed?: EmbedFn } = {},
 ): Promise<TalkResult> {
   const q = question.trim();
   const cfg = getTabConfig(tabId);
   const llm = deps.llm ?? liteLlmReasoner();
   const now = deps.now ?? Date.now;
+  // Self-guarding embedder for the Context Librarian: it curates by relevance ONLY
+  // when the pool exceeds the budget AND the embedding is genuinely semantic; on the
+  // offline hash (or under budget) it passes through to the existing deterministic
+  // packer, so behaviour is unchanged on the common path.
+  const embed = deps.embed ?? guardedEmbedder();
 
   // (1) Entitled-scope metadata overview (DLS-scoped, AS the caller) — always PINNED.
   const meta = await getTabMetadata(tabId, user);
@@ -180,7 +187,13 @@ export async function talkTo(
   if (history.length > 0) {
     candidates.push({ kind: 'history', id: 'history', text: `Recent conversation:\n${historyText(history)}`, at: now() });
   }
-  const assembled = assembleContext({ query: q, budget, candidates });
+  // NEED = the question + the tab's role — the relevance anchor for curation.
+  const assembled = await curateThenAssemble({
+    need: `Talk to the ${tabId} tab. Question: ${q}`,
+    budget,
+    candidates,
+    embed,
+  });
 
   // (4) Reason — answer + reasoning_content captured SEPARATELY.
   const messages: ChatMessage[] = [

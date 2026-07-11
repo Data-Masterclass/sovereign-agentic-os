@@ -12,6 +12,7 @@ import {
 } from '@/lib/assistant/agentic';
 import { compactToolResult } from '@/lib/infra/context/context-assembler';
 import { estimateTokens } from '@/lib/knowledge/context-pack';
+import { curateContext, type CurateCandidate, type EmbedFn } from '@/lib/infra/context/librarian';
 
 /**
  * THE AGENTIC GRAPH EXECUTOR — the core of the Software Delivery Team.
@@ -39,8 +40,45 @@ import { estimateTokens } from '@/lib/knowledge/context-pack';
  * `communication`) speaks last, and its final text is the user-facing reply.
  */
 
-/** A node's outcome: 'ok' produced output, 'denied' had a denied/errored tool, 'failed' threw. */
-export type NodeStatus = 'ok' | 'failed' | 'denied';
+/**
+ * A node's outcome:
+ *   'ok'     — produced output, no errored tools;
+ *   'error'  — a tool EXECUTION error (bad SQL, timeout, type error) — NOT a policy block;
+ *   'denied' — a genuine OPA/policy denial or missing grant blocked a tool;
+ *   'failed' — the node itself threw.
+ * `error` and `denied` are deliberately distinct: a bad-SQL error is not a governance
+ * denial, and mislabeling it alarms the student with a false "DENIED".
+ */
+export type NodeStatus = 'ok' | 'failed' | 'denied' | 'error';
+
+/** Whether an errored step was blocked by POLICY (governance) or failed in EXECUTION. */
+export type ErrorKind = 'policy' | 'exec';
+
+/**
+ * The typed error codes a GOVERNANCE block surfaces (server.ts `structuredError` /
+ * os-tools `errorResult`): a role-floor `forbidden`, a missing/out-of-scope grant
+ * (`not_found` — "Tool not available"), or a held write (`held`). Anything else —
+ * a Trino syntax/type error, a bad_request, a timeout, a raw thrown message — is an
+ * EXECUTION error, which is not a policy denial.
+ */
+const POLICY_ERROR_CODES = new Set(['forbidden', 'held', 'not_found']);
+
+/**
+ * Classify an errored step as a POLICY denial vs an EXECUTION error by parsing the
+ * governed tool-result envelope (`{"error":{"code":…}}`). Unparseable/absent code →
+ * 'exec' (a raw Trino/engine failure carries no typed policy code). Callers should
+ * only invoke this for steps where `isError` is true.
+ */
+export function classifyStepError(resultText: string): ErrorKind {
+  try {
+    const parsed = JSON.parse(resultText) as { error?: { code?: string } };
+    const code = parsed?.error?.code;
+    if (typeof code === 'string' && POLICY_ERROR_CODES.has(code)) return 'policy';
+  } catch {
+    /* not a typed envelope — fall through to exec */
+  }
+  return 'exec';
+}
 
 export type NodeRun = {
   node: string;
@@ -74,11 +112,22 @@ function renderUserTurn(messages: { role: 'user' | 'assistant'; content: string 
   return last ? `\n\n--- USER TURN ---\n${last.content}` : '';
 }
 
-/** Derive a node's status from its run: threw → failed; any denied/errored tool → denied; else ok. */
+/** The latest user message text — the task the handoff is being curated toward. */
+function lastUserContent(messages: { role: 'user' | 'assistant'; content: string }[]): string {
+  return messages.filter((m) => m.role === 'user').at(-1)?.content ?? '';
+}
+
+/**
+ * Derive a node's status as its WORST real outcome: threw → 'failed'; any POLICY-denied
+ * tool → 'denied'; else any EXECUTION-errored tool → 'error'; else 'ok'. A bad-SQL
+ * error is 'error', never 'denied' — only a real governance block earns 'denied'.
+ */
 function nodeStatus(result: AgenticResult, threw?: string): NodeStatus {
   if (threw) return 'failed';
-  if (result.steps.some((s) => s.isError)) return 'denied';
-  return 'ok';
+  const errored = result.steps.filter((s) => s.isError);
+  if (errored.length === 0) return 'ok';
+  if (errored.some((s) => classifyStepError(s.result) === 'policy')) return 'denied';
+  return 'error';
 }
 
 export type AgenticGraphResult = {
@@ -114,6 +163,23 @@ export type AgenticGraphDeps = {
   maxOutputTokens?: number;
   /** Toggled-off agents: skipped, their tools never run. */
   disabled?: string[];
+  /**
+   * OPTIONAL live embedder for RELEVANCE-CURATED handoffs (the Context Librarian).
+   * When present AND the embedding source is genuinely semantic (not the offline
+   * hash), the immediate predecessor's material outputs are kept WHOLE by relevance
+   * to the downstream node's need rather than blindly head-truncated to
+   * {@link HANDOFF_KEEP_ROWS}. Absent, or when {@link AgenticGraphDeps.embedSource}
+   * reports `offline-hash`, the handoff falls back to the existing keepRows path
+   * (relevance over hash vectors is meaningless). Never affects the loop-breaker or
+   * per-node observability — it only shapes the predecessor material block.
+   */
+  embed?: EmbedFn;
+  /**
+   * The source of the embedder's most recent call (`litellm` | `offline-hash`), used
+   * as the fallback guard: `offline-hash` (or undefined) → keep the deterministic
+   * keepRows handoff. Pair with {@link AgenticGraphDeps.embed} (see `librarian-live`).
+   */
+  embedSource?: () => 'litellm' | 'offline-hash' | undefined;
 };
 
 /**
@@ -150,8 +216,13 @@ export function nodeOrder(ir: IR, disabled: Set<string> = new Set()): string[] {
   return order;
 }
 
-/** One prior node's handoff: its narration PLUS the material data it produced. */
-type HandoffEntry = { node: string; block: string };
+/**
+ * One prior node's handoff: the rendered narration+material `block`, plus the RAW
+ * inputs (`finalText`, `steps`) so a downstream node can RE-RENDER this entry with a
+ * relevance-curated material selection (the Librarian handoff) instead of the flat
+ * keepRows compaction. `finalText`/`steps` are omitted on summarized/synthetic entries.
+ */
+type HandoffEntry = { node: string; block: string; finalText?: string; steps?: AgenticStep[] };
 
 /**
  * Instruction to the DOWNSTREAM node: the handoff below carries the prior agents'
@@ -212,6 +283,69 @@ function handoffBlock(node: string, finalText: string, steps: AgenticStep[]): st
 }
 
 /**
+ * The CURATED handoff block (Context Librarian). Same shape as {@link handoffBlock},
+ * but the predecessor's MATERIAL tool outputs are selected by RELEVANCE to `need`
+ * (the downstream node's role + the user task) within `budget`, rather than every
+ * output being flatly head-truncated to {@link HANDOFF_KEEP_ROWS}. A clearly-relevant
+ * output (cosine ≥ the Librarian's keepFullAbove) is kept WHOLE by its tool-result
+ * rule — the recommender-needs-the-whole-scorecard case wins over budget pressure —
+ * while off-topic outputs are compacted or dropped so the block fits.
+ *
+ * Falls back to the flat {@link handoffBlock} rendering when: there is no material,
+ * the material already fits, or the Librarian declines to curate (no/failed
+ * embedder) — so behaviour is IDENTICAL to the keepRows path whenever curation isn't
+ * genuinely engaged. NEVER throws (Librarian degrades gracefully).
+ */
+async function curatedHandoffBlock(
+  node: string,
+  finalText: string,
+  steps: AgenticStep[],
+  need: string,
+  budget: number,
+  embed: EmbedFn,
+  embedSource?: () => 'litellm' | 'offline-hash' | undefined,
+): Promise<string> {
+  const material = steps.filter((s) => !s.isError && s.result.trim());
+  const failed = steps.filter((s) => s.isError);
+  if (material.length === 0) return handoffBlock(node, finalText, steps);
+
+  // The predecessor's material outputs COMPETE by relevance to the downstream need.
+  // They are the direct-handoff data (all `tool-result`), so a clearly-relevant one
+  // (cosine ≥ keepFullAbove) is kept WHOLE by the Librarian's tool-result rule — the
+  // recommender-needs-the-whole-scorecard case — while off-topic outputs are compacted
+  // or dropped. We do NOT blanket-mark them `predecessor` (that would keep even the
+  // irrelevant ones whole and defeat the point); relevance decides among them.
+  const candidates: CurateCandidate[] = material.map((s, i) => ({
+    kind: 'tool-result',
+    id: `${node}:${s.tool}:${i}`,
+    text: `- ${s.tool}: ${s.result.trim()}`,
+  }));
+  const curation = await curateContext({ candidates, budget, need, embed });
+  // Post-embed guard: if the embedder degraded to the offline hash (cosine relevance
+  // over hash vectors is noise), OR the Librarian didn't actively curate (under-budget
+  // / fallback), keep the deterministic keepRows rendering so nothing regresses.
+  if (!curation.curated || embedSource?.() === 'offline-hash') {
+    return handoffBlock(node, finalText, steps);
+  }
+
+  const parts = [`## ${node}`, finalText.trim() || '(no narration)'];
+  parts.push('', `### ${node} — data produced (use this directly):`);
+  // Curated texts already carry the "- tool: …" prefix; compacted ones stay bounded.
+  for (const c of curation.candidates) parts.push(c.text);
+  if (failed.length > 0) {
+    parts.push('', `### ${node} — tools that did NOT return data: ${failed.map((s) => s.tool).join(', ')}`);
+  }
+  return parts.join('\n');
+}
+
+/** True when a real, semantic embedder is available — the guard for relevance
+ *  curation. The offline hash embedding is deterministic but semantically empty, so
+ *  cosine relevance over it is noise; in that case we keep the deterministic path. */
+function canCurate(deps: AgenticGraphDeps): boolean {
+  return typeof deps.embed === 'function' && deps.embedSource?.() !== 'offline-hash';
+}
+
+/**
  * The share of a node's input budget the between-node handoff may occupy. The rest
  * is preamble + role + the node's own ACT loop. Kept modest so the handoff never
  * crowds out the node's own working context.
@@ -219,6 +353,45 @@ function handoffBlock(node: string, finalText: string, steps: AgenticStep[]): st
 const HANDOFF_BUDGET_FRACTION = 0.4;
 /** Fallback handoff ceiling (tokens) when no `budget` is supplied by the caller. */
 const DEFAULT_HANDOFF_BUDGET = 6_000;
+
+/** The token ceiling the whole between-node handoff may occupy for a node call. */
+function handoffCeiling(budget?: number): number {
+  return Math.floor((budget ?? DEFAULT_HANDOFF_BUDGET / HANDOFF_BUDGET_FRACTION) * HANDOFF_BUDGET_FRACTION);
+}
+
+/**
+ * RELEVANCE-curate the IMMEDIATE predecessor's handoff entry against the DOWNSTREAM
+ * node's need (its role/prompt + the user task), in place, using the Context
+ * Librarian. This is the priority handoff use-case: the predecessor's material is
+ * kept WHOLE by relevance within the handoff ceiling rather than flatly truncated to
+ * {@link HANDOFF_KEEP_ROWS}. A no-op (returns the transcript untouched) when there is
+ * no embedder, the source is the offline hash, or the predecessor carries no raw
+ * steps to re-render — so the deterministic keepRows path is the graceful fallback.
+ */
+async function curatePredecessor(
+  transcript: HandoffEntry[],
+  node: IRNode,
+  userTask: string,
+  deps: AgenticGraphDeps,
+): Promise<HandoffEntry[]> {
+  if (!canCurate(deps) || transcript.length === 0) return transcript;
+  const pred = transcript[transcript.length - 1];
+  if (pred.finalText === undefined || pred.steps === undefined) return transcript;
+  const need = `${node.id}\n${node.prompt}\n${userTask}`.trim();
+  const block = await curatedHandoffBlock(
+    pred.node,
+    pred.finalText,
+    pred.steps,
+    need,
+    handoffCeiling(deps.budget),
+    deps.embed!,
+    deps.embedSource,
+  );
+  if (block === pred.block) return transcript;
+  const next = transcript.slice();
+  next[next.length - 1] = { ...pred, block };
+  return next;
+}
 
 /**
  * Bound the running transcript so the handoff can't blow the budget — biased to keep
@@ -261,8 +434,7 @@ function budgetTranscript(transcript: HandoffEntry[], ceiling: number): HandoffE
  * budgeter pins recent messages, so the thing this node most needs survives).
  */
 function nodeSystem(preamble: string, node: IRNode, transcript: HandoffEntry[], budget?: number): string {
-  const ceiling = Math.floor((budget ?? DEFAULT_HANDOFF_BUDGET / HANDOFF_BUDGET_FRACTION) * HANDOFF_BUDGET_FRACTION);
-  transcript = budgetTranscript(transcript, ceiling);
+  transcript = budgetTranscript(transcript, handoffCeiling(budget));
   const parts = [preamble, '', `--- YOUR ROLE IN THE TEAM: ${node.id} ---`, node.prompt];
   const memory = node.memory?.trim();
   if (memory && memory !== '# Memory') parts.push('', memory);
@@ -287,7 +459,8 @@ export async function runAgenticGraph(
   const order = nodeOrder(ir, new Set(deps.disabled ?? []));
 
   const runs: NodeRun[] = [];
-  const transcript: HandoffEntry[] = [];
+  let transcript: HandoffEntry[] = [];
+  const userTask = lastUserContent(messages);
   for (const id of order) {
     const node = nodeById.get(id)!;
     const actModel = node.model ?? deps.execModel;
@@ -295,6 +468,11 @@ export async function runAgenticGraph(
     // partial results — never a blank 500 that aborts the whole run. The run stops
     // at the failed node (downstream nodes depend on its output) but every node that
     // ran up to and including it is returned.
+    // CONTEXT LIBRARIAN: before composing this node's context, curate the immediate
+    // predecessor's material handoff by RELEVANCE to THIS node's need (role + task),
+    // so the downstream node keeps the whole material it actually needs within budget
+    // rather than a flat keepRows head-truncation. No-op without a live embedder.
+    transcript = await curatePredecessor(transcript, node, userTask, deps);
     // Compose the node's system context ONCE so we can both run on it AND capture it
     // as the node's readable `input` for the drill-down (what this agent was given).
     const system = nodeSystem(deps.preamble, node, transcript, deps.budget);
@@ -315,7 +493,14 @@ export async function runAgenticGraph(
       runs.push({ node: id, model: actModel, status: nodeStatus(result), result, input });
       // Thread this node's finalText AND its material tool outputs forward, so a
       // downstream node has the actual data (scorecard/rows/metrics) to work from.
-      transcript.push({ node: id, block: handoffBlock(node.id, result.finalText, result.steps) });
+      // Keep the RAW finalText/steps too, so the next node can re-render this entry
+      // with a relevance-curated material selection (see {@link curatePredecessor}).
+      transcript.push({
+        node: id,
+        block: handoffBlock(node.id, result.finalText, result.steps),
+        finalText: result.finalText,
+        steps: result.steps,
+      });
     } catch (e) {
       const error = (e as Error)?.message ?? String(e);
       runs.push({

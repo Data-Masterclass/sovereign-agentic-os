@@ -249,6 +249,46 @@ test('a node stuck re-firing the identical call breaks to a final synthesis and 
   assert.match(res.finalText, /tool-step budget/i, 'a soft cap note is appended');
 });
 
+test('a node whose SAME tool ERRORS N times in a row (varied args) breaks to a final synthesis', async () => {
+  // The model keeps calling query_data with a DIFFERENT sql each turn (so exact-dedup
+  // never trips), and every call errors. The consecutive-error breaker must stop the
+  // loop after 4 errors and force a real final answer (the mislabeled-loop fix).
+  const query: ToolSpec = {
+    name: 'query_data',
+    description: 'Run SQL.',
+    inputSchema: { type: 'object', properties: { sql: { type: 'string' } } },
+  };
+  let n = 0;
+  const llm: LlmCall = async (req) => {
+    if (!req.tools) {
+      const midRun = req.messages.some((m) => m.role === 'user' && m.content.startsWith('You have reached'));
+      return { content: midRun ? 'Best-effort answer from what I gathered.' : 'plan', toolCalls: [] };
+    }
+    n += 1;
+    // A fresh, DISTINCT sql each turn → the exact-dedup guard cannot fire.
+    return { content: '', toolCalls: [{ id: `q${n}`, name: 'query_data', args: { sql: `select ${n}` } }] };
+  };
+  let executed = 0;
+  const res = await runAgentic({
+    system: 'sys',
+    userMessages: [{ role: 'user', content: 'compute the trend' }],
+    tools: [query],
+    // Every call errors (a Trino syntax error, not a policy denial).
+    callTool: async () => { executed += 1; return { text: 'TrinoUserError SYNTAX_ERROR', isError: true }; },
+    llm,
+    planModel: 'r',
+    actModel: 'e',
+    maxIterations: 20, // high, so the ERROR-streak breaker (not the iteration cap) stops us
+  });
+  assert.equal(executed, 4, 'the tool ran exactly 4 times before the consecutive-error break');
+  assert.ok(res.iterations < 20, 'the run stopped well before the iteration cap');
+  const errorSteps = res.steps.filter((s) => s.isError);
+  assert.equal(errorSteps.length, 4, 'all four errored steps are recorded');
+  // The 4th errored step carries the firm stop note as its fed-back result is injected;
+  // the run still produces a real final answer and hands off.
+  assert.match(res.finalText, /Best-effort answer/, 'the node emits a real synthesized answer and hands off');
+});
+
 test('falls back to the ReAct JSON protocol when the model rejects the tools param', async () => {
   // Native attempt throws ToolCallingUnsupportedError once; then the model drives
   // via JSON actions in plain text (no tools param passed after the fallback).

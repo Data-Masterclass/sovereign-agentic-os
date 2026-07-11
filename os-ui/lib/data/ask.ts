@@ -23,6 +23,7 @@
  * Kept free of `server-only` / Next / network imports (mirrors transform.ts/profile.ts).
  */
 import { isNotMaterialized, notMaterializedReason } from './materialized.ts';
+import { sanitizeSingleStatement, MULTI_STATEMENT_MESSAGE } from './sql-guard.ts';
 
 export type AskColumn = { name: string; description: string };
 
@@ -47,13 +48,15 @@ export const NO_DATASET_MESSAGE =
 // ------------------------------------------------------------ SQL extraction --
 
 /** Pull the SQL out of a model reply: unwrap one markdown fence if present and
- *  tolerate exactly one trailing ';' (models love both). */
+ *  strip trailing ';' separators (models love both) via the shared single-statement
+ *  guard. A surviving internal ';' is left in place so {@link validateReadOnlySelect}
+ *  rejects it as multi-statement with the same clear message the agent path uses. */
 export function extractSql(text: string): string {
   const t = (text ?? '').trim();
   const fence = t.match(/```(?:sql)?\s*([\s\S]*?)```/i);
-  let sql = (fence ? fence[1] : t).trim();
-  if (sql.endsWith(';')) sql = sql.slice(0, -1).trimEnd();
-  return sql;
+  const inner = (fence ? fence[1] : t).trim();
+  const sanitized = sanitizeSingleStatement(inner);
+  return sanitized.ok ? sanitized.sql : inner;
 }
 
 // ------------------------------------------------------------ SQL validation --
@@ -86,7 +89,7 @@ export function validateReadOnlySelect(raw: string): SqlValidation {
   if (bare.includes('--') || bare.includes('/*') || bare.includes('*/') || bare.includes('#')) {
     return { ok: false, reason: 'SQL comments are not allowed' };
   }
-  if (bare.includes(';')) return { ok: false, reason: 'exactly one statement is allowed' };
+  if (bare.includes(';')) return { ok: false, reason: MULTI_STATEMENT_MESSAGE };
   if (!/^(select|with)\b/i.test(sql)) return { ok: false, reason: 'only a read-only SELECT is allowed' };
   const hit = bare.match(WRITE_KEYWORDS);
   if (hit) return { ok: false, reason: `read-only: '${hit[1].toLowerCase()}' is not allowed` };

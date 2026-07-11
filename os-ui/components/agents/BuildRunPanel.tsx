@@ -4,6 +4,7 @@
 'use client';
 
 import { useState } from 'react';
+import Markdown from '@/components/Markdown';
 
 /**
  * Build = execute + verify (Task 4) and Run (Task 7). Build runs the 5 adapters
@@ -46,9 +47,11 @@ function timeAgo(atMs: number): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 type RunStep = { node: string; tool: string; effect: string; ran?: boolean };
-type NodeStatus = 'ok' | 'failed' | 'denied';
-/** One tool call in the drill-down: name, denial flag, and (expanded) args → result. */
-type NodeStep = { tool: string; isError?: boolean; summary?: string; args?: string; result?: string };
+type NodeStatus = 'ok' | 'failed' | 'denied' | 'error';
+/** Why an errored step failed: a real governance block vs an execution failure. */
+type ErrorKind = 'policy' | 'exec';
+/** One tool call in the drill-down: name, error flag + kind, and (expanded) args → result. */
+type NodeStep = { tool: string; isError?: boolean; errorKind?: ErrorKind; summary?: string; args?: string; result?: string };
 /** A per-node reveal for the multi-agent run: input given + output + status + tool calls. */
 type RunNode = {
   node: string;
@@ -83,7 +86,7 @@ type TeamNode = {
   error?: string;
   input?: string;
   finalText?: string;
-  steps?: NodeStep[];
+  steps?: (NodeStep & { errorKind?: ErrorKind })[];
 };
 type RawRun = Partial<RunReport> & { team?: boolean; finalText?: string; nodes?: TeamNode[] };
 
@@ -107,7 +110,7 @@ function normalizeRun(body: RawRun): RunReport {
     error: n.error,
     input: n.input,
     finalText: n.finalText,
-    steps: (n.steps ?? []).map((s) => ({ tool: s.tool, isError: s.isError, summary: s.summary, args: s.args, result: s.result })),
+    steps: (n.steps ?? []).map((s) => ({ tool: s.tool, isError: s.isError, errorKind: s.errorKind, summary: s.summary, args: s.args, result: s.result })),
   }));
   const rawOut = body.output ?? body.finalText;
   return {
@@ -125,9 +128,50 @@ function normalizeRun(body: RawRun): RunReport {
   };
 }
 
-const EFFECT_BADGE: Record<string, string> = { allow: 'ok', deny: 'err', requires_approval: 'warn' };
-const NODE_STATUS_BADGE: Record<NodeStatus, string> = { ok: 'ok', denied: 'warn', failed: 'err' };
-const NODE_STATUS_LABEL: Record<NodeStatus, string> = { ok: '✓ ok', denied: 'tool denied', failed: '✗ failed' };
+const EFFECT_BADGE: Record<string, string> = { allow: 'ok', deny: 'warn', error: 'err', requires_approval: 'warn' };
+// 'denied' = a real policy block (warn amber, not alarming red); 'error' = an execution
+// failure (neutral, not a governance verdict); 'failed' = the node itself threw.
+const NODE_STATUS_BADGE: Record<NodeStatus, string> = { ok: 'ok', denied: 'warn', error: 'err', failed: 'err' };
+const NODE_STATUS_LABEL: Record<NodeStatus, string> = { ok: '✓ ok', denied: 'denied', error: 'error', failed: '✗ failed' };
+
+/**
+ * Collapse CONSECUTIVE identical tool rows (same tool + same error-flag/kind) into one
+ * summarized line — 34 identical error rows become "query_data ×34 …". Grouping is by
+ * (tool, isError, errorKind) so a real result and an error for the same tool stay apart.
+ */
+type StepGroup = { step: NodeStep; count: number; firstIndex: number };
+function groupSteps(steps: NodeStep[]): StepGroup[] {
+  const groups: StepGroup[] = [];
+  for (let i = 0; i < steps.length; i += 1) {
+    const s = steps[i];
+    const last = groups[groups.length - 1];
+    if (last && last.step.tool === s.tool && !!last.step.isError === !!s.isError && last.step.errorKind === s.errorKind) {
+      last.count += 1;
+    } else {
+      groups.push({ step: s, count: 1, firstIndex: i });
+    }
+  }
+  return groups;
+}
+
+/** The step badge label: only a real policy block reads "denied"; exec errors read "error". */
+function stepBadge(s: NodeStep): { cls: string; label: string } {
+  if (!s.isError) return { cls: 'ok', label: 'ok' };
+  return s.errorKind === 'policy' ? { cls: 'warn', label: 'denied' } : { cls: 'err', label: 'error' };
+}
+
+/** A one-line, human summary of the whole run: did it work, and how far did it get. */
+function runSummary(run: RunReport): string {
+  const last = run.path[run.path.length - 1];
+  const calls = run.steps.length;
+  const tail = `${calls} governed call${calls === 1 ? '' : 's'}`;
+  const nodes = run.nodes ?? [];
+  const failed = nodes.find((n) => n.status === 'failed');
+  if (failed) return `Failed at ${failed.node} · ${tail}`;
+  const capped = !!run.output && /tool[- ]step budget|tool step limit|step limit \(cap\)/i.test(run.output);
+  if (capped) return `Stopped at step cap · ${tail}`;
+  return `Completed${last ? ` through ${last} → END` : ''} · ${tail}`;
+}
 
 export default function BuildRunPanel({
   systemId,
@@ -156,7 +200,7 @@ export default function BuildRunPanel({
   const [builtAt, setBuiltAt] = useState<number | null>(lastBuild?.at ?? null);
   const [buildErr, setBuildErr] = useState('');
 
-  const [prompt, setPrompt] = useState('Test invocation');
+  const [prompt, setPrompt] = useState('');
   const [runningNow, setRunningNow] = useState(false);
   // Seed from server-persisted lastRun so the panel survives tab-switches.
   const [run, setRun] = useState<RunReport | null>(lastRun ?? null);
@@ -193,7 +237,9 @@ export default function BuildRunPanel({
       const res = await fetch(`/api/agents/systems/${systemId}/run`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(stop ? { stop: true } : { prompt }),
+        // Send the typed task; an empty prompt lets the server fill a real, purpose-derived
+        // default task (NOT "Test invocation"), so the run does the team's actual job.
+        body: JSON.stringify(stop ? { stop: true } : prompt.trim() ? { prompt: prompt.trim() } : {}),
       });
       const body = await res.json();
       if (!res.ok) setRunErr(body.error ?? 'Run failed');
@@ -284,11 +330,21 @@ export default function BuildRunPanel({
         </div>
       ) : null}
       <p className="hint" style={{ marginTop: 0 }}>
-        A test invocation walks the graph from the entrypoint; every tool call is forced through the
+        The team walks the graph from the entrypoint; every tool call is forced through the
         governed gateway (LiteLLM → OPA → Langfuse). Approvals land in Governance.
       </p>
+      <label className="hint" style={{ fontWeight: 600, display: 'block', marginBottom: 4 }} htmlFor="run-task">
+        What should the team do?
+      </label>
       <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <input type="text" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="prompt for the test invocation" style={{ flex: 1, minWidth: 220 }} />
+        <input
+          id="run-task"
+          type="text"
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder="e.g. Review last month's campaigns and recommend budget moves — leave blank for the team's default task"
+          style={{ flex: 1, minWidth: 220 }}
+        />
         <button className="btn sm" onClick={() => doRun(false)} disabled={runningNow || !canEdit}>
           {runningNow ? <span className="spin" /> : 'Run'}
         </button>
@@ -318,6 +374,12 @@ export default function BuildRunPanel({
 
       {run ? (
         <div className="answer" style={{ marginTop: 12, fontSize: 13 }}>
+          {/* One-line run summary — a student sees instantly whether it worked and how far
+              it got, before any drill-down. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <span className={`badge ${run.ok ? 'ok' : 'warn'}`}>{run.ok ? '✓' : '!'}</span>
+            <strong style={{ fontSize: 13 }}>{runSummary(run)}</strong>
+          </div>
           {/* FIX 2 — node-by-node reveal (multi-agent runs): each agent as a card with
               its status, what it concluded, and the tool calls it made (with a short
               result summary + denial/error flags). One scroll, Apple-clean. */}
@@ -362,15 +424,19 @@ export default function BuildRunPanel({
                               <p style={{ margin: 0, whiteSpace: 'pre-wrap', opacity: 0.92 }}>{n.finalText}</p>
                             </div>
                           ) : null}
-                          {/* Tool calls — each expandable to args → result. */}
+                          {/* Tool calls — CONSECUTIVE identical rows collapsed to one
+                              "tool ×N" line so a 34× error loop reads as a single row. */}
                           {n.steps.length > 0 ? (
                             <div>
                               <div className="hint" style={{ fontWeight: 600, marginBottom: 4 }}>Tool calls</div>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                {n.steps.map((s, j) => {
+                                {groupSteps(n.steps).map((g) => {
+                                  const s = g.step;
+                                  const j = g.firstIndex;
                                   const sk = `${nk}-${s.tool}-${j}`;
                                   const sOpen = !!openSteps[sk];
                                   const inspectable = !!(s.args || s.result);
+                                  const badge = stepBadge(s);
                                   return (
                                     <div key={sk} style={{ fontSize: 12.5 }}>
                                       <button
@@ -380,8 +446,9 @@ export default function BuildRunPanel({
                                         style={{ all: 'unset', cursor: inspectable ? 'pointer' : 'default', display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}
                                       >
                                         {inspectable ? <span style={{ opacity: 0.5, width: 10, display: 'inline-block' }}>{sOpen ? '▾' : '▸'}</span> : <span style={{ width: 10, display: 'inline-block' }} />}
-                                        <span className={`badge ${s.isError ? 'err' : 'ok'}`}>{s.isError ? 'denied' : 'ok'}</span>
+                                        <span className={`badge ${badge.cls}`}>{badge.label}</span>
                                         <span className="mono">{s.tool}</span>
+                                        {g.count > 1 ? <span className="mono" style={{ opacity: 0.6 }}>×{g.count}</span> : null}
                                         {!sOpen && s.summary ? <span style={{ opacity: 0.7 }}> — {s.summary}</span> : null}
                                       </button>
                                       {sOpen ? (
@@ -419,11 +486,25 @@ export default function BuildRunPanel({
           ) : null}
 
           {/* Final output — always shown, straight from the run (no Langfuse needed).
-              For a team run this is clearly delimited as THE result the student wants. */}
-          <div className="section-title" style={{ marginTop: 0 }}>{run.nodes && run.nodes.length > 0 ? 'Final output' : 'Run output'}</div>
-          <p className="mono" style={{ margin: '2px 0 8px', whiteSpace: 'pre-wrap' }}>
-            {run.output || '(the run produced no final text)'}
-          </p>
+              For a team run this is THE result the student wants: clearly separated,
+              rendered as markdown, visually prominent. */}
+          <div
+            style={{
+              marginTop: 4,
+              marginBottom: 10,
+              border: '1px solid var(--border, #e5e5e5)',
+              borderRadius: 10,
+              padding: '10px 14px',
+              background: 'var(--surface-2, #f6f6f6)',
+            }}
+          >
+            <div className="section-title" style={{ marginTop: 0 }}>{run.nodes && run.nodes.length > 0 ? 'Final output' : 'Run output'}</div>
+            {run.output ? (
+              <Markdown>{run.output}</Markdown>
+            ) : (
+              <p className="hint" style={{ margin: 0 }}>(the run produced no final text)</p>
+            )}
+          </div>
 
           <div><strong>Path:</strong> <span className="mono">{run.path.join(' → ')} → END</span></div>
           <div style={{ marginTop: 6 }}>

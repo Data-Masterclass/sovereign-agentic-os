@@ -15,6 +15,18 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.80] — 2026-07-11
+
+### Feature — the Context Librarian (need-aware context curation)
+- **A governed, embedding-driven curator that gives each agent the context it actually needs — in full — instead of a naively head-truncated dump.** New `lib/infra/context/librarian.ts` (`curateContext` + `curateThenAssemble`) runs in front of the budget packer: when the candidate pool exceeds the model window it embeds the agent's *need* (role + task) and each competing chunk with the `sovereign-embed` model, keeps pinned + the clearly-relevant material **whole**, compacts the mid-relevance, and drops the low — so a recommender reliably receives its predecessor's **complete scorecard** by relevance rather than the first N rows. It only curates when crowded (no embedding cost in the common case), only ever selects among **already-entitled** items (DLS/OPA preserved — a curator, never a bypass), and **falls back gracefully** to the existing packer if embeddings are unavailable. Wired into the multi-agent handoff and the Talk-to copilots; a Phase-2 LLM-curator escalation seam is in place for later.
+
+### Fix — multi-agent runs are now reliable *and* readable
+- **The trailing-semicolon SQL loop is gone.** An agent whose generated SQL ended in `;` hit Trino `SYNTAX_ERROR` and retried dozens of times. The governed `query_data` path (and Talk-to's NL→SQL) now strip a trailing `;` via a shared guard; a genuine multi-statement query gets a clear *"Only one SQL statement is allowed — remove extra semicolons"* instead of a raw stack trace.
+- **A node that keeps erroring now stops.** The loop-breaker also trips after several *consecutive tool errors from the same tool* (not only identical calls), so a run can't burn its budget thrashing on slightly-varied bad SQL — it breaks to a graceful final answer and hands off.
+- **"DENIED" now means denied.** A bad-SQL/execution failure was mislabeled as a policy denial. Node/step status now distinguishes **`error`** (execution — e.g. a Trino syntax error) from **`denied`** (a real OPA/grant denial), so the run view stops implying a permissions problem when there isn't one.
+- **Run asks what you want done.** The Run panel now has a *"What should the team do?"* prompt; an empty box uses a real, purpose-derived task instead of the old literal `"Test invocation"` default that made the recommender no-op.
+- **The "team, step by step" is legible.** Consecutive repeated tool rows collapse (34 error rows → one `query_data ×34` line), each agent shows a calm correct status, the **Final Output** is a clearly-separated markdown panel, and a one-line summary up top says whether the run *"Completed through … → END"*, stopped at the step cap, or failed — so you can tell at a glance if it worked.
+
 ## [os-ui 0.1.79] — 2026-07-11
 
 ### Fix — agent loop-breaker (the platform now stops degenerate re-query loops)

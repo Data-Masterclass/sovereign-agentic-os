@@ -7,7 +7,7 @@ import { parseSystem } from '../system-schema.ts';
 import { compile } from '../langgraph-compile.ts';
 import { listToolsForRole, toolsForTab } from '@/lib/mcp/server';
 import { SOFTWARE_TEAM_YAML } from '../software-team.ts';
-import { nodeOrder, runAgenticGraph, type AgenticGraphDeps } from './agentic-graph.ts';
+import { nodeOrder, runAgenticGraph, classifyStepError, type AgenticGraphDeps } from './agentic-graph.ts';
 import type { LlmCall, LlmCompletion, ToolExecutor, ToolSpec } from '@/lib/assistant/agentic';
 
 const IR = compile(parseSystem(SOFTWARE_TEAM_YAML));
@@ -273,6 +273,116 @@ test('handoff: a 40-row scorecard passes to the downstream node WITHOUT row trun
   }
 });
 
+// --- CONTEXT LIBRARIAN: relevance-curated handoff + offline-hash fallback guard ---
+
+/** A deterministic keyword embedder: cosine is high when texts share a vocab word. */
+function keywordEmbed() {
+  const vocab = ['scorecard', 'campaign', 'roas', 'weather', 'recipe'];
+  let calls = 0;
+  const embed = async (texts: string[]) => {
+    calls += 1;
+    return texts.map((t) => vocab.map((w) => (t.toLowerCase().includes(w) ? 1 : 0)));
+  };
+  return { embed, calls: () => calls };
+}
+
+test('handoff (Librarian): with a live embedder, the RELEVANT predecessor output is kept and irrelevant filler dropped', async () => {
+  // The orchestrator produces TWO material outputs: a relevant scorecard and an
+  // irrelevant weather blob (both big, so together they force the handoff over budget).
+  const scorecard = JSON.stringify(
+    Array.from({ length: 30 }, (_, i) => ({ campaign: `campaign_${i}`, roas: i, note: 'scorecard' })),
+  );
+  const weather = `weather recipe ${'w'.repeat(20_000)}`;
+  const relevant: ToolSpec = { name: 'query_scorecard', description: 'x', inputSchema: { type: 'object', properties: {}, required: [] } };
+  const irrelevant: ToolSpec = { name: 'get_weather', description: 'x', inputSchema: { type: 'object', properties: {}, required: [] } };
+
+  const systemsSeen: string[] = [];
+  let firstCalls = 0;
+  const llm: LlmCall = async (req) => {
+    if (!req.tools) return { content: 'plan', toolCalls: [] };
+    const system = req.messages.find((m) => m.role === 'system')?.content ?? '';
+    systemsSeen.push(system);
+    const isFirst = !system.includes('TEAM PROGRESS SO FAR');
+    if (isFirst && firstCalls < 2) {
+      const name = firstCalls === 0 ? 'query_scorecard' : 'get_weather';
+      firstCalls += 1;
+      return { content: '', toolCalls: [{ id: `c${firstCalls}`, name, args: {} }] };
+    }
+    return { content: `done (${req.model})`, toolCalls: [] };
+  };
+  const callTool: ToolExecutor = async (name) =>
+    name === 'query_scorecard'
+      ? { text: scorecard, isError: false }
+      : name === 'get_weather'
+        ? { text: weather, isError: false }
+        : { text: 'ok', isError: false };
+
+  const { embed, calls } = keywordEmbed();
+  await runAgenticGraph(
+    IR,
+    [{ role: 'user', content: 'recommend budget per campaign from the scorecard roas' }],
+    baseDeps({
+      llm,
+      toolSpecsFor: (n) => (n.id === 'orchestrator' ? [relevant, irrelevant] : []),
+      callTool,
+      maxIterations: 4,
+      budget: 2_000, // small → the two big outputs force the handoff over budget
+      embed,
+      embedSource: () => 'litellm',
+    }),
+  );
+
+  assert.ok(calls() > 0, 'the Librarian embedded the over-budget handoff');
+  const downstream = systemsSeen.filter((s) => s.includes('TEAM PROGRESS SO FAR'));
+  assert.ok(downstream.length > 0, 'a downstream node ran');
+  // The relevant scorecard is kept; the irrelevant weather blob is dropped by relevance.
+  const anyKeepsScorecard = downstream.some((s) => s.includes('campaign_0'));
+  assert.ok(anyKeepsScorecard, 'the relevant scorecard survived curation');
+});
+
+test('handoff (Librarian): offline-hash source FALLS BACK to the keepRows path (no relevance curation)', async () => {
+  // Same setup, but embedSource reports offline-hash → curation must NOT engage; the
+  // deterministic keepRows handoff renders instead (both outputs compacted, not ranked).
+  const scorecard = JSON.stringify(
+    Array.from({ length: 30 }, (_, i) => ({ campaign: `campaign_${i}`, roas: i })),
+  );
+  const spec: ToolSpec = { name: 'query_scorecard', description: 'x', inputSchema: { type: 'object', properties: {}, required: [] } };
+  const systemsSeen: string[] = [];
+  let called = false;
+  const llm: LlmCall = async (req) => {
+    if (!req.tools) return { content: 'plan', toolCalls: [] };
+    const system = req.messages.find((m) => m.role === 'system')?.content ?? '';
+    systemsSeen.push(system);
+    const isFirst = !system.includes('TEAM PROGRESS SO FAR');
+    if (isFirst && !called) {
+      called = true;
+      return { content: '', toolCalls: [{ id: 'c1', name: 'query_scorecard', args: {} }] };
+    }
+    return { content: `done (${req.model})`, toolCalls: [] };
+  };
+  const callTool: ToolExecutor = async (name) =>
+    name === 'query_scorecard' ? { text: scorecard, isError: false } : { text: 'ok', isError: false };
+
+  const { embed, calls } = keywordEmbed();
+  await runAgenticGraph(
+    IR,
+    [{ role: 'user', content: 'recommend campaigns' }],
+    baseDeps({
+      llm,
+      toolSpecsFor: (n) => (n.id === 'orchestrator' ? [spec] : []),
+      callTool,
+      maxIterations: 3,
+      embed,
+      embedSource: () => 'offline-hash',
+    }),
+  );
+
+  // The guard short-circuits BEFORE embedding, so the embedder is never called.
+  assert.equal(calls(), 0, 'offline-hash source skips relevance curation entirely');
+  const downstream = systemsSeen.filter((s) => s.includes('TEAM PROGRESS SO FAR'));
+  assert.ok(downstream.length > 0 && downstream.some((s) => s.includes('campaign_0')), 'keepRows handoff still delivers the scorecard');
+});
+
 test('DEPLOY GATE: the seeded team never grants decide_deploy, and a creator is never offered it', () => {
   const sys = parseSystem(SOFTWARE_TEAM_YAML);
   // (a) The system grants exclude the go-live approval tool by construction.
@@ -286,4 +396,60 @@ test('DEPLOY GATE: the seeded team never grants decide_deploy, and a creator is 
   // (c) A builder, by contrast, CAN decide — proving the floor is role-scoped.
   const builderTools = new Set(listToolsForRole('builder', toolsForTab('software')).map((t) => t.name));
   assert.ok(builderTools.has('decide_deploy'), 'a builder CAN approve a deploy');
+});
+
+// --- FIX B (error vs denial): classify a step + reflect the right node status ---
+
+test('classifyStepError: policy codes are policy; exec/Trino errors are exec', () => {
+  // Governance blocks carry a typed code (forbidden / not_found / held).
+  assert.equal(classifyStepError(JSON.stringify({ error: { code: 'forbidden', reason: 'x' } })), 'policy');
+  assert.equal(classifyStepError(JSON.stringify({ error: { code: 'not_found', reason: 'Tool not available' } })), 'policy');
+  assert.equal(classifyStepError(JSON.stringify({ error: { code: 'held', reason: 'requires approval' } })), 'policy');
+  // A bad-SQL / bad_request / raw Trino error is EXECUTION, never a policy denial.
+  assert.equal(classifyStepError(JSON.stringify({ error: { code: 'bad_request', reason: 'bad sql' } })), 'exec');
+  assert.equal(classifyStepError(JSON.stringify({ error: { code: 'error', reason: 'timeout' } })), 'exec');
+  assert.equal(classifyStepError('Error: TrinoUserError SYNTAX_ERROR mismatched input \';\''), 'exec');
+});
+
+test('node status: a Trino-error step → "error"; an OPA-deny step → "denied"', async () => {
+  const spec: ToolSpec = {
+    name: 'query_data',
+    description: 'Run SQL.',
+    inputSchema: { type: 'object', properties: { sql: { type: 'string' } }, required: ['sql'] },
+  };
+  // The orchestrator (first node) runs query_data once, then finishes; later nodes finish.
+  const drive: LlmCall = async (req) => {
+    if (!req.tools) return { content: 'plan', toolCalls: [] };
+    const system = req.messages.find((m) => m.role === 'system')?.content ?? '';
+    const isFirst = !system.includes('TEAM PROGRESS SO FAR');
+    const alreadyCalled = req.messages.some((m) => m.role === 'tool');
+    if (isFirst && !alreadyCalled) {
+      return { content: '', toolCalls: [{ id: 'c1', name: 'query_data', args: { sql: 'select 1' } }] };
+    }
+    return { content: `done (${req.model})`, toolCalls: [] };
+  };
+
+  // (a) a Trino execution error → node status 'error', NOT 'denied'.
+  const execErr: ToolExecutor = async (name) =>
+    name === 'query_data'
+      ? { text: 'Error: TrinoUserError SYNTAX_ERROR mismatched input \';\'', isError: true }
+      : { text: 'ok', isError: false };
+  const rExec = await runAgenticGraph(
+    IR,
+    [{ role: 'user', content: 'query it' }],
+    baseDeps({ llm: drive, toolSpecsFor: (n) => (n.id === 'orchestrator' ? [spec] : []), callTool: execErr, maxIterations: 3 }),
+  );
+  assert.equal(rExec.runs.find((r) => r.node === 'orchestrator')?.status, 'error', 'a bad-SQL step marks the node error, not denied');
+
+  // (b) an OPA policy denial → node status 'denied'.
+  const policyErr: ToolExecutor = async (name) =>
+    name === 'query_data'
+      ? { text: JSON.stringify({ error: { code: 'forbidden', reason: 'OPA denied user → query' } }), isError: true }
+      : { text: 'ok', isError: false };
+  const rDeny = await runAgenticGraph(
+    IR,
+    [{ role: 'user', content: 'query it' }],
+    baseDeps({ llm: drive, toolSpecsFor: (n) => (n.id === 'orchestrator' ? [spec] : []), callTool: policyErr, maxIterations: 3 }),
+  );
+  assert.equal(rDeny.runs.find((r) => r.node === 'orchestrator')?.status, 'denied', 'a real OPA denial marks the node denied');
 });

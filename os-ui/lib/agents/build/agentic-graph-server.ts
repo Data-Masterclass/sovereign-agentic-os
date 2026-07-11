@@ -14,6 +14,7 @@ import { loadBuildSpec } from '@/lib/tabs/build-spec';
 import { parseSystem, type System } from '../system-schema.ts';
 import { compile } from '../langgraph-compile.ts';
 import { runAgenticGraph, runNode, type AgenticGraphResult } from './agentic-graph.ts';
+import { liveEmbedder } from '@/lib/infra/context/librarian-live.ts';
 import {
   grantedToolSpecs,
   grantedToolExecutor,
@@ -185,10 +186,16 @@ export type RunOsTeamInput = {
 export async function runOsTeam(input: RunOsTeamInput): Promise<AgenticGraphResult> {
   const sys = parseSystem(input.yaml);
   const ir = compile(sys);
+  // Live embedder for the Context Librarian handoff: the predecessor's material is
+  // kept whole by RELEVANCE to the downstream node's need. Degrades to the keepRows
+  // handoff automatically when the embedder falls back to the offline hash.
+  const embedder = liveEmbedder();
   return runAgenticGraph(ir, input.messages, {
     llm: input.llm ?? liteLlmCaller(),
     toolSpecsFor: (node) => grantedToolSpecs(input.user, sys, node.tools),
     callTool: grantedToolExecutor(input.user, sys, input.systemId, input.toolDeps),
+    embed: embedder.embed,
+    embedSource: embedder.lastSource,
     preamble: osPreamble(sys),
     reasoningModel: roleModel('reasoning'),
     // ACT/tool-calling fallback model (a per-agent pin still wins). The `tools`

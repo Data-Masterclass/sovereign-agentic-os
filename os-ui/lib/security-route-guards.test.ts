@@ -245,3 +245,10 @@ test('PLATFORM-GATE 5: removed tab routes are redirect stubs, not content (no 40
     assert.match(src, new RegExp(`redirect\\('${target}'\\)`), `${p} must redirect to ${target}`);
   }
 });
+
+test('RUN PATH: the agent RUN route derives a real default task, never "Test invocation"', () => {
+  const src = read('app/api/agents/systems/[id]/run/route.ts');
+  // The run path must fall back to a purpose-derived default, not the literal probe string.
+  assert.match(src, /defaultRunTask\(view\.system\)/, 'an empty run prompt falls back to defaultRunTask');
+  assert.doesNotMatch(src, /:\s*'Test invocation'/, 'the RUN path no longer defaults to "Test invocation"');
+});

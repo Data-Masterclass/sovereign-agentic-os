@@ -93,6 +93,16 @@ const DEFAULT_MAX_ITERATIONS = 6;
 const DEFAULT_MAX_REPEATED_CALLS = 4;
 
 /**
+ * How many CONSECUTIVE tool calls to the SAME tool may ERROR before we stop the ACT
+ * loop and force a final synthesis. This catches the "keeps erroring with
+ * slightly-varied args" loop (e.g. 34× `query_data` with a bad-SQL variant each turn)
+ * that exact-call dedup misses — the args differ, so the signature never collides,
+ * but every call is a fresh `isError`. A firm note is injected before the break so the
+ * model stops retrying and answers from what it has.
+ */
+const DEFAULT_MAX_CONSECUTIVE_TOOL_ERRORS = 4;
+
+/**
  * Deterministic signature for a tool call: name + args with keys sorted (so arg
  * order never matters) and string values whitespace-normalized. Only EXACT repeats
  * collide; genuinely-distinct calls keep their own signature and run normally.
@@ -355,6 +365,11 @@ export async function runAgentic(opts: {
   // bounded instead of re-appending the full payload — the 60k-token loop fix.
   const executedSignatures = new Map<string, number>();
   let repeatedCalls = 0;
+  // Consecutive same-tool ERROR tracker (the varied-args error loop). Reset the
+  // instant a different tool runs or any call succeeds; trips the break once a tool
+  // errors DEFAULT_MAX_CONSECUTIVE_TOOL_ERRORS times in a row.
+  let errorStreakTool = '';
+  let errorStreak = 0;
 
   let iterations = 0;
   let finalText = '';
@@ -441,17 +456,34 @@ export async function runAgentic(opts: {
       const step: AgenticStep = { tool: call.name, args: call.args, result: out.text, isError: out.isError };
       steps.push(step);
       opts.onStep?.(step);
-      if (react) {
-        messages.push({ role: 'user', content: `Observation: ${out.text}` });
+
+      // Track a CONSECUTIVE same-tool error streak (varied-args error loop). A success,
+      // or a switch to a different tool, resets it. On the Nth in a row, inject a firm
+      // note as the tool result so the model sees a stop instruction, then break to the
+      // graceful final-synthesis path below.
+      if (out.isError && call.name === errorStreakTool) {
+        errorStreak += 1;
       } else {
-        messages.push({ role: 'tool', tool_call_id: call.id, content: out.text });
+        errorStreakTool = out.isError ? call.name : '';
+        errorStreak = out.isError ? 1 : 0;
+      }
+      const streakBroken = errorStreak >= DEFAULT_MAX_CONSECUTIVE_TOOL_ERRORS;
+      const feedback = streakBroken ? errorStreakNote(errorStreak, call.name) : out.text;
+      if (react) {
+        messages.push({ role: 'user', content: `Observation: ${feedback}` });
+      } else {
+        messages.push({ role: 'tool', tool_call_id: call.id, content: feedback });
+      }
+      if (streakBroken) {
+        forcedStop = true;
+        break;
       }
     }
 
     // A node stuck re-firing identical calls has exhausted its repeat budget: stop
     // the ACT loop and fall through to the final-synthesis path so it still emits a
     // real answer from the data already gathered and HANDS OFF.
-    if (repeatedCalls >= DEFAULT_MAX_REPEATED_CALLS) {
+    if (repeatedCalls >= DEFAULT_MAX_REPEATED_CALLS || forcedStop) {
       forcedStop = true;
       break;
     }
@@ -512,6 +544,19 @@ function dedupNote(priorCount: number): string {
     'You already ran this exact call earlier in this conversation — its result is ' +
     'above. Do NOT run it again; use that result to compute your answer, then ' +
     'continue. If you have what you need, produce your final answer now.'
+  );
+}
+
+/**
+ * The firm note injected in place of the tool result when a tool has ERRORED N times
+ * in a row (the varied-args error loop). It tells the model to stop retrying and
+ * answer from what it has — the loop then breaks to the graceful final-synthesis path.
+ */
+function errorStreakNote(streak: number, tool: string): string {
+  return (
+    `Your last ${streak} ${tool} calls all errored. Stop retrying — the same approach ` +
+    `keeps failing. Fix your approach or answer from what you already have. Do NOT call ` +
+    `${tool} again; give your best final answer now using the information gathered above.`
   );
 }
 

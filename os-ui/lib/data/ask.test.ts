@@ -68,7 +68,7 @@ test('VALIDATOR: a write smuggled INSIDE a SELECT is rejected', () => {
 test('VALIDATOR: multi-statement is rejected (even with the ; mid-string)', () => {
   const v = validateReadOnlySelect('select 1; drop table iceberg.sales.gold_northpeak_commerce');
   assert.equal(v.ok, false);
-  assert.match((v as { reason: string }).reason, /one statement/);
+  assert.match((v as { reason: string }).reason, /one SQL statement/);
 });
 
 test('VALIDATOR: comment smuggle (line + block + hash) is rejected', () => {
