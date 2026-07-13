@@ -258,6 +258,36 @@ export async function promoteArtifact(artId: string, user: CurrentUser): Promise
   return a;
 }
 
+/**
+ * Demotion (revoke sharing): the reverse of {@link promoteArtifact}, one step down:
+ * Certified → Shared (admin only) → Personal (owner or in-domain builder/admin).
+ * The role gate mirrors who could have promoted it; the effect seam is the primary
+ * gate, this is defence-in-depth. Never deletes the artifact — only lowers its tier.
+ */
+export async function demoteArtifact(artId: string, user: CurrentUser): Promise<Artifact> {
+  const map = await getCache();
+  const a = map.get(artId);
+  if (!a) throw withStatus(new Error('Artifact not found'), 404);
+  if (a.origin === 'certified-copy') throw withStatus(new Error('Certified copies cannot be demoted'), 400);
+  if (!user.domains.includes(a.domain)) {
+    throw withStatus(new Error('You can only revoke sharing on artifacts in a domain you belong to'), 403);
+  }
+  if (a.visibility === 'Certified') {
+    if (user.role !== 'admin') throw withStatus(new Error('Revoking from the Marketplace requires an admin'), 403);
+    a.visibility = 'Shared';
+  } else if (a.visibility === 'Shared') {
+    const isOwner = a.owner === user.id;
+    if (!isOwner && roleRank(user.role) < roleRank('builder')) {
+      throw withStatus(new Error('Unsharing requires the owner or an in-domain builder/admin'), 403);
+    }
+    a.visibility = 'Personal';
+  } else throw withStatus(new Error('Already Personal — nothing to revoke'), 400);
+  a.updatedAt = now();
+  map.set(a.id, a);
+  writeThrough(a);
+  return a;
+}
+
 /** Add a Certified Marketplace artifact into the caller's own workspace. */
 export async function addFromMarketplace(artId: string, user: CurrentUser): Promise<Artifact> {
   // Security: importing a cross-domain Certified item into your workspace is a

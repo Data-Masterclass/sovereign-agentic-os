@@ -67,6 +67,7 @@ export default function ArtifactPanel({
   const [versionsList, setVersionsList] = useState<VersionRow[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState('');
+  const [confirmDemoteId, setConfirmDemoteId] = useState('');
 
   // create form
   const [name, setName] = useState('');
@@ -257,6 +258,12 @@ export default function ArtifactPanel({
     const canShare = !isCert && a.visibility === 'Personal' && user && canPromote(user.role, 'Personal') && user.domains.includes(a.domain);
     const canCertify = !isCert && a.visibility === 'Shared' && user && canPromote(user.role, 'Shared') && user.domains.includes(a.domain);
     const canModify = user && (a.owner === user.id || (user.role === 'admin' && user.domains.includes(a.domain)));
+    // Revoke sharing (demote), mirroring who could have promoted it: Certified→Shared
+    // is admin-only; Shared→Personal is the owner or an in-domain builder/admin.
+    const inDomain = user && user.domains.includes(a.domain);
+    const canRevokeCert = !isCert && a.visibility === 'Certified' && user && user.role === 'admin' && inDomain;
+    const canUnshare = !isCert && a.visibility === 'Shared' && user && inDomain &&
+      (a.owner === user.id || canPromote(user.role, 'Personal'));
     if (editId === a.id) {
       return (
         <div className="card" key={a.id}>
@@ -302,6 +309,23 @@ export default function ArtifactPanel({
             <button className="btn" style={{ padding: '5px 12px' }} disabled={busyId === a.id} onClick={() => act(a, `/api/artifacts/${a.id}/promote`, 'POST')}>
               {busyId === a.id ? <span className="spin" /> : 'Certify → Marketplace'}
             </button>
+          ) : null}
+          {(canRevokeCert || canUnshare) ? (
+            confirmDemoteId === a.id ? (
+              <>
+                <button className="btn" style={{ padding: '5px 12px', background: 'var(--danger, #b42318)' }} disabled={busyId === a.id}
+                  onClick={() => { setConfirmDemoteId(''); act(a, `/api/artifacts/${a.id}/demote`, 'POST'); }}>
+                  {busyId === a.id ? <span className="spin" /> : (canRevokeCert ? 'Confirm revoke → Shared' : 'Confirm unshare → Personal')}
+                </button>
+                <button className="btn ghost" style={{ padding: '5px 12px' }} disabled={busyId === a.id} onClick={() => setConfirmDemoteId('')}>
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button className="btn ghost" style={{ padding: '5px 12px' }} disabled={busyId === a.id} onClick={() => setConfirmDemoteId(a.id)}>
+                {canRevokeCert ? 'Revoke from Marketplace' : 'Unshare'}
+              </button>
+            )
           ) : null}
           {canModify && !a.archived ? (
             <button className="btn ghost" style={{ padding: '5px 12px' }} disabled={busyId === a.id} onClick={() => beginEdit(a)}>

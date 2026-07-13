@@ -92,6 +92,7 @@ export default function KnowledgePage() {
   const [pkSaving, setPkSaving] = useState(false);
   const [pkMsg, setPkMsg] = useState('');
   const [pkPromoting, setPkPromoting] = useState(false);
+  const [confirmDemoteId, setConfirmDemoteId] = useState<string | null>(null);
 
   // Workflows
   const [groups, setGroups] = useState<WorkflowGroups | null>(null);
@@ -270,6 +271,26 @@ export default function KnowledgePage() {
     finally { setPkPromoting(false); }
   }
 
+  /**
+   * Revoke sharing on a personal entry one governed rung along
+   * Marketplace → Shared → Personal (`/demote`). Server is the fail-closed authority;
+   * this only fires for eligible users. Lineage-aware errors surface via setPkMsg.
+   */
+  async function demotePersonal(id: string) {
+    if (pkPromoting) return;
+    setPkPromoting(true);
+    setPkMsg('');
+    try {
+      const res = await fetch(`/api/knowledge/personal/${id}/demote`, { method: 'POST' });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { setPkMsg(d.error ?? 'Could not revoke.'); return; }
+      setPkMsg('Revoked.');
+      setTimeout(() => setPkMsg(''), 2500);
+      await loadPersonal();
+    } catch (e) { setPkMsg((e as Error).message); }
+    finally { setPkPromoting(false); }
+  }
+
   // ── Create workflow ──────────────────────────────────────────────────────
 
   async function createWorkflow() {
@@ -401,6 +422,23 @@ export default function KnowledgePage() {
                     )}
                   </button>
                 )}
+                {/* Revoke sharing — Marketplace → Shared (Admin) / Shared → Personal (owner or Builder+).
+                    Two-step confirm; server is the fail-closed authority. */}
+                {!e.archived &&
+                  ((e.visibility === 'Marketplace' && canCertify) ||
+                    (e.visibility === 'Shared' && editable)) &&
+                  (confirmDemoteId === e.id ? (
+                    <>
+                      <button className="btn sm" onClick={() => { setConfirmDemoteId(null); void demotePersonal(e.id); }} disabled={pkPromoting} style={{ background: 'var(--danger, #b42318)' }}>
+                        {pkPromoting ? <span className="spin" /> : (e.visibility === 'Marketplace' ? 'Confirm revoke → Shared' : 'Confirm unshare → Personal')}
+                      </button>
+                      <button className="btn ghost sm" onClick={() => setConfirmDemoteId(null)} disabled={pkPromoting}>Cancel</button>
+                    </>
+                  ) : (
+                    <button className="btn ghost sm" onClick={() => setConfirmDemoteId(e.id)} disabled={pkPromoting} title="Revoke sharing one governed rung">
+                      {e.visibility === 'Marketplace' ? 'Revoke from Marketplace' : 'Unshare'}
+                    </button>
+                  ))}
                 {editable && (
                   <button className="btn sm" onClick={() => void savePersonal()} disabled={pkSaving}>
                     {pkSaving ? <span className="spin" /> : 'Save'}

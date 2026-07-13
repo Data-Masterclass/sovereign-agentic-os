@@ -12,12 +12,14 @@ import {
   withStatus,
   type App,
 } from '@/lib/software/apps';
-import { removeConnection } from '@/lib/infra/app-registry';
+import { removeConnection, setConnectionVisibility } from '@/lib/infra/app-registry';
 import { unregisterConnectionProfile, trace } from '@/lib/infra/agent-governed';
 import { generateAndCompile } from './auto-mcp.ts';
 import { stopApp as stopRunner, deleteApp as deleteRunner } from './runner.ts';
 import type { ConsumedResource } from './model.ts';
 import { roleAtLeast } from '@/lib/core/session';
+import type { Visibility } from '@/lib/core/artifact-model';
+import { getArtifact, demoteArtifact } from '@/lib/core/artifacts';
 
 /**
  * App lifecycle + resource consumption (Software golden path §F).
@@ -157,6 +159,69 @@ export async function deleteApp(appId: string, user: CurrentUser): Promise<{ del
     decision: 'allow',
   });
   return { deleted: true };
+}
+
+/**
+ * Demotion (revoke sharing): the reverse of `promoteApp`, one step down —
+ * Certified → Shared (admin only) → Personal (owner or in-domain builder/admin).
+ * LINEAGE-AWARE (mirrors deleteApp): blocked while another app depends on this
+ * app's MCP/connection/data — we never orphan a live consumer. Never deletes the
+ * app; only lowers its (and its files'/connection's/data artifact's) visibility.
+ */
+export async function demoteApp(appId: string, user: CurrentUser): Promise<App> {
+  const app = await getAppByIdInternal(appId);
+  if (!app) throw withStatus(new Error('App not found'), 404);
+  if (!user.domains.includes(app.domain)) {
+    throw withStatus(new Error('You can only revoke sharing on apps in a domain you belong to'), 403);
+  }
+
+  let next: Visibility;
+  if (app.visibility === 'Certified') {
+    if (user.role !== 'admin') throw withStatus(new Error('Revoking from the Marketplace requires an Administrator'), 403);
+    next = 'Shared';
+  } else if (app.visibility === 'Shared') {
+    const isOwner = app.owner === user.id;
+    if (!isOwner && !roleAtLeast(user.role, 'builder')) {
+      throw withStatus(new Error('Unsharing requires the owner or an in-domain Builder/Administrator'), 403);
+    }
+    next = 'Personal';
+  } else {
+    throw withStatus(new Error('Already Personal — nothing to revoke'), 400);
+  }
+
+  // Lineage guard: an app other consumers rely on cannot be pulled out from under
+  // them (same discipline as delete).
+  const deps = await dependentsOf(app);
+  if (deps.length > 0) {
+    const names = deps.map((d) => `${d.by} (${d.kind})`).join(', ');
+    throw withStatus(
+      new Error(`Revoke blocked — this app is a dependency in use by: ${names}. Remove those uses first.`),
+      409,
+    );
+  }
+
+  app.visibility = next;
+  app.files = app.files.map((f) => ({ ...f, visibility: next }));
+  setConnectionVisibility(app.id, next);
+  // Cascade the data artifact down the SAME ladder (best-effort; it may be pinned
+  // by its own consumers, in which case its demote throws and we leave it shared).
+  if (app.dataArtifactId) {
+    try {
+      const art = await getArtifact(app.dataArtifactId);
+      if (art && art.visibility !== 'Personal') await demoteArtifact(app.dataArtifactId, user);
+    } catch {
+      /* artifact pinned or already lower — leave it */
+    }
+  }
+  await persistApp(app);
+  void trace({
+    principal: app.mcpPrincipal,
+    tool: 'generate',
+    input: { action: 'demote_app', by: user.id, role: user.role },
+    output: { appId: app.id, visibility: next },
+    decision: 'allow',
+  });
+  return app;
 }
 
 // ------------------------------------------------------------- Use as Data -----

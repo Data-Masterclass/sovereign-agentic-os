@@ -68,7 +68,7 @@ export type SwimlaneLayout = {
 /** Fixed display order for lanes — only lanes with steps are drawn. */
 const LANE_ORDER: ActorType[] = ['Human', 'Software', 'Agent'];
 
-const BLOCK_W = 168;
+const BLOCK_W = 200;
 const BLOCK_H = 82;
 const GAP_Y = 44;
 const LANE_PAD_X = 16;

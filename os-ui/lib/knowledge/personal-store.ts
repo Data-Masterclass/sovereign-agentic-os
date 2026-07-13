@@ -304,3 +304,26 @@ export function certifyPersonalKnowledge(id: string, user: Principal): PersonalK
   writeThrough(rec);
   return rec;
 }
+
+/** Marketplace → Shared. Admin only (only an admin certified it). */
+export function decertifyPersonalKnowledge(id: string, user: Principal): PersonalKnowledgeRecord {
+  if (!roleAtLeast(user.role, 'admin')) fail('Only admins can revoke knowledge from the marketplace', 403);
+  const rec = requireEdit(id, user);
+  if (rec.visibility !== 'Marketplace') fail('This knowledge is not certified', 409);
+  rec.visibility = 'Shared';
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+/** Shared → Personal. Owner or in-domain builder/admin (mirrors who could promote). */
+export function unsharePersonalKnowledge(id: string, user: Principal): PersonalKnowledgeRecord {
+  const rec = requireEdit(id, user); // owner OR in-domain builder/admin
+  if (rec.visibility !== 'Shared') {
+    fail(rec.visibility === 'Marketplace' ? 'Revoke from the marketplace before unsharing' : 'This knowledge is already personal', 409);
+  }
+  rec.visibility = 'Personal';
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}

@@ -481,12 +481,17 @@ function ArtifactGrantList({
 
   // Merge granted-but-unlisted ids (e.g. an artifact you can no longer browse) so
   // an existing grant is always visible + removable — never silently orphaned.
+  // The name falls back to a friendly "(removed) <short-id>" label — never the raw
+  // machine id — so the user knows it's an orphaned grant and can remove it.
   const rows: Available[] = (() => {
     const listed = available ?? [];
     const knownIds = new Set(listed.map((a) => a.id));
     const extra: Available[] = grants
       .filter((g) => !knownIds.has(g.id))
-      .map((g) => ({ id: g.id, name: g.id, scope: 'personal' as const }));
+      .map((g) => {
+        const short = g.id.includes('_') ? g.id.split('_').slice(1).join('_') : g.id;
+        return { id: g.id, name: `(removed) ${short}`, scope: 'personal' as const };
+      });
     const all = [...listed, ...extra];
     const q = search.trim().toLowerCase();
     return q ? all.filter((a) => a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q)) : all;

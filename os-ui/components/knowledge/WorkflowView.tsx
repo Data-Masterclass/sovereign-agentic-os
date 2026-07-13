@@ -281,7 +281,7 @@ export default function WorkflowView({
           <button className={panel === 'context' ? 'active' : ''} onClick={() => setPanel('context')}>Context</button>
           <button className={panel === 'handover' ? 'active' : ''} onClick={() => setPanel('handover')}>Handover</button>
           <button className={panel === 'markdown' ? 'active' : ''} onClick={() => setPanel('markdown')}>Markdown</button>
-          <button className={panel === 'mermaid' ? 'active' : ''} onClick={() => setPanel('mermaid')}>Diagram</button>
+          <button className={panel === 'mermaid' ? 'active' : ''} onClick={() => setPanel('mermaid')}>Diagram (read-only)</button>
           <button className={panel === 'gaps' ? 'active' : ''} onClick={() => setPanel('gaps')}>
             Gaps {data.gaps.length > 0 && <span className="badge err" style={{ marginLeft: 6, fontSize: 10 }}>{data.gaps.length}</span>}
           </button>

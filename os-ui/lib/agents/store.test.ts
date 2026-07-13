@@ -7,6 +7,7 @@ import {
   __resetStore,
   createSystem,
   promoteSystem,
+  demoteSystem,
   listSystems,
   markPendingShares,
   getSystem,
@@ -249,6 +250,29 @@ test('SECURITY: Personal→Shared is Builder+; Shared→Marketplace is Admin-onl
   assert.equal(promoteSystem(sys.id, admin).visibility, 'Marketplace');
   // Already-Marketplace is rejected.
   assert.throws(() => promoteSystem(sys.id, admin), /already published/i);
+});
+
+test('DEMOTE: revoke sharing lowers Marketplace → Shared → Personal one step at a time', () => {
+  __resetStore();
+  const sys = makeMarketplace(sara, { name: 'Revoke me', domain: 'sales' });
+  assert.equal(getSystem(sys.id, admin).visibility, 'Marketplace');
+  assert.equal(demoteSystem(sys.id, admin).visibility, 'Shared'); // Marketplace → Shared (admin)
+  assert.equal(demoteSystem(sys.id, sara).visibility, 'Personal'); // Shared → Personal (owner)
+  assert.throws(() => demoteSystem(sys.id, sara), /already personal/i);
+});
+
+test('DEMOTE role gate: revoking Marketplace requires an Admin (builder → 403)', () => {
+  __resetStore();
+  const sys = makeMarketplace(sara, { name: 'Certified kit', domain: 'sales' });
+  assert.throws(() => demoteSystem(sys.id, sara), /Admin/i); // sara is builder+owner but not admin
+  assert.equal(getSystem(sys.id, admin).visibility, 'Marketplace');
+});
+
+test('DEMOTE fail-closed: a creator cannot unshare a Shared system they do not own', () => {
+  __resetStore();
+  const sys = makeShared(sara, { name: 'Team agent', domain: 'sales' }); // owned by sara (builder)
+  assert.throws(() => demoteSystem(sys.id, amir), /owner or an in-domain Builder/i); // amir = creator
+  assert.equal(getSystem(sys.id, amir).visibility, 'Shared');
 });
 
 test('SECURITY: an installed (forked) system cannot be re-published', () => {

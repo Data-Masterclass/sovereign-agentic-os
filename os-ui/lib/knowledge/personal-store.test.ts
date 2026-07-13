@@ -16,6 +16,8 @@ import {
   restorePersonalKnowledgeVersion,
   promotePersonalKnowledge,
   certifyPersonalKnowledge,
+  decertifyPersonalKnowledge,
+  unsharePersonalKnowledge,
 } from './personal-store.ts';
 
 const amir = { id: 'amir', domains: ['sales'], role: 'creator' as const };
@@ -127,6 +129,26 @@ test('promotion guards: cannot re-promote an already-Shared entry, cannot certif
   assert.throws(() => promotePersonalKnowledge(rec.id, bea), /already promoted/);
   const rec2 = createPersonalKnowledge(ada, { title: 'Skip', md: 'x' });
   assert.throws(() => certifyPersonalKnowledge(rec2.id, ada), /Promote this knowledge to the domain/);
+});
+
+test('DEMOTE: revoke sharing lowers Marketplace → Shared → Personal', () => {
+  __resetStore();
+  const rec = createPersonalKnowledge(bea, { title: 'Roundtrip', md: 'x' });
+  promotePersonalKnowledge(rec.id, bea); // → Shared
+  certifyPersonalKnowledge(rec.id, ada); // → Marketplace
+  // Marketplace → Shared is admin-only (a builder → 403).
+  assert.throws(() => decertifyPersonalKnowledge(rec.id, bea), /admins can revoke/);
+  assert.equal(decertifyPersonalKnowledge(rec.id, ada).visibility, 'Shared');
+  // Shared → Personal: owner or in-domain builder/admin.
+  assert.equal(unsharePersonalKnowledge(rec.id, bea).visibility, 'Personal');
+});
+
+test('DEMOTE fail-closed: a creator cannot unshare a Shared entry they do not own', () => {
+  __resetStore();
+  const rec = createPersonalKnowledge(bea, { title: 'Team note', md: 'x' });
+  promotePersonalKnowledge(rec.id, bea); // → Shared (owned by bea)
+  assert.throws(() => unsharePersonalKnowledge(rec.id, amir), /Not permitted/i); // amir = creator
+  assert.equal(getPersonalKnowledge(rec.id, amir).visibility, 'Shared');
 });
 
 test('Shared-count bug regression: after Personal→Shared promotion the domain group count increments', () => {

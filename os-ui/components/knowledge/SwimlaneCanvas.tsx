@@ -115,26 +115,34 @@ export default function SwimlaneCanvas({
             {layout.blocks.map((b) => {
               const selected = b.id === selectedStepId;
               const fill = ACTOR_FILL[b.actor] ?? 'var(--gold)';
+              // Truncate title to fit the box (200px wide, text starts at x=14,
+              // right-side marks sit at ~x=w-14 ≈ 186 → usable ~172px; at 13px
+              // roughly 25 chars). Keep full title in the SVG <title> tooltip.
+              const TITLE_MAX = 24;
+              const titleDisplay = b.title.length > TITLE_MAX ? `${b.title.slice(0, TITLE_MAX)}…` : b.title;
+              const actorLine = b.actorName ? `${b.actor}: ${b.actorName}` : b.actor;
+              const ACTOR_MAX = 26;
+              const actorDisplay = actorLine.length > ACTOR_MAX ? `${actorLine.slice(0, ACTOR_MAX)}…` : actorLine;
+              const editLabel = canEdit ? ' — click to edit' : '';
               return (
                 <g
                   key={b.id}
                   transform={`translate(${b.x},${b.y})`}
-                  className={`swim-block${selected ? ' selected' : ''}`}
+                  className={`swim-block${selected ? ' selected' : ''}${canEdit ? ' editable' : ''}`}
                   onClick={() => onSelectStep?.(b.id)}
                   role="button"
+                  aria-label={`${b.title}${editLabel}`}
                   tabIndex={0}
                   onKeyDown={(ev) => {
                     if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onSelectStep?.(b.id); }
                   }}
                 >
+                  {/* Native SVG tooltip — shows full title + actor on hover */}
+                  <title>{b.title} ({actorLine}){editLabel}</title>
                   <rect width={b.w} height={b.h} rx={9} className="swim-rect" stroke={fill} />
                   <rect x={0} y={0} width={4} height={b.h} rx={2} fill={fill} />
-                  <text x={14} y={22} className="swim-block-title">
-                    {b.title.length > 22 ? `${b.title.slice(0, 22)}…` : b.title}
-                  </text>
-                  <text x={14} y={40} className="swim-block-actor" fill={fill}>
-                    {b.actorName ? `${b.actor}: ${b.actorName}` : b.actor}
-                  </text>
+                  <text x={14} y={22} className="swim-block-title">{titleDisplay}</text>
+                  <text x={14} y={40} className="swim-block-actor" fill={fill}>{actorDisplay}</text>
                   <text x={14} y={62} className="swim-block-meta">
                     {b.inputs > 0 ? `${b.inputs}in ` : ''}
                     {b.outputs > 0 ? `${b.outputs}out ` : ''}
@@ -143,11 +151,12 @@ export default function SwimlaneCanvas({
                   {b.hasHardRule ? <text x={b.w - 12} y={22} textAnchor="end" className="swim-mark hard">🔒</text> : null}
                   {b.hasTacit ? <text x={b.w - 12} y={40} textAnchor="end" className="swim-mark tacit">✎</text> : null}
                   {b.gaps > 0 ? (
-                    <g>
-                      <text x={b.w - 12} y={62} textAnchor="end" className="swim-mark gap">⚠ {b.gaps}</text>
-                      <title>{b.gaps} link{b.gaps === 1 ? '' : 's'} reference a missing entity — open the step to jump-to-build</title>
-                    </g>
+                    <text x={b.w - 12} y={62} textAnchor="end" className="swim-mark gap">⚠ {b.gaps}</text>
                   ) : null}
+                  {/* Small edit pencil badge — only shown in editable mode on hover */}
+                  {canEdit && (
+                    <text x={b.w - 10} y={b.h - 8} textAnchor="end" className="swim-edit-badge">✎</text>
+                  )}
                 </g>
               );
             })}
@@ -189,17 +198,31 @@ const SwimStyles = `
   letter-spacing: 1.2px;
   opacity: 0.8;
 }
-.swim-block { cursor: pointer; }
+.swim-block { cursor: default; }
+.swim-block.editable { cursor: pointer; }
 .swim-rect {
   fill: var(--bg);
   stroke-width: 1.4;
-  transition: filter 0.14s;
+  transition: stroke-width 0.12s, filter 0.12s;
 }
-.swim-block:hover .swim-rect { filter: brightness(1.02); stroke-width: 2; }
-.swim-block.selected .swim-rect { stroke-width: 2.5; filter: drop-shadow(0 0 6px rgba(200,162,74,0.3)); }
+/* Editable hover: raise stroke, add soft glow so it reads as interactive */
+.swim-block.editable:hover .swim-rect {
+  stroke-width: 2.2;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,0.12));
+}
+.swim-block.selected .swim-rect { stroke-width: 2.5; filter: drop-shadow(0 0 7px rgba(200,162,74,0.35)); }
 .swim-block-title { font-size: 13px; font-weight: 600; fill: var(--text); font-family: var(--font-body); }
 .swim-block-actor { font-size: 11px; font-weight: 500; }
 .swim-block-meta { font-size: 10.5px; fill: var(--text-faint); }
 .swim-mark { font-size: 11px; }
 .swim-mark.gap { fill: var(--danger); font-weight: 600; }
+/* Edit pencil badge — invisible at rest, appears on hover */
+.swim-edit-badge {
+  font-size: 11px;
+  fill: var(--text-faint);
+  opacity: 0;
+  transition: opacity 0.12s;
+  pointer-events: none;
+}
+.swim-block.editable:hover .swim-edit-badge { opacity: 0.7; }
 `;

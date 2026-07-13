@@ -5,7 +5,8 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { getSystem } from '@/lib/agents/store';
 import { listDatasets, ensureHydrated } from '@/lib/data/store';
-import { listWorkflows } from '@/lib/knowledge/store';
+import { listWorkflows, ensureHydrated as ensureWorkflowsHydrated } from '@/lib/knowledge/store';
+import { listPersonalKnowledge, ensureHydrated as ensurePersonalHydrated } from '@/lib/knowledge/personal-store';
 import { listMetrics } from '@/lib/metrics/store';
 import { listConnectionsForUser } from '@/lib/connections';
 
@@ -55,11 +56,19 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
         ...g.marketplace.map((d) => ({ id: d.id, name: d.name, scope: 'marketplace' as const })),
       ];
     } else if (kind === 'knowledge') {
-      const g = listWorkflows(principal);
+      // Hydrate both knowledge stores before listing (best-effort; OS-mirror backed).
+      await Promise.all([ensureWorkflowsHydrated(), ensurePersonalHydrated()]);
+      const wf = listWorkflows(principal);
+      const pk = listPersonalKnowledge(principal);
       items = [
-        ...g.mine.map((w) => ({ id: w.id, name: w.title, scope: 'personal' as const })),
-        ...g.domain.map((w) => ({ id: w.id, name: w.title, scope: 'domain' as const })),
-        ...g.marketplace.map((w) => ({ id: w.id, name: w.title, scope: 'marketplace' as const })),
+        // Workflows (wf_xxx)
+        ...wf.mine.map((w) => ({ id: w.id, name: w.title, scope: 'personal' as const })),
+        ...wf.domain.map((w) => ({ id: w.id, name: w.title, scope: 'domain' as const })),
+        ...wf.marketplace.map((w) => ({ id: w.id, name: w.title, scope: 'marketplace' as const })),
+        // Personal knowledge entries (pk_xxx) — same canView scoping, separate store
+        ...pk.mine.map((p) => ({ id: p.id, name: p.title, scope: 'personal' as const })),
+        ...pk.domain.map((p) => ({ id: p.id, name: p.title, scope: 'domain' as const })),
+        ...pk.marketplace.map((p) => ({ id: p.id, name: p.title, scope: 'marketplace' as const })),
       ];
     } else if (kind === 'metric') {
       await ensureHydrated();

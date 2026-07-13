@@ -21,6 +21,8 @@
     "@xterm/xterm": "5.5.0",
     "@xyflow/react": "^12.11.1",
     "js-yaml": "4.1.0",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
     "monaco-editor": "0.52.2",
     "next": "15.5.19",
     "react": "19.0.0",

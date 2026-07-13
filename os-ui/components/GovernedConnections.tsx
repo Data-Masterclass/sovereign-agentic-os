@@ -563,6 +563,7 @@ function ConnectionCard({
 }) {
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
+  const [confirmDemote, setConfirmDemote] = useState(false);
   const [draft, setDraft] = useState<Tool[]>(c.tools);
   const [approvalState, setApprovalState] = useState<{
     tool: string; args: Record<string, unknown>; preview: ApprovalPreview;
@@ -684,6 +685,13 @@ function ConnectionCard({
     const r = await doPost(`/api/connections/${c.id}/promote`);
     const conn = r.data.connection as Conn | undefined;
     setMsg(r.ok ? `✓ Promoted to ${conn?.visibility ?? ''}` : `✗ ${r.data.error as string}`);
+    if (r.ok) onChange();
+  }
+
+  async function demote() {
+    const r = await doPost(`/api/connections/${c.id}/demote`);
+    const conn = r.data.connection as Conn | undefined;
+    setMsg(r.ok ? `✓ Revoked → ${conn?.visibility ?? ''}` : `✗ ${r.data.error as string}`);
     if (r.ok) onChange();
   }
 
@@ -922,6 +930,22 @@ function ConnectionCard({
           <button className="btn ghost" onClick={promote} disabled={busy !== ''}>
             {c.visibility === 'Personal' ? 'Promote → Shared' : 'List → Marketplace'}
           </button>
+        ) : null}
+        {/* Revoke sharing (demote). Certified→Shared is admin-only; Shared→Personal is
+            builder+ (owner enforced server-side). The server is the fail-closed authority. */}
+        {((c.visibility === 'Certified' && role === 'admin') || (c.visibility === 'Shared' && canManage)) ? (
+          confirmDemote ? (
+            <>
+              <button className="btn" style={{ background: 'var(--danger, #b42318)' }} onClick={() => { setConfirmDemote(false); void demote(); }} disabled={busy !== ''}>
+                {c.visibility === 'Certified' ? 'Confirm revoke → Shared' : 'Confirm unshare → Personal'}
+              </button>
+              <button className="btn ghost" onClick={() => setConfirmDemote(false)} disabled={busy !== ''}>Cancel</button>
+            </>
+          ) : (
+            <button className="btn ghost" onClick={() => setConfirmDemote(true)} disabled={busy !== ''}>
+              {c.visibility === 'Certified' ? 'Revoke from Marketplace' : 'Unshare'}
+            </button>
+          )
         ) : null}
         {/* Data-source toggle */}
         {!dataUsage ? (

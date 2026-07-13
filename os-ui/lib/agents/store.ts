@@ -507,6 +507,35 @@ export function promoteSystem(systemId: string, user: Principal): SystemRecord {
 }
 
 /**
+ * Demotion (revoke sharing) — the reverse of `promoteSystem`, one step down:
+ *   Marketplace ──(Admin)──▶ Shared ──(owner | in-domain Builder+)──▶ Personal
+ * Marketplace→Shared is Admin-only (only an Admin published it); Shared→Personal is
+ * the owner or an in-domain Builder/Admin (mirrors who could have promoted it).
+ * Forked (installed) copies have no shared lineage to revoke. Never deletes the
+ * system; only lowers its visibility. Server-side enforcement, so the gate holds.
+ */
+export function demoteSystem(systemId: string, user: Principal): SystemRecord {
+  const rec = get(systemId);
+  if (rec.origin === 'forked') fail('An installed (forked) system has no sharing to revoke', 400);
+  if (!user.domains.includes(rec.domain)) fail('You can only revoke sharing on systems in a domain you belong to', 403);
+  if (rec.visibility === 'Marketplace') {
+    if (user.role !== 'admin') fail('Revoking from the Marketplace requires an Admin', 403);
+    rec.visibility = 'Shared';
+  } else if (rec.visibility === 'Shared') {
+    const isOwner = rec.owner === user.id;
+    if (!isOwner && !roleAtLeast(user.role, 'builder')) {
+      fail('Unsharing requires the owner or an in-domain Builder/Admin', 403);
+    }
+    rec.visibility = 'Personal';
+  } else {
+    fail('This system is already personal — nothing to revoke', 400);
+  }
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+/**
  * Marketplace install = fork into an independent copy the installer owns.
  * Installing an agent template is a **Builder+** action, mirroring the promotion
  * ladder: a User (participant) or Creator has no Marketplace surface, so they may

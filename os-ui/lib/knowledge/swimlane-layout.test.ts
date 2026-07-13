@@ -94,6 +94,31 @@ test('gapFor injection drives the block gap count', () => {
   assert.equal(layout.blocks.find((b) => b.id === 'prepare')!.gaps, 0);
 });
 
+test('long step title is preserved in block.title (full value, not truncated at layout)', () => {
+  const longTitle = 'A Very Long Step Title That Would Overflow Any Box';
+  const w = parseWorkflow(`---
+id: t
+title: Test
+domain: sales
+visibility: Personal
+status: draft
+version: "1"
+---
+
+\`\`\`step
+id: step1
+title: ${longTitle}
+actor: Human
+\`\`\`
+`);
+  const layout = layoutSwimlanes(w);
+  const block = layout.blocks.find((b) => b.id === 'step1')!;
+  // Layout must carry the full title so the canvas can render a tooltip.
+  assert.equal(block.title, longTitle);
+  // Box must be wide enough to be rendered (BLOCK_W >= 200).
+  assert.ok(block.w >= 200, `box width ${block.w} should be >= 200 to fit titles`);
+});
+
 test('empty workflow falls back to a single Human lane', () => {
   const w = parseWorkflow(`---
 id: e

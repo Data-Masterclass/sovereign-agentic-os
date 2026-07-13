@@ -15,6 +15,19 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.89] — 2026-07-13
+
+### Feature — revoke sharing (demote down the ladder)
+- **You can now pull an artifact back down the sharing ladder.** Previously things only promoted up (Personal → Shared → Certified/Marketplace) with no way back. A governed **demote / "Revoke sharing"** now lowers visibility one rung (Marketplace → Shared, Shared → Personal) for datasets, files, knowledge, agents, apps, connections, and marketplace artifacts — via a central `demoteThroughSeam` mirroring promotion, with the same **role gates** (revoking from Marketplace needs Admin; Shared → Personal needs the owner or an in-domain Builder) and **lineage guards** (blocked if another artifact still depends on it — never orphan a live consumer). Every demote is audited. A "Revoke sharing" control with a confirm sits in each artifact's detail.
+
+### Feature — run diagnostics + downloadable PDF report
+- **A simple diagnostics table at the bottom of a completed agent run** — one row per agent (model · tier · governed calls · decision), with tokens / latency / cost columns when the Langfuse trace is reachable (honest "metrics unavailable" note otherwise; the table always renders from the run's own data).
+- **A "Download PDF report" button** on a completed run — exports the task, per-agent status + output, the diagnostics table, and the final output as a shareable PDF, so students can send their results to instructors.
+
+### Fix
+- **Agent tool-grants show knowledge by NAME, not a raw id.** The grantable-knowledge list only included workflows (`wf_…`) and missed personal knowledge entries (`pk_…`, e.g. "Purchasing Details"), so a granted personal-knowledge item rendered as its machine id. Both are now listed with their titles; a genuinely orphaned grant reads `(removed) …` instead of a bare id.
+- **Workflow diagram no longer clips step text, and boxes are clearly editable.** Step boxes are wider with a full-title hover tooltip (no more cut-off), a pointer cursor + hover lift + ✎ badge signal that a box is editable (click → step editor), and the derived Mermaid view is labelled "(read-only)".
+
 ## [os-ui 0.1.88] — 2026-07-13
 
 ### Feature — Admin → Users & Access is now the one full user-admin console

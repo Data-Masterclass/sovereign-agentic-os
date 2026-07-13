@@ -97,6 +97,7 @@ export default function AppPage() {
   const [deployMsg, setDeployMsg] = useState('');
   const [showApi, setShowApi] = useState(false);
   const [manage, setManage] = useState(false);
+  const [confirmDemote, setConfirmDemote] = useState(false);
 
   // Persist whether Edit mode is open in the URL so a reload restores the editor
   // instead of the default Monitor view.
@@ -151,6 +152,22 @@ export default function AppPage() {
       const res = await fetch(`/api/apps/${id}/promote`, { method: 'POST' });
       const body = await res.json();
       setMsg(res.ok ? `✓ Promoted to ${body.app.visibility === 'Shared' ? 'Shared in Domain' : body.app.visibility}.` : `✗ ${body.error}`);
+      reload();
+    } catch (e) {
+      setMsg((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function demote() {
+    if (!id || busy) return;
+    setBusy(true);
+    setMsg('');
+    try {
+      const res = await fetch(`/api/apps/${id}/demote`, { method: 'POST' });
+      const body = await res.json();
+      setMsg(res.ok ? `✓ Revoked → ${body.app.visibility === 'Shared' ? 'Shared in Domain' : body.app.visibility}.` : `✗ ${body.error}`);
       reload();
     } catch (e) {
       setMsg((e as Error).message);
@@ -232,6 +249,12 @@ export default function AppPage() {
   const version = app.deploy.releases > 0 ? `v${app.deploy.releases}` : 'Unpublished';
   const canEditCode = roleAtLeast(data.user.role, 'builder');
   const canPromoteUI = promoteLabel(app.visibility);
+  // Revoke sharing (demote one rung): Admin revokes Certified→Shared; Builder+ unshares Shared→Personal.
+  const canDemoteUI =
+    (app.visibility === 'Certified' && data.user.role === 'admin') ||
+    (app.visibility === 'Shared' && roleAtLeast(data.user.role, 'builder'));
+  const demoteLabel = app.visibility === 'Certified' ? 'Revoke from Marketplace' : 'Unshare';
+  const confirmDemoteLabel = app.visibility === 'Certified' ? 'Confirm revoke → Shared' : 'Confirm unshare → Personal';
   // A deploy is already awaiting a Builder — block re-requesting (it would open a
   // duplicate review card and orphan the pending one). Point to the review inbox.
   const inReview = app.deploy.state === 'review';
@@ -254,6 +277,20 @@ export default function AppPage() {
               <button className="btn sm" onClick={promote} disabled={busy} title="Promote this app's visibility">
                 {busy ? <span className="spin" /> : canPromoteUI}
               </button>
+            ) : null}
+            {canDemoteUI ? (
+              confirmDemote ? (
+                <>
+                  <button className="btn sm" onClick={() => { setConfirmDemote(false); demote(); }} disabled={busy} style={{ background: 'var(--danger, #b42318)' }}>
+                    {busy ? <span className="spin" /> : confirmDemoteLabel}
+                  </button>
+                  <button className="btn ghost sm" onClick={() => setConfirmDemote(false)} disabled={busy}>Cancel</button>
+                </>
+              ) : (
+                <button className="btn ghost sm" onClick={() => setConfirmDemote(true)} disabled={busy} title="Revoke this app's sharing one rung">
+                  {demoteLabel}
+                </button>
+              )
             ) : null}
             <span className={dep.cls}>{dep.label}</span>
             <span className="badge muted">{version}</span>
@@ -413,11 +450,27 @@ export default function AppPage() {
                 <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
                   Personal → Shared (Builder/Admin) → Marketplace (Admin only). Cascades to the app&apos;s data, files and MCP connection.
                 </p>
-                {canPromoteUI ? (
-                  <button className="btn" onClick={promote} disabled={busy}>{busy ? <span className="spin" /> : canPromoteUI}</button>
-                ) : (
-                  <span className="badge vis-certified">In the Marketplace</span>
-                )}
+                <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+                  {canPromoteUI ? (
+                    <button className="btn" onClick={promote} disabled={busy}>{busy ? <span className="spin" /> : canPromoteUI}</button>
+                  ) : (
+                    <span className="badge vis-certified">In the Marketplace</span>
+                  )}
+                  {canDemoteUI ? (
+                    confirmDemote ? (
+                      <>
+                        <button className="btn sm" onClick={() => { setConfirmDemote(false); demote(); }} disabled={busy} style={{ background: 'var(--danger, #b42318)' }}>
+                          {busy ? <span className="spin" /> : confirmDemoteLabel}
+                        </button>
+                        <button className="btn ghost sm" onClick={() => setConfirmDemote(false)} disabled={busy}>Cancel</button>
+                      </>
+                    ) : (
+                      <button className="btn ghost sm" onClick={() => setConfirmDemote(true)} disabled={busy} title="Revoke this app's sharing one rung">
+                        {demoteLabel}
+                      </button>
+                    )
+                  ) : null}
+                </div>
 
                 <div className="section-title">Lifecycle</div>
                 <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>

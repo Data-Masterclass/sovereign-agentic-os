@@ -3,8 +3,17 @@
  */
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Markdown from '@/components/Markdown';
+import {
+  buildDiagnostics,
+  buildRunReport,
+  reportFilename,
+  type DiagNode,
+  type DiagRun,
+  type TraceMetrics,
+} from '@/lib/agents/build/run-diagnostics';
+import { useUser } from '@/lib/useUser';
 
 /**
  * Build = execute + verify (Task 4) and Run (Task 7). Build runs the 5 adapters
@@ -176,6 +185,26 @@ function runSummary(run: RunReport): string {
   return `Completed${last ? ` through ${last} → END` : ''} · ${tail}`;
 }
 
+/** Map the panel's RunReport into the pure DiagRun shape the diagnostics/report builders consume. */
+function runToDiag(run: RunReport): DiagRun {
+  const nodes: DiagNode[] | undefined = run.nodes?.map((n) => ({
+    node: n.node,
+    model: n.model,
+    tier: n.tier,
+    status: n.status,
+    finalText: n.finalText,
+    steps: n.steps.map((s) => ({ tool: s.tool, isError: s.isError, errorKind: s.errorKind })),
+  }));
+  return {
+    ok: run.ok,
+    path: run.path,
+    nodes,
+    steps: run.steps.map((s) => ({ node: s.node, tool: s.tool, effect: s.effect })),
+    output: run.output,
+    mode: run.mode,
+  };
+}
+
 /**
  * Live streaming state while a team run is in flight — the current tool step, the
  * agents that have started/finished (to light up the path), and the current node's
@@ -245,6 +274,105 @@ export default function BuildRunPanel({
   const [openSteps, setOpenSteps] = useState<Record<string, boolean>>({});
   const toggleNode = (k: string) => setOpenNodes((m) => ({ ...m, [k]: !m[k] }));
   const toggleStep = (k: string) => setOpenSteps((m) => ({ ...m, [k]: !m[k] }));
+  // The signed-in user — for the "who ran it" line in the PDF report.
+  const { user } = useUser();
+  // Optional Langfuse enrichment for the diagnostics table (tokens/latency/cost).
+  // The table always renders from the run's own steps; this only decorates it when
+  // the trace store is reachable. Fetched once per completed run.
+  const [metrics, setMetrics] = useState<TraceMetrics | null>(null);
+  const [pdfBusy, setPdfBusy] = useState(false);
+
+  const runComplete = !!run && !runningNow && ((run.nodes && run.nodes.length > 0) || !!run.output);
+
+  // Fetch Langfuse trace metrics when a run completes. Degrades silently: any
+  // failure just leaves `metrics` null and the table shows its honest note.
+  useEffect(() => {
+    if (!runComplete || !run) { setMetrics(null); return; }
+    let cancelled = false;
+    const nodes = (run.nodes ?? []).map((n) => n.node).join(',');
+    fetch(`/api/agents/systems/${systemId}/run/diagnostics?nodes=${encodeURIComponent(nodes)}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b: { metrics?: TraceMetrics } | null) => { if (!cancelled) setMetrics(b?.metrics ?? null); })
+      .catch(() => { if (!cancelled) setMetrics(null); });
+    return () => { cancelled = true; };
+    // Re-fetch per distinct run (path is a cheap identity for a completed run).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runComplete, systemId, run?.path.join('>')]);
+
+  /** Build + download a clean, legible PDF of the current run (client-side, offline-safe). */
+  const downloadPdf = async () => {
+    if (!run) return;
+    setPdfBusy(true);
+    try {
+      const [{ jsPDF }, autoTableMod] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
+      const autoTable = autoTableMod.default;
+      const diag = buildDiagnostics(runToDiag(run), metrics ?? undefined);
+      const at = lastRun?.at ?? Date.now();
+      const report = buildRunReport(runToDiag(run), diag, {
+        systemName: systemId,
+        ranBy: user?.name ?? 'unknown',
+        at,
+        prompt,
+      });
+
+      const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+      const M = 40;
+      const W = doc.internal.pageSize.getWidth();
+      let y = M;
+      const line = (text: string, size = 10, bold = false, gap = 14) => {
+        doc.setFont('helvetica', bold ? 'bold' : 'normal');
+        doc.setFontSize(size);
+        for (const l of doc.splitTextToSize(text, W - M * 2)) {
+          if (y > doc.internal.pageSize.getHeight() - M) { doc.addPage(); y = M; }
+          doc.text(l, M, y);
+          y += gap;
+        }
+      };
+      const space = (h = 8) => { y += h; };
+
+      line(report.title, 16, true, 20);
+      line(`Run report · ${report.summary}`, 10);
+      line(`Ran by ${report.ranBy} · ${report.timestamp} · mode: ${report.mode}`, 9);
+      space();
+      line('Task', 11, true);
+      line(report.prompt, 10);
+      space();
+      line('Path', 11, true);
+      line(report.path, 10);
+      space();
+
+      line('Agents', 12, true, 16);
+      for (const a of report.agents) {
+        line(`${a.name} — ${a.decision}${a.model ? ` · ${a.model}` : ''}${a.tier ? ` · ${a.tier}` : ''} · ${a.calls} call${a.calls === 1 ? '' : 's'}`, 10, true);
+        line(a.output, 9);
+        space(4);
+      }
+
+      space();
+      line('Diagnostics', 12, true, 16);
+      if (!diag.traceMetricsAvailable) line('Trace metrics unavailable — showing governed-call counts from the run.', 8);
+      autoTable(doc, {
+        startY: y,
+        head: [report.table.head],
+        body: report.table.rows,
+        foot: [report.table.totals],
+        margin: { left: M, right: M },
+        styles: { fontSize: 8, cellPadding: 4 },
+        headStyles: { fillColor: [30, 30, 30] },
+        footStyles: { fillColor: [240, 240, 240], textColor: 20, fontStyle: 'bold' },
+      });
+      y = ((doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY ?? y) + 20;
+
+      line('Final output', 12, true, 16);
+      line(report.finalOutput, 10);
+
+      doc.save(reportFilename(systemId, at));
+    } catch (e) {
+      setRunErr(`Could not generate the PDF report: ${(e as Error).message}`);
+    } finally {
+      setPdfBusy(false);
+    }
+  };
 
   const doBuild = async () => {
     setBuilding(true);
@@ -425,7 +553,20 @@ export default function BuildRunPanel({
         </div>
       ) : null}
 
-      <div className="section-title">Run</div>
+      <div className="section-title">
+        Run
+        {/* Download a clean PDF report of the completed run to send to an instructor.
+            Enabled only once a run has completed (has nodes / final output). */}
+        <button
+          className="btn ghost sm"
+          style={{ marginLeft: 'auto' }}
+          onClick={downloadPdf}
+          disabled={!runComplete || pdfBusy}
+          title={runComplete ? 'Download a PDF report of this run' : 'Run the team first'}
+        >
+          {pdfBusy ? <span className="spin" /> : 'Download PDF report'}
+        </button>
+      </div>
       {/* In-progress marker: shown to a returning user while the run is still going. */}
       {activity?.kind === 'running' && !runningNow ? (
         <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
@@ -665,6 +806,77 @@ export default function BuildRunPanel({
               </table>
             </div>
           ) : null}
+
+          {/* DIAGNOSTICS — a compact, one-scroll summary of the whole run: one row per
+              agent, its governed calls + decision + model tier, enriched with Langfuse
+              tokens/latency/cost when the trace store is reachable (honest note when not). */}
+          {(() => {
+            const diag = buildDiagnostics(runToDiag(run), metrics ?? undefined);
+            if (diag.rows.length === 0) return null;
+            const t = diag.totals;
+            const showMetrics = diag.traceMetricsAvailable;
+            return (
+              <div style={{ marginTop: 12 }}>
+                <div className="section-title" style={{ marginTop: 0 }}>Diagnostics</div>
+                <p className="hint" style={{ marginTop: 0 }}>
+                  {showMetrics
+                    ? 'One row per agent, with tokens, latency and cost read back from the Langfuse trace.'
+                    : 'One row per agent from the run’s own steps. Trace metrics unavailable — Langfuse may be down or still ingesting.'}
+                </p>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Agent</th>
+                        <th>Model · tier</th>
+                        <th>Calls</th>
+                        <th>Decision</th>
+                        {showMetrics ? <><th>Tokens</th><th>Latency</th><th>Cost</th></> : null}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {diag.rows.map((r) => (
+                        <tr key={r.agent}>
+                          <td className="mono">{r.agent}</td>
+                          <td className="mono" style={{ fontSize: 11.5, opacity: 0.85 }}>
+                            {[r.model, r.tier].filter(Boolean).join(' · ') || '—'}
+                          </td>
+                          <td className="mono">{r.calls}</td>
+                          <td>
+                            <span className={`badge ${NODE_STATUS_BADGE[r.decision]}`}>{NODE_STATUS_LABEL[r.decision]}</span>
+                            {r.denied > 0 ? <span className="badge warn" style={{ marginLeft: 4 }}>{r.denied} denied</span> : null}
+                            {r.errors > 0 ? <span className="badge err" style={{ marginLeft: 4 }}>{r.errors} err</span> : null}
+                          </td>
+                          {showMetrics ? (
+                            <>
+                              <td className="mono">{r.tokens != null ? Math.round(r.tokens) : '—'}</td>
+                              <td className="mono">{r.latencyMs != null ? `${Math.round(r.latencyMs)}ms` : '—'}</td>
+                              <td className="mono">{r.costUsd != null ? `$${r.costUsd.toFixed(4)}` : '—'}</td>
+                            </>
+                          ) : null}
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td className="mono" style={{ fontWeight: 600 }}>Total</td>
+                        <td className="hint">{t.nodes} agent{t.nodes === 1 ? '' : 's'}</td>
+                        <td className="mono" style={{ fontWeight: 600 }}>{t.calls}</td>
+                        <td className="hint">{t.denied} denied · {t.errors} err</td>
+                        {showMetrics ? (
+                          <>
+                            <td className="mono" style={{ fontWeight: 600 }}>{t.tokens != null ? Math.round(t.tokens) : '—'}</td>
+                            <td className="mono" style={{ fontWeight: 600 }}>{t.latencyMs != null ? `${Math.round(t.latencyMs)}ms` : '—'}</td>
+                            <td className="mono" style={{ fontWeight: 600 }}>{t.costUsd != null ? `$${t.costUsd.toFixed(4)}` : '—'}</td>
+                          </>
+                        ) : null}
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Trace store: honest note when the durable store is down; deep-link when up. */}
           <div className="hint" style={{ marginTop: 8 }}>

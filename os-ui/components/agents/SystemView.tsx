@@ -123,6 +123,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
   const [catalog, setCatalog] = useState<string[] | null>(null);
   const [actErr, setActErr] = useState('');
   const [acting, setActing] = useState(false);
+  const [confirmDemote, setConfirmDemote] = useState(false);
   // Re-entry guard: state is async, so gate concurrent edits through a ref. This
   // serializes mutations so each one builds its diff from the freshly-reloaded
   // source — no stale-base lost update on rapid canvas/chip edits.
@@ -266,6 +267,14 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
     ((data.visibility === 'Personal' && roleAtLeast(data.role, 'builder')) ||
       (data.visibility === 'Shared' && data.role === 'admin'));
   const promoteLabel = data.visibility === 'Personal' ? 'Promote to Shared' : 'Publish to Marketplace';
+  // Revoke sharing (demote), mirroring who could have promoted it: Marketplace→Shared
+  // is admin-only; Shared→Personal is the owner (canEdit) or an in-domain builder+.
+  const canDemote =
+    data.canEdit &&
+    data.origin !== 'forked' &&
+    ((data.visibility === 'Marketplace' && data.role === 'admin') ||
+      (data.visibility === 'Shared' && roleAtLeast(data.role, 'builder')));
+  const demoteLabel = data.visibility === 'Marketplace' ? 'Revoke from Marketplace → Shared' : 'Unshare → Personal';
   const editable = data.canEdit && !acting;
   // The mode to render NOW: the resolved state once known, else the role default
   // (avoids a Developer-surface flash for a builder while the pref resolves).
@@ -333,6 +342,20 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
             <button className="btn ghost sm" onClick={() => post('promote')} disabled={acting} title={`Governed publish step — ${promoteLabel}`}>
               {promoteLabel}
             </button>
+          ) : null}
+          {canDemote ? (
+            confirmDemote ? (
+              <>
+                <button className="btn sm" style={{ background: 'var(--danger, #b42318)' }} onClick={() => { setConfirmDemote(false); void post('demote'); }} disabled={acting}>
+                  {`Confirm — ${demoteLabel}`}
+                </button>
+                <button className="btn ghost sm" onClick={() => setConfirmDemote(false)} disabled={acting}>Cancel</button>
+              </>
+            ) : (
+              <button className="btn ghost sm" onClick={() => setConfirmDemote(true)} disabled={acting} title={`Revoke sharing — ${demoteLabel}`}>
+                {data.visibility === 'Marketplace' ? 'Revoke from Marketplace' : 'Unshare'}
+              </button>
+            )
           ) : null}
           {/* OS-wide rule: live → Archive; only an ARCHIVED system exposes Delete.
               Real archived state drives which actions show. */}

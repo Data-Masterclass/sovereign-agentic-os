@@ -407,6 +407,46 @@ export async function promoteConnection(connId: string, user: CurrentUser): Prom
   return c;
 }
 
+/**
+ * Demotion (revoke sharing): the reverse of {@link promoteConnection}, one step
+ * down — Certified → Shared (admin only) → Personal (owner or in-domain
+ * builder/admin). Never deletes the connection; only lowers its visibility so it
+ * leaves the marketplace / domain surface. The effect seam is the primary gate.
+ */
+export async function demoteConnection(connId: string, user: CurrentUser): Promise<Connection> {
+  const map = await getCache();
+  const c = map.get(connId);
+  if (!c) throw withStatus(new Error('Connection not found'), 404);
+  if (!user.domains.includes(c.domain)) {
+    throw withStatus(new Error('You can only revoke sharing on connections in a domain you belong to'), 403);
+  }
+  let next: Visibility;
+  if (c.visibility === 'Certified') {
+    if (user.role !== 'admin') throw withStatus(new Error('Revoking from the Marketplace requires an Administrator'), 403);
+    next = 'Shared';
+  } else if (c.visibility === 'Shared') {
+    const isOwner = c.owner === user.id;
+    if (!isOwner && !roleAtLeast(user.role, 'builder')) {
+      throw withStatus(new Error('Unsharing requires the owner or an in-domain Builder/Administrator'), 403);
+    }
+    next = 'Personal';
+  } else {
+    throw withStatus(new Error('Already Personal — nothing to revoke'), 400);
+  }
+  c.visibility = next;
+  c.updatedAt = now();
+  map.set(c.id, c);
+  writeThrough(c);
+  void trace({
+    principal: c.principal,
+    tool: 'generate',
+    input: { action: 'demote_connection', by: user.id, role: user.role },
+    output: { connectionId: c.id, visibility: next },
+    decision: 'allow',
+  });
+  return c;
+}
+
 // --------------------------------------------------------------- Grant to agent --
 
 /**

@@ -6,15 +6,17 @@ import type { CurrentUser } from '@/lib/core/auth';
 import { roleAtLeast } from '@/lib/core/session';
 import { decide, enqueue, listApprovals, recordEffect, type Approval } from '@/lib/governance/approvals';
 import { applyEffect, type EffectDeps, type EffectResult } from '@/lib/governance/effects';
+import { record as auditRecord } from '@/lib/governance/audit';
 import { publishPromotionLive } from '@/lib/data/publish-server';
 import { getWorkflow } from '@/lib/knowledge/store';
-import { getPersonalKnowledge } from '@/lib/knowledge/personal-store';
+import { getPersonalKnowledge, decertifyPersonalKnowledge, unsharePersonalKnowledge } from '@/lib/knowledge/personal-store';
 import { getDashboard } from '@/lib/dashboards/store';
-import { getConnectionForUser, promoteConnection } from '@/lib/connections';
+import { getConnectionForUser, promoteConnection, demoteConnection } from '@/lib/connections';
 import { getModel } from '@/lib/science/model-service';
-import { getArtifact, promoteArtifact } from '@/lib/core/artifacts';
+import { getArtifact, promoteArtifact, demoteArtifact } from '@/lib/core/artifacts';
 import { getAppForUser, promoteApp } from '@/lib/software/apps';
-import { getSystem } from '@/lib/agents/store';
+import { demoteApp } from '@/lib/software/lifecycle';
+import { getSystem, demoteSystem } from '@/lib/agents/store';
 
 /**
  * THE UNIFIED PROMOTION / CERTIFICATION LADDER — the ONE filing + enforcement
@@ -268,4 +270,85 @@ export async function promoteThroughSeam(
     recordEffect(realPending.id, { applied: effect.applied, live: effect.live, publish: effect.publish });
   }
   return { ...effect, rung, artifact: art };
+}
+
+/** The ladder kinds a DEMOTE (revoke sharing) is wired for — the reverse of the
+ *  UI direct-promote buttons. dataset/file keep their own lifecycle/transition rails. */
+export type DemotableKind = Extract<LadderKind, 'artifact' | 'app' | 'connection' | 'personal_knowledge' | 'agent_system'>;
+const DEMOTABLE: readonly DemotableKind[] = ['artifact', 'app', 'connection', 'personal_knowledge', 'agent_system'] as const;
+export function isDemotableKind(x: string): x is DemotableKind {
+  return (DEMOTABLE as readonly string[]).includes(x);
+}
+
+/** The applied summary a per-kind demote returns (id + new visibility). */
+type Demoted = { id: string; name: string; visibility: string };
+
+/**
+ * REVOKE SHARING — walk a ladder artifact ONE rung DOWN, the mirror of
+ * `promoteThroughSeam`:
+ *   Certified/Marketplace ──(Admin)──▶ Shared ──(owner | in-domain Builder+)──▶ Personal
+ *
+ * The rung is derived from the artifact's CURRENT tier (never a silent jump). Each
+ * per-kind store fn is the primary role gate (fail-closed: a creator who is not the
+ * owner cannot unshare a shared/certified asset; only an Admin can revoke from the
+ * marketplace) and, where relevant (apps), the lineage guard that refuses to orphan
+ * a live consumer. This seam adds the intent guard + a single audit entry, exactly
+ * mirroring how promotion is audited. It NEVER deletes the underlying asset.
+ */
+export async function demoteThroughSeam(
+  kind: DemotableKind,
+  id: string,
+  user: CurrentUser,
+  opts: { rung?: 'decertify' | 'unshare' } = {},
+): Promise<{ rung: 'decertify' | 'unshare'; artifact: Resolved; result: Demoted }> {
+  const art = await resolveLadderArtifact(kind, id, user); // view gate + current tier
+  const tier = normVisibility(art.visibility);
+  if (tier === 'Personal') fail(`This ${kind} is already personal — nothing to revoke`, 409);
+  const rung: 'decertify' | 'unshare' = tier === 'Marketplace' ? 'decertify' : 'unshare';
+  // Intent guard: never let a tier-derived rung diverge from the caller's stated one.
+  if (opts.rung && opts.rung !== rung) {
+    fail(`Cannot ${opts.rung} a ${tier} ${kind} — its next revoke step is ${rung}.`, 409);
+  }
+
+  const p = { id: user.id, domains: user.domains, role: user.role };
+  let result: Demoted;
+  switch (kind) {
+    case 'artifact': {
+      const a = await demoteArtifact(id, user);
+      result = { id: a.id, name: a.name, visibility: a.visibility };
+      break;
+    }
+    case 'connection': {
+      const c = await demoteConnection(id, user);
+      result = { id: c.id, name: c.name, visibility: c.visibility };
+      break;
+    }
+    case 'app': {
+      const a = await demoteApp(id, user);
+      result = { id: a.id, name: a.name, visibility: a.visibility };
+      break;
+    }
+    case 'personal_knowledge': {
+      const rec = rung === 'decertify' ? decertifyPersonalKnowledge(id, p) : unsharePersonalKnowledge(id, p);
+      result = { id: rec.id, name: rec.title, visibility: rec.visibility };
+      break;
+    }
+    case 'agent_system': {
+      const rec = demoteSystem(id, p);
+      result = { id: rec.id, name: rec.name, visibility: rec.visibility };
+      break;
+    }
+    default:
+      fail(`Unknown demotable kind ${kind}`, 400);
+  }
+
+  auditRecord({
+    actor: user.id,
+    action: 'approve',
+    subject: result.name,
+    domain: art.domain,
+    reason: `${kind} ${rung} (revoke sharing) by ${user.id}`,
+    detail: { artifactKind: kind, id, rung, from: tier, to: result.visibility },
+  });
+  return { rung, artifact: art, result };
 }
