@@ -15,6 +15,11 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.94] — 2026-07-13
+
+### Fix — Ask the OS input pinned to the bottom
+- **The Ask-the-OS message log now fills the drawer and the input box stays at the bottom.** The log inherited a 460px max-height cap, so in the tall assistant drawer the input floated mid-panel and long answers were awkward to read. The log now grows + scrolls, with the input + Send button anchored at the end so the whole conversation is readable.
+
 ## [os-ui 0.1.93] — 2026-07-13
 
 ### Fix — Simple builder: tools land on the right agent

@@ -5328,6 +5328,10 @@ button.card.tile:hover .tile-action { opacity: 1; }
 .osa-log {
   flex: 1;
   min-height: 0;
+  /* Fill the full-height drawer so the message log grows + scrolls and the input
+     form stays pinned at the BOTTOM. Without this the inherited .chat-log
+     max-height:460px caps the log, leaving the input floating mid-drawer. */
+  max-height: none;
 }
 .osa-context {
   margin: 4px 0 0;
