@@ -15,6 +15,17 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.90] — 2026-07-13
+
+### Feature — Simple builder can grant Data & Knowledge
+- **The Simple (guided) agent-system builder now has a "What your team can use" section** — plain add/remove chips for **Data** and **Knowledge**, sourced from the same role-scoped `grants/available` catalog the Developer grants table uses and written to the same `grants.data` / `grants.knowledge` (at **Read**). Previously grants lived only in the Developer-only "Grants & routing" tab, so a non-coder building in Simple mode could not attach the dataset or workflow knowledge their team needed. Write access and Metrics/Connections stay in Developer mode to keep Simple uncluttered.
+
+### Change — Simple is the default builder mode for everyone
+- **The agent builder now opens in Simple mode for all roles** (admins included), with **Developer** one click away and the choice remembered per user. The raw `system.yaml` editor, canvas, and full grants table remain exactly as they were — in Developer mode — for people who want them. `system.yaml` is still the single source of truth behind every surface; only the default landing changed.
+
+### Change — Knowledge sub-tabs reordered
+- **Knowledge opens on Workflows first, then General.** The two sub-tabs were swapped and the tab now lands on Workflows by default (the day-to-day surface), with General (the domain operating manual) second.
+
 ## [os-ui 0.1.89] — 2026-07-13
 
 ### Feature — revoke sharing (demote down the ladder)

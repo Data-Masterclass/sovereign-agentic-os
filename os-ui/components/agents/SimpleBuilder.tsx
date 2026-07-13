@@ -11,7 +11,7 @@ import { classifyModelNeed } from '@/lib/agents/routing';
 import { instructionsOf } from '@/lib/agents/agent-md';
 import {
   addSimpleAgent, moveAgent, removeSystemTool, addSystemTool,
-  setAgentInstructions, setAgentRole,
+  setAgentInstructions, setAgentRole, addArtifactGrant, removeArtifactGrant,
 } from '@/lib/agents/simple-edit';
 import { removeAgent, setEntrypoint } from '@/lib/agents/canvas-edit';
 import { suggestTools } from '@/lib/agents/suggest-tools';
@@ -119,6 +119,7 @@ export default function SimpleBuilder({
 
       {step === 'agents' ? (
         <AgentsStep
+          systemId={systemId}
           system={system}
           canEdit={editable}
           catalog={catalog}
@@ -268,6 +269,7 @@ function DescribeAndName({
  * reorder edit system.yaml directly. No Monaco, no canvas.
  */
 function AgentsStep({
+  systemId,
   system,
   canEdit,
   catalog,
@@ -276,6 +278,7 @@ function AgentsStep({
   onNext,
   ready,
 }: {
+  systemId: string;
   system: System;
   canEdit: boolean;
   catalog: string[] | null;
@@ -286,6 +289,8 @@ function AgentsStep({
 }) {
   return (
     <div className="sb-agents">
+      <TeamResources systemId={systemId} system={system} canEdit={canEdit} onCommit={onCommit} />
+
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
         <div>
           <h2 className="sb-section-title">Your team</h2>
@@ -468,6 +473,138 @@ function AgentCard({
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+type Available = { id: string; name: string; scope: 'personal' | 'domain' | 'marketplace' };
+
+/**
+ * Simple-mode "What your team can use" — the plain Data + Knowledge grant chips.
+ * These are SYSTEM-level grants (all agents share them), written to the same
+ * `grants.data` / `grants.knowledge` the Developer Grants panel writes, at Read
+ * access. Write access and Metrics/Connections stay in Developer mode so Simple
+ * stays uncluttered — but a non-coder can now attach the data and knowledge a team
+ * needs without leaving the guided flow.
+ */
+function TeamResources({
+  systemId, system, canEdit, onCommit,
+}: {
+  systemId: string;
+  system: System;
+  canEdit: boolean;
+  onCommit: (next: System) => void;
+}) {
+  return (
+    <div className="sb-resources">
+      <h2 className="sb-section-title" style={{ marginTop: 0 }}>What your team can use</h2>
+      <p className="hint" style={{ marginTop: 0 }}>
+        Give the whole team read access to the data and knowledge it needs — every agent shares these.
+        Write access and finer control live in Developer mode.
+      </p>
+      <ResourcePicker systemId={systemId} system={system} field="data" label="Data" canEdit={canEdit} onCommit={onCommit} />
+      <ResourcePicker systemId={systemId} system={system} field="knowledge" label="Knowledge" canEdit={canEdit} onCommit={onCommit} />
+    </div>
+  );
+}
+
+/**
+ * One artifact kind (data or knowledge): granted chips + an add-picker sourced from
+ * the SAME role-scoped `…/grants/available?kind=` endpoint the Developer grants
+ * table uses. Add grants at Read; remove is idempotent. Names come from the
+ * available list, falling back to a short id so nothing shows a raw machine id.
+ */
+function ResourcePicker({
+  systemId, system, field, label, canEdit, onCommit,
+}: {
+  systemId: string;
+  system: System;
+  field: 'data' | 'knowledge';
+  label: string;
+  canEdit: boolean;
+  onCommit: (next: System) => void;
+}) {
+  const [available, setAvailable] = useState<Available[] | null>(null);
+  const [loadErr, setLoadErr] = useState('');
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    let alive = true;
+    setLoadErr('');
+    fetch(`/api/agents/systems/${systemId}/grants/available?kind=${field}`, { cache: 'no-store' })
+      .then(async (res) => {
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? 'Failed to load');
+        if (alive) setAvailable(body.items as Available[]);
+      })
+      .catch((e) => { if (alive) setLoadErr((e as Error).message); });
+    return () => { alive = false; };
+  }, [systemId, field]);
+
+  const granted = system.grants[field];
+  const nameOf = (id: string) =>
+    available?.find((a) => a.id === id)?.name
+    ?? (id.includes('_') ? id.split('_').slice(1).join('_') : id);
+  const grantedIds = new Set(granted.map((g) => g.id));
+  const addable = (available ?? []).filter((a) => !grantedIds.has(a.id));
+  const q = search.trim().toLowerCase();
+  const shown = q ? addable.filter((a) => a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q)) : addable;
+
+  return (
+    <div className="sb-resource">
+      <div className="sb-field-label" style={{ margin: '4px 0' }}>{label}</div>
+      {loadErr ? <div className="error" style={{ marginBottom: 6 }}>{loadErr}</div> : null}
+      <div className="sb-chips">
+        {granted.length === 0 ? <span className="hint" style={{ marginTop: 0 }}>None yet.</span> : null}
+        {granted.map((g) => (
+          <span key={g.id} className="sb-chip granted">
+            <span>{nameOf(g.id)}</span>
+            {canEdit ? (
+              <button className="sb-chip-x" title="Remove" onClick={() => onCommit(removeArtifactGrant(system, field, g.id))}>✕</button>
+            ) : null}
+          </span>
+        ))}
+      </div>
+      {canEdit ? (
+        !open ? (
+          <button className="btn ghost sm" style={{ marginTop: 6 }} disabled={available === null} onClick={() => setOpen(true)}>
+            + Add {label.toLowerCase()}
+          </button>
+        ) : (
+          <div className="sb-resource-picker">
+            {addable.length > 6 ? (
+              <input
+                type="text"
+                autoFocus
+                placeholder={`Search ${label.toLowerCase()}…`}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{ width: '100%', marginBottom: 8 }}
+              />
+            ) : null}
+            {shown.length === 0 ? (
+              <p className="hint" style={{ marginTop: 0 }}>
+                {addable.length === 0 ? `Nothing to add — create or share ${label.toLowerCase()} first.` : 'No matches.'}
+              </p>
+            ) : (
+              <div className="sb-picker-list">
+                {shown.map((a) => (
+                  <button
+                    key={a.id}
+                    className="sb-picker-row"
+                    title={a.id}
+                    onClick={() => onCommit(addArtifactGrant(system, field, a.id))}
+                  >
+                    +<span>{a.name}</span><span className="badge muted">{a.scope}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <button className="btn ghost sm" style={{ marginTop: 8 }} onClick={() => { setOpen(false); setSearch(''); }}>Done</button>
+          </div>
+        )
+      ) : null}
     </div>
   );
 }

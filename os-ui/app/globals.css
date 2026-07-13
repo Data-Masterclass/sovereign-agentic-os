@@ -5687,3 +5687,37 @@ button.card.tile:hover .tile-action { opacity: 1; }
 .sb-chip-x:hover { color: var(--danger); }
 .sb-suggest { margin-top: 10px; }
 .sb-run { margin-top: 4px; }
+.sb-resources {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  padding: 14px 16px;
+  margin-bottom: 18px;
+}
+.sb-resource { margin-top: 12px; }
+.sb-resource:first-of-type { margin-top: 6px; }
+.sb-resource-picker {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  padding: 10px 12px;
+}
+.sb-picker-list { display: flex; flex-direction: column; gap: 2px; max-height: 240px; overflow-y: auto; }
+.sb-picker-row {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm, 6px);
+  font-size: 12.5px;
+}
+.sb-picker-row:hover { background: var(--gold-soft); }
+.sb-picker-row > span:first-of-type { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

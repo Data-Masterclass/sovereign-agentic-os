@@ -93,13 +93,17 @@ type Panel = 'yaml' | 'grants' | 'build';
 type ViewMode = 'simple' | 'developer';
 const MODE_KEY = 'agents.viewMode';
 
-/** The persisted mode, defaulting to Simple for builder/creator (Developer for admins). */
-function resolveInitialMode(role: Role): ViewMode {
+/**
+ * The persisted mode, defaulting to Simple for EVERYONE (admins included) — the
+ * guided flow is the front door; Developer (canvas + Monaco system.yaml + grants
+ * table) is one click away and, once chosen, remembered per user via localStorage.
+ */
+function resolveInitialMode(_role: Role): ViewMode {
   if (typeof window !== 'undefined') {
     const saved = window.localStorage.getItem(MODE_KEY);
     if (saved === 'simple' || saved === 'developer') return saved;
   }
-  return roleAtLeast(role, 'domain_admin') ? 'developer' : 'simple';
+  return 'simple';
 }
 
 const visClass = (v: string) => (v === 'Shared' ? 'vis-shared' : v === 'Marketplace' ? 'vis-certified' : 'vis-personal');
@@ -276,9 +280,9 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
       (data.visibility === 'Shared' && roleAtLeast(data.role, 'builder')));
   const demoteLabel = data.visibility === 'Marketplace' ? 'Revoke from Marketplace → Shared' : 'Unshare → Personal';
   const editable = data.canEdit && !acting;
-  // The mode to render NOW: the resolved state once known, else the role default
-  // (avoids a Developer-surface flash for a builder while the pref resolves).
-  const effectiveMode: ViewMode = mode ?? (roleAtLeast(data.role, 'domain_admin') ? 'developer' : 'simple');
+  // The mode to render NOW: the resolved state once known, else Simple — the
+  // universal default (never flash the Developer surface before the pref resolves).
+  const effectiveMode: ViewMode = mode ?? 'simple';
   const onConnect = (from: string, to: string) => {
     const fromAgent = sys.agents.find((a) => a.id === from);
     const isSupervisor = from === sys.entrypoint || (fromAgent?.members?.length ?? 0) > 0;

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { parseSystem, serializeSystem } from './system-schema.ts';
 import {
   setAgentRole, setAgentInstructions, setSystemTools, addSystemTool, removeSystemTool,
-  addSimpleAgent, moveAgent, nextAgentId,
+  addSimpleAgent, moveAgent, nextAgentId, addArtifactGrant, removeArtifactGrant,
 } from './simple-edit.ts';
 import { instructionsOf } from './agent-md.ts';
 
@@ -96,6 +96,25 @@ test('moveAgent reorders and clamps at the ends', () => {
   // clamp: moving the first up is a no-op
   const up = moveAgent(sys, 'analyst', -1);
   assert.deepEqual(up.agents.map((a) => a.id), ['analyst', 'writer']);
+});
+
+test('addArtifactGrant grants Data at Read and is idempotent', () => {
+  const sys = parseSystem(BASE);
+  const one = addArtifactGrant(sys, 'data', 'ds_campaigns');
+  assert.deepEqual(one.grants.data, [{ id: 'ds_campaigns', capability: 'Read' }]);
+  // idempotent — a second add does not duplicate
+  const two = addArtifactGrant(one, 'data', 'ds_campaigns');
+  assert.equal(two.grants.data.length, 1);
+});
+
+test('addArtifactGrant / removeArtifactGrant round-trip on Knowledge', () => {
+  const sys = parseSystem(BASE);
+  const added = addArtifactGrant(sys, 'knowledge', 'wf_playbook');
+  assert.deepEqual(added.grants.knowledge, [{ id: 'wf_playbook', capability: 'Read' }]);
+  const removed = removeArtifactGrant(added, 'knowledge', 'wf_playbook');
+  assert.deepEqual(removed.grants.knowledge, []);
+  // removing a non-grant is a no-op
+  assert.deepEqual(removeArtifactGrant(sys, 'data', 'nope').grants.data, sys.grants.data);
 });
 
 test('every Simple edit leaves the input untouched (immutability, for undo/redo)', () => {

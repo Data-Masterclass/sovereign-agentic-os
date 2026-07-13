@@ -64,12 +64,12 @@ const SECTION_PLACEHOLDERS: Record<string, string> = {
 };
 
 export default function KnowledgePage() {
-  const [view, setView] = useState<'overview' | 'workflows' | 'new' | 'detail'>('overview');
+  const [view, setView] = useState<'overview' | 'workflows' | 'new' | 'detail'>('workflows');
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
 
   // Clicking the Knowledge sidebar link while inside a workflow detail returns to
   // the tab root (same-route client nav wouldn't otherwise re-mount this page).
-  useTabNavReset(() => { setSelectedWorkflowId(null); setView('overview'); });
+  useTabNavReset(() => { setSelectedWorkflowId(null); setView('workflows'); });
 
   // Domain knowledge (top section)
   const [domainKnowledge, setDomainKnowledge] = useState<DomainKnowledge | null>(null);
@@ -468,14 +468,8 @@ export default function KnowledgePage() {
       <PageHeader title="Knowledge" crumb="domain operating manual · workflows · context" tutorial="knowledge" />
       <div className="content">
 
-        {/* ── Tab navigation ── */}
+        {/* ── Tab navigation (Workflows first, then General) ── */}
         <div className="tabstrip">
-          <button
-            className={view === 'overview' ? 'active' : ''}
-            onClick={() => setView('overview')}
-          >
-            General
-          </button>
           <button
             className={view === 'workflows' || view === 'new' ? 'active' : ''}
             onClick={() => setView('workflows')}
@@ -486,6 +480,12 @@ export default function KnowledgePage() {
                 {activeCount}
               </span>
             )}
+          </button>
+          <button
+            className={view === 'overview' ? 'active' : ''}
+            onClick={() => setView('overview')}
+          >
+            General
           </button>
         </div>
 

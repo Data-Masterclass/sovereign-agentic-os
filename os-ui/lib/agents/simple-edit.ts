@@ -73,6 +73,28 @@ export function removeSystemTool(input: System, tool: string): System {
   return sys;
 }
 
+/**
+ * Simple-mode artifact grants — the plain "what your team can use" chips for Data
+ * and Knowledge. These write the SAME `grants.data` / `grants.knowledge` list the
+ * Developer Grants panel writes, so a Simple grant and the Developer equivalent
+ * produce an identical `system.yaml`. Simple only ever grants `Read` (the common
+ * consume case); Write capabilities stay in Developer mode. Role floors + save
+ * guards are enforced downstream exactly as for the Grants panel.
+ */
+export function addArtifactGrant(input: System, field: 'data' | 'knowledge', id: string): System {
+  const sys = structuredClone(input);
+  const arr = sys.grants[field];
+  if (!arr.some((g) => g.id === id)) arr.push({ id, capability: 'Read' });
+  return sys;
+}
+
+/** Remove a Data/Knowledge grant (idempotent). */
+export function removeArtifactGrant(input: System, field: 'data' | 'knowledge', id: string): System {
+  const sys = structuredClone(input);
+  sys.grants[field] = sys.grants[field].filter((g) => g.id !== id);
+  return sys;
+}
+
 /** Next free `agentN` id (matches Developer mode's canvas guided-add naming). */
 export function nextAgentId(sys: System): string {
   const ids = new Set(sys.agents.map((a) => a.id));
