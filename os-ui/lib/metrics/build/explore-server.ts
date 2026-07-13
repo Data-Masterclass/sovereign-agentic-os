@@ -6,7 +6,7 @@ import { cubeLoad } from '@/lib/infra/governed';
 import { type DelegatedToken } from '../../data/identity.ts';
 import type { Dataset, Measure } from '../../data/dataset-schema.ts';
 import { type CubeExecutor, type Granularity, dropToSql, explore, exploreSpec } from '../explorer.ts';
-import { liveMetricsReachable } from './live-clients.ts';
+import { isCubeSyncLag, liveMetricsReachable } from './live-clients.ts';
 
 /**
  * Server boundary for the metric explorer. Runs the explore query UNDER the viewer's
@@ -59,6 +59,8 @@ export type ExploreServerResult = {
   securityContext: Record<string, unknown>;
   sql: string;
   mode: ExploreMode;
+  /** True when Cube is up but the just-defined measure hasn't sync'd yet (soft "syncing"). */
+  pending?: boolean;
 };
 
 export async function exploreMetric(
@@ -69,6 +71,14 @@ export async function exploreMetric(
 ): Promise<ExploreServerResult> {
   const spec = exploreSpec(dataset, measure, slice);
   const live = await liveMetricsReachable();
-  const result = await explore(spec, token, live ? liveExecutor() : mockExecutor());
-  return { member: result.member, rows: result.rows, securityContext: result.securityContext, sql: dropToSql(spec), mode: live ? 'live' : 'offline-mock' };
+  const base = { member: spec.member, sql: dropToSql(spec), mode: (live ? 'live' : 'offline-mock') as ExploreMode };
+  try {
+    const result = await explore(spec, token, live ? liveExecutor() : mockExecutor());
+    return { ...base, rows: result.rows, securityContext: result.securityContext };
+  } catch (e) {
+    // Sidecar sync lag: the measure isn't in Cube yet. Soft PENDING (200, no rows) so the
+    // preview shows "syncing", never a scary 400. Any other error propagates as an error.
+    if (isCubeSyncLag(e)) return { ...base, rows: [], securityContext: {}, pending: true };
+    throw e;
+  }
 }

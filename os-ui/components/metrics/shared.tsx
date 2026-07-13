@@ -40,7 +40,9 @@ export type DefineResult = {
   measure: { name: string; type: string; sql: string };
   member: string;
   convergence: { ok: boolean; rows: CheckRow[] };
-  build: { rows: BuildRow[]; ok: boolean; member: string; mode: Mode };
+  build: { rows: BuildRow[]; ok: boolean; member: string; mode: Mode; pending?: boolean };
+  /** Saved, but its live value hasn't sync'd to the query engine yet (not an error). */
+  pending?: boolean;
   cube: string;
 };
 
