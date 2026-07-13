@@ -51,7 +51,9 @@ function combinedKnowledgeItems(user: { id: string; domains: string[]; role: 'cr
 }
 
 const salesUser = { id: 'amir', domains: ['sales'], role: 'creator' as const };
-const salesBuilder = { id: 'bea', domains: ['sales'], role: 'builder' as const };
+// Publishing Personal→Shared now needs a domain_admin+ (a builder can no longer
+// approve), so the sales approver who publishes the shared workflow is a domain_admin.
+const salesApprover = { id: 'bea', domains: ['sales'], role: 'domain_admin' as const };
 const financeUser = { id: 'kenji', domains: ['finance'], role: 'builder' as const };
 
 test('AVAILABLE-SCOPE: caller sees own personal + domain shared, never a foreign private draft or foreign domain', () => {
@@ -61,8 +63,8 @@ test('AVAILABLE-SCOPE: caller sees own personal + domain shared, never a foreign
   // amir's own private draft (personal), bea's domain-published workflow (shared),
   // and kenji's finance-only private draft (must NEVER surface to sales).
   const mine = createWorkflow(salesUser, { title: 'My Draft', domain: 'sales' });
-  const shared = createWorkflow(salesBuilder, { title: 'Sales Playbook', domain: 'sales' });
-  publishWorkflow(shared.id, salesBuilder);
+  const shared = createWorkflow(salesApprover, { title: 'Sales Playbook', domain: 'sales' });
+  publishWorkflow(shared.id, salesApprover);
   const foreignPrivate = createWorkflow(financeUser, { title: 'Finance Secret', domain: 'finance' });
 
   const items = toItems(listWorkflows(salesUser));

@@ -4,6 +4,7 @@
 import type { Dataset, Measure } from '../data/dataset-schema.ts';
 import { type DelegatedToken, propagate } from '../data/identity.ts';
 import { dimensionMember, measureMember } from './model.ts';
+import { viewMembers } from '../data/metrics.ts';
 
 /**
  * The metric explorer — pick a metric + dimensions to slice, no SQL, per-viewer RLS.
@@ -37,11 +38,19 @@ export function exploreSpec(
   measure: Measure,
   slice: { dimensions?: string[]; timeDimension?: string; granularity?: Granularity; limit?: number } = {},
 ): ExploreSpec {
+  // Fail-soft reconcile: the Cube VIEW only exposes its `includes` members, so a
+  // slice on a non-member (classically the dataset PRIMARY KEY, which is a cube
+  // dimension but excluded from the view) would 400 at Cube. Drop non-members here
+  // so the query can never reference a member that isn't in the view (mirrors the
+  // scrub in lib/infra/governed.ts).
+  const members = viewMembers(dataset);
+  const dims = (slice.dimensions ?? []).filter((d) => members.has(d));
+  const timeOk = slice.timeDimension && members.has(slice.timeDimension) ? slice.timeDimension : undefined;
   return {
     member: measureMember(dataset, measure),
-    dimensions: (slice.dimensions ?? []).map((d) => dimensionMember(dataset, d)),
-    timeDimension: slice.timeDimension ? dimensionMember(dataset, slice.timeDimension) : undefined,
-    granularity: slice.granularity,
+    dimensions: dims.map((d) => dimensionMember(dataset, d)),
+    timeDimension: timeOk ? dimensionMember(dataset, timeOk) : undefined,
+    granularity: timeOk ? slice.granularity : undefined,
     limit: slice.limit,
   };
 }

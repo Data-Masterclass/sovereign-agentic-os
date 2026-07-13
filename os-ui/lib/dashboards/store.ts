@@ -6,6 +6,7 @@ import { type DashTier, type DashboardRecord, dashboardRecord, governDashboard }
 import { type DashboardSpec } from './model.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
+import { canManageArtifact } from '../governance/edit-scope.ts';
 
 /**
  * A small in-memory dashboard registry (mirrors lib/data/store's shape + discipline:
@@ -119,7 +120,8 @@ export function getDashboard(id: string, user: Principal): Stored {
 export function saveDashboard(user: Principal, id: string, spec: DashboardSpec): Stored {
   const existing = dashState().dashboards.find((x) => x.id === id);
   if (existing) {
-    if (existing.owner !== user.id) throw status('only the owner can edit this dashboard', 403);
+    // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
+    if (!canManageArtifact(user, { owner: existing.owner, domain: existing.domain })) throw status('only the owner, an in-domain domain admin, or an admin can edit this dashboard', 403);
     // Snapshot the PRIOR spec before overwriting so the edit is restorable.
     versions.record(existing.id, user.id, snapshotState(existing), 'edit');
     existing.spec = spec;
@@ -146,7 +148,8 @@ export function transitionDashboard(id: string, approver: Principal, transition:
 function requireOwned(id: string, user: Principal): Stored {
   const d = dashState().dashboards.find((x) => x.id === id);
   if (!d) throw status(`dashboard '${id}' not found`, 404);
-  if (d.owner !== user.id) throw status('only the owner can modify this dashboard', 403);
+  // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
+  if (!canManageArtifact(user, { owner: d.owner, domain: d.domain })) throw status('only the owner, an in-domain domain admin, or an admin can modify this dashboard', 403);
   return d;
 }
 

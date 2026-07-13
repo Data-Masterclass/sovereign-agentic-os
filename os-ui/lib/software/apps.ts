@@ -5,6 +5,7 @@ import 'server-only';
 import { config } from '@/lib/core/config';
 import type { CurrentUser } from '@/lib/core/auth';
 import { canPromote, roleAtLeast } from '@/lib/core/session';
+import { canManageArtifact } from '@/lib/governance/edit-scope';
 import type { Visibility } from '@/lib/core/artifact-model';
 import {
   createArtifact,
@@ -403,7 +404,8 @@ function snapshotState(a: App): { designDecisions: string; dataDescriptions: str
 }
 
 function isOwnerOrAdminApp(a: App, user: CurrentUser): boolean {
-  return a.owner === user.id || (user.role === 'admin' && user.domains.includes(a.domain));
+  // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
+  return canManageArtifact(user, { owner: a.owner, domain: a.domain });
 }
 
 async function getCache(): Promise<Map<string, App>> {
@@ -933,9 +935,8 @@ export async function updateAppDocs(
   const map = await getCache();
   const a = map.get(appId);
   if (!a) throw withStatus(new Error('App not found'), 404);
-  const isOwner = a.owner === user.id;
-  const isDomainAdmin = user.role === 'admin' && user.domains.includes(a.domain);
-  if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to edit this app'), 403);
+  // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
+  if (!isOwnerOrAdminApp(a, user)) throw withStatus(new Error('Not permitted to edit this app'), 403);
   // Snapshot prior state before any mutation; skip version churn on no-op edits.
   const changed =
     (patch.designDecisions !== undefined && patch.designDecisions !== a.designDecisions) ||
@@ -970,7 +971,7 @@ export async function promoteApp(appId: string, user: CurrentUser): Promise<App>
   let next: Visibility;
   if (a.visibility === 'Personal') {
     if (!canPromote(user.role, 'Personal')) {
-      throw withStatus(new Error('Promoting to Shared requires a Builder or Administrator'), 403);
+      throw withStatus(new Error('Promoting to Shared requires a Domain admin or Administrator'), 403);
     }
     next = 'Shared';
   } else if (a.visibility === 'Shared') {

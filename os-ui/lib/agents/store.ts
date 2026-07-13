@@ -12,6 +12,7 @@ import {
 } from './system-schema.ts';
 import { canPromote, roleAtLeast } from '../core/session.ts';
 import { type TemplateKey, templateYaml } from './templates.ts';
+import { canManageArtifact } from '../governance/edit-scope.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
 
@@ -308,8 +309,8 @@ function canView(rec: SystemRecord, user: Principal): boolean {
 }
 
 function canEdit(rec: SystemRecord, user: Principal): boolean {
-  if (rec.owner === user.id) return true;
-  return user.role === 'admin' && user.domains.includes(rec.domain);
+  // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
+  return canManageArtifact(user, { owner: rec.owner, domain: rec.domain });
 }
 
 function requireView(systemId: string, user: Principal): SystemRecord {
@@ -493,7 +494,7 @@ export function promoteSystem(systemId: string, user: Principal): SystemRecord {
   const rec = requireEdit(systemId, user);
   if (rec.origin === 'forked') fail('An installed (forked) system cannot be re-published', 400);
   if (rec.visibility === 'Personal') {
-    if (!canPromote(user.role, 'Personal')) fail('Promoting to Shared requires a Builder or Admin', 403);
+    if (!canPromote(user.role, 'Personal')) fail('Promoting to Shared requires a Domain admin or Admin', 403);
     rec.visibility = 'Shared';
   } else if (rec.visibility === 'Shared') {
     if (!canPromote(user.role, 'Shared')) fail('Publishing to the Marketplace requires an Admin', 403);
@@ -522,9 +523,8 @@ export function demoteSystem(systemId: string, user: Principal): SystemRecord {
     if (user.role !== 'admin') fail('Revoking from the Marketplace requires an Admin', 403);
     rec.visibility = 'Shared';
   } else if (rec.visibility === 'Shared') {
-    const isOwner = rec.owner === user.id;
-    if (!isOwner && !roleAtLeast(user.role, 'builder')) {
-      fail('Unsharing requires the owner or an in-domain Builder/Admin', 403);
+    if (!canManageArtifact(user, { owner: rec.owner, domain: rec.domain })) {
+      fail('Unsharing requires the owner, an in-domain Domain admin, or an Admin', 403);
     }
     rec.visibility = 'Personal';
   } else {

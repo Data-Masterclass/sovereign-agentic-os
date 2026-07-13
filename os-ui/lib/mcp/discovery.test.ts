@@ -60,12 +60,12 @@ test('the discovery + connection tools are all registered on the overarching end
   ]) assert.ok(names.includes(n), `missing discovery tool ${n}`);
 });
 
-test('connections is a real MCP tab and promote_connection is Builder-gated', () => {
+test('connections is a real MCP tab and promote_connection is Domain-admin-gated', () => {
   const conn = toolsForTab('connections');
   const names = conn.map((t) => t.name);
   assert.ok(names.includes('create_connection') && names.includes('test_connection'));
   const promote = conn.find((t) => t.name === 'promote_connection');
-  assert.equal(promote?.minRole, 'builder', 'promote_connection is the Builder gate');
+  assert.equal(promote?.minRole, 'domain_admin', 'promote_connection now needs a Domain admin (rung-1 promotion)');
 });
 
 test('science_predict: runs AS THE CALLER (principal user:<id>), never the hardcoded sales-assistant', async () => {

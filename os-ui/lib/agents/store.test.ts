@@ -33,15 +33,18 @@ import {
 } from './store.ts';
 import type { Principal, LastBuild, ActivityMarker, LastRun } from './store.ts';
 
-const sara = { id: 'sara', domains: ['sales'], role: 'builder' as const };
+// sara is the sales domain owner/approver — a domain_admin, since APPROVING
+// Personal→Shared now requires domain_admin+ (a plain builder can no longer
+// promote). She owns the shared fixtures below and lifts them Personal→Shared.
+const sara = { id: 'sara', domains: ['sales'], role: 'domain_admin' as const };
 const amir = { id: 'amir', domains: ['sales'], role: 'creator' as const };
 const kenji = { id: 'kenji', domains: ['finance'], role: 'builder' as const };
 const admin = { id: 'arya', domains: ['sales'], role: 'admin' as const };
 const creator = { id: 'cara', domains: ['sales'], role: 'creator' as const };
 
 // Create is always Personal now — arrange Shared / Marketplace fixtures through
-// the governed promotion ladder. `owner` must be Builder+ to reach Shared; an
-// in-domain Admin lifts Shared → Marketplace.
+// the governed promotion ladder. `owner` must be Domain admin+ to reach Shared;
+// an in-domain Admin lifts Shared → Marketplace.
 function makeShared(owner: Principal, opts: { name: string; domain?: string }) {
   const s = createSystem(owner, opts);
   promoteSystem(s.id, owner);
@@ -228,22 +231,29 @@ test('SECURITY: create is always Personal — client cannot self-publish', () =>
   assert.ok(!listSystems(amir).domain.some((s) => s.id === sys.id));
 });
 
-test('SECURITY: a creator/participant cannot promote a system (Shared needs Builder+)', () => {
+test('SECURITY: a creator/participant cannot promote a system (Shared needs Domain admin+)', () => {
   __resetStore();
   const sys = createSystem(creator, { name: 'Mine', domain: 'sales' });
-  assert.throws(() => promoteSystem(sys.id, creator), /Builder or Admin/i);
+  assert.throws(() => promoteSystem(sys.id, creator), /Domain admin or Admin/i);
   assert.equal(getSystem(sys.id, creator).visibility, 'Personal');
 
   const pSys = createSystem(amir, { name: 'Also mine', domain: 'sales' });
-  assert.throws(() => promoteSystem(pSys.id, amir), /Builder or Admin/i);
+  assert.throws(() => promoteSystem(pSys.id, amir), /Domain admin or Admin/i);
 });
 
-test('SECURITY: Personal→Shared is Builder+; Shared→Marketplace is Admin-only', () => {
+test('SECURITY: Personal→Shared is Domain admin+; Shared→Marketplace is Admin-only', () => {
   __resetStore();
-  const sys = createSystem(sara, { name: 'Ladder', domain: 'sales' }); // sara = builder, owner
-  // Builder lifts Personal → Shared.
+  // A plain Builder OWNER may NOT lift their OWN Personal system → Shared
+  // (approving Personal→Shared now needs domain_admin+, not builder).
+  const builder: Principal = { id: 'bob', domains: ['sales'], role: 'builder' };
+  const bobSys = createSystem(builder, { name: 'Bob Desk', domain: 'sales' });
+  assert.throws(() => promoteSystem(bobSys.id, builder), /Domain admin or Admin/i);
+  assert.equal(getSystem(bobSys.id, builder).visibility, 'Personal');
+
+  const sys = createSystem(sara, { name: 'Ladder', domain: 'sales' }); // sara = domain_admin, owner
+  // Domain admin lifts Personal → Shared.
   assert.equal(promoteSystem(sys.id, sara).visibility, 'Shared');
-  // Builder may NOT lift Shared → Marketplace.
+  // Domain admin may NOT lift Shared → Marketplace (Admin-only).
   assert.throws(() => promoteSystem(sys.id, sara), /Admin/i);
   assert.equal(getSystem(sys.id, sara).visibility, 'Shared');
   // In-domain Admin may.
@@ -271,7 +281,7 @@ test('DEMOTE role gate: revoking Marketplace requires an Admin (builder → 403)
 test('DEMOTE fail-closed: a creator cannot unshare a Shared system they do not own', () => {
   __resetStore();
   const sys = makeShared(sara, { name: 'Team agent', domain: 'sales' }); // owned by sara (builder)
-  assert.throws(() => demoteSystem(sys.id, amir), /owner or an in-domain Builder/i); // amir = creator
+  assert.throws(() => demoteSystem(sys.id, amir), /owner|Domain admin|Admin/i); // amir = creator
   assert.equal(getSystem(sys.id, amir).visibility, 'Shared');
 });
 
@@ -320,8 +330,8 @@ test('CAPABILITY: an Agentic Leader in-domain builds+runs OWN systems, RUNS a Sh
   // Builds + runs their OWN system.
   const own = createSystem(amir, { name: 'Amir Desk', domain: 'sales' });
   assert.ok(getSystemForRun(own.id, amir));
-  // But the base role can never promote to Shared (needs Builder+).
-  assert.throws(() => promoteSystem(own.id, amir), /Builder or Admin/i);
+  // But the base role can never promote to Shared (needs Domain admin+).
+  assert.throws(() => promoteSystem(own.id, amir), /Domain admin or Admin/i);
 });
 
 test('RUN-SCOPE: owner + in-domain admin unchanged; a Personal system stays owner-only', () => {

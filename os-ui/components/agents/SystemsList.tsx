@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import { useApi } from '@/lib/useApi';
 import { useUser } from '@/lib/useUser';
+import { canManageArtifact } from '@/lib/governance/edit-scope';
 import NewSystemPanel from './NewSystemPanel';
 import { roleAtLeast } from '@/lib/core/session';
 import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/core/scopes';
@@ -62,9 +63,9 @@ export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }
     }
   };
 
-  // A system is the caller's to manage when it's in the "Mine" group (owner) or
-  // the caller is an in-domain Admin (the server enforces this either way).
-  const canManage = (s: Summary) => !!user && (s.owner === user.id || (user.role === 'admin' && user.domains.includes(s.domain)));
+  // A system is the caller's to manage when they are the owner, an in-domain
+  // domain_admin, or an admin (the server enforces this either way).
+  const canManage = (s: Summary) => !!user && canManageArtifact(user, { owner: s.owner, domain: s.domain });
 
   const card = (s: Summary, kind: 'open' | 'install') => (
     <div className="card" key={s.id}>

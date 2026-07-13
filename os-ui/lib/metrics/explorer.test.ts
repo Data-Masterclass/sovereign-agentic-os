@@ -39,6 +39,21 @@ test('explorer builds a Cube query for the canonical member + slice', () => {
   assert.deepEqual(q.timeDimensions, [{ dimension: 'Sales.order_date', granularity: 'month' }]);
 });
 
+test('exploreSpec drops a slice on a non-view member (the PRIMARY KEY) — Cube can never 400', () => {
+  const d = goldSales();
+  // order_id is the PK: a cube dimension but NOT in the view → slicing on it would 400.
+  const spec = exploreSpec(d, measureFromForm(FORM), { dimensions: ['order_id', 'region'] });
+  const q = buildCubeQuery(spec);
+  assert.deepEqual(q.dimensions, ['Sales.region']); // PK scrubbed, real member kept
+});
+
+test('exploreSpec drops a non-member timeDimension (fail-soft)', () => {
+  const d = goldSales();
+  const spec = exploreSpec(d, measureFromForm(FORM), { timeDimension: 'order_id', granularity: 'month' });
+  assert.equal(spec.timeDimension, undefined);
+  assert.equal(spec.granularity, undefined);
+});
+
 test('R3 — two viewers see DIFFERENT rows on the same metric (Cube RLS via securityContext)', async () => {
   const d = goldSales();
   const spec = exploreSpec(d, measureFromForm(FORM), { dimensions: ['region'] });

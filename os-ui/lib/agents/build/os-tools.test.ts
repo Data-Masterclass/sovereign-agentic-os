@@ -31,6 +31,7 @@ function sysWith(tools: string[], runtime: 'langgraph' | 'hermes' = 'langgraph')
 
 const CREATOR: CurrentUser = { id: 'u1', name: 'Cara Creator', domains: ['sales'], role: 'creator' };
 const BUILDER: CurrentUser = { id: 'u2', name: 'Bo Builder', domains: ['sales'], role: 'builder' };
+const DOMAIN_ADMIN: CurrentUser = { id: 'u3', name: 'Dana Domain-Admin', domains: ['sales'], role: 'domain_admin' };
 
 /**
  * A deps bundle with spies. There is NO authorize spy: Gate 1b is now derived
@@ -128,10 +129,12 @@ test('grantedToolSpecs role-scopes and narrows to node tools', () => {
   const creatorSpecs = grantedToolSpecs(CREATOR, sys).map((s) => s.name);
   assert.ok(creatorSpecs.includes('query_data'));
   assert.ok(creatorSpecs.includes('search_knowledge'));
-  // approve_promotion is a builder-floor tool → a creator can't even SEE it.
+  // approve_promotion is now a domain_admin-floor tool (approving Personal→Shared
+  // needs domain_admin+) → neither a creator NOR a plain builder can SEE it.
   assert.ok(!creatorSpecs.includes('approve_promotion'));
-  // A builder sees it.
-  assert.ok(grantedToolSpecs(BUILDER, sys).map((s) => s.name).includes('approve_promotion'));
+  assert.ok(!grantedToolSpecs(BUILDER, sys).map((s) => s.name).includes('approve_promotion'));
+  // A domain_admin sees it.
+  assert.ok(grantedToolSpecs(DOMAIN_ADMIN, sys).map((s) => s.name).includes('approve_promotion'));
   // Node narrowing (alias-resolved) keeps the node's own tools + their discovery
   // companions (search_knowledge → list_knowledge).
   const narrowed = grantedToolSpecs(CREATOR, sys, ['retrieve']).map((s) => s.name);

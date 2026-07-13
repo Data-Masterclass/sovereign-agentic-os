@@ -181,7 +181,7 @@ test('promote Personal→Domain needs a Builder; an agent can NEVER self-promote
   assert.throws(() => promoteModel('test_model', agentActor('sales')), /agent cannot promote/i);
   assert.throws(
     () => promoteModel('test_model', { id: 'u', role: 'user', domains: ['sales'], isAgent: false }),
-    /Builder or Admin/i,
+    /Builder|Domain admin|Admin/i,
   );
   assert.equal(promoteModel('test_model', builder('sales')).tier, 'Domain');
 });
@@ -297,6 +297,16 @@ test('archive/delete reject agents and out-of-domain / non-owner non-admin actor
   upsertModel(personalModel()); // owner sara, domain sales
   assert.throws(() => setModelArchived('test_model', agentActor('sales'), true), /agent cannot/i);
   assert.throws(() => setModelArchived('test_model', admin('marketing'), true), /domain you belong to/i);
-  // a builder who is neither the owner (sara) nor an admin is edit-scoped out
-  assert.throws(() => setModelArchived('test_model', builder('sales'), true), /owner or a domain Admin/i);
+  // a builder who is neither the owner (sara) nor a domain_admin/admin is edit-scoped out
+  assert.throws(() => setModelArchived('test_model', builder('sales'), true), /owner|Domain admin|Admin/i);
+});
+
+test('archive/delete: a domain_admin of the owning domain MAY manage a non-owned model', () => {
+  _resetModels();
+  upsertModel(personalModel()); // owner sara, domain sales
+  const domainAdmin: Actor = { id: 'dana', role: 'domain_admin', domains: ['sales'], isAgent: false };
+  assert.equal(setModelArchived('test_model', domainAdmin, true).archived, true);
+  // a domain_admin of ANOTHER domain is out of scope.
+  const otherDomainAdmin: Actor = { id: 'omar', role: 'domain_admin', domains: ['ops'], isAgent: false };
+  assert.throws(() => setModelArchived('test_model', otherDomainAdmin, false), /domain you belong to/i);
 });

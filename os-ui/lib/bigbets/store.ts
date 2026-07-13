@@ -33,6 +33,7 @@ import {
   roleAtLeast,
 } from './model.ts';
 import { resolveArtifact, sourceFor } from './sources.ts';
+import { canManageArtifact } from '../governance/edit-scope.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
 
@@ -164,7 +165,8 @@ export function canView(bet: BigBet, user: Principal): boolean {
 export function canEdit(bet: BigBet, user: Principal): boolean {
   if (user.role === 'admin') return true;
   if (bet.crossDomain) return false; // cross-domain edits are Admin-only
-  return bet.owner === user.id;
+  // Fail-closed edit-scope: owner, or domain_admin of the owning domain.
+  return canManageArtifact(user, { owner: bet.owner, domain: bet.domain });
 }
 
 /**

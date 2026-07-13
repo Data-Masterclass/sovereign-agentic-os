@@ -69,7 +69,9 @@ export type SwimlaneLayout = {
 const LANE_ORDER: ActorType[] = ['Human', 'Software', 'Agent'];
 
 const BLOCK_W = 200;
-const BLOCK_H = 82;
+// Tall enough for a WRAPPED title (up to 3 lines) + the actor line + the meta line,
+// so long step titles are fully visible in the box (not clipped to one line).
+const BLOCK_H = 108;
 const GAP_Y = 44;
 const LANE_PAD_X = 16;
 const LANE_LABEL_H = 30;

@@ -80,10 +80,15 @@ export type EffectDeps = {
  *  `assertHuman` guard in model-service enforces this; we set isAgent:false). */
 function modelActor(approver: EffectApprover, fallbackRole: Principal['role'], domain: string): ModelActor {
   const p = approverPrincipal(approver, fallbackRole, domain);
-  // model-service's Actor role is a narrower 'user'|'builder'|'admin'; map the
-  // 4-rank session role onto it (domain_admin acts at builder rank for models —
-  // it may promote, and certification stays admin-only, so this is safe).
-  const role: ModelActor['role'] = p.role === 'admin' ? 'admin' : p.role === 'builder' || p.role === 'domain_admin' ? 'builder' : 'user';
+  // model-service's Actor role is 'user'|'builder'|'domain_admin'|'admin'; map the
+  // 4-rank session role onto it, PRESERVING domain_admin so the shared edit-scope
+  // rule can grant it manage rights on in-domain models (certification stays
+  // admin-only). Only the base creator collapses to the science 'user' rank.
+  const role: ModelActor['role'] =
+    p.role === 'admin' ? 'admin'
+    : p.role === 'domain_admin' ? 'domain_admin'
+    : p.role === 'builder' ? 'builder'
+    : 'user';
   return { id: p.id, role, domains: p.domains, isAgent: false };
 }
 

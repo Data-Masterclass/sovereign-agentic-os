@@ -46,8 +46,9 @@ export type ApprovalKind =
   | 'promote_certify';
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 
-/** Who must clear the item. Egress + tenant defaults are Admin-only. */
-export type ApproverRole = 'builder' | 'admin';
+/** Who must clear the item. Personal→Shared promotions need a domain_admin;
+ *  egress + tenant defaults are Admin-only; runtime write-approvals stay builder. */
+export type ApproverRole = 'builder' | 'domain_admin' | 'admin';
 /** Visibility/decision scope: own request, a domain, or the whole tenant. */
 export type ApprovalScope = 'own' | 'domain' | 'tenant';
 

@@ -16,6 +16,7 @@ import { canPromote, roleAtLeast } from '../core/session.ts';
 import type { Role } from '../core/session.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
+import { canManageArtifact } from '../governance/edit-scope.ts';
 
 export type { ArtifactVersion };
 
@@ -202,8 +203,9 @@ function canView(rec: WorkflowRecord, user: Principal): boolean {
 }
 
 function canEdit(rec: WorkflowRecord, user: Principal): boolean {
-  if (rec.owner === user.id) return true;
-  return roleAtLeast(user.role, 'builder') && user.domains.includes(rec.domain);
+  // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
+  // (Closes the gap where any in-domain Builder could mutate another's workflow.)
+  return canManageArtifact(user, { owner: rec.owner, domain: rec.domain });
 }
 
 function requireView(id: string, user: Principal): WorkflowRecord {
@@ -378,9 +380,11 @@ export function deleteWorkflow(id: string, user: Principal): void {
  */
 export function publishWorkflow(id: string, user: Principal): WorkflowRecord {
   if (!canPromote(user.role, 'Personal')) {
-    fail('Only builders and admins can publish workflows', 403);
+    fail('Only domain admins and admins can publish workflows', 403);
   }
-  const rec = requireEdit(id, user);
+  // The APPROVER authority is `canPromote` (above) — an approver need not be the
+  // artifact owner, so gate on VIEW here, not edit (which is owner/domain_admin-only).
+  const rec = requireView(id, user);
   if (rec.status === 'live') fail('Workflow is already published', 400);
 
   // Patch the frontmatter in the md to reflect the new state.
@@ -406,7 +410,8 @@ export function certifyWorkflow(id: string, user: Principal): WorkflowRecord {
   if (!canPromote(user.role, 'Shared')) {
     fail('Only admins can certify workflows to the marketplace', 403);
   }
-  const rec = requireEdit(id, user);
+  // Approver authority is the canPromote gate above — not artifact ownership.
+  const rec = requireView(id, user);
   if (rec.status !== 'live') fail('Workflow must be published before marketplace certification', 400);
   if (rec.visibility === 'Marketplace') fail('Workflow is already in the marketplace', 400);
 

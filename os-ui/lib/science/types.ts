@@ -100,7 +100,7 @@ export type CompiledPredictPolicy = {
 /** Who is acting on a lifecycle transition (promote / go-live / certify). */
 export type Actor = {
   id: string;
-  role: 'user' | 'builder' | 'admin';
+  role: 'user' | 'builder' | 'domain_admin' | 'admin';
   domains: string[];
   /** Hard invariant: an agent actor can NEVER certify, go-live, or self-promote. */
   isAgent: boolean;

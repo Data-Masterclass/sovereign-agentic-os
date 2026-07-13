@@ -22,7 +22,8 @@ import { __resetApprovals } from '@/lib/governance/approvals';
  */
 
 const creator: CurrentUser = { id: 'cara', name: 'Cara', domains: ['sales'], role: 'creator' };
-const builder: CurrentUser = { id: 'ben', name: 'Ben', domains: ['sales'], role: 'builder' };
+// Ben is a domain_admin: rung-1 Personal→Shared approval/publish now needs domain_admin+.
+const builder: CurrentUser = { id: 'ben', name: 'Ben', domains: ['sales'], role: 'domain_admin' };
 const admin: CurrentUser = { id: 'ada', name: 'Ada', domains: ['sales'], role: 'admin' };
 
 function resetAll(): void {
@@ -173,7 +174,7 @@ test('LOCKDOWN: a creator may create but is denied every promote/publish (typed 
   ] as const) {
     const e = errorOf(await call(creator, name, args as Record<string, unknown>));
     assert.equal(e.code, 'forbidden', `${name} must be a typed forbidden for a creator`);
-    assert.match(e.reason, /requires builder/i);
+    assert.match(e.reason, /requires (builder|domain_admin)/i);
     assert.ok(e.hint.length > 0);
   }
 });

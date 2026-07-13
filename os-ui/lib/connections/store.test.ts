@@ -19,11 +19,13 @@ const CONN_KEY = Symbol.for('soa.connections.cache');
 const user = { id: 'u1', name: 'U1', domains: ['sales'], role: 'admin' as const };
 const builder = { id: 'u2', name: 'U2', domains: ['sales'], role: 'builder' as const };
 const creator = { id: 'u3', name: 'U3', domains: ['sales'], role: 'creator' as const };
+// Promoting Personal→Shared now requires domain_admin+; `domainAdmin` is the in-domain approver.
+const domainAdmin = { id: 'u4', name: 'U4', domains: ['sales'], role: 'domain_admin' as const };
 
 async function certifiedConn(owner = builder) {
   const c = await createConnection(owner, { name: 'DB', template: 'database', endpoint: '', credential: 'pw' });
-  await promoteConnection(c.id, builder); // Personal → Shared
-  await promoteConnection(c.id, user);    // Shared → Certified (admin)
+  await promoteConnection(c.id, domainAdmin); // Personal → Shared (domain_admin gate)
+  await promoteConnection(c.id, user);        // Shared → Certified (admin)
   return c.id;
 }
 
@@ -45,8 +47,8 @@ test('DEMOTE role gate: revoking a Certified connection requires an Administrato
 test('DEMOTE fail-closed: a creator cannot unshare a Shared connection they do not own', async () => {
   __resetConnections();
   const c = await createConnection(builder, { name: 'Shared DB', template: 'database', endpoint: '', credential: 'pw' });
-  await promoteConnection(c.id, builder); // → Shared, owned by builder
-  await assert.rejects(() => demoteConnection(c.id, creator), /owner or an in-domain Builder/i);
+  await promoteConnection(c.id, domainAdmin); // → Shared, owned by builder
+  await assert.rejects(() => demoteConnection(c.id, creator), /owner|Domain admin|Administrator/i);
 });
 
 test('globalThis: soa.connections.cache — pinned Map survives across module calls', async () => {

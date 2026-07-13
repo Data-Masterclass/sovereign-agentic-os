@@ -5,6 +5,7 @@
 
 import { useState } from 'react';
 import { useUser } from '@/lib/useUser';
+import { canManageArtifact } from '@/lib/governance/edit-scope';
 import EmbedPanel from './EmbedPanel';
 import Reports from './Reports';
 import Govern from './Govern';
@@ -43,7 +44,7 @@ export default function DashboardDetail({
 }) {
   const [facet, setFacet] = useState<Facet>('view');
   const { user } = useUser();
-  const canManage = !!user && dashboard.owner === user.id;
+  const canManage = !!user && canManageArtifact(user, { owner: dashboard.owner, domain: dashboard.domain ?? '' });
 
   return (
     <ConfirmProvider>

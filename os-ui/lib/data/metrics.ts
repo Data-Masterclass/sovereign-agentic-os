@@ -109,6 +109,22 @@ function measureYaml(m: Measure, knownMembers: Set<string>): string {
   return out.join('\n');
 }
 
+/** The EXACT set of members the Cube VIEW exposes (its `includes` list): every
+ *  named measure + every gold dimension column EXCEPT the primary key. The PK is a
+ *  cube dimension (for joins/drill) but is deliberately NOT in the view, so a metric
+ *  slice on the PK would 400 ("not found for path <view>.<pk>"). Callers reconcile
+ *  slice dimensions against this set (drop non-members) — mirrors the security
+ *  scrub in lib/infra/governed.ts. Kept in lockstep with `scaffoldCubeYaml`. */
+export function viewMembers(d: Dataset): Set<string> {
+  const pk = primaryKeyColumn(d.columns);
+  const measureNames = new Set(d.measures.map((m) => m.name));
+  const dimCols = d.columns.filter((c) => c.name === pk || !measureNames.has(c.name));
+  return new Set<string>([
+    ...d.measures.map((m) => m.name),
+    ...dimCols.filter((c) => c.name !== pk).map((c) => c.name),
+  ]);
+}
+
 /** Build the Cube model YAML (cube + view) from the Gold columns + named measures —
  *  the file the Metric step would hand-write only the `measures:` block of. */
 export function scaffoldCubeYaml(d: Dataset): string {
@@ -130,7 +146,7 @@ export function scaffoldCubeYaml(d: Dataset): string {
   // against this set (never emit a reference to a column not in the mart, #91).
   const knownMembers = new Set<string>([...dimCols.map((c) => c.name), ...measureNames]);
   const measures = (d.measures.length ? d.measures : [{ name: 'count', type: 'count', sql: '' } as Measure]).map((m) => measureYaml(m, knownMembers));
-  const includes = [...d.measures.map((m) => m.name), ...dimCols.filter((c) => c.name !== pk).map((c) => c.name)];
+  const includes = [...viewMembers(d)]; // the view's member set (measures + non-pk dims)
   return [
     'cubes:',
     `  - name: ${cube}`,

@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { type Role, roleAtLeast } from '../core/session.ts';
+import { canManageArtifact } from '../governance/edit-scope.ts';
 import {
   type Dataset,
   type DataVisibility,
@@ -249,8 +250,8 @@ function canView(d: Dataset, user: Principal): boolean {
 }
 
 function canEdit(d: Dataset, user: Principal): boolean {
-  if (d.owner === user.id) return true;
-  return user.role === 'admin' && user.domains.includes(d.domain);
+  // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
+  return canManageArtifact(user, { owner: d.owner, domain: d.domain });
 }
 
 function viewOf(rec: DatasetRecord, user: Principal): Dataset {

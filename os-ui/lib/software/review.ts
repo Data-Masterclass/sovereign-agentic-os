@@ -279,7 +279,7 @@ export async function requestDeploy(
   app.deploy.reviewCardId = card.id;
   await persistApp(app);
 
-  // Surface in the Governance inbox so a Builder sees it alongside other holds.
+  // Surface in the Governance inbox so a Domain admin sees it alongside other holds.
   enqueue({
     kind: 'app_deploy',
     title: `Deploy review: ${app.name}`,
@@ -293,6 +293,7 @@ export async function requestDeploy(
     requestedBy: user.id,
     tool: 'request_deploy',
     payload: { appId: app.id, cardId: card.id },
+    approverRole: 'domain_admin',
   });
 
   void trace({

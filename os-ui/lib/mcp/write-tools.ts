@@ -717,7 +717,7 @@ export const knowledgeWriteTools: McpTool[] = [
   {
     name: 'publish_knowledge',
     tab: 'knowledge',
-    minRole: 'builder',
+    minRole: 'domain_admin',
     description:
       'Publish a draft workflow Personal → Shared (draft→live) and re-index it for retrieval. Builder+ only (the creator lockdown). This is the compat "approve half" of the ladder: the flip runs THROUGH the governance effect seam (no direct publish back door). Idempotency: publishing an already-live workflow returns a `conflict`.',
     inputSchema: {
@@ -922,12 +922,13 @@ export const promotionTools: McpTool[] = [
         const approval = enqueue({
           kind: 'dataset_promote',
           title: `Promote “${req.datasetName}” to a data asset`,
-          detail: `${user.id} requests promoting ${req.datasetName} into ${req.target} (visibility: ${req.visibility}). A domain Builder must approve.`,
+          detail: `${user.id} requests promoting ${req.datasetName} into ${req.target} (visibility: ${req.visibility}). A domain admin must approve.`,
           agent: user.id,
           domain: req.domain,
           requestedBy: user.id,
           tool: 'data_promote',
           payload: req as unknown as Record<string, unknown>,
+          approverRole: 'domain_admin',
         });
         return pendingHandle(approval, { artifactKind: kind, target: req.target, domain: req.domain });
       }
@@ -935,12 +936,13 @@ export const promotionTools: McpTool[] = [
       const approval = enqueue({
         kind: 'file_promote',
         title: `Share “${req.fileName}” with the ${req.domain} domain`,
-        detail: `${user.id} requests promoting ${req.fileName} into ${req.target} (visibility: ${req.visibility}). A domain Builder must approve.`,
+        detail: `${user.id} requests promoting ${req.fileName} into ${req.target} (visibility: ${req.visibility}). A domain admin must approve.`,
         agent: user.id,
         domain: req.domain,
         requestedBy: user.id,
         tool: 'file_promote',
         payload: req as unknown as Record<string, unknown>,
+        approverRole: 'domain_admin',
       });
       return pendingHandle(approval, { artifactKind: kind, target: req.target, domain: req.domain });
     },
@@ -949,9 +951,9 @@ export const promotionTools: McpTool[] = [
     name: 'approve_promotion',
     tab: 'data',
     extraTabs: ['files'],
-    minRole: 'builder',
+    minRole: 'domain_admin',
     description:
-      'APPLY a filed promotion request (dataset or file) — the Builder/Admin half of the split. Path: the approve step of the Data/Files golden paths. Before: a creator filed `request_promotion`. Governance: Builder+ AND in the asset’s domain (both re-checked in-lib); a creator is refused with a typed forbidden. Idempotency: an already-decided request returns a `conflict`.',
+      'APPLY a filed promotion request (dataset or file) — the Domain-admin/Admin half of the split. Path: the approve step of the Data/Files golden paths. Before: a creator filed `request_promotion`. Governance: domain_admin+ AND in the asset’s domain (both re-checked in-lib); a creator/builder is refused with a typed forbidden. Idempotency: an already-decided request returns a `conflict`.',
     inputSchema: {
       type: 'object',
       properties: { approvalId: { type: 'string', description: 'The approval id from request_promotion.' } },

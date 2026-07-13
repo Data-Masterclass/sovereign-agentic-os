@@ -25,6 +25,8 @@ import {
 
 const participant = { id: 'amir', domains: ['sales'], role: 'creator' as const };
 const builder = { id: 'bea', domains: ['sales'], role: 'builder' as const };
+// Promoting Personal→Shared now requires domain_admin+; `dom` is the in-domain approver.
+const dom = { id: 'dana', domains: ['sales'], role: 'domain_admin' as const };
 const admin = { id: 'sara', domains: ['sales', 'finance'], role: 'admin' as const };
 const outsider = { id: 'kenji', domains: ['finance'], role: 'builder' as const };
 
@@ -46,7 +48,7 @@ test('a created draft appears under Mine for its owner', () => {
 test('a published workflow is visible to its domain', () => {
   __resetStore();
   const rec = createWorkflow(builder, { title: 'Customer Onboarding', domain: 'sales' });
-  publishWorkflow(rec.id, builder);
+  publishWorkflow(rec.id, dom);
   const groups = listWorkflows(builder);
   const all = [...groups.mine, ...groups.domain, ...groups.marketplace];
   assert.ok(all.some((w) => w.title === 'Customer Onboarding'), 'Customer Onboarding should be visible');
@@ -55,7 +57,7 @@ test('a published workflow is visible to its domain', () => {
 test('own Shared (published) workflow groups under Domain, not Mine', () => {
   __resetStore();
   const rec = createWorkflow(builder, { title: 'Refund Handling', domain: 'sales' });
-  publishWorkflow(rec.id, builder); // Personal draft → Shared live
+  publishWorkflow(rec.id, dom); // Personal draft → Shared live
   const groups = listWorkflows(builder);
   assert.ok(groups.domain.some((w) => w.id === rec.id), 'own Shared workflow belongs under Domain');
   assert.ok(!groups.mine.some((w) => w.id === rec.id), 'own Shared workflow is NOT under Mine');
@@ -115,28 +117,34 @@ test('participant CANNOT publish (publish gate)', () => {
   assert.throws(() => publishWorkflow(draft.id, participant), /builder|admin/i);
 });
 
-test('builder CAN publish: draft → live (Personal → Shared)', () => {
+test('a plain builder can NO LONGER publish (Personal→Shared needs domain_admin)', () => {
+  __resetStore();
+  const rec = createWorkflow(builder, { title: 'Builder Blocked', domain: 'sales' });
+  assert.throws(() => publishWorkflow(rec.id, builder), /domain admin/i);
+});
+
+test('domain_admin CAN publish: draft → live (Personal → Shared)', () => {
   __resetStore();
   const rec = createWorkflow(builder, { title: 'To Publish', domain: 'sales' });
   assert.equal(rec.status, 'draft');
-  const published = publishWorkflow(rec.id, builder);
+  const published = publishWorkflow(rec.id, dom);
   assert.equal(published.status, 'live');
   assert.equal(published.visibility, 'Shared');
-  assert.ok(published.publishedBy === builder.id);
+  assert.ok(published.publishedBy === dom.id);
 });
 
 test('cannot publish an already-live workflow', () => {
   __resetStore();
   const rec = createWorkflow(builder, { title: 'Double-publish', domain: 'sales' });
-  publishWorkflow(rec.id, builder);
-  assert.throws(() => publishWorkflow(rec.id, builder), /already published/i);
+  publishWorkflow(rec.id, dom);
+  assert.throws(() => publishWorkflow(rec.id, dom), /already published/i);
 });
 
 test('only admin can certify to Marketplace', () => {
   __resetStore();
   const rec = createWorkflow(builder, { title: 'For Market', domain: 'sales' });
-  publishWorkflow(rec.id, builder);
-  assert.throws(() => certifyWorkflow(rec.id, builder), /admin/i);
+  publishWorkflow(rec.id, dom);
+  assert.throws(() => certifyWorkflow(rec.id, dom), /admin/i);
   const certified = certifyWorkflow(rec.id, admin);
   assert.equal(certified.visibility, 'Marketplace');
 });
@@ -152,7 +160,7 @@ test('delete removes a draft', () => {
 test('cannot delete a live workflow', () => {
   __resetStore();
   const rec = createWorkflow(builder, { title: 'Published', domain: 'sales' });
-  publishWorkflow(rec.id, builder);
+  publishWorkflow(rec.id, dom);
   assert.throws(() => deleteWorkflow(rec.id, builder), /unpublish/i);
 });
 
@@ -305,7 +313,7 @@ test('archive / delete / restore obey edit authz (viewer is rejected 403)', () =
   __resetStore();
   // A published workflow is Shared → visible to same-domain participants.
   const rec = createWorkflow(builder, { title: 'Governed', domain: 'sales' });
-  publishWorkflow(rec.id, builder); // now Shared(live)
+  publishWorkflow(rec.id, dom); // now Shared(live)
   const view0 = getWorkflow(rec.id, builder);
   updateWorkflow(rec.id, builder, { md: view0.md + '\n<!-- e -->', sha: view0.sha });
 

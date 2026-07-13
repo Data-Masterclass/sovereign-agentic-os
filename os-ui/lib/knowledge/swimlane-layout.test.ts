@@ -117,6 +117,9 @@ actor: Human
   assert.equal(block.title, longTitle);
   // Box must be wide enough to be rendered (BLOCK_W >= 200).
   assert.ok(block.w >= 200, `box width ${block.w} should be >= 200 to fit titles`);
+  // Box must be TALL enough for a wrapped (up to 3-line) title + actor + meta lines,
+  // so a long title is fully visible and not clipped to one line.
+  assert.ok(block.h >= 100, `box height ${block.h} should be tall enough for a wrapped title`);
 });
 
 test('empty workflow falls back to a single Human lane', () => {

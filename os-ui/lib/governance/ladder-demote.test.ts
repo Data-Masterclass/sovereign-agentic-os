@@ -20,6 +20,8 @@ import type { CurrentUser } from '../core/auth.ts';
 
 const admin: CurrentUser = { id: 'arya', name: 'Arya', domains: ['sales'], role: 'admin' };
 const builder: CurrentUser = { id: 'sara', name: 'Sara', domains: ['sales'], role: 'builder' };
+// Promoting Personal→Shared now requires domain_admin+; `domainAdmin` is the in-domain approver.
+const domainAdmin: CurrentUser = { id: 'dana', name: 'Dana', domains: ['sales'], role: 'domain_admin' };
 const creator: CurrentUser = { id: 'cara', name: 'Cara', domains: ['sales'], role: 'creator' };
 
 beforeEach(() => {
@@ -71,7 +73,7 @@ test('SEAM intent guard: asking to unshare a Certified artifact is refused (no s
 
 test('SEAM: every demote emits exactly one audit entry naming the revoke rung', async () => {
   const a = await createArtifact(builder, { type: 'knowledge', name: 'Runbook', domain: 'sales' });
-  await promoteArtifact(a.id, builder); // → Shared (owned by builder)
+  await promoteArtifact(a.id, domainAdmin); // → Shared (owned by builder)
   __resetAudit();
   await demoteThroughSeam('artifact', a.id, builder); // Shared → Personal
   const entries = auditSearch({ q: 'revoke sharing' });

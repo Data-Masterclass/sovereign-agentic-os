@@ -11,6 +11,7 @@ import {
 } from '@/lib/core/artifact-model';
 import { canPromote } from '@/lib/core/session';
 import { roleRank } from '@/lib/governance/roles';
+import { canManageArtifact } from '@/lib/governance/edit-scope';
 import type { CurrentUser } from '@/lib/core/auth';
 import { osMirror } from '@/lib/infra/os-mirror';
 import { type ArtifactVersion, versionLog } from '@/lib/core/versioning';
@@ -276,9 +277,8 @@ export async function demoteArtifact(artId: string, user: CurrentUser): Promise<
     if (user.role !== 'admin') throw withStatus(new Error('Revoking from the Marketplace requires an admin'), 403);
     a.visibility = 'Shared';
   } else if (a.visibility === 'Shared') {
-    const isOwner = a.owner === user.id;
-    if (!isOwner && roleRank(user.role) < roleRank('builder')) {
-      throw withStatus(new Error('Unsharing requires the owner or an in-domain builder/admin'), 403);
+    if (!canManageArtifact(user, { owner: a.owner, domain: a.domain })) {
+      throw withStatus(new Error('Unsharing requires the owner, an in-domain domain admin, or an admin'), 403);
     }
     a.visibility = 'Personal';
   } else throw withStatus(new Error('Already Personal — nothing to revoke'), 400);
@@ -331,9 +331,7 @@ export async function updateArtifact(
   const map = await getCache();
   const a = map.get(artId);
   if (!a) throw withStatus(new Error('Artifact not found'), 404);
-  const isOwner = a.owner === user.id;
-  const isDomainAdmin = user.role === 'admin' && user.domains.includes(a.domain);
-  if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to edit this artifact'), 403);
+  if (!canManageArtifact(user, { owner: a.owner, domain: a.domain })) throw withStatus(new Error('Not permitted to edit this artifact'), 403);
   // Snapshot the PRIOR editable state before overwriting it, so the edit is
   // restorable from the version history.
   versions.record(a.id, user.id, snapshotState(a), 'edit');
@@ -352,9 +350,7 @@ export async function archiveArtifact(artId: string, user: CurrentUser, archived
   const map = await getCache();
   const a = map.get(artId);
   if (!a) throw withStatus(new Error('Artifact not found'), 404);
-  const isOwner = a.owner === user.id;
-  const isDomainAdmin = user.role === 'admin' && user.domains.includes(a.domain);
-  if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to archive this artifact'), 403);
+  if (!canManageArtifact(user, { owner: a.owner, domain: a.domain })) throw withStatus(new Error('Not permitted to archive this artifact'), 403);
   a.archived = archived;
   a.updatedAt = now();
   map.set(a.id, a);
@@ -380,9 +376,7 @@ export async function restoreArtifactVersion(artId: string, user: CurrentUser, v
   const map = await getCache();
   const a = map.get(artId);
   if (!a) throw withStatus(new Error('Artifact not found'), 404);
-  const isOwner = a.owner === user.id;
-  const isDomainAdmin = user.role === 'admin' && user.domains.includes(a.domain);
-  if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to edit this artifact'), 403);
+  if (!canManageArtifact(user, { owner: a.owner, domain: a.domain })) throw withStatus(new Error('Not permitted to edit this artifact'), 403);
   const snap = versions.get(artId, version);
   if (!snap) throw withStatus(new Error(`Version ${version} not found`), 404);
   const restored = snap.state as ArtifactSnapshot;
@@ -401,9 +395,7 @@ export async function deleteArtifact(artId: string, user: CurrentUser): Promise<
   const map = await getCache();
   const a = map.get(artId);
   if (!a) return;
-  const isOwner = a.owner === user.id;
-  const isDomainAdmin = user.role === 'admin' && user.domains.includes(a.domain);
-  if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to delete this artifact'), 403);
+  if (!canManageArtifact(user, { owner: a.owner, domain: a.domain })) throw withStatus(new Error('Not permitted to delete this artifact'), 403);
   map.delete(artId);
   deleteThrough(artId);
   versions.purge(artId);

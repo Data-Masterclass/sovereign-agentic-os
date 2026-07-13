@@ -7,6 +7,7 @@ import { roleAtLeast } from '../core/session.ts';
 import type { Role } from '../core/session.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
+import { canManageArtifact } from '../governance/edit-scope.ts';
 
 /**
  * PERSONAL general-knowledge store — the "My knowledge" layer of the Knowledge
@@ -131,8 +132,9 @@ function canView(rec: PersonalKnowledgeRecord, user: Principal): boolean {
 }
 
 function canEdit(rec: PersonalKnowledgeRecord, user: Principal): boolean {
-  if (rec.owner === user.id) return true;
-  return roleAtLeast(user.role, 'builder') && user.domains.includes(rec.domain);
+  // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
+  // (Closes the gap where any in-domain Builder could mutate/unshare another's entry.)
+  return canManageArtifact(user, { owner: rec.owner, domain: rec.domain });
 }
 
 function requireView(id: string, user: Principal): PersonalKnowledgeRecord {
@@ -282,10 +284,11 @@ export function restorePersonalKnowledgeVersion(id: string, user: Principal, ver
 // (owner files request_promotion → Builder approves → Admin certifies). The role
 // gate here is a defence-in-depth backstop; the seam is the primary gate.
 
-/** Personal → Shared. Builder+ only (the effect seam already enforced SoD). */
+/** Personal → Shared. Domain admin+ only (the effect seam already enforced SoD). */
 export function promotePersonalKnowledge(id: string, user: Principal): PersonalKnowledgeRecord {
-  if (!roleAtLeast(user.role, 'builder')) fail('Only builders and admins can promote knowledge', 403);
-  const rec = requireEdit(id, user);
+  if (!roleAtLeast(user.role, 'domain_admin')) fail('Only domain admins and admins can promote knowledge', 403);
+  // Approver authority is the role gate above — approvers need not own the entry.
+  const rec = requireView(id, user);
   if (rec.visibility !== 'Personal') fail('This knowledge is already promoted', 409);
   rec.visibility = 'Shared';
   rec.updatedAt = now();
@@ -296,7 +299,7 @@ export function promotePersonalKnowledge(id: string, user: Principal): PersonalK
 /** Shared → Marketplace. Admin only. */
 export function certifyPersonalKnowledge(id: string, user: Principal): PersonalKnowledgeRecord {
   if (!roleAtLeast(user.role, 'admin')) fail('Only admins can certify knowledge to the marketplace', 403);
-  const rec = requireEdit(id, user);
+  const rec = requireView(id, user);
   if (rec.visibility === 'Marketplace') fail('This knowledge is already certified', 409);
   if (rec.visibility !== 'Shared') fail('Promote this knowledge to the domain before certifying', 409);
   rec.visibility = 'Marketplace';
@@ -308,7 +311,7 @@ export function certifyPersonalKnowledge(id: string, user: Principal): PersonalK
 /** Marketplace → Shared. Admin only (only an admin certified it). */
 export function decertifyPersonalKnowledge(id: string, user: Principal): PersonalKnowledgeRecord {
   if (!roleAtLeast(user.role, 'admin')) fail('Only admins can revoke knowledge from the marketplace', 403);
-  const rec = requireEdit(id, user);
+  const rec = requireView(id, user);
   if (rec.visibility !== 'Marketplace') fail('This knowledge is not certified', 409);
   rec.visibility = 'Shared';
   rec.updatedAt = now();

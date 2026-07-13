@@ -6,7 +6,8 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { CAPABILITY_MODES, type CapabilityMode, type ConnectionTemplateKey } from '@/lib/connections/schema';
-import { roleAtLeast, type Role } from '@/lib/core/session';
+import { type Role } from '@/lib/core/session';
+import { canManageArtifact } from '@/lib/governance/edit-scope';
 import { SCOPE_GROUPS, groupByScope, groupsFromVisibility, scopeCounts, type ScopeKey } from '@/lib/core/scopes';
 import { providerForTemplate, providerConfig, type OAuthProvider } from '@/lib/oauth/providers';
 import { driveConnectionStatus, driveAuthorizePath } from '@/lib/oauth/drive-status';
@@ -76,7 +77,7 @@ type Template = {
 };
 type OAuthProviderStatus = { provider: OAuthProvider; label: string; configured: boolean };
 type Data = {
-  user: { id: string; role: Role };
+  user: { id: string; role: Role; domains: string[] };
   connections: Conn[];
   templates: Template[];
   canCreate: boolean;
@@ -261,6 +262,7 @@ export default function GovernedConnections() {
                   key={c.id}
                   c={c}
                   role={data.user.role}
+                  me={data.user}
                   oauthProviders={data.oauthProviders ?? []}
                   open={open === c.id}
                   onToggle={() => setOpen(open === c.id ? '' : c.id)}
@@ -557,9 +559,9 @@ const connVisibility = (v: Conn['visibility']): Visibility =>
   v === 'Shared' ? 'shared' : v === 'Certified' ? 'certified' : 'personal';
 
 function ConnectionCard({
-  c, role, oauthProviders, open, onToggle, onChange,
+  c, role, me, oauthProviders, open, onToggle, onChange,
 }: {
-  c: Conn; role: Role; oauthProviders: OAuthProviderStatus[]; open: boolean; onToggle: () => void; onChange: () => void;
+  c: Conn; role: Role; me: { id: string; role: Role; domains: string[] }; oauthProviders: OAuthProviderStatus[]; open: boolean; onToggle: () => void; onChange: () => void;
 }) {
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
@@ -580,7 +582,9 @@ function ConnectionCard({
   const [presetBusy, setPresetBusy] = useState(false);
   const [autonomousMsg, setAutonomousMsg] = useState('');
 
-  const canManage = roleAtLeast(role, 'builder');
+  // Fail-closed edit-scope (defense-in-depth; server is the authority): only the
+  // owner, a domain_admin of the owning domain, or an admin sees manage controls.
+  const canManage = canManageArtifact(me, { owner: c.owner, domain: c.domain });
   const exposed = c.tools.filter((t) => t.mode === 'Read' || t.mode === 'Write-approval' || t.mode === 'Write-bounded');
   const isDrive = c.connector === 'drive' || c.type === 'Drive';
 

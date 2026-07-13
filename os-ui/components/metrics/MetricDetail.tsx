@@ -9,6 +9,7 @@ import GovernMetric from './GovernMetric';
 import Alerts from './Alerts';
 import { type MetricGroups, type MetricSummary, TIER_BADGE, TIER_WORD } from './shared';
 import { useUser } from '@/lib/useUser';
+import { canManageArtifact } from '@/lib/governance/edit-scope';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import DomainTag from '@/components/DomainTag';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
@@ -42,9 +43,9 @@ export default function MetricDetail({
 }) {
   const [facet, setFacet] = useState<Facet>('explore');
   const { user } = useUser();
-  // Owner or an in-domain Admin manages the metric (the server re-checks either way —
-  // this only decides whether to surface the controls).
-  const canManage = !!user && (metric.owner === user.id || user.role === 'admin');
+  // Owner, an in-domain domain_admin, or an admin manages the metric (the server
+  // re-checks either way — this only decides whether to surface the controls).
+  const canManage = !!user && canManageArtifact(user, { owner: metric.owner, domain: metric.domain ?? '' });
   // After archive/delete, refresh the registry and drop back to the list (the metric may
   // be gone or hidden); the govern reload alone would leave a stale open detail.
   const onLifecycle = () => { onGoverned(); onBack(); };

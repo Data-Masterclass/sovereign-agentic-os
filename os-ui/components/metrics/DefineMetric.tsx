@@ -192,6 +192,15 @@ export default function DefineMetric({ onDefined }: { onDefined: () => void }) {
     [columns],
   );
 
+  // The Cube VIEW only exposes its `includes` members (measures + non-PK dims):
+  // the PRIMARY KEY is a cube dimension but NOT in the view, so slicing on it 400s
+  // ("<pk> not found for path <view>.<pk>"). Mirror lib/data/metrics.ts viewMembers
+  // client-side: drop the PK (same rule: first `*_id`/`id` column, else first column).
+  const sliceMembers = useMemo(() => {
+    const pk = columns.find((c) => /(^|_)id$/.test(c.toLowerCase())) ?? columns[0];
+    return columns.filter((c) => c !== pk);
+  }, [columns]);
+
   const toggleDimension = (col: string) =>
     setForm((f) => ({
       ...f,
@@ -402,7 +411,7 @@ export default function DefineMetric({ onDefined }: { onDefined: () => void }) {
           </p>
         ) : (
           <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-            {columns.filter((c) => c !== form.column).map((c) => (
+            {sliceMembers.filter((c) => c !== form.column).map((c) => (
               <button key={c} type="button" className={`switch${form.dimensions.includes(c) ? ' on' : ''}`} onClick={() => toggleDimension(c)}>
                 <span className="switch-track"><span className="switch-thumb" /></span>
                 <span className="switch-text">{c}</span>

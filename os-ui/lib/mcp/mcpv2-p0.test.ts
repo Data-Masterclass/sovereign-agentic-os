@@ -28,7 +28,8 @@ import { __resetApprovals } from '@/lib/governance/approvals';
  */
 
 const cara: CurrentUser = { id: 'cara', name: 'Cara', domains: ['sales'], role: 'creator' }; // owner
-const ben: CurrentUser = { id: 'ben', name: 'Ben', domains: ['sales'], role: 'builder' }; // domain approver
+const ben: CurrentUser = { id: 'ben', name: 'Ben', domains: ['sales'], role: 'builder' }; // domain builder (can see, cannot approve rung-1)
+const dana: CurrentUser = { id: 'dana', name: 'Dana', domains: ['sales'], role: 'domain_admin' }; // rung-1 promotion approver
 const ada: CurrentUser = { id: 'ada', name: 'Ada', domains: ['sales'], role: 'admin' }; // platform admin
 const dan: CurrentUser = { id: 'dan', name: 'Dan', domains: ['ops'], role: 'creator' }; // foreign domain
 const bob: CurrentUser = { id: 'bob', name: 'Bob', domains: ['ops'], role: 'builder' }; // foreign builder
@@ -105,9 +106,12 @@ test('P0.2 get_request / list_approvals are canSee-scoped; no existence leak', a
   assert.equal(gotOwner.requestId, filed.requestId);
   assert.equal(gotOwner.mayApprove, false, 'a creator can never approve');
 
-  // A domain builder sees it AND may approve.
+  // A domain builder SEES it but (rung-1 promotion) may NOT approve — that now needs a domain_admin.
   const gotBuilder = await call<{ mayApprove: boolean }>(ben, 'get_request', { requestId: filed.requestId });
-  assert.equal(gotBuilder.mayApprove, true, 'a domain builder may approve a domain promotion');
+  assert.equal(gotBuilder.mayApprove, false, 'a plain builder cannot approve a rung-1 promotion');
+  // A domain_admin sees it AND may approve.
+  const gotDomainAdmin = await call<{ mayApprove: boolean }>(dana, 'get_request', { requestId: filed.requestId });
+  assert.equal(gotDomainAdmin.mayApprove, true, 'a domain_admin may approve a domain promotion');
 
   // A foreign-domain user cannot see it → not_found (indistinguishable from denied).
   const eDan = err(await raw(dan, 'get_request', { requestId: filed.requestId }));
@@ -121,14 +125,14 @@ test('P0.2 get_request / list_approvals are canSee-scoped; no existence leak', a
 });
 
 // ============================ 3. LADDER — TWO-STEP PER KIND ====================
-test('P0.3 knowledge ladder: creator files → builder approves → LIVE Shared (effect ran)', async () => {
+test('P0.3 knowledge ladder: creator files → domain_admin approves → LIVE Shared (effect ran)', async () => {
   resetAll();
   const wf = await call<{ id: string }>(cara, 'author_knowledge', { title: 'Refund handling' });
   const filed = await call<Pending>(cara, 'request_promotion', { kind: 'knowledge', id: wf.id });
   assert.equal(filed.status, 'pending');
 
-  // The approval IS the action: builder approves → the workflow is physically published.
-  const decided = await call<{ decided: string; effect: { live: boolean; ok: boolean } }>(ben, 'decide_approval', { requestId: filed.requestId, decision: 'approve' });
+  // The approval IS the action: a domain_admin approves → the workflow is physically published.
+  const decided = await call<{ decided: string; effect: { live: boolean; ok: boolean } }>(dana, 'decide_approval', { requestId: filed.requestId, decision: 'approve' });
   assert.equal(decided.decided, 'approved');
   assert.equal(decided.effect.ok, true);
   assert.equal(decided.effect.live, true, 'the ladder effect is LIVE (not a stub)');
@@ -168,7 +172,7 @@ test('P0.3 certification rung: builder-in-domain files → ADMIN approves; build
   // Promote to Shared first (rung 1).
   const wf = await call<{ id: string }>(cara, 'author_knowledge', { title: 'Certify me' });
   const p = await call<Pending>(cara, 'request_promotion', { kind: 'knowledge', id: wf.id });
-  await call(ben, 'decide_approval', { requestId: p.requestId, decision: 'approve' });
+  await call(dana, 'decide_approval', { requestId: p.requestId, decision: 'approve' });
 
   // Rung 2: a domain BUILDER files certification (the domain vouches) — owner not required.
   const cert = await call<Pending>(ben, 'request_certification', { kind: 'knowledge', id: wf.id });
@@ -314,22 +318,22 @@ test('FIX1 agent_system rides the ladder: creator files → the admin (edit righ
 
 // HIGH 2: a builder cannot publish a creator's PRIVATE knowledge draft (owner-only
 // trigger) — knowledge canEdit would otherwise let them, so the seam must guard it.
-test('FIX2 owner-only one-shot: a builder cannot publish a creator’s PRIVATE draft without a filing', async () => {
+test('FIX2 owner-only one-shot: a domain_admin cannot publish a creator’s PRIVATE draft without a filing', async () => {
   resetAll();
   const wf = await call<{ id: string }>(cara, 'author_knowledge', { title: 'Cara private' });
 
-  // ben is a builder in sales (canEdit cara's draft) — but not the owner and no
-  // request has been filed → publish_knowledge is a typed forbidden.
-  const e = err(await raw(ben, 'publish_knowledge', { workflowId: wf.id }));
+  // dana is a domain_admin in sales (canEdit cara's draft, passes the publish role floor)
+  // — but not the owner and no request has been filed → publish_knowledge is a typed forbidden.
+  const e = err(await raw(dana, 'publish_knowledge', { workflowId: wf.id }));
   assert.equal(e.code, 'forbidden');
   assert.match(e.reason, /owner/i);
   // The draft is untouched — still Personal.
   const seen = await call<{ workflow: { visibility: string } }>(cara, 'get_knowledge', { workflowId: wf.id });
   assert.equal(seen.workflow.visibility, 'Personal');
 
-  // Once the OWNER files, the builder’s publish_knowledge becomes the legit approve-half.
+  // Once the OWNER files, the domain_admin’s publish_knowledge becomes the legit approve-half.
   const filed = await call<Pending>(cara, 'request_promotion', { kind: 'knowledge', id: wf.id });
-  const pub = await call<{ visibility: string }>(ben, 'publish_knowledge', { workflowId: wf.id });
+  const pub = await call<{ visibility: string }>(dana, 'publish_knowledge', { workflowId: wf.id });
   assert.equal(pub.visibility, 'Shared');
   // The filed request is closed out (no lingering pending duplicate).
   const after = await call<{ status: string }>(cara, 'get_request', { requestId: filed.requestId });
@@ -339,15 +343,15 @@ test('FIX2 owner-only one-shot: a builder cannot publish a creator’s PRIVATE d
 // HIGH 5: the tier-derived rung can never diverge from the caller's stated intent.
 test('FIX5 rung intent: publish_knowledge on an already-Shared workflow is a CONFLICT, never a silent certify', async () => {
   resetAll();
-  // ben owns + publishes his own draft → Shared.
-  const wf = await call<{ id: string }>(ben, 'author_knowledge', { title: 'Ben flow' });
-  await call(ben, 'publish_knowledge', { workflowId: wf.id });
+  // dana (domain_admin) owns + publishes her own draft → Shared.
+  const wf = await call<{ id: string }>(dana, 'author_knowledge', { title: 'Dana flow' });
+  await call(dana, 'publish_knowledge', { workflowId: wf.id });
 
   // A second publish_knowledge (intent=promote) on a Shared workflow must NOT silently
   // certify it to the marketplace — it is a typed conflict.
-  const e = err(await raw(ben, 'publish_knowledge', { workflowId: wf.id }));
+  const e = err(await raw(dana, 'publish_knowledge', { workflowId: wf.id }));
   assert.equal(e.code, 'conflict');
-  const seen = await call<{ workflow: { visibility: string } }>(ben, 'get_knowledge', { workflowId: wf.id });
+  const seen = await call<{ workflow: { visibility: string } }>(dana, 'get_knowledge', { workflowId: wf.id });
   assert.notEqual(seen.workflow.visibility, 'Marketplace', 'a promote-intent call never jumps to the marketplace');
 });
 

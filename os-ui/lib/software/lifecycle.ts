@@ -18,6 +18,7 @@ import { generateAndCompile } from './auto-mcp.ts';
 import { stopApp as stopRunner, deleteApp as deleteRunner } from './runner.ts';
 import type { ConsumedResource } from './model.ts';
 import { roleAtLeast } from '@/lib/core/session';
+import { canManageArtifact } from '@/lib/governance/edit-scope';
 import type { Visibility } from '@/lib/core/artifact-model';
 import { getArtifact, demoteArtifact } from '@/lib/core/artifacts';
 
@@ -37,7 +38,8 @@ import { getArtifact, demoteArtifact } from '@/lib/core/artifacts';
  */
 
 function isOwnerOrAdmin(app: App, user: CurrentUser): boolean {
-  return app.owner === user.id || (user.role === 'admin' && user.domains.includes(app.domain));
+  // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
+  return canManageArtifact(user, { owner: app.owner, domain: app.domain });
 }
 
 // --------------------------------------------------------------- Archive -------
@@ -180,9 +182,8 @@ export async function demoteApp(appId: string, user: CurrentUser): Promise<App> 
     if (user.role !== 'admin') throw withStatus(new Error('Revoking from the Marketplace requires an Administrator'), 403);
     next = 'Shared';
   } else if (app.visibility === 'Shared') {
-    const isOwner = app.owner === user.id;
-    if (!isOwner && !roleAtLeast(user.role, 'builder')) {
-      throw withStatus(new Error('Unsharing requires the owner or an in-domain Builder/Administrator'), 403);
+    if (!canManageArtifact(user, { owner: app.owner, domain: app.domain })) {
+      throw withStatus(new Error('Unsharing requires the owner, an in-domain Domain admin, or an Administrator'), 403);
     }
     next = 'Personal';
   } else {

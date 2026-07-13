@@ -28,7 +28,8 @@ import { __resetAppsCache } from '@/lib/software/apps';
  */
 
 const creator: CurrentUser = { id: 'cara', name: 'Cara', domains: ['sales'], role: 'creator' };
-const builder: CurrentUser = { id: 'ben', name: 'Ben', domains: ['sales'], role: 'builder' };
+// Ben is a domain_admin: rung-1 Personal→Shared approval (approve_promotion) now needs domain_admin+.
+const builder: CurrentUser = { id: 'ben', name: 'Ben', domains: ['sales'], role: 'domain_admin' };
 const outsider: CurrentUser = { id: 'dan', name: 'Dan', domains: ['ops'], role: 'creator' };
 
 function resetAll(): void {

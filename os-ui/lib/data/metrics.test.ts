@@ -11,6 +11,7 @@ import {
   cubeViewName,
   goldMartFqn,
   metricGoldReady,
+  viewMembers,
   PROMOTE_FIRST_MESSAGE,
 } from './metrics.ts';
 import { emptyVersions, type Dataset } from './dataset-schema.ts';
@@ -129,4 +130,28 @@ test('#91 dim reconciliation: an all-unknown drill_members list emits NO drill_m
     measures: [{ name: 'revenue', type: 'sum', sql: 'net_amount', drillMembers: ['nope', 'gone'] }],
   }));
   assert.doesNotMatch(y, /drill_members:/);
+});
+
+test('viewMembers = the Cube VIEW includes set: measures + non-PK dims, PK EXCLUDED', () => {
+  const members = viewMembers(gold());
+  // measures + non-pk dimension columns are members…
+  assert.deepEqual([...members].sort(), ['net_amount', 'order_date', 'region', 'revenue']);
+  // …the PRIMARY KEY (order_id) is a cube dimension but NOT a view member (the 400 fix).
+  assert.equal(members.has('order_id'), false);
+  // viewMembers stays in lockstep with the YAML `includes` list.
+  const yaml = scaffoldCubeYaml(gold());
+  assert.match(yaml, /includes: \[revenue, order_date, region, net_amount\]/);
+});
+
+test('viewMembers matches a PK named like the dataset (e.g. campaign_id) — the reported 400', () => {
+  const members = viewMembers(gold({
+    columns: [
+      { name: 'campaign_id', description: 'PK.' },
+      { name: 'clicks', description: 'n.' },
+    ],
+    measures: [{ name: 'total_clicks', type: 'sum', sql: 'clicks' }],
+  }));
+  assert.equal(members.has('campaign_id'), false); // PK excluded → picker/explorer drop it
+  assert.equal(members.has('clicks'), true);
+  assert.equal(members.has('total_clicks'), true);
 });

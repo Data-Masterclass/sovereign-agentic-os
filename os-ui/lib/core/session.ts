@@ -51,9 +51,11 @@ export type SessionClaims = {
   iat: number;
 };
 
-/** Promote gate: Personal→Shared needs builder+, Shared→Certified needs admin. */
+/** Promote gate: APPROVING Personal→Shared needs a domain_admin+, Shared→Certified
+ * needs an admin. (Filing a promotion REQUEST is open to any creator/builder — that
+ * request path is gated separately; this is the APPROVER authority.) */
 export function canPromote(role: Role, from: 'Personal' | 'Shared'): boolean {
-  if (from === 'Personal') return roleAtLeast(role, 'builder');
+  if (from === 'Personal') return roleAtLeast(role, 'domain_admin');
   return role === 'admin';
 }
 

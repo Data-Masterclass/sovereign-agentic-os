@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@/lib/useUser';
+import { canManageArtifact } from '@/lib/governance/edit-scope';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 import LineagePanel from './LineagePanel';
 import RefinePanel from './RefinePanel';
@@ -462,7 +463,7 @@ export default function DatasetDetail({
   const fqn = layer ? physicalFqn(dataset, layer) : null;
   const cubeReady = isCubeReady(dataset);
   const published = !!dataset.certification;
-  const canEdit = !!user && (user.id === dataset.owner || (user.role === 'admin' && user.domains?.includes(dataset.domain)));
+  const canEdit = !!user && canManageArtifact(user, { owner: dataset.owner, domain: dataset.domain });
   // Certification (asset → marketplace) is Admin-only; only an Admin certifies directly.
   const isAdmin = user?.role === 'admin';
 

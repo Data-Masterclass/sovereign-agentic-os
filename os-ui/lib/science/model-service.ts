@@ -16,6 +16,8 @@ import type {
   ModelTier,
   ServiceModel,
 } from '@/lib/science/types';
+// Pure edit-scope helper (type-only dep chain — safe under `node --test`).
+import { canManageArtifact } from '../governance/edit-scope.ts';
 
 /**
  * Model-as-service governance — the Opus spine of the Science golden path.
@@ -276,8 +278,8 @@ export function promoteModel(model: string, actor: Actor): ServiceModel {
   assertHuman(actor, 'promote a model');
   requireDomain(actor, m);
   if (m.tier !== 'Personal') throw withStatus(new Error(`model is already ${m.tier}; use certify for Marketplace`), 400);
-  if (actor.role !== 'builder' && actor.role !== 'admin') {
-    throw withStatus(new Error('Promoting to Domain requires a Builder or Admin'), 403);
+  if (actor.role === 'user') {
+    throw withStatus(new Error('Promoting to Domain requires a Builder, Domain admin, or Admin'), 403);
   }
   m.tier = 'Domain';
   store().set(m.model, m);
@@ -294,8 +296,8 @@ export function goLive(model: string, actor: Actor): ServiceModel {
   if (!m) throw withStatus(new Error(`unknown model ${model}`), 404);
   assertHuman(actor, 'approve go-live');
   requireDomain(actor, m);
-  if (actor.role !== 'builder' && actor.role !== 'admin') {
-    throw withStatus(new Error('Go-live to Production requires a Builder or Admin'), 403);
+  if (actor.role === 'user') {
+    throw withStatus(new Error('Go-live to Production requires a Builder, Domain admin, or Admin'), 403);
   }
   const staging = m.versions.find((v) => v.stage === 'Staging');
   if (staging) {
@@ -336,11 +338,15 @@ export function nextTier(t: ModelTier): ModelTier | null {
   return i >= 0 && i < ORDER.length - 1 ? ORDER[i + 1] : null;
 }
 
-/** Edit-scope for archive/delete: the owner, or an Admin of the owning domain. */
+/** Edit-scope for archive/delete: the owner, a domain_admin of the owning domain,
+ *  or a platform Admin — the ONE fail-closed rule shared with every other tab. */
 function requireEditScope(actor: Actor, m: ServiceModel, action: string): void {
   requireDomain(actor, m);
-  if (m.owner !== actor.id && actor.role !== 'admin') {
-    throw withStatus(new Error(`Only the owner or a domain Admin can ${action} this model`), 403);
+  // Map the science Actor role onto the session Role for the shared gate:
+  // 'user' has no manage rights (→ creator); builder/domain_admin/admin pass through.
+  const role = actor.role === 'user' ? 'creator' : actor.role;
+  if (!canManageArtifact({ id: actor.id, role, domains: actor.domains }, { owner: m.owner, domain: m.domain })) {
+    throw withStatus(new Error(`Only the owner, an in-domain Domain admin, or an Admin can ${action} this model`), 403);
   }
 }
 

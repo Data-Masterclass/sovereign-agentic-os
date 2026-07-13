@@ -83,11 +83,23 @@ test('archive soft-hides a dashboard; unarchive restores it; delete purges histo
   assert.equal(listDashboardVersions('dash_a', builder).length, 0);
 });
 
-test('archive / delete / restore obey owner authz (a non-owner is rejected 403)', () => {
+test('archive / delete / restore obey edit-scope (a non-owner without manage rights is rejected 403)', () => {
   saveDashboard(builder, 'dash_o', spec('Owned'));
   saveDashboard(builder, 'dash_o', spec('e'));
-  const intruder: Principal = { id: 'mallory', domains: ['sales'], role: 'admin' };
+  // A non-owner plain creator (no manage rights) is rejected.
+  const intruder: Principal = { id: 'mallory', domains: ['sales'], role: 'creator' };
   assert.throws(() => setDashboardArchived('dash_o', intruder, true), (e: { status?: number }) => e.status === 403);
   assert.throws(() => deleteDashboard('dash_o', intruder), (e: { status?: number }) => e.status === 403);
   assert.throws(() => restoreDashboardVersion('dash_o', intruder, 1), (e: { status?: number }) => e.status === 403);
+});
+
+test('archive obeys edit-scope: a domain_admin of the owning domain and an admin MAY manage a non-owned dashboard', () => {
+  saveDashboard(builder, 'dash_da', spec('Owned')); // owned by amir (creator) in sales
+  const domainAdmin: Principal = { id: 'dana', domains: ['sales'], role: 'domain_admin' };
+  const platformAdmin: Principal = { id: 'sara', domains: ['ops'], role: 'admin' };
+  assert.equal(setDashboardArchived('dash_da', domainAdmin, true).archived, true);
+  assert.equal(setDashboardArchived('dash_da', platformAdmin, false).archived, false);
+  // A domain_admin of ANOTHER domain is denied.
+  const otherDomainAdmin: Principal = { id: 'omar', domains: ['ops'], role: 'domain_admin' };
+  assert.throws(() => setDashboardArchived('dash_da', otherDomainAdmin, true), (e: { status?: number }) => e.status === 403);
 });

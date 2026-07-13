@@ -6,6 +6,7 @@ import { config } from '@/lib/core/config';
 import { osMirror } from '@/lib/infra/os-mirror';
 import type { CurrentUser } from '@/lib/core/auth';
 import { canPromote, roleAtLeast } from '@/lib/core/session';
+import { canManageArtifact } from '@/lib/governance/edit-scope';
 import type { Visibility } from '@/lib/core/artifact-model';
 import {
   type Connection,
@@ -284,9 +285,10 @@ export async function updateCapabilities(
   const map = await getCache();
   const c = map.get(connId);
   if (!c) throw withStatus(new Error('Connection not found'), 404);
-  const isOwner = c.owner === user.id;
-  const isDomainAdmin = user.role === 'admin' && user.domains.includes(c.domain);
-  if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to edit this connection'), 403);
+  // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
+  if (!canManageArtifact(user, { owner: c.owner, domain: c.domain })) {
+    throw withStatus(new Error('Not permitted to edit this connection'), 403);
+  }
   if (!roleAtLeast(user.role, 'builder')) {
     throw withStatus(new Error('Editing capabilities requires a Builder or Administrator'), 403);
   }
@@ -385,7 +387,7 @@ export async function promoteConnection(connId: string, user: CurrentUser): Prom
   }
   let next: Visibility;
   if (c.visibility === 'Personal') {
-    if (!canPromote(user.role, 'Personal')) throw withStatus(new Error('Promoting to Shared requires a Builder or Administrator'), 403);
+    if (!canPromote(user.role, 'Personal')) throw withStatus(new Error('Promoting to Shared requires a Domain admin or Administrator'), 403);
     next = 'Shared';
   } else if (c.visibility === 'Shared') {
     if (!canPromote(user.role, 'Shared')) throw withStatus(new Error('Listing in the Marketplace requires an Administrator'), 403);
@@ -425,9 +427,8 @@ export async function demoteConnection(connId: string, user: CurrentUser): Promi
     if (user.role !== 'admin') throw withStatus(new Error('Revoking from the Marketplace requires an Administrator'), 403);
     next = 'Shared';
   } else if (c.visibility === 'Shared') {
-    const isOwner = c.owner === user.id;
-    if (!isOwner && !roleAtLeast(user.role, 'builder')) {
-      throw withStatus(new Error('Unsharing requires the owner or an in-domain Builder/Administrator'), 403);
+    if (!canManageArtifact(user, { owner: c.owner, domain: c.domain })) {
+      throw withStatus(new Error('Unsharing requires the owner, an in-domain Domain admin, or an Administrator'), 403);
     }
     next = 'Personal';
   } else {
@@ -463,9 +464,10 @@ export async function grantToAgent(
   const map = await getCache();
   const c = map.get(connId);
   if (!c) throw withStatus(new Error('Connection not found'), 404);
-  const isOwner = c.owner === user.id;
-  const isDomainAdmin = user.role === 'admin' && user.domains.includes(c.domain);
-  if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to grant this connection'), 403);
+  // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
+  if (!canManageArtifact(user, { owner: c.owner, domain: c.domain })) {
+    throw withStatus(new Error('Not permitted to grant this connection'), 403);
+  }
   if (!roleAtLeast(user.role, 'builder')) {
     throw withStatus(new Error('Granting a connection requires a Builder or Administrator'), 403);
   }
@@ -923,9 +925,10 @@ export async function verifyNotionConnection(
 /** The store's edit authority for archive/delete/restore: owner or a domain admin. */
 function requireConnEdit(c: Connection | undefined, user: CurrentUser): Connection {
   if (!c) throw withStatus(new Error('Connection not found'), 404);
-  const isOwner = c.owner === user.id;
-  const isDomainAdmin = user.role === 'admin' && user.domains.includes(c.domain);
-  if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Not permitted to modify this connection'), 403);
+  // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
+  if (!canManageArtifact(user, { owner: c.owner, domain: c.domain })) {
+    throw withStatus(new Error('Not permitted to modify this connection'), 403);
+  }
   return c;
 }
 

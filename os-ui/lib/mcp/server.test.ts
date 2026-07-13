@@ -12,8 +12,11 @@ const domainAdmin: CurrentUser = { id: 'dana', name: 'Dana', domains: ['sales'],
 const admin: CurrentUser = { id: 'ada', name: 'Ada', domains: ['sales'], role: 'admin' };
 
 const ELEVATED = ['promote', 'decide_deploy', 'delete'];
-/** The 6 builder-floor tools — they MUST stay builder-floor (domain_admin inherits). */
-const BUILDER_FLOOR = ['promote', 'decide_deploy', 'delete', 'publish_knowledge', 'approve_promotion', 'promote_connection'];
+/** Builder-floor tools — a plain builder sees them, and domain_admin inherits. */
+const BUILDER_FLOOR = ['promote', 'decide_deploy', 'delete'];
+/** Rung-1 promotion-APPROVAL tools — now raised to a domain_admin floor: a plain
+ *  builder does NOT see them; a domain_admin does. */
+const DOMAIN_ADMIN_FLOOR = ['publish_knowledge', 'approve_promotion', 'promote_connection'];
 
 function result(res: JsonRpcResponse | null): Record<string, unknown> {
   assert.ok(res && 'result' in res, 'expected a JSON-RPC result');
@@ -53,12 +56,17 @@ test('tools/list: role-scoped — admin sees elevated tools, a creator does NOT'
   assert.ok(adminNames.length > creatorNames.length);
 });
 
-test('4-RANK: domain_admin inherits every builder tool — the 6 builder-floor tools stay builder-floor', () => {
+test('4-RANK: domain_admin inherits every builder tool; rung-1 approval tools are domain_admin-floor', () => {
   const builderNames = new Set(listToolsForRole(builder.role).map((t) => t.name));
   const daNames = new Set(listToolsForRole(domainAdmin.role).map((t) => t.name));
   for (const t of BUILDER_FLOOR) {
     assert.ok(builderNames.has(t), `builder keeps builder-floor tool ${t}`);
     assert.ok(daNames.has(t), `domain_admin inherits builder-floor tool ${t}`);
+  }
+  // The promotion-APPROVAL tools moved up: a plain builder no longer sees them.
+  for (const t of DOMAIN_ADMIN_FLOOR) {
+    assert.ok(!builderNames.has(t), `a plain builder no longer sees domain_admin-floor tool ${t}`);
+    assert.ok(daNames.has(t), `domain_admin sees rung-1 approval tool ${t}`);
   }
   for (const n of builderNames) assert.ok(daNames.has(n), `domain_admin must see every builder tool (${n})`);
 });
@@ -121,10 +129,11 @@ test('tools/call: a role-gated tool a creator may not use returns a TYPED forbid
 });
 
 test('tools/call: a GOVERNANCE denial maps to an MCP tool error (isError), not a crash', async () => {
-  // Builder creates a Personal app, promotes it to Shared (allowed), then the
-  // second promote (Shared→Certified) needs an Admin → governed 403.
+  // A domain_admin creates a Personal app, promotes it to Shared (allowed — rung-1
+  // now needs domain_admin), then the second promote (Shared→Certified) needs an
+  // Admin → governed 403.
   const created = result(
-    await handleRpc(builder, {
+    await handleRpc(domainAdmin, {
       jsonrpc: '2.0',
       id: 5,
       method: 'tools/call',
@@ -134,17 +143,17 @@ test('tools/call: a GOVERNANCE denial maps to an MCP tool error (isError), not a
   const appId = JSON.parse((created.content as { text: string }[])[0].text).id as string;
 
   const firstPromote = result(
-    await handleRpc(builder, {
+    await handleRpc(domainAdmin, {
       jsonrpc: '2.0',
       id: 6,
       method: 'tools/call',
       params: { name: 'promote', arguments: { appId } },
     }),
   );
-  assert.notEqual(firstPromote.isError, true); // Personal → Shared is allowed for a builder
+  assert.notEqual(firstPromote.isError, true); // Personal → Shared is allowed for a domain_admin
 
   const secondPromote = result(
-    await handleRpc(builder, {
+    await handleRpc(domainAdmin, {
       jsonrpc: '2.0',
       id: 7,
       method: 'tools/call',

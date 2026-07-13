@@ -137,13 +137,13 @@ export async function fileArtifactPromotion(kind: LadderKind, id: string, user: 
   return enqueue({
     kind: 'artifact_promote',
     title: `Promote “${art.name}” to a ${art.domain} domain ${kind}`,
-    detail: `${user.id} requests promoting the ${kind} “${art.name}” to a shared domain asset. A domain Builder must approve.`,
+    detail: `${user.id} requests promoting the ${kind} “${art.name}” to a shared domain asset. A domain admin must approve.`,
     agent: user.id,
     domain: art.domain,
     requestedBy: user.id,
     tool: `${kind}_promote`,
     payload: { artifactKind: kind, id, name: art.name },
-    approverRole: 'builder',
+    approverRole: 'domain_admin',
     scope: 'domain',
   });
 }
@@ -256,7 +256,7 @@ export async function promoteThroughSeam(
     requestedBy: realPending?.requestedBy ?? user.id,
     tool: `${kind}_${rung}`,
     payload: { artifactKind: kind, id, name: art.name, ...(opts.mode ? { mode: opts.mode } : {}) },
-    approverRole: rung === 'certify' ? 'admin' : 'builder',
+    approverRole: rung === 'certify' ? 'admin' : 'domain_admin',
     scope: rung === 'certify' ? 'tenant' : 'domain',
     rememberable: false,
     source: 'ladder',

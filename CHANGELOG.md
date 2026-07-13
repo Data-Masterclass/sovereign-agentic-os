@@ -15,6 +15,18 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.95] — 2026-07-13
+
+### Governance — shared artifacts are owner/admin-managed; sharing is admin-approved
+- **A shared (domain/marketplace) artifact can now only be edited, archived, deleted, or un-shared by its OWNER (even if just a Builder), a domain admin of the owning domain, or a platform admin.** A non-owner Builder may view and use shared artifacts but can no longer modify or archive someone else's. Enforced fail-closed server-side via one `canManageArtifact` helper across every artifact type (data, files, knowledge, personal knowledge, connections, agents, software, dashboards, big bets, science models) — including the demote/revoke-sharing path — with the edit/archive/delete UI controls hidden from non-owners as defense in depth. (This also fixed a latent gap where domain admins could not manage in-domain artifacts, and where dashboards were owner-only.)
+- **Approving a Personal→Shared promotion now requires a domain admin or platform admin** (a Builder can still press Promote to FILE the request; it just no longer self-approves). Shared→Certified/Marketplace stays platform-admin-only. MCP approval tools (`approve_promotion`, `publish_knowledge`, `promote_connection`) raised to domain-admin.
+
+### Fix — creating a metric no longer 400s on an id column
+- **Slicing a metric by a dataset's primary key (e.g. `campaign_id`) no longer throws a Cube 400.** The dimension picker offered the key column, but the Cube view intentionally excludes the key — so the query targeted a non-member. The picker and the query builder now reconcile requested dimensions against the view's real members (mirroring the region-RLS fix), dropping non-members fail-soft instead of erroring.
+
+### Fix — Knowledge workflow step titles are fully readable
+- **Workflow step boxes now wrap the full title onto multiple lines** instead of truncating past ~3 words; the box grows to fit so nothing is clipped.
+
 ## [os-ui 0.1.94] — 2026-07-13
 
 ### Fix — Ask the OS input pinned to the bottom

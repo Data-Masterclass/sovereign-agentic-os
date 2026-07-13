@@ -747,9 +747,9 @@ const connectionTools: McpTool[] = [
   {
     name: 'promote_connection',
     tab: 'connections',
-    minRole: 'builder',
+    minRole: 'domain_admin',
     description:
-      'Promote a Personal connection → a SHARED domain data source (Builder+ only — the creator lockdown). Path: step 4 of the Connections golden path. Before: create_connection + test_connection. After: apps in the domain consume it via use_connection BY REFERENCE. Governance: Builder/Admin; re-promoting an already-shared connection returns a conflict.',
+      'Promote a Personal connection → a SHARED domain data source (Domain admin+ only — the creator/builder lockdown). Path: step 4 of the Connections golden path. Before: create_connection + test_connection. After: apps in the domain consume it via use_connection BY REFERENCE. Governance: Domain admin/Admin; re-promoting an already-shared connection returns a conflict.',
     inputSchema: idArg('connId', 'Personal connection id you own to promote.'),
     call: async (user, args) => {
       const id = str(args.connId).trim();

@@ -11,9 +11,11 @@ export const dynamic = 'force-dynamic';
 
 /** Map the platform Role onto the model-service Actor (human, never an agent). */
 function actorFrom(user: { id: string; role: string; domains: string[] }): Actor {
+  // Preserve domain_admin (shared edit-scope grants it in-domain manage rights).
   const role: Actor['role'] =
     user.role === 'admin' ? 'admin'
-    : user.role === 'builder' || user.role === 'domain_admin' ? 'builder'
+    : user.role === 'domain_admin' ? 'domain_admin'
+    : user.role === 'builder' ? 'builder'
     : 'user';
   return { id: user.id, role, domains: user.domains, isAgent: false };
 }

@@ -16,6 +16,8 @@ import type { CurrentUser } from './auth.ts';
 
 const admin: CurrentUser = { id: 'arya', name: 'Arya', domains: ['sales'], role: 'admin' };
 const builder: CurrentUser = { id: 'sara', name: 'Sara', domains: ['sales'], role: 'builder' };
+// Promoting Personal→Shared now requires domain_admin+; `domainAdmin` is the in-domain approver.
+const domainAdmin: CurrentUser = { id: 'dana', name: 'Dana', domains: ['sales'], role: 'domain_admin' };
 const creator: CurrentUser = { id: 'cara', name: 'Cara', domains: ['sales'], role: 'creator' };
 const participant: CurrentUser = { id: 'amir', name: 'Amir', domains: ['sales'], role: 'creator' };
 
@@ -71,14 +73,14 @@ test('DEMOTE role gate: revoking a Certified artifact requires an admin (builder
 test('DEMOTE role gate (fail-closed): a creator cannot unshare a Shared artifact they do not own', async () => {
   __resetArtifactsCache();
   const a = await createArtifact(builder, { type: 'knowledge', name: 'Shared runbook', domain: 'sales' });
-  await promoteArtifact(a.id, builder); // Personal → Shared (owned by builder)
-  await assert.rejects(() => demoteArtifact(a.id, creator), /owner or an in-domain builder/i);
+  await promoteArtifact(a.id, domainAdmin); // Personal → Shared (owned by builder)
+  await assert.rejects(() => demoteArtifact(a.id, creator), /owner|domain admin|admin/i);
 });
 
 test('DEMOTE: the owner may unshare their own Shared artifact even as a creator', async () => {
   __resetArtifactsCache();
   const a = await createArtifact(creator, { type: 'knowledge', name: 'My draft', domain: 'sales' });
-  await promoteArtifact(a.id, builder); // Personal → Shared (a builder promoted it)
+  await promoteArtifact(a.id, domainAdmin); // Personal → Shared (a domain admin promoted it)
   const back = await demoteArtifact(a.id, creator); // owner pulls it back
   assert.equal(back.visibility, 'Personal');
 });

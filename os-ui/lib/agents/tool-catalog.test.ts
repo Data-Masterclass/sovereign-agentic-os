@@ -40,9 +40,19 @@ test('buildCatalog: creator sees core read + write tools', () => {
   assert.ok(names.includes('upload_file'), 'creator can grant upload_file');
 });
 
-test('buildCatalog: builder sees approve_promotion', () => {
-  const catalog = buildCatalog('builder');
-  assert.ok(catalog.some((t) => t.name === 'approve_promotion'), 'builder can grant approve_promotion');
+test('buildCatalog: approve_promotion is domain_admin-floor (builder cannot, domain_admin can)', () => {
+  // Approving Personal→Shared now requires domain_admin+, so a plain builder no
+  // longer sees approve_promotion; a domain_admin does.
+  const builderCatalog = buildCatalog('builder');
+  assert.ok(
+    !builderCatalog.some((t) => t.name === 'approve_promotion'),
+    'a plain builder can no longer grant approve_promotion',
+  );
+  const domainAdminCatalog = buildCatalog('domain_admin');
+  assert.ok(
+    domainAdminCatalog.some((t) => t.name === 'approve_promotion'),
+    'a domain_admin can grant approve_promotion',
+  );
 });
 
 test('buildCatalog: builder catalog is a strict superset of creator catalog', () => {

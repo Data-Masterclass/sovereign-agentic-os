@@ -24,6 +24,36 @@ const ACTOR_FILL: Record<string, string> = {
   Agent: 'var(--gold)',
 };
 
+// Wrap a step title onto up to `maxLines` lines that fit the box width by whole
+// words (usable ~172px at 13px ≈ 24 chars/line). The last line is ellipsised only
+// if the title still overflows — so titles up to ~3 words × lines show in FULL, and
+// the SVG <title> tooltip always holds the complete text. Keeps the box Apple-clean.
+const TITLE_CHARS_PER_LINE = 24;
+const TITLE_MAX_LINES = 3;
+function wrapTitle(title: string): string[] {
+  const words = title.trim().split(/\s+/);
+  const lines: string[] = [];
+  let line = '';
+  for (const w of words) {
+    const next = line ? `${line} ${w}` : w;
+    if (next.length <= TITLE_CHARS_PER_LINE) {
+      line = next;
+    } else {
+      if (line) lines.push(line);
+      // A single word longer than a line: hard-slice it so it can't overflow.
+      line = w.length > TITLE_CHARS_PER_LINE ? w.slice(0, TITLE_CHARS_PER_LINE - 1) + '…' : w;
+    }
+    if (lines.length === TITLE_MAX_LINES) break;
+  }
+  if (lines.length < TITLE_MAX_LINES && line) lines.push(line);
+  // If words remain beyond the last drawable line, mark the overflow with an ellipsis.
+  const drawn = lines.join(' ').replace(/…$/, '').split(/\s+/).length;
+  if (drawn < words.length && lines.length > 0 && !lines[lines.length - 1].endsWith('…')) {
+    lines[lines.length - 1] = lines[lines.length - 1] + '…';
+  }
+  return lines.length ? lines : [''];
+}
+
 export default function SwimlaneCanvas({
   workflow,
   gaps = [],
@@ -115,11 +145,14 @@ export default function SwimlaneCanvas({
             {layout.blocks.map((b) => {
               const selected = b.id === selectedStepId;
               const fill = ACTOR_FILL[b.actor] ?? 'var(--gold)';
-              // Truncate title to fit the box (200px wide, text starts at x=14,
-              // right-side marks sit at ~x=w-14 ≈ 186 → usable ~172px; at 13px
-              // roughly 25 chars). Keep full title in the SVG <title> tooltip.
-              const TITLE_MAX = 24;
-              const titleDisplay = b.title.length > TITLE_MAX ? `${b.title.slice(0, TITLE_MAX)}…` : b.title;
+              // Wrap the title onto up to 3 lines (whole words) so it shows in FULL
+              // inside the box; the actor + meta lines flow below it. Full title also
+              // stays in the SVG <title> tooltip.
+              const titleLines = wrapTitle(b.title);
+              const TITLE_TOP = 20;          // baseline of the first title line
+              const TITLE_LINE_H = 16;
+              const actorY = TITLE_TOP + titleLines.length * TITLE_LINE_H + 2;
+              const metaY = actorY + 18;
               const actorLine = b.actorName ? `${b.actor}: ${b.actorName}` : b.actor;
               const ACTOR_MAX = 26;
               const actorDisplay = actorLine.length > ACTOR_MAX ? `${actorLine.slice(0, ACTOR_MAX)}…` : actorLine;
@@ -141,17 +174,21 @@ export default function SwimlaneCanvas({
                   <title>{b.title} ({actorLine}){editLabel}</title>
                   <rect width={b.w} height={b.h} rx={9} className="swim-rect" stroke={fill} />
                   <rect x={0} y={0} width={4} height={b.h} rx={2} fill={fill} />
-                  <text x={14} y={22} className="swim-block-title">{titleDisplay}</text>
-                  <text x={14} y={40} className="swim-block-actor" fill={fill}>{actorDisplay}</text>
-                  <text x={14} y={62} className="swim-block-meta">
+                  <text x={14} y={TITLE_TOP} className="swim-block-title">
+                    {titleLines.map((ln, i) => (
+                      <tspan key={i} x={14} dy={i === 0 ? 0 : TITLE_LINE_H}>{ln}</tspan>
+                    ))}
+                  </text>
+                  <text x={14} y={actorY} className="swim-block-actor" fill={fill}>{actorDisplay}</text>
+                  <text x={14} y={metaY} className="swim-block-meta">
                     {b.inputs > 0 ? `${b.inputs}in ` : ''}
                     {b.outputs > 0 ? `${b.outputs}out ` : ''}
                     {b.links > 0 ? `· ${b.links} link${b.links === 1 ? '' : 's'}` : ''}
                   </text>
-                  {b.hasHardRule ? <text x={b.w - 12} y={22} textAnchor="end" className="swim-mark hard">🔒</text> : null}
-                  {b.hasTacit ? <text x={b.w - 12} y={40} textAnchor="end" className="swim-mark tacit">✎</text> : null}
+                  {b.hasHardRule ? <text x={b.w - 12} y={TITLE_TOP} textAnchor="end" className="swim-mark hard">🔒</text> : null}
+                  {b.hasTacit ? <text x={b.w - 12} y={actorY} textAnchor="end" className="swim-mark tacit">✎</text> : null}
                   {b.gaps > 0 ? (
-                    <text x={b.w - 12} y={62} textAnchor="end" className="swim-mark gap">⚠ {b.gaps}</text>
+                    <text x={b.w - 12} y={metaY} textAnchor="end" className="swim-mark gap">⚠ {b.gaps}</text>
                   ) : null}
                   {/* Small edit pencil badge — only shown in editable mode on hover */}
                   {canEdit && (

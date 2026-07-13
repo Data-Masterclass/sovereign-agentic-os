@@ -6,6 +6,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { canPromote } from '@/lib/core/session';
+import { canManageArtifact } from '@/lib/governance/edit-scope';
 import {
   type Artifact,
   type ArtifactType,
@@ -257,13 +258,13 @@ export default function ArtifactPanel({
     const isCert = a.origin === 'certified-copy';
     const canShare = !isCert && a.visibility === 'Personal' && user && canPromote(user.role, 'Personal') && user.domains.includes(a.domain);
     const canCertify = !isCert && a.visibility === 'Shared' && user && canPromote(user.role, 'Shared') && user.domains.includes(a.domain);
-    const canModify = user && (a.owner === user.id || (user.role === 'admin' && user.domains.includes(a.domain)));
+    const canModify = user && canManageArtifact(user, { owner: a.owner, domain: a.domain });
     // Revoke sharing (demote), mirroring who could have promoted it: Certified→Shared
     // is admin-only; Shared→Personal is the owner or an in-domain builder/admin.
     const inDomain = user && user.domains.includes(a.domain);
     const canRevokeCert = !isCert && a.visibility === 'Certified' && user && user.role === 'admin' && inDomain;
-    const canUnshare = !isCert && a.visibility === 'Shared' && user && inDomain &&
-      (a.owner === user.id || canPromote(user.role, 'Personal'));
+    const canUnshare = !isCert && a.visibility === 'Shared' && user &&
+      canManageArtifact(user, { owner: a.owner, domain: a.domain });
     if (editId === a.id) {
       return (
         <div className="card" key={a.id}>

@@ -29,12 +29,13 @@ function disabled() {
 }
 
 function actorFrom(user: { id: string; role: string; domains: string[] }): Actor {
-  // Map the platform Role onto the model-service Actor role (user|builder|admin):
-  // builder AND domain_admin act at the builder level; admin stays admin. A human
-  // acting from the UI — NEVER an agent.
+  // Map the platform Role onto the model-service Actor role, PRESERVING domain_admin
+  // so the shared edit-scope rule grants it manage rights on in-domain models. Only
+  // the base creator collapses to 'user'. A human acting from the UI — NEVER an agent.
   const role: Actor['role'] =
     user.role === 'admin' ? 'admin'
-    : user.role === 'builder' || user.role === 'domain_admin' ? 'builder'
+    : user.role === 'domain_admin' ? 'domain_admin'
+    : user.role === 'builder' ? 'builder'
     : 'user';
   return { id: user.id, role, domains: user.domains, isAgent: false };
 }
