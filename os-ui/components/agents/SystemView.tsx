@@ -118,7 +118,10 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
   const { data: modelsData } = useApi<ModelsData>('/api/agents/models');
   const { data: routingData } = useApi<RoutingData>('/api/agents/routing');
 
-  const [panel, setPanel] = useState<Panel>('yaml');
+  // Developer tabs open on Build & run (the day-to-day surface); system.yaml is the
+  // last tab and a read-only source view unless the user clicks Edit (yamlEditing).
+  const [panel, setPanel] = useState<Panel>('build');
+  const [yamlEditing, setYamlEditing] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   // View mode (Simple ⇄ Developer). Initialized from the persisted choice / role
@@ -458,14 +461,35 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
       ) : null}
 
       <div className="tabstrip" style={{ marginTop: 18 }}>
-        <button className={panel === 'yaml' ? 'active' : ''} onClick={() => setPanel('yaml')}>system.yaml</button>
         <button className={panel === 'grants' ? 'active' : ''} onClick={() => setPanel('grants')}>Grants &amp; routing</button>
         <button className={panel === 'build' ? 'active' : ''} onClick={() => setPanel('build')}>Build &amp; run</button>
+        <button className={panel === 'yaml' ? 'active' : ''} onClick={() => setPanel('yaml')}>system.yaml</button>
       </div>
 
       <div style={{ marginTop: 14 }}>
         {panel === 'yaml' ? (
-          <MonacoFile systemId={systemId} path="system.yaml" canEdit={data.canEdit} height={420} reloadSignal={reloadKey} onSaved={reloadAll} />
+          <>
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <span className="hint" style={{ marginTop: 0 }}>
+                The single source of truth behind the canvas, grants, and per-agent fields.
+                {yamlEditing ? ' Editing directly — changes commit like any other edit.' : ' Read-only view.'}
+              </span>
+              {data.canEdit ? (
+                <button className="btn ghost sm" onClick={() => setYamlEditing((v) => !v)}>
+                  {yamlEditing ? 'Done editing' : '✎ Edit YAML'}
+                </button>
+              ) : null}
+            </div>
+            <MonacoFile
+              systemId={systemId}
+              path="system.yaml"
+              canEdit={data.canEdit && yamlEditing}
+              height={420}
+              reloadSignal={reloadKey}
+              onSaved={reloadAll}
+              readOnlyHint="Viewing the source — click “Edit YAML” above to change it."
+            />
+          </>
         ) : null}
         {panel === 'grants' ? (
           <GrantsRouting systemId={systemId} system={sys} canEdit={data.canEdit} canDirectWrite={roleAtLeast(data.role, 'builder')} roles={{ reasoning: modelsData?.roles?.reasoning || 'sovereign-reasoning', standard: modelsData?.roles?.standard || 'sovereign-default' }} routing={routingData} onChanged={reloadAll} />

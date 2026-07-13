@@ -228,8 +228,25 @@ function actSystem(system: string, plan: string, tools: ToolSpec[], react: boole
 
 const DEFAULT_MESSAGE_BUDGET = 24_000;
 
+/**
+ * Estimate the tokens ONE message costs on the wire. Counts `content` PLUS the
+ * `tool_calls` function-name + arguments JSON (an assistant tool call carries no
+ * content but a potentially large arguments blob — e.g. a query_data SQL/rows) PLUS
+ * a small per-message envelope (role tag, tool_call_id, delimiters). Undercounting
+ * these was a contributor to the LiteLLM 400: the budget looked safe but the real
+ * request was larger. See lib/models/context-windows.ts for the matching headroom.
+ */
+const MESSAGE_ENVELOPE_TOKENS = 4;
+function messageTokens(m: LlmMessage): number {
+  let n = estimateTokens(m.content ?? '') + MESSAGE_ENVELOPE_TOKENS;
+  if (m.tool_calls) {
+    for (const c of m.tool_calls) n += estimateTokens(`${c.function.name}${c.function.arguments ?? ''}`) + MESSAGE_ENVELOPE_TOKENS;
+  }
+  return n;
+}
+
 function messagesTokens(messages: LlmMessage[]): number {
-  return messages.reduce((n, m) => n + estimateTokens(m.content ?? ''), 0);
+  return messages.reduce((n, m) => n + messageTokens(m), 0);
 }
 
 /**

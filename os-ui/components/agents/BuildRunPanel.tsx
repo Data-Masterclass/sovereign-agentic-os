@@ -329,6 +329,51 @@ export default function BuildRunPanel({
         }
       };
       const space = (h = 8) => { y += h; };
+      const afterTableY = () => ((doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY ?? y);
+
+      // Strip inline markdown so text reads cleanly in the PDF (no **, `, leading #).
+      const cleanInline = (s: string) =>
+        s.replace(/\*\*(.*?)\*\*/g, '$1').replace(/\*(.*?)\*/g, '$1').replace(/`(.*?)`/g, '$1').replace(/^#+\s*/, '').trimEnd();
+      const splitRow = (s: string) => s.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => cleanInline(c.trim()));
+      const isTableSep = (s: string) => /-{2,}/.test(s) && /^[\s:|-]+$/.test(s.trim());
+
+      // Render a markdown string: GFM tables become real tables (autoTable),
+      // headings/bullets/paragraphs become formatted text. This is what makes the
+      // agent outputs + final output render as tables instead of raw "| a | b |".
+      const renderMarkdown = (md: string | undefined, size = 10) => {
+        const lines = (md ?? '').replace(/\r/g, '').split('\n');
+        let i = 0;
+        while (i < lines.length) {
+          const ln = lines[i];
+          if (ln.includes('|') && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+            const head = splitRow(ln);
+            const rows: string[][] = [];
+            i += 2;
+            while (i < lines.length && lines[i].includes('|') && lines[i].trim() !== '') {
+              rows.push(splitRow(lines[i]));
+              i += 1;
+            }
+            if (y > doc.internal.pageSize.getHeight() - M - 40) { doc.addPage(); y = M; }
+            autoTable(doc, {
+              startY: y,
+              head: [head],
+              body: rows,
+              margin: { left: M, right: M },
+              styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak' },
+              headStyles: { fillColor: [30, 30, 30] },
+            });
+            y = afterTableY() + 12;
+            continue;
+          }
+          const h = ln.match(/^(#{1,6})\s+(.*)$/);
+          if (h) { space(2); line(cleanInline(h[2]), size + 1, true, 15); i += 1; continue; }
+          if (ln.trim() === '') { space(4); i += 1; continue; }
+          const b = ln.match(/^\s*[-*+]\s+(.*)$/);
+          if (b) { line(`•  ${cleanInline(b[1])}`, size); i += 1; continue; }
+          line(cleanInline(ln), size);
+          i += 1;
+        }
+      };
 
       line(report.title, 16, true, 20);
       line(`Run report · ${report.summary}`, 10);
@@ -344,7 +389,7 @@ export default function BuildRunPanel({
       line('Agents', 12, true, 16);
       for (const a of report.agents) {
         line(`${a.name} — ${a.decision}${a.model ? ` · ${a.model}` : ''}${a.tier ? ` · ${a.tier}` : ''} · ${a.calls} call${a.calls === 1 ? '' : 's'}`, 10, true);
-        line(a.output, 9);
+        renderMarkdown(a.output, 9);
         space(4);
       }
 
@@ -364,7 +409,7 @@ export default function BuildRunPanel({
       y = ((doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY ?? y) + 20;
 
       line('Final output', 12, true, 16);
-      line(report.finalOutput, 10);
+      renderMarkdown(report.finalOutput, 10);
 
       doc.save(reportFilename(systemId, at));
     } catch (e) {

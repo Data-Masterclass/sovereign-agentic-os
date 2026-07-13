@@ -51,11 +51,18 @@ export default function MonacoFile({
   height = 360,
   reloadSignal = 0,
   onSaved,
+  readOnlyHint,
 }: {
   systemId: string;
   path: string;
   canEdit: boolean;
   height?: number;
+  /**
+   * Foot note shown when `canEdit` is false. Defaults to a "no permission" message;
+   * pass a friendlier note (e.g. "Viewing the source — click Edit to change it") when
+   * read-only is a deliberate view mode rather than a permission denial.
+   */
+  readOnlyHint?: string;
   /**
    * Bump to tell the editor the single source changed underneath it (e.g. a canvas
    * or agent-system-chat edit). It reloads ONLY when the buffer is clean; if there
@@ -177,7 +184,7 @@ export default function MonacoFile({
           />
           <div className="code-editor-foot">
             <span className="hint" style={{ marginTop: 0 }}>
-              {canEdit ? 'Edits commit to the system’s single source — the canvas reflects them.' : 'Read-only — you cannot edit this system.'}
+              {canEdit ? 'Edits commit to the system’s single source — the canvas reflects them.' : (readOnlyHint ?? 'Read-only — you cannot edit this system.')}
             </span>
             <div className="row" style={{ gap: 10, alignItems: 'center' }}>
               {saveMsg ? (

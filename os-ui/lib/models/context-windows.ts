@@ -9,9 +9,17 @@
  * the assembled input so a request NEVER exceeds the model window (the root cause
  * of the LiteLLM 400 ContextWindowExceededError). The input budget for a model is
  *
- *     inputBudget = contextWindow − reservedOutput
+ *     inputBudget = contextWindow − reservedOutput − safetyHeadroom
  *
- * and `reservedOutput` is also what the harness caps `max_tokens` at on the request.
+ * where `reservedOutput` is ALSO what the harness caps `max_tokens` at on the same
+ * request. Because the request sends `input + max_tokens`, the budget MUST leave
+ * room for BOTH — `input(≤ inputBudget) + reservedOutput` must stay under the window
+ * with slack. The `safetyHeadroom` provides that slack, and also absorbs the fact
+ * that our `estimateTokens` (≈4 chars/token, content-only) UNDER-counts the real
+ * tokenizer (it ignores tool_calls JSON + message envelope + the tools schema). An
+ * earlier `contextWindow − reservedOutput` budget double-spent the reserve — input
+ * filled to `window − reservedOutput`, then `+ reservedOutput` on the wire hit the
+ * window exactly and the tokenizer drift tipped it over → the 400.
  *
  * OPEN-SOURCE RULE: these are helm/env DEFAULTS, not hardcoded magic. A platform
  * admin overrides any model live via the `MODEL_CONTEXT_WINDOWS` env var — a JSON
@@ -91,14 +99,25 @@ export function modelContext(
 }
 
 /**
- * The INPUT token budget for a model — the ceiling the context assembler must
- * never exceed. `contextWindow − reservedOutput`, floored at a small positive
- * value so a misconfigured tiny window still yields a usable (if minimal) budget.
+ * A safety margin held back ON TOP of `reservedOutput`, so `input + max_tokens`
+ * stays strictly under the window even when our token estimate undercounts the real
+ * tokenizer. ~4% of the window (min 2000): 8000 for a 200k model, so a full input
+ * (184k) + reserved output (8k) = 192k leaves ~8k of real slack under 200k.
+ */
+export function safetyHeadroom(contextWindow: number): number {
+  return Math.max(2_000, Math.round(contextWindow * 0.04));
+}
+
+/**
+ * The INPUT token budget for a model — the ceiling the context assembler must never
+ * exceed. `contextWindow − reservedOutput − safetyHeadroom`, floored at a small
+ * positive value so a misconfigured tiny window still yields a usable (if minimal)
+ * budget. The headroom guarantees `inputBudget + reservedOutput < contextWindow`.
  */
 export function inputBudget(
   modelName: string,
   overrides?: Record<string, ModelContext>,
 ): number {
   const { contextWindow, reservedOutput } = modelContext(modelName, overrides ?? parseOverrides(process.env.MODEL_CONTEXT_WINDOWS));
-  return Math.max(512, contextWindow - reservedOutput);
+  return Math.max(512, contextWindow - reservedOutput - safetyHeadroom(contextWindow));
 }

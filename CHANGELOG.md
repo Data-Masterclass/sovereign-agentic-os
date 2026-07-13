@@ -15,6 +15,20 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.91] — 2026-07-13
+
+### Fix — multi-agent run no longer 400s on ContextWindowExceededError
+- **The last agent in a longer team (e.g. the campaign "recommender") could crash** with `LiteLLM 400 ContextWindowExceededError` (~192k input + 8k output = the whole 200k window, zero slack). Two root causes fixed: (1) the input budget was `contextWindow − reservedOutput`, but the request *also* sends `reservedOutput` as `max_tokens` — double-spending the reserve; `inputBudget` now subtracts an additional **safety headroom** (~4% of the window) so `input + max_tokens` stays strictly under the window. (2) the token estimator ignored `tool_calls` argument JSON (a big `query_data` call carries none in `content`) + the message envelope; it now counts both, so the budget reflects the real request. A new invariant test guards `inputBudget + reservedOutput < contextWindow`.
+
+### Fix — PDF run report renders real tables
+- **The downloadable run report showed markdown tables as raw `| a | b |` text.** The PDF now parses GFM tables in each agent's output and the final output and renders them as **real tables** (jspdf-autotable), with headings/bullets formatted instead of dumped as markdown source.
+
+### Change — Connections lifecycle is discoverable
+- **Archive / Restore / Delete for a connection moved out of the buried "Capabilities" expand** into the card's action row, next to Promote / Unshare — the same clear, consistent lifecycle placement every other artifact tab uses (live → Archive; archived → Restore + Delete, reachable via the "Show archived" toggle).
+
+### Change — system.yaml is a read-only source view (Developer mode)
+- **The raw `system.yaml` is now read-only by default with an explicit "✎ Edit YAML" button**, and moved to the **last** Developer tab (the tabs open on Build & run). It stays the single source of truth behind the canvas, grants, and per-agent fields — but raw hand-editing is now a deliberate opt-in rather than the first thing you see.
+
 ## [os-ui 0.1.90] — 2026-07-13
 
 ### Feature — Simple builder can grant Data & Knowledge

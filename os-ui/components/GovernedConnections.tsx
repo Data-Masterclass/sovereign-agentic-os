@@ -957,6 +957,24 @@ function ConnectionCard({
             Same connection — agent tool + {dataUsage === 'files' ? 'Files index' : 'Bronze source'}
           </span>
         )}
+        {/* Lifecycle — Archive (live) · Restore + Delete (archived). Lives in the
+            card action row next to Promote/Unshare so it's discoverable, consistent
+            with every other tab (archived connections need the "Show archived"
+            toggle above to be visible). */}
+        {canManage ? (
+          <span style={{ marginLeft: 'auto' }}>
+            <LifecycleActions
+              id={c.id}
+              name={c.name}
+              kind="connection"
+              visibility={connVisibility(c.visibility)}
+              archived={!!c.archived}
+              api={`/api/connections/${c.id}`}
+              onChanged={onChange}
+              compact
+            />
+          </span>
+        ) : null}
       </div>
 
       {msg ? <div className={msg.startsWith('✗') ? 'error' : 'answer'} style={{ marginTop: 10 }}>{msg}</div> : null}

@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
   modelContext,
   inputBudget,
+  safetyHeadroom,
   parseOverrides,
   DEFAULT_MODEL_CONTEXTS,
   UNKNOWN_MODEL_CONTEXT,
@@ -29,9 +30,20 @@ test('an admin/env override wins over the built-in default', () => {
   });
 });
 
-test('inputBudget is contextWindow minus reservedOutput', () => {
-  assert.equal(inputBudget('sovereign-reasoning', {}), 200_000 - 8_000);
-  assert.equal(inputBudget('sovereign-default', {}), 128_000 - 4_000);
+test('inputBudget subtracts reservedOutput AND a safety headroom', () => {
+  assert.equal(inputBudget('sovereign-reasoning', {}), 200_000 - 8_000 - safetyHeadroom(200_000));
+  assert.equal(inputBudget('sovereign-default', {}), 128_000 - 4_000 - safetyHeadroom(128_000));
+});
+
+test('INVARIANT: inputBudget + reservedOutput stays strictly under the window (the 400 fix)', () => {
+  // The request sends input(≤inputBudget) + max_tokens(=reservedOutput). That sum
+  // MUST leave real slack under the window, or the tokenizer drift tips it over.
+  for (const [name, { contextWindow, reservedOutput }] of Object.entries(DEFAULT_MODEL_CONTEXTS)) {
+    if (reservedOutput === 0) continue; // embeddings — not a chat budget
+    const total = inputBudget(name, {}) + reservedOutput;
+    assert.ok(total < contextWindow, `${name}: ${total} must be < ${contextWindow}`);
+    assert.ok(contextWindow - total >= 2_000, `${name}: needs ≥2000 tokens of headroom`);
+  }
 });
 
 test('parseOverrides ignores malformed JSON and bad entries', () => {
