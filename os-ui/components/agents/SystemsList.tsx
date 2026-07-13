@@ -142,13 +142,13 @@ export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }
         <div className="row" style={{ marginLeft: 'auto', gap: 8, alignItems: 'center' }}>
           <button
             className="btn ghost"
-            style={{ padding: '4px 12px', opacity: showArchived ? 1 : 0.7 }}
+            style={{ opacity: showArchived ? 1 : 0.7 }}
             onClick={() => setShowArchived((v) => !v)}
             title="Archived systems are hidden by default"
           >
             {showArchived ? 'Hide archived' : 'Show archived'}
           </button>
-          <button className="btn ghost" style={{ padding: '4px 12px' }} onClick={reload} disabled={loading}>
+          <button className="btn ghost" onClick={reload} disabled={loading}>
             {loading ? <span className="spin" /> : 'Refresh'}
           </button>
         </div>

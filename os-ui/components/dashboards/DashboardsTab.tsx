@@ -81,7 +81,17 @@ export default function DashboardsTab({ supersetUrl }: { supersetUrl: string }) 
                   Dashboards only consume governed metrics.
                 </p>
               </div>
-              <button className="btn" onClick={() => setView({ kind: 'new' })} style={{ marginTop: 4 }}>＋ New dashboard</button>
+              <div className="row" style={{ gap: 8, marginTop: 4 }}>
+                <button
+                  className="btn ghost"
+                  style={{ opacity: showArchived ? 1 : 0.7 }}
+                  onClick={() => setShowArchived((v) => !v)}
+                  title="Archived dashboards are hidden by default"
+                >
+                  {showArchived ? 'Hide archived' : 'Show archived'}
+                </button>
+                <button className="btn" onClick={() => setView({ kind: 'new' })}>＋ New dashboard</button>
+              </div>
             </div>
 
             <Tiles
@@ -90,7 +100,6 @@ export default function DashboardsTab({ supersetUrl }: { supersetUrl: string }) 
               error={dashboards.error}
               onOpen={(d) => setView({ kind: 'detail', dashboard: d })}
               showArchived={showArchived}
-              onToggleArchived={() => setShowArchived((v) => !v)}
             />
           </>
         )}

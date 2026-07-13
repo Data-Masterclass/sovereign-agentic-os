@@ -714,13 +714,15 @@ export default function KnowledgePage() {
               </p>
               <div className="row" style={{ gap: 8 }}>
                 <button
-                  className={`btn ghost sm ${showArchived ? 'active' : ''}`}
+                  className="btn ghost"
+                  style={{ opacity: showArchived ? 1 : 0.7 }}
                   onClick={() => setShowArchived((s) => !s)}
+                  title="Archived workflows are hidden by default"
                 >
                   {showArchived ? 'Hide archived' : 'Show archived'}
                 </button>
                 <button
-                  className="btn sm"
+                  className="btn"
                   onClick={() => setView(view === 'new' ? 'workflows' : 'new')}
                 >
                   {view === 'new' ? 'Cancel' : '+ New workflow'}

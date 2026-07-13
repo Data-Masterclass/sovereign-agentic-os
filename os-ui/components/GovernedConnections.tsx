@@ -4,7 +4,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CAPABILITY_MODES, type CapabilityMode, type ConnectionTemplateKey } from '@/lib/connections/schema';
 import { type Role } from '@/lib/core/session';
 import { canManageArtifact } from '@/lib/governance/edit-scope';
@@ -163,6 +163,12 @@ export default function GovernedConnections() {
   const [openApiSpec, setOpenApiSpec] = useState('');
   const [creating, setCreating] = useState(false);
   const [createMsg, setCreateMsg] = useState('');
+  // The header "+ New connection" scrolls to (and focuses) the existing create form
+  // below — one create flow, surfaced from the standard header position.
+  const createRef = useRef<HTMLDivElement>(null);
+  const openCreate = useCallback(() => {
+    createRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
 
   const tpl = data?.templates.find((t) => t.key === template);
   const isOAuth = tpl?.auth === 'oauth';
@@ -221,18 +227,28 @@ export default function GovernedConnections() {
     <ConfirmProvider>
 
       {/* ── 1. Governed connections (scope-grouped) ── */}
-      <div className="section-title">
-        Governed connections
-        <button
-          className="btn ghost"
-          style={{ marginLeft: 'auto', padding: '4px 12px', opacity: showArchived ? 1 : 0.7 }}
-          onClick={() => setShowArchived((v) => !v)}
-          title="Archived connections are hidden by default"
-        >
-          {showArchived ? 'Hide archived' : 'Show archived'}
-        </button>
+      {/* Canonical artifact-tab header: lead left, Show archived + New right, seg below. */}
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
+        <p className="lead" style={{ margin: 0, maxWidth: 560 }}>
+          Governed connections — each connects with your own account, stores only a token
+          <em> reference</em> (never the value), and rides the same visibility ladder as every
+          other artifact.
+        </p>
+        <div className="row" style={{ gap: 8 }}>
+          <button
+            className="btn ghost"
+            style={{ opacity: showArchived ? 1 : 0.7 }}
+            onClick={() => setShowArchived((v) => !v)}
+            title="Archived connections are hidden by default"
+          >
+            {showArchived ? 'Hide archived' : 'Show archived'}
+          </button>
+          {(canCreate || canCreatePersonal) ? (
+            <button className="btn" onClick={openCreate}>+ New connection</button>
+          ) : null}
+        </div>
       </div>
-      {error ? <div className="error">{error}</div> : null}
+      {error ? <div className="error" style={{ marginTop: 14 }}>{error}</div> : null}
 
       {(() => {
         if (!data) return null;
@@ -275,7 +291,7 @@ export default function GovernedConnections() {
       })()}
 
       {/* ── 2. Create a new connection ── */}
-      <div className="section-title" style={{ marginTop: 28 }}>New connection</div>
+      <div ref={createRef} className="section-title" style={{ marginTop: 28, scrollMarginTop: 16 }}>New connection</div>
       {(canCreate || canCreatePersonal) ? (
         <>
           <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>

@@ -21,14 +21,12 @@ export default function Tiles({
   error,
   onOpen,
   showArchived = false,
-  onToggleArchived,
 }: {
   data: DashboardGroups | null;
   loading: boolean;
   error: string;
   onOpen: (d: DashboardSummary) => void;
   showArchived?: boolean;
-  onToggleArchived?: () => void;
 }) {
   const [scope, setScope] = useState<ScopeKey>('all');
   const { user } = useUser();
@@ -75,24 +73,14 @@ export default function Tiles({
       {loading && !data ? <div className="stub-page">Loading dashboards…</div> : null}
 
       {data ? (
-        <div className="row" style={{ marginTop: 16, justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <div className="seg">
-            {SCOPE_GROUPS.map((g) => (
-              <button key={g.key} type="button" className={scope === g.key ? 'on' : ''} onClick={() => setScope(g.key)}>
-                {g.label('Dashboards')}{counts ? ` (${counts[g.key]})` : ''}
-              </button>
-            ))}
-          </div>
-          {onToggleArchived ? (
-            <button
-              className="btn ghost"
-              style={{ opacity: showArchived ? 1 : 0.7 }}
-              onClick={onToggleArchived}
-              title="Archived dashboards are hidden by default"
-            >
-              {showArchived ? 'Hide archived' : 'Show archived'}
+        /* Scope switcher — the OS-wide four groups: All · My · Shared · Marketplace.
+           Archived toggle + ＋ New live in the tab header row above (canonical). */
+        <div className="seg" style={{ marginTop: 14 }}>
+          {SCOPE_GROUPS.map((g) => (
+            <button key={g.key} type="button" className={scope === g.key ? 'on' : ''} onClick={() => setScope(g.key)}>
+              {g.label('Dashboards')}{counts ? ` (${counts[g.key]})` : ''}
             </button>
-          ) : null}
+          ))}
         </div>
       ) : null}
 

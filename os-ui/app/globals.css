@@ -530,8 +530,12 @@ input[type='text']:focus {
   color: #20160a;
   border: none;
   border-radius: 8px;
+  /* Shared control metrics: this padding + line-height is the canonical header
+     button height. `.seg button` and `.btn.ghost` inherit the same box so the
+     scope pills and the two header buttons line up on every artifact tab. */
   padding: 10px 18px;
   font-size: 13px;
+  line-height: 1.2;
   font-weight: 600;
   font-family: var(--font-head);
   text-transform: uppercase;
@@ -2504,9 +2508,13 @@ button.card.tile:focus-visible { outline: 2px solid var(--gold-line); outline-of
 
 /* Segmented control (Bronze panel source switch) */
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+/* Scope pills — sized to sit flush with the header `.btn` / `.btn.ghost`.
+   The 1px `.seg` container border is inside the shared box-sizing, so the pills
+   run 1px shorter top/bottom (9px vs the button's 10px) and the whole segment
+   lands at the same visual height as the buttons above it. */
 .seg button {
-  font: inherit; font-size: 12.5px; cursor: pointer;
-  padding: 7px 14px; border: 0; background: var(--panel);
+  font: inherit; font-size: 13px; line-height: 1.2; cursor: pointer;
+  padding: 9px 14px; border: 0; background: var(--panel);
   color: var(--text-muted); transition: background 0.14s, color 0.14s;
 }
 .seg button + button { border-left: 1px solid var(--border); }
