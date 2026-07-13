@@ -14,6 +14,10 @@ filter).
   `search_knowledge` returns the workflow. Both per-step tacit notes and the
   workflow-level tacit doc are indexed as separate `type: "tacit"` units.
 - `publish_knowledge(workflowId)` — Builder+ only; Personal → Shared.
+- `retire_knowledge(workflowId, action?)` — `archive` (default, reversible) or
+  `delete` (physical + index purge). Edit-gated (owner, or same-domain Builder+ for
+  a Shared workflow). LINEAGE-AWARE: blocked (409) if any App/Agent still consumes
+  it. `delete` also refuses a still-live workflow.
 - `search_knowledge(query, k?)` — governed hybrid retrieval (dense + lexical,
   reranked) with provenance. OPA `retrieve` gate + DLS grant filter; returns only
   units you may see. Tacit units carry `type: "tacit"` in their provenance.

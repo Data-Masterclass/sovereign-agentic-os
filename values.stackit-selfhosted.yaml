@@ -269,7 +269,7 @@ osUI:
     # 0.1.11 = Agents-tab builder rebuild: globalThis store fix (AGENT.md/MEMORY.md
     # now load), single Auto/Reasoning/Execution model toggle (real sovereign-*
     # ids), React Flow drag-and-drop graph builder, master-detail rail + templates.
-    tag: "0.1.86"
+    tag: "0.1.87"
   # CANONICAL PUBLIC URL — the apex host. OS_PUBLIC_URL derives from this (os-ui.yaml
   # reads `.Values.osUI.publicUrl` first, only falling back to the `os.<zone>` ingress
   # host). Pinning it here makes the apex authoritative so a `helm upgrade` can NEVER

@@ -53,7 +53,10 @@ import {
   updateTacit,
   getWorkflow,
   getDomainKnowledge,
+  archiveWorkflow,
+  deleteWorkflow,
 } from '@/lib/knowledge/store';
+import { knowledgeConsumers } from '@/lib/knowledge/consumers';
 import { fileArtifactPromotion, promoteThroughSeam, isLadderKind, type LadderKind } from '@/lib/governance/ladder';
 import { pendingHandle } from '@/lib/mcp/pending';
 import {
@@ -63,7 +66,7 @@ import {
   type WorkflowRule,
   type ActorType,
 } from '@/lib/knowledge/schema';
-import { indexWorkflow, indexDomain } from '@/lib/knowledge/index-pipeline';
+import { indexWorkflow, indexDomain, purgeKnowledgeUnits } from '@/lib/knowledge/index-pipeline';
 
 import {
   createFile,
@@ -761,6 +764,59 @@ export const knowledgeWriteTools: McpTool[] = [
       const workflow = await indexWorkflow(view.workflow, { owner: view.owner, tacit: view.tacit, updatedAt: view.updatedAt });
       const domain = await indexDomain(getDomainKnowledge(view.domain));
       return { workflow, domain };
+    },
+  },
+  {
+    name: 'retire_knowledge',
+    tab: 'knowledge',
+    minRole: 'creator',
+    description:
+      'RETIRE a knowledge workflow you can edit — the Knowledge tab’s lifecycle: `archive` (the default: reversible soft-hide, retains the record + history, unarchive with author_knowledge’s sibling flow) or `delete` (PHYSICAL + irreversible: removes the record, its version history, and purges its indexed units from OpenSearch + the offline mirror so it stops being retrievable). Same governed store the Knowledge tab + `/api/knowledge/workflows/[id]` call. LINEAGE-AWARE: blocked with a typed 409 if any App or Agent system still consumes it (never orphan a live dependency) — remove those uses first. Role gate (edit scope, re-checked in-lib): the OWNER may retire their own Personal/unshared workflow; a SHARED/domain workflow needs a same-domain Builder+ (the Knowledge edit gate). Physical `delete` additionally refuses a still-published (`live`) workflow — archive/unpublish it first (mirrors the store). Idempotency: retiring a missing workflow is a typed not_found.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workflowId: { type: 'string', description: 'The knowledge workflow id to retire.' },
+        action: {
+          type: 'string',
+          enum: ['archive', 'delete'],
+          description: 'archive = reversible soft-hide (default); delete = physical, irreversible removal + index purge.',
+        },
+      },
+      required: ['workflowId'],
+      examples: [
+        { workflowId: 'wf_ab12cd' },
+        { workflowId: 'wf_ab12cd', action: 'delete' },
+      ],
+    },
+    call: async (user, args) => {
+      const id = str(args.workflowId).trim();
+      if (!id) fail('retire_knowledge needs a `workflowId`', 400);
+      const action = str(args.action).trim() || 'archive';
+      if (action !== 'archive' && action !== 'delete') {
+        fail("retire_knowledge `action` must be 'archive' or 'delete'", 400);
+      }
+      const p = P(user);
+      // View-scope + existence guard first (typed 403/404) so a lineage/role message
+      // never leaks a workflow the caller can't even see.
+      const view = getWorkflow(id, p);
+      // LINEAGE GUARD (mirrors the app-delete dependentsOf check): refuse to orphan a
+      // live consumer. Runs for BOTH archive and delete — retiring an in-use workflow,
+      // reversibly or not, breaks the consumers' context handover.
+      const consumers = await knowledgeConsumers(id, p);
+      if (consumers.length > 0) {
+        const names = consumers.map((c) => `${c.by} (${c.kind})`).join(', ');
+        fail(`retire blocked — this workflow is still consumed by: ${names}. Remove those uses first.`, 409);
+      }
+      if (action === 'archive') {
+        const rec = archiveWorkflow(id, p); // edit-gated in-lib (owner or same-domain Builder+)
+        return { id: rec.id, title: rec.title, action: 'archive', archived: rec.archived, reversible: true };
+      }
+      // PHYSICAL delete: edit-gated + refuses a live workflow in-lib. On success, purge
+      // the indexed units so a deleted workflow stops being retrievable (best-effort +
+      // honest — the record is already gone; report if the index purge couldn't run).
+      deleteWorkflow(id, p);
+      const indexPurged = await purgeKnowledgeUnits(id);
+      return { id, title: view.title, action: 'delete', deleted: true, indexPurged, reversible: false };
     },
   },
 ];

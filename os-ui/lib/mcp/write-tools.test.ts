@@ -243,6 +243,70 @@ test('DATA QUALITY: a rule without a column is a typed bad_request', async () =>
   assert.equal(e.code, 'bad_request');
 });
 
+// ---- RETIRE KNOWLEDGE: governed archive/delete, lineage- + role-gated --------
+test('RETIRE: a zero-consumer draft archives (reversible), then deletes physically', async () => {
+  resetAll();
+  const wf = payload<{ id: string }>(await call(creator, 'author_knowledge', { title: 'Stale flow' }));
+
+  // ARCHIVE (default): reversible soft-hide of the caller's OWN Personal draft.
+  const archived = payload<{ action: string; archived: boolean; reversible: boolean }>(
+    await call(creator, 'retire_knowledge', { workflowId: wf.id }),
+  );
+  assert.equal(archived.action, 'archive');
+  assert.equal(archived.archived, true);
+  assert.equal(archived.reversible, true);
+
+  // DELETE: physical + irreversible on the zero-consumer draft (archived first, above,
+  // but a draft can be deleted directly — the store only blocks a LIVE workflow).
+  const deleted = payload<{ action: string; deleted: boolean; reversible: boolean }>(
+    await call(creator, 'retire_knowledge', { workflowId: wf.id, action: 'delete' }),
+  );
+  assert.equal(deleted.action, 'delete');
+  assert.equal(deleted.deleted, true);
+  assert.equal(deleted.reversible, false);
+
+  // Gone: a second retire is a typed not_found (the governed view guard).
+  const gone = errorOf(await call(creator, 'retire_knowledge', { workflowId: wf.id }));
+  assert.equal(gone.code, 'not_found');
+});
+
+test('RETIRE: blocked (typed conflict) while an Agent system still consumes the workflow', async () => {
+  resetAll();
+  const wf = payload<{ id: string }>(await call(builder, 'author_knowledge', { title: 'Consumed flow' }));
+
+  // Wire the workflow into an agent system's knowledge grants (the "context out"
+  // handover) so it has a live consumer.
+  const sys = payload<{ id: string }>(await call(builder, 'create_agent_system', { name: 'Triage', template: 'analyze' }));
+  const view = payload<{ yaml: string }>(await call(builder, 'get_agent_system', { systemId: sys.id }));
+  const granted = view.yaml.replace(/knowledge: \[\]/, `knowledge: [${wf.id}]`);
+  assert.notEqual(granted, view.yaml, 'spliced a knowledge grant into system.yaml');
+  payload(await call(builder, 'commit_agent_files', { systemId: sys.id, path: 'system.yaml', content: granted }));
+
+  // Retire (archive OR delete) is BLOCKED — never orphan a live dependency.
+  const blocked = errorOf(await call(builder, 'retire_knowledge', { workflowId: wf.id }));
+  assert.equal(blocked.code, 'conflict');
+  assert.match(blocked.reason, new RegExp(`still consumed by:.*${sys.id}`));
+
+  // Remove the grant → the consumer is gone → retire now succeeds.
+  const released = granted.replace(`knowledge: [${wf.id}]`, 'knowledge: []');
+  payload(await call(builder, 'commit_agent_files', { systemId: sys.id, path: 'system.yaml', content: released }));
+  const ok = payload<{ archived: boolean }>(await call(builder, 'retire_knowledge', { workflowId: wf.id }));
+  assert.equal(ok.archived, true, 'with no consumer, retire proceeds');
+});
+
+test('RETIRE: role-gated — a creator is denied retiring another owner’s SHARED workflow', async () => {
+  resetAll();
+  // Builder authors + publishes a workflow → it becomes a SHARED domain artifact.
+  const wf = payload<{ id: string }>(await call(builder, 'author_knowledge', { title: 'Shared SOP' }));
+  const pub = payload<{ status: string; visibility: string }>(await call(builder, 'publish_knowledge', { workflowId: wf.id }));
+  assert.equal(pub.visibility, 'Shared');
+
+  // A same-domain CREATOR can SEE it but is not entitled to edit/retire it (the
+  // Knowledge edit gate: owner, or a same-domain Builder+). Typed forbidden.
+  const denied = errorOf(await call(creator, 'retire_knowledge', { workflowId: wf.id }));
+  assert.equal(denied.code, 'forbidden');
+});
+
 // ---- CUBE auto-registration reflected in get_dataset -------------------------
 test('DISCOVERY: get_dataset reflects Cube auto-registration state (no manual metric needed)', async () => {
   resetAll();

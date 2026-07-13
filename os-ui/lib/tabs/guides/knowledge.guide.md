@@ -107,7 +107,13 @@ author_knowledge({
 |---|---|
 | `search_knowledge`, `list_knowledge`, `get_knowledge` | Creator |
 | `author_knowledge`, `index_knowledge` | Creator (own work) |
+| `retire_knowledge` (archive/delete) | Creator (own Personal); Builder+ for a Shared workflow |
 | ⛔ `publish_knowledge` | Builder or Admin |
+
+`retire_knowledge` is lineage-aware: retiring a workflow still consumed by an App
+or Agent system is blocked (409) — remove those uses first. `action: "delete"` is
+physical + irreversible (purges the index) and refuses a still-published workflow;
+`action: "archive"` (default) is a reversible soft-hide.
 
 OPA enforces domain scope. Unpublished workflows are Personal and invisible to
 agents. A creator cannot publish their own knowledge — file the workflow and hand

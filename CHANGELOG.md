@@ -15,6 +15,12 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.87] — 2026-07-13
+
+### Feature — free-form agent-team scaffolder + `retire_knowledge` MCP
+- **"Describe what your team should do" now builds a real multi-agent team from free text.** A plain-language description is turned by the reasoning model into a validated linear team (agents + per-agent instructions + handoff edges), applied through the same `system.yaml` commit path as everything else; the LLM only proposes *structure* — tools are derived deterministically by the suggester within the caller's role floor, models stay Auto. The deterministic structured fast-path (`add a <role> sub-agent…`) still applies; a malformed plan is rejected, never written.
+- **`retire_knowledge` MCP tool** — archive (reversible) or delete (physical) a knowledge workflow via MCP, closing the gap where the MCP surface could author/publish/index knowledge but never retire it. Lineage-aware (blocked if any app/agent still consumes it) and role-gated exactly like the UI delete.
+
 ## [os-ui 0.1.86] — 2026-07-13
 
 ### Fix — an admin can set a user's password in the UI (create + reset)

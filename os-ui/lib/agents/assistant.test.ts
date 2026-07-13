@@ -3,9 +3,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSystem } from './system-schema.ts';
+import { parseSystem, serializeSystem } from './system-schema.ts';
 import { compile } from './langgraph-compile.ts';
-import { applyInstruction } from './assistant.ts';
+import { applyInstruction, scaffoldSystem, parseProposedAgents } from './assistant.ts';
 
 const BASE = `
 system: { name: Desk, domain: sales, visibility: Personal }
@@ -64,4 +64,100 @@ test('a handoff is only reported as wired when the target agent actually exists'
 test('an unrecognised instruction is reported, not silently ignored', () => {
   const before = parseSystem(BASE);
   assert.throws(() => applyInstruction(before, 'make me a sandwich'), /could not turn that into a system edit/i);
+});
+
+// --- free-form scaffolder (LLM fallback, stubbed) --------------------------
+
+/** An empty starting system (what a fresh Simple builder session sees). */
+const EMPTY = `
+system: { name: Untitled system, domain: sales, visibility: Personal }
+entrypoint: ""
+grants: { tools: [] }
+agents: []
+`;
+
+/** A stub completer returning a fixed JSON team — deterministic, no network. */
+const stub = (json: string) => async () => json;
+
+const FOUR_STEP = JSON.stringify({
+  agents: [
+    { id: 'pull-campaign-data', role: 'Pulls campaign data', instruction: 'Query the campaign dataset for the period.' },
+    { id: 'check-margins', role: 'Checks margins after returns', instruction: 'Compute margin after returns per campaign.' },
+    { id: 'score-campaigns', role: 'Scores each campaign against rules', instruction: 'Apply the policy rules and score each campaign.' },
+    { id: 'recommend-budget', role: 'Recommends budget changes', instruction: 'Recommend budget changes from the scores.' },
+  ],
+});
+
+test('a free-form description yields a valid linear multi-agent team', async () => {
+  const before = parseSystem(EMPTY);
+  const { system, summary } = await scaffoldSystem(
+    before,
+    'a team that pulls campaign data, checks margins after returns, scores each campaign, and recommends budget changes',
+    { complete: stub(FOUR_STEP) },
+  );
+
+  // >= 2 agents, in order, with per-agent instructions.
+  assert.ok(system.agents.length >= 2);
+  assert.equal(system.agents[0].id, 'pull-campaign-data');
+  for (const a of system.agents) assert.ok(a.agent_md.trim().length > 0, `agent ${a.id} has instructions`);
+
+  // Linear chain: consecutive handoff edges, first agent is the entrypoint.
+  assert.equal(system.entrypoint, system.agents[0].id);
+  for (let i = 0; i < system.agents.length - 1; i++) {
+    assert.ok(
+      system.edges.some((e) => e.from === system.agents[i].id && e.to === system.agents[i + 1].id && e.type === 'handoff'),
+      `handoff ${system.agents[i].id} -> ${system.agents[i + 1].id}`,
+    );
+  }
+
+  // Passes schema + compiler validation (identical to the manual builder path).
+  assert.doesNotThrow(() => parseSystem(serializeSystem(system)));
+  assert.doesNotThrow(() => compile(system));
+  assert.match(summary, /team/i);
+});
+
+test('scaffold tools come from suggest-tools and never exceed the role floor', async () => {
+  const before = parseSystem(EMPTY);
+  // The caller may ONLY grant search_knowledge (a tight role floor).
+  const floor = ['search_knowledge'];
+  const { system } = await scaffoldSystem(before, 'pull data, analyze, and report', {
+    complete: stub(FOUR_STEP),
+    catalog: floor,
+  });
+  // Every granted tool (and every per-agent tool) must be within the floor.
+  for (const t of system.grants.tools) assert.ok(floor.includes(t), `grant ${t} within floor`);
+  for (const a of system.agents) for (const t of a.tools ?? []) assert.ok(floor.includes(t), `${a.id} tool ${t} within floor`);
+  // And per-agent tools stay a subset of grants ⇒ compile is clean (narrow-only).
+  assert.doesNotThrow(() => compile(system));
+});
+
+test('describing again REPLACES the scaffold (no duplicate agents)', async () => {
+  const before = parseSystem(EMPTY);
+  const first = await scaffoldSystem(before, 'anything', { complete: stub(FOUR_STEP) });
+  const second = await scaffoldSystem(first.system, 'anything again', { complete: stub(FOUR_STEP) });
+  assert.equal(second.system.agents.length, 4); // not 8
+});
+
+test('a malformed LLM output is rejected, never written as an invalid system', async () => {
+  const before = parseSystem(EMPTY);
+  // Garbage / single-agent / empty proposals must all be rejected.
+  await assert.rejects(() => scaffoldSystem(before, 'x', { complete: stub('not json at all') }), /could not turn that description/i);
+  await assert.rejects(() => scaffoldSystem(before, 'x', { complete: stub('{"agents":[]}') }), /could not turn that description/i);
+  await assert.rejects(
+    () => scaffoldSystem(before, 'x', { complete: stub(JSON.stringify({ agents: [{ id: 'solo', role: 'r', instruction: 'i' }] })) }),
+    /could not turn that description/i,
+  );
+});
+
+test('parseProposedAgents repairs ids and drops empty steps', () => {
+  const agents = parseProposedAgents(JSON.stringify({
+    agents: [
+      { id: 'Pull Data!!', role: 'Pulls', instruction: 'do it' },
+      { role: '', instruction: '' }, // empty — dropped
+      { id: 'pull-data', role: 'Also pulls', instruction: 'again' }, // id collides ⇒ de-duped
+    ],
+  }));
+  assert.equal(agents.length, 2);
+  assert.equal(agents[0].id, 'pull-data');
+  assert.notEqual(agents[1].id, agents[0].id); // unique
 });

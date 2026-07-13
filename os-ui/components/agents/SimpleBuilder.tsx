@@ -224,7 +224,7 @@ function DescribeAndName({
           value={desc}
           onChange={(e) => setDesc(e.target.value)}
           disabled={!canEdit || scaffolding}
-          placeholder="e.g. add a research sub-agent that hands off to the writer"
+          placeholder="e.g. a team that pulls campaign data, checks margins after returns, scores each campaign against the rules, and recommends budget changes"
           onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void describe(); } }}
         />
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
