@@ -15,6 +15,17 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.96] — 2026-07-13
+
+### Feature — the agent-system builder is now a clear 5-phase flow
+- **Simple mode is reorganized into Define · Design · Build · Run · Evaluate.** Define (name, description, safety/rights preset up front); Design (the team, with a **template picker** on "+ Add agent": curated roles — blank/analyst/recommender/reviewer/researcher — plus marketplace-shared agents); **Build** (renamed from "Build & run", compile+verify only); **Run** (a separate step with three clear trigger modes — Manual · On schedule · Called from system — the schedule editor moved here, and a one-click **▶ Run** of the defined task replacing the confusing "What should the team do?" prompt, with an optional per-run input; results shown here); **Evaluate** (diagnostics + Langfuse + PDF report relocated here, plus deterministic **checks** — non-empty · no error/denial · within budget — and a one-click **LLM-judge** scoring Clarity/Grounding/Actionability). All phases still write the same `system.yaml` through the same commit path and reuse the existing run engine; Developer mode is unchanged.
+
+### Fix — creating a metric no longer errors while Cube catches up
+- **Defining a metric no longer shows a scary `Cube 400 … not found for path`.** Runtime-defined metrics reach Cube via a model-sync sidecar within a few seconds; the app used to query the new measure immediately and hard-fail. Now the define + live-preview paths **fail-soft**: the metric is always saved and the UI shows "✓ saved — its live value appears within a few seconds as Cube syncs" instead of an error. The sidecar poll interval was shortened (30s → 5s) for snappier convergence, and a hint nudges you to promote the dataset to Shared + build Gold if its metrics aren't reaching the query engine. (Corrected a stale code comment that wrongly claimed Cube schema was git-deployed.)
+
+### Change — consistent artifact-tab headers
+- **The All/My/Shared/Marketplace scope pills and the Show-archived / + New buttons now render at a consistent size and alignment across every tab**, and **Connections** gained the standard Show-archived + "+ New connection" header controls it was missing.
+
 ## [os-ui 0.1.95] — 2026-07-13
 
 ### Governance — shared artifacts are owner/admin-managed; sharing is admin-approved
