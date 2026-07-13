@@ -8,6 +8,8 @@ import PageHeader from '@/components/PageHeader';
 import { useApi } from '@/lib/useApi';
 import { useUser } from '@/lib/useUser';
 import { useToolWindow } from '@/components/ToolWindowProvider';
+import LifecycleActions from '@/components/lifecycle/LifecycleActions';
+import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 
 // Layer-4 tools embeddable same-origin (lib/tool-proxy.ts). JupyterHub needs
 // WebSockets (kernels) and KServe has no human UI, so those keep native links.
@@ -316,12 +318,12 @@ function ModelService() {
   }
 
   return (
-    <>
+    <ConfirmProvider>
       <TierLadder model={model} reload={reload} gpuEnabled={data?.gpuEnabled ?? false} />
       <FrontDoors model={model} />
       {data?.drift ? <Monitoring drift={data.drift} model={model} reload={reload} /> : null}
       <Marketplace model={model} reload={reload} />
-    </>
+    </ConfirmProvider>
   );
 }
 
@@ -496,6 +498,24 @@ function TierLadder({
             onClick={() => runOp({ op: 'certify', mode: certifyMode })}
           />
         </div>
+
+        {/* Lifecycle — Archive (live) · Restore + Delete (archived), the OS-wide
+            control every artifact tab uses. Edit-scoped server-side (owner/Admin). */}
+        {isBuilder ? (
+          <div className="row" style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)', justifyContent: 'flex-end' }}>
+            <LifecycleActions
+              id={model.model}
+              name={model.name}
+              kind="model"
+              visibility={model.tier === 'Marketplace' ? 'certified' : model.tier === 'Domain' ? 'shared' : 'personal'}
+              archived={model.archived ?? false}
+              api={`/api/science/model/${encodeURIComponent(model.model)}`}
+              onChanged={reload}
+              showVersions={false}
+              compact
+            />
+          </div>
+        ) : null}
 
         {opErr ? <div className="error" style={{ marginTop: 12 }}>{opErr}</div> : null}
       </div>

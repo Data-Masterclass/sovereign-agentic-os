@@ -233,11 +233,17 @@ export const config = {
   // fall back to the mock chat model so the loop still runs on a laptop.
   litellmReasoningModel: env('LITELLM_REASONING_MODEL', env('LITELLM_CHAT_MODEL', 'sovereign-reasoning')),
   litellmExecModel: env('LITELLM_EXEC_MODEL', env('LITELLM_CHAT_MODEL', 'sovereign-default')),
-  // Agent tool-calling (function-calling) model. Defaults to the reasoning tier
-  // (Qwen), which emits clean OpenAI `tool_calls`; the light default (gpt-oss-20b)
-  // uses the "harmony" response format whose tool calls parse unreliably. This is
-  // just the install baseline — admin-overridable via the `tools` model role.
-  litellmToolsModel: env('LITELLM_TOOLS_MODEL', env('LITELLM_REASONING_MODEL', 'sovereign-reasoning')),
+  // Agent tool-calling (function-calling) model — the EXEC/"fast" tier of the
+  // multi-agent graph (this role is used ONLY there; Ask-the-OS resolves its own
+  // model). Defaults to the STANDARD tier (gpt-oss-20b): cheap-first, so read-only
+  // gatherer nodes run fast/cheap while the Auto router still escalates genuine
+  // write/decide/synthesis nodes to the reasoning tier (Qwen). Previously this
+  // followed the reasoning model, so EVERY node — even fast gatherers — ran on the
+  // 235B model, the main token/latency sink of a team run. gpt-oss-20b's "harmony"
+  // tool-call framing is stripped defensively (lib/assistant/runtime.ts), so it
+  // degrades gracefully. Admin-overridable via LITELLM_TOOLS_MODEL / the `tools`
+  // role to pin tool-calling back to the reasoning model if desired.
+  litellmToolsModel: env('LITELLM_TOOLS_MODEL', env('LITELLM_EXEC_MODEL', 'sovereign-default')),
   // Ask-the-OS assistant: max PLAN→ACT tool-call rounds per turn. Raised from the
   // original 8 so multi-step builds (ingest → silver → gold → metric → publish) can
   // complete in one conversation. Tunable via env without a rebuild.

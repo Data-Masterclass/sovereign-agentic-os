@@ -15,6 +15,14 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.92] — 2026-07-13
+
+### Change — multi-agent teams run cheap-first (big token + latency saving)
+- **A team run's fast/gatherer nodes now run on the STANDARD model (gpt-oss-20b), not the 235B reasoning model.** The graph's exec ("tools") tier previously followed the reasoning model, so *every* node — even read-only data-gatherers — ran on Qwen3‑235B, the main token/latency sink of a run. Now the Auto per-node router genuinely saves: read-only gatherers → the cheap standard tier, and only write/decide/synthesis nodes escalate to reasoning. gpt-oss-20b's "harmony" tool-call framing is stripped defensively, so it degrades gracefully. Fully reversible: set `LITELLM_TOOLS_MODEL` (or the `tools` model role) back to the reasoning model, or pin any single agent to **Reasoning**. The between-node context budget already sizes to the smaller model window, so this is safe with the 128k standard model.
+
+### Feature — Science tab gains the OS-wide lifecycle
+- **A model-as-a-service can now be Archived → Restored / Deleted**, the same consistent lifecycle every other artifact tab has (it was the only tab missing it). The controls sit in the model's tier-ladder detail card; archive is reversible, delete is reachable only once archived and is edit-scoped (owner or domain Admin, agents rejected). Adds a `model` lifecycle kind, an `archived` flag that drops archived models out of the tab list, and the `/api/science/model/[model]` archive/unarchive/delete route.
+
 ## [os-ui 0.1.91] — 2026-07-13
 
 ### Fix — multi-agent run no longer 400s on ContextWindowExceededError

@@ -25,7 +25,8 @@ export type ArtifactKind =
   | 'metric'
   | 'connection'
   | 'knowledge'
-  | 'bigbet';
+  | 'bigbet'
+  | 'model';
 
 /** Visibility tier — Shared/Certified artifacts affect others, so delete is gated harder. */
 export type Visibility = 'personal' | 'shared' | 'certified' | string;
@@ -41,6 +42,7 @@ const BACKING: Record<ArtifactKind, string> = {
   connection: 'purges its stored credential',
   knowledge: 'removes it from the search index',
   bigbet: 'deletes the bet and its plan',
+  model: 'tears down its serving endpoint and registry entry',
 };
 
 /** Human noun for a kind, for prose ("this dataset", "this app"). */
@@ -54,6 +56,7 @@ const NOUN: Record<ArtifactKind, string> = {
   connection: 'connection',
   knowledge: 'knowledge item',
   bigbet: 'big bet',
+  model: 'model',
 };
 
 export type ConfirmCopy = {

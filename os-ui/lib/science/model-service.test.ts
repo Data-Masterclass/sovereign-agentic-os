@@ -16,6 +16,8 @@ import {
   goLive,
   certifyModel,
   nextTier,
+  setModelArchived,
+  deleteModel,
 } from './model-service.ts';
 import {
   proposePlan,
@@ -267,4 +269,34 @@ test('fork-allowed import drops a governed fork in the consumer domain', () => {
 test('cannot import a model that is not yet certified to the Marketplace', () => {
   resetWithChurn(); // churn at Personal, not Marketplace
   assert.throws(() => importModel('churn_model', { id: 'm', domain: 'marketing' }), /not certified/i);
+});
+
+test('setModelArchived archives + restores; archived drops out of the viewer list', () => {
+  _resetModels();
+  upsertModel(personalModel()); // owner sara, domain sales, model test_model
+  const viewer = { id: 'sara', domains: ['sales'] };
+  assert.equal(listModelsForUser(viewer).length, 1);
+  setModelArchived('test_model', admin('sales'), true);
+  assert.equal(listModelsForUser(viewer).length, 0, 'archived model hidden by default');
+  assert.equal(listModelsForUser(viewer, { includeArchived: true }).length, 1);
+  setModelArchived('test_model', admin('sales'), false);
+  assert.equal(listModelsForUser(viewer).length, 1, 'restored model visible again');
+});
+
+test('deleteModel requires archive first, then removes the record', () => {
+  _resetModels();
+  upsertModel(personalModel());
+  assert.throws(() => deleteModel('test_model', admin('sales')), /archive the model before deleting/i);
+  setModelArchived('test_model', admin('sales'), true);
+  deleteModel('test_model', admin('sales'));
+  assert.equal(getModel('test_model'), null, 'record physically removed');
+});
+
+test('archive/delete reject agents and out-of-domain / non-owner non-admin actors', () => {
+  _resetModels();
+  upsertModel(personalModel()); // owner sara, domain sales
+  assert.throws(() => setModelArchived('test_model', agentActor('sales'), true), /agent cannot/i);
+  assert.throws(() => setModelArchived('test_model', admin('marketing'), true), /domain you belong to/i);
+  // a builder who is neither the owner (sara) nor an admin is edit-scoped out
+  assert.throws(() => setModelArchived('test_model', builder('sales'), true), /owner or a domain Admin/i);
 });

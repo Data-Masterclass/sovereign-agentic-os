@@ -105,9 +105,10 @@ function modelVisibleToUser(m: ServiceModel, viewer: ModelViewer): boolean {
  * surface. Returns the viewer's own Personal models + the Domain models of the
  * domains they belong to + Marketplace-published models, and nothing else.
  */
-export function listModelsForUser(viewer: ModelViewer): ServiceModel[] {
+export function listModelsForUser(viewer: ModelViewer, opts: { includeArchived?: boolean } = {}): ServiceModel[] {
   return [...store().values()]
     .filter((m) => modelVisibleToUser(m, viewer))
+    .filter((m) => opts.includeArchived || !m.archived)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -333,4 +334,43 @@ export function certifyModel(model: string, actor: Actor, mode: ConsumptionMode)
 export function nextTier(t: ModelTier): ModelTier | null {
   const i = ORDER.indexOf(t);
   return i >= 0 && i < ORDER.length - 1 ? ORDER[i + 1] : null;
+}
+
+/** Edit-scope for archive/delete: the owner, or an Admin of the owning domain. */
+function requireEditScope(actor: Actor, m: ServiceModel, action: string): void {
+  requireDomain(actor, m);
+  if (m.owner !== actor.id && actor.role !== 'admin') {
+    throw withStatus(new Error(`Only the owner or a domain Admin can ${action} this model`), 403);
+  }
+}
+
+/**
+ * Archive / restore a model (the OS-wide lifecycle). Archived models drop out of
+ * the tab list until restored; delete is reachable only once archived. Edit-scoped
+ * (owner or domain Admin), agents rejected — the same authz posture as promote.
+ */
+export function setModelArchived(model: string, actor: Actor, archived: boolean): ServiceModel {
+  const m = getModel(model);
+  if (!m) throw withStatus(new Error(`unknown model ${model}`), 404);
+  assertHuman(actor, archived ? 'archive a model' : 'restore a model');
+  requireEditScope(actor, m, archived ? 'archive' : 'restore');
+  m.archived = archived;
+  store().set(m.model, m);
+  return m;
+}
+
+/**
+ * Physically delete a model — remove it from the registry (the record every store
+ * fn keys on). Edit-scoped, agents rejected, and ONLY once archived (mirrors the
+ * OS-wide "delete archived-only" rule the UI also enforces). Returns the removed
+ * record so the route can report the backing teardown honestly.
+ */
+export function deleteModel(model: string, actor: Actor): ServiceModel {
+  const m = getModel(model);
+  if (!m) throw withStatus(new Error(`unknown model ${model}`), 404);
+  assertHuman(actor, 'delete a model');
+  requireEditScope(actor, m, 'delete');
+  if (!m.archived) throw withStatus(new Error('Archive the model before deleting it'), 400);
+  store().delete(m.model);
+  return m;
 }

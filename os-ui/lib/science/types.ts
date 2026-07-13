@@ -61,6 +61,9 @@ export type ServiceModel = {
   /** Both front doors are auto-registered at the model's CURRENT tier (no publish step). */
   frontDoors: FrontDoor[];
   versions: ModelVersion[];
+  /** Soft-archived (retained, reversible). Archived models drop out of the tab list
+   *  until restored; delete is reachable only once archived (the OS-wide lifecycle). */
+  archived?: boolean;
 };
 
 /** The caller of a `predict` front door — a Software app/external (rest) or an agent (mcp). */

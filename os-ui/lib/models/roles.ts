@@ -8,9 +8,11 @@
  *
  *   • reasoning  → STACKIT reasoning model  (`sovereign-reasoning` → Qwen3-VL-235B)
  *   • standard   → STACKIT standard/worker  (`sovereign-default`   → gpt-oss-20b)
- *   • tools      → agent tool-calling. Follows the REASONING model (Qwen), which
- *                  emits clean OpenAI `tool_calls` (the standard gpt-oss-20b uses
- *                  the "harmony" format whose tool calls parse unreliably).
+ *   • tools      → the multi-agent graph's EXEC/"fast" tier. Defaults to the
+ *                  STANDARD model (gpt-oss-20b) so fast gatherer nodes run cheap;
+ *                  the Auto router escalates write/decide/synthesis nodes to the
+ *                  reasoning model. gpt-oss-20b's "harmony" tool-call framing is
+ *                  stripped defensively; pin this role to reasoning to override.
  *   • embeddings → STACKIT embeddings model (`sovereign-embed` → Qwen3-VL-Embedding-8B)
  *
  *   • mock (`sovereign-mock`) → NOT a role. It is the OFFLINE / testing default:
