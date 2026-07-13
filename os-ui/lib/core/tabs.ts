@@ -6,9 +6,9 @@
  * (os-application.md §4); every tab routes to a real surface in v1.0.
  *
  * Six sections:
- *   Ungrouped (entry): Home, Cockpit
- *   Plan:    Strategy, Big Bets, MCP, Tutorials
- *   Context: Knowledge, Files, Data, Connections, Metrics, Marketplace
+ *   Ungrouped (entry): Home, Cockpit, Tutorials, MCP
+ *   Plan:    Strategy, Big Bets, Marketplace
+ *   Context: Knowledge, Files, Data, Connections, Metrics
  *   Build:   Agents, Software, Science, Dashboards
  *   Monitor: Governance (builder+), Monitoring, Components (admin), LLM Gateway
  *   Admin:   Admin (admin), Terminal (admin), Query (admin), About / Licenses (admin)
@@ -36,11 +36,16 @@ export type TabGroup = {
 
 export const TAB_GROUPS: TabGroup[] = [
   {
-    // Entry points — ungrouped, always at the top
+    // Entry points — ungrouped, always at the top (Home + Cockpit, then the
+    // cross-cutting Tutorials + MCP setup that aren't part of the Plan workflow).
     tabs: [
       { label: 'Home', icon: '◇', href: '/' },
       { label: 'Cockpit', icon: '◉', href: '/cockpit' },
-      { label: 'Marketplace', icon: '⊞', href: '/marketplace', role: 'Builder / Administrator' },
+      { label: 'Tutorials', icon: '◎', href: '/tutorials' },
+      // MCP setup UI is builder+/admin. Creators still CONNECT via MCP (the
+      // /api/mcp endpoint + their per-user token are unaffected) — only this
+      // configuration tab is hidden from the creator menu.
+      { label: 'MCP', icon: '⌗', href: '/mcp', role: 'Builder / Administrator', minRole: 'builder' },
     ],
   },
   {
@@ -48,11 +53,7 @@ export const TAB_GROUPS: TabGroup[] = [
     tabs: [
       { label: 'Strategy', icon: '▲', href: '/strategy' },
       { label: 'Big Bets', icon: '◆', href: '/big-bets' },
-      // MCP setup UI is builder+/admin. Creators still CONNECT via MCP (the
-      // /api/mcp endpoint + their per-user token are unaffected) — only this
-      // configuration tab is hidden from the creator menu.
-      { label: 'MCP', icon: '⌗', href: '/mcp', role: 'Builder / Administrator', minRole: 'builder' },
-      { label: 'Tutorials', icon: '◎', href: '/tutorials' },
+      { label: 'Marketplace', icon: '⊞', href: '/marketplace', role: 'Builder / Administrator' },
     ],
   },
   {

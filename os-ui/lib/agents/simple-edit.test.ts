@@ -7,6 +7,7 @@ import { parseSystem, serializeSystem } from './system-schema.ts';
 import {
   setAgentRole, setAgentInstructions, setSystemTools, addSystemTool, removeSystemTool,
   addSimpleAgent, moveAgent, nextAgentId, addArtifactGrant, removeArtifactGrant,
+  addAgentTool, removeAgentTool, removeAgentSimple,
 } from './simple-edit.ts';
 import { instructionsOf } from './agent-md.ts';
 
@@ -126,4 +127,34 @@ test('every Simple edit leaves the input untouched (immutability, for undo/redo)
   addSimpleAgent(sys, { role: 'q' });
   moveAgent(sys, 'analyst', 1);
   assert.equal(serializeSystem(sys), snapshot, 'input never mutated');
+});
+
+test('addAgentTool grants a tool to ONLY the target agent, not inheriting siblings', () => {
+  const sys = parseSystem(BASE); // analyst + writer both inherit [search_knowledge, query_data]
+  const next = addAgentTool(sys, 'writer', 'author_knowledge');
+  const writer = next.agents.find((a) => a.id === 'writer')!;
+  const analyst = next.agents.find((a) => a.id === 'analyst')!;
+  assert.ok(writer.tools!.includes('author_knowledge'), 'target agent gets the tool');
+  assert.ok(!analyst.tools!.includes('author_knowledge'), 'sibling does NOT inherit it (the bug)');
+  assert.ok(next.grants.tools.includes('author_knowledge'), 'pool contains it (agent tools ⊆ grants)');
+});
+
+test('removeAgentTool removes from one agent and prunes the pool only when unused', () => {
+  const sys = parseSystem(BASE);
+  const one = removeAgentTool(sys, 'writer', 'query_data');
+  assert.ok(!one.agents.find((a) => a.id === 'writer')!.tools!.includes('query_data'));
+  assert.ok(one.agents.find((a) => a.id === 'analyst')!.tools!.includes('query_data'), 'still used → kept');
+  assert.ok(one.grants.tools.includes('query_data'));
+  const gone = removeAgentTool(one, 'analyst', 'query_data');
+  assert.ok(!gone.grants.tools.includes('query_data'), 'pruned from pool when no agent uses it');
+});
+
+test('removeAgentSimple deletes any agent incl. START, reassigning the entrypoint', () => {
+  const sys = parseSystem(BASE); // entrypoint = analyst
+  const next = removeAgentSimple(sys, 'analyst');
+  assert.ok(!next.agents.some((a) => a.id === 'analyst'));
+  assert.equal(next.entrypoint, 'writer', 'START handed to the remaining agent');
+  const empty = removeAgentSimple(next, 'writer');
+  assert.equal(empty.agents.length, 0);
+  assert.equal(empty.entrypoint, '');
 });

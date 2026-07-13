@@ -15,6 +15,20 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.93] — 2026-07-13
+
+### Fix — Simple builder: tools land on the right agent
+- **Adding a tool to an agent in the Simple builder now shows on THAT agent**, not on a different (the first) one. Tools are managed per-agent: an agent that had no explicit tool list used to inherit the whole system pool, so a tool added to one agent appeared on every inheriting agent instead of the one you clicked. Add/remove now affect only the target agent (siblings are frozen to their current set), preserving the invariant that an agent's tools are a subset of the system grant pool.
+
+### Fix — Simple builder: any agent is deletable
+- **You can now delete any agent card, including the START agent.** Deleting the entrypoint hands START to the next remaining agent automatically (or clears it when the team becomes empty), so you're never stuck with an agent you can't remove.
+
+### Feature — restore an older version of an agent system
+- **Agent systems now show Version history with per-version Restore** in the system detail (it was hidden). Every save already commits `system.yaml` + the agent files to a git repo, so the full history was there — restoring re-commits a prior version onto HEAD (auditable).
+
+### Change — navigation
+- **Marketplace moved under Plan** (below Big Bets), and **Tutorials + MCP moved up to the top entry area** (under Cockpit), so the sidebar groups read more naturally.
+
 ## [os-ui 0.1.92] — 2026-07-13
 
 ### Change — multi-agent teams run cheap-first (big token + latency saving)

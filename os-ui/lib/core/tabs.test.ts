@@ -44,17 +44,17 @@ const ADMIN_ONLY_LABELS = TAB_GROUPS
   .filter((t) => t.minRole === 'admin')
   .map((t) => t.label);
 
-test('TAB-SET entry group is exactly Home + Cockpit + Marketplace', () => {
+test('TAB-SET entry group is exactly Home + Cockpit + Tutorials + MCP', () => {
   assert.deepEqual(
     ENTRY_GROUP.tabs.map((t) => t.label),
-    ['Home', 'Cockpit', 'Marketplace'],
+    ['Home', 'Cockpit', 'Tutorials', 'MCP'],
   );
 });
 
-test('TAB-SET Plan group is Strategy, Big Bets, MCP, Tutorials', () => {
+test('TAB-SET Plan group is Strategy, Big Bets, Marketplace', () => {
   assert.deepEqual(
     PLAN_GROUP.tabs.map((t) => t.label),
-    ['Strategy', 'Big Bets', 'MCP', 'Tutorials'],
+    ['Strategy', 'Big Bets', 'Marketplace'],
   );
 });
 
@@ -96,10 +96,16 @@ test('TAB-SET removed tabs are gone from the nav entirely', () => {
   }
 });
 
-test('TAB-SET Tutorials is in the Plan group with no minRole', () => {
-  const tut = PLAN_GROUP.tabs.find((t) => t.label === 'Tutorials');
-  assert.ok(tut, 'Tutorials must be in the Plan group');
+test('TAB-SET Tutorials is in the entry group (under Cockpit) with no minRole', () => {
+  const tut = ENTRY_GROUP.tabs.find((t) => t.label === 'Tutorials');
+  assert.ok(tut, 'Tutorials must be in the entry group');
   assert.equal(tut!.minRole, undefined, 'Tutorials must have no minRole');
+});
+
+test('TAB-SET Marketplace is in the Plan group; MCP is in the entry group', () => {
+  assert.ok(PLAN_GROUP.tabs.some((t) => t.label === 'Marketplace'), 'Marketplace under Plan');
+  assert.ok(ENTRY_GROUP.tabs.some((t) => t.label === 'MCP'), 'MCP in the entry group');
+  assert.ok(!ENTRY_GROUP.tabs.some((t) => t.label === 'Marketplace'), 'Marketplace no longer at the top');
 });
 
 test('TAB-VIS creator: sees no admin-only tabs at all', () => {
@@ -219,23 +225,20 @@ test('TAB-VIS tabVisible: null/undefined userRole passes (middleware handles aut
   assert.equal(tabVisible(adminTab, undefined), true);
 });
 
-test('TAB-VIS entry + Context + Build tabs have no minRole; Plan is all-open to creators except the MCP setup tab', () => {
-  const allOpenGroups = [ENTRY_GROUP, CONTEXT_GROUP, BUILD_GROUP];
-  for (const group of allOpenGroups) {
+test('TAB-VIS entry/Context/Build/Plan tabs are open to creators except the MCP setup tab', () => {
+  // MCP is a builder+ setup tab wherever it lives (creators still connect via
+  // /api/mcp); every other tab in these groups is open to creators.
+  const openGroups = [ENTRY_GROUP, CONTEXT_GROUP, BUILD_GROUP, PLAN_GROUP];
+  for (const group of openGroups) {
     for (const tab of group.tabs) {
+      if (tab.label === 'MCP') {
+        assert.equal(tab.minRole, 'builder', 'MCP setup tab is builder-gated');
+        continue;
+      }
       assert.equal(tab.minRole, undefined,
         `${group.heading ?? 'Entry'} group tab "${tab.label}" must not have minRole`);
       assert.equal(tabVisible(tab, 'creator'), true,
         `${group.heading ?? 'Entry'} group tab "${tab.label}" hidden from creator`);
     }
-  }
-  // Plan: open to creators EXCEPT MCP (a builder+ setup tab; creators still connect via /api/mcp).
-  for (const tab of PLAN_GROUP.tabs) {
-    if (tab.label === 'MCP') {
-      assert.equal(tab.minRole, 'builder', 'MCP setup tab is builder-gated');
-      continue;
-    }
-    assert.equal(tab.minRole, undefined, `Plan tab "${tab.label}" must not have minRole`);
-    assert.equal(tabVisible(tab, 'creator'), true, `Plan tab "${tab.label}" hidden from creator`);
   }
 });

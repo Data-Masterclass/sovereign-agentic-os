@@ -10,10 +10,11 @@ import type { System } from '@/lib/agents/system-schema';
 import { classifyModelNeed } from '@/lib/agents/routing';
 import { instructionsOf } from '@/lib/agents/agent-md';
 import {
-  addSimpleAgent, moveAgent, removeSystemTool, addSystemTool,
+  addSimpleAgent, moveAgent, removeAgentSimple,
   setAgentInstructions, setAgentRole, addArtifactGrant, removeArtifactGrant,
+  addAgentTool, removeAgentTool,
 } from '@/lib/agents/simple-edit';
-import { removeAgent, setEntrypoint } from '@/lib/agents/canvas-edit';
+import { setEntrypoint } from '@/lib/agents/canvas-edit';
 import { suggestTools } from '@/lib/agents/suggest-tools';
 
 /**
@@ -367,11 +368,13 @@ function AgentCard({
   // The tools this agent effectively sees (inherits the system grants unless narrowed).
   const effectiveTools = agent.tools ?? system.grants.tools;
 
-  // Deterministic suggestions from the role + instructions, minus what's already granted.
+  // Deterministic suggestions from the role + instructions, minus what THIS agent
+  // already has (effectiveTools) — not the system pool, so a tool granted to a
+  // sibling is still offered here.
   const suggestions = useMemo(() => {
     const text = `${agent.id} ${role} ${instr}`;
-    return suggestTools(text, catalog ?? undefined).filter((s) => !system.grants.tools.includes(s.tool));
-  }, [agent.id, role, instr, catalog, system.grants.tools]);
+    return suggestTools(text, catalog ?? undefined).filter((s) => !effectiveTools.includes(s.tool));
+  }, [agent.id, role, instr, catalog, effectiveTools]);
 
   // The Auto model tier this agent resolves to (same classifier the run uses).
   const auto = classifyModelNeed(effectiveTools, `${agent.id} ${role} ${instr}`);
@@ -400,9 +403,7 @@ function AgentCard({
             <>
               <button className="icon-btn" disabled={index === 0} title="Move up" onClick={() => onCommit(moveAgent(system, agentId, -1))}>↑</button>
               <button className="icon-btn" disabled={index === count - 1} title="Move down" onClick={() => onCommit(moveAgent(system, agentId, 1))}>↓</button>
-              {!isStart ? (
-                <button className="icon-btn danger" title="Remove agent" onClick={() => onCommit(removeAgent(system, agentId))}>✕</button>
-              ) : null}
+              <button className="icon-btn danger" title="Remove agent" onClick={() => onCommit(removeAgentSimple(system, agentId))}>✕</button>
             </>
           ) : null}
         </div>
@@ -448,8 +449,8 @@ function AgentCard({
           {effectiveTools.map((t) => (
             <span key={t} className="sb-chip granted">
               <span className="mono">{t}</span>
-              {canEdit && system.grants.tools.includes(t) ? (
-                <button className="sb-chip-x" title="Remove" onClick={() => onCommit(removeSystemTool(system, t))}>✕</button>
+              {canEdit ? (
+                <button className="sb-chip-x" title="Remove" onClick={() => onCommit(removeAgentTool(system, agentId, t))}>✕</button>
               ) : null}
             </span>
           ))}
@@ -463,7 +464,7 @@ function AgentCard({
                   key={s.tool}
                   className="sb-chip suggest"
                   title={s.why}
-                  onClick={() => onCommit(addSystemTool(system, s.tool))}
+                  onClick={() => onCommit(addAgentTool(system, agentId, s.tool))}
                 >
                   + <span className="mono">{s.tool}</span>
                   <span className="sb-chip-why">{s.why}</span>

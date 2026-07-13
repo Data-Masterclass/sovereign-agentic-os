@@ -74,6 +74,44 @@ export function removeSystemTool(input: System, tool: string): System {
 }
 
 /**
+ * PER-AGENT tools for Simple mode. Each agent card reads "Tools THIS agent can
+ * use", so add/remove must affect ONLY the clicked agent — not every sibling. The
+ * fix for the bug where a tool added to one agent showed up on a different (the
+ * first, inheriting) agent: an agent with no explicit `tools` INHERITS the whole
+ * system pool, so any tool added to the pool appeared on it. Here we FREEZE every
+ * currently-inheriting agent to its present effective set first, making each
+ * agent's tool list explicit and independent, then edit only the target. The OS
+ * invariant (an agent's tools ⊆ `grants.tools`) is preserved: the pool is the union.
+ */
+function freezeInheritedTools(sys: System): void {
+  for (const a of sys.agents) if (!a.tools) a.tools = [...sys.grants.tools];
+}
+
+/** Grant a tool to ONE agent (idempotent). Other agents are unaffected. */
+export function addAgentTool(input: System, agentId: string, tool: string): System {
+  const sys = structuredClone(input);
+  const target = sys.agents.find((a) => a.id === agentId);
+  if (!target) throw new SystemError(`Simple: '${agentId}' is not a declared agent`);
+  freezeInheritedTools(sys); // snapshot siblings BEFORE the pool grows
+  if (!sys.grants.tools.includes(tool)) sys.grants.tools.push(tool); // keep pool ⊇ union
+  target.tools = target.tools!.includes(tool) ? target.tools : [...target.tools!, tool];
+  return sys;
+}
+
+/** Remove a tool from ONE agent; prune it from the pool if no agent uses it. */
+export function removeAgentTool(input: System, agentId: string, tool: string): System {
+  const sys = structuredClone(input);
+  const target = sys.agents.find((a) => a.id === agentId);
+  if (!target) throw new SystemError(`Simple: '${agentId}' is not a declared agent`);
+  freezeInheritedTools(sys);
+  target.tools = target.tools!.filter((t) => t !== tool);
+  if (!sys.agents.some((a) => (a.tools ?? sys.grants.tools).includes(tool))) {
+    sys.grants.tools = sys.grants.tools.filter((t) => t !== tool);
+  }
+  return sys;
+}
+
+/**
  * Simple-mode artifact grants — the plain "what your team can use" chips for Data
  * and Knowledge. These write the SAME `grants.data` / `grants.knowledge` list the
  * Developer Grants panel writes, so a Simple grant and the Developer equivalent
@@ -134,6 +172,30 @@ export function addSimpleAgent(
   };
   sys.agents.push(agent);
   if (!sys.entrypoint) sys.entrypoint = id;
+  return sys;
+}
+
+/**
+ * Remove ANY agent in Simple mode — including the START agent. The raw canvas
+ * `removeAgent` refuses to drop the entrypoint; here, if the removed agent IS the
+ * entrypoint, we first hand START to the next remaining agent (or clear it when the
+ * team becomes empty), so a business user is never stuck unable to delete a card.
+ * Also scrubs the agent from every supervisor `members` list + all edges.
+ */
+export function removeAgentSimple(input: System, agentId: string): System {
+  const sys = structuredClone(input);
+  if (!sys.agents.some((a) => a.id === agentId)) {
+    throw new SystemError(`Simple: '${agentId}' is not a declared agent`);
+  }
+  if (sys.entrypoint === agentId) {
+    const next = sys.agents.find((a) => a.id !== agentId);
+    sys.entrypoint = next ? next.id : '';
+  }
+  sys.agents = sys.agents.filter((a) => a.id !== agentId);
+  for (const a of sys.agents) {
+    if (a.members) a.members = a.members.filter((m) => m !== agentId);
+  }
+  sys.edges = sys.edges.filter((e) => e.from !== agentId && e.to !== agentId);
   return sys;
 }
 

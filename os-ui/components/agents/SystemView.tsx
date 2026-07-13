@@ -375,7 +375,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
               archived={!!data.archived}
               api={`/api/agents/systems/${systemId}`}
               onChanged={() => { if (data.archived) onBack(); else void reloadAll(); }}
-              showVersions={false}
+              showVersions
               compact
             />
           ) : null}
