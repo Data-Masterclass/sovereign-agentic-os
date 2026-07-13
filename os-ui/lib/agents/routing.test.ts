@@ -60,12 +60,12 @@ test('a workspace override replaces an activity default', () => {
 test('tierOf classifies known model_names', () => {
   assert.equal(tierOf('some-small-model'), 'light');              // unknown → light heuristic
   assert.equal(tierOf('sovereign-reasoning'), 'reasoning');
-  assert.equal(tierOf('sovereign-reasoning-fast'), 'reasoning');   // fast/fallback
+  assert.equal(tierOf('sovereign-reasoning-fast'), 'reasoning');   // legacy fast alias, still classifies
   assert.equal(tierOf('stackit-qwen3-vl-reasoning'), 'reasoning'); // legacy alias
   assert.equal(tierOf('stackit-qwen3-vl'), 'vision');
 });
 
-test('MODEL_CATALOG contains ONLY real live gateway model_names (no phantoms)', () => {
+test('MODEL_CATALOG presents ONLY the 3 STACKIT models + the mock (no stale aliases)', () => {
   // Every catalog entry carries a human display + tier + provenance; the key IS
   // the real LiteLLM model_name from the live proxy_config.model_list.
   for (const [name, info] of Object.entries(MODEL_CATALOG)) {
@@ -77,10 +77,19 @@ test('MODEL_CATALOG contains ONLY real live gateway model_names (no phantoms)', 
     // gateway. No `ministral-*` / `stackit-*` / other-provider phantoms.
     assert.ok(name.startsWith('sovereign-'), `${name} is a real sovereign gateway alias`);
   }
+  // Exactly the intended presented set: the three STACKIT roles + the mock.
+  assert.deepEqual(
+    Object.keys(MODEL_CATALOG).sort(),
+    ['sovereign-default', 'sovereign-embed', 'sovereign-mock', 'sovereign-reasoning'],
+  );
   // The live model set is all STACKIT-managed inference → every alias is external.
   assert.equal(MODEL_CATALOG['sovereign-default'].provenance, 'external');
   assert.equal(MODEL_CATALOG['sovereign-reasoning'].provenance, 'external');
   assert.equal(MODEL_CATALOG['sovereign-embed'].provenance, 'external');
+  // The stale duplicate-of-Qwen aliases are retired from the presented catalog.
+  assert.equal(MODEL_CATALOG['sovereign-vision'], undefined);
+  assert.equal(MODEL_CATALOG['sovereign-premium'], undefined);
+  assert.equal(MODEL_CATALOG['sovereign-reasoning-fast'], undefined);
   // No phantom / stale self-hosted ids leaked back in.
   assert.equal(MODEL_CATALOG['ministral-3'], undefined);
   assert.equal(MODEL_CATALOG['magistral-small'], undefined);

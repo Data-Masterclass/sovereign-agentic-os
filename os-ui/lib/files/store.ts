@@ -446,6 +446,30 @@ export function createFile(user: Principal, input: UploadInput): FileAsset {
   return a;
 }
 
+/**
+ * Governed offboard support: transfer this owner's PERSONAL-lane records to a new
+ * owner (used by lib/platform-admin/offboard.ts when a user is offboarded with
+ * reassignment). Only personal, owner-only artifacts move; shared/domain/certified
+ * are untouched. Returns the count moved.
+ */
+export function reassignOwner(fromId: string, toId: string): number {
+  let moved = 0;
+  for (const rec of fs().store.values()) {
+    if (rec.owner !== fromId) continue;
+    const a = parseAsset(rec.yaml);
+    if (a.tier !== 'dataset') continue; // personal lane only
+    // Owner lives on both the record (mirror key) and the serialized yaml (which
+    // drives canView/DLS) — rewrite both so the new owner can see the asset.
+    a.owner = toId;
+    rec.owner = toId;
+    rec.yaml = serializeAsset(a);
+    rec.updatedAt = now();
+    writeThrough(rec);
+    moved++;
+  }
+  return moved;
+}
+
 export function moveFile(id: string, user: Principal, folder: string): FileAsset {
   const rec = get(id);
   const a = editOf(rec, user);

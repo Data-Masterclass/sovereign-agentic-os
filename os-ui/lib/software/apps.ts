@@ -882,6 +882,26 @@ export async function createApp(
   return app;
 }
 
+/**
+ * Governed offboard support: transfer this owner's PERSONAL-lane records to a new
+ * owner (used by lib/platform-admin/offboard.ts when a user is offboarded with
+ * reassignment). Only personal, owner-only artifacts move; shared/domain/certified
+ * are untouched. Returns the count moved.
+ */
+export async function reassignOwner(fromId: string, toId: string): Promise<number> {
+  const map = await getCache();
+  let moved = 0;
+  for (const a of map.values()) {
+    if (a.owner !== fromId) continue;
+    if (a.visibility !== 'Personal') continue; // personal lane only
+    a.owner = toId;
+    a.updatedAt = now();
+    writeThrough(a);
+    moved++;
+  }
+  return moved;
+}
+
 // --------------------------------------------------------------- Build chat ---
 
 /** Persist the running build-chat conversation under the app (most recent 40). */

@@ -7,17 +7,21 @@
  * overrides. The tier model_names are the REAL sovereign gateway aliases (verified
  * against the live LiteLLM proxy_config.model_list — see values.stackit-managed.yaml):
  *
- *   • light     → `sovereign-default` — chat, coding, tool-selection, light work.
- *   • reasoning → `sovereign-reasoning` — planning / deep reasoning. `sovereign-
- *                 reasoning-fast` is the explicit fast alternative AND fallback.
- *   • vision    → `sovereign-vision` — the rare vision/video need + failover.
+ *   • light     → `sovereign-default` — chat, coding, tool-selection, light work
+ *                 (gpt-oss-20b, the STACKIT standard/worker model).
+ *   • reasoning → `sovereign-reasoning` — planning / deep reasoning (Qwen3-VL-235B).
+ *   • vision    → `sovereign-reasoning` — the rare vision/video need runs on the
+ *                 SAME Qwen3-VL-235B (it is a VLM), so there is no separate vision
+ *                 alias to present; the tier just reuses the reasoning model.
  *
- * The live model set behind these fixed aliases is now ALL STACKIT-managed
- * inference (sovereign-default→gpt-oss-20b; sovereign-reasoning/vision/premium→
- * Qwen3-VL-235B; sovereign-embed→Qwen3-VL-Embedding-8B). There is no in-box
- * self-hosted model server anymore, so provenance for every alias is `external`
- * (STACKIT-EU). A per-agent pin MUST be one of these real aliases or Build/run
- * 404s at the gateway.
+ * The PRESENTED model set is exactly the three STACKIT-managed sovereign models
+ * (sovereign-default→gpt-oss-20b; sovereign-reasoning→Qwen3-VL-235B; sovereign-
+ * embed→Qwen3-VL-Embedding-8B) plus `sovereign-mock` (the offline/testing model).
+ * The former stale aliases (`sovereign-reasoning-fast`, `sovereign-vision`,
+ * `sovereign-premium`) are retired from the catalog — they all mapped to the same
+ * Qwen3-VL-235B behind the gateway, so nothing is lost. There is no in-box self-
+ * hosted model server; provenance for every alias is `external` (STACKIT-EU). A
+ * per-agent pin MUST be one of these real aliases or Build/run 404s at the gateway.
  *
  * PURE module: editing the table writes LiteLLM routing config (the LiteLLM build
  * adapter), but no endpoint is ever hardcoded in the UI — a per-agent model is a
@@ -30,11 +34,13 @@ export type Tier = 'light' | 'reasoning' | 'vision';
 
 export const ACTIVITIES: Activity[] = ['planning', 'coding', 'text-writing', 'tool-selection', 'vision', 'video'];
 
-/** Tier → default LiteLLM model_name (a REAL live gateway alias; overridable). */
+/** Tier → default LiteLLM model_name (a REAL live gateway alias; overridable).
+ *  Vision reuses the reasoning model — Qwen3-VL-235B IS the vision-capable model,
+ *  so there is no separate `sovereign-vision` alias in the presented set. */
 export const TIER_MODELS: Record<Tier, string> = {
   light: 'sovereign-default',
   reasoning: 'sovereign-reasoning',
-  vision: 'sovereign-vision',
+  vision: 'sovereign-reasoning',
 };
 
 /**
@@ -66,10 +72,10 @@ export type ModelInfo = {
 export const MODEL_CATALOG: Record<string, ModelInfo> = {
   'sovereign-default': { model_name: 'sovereign-default', display: 'gpt-oss-20b', params: '20B', tier: 'light', provenance: 'external' },
   'sovereign-reasoning': { model_name: 'sovereign-reasoning', display: 'Qwen3-VL-235B', params: '235B', tier: 'reasoning', provenance: 'external' },
-  'sovereign-reasoning-fast': { model_name: 'sovereign-reasoning-fast', display: 'Qwen3-VL-235B (fast)', params: '235B', tier: 'reasoning', provenance: 'external' },
-  'sovereign-vision': { model_name: 'sovereign-vision', display: 'Qwen3-VL-235B', params: '235B', tier: 'vision', provenance: 'external' },
-  'sovereign-premium': { model_name: 'sovereign-premium', display: 'Qwen3-VL-235B', params: '235B', tier: 'reasoning', provenance: 'external' },
   'sovereign-embed': { model_name: 'sovereign-embed', display: 'Qwen3-VL-Embedding-8B', params: '8B', tier: 'light', provenance: 'external' },
+  // The offline / testing model — the honest fallback when no live gateway is
+  // reachable. Presented so an admin can pick it per role for testing.
+  'sovereign-mock': { model_name: 'sovereign-mock', display: 'Mock model (offline / testing)', tier: 'light', provenance: 'external' },
 };
 
 /**

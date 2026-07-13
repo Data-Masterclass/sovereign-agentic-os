@@ -15,6 +15,19 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.88] — 2026-07-13
+
+### Feature — Admin → Users & Access is now the one full user-admin console
+- **An admin can set (and reset) a user's password in the console.** The live Users & Access surface (`/platform/access`) previously delegated to an identity provider that didn't deliver a credential on this deployment, so invited users couldn't sign in. It now has a **Password** field (Show/Hide, Copy, Generate-strong, live strength meter) validated on client **and** server; the password is hashed (scrypt) and the created user **can log in with it** (proven by test). Existing users get a **Reset password** action. (The earlier 0.1.86 password field had landed on a deprecated component that isn't live — this puts it on the real surface.)
+- **Domain picker is a dropdown with checkboxes** (was pill toggles), in both invite and edit.
+- **Deactivate asks for confirmation.** **Offboard** now appears only for **deactivated** users (who sort to the bottom), and opens a strong-danger dialog warning the account + its personal "My artifacts" are permanently deleted — with an option to **reassign "My artifacts" to another user** (data · files · knowledge · agents · software; dashboards/bigbets/science reported as deferred) before deletion. Guards: can't deactivate/offboard yourself or the last active admin.
+
+### Fix — Cube RLS no longer 400s on a missing dimension
+- **A metric on a domain-scoped cube no longer fails with `'region' not found`.** The per-viewer `securityContext` spread low-cardinality attributes (e.g. `region`) that Cube turned into RLS filters — 400ing on cubes without that dimension. `cubeLoad()` now scrubs the security context against the queried cubes' **actual** dimensions: structural keys (identity/domain/scope) are always kept (RLS stays sound), attributes no queried cube has are dropped. General guard for every cube.
+
+### Cleanup — model settings show only the sovereign set
+- The model picker/catalog now presents exactly **`sovereign-default` (gpt-oss-20b) · `sovereign-reasoning` (Qwen3-VL-235B) · `sovereign-embed` (Qwen3-VL-Embedding-8B)** plus **`sovereign-mock`** (offline/testing, the default for every role when no live gateway model is wired). Stale duplicate aliases (`sovereign-vision`/`sovereign-premium`/`sovereign-reasoning-fast`) removed. Still admin/env-configurable.
+
 ## [os-ui 0.1.87] — 2026-07-13
 
 ### Feature — free-form agent-team scaffolder + `retire_knowledge` MCP

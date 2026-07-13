@@ -482,6 +482,30 @@ export function createDataset(user: Principal, input: { name: string; domain?: s
   return d;
 }
 
+/**
+ * Governed offboard support: transfer this owner's PERSONAL-lane records to a new
+ * owner (used by lib/platform-admin/offboard.ts when a user is offboarded with
+ * reassignment). Only personal, owner-only artifacts move; shared/domain/certified
+ * are untouched. Returns the count moved.
+ */
+export function reassignOwner(fromId: string, toId: string): number {
+  let moved = 0;
+  for (const rec of ds().store.values()) {
+    if (rec.owner !== fromId) continue;
+    const d = parseDataset(rec.yaml);
+    if (d.tier !== 'dataset') continue; // personal lane only
+    // The owner lives on BOTH the record (mirror index key) and the serialized
+    // yaml (which drives canView/DLS) — rewrite both so the new owner can see it.
+    d.owner = toId;
+    rec.owner = toId;
+    rec.yaml = serializeDataset(d);
+    rec.updatedAt = now();
+    writeThrough(rec);
+    moved++;
+  }
+  return moved;
+}
+
 /** Build (or pass-through) one medallion version. Editing is Creator+ on a dataset
  *  you can edit; the guided panels and the data agent both call this. */
 export function buildVersion(

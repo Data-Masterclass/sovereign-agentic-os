@@ -304,6 +304,26 @@ export function createWorkflow(
   return rec;
 }
 
+/**
+ * Governed offboard support: transfer this owner's PERSONAL-lane records to a new
+ * owner (used by lib/platform-admin/offboard.ts when a user is offboarded with
+ * reassignment). Only personal, owner-only artifacts move; shared/domain/certified
+ * are untouched. Returns the count moved. Only the workflows map is touched —
+ * domain knowledge is domain-scoped, not personal.
+ */
+export function reassignOwner(fromId: string, toId: string): number {
+  let moved = 0;
+  for (const rec of ks().workflows.values()) {
+    if (rec.owner !== fromId) continue;
+    if (rec.visibility !== 'Personal') continue; // personal lane only
+    rec.owner = toId;
+    rec.updatedAt = now();
+    writeThrough(rec);
+    moved++;
+  }
+  return moved;
+}
+
 export type WorkflowPatch = {
   md?: string;
   sha?: string;

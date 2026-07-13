@@ -2,24 +2,38 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 /**
- * Model-role resolver — the ONE runtime resolution point for the three default
- * model roles the OS uses everywhere:
+ * Model-role resolver — the ONE runtime resolution point for the model roles the
+ * OS uses everywhere. There are exactly FOUR presented models: the three live
+ * STACKIT-managed sovereign models, plus the mock (offline/testing) fallback:
  *
- *   • reasoning  → planning / deep reasoning (default `config.litellmReasoningModel`)
- *   • standard   → assistant / agent execution, light work (default `config.litellmExecModel`)
- *   • tools      → agent tool-calling / function-calling execution. Defaults to the
- *                  REASONING model (Qwen), which emits clean OpenAI `tool_calls`,
- *                  because the light default (gpt-oss-20b) uses the "harmony"
- *                  response format whose tool calls parse unreliably. Admin-
- *                  overridable like every other role.
- *   • embeddings → the shared embedding model (default `config.embedModel`)
+ *   • reasoning  → STACKIT reasoning model  (`sovereign-reasoning` → Qwen3-VL-235B)
+ *   • standard   → STACKIT standard/worker  (`sovereign-default`   → gpt-oss-20b)
+ *   • tools      → agent tool-calling. Follows the REASONING model (Qwen), which
+ *                  emits clean OpenAI `tool_calls` (the standard gpt-oss-20b uses
+ *                  the "harmony" format whose tool calls parse unreliably).
+ *   • embeddings → STACKIT embeddings model (`sovereign-embed` → Qwen3-VL-Embedding-8B)
  *
- * Resolution order (per role): the persisted PLATFORM-ADMIN setting
- * (`settings.modelRoles.<role>`) when it is a non-empty LiteLLM `model_name`,
- * ELSE the env-configurable `config.ts` default. So env defaults keep working
- * out of the box (local/offline) and an admin re-points a role live without a
- * rebuild. This never rewrites the fixed LiteLLM aliases — it only chooses WHICH
- * live alias each app role uses.
+ *   • mock (`sovereign-mock`) → NOT a role. It is the OFFLINE / testing default:
+ *                  when NO live gateway is configured (no admin override AND no env
+ *                  override for the role) every role resolves to the mock so the
+ *                  teaching flow runs on a laptop. It is only ever "connected" when
+ *                  an admin explicitly picks it for a role.
+ *
+ * Resolution order (per role):
+ *   1. the persisted PLATFORM-ADMIN override (`settings.modelRoles.<role>`) when it
+ *      is a non-empty LiteLLM `model_name`;
+ *   2. ELSE the deployment CONNECTED default — the role's STACKIT alias, sourced
+ *      from the env-configurable `config.ts` (helm/operator can re-point it, but the
+ *      baseline the whole OS ships with is the live STACKIT alias);
+ *   3. ELSE (no live gateway wired at all) the MOCK model (`sovereign-mock`) — the
+ *      honest offline default, so the teaching flow runs on a laptop.
+ *
+ * "Connected" means a live gateway model is configured for the role (via config/env
+ * or an admin override). When NOTHING is configured — `config` resolves the role to
+ * the mock chat model — we return the mock explicitly. This keeps the set ADMIN-
+ * CONFIGURABLE (an admin re-points a role, or a deployment sets the env, without a
+ * rebuild) while making mock the default when nothing is wired. It never rewrites
+ * the fixed LiteLLM aliases — it only chooses WHICH live alias each app role uses.
  *
  * Server-only (reads the in-process admin settings store).
  */
@@ -29,18 +43,31 @@ import { getSettings } from '../platform-admin/settings.ts';
 
 export type ModelRole = 'reasoning' | 'standard' | 'tools' | 'embeddings';
 
-/** The env default for a role (the resolution fallback when no admin override). */
+/** The offline/testing fallback alias — the ONLY non-role model we present. */
+export const MOCK_MODEL = 'sovereign-mock';
+
+/**
+ * The default for a role when there is no admin override: the env-configurable
+ * connected STACKIT alias from `config.ts`, ELSE the mock model. `config` already
+ * falls the chat-fronted roles back to `sovereign-mock` when no gateway model is
+ * set; embeddings/tools do not, so we coalesce here to the mock so EVERY role is
+ * mock-by-default when nothing is wired. A deployment/env that pins a real alias
+ * (the STACKIT default, or an operator override) keeps that alias — "connected".
+ */
 export function roleDefault(role: ModelRole): string {
-  switch (role) {
-    case 'reasoning':
-      return config.litellmReasoningModel;
-    case 'standard':
-      return config.litellmExecModel;
-    case 'tools':
-      return config.litellmToolsModel;
-    case 'embeddings':
-      return config.embedModel;
-  }
+  const configured = (() => {
+    switch (role) {
+      case 'reasoning':
+        return config.litellmReasoningModel;
+      case 'standard':
+        return config.litellmExecModel;
+      case 'tools':
+        return config.litellmToolsModel;
+      case 'embeddings':
+        return config.embedModel;
+    }
+  })();
+  return configured && configured.trim().length > 0 ? configured : MOCK_MODEL;
 }
 
 /** Effective LiteLLM model_name for a role: admin override if set, else env default. */

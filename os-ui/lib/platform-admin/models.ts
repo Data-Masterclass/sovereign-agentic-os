@@ -185,8 +185,6 @@ function seed(): void {
   const rows: Model[] = [
     { id: 'sovereign-default', label: 'gpt-oss-20b (standard)', provider: 'stackit', task: 'chat', tier: 'premium', route: 'stackit', enabled: true, capEUR: null },
     { id: 'sovereign-reasoning', label: 'Qwen3-VL-235B (reasoning)', provider: 'stackit', task: 'reasoning', tier: 'premium', route: 'stackit', enabled: true, capEUR: null },
-    { id: 'sovereign-vision', label: 'Qwen3-VL-235B (vision)', provider: 'stackit', task: 'chat', tier: 'premium', route: 'stackit', enabled: true, capEUR: null },
-    { id: 'sovereign-premium', label: 'Qwen3-VL-235B (premium)', provider: 'stackit', task: 'reasoning', tier: 'premium', route: 'stackit', enabled: true, capEUR: null },
     { id: 'sovereign-embed', label: 'Qwen3-VL-Embedding-8B (embeddings)', provider: 'stackit', task: 'embedding', tier: 'premium', route: 'stackit', enabled: true, capEUR: null },
     { id: 'sovereign-mock', label: 'Mock model (offline only)', provider: 'stackit', task: 'chat', tier: 'sovereign', route: 'stackit', enabled: true, capEUR: null },
   ];

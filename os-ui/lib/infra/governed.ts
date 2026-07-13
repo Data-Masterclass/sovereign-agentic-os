@@ -109,6 +109,86 @@ export type CubeQuery = {
 
 export type CubeResult = { rows: Record<string, unknown>[]; annotation: Record<string, unknown> };
 
+/**
+ * The securityContext structural keys — the delegated identity Cube's queryRewrite reads
+ * to BUILD its RLS (never itself a filter member). Everything else in the context is a
+ * low-cardinality ATTRIBUTE (region, tenant …) that Cube turns into a `filters` member
+ * `<Cube>.<attr>` — which 400s the whole query if the queried cube has no such dimension.
+ */
+const RLS_STRUCTURAL_KEYS = new Set(['sub', 'domains', 'role', 'scope', 'imported']);
+
+/**
+ * Drop any securityContext ATTRIBUTE the queried cube(s) do NOT have as a dimension, so
+ * Cube never pushes a filter on a non-existent path (the Northpeak cohort cubes have no
+ * `region` — a domain-scoped, not region-scoped, dataset). Structural identity keys are
+ * always kept (RLS is not collapsed); an attribute the cube DOES have is kept (RLS stays
+ * sound). `cubeDimensions` is the set of full dimension members the target cube(s) expose
+ * (`Sales.region`, …); an empty/unknown set means "don't scrub" (offline: no live 400).
+ */
+export function scrubSecurityContext(
+  ctx: Record<string, unknown>,
+  cubeDimensions: Set<string>,
+): Record<string, unknown> {
+  if (cubeDimensions.size === 0) return ctx;
+  const cubes = new Set<string>();
+  for (const dim of cubeDimensions) cubes.add(dim.split('.')[0]);
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(ctx)) {
+    if (RLS_STRUCTURAL_KEYS.has(k)) {
+      out[k] = v;
+      continue;
+    }
+    // Keep the attribute only if SOME queried cube has `<Cube>.<attr>` as a dimension.
+    const has = [...cubes].some((c) => cubeDimensions.has(`${c}.${k}`));
+    if (has) out[k] = v;
+  }
+  return out;
+}
+
+// The cube→dimension-members map from Cube /meta, cached per process (the schema is
+// git-deployed, not hot-swapped, so a short-lived cache is safe). A test hook injects it.
+let cubeMetaCache: Record<string, true> | null = null;
+
+/** TEST ONLY: inject (or clear with `null`) the cached Cube dimension-member set. */
+export function __setCubeMetaForTest(members: Record<string, true> | null): void {
+  cubeMetaCache = members;
+}
+
+/** The set of dimension members the queried cubes expose (from Cube /meta, cached).
+ *  Returns an empty set when meta is unknown/unreachable → callers then DON'T scrub. */
+async function cubeDimensionsFor(query: CubeQuery): Promise<Set<string>> {
+  if (!cubeMetaCache) {
+    const res = await withTimeout(
+      `${config.cubeUrl}/cubejs-api/v1/meta`,
+      { method: 'GET', headers: { accept: 'application/json' } },
+      2500,
+    );
+    if (!res || !res.ok) return new Set();
+    try {
+      const data = (await res.json()) as { cubes?: { name?: string; dimensions?: { name?: string }[] }[] };
+      const members: Record<string, true> = {};
+      for (const cube of data?.cubes ?? []) {
+        for (const d of cube.dimensions ?? []) {
+          if (typeof d?.name === 'string') members[d.name] = true;
+        }
+      }
+      cubeMetaCache = members;
+    } catch {
+      return new Set();
+    }
+  }
+  // Narrow to the cubes actually referenced by this query (measures/dimensions/timeDims).
+  const queriedCubes = new Set<string>();
+  for (const m of query.measures ?? []) queriedCubes.add(m.split('.')[0]);
+  for (const d of query.dimensions ?? []) queriedCubes.add(d.split('.')[0]);
+  for (const t of query.timeDimensions ?? []) queriedCubes.add(t.dimension.split('.')[0]);
+  const out = new Set<string>();
+  for (const member of Object.keys(cubeMetaCache)) {
+    if (queriedCubes.has(member.split('.')[0])) out.add(member);
+  }
+  return out;
+}
+
 export async function cubeLoad(
   query: CubeQuery,
   opts: { securityContext?: Record<string, unknown> } = {},
@@ -118,7 +198,12 @@ export async function cubeLoad(
   // never a shared service identity. Cube reads it from the request token; locally
   // (no JWT signer) it is passed as a header a dev Cube can map, and is a no-op otherwise.
   const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json' };
-  if (opts.securityContext) headers['x-cube-security-context'] = JSON.stringify(opts.securityContext);
+  if (opts.securityContext) {
+    // Scrub attributes the queried cube lacks so Cube can't push a filter on a
+    // non-existent path (e.g. `region` on a domain-scoped cohort cube) → no 400.
+    const dims = await cubeDimensionsFor(query);
+    headers['x-cube-security-context'] = JSON.stringify(scrubSecurityContext(opts.securityContext, dims));
+  }
   const res = await withTimeout(
     `${config.cubeUrl}/cubejs-api/v1/load`,
     { method: 'POST', headers, body: JSON.stringify({ query }) },

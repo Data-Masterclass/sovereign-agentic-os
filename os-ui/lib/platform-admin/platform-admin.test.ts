@@ -222,7 +222,7 @@ test('models: cannot disable a current role default; caps + defaults projection'
   // sovereign-default is the STANDARD role default out of the box → cannot disable.
   assert.throws(() => setEnabled('sovereign-default', false), (e: { status?: number }) => e.status === 409);
   // Per-model cap works on a live alias.
-  setCap('sovereign-premium', 150);
+  setCap('sovereign-reasoning', 150);
   // getDefaults projects the ONE role store (unset → baselines).
   assert.equal(getDefaults().chat, 'sovereign-default');
   assert.equal(getDefaults().embedding, 'sovereign-embed');

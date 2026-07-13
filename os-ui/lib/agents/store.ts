@@ -463,6 +463,25 @@ export function createSystem(
 }
 
 /**
+ * Governed offboard support: transfer this owner's PERSONAL-lane records to a new
+ * owner (used by lib/platform-admin/offboard.ts when a user is offboarded with
+ * reassignment). Only personal, owner-only artifacts move; shared/domain/certified
+ * are untouched. Returns the count moved.
+ */
+export function reassignOwner(fromId: string, toId: string): number {
+  let moved = 0;
+  for (const rec of state().store.values()) {
+    if (rec.owner !== fromId) continue;
+    if (rec.visibility !== 'Personal') continue; // personal lane only
+    rec.owner = toId;
+    rec.updatedAt = now();
+    writeThrough(rec);
+    moved++;
+  }
+  return moved;
+}
+
+/**
  * Promotion ladder for an agent system — the mirror of `promoteArtifact`:
  *   Personal ──(Builder+)──▶ Shared ──(Admin)──▶ Marketplace
  * The actor must belong to the system's domain (Admin spans the tenant via

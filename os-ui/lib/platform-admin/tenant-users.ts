@@ -10,6 +10,7 @@ import {
   type PublicUser,
 } from '@/lib/platform-admin/users';
 import type { Role } from '@/lib/core/session';
+import { assessPasswordStrength, generateTempPassword } from '@/lib/core/password';
 import { osMirror } from '../infra/os-mirror.ts';
 
 /**
@@ -81,9 +82,15 @@ function statusOf(id: string): Status {
   return tenantUsersState().statusMap.get(id) ?? 'active';
 }
 
-function randomSecret(): string {
-  // Server-side only; never returned to a caller. Ory owns the real credential.
-  return `ory-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+/** Validate a candidate password server-side (empty/weak → 400). Shared by
+ *  invite + reset so the API can never store an unvalidated credential. */
+function requireStrong(password: string, username: string): void {
+  const strength = assessPasswordStrength(password, username);
+  if (!strength.ok) {
+    const e = new Error(strength.reasons[0] ?? 'Password is too weak');
+    (e as Error & { status?: number }).status = 400;
+    throw e;
+  }
 }
 
 export async function listAccess(): Promise<AccessUser[]> {
@@ -94,26 +101,55 @@ export async function listAccess(): Promise<AccessUser[]> {
   });
 }
 
-/** Invite a user via the Ory flow. The password is generated + retained by the
- * directory; it is NEVER returned, logged, or shown — only a PublicUser is. */
+/**
+ * Invite a user with a REAL, hashed password so the created account can
+ * `authenticate()` and sign in immediately (this deployment uses OS-native
+ * password auth, not a live Ory credential delivery).
+ *
+ * The admin may SUPPLY a password (validated server-side for strength; empty/weak
+ * → 400) — otherwise the server generates a strong one. Either way only the scrypt
+ * hash is stored; the plaintext is returned ONCE (`tempPassword`) so the admin can
+ * relay it, and the account is flagged `mustChangeCredentials` so the invitee sets
+ * their own on first login. `generated` tells the caller whether it must surface
+ * the password (i.e. the admin left it blank).
+ */
 export async function inviteUser(input: {
   id: string;
   name?: string;
   email?: string;
   domains: string[];
   role: Role;
-}): Promise<PublicUser> {
+  password?: string;
+}): Promise<{ user: PublicUser; tempPassword: string; generated: boolean }> {
+  const supplied = input.password?.trim() ?? '';
+  const generated = !supplied;
+  const password = supplied || generateTempPassword();
+  if (supplied) requireStrong(supplied, input.id);
   const user = await createUser({
     id: input.id,
     name: input.name,
     email: input.email,
-    password: randomSecret(),
+    password,
     domains: input.domains,
     role: input.role,
+    mustChangeCredentials: true,
   });
   tenantUsersState().statusMap.set(user.id, 'invited');
   writeThrough(user.id, 'invited');
-  return user; // PublicUser — password is omitted by the directory
+  return { user, tempPassword: password, generated };
+}
+
+/**
+ * Admin-set password reset for an existing user. Validates strength server-side,
+ * hashes + stores it (never plaintext), and returns the new password ONCE so the
+ * admin can relay it. If `password` is omitted a strong one is generated.
+ */
+export async function resetPassword(id: string, password?: string): Promise<{ user: PublicUser; tempPassword: string }> {
+  const supplied = password?.trim() ?? '';
+  const next = supplied || generateTempPassword();
+  requireStrong(next, id);
+  const user = await updateUser(id, { password: next });
+  return { user, tempPassword: next };
 }
 
 export async function deactivateUser(id: string): Promise<AccessUser> {
@@ -182,10 +218,27 @@ export async function setMemberships(id: string, domains: string[]): Promise<Pub
   return updateUser(id, { domains: clean });
 }
 
-export async function offboardUser(id: string): Promise<void> {
+/**
+ * Permanently offboard a user. When `reassignTo` is given, the user's PERSONAL-
+ * lane "My artifacts" are transferred to that owner FIRST (governed, via
+ * offboard.reassignOwner) so nothing is orphaned; otherwise those artifacts are
+ * deleted with the account. The deletion itself is guarded by the user directory
+ * (never the last active admin). Returns the reassignment report (empty when no
+ * reassignment was requested) so the caller can surface what moved / what failed.
+ */
+export async function offboardUser(
+  id: string,
+  reassignTo?: string,
+): Promise<import('./offboard').ReassignReport | null> {
+  let report: import('./offboard').ReassignReport | null = null;
+  if (reassignTo && reassignTo !== id) {
+    const { reassignOwner } = await import('./offboard');
+    report = await reassignOwner(id, reassignTo);
+  }
   await deleteUser(id);
   tenantUsersState().statusMap.delete(id);
   mirror.deleteThrough(id);
+  return report;
 }
 
 /** Compiler input: only ACTIVE users grant rights. */

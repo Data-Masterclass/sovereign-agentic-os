@@ -24,18 +24,32 @@ export async function GET() {
   }
 }
 
-/** Invite a user via Ory — the password is generated server-side and NEVER
- * returned; only the PublicUser comes back. */
+/**
+ * Invite a user with a REAL, hashed password so they can sign in immediately
+ * (OS-native password auth). The admin may supply a password (validated for
+ * strength server-side — empty/weak → 400) or leave it blank to have the server
+ * generate one. The plaintext is returned ONCE (`tempPassword`) for the admin to
+ * relay; only the scrypt hash is stored. `generated` is true when the admin left
+ * it blank, so the UI knows to surface the generated password.
+ */
 export async function POST(req: Request) {
   try {
     const { user, tenant } = await adminCtx();
     const body = await req.json();
     const role = (ROLES.includes(body?.role) ? body.role : 'creator') as Role;
     const domains = Array.isArray(body?.domains) ? body.domains.map(String).filter(Boolean) : [];
-    const invited = await inviteUser({ id: String(body?.id ?? ''), name: body?.name ? String(body.name) : undefined, email: body?.email ? String(body.email) : undefined, domains, role });
-    audit({ tenant: tenant.id, actor: user.id, role: user.role, action: 'user.invite', target: `user:${invited.id}`, detail: `Invited ${invited.id} as ${role} into ${domains.join(', ')} (via Ory; no password seen)` });
+    const { user: invited, tempPassword, generated } = await inviteUser({
+      id: String(body?.id ?? ''),
+      name: body?.name ? String(body.name) : undefined,
+      email: body?.email ? String(body.email) : undefined,
+      domains,
+      role,
+      password: body?.password ? String(body.password) : undefined,
+    });
+    audit({ tenant: tenant.id, actor: user.id, role: user.role, action: 'user.invite', target: `user:${invited.id}`, detail: `Invited ${invited.id} as ${role} into ${domains.join(', ')} (${generated ? 'server-generated' : 'admin-set'} password; hash only stored)` });
     const { publish } = await recompile();
-    return NextResponse.json({ user: invited, publish }, { status: 201 });
+    // tempPassword leaves the server ONCE here — the invitee replaces it on first login.
+    return NextResponse.json({ user: invited, tempPassword, generated, publish }, { status: 201 });
   } catch (e) {
     return fail(e);
   }
