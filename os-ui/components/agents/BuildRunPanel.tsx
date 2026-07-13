@@ -244,6 +244,7 @@ export default function BuildRunPanel({
   lastRun,
   nodePath,
   onStateChange,
+  phase = 'all',
 }: {
   systemId: string;
   running: boolean;
@@ -254,7 +255,18 @@ export default function BuildRunPanel({
   /** The team's node path — shown as an immediate in-progress affordance on Run. */
   nodePath?: string[];
   onStateChange: () => void;
+  /**
+   * Which sections to render. Simple mode's 5-phase flow reuses this ONE panel but
+   * shows only the section for the current phase: `'build'` = compile+verify only,
+   * `'run'` = the run trigger + results (final output, per-node drill-down, live
+   * progress), `'evaluate'` = the assessment (diagnostics table, Langfuse link, PDF).
+   * Developer mode passes nothing → `'all'`, so it is unchanged.
+   */
+  phase?: 'all' | 'build' | 'run' | 'evaluate';
 }) {
+  const showBuild = phase === 'all' || phase === 'build';
+  const showRun = phase === 'all' || phase === 'run';
+  const showEvaluate = phase === 'all' || phase === 'evaluate';
   const [building, setBuilding] = useState(false);
   // Seed from server-persisted lastBuild so the panel survives tab-switches.
   const [report, setReport] = useState<BuildReport | null>(lastBuild ?? null);
@@ -263,6 +275,9 @@ export default function BuildRunPanel({
   const [buildErr, setBuildErr] = useState('');
 
   const [prompt, setPrompt] = useState('');
+  // Whether the optional "add input for this run" field is revealed. Default hidden:
+  // the primary affordance is a one-click ▶ Run of the task defined in Define.
+  const [showInput, setShowInput] = useState(false);
   const [runningNow, setRunningNow] = useState(false);
   // Seed from server-persisted lastRun so the panel survives tab-switches.
   const [run, setRun] = useState<RunReport | null>(lastRun ?? null);
@@ -537,8 +552,10 @@ export default function BuildRunPanel({
 
   return (
     <div className="buildrun-panel">
+      {showBuild ? (
+      <>
       <div className="section-title" style={{ marginTop: 4 }}>
-        Build — execute + verify
+        {phase === 'build' ? 'Build' : 'Build — execute + verify'}
         <button className="btn sm" style={{ marginLeft: 'auto' }} onClick={doBuild} disabled={building || !canEdit}>
           {building ? <span className="spin" /> : 'Build'}
         </button>
@@ -597,20 +614,26 @@ export default function BuildRunPanel({
           </div>
         </div>
       ) : null}
+      </>
+      ) : null}
 
+      {showRun ? (
+      <>
       <div className="section-title">
         Run
-        {/* Download a clean PDF report of the completed run to send to an instructor.
-            Enabled only once a run has completed (has nodes / final output). */}
-        <button
-          className="btn ghost sm"
-          style={{ marginLeft: 'auto' }}
-          onClick={downloadPdf}
-          disabled={!runComplete || pdfBusy}
-          title={runComplete ? 'Download a PDF report of this run' : 'Run the team first'}
-        >
-          {pdfBusy ? <span className="spin" /> : 'Download PDF report'}
-        </button>
+        {/* The PDF report belongs to the Evaluate phase — shown here only in the
+            combined 'all' view (Developer mode). */}
+        {phase === 'all' ? (
+          <button
+            className="btn ghost sm"
+            style={{ marginLeft: 'auto' }}
+            onClick={downloadPdf}
+            disabled={!runComplete || pdfBusy}
+            title={runComplete ? 'Download a PDF report of this run' : 'Run the team first'}
+          >
+            {pdfBusy ? <span className="spin" /> : 'Download PDF report'}
+          </button>
+        ) : null}
       </div>
       {/* In-progress marker: shown to a returning user while the run is still going. */}
       {activity?.kind === 'running' && !runningNow ? (
@@ -629,25 +652,39 @@ export default function BuildRunPanel({
         The team walks the graph from the entrypoint; every tool call is forced through the
         governed gateway (LiteLLM → OPA → Langfuse). Approvals land in Governance.
       </p>
-      <label className="hint" style={{ fontWeight: 600, display: 'block', marginBottom: 4 }} htmlFor="run-task">
-        What should the team do?
-      </label>
+      {/* Primary affordance: one click runs the task DEFINED in Define. The server
+          fills a real, purpose-derived default when the prompt is empty — no need to
+          re-type the task. An optional collapsible adds a one-off input for this run. */}
       <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <input
-          id="run-task"
-          type="text"
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          placeholder="e.g. Review last month's campaigns and recommend budget moves — leave blank for the team's default task"
-          style={{ flex: 1, minWidth: 220 }}
-        />
-        <button className="btn sm" onClick={() => doRun(false)} disabled={runningNow || !canEdit}>
-          {runningNow ? <span className="spin" /> : 'Run'}
+        <button className="btn" onClick={() => doRun(false)} disabled={runningNow || !canEdit}>
+          {runningNow ? <span className="spin" /> : '▶ Run'}
         </button>
         {running ? (
           <button className="btn ghost sm" onClick={() => doRun(true)} disabled={runningNow || !canEdit}>Stop</button>
         ) : null}
+        {!showInput ? (
+          <button className="btn ghost sm" onClick={() => setShowInput(true)} disabled={runningNow}>
+            Add input for this run (optional)
+          </button>
+        ) : null}
       </div>
+      {showInput ? (
+        <div style={{ marginTop: 8 }}>
+          <label className="hint" style={{ fontWeight: 600, display: 'block', marginBottom: 4 }} htmlFor="run-task">
+            Add input for this run (optional) — leave empty to run the defined task
+          </label>
+          <input
+            id="run-task"
+            type="text"
+            value={prompt}
+            autoFocus
+            onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') doRun(false); }}
+            placeholder="e.g. Review last month's campaigns and recommend budget moves"
+            style={{ width: '100%' }}
+          />
+        </div>
+      ) : null}
       {runErr ? <div className="error" style={{ marginTop: 10 }}>{runErr}</div> : null}
 
       {/* FIX 1 — LIVE in-progress: the instant Run is pressed, show an animated
@@ -680,9 +717,13 @@ export default function BuildRunPanel({
           <p className="hint" style={{ marginTop: 6 }}>Each agent runs in turn, handing its results to the next. This may take a moment.</p>
         </div>
       ) : null}
+      </>
+      ) : null}
 
       {run ? (
         <div className="answer" style={{ marginTop: 12, fontSize: 13 }}>
+          {showRun ? (
+          <>
           {/* One-line run summary — a student sees instantly whether it worked and how far
               it got, before any drill-down. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
@@ -851,7 +892,28 @@ export default function BuildRunPanel({
               </table>
             </div>
           ) : null}
+          </>
+          ) : null}
 
+          {/* EVALUATE-phase assessment: the PDF report button, the diagnostics table
+              and the Langfuse trace link — relocated here so Run stays about results
+              and Evaluate is about assessment. In Developer mode (phase 'all') all of
+              it shows together, unchanged. */}
+          {showEvaluate && phase !== 'all' ? (
+            <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 6 }}>
+              <button
+                className="btn ghost sm"
+                onClick={downloadPdf}
+                disabled={!runComplete || pdfBusy}
+                title={runComplete ? 'Download a PDF report of this run' : 'Run the team first'}
+              >
+                {pdfBusy ? <span className="spin" /> : 'Download PDF report'}
+              </button>
+            </div>
+          ) : null}
+
+          {showEvaluate ? (
+          <>
           {/* DIAGNOSTICS — a compact, one-scroll summary of the whole run: one row per
               agent, its governed calls + decision + model tier, enriched with Langfuse
               tokens/latency/cost when the trace store is reachable (honest note when not). */}
@@ -931,6 +993,8 @@ export default function BuildRunPanel({
               <>Live trace store unavailable — showing the in-run steps above (the durable Langfuse trace may lag or be down).</>
             )}
           </div>
+          </>
+          ) : null}
         </div>
       ) : null}
     </div>

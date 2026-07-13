@@ -5,8 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import BuildRunPanel from './BuildRunPanel';
-import { commitSystem } from './commitSystem';
-import type { System } from '@/lib/agents/system-schema';
+import type { System, SafetyPreset } from '@/lib/agents/system-schema';
 import { classifyModelNeed } from '@/lib/agents/routing';
 import { instructionsOf } from '@/lib/agents/agent-md';
 import {
@@ -16,20 +15,35 @@ import {
 } from '@/lib/agents/simple-edit';
 import { setEntrypoint } from '@/lib/agents/canvas-edit';
 import { suggestTools } from '@/lib/agents/suggest-tools';
+import { AGENT_TEMPLATES, agentTemplate, type AgentTemplateKey } from '@/lib/agents/agent-templates';
+import { runChecks, allChecksPass } from '@/lib/agents/build/run-checks';
+import type { DiagRun } from '@/lib/agents/build/run-diagnostics';
+import { dimensionLabel, type JudgeResult } from '@/lib/agents/evaluate-judge';
 
 /**
- * Simple mode — the guided, linear builder for non-coders. It reads and writes the
- * SAME `system.yaml` / `agents/<id>/AGENT.md` Developer mode does, through the
- * SAME `commitSystem` file write and `/api/agents` endpoints. There is NO parallel
- * data model: every action here (describe→scaffold, edit a plain field, accept a
- * suggested tool, add/remove/reorder an agent) is an ordinary edit to the one
- * source of truth, so flipping to Developer mode shows exactly what Simple made.
+ * Simple mode — the guided builder for non-coders, now a FIVE-phase path:
+ *   Define · Design · Build · Run · Evaluate.
+ * It reads and writes the SAME `system.yaml` / `agents/<id>/AGENT.md` Developer mode
+ * does, through the SAME `commitSystem` file write and `/api/agents` endpoints. There
+ * is NO parallel data model. Build/Run/Evaluate reuse the ONE `BuildRunPanel` run
+ * engine (gated per phase); the schedule reuses the existing schedule route; the
+ * LLM-judge reuses the ONE governed assistant model via the evaluate route.
  *
- * The flow is a plain ordered path — Describe · Name · Agents · Build · Run — not a
- * canvas and never Monaco. Build/Run reuse the existing BuildRunPanel unchanged.
+ *  1. Define    — Name, Description (the describe→scaffold box), and the safety preset.
+ *  2. Design    — the team: per-agent cards + a template picker on "+ Add agent".
+ *  3. Build     — compile + verify the team (no run).
+ *  4. Run       — trigger mode (Manual · Schedule · Called) + one-click ▶ Run + results.
+ *  5. Evaluate  — deterministic checks + LLM-judge + diagnostics/PDF/trace.
  */
 
-type Step = 'name' | 'agents' | 'run';
+type Phase = 'define' | 'design' | 'build' | 'run' | 'evaluate';
+const PHASES: { key: Phase; label: string }[] = [
+  { key: 'define', label: 'Define' },
+  { key: 'design', label: 'Design' },
+  { key: 'build', label: 'Build' },
+  { key: 'run', label: 'Run' },
+  { key: 'evaluate', label: 'Evaluate' },
+];
 
 type BuildRunProps = {
   running: boolean;
@@ -59,19 +73,20 @@ export default function SimpleBuilder({
   /** Re-fetch the system view after a server-side edit (scaffold). */
   onReload: () => Promise<void> | void;
 }) {
-  const [step, setStep] = useState<Step>('name');
+  const [phase, setPhase] = useState<Phase>('define');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
   const editable = canEdit && !busy;
   const hasAgents = system.agents.length > 0;
   const ready = hasAgents && !!system.entrypoint;
+  const hasRun = !!buildRun.lastRun && ((buildRun.lastRun.nodes?.length ?? 0) > 0 || !!buildRun.lastRun.output);
 
-  // Advance to the Agents step automatically once the system has agents (e.g. after
-  // a scaffold or the first add) — but never yank a user who stepped back.
+  // Advance to Design automatically once the system has agents (e.g. after a scaffold
+  // or the first add) — but never yank a user who stepped back.
   const autoAdvanced = useRef(false);
   useEffect(() => {
-    if (hasAgents && !autoAdvanced.current) { autoAdvanced.current = true; setStep('agents'); }
+    if (hasAgents && !autoAdvanced.current) { autoAdvanced.current = true; setPhase('design'); }
   }, [hasAgents]);
 
   const guard = useCallback(
@@ -88,54 +103,67 @@ export default function SimpleBuilder({
 
   const commit = useCallback((next: System) => guard(() => onCommit(next)), [guard, onCommit]);
 
+  // Which phases are reachable — you can't Build/Run/Evaluate without a team, and you
+  // can't Evaluate without a run.
+  const enabled: Record<Phase, boolean> = {
+    define: true,
+    design: true,
+    build: ready,
+    run: ready,
+    evaluate: ready && hasRun,
+  };
+  const doneOf = (p: Phase): boolean => {
+    if (p === 'define') return !!system.system.name && system.system.name !== 'Untitled system';
+    if (p === 'design') return ready;
+    if (p === 'run') return hasRun;
+    return false;
+  };
+
   return (
     <div className="simple-builder">
-      <ol className="sb-steps" aria-label="Build steps">
-        {(['name', 'agents', 'run'] as Step[]).map((s, i) => {
-          const label = s === 'name' ? 'Describe & name' : s === 'agents' ? 'Your team' : 'Build & run';
-          const done = s === 'name' ? !!system.system.name : s === 'agents' ? ready : false;
-          return (
-            <li key={s} className={`sb-step${step === s ? ' active' : ''}${done ? ' done' : ''}`}>
-              <button type="button" onClick={() => setStep(s)} disabled={s === 'run' && !ready}>
-                <span className="sb-step-n">{done ? '✓' : i + 1}</span>
-                <span className="sb-step-label">{label}</span>
-              </button>
-            </li>
-          );
-        })}
+      <ol className="sb-steps" aria-label="Build phases">
+        {PHASES.map((ph, i) => (
+          <li key={ph.key} className={`sb-step${phase === ph.key ? ' active' : ''}${doneOf(ph.key) ? ' done' : ''}`}>
+            <button type="button" onClick={() => setPhase(ph.key)} disabled={!enabled[ph.key]}>
+              <span className="sb-step-n">{doneOf(ph.key) ? '✓' : i + 1}</span>
+              <span className="sb-step-label">{ph.label}</span>
+            </button>
+          </li>
+        ))}
       </ol>
 
       {err ? <div className="error" style={{ marginBottom: 12 }}>{err}</div> : null}
 
-      {step === 'name' ? (
-        <DescribeAndName
+      {phase === 'define' ? (
+        <DefineStep
           systemId={systemId}
           system={system}
           canEdit={editable}
-          onScaffolded={async () => { await onReload(); setStep('agents'); }}
-          onRenamed={(next) => commit(next)}
-          onNext={() => setStep('agents')}
+          onScaffolded={async () => { await onReload(); setPhase('design'); }}
+          onCommit={(next) => commit(next)}
+          onNext={() => setPhase('design')}
         />
       ) : null}
 
-      {step === 'agents' ? (
-        <AgentsStep
+      {phase === 'design' ? (
+        <DesignStep
           systemId={systemId}
           system={system}
           canEdit={editable}
           catalog={catalog}
           onCommit={commit}
-          onBack={() => setStep('name')}
-          onNext={() => ready && setStep('run')}
+          onBack={() => setPhase('define')}
+          onNext={() => ready && setPhase('build')}
           ready={ready}
         />
       ) : null}
 
-      {step === 'run' ? (
+      {phase === 'build' ? (
         <div className="sb-run">
+          <h2 className="sb-section-title" style={{ marginTop: 0 }}>Build</h2>
           <p className="hint" style={{ marginTop: 0 }}>
-            Build compiles your team and checks it. Run walks the team from the start agent and shows
-            every step. This is the same engine developers use — nothing is hidden.
+            Compile your team and verify it — the same build developers run. Nothing runs yet.
+            When it is green, move on to Run.
           </p>
           <BuildRunPanel
             systemId={systemId}
@@ -146,45 +174,110 @@ export default function SimpleBuilder({
             lastRun={buildRun.lastRun}
             nodePath={buildRun.nodePath}
             onStateChange={onReload}
+            phase="build"
           />
-          <button className="btn ghost sm" style={{ marginTop: 12 }} onClick={() => setStep('agents')}>← Back to your team</button>
+          <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}>
+            <button className="btn ghost sm" onClick={() => setPhase('design')}>← Design</button>
+            <button className="btn" onClick={() => setPhase('run')}>Run →</button>
+          </div>
+        </div>
+      ) : null}
+
+      {phase === 'run' ? (
+        <div className="sb-run">
+          <h2 className="sb-section-title" style={{ marginTop: 0 }}>Run</h2>
+          <p className="hint" style={{ marginTop: 0 }}>
+            Choose how this team is triggered, then run it. The team walks from the START agent and
+            shows every step — the same engine developers use.
+          </p>
+          <TriggerMode systemId={systemId} system={system} canEdit={editable} onReload={onReload} />
+          <BuildRunPanel
+            systemId={systemId}
+            running={buildRun.running}
+            canEdit={canEdit}
+            lastBuild={buildRun.lastBuild}
+            activity={buildRun.activity}
+            lastRun={buildRun.lastRun}
+            nodePath={buildRun.nodePath}
+            onStateChange={onReload}
+            phase="run"
+          />
+          <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}>
+            <button className="btn ghost sm" onClick={() => setPhase('build')}>← Build</button>
+            <button className="btn" onClick={() => setPhase('evaluate')} disabled={!hasRun} title={hasRun ? 'Evaluate the run' : 'Run the team first'}>Evaluate →</button>
+          </div>
+        </div>
+      ) : null}
+
+      {phase === 'evaluate' ? (
+        <div className="sb-run">
+          <h2 className="sb-section-title" style={{ marginTop: 0 }}>Evaluate</h2>
+          <p className="hint" style={{ marginTop: 0 }}>
+            Check the run against clear, honest tests — deterministic checks first, then an optional
+            AI judge — and download a report.
+          </p>
+          <EvaluateStep systemId={systemId} lastRun={buildRun.lastRun} canEdit={editable} />
+          <BuildRunPanel
+            systemId={systemId}
+            running={buildRun.running}
+            canEdit={canEdit}
+            lastBuild={buildRun.lastBuild}
+            activity={buildRun.activity}
+            lastRun={buildRun.lastRun}
+            nodePath={buildRun.nodePath}
+            onStateChange={onReload}
+            phase="evaluate"
+          />
+          <button className="btn ghost sm" style={{ marginTop: 14 }} onClick={() => setPhase('run')}>← Back to Run</button>
         </div>
       ) : null}
     </div>
   );
 }
 
+/* ─────────────────────────── Phase 1 — Define ─────────────────────────── */
+
+const PRESETS: { id: SafetyPreset; label: string; consequence: string }[] = [
+  { id: 'read-only',      label: 'Read-only',             consequence: 'The team can look but never change anything.' },
+  { id: 'read-propose',   label: 'Read + propose',        consequence: 'The team suggests changes — a human approves each one before it runs.' },
+  { id: 'read-bounded',   label: 'Read + bounded writes', consequence: 'The team can write inside its own workspace, nowhere else.' },
+  { id: 'full-in-scope',  label: 'Full in-scope',         consequence: 'The team may write anywhere its grants allow — use with care.' },
+];
+
 /**
- * Step 1 — the HERO. A prominent "Describe what your team should do" box that runs
- * the EXISTING scaffold path (the assistant endpoint that edits system.yaml), plus
- * a plain Name field. After scaffolding the caller advances to the review step.
+ * Phase 1 — Define. Name on top, Description below it (the describe→scaffold box that
+ * edits system.yaml server-side), then the safety/rights preset — surfaced HERE on
+ * the first page. Success criteria live in the Description prose or in a granted
+ * Knowledge workflow; there is deliberately NO separate acceptance-criteria field.
  */
-function DescribeAndName({
+function DefineStep({
   systemId,
   system,
   canEdit,
   onScaffolded,
-  onRenamed,
+  onCommit,
   onNext,
 }: {
   systemId: string;
   system: System;
   canEdit: boolean;
   onScaffolded: () => Promise<void> | void;
-  onRenamed: (next: System) => void;
+  onCommit: (next: System) => void;
   onNext: () => void;
 }) {
-  const [desc, setDesc] = useState('');
   const [name, setName] = useState(system.system.name === 'Untitled system' ? '' : system.system.name);
+  const [desc, setDesc] = useState('');
   const [scaffolding, setScaffolding] = useState(false);
   const [scaffoldErr, setScaffoldErr] = useState('');
   const hasAgents = system.agents.length > 0;
+  const preset = system.safetyPreset ?? 'read-only';
 
-  // Persist a name edit on blur (an ordinary system.yaml edit through the shared path).
+  useEffect(() => { setName(system.system.name === 'Untitled system' ? '' : system.system.name); }, [system.system.name]);
+
   const saveName = () => {
     const trimmed = name.trim();
     if (!trimmed || trimmed === system.system.name) return;
-    onRenamed({ ...system, system: { ...system.system, name: trimmed } });
+    onCommit({ ...system, system: { ...system.system, name: trimmed } });
   };
 
   const describe = async () => {
@@ -193,14 +286,14 @@ function DescribeAndName({
     setScaffolding(true);
     setScaffoldErr('');
     try {
-      // The SAME scaffold endpoint HelperChat uses — edits system.yaml server-side.
+      // The SAME scaffold endpoint the helper uses — edits system.yaml server-side.
       const res = await fetch(`/api/agents/systems/${systemId}/assistant`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ instruction }),
       });
       const raw = await res.text();
-      let body: { error?: string; summary?: string } = {};
+      let body: { error?: string } = {};
       try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
       if (!res.ok) { setScaffoldErr(body.error ?? 'The OS could not build that yet.'); return; }
       setDesc('');
@@ -214,11 +307,27 @@ function DescribeAndName({
 
   return (
     <div className="sb-describe">
+      {/* Name on top */}
+      <div className="sb-name-row" style={{ marginTop: 0, marginBottom: 16 }}>
+        <label className="sb-field-label" htmlFor="sb-name">Name your team</label>
+        <input
+          id="sb-name"
+          type="text"
+          value={name}
+          disabled={!canEdit}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={saveName}
+          onKeyDown={(e) => { if (e.key === 'Enter') saveName(); }}
+          placeholder="e.g. Renewals desk"
+        />
+      </div>
+
+      {/* Description below — the describe→scaffold box */}
       <div className="sb-hero">
         <h2 className="sb-hero-title">Describe what your team should do</h2>
         <p className="sb-hero-sub">
-          Say it in plain words — the OS builds the agents, wires them up, and picks the right model
-          for each. You review and adjust next.
+          Say it in plain words, including what a good result looks like — the OS builds the agents,
+          wires them up, and picks the right model for each. You review and adjust next.
         </p>
         <textarea
           className="sb-hero-input"
@@ -230,7 +339,7 @@ function DescribeAndName({
           onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void describe(); } }}
         />
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
-          <span className="hint" style={{ marginTop: 0 }}>⌘/Ctrl + Enter. Governed like every agent.</span>
+          <span className="hint" style={{ marginTop: 0 }}>⌘/Ctrl + Enter. Success criteria go here or in a granted Knowledge workflow.</span>
           <button className="btn" onClick={describe} disabled={!canEdit || scaffolding || !desc.trim()}>
             {scaffolding ? <span className="spin" /> : hasAgents ? 'Add to my team' : 'Build my team'}
           </button>
@@ -238,23 +347,39 @@ function DescribeAndName({
         {scaffoldErr ? <div className="error" style={{ marginTop: 10 }}>{scaffoldErr}</div> : null}
       </div>
 
-      <div className="sb-name-row">
-        <label className="sb-field-label" htmlFor="sb-name">Name your team</label>
-        <input
-          id="sb-name"
-          type="text"
-          value={name}
-          disabled={!canEdit}
-          onChange={(e) => setName(e.target.value)}
-          onBlur={saveName}
-          onKeyDown={(e) => { if (e.key === 'Enter') { saveName(); onNext(); } }}
-          placeholder="e.g. Renewals desk"
-        />
+      {/* Safety / rights preset — surfaced on the FIRST page */}
+      <div className="sb-resources" style={{ marginTop: 16 }}>
+        <h2 className="sb-section-title" style={{ marginTop: 0 }}>What this team is allowed to do</h2>
+        <p className="hint" style={{ marginTop: 0 }}>
+          The safety preset bounds every agent — pick the least power the job needs.
+        </p>
+        <div className="rs-preset-grid">
+          {PRESETS.map((p) => {
+            const selected = preset === p.id;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                disabled={!canEdit}
+                className={`rs-preset-option${selected ? ' rs-preset-option--selected' : ''}`}
+                onClick={() => canEdit && !selected && onCommit({ ...system, safetyPreset: p.id })}
+              >
+                <div className="rs-preset-top">
+                  <span className="rs-preset-name">{p.label}</span>
+                  {selected && <span className="rs-preset-check" aria-hidden>✓</span>}
+                </div>
+                <p className="rs-preset-consequence">{p.consequence}</p>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {hasAgents ? (
-        <div className="row" style={{ justifyContent: 'flex-end', marginTop: 4 }}>
-          <button className="btn ghost sm" onClick={() => { saveName(); onNext(); }}>Review your team →</button>
+        <div className="row" style={{ justifyContent: 'flex-end', marginTop: 14 }}>
+          <button className="btn ghost sm" onClick={() => { saveName(); onNext(); }}>Design your team →</button>
         </div>
       ) : (
         <p className="hint">Or start empty and add agents yourself on the next step.</p>
@@ -263,13 +388,18 @@ function DescribeAndName({
   );
 }
 
+/* ─────────────────────────── Phase 2 — Design ─────────────────────────── */
+
+/** A marketplace-sourced agent the picker can copy into the team (ungated text copy). */
+type MarketplaceAgent = { role: string; instructions: string; source: string };
+
 /**
- * Step 2 — plain per-agent cards. Each agent is a card with a Role field, an
- * Instructions textarea (mapped losslessly to AGENT.md), the resolved Auto model
- * tier, and accept/toggle tool chips (deterministic suggestions). Add/remove/
- * reorder edit system.yaml directly. No Monaco, no canvas.
+ * Phase 2 — Design. The team: per-agent cards (unchanged) plus a template picker on
+ * "+ Add agent". The picker offers the curated role templates AND agents pulled from
+ * marketplace-shared systems. Adding calls `addSimpleAgent(sys,{role,instructions})`
+ * then applies any suggested tools via `addAgentTool` — ordinary system.yaml edits.
  */
-function AgentsStep({
+function DesignStep({
   systemId,
   system,
   canEdit,
@@ -288,6 +418,26 @@ function AgentsStep({
   onNext: () => void;
   ready: boolean;
 }) {
+  const [picking, setPicking] = useState(false);
+
+  // Add a curated template: create the agent, then apply its suggested tools that the
+  // caller's role-floor catalog allows (never grant a tool outside the catalog).
+  const addTemplate = (key: AgentTemplateKey) => {
+    const tpl = agentTemplate(key);
+    let next = addSimpleAgent(system, { role: tpl.role, instructions: tpl.instructions });
+    const added = next.agents[next.agents.length - 1];
+    for (const t of tpl.suggestedTools ?? []) {
+      if (!catalog || catalog.includes(t)) next = addAgentTool(next, added.id, t);
+    }
+    onCommit(next);
+    setPicking(false);
+  };
+
+  const addMarketplace = (a: MarketplaceAgent) => {
+    onCommit(addSimpleAgent(system, { role: a.role, instructions: a.instructions }));
+    setPicking(false);
+  };
+
   return (
     <div className="sb-agents">
       <TeamResources systemId={systemId} system={system} canEdit={canEdit} onCommit={onCommit} />
@@ -321,19 +471,124 @@ function AgentsStep({
         </div>
       )}
 
-      <button
-        className="btn ghost sm sb-add"
-        disabled={!canEdit}
-        onClick={() => onCommit(addSimpleAgent(system, {}))}
-      >
-        + Add an agent
-      </button>
+      {picking ? (
+        <AgentTemplatePicker
+          systemId={systemId}
+          onPickTemplate={addTemplate}
+          onPickMarketplace={addMarketplace}
+          onCancel={() => setPicking(false)}
+        />
+      ) : (
+        <button className="btn ghost sm sb-add" disabled={!canEdit} onClick={() => setPicking(true)}>
+          + Add agent
+        </button>
+      )}
 
       <div className="row" style={{ justifyContent: 'space-between', marginTop: 18 }}>
-        <button className="btn ghost sm" onClick={onBack}>← Describe</button>
-        <button className="btn" onClick={onNext} disabled={!ready} title={ready ? 'Build & run' : 'Add at least one agent first'}>
-          Build &amp; run →
+        <button className="btn ghost sm" onClick={onBack}>← Define</button>
+        <button className="btn" onClick={onNext} disabled={!ready} title={ready ? 'Build' : 'Add at least one agent first'}>
+          Build →
         </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The "+ Add agent" template picker. Curated role templates (from `agent-templates.ts`)
+ * plus agents copied from marketplace-shared systems: it lists `/api/agents/systems`
+ * (the marketplace group), then on demand fetches `/api/agents/systems/[id]` and reads
+ * each node's {role, agent_md} as a copyable template. Reuses the `.tmpl-grid`/
+ * `.tmpl-card` classes from NewSystemPanel.
+ */
+function AgentTemplatePicker({
+  systemId,
+  onPickTemplate,
+  onPickMarketplace,
+  onCancel,
+}: {
+  systemId: string;
+  onPickTemplate: (key: AgentTemplateKey) => void;
+  onPickMarketplace: (a: MarketplaceAgent) => void;
+  onCancel: () => void;
+}) {
+  const [market, setMarket] = useState<MarketplaceAgent[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadErr, setLoadErr] = useState('');
+  const [expanded, setExpanded] = useState(false);
+
+  // Lazily load marketplace agents only when the user asks for them (avoids N fetches
+  // on every "+ Add agent"). List the marketplace group, then hydrate each system's nodes.
+  const loadMarketplace = async () => {
+    if (market || loading) { setExpanded(true); return; }
+    setLoading(true);
+    setLoadErr('');
+    try {
+      const res = await fetch('/api/agents/systems', { cache: 'no-store' });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? 'Could not load the marketplace.');
+      const systems: { id: string; name: string }[] = Array.isArray(body.marketplace) ? body.marketplace : [];
+      const agents: MarketplaceAgent[] = [];
+      // Hydrate a bounded number of shared systems (copying text is ungated).
+      for (const s of systems.slice(0, 12)) {
+        if (s.id === systemId) continue;
+        try {
+          const one = await fetch(`/api/agents/systems/${s.id}`, { cache: 'no-store' });
+          if (!one.ok) continue;
+          const view = await one.json();
+          for (const node of (view.system?.agents ?? []) as { role?: string; agent_md?: string }[]) {
+            if (!node.role) continue;
+            agents.push({ role: node.role, instructions: instructionsOf(node.agent_md ?? ''), source: s.name });
+          }
+        } catch { /* skip an unreadable shared system */ }
+      }
+      setMarket(agents);
+      setExpanded(true);
+    } catch (e) {
+      setLoadErr((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="sb-resource-picker sb-add" style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12 }}>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span className="sb-field-label" style={{ margin: 0 }}>Add an agent — pick a starting point</span>
+        <button className="btn ghost sm" onClick={onCancel}>Cancel</button>
+      </div>
+      <div className="tmpl-grid">
+        {AGENT_TEMPLATES.map((t) => (
+          <button key={t.key} type="button" className="tmpl-card" onClick={() => onPickTemplate(t.key)}>
+            <span className="tmpl-label">{t.label}</span>
+            <span className="tmpl-blurb">{t.blurb}</span>
+          </button>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 12 }}>
+        {!expanded ? (
+          <button className="btn ghost sm" onClick={loadMarketplace} disabled={loading}>
+            {loading ? <span className="spin" /> : 'Or copy an agent from the marketplace →'}
+          </button>
+        ) : (
+          <>
+            <span className="sb-field-label" style={{ margin: '0 0 6px' }}>From marketplace-shared teams</span>
+            {loadErr ? <div className="error" style={{ marginBottom: 6 }}>{loadErr}</div> : null}
+            {market && market.length > 0 ? (
+              <div className="tmpl-grid">
+                {market.map((a, i) => (
+                  <button key={`${a.source}-${i}`} type="button" className="tmpl-card" title={a.source} onClick={() => onPickMarketplace(a)}>
+                    <span className="tmpl-label">{a.role}</span>
+                    <span className="tmpl-blurb">from {a.source}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="hint" style={{ marginTop: 0 }}>No marketplace agents to copy yet.</p>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
@@ -359,24 +614,18 @@ function AgentCard({
   const agent = system.agents.find((a) => a.id === agentId)!;
   const isStart = system.entrypoint === agentId;
 
-  // Local mirrors for the plain fields so typing is smooth; committed on blur.
   const [role, setRole] = useState(agent.role);
   const [instr, setInstr] = useState(() => instructionsOf(agent.agent_md));
   useEffect(() => { setRole(agent.role); }, [agent.role]);
   useEffect(() => { setInstr(instructionsOf(agent.agent_md)); }, [agent.agent_md]);
 
-  // The tools this agent effectively sees (inherits the system grants unless narrowed).
   const effectiveTools = agent.tools ?? system.grants.tools;
 
-  // Deterministic suggestions from the role + instructions, minus what THIS agent
-  // already has (effectiveTools) — not the system pool, so a tool granted to a
-  // sibling is still offered here.
   const suggestions = useMemo(() => {
     const text = `${agent.id} ${role} ${instr}`;
     return suggestTools(text, catalog ?? undefined).filter((s) => !effectiveTools.includes(s.tool));
   }, [agent.id, role, instr, catalog, effectiveTools]);
 
-  // The Auto model tier this agent resolves to (same classifier the run uses).
   const auto = classifyModelNeed(effectiveTools, `${agent.id} ${role} ${instr}`);
 
   const saveRole = () => {
@@ -441,7 +690,6 @@ function AgentCard({
         </div>
       </div>
 
-      {/* Granted tools (chips) — removable; plus accept-chips for suggestions. */}
       <div className="sb-tools">
         <span className="sb-field-label" style={{ margin: '4px 0' }}>Tools this agent can use</span>
         <div className="sb-chips">
@@ -478,15 +726,237 @@ function AgentCard({
   );
 }
 
+/* ─────────────────────────── Phase 4 — Run (trigger) ─────────────────────────── */
+
+type TriggerKind = 'manual' | 'cron' | 'event';
+const TRIGGER_CARDS: { kind: TriggerKind; label: string; blurb: string }[] = [
+  { kind: 'manual', label: 'Manual', blurb: 'You run it by hand, right here.' },
+  { kind: 'cron', label: 'On schedule', blurb: 'It runs automatically on a repeating schedule.' },
+  { kind: 'event', label: 'Called from system', blurb: 'Another system or the API triggers it on demand.' },
+];
+
+/**
+ * Phase 4's trigger-mode selector — three cards (Manual · On schedule · Called from
+ * system), each showing its settings when chosen. It reuses the working schedule route
+ * (`/schedule`): "On schedule" edits a cron; "Called from system" shows the MCP/API
+ * caller hint and persists an `event` schedule. The schedule is a first-class part of
+ * system.yaml already, so nothing new is persisted.
+ */
+function TriggerMode({
+  systemId, system, canEdit, onReload,
+}: {
+  systemId: string;
+  system: System;
+  canEdit: boolean;
+  onReload: () => void | Promise<void>;
+}) {
+  const current: TriggerKind = system.schedule?.kind ?? 'manual';
+  const [kind, setKind] = useState<TriggerKind>(current);
+  const [cron, setCron] = useState(system.schedule?.cron ?? '0 9 * * 1');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [note, setNote] = useState('');
+  useEffect(() => { setKind(system.schedule?.kind ?? 'manual'); }, [system.schedule?.kind]);
+  useEffect(() => { if (system.schedule?.cron) setCron(system.schedule.cron); }, [system.schedule?.cron]);
+
+  const save = async (next: { kind: TriggerKind; cron?: string; event?: string }) => {
+    setBusy(true);
+    setErr('');
+    setNote('');
+    try {
+      const res = await fetch(`/api/agents/systems/${systemId}/schedule`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(next),
+      });
+      const b = await res.json();
+      if (!res.ok) throw new Error(b.error ?? 'Could not update the trigger.');
+      if (b.cron && next.kind === 'cron') {
+        setNote(b.cron.ok && b.cron.live ? `✓ CronJob ${b.cron.action} — runs on schedule` : `⚠ schedule saved but not scheduled — ${b.cron.detail}`);
+      }
+      await onReload();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pick = (next: TriggerKind) => {
+    setKind(next);
+    void save(next === 'cron' ? { kind: 'cron', cron } : next === 'event' ? { kind: 'event', event: 'on_demand' } : { kind: 'manual' });
+  };
+
+  return (
+    <div className="sb-resources" style={{ marginBottom: 16 }}>
+      <h2 className="sb-section-title" style={{ marginTop: 0 }}>How is this team triggered?</h2>
+      <div className="tmpl-grid" role="group" aria-label="Trigger mode">
+        {TRIGGER_CARDS.map((c) => (
+          <button
+            key={c.kind}
+            type="button"
+            className={`tmpl-card${kind === c.kind ? ' active' : ''}`}
+            aria-pressed={kind === c.kind}
+            disabled={!canEdit || busy}
+            onClick={() => canEdit && kind !== c.kind && pick(c.kind)}
+          >
+            <span className="tmpl-label">{c.label}</span>
+            <span className="tmpl-blurb">{c.blurb}</span>
+          </button>
+        ))}
+      </div>
+
+      {kind === 'cron' ? (
+        <div style={{ marginTop: 10 }}>
+          <label className="sb-field-label" htmlFor="sb-cron">Schedule (cron — minute hour day month weekday)</label>
+          <form onSubmit={(e) => { e.preventDefault(); void save({ kind: 'cron', cron }); }} className="row" style={{ gap: 8, alignItems: 'center' }}>
+            <input id="sb-cron" type="text" className="mono" value={cron} disabled={!canEdit || busy} onChange={(e) => setCron(e.target.value)} style={{ width: 160 }} />
+            <button className="btn ghost sm" type="submit" disabled={!canEdit || busy}>Save schedule</button>
+            <span className="hint" style={{ marginTop: 0 }}>e.g. <span className="mono">0 9 * * 1</span> = every Monday 09:00</span>
+          </form>
+        </div>
+      ) : null}
+
+      {kind === 'event' ? (
+        <div style={{ marginTop: 10 }} className="hint">
+          Trigger it from another system or the API with{' '}
+          <span className="mono">run_agent_system</span> (MCP) or{' '}
+          <span className="mono">POST /api/agents/systems/{systemId}/run</span>. No schedule is set — it runs when called.
+        </div>
+      ) : null}
+
+      {err ? <div className="error" style={{ marginTop: 8 }}>{err}</div> : null}
+      {note ? <div className="hint" style={{ marginTop: 8 }}>{note}</div> : null}
+    </div>
+  );
+}
+
+/* ─────────────────────────── Phase 5 — Evaluate ─────────────────────────── */
+
+/** The four node verdicts the diagnostics/checks understand. */
+type DiagStatus = 'ok' | 'denied' | 'error' | 'failed';
+const DIAG_STATUSES = new Set<DiagStatus>(['ok', 'denied', 'error', 'failed']);
+function toDiagStatus(s: string): DiagStatus {
+  return DIAG_STATUSES.has(s as DiagStatus) ? (s as DiagStatus) : 'ok';
+}
+
+/** Map the persisted LastRun into the DiagRun shape the deterministic checks consume. */
+function lastRunToDiag(lastRun: NonNullable<BuildRunProps['lastRun']>): DiagRun {
+  return {
+    ok: lastRun.ok,
+    path: lastRun.path ?? [],
+    output: lastRun.output,
+    nodes: (lastRun.nodes ?? []).map((n) => ({
+      node: n.node,
+      status: toDiagStatus(n.status),
+      // The persisted step has no errorKind — an errored step counts as an exec error.
+      steps: (n.steps ?? []).map((s) => ({ tool: s.tool, isError: s.isError })),
+    })),
+  };
+}
+
+/**
+ * Phase 5 — Evaluate. Deterministic checks (green/red) + a one-click LLM-judge that
+ * scores Clarity · Grounding · Actionability against the system's task Description via
+ * the governed assistant model (the evaluate route). Diagnostics/PDF/trace live below,
+ * relocated into the shared panel's `evaluate` phase.
+ */
+function EvaluateStep({
+  systemId, lastRun, canEdit,
+}: {
+  systemId: string;
+  lastRun: BuildRunProps['lastRun'];
+  canEdit: boolean;
+}) {
+  const [judge, setJudge] = useState<JudgeResult | null>(null);
+  const [judging, setJudging] = useState(false);
+  const [judgeErr, setJudgeErr] = useState('');
+
+  const checks = useMemo(() => (lastRun ? runChecks(lastRunToDiag(lastRun)) : []), [lastRun]);
+  const output = lastRun?.output ?? '';
+
+  const runJudge = async () => {
+    if (judging) return;
+    setJudging(true);
+    setJudgeErr('');
+    try {
+      const res = await fetch(`/api/agents/systems/${systemId}/evaluate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ output }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? 'The judge could not score this run.');
+      setJudge(body as JudgeResult);
+    } catch (e) {
+      setJudgeErr((e as Error).message);
+    } finally {
+      setJudging(false);
+    }
+  };
+
+  if (!lastRun) {
+    return <div className="sb-empty">No run to evaluate yet — run the team first.</div>;
+  }
+
+  return (
+    <div className="sb-resources" style={{ marginBottom: 12 }}>
+      {/* Deterministic checks — green/red, zero-cost, no model. */}
+      <div className="row" style={{ alignItems: 'center', gap: 8 }}>
+        <h2 className="sb-section-title" style={{ margin: 0 }}>Checks</h2>
+        <span className={`badge ${allChecksPass(checks) ? 'ok' : 'warn'}`}>
+          {allChecksPass(checks) ? '✓ all passed' : `${checks.filter((c) => !c.pass).length} to look at`}
+        </span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+        {checks.map((c) => (
+          <div key={c.id} className="row" style={{ alignItems: 'baseline', gap: 8 }}>
+            <span className={`badge ${c.pass ? 'ok' : 'err'}`} style={{ minWidth: 22, textAlign: 'center' }}>{c.pass ? '✓' : '✗'}</span>
+            <span style={{ fontWeight: 600, minWidth: 160 }}>{c.label}</span>
+            <span className="hint" style={{ marginTop: 0 }}>{c.detail}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* LLM-judge — one click, scores against the system's task Description. */}
+      <div className="row" style={{ alignItems: 'center', gap: 8, marginTop: 18 }}>
+        <h2 className="sb-section-title" style={{ margin: 0 }}>AI judge</h2>
+        <button className="btn sm" onClick={runJudge} disabled={judging || !canEdit || !output.trim()} title={output.trim() ? 'Score this run with the AI judge' : 'No output to judge'}>
+          {judging ? <span className="spin" /> : judge ? 'Re-judge' : 'Judge this run'}
+        </button>
+      </div>
+      <p className="hint" style={{ marginTop: 4 }}>
+        The standard model scores the final output against what this team is meant to do — Clarity, Grounding, Actionability (1–5).
+      </p>
+      {judgeErr ? <div className="error" style={{ marginTop: 6 }}>{judgeErr}</div> : null}
+      {judge ? (
+        <div style={{ marginTop: 8 }}>
+          <div className="row" style={{ alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <span className="badge ok" style={{ fontSize: 13 }}>Overall {judge.overall}/5</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {judge.scores.map((s) => (
+              <div key={s.dimension} className="sb-card" style={{ padding: '10px 12px' }}>
+                <div className="row" style={{ alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontWeight: 650 }}>{dimensionLabel(s.dimension)}</span>
+                  <span className="badge">{s.score}/5</span>
+                </div>
+                <p className="hint" style={{ marginTop: 4, marginBottom: 0 }}>{s.why}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 type Available = { id: string; name: string; scope: 'personal' | 'domain' | 'marketplace' };
 
 /**
- * Simple-mode "What your team can use" — the plain Data + Knowledge grant chips.
- * These are SYSTEM-level grants (all agents share them), written to the same
- * `grants.data` / `grants.knowledge` the Developer Grants panel writes, at Read
- * access. Write access and Metrics/Connections stay in Developer mode so Simple
- * stays uncluttered — but a non-coder can now attach the data and knowledge a team
- * needs without leaving the guided flow.
+ * Simple-mode "What your team can use" — the plain Data + Knowledge grant chips
+ * (SYSTEM-level Read grants, the same `grants.data`/`grants.knowledge` the Developer
+ * Grants panel writes). Shown in the Design phase.
  */
 function TeamResources({
   systemId, system, canEdit, onCommit,
@@ -509,12 +979,6 @@ function TeamResources({
   );
 }
 
-/**
- * One artifact kind (data or knowledge): granted chips + an add-picker sourced from
- * the SAME role-scoped `…/grants/available?kind=` endpoint the Developer grants
- * table uses. Add grants at Read; remove is idempotent. Names come from the
- * available list, falling back to a short id so nothing shows a raw machine id.
- */
 function ResourcePicker({
   systemId, system, field, label, canEdit, onCommit,
 }: {
