@@ -503,6 +503,11 @@ polaris:
 # resolves/explores through it). Depends on Trino (now ON above).
 cube:
   enabled: true
+  # Faster convergence: the model-sync sidecar polls os-ui's /api/cube/models and writes
+  # the .cube.yml files Cube hot-reloads. Poll every 5s (base default 30s) so a newly
+  # defined measure reaches Cube in seconds — the define/preview fail-soft handles the gap.
+  modelSync:
+    pollSeconds: 5
 
 # litellm: remove the db-migrate initContainer (it OOMKilled on the live cluster;
 # the DB is already migrated). Setting extraInitContainers: [] overrides the list

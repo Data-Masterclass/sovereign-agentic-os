@@ -44,7 +44,18 @@ export async function POST(req: Request) {
     const { token } = await delegatedToken('domain');
     const build = await buildMetric(dataset, measure, token);
 
-    return NextResponse.json({ datasetId, measure, member: build.member, convergence: conv, build, cube: yaml });
+    // The metric is ALREADY persisted (defineMeasure above). If the only reason the build
+    // isn't green is Cube sync lag (the sidecar hasn't pushed the measure yet), report it
+    // as pending (200) — the value converges within a few seconds — never a lost metric.
+    return NextResponse.json({
+      datasetId,
+      measure,
+      member: build.member,
+      convergence: conv,
+      build,
+      cube: yaml,
+      ...(build.pending ? { pending: true } : {}),
+    });
   } catch (e) {
     return errorResponse(e);
   }

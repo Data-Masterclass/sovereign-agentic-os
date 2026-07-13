@@ -102,6 +102,8 @@ type PreviewResult = {
   member: string;
   rows: Record<string, unknown>[];
   mode: 'live' | 'offline-mock';
+  /** Cube is up but the just-defined measure hasn't sync'd yet — show "syncing", not an error. */
+  pending?: boolean;
 };
 
 /** Build the API payload from the guided form (the shape /api/metrics/define reads). */
@@ -143,22 +145,29 @@ function DatasetPicker({ value, onChange }: { value: string; onChange: (id: stri
   );
 }
 
+type DatasetState = { columns: string[]; measures: Measure[]; deliverable: boolean };
+const EMPTY_DATASET: DatasetState = { columns: [], measures: [], deliverable: true };
+
 /** Fetch the host dataset's real columns + existing measures (for ratio pickers). */
-function useDataset(datasetId: string): { columns: string[]; measures: Measure[] } {
-  const [state, setState] = useState<{ columns: string[]; measures: Measure[] }>({ columns: [], measures: [] });
+function useDataset(datasetId: string): DatasetState {
+  const [state, setState] = useState<DatasetState>(EMPTY_DATASET);
   useEffect(() => {
-    if (!datasetId) { setState({ columns: [], measures: [] }); return; }
+    if (!datasetId) { setState(EMPTY_DATASET); return; }
     let live = true;
     (async () => {
       try {
         const res = await fetch(`/api/data/datasets/${datasetId}`, { cache: 'no-store' });
         const data = await res.json();
         if (live && res.ok) {
-          const cols = (data?.dataset?.columns ?? []) as Column[];
-          const ms = (data?.dataset?.measures ?? []) as Measure[];
-          setState({ columns: cols.map((c) => c.name).filter(Boolean), measures: ms });
+          const ds = data?.dataset ?? {};
+          const cols = (ds.columns ?? []) as Column[];
+          const ms = (ds.measures ?? []) as Measure[];
+          // A metric only reaches Cube if the dataset is governed (not private/'dataset')
+          // AND its Gold mart is built (mirrors lib/data/cube-models.ts cubeDeliverable).
+          const deliverable = ds.tier !== 'dataset' && Boolean(ds?.versions?.gold?.built);
+          setState({ columns: cols.map((c) => c.name).filter(Boolean), measures: ms, deliverable });
         }
-      } catch { if (live) setState({ columns: [], measures: [] }); }
+      } catch { if (live) setState(EMPTY_DATASET); }
     })();
     return () => { live = false; };
   }, [datasetId]);
@@ -182,7 +191,7 @@ export default function DefineMetric({ onDefined }: { onDefined: () => void }) {
   const [err, setErr] = useState('');
   const [result, setResult] = useState<DefineResult | null>(null);
 
-  const { columns, measures } = useDataset(datasetId);
+  const { columns, measures, deliverable } = useDataset(datasetId);
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
   const isRatio = form.aggregation === 'number';
   const needsColumn = !isRatio && form.aggregation !== 'count';
@@ -258,7 +267,7 @@ export default function DefineMetric({ onDefined }: { onDefined: () => void }) {
       });
       const data = await res.json();
       if (!res.ok) { setPreviewErr(data.error ?? 'Preview failed'); setPreview(null); return; }
-      setPreview({ member: data.member, rows: data.rows ?? [], mode: data.mode });
+      setPreview({ member: data.member, rows: data.rows ?? [], mode: data.mode, pending: data.pending });
     } catch (e) { setPreviewErr((e as Error).message); setPreview(null); } finally { setPreviewBusy(false); }
   }, [canSubmit, datasetId, form]);
 
@@ -298,6 +307,13 @@ export default function DefineMetric({ onDefined }: { onDefined: () => void }) {
           A metric lives on a governed Gold <strong>asset</strong> or <strong>product</strong>. Pick a
           private dataset and the platform will tell you to promote it in Data first.
         </p>
+        {datasetId && !deliverable ? (
+          <p className="hint" style={{ marginTop: 6 }}>
+            Heads up: promote this dataset to <strong>Shared</strong> and build <strong>Gold</strong> so
+            its metrics reach the query engine — you can still define now, but the live value
+            won&apos;t resolve until then.
+          </p>
+        ) : null}
       </div>
 
       {/* ② Measure */}
@@ -449,7 +465,12 @@ export default function DefineMetric({ onDefined }: { onDefined: () => void }) {
         </p>
         {previewErr ? <div className="error" style={{ marginTop: 10 }}>{previewErr}</div> : null}
         {preview ? (
-          preview.rows.length === 0 ? (
+          preview.pending ? (
+            <div className="stub-page" style={{ marginTop: 10 }}>
+              Syncing — the live value appears within a few seconds as the query engine picks
+              up this metric. Preview again shortly.
+            </div>
+          ) : preview.rows.length === 0 ? (
             <div className="stub-page" style={{ marginTop: 10 }}>No rows for you under the current filter.</div>
           ) : (
             <>
@@ -520,6 +541,12 @@ export default function DefineMetric({ onDefined }: { onDefined: () => void }) {
 
       {result ? (
         <>
+          {result.pending ? (
+            <div className="stub-page" style={{ marginTop: 14 }}>
+              ✓ Metric saved — its live value appears within a few seconds as the query engine
+              syncs. Nothing to fix; refresh the metric shortly to see the number.
+            </div>
+          ) : null}
           <div className="section-title">Convergence · form and agent resolve to one measure</div>
           <ChecksList rows={result.convergence.rows} />
 

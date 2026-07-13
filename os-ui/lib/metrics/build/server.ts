@@ -21,7 +21,18 @@ import { makeRealMetricClients, liveMetricsReachable } from './live-clients.ts';
  */
 
 export type BuildMode = 'live' | 'offline-mock';
-export type MetricBuildReport = { rows: BuildRow[]; ok: boolean; member: string; mode: BuildMode };
+export type MetricBuildReport = {
+  rows: BuildRow[];
+  ok: boolean;
+  member: string;
+  mode: BuildMode;
+  /**
+   * Live only: the measure didn't resolve yet because the model-sync sidecar hasn't
+   * pushed it to Cube (sync lag), NOT a genuine failure. The metric is persisted; its
+   * live value appears within a few seconds. Distinguishes "syncing" from "broken".
+   */
+  pending?: boolean;
+};
 
 function contextFor(dataset: Dataset, measure: Measure, token: DelegatedToken): MetricBuildContext {
   return {
@@ -42,5 +53,14 @@ export async function buildMetric(dataset: Dataset, measure: Measure, token: Del
   for (const tool of ['cube', 'metric-explorer']) {
     rows.push(await runAdapter(adapters.set[tool], ctx));
   }
-  return { rows, ok: rows.every((r) => r.status === 'ok'), member: ctx.member, mode: adapters.mode };
+  const ok = rows.every((r) => r.status === 'ok');
+  // PENDING (live only): the sole reason the build isn't green is that the measure hasn't
+  // resolved yet — the sidecar hasn't pushed it to Cube. resolveMeasure returned null (we
+  // fail-soft the "not found for path" 400), so every failing row is a non-resolution, not
+  // a genuine error. The metric IS persisted; the value converges within a few seconds.
+  const pending =
+    !ok &&
+    adapters.mode === 'live' &&
+    rows.every((r) => r.status === 'ok' || /did not resolve|no usable rows|did not resolve on both/i.test(r.detail));
+  return { rows, ok, member: ctx.member, mode: adapters.mode, ...(pending ? { pending: true } : {}) };
 }
