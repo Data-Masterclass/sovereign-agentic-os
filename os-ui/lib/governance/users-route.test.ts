@@ -121,3 +121,59 @@ test('PATCH: domain_admin cannot edit a user outside their domain scope', async 
   );
   assert.equal(status, 403);
 });
+
+// ---- Password reset via PATCH ------------------------------------------------
+
+async function patchWithReset(actor: Actor, body: Record<string, unknown>, tag: string) {
+  ACTING = actor;
+  (globalThis as { fetch: unknown }).fetch = async () => { throw new Error('offline'); };
+
+  const users = await import('../platform-admin/users.ts');
+  users.__resetUsers();
+  await users.setupAdmin({
+    bootstrapId: 'admin', username: 'ada', email: 'ada@example.com',
+    passwordHashReady: await hashPassword('Tr0ub4dour&3-test'),
+  });
+  await users.createUser({ id: 'bob@example.com', email: 'bob@example.com', password: 'Tr0ub4dour&3-test', domains: ['sales'], role: 'creator' });
+
+  const route = await import(`../../app/api/governance/users/route.ts?${tag}`);
+  const req = new Request('http://localhost/api/governance/users', {
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const res = await route.PATCH(req) as { status: number; json: () => Promise<Record<string, unknown>> };
+  return { status: res.status, body: await res.json(), users };
+}
+
+test('PATCH resetPassword: admin can reset a password; new credential authenticates', async () => {
+  const { status, body, users } = await patchWithReset(
+    ADMIN,
+    { id: 'bob@example.com', resetPassword: true, password: 'NewStr0ng!Pass2026' },
+    'admin-pw-reset',
+  );
+  assert.equal(status, 200, `reset should succeed: ${JSON.stringify(body)}`);
+  // Server echoes the new password once.
+  assert.equal((body as { tempPassword?: string }).tempPassword, 'NewStr0ng!Pass2026');
+  // New credential authenticates.
+  const auth = await users.authenticate('bob@example.com', 'NewStr0ng!Pass2026');
+  assert.ok(auth, 'new password authenticates after reset');
+  // Old credential no longer works.
+  assert.equal(await users.authenticate('bob@example.com', 'Tr0ub4dour&3-test'), null);
+});
+
+test('PATCH resetPassword: domain_admin is denied (only platform admin may reset passwords)', async () => {
+  const { status } = await patchWithReset(
+    DOMAIN_ADMIN,
+    { id: 'bob@example.com', resetPassword: true, password: 'NewStr0ng!Pass2026' },
+    'da-pw-reset-denied',
+  );
+  assert.equal(status, 403);
+});
+
+test('PATCH resetPassword: weak password is rejected with 400', async () => {
+  const { status, body } = await patchWithReset(
+    ADMIN,
+    { id: 'bob@example.com', resetPassword: true, password: 'weak' },
+    'admin-pw-reset-weak',
+  );
+  assert.equal(status, 400, `weak password should be rejected: ${JSON.stringify(body)}`);
+});

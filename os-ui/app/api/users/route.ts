@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/core/auth';
 import { createUser, knownDomains, listUsers } from '@/lib/platform-admin/users';
+import { assessPasswordStrength } from '@/lib/core/password';
 import { ROLES, type Role } from '@/lib/core/session';
 
 export const dynamic = 'force-dynamic';
@@ -31,11 +32,19 @@ export async function POST(req: Request) {
     const body = await req.json();
     const role = (ROLES.includes(body?.role) ? body.role : 'creator') as Role;
     const domains = Array.isArray(body?.domains) ? body.domains.map(String).filter(Boolean) : [];
+    const password = String(body?.password ?? '');
+    if (!password) {
+      return NextResponse.json({ error: 'A password is required' }, { status: 400 });
+    }
+    const strength = assessPasswordStrength(password, String(body?.id ?? ''));
+    if (!strength.ok) {
+      return NextResponse.json({ error: strength.reasons[0] ?? 'Password is too weak' }, { status: 400 });
+    }
     const user = await createUser({
       id: String(body?.id ?? ''),
       name: body?.name ? String(body.name) : undefined,
       email: body?.email ? String(body.email) : undefined,
-      password: String(body?.password ?? ''),
+      password,
       domains,
       role,
     });

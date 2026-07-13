@@ -70,7 +70,114 @@ function ConfirmDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Invite result — shows the one-time temp password ONCE with a copy button.
+// Password field — shared by the invite form and the reset dialog.
+// ---------------------------------------------------------------------------
+type StrengthResult = { ok: boolean; score: number; reasons: string[] };
+
+function assessClient(pw: string, username = ''): StrengthResult {
+  const reasons: string[] = [];
+  const lower = pw.toLowerCase();
+  if (pw.length < 12) reasons.push('Use at least 12 characters');
+  const classes =
+    Number(/[a-z]/.test(pw)) + Number(/[A-Z]/.test(pw)) +
+    Number(/[0-9]/.test(pw)) + Number(/[^A-Za-z0-9]/.test(pw));
+  if (classes < 3) reasons.push('Mix upper, lower, numbers and symbols (3 of 4)');
+  const common = new Set(['password','admin','changeme','letmein','welcome','qwerty','123456']);
+  if (common.has(lower)) reasons.push('That password is too common');
+  if (username && lower.includes(username.trim().toLowerCase()) && username.trim().length >= 3)
+    reasons.push('Do not include the username');
+  let score = 0;
+  if (pw.length >= 12) score++;
+  if (pw.length >= 16) score++;
+  score += Math.max(0, classes - 2);
+  score = Math.min(4, score);
+  return { ok: reasons.length === 0, score, reasons };
+}
+
+const SCORE_COLOR = ['#dc2626','#f97316','#eab308','#22c55e','#16a34a'];
+const SCORE_LABEL = ['Very weak','Weak','Fair','Strong','Very strong'];
+
+function PasswordField({
+  value, onChange, username, generateUrl,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  username?: string;
+  generateUrl: string;
+}) {
+  const [show, setShow] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const strength = assessClient(value, username);
+
+  async function generate() {
+    setGenerating(true);
+    try {
+      const res = await fetch(generateUrl);
+      if (res.ok) {
+        const data = await res.json() as { password?: string };
+        if (data.password) onChange(data.password);
+      }
+    } catch { /* ignore */ } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function copy() {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch { /* clipboard unavailable */ }
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <div style={{ position: 'relative', flex: 1 }}>
+          <input
+            type={show ? 'text' : 'password'}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="Set a strong password"
+            style={{ width: '100%', paddingRight: 80 }}
+            autoComplete="new-password"
+          />
+          <button
+            type="button"
+            onClick={() => setShow((s) => !s)}
+            style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--muted, #6b7280)', padding: '2px 4px' }}
+            tabIndex={-1}
+          >
+            {show ? 'Hide' : 'Show'}
+          </button>
+        </div>
+        <button type="button" className="btn ghost" style={{ padding: '6px 10px', fontSize: 12, flexShrink: 0 }} onClick={copy} disabled={!value}>
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+        <button type="button" className="btn ghost" style={{ padding: '6px 10px', fontSize: 12, flexShrink: 0 }} onClick={generate} disabled={generating}>
+          {generating ? <span className="spin" /> : 'Generate'}
+        </button>
+      </div>
+      {value && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{ display: 'flex', gap: 3, marginBottom: 3 }}>
+            {[0,1,2,3].map((i) => (
+              <div key={i} style={{ height: 3, flex: 1, borderRadius: 2, background: i < strength.score ? SCORE_COLOR[strength.score] : 'var(--border, #e5e7eb)', transition: 'background 0.2s' }} />
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: strength.ok ? SCORE_COLOR[strength.score] : 'var(--danger, #dc2626)' }}>
+            {strength.ok ? SCORE_LABEL[strength.score] : strength.reasons[0]}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Invite result — shows the password ONCE with a copy button.
 // ---------------------------------------------------------------------------
 function InviteResultDialog({
   open, userId, tempPassword, onClose,
@@ -95,10 +202,10 @@ function InviteResultDialog({
         style={{ background: 'var(--surface, #fff)', borderRadius: 14, padding: '28px 32px', width: 440, boxShadow: '0 12px 48px rgba(0,0,0,0.22)', border: '1px solid var(--border, #e5e7eb)' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: -0.2, marginBottom: 8 }}>Invite sent</div>
+        <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: -0.2, marginBottom: 8 }}>User created</div>
         <div className="muted" style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 16 }}>
-          <strong>{userId}</strong> can sign in with the one-time password below. Share it with
-          them once — they&apos;ll be required to set their own password on first login. This is the
+          <strong>{userId}</strong> can sign in with the password below. Share it with
+          them — they&apos;ll be required to set their own password on first login. This is the
           only time it&apos;s shown.
         </div>
         <div
@@ -111,6 +218,49 @@ function InviteResultDialog({
         </div>
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button className="btn ghost" onClick={onClose}>Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Reset password dialog — admin sets/generates a new password for an existing user.
+// ---------------------------------------------------------------------------
+function ResetPasswordDialog({
+  open, userId, busy, error, onReset, onCancel,
+}: {
+  open: boolean; userId: string; busy: boolean; error: string;
+  onReset: (password: string) => void; onCancel: () => void;
+}) {
+  const [password, setPassword] = useState('');
+  const strength = assessClient(password, userId);
+  useEffect(() => { if (!open) setPassword(''); }, [open]);
+  if (!open) return null;
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      onClick={onCancel}
+    >
+      <div
+        style={{ background: 'var(--surface, #fff)', borderRadius: 14, padding: '28px 32px', width: 460, boxShadow: '0 12px 48px rgba(0,0,0,0.22)', border: '1px solid var(--border, #e5e7eb)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: -0.2, marginBottom: 4 }}>Reset password</div>
+        <div className="hint" style={{ marginBottom: 14, fontSize: 12 }}>
+          Set a new password for <strong>{userId}</strong>. The password is shown once — share it with them directly. They will be required to set their own on next login.
+        </div>
+        {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
+        <PasswordField value={password} onChange={setPassword} username={userId} generateUrl="/api/users/gen-password" />
+        <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
+          <button className="btn ghost" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button
+            className="btn"
+            disabled={busy || !password || !strength.ok}
+            onClick={() => onReset(password)}
+          >
+            {busy ? <span className="spin" /> : 'Set password'}
+          </button>
         </div>
       </div>
     </div>
@@ -187,7 +337,7 @@ function RoleSelect({
 // Edit user panel.
 // ---------------------------------------------------------------------------
 function EditUserPanel({
-  open, user, assignable, allDomains, busy, error, onSave, onCancel,
+  open, user, assignable, allDomains, busy, error, onSave, onCancel, onResetPassword,
 }: {
   open: boolean;
   user: GovUser | null;
@@ -197,6 +347,7 @@ function EditUserPanel({
   error: string;
   onSave: (patch: { name: string; email: string; role: string; domains: string[] }) => void;
   onCancel: () => void;
+  onResetPassword?: () => void;
 }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -225,11 +376,22 @@ function EditUserPanel({
         style={{ background: 'var(--surface, #fff)', borderRadius: 14, padding: '28px 32px', width: 460, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 12px 48px rgba(0,0,0,0.22)', border: '1px solid var(--border, #e5e7eb)' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: -0.2, marginBottom: 4 }}>
-          Edit user
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 4 }}>
+          <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: -0.2 }}>Edit user</div>
+          {onResetPassword && (
+            <button
+              type="button"
+              className="btn ghost"
+              style={{ marginLeft: 'auto', padding: '3px 10px', fontSize: 12 }}
+              onClick={onResetPassword}
+              disabled={busy}
+            >
+              Reset password…
+            </button>
+          )}
         </div>
         <div className="hint" style={{ marginBottom: 16, fontSize: 12 }}>
-          <strong>{user.id}</strong> — username and password are managed by the identity provider.
+          <strong>{user.id}</strong>
         </div>
 
         {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
@@ -282,12 +444,17 @@ export default function UsersAccess() {
   const [newName, setNewName] = useState('');
   const [newDomains, setNewDomains] = useState<string[]>([]);
   const [newRole, setNewRole] = useState('');
+  const [newPassword, setNewPassword] = useState('');
 
   // edit dialog
   const [editUser, setEditUser] = useState<GovUser | null>(null);
   const [editError, setEditError] = useState('');
 
-  // invite result — the one-time temp password to hand to the invitee.
+  // reset-password dialog
+  const [resetTarget, setResetTarget] = useState<GovUser | null>(null);
+  const [resetError, setResetError] = useState('');
+
+  // invite result — the one-time password to hand to the invitee.
   const [invited, setInvited] = useState<{ id: string; tempPassword: string } | null>(null);
 
   // archive confirm
@@ -318,6 +485,10 @@ export default function UsersAccess() {
   const invite = useCallback(async () => {
     const email = newEmail.trim();
     if (!email || !newDomains.length || !newRole) return;
+    const pw = newPassword.trim();
+    if (!pw) { setError('A password is required — type one or click Generate'); return; }
+    const strength = assessClient(pw, email);
+    if (!strength.ok) { setError(strength.reasons[0] ?? 'Password is too weak'); return; }
     setBusy('invite');
     setError('');
     try {
@@ -331,22 +502,22 @@ export default function UsersAccess() {
           ...(newName.trim() ? { name: newName.trim() } : {}),
           domains: newDomains,
           role: newRole,
+          password: pw,
         }),
       });
       const body = await res.json();
       if (!res.ok) setError(body.error ?? 'Invite failed');
       else {
-        // Surface the one-time temp password to the admin exactly once — the
-        // server never returns it again.
+        // Surface the password to the admin exactly once — the server never returns it again.
         if (body.tempPassword) setInvited({ id: body.user?.id ?? email, tempPassword: body.tempPassword });
-        setNewEmail(''); setNewName(''); setNewDomains([]); await load();
+        setNewEmail(''); setNewName(''); setNewDomains([]); setNewPassword(''); await load();
       }
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy('');
     }
-  }, [newEmail, newName, newDomains, newRole, load]);
+  }, [newEmail, newName, newDomains, newRole, newPassword, load]);
 
   const saveEdit = useCallback(async (patch: { name: string; email: string; role: string; domains: string[] }) => {
     if (!editUser) return;
@@ -368,6 +539,29 @@ export default function UsersAccess() {
       setBusy('');
     }
   }, [editUser, load]);
+
+  const resetPassword = useCallback(async (password: string) => {
+    if (!resetTarget) return;
+    setBusy('reset');
+    setResetError('');
+    try {
+      const res = await fetch('/api/governance/users', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: resetTarget.id, resetPassword: true, password }),
+      });
+      const body = await res.json();
+      if (!res.ok) { setResetError(body.error ?? 'Reset failed'); return; }
+      // Show the new password once so the admin can relay it.
+      if (body.tempPassword) setInvited({ id: resetTarget.id, tempPassword: body.tempPassword });
+      setResetTarget(null);
+      setEditUser(null);
+    } catch (e) {
+      setResetError((e as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }, [resetTarget]);
 
   const confirmArchive = useCallback(async () => {
     if (!archiveTarget) return;
@@ -453,6 +647,15 @@ export default function UsersAccess() {
         error={editError}
         onSave={saveEdit}
         onCancel={() => { setEditUser(null); setEditError(''); }}
+        onResetPassword={() => { setResetTarget(editUser); setResetError(''); }}
+      />
+      <ResetPasswordDialog
+        open={!!resetTarget}
+        userId={resetTarget?.id ?? ''}
+        busy={busy === 'reset'}
+        error={resetError}
+        onReset={resetPassword}
+        onCancel={() => { setResetTarget(null); setResetError(''); }}
       />
       <ConfirmDialog
         open={!!archiveTarget}
@@ -482,8 +685,8 @@ export default function UsersAccess() {
         </button>
       </div>
       <p className="hint" style={{ marginTop: 0, marginBottom: 14 }}>
-        Inviting a user issues a one-time password shown to you once — hand it to them and they
-        set their own password on first login. Passwords are stored only as salted hashes.
+        Set a strong password when creating a user — it is shown to you once so you can relay it.
+        Users are required to change it on first login. Passwords are stored only as salted hashes.
       </p>
 
       {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
@@ -511,6 +714,11 @@ export default function UsersAccess() {
               />
             </div>
 
+            <div>
+              <div className="hint" style={{ marginBottom: 6 }}>Password</div>
+              <PasswordField value={newPassword} onChange={setNewPassword} username={newEmail.trim()} generateUrl="/api/users/gen-password" />
+            </div>
+
             <div className="hint" style={{ marginBottom: 6 }}>Domains</div>
             <DomainPicker available={allDomains} selected={newDomains} onChange={setNewDomains} />
 
@@ -526,7 +734,7 @@ export default function UsersAccess() {
                 <button
                   className="btn"
                   style={{ flexShrink: 0 }}
-                  disabled={busy === 'invite' || !newEmail.trim() || !newDomains.length || !newRole}
+                  disabled={busy === 'invite' || !newEmail.trim() || !newDomains.length || !newRole || !assessClient(newPassword.trim(), newEmail.trim()).ok}
                   onClick={invite}
                 >
                   {busy === 'invite' ? <span className="spin" /> : 'Invite'}

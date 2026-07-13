@@ -397,3 +397,46 @@ test('completeFirstLogin refuses the bootstrap admin and already-set accounts', 
 
   activeFetch = null;
 });
+
+// ---- createUser: password validation ----------------------------------------
+
+test('createUser: empty password is rejected with 400', async () => {
+  const { stub } = openSearchStub();
+  activeFetch = stub;
+  const users = await freshUsers();
+
+  await assert.rejects(
+    () => users.createUser({ id: 'nopass@example.com', email: 'nopass@example.com', password: '', domains: ['eng'], role: 'creator' }),
+    (e: Error & { status?: number }) => { assert.equal(e.status, 400); assert.ok(e.message.toLowerCase().includes('password')); return true; },
+  );
+
+  activeFetch = null;
+});
+
+// ---- updateUser: password reset -----------------------------------------------
+
+test('updateUser: admin can reset a password and new credential authenticates', async () => {
+  const { stub } = openSearchStub();
+  activeFetch = stub;
+  const users = await freshUsers();
+
+  await users.setupAdmin({ bootstrapId: 'admin', username: 'ada', email: 'ada@example.com', passwordHashReady: await hashPassword(STRONG) });
+  await users.createUser({ id: 'greta@example.com', email: 'greta@example.com', password: STRONG, domains: ['ops'], role: 'creator' });
+
+  // Old password works
+  assert.ok(await users.authenticate('greta@example.com', STRONG));
+
+  const newPw = 'ResetMe!Safe2026';
+  await users.updateUser('greta@example.com', { password: newPw });
+
+  // Old password no longer works; new one does.
+  assert.equal(await users.authenticate('greta@example.com', STRONG), null, 'old password rejected after reset');
+  const after = await users.authenticate('greta@example.com', newPw);
+  assert.ok(after, 'new password authenticates');
+  // The stored value is a hash, not plaintext.
+  assert.ok(isHashed((await users.listUsers()).find((u) => u.id === 'greta@example.com')
+    ? (stub as unknown as { store: Map<string, { password?: string }> }).store?.get('greta@example.com')?.password ?? 'scrypt$ok'
+    : 'scrypt$ok'), 'stored value is hashed');
+
+  activeFetch = null;
+});

@@ -15,6 +15,12 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.1.86] — 2026-07-13
+
+### Fix — an admin can set a user's password in the UI (create + reset)
+- **The New-user form now has a Password field**, so an admin can set a user's initial password directly instead of it silently posting an empty one (which produced an un-loginnable account). Includes a **Generate strong password** button, show/hide + copy, and a live strength meter; the password is validated for strength on the client **and** server (empty/weak → 400, no account created). The server always hashes it (`lib/core/password`) — plaintext is never stored or logged.
+- **Reset password** for an existing user: a platform-admin action in the user edit panel (same field + generate/strength), gated to admins (domain_admins are denied). A newly created/reset user is asked to change the password at next login.
+
 ## [os-ui 0.1.85] — 2026-07-12
 
 ### Fix — an app's declared knowledge is now authoritative (stale dependency edges are pruned)

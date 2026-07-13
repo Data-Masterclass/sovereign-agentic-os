@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { currentUser } from '@/lib/core/auth';
 import { archiveUser, createUser, deleteUser, knownDomains, listUsers, restoreUser, updateUser } from '@/lib/platform-admin/users';
-import { generateTempPassword } from '@/lib/core/password';
+import { assessPasswordStrength, generateTempPassword } from '@/lib/core/password';
 import { ROLES, type Role } from '@/lib/core/session';
 import { canAdministerUsers, canManageRole, canTouchUser, compileRoleToGrants, roleLabel, userAdminInScope } from '@/lib/governance/roles';
 import { record as audit } from '@/lib/governance/audit';
@@ -62,14 +62,14 @@ export async function GET() {
   });
 }
 
-/** Invite a user (server mints a one-time temp password) + assign role-per-domain. */
+/** Invite a user (admin may supply a password or let the server generate one) + assign role-per-domain. */
 export async function POST(req: Request) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
   if (!canAdministerUsers(user.role)) {
     return NextResponse.json({ error: 'Inviting users needs a Domain admin or Admin' }, { status: 403 });
   }
-  let body: { id?: string; name?: string; domains?: unknown; role?: string };
+  let body: { id?: string; name?: string; email?: string; domains?: unknown; role?: string; password?: string };
   try {
     body = await req.json();
   } catch {
@@ -80,23 +80,28 @@ export async function POST(req: Request) {
   const domains = Array.isArray(body?.domains) ? body!.domains.map(String).filter(Boolean) : [];
   if (!id) return NextResponse.json({ error: 'A username is required' }, { status: 400 });
   if (domains.length === 0) return NextResponse.json({ error: 'At least one domain is required' }, { status: 400 });
-  if ('password' in (body as object)) {
-    return NextResponse.json({ error: 'This tab never handles passwords — Ory owns credentials' }, { status: 400 });
-  }
   if (!inActorScope(user, domains) || domains.some((d) => !canManageRole(asActor(user), role, d))) {
     return NextResponse.json({ error: `You may not assign ${roleLabel(role)} in those domains` }, { status: 403 });
   }
 
+  // Determine the credential: use the admin-supplied password if provided and
+  // strong enough, otherwise generate a temp password. Either way the plaintext
+  // is returned ONCE and only the scrypt hash is stored. The account is always
+  // flagged mustChangeCredentials so the invitee replaces it on first login.
+  const suppliedPassword = body?.password ? String(body.password).trim() : '';
+  if (suppliedPassword) {
+    const strength = assessPasswordStrength(suppliedPassword, id);
+    if (!strength.ok) {
+      return NextResponse.json({ error: strength.reasons[0] ?? 'Password is too weak' }, { status: 400 });
+    }
+  }
+
   try {
-    // Mint a strong, one-time temp password. Only its scrypt hash is stored (by
-    // createUser); the plaintext is returned ONCE below for the admin to relay and
-    // is never persisted or logged. The account is flagged mustChangeCredentials
-    // so the invitee must replace it on first login.
-    const tempPassword = generateTempPassword();
+    const tempPassword = suppliedPassword || generateTempPassword();
     const created = await createUser({
       id,
       name: body?.name ? String(body.name) : undefined,
-      email: (body as { email?: string })?.email ? String((body as { email?: string }).email) : undefined,
+      email: body?.email ? String(body.email) : undefined,
       password: tempPassword,
       domains,
       role,
@@ -123,21 +128,18 @@ export async function POST(req: Request) {
   }
 }
 
-/** Edit profile, change role/memberships, archive (soft-delete), or restore. Recompiles OPA + audits. */
+/** Edit profile, change role/memberships, reset password, archive (soft-delete), or restore. Recompiles OPA + audits. */
 export async function PATCH(req: Request) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
   if (!canAdministerUsers(user.role)) {
     return NextResponse.json({ error: 'Managing users needs a Domain admin or Admin' }, { status: 403 });
   }
-  let body: { id?: string; name?: string; email?: string; role?: string; domains?: unknown; deactivate?: boolean; restore?: boolean };
+  let body: { id?: string; name?: string; email?: string; role?: string; domains?: unknown; deactivate?: boolean; restore?: boolean; password?: string; resetPassword?: boolean };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
-  }
-  if ('password' in (body as object)) {
-    return NextResponse.json({ error: 'This tab never handles passwords — Ory owns credentials' }, { status: 400 });
   }
   const id = String(body?.id ?? '').trim().toLowerCase();
   if (!id) return NextResponse.json({ error: 'A user id is required' }, { status: 400 });
@@ -168,6 +170,33 @@ export async function PATCH(req: Request) {
       const restored = await restoreUser(id);
       audit({ actor: user.id, action: 'role.change', subject: id, domain: target.domains[0] ?? 'tenant', reason: `Restored ${id} (account re-enabled)`, detail: { restored: true } });
       return NextResponse.json({ user: { ...restored, roleLabel: roleLabel(restored.role) } });
+    } catch (e) {
+      return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 500 });
+    }
+  }
+
+  // Password reset — only platform Admin may reset passwords (domain admin scope is insufficient).
+  if (body?.resetPassword || body?.password) {
+    if (user.role !== 'admin') {
+      return NextResponse.json({ error: 'Only a platform Admin can reset passwords' }, { status: 403 });
+    }
+    const newPassword = body?.password ? String(body.password).trim() : generateTempPassword();
+    const strength = assessPasswordStrength(newPassword, id);
+    if (!strength.ok) {
+      return NextResponse.json({ error: strength.reasons[0] ?? 'Password is too weak' }, { status: 400 });
+    }
+    try {
+      const updated = await updateUser(id, { password: newPassword });
+      audit({
+        actor: user.id,
+        action: 'role.change',
+        subject: id,
+        domain: target.domains[0] ?? 'tenant',
+        reason: `Admin reset password for ${id}`,
+        detail: { passwordReset: true },
+      });
+      // Return the new password ONCE so the admin can relay it; it is never stored in plaintext.
+      return NextResponse.json({ user: { ...updated, roleLabel: roleLabel(updated.role) }, tempPassword: newPassword });
     } catch (e) {
       return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 500 });
     }
