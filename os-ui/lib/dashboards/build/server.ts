@@ -59,7 +59,7 @@ export async function buildDashboard(
  * that UUID. `dashboardName` is the Superset dashboard title (spec.name). If it can't be
  * resolved live, we fall through to the honest offline-mock rather than 500 the open.
  */
-export async function mintEmbed(token: DelegatedToken, dashboardId: string, dashboardName?: string): Promise<{
+export async function mintEmbed(token: DelegatedToken, dashboardId: string, spec?: DashboardSpec): Promise<{
   request: ReturnType<typeof guestTokenRequest>;
   token: string;
   expiresInSeconds: number;
@@ -67,11 +67,22 @@ export async function mintEmbed(token: DelegatedToken, dashboardId: string, dash
   reason?: string;
 }> {
   const request = guestTokenRequest(token, dashboardId);
+  const dashboardName = spec?.name;
   let reason: string | undefined;
   if (dashboardName && (await liveDashboardsReachable())) {
     try {
       const base = config.supersetInternalUrl;
-      const supersetId = await resolveDashboardIdByTitle(base, dashboardName);
+      let supersetId = await resolveDashboardIdByTitle(base, dashboardName);
+      if (supersetId == null && spec) {
+        // Auto-heal: a dashboard that was created before it was ever built into Superset
+        // (or before the build-on-create fix) isn't there yet, so the guest token has
+        // nothing to target → offline-mock forever. Build it now from its spec, then
+        // re-resolve, so the embed mounts on this very open. Idempotent: for a dashboard
+        // already in Superset this branch never runs; buildDashboard's own superset adapter
+        // is an upsert-by-title.
+        await buildDashboard(spec, token, dashboardId);
+        supersetId = await resolveDashboardIdByTitle(base, dashboardName);
+      }
       if (supersetId == null) {
         reason = `dashboard "${dashboardName}" not found in Superset`;
       } else {

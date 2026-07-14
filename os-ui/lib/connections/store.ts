@@ -51,8 +51,9 @@ import {
 } from '@/lib/governance/governance';
 import { registerBronzeSource, indexToFiles } from '@/lib/data/data-handoff';
 import { logEgress } from '@/lib/connections/egress-requests';
-import { providerForTemplate } from '@/lib/oauth/providers';
+import { providerForTemplate, providerConfig, type OAuthProvider } from '@/lib/oauth/providers';
 import { storeTokens, readTokens, resolveAccessToken } from '@/lib/oauth/connection-token';
+import { probeDrive } from '@/lib/oauth/client';
 import { isExpired, type TokenSet } from '@/lib/oauth/token-set';
 import {
   refreshNotionToken,
@@ -421,10 +422,43 @@ export async function updateCapabilities(
  * the client) and probes the endpoint best-effort; offline returns a deterministic
  * ok so the flow works with no live endpoint. Never echoes the secret.
  */
-export async function testConnection(connId: string, user: CurrentUser): Promise<{ ok: boolean; mode: 'live' | 'offline'; detail: string }> {
+export async function testConnection(
+  connId: string,
+  user: CurrentUser,
+  opts: { probe?: (provider: OAuthProvider, token: string) => Promise<{ ok: boolean; status: number }> } = {},
+): Promise<{ ok: boolean; mode: 'live' | 'offline'; detail: string }> {
   const map = await getCache();
   const c = map.get(connId);
   if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
+
+  // DRIVE (personal OAuth): the honest test is a real, read-only call to the
+  // provider (Google Drive `about.get` / Graph `/me/drive`) with the stored token.
+  // Success ⇒ genuinely connected; a needs-reconnect/none resolution or a non-2xx
+  // response is reported honestly — never a fake "ok". Governance: owner-only.
+  const driveProvider = c.type === 'Drive' && c.auth === 'oauth' ? providerForTemplate(c.template) : null;
+  if (driveProvider) {
+    if (c.owner !== user.id) throw withStatus(new Error('Only the connection owner can test this connection'), 403);
+    const probe = opts.probe ?? probeDrive;
+    const token = await resolveConnectionAccessToken(c.id, user.id); // silent refresh; owner-gated
+    if (!token) {
+      const reason =
+        c.health === 'needs-reconnect'
+          ? 'the stored token expired and could not be refreshed — click Reconnect'
+          : 'no account is connected yet — click Connect to authorize';
+      c.mode = 'offline';
+      c.updatedAt = now();
+      writeThrough(c);
+      return { ok: false, mode: 'offline', detail: `${providerConfig(driveProvider).label}: ${reason}.` };
+    }
+    const res = await probe(driveProvider, token);
+    c.mode = res.ok ? 'live' : 'offline';
+    c.health = res.ok ? 'healthy' : 'needs-reconnect';
+    c.updatedAt = now();
+    writeThrough(c);
+    return res.ok
+      ? { ok: true, mode: 'live', detail: `${providerConfig(driveProvider).label}: live call succeeded — the connected account's drive is reachable. The token is never sent to the browser.` }
+      : { ok: false, mode: 'offline', detail: `${providerConfig(driveProvider).label}: the live API rejected the stored token (HTTP ${res.status || 'unreachable'}) — click Reconnect.` };
+  }
 
   // WAREHOUSE: the honest test is the provider's probe. When the probe is `sql` the
   // live check is running `SHOW SCHEMAS FROM <catalog>` through the governed query

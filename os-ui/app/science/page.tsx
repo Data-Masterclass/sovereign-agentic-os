@@ -203,7 +203,7 @@ function ServicesGrid({ data }: { data: GateData }) {
                 >
                   Open {s.label}
                 </button>
-              ) : (
+              ) : s.consoleUrl ? (
                 <a
                   className="btn ghost"
                   href={s.consoleUrl}
@@ -213,6 +213,13 @@ function ServicesGrid({ data }: { data: GateData }) {
                 >
                   Open {s.label} →
                 </a>
+              ) : (
+                // No public console on this deploy (chart set *_CONSOLE_URL=""):
+                // e.g. KServe has no human UI, or a tool has no ingress host. Show
+                // an honest disabled state instead of a dead localhost/empty link.
+                <span className="btn ghost" style={{ opacity: 0.5, cursor: 'default' }} title="No browser console on this deployment">
+                  No console
+                </span>
               )}
             </div>
           </div>

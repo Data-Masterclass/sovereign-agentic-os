@@ -67,6 +67,13 @@ test('buildAuthorizeUrl (Microsoft) requests Files.Read + offline_access', () =>
   assert.equal(url.searchParams.get('scope'), 'Files.Read offline_access');
 });
 
+test('each provider declares a READ-ONLY probe endpoint for the honest test', () => {
+  // Google Drive `about.get` and Graph `/me/drive` — the smallest authenticated
+  // read the honest testConnection uses; both must be least-privilege reads.
+  assert.match(OAUTH_PROVIDERS.google.probeUrl, /googleapis\.com\/drive\/v3\/about/);
+  assert.match(OAUTH_PROVIDERS.microsoft.probeUrl, /graph\.microsoft\.com\/v1\.0\/me\/drive/);
+});
+
 test('exchange + refresh bodies carry the right grant types', () => {
   const ex = exchangeBody({ clientId: 'c', clientSecret: 's', code: 'code', redirectUri: 'r' });
   assert.equal(ex.get('grant_type'), 'authorization_code');

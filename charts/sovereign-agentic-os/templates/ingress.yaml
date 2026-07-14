@@ -64,7 +64,15 @@
   "dagster"      (dict "service" "agentic-os-dagster-webserver" "port" 80 "annotations" $dagsterAnno)
   "terminal"     (dict "service" "terminal-broker" "port" 8080 "annotations" $wsAnno)
   "workbench"    (dict "service" "workbench-broker" "port" 8080 "annotations" $wbAnno)
+  "jupyterhub"   (dict "service" "proxy-public" "port" 80 "annotations" $wsAnno)
 }}
+{{- /* JupyterHub (Science) rides the $routes map above. Notebooks need WebSockets
+       (kernels/terminals) so the tool CANNOT be served through the os-ui same-origin
+       proxy (that route rejects protocol:ws with 501) — it needs its OWN public host
+       fronting the Z2JH proxy (`proxy-public`), which the CHP serves at `/`. Emitted
+       only when `ingress.hosts.jupyterhub` is set. $wsAnno gives it the long-timeout +
+       Upgrade/Connection passthrough the kernel WebSockets require, same as the
+       terminal/workbench WS consoles. */}}
 {{- range $key, $route := $routes }}
 {{- $host := index ($ing.hosts | default dict) $key }}
 {{- if $host }}

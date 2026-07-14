@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 const _realFetch = globalThis.fetch;
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 
-const { createConnection, storeConnectionTokens, resolveConnectionAccessToken, __resetConnections } = await import('./store.ts');
+const { createConnection, storeConnectionTokens, resolveConnectionAccessToken, testConnection, __resetConnections } = await import('./store.ts');
 const { liveClientFor } = await import('../files/connectors-live.ts');
 
 const owner = { id: 'amir', name: 'Amir', domains: ['sales'], role: 'creator' as const };
@@ -64,6 +64,48 @@ test('an expired token with an unreachable refresh endpoint degrades to the mock
   const token = await resolveConnectionAccessToken(conn.id, owner.id);
   assert.equal(token, null);
   assert.equal(liveClientFor('google-drive', token).mode, 'mock');
+});
+
+test('testConnection is HONEST: not-connected before OAuth (no fake ok)', async () => {
+  const conn = await makeDrive();
+  const res = await testConnection(conn.id, owner, { probe: async () => ({ ok: true, status: 200 }) });
+  // No real token stored yet → the probe is never called; the result is an honest failure.
+  assert.equal(res.ok, false);
+  assert.equal(res.mode, 'offline');
+  assert.match(res.detail, /Connect/i);
+});
+
+test('testConnection makes a REAL call: 2xx from the drive API → live/connected', async () => {
+  const conn = await makeDrive();
+  await storeConnectionTokens(conn.id, owner.id, { accessToken: 'ya29.real', refreshToken: 'r', expiresAt: nowSec() + 3600 });
+  let seen: { provider: string; token: string } | null = null;
+  const res = await testConnection(conn.id, owner, {
+    probe: async (provider, token) => { seen = { provider, token }; return { ok: true, status: 200 }; },
+  });
+  assert.deepEqual(seen, { provider: 'google', token: 'ya29.real' }); // the stored token was really used
+  assert.equal(res.ok, true);
+  assert.equal(res.mode, 'live');
+});
+
+test('testConnection reflects a REAL failure: 401 from the drive API → not ok, needs-reconnect', async () => {
+  const conn = await makeDrive();
+  await storeConnectionTokens(conn.id, owner.id, { accessToken: 'ya29.bad', refreshToken: 'r', expiresAt: nowSec() + 3600 });
+  const res = await testConnection(conn.id, owner, { probe: async () => ({ ok: false, status: 401 }) });
+  assert.equal(res.ok, false);
+  assert.equal(res.mode, 'offline');
+  assert.match(res.detail, /401/);
+});
+
+test('governance: a personal drive connection is not even visible to a non-owner', async () => {
+  const conn = await makeDrive();
+  await storeConnectionTokens(conn.id, owner.id, { accessToken: 'ya29.real', expiresAt: nowSec() + 3600 });
+  // A Personal connection is owner-only visible, so a non-owner cannot test it —
+  // the probe is NEVER reached (it would throw if it were).
+  const intruder = { id: 'mallory', name: 'Mallory', domains: ['sales'], role: 'creator' as const };
+  await assert.rejects(
+    testConnection(conn.id, intruder, { probe: async () => { throw new Error('probe must not run'); } }),
+    /not found/i,
+  );
 });
 
 test('restore real fetch', () => {

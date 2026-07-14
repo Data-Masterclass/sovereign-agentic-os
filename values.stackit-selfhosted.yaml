@@ -649,6 +649,19 @@ ingress:
     # tab). WITHOUT this the chart renders DAGSTER_CONSOLE_URL as "" on the
     # os-ui and the UI has no reachable console to open.
     dagster: "dagster.agentic.datamasterclass.com"
+    # JupyterHub (Science tab). Notebooks need WebSocket kernels, so Jupyter is NOT
+    # served through the os-ui same-origin tool proxy (that rejects protocol:ws) —
+    # it gets its OWN public host fronting the Z2JH `proxy-public` service (the CHP).
+    # WITHOUT this key the chart renders JUPYTERHUB_CONSOLE_URL="" (UI hides the link)
+    # AND no ingress is created, so the "Open JupyterHub" button 404s on localhost.
+    # DNS wildcard *.agentic.datamasterclass.com already points at ingress-nginx.
+    # The ingress inherits the tenant-wide soa-basic-auth annotation from
+    # `ingress.annotations`; JupyterHub's DummyAuthenticator (jupyter-local-dev) is
+    # the app-level gate behind it.
+    # (MLflow/Featureform have NO host here on purpose — they open via the os-ui
+    #  proxy iframe; KServe has no human UI. Their *_CONSOLE_URL render "" and the
+    #  Science tab hides those native "Open" links instead of dialing localhost.)
+    jupyterhub: "jupyter.agentic.datamasterclass.com"
   # Dagster OSS has NO auth of its own (every other exposed console has a login),
   # so its Ingress enforces nginx basic-auth from this htpasswd Secret (key
   # `auth`, release namespace). Create it once:

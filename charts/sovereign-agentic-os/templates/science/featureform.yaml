@@ -44,12 +44,59 @@ spec:
         runAsUser: 0
         seccompProfile:
           type: {{ .Values.global.podSecurity.seccompProfile }}
-      containers:
-        - name: featureform
+      initContainers:
+        # The image is designed to run self-contained against its OWN embedded
+        # Postgres, whose schema is created by the goose migrations baked into the
+        # image at /app/db/migrations (00001 creates ff_task_metadata, ff_locks,
+        # ff_ordered_id; 00002/00003 add deletion + search tables). We point the
+        # metadata/coordinator at the stack's EXTERNAL pg-rw instead, so those
+        # migrations never run and the server queries a non-existent
+        # `ff_task_metadata` forever ("relation does not exist"), spamming the
+        # coordinator with gRPC Internal errors — the Science tab reads red.
+        # Run the exact same goose migrations against the external featureform DB
+        # before the server boots. Idempotent (CREATE TABLE IF NOT EXISTS + goose
+        # version tracking), so it is safe on every (re)deploy.
+        - name: ff-migrate
           image: "{{ $f.image.repository }}:{{ $f.image.tag }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           securityContext:
             {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              cd /app/db/migrations
+              exec /go/bin/goose postgres \
+                "host=$PSQL_HOST port=$PSQL_PORT dbname=$PSQL_DB user=$PSQL_USER password=$PSQL_PASSWORD sslmode=$PSQL_SSLMODE" \
+                up
+          env:
+            - name: PSQL_HOST
+              value: {{ include "soa.pgHost" . | quote }}
+            - name: PSQL_PORT
+              value: "5432"
+            - name: PSQL_DB
+              value: featureform
+            - name: PSQL_USER
+              valueFrom: { secretKeyRef: { name: postgres-featureform-credentials, key: username } }
+            - name: PSQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-featureform-credentials, key: password } }
+            - name: PSQL_SSLMODE
+              value: disable
+      containers:
+        - name: featureform
+          image: "{{ $f.image.repository }}:{{ $f.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          # The bundled dashboard (nginx on :80 — the endpoint the OS Science tab
+          # probes for health) runs its master as root and chowns its cache/body
+          # temp dirs to the worker uid on startup. The hardened default drops ALL
+          # capabilities, so that chown fails with EPERM and nginx exits, leaving
+          # :80 dead (probe → red) even once the metadata schema exists. Grant back
+          # only CAP_CHOWN for THIS component so the dashboard can start.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+              add: [CHOWN]
           env:
             # Online store = Valkey (host/port; auth from the stack's valkey secret).
             - name: FEATUREFORM_ONLINE_VALKEY_HOST

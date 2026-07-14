@@ -33,6 +33,12 @@ export type OAuthProviderConfig = {
   scopes: string[];
   /** Extra authorize-URL params required to obtain a refresh token. */
   extraAuthParams: Record<string, string>;
+  /**
+   * A cheap, READ-ONLY "who am I / is this drive reachable" endpoint used by the
+   * honest `testConnection` probe (Google Drive `about.get`; Graph `/me/drive`).
+   * Called with the stored access token — success ⇒ the token really works.
+   */
+  probeUrl: string;
 };
 
 export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderConfig> = {
@@ -46,6 +52,8 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderConfig> = {
     // access_type=offline + prompt=consent are REQUIRED for Google to return a
     // refresh token (so the connection can silently refresh a stale access token).
     extraAuthParams: { access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true' },
+    // Drive `about.get` — the smallest authenticated read; 200 ⇒ token works.
+    probeUrl: 'https://www.googleapis.com/drive/v3/about?fields=user',
   },
   microsoft: {
     provider: 'microsoft',
@@ -57,6 +65,8 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderConfig> = {
     // Files.Read = read the signed-in user's OneDrive; offline_access = refresh token.
     scopes: ['Files.Read', 'offline_access'],
     extraAuthParams: { response_mode: 'query' },
+    // Graph `/me/drive` — the signed-in user's OneDrive; 200 ⇒ token works.
+    probeUrl: 'https://graph.microsoft.com/v1.0/me/drive?$select=id',
   },
 };
 

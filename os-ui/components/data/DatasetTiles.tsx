@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { roleAtLeast } from '@/lib/core/session';
+import { canManageArtifact } from '@/lib/governance/edit-scope';
 import { DATASET_SCOPES, tilesForScope, scopeCounts, type DatasetScope } from '@/lib/data/dataset-scopes';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
@@ -115,7 +116,11 @@ function TileCard({ t, onOpen, onImport, canManage, onChanged, showDomain }: { t
             onChanged={onChanged}
             compact
             showVersions={false}
-            surface="tile"
+            // OS-wide rule: live tiles stay clean (Archive/Delete live in the detail).
+            // An ARCHIVED tile is the one place the list promises Restore/Delete inline —
+            // so it renders the real cluster (Restore + Delete) right here, matching the
+            // Archived-section copy and the Agents tab's archived-item affordance.
+            surface={t.archived ? 'detail' : 'tile'}
           />
         </div>
       ) : null}
@@ -176,10 +181,12 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
     } catch (e) { setErr((e as Error).message); }
   }, [refresh]);
 
-  // A dataset is the caller's to manage when they own it or are an in-domain Admin
-  // (the server enforces this either way — this only decides whether to show controls).
+  // A dataset is the caller's to manage under the ONE canonical edit-scope rule the
+  // DELETE/archive routes enforce: owner, domain_admin of the owning domain, or admin.
+  // Using the shared predicate (not a hand-rolled owner-or-admin check) keeps the
+  // list's affordances consistent with the route — the same gate every other tab uses.
   const canManage = useCallback((t: Tile) =>
-    !!user && (t.owner === user.id || (user.role === 'admin' && user.domains.includes(t.domain))), [user]);
+    !!user && canManageArtifact(user, { owner: t.owner, domain: t.domain }), [user]);
 
   // Scope slice (Files mental model): All Data · My Data · Shared Data · Marketplace
   // Data, working tiles + archived (soft-hidden) split per scope.

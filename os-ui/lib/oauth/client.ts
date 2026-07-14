@@ -93,3 +93,30 @@ export async function refreshTokens(provider: OAuthProvider, prev: TokenSet): Pr
   }
   return ts;
 }
+
+/**
+ * HONEST reachability probe: call the provider's cheap read endpoint (Drive
+ * `about.get` / Graph `/me/drive`) with the resolved access token. A 2xx means the
+ * token really works against the live API; anything else is an honest failure. The
+ * token is sent ONLY to the provider over TLS — never returned, logged, or traced.
+ */
+export async function probeDrive(
+  provider: OAuthProvider,
+  accessToken: string,
+  ms = 8000,
+): Promise<{ ok: boolean; status: number }> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const res = await fetch(providerConfig(provider).probeUrl, {
+      headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' },
+      cache: 'no-store',
+      signal: ctrl.signal,
+    });
+    return { ok: res.ok, status: res.status };
+  } catch {
+    return { ok: false, status: 0 };
+  } finally {
+    clearTimeout(timer);
+  }
+}

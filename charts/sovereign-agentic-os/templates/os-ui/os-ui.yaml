@@ -351,6 +351,11 @@ spec:
               # and the Science-tab probe GETs). 7878 is gRPC-only — plain HTTP
               # against it resets, which made the tab report Featureform "absent".
               value: {{ $u.featureformUrl | default "http://featureform:80" | quote }}
+            # External-warehouse connectors (Glue/Snowflake/BigQuery/Databricks/Fabric).
+            # OFF by default — surfaces the warehouse create-flow + MCP tools only when the
+            # operator opts in (lib/core/config.ts reads EXTERNAL_CONNECTORS_ENABLED).
+            - name: EXTERNAL_CONNECTORS_ENABLED
+              value: {{ $u.externalConnectorsEnabled | default false | quote }}
             {{- if .Values.ml.enabled }}
             # Layer 4 (Science). Gates the Science/ML surfaces in the UI
             # (lib/config.ts reads ML_ENABLED). On when the Science plane
@@ -415,6 +420,27 @@ spec:
               value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "openmetadata" "fallback" $u.openmetadataUrl) | quote }}
             - name: DAGSTER_CONSOLE_URL
               value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "dagster" "fallback" $u.dagsterConsoleUrl) | quote }}
+            {{- if .Values.ml.enabled }}
+            # Layer-4 (Science) browser-reachable consoles. The Science-tab "Open"
+            # buttons for JupyterHub + KServe are NATIVE links (not the same-origin
+            # tool proxy: Jupyter needs WebSocket kernels and KServe has no human UI,
+            # so both are rejected by the /tools proxy). Without these env vars they
+            # fall back to the localhost defaults in lib/core/config.ts — a dead link
+            # on a real deploy (the Jupyter 404 / KServe localhost bug). Resolve them
+            # through soa.consoleUrl exactly like every other console: the PUBLIC
+            # ingress host when `ingress.hosts.<key>` is set, else "" so the UI HIDES
+            # the "Open" link instead of dialing localhost. MLflow/Featureform ALSO
+            # get a console value here (they open via the proxy, but this keeps the
+            # env explicit and consistent). Local-kind keeps the port-forward defaults.
+            - name: JUPYTERHUB_CONSOLE_URL
+              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "jupyterhub" "fallback" $u.jupyterhubConsoleUrl) | quote }}
+            - name: MLFLOW_CONSOLE_URL
+              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "mlflow" "fallback" $u.mlflowConsoleUrl) | quote }}
+            - name: FEATUREFORM_CONSOLE_URL
+              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "featureform" "fallback" $u.featureformConsoleUrl) | quote }}
+            - name: KSERVE_CONSOLE_URL
+              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "kserve" "fallback" $u.kserveConsoleUrl) | quote }}
+            {{- end }}
             # Langfuse project keys — public key is non-secret; secret key via Secret.
             - name: LANGFUSE_PUBLIC_KEY
               value: {{ .Values.langfuseInit.publicKey | quote }}

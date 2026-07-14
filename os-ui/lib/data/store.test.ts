@@ -349,6 +349,23 @@ test('SECURITY: archive/unarchive/delete are edit-scoped (a non-owner viewer is 
   assert.equal(unarchiveDataset(id, sara).archived, false);
 });
 
+test('LIFECYCLE: archive THEN delete — the owner purges an archived dataset; a non-owner non-admin is 403', () => {
+  __resetStore();
+  // The streamlined Data-tab lifecycle: archive first (reversible), then a physical
+  // delete of the ARCHIVED artifact. Delete must not require live state, and must
+  // authorize via the SAME edit-scope rule as everywhere else.
+  const id = seedOrders(); // amir-owned, bronze+silver built
+  archiveDataset(id, amir);
+  assert.equal(listDatasets(amir, { includeArchived: true }).mine[0].archived, true);
+  // A non-owner, non-admin in the same domain cannot delete the archived dataset.
+  assert.throws(() => deleteDataset(id, bea), (e: DatasetError) => e.status === 403);
+  // The owner can — even while archived — and it purges the record for good.
+  const deleted = deleteDataset(id, amir);
+  assert.equal(deleted.id, id);
+  assert.equal(listDatasets(amir, { includeArchived: true }).mine.length, 0);
+  assert.throws(() => getDataset(id, amir), (e: DatasetError) => e.status === 404);
+});
+
 test('delete permanently removes a dataset; a missing dataset is 404', () => {
   __resetStore();
   const d = createDataset(amir, { name: 'Ephemeral' });

@@ -15,6 +15,28 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.3.4] — 2026-07-14
+
+Live-QA fixes found by exercising the deployed OS tab-by-tab. `tsc` clean; 2195 tests pass.
+
+### Fix — deleting an ARCHIVED dataset now works (was the blocker)
+- Root cause was a UI gate divergence, not the route/purge (those were correct). The Data tab used a hand-rolled permission check that **omitted `domain_admin`** and wrongly required a platform admin to be a member of the dataset's domain; and archived tiles rendered `LifecycleActions surface="tile"` which returns `null`, so the **Restore/Delete buttons the copy promised were literally absent**. Now `components/data/DatasetTiles.tsx` uses the shared `canManageArtifact` (identical to the DELETE route + every other tab) and renders the real Restore/Delete cluster on archived tiles → archive→delete works for the owner/admin, 403 for a non-owner non-admin.
+
+### Fix — Superset embed auto-heal (dashboards created before the embed fix)
+- `mintEmbed` now takes the dashboard spec and, when the dashboard isn't yet in Superset, **builds it on the fly** then embeds — so a dashboard created before the build-on-create fix (e.g. "Contribution") self-repairs on first view instead of staying OFFLINE-MOCK. Idempotent for already-built dashboards.
+
+### Fix — Science tab: Jupyter/KServe links (were `localhost`/404)
+- The chart never emitted the Science **console URLs**, so they fell back to `localhost`. Now `os-ui.yaml` emits `JUPYTERHUB/MLFLOW/FEATUREFORM/KSERVE_CONSOLE_URL` via the `soa.consoleUrl` helper; a new `proxy-public` ingress (`jupyter.<domain>`, WebSocket-annotated) gives JupyterHub (which was already deployed + serving, just had no front door) a real browser entrance; KServe — which has no human UI — now shows an honest "No console" state instead of a dead localhost link. MLflow/Featureform keep opening via the in-cluster tool-proxy (why they already worked).
+
+### Fix — Featureform comes up green (opt-in Layer 4)
+- The all-in-one image assumes an embedded Postgres and never creates its metadata schema against our external PG (so its coordinator errored `ff_task_metadata does not exist`); and its :80 dashboard (the endpoint the OS probes) couldn't start because the hardened container dropped `CAP_CHOWN` that nginx needs. Added an `ff-migrate` init container that runs the image's own `goose` migrations against the external `featureform` DB, and restored just `CAP_CHOWN` on the main container. (Also: a `post-upgrade` reconcile hook now creates the `featureform` role+db that was missing on the long-lived volume.)
+
+### Fix — Google Drive / OneDrive: `testConnection` is real, not a stub
+- The OAuth authorization-code flow (authorize + callback routes, admin OAuth-app registry, token-in-Secrets-Manager, silent refresh, honest "not configured" UI) already existed; the one remaining "pretends to connect" gap was `testConnection` doing a generic HEAD poke that **always returned ok**. It now makes a real Drive `about.get` / Graph `/me/drive` call with the stored token — honest healthy / needs-reconnect / not-connected. (To actually connect, an admin must register a Google/Microsoft OAuth app under Platform → OAuth apps; the UI says so honestly until then.)
+
+### Feature — external-warehouse connectors are now surfaceable
+- `EXTERNAL_CONNECTORS_ENABLED` is wired into the chart (`osUI.externalConnectorsEnabled`), so the warehouse create-flow + MCP tools appear when an operator turns it on. Deployed **on** for this tenant.
+
 ## [os-ui 0.3.3] — 2026-07-14
 
 ### Fix — OS-built apps now serve a real UI (closes the Software image-build gap, #132)
