@@ -73,6 +73,15 @@ export type WarehouseProvider = {
   capabilities: { federate: boolean; import: boolean };
   /** Pure: same input → same output; throws `WarehouseError` on bad input. */
   catalogProps(source: WarehouseSource): TrinoCatalogProps;
+  /**
+   * Render the cheap, read-only `SHOW TABLES FROM <catalog>.<schema>` discovery
+   * query for a source + schema — the SAME discipline as `testProbe.kind==='sql'`:
+   * pure, no I/O, no secrets, and it VALIDATES the schema identifier so it can
+   * never fold unquoted user input into SQL. A provider whose metastore exposes no
+   * table listing (Fabric/OneLake — see its `testProbe.kind==='none'`) OMITS this
+   * method entirely; the store then honestly reports "not discoverable".
+   */
+  discoverTables?(source: WarehouseSource, schema: string): string;
   credentialFields: CredentialField[];
   secretMaterial: SecretMaterial;
   testProbe: TestProbe;

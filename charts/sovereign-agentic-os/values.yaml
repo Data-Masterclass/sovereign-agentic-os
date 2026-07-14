@@ -1477,6 +1477,34 @@ cube:
       limits: { cpu: 100m, memory: 96Mi }
   local:
     apiSecret: cube-local-dev-secret
+  # ---------------------------------------------------------------------------
+  # Cube SQL API (Postgres-wire) — Power BI / BI-tool consumption of GOVERNED metrics.
+  # OFF by default: turning it on opens a second listener (CUBEJS_PG_SQL_PORT) that
+  # speaks the Postgres protocol so Power BI's "Get Data → PostgreSQL" connects to
+  # Cube. Queries still resolve Cube → Trino → OPA (governed measures/dimensions, NOT
+  # raw tables). Per-DOMAIN scope: a report authenticates as the domain's read-only BI
+  # principal `bi_<domain>`; Cube's checkSqlAuth (templates/cube/cube-config.js) maps
+  # that username to the domain's securityContext → Trino/OPA RLS. This is DOMAIN-LEVEL
+  # RLS (all viewers of a domain share it), NOT per-individual-viewer RLS.
+  #
+  # Exposure is the OPERATOR's job: in-cluster this is only the `cube-sql` Service on
+  # `port`. To let Power BI Desktop / on-prem gateway reach it, publish a TCP ingress /
+  # LoadBalancer to that Service and set `host` to the external hostname (the
+  # /api/powerbi/connection-info route reads CUBE_SQL_HOST/PORT via os-ui env).
+  sqlApi:
+    enabled: false
+    # CUBEJS_PG_SQL_PORT — the Postgres-wire listener port (container + Service).
+    port: 15432
+    # The single SQL login Cube authenticates. Per-domain principals `bi_<domain>` all
+    # share this password (Cube verifies one CUBEJS_SQL_PASSWORD); the USERNAME selects
+    # the domain securityContext. Password is generated + kept in the cube-sql-secrets
+    # Secret (never committed); set `password` explicitly for GitOps/Argo (lookup can't
+    # preserve it there). `user` is the fallback/admin login checkSqlAuth also accepts.
+    user: cube
+    password: ""
+    # Host the /api/powerbi/connection-info route advertises to builders. Default = the
+    # in-cluster Service; override with the published ingress host when exposed.
+    host: cube-sql
 
 # -----------------------------------------------------------------------------
 # Northpeak gold-mart materialization (templates/lakehouse/northpeak-marts-init.yaml).

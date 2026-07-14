@@ -329,6 +329,19 @@ export const config = {
   // rides in the JSON payload for audit + the Trino-OPA enforcement path).
   cubeEmbedAccessPolicy: env('CUBE_EMBED_ACCESS_POLICY', 'true') !== 'false',
 
+  // Cube SQL API (Postgres-wire) for Power BI / BI-tool consumption. When the operator
+  // enables `cube.sqlApi` (Helm) they set these to the exposed host + port so the
+  // /api/powerbi/connection-info route can hand a builder the exact PostgreSQL
+  // connection fields for THEIR domain. Defaults describe the in-cluster Service; an
+  // external ingress overrides CUBE_SQL_HOST/PORT. `enabled` gates the affordance so
+  // the UI/doc never advertise a port the operator hasn't opened.
+  cubeSqlApiEnabled: env('CUBE_SQL_API_ENABLED', 'false') === 'true',
+  cubeSqlHost: env('CUBE_SQL_HOST', 'cube-sql'),
+  cubeSqlPort: Number(env('CUBE_SQL_PORT', '15432')),
+  // The k8s Secret holding CUBEJS_SQL_PASSWORD — surfaced to builders as a reference
+  // (vault path), never dereferenced into any browser-visible JSON.
+  cubeSqlPasswordSecret: env('CUBE_SQL_PASSWORD_SECRET', 'cube-sql-secrets'),
+
   // OpenMetadata (catalog & lineage): server-side REST API base. OFF by default
   // locally (~2.5 GB JVM) — the Data/Unstructured surfaces probe it and degrade
   // to the query-tool catalog / OpenSearch index when it's unreachable.

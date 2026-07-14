@@ -24,6 +24,7 @@ import { splitWarehouseFields, toWarehouseSource } from '@/lib/connections/wareh
 import { providerFor } from '@/lib/connections/warehouse/registry';
 import { buildImportCtas } from '@/lib/connections/warehouse/import';
 import { catalogRegistration, type CatalogRegistration } from '@/lib/connections/warehouse/registration';
+import { applyLiveRegistration, type RegK8s, type RegisterK8sOutcome, type SecretValues } from '@/lib/connections/warehouse/k8s-registration';
 import { executeRun, queryRun, type ExecuteIdentity } from '@/lib/infra/governed';
 import { putSecret, secretFingerprint, getSecretServerSide, isEgressAllowed, deleteSecret, hasSecret } from '@/lib/infra/secrets';
 import { type ArtifactVersion, versionLog } from '@/lib/core/versioning';
@@ -544,6 +545,168 @@ export async function warehouseRegistration(connId: string, user: CurrentUser): 
   if (c.template !== 'warehouse' || !c.warehouse) throw withStatus(new Error('Not a warehouse connection'), 400);
   const source = toWarehouseSource({ platform: c.warehouse.platform, catalog: c.warehouse.catalog, config: c.warehouse.config });
   return catalogRegistration(source);
+}
+
+// -------------------------------------------------------- Warehouse discovery ---
+
+/** One discovered schema/table pair, shaped so the UI can render a browse tree. */
+export type DiscoveryResult = {
+  ok: boolean;
+  mode: 'live' | 'offline';
+  catalog: string;
+  /** Schemas visible in the catalog (from SHOW SCHEMAS). */
+  schemas: string[];
+  /** Tables in the requested schema (from SHOW TABLES FROM <catalog>.<schema>). */
+  tables: string[];
+  /** The schema the tables belong to, when one was requested. */
+  schema: string | null;
+  detail: string;
+};
+
+/**
+ * DISCOVER a warehouse's schemas (and, given a schema, its tables) through the SAME
+ * governed query path `testConnection` probes with — running the provider's pure
+ * `SHOW SCHEMAS` / `SHOW TABLES` queries AS the caller's domain so Trino→OPA governs
+ * the reads. Requires the catalog to be registered + queryable in Trino; until then
+ * (and for a `none`-probe platform like Fabric that exposes no metastore) it honestly
+ * reports offline rather than inventing a listing. Visible to anyone who can see the
+ * connection (read-only).
+ */
+export async function discoverWarehouse(
+  connId: string,
+  user: CurrentUser,
+  opts: { schema?: string } = {},
+): Promise<DiscoveryResult> {
+  const map = await getCache();
+  const c = map.get(connId);
+  if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
+  if (c.template !== 'warehouse' || !c.warehouse) throw withStatus(new Error('Not a warehouse connection'), 400);
+  const provider = providerFor(c.warehouse.platform);
+  const source = toWarehouseSource({ platform: c.warehouse.platform, catalog: c.warehouse.catalog, config: c.warehouse.config });
+  const catalog = c.warehouse.catalog;
+
+  // Honest: a platform whose metastore exposes no table listing (Fabric/OneLake) has
+  // no `discoverTables`. We say so instead of pretending to enumerate.
+  if (!provider.discoverTables) {
+    return {
+      ok: false,
+      mode: 'offline',
+      catalog,
+      schemas: [],
+      tables: [],
+      schema: null,
+      detail: `${provider.label} is not discoverable — OneLake exposes no metastore; provide explicit table locations when importing.`,
+    };
+  }
+
+  const schema = (opts.schema ?? '').trim();
+  // The SHOW SCHEMAS probe reuses the provider's testProbe (sql); guarded above.
+  const schemasQuery = provider.testProbe.kind === 'sql' ? provider.testProbe.query(source) : `SHOW SCHEMAS FROM ${catalog}`;
+  try {
+    const schemasRes = await queryRun(schemasQuery, c.domain, c.domain);
+    const schemas = schemasRes.rows.map((r) => String(r[0])).filter(Boolean);
+    let tables: string[] = [];
+    if (schema) {
+      // `discoverTables` validates the schema identifier (throws on bad input).
+      const tablesQuery = provider.discoverTables(source, schema);
+      const tablesRes = await queryRun(tablesQuery, c.domain, c.domain);
+      tables = tablesRes.rows.map((r) => String(r[0])).filter(Boolean);
+    }
+    void trace({
+      principal: c.principal,
+      tool: 'generate',
+      input: { action: 'discover_warehouse', by: user.id, catalog, schema: schema || null },
+      output: { schemas: schemas.length, tables: tables.length },
+      decision: 'allow',
+    });
+    return {
+      ok: true,
+      mode: 'live',
+      catalog,
+      schemas,
+      tables,
+      schema: schema || null,
+      detail: schema
+        ? `Discovered ${schemas.length} schema(s); ${tables.length} table(s) in '${schema}'.`
+        : `Discovered ${schemas.length} schema(s) in catalog '${catalog}'.`,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      mode: 'offline',
+      catalog,
+      schemas: [],
+      tables: [],
+      schema: schema || null,
+      detail: `Catalog '${catalog}' is not queryable yet (${(e as Error).message}). Register it (one-click Register, or values.trino.externalCatalogs + rolling restart), then retry.`,
+    };
+  }
+}
+
+// ------------------------------------------------------- Warehouse registration ---
+
+export type RegisterWarehouseResult = RegisterK8sOutcome;
+
+/**
+ * ONE-CLICK REGISTER a warehouse connection as a LIVE Trino catalog — no values edit,
+ * no manual helm. Renders the connection's `catalogRegistration()` (the exact props +
+ * secret env plumbing), reads the connection's vaulted secret VALUES server-side (never
+ * returned), and applies them to the cluster via {@link applyLiveRegistration}: merge the
+ * `<catalog>.properties` into the live `trino-catalog` ConfigMap, materialize a
+ * `trino-ext-<catalog>` Secret + patch the Trino env for the provider's env vars (keyless
+ * platforms emit NO secret), and roll the Trino Deployment. Governed: Builder/Admin with
+ * edit rights on the connection; audit-logged; honest failure surfaced. `k8s` is
+ * injectable for tests.
+ */
+export async function registerWarehouseCatalog(
+  connId: string,
+  user: CurrentUser,
+  opts: { k8s?: RegK8s } = {},
+): Promise<RegisterWarehouseResult> {
+  const map = await getCache();
+  const c = map.get(connId);
+  if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
+  if (c.template !== 'warehouse' || !c.warehouse) throw withStatus(new Error('Not a warehouse connection'), 400);
+  // Governed: registering a live catalog writes cluster state — edit rights + Builder+.
+  if (!canManageArtifact(user, { owner: c.owner, domain: c.domain })) {
+    throw withStatus(new Error('Not permitted to register this connection'), 403);
+  }
+  if (!roleAtLeast(user.role, 'builder')) {
+    throw withStatus(new Error('Registering a warehouse catalog requires a Builder or Administrator'), 403);
+  }
+
+  const source = toWarehouseSource({ platform: c.warehouse.platform, catalog: c.warehouse.catalog, config: c.warehouse.config });
+  const reg = catalogRegistration(source);
+
+  // Materialize the vaulted secret VALUES keyed by ENV-VAR name. The provider pairs
+  // secretKeys[i] ↔ envVars[i] (see each provider's secretMaterial). A keyless platform
+  // (Glue IRSA / BigQuery WI) has NO env vars → no values, no Secret emitted.
+  const provider = providerFor(c.warehouse.platform);
+  const { secretKeys, envVars } = provider.secretMaterial;
+  const values: SecretValues = {};
+  for (let i = 0; i < envVars.length; i++) {
+    const key = secretKeys[i];
+    // Each secret field is stored under its own key in the connection's vault secret.
+    const val = key ? getSecretServerSide({ name: c.secretRef.name, key }) : null;
+    if (val) values[envVars[i]] = val;
+  }
+
+  const outcome = await applyLiveRegistration(reg, values, { namespace: config.platformNamespace, k8s: opts.k8s });
+
+  // Reflect the outcome on the record so the UI can show "registered" honestly.
+  if (outcome.ok) {
+    c.updatedAt = now();
+    map.set(c.id, c);
+    writeThrough(c);
+  }
+  void trace({
+    principal: c.principal,
+    tool: 'generate',
+    input: { action: 'register_warehouse_catalog', by: user.id, catalog: reg.name, envVars }, // env-var NAMES only, never values
+    output: { ok: outcome.ok, live: outcome.live, steps: outcome.steps },
+    decision: outcome.ok ? 'allow' : 'deny',
+  });
+  return outcome;
 }
 
 /**

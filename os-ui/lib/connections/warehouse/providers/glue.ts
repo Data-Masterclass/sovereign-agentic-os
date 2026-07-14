@@ -20,6 +20,7 @@ import {
   WarehouseError,
 } from '../types.ts';
 import type { WarehouseProvider } from '../provider.ts';
+import { showTablesQuery } from '../discovery-query.ts';
 
 /**
  * AWS Glue / Athena → Trino Hive OR Iceberg connector against the Glue metastore.
@@ -71,6 +72,7 @@ export const glueProvider: WarehouseProvider = {
   nativeInImage: true,
   capabilities: { federate: true, import: true },
   catalogProps: (source) => glueProps(source as GlueConfig & { catalog: string }),
+  discoverTables: (source, schema) => showTablesQuery(source, schema),
   // IRSA only — the pod's IAM role is the credential. There are NO collected secrets.
   credentialFields: [
     {

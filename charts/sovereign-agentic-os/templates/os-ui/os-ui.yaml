@@ -43,6 +43,17 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "services"]
     verbs: ["get", "list"]
+  {{- if .Values.osUI.externalConnectorsEnabled }}
+  # One-click external-warehouse catalog registration (Connections tab): the os-ui
+  # server merges the catalog `.properties` into the `trino-catalog` ConfigMap and
+  # materializes a `trino-ext-<catalog>` Secret in-namespace, then rolls Trino
+  # (lib/connections/warehouse/k8s-registration.ts). Least-privilege: namespaced
+  # configmaps + secrets read/write only — gated on the same flag as the feature, so a
+  # deployment with external connectors OFF grants no secret access at all.
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "create", "patch", "update"]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -346,6 +357,18 @@ spec:
               value: {{ $u.opensearchDashboardsInternalUrl | default "http://opensearch-dashboards:5601" | quote }}
             - name: CUBE_URL
               value: {{ $u.cubeUrl | default "http://cube:4000" | quote }}
+            {{- if .Values.cube.sqlApi.enabled }}
+            # Power BI consumption via Cube's SQL API (Postgres-wire). The
+            # /api/powerbi/connection-info route advertises host/port so a user can
+            # point Power BI at their per-domain BI principal (bi_<domain>). Override
+            # `cube.sqlApi.host` with the published TCP ingress host for external Power BI.
+            - name: CUBE_SQL_API_ENABLED
+              value: "true"
+            - name: CUBE_SQL_HOST
+              value: {{ .Values.cube.sqlApi.host | default "cube-sql" | quote }}
+            - name: CUBE_SQL_PORT
+              value: {{ .Values.cube.sqlApi.port | default 15432 | quote }}
+            {{- end }}
             - name: FEATUREFORM_URL
               # Port 80 = Featureform's HTTP dashboard (what the tool-proxy iframes
               # and the Science-tab probe GETs). 7878 is gRPC-only — plain HTTP

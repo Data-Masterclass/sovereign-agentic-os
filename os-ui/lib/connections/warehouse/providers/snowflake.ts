@@ -18,6 +18,7 @@ import {
   WarehouseError,
 } from '../types.ts';
 import type { WarehouseProvider } from '../provider.ts';
+import { showTablesQuery } from '../discovery-query.ts';
 
 /**
  * Derive the Snowflake JDBC host from `accountUrl`. Accepts EITHER a bare account
@@ -87,6 +88,7 @@ export const snowflakeProvider: WarehouseProvider = {
   nativeInImage: true,
   capabilities: { federate: true, import: true },
   catalogProps: (source) => snowflakeProps(source as SnowflakeConfig),
+  discoverTables: (source, schema) => showTablesQuery(source, schema),
   credentialFields: [
     {
       key: 'accountUrl',

@@ -12,6 +12,7 @@ import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import DomainTag from '@/components/DomainTag';
 import type { Visibility } from '@/lib/core/lifecycle';
+import WarehouseImportPanel, { type WarehouseConn } from './WarehouseImportPanel';
 
 /** Mirrors lib/data/store `DatasetSummary`. */
 type Tile = {
@@ -142,6 +143,29 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
   const [scope, setScope] = useState<DatasetScope>('all');
   // Archive/lifecycle UI (mirrors the Knowledge tab's reference pattern).
   const [showArchived, setShowArchived] = useState(false);
+  // Import-from-warehouse affordance: registered warehouse connections a builder can
+  // materialize a table from. Lazily loaded from the same /api/connections endpoint the
+  // Connections tab uses; only offered when there's at least one warehouse connection.
+  const [warehouses, setWarehouses] = useState<WarehouseConn[]>([]);
+  const [importing, setImporting] = useState(false);
+  const canImportWarehouse = !!user && roleAtLeast(user.role, 'builder');
+
+  useEffect(() => {
+    if (!canImportWarehouse) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/connections', { cache: 'no-store' });
+        if (!res.ok) return;
+        const body = await res.json() as { connections?: Array<{ id: string; name: string; domain: string; template: string; archived?: boolean; warehouse?: { platform: string; catalog: string } }> };
+        const whs = (body.connections ?? [])
+          .filter((c) => c.template === 'warehouse' && c.warehouse && !c.archived)
+          .map((c) => ({ id: c.id, name: c.name, domain: c.domain, catalog: c.warehouse!.catalog, platform: c.warehouse!.platform }));
+        if (!cancelled) setWarehouses(whs);
+      } catch { /* the affordance just stays hidden */ }
+    })();
+    return () => { cancelled = true; };
+  }, [canImportWarehouse]);
 
   const refresh = useCallback(async () => {
     setErr('');
@@ -209,12 +233,17 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
         <div className="row" style={{ gap: 8 }}>
           <button
             className="btn ghost"
-            style={{ opacity: showArchived ? 1 : 0.7 }}
+            style={{ opacity: 1 }}
             onClick={() => setShowArchived((v) => !v)}
             title="Archived datasets are hidden by default"
           >
             {showArchived ? 'Hide archived' : 'Show archived'}
           </button>
+          {canImportWarehouse && warehouses.length > 0 ? (
+            <button className="btn ghost" onClick={() => setImporting((v) => !v)}>
+              {importing ? 'Close import' : 'Import from warehouse'}
+            </button>
+          ) : null}
           {creating ? (
             <div className="row" style={{ gap: 8 }}>
               <input autoFocus value={newName} placeholder="Dataset name" onChange={(e) => setNewName(e.target.value)}
@@ -227,6 +256,18 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
           )}
         </div>
       </div>
+
+      {/* Import from warehouse — materialize a registered warehouse table into a
+          governed dataset. Opens the browse → name → import panel; on success it
+          refreshes the tiles and (when a dataset id comes back) opens it. */}
+      {importing && canImportWarehouse ? (
+        <WarehouseImportPanel
+          connections={warehouses}
+          domains={user?.domains ?? []}
+          onClose={() => { setImporting(false); refresh(); }}
+          onImported={(datasetId) => { refresh(); if (datasetId) onOpen(datasetId); }}
+        />
+      ) : null}
 
       {/* Scope switcher — same grouping logic as the Files tab, plus All Data. */}
       <div className="seg" style={{ marginTop: 14 }}>

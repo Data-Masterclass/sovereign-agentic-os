@@ -15,6 +15,18 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.3.5] — 2026-07-15
+
+### Feature — external-warehouse connectors usable end-to-end (no YAML / no helm)
+- **One-click Register**: a warehouse connection now registers its Trino catalog **live** from the UI — merges the generated `<catalog>.properties` into the read-only `trino-catalog` ConfigMap, materializes the vaulted secret(s) + wires the Trino env (keyless IRSA/Workload-Identity for Glue/BigQuery; `${ENV}` secret-ref for Snowflake/Databricks/Fabric), and rolls Trino — governed (Builder+/edit-rights), audit-logged, credential never returned. The os-ui RBAC role gains `configmaps`+`secrets` (gated on the flag).
+- **Discover + Import**: `discover_warehouse_tables` (governed `SHOW SCHEMAS`/`SHOW TABLES`) + a Data-tab "Import from warehouse" flow that CTAS-imports a federated table as a normal governed dataset (`iceberg.<domain>.<name>`). The connection UX is **Create → Register → Test → Browse → Import** — no catalog properties or YAML ever shown. (Fabric/OneLake honestly degrades to a manual table-path input — no metastore probe.)
+
+### Feature — Power BI consumption via Cube's SQL API (per-domain principal)
+- Cube's Postgres-wire **SQL API** (`cube.sqlApi.enabled`, port 15432) exposes the governed semantic layer to Power BI. Each domain gets a read-only **`bi_<domain>`** principal — Cube's `checkSqlAuth` parses the domain from the username and resolves that domain's `securityContext` → OPA/RLS, so a Power BI connection sees only its domain's governed metrics. A `/api/powerbi/connection-info` route advertises host/port/database/user (password stays in the `cube-sql-secrets` vault, never in the response) + `docs/powerbi-consumption.md`. Honest limit: **domain-level** scope (all viewers of a domain share it) — per-viewer RLS is a later phase. External Power BI needs the operator to publish a **TCP** LoadBalancer to `cube-sql:15432` (Postgres wire, not HTTP).
+
+### Fix — "Show archived" toggle always solid
+- Dropped the `opacity: 0.7` dimming on the "Show archived" toggle across all 7 tabs (Data, Connections, Metrics, Agents, Dashboards, Files, Artifacts) — it read as disabled even though it worked. Now always solid.
+
 ## [os-ui 0.3.4] — 2026-07-14
 
 Live-QA fixes found by exercising the deployed OS tab-by-tab. `tsc` clean; 2195 tests pass.

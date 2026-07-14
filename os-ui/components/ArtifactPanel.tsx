@@ -443,7 +443,7 @@ export default function ArtifactPanel({
         <div className="row" style={{ marginLeft: 'auto', gap: 10, alignItems: 'center' }}>
           <button
             className="btn ghost"
-            style={{ padding: '4px 10px', fontSize: 12, opacity: showArchived ? 1 : 0.7 }}
+            style={{ padding: '4px 10px', fontSize: 12, opacity: 1 }}
             onClick={() => setShowArchived((v) => !v)}
             title="Archived artifacts are hidden by default"
           >

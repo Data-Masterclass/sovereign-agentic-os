@@ -30,6 +30,7 @@ import {
   WarehouseError,
 } from '../types.ts';
 import type { WarehouseProvider } from '../provider.ts';
+import { showTablesQuery } from '../discovery-query.ts';
 
 /**
  * Absolute path the integration chart mounts the customer's service-account JSON
@@ -88,6 +89,7 @@ export const bigqueryProvider: WarehouseProvider = {
   nativeInImage: true,
   capabilities: { federate: true, import: true },
   catalogProps: (source: WarehouseSource) => bigqueryProps(source as BigQueryConfig),
+  discoverTables: (source, schema) => showTablesQuery(source, schema),
   credentialFields: [
     {
       key: 'projectId',

@@ -108,7 +108,7 @@ export default function MetricsRegistry({
           {onToggleArchived ? (
             <button
               className="btn ghost"
-              style={{ opacity: showArchived ? 1 : 0.7 }}
+              style={{ opacity: 1 }}
               onClick={onToggleArchived}
               title="Archived metrics are hidden by default"
             >

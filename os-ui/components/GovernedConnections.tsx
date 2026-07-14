@@ -17,6 +17,7 @@ import type { Visibility } from '@/lib/core/lifecycle';
 import DomainTag from '@/components/DomainTag';
 import { CONNECTORS, CONNECTOR_CATEGORIES } from '@/lib/connections/connectors';
 import { useApi } from '@/lib/useApi';
+import { WarehouseBrowser } from '@/components/data/WarehouseImportPanel';
 
 /**
  * Governed Connections surface — ONE scroll, no sub-tabs.
@@ -66,6 +67,8 @@ type Conn = {
   egress: { external: boolean; host: string; allowed: boolean };
   tools: Tool[];
   grants: Grant[];
+  /** Only on a `warehouse` template: the non-secret federation config (platform + catalog). */
+  warehouse?: { platform: string; catalog: string; config?: Record<string, string> };
 };
 type Template = {
   key: string;
@@ -292,7 +295,7 @@ export default function GovernedConnections() {
         <div className="row" style={{ gap: 8 }}>
           <button
             className="btn ghost"
-            style={{ opacity: showArchived ? 1 : 0.7 }}
+            style={{ opacity: 1 }}
             onClick={() => setShowArchived((v) => !v)}
             title="Archived connections are hidden by default"
           >
@@ -686,6 +689,107 @@ type AutonomousPreset = typeof AUTONOMOUS_PRESETS[number];
 const connVisibility = (v: Conn['visibility']): Visibility =>
   v === 'Shared' ? 'shared' : v === 'Certified' ? 'certified' : 'personal';
 
+/** Register outcome (backend route wraps registerWarehouseCatalog → RegisterK8sOutcome). */
+type RegisterResult = { ok?: boolean; catalog?: string; detail?: string; error?: string };
+/** Test outcome (existing route: SHOW SCHEMAS through the governed query path). */
+type TestResult = { ok?: boolean; detail?: string; error?: string };
+
+/**
+ * Warehouse lifecycle — the clean inline steps a builder expects on a warehouse
+ * connection: Register the Trino catalog (one click), Test it (SHOW SCHEMAS), then
+ * Browse its schemas/tables. No YAML, no raw catalog properties — Connect → Register
+ * → Test → Browse. A rolling Trino restart is slow, so after Register we poll Test.
+ */
+function WarehouseControls({ c, canManage, onChange }: { c: Conn; canManage: boolean; onChange: () => void }) {
+  const [busy, setBusy] = useState('');
+  const [regMsg, setRegMsg] = useState('');
+  const [testMsg, setTestMsg] = useState('');
+  const [registered, setRegistered] = useState(c.health === 'healthy');
+  const [browsing, setBrowsing] = useState(false);
+
+  async function register() {
+    setBusy('register');
+    setRegMsg('Registering catalog… a rolling Trino restart can take 60–90s.');
+    setTestMsg('');
+    try {
+      const r = await postJSON(`/api/connections/${c.id}/register`);
+      const d = r.data as RegisterResult;
+      if (r.ok && d.ok !== false) {
+        setRegMsg(`✓ Registered catalog '${d.catalog ?? c.warehouse?.catalog ?? ''}'. ${d.detail ?? 'Testing…'}`);
+        setRegistered(true);
+        onChange();
+        // Trino re-reads its catalog mount on the rolling restart — poll Test until it answers.
+        await pollTest();
+      } else {
+        setRegMsg(`✗ ${d.error ?? d.detail ?? 'Could not register the catalog'}`);
+      }
+    } catch (e) {
+      setRegMsg(`✗ ${(e as Error).message}`);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function pollTest() {
+    // Up to ~90s: the pod restart is the slow part. Stop as soon as SHOW SCHEMAS answers ok.
+    for (let i = 0; i < 9; i++) {
+      await new Promise((res) => setTimeout(res, 10_000));
+      try {
+        const r = await postJSON(`/api/connections/${c.id}/test`);
+        const d = r.data as TestResult;
+        if (d.ok) { setTestMsg(`✓ ${d.detail ?? 'Catalog is queryable.'}`); onChange(); return; }
+      } catch { /* keep polling */ }
+    }
+    setTestMsg('Still waiting on Trino — click Test again in a moment.');
+  }
+
+  async function test() {
+    setBusy('test');
+    setTestMsg('');
+    try {
+      const r = await postJSON(`/api/connections/${c.id}/test`);
+      const d = r.data as TestResult;
+      // The route returns 200 even on a not-yet-registered catalog; branch on payload ok.
+      setTestMsg(d.ok ? `✓ ${d.detail}` : `✗ ${d.error ?? d.detail ?? 'Register the catalog first, then test.'}`);
+      if (d.ok) { setRegistered(true); onChange(); }
+    } catch (e) {
+      setTestMsg(`✗ ${(e as Error).message}`);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+      <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        {registered
+          ? <span className="badge ok">catalog registered</span>
+          : <span className="badge muted">needs register</span>}
+        {canManage ? (
+          <button className="btn ghost" onClick={register} disabled={busy !== ''}>
+            {busy === 'register' ? <span className="spin" /> : registered ? 'Re-register' : 'Register catalog'}
+          </button>
+        ) : null}
+        <button className="btn ghost" onClick={test} disabled={busy !== ''}>
+          {busy === 'test' ? <span className="spin" /> : 'Test'}
+        </button>
+        <button className="btn ghost" onClick={() => setBrowsing((v) => !v)} disabled={busy !== ''}>
+          {browsing ? 'Hide browse' : 'Browse'}
+        </button>
+      </div>
+      <p className="hint" style={{ marginTop: 8, marginBottom: 0, fontSize: 11.5 }}>
+        <strong>Register</strong> mounts this source as one governed Trino catalog (one click — no YAML).
+        <strong> Test</strong> runs <span className="mono">SHOW SCHEMAS</span> through the governed query path.
+        <strong> Browse</strong> lists schemas &amp; tables. Import a table into your lakehouse from the
+        Data tab’s <em>Import from warehouse</em>.
+      </p>
+      {regMsg ? <div className={regMsg.startsWith('✗') ? 'error' : 'answer'} style={{ marginTop: 8 }}>{regMsg}</div> : null}
+      {testMsg ? <div className={testMsg.startsWith('✗') ? 'error' : 'answer'} style={{ marginTop: 8 }}>{testMsg}</div> : null}
+      {browsing ? <WarehouseBrowser connId={c.id} onSelect={() => { /* browse-only preview here; import lives in the Data tab */ }} /> : null}
+    </div>
+  );
+}
+
 function ConnectionCard({
   c, role, me, oauthProviders, open, onToggle, onChange,
 }: {
@@ -715,6 +819,9 @@ function ConnectionCard({
   const canManage = canManageArtifact(me, { owner: c.owner, domain: c.domain });
   const exposed = c.tools.filter((t) => t.mode === 'Read' || t.mode === 'Write-approval' || t.mode === 'Write-bounded');
   const isDrive = c.connector === 'drive' || c.type === 'Drive';
+  // Warehouse connection: its lifecycle is Register → Test → Browse (its own control
+  // block below), not the generic reachability Test the other connectors use.
+  const isWarehouse = c.template === 'warehouse';
 
   // Notion hosted-MCP connection: a per-user OAuth (DCR + PKCE) connect flow that
   // proves liveness with a real MCP tools/list. Status derives from the same safe
@@ -1050,9 +1157,12 @@ function ConnectionCard({
         </div>
       ) : null}
 
+      {/* Warehouse lifecycle — Register → Test → Browse (its own block; no YAML). */}
+      {isWarehouse ? <WarehouseControls c={c} canManage={canManage} onChange={onChange} /> : null}
+
       {/* Action buttons */}
       <div className="row" style={{ marginTop: 12, gap: 8, flexWrap: 'wrap' }}>
-        {driveProvider || isNotion ? null : c.health === 'needs-reconnect'
+        {driveProvider || isNotion || isWarehouse ? null : c.health === 'needs-reconnect'
           ? <button className="btn ghost" onClick={test} disabled={busy !== ''}>Reconnect</button>
           : <button className="btn ghost" onClick={test} disabled={busy !== ''}>Test</button>}
         <button className="btn ghost" onClick={onToggle}>

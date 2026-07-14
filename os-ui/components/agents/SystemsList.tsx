@@ -142,7 +142,7 @@ export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }
         <div className="row" style={{ marginLeft: 'auto', gap: 8, alignItems: 'center' }}>
           <button
             className="btn ghost"
-            style={{ opacity: showArchived ? 1 : 0.7 }}
+            style={{ opacity: 1 }}
             onClick={() => setShowArchived((v) => !v)}
             title="Archived systems are hidden by default"
           >

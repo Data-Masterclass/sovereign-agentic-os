@@ -84,7 +84,7 @@ export default function DashboardsTab({ supersetUrl }: { supersetUrl: string }) 
               <div className="row" style={{ gap: 8, marginTop: 4 }}>
                 <button
                   className="btn ghost"
-                  style={{ opacity: showArchived ? 1 : 0.7 }}
+                  style={{ opacity: 1 }}
                   onClick={() => setShowArchived((v) => !v)}
                   title="Archived dashboards are hidden by default"
                 >

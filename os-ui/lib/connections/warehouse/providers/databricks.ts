@@ -41,6 +41,7 @@ import {
   WarehouseError,
 } from '../types.ts';
 import type { WarehouseProvider } from '../provider.ts';
+import { showTablesQuery } from '../discovery-query.ts';
 
 /** The real Trino 476 connector value — UNDERSCORE (verified from the 476 docs). */
 const CONNECTOR_NAME = 'delta_lake';
@@ -175,6 +176,7 @@ export const databricksProvider: WarehouseProvider = {
   nativeInImage: true,
   capabilities: { federate: true, import: true },
   catalogProps: (source) => databricksProps(source as DatabricksDeltaConfig),
+  discoverTables: (source, schema) => showTablesQuery(source, schema),
   credentialFields: [
     {
       key: 'host',

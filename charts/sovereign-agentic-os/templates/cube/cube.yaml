@@ -217,6 +217,96 @@ stringData:
   CUBEJS_API_SECRET: {{ $c.local.apiSecret | quote }}
 ---
 {{- end }}
+{{- if $c.sqlApi.enabled }}
+{{- /*
+  Cube SQL API credential (Postgres-wire). Power BI authenticates as a per-DOMAIN
+  principal `bi_<domain>` with THIS shared password; Cube's checkSqlAuth (cube-config.js)
+  resolves the username to that domain's securityContext. Resolution order (no secret in
+  git): explicit `sqlApi.password` → the value already in this Secret (preserved across
+  `helm upgrade` via lookup) → a fresh 32-char random on first install. GITOPS CAVEAT:
+  Argo/Flux/`helm template` return an empty lookup, so set `sqlApi.password` explicitly
+  (ExternalSecret ideal) there or every sync mints a NEW password and breaks Power BI.
+*/}}
+{{- $sqlName := "cube-sql-secrets" }}
+{{- $sqlExisting := (lookup "v1" "Secret" .Release.Namespace $sqlName) }}
+{{- $sqlCurrent := "" }}
+{{- if $sqlExisting }}{{ $sqlCurrent = (index $sqlExisting.data "CUBEJS_SQL_PASSWORD" | b64dec) }}{{- end }}
+{{- $sqlPass := $c.sqlApi.password | default $sqlCurrent | default (randAlphaNum 32) }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $sqlName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "cube") | nindent 4 }}
+  annotations:
+    "helm.sh/resource-policy": keep
+type: Opaque
+stringData:
+  CUBEJS_SQL_USER: {{ $c.sqlApi.user | quote }}
+  CUBEJS_SQL_PASSWORD: {{ $sqlPass | quote }}
+---
+{{- /*
+  Cube config file (cube.js) — Cube auto-loads /cube/conf/cube.js. It implements
+  checkSqlAuth: on a Postgres-wire login it verifies the shared CUBEJS_SQL_PASSWORD and
+  maps the SQL USERNAME `bi_<domain>` to that domain's securityContext
+  { sub, domains, role:'creator', scope:'bi-readonly' } — the SAME structural keys the
+  governed HTTP path uses (os-ui lib/infra/governed.ts RLS_STRUCTURAL_KEYS). queryRewrite
+  is the safety net that REJECTS any SQL-API query whose connection lacks a domain scope,
+  so a raw/unscoped SQL login can never read ungoverned rows. The admin `user` login gets
+  no domain (empty scope) → it can introspect meta but sees no domain rows.
+  Mirrors os-ui lib/powerbi/principal.ts — keep the two in sync.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cube-sql-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "cube") | nindent 4 }}
+data:
+  cube.js: |
+    // SPDX-License-Identifier: Apache-2.0
+    const BI_PREFIX = 'bi_';
+    function normDomain(s) {
+      return String(s || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+    }
+    function domainFromBiUser(user) {
+      const u = String(user || '').trim().toLowerCase();
+      if (!u.startsWith(BI_PREFIX)) return null;
+      const d = normDomain(u.slice(BI_PREFIX.length));
+      return d || null;
+    }
+    module.exports = {
+      // Verify the shared SQL password, then map the SQL username -> domain securityContext.
+      checkSqlAuth: (query, user, password) => {
+        const expected = process.env.CUBEJS_SQL_PASSWORD;
+        if (expected && password !== expected) {
+          throw new Error('Invalid Cube SQL API credentials');
+        }
+        const domain = domainFromBiUser(user);
+        if (domain) {
+          return {
+            password: expected,
+            securityContext: { sub: 'bi:' + domain, domains: [domain], role: 'creator', scope: 'bi-readonly' },
+          };
+        }
+        // The admin `user` login: authenticated but NO domain scope (introspection only).
+        return { password: expected, securityContext: { sub: user, domains: [], role: 'creator', scope: 'bi-readonly' } };
+      },
+      // Safety net: a connection with no domain in scope may not read domain rows.
+      queryRewrite: (query, { securityContext }) => {
+        const domains = (securityContext && securityContext.domains) || [];
+        if (securityContext && securityContext.scope === 'bi-readonly' && domains.length === 0) {
+          throw new Error('Cube SQL API: no domain scope on this principal');
+        }
+        return query;
+      },
+    };
+---
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -254,10 +344,19 @@ spec:
         - name: model-init
           image: "{{ $c.image.repository }}@{{ $c.image.digest }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- if $c.sqlApi.enabled }}
+          # Also seed the SQL-API cube.js config into the writable conf dir (Cube auto-loads
+          # /cube/conf/cube.js) — checkSqlAuth maps the domain BI login to its securityContext.
+          command: ["/bin/sh", "-c", "mkdir -p /conf/model && cp /model/*.yml /conf/model/ && cp /sql-config/cube.js /conf/cube.js"]
+          {{- else }}
           command: ["/bin/sh", "-c", "mkdir -p /conf/model && cp /model/*.yml /conf/model/"]
+          {{- end }}
           volumeMounts:
             - { name: conf, mountPath: /conf }
             - { name: model, mountPath: /model, readOnly: true }
+            {{- if $c.sqlApi.enabled }}
+            - { name: sql-config, mountPath: /sql-config, readOnly: true }
+            {{- end }}
       containers:
         - name: cube
           image: "{{ $c.image.repository }}@{{ $c.image.digest }}"
@@ -283,8 +382,22 @@ spec:
               value: {{ $c.trino.catalog | quote }}
             - name: CUBEJS_API_SECRET
               valueFrom: { secretKeyRef: { name: cube-secrets, key: CUBEJS_API_SECRET } }
+            {{- if $c.sqlApi.enabled }}
+            # Postgres-wire SQL API for Power BI. Cube opens a second listener on this port;
+            # CUBEJS_SQL_USER/PASSWORD are the shared credential checkSqlAuth verifies before
+            # mapping the `bi_<domain>` username to that domain's securityContext.
+            - name: CUBEJS_PG_SQL_PORT
+              value: {{ $c.sqlApi.port | quote }}
+            - name: CUBEJS_SQL_USER
+              valueFrom: { secretKeyRef: { name: cube-sql-secrets, key: CUBEJS_SQL_USER } }
+            - name: CUBEJS_SQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: cube-sql-secrets, key: CUBEJS_SQL_PASSWORD } }
+            {{- end }}
           ports:
             - { name: http, containerPort: 4000 }
+            {{- if $c.sqlApi.enabled }}
+            - { name: pgsql, containerPort: {{ $c.sqlApi.port }} }
+            {{- end }}
           startupProbe:
             httpGet: { path: /readyz, port: http }
             periodSeconds: 5
@@ -330,6 +443,11 @@ spec:
         - name: model
           configMap:
             name: cube-model
+        {{- if $c.sqlApi.enabled }}
+        - name: sql-config
+          configMap:
+            name: cube-sql-config
+        {{- end }}
         {{- if $c.modelSync.enabled }}
         - name: model-sync
           configMap:
@@ -353,4 +471,29 @@ spec:
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "cube") | nindent 4 }}
   ports:
     - { name: http, port: 4000, targetPort: http }
+    {{- if $c.sqlApi.enabled }}
+    - { name: pgsql, port: {{ $c.sqlApi.port }}, targetPort: pgsql }
+    {{- end }}
+{{- if $c.sqlApi.enabled }}
+---
+{{- /*
+  Dedicated `cube-sql` Service for the Postgres-wire SQL API. Same selector, only the
+  pgsql port — this is the stable in-cluster name (`cube-sql:<port>`) the
+  /api/powerbi/connection-info route advertises, and the Service an operator publishes
+  behind a TCP ingress / LoadBalancer to reach Power BI Desktop / an on-prem gateway.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: cube-sql
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "cube") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "cube") | nindent 4 }}
+  ports:
+    - { name: pgsql, port: {{ $c.sqlApi.port }}, targetPort: pgsql }
+{{- end }}
 {{- end }}

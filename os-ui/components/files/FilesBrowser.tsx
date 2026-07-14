@@ -148,7 +148,7 @@ export default function FilesBrowser() {
         </div>
         <button
           className="btn ghost"
-          style={{ opacity: showArchived ? 1 : 0.7 }}
+          style={{ opacity: 1 }}
           onClick={() => { setShowArchived((v) => !v); setSelected(null); }}
           title="Archived files are hidden by default"
         >

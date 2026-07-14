@@ -30,6 +30,8 @@ import {
   createConnection,
   testConnection,
   warehouseRegistration,
+  registerWarehouseCatalog,
+  discoverWarehouse,
   importWarehouseTable,
   CONNECTION_TEMPLATES,
   isPersonalConnectable,
@@ -900,6 +902,40 @@ const warehouseTools: McpTool[] = [
       const id = str(args.connId).trim();
       if (!id) fail('warehouse_registration needs a `connId`', 400);
       return warehouseRegistration(id, user);
+    },
+  },
+  {
+    name: 'discover_warehouse_tables',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'DISCOVER a registered warehouse catalog’s schemas — and, given a `schema`, its tables — through the SAME governed query path test_connection probes (SHOW SCHEMAS / SHOW TABLES run AS your domain, so Trino→OPA governs the reads). Purpose: browse what is federated before import_warehouse_table, without guessing names. Before: create_connection (warehouse) + register the catalog so it is queryable. After: import_warehouse_table with a real schema.table. Governance: read-only; unseeable id → not_found. Honest: a catalog that is not registered/queryable yet, or a platform with no metastore (Fabric/OneLake), returns ok:false + a reason — never an invented listing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connId: { type: 'string', description: 'Warehouse connection id from list_connections.' },
+        schema: { type: 'string', description: 'Optional schema to list tables from (omit for schemas only).' },
+      },
+      required: ['connId'],
+      examples: [{ connId: 'conn_ab12cd' }, { connId: 'conn_ab12cd', schema: 'sales' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('discover_warehouse_tables needs a `connId`', 400);
+      return discoverWarehouse(id, user, { schema: str(args.schema) || undefined });
+    },
+  },
+  {
+    name: 'register_warehouse_catalog',
+    tab: 'connections',
+    minRole: 'builder',
+    description:
+      'ONE-CLICK REGISTER a warehouse connection as a LIVE Trino catalog — no YAML paste, no manual helm. Merges the connection’s catalog `.properties` into the live trino-catalog ConfigMap, materializes its vaulted secret(s) into a trino-ext-<catalog> Secret + wires the Trino env (keyless platforms like Glue/BigQuery-WI emit NO secret), and rolls the Trino Deployment (Recreate re-reads the mount). Before: create_connection (warehouse). After: test_connection / discover_warehouse_tables once the pod restarts. Governance: Builder/Admin with edit rights on the connection; audit-logged. Honest: a step the API server rejects returns ok:false with the real reason — never a silent partial. Secrets are read server-side and never returned.',
+    inputSchema: idArg('connId', 'Warehouse connection id you can edit.'),
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('register_warehouse_catalog needs a `connId`', 400);
+      return registerWarehouseCatalog(id, user);
     },
   },
   {

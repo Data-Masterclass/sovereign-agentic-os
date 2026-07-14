@@ -133,6 +133,11 @@ export const fabricProvider: WarehouseProvider = {
   nativeInImage: true,
   capabilities: { federate: true, import: true },
   catalogProps: (source) => fabricProps(source as FabricConfig),
+  // NO `discoverTables` — deliberately omitted. OneLake exposes no metastore for a
+  // generic table listing (mirrors `testProbe.kind==='none'`), so there is no honest
+  // SHOW TABLES to render. The store surfaces "not discoverable — OneLake exposes no
+  // metastore; provide explicit Delta table locations" instead of a query that would
+  // lie about what can be enumerated.
   credentialFields: [
     {
       key: 'workspaceId',
