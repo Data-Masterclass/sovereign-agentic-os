@@ -23,7 +23,7 @@ import { isNotMaterialized } from './materialized.ts';
  * entry came from.
  */
 
-export type CatalogSource = 'registry' | 'trino' | 'openmetadata';
+export type CatalogSource = 'registry' | 'trino' | 'openmetadata' | 'om-connection';
 
 export type CatalogAsset = {
   name: string;
@@ -127,6 +127,21 @@ export async function assembleCatalog(opts: {
     /** Explicit pill count (e.g. governed marts mirrored when nothing is pulled). */
     count?: number;
   }>;
+  /**
+   * OPTIONAL: an EXTERNAL OpenMetadata modelled as an `om-catalog` Connection
+   * (Phase 1, read/discover). When present it folds that OM's domains / data
+   * products / tables into the union as DLS-scoped discovery context (the route
+   * clamps to what the caller may see — the raw bot-token view is never exposed).
+   * Absent (the default) means no external OM is connected → nothing changes.
+   * Never throws: an unreachable external OM degrades to a calm source status.
+   */
+  omConnection?: () => Promise<{
+    assets: CatalogAsset[] | null;
+    status: string;
+    severity?: SourceSeverity;
+    ok?: boolean;
+    count?: number;
+  }>;
 }): Promise<CatalogResult> {
   const assets: CatalogAsset[] = [];
   const sources: CatalogSourceStatus[] = [];
@@ -177,6 +192,23 @@ export async function assembleCatalog(opts: {
     status: om.status,
     severity: om.severity ?? (omOk ? 'ok' : 'warn'),
   });
+
+  // 4. om-connection — an EXTERNAL OpenMetadata modelled as an `om-catalog`
+  //    Connection (Phase 1, read/discover). Only appears when an OM is connected
+  //    AND reachable; the route already DLS-clamped its contribution to what the
+  //    caller may see. Absent/unreachable degrades honestly — never a 500.
+  if (opts.omConnection) {
+    const oc = await opts.omConnection();
+    if (oc.assets) assets.push(...oc.assets);
+    const ocOk = oc.ok ?? !!oc.assets;
+    sources.push({
+      source: 'om-connection',
+      ok: ocOk,
+      count: oc.count ?? oc.assets?.length ?? 0,
+      status: oc.status,
+      severity: oc.severity ?? (ocOk ? 'ok' : 'warn'),
+    });
+  }
 
   return { source: 'union', sources, assets };
 }

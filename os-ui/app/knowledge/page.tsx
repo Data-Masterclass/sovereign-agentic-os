@@ -352,7 +352,12 @@ export default function KnowledgePage() {
           api={`/api/knowledge/workflows/${w.id}`}
           onChanged={() => void loadWorkflows()}
           compact
-          surface="tile"
+          // OS-wide rule: live tiles stay clean (Archive lives in the detail).
+          // An ARCHIVED tile is the one place the list promises Restore/Delete
+          // inline — so it renders the real cluster here (matching the Data tab),
+          // otherwise `surface="tile"` returns null and the archived workflow has
+          // no working Delete at all.
+          surface={w.archived ? 'detail' : 'tile'}
         />
       </div>
     </div>
@@ -371,6 +376,7 @@ export default function KnowledgePage() {
         <div className="k-section-head">
           <span className="k-section-label">{e.title}</span>
           <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+            {e.archived && <span className="badge muted">archived</span>}
             {shared && <DomainTag domain={e.domain} />}
             {e.visibility === 'Shared' && <span className="badge vis-shared">Shared in Domain</span>}
             {e.visibility === 'Marketplace' && <span className="badge vis-certified">Certified</span>}
@@ -656,9 +662,26 @@ export default function KnowledgePage() {
 
             {/* ── MY KNOWLEDGE: personal general-knowledge entries — the tab's
                 focal lane (order 1 in the combined view). ── */}
-            {(kScope === 'all' || kScope === 'mine') && (
+            {(kScope === 'all' || kScope === 'mine') && (() => {
+              // `personal.mine` carries archived entries only when showArchived is on
+              // (loadPersonal requests ?archived=1). Split so the working list stays
+              // clean and archived notes get their own Restore/Delete section — the
+              // one place an archived personal note is reachable (mirrors Workflows).
+              const mineActive = (personal?.mine ?? []).filter((e) => !e.archived);
+              const mineArchived = (personal?.mine ?? []).filter((e) => e.archived);
+              return (
               <div style={{ marginTop: 24, order: 1 }}>
-                <div className="section-title" style={{ marginTop: 0 }}>My knowledge</div>
+                <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <div className="section-title" style={{ marginTop: 0 }}>My knowledge</div>
+                  <button
+                    className="btn ghost sm"
+                    style={{ opacity: showArchived ? 1 : 0.7 }}
+                    onClick={() => setShowArchived((s) => !s)}
+                    title="Archived notes are hidden by default"
+                  >
+                    {showArchived ? 'Hide archived' : 'Show archived'}
+                  </button>
+                </div>
                 <p className="hint" style={{ marginTop: 0 }}>
                   Personal notes about your role and how you work — feeds your own agents &amp; assistant. Owner-only.
                   Add one above; promote a note to share it with your domain.
@@ -669,17 +692,34 @@ export default function KnowledgePage() {
 
                 {personal === null ? (
                   <div className="stub-page"><span className="spin" /> Loading…</div>
-                ) : personal.mine.length === 0 ? (
+                ) : mineActive.length === 0 ? (
                   <div className="stub-page" style={{ marginTop: 8 }}>
                     No personal knowledge yet. Add a note above — it stays private to you.
                   </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
-                    {personal.mine.map((e) => renderPersonalEntry(e, true))}
+                    {mineActive.map((e) => renderPersonalEntry(e, true))}
                   </div>
                 )}
+
+                {showArchived && (
+                  mineArchived.length > 0 ? (
+                    <>
+                      <div className="section-title" style={{ marginTop: 20, fontSize: 12 }}>Archived</div>
+                      <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>
+                        Archived notes are hidden from your agents. Open one to Restore it or Delete it permanently.
+                      </p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {mineArchived.map((e) => renderPersonalEntry(e, true))}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="hint" style={{ marginTop: 16 }}>No archived notes.</div>
+                  )
+                )}
               </div>
-            )}
+              );
+            })()}
 
             {/* ── MARKETPLACE: certified general-knowledge entries ── */}
             {(kScope === 'all' || kScope === 'marketplace') && (

@@ -16,9 +16,19 @@ import {
   type CapabilityLimits,
   type DataUsage,
   type WarehouseConnectionConfig,
+  type AirflowConnectionConfig,
+  type AirflowAuthType,
   templateByKey,
   isPersonalConnectable,
 } from '@/lib/connections/schema';
+import {
+  type AirflowConn,
+  airflowHealth,
+  listDags as afListDags,
+  getDagRun as afGetDagRun,
+  triggerDag as afTriggerDag,
+  airflowDagAllowed,
+} from '@/lib/connections/airflow';
 import type { WarehousePlatform } from '@/lib/connections/warehouse/types';
 import { splitWarehouseFields, toWarehouseSource } from '@/lib/connections/warehouse/connection';
 import { providerFor } from '@/lib/connections/warehouse/registry';
@@ -198,9 +208,18 @@ export type WarehouseCreateInput = {
   fields: Record<string, string>;
 };
 
+/** The non-secret Airflow config on the create input (only for the `airflow` template). */
+export type AirflowCreateInput = {
+  authType: AirflowAuthType;
+  /** Basic-auth username (non-secret); empty for Bearer. */
+  username?: string;
+  /** Optional allowlist of DAG ids `trigger_dag` is bounded to. */
+  dagAllowlist?: string[];
+};
+
 export async function createConnection(
   user: CurrentUser,
-  input: { name: string; template: ConnectionTemplateKey; endpoint: string; credential: string; domain?: string; openApiSpec?: unknown; warehouse?: WarehouseCreateInput },
+  input: { name: string; template: ConnectionTemplateKey; endpoint: string; credential: string; domain?: string; openApiSpec?: unknown; warehouse?: WarehouseCreateInput; omService?: string; airflow?: AirflowCreateInput },
 ): Promise<Connection> {
   const tpl = templateByKey(input.template);
   if (!tpl) throw withStatus(new Error('Unknown connection template'), 400);
@@ -210,6 +229,12 @@ export async function createConnection(
   // change for any other template when the flag is off.
   if (tpl.key === 'warehouse' && !config.externalConnectorsEnabled) {
     throw withStatus(new Error('External-warehouse connectors are not enabled on this deployment'), 403);
+  }
+
+  // External OpenMetadata connections are gated OFF by default too — refuse to
+  // create one unless the operator has turned on OPENMETADATA_CONNECT_ENABLED.
+  if (tpl.key === 'om-catalog' && !config.openmetadataConnectEnabled) {
+    throw withStatus(new Error('External OpenMetadata connections are not enabled on this deployment'), 403);
   }
 
   // WHO CONNECTS (golden path): any user may connect a PERSONAL (per-user OAuth)
@@ -342,6 +367,19 @@ export async function createConnection(
     grants: [],
     health: 'untested',
     dataUsage: null,
+    // For an om-catalog connection, stamp the optional default OM Service (non-secret).
+    ...(tpl.key === 'om-catalog' ? { om: { service: (input.omService ?? '').trim() || undefined } } : {}),
+    // For an airflow connection, stamp the non-secret REST config (auth type, Basic
+    // username, optional trigger allowlist). The password/token stays in the vault.
+    ...(tpl.key === 'airflow'
+      ? {
+          airflow: {
+            authType: input.airflow?.authType ?? 'bearer',
+            username: (input.airflow?.username ?? '').trim() || undefined,
+            dagAllowlist: (input.airflow?.dagAllowlist ?? []).map((d) => d.trim()).filter(Boolean),
+          } satisfies AirflowConnectionConfig,
+        }
+      : {}),
     createdAt: t,
     updatedAt: t,
   };
@@ -487,6 +525,21 @@ export async function testConnection(
       writeThrough(c);
       return { ok: true, mode: 'offline', detail: `Config valid; catalog '${c.warehouse.catalog}' is not queryable yet (${(e as Error).message}). Register it in Trino (values.trino.externalCatalogs) + rolling-restart, then re-test.` };
     }
+  }
+
+  // AIRFLOW: the honest test is a real, unauthenticated health probe against the
+  // Airflow REST API (v2 /api/v2/monitor/health, falling back to v1 /api/v1/health).
+  // ANY HTTP response ⇒ Airflow is reachable (live); a network error/timeout ⇒
+  // offline. Never a stub — and the credential is never sent on the health probe.
+  if (c.template === 'airflow') {
+    const h = await airflowHealth(airflowConnFor(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    c.updatedAt = now();
+    writeThrough(c);
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Airflow at ${c.egress.host} is reachable${h.detail ? ` (${h.detail})` : ''}. The token is never sent on the health probe.` }
+      : { ok: false, mode: 'offline', detail: `Airflow at ${c.egress.host} is unreachable (${h.reason ?? 'network error'}) — check the base URL + egress, then re-test.` };
   }
 
   const secret = getSecretServerSide(c.secretRef); // server-side only
@@ -981,7 +1034,11 @@ async function runAllow(
   mode?: string,
 ): Promise<ToolCallResult> {
   const secret = getSecretServerSide(c.secretRef);
-  const result = executeMock(c, tool, args, Boolean(secret));
+  // Airflow tools hit the REAL REST API (the secret is injected server-side inside
+  // the client and never logged); every other connector uses the offline mock.
+  const result = c.template === 'airflow'
+    ? await executeAirflow(c, tool, args)
+    : executeMock(c, tool, args, Boolean(secret));
   if (c.egress.external) logEgress({ host: c.egress.host, connectionId: c.id, tool }); // monitored egress
   const tr = await trace({
     principal: c.principal,
@@ -1099,6 +1156,53 @@ export async function approveAndRemember(
 }
 
 /** Deterministic seed responses so the slice is demonstrable with no live endpoint. */
+/** Build the pure Airflow client config from a connection — the credential is
+ *  dereferenced from the vault HERE (server-side) and never leaves this process. */
+function airflowConnFor(c: Connection): AirflowConn {
+  const authType: AirflowAuthType = c.airflow?.authType ?? 'bearer';
+  return {
+    baseUrl: c.endpoint,
+    authType,
+    username: c.airflow?.username,
+    secret: getSecretServerSide(c.secretRef) ?? undefined,
+    fetchImpl: fetch,
+    timeoutMs: 4000,
+  };
+}
+
+/**
+ * Execute an ALLOWED Airflow tool against the real REST API. The governance gate
+ * (Read auto-allow · trigger_dag Write-approval) already passed upstream; here we
+ * only run the call and shape an honest result. `trigger_dag` additionally honours
+ * the connection's non-secret DAG allowlist as a bound. Never throws.
+ */
+async function executeAirflow(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
+  const conn = airflowConnFor(c);
+  const dagId = String(args.dagId ?? args.dag_id ?? '');
+  switch (tool) {
+    case 'list_dags': {
+      const r = await afListDags(conn);
+      return r.ok ? { connection: c.name, dags: r.data } : { connection: c.name, ok: false, reason: r.reason };
+    }
+    case 'get_dag_run': {
+      const runId = String(args.runId ?? args.dag_run_id ?? '');
+      if (!dagId || !runId) return { connection: c.name, ok: false, reason: 'get_dag_run needs a dagId and a runId' };
+      const r = await afGetDagRun(conn, dagId, runId);
+      return r.ok ? { connection: c.name, run: r.data } : { connection: c.name, ok: false, reason: r.reason };
+    }
+    case 'trigger_dag': {
+      if (!dagId) return { connection: c.name, ok: false, reason: 'trigger_dag needs a dagId' };
+      if (!airflowDagAllowed(c, dagId)) return { connection: c.name, ok: false, reason: `DAG "${dagId}" is not on this connection's trigger allowlist` };
+      const conf = (args.conf && typeof args.conf === 'object') ? (args.conf as Record<string, unknown>) : undefined;
+      const logicalDate = args.logicalDate ? String(args.logicalDate) : (args.logical_date ? String(args.logical_date) : undefined);
+      const r = await afTriggerDag(conn, dagId, conf, logicalDate);
+      return r.ok ? { connection: c.name, triggered: r.data } : { connection: c.name, ok: false, reason: r.reason };
+    }
+    default:
+      return { connection: c.name, ok: false, reason: `Unknown Airflow tool: ${tool}` };
+  }
+}
+
 function executeMock(c: Connection, tool: string, args: Record<string, unknown>, credentialPresent: boolean): unknown {
   const base = { connection: c.name, credentialInjectedServerSide: credentialPresent };
   switch (tool) {

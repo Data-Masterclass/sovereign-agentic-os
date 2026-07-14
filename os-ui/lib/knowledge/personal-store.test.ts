@@ -94,6 +94,26 @@ test('delete removes the entry and its history', () => {
   assert.throws(() => getPersonalKnowledge(rec.id, amir), /not found/);
 });
 
+test('archived-delete regression: an ARCHIVED entry deletes for the owner, is denied for a non-owner non-admin, and a missing entry surfaces honestly', () => {
+  // Reproduces the reported bug: archive a knowledge note, then Delete it.
+  // Server-side the delete must (a) succeed for the owner even once archived,
+  // (b) stay fail-closed for a non-owner non-admin, and (c) NOT silently no-op
+  // on a missing id — it must throw a 404 the UI can surface.
+  __resetStore();
+  const rec = createPersonalKnowledge(amir, { title: 'To retire', md: 'body' });
+  archivePersonalKnowledge(rec.id, amir);
+  // Still present (archived), not yet gone.
+  assert.equal(listPersonalKnowledge(amir, { includeArchived: true }).mine.length, 1);
+  // A non-owner in another domain (creator/builder — no admin authority) is refused.
+  assert.throws(() => deletePersonalKnowledge(rec.id, kenji), /Not permitted/);
+  // The owner deletes the archived entry — it is physically gone (record + history).
+  deletePersonalKnowledge(rec.id, amir);
+  assert.equal(listPersonalKnowledge(amir, { includeArchived: true }).mine.length, 0);
+  assert.throws(() => getPersonalKnowledge(rec.id, amir), /not found/);
+  // Deleting a now-missing id is an HONEST 404, never a silent success.
+  assert.throws(() => deletePersonalKnowledge(rec.id, amir), /not found/);
+});
+
 test('restore: reverts to a prior version and snapshots the live state first (reversible)', () => {
   __resetStore();
   const rec = createPersonalKnowledge(amir, { title: 'T', md: 'v1' });

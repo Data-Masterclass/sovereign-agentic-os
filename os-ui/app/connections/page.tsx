@@ -9,12 +9,14 @@ import TalkTo from '@/components/talk/TalkTo';
 import { TALK_PRESENTATION } from '@/lib/talk/schema';
 
 /**
- * The Connections page — one scroll, no sub-tabs.
+ * The Connections page — one scroll, no sub-tabs. Four sections, top → bottom:
  *
- *   Top:    governed connections grouped All · My · Shared · Marketplace.
- *   Below:  create a new connection (OAuth templates + service connectors).
- *   Then:   app MCP connections (auto-generated) + supported connector catalog.
- *   Then:   outbound access (egress allowlist requests).
+ *   1. Connections list — governed connections grouped All · My · Shared · Marketplace,
+ *      with App-MCP connections folded in by scope (header: scope segment · Show archived
+ *      · ＋ New connector). Both create paths open the shared ConnectorWizard.
+ *   2. Supported Connectors — a gallery of connector types (dynamic, from the registry).
+ *   3. Outbound access — egress allowlist requests (Builder/Admin).
+ *   4. Talk to Connectors — the metadata-grounded copilot for this tab.
  */
 export default function ConnectionsPage() {
   const talk = TALK_PRESENTATION.connections;

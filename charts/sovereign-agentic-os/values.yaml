@@ -2289,6 +2289,13 @@ osUI:
   # auth-mechanism JWT (docs/components/openmetadata.md). Without it the Catalog
   # skips OpenMetadata honestly. NEVER commit a real token.
   openmetadataJwt: ""
+  # External OpenMetadata CONNECTIONS (Phase 1 — read/discover only). OFF by default:
+  # when true, os-ui lets an operator model an EXTERNAL OpenMetadata as an om-catalog
+  # Connection (base URL + vaulted bot JWT + optional default OM Service) and folds its
+  # domains/data-products/tables into the Catalog as DLS-scoped discovery, plus the MCP
+  # read tools (list_domains/list_data_products/list_tables/search_catalog/get_om_lineage).
+  # No writes to OM in this phase. Distinct from openmetadataJwt above (the bundled OM).
+  openmetadataConnectEnabled: false
   # Auth session-signing secret (HMAC-SHA256 for the login cookie). Leave EMPTY:
   # the chart generates a strong random value into the `os-ui-session` Secret on
   # first install and preserves it across `helm upgrade`. Set a value (or wire an

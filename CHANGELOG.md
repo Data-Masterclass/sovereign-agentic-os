@@ -15,6 +15,30 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.4.0] — 2026-07-15
+
+Integration + honesty release. `tsc` clean; **2262 tests pass**. Several features ship as
+explicitly-labeled Phase-1 slices (their next phases need new infra or the customer's cloud
+credentials — called out honestly, never faked).
+
+### Feature — Science tab, reworked into an integrated lifecycle (Phase 1)
+- The Science tab is no longer a launcher of four raw consoles. It's now an **integrated model-as-a-service tab** matching every other tab: All/My/Shared/Marketplace list + **＋New model**, detail-on-click with **Predict** ("Try it" against the live KServe model), tier ladder (promote), version history, and lifecycle — wrapping the live churn/KServe slice as the first model. The raw MLflow/Featureform/JupyterHub/KServe consoles move to a **Developer → Open console** escape hatch. `app/science/page.tsx` shrank from ~1000 lines to a thin shell. Honestly Phase-2+: guided train + a real on-platform **training runtime** (new infra) and inline eval/monitor charts render as labeled "coming" states.
+
+### Feature — OpenMetadata as a Connection, read/discover (Phase 1, flag-gated off)
+- A customer's existing OpenMetadata can be connected as a first-class **`om-catalog` Connection** (base URL + vaulted bot JWT) with **read-only** tools (`list_domains`/`list_data_products`/`list_tables`/`search_catalog`/`get_om_lineage`), a per-connection OM client with version detection, and a DLS-scoped fold of their catalog into OS discovery — **zero writes to OM** by construction. Behind `OPENMETADATA_CONNECT_ENABLED` (default off). Phase 2 (scoped additive JSON-Patch write into an OS-owned OM namespace, with a preview diff + approval) and Phase 3 (lineage/DQ + domain binding) are designed and scoped, not built.
+
+### Feature — Connections page restructured (the approved 4-section IA)
+- The Connections tab is now: **header** (All/My/Shared/Marketplace · Show archived · **＋New connector** wizard) → **Connections list** (App-MCP connections folded in by scope, badged "App", linking to their app) → **Supported Connectors** (a dynamic gallery that auto-lists every connector type — warehouses, Drive, OneDrive, Notion, Airflow, OpenMetadata — each **Connect** opening a guided wizard) → **Outbound access** → **Talk to Connectors**. A shared stepper (`ConnectorWizard`) drives both the supported-type and custom flows. *Honest carry-over:* a fully-arbitrary custom API/MCP endpoint still hits the backend's known-template gate (it errors honestly, doesn't fake success) — the generic custom-connector backend is a fast-follow.
+
+### Feature — Apache Airflow as a Supported Connector
+- Governed outbound connection to a member's Airflow REST API: `list_dags`/`get_dag_run` (Read) + `trigger_dag` (**Write-approval** — a DAG trigger is held for governance approval, honoring an optional DAG allowlist). Client tries Airflow **v2 then v1**, Basic or Bearer auth (vaulted). So a member who runs Airflow can drive + monitor their DAGs from the OS (and agents can). Live verification needs their real Airflow + token.
+
+### Fix — deleting an ARCHIVED knowledge artifact now works
+- Same UI-surface bug as archived datasets: archived knowledge tiles rendered `LifecycleActions surface="tile"` (which returns `null`), so the Restore/Delete controls were absent, and the "Show archived" toggle didn't reach the General/"My knowledge" view. Fixed both areas (Workflows + Personal); the delete route + physical OpenSearch purge were already correct.
+
+### Polish — Agents tab
+- Bigger **Judge this run** + **Download PDF report** buttons; the PDF report now contains **Run results** (final output + per-agent outputs) alongside the **Assessment** (diagnostics), so it's one complete shareable report.
+
 ## [os-ui 0.3.5] — 2026-07-15
 
 ### Feature — external-warehouse connectors usable end-to-end (no YAML / no helm)

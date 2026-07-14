@@ -527,15 +527,28 @@ export default function BuildRunPanel({
       line(report.path, 10);
       space();
 
-      line('Agents', 12, true, 16);
-      for (const a of report.agents) {
-        line(`${a.name} — ${a.decision}${a.model ? ` · ${a.model}` : ''}${a.tier ? ` · ${a.tier}` : ''} · ${a.calls} call${a.calls === 1 ? '' : 's'}`, 10, true);
-        renderMarkdown(a.output, 9);
+      // ── Section 1: Run results ──────────────────────────────────────────────
+      line('Run results', 12, true, 16);
+      line('Final output', 11, true);
+      renderMarkdown(report.finalOutput, 10);
+
+      if (report.agents.length > 0) {
         space(4);
+        line('Per-agent outputs', 11, true);
+        for (const a of report.agents) {
+          space(4);
+          line(`${a.name} — ${a.decision}${a.model ? ` · ${a.model}` : ''}${a.tier ? ` · ${a.tier}` : ''} · ${a.calls} call${a.calls === 1 ? '' : 's'}`, 10, true);
+          renderMarkdown(a.output.length > 2000 ? `${a.output.slice(0, 2000)}…` : a.output, 9);
+        }
+      } else {
+        space(4);
+        line('No run yet — run the team to see output here.', 9);
       }
 
-      space();
-      line('Diagnostics', 12, true, 16);
+      // ── Section 2: Evaluate / Assessment ───────────────────────────────────
+      space(8);
+      line('Assessment', 12, true, 16);
+      line('Diagnostics', 11, true);
       if (!diag.traceMetricsAvailable) line('Trace metrics unavailable — showing governed-call counts from the run.', 8);
       autoTable(doc, {
         startY: y,
@@ -548,9 +561,6 @@ export default function BuildRunPanel({
         footStyles: { fillColor: [240, 240, 240], textColor: 20, fontStyle: 'bold' },
       });
       y = ((doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY ?? y) + 20;
-
-      line('Final output', 12, true, 16);
-      renderMarkdown(report.finalOutput, 10);
 
       doc.save(reportFilename(systemId, at));
     } catch (e) {
@@ -751,7 +761,7 @@ export default function BuildRunPanel({
             combined 'all' view (Developer mode). */}
         {phase === 'all' ? (
           <button
-            className="btn ghost sm"
+            className="btn ghost"
             style={{ marginLeft: 'auto' }}
             onClick={downloadPdf}
             disabled={!runComplete || pdfBusy}
@@ -933,7 +943,7 @@ export default function BuildRunPanel({
           {showEvaluate && phase !== 'all' ? (
             <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 6 }}>
               <button
-                className="btn ghost sm"
+                className="btn ghost"
                 onClick={downloadPdf}
                 disabled={!runComplete || pdfBusy}
                 title={runComplete ? 'Download a PDF report of this run' : 'Run the team first'}

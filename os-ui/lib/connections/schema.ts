@@ -37,6 +37,24 @@ export type WarehouseConnectionConfig = {
   config: Record<string, string>;
 };
 
+/** How an Airflow REST connection authenticates. Both are vaulted (the password /
+ *  token is the secret); `basic` additionally carries a non-secret username. */
+export type AirflowAuthType = 'basic' | 'bearer';
+
+/**
+ * The NON-SECRET config carried on an `airflow` Connection record. The base URL is
+ * the connection `endpoint`; the password/token is the vaulted secret (secretRef,
+ * NEVER here). `authType` picks Basic vs Bearer; `username` is only meaningful for
+ * Basic (non-secret). `dagAllowlist` optionally bounds which DAGs may be triggered.
+ */
+export type AirflowConnectionConfig = {
+  authType: AirflowAuthType;
+  /** Basic-auth username (non-secret). Empty for Bearer. */
+  username?: string;
+  /** Optional allowlist of DAG ids a builder permits `trigger_dag` on. */
+  dagAllowlist?: string[];
+};
+
 /** The adapter family that implements a connection type (see lib/connection-adapters). */
 export type ConnectorKind = 'drive' | 'database' | 'api' | 'mcp' | 'saas';
 
@@ -149,6 +167,14 @@ export type Connection = {
   /** For a `warehouse` template only: the non-secret federation config (platform,
    *  catalog, region/account/…). Absent on every other connection type. */
   warehouse?: WarehouseConnectionConfig;
+  /** For an `om-catalog` template only: the OM build version last detected + the
+   *  optional default OM Service name. Non-secret; the bot JWT lives in the vault.
+   *  Version is recorded so the client picks stable API shapes (and, in Phase 2,
+   *  refuses writes on an unknown version — Phase 1 never writes). */
+  om?: { service?: string; version?: string };
+  /** For an `airflow` template only: the non-secret REST config (auth type, basic
+   *  username, optional trigger allowlist). The password/token lives in the vault. */
+  airflow?: AirflowConnectionConfig;
   /** Soft-archived: hidden from the working lists, reversible, retained (the vault
    *  secret + OAuth token are KEPT). Absent/false = live. */
   archived?: boolean;
@@ -170,7 +196,17 @@ export type ConnectionTemplateKey =
   // Fabric). ONE template, the platform is picked inside it and its credential
   // fields render generically from the provider registry. Gated OFF behind
   // EXTERNAL_CONNECTORS_ENABLED — it is NOT user-facing until an operator enables it.
-  | 'warehouse';
+  | 'warehouse'
+  // External OpenMetadata catalog (read/discover only). ONE template: base URL +
+  // a vaulted bot JWT + an optional default OM Service name. Gated OFF behind
+  // OPENMETADATA_CONNECT_ENABLED — inert until an operator connects an OM. Every
+  // tool is read-only by construction (Phase 1 never writes to OM).
+  | 'om-catalog'
+  // Apache Airflow REST API (v2 `/api/v2/...`, older `/api/v1/...`). A governed
+  // outbound connection to a customer's Airflow so OS agents can trigger + monitor
+  // DAGs. Read tools (list DAGs, get a run) auto-allow; `trigger_dag` is a real
+  // side effect held for approval by default. User-facing (a plain API connector).
+  | 'airflow';
 
 export type ConnectionTemplate = {
   key: ConnectionTemplateKey;
@@ -333,6 +369,54 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
       { name: 'import_table', description: 'Materialize one external table into the OS Iceberg lakehouse via CTAS (write).', write: true, mode: 'Off' },
     ],
   },
+  {
+    // External OpenMetadata catalog — modelled as a first-class Connection. READ /
+    // DISCOVER ONLY: the preset exposes ONLY read tools; there is NO write tool at
+    // all (Phase 1 never POSTs/PUTs/PATCHes OM — the scoped write path is Phase 2).
+    // The secret is the OM bot JWT (vaulted secretRef, never on the record); the
+    // endpoint is the OM base URL; the optional default OM Service is a non-secret
+    // config on the record. Gated OFF behind OPENMETADATA_CONNECT_ENABLED.
+    key: 'om-catalog',
+    label: 'OpenMetadata catalog (external · read-only)',
+    type: 'API',
+    connector: 'api',
+    auth: 'service',
+    endpointHint: 'https://openmetadata.example.com',
+    secretKey: 'om-bot-jwt',
+    tools: [
+      { name: 'list_domains', description: 'List OM domains (read).', write: false, mode: 'Read' },
+      { name: 'list_data_products', description: 'List OM data products (read).', write: false, mode: 'Read' },
+      { name: 'list_tables', description: 'List OM tables with description/owners/tags (read).', write: false, mode: 'Read' },
+      { name: 'search_catalog', description: 'Search the OM catalog (read).', write: false, mode: 'Read' },
+      { name: 'get_om_lineage', description: 'Read lineage for an OM entity by FQN (read).', write: false, mode: 'Read' },
+    ],
+  },
+  {
+    // Apache Airflow REST API — a governed outbound connection to a customer's
+    // Airflow. The endpoint is the Airflow base URL; the secret is the Bearer token
+    // (or the Basic-auth password), vaulted. Auth type + Basic username + an optional
+    // trigger allowlist are non-secret config on the record. The preset is safe:
+    // the two READS auto-allow; `trigger_dag` is a real side effect so it defaults
+    // to Write-approval (a builder can drop it to Write-bounded once trusted).
+    key: 'airflow',
+    label: 'Apache Airflow (REST API)',
+    type: 'API',
+    connector: 'api',
+    auth: 'service',
+    endpointHint: 'https://airflow.example.com',
+    secretKey: 'airflow-secret',
+    tools: [
+      { name: 'list_dags', description: 'List DAGs in the Airflow instance (read).', write: false, mode: 'Read' },
+      { name: 'get_dag_run', description: 'Read one DAG run by dag id + run id (read).', write: false, mode: 'Read' },
+      {
+        name: 'trigger_dag',
+        description: 'Trigger a DAG run (write — a real side effect).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'DAGs on this Airflow instance', rateLimitPerMin: 10 },
+      },
+    ],
+  },
 ];
 
 /**
@@ -343,7 +427,7 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
  * import, the connections gate, adapter tests) and is deliberately NOT offered in
  * the create picker — a user can never stand up a non-working mock connection.
  */
-export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp'];
+export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp', 'airflow'];
 
 export function isUserFacingTemplate(key: string): boolean {
   return (USER_FACING_TEMPLATE_KEYS as string[]).includes(key);

@@ -791,16 +791,27 @@ by living inside it.
 The governance spine — OPA, approvals, RLS, promote ladders, roles, audit, MCP (live end-to-end
 at `/api/mcp`), auth, Knowledge, and the physical Data pipeline (upload → Bronze → Silver →
 Gold → publish-on-approval → Cube → Talk to your data) — is **fully live**. Layers 1–3 are in
-place; **Science (Layer 4)** deploys a classic-ML model as a live `predict` service. **Software**
-apps build a real container image in-cluster (Forgejo CI) and deploy to a live per-app URL —
-end-to-end, no external registry. **Dashboards** embed governed Superset with a viewer-scoped
-guest token. The OS UI is v1.0: every sidebar tab is a real, brand-themed surface with
-light/dark theming. Newer / opt-in: the medallion **layer choice** on agent data grants, and an
-admin-enabled **external-warehouse connector** (federate AWS Glue/Athena · Snowflake · BigQuery ·
-Databricks/Delta, plus experimental Fabric/OneLake, through Trino) — off by default and validated
-against a live source with your own cloud credentials. Still being wired or deferred: real
-external tool execution beyond Google Drive / OneDrive / Notion, richer OpenMetadata lineage
-ingestion, and broader tutorial anchors. The full, versioned history is in `CHANGELOG.md`.
+place; **Science (Layer 4)** is an integrated model-as-a-service tab (list → detail → **predict** →
+promote → lifecycle) wrapping a live KServe `predict` model, with the raw MLflow/Featureform/
+JupyterHub/KServe consoles as a Developer escape hatch. **Software** apps build a real container
+image in-cluster (Forgejo CI) and deploy to a live per-app URL — end-to-end, no external registry.
+**Dashboards** embed governed Superset with a viewer-scoped guest token. The OS UI is v1.0: every
+sidebar tab is a real, brand-themed surface with light/dark theming.
+
+**Connections** federate the outside world through one governed door: the tab lists connections
+(All/My/Shared/Marketplace, with app-generated MCP connections folded in), a **Supported
+Connectors** gallery, and **Talk to Connectors**. Supported today: Google Drive / OneDrive / Notion,
+the medallion **layer choice** on agent data grants, an admin-enabled **external-warehouse connector**
+(federate AWS Glue/Athena · Snowflake · BigQuery · Databricks/Delta, plus experimental Fabric/OneLake,
+through Trino — discover → register → import, no YAML), **Power BI** consumption via Cube's SQL API
+with a per-domain BI principal, an **Apache Airflow** connector (governed `trigger_dag`/monitor), and
+**OpenMetadata** (read/discover of a customer's existing catalog as a Connection). External connectors
+are off by default and validated against a live source with your own cloud credentials.
+
+Shipped as explicitly-labeled Phase-1 slices (their next phases need new infra or your cloud
+credentials): Science's guided-train + real training runtime, OpenMetadata scoped write-back, a
+generic custom-API/MCP connector, and true per-viewer Power-BI RLS. The full, versioned history is in
+`CHANGELOG.md`.
 
 ---
 

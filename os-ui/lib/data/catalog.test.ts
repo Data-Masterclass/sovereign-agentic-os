@@ -102,6 +102,51 @@ test('an empty warehouse yields a valid empty catalog (registry-only), never an 
   assert.equal(result.sources.length, 3); // all three reported, honestly
 });
 
+// ---------------------------------------- external OM connection discovery fold --
+
+test('assembleCatalog folds in an external OM connection when one is present + reachable', async () => {
+  const registry: CatalogAsset[] = [
+    { name: 'Orders', fqn: 'iceberg.sales.silver_orders', description: '', type: 'dataset', source: 'registry' },
+  ];
+  const omConnection = async () => ({
+    assets: [{ name: 'ext_orders', fqn: 'iceberg.sales.gold_ext', description: 'ext', type: 'table', source: 'om-connection' as const }],
+    status: 'external catalog "Prod OM" · 1 discoverable table · 2 domains · 1 data product (DLS-scoped)',
+    ok: true,
+    count: 1,
+    severity: 'ok' as const,
+  });
+
+  const result = await assembleCatalog({ schema: 'sales', registry, trino: noTrino, openmetadata: noOm, omConnection });
+
+  const src = result.sources.find((s) => s.source === 'om-connection')!;
+  assert.ok(src);
+  assert.equal(src.ok, true);
+  assert.equal(src.count, 1);
+  assert.match(src.status, /DLS-scoped/);
+  assert.ok(result.assets.some((a) => a.source === 'om-connection'));
+});
+
+test('assembleCatalog degrades honestly when the external OM is unreachable — no 500', async () => {
+  const omConnection = async () => ({
+    assets: null,
+    status: 'reconnecting to external catalog "Prod OM"…',
+    ok: false,
+    count: 0,
+    severity: 'warn' as const,
+  });
+  const result = await assembleCatalog({ schema: 'sales', registry: [], trino: noTrino, openmetadata: noOm, omConnection });
+  const src = result.sources.find((s) => s.source === 'om-connection')!;
+  assert.equal(src.ok, false);
+  assert.equal(src.severity, 'warn');
+  assert.match(src.status, /reconnecting/i);
+});
+
+test('assembleCatalog omits the om-connection source entirely when none is connected', async () => {
+  const result = await assembleCatalog({ schema: 'sales', registry: [], trino: noTrino, openmetadata: noOm });
+  assert.ok(!result.sources.some((s) => s.source === 'om-connection'));
+  assert.equal(result.sources.length, 3); // registry + trino + openmetadata only
+});
+
 // ------------------------------------------------------------- DLS scoping holds --
 
 test('registryAssets inherits DLS: a private dataset is invisible to other users', () => {

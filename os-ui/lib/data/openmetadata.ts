@@ -153,6 +153,145 @@ export function omEntityUrl(consoleBase: string, service: string, icebergFqn: st
   return `${consoleBase}/table/${encodeURIComponent(omFqn)}`;
 }
 
+// ======================================================================
+// PER-CONNECTION OpenMetadata client (Phase 1 — read / discover only)
+// ======================================================================
+//
+// The functions ABOVE talk to the ONE bundled in-cluster OM via config globals.
+// The functions BELOW take an explicit base URL + bearer token as ARGS, so an
+// EXTERNAL OM modelled as an `om-catalog` Connection can be read per-connection
+// (its bot JWT comes from the connection's vaulted secretRef — never a global).
+//
+// Same discipline as above: `fetch` is injected, the token is sent as a Bearer
+// header and NEVER logged/returned, and every read NEVER throws to the caller —
+// it degrades to `{ ok: false, reason }` so discovery keeps rendering.
+//
+// HARD GUARDRAIL (Phase 1): read only. There is NO POST/PUT/PATCH helper here.
+// `detectOmVersion` records the OM build so a future (Phase 2) write path can
+// refuse writes on an unknown/unsupported version — but this phase never writes.
+
+/** A per-connection OM client config: where + how to authenticate. */
+export type OmConn = {
+  /** OM base URL (the connection endpoint), e.g. https://om.example.com. */
+  baseUrl: string;
+  /** OM bot JWT (resolved from the connection's vaulted secretRef, server-side). */
+  token?: string;
+  fetchImpl: OmFetch;
+  timeoutMs?: number;
+};
+
+/** An OM read that never throws: either data, or an honest failure reason. */
+export type OmRead<T> =
+  | { ok: true; data: T }
+  | { ok: false; reason: string };
+
+/** A lightly-typed OM domain (only the fields discovery needs). */
+export type OmDomain = { name: string; fqn: string; description: string };
+/** A lightly-typed OM data product. */
+export type OmDataProduct = { name: string; fqn: string; description: string };
+
+/** GET one OM path under this connection, never throwing. Bearer token injected
+ *  when present; a non-OK status or a network error becomes an honest reason. */
+async function omGet(conn: OmConn, path: string): Promise<OmRead<unknown>> {
+  const base = conn.baseUrl.replace(/\/$/, '');
+  try {
+    const res = await withTimeout(
+      conn.fetchImpl,
+      `${base}${path}`,
+      { method: 'GET', headers: authHeaders(conn.token) },
+      conn.timeoutMs ?? 2500,
+    );
+    if (!res.ok) return { ok: false, reason: `OpenMetadata ${res.status}` };
+    return { ok: true, data: await res.json() };
+  } catch {
+    return { ok: false, reason: 'unreachable' };
+  }
+}
+
+/** Read a `{ data: [...] }` list body into a name/fqn/description shape. */
+function shapeList(data: unknown): { name: string; fqn: string; description: string }[] {
+  const rows = (data as { data?: Record<string, unknown>[] })?.data;
+  if (!Array.isArray(rows)) return [];
+  return rows.map((r) => ({
+    name: String(r.name ?? ''),
+    fqn: String(r.fullyQualifiedName ?? r.name ?? ''),
+    description: String(r.description ?? ''),
+  }));
+}
+
+/** OM build version for this connection (records it so the client can pick stable
+ *  API shapes and, in Phase 2, refuse writes on an unknown version). Unauth-safe:
+ *  the version endpoint answers without a token, so a version is best-effort. */
+export async function detectOmVersion(conn: OmConn): Promise<string | undefined> {
+  const r = await omGet(conn, '/api/v1/system/version');
+  if (!r.ok) return undefined;
+  const v = (r.data as { version?: string })?.version;
+  return v ? String(v) : undefined;
+}
+
+/** GET /api/v1/domains — OM domains (a discovery SIGNAL, not an authz boundary). */
+export async function listOmDomains(conn: OmConn, limit = 50): Promise<OmRead<OmDomain[]>> {
+  const r = await omGet(conn, `/api/v1/domains?limit=${limit}`);
+  return r.ok ? { ok: true, data: shapeList(r.data) } : r;
+}
+
+/** GET /api/v1/dataProducts — OM data products. */
+export async function listOmDataProducts(conn: OmConn, limit = 50): Promise<OmRead<OmDataProduct[]>> {
+  const r = await omGet(conn, `/api/v1/dataProducts?limit=${limit}`);
+  return r.ok ? { ok: true, data: shapeList(r.data) } : r;
+}
+
+/** GET /api/v1/tables (paged, fields=description,owners,tags) → CatalogAssets. */
+export async function listOmTables(conn: OmConn, limit = 50): Promise<OmRead<CatalogAsset[]>> {
+  const r = await omGet(conn, `/api/v1/tables?limit=${limit}&fields=description,owners,tags`);
+  if (!r.ok) return r;
+  const rows = (r.data as { data?: Record<string, unknown>[] })?.data;
+  if (!Array.isArray(rows)) return { ok: false, reason: 'OpenMetadata returned no table list' };
+  return {
+    ok: true,
+    data: rows.map((t) => ({
+      name: String(t.name ?? ''),
+      fqn: String(t.fullyQualifiedName ?? t.name ?? ''),
+      description: String(t.description ?? ''),
+      type: 'table',
+      source: 'openmetadata' as const,
+    })),
+  };
+}
+
+/** GET /api/v1/search/query?q=... — free-text catalog search → CatalogAssets. */
+export async function searchOmCatalog(conn: OmConn, query: string, limit = 25): Promise<OmRead<CatalogAsset[]>> {
+  const r = await omGet(conn, `/api/v1/search/query?q=${encodeURIComponent(query)}&size=${limit}`);
+  if (!r.ok) return r;
+  // OM search returns Elasticsearch-shaped hits: { hits: { hits: [{ _source }] } }.
+  const hits = (r.data as { hits?: { hits?: { _source?: Record<string, unknown> }[] } })?.hits?.hits;
+  if (!Array.isArray(hits)) return { ok: true, data: [] };
+  return {
+    ok: true,
+    data: hits.map((h) => {
+      const s = h._source ?? {};
+      return {
+        name: String(s.name ?? ''),
+        fqn: String(s.fullyQualifiedName ?? s.name ?? ''),
+        description: String(s.description ?? ''),
+        type: String(s.entityType ?? 'entity'),
+        source: 'openmetadata' as const,
+      };
+    }),
+  };
+}
+
+/** GET /api/v1/lineage/<entity>/name/<fqn> — read lineage for an OM entity. The
+ *  raw upstream/downstream graph is returned as-is (read-only); the caller shapes
+ *  it. `entity` defaults to `table`. Never throws — honest reason on failure. */
+export async function getOmLineage(
+  conn: OmConn,
+  fqn: string,
+  entity = 'table',
+): Promise<OmRead<unknown>> {
+  return omGet(conn, `/api/v1/lineage/${encodeURIComponent(entity)}/name/${encodeURIComponent(fqn)}`);
+}
+
 /**
  * The composed OpenMetadata source the Catalog assembler injects. Runs the health
  * probe first (always), then — only when connected AND a bot token is present —

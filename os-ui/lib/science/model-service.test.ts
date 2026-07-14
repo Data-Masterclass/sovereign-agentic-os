@@ -18,6 +18,9 @@ import {
   nextTier,
   setModelArchived,
   deleteModel,
+  createModel,
+  ensureChurnSeed,
+  churnSeedModel,
 } from './model-service.ts';
 import {
   proposePlan,
@@ -309,4 +312,79 @@ test('archive/delete: a domain_admin of the owning domain MAY manage a non-owned
   // a domain_admin of ANOTHER domain is out of scope.
   const otherDomainAdmin: Actor = { id: 'omar', role: 'domain_admin', domains: ['ops'], isAgent: false };
   assert.throws(() => setModelArchived('test_model', otherDomainAdmin, false), /domain you belong to/i);
+});
+
+// ------------------------------------------------------------- createModel (Phase 1)
+
+const spec = () => ({
+  sourceDataProductFqn: 'sales.customer_360',
+  targetColumn: 'churned',
+  taskType: 'binary_classification' as const,
+  algorithm: 'xgboost',
+  features: ['recency_days', 'tenure_months'],
+  trainTestSplit: 0.8,
+  optimizeMetric: 'auc',
+});
+
+test('createModel registers a draft Personal model owned by the actor, in their domain', () => {
+  _resetModels();
+  const m = createModel({ name: 'Lead scoring', description: 'score leads', spec: spec() }, builder('sales'));
+  assert.equal(m.model, 'lead_scoring'); // slugged
+  assert.equal(m.owner, 'b');
+  assert.equal(m.domain, 'sales');
+  assert.equal(m.tier, 'Personal');
+  assert.equal(m.buildState, 'draft');
+  assert.equal(m.stage, 'Staging');
+  assert.deepEqual(m.frontDoors, ['rest', 'mcp']);
+  assert.equal(m.spec?.taskType, 'binary_classification');
+  assert.ok(m.createdAt && m.updatedAt);
+  // It's in the registry + RLS-visible to its owner as a Personal model.
+  assert.equal(getModel('lead_scoring')?.name, 'Lead scoring');
+  const mine = listModelsForUser({ id: 'b', domains: ['sales'] });
+  assert.ok(mine.some((x) => x.model === 'lead_scoring'));
+});
+
+test('createModel rejects agents, empty names, missing domain, and duplicates', () => {
+  _resetModels();
+  assert.throws(() => createModel({ name: 'X', spec: spec() }, agentActor('sales')), /agent cannot create/i);
+  assert.throws(() => createModel({ name: '   ', spec: spec() }, builder('sales')), /needs a name/i);
+  assert.throws(
+    () => createModel({ name: 'Y', spec: spec() }, { id: 'u', role: 'user', domains: [], isAgent: false }),
+    /belong to a domain/i,
+  );
+  createModel({ name: 'Dup', spec: spec() }, builder('sales'));
+  assert.throws(() => createModel({ name: 'Dup', spec: spec() }, builder('sales')), /already exists/i);
+});
+
+test('createModel: a base user (creator) MAY create their own draft in their domain', () => {
+  _resetModels();
+  const m = createModel({ name: 'My draft', spec: spec() }, { id: 'sara', role: 'user', domains: ['sales'], isAgent: false });
+  assert.equal(m.owner, 'sara');
+  assert.equal(m.tier, 'Personal');
+});
+
+// ------------------------------------------------------ churn seed (the first model)
+
+test('ensureChurnSeed wraps the live churn/KServe slice as the first trained+deployed model', () => {
+  _resetModels();
+  assert.equal(getModel('churn_model'), null, 'registry starts empty');
+  const m = ensureChurnSeed('sara', 'sales');
+  assert.equal(m.model, 'churn_model');
+  assert.equal(m.buildState, 'deployed');
+  assert.equal(m.spec?.taskType, 'binary_classification');
+  assert.equal(m.kserveService, 'churn_model');
+  assert.ok(m.versions.some((v) => v.stage === 'Production' && v.certified));
+  // Idempotent — a second call does not duplicate or clobber.
+  const again = ensureChurnSeed('someone-else', 'other');
+  assert.equal(again.owner, 'sara', 'pre-existing model is returned unchanged');
+  assert.equal(listModels().filter((x) => x.model === 'churn_model').length, 1);
+  // The churn seed appears in its owner's RLS-scoped list.
+  assert.ok(listModelsForUser({ id: 'sara', domains: ['sales'] }).some((x) => x.model === 'churn_model'));
+});
+
+test('churnSeedModel is a self-consistent Personal-tier template (walkable ladder)', () => {
+  const m = churnSeedModel('sara', 'sales');
+  assert.equal(m.tier, 'Personal'); // owner-only start → the whole ladder is walkable
+  assert.equal(nextTier(m.tier), 'Domain');
+  assert.equal(compilePredictPolicy(m).allowedDomains.length, 0); // Personal = owner only
 });

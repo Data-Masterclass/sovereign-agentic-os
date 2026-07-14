@@ -13,6 +13,7 @@ import type {
   Caller,
   CompiledPredictPolicy,
   ConsumptionMode,
+  ModelSpec,
   ModelTier,
   ServiceModel,
 } from '@/lib/science/types';
@@ -65,6 +66,56 @@ function seedModels(): ServiceModel[] {
   // A fresh tenant starts EMPTY. Models are registered only through the
   // platform's own promote/certify flows (e.g. the Northpeak e-commerce seed).
   return [];
+}
+
+/**
+ * The churn/KServe slice as a FULL model artifact — the one live backend, wrapped
+ * as the first `trained`+`deployed` model so the Science tab is never empty and has
+ * a real thing to open/predict/promote. Personal tier (owner-only) so the whole
+ * ladder is walkable; Production stage + a certified v2 version mirror the live
+ * MLflow registry. This is the Phase-1 template the route seeds when the registry
+ * has no churn model yet; tests seed it explicitly via `upsertModel`.
+ */
+export function churnSeedModel(owner = 'sara', domain = 'sales'): ServiceModel {
+  const now = new Date().toISOString();
+  return {
+    id: 'svc_churn_model',
+    model: 'churn_model',
+    name: 'Churn model',
+    owner,
+    domain,
+    tier: 'Personal',
+    stage: 'Production',
+    frontDoors: ['rest', 'mcp'],
+    versions: [{ version: 'v2', stage: 'Production', auc: 0.871, certified: true, runId: 'mlf-run-2a9c' }],
+    spec: {
+      sourceDataProductFqn: 'sales.customer_360',
+      targetColumn: 'churned',
+      taskType: 'binary_classification',
+      algorithm: 'xgboost',
+      features: ['recency_days', 'order_frequency', 'monetary_value', 'tenure_months'],
+      trainTestSplit: 0.8,
+      optimizeMetric: 'auc',
+    },
+    buildState: 'deployed',
+    description: 'Predicts customer churn from RFM + tenure features. Served by KServe; the live Layer-4 slice.',
+    metrics: { primary: 0.871, primaryMetric: 'auc' },
+    mlflowRunId: 'mlf-run-2a9c',
+    kserveService: 'churn_model',
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/**
+ * Ensure the wrapped churn model exists (idempotent) — the route calls this so a
+ * fresh tenant's Science tab opens on the live model rather than an empty grid.
+ * Returns the model that is now in the registry (seeded or pre-existing).
+ */
+export function ensureChurnSeed(owner?: string, domain?: string): ServiceModel {
+  const existing = getModel('churn_model');
+  if (existing) return existing;
+  return upsertModel(churnSeedModel(owner, domain));
 }
 
 let registry: Map<string, ServiceModel> | null = null;
@@ -127,6 +178,63 @@ export function upsertModel(m: ServiceModel): ServiceModel {
 /** Reset the registry to seed — used by tests so each case starts clean. */
 export function _resetModels(): void {
   registry = null;
+}
+
+// --------------------------------------------------------------- create a model ---
+
+function slugModel(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/(^_|_$)/g, '');
+}
+
+/** The fields a caller supplies when creating a model; the rest are derived. */
+export type CreateModelInput = {
+  name: string;
+  description?: string;
+  spec: ModelSpec;
+};
+
+/**
+ * Register a NEW model as a `draft` artifact, owned by the actor in their domain
+ * at the base `Personal` tier — the create seam the builder's Define step calls.
+ * Mirrors how every other artifact is born: authored by a human (agents rejected),
+ * scoped to a domain the actor belongs to, and persisted into the SAME in-process
+ * registry every other store fn keys on (`upsertModel`), so the RLS list, the
+ * policy compiler and the whole tier ladder apply to it immediately. Pure + in-
+ * process (like the agents/dataset MOCK stores) so it stays `node --test`-safe.
+ */
+export function createModel(input: CreateModelInput, actor: Actor): ServiceModel {
+  assertHuman(actor, 'create a model');
+  const domain = actor.domains[0];
+  if (!domain) throw withStatus(new Error('You must belong to a domain to create a model'), 403);
+  const name = input.name?.trim();
+  if (!name) throw withStatus(new Error('A model needs a name'), 400);
+  const modelId = slugModel(name);
+  if (!modelId) throw withStatus(new Error('The model name must contain letters or digits'), 400);
+  if (getModel(modelId)) throw withStatus(new Error(`A model named ${modelId} already exists`), 409);
+
+  const now = new Date().toISOString();
+  const m: ServiceModel = {
+    id: `svc_${modelId}`,
+    model: modelId,
+    name,
+    owner: actor.id,
+    domain,
+    tier: 'Personal',
+    stage: 'Staging',
+    frontDoors: ['rest', 'mcp'],
+    versions: [],
+    spec: input.spec,
+    buildState: 'draft',
+    description: input.description?.trim() || undefined,
+    kserveService: modelId,
+    createdAt: now,
+    updatedAt: now,
+  };
+  return upsertModel(m);
 }
 
 // --------------------------------------------------- The policy compiler (mirror) ---

@@ -383,6 +383,16 @@ export const config = {
   // the existing materialize path). See docs/external-warehouse-connectors.md.
   externalConnectorsEnabled: env('EXTERNAL_CONNECTORS_ENABLED', '').toLowerCase() === 'true',
 
+  // ---- External OpenMetadata connection (Phase 1, read/discover only). GATED
+  // OFF by default: modelling an EXTERNAL OpenMetadata instance as a first-class
+  // Connection (base URL + vaulted bot JWT + optional default OM Service) and
+  // folding its domains/data-products/tables into the catalog as DLS-scoped
+  // discovery context is code-complete + unit-tested but inert until an operator
+  // deliberately connects an OM. This is READ-ONLY by construction — no writes to
+  // OM in this phase. Distinct from the bundled in-cluster OM (openmetadataApiUrl
+  // above), which is unchanged. See docs/openmetadata-connectors.md (Phase 1).
+  openmetadataConnectEnabled: env('OPENMETADATA_CONNECT_ENABLED', '').toLowerCase() === 'true',
+
   // ---- Deployment identity (read-only, surfaced on Settings; non-secret) ----
   deploymentProfile: env('OS_PROFILE', 'local'),
   deploymentNamespace: env('OS_NAMESPACE', 'agentic-os'),

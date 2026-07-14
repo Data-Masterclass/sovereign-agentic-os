@@ -379,6 +379,12 @@ spec:
             # operator opts in (lib/core/config.ts reads EXTERNAL_CONNECTORS_ENABLED).
             - name: EXTERNAL_CONNECTORS_ENABLED
               value: {{ $u.externalConnectorsEnabled | default false | quote }}
+            # External OpenMetadata connections (Phase 1 — read/discover only). OFF
+            # by default — surfaces the om-catalog create-flow, catalog discovery fold
+            # + MCP read tools only when the operator opts in (lib/core/config.ts reads
+            # OPENMETADATA_CONNECT_ENABLED). No writes to OM in this phase.
+            - name: OPENMETADATA_CONNECT_ENABLED
+              value: {{ $u.openmetadataConnectEnabled | default false | quote }}
             {{- if .Values.ml.enabled }}
             # Layer 4 (Science). Gates the Science/ML surfaces in the UI
             # (lib/config.ts reads ML_ENABLED). On when the Science plane

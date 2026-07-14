@@ -29,6 +29,7 @@ import {
   getConnectionForUser,
   createConnection,
   testConnection,
+  callConnectionTool,
   warehouseRegistration,
   registerWarehouseCatalog,
   discoverWarehouse,
@@ -37,7 +38,17 @@ import {
   isPersonalConnectable,
   type ConnectionTemplateKey,
   type WarehouseCreateInput,
+  type AirflowCreateInput,
 } from '@/lib/connections';
+import type { AirflowAuthType } from '@/lib/connections/schema';
+import {
+  resolveOmCatalog,
+  omListDomains,
+  omListDataProducts,
+  omListTables,
+  omSearch,
+  omLineage,
+} from '@/lib/connections/openmetadata';
 import { WAREHOUSE_PROVIDERS } from '@/lib/connections/warehouse/registry';
 import { WAREHOUSE_PLATFORMS, type WarehousePlatform } from '@/lib/connections/warehouse/types';
 import { promoteThroughSeam } from '@/lib/governance/ladder';
@@ -729,6 +740,9 @@ const connectionTools: McpTool[] = [
         // The `warehouse` template appears ONLY when the operator enabled external
         // connectors — otherwise it is hidden exactly like it is in the UI picker.
         .filter((t) => t.key !== 'warehouse' || config.externalConnectorsEnabled)
+        // Same for the external `om-catalog` template — hidden until an operator
+        // enables OPENMETADATA_CONNECT_ENABLED (Phase 1 default OFF).
+        .filter((t) => t.key !== 'om-catalog' || config.openmetadataConnectEnabled)
         .map((t) => {
           const personal = isPersonalConnectable(t);
           return {
@@ -822,6 +836,19 @@ const connectionTools: McpTool[] = [
           },
           required: ['platform', 'catalog', 'fields'],
         },
+        omService: {
+          type: 'string',
+          description: 'For template="om-catalog" ONLY (OpenMetadata connections must be enabled): the optional default OM Service name. The endpoint is the OM base URL; credential is the bot JWT.',
+        },
+        airflow: {
+          type: 'object',
+          description: 'For template="airflow" ONLY: the non-secret REST config. The endpoint is the Airflow base URL; credential is the Bearer token (or the Basic-auth password).',
+          properties: {
+            authType: { type: 'string', enum: ['basic', 'bearer'], description: 'How to authenticate (default bearer).' },
+            username: { type: 'string', description: 'Basic-auth username (non-secret); omit for bearer.' },
+            dagAllowlist: { type: 'array', items: { type: 'string' }, description: 'Optional DAG ids trigger_dag is bounded to (empty = any DAG).' },
+          },
+        },
       },
       required: ['name', 'template'],
       examples: [
@@ -845,6 +872,12 @@ const connectionTools: McpTool[] = [
         for (const [k, v] of Object.entries(rawFields)) fields[k] = str(v);
         warehouse = { platform, catalog, fields };
       }
+      let airflow: AirflowCreateInput | undefined;
+      if (template === 'airflow') {
+        const a = (args.airflow ?? {}) as Record<string, unknown>;
+        const authType = (str(a.authType) === 'basic' ? 'basic' : 'bearer') as AirflowAuthType;
+        airflow = { authType, username: str(a.username) || undefined, dagAllowlist: strArr(a.dagAllowlist) };
+      }
       return createConnection(user, {
         name,
         template,
@@ -852,6 +885,8 @@ const connectionTools: McpTool[] = [
         credential: str(args.credential),
         domain: str(args.domain) || undefined,
         warehouse,
+        omService: template === 'om-catalog' ? str(args.omService) || undefined : undefined,
+        airflow,
       });
     },
   },
@@ -967,6 +1002,188 @@ const warehouseTools: McpTool[] = [
   },
 ];
 
+// ============================ EXTERNAL OPENMETADATA ===========================
+// Read/discover tools over an EXTERNAL OpenMetadata modelled as an `om-catalog`
+// connection (Phase 1). Registered ONLY when the operator enabled
+// OPENMETADATA_CONNECT_ENABLED. Every tool is READ-ONLY — there is NO write to OM
+// here (the scoped write path is Phase 2). Each resolves the connection under the
+// caller's identity (DLS 404 on an unseeable id), reads the bot JWT server-side
+// (never returned/logged), and routes through the governed spine so calls are
+// audit-traced like every other discovery tool. An unreachable OM degrades to an
+// honest { ok:false, reason } — never a fabricated listing.
+const omArg = (extra?: Record<string, unknown>): JsonSchema => ({
+  type: 'object',
+  properties: {
+    connId: { type: 'string', description: 'The om-catalog connection id from list_connections.' },
+    ...(extra ?? {}),
+  },
+  required: ['connId', ...Object.keys(extra ?? {})],
+  examples: [{ connId: 'conn_ab12cd', ...(extra ? Object.fromEntries(Object.keys(extra).map((k) => [k, 'x'])) : {}) }],
+});
+
+const omCatalogTools: McpTool[] = [
+  {
+    name: 'list_domains',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'List the DOMAINS in an external OpenMetadata catalog (om-catalog connection). Read-only discovery — OM domain membership is a discovery SIGNAL, not an authorization boundary. Before: list_connections (find an om-catalog connection). After: list_data_products / list_tables / search_catalog. Governance: read-only; an unseeable connId → not_found; an unreachable OM → { ok:false, reason }.',
+    inputSchema: omArg(),
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('list_domains needs a `connId`', 400);
+      const c = await resolveOmCatalog(id, user);
+      return omListDomains(c);
+    },
+  },
+  {
+    name: 'list_data_products',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'List the DATA PRODUCTS in an external OpenMetadata catalog (om-catalog connection). Read-only discovery. Before: list_connections. After: list_tables / search_catalog / get_om_lineage. Governance: read-only; unseeable connId → not_found; unreachable OM → { ok:false, reason }.',
+    inputSchema: omArg(),
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('list_data_products needs a `connId`', 400);
+      const c = await resolveOmCatalog(id, user);
+      return omListDataProducts(c);
+    },
+  },
+  {
+    name: 'list_tables',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'List TABLES (with description/owners/tags) in an external OpenMetadata catalog (om-catalog connection). Read-only discovery. Before: list_connections. After: search_catalog to narrow, or get_om_lineage on a table FQN. Governance: read-only; unseeable connId → not_found; unreachable OM → { ok:false, reason }.',
+    inputSchema: omArg(),
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('list_tables needs a `connId`', 400);
+      const c = await resolveOmCatalog(id, user);
+      return omListTables(c);
+    },
+  },
+  {
+    name: 'search_catalog',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'SEARCH an external OpenMetadata catalog (om-catalog connection) by free text. Read-only discovery. Before: list_connections. After: get_om_lineage on a hit’s FQN. Governance: read-only; unseeable connId → not_found; unreachable OM → { ok:false, reason }.',
+    inputSchema: omArg({ query: { type: 'string', description: 'Free-text search over the OM catalog.' } }),
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('search_catalog needs a `connId`', 400);
+      const query = str(args.query).trim();
+      if (!query) fail('search_catalog needs a `query`', 400);
+      const c = await resolveOmCatalog(id, user);
+      return omSearch(c, query);
+    },
+  },
+  {
+    name: 'get_om_lineage',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'Read LINEAGE for an entity in an external OpenMetadata catalog (om-catalog connection) by FQN. Read-only. Before: list_tables / search_catalog (take an FQN). Governance: read-only; unseeable connId → not_found; unreachable OM or unknown FQN → { ok:false, reason }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connId: { type: 'string', description: 'The om-catalog connection id from list_connections.' },
+        fqn: { type: 'string', description: 'Entity fully-qualified name, e.g. "trino.iceberg.sales.orders".' },
+        entity: { type: 'string', description: 'Entity type (default "table").' },
+      },
+      required: ['connId', 'fqn'],
+      examples: [{ connId: 'conn_ab12cd', fqn: 'trino.iceberg.sales.orders' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('get_om_lineage needs a `connId`', 400);
+      const fqn = str(args.fqn).trim();
+      if (!fqn) fail('get_om_lineage needs an `fqn`', 400);
+      const c = await resolveOmCatalog(id, user);
+      return omLineage(c, fqn, str(args.entity) || undefined);
+    },
+  },
+];
+
+// ================================= AIRFLOW =====================================
+// Governed outbound tools over a customer's Apache Airflow modelled as an `airflow`
+// connection. list_dags / get_dag_run are Read (auto-allow); trigger_dag is a real
+// side effect held for approval by default (its CapabilityMode is Write-approval).
+// Every tool routes through the SAME governed callConnectionTool as the UI + the
+// /api tool door — so the capability gate, the DAG allowlist bound, the vaulted
+// secret injection (never returned/logged) and the Langfuse audit ALL apply, and a
+// held trigger is enqueued into the Governance queue rather than firing.
+const airflowTools: McpTool[] = [
+  {
+    name: 'list_dags',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'List the DAGs in a customer Apache Airflow (airflow connection). Read-only monitoring — the credential is injected server-side and never returned. Before: list_connections (find an airflow connection). After: trigger_dag to start a run, or get_dag_run to monitor one. Governance: read-only, auto-allowed; an unseeable connId → not_found; an unreachable Airflow → { ok:false, reason }.',
+    inputSchema: idArg('connId', 'The airflow connection id from list_connections.'),
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('list_dags needs a `connId`', 400);
+      return callConnectionTool(id, user, { tool: 'list_dags', args: {} });
+    },
+  },
+  {
+    name: 'get_dag_run',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'Read one DAG run (state, logical date) in a customer Apache Airflow (airflow connection) by dag id + run id. Read-only monitoring. Before: list_dags / trigger_dag (take the returned dagRunId). Governance: read-only, auto-allowed; unseeable connId → not_found; unreachable Airflow or unknown run → { ok:false, reason }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connId: { type: 'string', description: 'The airflow connection id from list_connections.' },
+        dagId: { type: 'string', description: 'The DAG id, e.g. "example_etl".' },
+        runId: { type: 'string', description: 'The DAG run id returned by trigger_dag.' },
+      },
+      required: ['connId', 'dagId', 'runId'],
+      examples: [{ connId: 'conn_ab12cd', dagId: 'example_etl', runId: 'manual__2026-01-01T00:00:00+00:00' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('get_dag_run needs a `connId`', 400);
+      const dagId = str(args.dagId).trim();
+      const runId = str(args.runId).trim();
+      if (!dagId || !runId) fail('get_dag_run needs a `dagId` and a `runId`', 400);
+      return callConnectionTool(id, user, { tool: 'get_dag_run', args: { dagId, runId } });
+    },
+  },
+  {
+    name: 'trigger_dag',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'Trigger a DAG run in a customer Apache Airflow (airflow connection). This is a real WRITE side effect — by default its CapabilityMode is Write-approval, so the call is HELD for human approval in the Governance tab (a Builder can drop it to Write-bounded once trusted). The response decision is "requires_approval" until approved; only then does Airflow receive the POST. `conf` is passed through to the run. Before: list_dags (pick a dagId). After: get_dag_run to monitor. Governance: written through the same capability gate + DAG allowlist as the UI; the token is never sent to the model. Honest: an unreachable Airflow → { ok:false, reason }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connId: { type: 'string', description: 'The airflow connection id from list_connections.' },
+        dagId: { type: 'string', description: 'The DAG id to trigger, e.g. "example_etl".' },
+        conf: { type: 'object', description: 'Optional run configuration passed to the DAG (Airflow `conf`).' },
+        logicalDate: { type: 'string', description: 'Optional ISO-8601 logical date for the run.' },
+      },
+      required: ['connId', 'dagId'],
+      examples: [{ connId: 'conn_ab12cd', dagId: 'example_etl' }, { connId: 'conn_ab12cd', dagId: 'example_etl', conf: { rows: 100 } }],
+    },
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('trigger_dag needs a `connId`', 400);
+      const dagId = str(args.dagId).trim();
+      if (!dagId) fail('trigger_dag needs a `dagId`', 400);
+      const toolArgs: Record<string, unknown> = { dagId };
+      if (args.conf && typeof args.conf === 'object') toolArgs.conf = args.conf;
+      if (str(args.logicalDate).trim()) toolArgs.logicalDate = str(args.logicalDate).trim();
+      return callConnectionTool(id, user, { tool: 'trigger_dag', args: toolArgs });
+    },
+  },
+];
+
 // ================================= SCIENCE ====================================
 // The Science read surface: what the caller can SCORE through the governed predict
 // door. Reads the SAME registry `science_predict`'s gate (`authorizePredict`) reads,
@@ -1070,6 +1287,12 @@ export const DISCOVERY_TOOLS: McpTool[] = [
   // Warehouse tools appear ONLY when the operator enabled external connectors —
   // nothing new surfaces on the MCP when EXTERNAL_CONNECTORS_ENABLED is off.
   ...(config.externalConnectorsEnabled ? warehouseTools : []),
+  // External-OM read tools appear ONLY when the operator enabled OpenMetadata
+  // connections — nothing new surfaces when OPENMETADATA_CONNECT_ENABLED is off.
+  ...(config.openmetadataConnectEnabled ? omCatalogTools : []),
+  // Airflow tools are always available — the connector is user-facing (a plain API
+  // connector); the tools resolve to a no-op unless an airflow connection exists.
+  ...airflowTools,
   ...scienceTools,
   guideTool,
 ];

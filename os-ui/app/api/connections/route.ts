@@ -91,7 +91,13 @@ export async function POST(req: Request) {
     if (isWarehouse && !config.externalConnectorsEnabled) {
       return NextResponse.json({ error: 'External-warehouse connectors are not enabled on this deployment' }, { status: 403 });
     }
-    if (!isWarehouse && !isUserFacingTemplate(template)) {
+    // External OpenMetadata (Phase 1, read/discover) — allowed ONLY when the operator
+    // enabled OpenMetadata connections; otherwise inert like every other flag-gated one.
+    const isOmCatalog = template === 'om-catalog';
+    if (isOmCatalog && !config.openmetadataConnectEnabled) {
+      return NextResponse.json({ error: 'External OpenMetadata connections are not enabled on this deployment' }, { status: 403 });
+    }
+    if (!isWarehouse && !isOmCatalog && !isUserFacingTemplate(template)) {
       return NextResponse.json({ error: 'This connector is not available' }, { status: 400 });
     }
     // Parse + validate the warehouse block shape at the edge (the lib re-validates fields).
@@ -116,6 +122,8 @@ export async function POST(req: Request) {
       domain: body?.domain ? String(body.domain) : undefined,
       openApiSpec: body?.openApiSpec,
       warehouse,
+      // Optional default OM Service name for an om-catalog connection (non-secret).
+      omService: isOmCatalog && body?.omService ? String(body.omService) : undefined,
     });
     return NextResponse.json({ connection: conn }, { status: 201 });
   } catch (e) {

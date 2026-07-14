@@ -13,6 +13,7 @@ import {
   type CatalogAsset,
 } from '@/lib/data/catalog';
 import { openMetadataSource, omEntityUrl } from '@/lib/data/openmetadata';
+import { firstOmCatalogFor, omConnectionSource } from '@/lib/connections/openmetadata';
 
 export const dynamic = 'force-dynamic';
 
@@ -77,6 +78,14 @@ export async function GET() {
   const registry = registryAssets(listDatasets(p));
   const mirroredMarts = registry.filter((a) => a.fqn.startsWith('iceberg.')).length;
 
+  // Phase-1 external OM: the FIRST `om-catalog` connection the caller may see (null
+  // when the flag is off or none is connected → the discovery fold is absent). Its
+  // contribution is DLS-clamped to the FQNs the caller already sees below.
+  const omConn = await firstOmCatalogFor(user);
+  const visibleFqns = new Set(
+    [...registry].map((a) => a.fqn).filter((fqn) => fqn.startsWith('iceberg.')),
+  );
+
   const result = await assembleCatalog({
     schema: principal,
     registry,
@@ -88,6 +97,10 @@ export async function GET() {
         fetchImpl: fetch,
         mirroredMarts,
       }),
+    // Only fold in the external OM when one is actually connected + visible.
+    ...(omConn
+      ? { omConnection: () => omConnectionSource(omConn, visibleFqns).then((s) => s ?? { assets: null, ok: true, count: 0, status: '', severity: 'ok' as const }) }
+      : {}),
   });
   // Deep-link every governed Iceberg asset (registry + Trino) into its OM entity.
   result.assets = withOmLinks(result.assets);

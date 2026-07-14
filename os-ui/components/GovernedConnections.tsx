@@ -15,23 +15,28 @@ import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import type { Visibility } from '@/lib/core/lifecycle';
 import DomainTag from '@/components/DomainTag';
-import { CONNECTORS, CONNECTOR_CATEGORIES } from '@/lib/connections/connectors';
 import { useApi } from '@/lib/useApi';
 import { WarehouseBrowser } from '@/components/data/WarehouseImportPanel';
+import ConnectorWizard, { type WizardStart } from '@/components/connections/ConnectorWizard';
 
 /**
  * Governed Connections surface — ONE scroll, no sub-tabs.
  *
  * Layout (top → bottom):
- *   1. Governed connections grouped All · My · Shared · Marketplace (scope switcher).
- *   2. Create a new connection (OAuth templates + service connectors).
- *   3. App MCP connections (auto-generated from Software tab).
- *   4. Supported connector catalog.
- *   5. Outbound access / egress allowlist (Builder/Admin only).
+ *   Header — All · My · Shared · Marketplace scope segment, Show archived, ＋ New connector.
+ *   1. Connections list — scope-grouped governed connections, with App-MCP connections
+ *      (auto-generated from the Software tab) FOLDED IN by scope, tagged "App" and
+ *      linking back to their app. Warehouse cards keep Register → Test → Browse → Import.
+ *   2. Supported Connectors — a gallery of the connector TYPES you can connect,
+ *      rendered dynamically from the connection-template registry the API returns
+ *      (data.templates + data.warehouse.providers) so new templates appear on their own.
+ *   3. Outbound access / egress allowlist (Builder/Admin only).
  *
- * Builder/Admin creates a Connection → endpoint + credential (to Secrets Manager,
- * never the record) → tests it → tunes the per-tool capability profile → promotes it
- * up the Personal→Shared→Marketplace ladder. Participants see a read-only consume view.
+ * Both create paths — the header "＋ New connector" (pick any type) and a gallery card's
+ * Connect (pre-set to that type) — open the SAME shared <ConnectorWizard>, which drives
+ * the SAME governed create route. Credentials go to Secrets Manager (never the record);
+ * Builder/Admin then tunes the per-tool capability profile on the card and promotes it up
+ * the Personal→Shared→Marketplace ladder. Participants see a read-only consume view.
  */
 
 // ---- Types -----------------------------------------------------------------
@@ -172,120 +177,28 @@ export default function GovernedConnections() {
   // ---- App MCP connections (auto-generated from Software tab) ----
   const { data: appConns } = useApi<AppConns>('/api/connections/apps');
 
-  // ---- New connection form ----
-  const [name, setName] = useState('');
-  const [template, setTemplate] = useState('notion-mcp');
-  const [endpoint, setEndpoint] = useState('');
-  const [credential, setCredential] = useState('');
-  const [openApiSpec, setOpenApiSpec] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [createMsg, setCreateMsg] = useState('');
-  // The header "+ New connection" scrolls to (and focuses) the existing create form
-  // below — one create flow, surfaced from the standard header position.
-  const createRef = useRef<HTMLDivElement>(null);
-  const openCreate = useCallback(() => {
-    createRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // ---- Shared connector wizard (both create paths open the SAME stepper) ----
+  // `null` = closed; a WizardStart = open (custom = header button, type = gallery card).
+  const [wizard, setWizard] = useState<WizardStart | null>(null);
+  const wizardRef = useRef<HTMLDivElement>(null);
+  const openWizard = useCallback((start: WizardStart) => {
+    setWizard(start);
+    // Bring the (now-visible) wizard into view — it renders just under the header.
+    requestAnimationFrame(() => wizardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   }, []);
 
-  // ---- Warehouse (external connectors, flag-gated) create state ----
   const warehouseMeta = data?.warehouse?.enabled ? data.warehouse : null;
-  const [whPlatform, setWhPlatform] = useState('');
-  const [whCatalog, setWhCatalog] = useState('');
-  const [whFields, setWhFields] = useState<Record<string, string>>({});
-  const isWarehouse = template === 'warehouse';
-  const whProvider = warehouseMeta?.providers.find((p) => p.platform === whPlatform)
-    ?? warehouseMeta?.providers[0];
-
-  const tpl = isWarehouse
-    ? (warehouseMeta?.template ?? data?.templates.find((t) => t.key === template))
-    : data?.templates.find((t) => t.key === template);
-  const isOAuth = !isWarehouse && tpl?.auth === 'oauth';
-  const isApiConnector = !isWarehouse && tpl?.connector === 'api';
-  const oauthTemplates = data?.templates.filter((t) => t.auth === 'oauth') ?? [];
-  const serviceTemplates = data?.templates.filter((t) => t.auth === 'service') ?? [];
   const canCreate = data?.canCreate ?? false;
   const canCreatePersonal = data?.canCreatePersonal ?? false;
-
-  async function createWarehouse() {
-    if (!name.trim() || !whProvider || creating) return;
-    setCreating(true);
-    setCreateMsg('');
-    try {
-      const res = await fetch('/api/connections', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          template: 'warehouse',
-          warehouse: { platform: whProvider.platform, catalog: whCatalog.trim(), fields: whFields },
-        }),
-      });
-      const resp = await res.json() as { connection?: Conn; error?: string };
-      if (!res.ok || !resp.connection) {
-        setCreateMsg(`✗ ${resp.error ?? 'Could not create warehouse connection'}`);
-      } else {
-        const c = resp.connection;
-        setCreateMsg(`✓ Created "${c.name}" (${whProvider.label}). Next: an operator registers catalog '${whCatalog.trim()}' in Trino (values.trino.externalCatalogs) + wires the secret, rolling-restarts Trino, then Test. Secrets went to Secrets Manager (never the record).`);
-        setName('');
-        setWhCatalog('');
-        setWhFields({});
-        load();
-      }
-    } catch (e) { setCreateMsg(`✗ ${(e as Error).message}`); }
-    finally { setCreating(false); }
-  }
-
-  async function create() {
-    if (!name.trim() || creating) return;
-    setCreating(true);
-    setCreateMsg('');
-    try {
-      const body: Record<string, unknown> = { name, template };
-      if (!isOAuth) {
-        body.endpoint = endpoint;
-        body.credential = credential;
-        if (isApiConnector && openApiSpec.trim()) {
-          let spec: unknown = openApiSpec.trim();
-          try { spec = JSON.parse(openApiSpec.trim()); } catch { /* send raw — backend tolerates */ }
-          body.openApiSpec = spec;
-        }
-      }
-      const res = await fetch('/api/connections', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const resp = await res.json() as { connection?: Conn; error?: string };
-      if (!res.ok || !resp.connection) {
-        setCreateMsg(`✗ ${resp.error ?? 'Could not create connection'}`);
-      } else {
-        const c = resp.connection;
-        const ref = `${c.secretRef.name}/${c.secretRef.key}`;
-        if (isOAuth) {
-          setCreateMsg(`✓ Created "${c.name}" — ${c.visibility === 'Shared' ? 'Shared in Domain' : c.visibility}. Now click Connect on its card below to sign in and authorize your own account. The token goes to Secrets Manager as ref ${ref} (never the value).`);
-        } else {
-          setCreateMsg(`✓ Created "${c.name}" — ${c.visibility === 'Shared' ? 'Shared in Domain' : c.visibility}. Credential stored as ref ${ref} (never the value).`);
-        }
-        setName('');
-        setCredential('');
-        setOpenApiSpec('');
-        load();
-      }
-    } catch (e) { setCreateMsg(`✗ ${(e as Error).message}`); }
-    finally { setCreating(false); }
-  }
-
-  const showOAuthForm = (canCreatePersonal || canCreate) && isOAuth && oauthTemplates.length > 0;
-  const showWarehouseForm = canCreate && isWarehouse && !!warehouseMeta;
-  const showServiceForm = canCreate && !isOAuth && !isWarehouse && serviceTemplates.length > 0;
 
   if (!data && !error) return <div className="hint"><span className="spin" /> Loading connections…</div>;
 
   return (
     <ConfirmProvider>
 
-      {/* ── 1. Governed connections (scope-grouped) ── */}
-      {/* Canonical artifact-tab header: lead left, Show archived + New right, seg below. */}
+      {/* ── Header (canonical artifact-tab header) ── */}
+      {/* Lead left; Show archived + ＋ New connector right; scope segment below. The
+          Show-archived toggle is intentionally always-solid — do NOT restyle it. */}
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
         <p className="lead" style={{ margin: 0, maxWidth: 560 }}>
           Governed connections — each connects with your own account, stores only a token
@@ -302,18 +215,40 @@ export default function GovernedConnections() {
             {showArchived ? 'Hide archived' : 'Show archived'}
           </button>
           {(canCreate || canCreatePersonal) ? (
-            <button className="btn" onClick={openCreate}>+ New connection</button>
+            <button className="btn" onClick={() => openWizard({ mode: 'custom' })}>＋ New connector</button>
           ) : null}
         </div>
       </div>
       {error ? <div className="error" style={{ marginTop: 14 }}>{error}</div> : null}
 
+      {/* The shared wizard — opens under the header for BOTH create paths (header
+          "＋ New connector" = custom; a Supported card's Connect = pre-set to that type). */}
+      <div ref={wizardRef} style={{ scrollMarginTop: 16 }}>
+        {wizard && data ? (
+          <ConnectorWizard
+            data={{ templates: data.templates, warehouse: data.warehouse, canCreate, canCreatePersonal }}
+            start={wizard}
+            onDone={load}
+            onCancel={() => setWizard(null)}
+          />
+        ) : null}
+      </div>
+
+      {/* ── 1. Connections list (scope-grouped; App-MCP folded in by scope) ── */}
       {(() => {
         if (!data) return null;
+        // Governed connections + App-MCP connections share the SAME four scope groups
+        // (My / Shared / Marketplace by visibility+owner). App connections fold into the
+        // caller's scope: my app → My, a Shared app → Shared, etc.
         const groups = groupsFromVisibility(data.connections);
-        const scoped = groupByScope(groups, data.user.id);
-        const counts = scopeCounts(groups, data.user.id);
-        const visible = scoped[scope];
+        const scopedConns = groupByScope(groups, data.user.id)[scope];
+        const apps = appConns?.connections ?? [];
+        const scopedApps = groupByScope(groupsFromVisibility(apps), data.user.id)[scope];
+        // Counts include both governed + app connections so the segment reflects the list.
+        const cCounts = scopeCounts(groups, data.user.id);
+        const aCounts = scopeCounts(groupsFromVisibility(apps), data.user.id);
+        const counts = { all: cCounts.all + aCounts.all, mine: cCounts.mine + aCounts.mine, shared: cCounts.shared + aCounts.shared, marketplace: cCounts.marketplace + aCounts.marketplace };
+        const empty = scopedConns.length === 0 && scopedApps.length === 0;
         return (
           <>
             {/* Scope switcher — the OS-wide four groups: All · My · Shared · Marketplace. */}
@@ -324,263 +259,72 @@ export default function GovernedConnections() {
                 </button>
               ))}
             </div>
-            {visible.length === 0 ? (
+            {empty ? (
               <div className="stub-page">
                 {scope === 'mine' || scope === 'all'
-                  ? <>No governed connections yet{canCreate ? ' — create one below.' : '.'}</>
+                  ? <>No connections yet{(canCreate || canCreatePersonal) ? ' — use ＋ New connector, or pick a Supported connector below.' : '.'}</>
                   : scope === 'shared' ? 'Nothing shared in your domain yet.' : 'Nothing in the marketplace yet.'}
               </div>
             ) : (
-              visible.map((c) => (
-                <ConnectionCard
-                  key={c.id}
-                  c={c}
-                  role={data.user.role}
-                  me={data.user}
-                  oauthProviders={data.oauthProviders ?? []}
-                  open={open === c.id}
-                  onToggle={() => setOpen(open === c.id ? '' : c.id)}
-                  onChange={load}
-                />
-              ))
+              <>
+                {scopedConns.map((c) => (
+                  <ConnectionCard
+                    key={c.id}
+                    c={c}
+                    role={data.user.role}
+                    me={data.user}
+                    oauthProviders={data.oauthProviders ?? []}
+                    open={open === c.id}
+                    onToggle={() => setOpen(open === c.id ? '' : c.id)}
+                    onChange={load}
+                  />
+                ))}
+                {scopedApps.map((c) => <AppConnectionCard key={c.id} c={c} />)}
+              </>
             )}
           </>
         );
       })()}
 
-      {/* ── 2. Create a new connection ── */}
-      <div ref={createRef} className="section-title" style={{ marginTop: 28, scrollMarginTop: 16 }}>New connection</div>
-      {(canCreate || canCreatePersonal) ? (
-        <>
-          <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-            Pick a connector: <strong>Google Drive</strong>, <strong>OneDrive</strong> or
-            {' '}<strong>Notion</strong>. Each connects with your own account via OAuth — you sign in,
-            we complete the flow server-side and store only a token <em>reference</em> (never the token).
-            All external endpoints are checked against the <strong>egress allowlist</strong>.
-          </p>
-
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Connection name (e.g. Alex's Google Drive, My Notion workspace)"
-          />
-
-          <div className="row" style={{ marginTop: 10 }}>
-            <select
-              value={template}
-              onChange={(e) => { setTemplate(e.target.value); setEndpoint(''); }}
-              style={{ flex: 1 }}
-            >
-              {oauthTemplates.length > 0 && (
-                <optgroup label="Connect your own account (personal OAuth)">
-                  {oauthTemplates.map((t) => (
-                    <option key={t.key} value={t.key}>{t.label}</option>
-                  ))}
-                </optgroup>
-              )}
-              {serviceTemplates.length > 0 && (
-                <optgroup label="Shared in Domain connection (service credentials — Builder / Admin)">
-                  {serviceTemplates.map((t) => (
-                    <option key={t.key} value={t.key}>{t.label} · {t.type}</option>
-                  ))}
-                </optgroup>
-              )}
-              {warehouseMeta && (
-                <optgroup label="External data warehouse (federated Trino catalog — Builder / Admin)">
-                  <option value="warehouse">{warehouseMeta.template.label}</option>
-                </optgroup>
-              )}
-            </select>
-          </div>
-
-          {showOAuthForm ? (
-            <>
-              <p className="hint" style={{ marginTop: 10, marginBottom: 6 }}>
-                Add the drive, then click <strong>Connect</strong> on its card above to sign in through
-                {tpl ? ` ${tpl.label}` : ' the provider'} and authorize your own account. We complete OAuth
-                and store the token in Secrets Manager — never in the browser or the record. This
-                connection is private to you (<strong>Personal</strong>).
-              </p>
-              <div className="row" style={{ justifyContent: 'flex-end' }}>
-                <button className="btn" onClick={create} disabled={creating || !name.trim()}>
-                  {creating ? <span className="spin" /> : `Add ${tpl?.label ?? 'drive'}`}
-                </button>
-              </div>
-            </>
-          ) : showWarehouseForm && warehouseMeta && whProvider ? (
-            <>
-              <p className="hint" style={{ marginTop: 10, marginBottom: 6 }}>
-                Federate an external lakehouse as ONE governed Trino catalog. Fill the platform&rsquo;s
-                fields below — <strong>secret</strong> fields go to Secrets Manager, the rest onto the
-                record. Registration is an operator step (values.trino.externalCatalogs + rolling restart);
-                the Trino pod mounts its catalog dir <strong>read-only</strong>, so no catalog is written at runtime.
-              </p>
-              <div className="row" style={{ marginTop: 10 }}>
-                <select
-                  value={whProvider.platform}
-                  onChange={(e) => { setWhPlatform(e.target.value); setWhFields({}); }}
-                  style={{ flex: 1 }}
-                >
-                  {warehouseMeta.providers.map((p) => (
-                    <option key={p.platform} value={p.platform}>{p.label}</option>
-                  ))}
-                </select>
-              </div>
-              <input
-                type="text"
-                value={whCatalog}
-                onChange={(e) => setWhCatalog(e.target.value)}
-                placeholder="Trino catalog name (e.g. glue_sales) — [a-z_][a-z0-9_]*"
-                style={{ marginTop: 10 }}
-                autoComplete="off"
-              />
-              {whProvider.credentialFields.map((f) => {
-                const secret = whProvider.secretKeys.includes(f.key);
-                return (
-                  <input
-                    key={f.key}
-                    type={secret || f.kind === 'password' || f.kind === 'pem' ? 'password' : 'text'}
-                    value={whFields[f.key] ?? ''}
-                    onChange={(e) => setWhFields((prev) => ({ ...prev, [f.key]: e.target.value }))}
-                    placeholder={`${f.label}${f.required ? '' : ' (optional)'}${secret ? ' — to Secrets Manager' : ''}${f.help ? ` — ${f.help}` : ''}`}
-                    style={{ marginTop: 10 }}
-                    autoComplete="off"
-                  />
-                );
-              })}
-              {whProvider.liveVerificationRequired.length > 0 ? (
-                <p className="hint" style={{ marginTop: 10 }}>
-                  <strong>Needs live creds to verify:</strong> {whProvider.liveVerificationRequired[0]}
-                </p>
-              ) : null}
-              <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
-                <button className="btn" onClick={createWarehouse} disabled={creating || !name.trim() || !whCatalog.trim()}>
-                  {creating ? <span className="spin" /> : 'Create warehouse connection'}
-                </button>
-              </div>
-            </>
-          ) : showServiceForm ? (
-            <>
-              <input
-                type="text"
-                value={endpoint}
-                onChange={(e) => setEndpoint(e.target.value)}
-                placeholder={tpl ? `Endpoint (e.g. ${tpl.endpointHint})` : 'Endpoint'}
-                style={{ marginTop: 10 }}
-              />
-              <input
-                type="password"
-                value={credential}
-                onChange={(e) => setCredential(e.target.value)}
-                placeholder="Credential (API key / token / password) — goes to Secrets Manager"
-                style={{ marginTop: 10 }}
-                autoComplete="off"
-              />
-              {isApiConnector ? (
-                <textarea
-                  value={openApiSpec}
-                  onChange={(e) => setOpenApiSpec(e.target.value)}
-                  placeholder="Optional: paste OpenAPI spec (JSON or YAML) — governed tools are generated from it"
-                  style={{ marginTop: 10, minHeight: 80, fontSize: 12, resize: 'vertical' }}
-                />
-              ) : null}
-              <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
-                <button className="btn" onClick={create} disabled={creating || !name.trim()}>
-                  {creating ? <span className="spin" /> : 'Create connection'}
-                </button>
-              </div>
-            </>
-          ) : !canCreate && !isOAuth ? (
-            <p className="hint" style={{ marginTop: 10 }}>
-              Shared connections require a <strong>Builder</strong> or <strong>Administrator</strong>.
-              Select a personal OAuth type above.
-            </p>
-          ) : null}
-
-          {createMsg ? (
-            <div className={createMsg.startsWith('✓') ? 'answer' : 'error'} style={{ marginTop: 12 }}>
-              {createMsg}
-            </div>
-          ) : null}
-        </>
-      ) : (
-        <div className="stub-page">
-          Creating connections requires a <strong>Builder</strong> or <strong>Administrator</strong>.
-          You consume connections that have been granted or shared to you.
-        </div>
-      )}
-
-      {/* ── 3. App MCP connections (auto-generated) ── */}
-      <div className="section-title" style={{ marginTop: 28 }}>App MCP connections</div>
-      <p className="hint" style={{ marginTop: 0, marginBottom: 14 }}>
-        Every app you build in the Software tab auto-generates an MCP, registered here as a
-        governed connection + agent tool. Building an app and creating a connection are one act.
-      </p>
-      {(appConns?.connections?.length ?? 0) === 0 ? (
-        <div className="stub-page">No app connections yet — build one in the Software tab.</div>
-      ) : (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Connection</th><th>Principal</th><th>Tools</th><th>Visibility</th><th>App</th></tr>
-            </thead>
-            <tbody>
-              {appConns!.connections.map((c) => (
-                <tr key={c.id}>
-                  <td style={{ fontWeight: 600 }}>{c.name}</td>
-                  <td className="mono">{c.principal}</td>
-                  <td className="muted mono" style={{ fontSize: 11.5, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.tools.map((t) => t.name).join(', ')}>{c.tools.map((t) => t.name).join(', ')}</td>
-                  <td><span className={`badge vis-${c.visibility.toLowerCase()}`}>{c.visibility === 'Shared' ? 'Shared in Domain' : c.visibility}</span></td>
-                  <td><Link className="btn ghost" href={`/software/${c.appId}`}>Open →</Link></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* ── 4. Supported connector catalog ── */}
+      {/* ── 2. Supported Connectors (dynamic gallery from the template registry) ── */}
       <div className="section-title" style={{ marginTop: 28 }}>Supported connectors</div>
       <p className="hint" style={{ marginTop: 0, marginBottom: 14 }}>
-        These connectors are wired end-to-end: you sign in with your own account and only a
-        token <em>reference</em> is stored (never a raw secret). Connect any of them using
-        the <strong>New connection</strong> form above.
+        The connector types you can connect, straight from the template registry — inbound
+        sources (warehouse, Google Drive, OneDrive, Notion) and any new template the platform
+        adds appear here automatically. <strong>Connect</strong> opens the wizard pre-set to that
+        type. For an arbitrary outbound API or MCP, use <strong>＋ New connector</strong> above.
       </p>
-      {CONNECTOR_CATEGORIES.map((cat) => {
-        const items = CONNECTORS.filter((c) => c.category === cat);
-        if (items.length === 0) return null;
+      {(() => {
+        if (!data) return null;
+        // Dynamic: one card per user-facing template the API returned, plus the warehouse
+        // template when the operator enabled external connectors. No hardcoded catalog.
+        const cards: { key: string; label: string; type: string; auth: string }[] = data.templates.map((t) => ({
+          key: t.key, label: t.label, type: t.type, auth: t.auth === 'oauth' ? 'personal OAuth' : 'service credentials',
+        }));
+        if (warehouseMeta) cards.push({ key: 'warehouse', label: warehouseMeta.template.label, type: warehouseMeta.template.type, auth: 'service credentials · federated' });
+        if (cards.length === 0) return <div className="stub-page">No connector types available on this deployment.</div>;
+        const canOpen = canCreate || canCreatePersonal;
         return (
-          <div key={cat} style={{ marginBottom: 18 }}>
-            <div className="mono" style={{ color: 'var(--text-faint)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>{cat}</div>
-            <div className="grid">
-              {items.map((c) => (
-                <div className="card" key={c.name}>
-                  <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-                    <h3 style={{ margin: 0 }}>{c.name}</h3>
-                    <span className="badge ok">available</span>
-                  </div>
-                  <div className="muted" style={{ marginTop: 8 }}>Auth: {c.auth}</div>
-                  <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
-                    <button
-                      className="btn ghost"
-                      onClick={() => {
-                        // Scroll to the new connection form above (smooth UX).
-                        document.querySelector<HTMLElement>('input[placeholder*="Connection name"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        setTemplate(c.template);
-                      }}
-                    >
-                      Connect →
-                    </button>
-                  </div>
+          <div className="grid">
+            {cards.map((c) => (
+              <div className="card" key={c.key}>
+                <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h3 style={{ margin: 0 }}>{c.label}</h3>
+                  <span className="badge ok">available</span>
                 </div>
-              ))}
-            </div>
+                <div className="muted" style={{ marginTop: 8 }}>{c.type} · {c.auth}</div>
+                {canOpen ? (
+                  <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
+                    <button className="btn ghost" onClick={() => openWizard({ mode: 'type', template: c.key })}>Connect →</button>
+                  </div>
+                ) : null}
+              </div>
+            ))}
           </div>
         );
-      })}
+      })()}
 
-      {/* ── 5. Outbound access (Builder/Admin only) ── */}
+      {/* ── 3. Outbound access (Builder/Admin only) ── */}
       {canCreate ? <EgressSection /> : null}
 
     </ConfirmProvider>
@@ -786,6 +530,44 @@ function WarehouseControls({ c, canManage, onChange }: { c: Conn; canManage: boo
       {regMsg ? <div className={regMsg.startsWith('✗') ? 'error' : 'answer'} style={{ marginTop: 8 }}>{regMsg}</div> : null}
       {testMsg ? <div className={testMsg.startsWith('✗') ? 'error' : 'answer'} style={{ marginTop: 8 }}>{testMsg}</div> : null}
       {browsing ? <WarehouseBrowser connId={c.id} onSelect={() => { /* browse-only preview here; import lives in the Data tab */ }} /> : null}
+    </div>
+  );
+}
+
+/**
+ * App-MCP connection card — an auto-generated connection from the Software tab, folded
+ * into the scope list alongside governed connections. Tagged "App" and links to its app.
+ * Read-only here: the app owns its lifecycle (capabilities live on the app in Software).
+ */
+function AppConnectionCard({ c }: { c: AppConn }) {
+  const toolNames = c.tools.map((t) => t.name).join(', ');
+  return (
+    <div className="card" style={{ marginBottom: 14 }}>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h3 style={{ margin: 0 }}>
+            {c.name}
+            <span className="badge" style={{ marginLeft: 6 }}>App</span>
+          </h3>
+          <div className="muted mono" style={{ marginTop: 6, fontSize: 11.5 }}>
+            {c.principal} · {c.owner}/{c.domain}
+          </div>
+          <div className="muted mono" style={{ marginTop: 8, fontSize: 11.5 }} title={toolNames}>
+            Tools: {toolNames || '(none)'}
+          </div>
+        </div>
+        <div className="row" style={{ gap: 6, alignItems: 'center', flexShrink: 0, marginLeft: 12 }}>
+          {(c.visibility === 'Shared' || c.visibility === 'Certified') ? <DomainTag domain={c.domain} /> : null}
+          <span className={badge(c.visibility)}>{c.visibility === 'Shared' ? 'Shared in Domain' : c.visibility}</span>
+        </div>
+      </div>
+      <p className="hint" style={{ marginTop: 10, marginBottom: 0, fontSize: 11.5 }}>
+        Auto-generated when you built this app in the Software tab — building an app and creating a
+        connection are one act. Manage it from its app.
+      </p>
+      <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
+        <Link className="btn ghost" href={`/software/${c.appId}`}>Open app →</Link>
+      </div>
     </div>
   );
 }

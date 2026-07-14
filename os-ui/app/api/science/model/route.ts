@@ -8,6 +8,8 @@ import { trace } from '@/lib/infra/agent-governed';
 import {
   listModelsForUser,
   getModel,
+  createModel,
+  ensureChurnSeed,
   compilePredictPolicy,
   goLive,
   importModel,
@@ -19,13 +21,18 @@ import {
   CHURN,
   type Actor,
   type ConsumptionMode,
+  type ModelSpec,
+  type ServiceModel,
 } from '@/lib/science';
 import { promoteThroughSeam } from '@/lib/governance/ladder';
 
 export const dynamic = 'force-dynamic';
 
 function disabled() {
-  return NextResponse.json({ mlEnabled: false, models: [], adapters: [], drift: null }, { status: 200 });
+  return NextResponse.json(
+    { mlEnabled: false, models: [], mine: [], domain: [], marketplace: [], adapters: [], drift: null },
+    { status: 200 },
+  );
 }
 
 function actorFrom(user: { id: string; role: string; domains: string[] }): Actor {
@@ -48,7 +55,7 @@ function actorFrom(user: { id: string; role: string; domains: string[] }): Actor
  * (proving promotion/certification widens reach), the 5 adapter liveness probes,
  * and the churn drift series for the monitoring view. Off when `ml.enabled=false`.
  */
-export async function GET() {
+export async function GET(request: Request) {
   if (!config.mlEnabled) return disabled();
   let user;
   try {
@@ -56,6 +63,10 @@ export async function GET() {
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
   }
+  // Phase 1: wrap the live churn/KServe slice as the FIRST model so the tab is never
+  // empty. Seeded into the viewer's own domain so it's theirs to open/predict/promote.
+  ensureChurnSeed(user.id, user.domains[0] ?? 'sales');
+
   const [features, train, registry, deploy, mon, drift] = await Promise.all([
     featuresAdapter.probe(),
     trainTrackAdapter.probe(),
@@ -64,11 +75,22 @@ export async function GET() {
     monitoringAdapter.probe(),
     monitoringAdapter.drift(),
   ]);
-  const models = listModelsForUser({ id: user.id, domains: user.domains }).map((m) => ({ ...m, policy: compilePredictPolicy(m) }));
+  const withPolicy = (m: ServiceModel) => ({ ...m, policy: compilePredictPolicy(m) });
+  // ?archived=1 additionally returns soft-archived models (their own section).
+  const includeArchived = new URL(request.url).searchParams.get('archived') === '1';
+  const models = listModelsForUser({ id: user.id, domains: user.domains }, { includeArchived }).map(withPolicy);
+  // Group into the OS-wide { mine, domain, marketplace } shape the scope helper needs.
+  // "mine" = tier Personal (owner-only visibility); Domain/Marketplace by tier.
+  const groups = {
+    mine: models.filter((m) => m.tier === 'Personal'),
+    domain: models.filter((m) => m.tier === 'Domain'),
+    marketplace: models.filter((m) => m.tier === 'Marketplace'),
+  };
   return NextResponse.json({
     mlEnabled: true,
     gpuEnabled: false, // CPU default; GPU behind Builder/Admin approval + quota
-    models,
+    models, // flat (back-compat: existing consumers read models[0])
+    ...groups, // grouped (the tab's scope switcher)
     drift,
     adapters: [
       { name: featuresAdapter.name, kind: 'features', live: features },
@@ -99,7 +121,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
   }
 
-  let body: { op?: string; model?: string; mode?: ConsumptionMode } = {};
+  let body: {
+    op?: string;
+    model?: string;
+    mode?: ConsumptionMode;
+    name?: string;
+    description?: string;
+    spec?: ModelSpec;
+  } = {};
   try {
     body = await req.json();
   } catch {
@@ -110,6 +139,14 @@ export async function POST(req: Request) {
 
   try {
     switch (body.op) {
+      case 'create': {
+        if (!body.name || !body.spec) {
+          return NextResponse.json({ error: 'create needs a name and a spec' }, { status: 400 });
+        }
+        const m = createModel({ name: body.name, description: body.description, spec: body.spec }, actor);
+        await trace({ principal: user.id, tool: 'model_create', input: { name: m.name, model: m.model }, output: { tier: m.tier, buildState: m.buildState }, decision: 'allow' });
+        return NextResponse.json({ ok: true, model: m, policy: compilePredictPolicy(m) });
+      }
       case 'promote': {
         // Route the tier flip THROUGH the governance effect seam (never a direct
         // promoteModel — the former back door is closed). The seam's applier

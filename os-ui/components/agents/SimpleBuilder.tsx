@@ -952,7 +952,7 @@ function EvaluateStep({
       {/* LLM-judge — one click, scores against the system's task Description. */}
       <div className="row" style={{ alignItems: 'center', gap: 8, marginTop: 18 }}>
         <h2 className="sb-section-title" style={{ margin: 0 }}>AI judge</h2>
-        <button className="btn sm" onClick={runJudge} disabled={judging || !canEdit || !output.trim()} title={output.trim() ? 'Score this run with the AI judge' : 'No output to judge'}>
+        <button className="btn primary" onClick={runJudge} disabled={judging || !canEdit || !output.trim()} title={output.trim() ? 'Score this run with the AI judge' : 'No output to judge'}>
           {judging ? <span className="spin" /> : judge ? 'Re-judge' : 'Judge this run'}
         </button>
       </div>
