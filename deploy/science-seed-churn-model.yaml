@@ -1,3 +1,11 @@
+# SUPERSEDED (kept for manual/emergency use only) — the chart now ships this as an
+# automatic post-install,post-upgrade hook:
+#   charts/sovereign-agentic-os/templates/science/kserve-model-seed.yaml
+#   (gated on ml.enabled + kserve.enabled + kserve.seed.enabled; runs on every deploy).
+# Prefer `helm upgrade`; only `kubectl apply` this file if you need to re-seed the
+# model out-of-band without a release. The hook and this manifest write the SAME
+# artifact to the SAME path, so they are interchangeable and safe to run either way.
+#
 # One-off seed: train + publish the demo churn model the Science tier serves.
 #
 # WHY: the chart's InferenceService (templates/science/kserve.yaml) points at

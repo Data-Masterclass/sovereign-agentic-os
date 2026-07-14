@@ -15,9 +15,16 @@ import {
   type CapabilityMode,
   type CapabilityLimits,
   type DataUsage,
+  type WarehouseConnectionConfig,
   templateByKey,
   isPersonalConnectable,
 } from '@/lib/connections/schema';
+import type { WarehousePlatform } from '@/lib/connections/warehouse/types';
+import { splitWarehouseFields, toWarehouseSource } from '@/lib/connections/warehouse/connection';
+import { providerFor } from '@/lib/connections/warehouse/registry';
+import { buildImportCtas } from '@/lib/connections/warehouse/import';
+import { catalogRegistration, type CatalogRegistration } from '@/lib/connections/warehouse/registration';
+import { executeRun, queryRun, type ExecuteIdentity } from '@/lib/infra/governed';
 import { putSecret, secretFingerprint, getSecretServerSide, isEgressAllowed, deleteSecret, hasSecret } from '@/lib/infra/secrets';
 import { type ArtifactVersion, versionLog } from '@/lib/core/versioning';
 import {
@@ -180,12 +187,28 @@ function assertBuilderOrAdmin(user: CurrentUser): void {
 
 // -------------------------------------------------------------------- Create ---
 
+/** The warehouse-federation block on the create input (only for the `warehouse` template). */
+export type WarehouseCreateInput = {
+  platform: WarehousePlatform;
+  /** The Trino catalog name to mount as (e.g. `glue_sales`). */
+  catalog: string;
+  /** Flat field map keyed by the provider's credentialField keys (secret + non-secret). */
+  fields: Record<string, string>;
+};
+
 export async function createConnection(
   user: CurrentUser,
-  input: { name: string; template: ConnectionTemplateKey; endpoint: string; credential: string; domain?: string; openApiSpec?: unknown },
+  input: { name: string; template: ConnectionTemplateKey; endpoint: string; credential: string; domain?: string; openApiSpec?: unknown; warehouse?: WarehouseCreateInput },
 ): Promise<Connection> {
   const tpl = templateByKey(input.template);
   if (!tpl) throw withStatus(new Error('Unknown connection template'), 400);
+
+  // External-warehouse connections are gated OFF by default — refuse to create one
+  // unless the operator has turned on EXTERNAL_CONNECTORS_ENABLED. No behaviour
+  // change for any other template when the flag is off.
+  if (tpl.key === 'warehouse' && !config.externalConnectorsEnabled) {
+    throw withStatus(new Error('External-warehouse connectors are not enabled on this deployment'), 403);
+  }
 
   // WHO CONNECTS (golden path): any user may connect a PERSONAL (per-user OAuth)
   // account; SHARED (service-credential) connections require a Builder/Admin.
@@ -200,6 +223,72 @@ export async function createConnection(
   const principal = `conn-${slug}`;
   const endpoint = (input.endpoint ?? '').trim() || tpl.endpointHint;
   const adapter = adapterFor(tpl.connector);
+
+  // ---- WAREHOUSE branch: split the flat field map into non-secret record config +
+  // vaulted secrets, store each secret under its own key, and stamp the record's
+  // `warehouse` block. NEVER put a secret value on the record (the ONE rule holds).
+  if (tpl.key === 'warehouse') {
+    if (!input.warehouse) throw withStatus(new Error('A warehouse connection needs a platform + catalog + fields'), 400);
+    const wh = input.warehouse;
+    let split: { config: Record<string, string>; secrets: Record<string, string> };
+    try {
+      split = splitWarehouseFields({ platform: wh.platform, catalog: wh.catalog, fields: wh.fields });
+    } catch (e) {
+      throw withStatus(e as Error, (e as Error & { status?: number }).status ?? 400);
+    }
+    const secretName = `connection-${slug}`;
+    // Store each secret field under its own key in the connection's vault secret.
+    let anySecret = false;
+    for (const [key, value] of Object.entries(split.secrets)) {
+      putSecret(secretName, key, value);
+      anySecret = true;
+    }
+    // A stable primary ref so the record has a secretRef even when a platform (Glue)
+    // needs no secret material at all (IRSA) — points at the connection's secret name.
+    const secretRef = { name: secretName, key: providerFor(wh.platform).secretMaterial.secretKeys[0] ?? 'warehouse-secret' };
+    const warehouse: WarehouseConnectionConfig = { platform: wh.platform, catalog: wh.catalog, config: split.config };
+    const tools = tpl.tools.map((tool) => ({ ...tool, limits: tool.limits ? { ...tool.limits } : undefined }));
+    const tW = now();
+    const cW: Connection = {
+      id: id('conn'),
+      name,
+      type: tpl.type,
+      connector: tpl.connector,
+      auth: tpl.auth,
+      template: tpl.key,
+      endpoint: `catalog:${wh.catalog}`,
+      principal,
+      owner: user.id,
+      domain,
+      visibility: 'Personal',
+      mode: 'untested',
+      secretRef,
+      secretSet: anySecret,
+      secretFingerprint: anySecret ? secretFingerprint(secretRef) : '',
+      // Federation reaches an external metastore/object store — a real egress, but it
+      // is the Trino POD that egresses (GitOps-configured), not this app. Mark it
+      // non-external here so the app never claims to proxy the warehouse itself.
+      egress: { external: false, host: wh.catalog, allowed: true },
+      tools,
+      grants: [],
+      health: 'untested',
+      dataUsage: null,
+      warehouse,
+      createdAt: tW,
+      updatedAt: tW,
+    };
+    map.set(cW.id, cW);
+    compileProfile(cW);
+    writeThrough(cW);
+    void trace({
+      principal,
+      tool: 'generate',
+      input: { action: 'create_connection', name, type: tpl.type, warehouse: { platform: wh.platform, catalog: wh.catalog }, secretRef },
+      output: { connectionId: cW.id, exposed: exposedConnectionTools(principal), secretKeys: Object.keys(split.secrets) },
+      decision: 'allow',
+    });
+    return cW;
+  }
 
   // Egress guardrail: an external endpoint must be on the allowlist (Admin
   // guardrail; or an Admin-approved request). Checked BEFORE any credential use.
@@ -337,6 +426,34 @@ export async function testConnection(connId: string, user: CurrentUser): Promise
   const c = map.get(connId);
   if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
 
+  // WAREHOUSE: the honest test is the provider's probe. When the probe is `sql` the
+  // live check is running `SHOW SCHEMAS FROM <catalog>` through the governed query
+  // path — but that only works once an operator has registered the catalog in Trino
+  // (a GitOps step). Until then, and for `none`-probe platforms, we honestly report
+  // "credential present; the live probe is the operator's step", never a fake ok.
+  if (c.template === 'warehouse' && c.warehouse) {
+    const provider = providerFor(c.warehouse.platform);
+    const source = toWarehouseSource({ platform: c.warehouse.platform, catalog: c.warehouse.catalog, config: c.warehouse.config });
+    if (provider.testProbe.kind === 'none') {
+      c.updatedAt = now();
+      writeThrough(c);
+      return { ok: true, mode: 'offline', detail: `Config valid for ${provider.label}. No safe live probe exists (${provider.testProbe.reason}) — reachability is the operator's step on a live tenant.` };
+    }
+    const query = provider.testProbe.query(source);
+    try {
+      const res = await queryRun(query, c.domain, c.domain);
+      c.mode = 'live';
+      c.health = 'healthy';
+      c.updatedAt = now();
+      writeThrough(c);
+      return { ok: true, mode: 'live', detail: `Ran \`${query}\` through the governed query path — ${res.rowCount} schema(s) visible in catalog '${c.warehouse.catalog}'.` };
+    } catch (e) {
+      c.updatedAt = now();
+      writeThrough(c);
+      return { ok: true, mode: 'offline', detail: `Config valid; catalog '${c.warehouse.catalog}' is not queryable yet (${(e as Error).message}). Register it in Trino (values.trino.externalCatalogs) + rolling-restart, then re-test.` };
+    }
+  }
+
   const secret = getSecretServerSide(c.secretRef); // server-side only
   if (!secret) {
     return { ok: false, mode: 'offline', detail: 'No credential set in Secrets Manager for this connection.' };
@@ -370,6 +487,74 @@ export async function testConnection(connId: string, user: CurrentUser): Promise
         ? `Reached ${c.egress.host}; credential present (${c.secretFingerprint}). Egress allowed.`
         : `Credential present in Secrets Manager (${c.secretFingerprint}); endpoint not probed offline. The secret is never sent to the browser.`,
   };
+}
+
+// ---------------------------------------------------------------- Warehouse ---
+
+/** The identity threaded to the governed WRITE path (mirrors the data store's shape). */
+function executeIdentity(user: CurrentUser): ExecuteIdentity {
+  return { principal: user.domains[0] ?? user.id, uid: user.id, domains: user.domains, role: user.role };
+}
+
+/**
+ * The GitOps registration snippet for a warehouse connection: the Trino catalog
+ * props + the exact `values.trino.externalCatalogs` entry an operator pastes, plus
+ * the secret env vars + OM hint. Registration is a values edit + rolling restart
+ * (the pod's catalog dir is a read-only ConfigMap) — this returns what to apply, it
+ * never mutates the cluster. Visible to anyone who can see the connection.
+ */
+export async function warehouseRegistration(connId: string, user: CurrentUser): Promise<CatalogRegistration> {
+  const map = await getCache();
+  const c = map.get(connId);
+  if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
+  if (c.template !== 'warehouse' || !c.warehouse) throw withStatus(new Error('Not a warehouse connection'), 400);
+  const source = toWarehouseSource({ platform: c.warehouse.platform, catalog: c.warehouse.catalog, config: c.warehouse.config });
+  return catalogRegistration(source);
+}
+
+/**
+ * IMPORT a federated external table into the OS Iceberg lakehouse as an owned data
+ * product — a governed CTAS run through the SAME `executeRun` promote/materialize
+ * path (Trino→OPA as the caller). Requires the provider to support import and the
+ * caller to be able to edit the connection. Returns the target FQN + the SQL run.
+ */
+export async function importWarehouseTable(
+  connId: string,
+  user: CurrentUser,
+  input: { schema: string; table: string; name?: string; targetDomain?: string },
+): Promise<{ ok: true; target: string; sql: string; rowsAffected: number | null }> {
+  const map = await getCache();
+  const c = map.get(connId);
+  if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
+  if (c.template !== 'warehouse' || !c.warehouse) throw withStatus(new Error('Not a warehouse connection'), 400);
+  if (!canManageArtifact(user, { owner: c.owner, domain: c.domain })) {
+    throw withStatus(new Error('Not permitted to import from this connection'), 403);
+  }
+  const provider = providerFor(c.warehouse.platform);
+  if (!provider.capabilities.import) {
+    throw withStatus(new Error(`${provider.label} does not support import-as-product`), 400);
+  }
+  const targetDomain = input.targetDomain && user.domains.includes(input.targetDomain) ? input.targetDomain : c.domain;
+  const name = (input.name ?? input.table).trim();
+  let sql: string;
+  try {
+    sql = buildImportCtas(
+      { domain: targetDomain, name },
+      { catalog: c.warehouse.catalog, schema: input.schema, table: input.table },
+    );
+  } catch (e) {
+    throw withStatus(e as Error, (e as Error & { status?: number }).status ?? 400);
+  }
+  const res = await executeRun(sql, executeIdentity(user), targetDomain);
+  const target = `iceberg.${targetDomain}.${name}`;
+  void trace({
+    principal: c.principal,
+    tool: 'generate',
+    input: { action: 'import_warehouse_table', by: user.id, source: `${c.warehouse.catalog}.${input.schema}.${input.table}` },
+    output: { target, rowsAffected: res.rowsAffected },
+    decision: 'allow',
+  });
+  return { ok: true, target, sql, rowsAffected: res.rowsAffected };
 }
 
 // ------------------------------------------------------------------- Promote ---

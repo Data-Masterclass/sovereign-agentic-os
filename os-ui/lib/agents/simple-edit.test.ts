@@ -7,7 +7,7 @@ import { parseSystem, serializeSystem } from './system-schema.ts';
 import {
   setAgentRole, setAgentInstructions, setSystemTools, addSystemTool, removeSystemTool,
   addSimpleAgent, moveAgent, nextAgentId, addArtifactGrant, removeArtifactGrant,
-  addAgentTool, removeAgentTool, removeAgentSimple,
+  addAgentTool, removeAgentTool, removeAgentSimple, setArtifactGrant, setDataGrantLayer,
 } from './simple-edit.ts';
 import { instructionsOf } from './agent-md.ts';
 
@@ -157,4 +157,46 @@ test('removeAgentSimple deletes any agent incl. START, reassigning the entrypoin
   const empty = removeAgentSimple(next, 'writer');
   assert.equal(empty.agents.length, 0);
   assert.equal(empty.entrypoint, '');
+});
+
+// --- DATA-grant medallion layer -------------------------------------------------
+
+test('setArtifactGrant on data carries the chosen layer; gold stays unset (byte-stable)', () => {
+  const sys = parseSystem(BASE);
+  // Default (gold) → no layer key on the grant.
+  const gold = setArtifactGrant(sys, 'data', 'ds_orders', false);
+  assert.equal(gold.grants.data[0].id, 'ds_orders');
+  assert.equal(gold.grants.data[0].layer, undefined);
+  // Silver → recorded on the grant.
+  const silver = setArtifactGrant(sys, 'data', 'ds_orders', false, 'silver');
+  assert.equal(silver.grants.data[0].layer, 'silver');
+});
+
+test('re-toggling Read/Write keeps a previously-picked data layer', () => {
+  let sys = setArtifactGrant(parseSystem(BASE), 'data', 'ds_orders', false, 'bronze');
+  assert.equal(sys.grants.data[0].layer, 'bronze');
+  // Flip to write (default gold arg) — the stored layer must survive.
+  sys = setArtifactGrant(sys, 'data', 'ds_orders', true);
+  assert.equal(sys.grants.data[0].capability, 'Write-bounded');
+  assert.equal(sys.grants.data[0].layer, 'bronze', 'layer preserved across an access toggle');
+});
+
+test('non-data kinds ignore the layer argument', () => {
+  const sys = setArtifactGrant(parseSystem(BASE), 'knowledge', 'wf_playbook', false, 'silver');
+  assert.equal(sys.grants.knowledge[0].id, 'wf_playbook');
+  assert.equal((sys.grants.knowledge[0] as { layer?: string }).layer, undefined);
+});
+
+test('setDataGrantLayer sets/clears the layer only on data grants', () => {
+  const base = setArtifactGrant(parseSystem(BASE), 'data', 'ds_orders', false);
+  const silver = setDataGrantLayer(base, 'ds_orders', 'silver');
+  assert.equal(silver.grants.data[0].layer, 'silver');
+  // Back to gold clears the key so the file stays byte-stable.
+  const gold = setDataGrantLayer(silver, 'ds_orders', 'gold');
+  assert.equal(gold.grants.data[0].layer, undefined);
+  assert.ok(!/layer:/.test(serializeSystem(gold)));
+});
+
+test('setDataGrantLayer throws for an ungranted dataset', () => {
+  assert.throws(() => setDataGrantLayer(parseSystem(BASE), 'ds_missing', 'silver'), /not a granted dataset/);
 });

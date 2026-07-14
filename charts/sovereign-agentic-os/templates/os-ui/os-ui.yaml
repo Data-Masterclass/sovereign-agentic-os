@@ -334,6 +334,14 @@ spec:
             # backend URLs already wired above. Server-only; never sent to browsers.
             - name: SUPERSET_INTERNAL_URL
               value: {{ $u.supersetInternalUrl | default "http://agentic-os-superset:8088" | quote }}
+            # Trusted-header SSO service account for Superset writes (guest-token mint,
+            # dashboard import/delete). Superset's _sso_login maps X-Forwarded-Roles → the
+            # user's role, so the service user MUST be provisioned as Admin — only Admin has
+            # can_grant_guest_token (a Gamma default 403s the mint). Admin-overridable.
+            - name: SUPERSET_SERVICE_USER
+              value: {{ $u.supersetServiceUser | default "admin" | quote }}
+            - name: SUPERSET_SERVICE_ROLES
+              value: {{ $u.supersetServiceRoles | default "Admin" | quote }}
             - name: OPENSEARCH_DASHBOARDS_INTERNAL_URL
               value: {{ $u.opensearchDashboardsInternalUrl | default "http://opensearch-dashboards:5601" | quote }}
             - name: CUBE_URL

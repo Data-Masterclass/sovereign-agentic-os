@@ -164,17 +164,55 @@ function b64(s: string): string {
   return Buffer.from(s, 'utf8').toString('base64');
 }
 
+/**
+ * The REAL build->push CI workflow — the SAME sovereign pipeline the app golden
+ * path seeds (lib/software/apps.ts `ciWorkflow`) and the proven demo-app seed uses:
+ * `runs-on: docker` (the in-cluster runner's only label), an in-pod DinD build, and
+ * a push of `:latest` to Forgejo's registry — the exact tag the app runner pulls.
+ * The previous stub (`runs-on: ubuntu-latest`, `uses: actions/checkout@v4`, an
+ * `echo` "build here") could NEVER run on the sovereign runner nor publish an image,
+ * so every repo it seeded reported "success" while pushing nothing.
+ */
+function ciWorkflow(name: string): string {
+  const registry = config.harborRegistry.split('/')[0];
+  const owner = config.forgejoRepoOwner;
+  return (
+    'on:\n  push:\n    branches: [main]\n' +
+    'jobs:\n  build-and-push:\n    runs-on: docker\n    env:\n' +
+    '      DOCKER_HOST: tcp://localhost:2375\n' +
+    '      REGISTRY: ' + registry + '\n' +
+    '      OWNER: ' + owner + '\n' +
+    '      REPO: ' + name + '\n' +
+    '    steps:\n' +
+    '      - name: Checkout (manual — sovereign, no github.com)\n' +
+    '        env: { REG_PASS: "${{ secrets.REGISTRY_PASS }}" }\n' +
+    '        run: |\n          set -eu\n' +
+    '          git clone --depth 1 "http://${OWNER}:${REG_PASS}@${REGISTRY}/${OWNER}/${REPO}.git" src\n' +
+    '      - name: Build & push image\n' +
+    '        env: { REG_PASS: "${{ secrets.REGISTRY_PASS }}" }\n' +
+    '        run: |\n          set -eu\n' +
+    '          TAG="$(echo "${GITHUB_SHA}" | cut -c1-12)"\n' +
+    '          IMAGE="${REGISTRY}/${OWNER}/${REPO}"\n' +
+    '          echo "${REG_PASS}" | docker login "${REGISTRY}" -u "${OWNER}" --password-stdin\n' +
+    '          docker build -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" ./src\n' +
+    '          docker push "${IMAGE}:${TAG}"\n' +
+    '          docker push "${IMAGE}:latest"\n'
+  );
+}
+
 function starterFiles(name: string, description: string) {
   // README.md is omitted here — auto_init already creates one; seeding it again
   // would 422 (already exists). We seed the files Forgejo's auto-init does not.
   void description;
   const dockerfile = `# Starter Dockerfile — Sovereign Agentic OS software scaffold\nFROM node:22-alpine\nWORKDIR /app\nCOPY . .\nEXPOSE 8080\nCMD ["node", "server.js"]\n`;
-  const ci = `name: ci\non: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Build container image\n        run: echo "build ${name} image here (kaniko/buildah)"\n`;
+  const ci = ciWorkflow(name);
   const manifest = `apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: ${name}\n  labels: { app: ${name} }\nspec:\n  replicas: 1\n  selector: { matchLabels: { app: ${name} } }\n  template:\n    metadata: { labels: { app: ${name} } }\n    spec:\n      containers:\n        - name: ${name}\n          image: forgejo-http:3000/${config.forgejoRepoOwner}/${name}:latest\n          ports: [{ containerPort: 8080 }]\n`;
+  // Source first, workflow LAST — the commit that adds the workflow is the push
+  // that first triggers CI, so it must land with the Dockerfile already present.
   return [
     { path: 'Dockerfile', content: dockerfile },
-    { path: '.forgejo/workflows/ci.yml', content: ci },
     { path: 'manifests/app.yaml', content: manifest },
+    { path: '.forgejo/workflows/ci.yml', content: ci },
   ];
 }
 
@@ -222,7 +260,24 @@ export async function POST(req: Request) {
   }
 
   const owner = config.forgejoRepoOwner;
-  // Real action #2: seed the starter files (Dockerfile / CI / manifest) so
+  // Real action #2a: set the REGISTRY_PASS Actions secret the CI workflow uses to
+  // `docker login` and push the image — BEFORE seeding the workflow, so the first
+  // push can build. (Admin creds — the same local-dev convenience the app path and
+  // the demo-app seed use.)
+  await fetch(
+    `${config.forgejoUrl}/api/v1/repos/${owner}/${name}/actions/secrets/REGISTRY_PASS`,
+    {
+      method: 'PUT',
+      headers: {
+        authorization: authHeader(),
+        accept: 'application/json',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ data: config.forgejoPassword }),
+      cache: 'no-store',
+    },
+  ).catch(() => undefined);
+  // Real action #2b: seed the starter files (Dockerfile / manifest / CI) so
   // Forgejo Actions can build and Argo CD has a manifest to sync.
   const seeded: string[] = [];
   const seedErrors: string[] = [];

@@ -113,6 +113,21 @@ export function withDiscoveryCompanions(mcpNames: string[]): string[] {
 
 const MCP_NAMES = new Set(ALL_MCP_TOOLS.map((t) => t.name));
 
+/** The read tools that resolve a dataset to a physical medallion FQN — the ones whose
+ *  target layer the system's DATA grant selects (get_dataset surfaces it; profile_dataset
+ *  profiles it). query_data takes raw SQL, so the layer can only steer it via the FQN the
+ *  agent first learns from get_dataset — hence these two carry the enforcement. */
+const LAYER_AWARE_DATA_TOOLS = new Set(['get_dataset', 'profile_dataset']);
+
+/**
+ * The medallion layer a system's DATA grant selects for a given dataset id, or
+ * undefined when the grant is Gold/unset (the serving default). This is the single
+ * place the `system.yaml` layer choice is READ at run time.
+ */
+export function grantedLayerFor(sys: System, datasetId: string): 'bronze' | 'silver' | 'gold' | undefined {
+  return sys.grants.data.find((g) => g.id === datasetId)?.layer;
+}
+
 /**
  * The state-modifying MCP tools (the SAME set `lib/agents/tool-catalog.ts` marks
  * `requires_approval`). An agent's call to any of these is HELD for human approval
@@ -262,6 +277,19 @@ export function grantedToolExecutor(
     // Gate 1 — structural grant scope. Not granted ⇒ never touch OPA or the tool.
     if (!grantedNames.has(mcpName)) {
       return errorResult('not_found', `Tool not available: ${name || '(none)'}`);
+    }
+
+    // LAYER ENFORCEMENT — steer a layer-aware data read to the medallion layer the
+    // system's DATA grant selected (bronze/silver). The FQN resolution stays SERVER-
+    // side (get_dataset/profile_dataset resolve `builtLayerFqn(dataset, layer)` with a
+    // graceful not-built fallback); here we only inject the grant's layer when the
+    // agent didn't ask for one explicitly. Gold/unset grants inject nothing (the
+    // serving default is unchanged — fully backward-compatible).
+    if (LAYER_AWARE_DATA_TOOLS.has(mcpName) && args && typeof args === 'object') {
+      const a = args as Record<string, unknown>;
+      const datasetId = typeof a.datasetId === 'string' ? a.datasetId : '';
+      const layer = grantedLayerFor(sys, datasetId);
+      if (layer && a.layer === undefined) args = { ...a, layer };
     }
 
     // Gate 1b — the Write-approval HOLD, derived IN-PROCESS from the granted set +

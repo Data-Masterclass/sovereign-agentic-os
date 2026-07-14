@@ -29,10 +29,15 @@ import {
   getConnectionForUser,
   createConnection,
   testConnection,
+  warehouseRegistration,
+  importWarehouseTable,
   CONNECTION_TEMPLATES,
   isPersonalConnectable,
   type ConnectionTemplateKey,
+  type WarehouseCreateInput,
 } from '@/lib/connections';
+import { WAREHOUSE_PROVIDERS } from '@/lib/connections/warehouse/registry';
+import { WAREHOUSE_PLATFORMS, type WarehousePlatform } from '@/lib/connections/warehouse/types';
 import { promoteThroughSeam } from '@/lib/governance/ladder';
 import { scaffoldCubeYaml, cubeViewName } from '@/lib/data/metrics';
 import { cubeDeliverable } from '@/lib/data/cube-models';
@@ -40,7 +45,9 @@ import { loadGuide, isGuidePath, GUIDE_PATHS } from '@/lib/tabs/guides';
 import { config } from '@/lib/core/config';
 import { queryRun } from '@/lib/infra/governed';
 import { versionTarget } from '@/lib/data/store-fqn';
+import { builtLayerFqn } from '@/lib/data/store';
 import type { Layer } from '@/lib/data/dataset-schema';
+import { LAYERS } from '@/lib/data/dataset-schema';
 import {
   assembleProfile,
   parseDescribe,
@@ -90,6 +97,53 @@ const idArg = (name: string, desc: string): JsonSchema => ({
   examples: [{ [name]: 'id_ab12cd' }],
 });
 
+/**
+ * Resolve the physical FQN + medallion layer a granted dataset queries FOR the caller,
+ * honouring the layer the agent's DATA grant selected (Gold is the serving default).
+ *
+ * Fail-graceful (never crash): {@link builtLayerFqn} resolves the requested layer when
+ * it is built, otherwise the FURTHEST built layer — so a `silver` grant on a dataset
+ * whose silver isn't built yet resolves to the best available and we FLAG the miss
+ * (`requestedLayer` ≠ resolved `layer`, plus a note) rather than 404. When NOTHING is
+ * built we surface {available:false} with an honest reason. Viewer-aware: the FQN's
+ * schema and the read principal always agree (owner ⇒ personal lane, else domain).
+ */
+function resolveQueryable(
+  d: ReturnType<typeof getDataset>,
+  user: CurrentUser,
+  requested?: Layer,
+): {
+  available: boolean;
+  requestedLayer: Layer;
+  layer?: Layer;
+  fqn?: string;
+  built: Layer[];
+  note: string | null;
+} {
+  const requestedLayer: Layer = requested && LAYERS.includes(requested) ? requested : 'gold';
+  const built = LAYERS.filter((l) => d.versions[l].built);
+  const resolved = builtLayerFqn(d, P(user), requestedLayer);
+  if (!resolved) {
+    return {
+      available: false,
+      requestedLayer,
+      built,
+      note: `The ${requestedLayer} layer isn't built for this dataset yet — nothing to query.`,
+    };
+  }
+  const fellBack = resolved.layer !== requestedLayer;
+  return {
+    available: true,
+    requestedLayer,
+    layer: resolved.layer,
+    fqn: resolved.fqn,
+    built,
+    note: fellBack
+      ? `The ${requestedLayer} layer isn't built yet — resolved to the furthest built layer (${resolved.layer}) instead.`
+      : null,
+  };
+}
+
 // ================================ READ / LIST =================================
 const readTools: McpTool[] = [
   {
@@ -106,8 +160,16 @@ const readTools: McpTool[] = [
     tab: 'data',
     minRole: 'creator',
     description:
-      'Read one dataset you can see (medallion versions, docs, tier, data-quality rules) plus its semantic-layer state: `cube.ready` is true when the dataset is shared/certified AND its Gold is built — it is then AUTO-REGISTERED as a queryable Cube model (view `cube.view`, dimensions from the gold columns, count fallback) WITHOUT any define_metric step. Path: DISCOVERY for the Data golden path. Before: list_datasets. After: add_dataset_version / document_dataset / define_quality_rules → run_quality_checks / define_metric (only to ADD measures — the model is already queryable). Governance: read-only; an id you cannot see returns not_found (no existence leak).',
-    inputSchema: idArg('datasetId', 'Dataset id from list_datasets.'),
+      'Read one dataset you can see (medallion versions, docs, tier, data-quality rules) plus its semantic-layer state: `cube.ready` is true when the dataset is shared/certified AND its Gold is built — it is then AUTO-REGISTERED as a queryable Cube model (view `cube.view`, dimensions from the gold columns, count fallback) WITHOUT any define_metric step. `queryable` names the physical FQN + layer this dataset resolves to for YOU — Gold by default, or the medallion `layer` your data grant selects (bronze/silver). Path: DISCOVERY for the Data golden path. Before: list_datasets. After: add_dataset_version / document_dataset / define_quality_rules → run_quality_checks / define_metric (only to ADD measures — the model is already queryable). Governance: read-only; an id you cannot see returns not_found (no existence leak).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        datasetId: { type: 'string', description: 'Dataset id from list_datasets.' },
+        layer: { type: 'string', enum: ['bronze', 'silver', 'gold'], description: 'Which medallion layer to resolve the queryable FQN for (default: your granted layer, else the furthest built — Gold is the serving default).' },
+      },
+      required: ['datasetId'],
+      examples: [{ datasetId: 'ds_ab12cd' }, { datasetId: 'ds_ab12cd', layer: 'silver' }],
+    },
     call: async (user, args) => {
       const id = str(args.datasetId).trim();
       if (!id) fail('get_dataset needs a `datasetId`', 400);
@@ -116,8 +178,15 @@ const readTools: McpTool[] = [
       // shared/certified + Gold built ⇒ a queryable model appears in /api/cube/models
       // with no manual metric step. Kept honest — never claims ready before the gate.
       const ready = cubeDeliverable(d);
+      // Which physical layer this dataset resolves to for the caller. The requested
+      // layer comes from the agent's data grant (injected by the run path) or an
+      // explicit arg; Gold is the serving default. Graceful fallback: if the requested
+      // layer isn't built we resolve the furthest built one and SAY SO — never crash.
+      const requested = (str(args.layer) as Layer) || undefined;
+      const queryable = resolveQueryable(d, user, requested);
       return {
         ...d,
+        queryable,
         cube: {
           ready,
           view: ready ? cubeViewName(d) : null,
@@ -654,26 +723,54 @@ const connectionTools: McpTool[] = [
       'List what CAN be connected — the connection template catalog: each template’s key, label, what it connects (Drive / Database / API / MCP / SaaS), whether it is PERSONAL (per-user OAuth — any user may connect their own account) or SHARED (service credentials — creating it needs a Builder/Admin), the endpoint hint, the fields create_connection needs, and the safe preset capability profile (reads on · writes opt-in · deletes blocked). Purpose: step 0 of the Connections golden path — know the catalog before you connect. Before: whoami. After: list_connections (reuse first!), then create_connection with a template key from here. Governance: read-only and identical for every role; this reads the SAME template registry create_connection validates against, so a key listed here is always accepted there (one source of truth).',
     inputSchema: NO_ARGS,
     call: async () => ({
-      templates: CONNECTION_TEMPLATES.map((t) => {
-        const personal = isPersonalConnectable(t);
-        return {
-          key: t.key,
-          label: t.label,
-          connects: t.type,
-          connector: t.connector,
-          auth: t.auth,
-          personal,
-          minRoleToCreate: personal ? 'creator' : 'builder',
-          endpointHint: t.endpointHint,
-          requiredFields: ['name', 'template'],
-          optionalFields: [
-            'endpoint (defaults to the endpointHint)',
-            `credential (the ${t.secretKey} — stored server-side, fingerprinted, never returned)`,
-            'domain (one of YOUR domains; defaults to your first)',
-          ],
-          tools: t.tools.map((x) => ({ name: x.name, write: x.write, mode: x.mode })),
-        };
-      }),
+      templates: CONNECTION_TEMPLATES
+        // The `warehouse` template appears ONLY when the operator enabled external
+        // connectors — otherwise it is hidden exactly like it is in the UI picker.
+        .filter((t) => t.key !== 'warehouse' || config.externalConnectorsEnabled)
+        .map((t) => {
+          const personal = isPersonalConnectable(t);
+          return {
+            key: t.key,
+            label: t.label,
+            connects: t.type,
+            connector: t.connector,
+            auth: t.auth,
+            personal,
+            minRoleToCreate: personal ? 'creator' : 'builder',
+            endpointHint: t.endpointHint,
+            requiredFields: ['name', 'template'],
+            optionalFields: [
+              'endpoint (defaults to the endpointHint)',
+              `credential (the ${t.secretKey} — stored server-side, fingerprinted, never returned)`,
+              'domain (one of YOUR domains; defaults to your first)',
+            ],
+            tools: t.tools.map((x) => ({ name: x.name, write: x.write, mode: x.mode })),
+          };
+        }),
+      // The external-warehouse platforms + each provider's credential fields, so a
+      // tools-only client can build the `warehouse` block for create_connection. Only
+      // present when enabled; the field split (secret vs record) is provider-driven.
+      warehouse: config.externalConnectorsEnabled
+        ? {
+            enabled: true,
+            note: 'Create a warehouse connection with template="warehouse" and a warehouse block {platform, catalog, fields}. Fields render from the provider below; secret-keyed fields go to Secrets Manager, the rest onto the record. Live registration is an operator GitOps step (values.trino.externalCatalogs + rolling restart).',
+            platforms: WAREHOUSE_PLATFORMS.map((p) => {
+              const pr = WAREHOUSE_PROVIDERS[p];
+              return {
+                platform: pr.platform,
+                label: pr.label,
+                capabilities: pr.capabilities,
+                fields: pr.credentialFields.map((f) => ({
+                  key: f.key,
+                  label: f.label,
+                  required: f.required,
+                  secret: pr.secretMaterial.secretKeys.includes(f.key),
+                })),
+                liveVerificationRequired: pr.liveVerificationRequired,
+              };
+            }),
+          }
+        : { enabled: false as const },
       note: 'PERSONAL (per-user OAuth) templates are connectable by any user; SHARED (service-credential) templates require a Builder/Admin — create_connection re-gates this in the lib.',
     }),
   },
@@ -713,21 +810,46 @@ const connectionTools: McpTool[] = [
         endpoint: { type: 'string', description: 'Endpoint/URL (defaults to the template hint).' },
         credential: { type: 'string', description: 'Secret/token — stored server-side, fingerprinted, never returned.' },
         domain: { type: 'string', description: 'One of YOUR domains; defaults to your first.' },
+        warehouse: {
+          type: 'object',
+          description: 'For template="warehouse" ONLY (external connectors must be enabled): the federation config. Secret-keyed fields go to Secrets Manager, the rest onto the record.',
+          properties: {
+            platform: { type: 'string', enum: [...WAREHOUSE_PLATFORMS], description: 'Warehouse platform (from list_connection_templates.warehouse.platforms).' },
+            catalog: { type: 'string', description: 'Trino catalog name to mount as, e.g. glue_sales ([a-z_][a-z0-9_]*).' },
+            fields: { type: 'object', description: 'Flat field map keyed by the provider credential-field keys (e.g. {region:"eu-central-1"}).' },
+          },
+          required: ['platform', 'catalog', 'fields'],
+        },
       },
       required: ['name', 'template'],
-      examples: [{ name: 'Ops MCP', template: 'generic-mcp', endpoint: 'https://mcp.example.com/sse', credential: 'secret_xxx' }],
+      examples: [
+        { name: 'Ops MCP', template: 'generic-mcp', endpoint: 'https://mcp.example.com/sse', credential: 'secret_xxx' },
+        { name: 'Glue sales', template: 'warehouse', warehouse: { platform: 'glue', catalog: 'glue_sales', fields: { region: 'eu-central-1' } } },
+      ],
     },
     call: async (user, args) => {
       const name = str(args.name).trim();
       if (!name) fail('create_connection needs a `name`', 400);
       const template = str(args.template) as ConnectionTemplateKey;
       if (!connectionTemplateKeys.includes(template)) fail('create_connection needs a valid `template`', 400);
+      let warehouse: WarehouseCreateInput | undefined;
+      if (template === 'warehouse') {
+        const w = (args.warehouse ?? {}) as Record<string, unknown>;
+        const platform = str(w.platform) as WarehousePlatform;
+        if (!WAREHOUSE_PLATFORMS.includes(platform)) fail('warehouse connection needs a valid `warehouse.platform`', 400);
+        const catalog = str(w.catalog).trim();
+        const rawFields = (w.fields && typeof w.fields === 'object') ? (w.fields as Record<string, unknown>) : {};
+        const fields: Record<string, string> = {};
+        for (const [k, v] of Object.entries(rawFields)) fields[k] = str(v);
+        warehouse = { platform, catalog, fields };
+      }
       return createConnection(user, {
         name,
         template,
         endpoint: str(args.endpoint),
         credential: str(args.credential),
         domain: str(args.domain) || undefined,
+        warehouse,
       });
     },
   },
@@ -757,6 +879,54 @@ const connectionTools: McpTool[] = [
       // Route the flip through the ONE effect seam (never promoteConnection directly).
       const r = await promoteThroughSeam('connection', id, user);
       return getConnectionForUser(id, user).then((c) => ({ id: c.id, name: c.name, visibility: c.visibility, applied: r.applied, live: r.live }));
+    },
+  },
+];
+
+// External-warehouse tools — registered ONLY when the operator enabled external
+// connectors. `warehouse_registration` returns the GitOps values snippet an operator
+// applies to register the catalog in Trino (read-only-rootfs → no runtime catalog
+// creation); `import_warehouse_table` materializes one federated table into the OS
+// Iceberg lakehouse via the SAME governed CTAS path promote/materialize uses.
+const warehouseTools: McpTool[] = [
+  {
+    name: 'warehouse_registration',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'Get the GitOps registration for a WAREHOUSE connection you can see — the Trino catalog `.properties`, the secret env vars it references, the OpenMetadata connector hint, and the exact `values.trino.externalCatalogs` YAML entry an operator pastes. Purpose: registration is a values edit + rolling restart (the Trino pod mounts its catalog dir read-only, so no runtime catalog creation) — this returns what to apply. Before: create_connection (template="warehouse"). After: an operator applies the snippet + wires the secret + rolling-restarts Trino, then test_connection. Governance: read-only; unseeable id → not_found. Secrets are referenced via ${ENV:...}, never emitted.',
+    inputSchema: idArg('connId', 'Warehouse connection id from list_connections.'),
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('warehouse_registration needs a `connId`', 400);
+      return warehouseRegistration(id, user);
+    },
+  },
+  {
+    name: 'import_warehouse_table',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'IMPORT one federated external table into the OS Iceberg lakehouse as an owned data product — a governed CTAS (CREATE TABLE iceberg.<domain>.<name> AS SELECT * FROM <catalog>.<schema>.<table>) run through the SAME promote/materialize path (Trino→OPA as you). This is distinct from marketplace import_product (a listing GRANT): here you materialize a live external table. Before: create_connection (warehouse) + register the catalog + test_connection so the catalog is queryable. After: the imported table is a normal sovereign dataset. Governance: requires edit rights on the connection; the query-tool re-validates the CTAS allowlist + target-schema/role gate before Trino runs it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connId: { type: 'string', description: 'Warehouse connection id from list_connections.' },
+        schema: { type: 'string', description: 'Source schema in the external catalog.' },
+        table: { type: 'string', description: 'Source table to import.' },
+        name: { type: 'string', description: 'Target table name (defaults to the source table name).' },
+        targetDomain: { type: 'string', description: 'One of YOUR domains to land it in (defaults to the connection domain).' },
+      },
+      required: ['connId', 'schema', 'table'],
+      examples: [{ connId: 'conn_ab12cd', schema: 'sales', table: 'orders' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('import_warehouse_table needs a `connId`', 400);
+      const schema = str(args.schema).trim();
+      const table = str(args.table).trim();
+      if (!schema || !table) fail('import_warehouse_table needs a `schema` and a `table`', 400);
+      return importWarehouseTable(id, user, { schema, table, name: str(args.name) || undefined, targetDomain: str(args.targetDomain) || undefined });
     },
   },
 ];
@@ -857,4 +1027,13 @@ const guideTool: McpTool = {
   },
 };
 
-export const DISCOVERY_TOOLS: McpTool[] = [...readTools, ...waveBReadTools, ...connectionTools, ...scienceTools, guideTool];
+export const DISCOVERY_TOOLS: McpTool[] = [
+  ...readTools,
+  ...waveBReadTools,
+  ...connectionTools,
+  // Warehouse tools appear ONLY when the operator enabled external connectors —
+  // nothing new surfaces on the MCP when EXTERNAL_CONNECTORS_ENABLED is off.
+  ...(config.externalConnectorsEnabled ? warehouseTools : []),
+  ...scienceTools,
+  guideTool,
+];

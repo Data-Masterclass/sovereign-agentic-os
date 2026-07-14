@@ -36,14 +36,24 @@ export type SafetyPreset = 'read-only' | 'read-propose' | 'read-bounded' | 'full
 export type Capability = 'Off' | 'Read' | 'Write-approval' | 'Write-bounded' | 'Blocked';
 
 /**
+ * Which medallion refinement layer a DATA grant reads. `gold` is the curated
+ * serving default (and the historic behaviour), so it is OMITTED on serialize and
+ * ASSUMED on parse — existing system.yaml stays byte-stable. Only DATA grants carry
+ * this; knowledge/metrics/connections have no layers.
+ */
+export type DataLayer = 'bronze' | 'silver' | 'gold';
+export const DATA_LAYERS: DataLayer[] = ['bronze', 'silver', 'gold'];
+
+/**
  * A per-artifact grant: an id plus the capability the agent holds on it.
  *  - `Read`           → read/query immediately
  *  - `Write-approval` → propose a write, HELD in the Governance queue for a human
  *  - `Write-bounded`  → immediate write, NO approval (builder-only; server-enforced)
  * The same shape governs data products, knowledge, metrics AND connections so the
- * grant model is uniform across every artifact type.
+ * grant model is uniform across every artifact type. `layer` is DATA-only: which
+ * medallion layer the team reads (default gold, the serving layer).
  */
-export type ArtifactGrant = { id: string; capability: Capability };
+export type ArtifactGrant = { id: string; capability: Capability; layer?: DataLayer };
 /** Back-compat alias — connections have always carried a capability profile. */
 export type ConnectionGrant = ArtifactGrant;
 
@@ -143,8 +153,11 @@ function strMap(v: unknown): Record<string, string> {
  * migrating the OLD shape on read: a bare `string[]` of ids (or a mixed list with
  * string entries) coerces each string to `{ id, capability: 'Read' }`. This keeps
  * every system.yaml saved before per-artifact access existed working unchanged.
+ *
+ * `allowLayer` (DATA only) parses + validates a medallion `layer` when present;
+ * `gold` (or absent) leaves the grant layer UNSET so the file stays byte-stable.
  */
-function parseArtifactGrants(v: unknown, where: string): ArtifactGrant[] {
+function parseArtifactGrants(v: unknown, where: string, allowLayer = false): ArtifactGrant[] {
   if (v === undefined || v === null) return [];
   if (!Array.isArray(v)) throw new SystemError(`system.yaml: '${where}' must be a list`);
   const out: ArtifactGrant[] = [];
@@ -163,7 +176,18 @@ function parseArtifactGrants(v: unknown, where: string): ArtifactGrant[] {
         `system.yaml: ${where} '${entry.id}' has invalid capability '${String(entry.capability)}' (expected ${CAPABILITIES.join('|')})`,
       );
     }
-    out.push({ id: entry.id, capability });
+    const grant: ArtifactGrant = { id: entry.id, capability };
+    if (allowLayer && entry.layer !== undefined && entry.layer !== null) {
+      const layer = entry.layer as DataLayer;
+      if (!DATA_LAYERS.includes(layer)) {
+        throw new SystemError(
+          `system.yaml: ${where} '${entry.id}' has invalid layer '${String(entry.layer)}' (expected ${DATA_LAYERS.join('|')})`,
+        );
+      }
+      // Gold is the default/serving layer — never persist it, so files stay byte-stable.
+      if (layer !== 'gold') grant.layer = layer;
+    }
+    out.push(grant);
   }
   return out;
 }
@@ -171,7 +195,7 @@ function parseArtifactGrants(v: unknown, where: string): ArtifactGrant[] {
 function parseGrants(v: unknown): Grants {
   const g = isRecord(v) ? v : {};
   return {
-    data: parseArtifactGrants(g.data, 'grants.data'),
+    data: parseArtifactGrants(g.data, 'grants.data', true),
     knowledge: parseArtifactGrants(g.knowledge, 'grants.knowledge'),
     metrics: parseArtifactGrants(g.metrics, 'grants.metrics'),
     tools: strArray(g.tools, 'grants.tools'),
@@ -235,7 +259,7 @@ export function assertGrantsWithinRole(sys: System, role: Role, prev?: System): 
 export function downgradeGrantsForRole(sys: System, role: Role): System {
   if (roleAtLeast(role, 'builder')) return sys;
   const fix = (arr: ArtifactGrant[]): ArtifactGrant[] =>
-    arr.map((g) => (g.capability === 'Write-bounded' ? { id: g.id, capability: 'Write-approval' } : g));
+    arr.map((g) => (g.capability === 'Write-bounded' ? { ...g, capability: 'Write-approval' } : g));
   return {
     ...sys,
     grants: {

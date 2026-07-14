@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { type AgentSpec, type System, type Capability, SystemError } from './system-schema.ts';
+import { type AgentSpec, type System, type Capability, type DataLayer, SystemError } from './system-schema.ts';
 import { setInstructions } from './agent-md.ts';
 import {
   type GrantKind,
@@ -131,7 +131,13 @@ export function removeAgentTool(input: System, agentId: string, tool: string): S
  * system.yaml the Developer Grants panel does. The user can still narrow tools per
  * agent afterwards; {@link reconcileKindTools} keeps the pool in step on removal.
  */
-export function setArtifactGrant(input: System, kind: GrantKind, id: string | null, write: boolean): System {
+export function setArtifactGrant(
+  input: System,
+  kind: GrantKind,
+  id: string | null,
+  write: boolean,
+  layer: DataLayer = 'gold',
+): System {
   const sys = structuredClone(input);
   const cap: Capability = write ? 'Write-bounded' : 'Read';
   if (kind !== 'files' && id) {
@@ -139,6 +145,15 @@ export function setArtifactGrant(input: System, kind: GrantKind, id: string | nu
     const existing = arr.find((g) => g.id === id);
     if (existing) existing.capability = cap;
     else arr.push({ id, capability: cap });
+    // DATA grants alone carry a medallion layer. Gold is the serving default, so we
+    // keep it UNSET (byte-stable); a non-gold layer preserves an existing pick when
+    // the caller passes gold (the toggle only re-Reads a chip, never re-defaults it).
+    if (kind === 'data') {
+      const g = arr.find((x) => x.id === id)!;
+      if (layer !== 'gold') g.layer = layer;
+      else if (!existing) delete g.layer; // fresh gold grant carries no layer
+      // (an existing grant keeps its stored layer when re-toggled Read/Write)
+    }
   }
   // Provision the matching tools (ADD-only — never removes a hand-picked tool).
   for (const t of toolsForGrant(kind, cap)) if (!sys.grants.tools.includes(t)) sys.grants.tools.push(t);
@@ -153,6 +168,21 @@ export function setArtifactGrant(input: System, kind: GrantKind, id: string | nu
 /** Back-compat: a plain Read grant of a Data/Knowledge artifact (older callers). */
 export function addArtifactGrant(input: System, field: 'data' | 'knowledge', id: string): System {
   return setArtifactGrant(input, field, id, false);
+}
+
+/**
+ * Set the medallion LAYER a granted DATA product reads (bronze · silver · gold).
+ * Gold is the curated serving default, kept UNSET so system.yaml stays byte-stable;
+ * silver/bronze are recorded on the grant. A no-op when the dataset isn't granted.
+ * Only DATA grants have layers — knowledge/metrics/connections don't.
+ */
+export function setDataGrantLayer(input: System, id: string, layer: DataLayer): System {
+  const sys = structuredClone(input);
+  const g = sys.grants.data.find((x) => x.id === id);
+  if (!g) throw new SystemError(`Simple: '${id}' is not a granted dataset`);
+  if (layer === 'gold') delete g.layer;
+  else g.layer = layer;
+  return sys;
 }
 
 /**

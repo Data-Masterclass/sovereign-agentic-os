@@ -30,7 +30,7 @@ const READ_TOOLS: Record<GrantKind, string[]> = {
   data: ['query_data', 'list_datasets', 'get_dataset', 'profile_dataset'],
   knowledge: ['search_knowledge', 'list_knowledge', 'get_knowledge'],
   files: ['list_files', 'search_files', 'get_file'],
-  connections: ['list_connections', 'get_connection', 'test_connection', 'list_connection_templates'],
+  connections: ['list_connections', 'get_connection', 'test_connection', 'list_connection_templates', 'warehouse_registration'],
 };
 
 /** Create/write tools per kind — added on top of the read set when the grant writes.
@@ -40,7 +40,7 @@ const WRITE_TOOLS: Record<GrantKind, string[]> = {
   data: ['create_dataset', 'ingest_dataset', 'transform_silver', 'build_gold_join', 'add_dataset_version', 'document_dataset'],
   knowledge: ['author_knowledge', 'index_knowledge'],
   files: ['upload_file'],
-  connections: ['create_connection'],
+  connections: ['create_connection', 'import_warehouse_table'],
 };
 
 /** True when the capability lets the team WRITE (not just read). */

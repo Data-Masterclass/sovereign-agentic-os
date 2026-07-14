@@ -1,0 +1,43 @@
+{{- if and .Values.openmetadata.enabled .Values.trino.externalCatalogs }}
+{{- /*
+  External-warehouse → OpenMetadata ingestion STUB (Phase 1b, honest).
+
+  Full OM lineage ingestion for the federated warehouses is a POST-LIVE step: this
+  deployment runs OM with Airflow ingestion DISABLED (values: openmetadata.openmetadata
+  .config.pipelineServiceClientConfig ... enabled: false) and the Catalog surface unions
+  OM entries via a bot JWT, not a live crawler. So we do NOT fabricate an ingestion
+  pipeline here. Instead this ConfigMap RECORDS, per external catalog, the OM connector
+  type + config keys the provider maps to (os-ui `providerFor(platform).openMetadata`),
+  so an operator can create the matching OM Database Service by hand (or wire an Airflow
+  DAG once ingestion is enabled). It is advisory metadata — it changes no OM runtime
+  behaviour on its own. When lineage ingestion is turned on later, these are the exact
+  service definitions to register.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-external-catalog-om-hints
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "openmetadata") | nindent 4 }}
+  annotations:
+    "soa.dev/purpose": "Advisory OM connector hints for federated warehouse catalogs (Phase 1b stub — full lineage is post-live)."
+data:
+  README: |
+    These are OpenMetadata Database-Service hints for the external Trino catalogs
+    federated in trino.externalCatalogs. Ingestion is NOT run automatically here
+    (Airflow ingestion is disabled). To catalog a federated source in OM, create a
+    Database Service of the connectorType below and populate the configKeys from the
+    connection's non-secret config (secrets stay in your vault). Lineage from the
+    external tables to any OS import (CTAS) lands once ingestion is enabled.
+  {{- range $c := .Values.trino.externalCatalogs }}
+  {{ $c.name }}.yaml: |
+    catalog: {{ $c.name }}
+    platform: {{ $c.platform | default "unknown" }}
+    # The OM connectorType + configKeys come from the os-ui provider registry
+    # (providerFor(platform).openMetadata). The operator fills configKeys from the
+    # connection's stored non-secret config; credentials come from the OM secret store.
+    note: "Create an OM Database Service of the matching connectorType by hand until Airflow ingestion is enabled."
+  {{- end }}
+{{- end }}

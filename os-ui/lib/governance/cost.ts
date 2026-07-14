@@ -83,6 +83,37 @@ export function getSpend(scope: CapScope, subject: string, modelClass?: string):
   return costState().spend.get(k) ?? costState().spend.get(key(scope, subject)) ?? 0;
 }
 
+/**
+ * Reconcile the in-process spend Map with LIVE LiteLLM spend so `getSpend` (and the
+ * alerts/home consumers that read it) reflect REAL usage, not only the test-seeded
+ * Map. LiteLLM groups spend by tag subject (per-user / per-domain / bare) — we map
+ * each subject onto the matching cap scope so a domain cap sees its domain's spend.
+ *
+ * HONEST: this never fabricates. When LiteLLM is unreachable the Map is left as-is;
+ * when it reports $0 (self-hosted models cost nothing per token) that real 0 flows
+ * through. Sync `getSpend`/`checkCap` are unchanged — this is an async pre-step the
+ * overview builder runs so the numbers the user sees are live. Imported lazily to
+ * avoid a cycle with the monitoring adapter (which imports `listCaps` from here).
+ */
+export async function reconcileSpendFromLiteLLM(): Promise<void> {
+  const { litellmSpendByTag } = await import('@/lib/monitoring/adapters/cost');
+  const byTag = await litellmSpendByTag();
+  if (!byTag) return; // unreachable → leave the Map untouched (don't zero real seeds)
+  const st = costState();
+  // Map each known cap's subject to its live spend. A domain/tenant/key cap's
+  // subject is matched against the LiteLLM tag subjects (domain name or user id).
+  for (const cap of st.caps.values()) {
+    const live = byTag[cap.subject];
+    if (live !== undefined) st.spend.set(key(cap.scope, cap.subject), live);
+  }
+  // Also surface any live subject that has no cap yet (so getSpend is truthful for
+  // a domain the admin hasn't capped). Recorded as a domain-scoped spend entry.
+  for (const [subject, spent] of Object.entries(byTag)) {
+    const dk = key('domain', subject);
+    if (!st.spend.has(dk)) st.spend.set(dk, spent);
+  }
+}
+
 export type CapCheck = { allowed: boolean; reason: string; cap?: Cap; projected: number };
 
 /**

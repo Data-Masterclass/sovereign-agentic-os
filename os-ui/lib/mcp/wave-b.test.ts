@@ -402,12 +402,20 @@ test('list_connection_templates: the catalog from the SAME registry create_conne
   const r = payload<{ templates: { key: string; personal: boolean; minRoleToCreate: string; requiredFields: string[]; tools: { name: string; mode: string }[] }[]; note: string }>(
     await call(creator, 'list_connection_templates'),
   );
-  assert.equal(r.templates.length, 7, 'the full template catalog (3 user-facing + 4 internal building blocks)');
+  // Flag-off default: the external-warehouse template is hidden (EXTERNAL_CONNECTORS_ENABLED
+  // off), so the catalog is the 3 user-facing + 4 internal building blocks — warehouse
+  // does NOT appear (the flag-off invariant, mirrored in the UI picker).
+  assert.equal(r.templates.length, 7, 'the full template catalog (3 user-facing + 4 internal building blocks); warehouse hidden flag-off');
+  assert.ok(!r.templates.some((t) => t.key === 'warehouse'), 'warehouse hidden when external connectors are off');
 
-  // ONE source of truth: exactly the keys the create_connection schema accepts.
+  // ONE source of truth: the listed keys are exactly the keys create_connection accepts
+  // in THIS deployment — its enum minus the flag-gated `warehouse` (rejected flag-off).
   const createTool = ALL_MCP_TOOLS.find((t) => t.name === 'create_connection')!;
-  const accepted = ((createTool.inputSchema.properties.template as { enum: string[] }).enum ?? []).slice().sort();
-  assert.deepEqual(r.templates.map((t) => t.key).sort(), accepted, 'catalog keys === create_connection’s accepted keys');
+  const accepted = ((createTool.inputSchema.properties.template as { enum: string[] }).enum ?? [])
+    .filter((k) => k !== 'warehouse')
+    .slice()
+    .sort();
+  assert.deepEqual(r.templates.map((t) => t.key).sort(), accepted, 'catalog keys === create_connection’s accepted keys (flag-off)');
 
   const gdrive = r.templates.find((t) => t.key === 'gdrive')!;
   assert.equal(gdrive.personal, true, 'per-user OAuth → any user may connect');

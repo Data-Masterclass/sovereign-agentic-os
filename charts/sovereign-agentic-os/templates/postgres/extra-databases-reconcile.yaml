@@ -1,0 +1,127 @@
+{{- if .Values.postgres.enabled }}
+{{- if eq .Values.postgres.engine "plain" }}
+{{- if .Values.postgres.extraDatabases }}
+{{- /*
+  Extra-databases reconcile hook (engine:plain only).
+
+  WHY: the pg-init ConfigMap (templates/postgres/statefulset.yaml) only runs from
+  /docker-entrypoint-initdb.d on the FIRST boot of an EMPTY PGDATA volume. When a
+  NEW entry is added to postgres.extraDatabases AFTER the volume was initialised,
+  that role + database are NEVER created — the init script does not re-run on an
+  existing volume. The consumer then loops forever on an auth/"database does not
+  exist" error (this is exactly what happened to Featureform: its `featureform`
+  role/db were added ~7 days after pg's volume was first initialised, so the
+  metadata server retried pg-rw:5432 hundreds of thousands of times and never
+  bound its API/dashboard ports).
+
+  This one-shot Helm hook connects as the bootstrap superuser (postgres.secretName)
+  to pg-rw and runs the SAME idempotent create-role/create-db/grants logic the
+  initdb script uses, for EVERY extraDatabases entry. A NO-OP for roles/dbs that
+  already exist (safe on every upgrade), it only fills in the missing ones. This
+  keeps extraDatabases declarative on a long-lived volume without a manual psql.
+*/}}
+{{- $pg := .Values.postgres }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pg-extra-databases-reconcile
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres-reconcile") | nindent 4 }}
+  annotations:
+    # Runs on install AND upgrade, AFTER Postgres itself (infra wave 0) is up.
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres-reconcile") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 999
+      containers:
+        - name: reconcile
+          # Same official Postgres image as the plain engine — ships psql.
+          image: "{{ $pg.plainImage.repository }}:{{ $pg.plainImage.tag }}{{ if $pg.plainImage.digest }}@{{ $pg.plainImage.digest }}{{ end }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          env:
+            # Bootstrap superuser (the plain-engine app owner) — connects to pg-rw.
+            - name: PGHOST
+              value: {{ include "soa.pgHost" . | quote }}
+            - name: PGPORT
+              value: "5432"
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: {{ $pg.secretName }}, key: username } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $pg.secretName }}, key: password } }
+            {{- range $pg.extraDatabases }}
+            # Password for the {{ .name }} role, from its credential Secret.
+            - name: PG_{{ .username | upper }}_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .secretName }}, key: password } }
+            {{- end }}
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+
+              echo "waiting for Postgres at ${PGHOST}:${PGPORT} ..."
+              for i in $(seq 1 60); do
+                if pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -q; then
+                  echo "Postgres is ready"; break
+                fi
+                sleep 5
+              done
+
+              psql_super() { psql -v ON_ERROR_STOP=1 --dbname postgres "$@"; }
+
+              create_role_db() {
+                local role="$1" db="$2" pw="$3" createdb="$4"
+                local pw_esc=${pw//\'/\'\'}
+                psql_super <<SQL
+              DO \$do\$
+              BEGIN
+                IF EXISTS (SELECT FROM pg_roles WHERE rolname = '${role}') THEN
+                  ALTER ROLE "${role}" WITH LOGIN PASSWORD '${pw_esc}';
+                ELSE
+                  CREATE ROLE "${role}" WITH LOGIN PASSWORD '${pw_esc}';
+                END IF;
+              END
+              \$do\$;
+              SQL
+                if [ "${createdb}" = "true" ]; then
+                  psql_super -c "ALTER ROLE \"${role}\" CREATEDB;"
+                fi
+                if ! psql_super -tAc "SELECT 1 FROM pg_database WHERE datname = '${db}'" | grep -q 1; then
+                  psql_super -c "CREATE DATABASE \"${db}\" OWNER \"${role}\";"
+                fi
+                psql_super -c "ALTER DATABASE \"${db}\" OWNER TO \"${role}\";"
+                psql_super -c "GRANT ALL PRIVILEGES ON DATABASE \"${db}\" TO \"${role}\";"
+                psql -v ON_ERROR_STOP=1 --dbname "${db}" \
+                  -c "ALTER SCHEMA public OWNER TO \"${role}\";" \
+                  -c "GRANT ALL ON SCHEMA public TO \"${role}\";"
+                echo "reconciled role+db: ${role}/${db}"
+              }
+
+              {{- range $pg.extraDatabases }}
+              create_role_db "{{ .username }}" "{{ .name }}" "${PG_{{ .username | upper }}_PASSWORD}" "{{ .createdb | default false }}"
+              {{- end }}
+              echo "pg-extra-databases-reconcile: all extra databases present"
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+{{- end }}
+{{- end }}
+{{- end }}

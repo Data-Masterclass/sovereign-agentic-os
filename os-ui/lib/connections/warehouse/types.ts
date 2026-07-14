@@ -93,6 +93,10 @@ export type SnowflakeConfig = {
   accountUrl: string;
   database: string;
   warehouse: string;
+  /** Snowflake login username the key-pair belongs to. */
+  username?: string;
+  /** Snowflake role to assume for queries (least-privilege, read-only). */
+  role?: string;
   /** Vault ref name for the key-pair private key (NEVER inlined). */
   privateKeySecretRef?: string;
 };
@@ -100,7 +104,13 @@ export type SnowflakeConfig = {
 /** BigQuery via the Trino BigQuery connector (Workload Identity / SA). Phase 1b. */
 export type BigQueryConfig = {
   platform: 'bigquery';
+  /** GCP project that OWNS the datasets being federated. */
   projectId: string;
+  /** Optional billing/parent project (where query jobs are billed), if distinct. */
+  parentProjectId?: string;
+  /** Vault ref name for the service-account JSON key (NEVER inlined). Omit to use
+   *  Workload Identity via the pod's GCP service account. */
+  credentialsSecretRef?: string;
 };
 
 /** Databricks Delta via the Trino Delta connector + Unity metastore. Phase 1b. */
@@ -108,6 +118,14 @@ export type DatabricksDeltaConfig = {
   platform: 'databricks-delta';
   /** Databricks workspace host, e.g. `https://dbc-xxxx.cloud.databricks.com`. */
   host: string;
+  /** SQL warehouse HTTP path, e.g. `/sql/1.0/warehouses/abc123`. */
+  httpPath?: string;
+  /** Vault ref name for the Databricks PAT / OAuth token (NEVER inlined). */
+  tokenSecretRef?: string;
+  /** Unity Catalog name the Delta tables live under. */
+  unityCatalog?: string;
+  /** Underlying cloud storage root (S3/ADLS/GCS) for the Delta tables. */
+  storage?: string;
   /** Unity Catalog metastore endpoint. */
   metastoreUri?: string;
 };
@@ -115,8 +133,16 @@ export type DatabricksDeltaConfig = {
 /** Azure Fabric — Delta over OneLake. Phase 1b. */
 export type FabricConfig = {
   platform: 'fabric';
-  /** OneLake ABFS endpoint for the workspace. */
-  oneLakeUri: string;
+  /** Fabric workspace (GUID) whose lakehouse is federated. */
+  workspaceId?: string;
+  /** OneLake ABFS/HTTPS endpoint for the workspace. */
+  onelakeEndpoint?: string;
+  /** Entra (Azure AD) tenant id the service principal belongs to. */
+  tenantId?: string;
+  /** Vault ref name for the service-principal client secret / cert (NEVER inlined). */
+  servicePrincipalSecretRef?: string;
+  /** OneLake ABFS endpoint for the workspace (legacy alias of onelakeEndpoint). */
+  oneLakeUri?: string;
 };
 
 /**

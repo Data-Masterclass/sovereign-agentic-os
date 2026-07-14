@@ -64,22 +64,28 @@ export async function mintEmbed(token: DelegatedToken, dashboardId: string, dash
   token: string;
   expiresInSeconds: number;
   mode: BuildMode;
+  reason?: string;
 }> {
   const request = guestTokenRequest(token, dashboardId);
+  let reason: string | undefined;
   if (dashboardName && (await liveDashboardsReachable())) {
     try {
       const base = config.supersetInternalUrl;
       const supersetId = await resolveDashboardIdByTitle(base, dashboardName);
-      if (supersetId != null) {
+      if (supersetId == null) {
+        reason = `dashboard "${dashboardName}" not found in Superset`;
+      } else {
         const uuid = await ensureEmbedded(base, supersetId);
         const embedRequest = { ...request, resourceId: uuid }; // guest token targets the embedded UUID
         const minted = await makeRealDashboardClients().embed.mint(embedRequest);
         return { request: embedRequest, ...minted, mode: 'live' };
       }
-    } catch {
-      // fall through to the honest offline-mock on any live failure
+    } catch (e) {
+      // fall through to the honest offline-mock on any live failure — but capture WHY, so a
+      // future mint 403 (or unreachable Superset) surfaces in the panel instead of vanishing.
+      reason = e instanceof Error ? e.message : String(e);
     }
   }
   const minted = await mockDashboardDeps(newDashboardMock()).embed.mint(request);
-  return { request, ...minted, mode: 'offline-mock' };
+  return { request, ...minted, mode: 'offline-mock', reason };
 }

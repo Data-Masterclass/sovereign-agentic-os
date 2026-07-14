@@ -1,0 +1,141 @@
+{{- if and .Values.ml.enabled .Values.kserve.enabled .Values.kserve.seed.enabled }}
+{{- /*
+  KServe demo-model seed hook (Layer 4 Science).
+
+  WHY: the InferenceService (templates/science/kserve.yaml) points its storageUri
+  at s3://mlflow/models/sample-sklearn, but nothing writes an artifact there on a
+  fresh deploy — so the predictor's storage-initializer fails with
+  "No model found in models/sample-sklearn" and sits in Init:CrashLoopBackOff.
+
+  This one-shot Helm hook trains a tiny sklearn churn scorer INSIDE the exact
+  serving image (the kserve-mlserver ClusterServingRuntime image), so the pickled
+  model is joblib/sklearn-version-safe by construction, then uploads it plus a
+  model-settings.json naming the model `{{ .Values.kserve.seed.modelName }}` — the
+  name the OS UI calls at /v2/models/{{ .Values.kserve.seed.modelName }}/infer
+  (os-ui lib/science/churn.ts). Once the artifact lands, the predictor's next
+  storage-initializer retry (it is already backing off) succeeds and the
+  InferenceService becomes READY — no manual rollout needed.
+
+  Idempotent + non-blocking: a re-run overwrites the same artifact; the upload is
+  guarded with `|| echo` so a transient S3 hiccup never fails the release.
+
+  Features (order matters — must match CHURN.features in os-ui lib/science/churn.ts):
+    [recency_days, order_frequency, monetary_value, tenure_months]
+*/}}
+{{- $k := .Values.kserve }}
+{{- $os := .Values.objectStorage }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: science-churn-model-seed
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "science-seed") | nindent 4 }}
+  annotations:
+    # Runs on install AND upgrade, AFTER the object-storage bucket-init hook (weight 5).
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "science-seed") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      initContainers:
+        - name: train
+          # SAME image as the kserve-mlserver runtime => identical sklearn/joblib.
+          image: "{{ $k.seed.trainImage.repository }}:{{ $k.seed.trainImage.tag }}{{ if $k.seed.trainImage.digest }}@{{ $k.seed.trainImage.digest }}{{ end }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          command: ["python", "-c"]
+          args:
+            - |
+              import json, numpy as np, joblib
+              from sklearn.ensemble import GradientBoostingRegressor
+              import sklearn
+              rng = np.random.default_rng(42)
+              n = 4000
+              recency  = rng.uniform(0, 365, n)     # days since last order
+              freq     = rng.uniform(0, 30, n)      # orders / period
+              monetary = rng.uniform(0, 5000, n)    # revenue
+              tenure   = rng.uniform(1, 72, n)      # months as customer
+              X = np.column_stack([recency, freq, monetary, tenure]).astype(np.float32)
+              # Latent churn propensity: dormant, low-frequency, low-value, young
+              # accounts churn more. Bernoulli outcomes -> a regressor learns the
+              # conditional mean, i.e. an approximate churn probability in [0,1].
+              logit = 0.015*recency - 0.22*freq - 0.0009*monetary - 0.04*tenure - 1.0
+              p = 1.0/(1.0 + np.exp(-logit))
+              y = rng.binomial(1, p).astype(np.float64)
+              model = GradientBoostingRegressor(n_estimators=120, max_depth=3, random_state=0)
+              model.fit(X, y)
+              joblib.dump(model, "/artifact/model.joblib")
+              settings = {
+                "name": {{ $k.seed.modelName | quote }},
+                "implementation": "mlserver_sklearn.SKLearnModel",
+                "parameters": {"uri": "./model.joblib", "version": "v1"},
+              }
+              with open("/artifact/model-settings.json", "w") as f:
+                  json.dump(settings, f, indent=2)
+              hi = model.predict(np.array([[300, 1, 50, 3]], dtype=np.float32))[0]
+              lo = model.predict(np.array([[5, 20, 4000, 60]], dtype=np.float32))[0]
+              print(f"sklearn={sklearn.__version__} risky={hi:.3f} loyal={lo:.3f}")
+              assert hi > lo, "model failed sanity ordering"
+          volumeMounts:
+            - { name: artifact, mountPath: /artifact }
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: "1", memory: 1Gi }
+      containers:
+        - name: upload
+          # Same pinned aws-cli the chart's bucket-init uses (mc/MinIO client is AGPL).
+          image: "{{ $os.awsCli.repository }}{{ if $os.awsCli.digest }}@{{ $os.awsCli.digest }}{{ else }}:{{ $os.awsCli.tag }}{{ end }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: {{ $os.secretName }}, key: AWS_ACCESS_KEY_ID } }
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: {{ $os.secretName }}, key: AWS_SECRET_ACCESS_KEY } }
+            - name: AWS_DEFAULT_REGION
+              value: {{ $os.region | default "us-east-1" | quote }}
+            - name: ENDPOINT
+              value: {{ include "soa.s3Endpoint" . | quote }}
+            - name: STORAGE_URI
+              value: {{ $k.sampleModel.storageUri | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              # BUCKET/PREFIX from the storageUri (s3://<bucket>/<prefix>).
+              REST="${STORAGE_URI#s3://}"
+              BUCKET="${REST%%/*}"
+              # Ensure the bucket exists (no-op if already there), then publish.
+              aws --endpoint-url "$ENDPOINT" s3 ls "s3://$BUCKET" >/dev/null 2>&1 \
+                || aws --endpoint-url "$ENDPOINT" s3 mb "s3://$BUCKET" || echo "mb skipped"
+              aws --endpoint-url "$ENDPOINT" s3 cp --recursive /artifact "${STORAGE_URI%/}/" \
+                || echo "WARN: churn model upload failed (non-blocking)"
+              aws --endpoint-url "$ENDPOINT" s3 ls "${STORAGE_URI%/}/" || echo "ls skipped"
+              echo "churn model seed complete"
+          volumeMounts:
+            - { name: artifact, mountPath: /artifact }
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 256Mi }
+      volumes:
+        - name: artifact
+          emptyDir: {}
+{{- end }}

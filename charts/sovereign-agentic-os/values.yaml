@@ -1821,6 +1821,45 @@ trino:
   s3:
     region: us-east-1
     pathStyleAccess: true
+  # External-warehouse FEDERATED catalogs (opt-in; default EMPTY so nothing changes).
+  # Each entry mounts one external lakehouse as a governed Trino catalog. Paired with
+  # os-ui's EXTERNAL_CONNECTORS_ENABLED flag (default off). Get `properties` from the
+  # connection's registration snippet (warehouse_registration MCP tool / UI) — it is
+  # exactly what providerFor(platform).catalogProps renders. Secrets are NEVER inlined:
+  # props reference ${ENV:VAR}, injected from a Secret via `secretEnv`. Registration is
+  # this values edit + a rolling restart (the pod's catalog dir is a read-only mount).
+  #   externalCatalogs:
+  #     - name: glue_sales           # keyless: IRSA via trino.serviceAccount below
+  #       platform: glue
+  #       properties: |
+  #         connector.name=iceberg
+  #         iceberg.catalog.type=glue
+  #         hive.metastore.glue.region=eu-central-1
+  #         fs.native-s3.enabled=true
+  #         s3.region=eu-central-1
+  #       secretEnv: []
+  #     - name: snow_fin             # secret-backed: key-pair via ${ENV:SNOWFLAKE_PRIVATE_KEY}
+  #       platform: snowflake
+  #       properties: |
+  #         connector.name=snowflake
+  #         connection-url=jdbc:snowflake://ORG-ACCT.snowflakecomputing.com
+  #         connection-private-key=${ENV:SNOWFLAKE_PRIVATE_KEY}
+  #         snowflake.database=ANALYTICS
+  #         snowflake.warehouse=WH
+  #       secretEnv:
+  #         - name: SNOWFLAKE_PRIVATE_KEY
+  #           secretName: trino-snowflake
+  #           key: private-key
+  externalCatalogs: []
+  # Optional ServiceAccount for the Trino pod — the IRSA (AWS) / Workload-Identity
+  # (GCP) carrier for KEYLESS Glue / BigQuery federation. Default off (no SA) so the
+  # base deployment is unchanged. Set create: true and add the cloud annotation, e.g.
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::<acct>:role/<trino-glue-role>   (AWS)
+  #   iam.gke.io/gcp-service-account: trino@<project>.iam.gserviceaccount.com  (GCP)
+  serviceAccount:
+    create: false
+    name: trino
+    annotations: {}
   # OPA governance + resource groups are layered in their own phases (the chart
   # renders access-control.properties + resource-groups.properties from these).
   opa:
@@ -2584,6 +2623,21 @@ kserve:
     # A trained model artifact in the MLflow object-storage bucket (replace with a
     # real registry path). Demo path under the `mlflow` bucket.
     storageUri: "s3://mlflow/models/sample-sklearn"
+  # Seed hook: trains a tiny demo churn model and publishes it to the sampleModel
+  # storage path so the InferenceService has an artifact to serve on first deploy.
+  # Without it the predictor's storage-initializer loops on "No model found in
+  # models/sample-sklearn" (Init:CrashLoopBackOff). Idempotent + non-blocking —
+  # a re-run overwrites the same artifact; a failed upload never blocks the release.
+  seed:
+    enabled: true
+    # SAME image as the kserve-mlserver ClusterServingRuntime => identical
+    # sklearn/joblib, so the pickled model is version-safe by construction.
+    trainImage:
+      repository: docker.io/seldonio/mlserver
+      tag: "1.5.0"
+    # model-settings.json names the model `churn_model` — matches the UI's
+    # /v2/models/churn_model/infer call (os-ui lib/science/churn.ts).
+    modelName: churn_model
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "1", memory: 1Gi }

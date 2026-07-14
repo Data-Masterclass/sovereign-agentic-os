@@ -204,7 +204,11 @@ there.
   validated read-only `SELECT`, executed under your row filters.
 - **Connections — governed bridges to outside systems.** A Connection is `credentials +
   endpoint + a set of governed tools`, never a raw pipe — used to bring data in and to expose
-  external APIs/MCPs as tools. You grant **use**, never the token.
+  external APIs/MCPs as tools. You grant **use**, never the token. For teams already running a
+  lakehouse elsewhere, an admin-enabled **external-warehouse** connector federates it through
+  central Trino as a governed catalog — AWS Glue/Athena, Snowflake, BigQuery, Databricks/Delta,
+  and (experimental) Microsoft Fabric/OneLake — so you can query it in place under the same OPA
+  path, or import a core table as a governed data product into the sovereign lakehouse.
 - **Metrics — one number, everywhere.** The KPI semantic layer. Define "Revenue" once and it
   resolves to the *same* number in the explorer, in dashboards, and in an agent's `metrics`
   tool — each under the viewer's own row-level security.
@@ -222,7 +226,10 @@ honestly rather than inventing an answer when retrieval comes back empty.
 - **Agents — compose, govern, run.** One page where a domain's **agent systems** (instructions
   + tools + memory) are composed three equivalent ways — a React-Flow graph builder, Monaco
   YAML editing, or a chat assistant — then granted resources, built (*Build = execute +
-  verify*), and run. Every call routes through **LiteLLM → OPA → Langfuse**.
+  verify*), and run. Every call routes through **LiteLLM → OPA → Langfuse**. Each **data grant**
+  can target the **medallion layer** the team reads — Bronze, Silver, or Gold — and the picker
+  only offers layers that are actually built, defaulting to the highest (Gold, the curated
+  default). The chosen layer is enforced when the team discovers and profiles that dataset.
 - **Software — build governed apps, sovereign.** Describe an app in a Claude-style build chat;
   the agent writes and commits code to an in-cluster **Forgejo** repo (no GitHub, no tokens,
   your code never leaves). *Request deploy* assembles a review card — security scan, resource
@@ -784,11 +791,16 @@ by living inside it.
 The governance spine — OPA, approvals, RLS, promote ladders, roles, audit, MCP (live end-to-end
 at `/api/mcp`), auth, Knowledge, and the physical Data pipeline (upload → Bronze → Silver →
 Gold → publish-on-approval → Cube → Talk to your data) — is **fully live**. Layers 1–3 are in
-place; **Science (Layer 4) is opt-in / off by default**. The OS UI is v1.0: every sidebar tab is
-a real, brand-themed surface with light/dark theming. Still being wired or deferred: real
-external tool execution beyond Google Drive / OneDrive / Notion, the Science/Layer-4 ML
-lifecycle beyond reads + predict, and broader tutorial anchors. The full, versioned history is
-in `CHANGELOG.md`.
+place; **Science (Layer 4)** deploys a classic-ML model as a live `predict` service. **Software**
+apps build a real container image in-cluster (Forgejo CI) and deploy to a live per-app URL —
+end-to-end, no external registry. **Dashboards** embed governed Superset with a viewer-scoped
+guest token. The OS UI is v1.0: every sidebar tab is a real, brand-themed surface with
+light/dark theming. Newer / opt-in: the medallion **layer choice** on agent data grants, and an
+admin-enabled **external-warehouse connector** (federate AWS Glue/Athena · Snowflake · BigQuery ·
+Databricks/Delta, plus experimental Fabric/OneLake, through Trino) — off by default and validated
+against a live source with your own cloud credentials. Still being wired or deferred: real
+external tool execution beyond Google Drive / OneDrive / Notion, richer OpenMetadata lineage
+ingestion, and broader tutorial anchors. The full, versioned history is in `CHANGELOG.md`.
 
 ---
 

@@ -15,6 +15,40 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.3.3] — 2026-07-14
+
+### Fix — OS-built apps now serve a real UI (closes the Software image-build gap, #132)
+- **Proven end-to-end:** a created app's CI now genuinely `docker build`s and pushes an image to the Forgejo registry, the node pulls it, and the runner deploys it (verified live — the first OS-built app image ever produced; the prior app-path CI was a no-op `echo` stub that reported success while pushing nothing).
+- **Scaffold produces a runnable app:** the `nextjs-supabase` template now seeds a minimal Next.js **App Router** app (`app/page.tsx` + `app/layout.tsx`, no runtime Supabase calls so it boots without secrets) and a correct Dockerfile — `npm install` (no lockfile is seeded; the old `npm ci || true` silently produced no `node_modules` → `next: not found`), a real `next build`, and `PORT=8080`/`HOSTNAME=0.0.0.0`/`EXPOSE 8080` to match the runner's readiness probe. TS devDependencies are seeded so `next build` type-checks in the network-less DinD runner.
+
+### Feature (flag-gated, default OFF) — external-warehouse connectors, integration layer
+- Building on the provider registry (Glue/Athena · Snowflake · BigQuery · Databricks-Delta · Fabric/OneLake — all real `catalogProps` generators, secrets referenced via `${ENV:…}`/mounted files, never inlined), this wires the connectors end-to-end behind `EXTERNAL_CONNECTORS_ENABLED`: a generic Connections create-flow that renders each provider's `credentialFields` (secrets vaulted to Secrets Manager, never on the record); **live Trino catalog registration** via a new `values.trino.externalCatalogs` list rendered into the read-only `trino-catalog` ConfigMap with per-catalog secret-env / IRSA injection; a governed **import-to-Iceberg** CTAS (`import_warehouse_table`, reusing the materialize path); MCP `create_connection`/`test_connection` (honoring each provider's `testProbe`) + `warehouse_registration`/`import_warehouse_table`; and an OpenMetadata connector-hint stub. Default render is unchanged (empty catalog list); nothing activates until an operator sets the flag + adds a catalog. Live "returns rows" verification against a real AWS/Azure/Snowflake/GCP/Databricks account remains the operator's step.
+
+## [os-ui 0.3.2] — 2026-07-14
+
+Four-tab operability pass (Dashboards, Monitoring, Science, Software) plus a
+medallion-layer choice on agent data grants. All code `tsc`-clean; 2120 tests pass.
+
+### Fix — Dashboards embed actually mounts (was permanently OFFLINE-MOCK)
+- **Guest-token mint no longer 403s.** The Superset service handshake now sends `X-Forwarded-Roles` on both the CSRF GET (the first request, which triggers `_sso_login`) and every service call, and the chart injects `SUPERSET_SERVICE_USER`/`SUPERSET_SERVICE_ROLES` — so the embed service user is `Admin`, not a role-less `Gamma` that the mint endpoint rejected.
+- **Dashboards now import into Superset on create.** MCP `create_dashboard` calls `buildDashboard(...)` after save (delegated domain token), so a created dashboard exists in Superset to embed instead of only in the OS store.
+- **The embed is mounted, not summarised.** `EmbedPanel` now mounts the real `@superset-ui/embedded-sdk` `embedDashboard(...)` against the embedded UUID with the OS-minted guest token, with clean unmount. `mintEmbed` now surfaces a `reason` when it can't embed (honest failure instead of silent mock).
+
+### Fix — Monitoring shows real numbers, not placeholders
+- **Cost lens reconciles live LiteLLM spend.** `collectCost` always reads LiteLLM `/spend/tags` (parsing the real `individual_request_tag`/`total_spend` shape, dropping `User-Agent:` transport noise), and `governance/cost.ts` seeds its cap ledger from that live read so cap-breach alerts fire on real usage. (On STACKIT the self-hosted models are free per-token, so spend is honestly `$0` — grouped, not mocked.)
+- **Native trace drawer fills Context pack + Logs.** `fetchTrace` derives `contextPack` from the generation observation's `input.messages` (falling back to the governed trace input) and emits structured `logs` lines per observation — so the drawer shows the real packed context + `principal=… decision=allow`, not empty arrays.
+
+### Fix — Science infra: predictor + feature store come up (Science tab was red)
+- **Featureform's Postgres backend is provisioned on existing volumes.** A new `post-upgrade` reconcile Job idempotently creates the `featureform` role+db in the plain-engine Postgres (the init script only ran on first boot of an empty volume, so a database added later never existed — Featureform looped forever authenticating). 
+- **KServe sample model is seeded.** A new `post-upgrade` Job trains + uploads the `churn_model` artifact to the path the InferenceService expects, so the predictor's storage-initializer stops crash-looping and the service goes Ready. Both hooks are chart-native and idempotent.
+
+### Fix — Software: OS-built apps actually build + can deploy (#132)
+- **The scaffolded CI is a real build, on both paths.** The legacy `POST /api/software` scaffolder emitted an `echo` stub with an external `actions/checkout` the sovereign runner can't run; it now emits the same real `runs-on: docker` in-pod `docker build && push` workflow the app path uses, and seeds a `REGISTRY_PASS` secret so `docker login` works.
+- **Workflow is committed last.** `scaffoldRepo` now commits all source before `.forgejo/workflows/*`, so the CI-triggering push lands against a complete build context (matching the proven demo-app seed order).
+
+### Feature — medallion-layer choice on agent DATA grants
+- A data grant can now target **Bronze / Silver / Gold**. The Simple-builder selector shows **only the layers actually built** for that dataset and defaults to the **highest available** (Gold if built, else Silver, else Bronze); it hides entirely when a dataset has a single layer. The choice is enforced server-side for `get_dataset`/`profile_dataset` (the granted layer's physical FQN is injected, viewer-aware, with graceful fallback to the furthest built layer), and steers ad-hoc `query_data` via discovery. Backward-compatible: no layer = Gold; existing `system.yaml` stays byte-stable. Metrics/Dashboards remain Gold-locked.
+
 ## [os-ui 0.3.1] — 2026-07-14
 
 ### Hardening — Northpeak durability guards (belt-and-suspenders on the 0.1.99 fix)

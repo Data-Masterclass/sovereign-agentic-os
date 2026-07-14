@@ -4,7 +4,7 @@
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
 import { recentTraces } from '@/lib/infra/agent-governed';
-import { listCaps, getSpend } from '@/lib/governance/cost';
+import { listCaps, getSpend, reconcileSpendFromLiteLLM } from '@/lib/governance/cost';
 import { collectRuns } from './adapters/run-trace';
 import { collectPipelines } from './adapters/pipeline-health';
 import { collectCost } from './adapters/cost';
@@ -51,6 +51,9 @@ export async function buildOverview(user: CurrentUser): Promise<Overview> {
     summarize(id, visible.filter((it) => it.lens === id)),
   );
   const attention = pickAttention(visible);
+  // Seed the governance spend Map with LIVE LiteLLM spend so cap-breach alerts fire
+  // on REAL usage (getSpend is otherwise only the test-seeded Map). No-op offline.
+  await reconcileSpendFromLiteLLM();
   const alerts = scopedAlerts(scope);
 
   return { scope, lenses, attention, alerts, generatedAt: new Date().toISOString() };

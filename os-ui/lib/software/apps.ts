@@ -255,6 +255,14 @@ function nextjsSupabaseTemplate(): Template {
             private: true,
             scripts: { dev: 'next dev', build: 'next build', start: 'next start' },
             dependencies: { next: '^15.0.0', react: '^19.0.0', 'react-dom': '^19.0.0', '@supabase/supabase-js': '^2.45.0' },
+            // Seeded so `next build` type-checks the .tsx source without Next's
+            // first-run auto-install (which needs network the DinD runner lacks).
+            devDependencies: {
+              typescript: '^5.6.0',
+              '@types/node': '^22.0.0',
+              '@types/react': '^19.0.0',
+              '@types/react-dom': '^19.0.0',
+            },
           },
           null,
           2,
@@ -277,10 +285,47 @@ function nextjsSupabaseTemplate(): Template {
           '  using (owner = auth.uid()) with check (owner = auth.uid());\n',
       },
       {
+        path: 'app/layout.tsx',
+        content:
+          "export const metadata = { title: '" + name + "', description: 'Built by Sovereign Agentic OS.' };\n" +
+          '\n' +
+          'export default function RootLayout({ children }: { children: React.ReactNode }) {\n' +
+          '  return (\n' +
+          '    <html lang="en">\n' +
+          '      <body>{children}</body>\n' +
+          '    </html>\n' +
+          '  );\n' +
+          '}\n',
+      },
+      {
+        path: 'app/page.tsx',
+        content:
+          'export default function Page() {\n' +
+          '  return (\n' +
+          '    <main style={{ fontFamily: \'system-ui, sans-serif\', maxWidth: 640, margin: \'4rem auto\', padding: \'0 1.5rem\' }}>\n' +
+          '      <h1>' + name + '</h1>\n' +
+          '      <p>Built by Sovereign Agentic OS.</p>\n' +
+          '    </main>\n' +
+          '  );\n' +
+          '}\n',
+      },
+      {
         path: 'Dockerfile',
         content:
           '# Next.js app — built by Sovereign Agentic OS CI -> Harbor -> Argo CD.\n' +
-          'FROM node:22-alpine\nWORKDIR /app\nCOPY . .\nRUN npm ci || true\nEXPOSE 8080\nCMD ["npm","run","start"]\n',
+          '# Single stage: install, build, then serve Next\'s standalone output on 8080.\n' +
+          'FROM node:22-alpine\n' +
+          'WORKDIR /app\n' +
+          '# No lockfile is seeded, so use npm install; do NOT swallow errors.\n' +
+          'COPY package.json ./\n' +
+          'RUN npm install\n' +
+          'COPY . .\n' +
+          'RUN npm run build\n' +
+          '# next start reads PORT/HOSTNAME; the runner probes 8080 on 0.0.0.0.\n' +
+          'ENV PORT=8080\n' +
+          'ENV HOSTNAME=0.0.0.0\n' +
+          'EXPOSE 8080\n' +
+          'CMD ["npm","run","start"]\n',
       },
       {
         path: '.forgejo/workflows/ci.yml',
@@ -502,7 +547,18 @@ async function scaffoldRepo(
     data: config.forgejoPassword,
   });
   const seeded: string[] = [];
-  for (const f of tpl.files(name, slug)) {
+  // Seed the SOURCE first (Dockerfile + manifests + app.yaml …) and the Actions
+  // workflow LAST, exactly like the proven demo-app seed: each contents-API PUT is
+  // its own commit, and the commit that ADDS `.forgejo/workflows/ci.yml` is the
+  // push that first triggers CI. If the workflow lands before the Dockerfile, that
+  // trigger fires against a tree with no build context and the run cannot build an
+  // image — so the workflow must be the final file committed.
+  const isWorkflow = (p: string) => p.startsWith('.forgejo/workflows/');
+  const ordered = [
+    ...tpl.files(name, slug).filter((f) => !isWorkflow(f.path)),
+    ...tpl.files(name, slug).filter((f) => isWorkflow(f.path)),
+  ];
+  for (const f of ordered) {
     const r = await forgejoWrite(`/repos/${owner}/${slug}/contents/${f.path}`, {
       content: b64(f.content),
       message: `seed ${f.path}`,

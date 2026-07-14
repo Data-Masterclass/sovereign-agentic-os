@@ -17,8 +17,25 @@
  */
 
 import type { Visibility } from '@/lib/core/artifact-model';
+import type { WarehousePlatform } from '@/lib/connections/warehouse/types';
 
 export type ConnectionType = 'API' | 'MCP' | 'Database' | 'SaaS' | 'Drive';
+
+/**
+ * The NON-SECRET external-warehouse config carried on a warehouse Connection record.
+ * The platform + the Trino catalog name + the platform-specific non-secret config
+ * (region / accountUrl / projectId …). Secret material (keys, PEMs, SA-JSON) is
+ * NEVER here — it lives only in Secrets Manager (secretRef), exactly like every
+ * other connection credential. `config` mirrors the provider's `credentialFields`
+ * minus the secret ones.
+ */
+export type WarehouseConnectionConfig = {
+  platform: WarehousePlatform;
+  /** The Trino catalog name this source mounts as (e.g. `glue_sales`). */
+  catalog: string;
+  /** Non-secret platform config keyed by the provider's credentialField keys. */
+  config: Record<string, string>;
+};
 
 /** The adapter family that implements a connection type (see lib/connection-adapters). */
 export type ConnectorKind = 'drive' | 'database' | 'api' | 'mcp' | 'saas';
@@ -129,6 +146,9 @@ export type Connection = {
   health: ConnectionHealth;
   /** Whether the connection is also registered as a data source, and where. */
   dataUsage: DataUsage;
+  /** For a `warehouse` template only: the non-secret federation config (platform,
+   *  catalog, region/account/…). Absent on every other connection type. */
+  warehouse?: WarehouseConnectionConfig;
   /** Soft-archived: hidden from the working lists, reversible, retained (the vault
    *  secret + OAuth token are KEPT). Absent/false = live. */
   archived?: boolean;
@@ -145,7 +165,12 @@ export type ConnectionTemplateKey =
   | 'salesforce-api'
   | 'generic-mcp'
   | 'generic-api'
-  | 'database';
+  | 'database'
+  // External-warehouse federation (AWS Glue / Snowflake / BigQuery / Databricks /
+  // Fabric). ONE template, the platform is picked inside it and its credential
+  // fields render generically from the provider registry. Gated OFF behind
+  // EXTERNAL_CONNECTORS_ENABLED — it is NOT user-facing until an operator enables it.
+  | 'warehouse';
 
 export type ConnectionTemplate = {
   key: ConnectionTemplateKey;
@@ -285,6 +310,27 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
       { name: 'query', description: 'Governed read query (read).', write: false, mode: 'Read', limits: { dataScope: 'allowlisted tables' } },
       { name: 'write_row', description: 'Insert/update a row (write).', write: true, mode: 'Off' },
       { name: 'drop_table', description: 'Drop a table (write).', write: true, mode: 'Blocked' },
+    ],
+  },
+  {
+    // External-warehouse federation. A single template whose PLATFORM is chosen at
+    // create time; the per-platform credential fields render from the provider
+    // registry (lib/connections/warehouse), never hardcoded here. Federation is
+    // READ-ONLY by construction — the external source is mounted as a governed Trino
+    // catalog and queried live; "import as product" (CTAS) is a separate, explicit
+    // materialize step. So the preset exposes ONLY read tools; writes stay Blocked.
+    key: 'warehouse',
+    label: 'External data warehouse (federated catalog)',
+    type: 'Database',
+    connector: 'database',
+    auth: 'service',
+    endpointHint: 'trino-catalog (registered via GitOps values, not a URL)',
+    secretKey: 'warehouse-secret',
+    tools: [
+      { name: 'list_schemas', description: 'List schemas in the federated catalog (read).', write: false, mode: 'Read' },
+      { name: 'list_tables', description: 'List tables in a schema (read).', write: false, mode: 'Read' },
+      { name: 'query', description: 'Governed live read over the federated catalog (read).', write: false, mode: 'Read', limits: { dataScope: 'the federated external catalog' } },
+      { name: 'import_table', description: 'Materialize one external table into the OS Iceberg lakehouse via CTAS (write).', write: true, mode: 'Off' },
     ],
   },
 ];

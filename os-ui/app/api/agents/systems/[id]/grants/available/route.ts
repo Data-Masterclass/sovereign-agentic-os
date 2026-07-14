@@ -21,13 +21,30 @@ export const dynamic = 'force-dynamic';
  * user's private drafts or another domain's artifacts.
  *
  * Response: `{ items: [{ id, name, scope: 'personal'|'domain'|'marketplace' }] }`.
+ * DATA items additionally carry `layers` (which medallion layers are BUILT) so the
+ * grant picker only ever offers a real, queryable Bronze/Silver/Gold choice.
  */
 // `connections` (plural) is the Simple-builder GrantKind spelling; `connection`
 // (singular) is the original Grants-panel spelling — both resolve to the same list.
 type Kind = 'data' | 'knowledge' | 'connection' | 'connections' | 'metric';
 const KINDS: Kind[] = ['data', 'knowledge', 'connection', 'connections', 'metric'];
 
-type Item = { id: string; name: string; scope: 'personal' | 'domain' | 'marketplace' };
+type Item = {
+  id: string;
+  name: string;
+  scope: 'personal' | 'domain' | 'marketplace';
+  /** DATA only: which medallion layers are built (so the picker offers real layers). */
+  layers?: ('bronze' | 'silver' | 'gold')[];
+};
+
+/** The built medallion layers of a dataset summary, from its B/S/G dots. */
+function builtLayers(dots: { bronze: boolean; silver: boolean; gold: boolean }): ('bronze' | 'silver' | 'gold')[] {
+  const out: ('bronze' | 'silver' | 'gold')[] = [];
+  if (dots.bronze) out.push('bronze');
+  if (dots.silver) out.push('silver');
+  if (dots.gold) out.push('gold');
+  return out;
+}
 
 function fail(e: unknown) {
   const status = (e as { status?: number })?.status ?? 500;
@@ -53,9 +70,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       await ensureHydrated();
       const g = listDatasets(principal);
       items = [
-        ...g.mine.map((d) => ({ id: d.id, name: d.name, scope: 'personal' as const })),
-        ...g.domain.map((d) => ({ id: d.id, name: d.name, scope: 'domain' as const })),
-        ...g.marketplace.map((d) => ({ id: d.id, name: d.name, scope: 'marketplace' as const })),
+        ...g.mine.map((d) => ({ id: d.id, name: d.name, scope: 'personal' as const, layers: builtLayers(d.dots) })),
+        ...g.domain.map((d) => ({ id: d.id, name: d.name, scope: 'domain' as const, layers: builtLayers(d.dots) })),
+        ...g.marketplace.map((d) => ({ id: d.id, name: d.name, scope: 'marketplace' as const, layers: builtLayers(d.dots) })),
       ];
     } else if (kind === 'knowledge') {
       // Hydrate both knowledge stores before listing (best-effort; OS-mirror backed).

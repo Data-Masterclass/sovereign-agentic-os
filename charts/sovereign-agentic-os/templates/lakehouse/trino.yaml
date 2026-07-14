@@ -141,7 +141,40 @@ data:
     s3.aws-access-key=${ENV:AWS_ACCESS_KEY_ID}
     s3.aws-secret-key=${ENV:AWS_SECRET_ACCESS_KEY}
     {{- end }}
+  {{- /*
+    EXTERNAL-WAREHOUSE FEDERATED CATALOGS (opt-in, default empty). Each entry mounts
+    one external lakehouse (AWS Glue / Snowflake / BigQuery / Databricks / Fabric) as
+    a governed Trino catalog `<name>.properties`. The `properties` block is EXACTLY
+    what os-ui's `providerFor(platform).catalogProps` renders (obtain it from the
+    `warehouse_registration` MCP tool / the connection's registration snippet). NO
+    secret material lives here — props reference `${ENV:...}` env vars injected from a
+    Secret via `secretEnv` below. Dynamic in-pod catalog creation is intentionally NOT
+    supported (readOnlyRootFilesystem); registration = this values edit + a rolling
+    restart (Deployment strategy: Recreate re-reads the mounted ConfigMap).
+  */}}
+  {{- range $c := $t.externalCatalogs }}
+  {{ $c.name }}.properties: |
+{{ $c.properties | indent 4 }}
+  {{- end }}
 ---
+{{- /* Optional ServiceAccount for the Trino pod — carries the IRSA (AWS) / Workload
+       Identity (GCP) annotations Glue / BigQuery use for keyless auth. Rendered only
+       when trino.serviceAccount.create is true so the default (no SA) is unchanged. */}}
+{{- if $t.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $t.serviceAccount.name | default "trino" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "trino") | nindent 4 }}
+  {{- with $t.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -162,12 +195,16 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/catalog: {{ printf "%s-%s" ($ice | toJson) (include "soa.s3Endpoint" .) | sha256sum }}
+        checksum/catalog: {{ printf "%s-%s-%s" ($ice | toJson) (include "soa.s3Endpoint" .) ($t.externalCatalogs | toJson) | sha256sum }}
       labels:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "trino") | nindent 8 }}
     spec:
       {{- include "soa.priorityClassName" (dict "ctx" . "tier" "app") | nindent 6 }}
+      {{- if $t.serviceAccount.create }}
+      # IRSA / Workload-Identity carrier for keyless Glue / BigQuery federation.
+      serviceAccountName: {{ $t.serviceAccount.name | default "trino" }}
+      {{- end }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -196,6 +233,16 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_ACCESS_KEY_ID } }
             - name: AWS_SECRET_ACCESS_KEY
               valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_SECRET_ACCESS_KEY } }
+            {{- end }}
+            {{- /* Per-external-catalog secret env vars (Snowflake key-pair, Databricks
+                   PAT, Fabric SP secret …). Each `secretEnv` entry maps a ${ENV:VAR}
+                   referenced in the catalog props to a (secretName,key). Glue/BigQuery-
+                   Workload-Identity catalogs declare none — keyless via the SA above. */}}
+            {{- range $c := $t.externalCatalogs }}
+            {{- range $e := ($c.secretEnv | default list) }}
+            - name: {{ $e.name }}
+              valueFrom: { secretKeyRef: { name: {{ $e.secretName }}, key: {{ $e.key }} } }
+            {{- end }}
             {{- end }}
           ports:
             - { name: http, containerPort: 8080 }

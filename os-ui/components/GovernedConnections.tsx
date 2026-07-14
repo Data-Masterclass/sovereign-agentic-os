@@ -76,10 +76,24 @@ type Template = {
   endpointHint: string;
 };
 type OAuthProviderStatus = { provider: OAuthProvider; label: string; configured: boolean };
+/** One external-warehouse provider's create metadata (fields render from this). */
+type WarehouseField = { key: string; label: string; required: boolean; help?: string; kind?: string };
+type WarehouseProviderMeta = {
+  platform: string;
+  label: string;
+  capabilities: { federate: boolean; import: boolean };
+  credentialFields: WarehouseField[];
+  secretKeys: string[];
+  liveVerificationRequired: string[];
+};
+type WarehouseMeta =
+  | { enabled: false }
+  | { enabled: true; template: Template; providers: WarehouseProviderMeta[] };
 type Data = {
   user: { id: string; role: Role; domains: string[] };
   connections: Conn[];
   templates: Template[];
+  warehouse?: WarehouseMeta;
   canCreate: boolean;
   canCreatePersonal: boolean;
   oauthProviders?: OAuthProviderStatus[];
@@ -170,13 +184,53 @@ export default function GovernedConnections() {
     createRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, []);
 
-  const tpl = data?.templates.find((t) => t.key === template);
-  const isOAuth = tpl?.auth === 'oauth';
-  const isApiConnector = tpl?.connector === 'api';
+  // ---- Warehouse (external connectors, flag-gated) create state ----
+  const warehouseMeta = data?.warehouse?.enabled ? data.warehouse : null;
+  const [whPlatform, setWhPlatform] = useState('');
+  const [whCatalog, setWhCatalog] = useState('');
+  const [whFields, setWhFields] = useState<Record<string, string>>({});
+  const isWarehouse = template === 'warehouse';
+  const whProvider = warehouseMeta?.providers.find((p) => p.platform === whPlatform)
+    ?? warehouseMeta?.providers[0];
+
+  const tpl = isWarehouse
+    ? (warehouseMeta?.template ?? data?.templates.find((t) => t.key === template))
+    : data?.templates.find((t) => t.key === template);
+  const isOAuth = !isWarehouse && tpl?.auth === 'oauth';
+  const isApiConnector = !isWarehouse && tpl?.connector === 'api';
   const oauthTemplates = data?.templates.filter((t) => t.auth === 'oauth') ?? [];
   const serviceTemplates = data?.templates.filter((t) => t.auth === 'service') ?? [];
   const canCreate = data?.canCreate ?? false;
   const canCreatePersonal = data?.canCreatePersonal ?? false;
+
+  async function createWarehouse() {
+    if (!name.trim() || !whProvider || creating) return;
+    setCreating(true);
+    setCreateMsg('');
+    try {
+      const res = await fetch('/api/connections', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          template: 'warehouse',
+          warehouse: { platform: whProvider.platform, catalog: whCatalog.trim(), fields: whFields },
+        }),
+      });
+      const resp = await res.json() as { connection?: Conn; error?: string };
+      if (!res.ok || !resp.connection) {
+        setCreateMsg(`✗ ${resp.error ?? 'Could not create warehouse connection'}`);
+      } else {
+        const c = resp.connection;
+        setCreateMsg(`✓ Created "${c.name}" (${whProvider.label}). Next: an operator registers catalog '${whCatalog.trim()}' in Trino (values.trino.externalCatalogs) + wires the secret, rolling-restarts Trino, then Test. Secrets went to Secrets Manager (never the record).`);
+        setName('');
+        setWhCatalog('');
+        setWhFields({});
+        load();
+      }
+    } catch (e) { setCreateMsg(`✗ ${(e as Error).message}`); }
+    finally { setCreating(false); }
+  }
 
   async function create() {
     if (!name.trim() || creating) return;
@@ -219,7 +273,8 @@ export default function GovernedConnections() {
   }
 
   const showOAuthForm = (canCreatePersonal || canCreate) && isOAuth && oauthTemplates.length > 0;
-  const showServiceForm = canCreate && !isOAuth && serviceTemplates.length > 0;
+  const showWarehouseForm = canCreate && isWarehouse && !!warehouseMeta;
+  const showServiceForm = canCreate && !isOAuth && !isWarehouse && serviceTemplates.length > 0;
 
   if (!data && !error) return <div className="hint"><span className="spin" /> Loading connections…</div>;
 
@@ -328,6 +383,11 @@ export default function GovernedConnections() {
                   ))}
                 </optgroup>
               )}
+              {warehouseMeta && (
+                <optgroup label="External data warehouse (federated Trino catalog — Builder / Admin)">
+                  <option value="warehouse">{warehouseMeta.template.label}</option>
+                </optgroup>
+              )}
             </select>
           </div>
 
@@ -342,6 +402,58 @@ export default function GovernedConnections() {
               <div className="row" style={{ justifyContent: 'flex-end' }}>
                 <button className="btn" onClick={create} disabled={creating || !name.trim()}>
                   {creating ? <span className="spin" /> : `Add ${tpl?.label ?? 'drive'}`}
+                </button>
+              </div>
+            </>
+          ) : showWarehouseForm && warehouseMeta && whProvider ? (
+            <>
+              <p className="hint" style={{ marginTop: 10, marginBottom: 6 }}>
+                Federate an external lakehouse as ONE governed Trino catalog. Fill the platform&rsquo;s
+                fields below — <strong>secret</strong> fields go to Secrets Manager, the rest onto the
+                record. Registration is an operator step (values.trino.externalCatalogs + rolling restart);
+                the Trino pod mounts its catalog dir <strong>read-only</strong>, so no catalog is written at runtime.
+              </p>
+              <div className="row" style={{ marginTop: 10 }}>
+                <select
+                  value={whProvider.platform}
+                  onChange={(e) => { setWhPlatform(e.target.value); setWhFields({}); }}
+                  style={{ flex: 1 }}
+                >
+                  {warehouseMeta.providers.map((p) => (
+                    <option key={p.platform} value={p.platform}>{p.label}</option>
+                  ))}
+                </select>
+              </div>
+              <input
+                type="text"
+                value={whCatalog}
+                onChange={(e) => setWhCatalog(e.target.value)}
+                placeholder="Trino catalog name (e.g. glue_sales) — [a-z_][a-z0-9_]*"
+                style={{ marginTop: 10 }}
+                autoComplete="off"
+              />
+              {whProvider.credentialFields.map((f) => {
+                const secret = whProvider.secretKeys.includes(f.key);
+                return (
+                  <input
+                    key={f.key}
+                    type={secret || f.kind === 'password' || f.kind === 'pem' ? 'password' : 'text'}
+                    value={whFields[f.key] ?? ''}
+                    onChange={(e) => setWhFields((prev) => ({ ...prev, [f.key]: e.target.value }))}
+                    placeholder={`${f.label}${f.required ? '' : ' (optional)'}${secret ? ' — to Secrets Manager' : ''}${f.help ? ` — ${f.help}` : ''}`}
+                    style={{ marginTop: 10 }}
+                    autoComplete="off"
+                  />
+                );
+              })}
+              {whProvider.liveVerificationRequired.length > 0 ? (
+                <p className="hint" style={{ marginTop: 10 }}>
+                  <strong>Needs live creds to verify:</strong> {whProvider.liveVerificationRequired[0]}
+                </p>
+              ) : null}
+              <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
+                <button className="btn" onClick={createWarehouse} disabled={creating || !name.trim() || !whCatalog.trim()}>
+                  {creating ? <span className="spin" /> : 'Create warehouse connection'}
                 </button>
               </div>
             </>

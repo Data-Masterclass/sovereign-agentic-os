@@ -59,6 +59,8 @@ export type EmbedResponse = {
   token: string;
   expiresInSeconds: number;
   mode: EmbedMode;
+  /** Why the live mint fell back to offline-mock (e.g. mint status) — present on the fallback. */
+  reason?: string;
 };
 
 export type BuildRow = {

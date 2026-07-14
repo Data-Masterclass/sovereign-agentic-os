@@ -92,15 +92,24 @@ deployment. No UI is wired in Phase 1.
 
 ## What is real vs stubbed
 
-**Real + unit-tested (Phase 1):**
-- `trinoCatalogProps(source)` — Glue (Iceberg + Hive), IRSA-only, no static keys.
+**Real + unit-tested (all five providers, behind the flag):**
+- A `WarehouseProvider` registry (`provider.ts`/`registry.ts`); `trinoCatalogProps(source)`
+  dispatches to it. Every provider generates real Trino catalog props — **Glue** (Iceberg +
+  Hive, IRSA-only, no static keys), **Snowflake** (key-pair via `${ENV:SNOWFLAKE_PRIVATE_KEY}`),
+  **BigQuery** (SA-JSON file or Workload Identity), **Databricks-Delta** (`delta_lake`; Thrift/Glue
+  storage mode verified, Unity mode flagged `UNVERIFIED` — Unity-as-metastore is Starburst-only
+  in OSS Trino 476), **Fabric/OneLake** (`delta_lake` over ABFS/OneLake OAuth, experimental).
+  Secrets are `${ENV:…}`/file references, never inlined (tests assert no key/JSON leaks).
 - `externalTableFqn(catalog, schema, table)` — the `catalog.schema.table` mapping.
 - `toFederatedDataset(...)` — OM/Glue descriptor → read-only `FederatedDataset`.
-- `EXTERNAL_CONNECTORS_ENABLED` feature flag.
+- Create-flow (schema/store/route/UI), the `buildImportCtas` import path, `catalogRegistration`
+  (values snippet + secret-env plumbing), the MCP surface (`create_connection`/`test_connection`/
+  `warehouse_registration`/`import_warehouse_table`), and the `EXTERNAL_CONNECTORS_ENABLED` flag.
 
-**Typed stub / interface only (Phase 1b / 2 — need a live source):**
-- Snowflake / BigQuery / Databricks-Delta / Fabric prop generation (throws a clear
-  "not yet implemented in Phase 1" `WarehouseError`; config shapes established).
-- Live OpenMetadata ingestion of external catalogs (only the pure transform exists).
-- Dynamic Trino catalog reload, connection health / reachability checks, cloud auth
-  validation, and the import-as-product wiring.
+**Needs a live customer source to validate (operator's step):**
+- Whether each catalog actually connects + returns rows against the customer's real
+  AWS/Azure/Snowflake/GCP/Databricks account (IRSA role assumption, key-pair acceptance,
+  SA-JSON/Workload-Identity, PAT scope, OneLake ABFS auth).
+- Databricks **Unity** REST metastore keys on the deployed Trino image (prefer the Thrift/Glue mode).
+- Live OpenMetadata ingestion of external catalogs (only the connector-hint stub exists; Airflow
+  ingestion is disabled here — full lineage is post-live).

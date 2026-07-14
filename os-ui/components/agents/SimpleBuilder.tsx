@@ -6,13 +6,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import BuildRunPanel from './BuildRunPanel';
 import RecurrenceEditor from './RecurrenceEditor';
-import type { System, SafetyPreset } from '@/lib/agents/system-schema';
+import type { System, SafetyPreset, DataLayer } from '@/lib/agents/system-schema';
 import { classifyModelNeed } from '@/lib/agents/routing';
 import { instructionsOf } from '@/lib/agents/agent-md';
 import {
   addSimpleAgent, moveAgent, removeAgentSimple,
   setAgentInstructions, setAgentRole, setArtifactGrant, removeArtifactGrant,
-  setDescription, addAgentTool, removeAgentTool,
+  setDescription, addAgentTool, removeAgentTool, setDataGrantLayer,
 } from '@/lib/agents/simple-edit';
 import { writeToolsForKind, type GrantKind } from '@/lib/agents/capability-tools';
 import { setEntrypoint } from '@/lib/agents/canvas-edit';
@@ -982,7 +982,16 @@ function EvaluateStep({
   );
 }
 
-type Available = { id: string; name: string; scope: 'personal' | 'domain' | 'marketplace' };
+type Available = { id: string; name: string; scope: 'personal' | 'domain' | 'marketplace'; layers?: DataLayer[] };
+
+/** Highest built layer of a dataset (Gold > Silver > Bronze), or null if none built. */
+function highestLayer(layers: DataLayer[] | undefined): DataLayer | null {
+  if (!layers || layers.length === 0) return null;
+  if (layers.includes('gold')) return 'gold';
+  if (layers.includes('silver')) return 'silver';
+  if (layers.includes('bronze')) return 'bronze';
+  return null;
+}
 
 /** True when the write tools for `kind` are all present in the team's tool pool. */
 function hasWriteTools(system: System, kind: GrantKind): boolean {
@@ -1057,6 +1066,46 @@ function AccessToggle({
   );
 }
 
+/**
+ * Bronze · Silver · Gold segmented selector for ONE granted dataset (DATA grants
+ * only). Renders ONLY the medallion layers that are actually BUILT for this dataset
+ * — so a user can never pick an unbuilt (unqueryable) layer. Hidden entirely when
+ * the dataset exposes a single layer (nothing to choose). Gold, when built, is the
+ * curated serving default; picking silver/bronze routes the team's discovery + reads
+ * to that layer's physical table.
+ */
+const LAYER_ORDER: DataLayer[] = ['bronze', 'silver', 'gold'];
+function LayerToggle({
+  layer, built, canEdit, onPick,
+}: {
+  layer: DataLayer;
+  /** The dataset's built medallion layers (from the grant-available feed). */
+  built: DataLayer[];
+  canEdit: boolean;
+  onPick: (layer: DataLayer) => void;
+}) {
+  const choices = LAYER_ORDER.filter((l) => built.includes(l));
+  // Nothing to choose (0 or 1 built layer) → no selector at all.
+  if (choices.length < 2) return null;
+  return (
+    <span className="sb-layer" role="group" aria-label="Medallion layer" style={{ display: 'inline-flex', gap: 4 }}>
+      {choices.map((l) => (
+        <button
+          key={l}
+          type="button"
+          className={`btn ghost sm${l === layer ? ' active' : ''}`}
+          aria-pressed={l === layer}
+          disabled={!canEdit}
+          title={`Read the ${l} layer`}
+          onClick={() => canEdit && l !== layer && onPick(l)}
+        >
+          {l.charAt(0).toUpperCase() + l.slice(1)}
+        </button>
+      ))}
+    </span>
+  );
+}
+
 function ResourcePicker({
   systemId, system, kind, label, canEdit, onCommit,
 }: {
@@ -1087,9 +1136,12 @@ function ResourcePicker({
   }, [systemId, kind]);
 
   const granted = system.grants[kind];
+  const availOf = (id: string) => available?.find((a) => a.id === id);
   const nameOf = (id: string) =>
-    available?.find((a) => a.id === id)?.name
+    availOf(id)?.name
     ?? (id.includes('_') ? id.split('_').slice(1).join('_') : id);
+  /** Built medallion layers for a granted dataset (empty until `available` loads). */
+  const layersOf = (id: string): DataLayer[] => availOf(id)?.layers ?? [];
   const grantedIds = new Set(granted.map((g) => g.id));
   const addable = (available ?? []).filter((a) => !grantedIds.has(a.id));
   const q = search.trim().toLowerCase();
@@ -1111,12 +1163,25 @@ function ResourcePicker({
               onRead={() => onCommit(setArtifactGrant(system, kind, g.id, false))}
               onWrite={() => onCommit(setArtifactGrant(system, kind, g.id, true))}
             />
+            {kind === 'data' ? (
+              <LayerToggle
+                layer={g.layer ?? highestLayer(layersOf(g.id)) ?? 'gold'}
+                built={layersOf(g.id)}
+                canEdit={canEdit}
+                onPick={(l) => onCommit(setDataGrantLayer(system, g.id, l))}
+              />
+            ) : null}
             {canEdit ? (
               <button className="sb-chip-x" title="Remove" onClick={() => onCommit(removeArtifactGrant(system, kind, g.id))}>✕</button>
             ) : null}
           </span>
         ))}
       </div>
+      {kind === 'data' && granted.length > 0 ? (
+        <p className="hint" style={{ marginTop: 4, marginBottom: 0 }}>
+          Which refined layer this team reads — Gold is the curated default.
+        </p>
+      ) : null}
       {canEdit ? (
         !open ? (
           <button className="btn ghost sm" style={{ marginTop: 6 }} disabled={available === null} onClick={() => setOpen(true)}>
@@ -1145,7 +1210,11 @@ function ResourcePicker({
                     key={a.id}
                     className="sb-picker-row"
                     title={a.id}
-                    onClick={() => onCommit(setArtifactGrant(system, kind, a.id, false))}
+                    onClick={() =>
+                      // DATA grants default to the HIGHEST built layer (Gold if built,
+                      // else Silver, else Bronze); non-data kinds ignore the layer arg.
+                      onCommit(setArtifactGrant(system, kind, a.id, false, highestLayer(a.layers) ?? 'gold'))
+                    }
                   >
                     +<span>{a.name}</span><span className="badge muted">{a.scope}</span>
                   </button>

@@ -45,35 +45,72 @@ function capHealth(spent: number, limit: number): Health {
 export async function collectCost(): Promise<HealthItem[]> {
   const caps = readCaps();
 
-  if (Object.keys(caps).length === 0) {
-    // No governance caps set yet — fall through to offline mock.
-    return [...MOCK_COST];
+  // ALWAYS attempt the live LiteLLM spend read — not only when a cap exists. A
+  // reachable gateway with $0 spend (self-hosted STACKIT models cost nothing per
+  // token) is an HONEST value, not a reason to fall to mock. `null` means the
+  // gateway was genuinely unreachable; `{}` (or a populated map) means reachable.
+  const spendByTag = await litellmSpendByTag();
+
+  // 1) Real caps: render one item PER CAP, measuring live spend against it. Spend
+  //    0 is honest whether LiteLLM is off (null) or simply reports zero.
+  if (Object.keys(caps).length > 0) {
+    const items: HealthItem[] = [];
+    for (const [capId, cap] of Object.entries(caps)) {
+      const spent = spendByTag?.[cap.domain] ?? 0;
+      items.push({
+        id: `cost-${cap.domain}`,
+        lens: 'cost',
+        title: `${cap.domain} domain — LLM spend (month-to-date)`,
+        health: capHealth(spent, cap.limitUsd),
+        detail: `$${spent.toFixed(0)} of the $${cap.limitUsd} Governance cap (${Math.round((spent / cap.limitUsd) * 100)}%).`,
+        owner: cap.owner,
+        domain: cap.domain,
+        metric: spent,
+        cap: { id: capId, limitUsd: cap.limitUsd, spentUsd: spent },
+        links: { capRef: capId },
+        source: 'live',
+      });
+    }
+    return items;
   }
 
-  // Real caps exist. Spend 0 is honest when LiteLLM is offline; the cap is real.
-  const spendByDomain = await litellmSpendByDomain();
-  const items: HealthItem[] = [];
-  for (const [capId, cap] of Object.entries(caps)) {
-    const spent = spendByDomain?.[cap.domain] ?? 0;
-    items.push({
-      id: `cost-${cap.domain}`,
-      lens: 'cost',
-      title: `${cap.domain} domain — LLM spend (month-to-date)`,
-      health: capHealth(spent, cap.limitUsd),
-      detail: `$${spent.toFixed(0)} of the $${cap.limitUsd} Governance cap (${Math.round((spent / cap.limitUsd) * 100)}%).`,
-      owner: cap.owner,
-      domain: cap.domain,
-      metric: spent,
-      cap: { id: capId, limitUsd: cap.limitUsd, spentUsd: spent },
-      links: { capRef: capId },
-      source: 'live',
-    });
+  // 2) No caps, but LiteLLM is REACHABLE and reported real per-tag spend — surface
+  //    it honestly (no cap → health 'unknown', a watch-only signal). This is the
+  //    real usage-visibility path: it flows even when spend is small or $0.
+  if (spendByTag && Object.keys(spendByTag).length > 0) {
+    return Object.entries(spendByTag)
+      .sort((a, b) => b[1] - a[1])
+      .map(([subject, spent]): HealthItem => ({
+        id: `cost-${subject}`,
+        lens: 'cost',
+        title: `${subject} — LLM spend (month-to-date)`,
+        health: 'unknown', // no Governance cap set → nothing to measure against
+        detail: `$${spent.toFixed(2)} spent · no Governance cap set.`,
+        owner: subject,
+        domain: subject,
+        metric: spent,
+        source: 'live',
+      }));
   }
-  return items;
+
+  // 3) No caps AND LiteLLM unreachable (or reported nothing) — offline mock keeps
+  //    the tab + validation gate demonstrable, honestly marked source:'mock'.
+  return [...MOCK_COST];
 }
 
-/** Read LiteLLM spend grouped by domain tag. Returns null when LiteLLM is off. */
-async function litellmSpendByDomain(): Promise<Record<string, number> | null> {
+/**
+ * Read LiteLLM spend grouped by tag subject. Returns `null` ONLY when the gateway
+ * is unreachable/errors; a reachable-but-empty gateway returns `{}` so the caller
+ * can tell "$0 is real" from "gateway down".
+ *
+ * Live shape (verified against LiteLLM `/spend/tags`) is an ARRAY of
+ *   { individual_request_tag: string, log_count: number, total_spend: number }
+ * where the tag is one of: `user:<email>` (per-user), `User-Agent: <x>` (transport
+ * noise — dropped), or a bare label like `assistant`. We strip the `user:` prefix,
+ * drop `User-Agent:` rows (not a spend subject), and keep bare tags as-is. A legacy
+ * `domain:` prefix is still honoured if present.
+ */
+export async function litellmSpendByTag(): Promise<Record<string, number> | null> {
   const res = await readFetch(`${config.litellmUrl}/spend/tags`, {
     headers: { authorization: `Bearer ${config.litellmMasterKey}`, accept: 'application/json' },
   });
@@ -81,14 +118,19 @@ async function litellmSpendByDomain(): Promise<Record<string, number> | null> {
   try {
     const data = JSON.parse(await res.text());
     const rows = Array.isArray(data) ? data : Array.isArray(data?.spend) ? data.spend : [];
-    if (rows.length === 0) return null;
     const out: Record<string, number> = {};
     for (const r of rows as Record<string, unknown>[]) {
-      const tag = String(r.tag ?? r.individual_request_tag ?? '').replace(/^domain:/, '');
+      const raw = String(r.tag ?? r.individual_request_tag ?? '').trim();
+      if (!raw) continue;
+      // Transport user-agent tags are LiteLLM instrumentation noise, not a spend
+      // subject (domain/user) — exclude them from the grouping.
+      if (/^user-agent:/i.test(raw)) continue;
+      const subject = raw.replace(/^(?:domain|user):\s*/i, '');
+      if (!subject) continue;
       const spend = Number(r.spend ?? r.total_spend ?? 0);
-      if (tag) out[tag] = (out[tag] ?? 0) + (Number.isFinite(spend) ? spend : 0);
+      out[subject] = (out[subject] ?? 0) + (Number.isFinite(spend) ? spend : 0);
     }
-    return Object.keys(out).length > 0 ? out : null;
+    return out; // reachable — may be {} (honest $0), never null unless unreachable
   } catch {
     return null;
   }

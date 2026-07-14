@@ -16,6 +16,7 @@
   "dependencies": {
     "@dagrejs/dagre": "^1.1.8",
     "@monaco-editor/react": "4.7.0",
+    "@superset-ui/embedded-sdk": "^0.4.0",
     "@xterm/addon-fit": "0.10.0",
     "@xterm/addon-web-links": "0.11.0",
     "@xterm/xterm": "5.5.0",

@@ -101,9 +101,9 @@ export async function fetchTrace(id: string): Promise<TraceDetail | null> {
         kind: (o.type === 'GENERATION' ? 'llm' : o.type === 'SPAN' ? 'span' : 'tool') as TraceStep['kind'],
         input: preview(o.input),
         output: preview(o.output),
-        tokens: numOrUndef((o.usage as Record<string, unknown>)?.total),
+        tokens: numOrUndef((o.usage as Record<string, unknown>)?.total) ?? numOrUndef(o.totalTokens),
         ms: numOrUndef(o.latency),
-        status: /error/i.test(preview(o.output)) ? 'error' : 'ok',
+        status: obsError(o) ? 'error' : 'ok',
       }));
       return {
         id: String(t.id ?? id),
@@ -112,9 +112,9 @@ export async function fetchTrace(id: string): Promise<TraceDetail | null> {
         domain: String(meta.domain ?? principalDomain(String(meta.principal ?? ''))),
         health: /error|fail/i.test(preview(t.output)) ? 'red' : 'green',
         ts: (t.timestamp as string) ?? undefined,
-        contextPack: [],
+        contextPack: contextPackFrom(t, obs),
         steps,
-        logs: [],
+        logs: logsFrom(t, obs),
         links: { runId: String(t.id ?? id) },
         source: 'live',
       };
@@ -123,6 +123,79 @@ export async function fetchTrace(id: string): Promise<TraceDetail | null> {
     }
   }
   return mockTrace(id);
+}
+
+/**
+ * The CONTEXT PACK handed to the run — the packed context messages the LLM saw.
+ * Verified against the live Langfuse shape: a GENERATION observation's
+ * `input.messages` is an array of {role, content} — that IS the assembled context
+ * (system prompt + retrieved passages + the task). We surface each message as one
+ * "role: content" line. Governed traces (agent.*) carry NO observations but do carry
+ * a trace-level `input` (the tool's request payload) — we fall back to that so the
+ * pack is never empty when context genuinely exists.
+ */
+function contextPackFrom(t: Record<string, unknown>, obs: Record<string, unknown>[]): string[] {
+  // 1) The richest source: the first generation step's input messages.
+  const gen = obs.find((o) => o.type === 'GENERATION' && o.input != null);
+  const msgs = (gen?.input as Record<string, unknown> | undefined)?.messages;
+  if (Array.isArray(msgs) && msgs.length > 0) {
+    return msgs.map((m) => {
+      const role = String((m as Record<string, unknown>).role ?? 'msg');
+      return `${role}: ${preview((m as Record<string, unknown>).content, 400)}`;
+    });
+  }
+  // 2) Governed trace with no observations — the trace input is the packed request.
+  const packed = preview(t.input, 600);
+  if (packed) return [packed];
+  // 3) Nothing to pack (e.g. a run with no recorded input) — honest empty.
+  return [];
+}
+
+/**
+ * Log-like lines for the run. Langfuse has no discrete log stream, but each
+ * observation IS a structured log event; we render one line per observation
+ * (time · type · name · status · latency · tokens) plus a final trace summary,
+ * exactly what an operator scans. When there are no observations we still emit the
+ * trace-level start/decision line from the metadata so the tail is never blank for
+ * a real run. If the trace carried a genuine log field we'd prefer it; Langfuse
+ * does not expose one, so these derived lines are the honest best available.
+ */
+function logsFrom(t: Record<string, unknown>, obs: Record<string, unknown>[]): string[] {
+  const lines: string[] = [];
+  for (const o of obs) {
+    const ts = String(o.startTime ?? o.createdAt ?? '');
+    const type = String(o.type ?? 'EVENT');
+    const name = String(o.name ?? 'step');
+    const level = obsError(o) ? 'ERROR' : String(o.level ?? 'INFO').toUpperCase();
+    const ms = numOrUndef(o.latency);
+    const toks = numOrUndef((o.usage as Record<string, unknown>)?.total) ?? numOrUndef(o.totalTokens);
+    const status = String(o.statusMessage ?? '').trim();
+    const extras = [
+      ms != null ? `${ms}ms` : '',
+      toks != null ? `${toks}tok` : '',
+      status ? `msg="${preview(status, 80)}"` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    lines.push(`${ts} ${level} ${type.toLowerCase()}.${name}${extras ? ` ${extras}` : ''}`.trim());
+  }
+  const meta = (t.metadata ?? {}) as Record<string, unknown>;
+  const decision = meta.decision ?? meta.tool;
+  if (lines.length === 0 && (t.timestamp || decision)) {
+    // No observations (governed trace) — one honest summary line from the metadata.
+    lines.push(
+      `${String(t.timestamp ?? '')} INFO ${String(t.name ?? 'run')}${
+        meta.principal ? ` principal=${meta.principal}` : ''
+      }${decision ? ` decision=${decision}` : ''}`.trim(),
+    );
+  }
+  return lines;
+}
+
+/** True when an observation recorded an error (Langfuse level or an error output). */
+function obsError(o: Record<string, unknown>): boolean {
+  if (String(o.level ?? '').toUpperCase() === 'ERROR') return true;
+  return /error|fail|aborted/i.test(preview(o.output) + ' ' + preview(o.statusMessage));
 }
 
 /** Map a principal to its domain. Sales-family principals → 'sales' (worked example). */

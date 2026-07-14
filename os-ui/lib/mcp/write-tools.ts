@@ -80,6 +80,8 @@ import type { Sensitivity } from '@/lib/files/asset-schema';
 
 import { saveDashboard, getDashboard } from '@/lib/dashboards/store';
 import { fromTiles, type ChartSpec } from '@/lib/dashboards/model';
+import { buildDashboard } from '@/lib/dashboards/build/server';
+import { claimsFromUser, delegate } from '@/lib/data/identity';
 
 import {
   createBet,
@@ -1136,7 +1138,18 @@ export const dashboardWriteTools: McpTool[] = [
       const id = str(args.id).trim() || `dash_${slug(name)}_${rand()}`;
       const spec = fromTiles(name, view, charts);
       const rec = saveDashboard(P(user), id, spec);
-      return { id: rec.id, tier: rec.tier, spec: rec.spec };
+      // Import to Superset (mirrors /api/dashboards/build): run the superset/embed/report/
+      // alert Build as the caller so the dashboard actually exists to embed. Best-effort —
+      // buildDashboard falls back to the honest offline-mock when Superset is unreachable,
+      // and we never fail the create on a live-path error.
+      let build: Awaited<ReturnType<typeof buildDashboard>> | undefined;
+      try {
+        const token = delegate(claimsFromUser({ id: user.id, domains: user.domains, role: user.role }), 'domain');
+        build = await buildDashboard(spec, token, rec.id);
+      } catch {
+        // dashboard is saved regardless; Superset import is a best-effort side-effect
+      }
+      return { id: rec.id, tier: rec.tier, spec: rec.spec, build };
     },
   },
 ];

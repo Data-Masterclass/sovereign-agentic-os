@@ -83,6 +83,78 @@ test('round-trips through serialize -> parse', () => {
   assert.equal(again.entrypoint, 'supervisor');
 });
 
+// --- DATA-grant medallion layer -------------------------------------------------
+
+test('data grant: layer omitted defaults to gold and stays out of the file (byte-stable)', () => {
+  const sys = parseSystem(`
+entrypoint: a
+grants:
+  data:
+    - { id: ds_orders, capability: Read }
+agents:
+  - { id: a, role: r, agent_md: "", memory_md: "" }
+`);
+  // No layer key ⇒ gold (unset) — the historic/serving behaviour.
+  assert.equal(sys.grants.data[0].layer, undefined);
+  // Serialize does not introduce a `layer:` key for a gold/unset grant.
+  assert.ok(!/layer:/.test(serializeSystem(sys)), 'gold grant serializes without a layer key');
+});
+
+test('data grant: a silver layer is parsed, preserved and round-trips', () => {
+  const sys = parseSystem(`
+entrypoint: a
+grants:
+  data:
+    - { id: ds_orders, capability: Read, layer: silver }
+agents:
+  - { id: a, role: r, agent_md: "", memory_md: "" }
+`);
+  assert.equal(sys.grants.data[0].layer, 'silver');
+  const yaml = serializeSystem(sys);
+  assert.match(yaml, /layer: silver/);
+  const again = parseSystem(yaml);
+  assert.equal(again.grants.data[0].layer, 'silver');
+});
+
+test('data grant: an explicit gold layer is normalized away (byte-stable with unset)', () => {
+  const withGold = parseSystem(`
+entrypoint: a
+grants: { data: [{ id: ds_x, capability: Read, layer: gold }] }
+agents: [{ id: a, role: r, agent_md: "", memory_md: "" }]
+`);
+  const withUnset = parseSystem(`
+entrypoint: a
+grants: { data: [{ id: ds_x, capability: Read }] }
+agents: [{ id: a, role: r, agent_md: "", memory_md: "" }]
+`);
+  assert.equal(withGold.grants.data[0].layer, undefined);
+  assert.equal(serializeSystem(withGold), serializeSystem(withUnset));
+});
+
+test('an invalid data layer is rejected', () => {
+  assert.throws(
+    () =>
+      parseSystem(`
+entrypoint: a
+grants: { data: [{ id: ds_x, capability: Read, layer: platinum }] }
+agents: [{ id: a, role: r, agent_md: "", memory_md: "" }]
+`),
+    /invalid layer 'platinum'/,
+  );
+});
+
+test('downgradeGrantsForRole preserves a data grant layer', () => {
+  const sys = parseSystem(`
+entrypoint: a
+grants: { data: [{ id: ds_x, capability: Write-bounded, layer: silver }] }
+agents: [{ id: a, role: r, agent_md: "", memory_md: "" }]
+`);
+  // A non-builder downgrade flips Write-bounded → Write-approval but keeps the layer.
+  const down = downgradeGrantsForRole(sys, 'creator');
+  assert.equal(down.grants.data[0].capability, 'Write-approval');
+  assert.equal(down.grants.data[0].layer, 'silver');
+});
+
 test('ui.positions round-trips and is pruned to declared agents', () => {
   const sys = parseSystem(`
 entrypoint: a

@@ -73,15 +73,15 @@ test('rejects a missing / malformed region', () => {
   );
 });
 
-test('non-Glue platforms throw a clear Phase-1 not-implemented error (501)', () => {
+test('every platform is implemented — none is a Phase-1 501 stub', () => {
+  // Empty config still throws a *validation* WarehouseError, but never the old
+  // "not yet implemented in Phase 1" stub message — proving each provider is real.
   for (const platform of ['snowflake', 'bigquery', 'databricks-delta', 'fabric'] as const) {
     assert.throws(
-      // deliberately loose cast — we only exercise the platform switch here
       () => trinoCatalogProps({ catalog: 'x', platform } as unknown as WarehouseSource),
       (e: unknown) =>
         e instanceof WarehouseError &&
-        (e as WarehouseError).status === 501 &&
-        /not yet implemented in Phase 1/.test((e as Error).message),
+        !/not yet implemented in Phase 1/.test((e as Error).message),
       platform,
     );
   }

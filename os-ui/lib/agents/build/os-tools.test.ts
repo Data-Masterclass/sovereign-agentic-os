@@ -13,6 +13,7 @@ import {
   isAgenticOsTeam,
   grantedToolSpecs,
   grantedToolExecutor,
+  grantedLayerFor,
   type OsToolDeps,
 } from './os-tools.ts';
 
@@ -244,4 +245,53 @@ test('executor: a creator hits a typed forbidden on a builder-floor tool (real r
   const res = await exec('get_policy_view', { id: 'x' });
   assert.equal(res.isError, true);
   assert.match(res.text, /requires builder|forbidden/i);
+});
+
+// --- DATA-grant medallion layer injection ---------------------------------------
+
+/** A system granting query_data + a data product read at a specific medallion layer. */
+function sysWithDataLayer(layer?: 'bronze' | 'silver' | 'gold'): System {
+  return parseSystem({
+    version: '1',
+    system: { name: 'T', domain: 'sales', visibility: 'Personal' },
+    runtime: 'langgraph',
+    entrypoint: 'a',
+    grants: {
+      tools: ['query_data'], // pulls in the get_dataset / profile_dataset companions
+      data: [{ id: 'ds_orders', capability: 'Read', ...(layer ? { layer } : {}) }],
+    },
+    agents: [{ id: 'a', role: 'agent', agent_md: '', memory_md: '' }],
+  });
+}
+
+test('grantedLayerFor reads the layer of a data grant (undefined = gold/unset)', () => {
+  assert.equal(grantedLayerFor(sysWithDataLayer('silver'), 'ds_orders'), 'silver');
+  assert.equal(grantedLayerFor(sysWithDataLayer(), 'ds_orders'), undefined);
+  assert.equal(grantedLayerFor(sysWithDataLayer('silver'), 'ds_missing'), undefined);
+});
+
+test('executor injects the granted silver layer into get_dataset args', async () => {
+  const deps = spyDeps();
+  const exec = grantedToolExecutor(CREATOR, sysWithDataLayer('silver'), 'sys1', deps);
+  await exec('get_dataset', { datasetId: 'ds_orders' });
+  const call = deps.calls.handleRpc[0] as { req: { params: { arguments: Record<string, unknown> } } };
+  // The system.yaml layer choice is threaded into the discovery call, server-side.
+  assert.equal(call.req.params.arguments.layer, 'silver');
+  assert.equal(call.req.params.arguments.datasetId, 'ds_orders');
+});
+
+test('a gold/unset grant injects no layer (backward-compatible serving default)', async () => {
+  const deps = spyDeps();
+  const exec = grantedToolExecutor(CREATOR, sysWithDataLayer(), 'sys1', deps);
+  await exec('get_dataset', { datasetId: 'ds_orders' });
+  const call = deps.calls.handleRpc[0] as { req: { params: { arguments: Record<string, unknown> } } };
+  assert.equal(call.req.params.arguments.layer, undefined);
+});
+
+test('an explicit layer arg from the agent is NOT overridden by the grant', async () => {
+  const deps = spyDeps();
+  const exec = grantedToolExecutor(CREATOR, sysWithDataLayer('silver'), 'sys1', deps);
+  await exec('profile_dataset', { datasetId: 'ds_orders', layer: 'bronze' });
+  const call = deps.calls.handleRpc[0] as { req: { params: { arguments: Record<string, unknown> } } };
+  assert.equal(call.req.params.arguments.layer, 'bronze', 'agent-supplied layer wins');
 });

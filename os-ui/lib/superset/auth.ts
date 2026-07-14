@@ -16,6 +16,16 @@ export function serviceUser(): string {
   return process.env.SUPERSET_SERVICE_USER || 'admin';
 }
 
+/**
+ * The Superset role(s) the trusted-header SSO provisions the service user with. Superset's
+ * `_sso_login` maps `X-Forwarded-Roles` → the user's role, so this must be `Admin` for the
+ * service user to hold `can_grant_guest_token` (only Admin has it — a Gamma default 403s the
+ * guest-token mint). Admin-overridable via SUPERSET_SERVICE_ROLES.
+ */
+export function serviceRoles(): string {
+  return process.env.SUPERSET_SERVICE_ROLES || 'Admin';
+}
+
 export async function withTimeout(
   fetchImpl: typeof fetch,
   url: string,
@@ -37,7 +47,7 @@ export async function withTimeout(
 export async function csrf(fetchImpl: typeof fetch, base: string): Promise<{ token?: string; cookie?: string }> {
   const res = await withTimeout(fetchImpl, `${base}/api/v1/security/csrf_token/`, {
     method: 'GET',
-    headers: { 'X-Forwarded-User': serviceUser(), accept: 'application/json' },
+    headers: { 'X-Forwarded-User': serviceUser(), 'X-Forwarded-Roles': serviceRoles(), accept: 'application/json' },
   });
   if (!res || !res.ok) return {};
   const raw = res.headers.get('set-cookie');
@@ -56,7 +66,12 @@ export function serviceHeaders(
   auth: { token?: string; cookie?: string },
   extra: Record<string, string> = {},
 ): Record<string, string> {
-  const headers: Record<string, string> = { 'X-Forwarded-User': serviceUser(), Referer: base, ...extra };
+  const headers: Record<string, string> = {
+    'X-Forwarded-User': serviceUser(),
+    'X-Forwarded-Roles': serviceRoles(),
+    Referer: base,
+    ...extra,
+  };
   if (auth.token) headers['X-CSRFToken'] = auth.token;
   if (auth.cookie) headers['Cookie'] = auth.cookie;
   return headers;
