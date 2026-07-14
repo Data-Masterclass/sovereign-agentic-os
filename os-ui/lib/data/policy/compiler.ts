@@ -80,6 +80,17 @@ export function compileOpa(datasets: Dataset[], roster: Roster): OpaBundle {
   for (const [id, p] of Object.entries(roster)) {
     principals[id] = { domains: p.domains, clearances: p.clearances ?? [] };
   }
+  // Domain SELF-PRINCIPAL — every domain that governs a table (or is shared one)
+  // MUST map to itself, or the Trino row filter resolves a domain-session user's
+  // membership to [] and returns ZERO rows (the empty-scorecard bug). The governed
+  // query tool runs as the domain name (`user.domains[0]`), so this self-mapping is
+  // load-bearing and must be emitted on EVERY compile — it cannot depend on the
+  // user directory happening to list the domain. Never clobber a real roster entry.
+  for (const g of Object.values(tables)) {
+    for (const dom of [g.domain, ...(g.shared_with ?? [])]) {
+      if (dom && !principals[dom]) principals[dom] = { domains: [dom], clearances: [] };
+    }
+  }
   return { tables, principals };
 }
 

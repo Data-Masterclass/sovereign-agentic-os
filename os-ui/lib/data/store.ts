@@ -266,6 +266,26 @@ function editOf(rec: DatasetRecord, user: Principal): Dataset {
   return d;
 }
 
+/**
+ * Metric-definition scope — DISTINCT from a structural edit. Defining/removing a
+ * measure is additive semantic-layer work on a governed domain gold mart (the Metrics
+ * tab is built for Builders to do exactly this), not a change to the dataset's core
+ * (silver/gold rebuild, docs, promotion, delete — those stay owner/domain_admin/admin
+ * via {@link editOf}). So a metric only needs: you can USE the data (canView) and you
+ * are a Builder+. This restores the pre-0.1.95 "builders define metrics" behaviour that
+ * the edit-scope tightening accidentally blocked for shared-in-domain datasets.
+ */
+function metricScopeOf(rec: DatasetRecord, user: Principal): Dataset {
+  const d = parseDataset(rec.yaml);
+  if (!canView(d, user)) fail('Not permitted to view this dataset', 403);
+  // The OWNER may always define a metric on their own dataset (building their own
+  // work); anyone else needs Builder+ to add a metric to a dataset they can use.
+  if (d.owner !== user.id && !roleAtLeast(user.role, 'builder')) {
+    fail('Defining a metric requires a Builder or Admin', 403);
+  }
+  return d;
+}
+
 function persist(rec: DatasetRecord, d: Dataset, snap?: { author: string; summary: string }): DatasetRecord {
   // Capture the PRIOR dataset.yaml as a version BEFORE overwriting it, so the
   // history holds every superseded definition (mirrors lib/files/store.ts). Only
@@ -463,6 +483,18 @@ export function listAskable(user: Principal): AskableDataset[] {
 export function createDataset(user: Principal, input: { name: string; domain?: string }): Dataset {
   ensureSeeded();
   const domain = input.domain && user.domains.includes(input.domain) ? input.domain : user.domains[0] ?? 'platform';
+  const wanted = (input.name.trim() || 'Untitled dataset').toLowerCase();
+  // Name uniqueness WITHIN a domain: a dataset name maps to ONE domain gold table
+  // (`gold_<slug>`) and ONE Cube model file (`metrics/<slug>.cube.yml`), so two
+  // same-named datasets in a domain collide — the model-sync sidecar overwrites one
+  // with the other and a defined measure silently vanishes ("metric did not resolve").
+  // Refuse the duplicate at the source with a clear message.
+  for (const rec of ds().store.values()) {
+    if (rec.domain !== domain) continue;
+    if (parseDataset(rec.yaml).name.trim().toLowerCase() === wanted) {
+      fail(`A dataset named “${input.name.trim()}” already exists in ${domain} — pick a unique name.`, 409);
+    }
+  }
   const d: Dataset = {
     version: '1',
     id: newId(),
@@ -638,7 +670,7 @@ function carryQuality(d: Dataset, layer: Layer): Quality {
  */
 export function defineMeasure(id: string, user: Principal, measure: Measure): Dataset {
   const rec = get(id);
-  const d = editOf(rec, user);
+  const d = metricScopeOf(rec, user);
   // FAIL-CLOSED metric gate (#91): a cube can only bind to a governed DOMAIN gold mart.
   // Registering a metric on un-promoted personal gold builds a broken cube (Cube's
   // `cube-*` principal can't read the personal lane). Refuse with the clear message.
@@ -668,7 +700,7 @@ export function defineMeasure(id: string, user: Principal, measure: Measure): Da
  */
 export function removeMeasure(id: string, user: Principal, measureName: string): { removed: boolean } {
   const rec = get(id);
-  const d = editOf(rec, user);
+  const d = metricScopeOf(rec, user);
   const before = d.measures.length;
   d.measures = d.measures.filter((m) => m.name !== measureName);
   if (d.measures.length === before) return { removed: false }; // nothing to drop

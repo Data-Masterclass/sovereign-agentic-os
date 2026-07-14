@@ -11,7 +11,7 @@ import {
 } from '@/lib/mcp/server';
 import { ALL_WRITE_TOOLS } from '@/lib/mcp/write-tools';
 import type { ToolExecutor, ToolSpec } from '@/lib/assistant/agentic';
-import type { System } from '../system-schema.ts';
+import type { System, SafetyPreset } from '../system-schema.ts';
 import { type Effect } from '../gateway.ts';
 import { principalFor } from './runtime-contract.ts';
 import { trace as realTrace } from '@/lib/infra/agent-governed';
@@ -121,6 +121,23 @@ const MCP_NAMES = new Set(ALL_MCP_TOOLS.map((t) => t.name));
  * tools are absent → they flow through to the run-as-user governed dispatch.
  */
 const WRITE_APPROVAL_NAMES = new Set(ALL_WRITE_TOOLS.map((t) => t.name));
+
+/**
+ * Does the system's safety preset HOLD writes for human approval? Mirrors
+ * `lib/governance/governance.ts` `resolveAutonomous` for the agent-run path:
+ *   - `read-only`    → writes blocked + queued (held).
+ *   - `read-propose` → writes drafted for a human to run (held).
+ *   - `read-bounded` → bounded writes auto-run (NOT held) — gate 2 (the acting
+ *                      user's OPA/DLS/role) is the real authority.
+ *   - `full-in-scope`→ everything the grants expose runs (NOT held).
+ * When NOT held, a granted write tool falls through to the run-as-user governed
+ * dispatch, exactly like a read tool: an agent can still never exceed what its
+ * runner could do by hand in the UI (creating a Personal-lane artifact needs no
+ * approval), and promotion (Personal→Shared) keeps its own separate approval gate.
+ */
+export function writesAreHeld(preset: SafetyPreset): boolean {
+  return preset === 'read-only' || preset === 'read-propose';
+}
 
 /**
  * Resolve a system's `grants.tools` through the alias map, split into the MCP
@@ -249,9 +266,12 @@ export function grantedToolExecutor(
 
     // Gate 1b — the Write-approval HOLD, derived IN-PROCESS from the granted set +
     // the write-tool catalog (no live `os-<systemId>` OPA doc, which only a Build
-    // writes). A granted WRITE tool is HELD; a granted READ tool falls through to
-    // the run-as-user dispatch, where the owner DLS clause + role floor decide.
-    if (WRITE_APPROVAL_NAMES.has(mcpName)) {
+    // writes). A granted WRITE tool is HELD **only when the system's safety preset
+    // holds writes** (read-only / read-propose); under read-bounded / full-in-scope
+    // the write runs directly and falls through to gate 2 (governed as the acting
+    // user). A granted READ tool always falls through to the run-as-user dispatch,
+    // where the owner DLS clause + role floor decide.
+    if (WRITE_APPROVAL_NAMES.has(mcpName) && writesAreHeld(sys.safetyPreset)) {
       // A held write is NEVER executed — record the human-in-the-loop request.
       deps.enqueue({
         kind: 'connection_write',

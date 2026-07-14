@@ -92,5 +92,17 @@ export function buildCubeModels(
     });
   }
   models.sort((a, b) => a.name.localeCompare(b.name));
-  return { generatedAt: (opts.now ?? (() => new Date().toISOString()))(), models };
+  // Defense-in-depth against a same-NAME dataset duplicate: two datasets with the same
+  // name map to the SAME cube file (`metrics/<slug>.cube.yml`), so a duplicate makes
+  // the model-sync sidecar overwrite one with the other every poll — last-writer-wins
+  // silently drops a measure (the "metric did not resolve" bug). `createDataset` now
+  // blocks same-name datasets at the source; this keeps ONE entry per file (the richest
+  // — most measures) so any pre-existing duplicate can't thrash the delivered payload.
+  const byFile = new Map<string, CubeModelEntry>();
+  for (const m of models) {
+    const prev = byFile.get(m.file);
+    if (!prev || m.measures.length > prev.measures.length) byFile.set(m.file, m);
+  }
+  const deduped = [...byFile.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return { generatedAt: (opts.now ?? (() => new Date().toISOString()))(), models: deduped };
 }

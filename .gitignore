@@ -43,3 +43,7 @@ stackit/private-instance-models.md
 # Tier-0 OpenSearch migration exports (live platform data — never commit)
 .opensearch-migration/
 node_modules
+
+# Accidental artifacts — never track (screenshots, DB/metastore backups)
+Screenshot *.png
+polaris-metastore-backup-*.sql

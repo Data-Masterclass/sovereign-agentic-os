@@ -12,6 +12,8 @@ import BuildRunPanel from './BuildRunPanel';
 import MonacoFile from './MonacoFile';
 import RuntimeSelector from './RuntimeSelector';
 import SimpleBuilder from './SimpleBuilder';
+import RecurrenceEditor from './RecurrenceEditor';
+import { cronToRecurrence, describeRecurrence } from '@/lib/agents/cron-friendly';
 import { commitSystem } from './commitSystem';
 import { addAgent, addHandoffEdge, addSuperviseEdge, removeAgent, removeEdge, setEntrypoint, setNodePositions } from '@/lib/agents/canvas-edit';
 import type { Schedule, System } from '@/lib/agents/system-schema';
@@ -344,7 +346,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
           ) : (
             <button className="btn sm" onClick={() => post('run', { prompt: 'Test invocation' })} disabled={!data.canEdit || acting}>Run</button>
           )}
-          <ScheduleControl systemId={systemId} schedule={data.schedule} canEdit={data.canEdit && !acting} onSaved={reloadAll} />
+          <ScheduleBadge schedule={data.schedule} />
           {canPromote ? (
             <button className="btn ghost sm" onClick={() => post('promote')} disabled={acting} title={`Governed publish step — ${promoteLabel}`}>
               {promoteLabel}
@@ -495,7 +497,10 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
           <GrantsRouting systemId={systemId} system={sys} canEdit={data.canEdit} canDirectWrite={roleAtLeast(data.role, 'builder')} roles={{ reasoning: modelsData?.roles?.reasoning || 'sovereign-reasoning', standard: modelsData?.roles?.standard || 'sovereign-default' }} routing={routingData} onChanged={reloadAll} />
         ) : null}
         {panel === 'build' ? (
-          <BuildRunPanel systemId={systemId} running={data.running} canEdit={data.canEdit} lastBuild={data.lastBuild} activity={data.activity} lastRun={data.lastRun} nodePath={runOrder(sys, data.disabledAgents)} onStateChange={reloadAll} />
+          <>
+            <TriggerEditor systemId={systemId} schedule={data.schedule} canEdit={data.canEdit && !acting} onSaved={reloadAll} />
+            <BuildRunPanel systemId={systemId} running={data.running} canEdit={data.canEdit} lastBuild={data.lastBuild} activity={data.activity} lastRun={data.lastRun} nodePath={runOrder(sys, data.disabledAgents)} onStateChange={reloadAll} />
+          </>
         ) : null}
       </div>
 
@@ -568,15 +573,39 @@ function BuildChecklist({ system, compileError, disabledAgents }: { system: Syst
 
 type CronStatus = { ok: boolean; live: boolean; action: string; detail: string; name: string };
 
-function ScheduleControl({ systemId, schedule, canEdit, onSaved }: { systemId: string; schedule: Schedule; canEdit: boolean; onSaved: () => void | Promise<void> }) {
-  // Local optimistic mirrors of the server-owned schedule so the dropdown reflects
-  // the choice immediately (no snap-back during the round-trip) and the cron field
-  // re-syncs when the persisted value changes.
+const TRIGGER_MODES: { kind: Schedule['kind']; label: string; blurb: string }[] = [
+  { kind: 'manual', label: 'Manual', blurb: 'You run it by hand.' },
+  { kind: 'cron', label: 'On schedule', blurb: 'It runs automatically on a repeating schedule.' },
+  { kind: 'event', label: 'Called from system', blurb: 'Another system or the API triggers it on demand.' },
+];
+
+/** One-line, human summary of the current trigger for the read-only header badge. */
+function scheduleSummary(schedule: Schedule): string {
+  if (schedule.kind === 'manual') return 'Manual';
+  if (schedule.kind === 'event') return 'Called from system';
+  const r = schedule.cron ? cronToRecurrence(schedule.cron) : null;
+  return r ? `On schedule · ${describeRecurrence(r)}` : `On schedule · ${schedule.cron ?? ''}`.trim();
+}
+
+/** Read-only trigger badge for the header — DISPLAY only; editing lives in the editor. */
+function ScheduleBadge({ schedule }: { schedule: Schedule }) {
+  return (
+    <span className="badge" title="Trigger — edit under Build & run" style={{ whiteSpace: 'nowrap' }}>
+      {scheduleSummary(schedule)}
+    </span>
+  );
+}
+
+/**
+ * The FULL trigger editor for Developer mode — three-mode selector (Manual · On
+ * schedule · Called from system) plus the Outlook-style RecurrenceEditor for cron.
+ * Lives inside the Build & run panel (mirrors Simple mode's Run phase). Same
+ * `/schedule` route contract — RecurrenceEditor produces the cron string.
+ */
+function TriggerEditor({ systemId, schedule, canEdit, onSaved }: { systemId: string; schedule: Schedule; canEdit: boolean; onSaved: () => void | Promise<void> }) {
   const [kind, setKind] = useState<Schedule['kind']>(schedule.kind);
   const [cron, setCron] = useState(schedule.cron ?? '0 9 * * 1');
   const [busy, setBusy] = useState(false);
-  // The CronJob reconcile status (honest): a cron schedule only fires once a real
-  // CronJob is provisioned — surface when it was NOT (e.g. cluster unreachable).
   const [cronStatus, setCronStatus] = useState<CronStatus | null>(null);
   const [err, setErr] = useState('');
   useEffect(() => { setKind(schedule.kind); }, [schedule.kind]);
@@ -603,37 +632,57 @@ function ScheduleControl({ systemId, schedule, canEdit, onSaved }: { systemId: s
     }
   };
 
+  const pick = (next: Schedule['kind']) => {
+    if (next === kind) return;
+    setKind(next);
+    void save(next === 'cron' ? { kind: next, cron } : next === 'event' ? { kind: next, event: 'on_demand' } : { kind: next });
+  };
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
-      <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-        <select
-          value={kind}
-          disabled={!canEdit || busy}
-          onChange={(e) => {
-            const next = e.target.value as Schedule['kind'];
-            setKind(next);
-            void save(next === 'cron' ? { kind: next, cron } : next === 'event' ? { kind: next, event: 'on_demand' } : { kind: next });
-          }}
-          title="Schedule"
-        >
-          <option value="manual">manual</option>
-          <option value="cron">cron</option>
-          <option value="event">event</option>
-        </select>
-        {kind === 'cron' ? (
-          <form onSubmit={(e) => { e.preventDefault(); void save({ kind: 'cron', cron }); }}>
-            <input type="text" value={cron} onChange={(e) => setCron(e.target.value)} disabled={!canEdit || busy} style={{ width: 120 }} className="mono" />
-          </form>
-        ) : null}
+    <div className="sb-resources" style={{ marginBottom: 16 }}>
+      <h3 style={{ marginTop: 0, marginBottom: 10 }}>How is this system triggered?</h3>
+      <div className="tmpl-grid" role="group" aria-label="Trigger mode">
+        {TRIGGER_MODES.map((m) => (
+          <button
+            key={m.kind}
+            type="button"
+            className={`tmpl-card${kind === m.kind ? ' active' : ''}`}
+            aria-pressed={kind === m.kind}
+            disabled={!canEdit || busy}
+            onClick={() => pick(m.kind)}
+          >
+            <span className="tmpl-label">{m.label}</span>
+            <span className="tmpl-blurb">{m.blurb}</span>
+          </button>
+        ))}
       </div>
-      {err ? <span className="muted" style={{ fontSize: 11, color: 'var(--danger, #c0392b)' }}>{err}</span> : null}
+
+      {kind === 'cron' ? (
+        <div style={{ marginTop: 10 }}>
+          <RecurrenceEditor
+            cron={cron}
+            disabled={!canEdit || busy}
+            onChange={(next) => { setCron(next); void save({ kind: 'cron', cron: next }); }}
+          />
+        </div>
+      ) : null}
+
+      {kind === 'event' ? (
+        <div style={{ marginTop: 10 }} className="hint">
+          Trigger it from another system or the API with{' '}
+          <span className="mono">run_agent_system</span> (MCP) or{' '}
+          <span className="mono">POST /api/agents/systems/{systemId}/run</span>. No schedule is set — it runs when called.
+        </div>
+      ) : null}
+
+      {err ? <div className="error" style={{ marginTop: 8 }}>{err}</div> : null}
       {cronStatus && kind === 'cron' && !cronStatus.ok ? (
-        <span className="muted" style={{ fontSize: 11, color: 'var(--warn, #b7791f)' }} title={cronStatus.detail}>
+        <div className="hint" style={{ marginTop: 8, color: 'var(--warn, #b7791f)' }} title={cronStatus.detail}>
           ⚠ schedule saved but not scheduled — {cronStatus.detail}
-        </span>
+        </div>
       ) : null}
       {cronStatus && kind === 'cron' && cronStatus.ok && cronStatus.live ? (
-        <span className="muted" style={{ fontSize: 11 }}>✓ CronJob {cronStatus.action} — runs on schedule</span>
+        <div className="hint" style={{ marginTop: 8 }}>✓ CronJob {cronStatus.action} — runs on schedule</div>
       ) : null}
     </div>
   );

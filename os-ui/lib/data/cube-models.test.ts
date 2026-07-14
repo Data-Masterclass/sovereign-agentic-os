@@ -47,6 +47,21 @@ test('payload shape: one entry per shared dataset with view + measures + access'
   assert.match(m.model, /sql_table: iceberg\.sales\.gold_orders/);
 });
 
+test('same-name duplicate datasets collapse to ONE entry per cube file (the richest)', () => {
+  // Two datasets with the same name map to the SAME cube file — a duplicate would make
+  // the sidecar overwrite one with the other every poll (a measure vanishes). The payload
+  // must keep a single entry per file, preferring the one with more measures.
+  const a = ds({ id: 'ds_a', measures: [{ name: 'contribution_margin', type: 'sum', sql: 'net_amount' }] });
+  const b = ds({ id: 'ds_b', measures: [
+    { name: 'contribution_margin', type: 'sum', sql: 'net_amount' },
+    { name: 'total_contribution_in', type: 'sum', sql: 'net_amount' },
+  ] });
+  const { models } = buildCubeModels([a, b]);
+  const forFile = models.filter((m) => m.file === 'metrics/orders.cube.yml');
+  assert.equal(forFile.length, 1); // collapsed, not two colliding entries
+  assert.ok(forFile[0].measures.includes('total_contribution_in')); // kept the richer one
+});
+
 test('a non-shared (private) dataset is EXCLUDED', () => {
   const priv = ds({ id: 'ds_p', name: 'Scratch', tier: 'dataset', visibility: 'private' });
   const { models } = buildCubeModels([ds(), priv]);

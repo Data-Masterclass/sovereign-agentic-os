@@ -4,6 +4,7 @@
 import 'server-only';
 import { config } from '@/lib/core/config';
 import { importDashboardBundle, deleteDashboardByName } from '@/lib/superset/client';
+import { csrf, serviceHeaders } from '@/lib/superset/auth';
 import { type DashboardLiveDeps, type EmbedClient, type SupersetClient } from './live.ts';
 import { type GuestTokenRequest } from '../embed.ts';
 
@@ -88,9 +89,15 @@ export function realEmbed(): EmbedClient {
     async mint(req: GuestTokenRequest) {
       // POST /api/v1/security/guest_token/ with a service account; the token PAYLOAD
       // carries the viewer's RLS (req.rls) so the embed is scoped to the viewer (R3).
+      // The mint endpoint is CSRF-protected like every other Superset write, so we run
+      // the shared authenticated handshake first (CSRF token + session cookie + the
+      // trusted X-Forwarded-User), then POST with those headers. `req.resourceId` is the
+      // dashboard's EMBEDDED UUID (resolved upstream via ensureEmbedded), which is what a
+      // guest token must target.
+      const auth = await csrf(fetch, base);
       const res = await withTimeout(`${base}/api/v1/security/guest_token/`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: serviceHeaders(base, auth, { 'content-type': 'application/json', accept: 'application/json' }),
         body: JSON.stringify({
           user: req.user,
           resources: [{ type: req.resourceType, id: req.resourceId }],

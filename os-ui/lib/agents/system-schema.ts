@@ -74,7 +74,14 @@ export type Schedule = { kind: 'manual' | 'cron' | 'event'; cron?: string; event
 
 export type System = {
   version: string;
-  system: { name: string; domain: string; visibility: Visibility };
+  system: {
+    name: string;
+    domain: string;
+    visibility: Visibility;
+    /** The team's stated purpose / success criteria in the author's own words (the
+     * Define description). Optional; drives the Evaluate judge's task rubric. */
+    description?: string;
+  };
   /** Execution engine (default `langgraph`). `hermes` = autonomous runtime. */
   runtime: Runtime;
   /** Write-back safety preset (default `read-only`, the safest). */
@@ -349,6 +356,9 @@ export function parseSystem(input: string | Record<string, unknown>): System {
       name: typeof sysMeta.name === 'string' ? sysMeta.name : 'Untitled system',
       domain: typeof sysMeta.domain === 'string' ? sysMeta.domain : '',
       visibility,
+      ...(typeof sysMeta.description === 'string' && sysMeta.description.trim()
+        ? { description: sysMeta.description }
+        : {}),
     },
     runtime,
     safetyPreset,

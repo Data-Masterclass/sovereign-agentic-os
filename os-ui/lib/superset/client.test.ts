@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { importDashboardBundle } from './client.ts';
+import { importDashboardBundle, ensureEmbedded } from './client.ts';
 
 const MANIFEST = JSON.stringify({
   dashboard: 'Sales Overview',
@@ -79,4 +79,64 @@ test('still attempts the import (no false success) when CSRF is unavailable', as
   assert.ok(imp, 'import POST still issued');
   const headers = imp.init.headers as Record<string, string>;
   assert.equal(headers['X-CSRFToken'], undefined); // no token available, but not fatal
+});
+
+/** Fake Superset for the embedded-registration endpoint. */
+function fakeEmbedFetch(calls: Call[], existing?: string): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = (init?.method ?? 'GET').toUpperCase();
+    calls.push({ url, method, init: init ?? {} });
+    if (url.endsWith('/api/v1/security/csrf_token/')) {
+      return new Response(JSON.stringify({ result: 'csrf-abc' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json', 'set-cookie': 'session=xyz; Path=/; HttpOnly' },
+      });
+    }
+    if (url.endsWith('/api/v1/dashboard/7/embedded')) {
+      if (method === 'GET') {
+        return existing
+          ? new Response(JSON.stringify({ result: { uuid: existing } }), { status: 200 })
+          : new Response('not found', { status: 404 });
+      }
+      // POST creates the registration
+      return new Response(JSON.stringify({ result: { uuid: 'uuid-new' } }), { status: 200 });
+    }
+    return new Response('not found', { status: 404 });
+  }) as unknown as typeof fetch;
+}
+
+test('ensureEmbedded returns the existing embedded uuid without re-registering', async () => {
+  const calls: Call[] = [];
+  const uuid = await ensureEmbedded('http://superset:8088', 7, fakeEmbedFetch(calls, 'uuid-existing'));
+  assert.equal(uuid, 'uuid-existing');
+  // GET only — no POST when already registered.
+  assert.ok(!calls.some((c) => c.url.endsWith('/embedded') && c.method === 'POST'));
+});
+
+test('ensureEmbedded registers (POST) when none exists and threads CSRF/service-user headers', async () => {
+  const calls: Call[] = [];
+  const uuid = await ensureEmbedded('http://superset:8088', 7, fakeEmbedFetch(calls));
+  assert.equal(uuid, 'uuid-new');
+  const post = calls.find((c) => c.url.endsWith('/embedded') && c.method === 'POST')!;
+  assert.ok(post, 'POST issued to create the embedded registration');
+  const headers = post.init.headers as Record<string, string>;
+  assert.equal(headers['X-CSRFToken'], 'csrf-abc');
+  assert.equal(headers['Cookie'], 'session=xyz');
+  assert.equal(headers['X-Forwarded-User'], 'admin');
+  assert.equal(JSON.parse(post.init.body as string).allowed_domains.length, 0);
+});
+
+test('ensureEmbedded throws when registration fails (⇒ offline-mock fallback)', async () => {
+  const failFetch: typeof fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith('/api/v1/security/csrf_token/')) {
+      return new Response(JSON.stringify({ result: 'csrf-abc' }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (url.endsWith('/embedded') && (init?.method ?? 'GET').toUpperCase() === 'GET') return new Response('no', { status: 404 });
+    return new Response('boom', { status: 500 });
+  }) as unknown as typeof fetch;
+  await assert.rejects(() => ensureEmbedded('http://superset:8088', 7, failFetch), /embedded-registration failed \(500\)/);
 });

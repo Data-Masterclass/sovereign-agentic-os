@@ -23,10 +23,13 @@ export async function POST(req: Request) {
     const dashboardId = (body.dashboardId ?? '').trim();
     if (!dashboardId) return NextResponse.json({ error: 'dashboardId is required' }, { status: 400 });
 
-    getDashboard(dashboardId, user); // authorize the open (tier/ownership)
+    const dash = getDashboard(dashboardId, user); // authorize the open (tier/ownership)
     const { token } = await delegatedToken('domain', { region: body.viewerRegion });
-    const minted = await mintEmbed(token, dashboardId);
-    return NextResponse.json({ dashboardId, ...minted });
+    // Pass the Superset title so the live path can resolve the dashboard → its embedded
+    // UUID (the id a guest token must target). `request.resourceId` is that UUID on the
+    // live path, so the frontend embed SDK mounts by it.
+    const minted = await mintEmbed(token, dashboardId, dash.spec.name);
+    return NextResponse.json({ dashboardId, embeddedId: minted.request.resourceId, ...minted });
   } catch (e) {
     return errorResponse(e);
   }

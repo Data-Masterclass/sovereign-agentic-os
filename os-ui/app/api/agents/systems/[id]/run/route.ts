@@ -136,10 +136,15 @@ function runMessages(body: Record<string, unknown>, prompt: string): ChatMsg[] {
   return clean.length > 0 ? clean : [{ role: 'user', content: prompt }];
 }
 
-/** Flip the persistent running flag for editors; record activity for run-only. */
-function markRun(id: string, user: Parameters<typeof setRunning>[1]): boolean {
+/**
+ * Mark the run FINISHED: clear the persistent running flag for editors (the run has
+ * completed by the time this is called, in `complete()`), record activity for
+ * run-only consumers. Returns the resulting running state (false) for the report
+ * body — so a completed run never lingers as "running" with a live Stop button.
+ */
+function markRunFinished(id: string, user: Parameters<typeof setRunning>[1]): boolean {
   try {
-    return setRunning(id, user, true).running;
+    return setRunning(id, user, false).running;
   } catch {
     recordActivity(id);
     return false;
@@ -206,7 +211,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       // return the exact JSON body (shared by the stream's `done` frame and the
       // non-streaming response, so the final render is identical either way).
       const complete = (team: AgenticGraphResult) => {
-        const running = markRun(id, user);
+        const running = markRunFinished(id, user);
         const { body: out, lastRun } = finalizeTeamRun(team, running);
         try { setLastRun(id, user, lastRun); } catch { /* run-only consumer: persist best-effort */ }
         return out;
@@ -278,7 +283,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // Flip the PERSISTENT running flag only for editors (owner / in-domain admin);
     // a run-scoped consumer performs a transient invocation and must NOT mutate the
     // shared record's state — record activity instead.
-    const running = markRun(id, resolvedUser);
+    const running = markRunFinished(id, resolvedUser);
     // Persist the run report so the panel can re-seed after a tab-switch.
     const lastRun: LastRun = {
       at: Date.now(),

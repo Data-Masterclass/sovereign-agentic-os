@@ -29,6 +29,19 @@ function sysWith(tools: string[], runtime: 'langgraph' | 'hermes' = 'langgraph')
   });
 }
 
+/** Same fixture with an explicit safety preset (default parse is read-only). */
+function sysWithPreset(tools: string[], preset: 'read-only' | 'read-propose' | 'read-bounded' | 'full-in-scope'): System {
+  return parseSystem({
+    version: '1',
+    system: { name: 'T', domain: 'sales', visibility: 'Personal' },
+    runtime: 'langgraph',
+    entrypoint: 'a',
+    grants: { tools },
+    safety_preset: preset,
+    agents: [{ id: 'a', role: 'agent', agent_md: '', memory_md: '' }],
+  });
+}
+
 const CREATOR: CurrentUser = { id: 'u1', name: 'Cara Creator', domains: ['sales'], role: 'creator' };
 const BUILDER: CurrentUser = { id: 'u2', name: 'Bo Builder', domains: ['sales'], role: 'builder' };
 const DOMAIN_ADMIN: CurrentUser = { id: 'u3', name: 'Dana Domain-Admin', domains: ['sales'], role: 'domain_admin' };
@@ -175,6 +188,36 @@ test('executor: a requires_approval tool enqueues and never executes', async () 
   assert.equal(item.tool, 'create_dataset');
   assert.equal(item.requestedBy, 'u1'); // human-in-the-loop attribution
   assert.equal(item.agent, 'os-sys1'); // the system principal
+});
+
+test('executor: full-in-scope runs a write directly as the acting user (no hold)', async () => {
+  // The blocker fix: under full-in-scope the write tool is NOT held — it dispatches
+  // through handleRpc as the acting user (gate 2 is the real authority), so a leader's
+  // agent can create a new dataset/file without a Governance round-trip.
+  const deps = spyDeps();
+  const exec = grantedToolExecutor(CREATOR, sysWithPreset(['create_dataset'], 'full-in-scope'), 'sys1', deps);
+  const res = await exec('create_dataset', { name: 'x' });
+  assert.equal(deps.calls.enqueue.length, 0); // NOT held
+  assert.equal(deps.calls.handleRpc.length, 1); // ran as the acting user
+  assert.equal((deps.calls.handleRpc[0] as { user: CurrentUser }).user, CREATOR);
+  assert.equal(res.text, 'ran create_dataset');
+});
+
+test('executor: read-bounded runs upload_file directly (no hold)', async () => {
+  const deps = spyDeps();
+  const exec = grantedToolExecutor(CREATOR, sysWithPreset(['upload_file'], 'read-bounded'), 'sys1', deps);
+  await exec('upload_file', { name: 'report.md' });
+  assert.equal(deps.calls.enqueue.length, 0);
+  assert.equal(deps.calls.handleRpc.length, 1);
+});
+
+test('executor: read-propose still HOLDS a write for approval', async () => {
+  const deps = spyDeps();
+  const exec = grantedToolExecutor(CREATOR, sysWithPreset(['create_dataset'], 'read-propose'), 'sys1', deps);
+  const res = await exec('create_dataset', { name: 'x' });
+  assert.match(res.text, /requires approval/);
+  assert.equal(deps.calls.enqueue.length, 1);
+  assert.equal(deps.calls.handleRpc.length, 0);
 });
 
 test('executor: an allowed tool dispatches as the ACTING USER (not the service principal)', async () => {

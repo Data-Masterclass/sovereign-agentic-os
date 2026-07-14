@@ -5,14 +5,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import BuildRunPanel from './BuildRunPanel';
+import RecurrenceEditor from './RecurrenceEditor';
 import type { System, SafetyPreset } from '@/lib/agents/system-schema';
 import { classifyModelNeed } from '@/lib/agents/routing';
 import { instructionsOf } from '@/lib/agents/agent-md';
 import {
   addSimpleAgent, moveAgent, removeAgentSimple,
-  setAgentInstructions, setAgentRole, addArtifactGrant, removeArtifactGrant,
-  addAgentTool, removeAgentTool,
+  setAgentInstructions, setAgentRole, setArtifactGrant, removeArtifactGrant,
+  setDescription, addAgentTool, removeAgentTool,
 } from '@/lib/agents/simple-edit';
+import { writeToolsForKind, type GrantKind } from '@/lib/agents/capability-tools';
 import { setEntrypoint } from '@/lib/agents/canvas-edit';
 import { suggestTools } from '@/lib/agents/suggest-tools';
 import { AGENT_TEMPLATES, agentTemplate, type AgentTemplateKey } from '@/lib/agents/agent-templates';
@@ -29,11 +31,11 @@ import { dimensionLabel, type JudgeResult } from '@/lib/agents/evaluate-judge';
  * engine (gated per phase); the schedule reuses the existing schedule route; the
  * LLM-judge reuses the ONE governed assistant model via the evaluate route.
  *
- *  1. Define    — Name, Description (the describe→scaffold box), and the safety preset.
+ *  1. Define    — Name, Description (the describe→scaffold box), safety preset + trigger mode.
  *  2. Design    — the team: per-agent cards + a template picker on "+ Add agent".
  *  3. Build     — compile + verify the team (no run).
- *  4. Run       — trigger mode (Manual · Schedule · Called) + one-click ▶ Run + results.
- *  5. Evaluate  — deterministic checks + LLM-judge + diagnostics/PDF/trace.
+ *  4. Run       — one-click ▶ Run + live progress + the final result.
+ *  5. Evaluate  — per-agent breakdown + deterministic checks + LLM-judge + diagnostics/PDF/trace.
  */
 
 type Phase = 'define' | 'design' | 'build' | 'run' | 'evaluate';
@@ -115,22 +117,33 @@ export default function SimpleBuilder({
   const doneOf = (p: Phase): boolean => {
     if (p === 'define') return !!system.system.name && system.system.name !== 'Untitled system';
     if (p === 'design') return ready;
+    if (p === 'build') return !!buildRun.lastBuild?.ok; // a green ✓ once the team is built
     if (p === 'run') return hasRun;
+    // Evaluate is ✓ once a run's deterministic checks all pass (the "✓ all passed" state).
+    if (p === 'evaluate') return hasRun && allChecksPass(runChecks(lastRunToDiag(buildRun.lastRun!)));
     return false;
   };
 
   return (
     <div className="simple-builder">
-      <ol className="sb-steps" aria-label="Build phases">
-        {PHASES.map((ph, i) => (
-          <li key={ph.key} className={`sb-step${phase === ph.key ? ' active' : ''}${doneOf(ph.key) ? ' done' : ''}`}>
-            <button type="button" onClick={() => setPhase(ph.key)} disabled={!enabled[ph.key]}>
-              <span className="sb-step-n">{doneOf(ph.key) ? '✓' : i + 1}</span>
-              <span className="sb-step-label">{ph.label}</span>
-            </button>
-          </li>
-        ))}
-      </ol>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <ol className="sb-steps" aria-label="Build phases" style={{ marginBottom: 0 }}>
+          {PHASES.map((ph, i) => (
+            <li key={ph.key} className={`sb-step${phase === ph.key ? ' active' : ''}${doneOf(ph.key) ? ' done' : ''}`}>
+              <button type="button" onClick={() => setPhase(ph.key)} disabled={!enabled[ph.key]}>
+                <span className="sb-step-n">{doneOf(ph.key) ? '✓' : i + 1}</span>
+                <span className="sb-step-label">{ph.label}</span>
+              </button>
+            </li>
+          ))}
+        </ol>
+        {/* Runtime badge — read-only, tells the author which engine runs their team. */}
+        {hasAgents ? (
+          <span className="badge" title={`This team runs on the ${system.runtime} runtime`}>
+            {system.runtime === 'hermes' ? 'Autonomous (Hermes)' : 'Graph (LangGraph)'}
+          </span>
+        ) : null}
+      </div>
 
       {err ? <div className="error" style={{ marginBottom: 12 }}>{err}</div> : null}
 
@@ -140,6 +153,7 @@ export default function SimpleBuilder({
           system={system}
           canEdit={editable}
           onScaffolded={async () => { await onReload(); setPhase('design'); }}
+          onReload={onReload}
           onCommit={(next) => commit(next)}
           onNext={() => setPhase('design')}
         />
@@ -187,10 +201,9 @@ export default function SimpleBuilder({
         <div className="sb-run">
           <h2 className="sb-section-title" style={{ marginTop: 0 }}>Run</h2>
           <p className="hint" style={{ marginTop: 0 }}>
-            Choose how this team is triggered, then run it. The team walks from the START agent and
-            shows every step — the same engine developers use.
+            Run the team — it walks from the START agent and shows its progress and final result.
+            How it is triggered is set on Define. See the step-by-step breakdown under Evaluate.
           </p>
-          <TriggerMode systemId={systemId} system={system} canEdit={editable} onReload={onReload} />
           <BuildRunPanel
             systemId={systemId}
             running={buildRun.running}
@@ -255,6 +268,7 @@ function DefineStep({
   system,
   canEdit,
   onScaffolded,
+  onReload,
   onCommit,
   onNext,
 }: {
@@ -262,22 +276,33 @@ function DefineStep({
   system: System;
   canEdit: boolean;
   onScaffolded: () => Promise<void> | void;
+  onReload: () => Promise<void> | void;
   onCommit: (next: System) => void;
   onNext: () => void;
 }) {
   const [name, setName] = useState(system.system.name === 'Untitled system' ? '' : system.system.name);
-  const [desc, setDesc] = useState('');
+  // Seed the describe box from the persisted team description so the judge's task and
+  // the scaffold prompt share one source of truth (re-seeded when it changes server-side).
+  const [desc, setDesc] = useState(system.system.description ?? '');
   const [scaffolding, setScaffolding] = useState(false);
   const [scaffoldErr, setScaffoldErr] = useState('');
   const hasAgents = system.agents.length > 0;
   const preset = system.safetyPreset ?? 'read-only';
 
   useEffect(() => { setName(system.system.name === 'Untitled system' ? '' : system.system.name); }, [system.system.name]);
+  useEffect(() => { setDesc(system.system.description ?? ''); }, [system.system.description]);
 
   const saveName = () => {
     const trimmed = name.trim();
     if (!trimmed || trimmed === system.system.name) return;
     onCommit({ ...system, system: { ...system.system, name: trimmed } });
+  };
+
+  // Persist the describe text as the team's purpose (drives the Evaluate judge). Skipped
+  // when unchanged so we never churn system.yaml on a no-op blur.
+  const saveDesc = () => {
+    if (desc.trim() === (system.system.description ?? '').trim()) return;
+    onCommit(setDescription(system, desc));
   };
 
   const describe = async () => {
@@ -296,7 +321,9 @@ function DefineStep({
       let body: { error?: string } = {};
       try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
       if (!res.ok) { setScaffoldErr(body.error ?? 'The OS could not build that yet.'); return; }
-      setDesc('');
+      // Persist the description so the Evaluate judge grades THIS task; the scaffold
+      // reload re-seeds `desc` from it, so the box keeps what the author wrote.
+      onCommit(setDescription(system, instruction));
       await onScaffolded();
     } catch (e) {
       setScaffoldErr((e as Error).message);
@@ -334,6 +361,7 @@ function DefineStep({
           rows={3}
           value={desc}
           onChange={(e) => setDesc(e.target.value)}
+          onBlur={saveDesc}
           disabled={!canEdit || scaffolding}
           placeholder="e.g. a team that pulls campaign data, checks margins after returns, scores each campaign against the rules, and recommends budget changes"
           onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void describe(); } }}
@@ -376,6 +404,9 @@ function DefineStep({
           })}
         </div>
       </div>
+
+      {/* How the team is triggered — part of team setup, so it lives on Define. */}
+      <TriggerMode systemId={systemId} system={system} canEdit={canEdit} onReload={onReload} />
 
       {hasAgents ? (
         <div className="row" style={{ justifyContent: 'flex-end', marginTop: 14 }}>
@@ -726,7 +757,7 @@ function AgentCard({
   );
 }
 
-/* ─────────────────────────── Phase 4 — Run (trigger) ─────────────────────────── */
+/* ─────────────────────────── Trigger mode (Define) ─────────────────────────── */
 
 type TriggerKind = 'manual' | 'cron' | 'event';
 const TRIGGER_CARDS: { kind: TriggerKind; label: string; blurb: string }[] = [
@@ -736,7 +767,7 @@ const TRIGGER_CARDS: { kind: TriggerKind; label: string; blurb: string }[] = [
 ];
 
 /**
- * Phase 4's trigger-mode selector — three cards (Manual · On schedule · Called from
+ * The Define-phase trigger-mode selector — three cards (Manual · On schedule · Called from
  * system), each showing its settings when chosen. It reuses the working schedule route
  * (`/schedule`): "On schedule" edits a cron; "Called from system" shows the MCP/API
  * caller hint and persists an `event` schedule. The schedule is a first-class part of
@@ -808,12 +839,12 @@ function TriggerMode({
 
       {kind === 'cron' ? (
         <div style={{ marginTop: 10 }}>
-          <label className="sb-field-label" htmlFor="sb-cron">Schedule (cron — minute hour day month weekday)</label>
-          <form onSubmit={(e) => { e.preventDefault(); void save({ kind: 'cron', cron }); }} className="row" style={{ gap: 8, alignItems: 'center' }}>
-            <input id="sb-cron" type="text" className="mono" value={cron} disabled={!canEdit || busy} onChange={(e) => setCron(e.target.value)} style={{ width: 160 }} />
-            <button className="btn ghost sm" type="submit" disabled={!canEdit || busy}>Save schedule</button>
-            <span className="hint" style={{ marginTop: 0 }}>e.g. <span className="mono">0 9 * * 1</span> = every Monday 09:00</span>
-          </form>
+          <label className="sb-field-label">When should it run?</label>
+          <RecurrenceEditor
+            cron={cron}
+            disabled={!canEdit || busy}
+            onChange={(next) => { setCron(next); void save({ kind: 'cron', cron: next }); }}
+          />
         </div>
       ) : null}
 
@@ -953,10 +984,18 @@ function EvaluateStep({
 
 type Available = { id: string; name: string; scope: 'personal' | 'domain' | 'marketplace' };
 
+/** True when the write tools for `kind` are all present in the team's tool pool. */
+function hasWriteTools(system: System, kind: GrantKind): boolean {
+  const w = writeToolsForKind(kind);
+  return w.length > 0 && w.every((t) => system.grants.tools.includes(t));
+}
+
 /**
- * Simple-mode "What your team can use" — the plain Data + Knowledge grant chips
- * (SYSTEM-level Read grants, the same `grants.data`/`grants.knowledge` the Developer
- * Grants panel writes). Shown in the Design phase.
+ * Simple-mode "What your team can use" — the plain grant section for the four resource
+ * kinds (Data · Knowledge · Files · Connections), each at a Read / Can-write access
+ * level. Granting AUTO-PROVISIONS the matching governed tools via `setArtifactGrant`,
+ * so the label is truthful. Data/Knowledge/Connections carry per-artifact id lists
+ * (picker); Files have no id list, so it is a single Read/Write toggle. Shown in Design.
  */
 function TeamResources({
   systemId, system, canEdit, onCommit,
@@ -970,21 +1009,61 @@ function TeamResources({
     <div className="sb-resources">
       <h2 className="sb-section-title" style={{ marginTop: 0 }}>What your team can use</h2>
       <p className="hint" style={{ marginTop: 0 }}>
-        Give the whole team read access to the data and knowledge it needs — every agent shares these.
-        Write access and finer control live in Developer mode.
+        Give the whole team the data, knowledge, files and connections it needs — every agent shares
+        these. Choose <strong>Read</strong> to look only, or <strong>Can write</strong> to also create
+        and change. The matching tools are granted automatically.
       </p>
-      <ResourcePicker systemId={systemId} system={system} field="data" label="Data" canEdit={canEdit} onCommit={onCommit} />
-      <ResourcePicker systemId={systemId} system={system} field="knowledge" label="Knowledge" canEdit={canEdit} onCommit={onCommit} />
+      <ResourcePicker systemId={systemId} system={system} kind="data" label="Data" canEdit={canEdit} onCommit={onCommit} />
+      <ResourcePicker systemId={systemId} system={system} kind="knowledge" label="Knowledge" canEdit={canEdit} onCommit={onCommit} />
+      <FilesGrant system={system} canEdit={canEdit} onCommit={onCommit} />
+      <ResourcePicker systemId={systemId} system={system} kind="connections" label="Connections" canEdit={canEdit} onCommit={onCommit} />
+      <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>
+        Writes run directly or wait for approval depending on this team’s safety setting on the Define page.
+      </p>
     </div>
   );
 }
 
+/** A compact two-state Read / Can-write toggle (segmented control, house styling). */
+function AccessToggle({
+  write, canEdit, onRead, onWrite,
+}: {
+  write: boolean;
+  canEdit: boolean;
+  onRead: () => void;
+  onWrite: () => void;
+}) {
+  return (
+    <span className="sb-access" role="group" aria-label="Access level" style={{ display: 'inline-flex', gap: 4 }}>
+      <button
+        type="button"
+        className={`btn ghost sm${write ? '' : ' active'}`}
+        aria-pressed={!write}
+        disabled={!canEdit}
+        onClick={() => canEdit && write && onRead()}
+      >
+        Read
+      </button>
+      <button
+        type="button"
+        className={`btn ghost sm${write ? ' active' : ''}`}
+        aria-pressed={write}
+        disabled={!canEdit}
+        onClick={() => canEdit && !write && onWrite()}
+      >
+        Can write
+      </button>
+    </span>
+  );
+}
+
 function ResourcePicker({
-  systemId, system, field, label, canEdit, onCommit,
+  systemId, system, kind, label, canEdit, onCommit,
 }: {
   systemId: string;
   system: System;
-  field: 'data' | 'knowledge';
+  /** An id-carrying grant kind (Files is handled separately by FilesGrant). */
+  kind: 'data' | 'knowledge' | 'connections';
   label: string;
   canEdit: boolean;
   onCommit: (next: System) => void;
@@ -997,7 +1076,7 @@ function ResourcePicker({
   useEffect(() => {
     let alive = true;
     setLoadErr('');
-    fetch(`/api/agents/systems/${systemId}/grants/available?kind=${field}`, { cache: 'no-store' })
+    fetch(`/api/agents/systems/${systemId}/grants/available?kind=${kind}`, { cache: 'no-store' })
       .then(async (res) => {
         const body = await res.json();
         if (!res.ok) throw new Error(body.error ?? 'Failed to load');
@@ -1005,9 +1084,9 @@ function ResourcePicker({
       })
       .catch((e) => { if (alive) setLoadErr((e as Error).message); });
     return () => { alive = false; };
-  }, [systemId, field]);
+  }, [systemId, kind]);
 
-  const granted = system.grants[field];
+  const granted = system.grants[kind];
   const nameOf = (id: string) =>
     available?.find((a) => a.id === id)?.name
     ?? (id.includes('_') ? id.split('_').slice(1).join('_') : id);
@@ -1015,6 +1094,7 @@ function ResourcePicker({
   const addable = (available ?? []).filter((a) => !grantedIds.has(a.id));
   const q = search.trim().toLowerCase();
   const shown = q ? addable.filter((a) => a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q)) : addable;
+  const writes = (cap: string) => cap === 'Write-approval' || cap === 'Write-bounded';
 
   return (
     <div className="sb-resource">
@@ -1023,10 +1103,16 @@ function ResourcePicker({
       <div className="sb-chips">
         {granted.length === 0 ? <span className="hint" style={{ marginTop: 0 }}>None yet.</span> : null}
         {granted.map((g) => (
-          <span key={g.id} className="sb-chip granted">
+          <span key={g.id} className="sb-chip granted" style={{ gap: 8 }}>
             <span>{nameOf(g.id)}</span>
+            <AccessToggle
+              write={writes(g.capability)}
+              canEdit={canEdit}
+              onRead={() => onCommit(setArtifactGrant(system, kind, g.id, false))}
+              onWrite={() => onCommit(setArtifactGrant(system, kind, g.id, true))}
+            />
             {canEdit ? (
-              <button className="sb-chip-x" title="Remove" onClick={() => onCommit(removeArtifactGrant(system, field, g.id))}>✕</button>
+              <button className="sb-chip-x" title="Remove" onClick={() => onCommit(removeArtifactGrant(system, kind, g.id))}>✕</button>
             ) : null}
           </span>
         ))}
@@ -1059,7 +1145,7 @@ function ResourcePicker({
                     key={a.id}
                     className="sb-picker-row"
                     title={a.id}
-                    onClick={() => onCommit(addArtifactGrant(system, field, a.id))}
+                    onClick={() => onCommit(setArtifactGrant(system, kind, a.id, false))}
                   >
                     +<span>{a.name}</span><span className="badge muted">{a.scope}</span>
                   </button>
@@ -1069,6 +1155,53 @@ function ResourcePicker({
             <button className="btn ghost sm" style={{ marginTop: 8 }} onClick={() => { setOpen(false); setSearch(''); }}>Done</button>
           </div>
         )
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Files grant — files carry NO per-artifact id list (file tools act over the caller's
+ * own DLS), so this is a single Off / Read / Can-write control. State is derived from
+ * whether the team's tool pool holds the file read/write tools (see capability-tools).
+ */
+function FilesGrant({
+  system, canEdit, onCommit,
+}: {
+  system: System;
+  canEdit: boolean;
+  onCommit: (next: System) => void;
+}) {
+  const write = hasWriteTools(system, 'files');
+  const on = write || system.grants.tools.includes('list_files');
+
+  return (
+    <div className="sb-resource">
+      <div className="sb-field-label" style={{ margin: '4px 0' }}>Files</div>
+      <div className="sb-chips" style={{ alignItems: 'center' }}>
+        {on ? (
+          <span className="sb-chip granted" style={{ gap: 8 }}>
+            <span>Team files</span>
+            <AccessToggle
+              write={write}
+              canEdit={canEdit}
+              onRead={() => onCommit(setArtifactGrant(system, 'files', null, false))}
+              onWrite={() => onCommit(setArtifactGrant(system, 'files', null, true))}
+            />
+          </span>
+        ) : (
+          <span className="hint" style={{ marginTop: 0 }}>None yet.</span>
+        )}
+      </div>
+      {canEdit && !on ? (
+        <button className="btn ghost sm" style={{ marginTop: 6 }} onClick={() => onCommit(setArtifactGrant(system, 'files', null, false))}>
+          + Give file access
+        </button>
+      ) : null}
+      {canEdit && write ? (
+        <p className="hint" style={{ marginTop: 4, marginBottom: 0 }}>
+          File read tools stay granted; switch back to <strong>Read</strong> to drop write. Full removal lives in Developer mode.
+        </p>
       ) : null}
     </div>
   );

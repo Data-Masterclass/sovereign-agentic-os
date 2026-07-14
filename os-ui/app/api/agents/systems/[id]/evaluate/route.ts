@@ -6,8 +6,32 @@ import { requireUser } from '@/lib/core/auth';
 import { getSystem } from '@/lib/agents/store';
 import { assistantComplete } from '@/lib/assistant/complete';
 import { judgeRun, type JudgeComplete } from '@/lib/agents/evaluate-judge';
+import { getWorkflow } from '@/lib/knowledge/store';
+import type { CurrentUser } from '@/lib/core/auth';
+import type { System } from '@/lib/agents/system-schema';
 
 export const dynamic = 'force-dynamic';
+
+/**
+ * Gather the SUCCESS CRITERIA the team was actually given, so the judge scores
+ * against the real task, not a generic one: the workflow-level tacit doc + every
+ * per-step tacit note from each GRANTED knowledge workflow. Read governed as the
+ * caller; a workflow we can't read is skipped (never fails the evaluation). Bounded
+ * so a huge playbook can't blow the judge's context.
+ */
+function gatherGrantedCriteria(system: System, user: CurrentUser): string {
+  const parts: string[] = [];
+  for (const g of system.grants.knowledge) {
+    try {
+      const wf = getWorkflow(g.id, user);
+      if (wf.tacit?.trim()) parts.push(wf.tacit.trim());
+      for (const s of wf.workflow?.steps ?? []) if (s.tacit?.trim()) parts.push(`- ${s.tacit.trim()}`);
+    } catch {
+      /* not readable / not found — skip, never fail the evaluation */
+    }
+  }
+  return parts.join('\n').slice(0, 4000);
+}
 
 function fail(e: unknown) {
   const status = (e as { status?: number })?.status ?? 500;
@@ -55,18 +79,24 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       return NextResponse.json({ error: 'Run the team first — there is no output to evaluate yet.' }, { status: 400 });
     }
 
+    // Task description: an explicit override, else the persisted Define description
+    // (the author's own words), else the generic fallback — so the judge scores the
+    // REAL task whenever the team stated one.
     const description = (typeof body.description === 'string' && body.description.trim())
       ? body.description
-      : systemDescription(view.system);
+      : (view.system.system.description?.trim() || systemDescription(view.system));
+
+    // Success criteria: an explicit override, else auto-gathered from the granted
+    // knowledge workflows' tacit notes — so grounding is judged against the actual rules.
+    const tacitKnowledge = (typeof body.tacitKnowledge === 'string' && body.tacitKnowledge.trim())
+      ? body.tacitKnowledge
+      : gatherGrantedCriteria(view.system, user);
 
     // Route the judge through the ONE governed assistant model (Langfuse-audited).
     const complete: JudgeComplete = (messages) =>
       assistantComplete(messages, { user: user.id }).then((r) => r.content);
 
-    const result = await judgeRun(
-      { output, description, tacitKnowledge: typeof body.tacitKnowledge === 'string' ? body.tacitKnowledge : undefined },
-      complete,
-    );
+    const result = await judgeRun({ output, description, tacitKnowledge }, complete);
     return NextResponse.json(result);
   } catch (e) {
     return fail(e);

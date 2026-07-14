@@ -4,6 +4,10 @@
 import { config } from '../core/config.ts';
 import { k8s as liveK8s } from '../infra/k8s.ts';
 import type { Schedule } from './system-schema.ts';
+// isValidCron lives in a PURE module (no k8s) so client bundles can use it; we
+// re-export it here for the server callers + tests that import it from this module.
+export { isValidCron } from './cron-util.ts';
+import { isValidCron } from './cron-util.ts';
 
 /**
  * The MISSING trigger behind a saved cron schedule. `store.setSchedule` only
@@ -57,13 +61,6 @@ export function cronJobName(systemId: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
   return `agent-schedule-${slug || 'system'}`.slice(0, 52).replace(/-+$/g, '');
-}
-
-/** A cron expression is minimally valid when it has exactly 5 non-empty fields. */
-export function isValidCron(cron: string | undefined): cron is string {
-  if (!cron || typeof cron !== 'string') return false;
-  const fields = cron.trim().split(/\s+/);
-  return fields.length === 5 && fields.every((f) => f.length > 0);
 }
 
 /** Build the CronJob manifest that triggers one scheduled run of `systemId`. */

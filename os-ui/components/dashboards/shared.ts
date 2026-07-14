@@ -53,6 +53,8 @@ export type GuestTokenRequest = {
 export type EmbedMode = 'live' | 'offline-mock';
 export type EmbedResponse = {
   dashboardId: string;
+  /** Superset embedded UUID the guest token targets (live path); === request.resourceId. */
+  embeddedId: string;
   request: GuestTokenRequest;
   token: string;
   expiresInSeconds: number;

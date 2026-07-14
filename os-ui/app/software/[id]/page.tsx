@@ -390,7 +390,7 @@ export default function AppPage() {
                 </div>
                 <div className="row" style={{ gap: 8, alignItems: 'center', flexShrink: 0 }}>
                   <button className="btn ghost" onClick={() => deployAction('preview')} disabled={busy}>Preview</button>
-                  <button className="btn" onClick={() => deployAction()} disabled={publishDisabled} title={inReview ? 'A deploy is awaiting a Builder in Deploy reviews' : undefined}>
+                  <button className="btn lg" onClick={() => deployAction()} disabled={publishDisabled} title={inReview ? 'A deploy is awaiting a Builder in Deploy reviews' : undefined}>
                     {publishLabel}
                   </button>
                 </div>
@@ -512,7 +512,7 @@ export default function AppPage() {
                   ? 'Edit the code directly below, or ask the “Ask the OS” assistant (top-right) to build changes for you.'
                   : 'Ask the “Ask the OS” assistant (top-right) to describe the changes you want — it writes code, commits to Forgejo, and prepares a release.'}
               </span>
-              <button className="btn" onClick={() => deployAction()} disabled={publishDisabled} title={inReview ? 'A deploy is awaiting a Builder in Deploy reviews' : undefined}>
+              <button className="btn lg" onClick={() => deployAction()} disabled={publishDisabled} title={inReview ? 'A deploy is awaiting a Builder in Deploy reviews' : undefined}>
                 {publishLabel}
               </button>
             </div>

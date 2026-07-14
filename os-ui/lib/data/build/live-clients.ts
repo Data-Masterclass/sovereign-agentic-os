@@ -134,6 +134,57 @@ async function probeQueryable(fqn: string, principal?: string): Promise<boolean>
   }
 }
 
+/** Read a single `count(*)` scalar from a governed probe. Returns null when the
+ *  query can't run (table absent, not-yet-created, or an OPA/Trino error) so the
+ *  guard treats "unknown" as "not a populated target" and proceeds. */
+async function countRows(sql: string, principal: string | undefined, run: typeof queryRun): Promise<number | null> {
+  const r = await run(sql, principal);
+  const cell = r.rows?.[0]?.[0];
+  const n = Number(cell);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Guard 1 (belt-and-suspenders): refuse to let a `CREATE OR REPLACE TABLE <fqn> AS
+ * <select>` blow away a POPULATED table with a 0-row result. The verify runs AFTER
+ * the replace, so without this a compiled SELECT that (via a bug/regression) yields
+ * 0 rows would silently zero-out real data. Pre-flight, under the SAME identity:
+ *   1. if the target already has count(*) > 0, AND
+ *   2. `count(*) FROM (<select>)` is 0
+ * → ABORT before executing. A fresh target (probe fails/0) or a >0-row select proceeds.
+ *
+ * Dependency-injected `run` (defaults to the governed queryRun) keeps it unit-testable.
+ * Any probe error is swallowed as "unknown" → proceed, so the guard never turns a
+ * transient probe failure into a false abort (the CTAS + its post-verify still run).
+ */
+export async function assertNoZeroRowReplace(
+  ctasSql: string,
+  principal: string | undefined,
+  run: typeof queryRun = queryRun,
+): Promise<void> {
+  const m = /^\s*create\s+or\s+replace\s+table\s+(\S+)\s+as\s+([\s\S]+)$/i.exec(ctasSql);
+  if (!m) return; // not a create-or-replace CTAS → nothing to guard
+  const [, fqn, select] = m;
+  let existing: number | null;
+  try {
+    existing = await countRows(`SELECT count(*) FROM ${fqn}`, principal, run);
+  } catch {
+    return; // target absent / not readable yet → fresh replace, proceed
+  }
+  if (existing === null || existing <= 0) return; // fresh or empty target → proceed
+  let incoming: number | null;
+  try {
+    incoming = await countRows(`SELECT count(*) FROM (${select})`, principal, run);
+  } catch {
+    return; // can't evaluate the select count → don't block the real CTAS + its verify
+  }
+  if (incoming === 0) {
+    throw new Error(
+      `refusing to replace populated table ${fqn} with a 0-row result (${existing} existing row(s) would be lost)`,
+    );
+  }
+}
+
 /** The data-runner /ingest result (the physical Bronze table it just wrote). */
 export type IngestOutcome = { table: string; rowCount: number; columns: { name: string; type: string }[] };
 
@@ -193,6 +244,8 @@ export function realDbt(): DbtClient {
   return {
     async build(modelFqn, write) {
       if (write) {
+        // Guard 1: never let a compiled CTAS zero-out a populated table.
+        await assertNoZeroRowReplace(write.sql, write.identity.principal);
         await executeRun(write.sql, write.identity); // throws on any rejection/Trino error
         const queryable = await probeQueryable(modelFqn, write.identity.principal);
         return { testsPassed: queryable, compiledCode: true };
@@ -236,6 +289,8 @@ export function realDbtTrino(): DbtTrinoClient {
         }
         try {
           if (write.schemaSql) await executeRun(write.schemaSql, write.identity);
+          // Guard 1: never let the publish CTAS zero-out a populated domain table.
+          await assertNoZeroRowReplace(write.sql, write.identity.principal);
           await executeRun(write.sql, write.identity);
         } finally {
           if (write.releaseSchema) await withdrawPromoteRelease(write.releaseSchema);
@@ -259,12 +314,24 @@ export function realPolicy(): PolicyClient {
   // push the OPA half; an unreachable OPA → throw → ✗.
   return {
     async push(opa) {
-      const res = await withTimeout(`${config.opaUrl}/v1/data/governance`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ tables: opa.tables, principals: opa.principals }),
-      });
-      if (!res || !res.ok) throw new Error(`OPA governance push failed (${res?.status ?? 'unreachable'})`);
+      // `tables` is fully recomputed each compile, so a wholesale replace is correct.
+      // `principals` is an UPSERT-per-key merge, NOT a wholesale replace: a full PUT
+      // here used to clobber the statically-seeded domain self-principals (which are
+      // not in the user roster), collapsing every domain-session row filter to []
+      // → ZERO rows (the empty-scorecard bug). Writing each principal to its own path
+      // only ever adds/updates — it can never delete a principal this push didn't compute.
+      const put = async (path: string, body: unknown) => {
+        const res = await withTimeout(`${config.opaUrl}/v1/data/${path}`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!res || !res.ok) throw new Error(`OPA governance push failed at ${path} (${res?.status ?? 'unreachable'})`);
+      };
+      await put('governance/tables', opa.tables);
+      for (const [id, p] of Object.entries(opa.principals)) {
+        await put(`governance/principals/${encodeURIComponent(id)}`, p);
+      }
     },
   };
 }

@@ -39,6 +39,18 @@ test('compiles ONE source → the OPA governance bundle the trino rego reads', (
   assert.deepEqual(opa.principals.kenji, { domains: ['finance'], clearances: [] });
 });
 
+test('emits a domain SELF-PRINCIPAL for every governing/shared domain (empty-scorecard guard)', () => {
+  // The governed query tool runs AS the domain name; without a self-map the row
+  // filter resolves membership to [] → 0 rows. The roster here lists only USERS
+  // (no 'sales'/'finance' keys), so these must come from the self-emit.
+  const d = product({ imports: ['finance'] }); // domain 'sales', shared_with ['finance']
+  const { opa } = compilePolicy([d], roster);
+  assert.deepEqual(opa.principals.sales, { domains: ['sales'], clearances: [] });
+  assert.deepEqual(opa.principals.finance, { domains: ['finance'], clearances: [] });
+  // A real roster entry is never clobbered by the self-emit.
+  assert.deepEqual(opa.principals.sam, { domains: ['sales', 'finance'], clearances: [] });
+});
+
 test('compiles the SAME source → Cube access policies', () => {
   const d = product({ imports: ['finance'], grants: [maskGrant('net_amount')] });
   const { cube } = compilePolicy([d], roster);

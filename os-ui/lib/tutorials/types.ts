@@ -128,7 +128,7 @@ export interface TutorialDef {
   walkthrough: WalkStep[];
   /** The tab's existing personal/sandbox lane (reused — no new infra). */
   sandbox: {
-    /** Human label, e.g. "My data — personal DuckDB lane". */
+    /** Human label, e.g. "My data — personal Trino/Iceberg lane". */
     lane: string;
     /** Anchor that opens/selects the sandbox lane on the tab. */
     anchor: string;

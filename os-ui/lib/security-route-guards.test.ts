@@ -28,7 +28,9 @@ test('GAP 2: the agents-systems create route no longer accepts a client visibili
   const create = read('app/api/agents/systems/route.ts');
   assert.doesNotMatch(create, /body\.visibility/, 'create must not read a client visibility');
   assert.ok(existsSync(resolve(OSUI, 'app/api/agents/systems/[id]/promote/route.ts')), 'promote route exists');
-  assert.match(read('app/api/agents/systems/[id]/promote/route.ts'), /promoteSystem/);
+  // Promotion runs through the governed ladder entry (promoteOrRequest → seam), never a
+  // direct promoteSystem back door; a non-approver owner files a request instead of 403.
+  assert.match(read('app/api/agents/systems/[id]/promote/route.ts'), /promoteOrRequest|promoteThroughSeam/);
 });
 
 test('GAP 3: marketplace import paths gate on Builder+ (rank-based — domain_admin inherits)', () => {

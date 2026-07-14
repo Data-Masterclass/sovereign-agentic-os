@@ -361,6 +361,15 @@ export const config = {
   featureformUrl: base(env('FEATUREFORM_URL', 'http://featureform:7878')),
   kserveUrl: base(env('KSERVE_URL', 'http://kserve:80')),
 
+  // ---- External-warehouse connectors (Phase 1, opt-in). GATED OFF by default:
+  // federating an external lakehouse (AWS Glue today) as a governed Trino catalog
+  // is code-complete + unit-tested but NOT yet validated against a live source, so
+  // nothing appears in the UI/runtime until an operator deliberately enables it.
+  // When ON, a "warehouse catalog" connection renders Trino catalog props, mirrors
+  // to OpenMetadata and exposes read-only federated datasets (import = CTAS reuses
+  // the existing materialize path). See docs/external-warehouse-connectors.md.
+  externalConnectorsEnabled: env('EXTERNAL_CONNECTORS_ENABLED', '').toLowerCase() === 'true',
+
   // ---- Deployment identity (read-only, surfaced on Settings; non-secret) ----
   deploymentProfile: env('OS_PROFILE', 'local'),
   deploymentNamespace: env('OS_NAMESPACE', 'agentic-os'),

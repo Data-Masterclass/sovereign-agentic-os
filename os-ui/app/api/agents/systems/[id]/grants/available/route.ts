@@ -22,8 +22,10 @@ export const dynamic = 'force-dynamic';
  *
  * Response: `{ items: [{ id, name, scope: 'personal'|'domain'|'marketplace' }] }`.
  */
-type Kind = 'data' | 'knowledge' | 'connection' | 'metric';
-const KINDS: Kind[] = ['data', 'knowledge', 'connection', 'metric'];
+// `connections` (plural) is the Simple-builder GrantKind spelling; `connection`
+// (singular) is the original Grants-panel spelling — both resolve to the same list.
+type Kind = 'data' | 'knowledge' | 'connection' | 'connections' | 'metric';
+const KINDS: Kind[] = ['data', 'knowledge', 'connection', 'connections', 'metric'];
 
 type Item = { id: string; name: string; scope: 'personal' | 'domain' | 'marketplace' };
 
@@ -80,7 +82,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
         ...g.marketplace.map((m) => ({ id: m.id, name: nm(m), scope: 'marketplace' as const })),
       ];
     } else {
-      // connection — the async, already canView-scoped list.
+      // connection / connections — the async, already canView-scoped list.
       const conns = await listConnectionsForUser(user);
       items = conns.map((c) => ({
         id: c.id,

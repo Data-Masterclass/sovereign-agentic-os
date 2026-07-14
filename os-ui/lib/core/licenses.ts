@@ -34,7 +34,7 @@ export const COMPONENTS: Component[] = [
   // ---- Lakehouse & data tier ----
   { name: 'Apache Iceberg', license: 'Apache-2.0', layer: 'Structured Data', note: 'Open table format for the lakehouse.' },
   { name: 'Apache Polaris', license: 'Apache-2.0', layer: 'Structured Data', note: 'Iceberg REST catalog.' },
-  { name: 'DuckDB', license: 'MIT', layer: 'Structured Data', note: 'Embedded query engine (query-tool).' },
+  { name: 'Trino', license: 'Apache-2.0', layer: 'Structured Data', note: 'Distributed SQL query engine over Iceberg (query-tool).' },
   { name: 'dbt Core', license: 'Apache-2.0', layer: 'Structured Data', note: 'Transforms raw data into the warehouse.' },
   { name: 'Cube', license: 'Apache-2.0', layer: 'Metrics', note: 'Semantic / metrics layer over the warehouse.' },
   { name: 'OpenMetadata', license: 'Apache-2.0', layer: 'Governance', note: 'Data catalog + lineage + profiler.' },

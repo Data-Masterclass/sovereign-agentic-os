@@ -1903,12 +1903,31 @@ superset:
       limits: { cpu: "1", memory: 1536Mi }
   extraSecretEnv:
     SUPERSET_SECRET_KEY: "sovereign-os-superset-local-dev-secret-key"
+    # STABLE secret that signs embedded-dashboard GUEST TOKENS. Must be 32+ chars and
+    # MUST NOT rotate on every deploy — rotating it invalidates every live guest token.
+    # (Left as the insecure Superset 27-char default, the guest_token mint 403s.) The
+    # embedded config below reads it via os.environ. For a real deployment override this
+    # from a K8s secret (values.stackit-selfhosted.yaml).
+    SUPERSET_GUEST_TOKEN_JWT_SECRET: "sovereign-os-superset-embedded-guest-token-signing-secret"
   configOverrides:
     simplecache: |
       CACHE_CONFIG = {"CACHE_TYPE": "SimpleCache"}
       DATA_CACHE_CONFIG = {"CACHE_TYPE": "SimpleCache"}
       FILTER_STATE_CACHE_CONFIG = {"CACHE_TYPE": "SimpleCache"}
       EXPLORE_FORM_DATA_CACHE_CONFIG = {"CACHE_TYPE": "SimpleCache"}
+    # ------------------------------------------------------------------------
+    # Embedded dashboards. The EMBEDDED_SUPERSET feature flag MUST be on or the
+    # guest_token API 403s (even for admin). Guest tokens sign with the STABLE
+    # SUPERSET_GUEST_TOKEN_JWT_SECRET above and carry the read-only Gamma role
+    # (the role the OS SSO map lands most users on — NOT Public), so an embedded
+    # viewer sees only what a Gamma user may, scoped further by the token's RLS.
+    # configOverrides entries merge by key, so this adds to (not replaces) the map.
+    # ------------------------------------------------------------------------
+    embedded: |
+      FEATURE_FLAGS = {"EMBEDDED_SUPERSET": True}
+      GUEST_ROLE_NAME = "Gamma"
+      GUEST_TOKEN_JWT_SECRET = os.environ["SUPERSET_GUEST_TOKEN_JWT_SECRET"]
+      GUEST_TOKEN_JWT_EXP_SECONDS = 300
     # ------------------------------------------------------------------------
     # OS single sign-on. The os-ui reverse proxy (/tools/superset) injects the
     # trusted X-Forwarded-User + X-Forwarded-Roles headers for the already-

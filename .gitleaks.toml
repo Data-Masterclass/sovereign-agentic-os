@@ -1,55 +1,24 @@
-# SPDX-License-Identifier: Apache-2.0
-# Copyright 2026 Borek Data Ventures UG
-#
-# gitleaks configuration for the Sovereign Agentic OS public repository.
-#
-# Keeps ALL default gitleaks rules enabled (useDefault = true) so any real
-# credential, API token, private key, or cloud service-account key is a finding.
-#
-# The allowlist below suppresses ONLY the documented, intentional *local-dev
-# throwaway* values that ship with `profile: local` (the self-contained kind
-# demo). They are clearly marked as non-production in the chart and the Guide,
-# are gated behind `global.profile == local`, and are NEVER used on STACKIT /
-# any real deployment (where these secrets come from External Secrets). They
-# must remain stable across `helm upgrade` (rotating e.g. the Langfuse
-# encryption key would orphan already-encrypted local data), so they live in
-# git on purpose. Nothing here is a real secret.
-
-title = "Sovereign Agentic OS — gitleaks config"
+# gitleaks config — extends the default ruleset with an allowlist for
+# DOCUMENTED LOCAL-DEV DEFAULTS and obviously-fake placeholders. None of these
+# are production secrets: real secrets live in the gitignored values.private.yaml
+# and override these defaults at deploy time. These strings have always been part
+# of the public source (docs + chart example values).
+title = "Sovereign Agentic OS"
 
 [extend]
 useDefault = true
 
-[[allowlists]]
-description = "Documented local-dev throwaway credentials (profile: local only; never used in production)."
-# Match against the whole offending line so these specific, unique literals are
-# reliably recognised regardless of which default rule fires.
-regexTarget = "line"
+[allowlist]
+description = "Fake unit-test creds + documented local-dev defaults / placeholders"
 regexes = [
-  # Generic local-dev / localdev marker (covers *-local-dev*, *localdev*,
-  # sovereign-os-local-dev-salt, sovereign-os-local-dev-nextauth-secret, etc.)
-  '''(?i)local-?dev''',
-  # LiteLLM master + agent virtual keys (local demo gateway)
-  '''sk-litellm-local-dev-master''',
-  '''sk-agents-local-dev''',
-  # Langfuse local project keys
-  '''pk-lf-localdev[0-9a-z]*''',
-  '''sk-lf-localdev[0-9a-z]*''',
-  # MinIO / object-storage local root credentials
-  '''agentic-os-local(-secret)?''',
-  # JupyterHub local dummy-auth password
-  '''jupyter-local-dev''',
-  # Harbor local default admin password (registry demo)
-  '''Harbor12345''',
-  # Langfuse local encryptionKey — stable 64-hex dev value, profile: local only
-  '''a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90''',
-  # JupyterHub proxy secretToken — local dev 64-hex value
-  '''0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef''',
-  # Container image digests are content hashes, not secrets
-  '''sha256:[a-f0-9]{64}''',
+  '''pw-strong-123''',          # unit-test fixture password
+  '''gitea_admin''',            # local-dev Forgejo admin default (docs; prod overrides)
+  '''forgejo-admin''',
+  '''sk-litellm-local-dev''',   # local-dev LiteLLM master-key default (docs)
+  '''pk-lf-localdev''',         # Langfuse local-dev PUBLIC key
+  '''a1b2c3d4e5f6''',           # placeholder hex in chart example values
+  '''0123456789abcdef''',       # placeholder hex in values.yaml default
 ]
-stopwords = [
-  "local-dev",
-  "localdev",
-  "sovereign-os-local",
+paths = [
+  '''.*\.test\.ts$''',   # unit-test fixtures use fake credentials by design
 ]

@@ -225,9 +225,11 @@ test('P0.4 the ladder is the ONLY promotion path: no direct promote/certify/tier
     certifyModel: ['lib/science/model-service.ts', 'lib/governance/effects.ts'],
     promoteSystem: ['lib/agents/store.ts', 'lib/governance/effects.ts'], // the fix: agent_system now on the ladder
     // dataset tier relabel (the `transition` alias): only the guarded metrics-govern
-    // route may call it, and ONLY for a NON-materialising asset→product move (it
-    // refuses a dataset→asset flip and sends it to the physical-publish path).
-    transitionDataset: ['app/api/metrics/govern/route.ts'],
+    // routes may call it, and ONLY for a NON-materialising asset→product move (they
+    // refuse a dataset→asset flip and send it to the physical-publish path). The
+    // shared <PromoteButton>'s `[id]/promote` front door replicates the SAME guard
+    // (identical consistency gate + dataset-tier refusal) — same seam, second entry.
+    transitionDataset: ['app/api/metrics/govern/route.ts', 'app/api/metrics/[id]/promote/route.ts'],
   };
   for (const [fn, allow] of Object.entries(ALLOW)) {
     const callers = grep(fn);

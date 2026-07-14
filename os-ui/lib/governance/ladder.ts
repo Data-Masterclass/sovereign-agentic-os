@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
-import { roleAtLeast } from '@/lib/core/session';
+import { roleAtLeast, canPromote } from '@/lib/core/session';
 import { decide, enqueue, listApprovals, recordEffect, type Approval } from '@/lib/governance/approvals';
 import { applyEffect, type EffectDeps, type EffectResult } from '@/lib/governance/effects';
 import { record as auditRecord } from '@/lib/governance/audit';
@@ -270,6 +270,32 @@ export async function promoteThroughSeam(
     recordEffect(realPending.id, { applied: effect.applied, live: effect.live, publish: effect.publish });
   }
   return { ...effect, rung, artifact: art };
+}
+
+/**
+ * PROMOTE-OR-PROPOSE — the one entry the UI "Promote to Shared" button should call
+ * so promotion is CONSISTENT across every tab. Personal→Shared:
+ *   • an OWNER who lacks approver authority (creator/builder) FILES a request
+ *     (`fileArtifactPromotion`) → it lands in Governance for a domain_admin+ to
+ *     approve — NO more "requires a Domain admin" dead-end.
+ *   • an approver (domain_admin+) promotes in one shot through the seam.
+ * Shared→Certified and the non-owner-with-no-request case fall through to
+ * `promoteThroughSeam` unchanged (SoD preserved). Returns a discriminated result so
+ * the route can tell the UI "requested" vs "promoted".
+ */
+export async function promoteOrRequest(
+  kind: LadderKind,
+  id: string,
+  user: CurrentUser,
+): Promise<
+  | { requested: true; approval: Approval }
+  | ({ requested: false } & EffectResult & { rung: 'promote' | 'certify'; artifact: Resolved })
+> {
+  const art = await resolveLadderArtifact(kind, id, user);
+  if (normVisibility(art.visibility) === 'Personal' && art.owner === user.id && !canPromote(user.role, 'Personal')) {
+    return { requested: true, approval: await fileArtifactPromotion(kind, id, user) };
+  }
+  return { requested: false, ...(await promoteThroughSeam(kind, id, user)) };
 }
 
 /** The ladder kinds a DEMOTE (revoke sharing) is wired for — the reverse of the

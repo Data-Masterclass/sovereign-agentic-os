@@ -1,8 +1,14 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { type AgentSpec, type System, SystemError } from './system-schema.ts';
+import { type AgentSpec, type System, type Capability, SystemError } from './system-schema.ts';
 import { setInstructions } from './agent-md.ts';
+import {
+  type GrantKind,
+  toolsForGrant,
+  writeToolsForKind,
+  capabilityWrites,
+} from './capability-tools.ts';
 
 /**
  * Pure, immutable `system.yaml` edits for Simple mode (the guided, plain-fields
@@ -112,25 +118,75 @@ export function removeAgentTool(input: System, agentId: string, tool: string): S
 }
 
 /**
- * Simple-mode artifact grants — the plain "what your team can use" chips for Data
- * and Knowledge. These write the SAME `grants.data` / `grants.knowledge` list the
- * Developer Grants panel writes, so a Simple grant and the Developer equivalent
- * produce an identical `system.yaml`. Simple only ever grants `Read` (the common
- * consume case); Write capabilities stay in Developer mode. Role floors + save
- * guards are enforced downstream exactly as for the Grants panel.
+ * Simple-mode artifact grants — the plain "what your team can use" section for Data,
+ * Knowledge, Files and Connections. Granting a resource AUTO-PROVISIONS the matching
+ * governed MCP tools into `grants.tools` (via {@link toolsForGrant}) so the team can
+ * actually USE what it's given — the label is truthful. A `write` grant additionally
+ * provisions the create/write tools and, if the team is still at the `read-only`
+ * default, lifts the safety preset to `read-bounded` so those writes RUN in the
+ * team's own workspace (approval stays the ONE team-wide safety preset — see the
+ * run-time gate `os-tools.writesAreHeld`). Data/Knowledge/Connections also record the
+ * id in `grants.<kind>`; Files carry no per-artifact list (file tools act over the
+ * caller's own DLS), so Files is provisioned by tools alone. Writes the SAME
+ * system.yaml the Developer Grants panel does. The user can still narrow tools per
+ * agent afterwards; {@link reconcileKindTools} keeps the pool in step on removal.
  */
-export function addArtifactGrant(input: System, field: 'data' | 'knowledge', id: string): System {
+export function setArtifactGrant(input: System, kind: GrantKind, id: string | null, write: boolean): System {
   const sys = structuredClone(input);
-  const arr = sys.grants[field];
-  if (!arr.some((g) => g.id === id)) arr.push({ id, capability: 'Read' });
+  const cap: Capability = write ? 'Write-bounded' : 'Read';
+  if (kind !== 'files' && id) {
+    const arr = sys.grants[kind];
+    const existing = arr.find((g) => g.id === id);
+    if (existing) existing.capability = cap;
+    else arr.push({ id, capability: cap });
+  }
+  // Provision the matching tools (ADD-only — never removes a hand-picked tool).
+  for (const t of toolsForGrant(kind, cap)) if (!sys.grants.tools.includes(t)) sys.grants.tools.push(t);
+  // A Read grant of Files strips only the write tool (files have no id list, so a
+  // Read after a Write must drop upload_file); the id-kinds keep write tools until
+  // no grant writes (handled on removal/downgrade below).
+  if (kind === 'files' && !write) for (const t of writeToolsForKind('files')) stripTool(sys, t);
+  if (write && sys.safetyPreset === 'read-only') sys.safetyPreset = 'read-bounded';
   return sys;
 }
 
-/** Remove a Data/Knowledge grant (idempotent). */
-export function removeArtifactGrant(input: System, field: 'data' | 'knowledge', id: string): System {
+/** Back-compat: a plain Read grant of a Data/Knowledge artifact (older callers). */
+export function addArtifactGrant(input: System, field: 'data' | 'knowledge', id: string): System {
+  return setArtifactGrant(input, field, id, false);
+}
+
+/**
+ * Persist the team's stated purpose / success criteria (the Define description). This
+ * is what the Evaluate judge scores against, so capturing it in plain words makes the
+ * judge grade the ACTUAL task instead of a generic fallback. Empty clears the field
+ * (kept out of the serialized system.yaml so files stay byte-stable).
+ */
+export function setDescription(input: System, text: string): System {
   const sys = structuredClone(input);
-  sys.grants[field] = sys.grants[field].filter((g) => g.id !== id);
+  const trimmed = text.trim();
+  if (trimmed) sys.system.description = trimmed;
+  else delete sys.system.description;
   return sys;
+}
+
+/**
+ * Remove a resource grant (idempotent). Read tools are LEFT in place (harmless, and
+ * may be hand-picked); the kind's WRITE tools are stripped once no remaining grant of
+ * the kind writes — so revoking the last write grant also revokes its create tools.
+ */
+export function removeArtifactGrant(input: System, kind: GrantKind, id: string | null): System {
+  const sys = structuredClone(input);
+  if (kind !== 'files' && id) sys.grants[kind] = sys.grants[kind].filter((g) => g.id !== id);
+  const stillWrites =
+    kind === 'files' ? false : sys.grants[kind].some((g) => capabilityWrites(g.capability));
+  if (!stillWrites) for (const t of writeToolsForKind(kind)) stripTool(sys, t);
+  return sys;
+}
+
+/** Remove a tool from the system pool AND from every per-agent tools override. */
+function stripTool(sys: System, tool: string): void {
+  sys.grants.tools = sys.grants.tools.filter((t) => t !== tool);
+  for (const a of sys.agents) if (a.tools) a.tools = a.tools.filter((t) => t !== tool);
 }
 
 /** Next free `agentN` id (matches Developer mode's canvas guided-add naming). */

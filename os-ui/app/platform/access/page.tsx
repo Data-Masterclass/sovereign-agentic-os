@@ -355,8 +355,8 @@ function EditUserPanel({
       <div style={PANEL} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 4 }}>
           <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: -0.2 }}>Edit user</div>
-          <button type="button" className="btn ghost" style={{ marginLeft: 'auto', padding: '3px 10px', fontSize: 12 }} onClick={onResetPassword} disabled={busy}>
-            Reset password…
+          <button type="button" className="btn" style={{ marginLeft: 'auto' }} onClick={onResetPassword} disabled={busy}>
+            🔑 Reset password
           </button>
         </div>
         <div className="hint" style={{ marginBottom: 16, fontSize: 12 }}><strong>{user.id}</strong></div>

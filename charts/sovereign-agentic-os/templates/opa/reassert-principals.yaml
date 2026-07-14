@@ -1,0 +1,100 @@
+{{- if .Values.opa.enabled }}
+{{- /*
+  Guard 2 (durability, belt-and-suspenders): re-assert each governed domain's
+  SELF-PRINCIPAL into LIVE OPA after every upgrade.
+
+  Why: the governed query tool runs AS the domain name (Trino session user =
+  `user.domains[0]`), so OPA's Trino row filter needs
+  `data.governance.principals[<domain>] = {domains:[<domain>], clearances:[]}`
+  or the filter resolves the caller's domain membership to [] → ZERO rows (the
+  empty-scorecard bug). These self-principals are seeded into the OPA ConfigMap
+  (governance.json) on install, and os-ui's policy compiler merge-PUTs them at
+  runtime (fixed at source in 0.1.99). This hook is defense-in-depth: if a runtime
+  path ever misses them, an upgrade re-PUTs them straight into live OPA.
+
+  Sibling of register-opensearch-snapshot-repo: a curl post-install/post-upgrade
+  hook. Idempotent (PUT is upsert) + NON-BLOCKING (`|| echo` per PUT), so a
+  transient OPA hiccup never fails the release. Reads the SAME governance block
+  the OPA seed uses (.Values.opa.governance.principals); only principals that map
+  to themselves (a domain self-principal: key ∈ its own `domains`) are re-asserted.
+*/}}
+{{- $opa := .Values.opa }}
+{{- $reg := .Values.opensearchSnapshots.registerJob }}
+{{- $selfPrincipals := dict }}
+{{- range $id, $p := (($opa.governance | default dict).principals | default dict) }}
+{{-   if has $id ($p.domains | default list) }}
+{{-     $_ := set $selfPrincipals $id $p }}
+{{-   end }}
+{{- end }}
+{{- if gt (len $selfPrincipals) 0 }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: opa-reassert-principals
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa-reassert-principals") | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    # A Job is immutable, so a plain re-apply on every `helm upgrade` fails —
+    # before-hook-creation recreates it each release (the last run stays for debug).
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa-reassert-principals") | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        # curlimages/curl runs as named user curl_user (uid/gid 100); a numeric uid
+        # is required under runAsNonRoot.
+        runAsUser: 100
+        runAsGroup: 100
+      containers:
+        - name: reassert
+          image: "{{ $reg.image.repository }}:{{ $reg.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          resources:
+            {{- toYaml $reg.resources | nindent 12 }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -u
+              OPA="http://opa:8181"
+
+              echo "Waiting for OPA to be ready ..."
+              for i in $(seq 1 30); do
+                STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "$OPA/health" 2>/dev/null || echo "000")
+                [ "$STATUS" = "200" ] && break
+                [ "$i" = "30" ] && echo "WARNING: OPA not ready after 60s — will still attempt PUTs (non-blocking)."
+                sleep 2
+              done
+
+              # Re-assert each governed domain's self-principal. Idempotent (PUT is
+              # an upsert on a distinct per-principal path) + NON-BLOCKING: a failed
+              # PUT logs a warning and never fails the release.
+              {{- range $id, $p := $selfPrincipals }}
+              curl -sf -X PUT "$OPA/v1/data/governance/principals/{{ $id }}" \
+                -H 'Content-Type: application/json' \
+                -d {{ dict "domains" ($p.domains | default list) "clearances" ($p.clearances | default list) | toJson | quote }} \
+                && echo "re-asserted principal {{ $id }}" \
+                || echo "WARNING: could not re-assert principal {{ $id }} (non-blocking)."
+              {{- end }}
+              echo "OPA self-principal re-assertion complete."
+{{- end }}
+{{- end }}

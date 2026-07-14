@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
  *   • metrics path — Cube measure `mart_sales.revenue`, filtered to region=DE +
  *     the last-quarter date range. This is exactly what the Superset "Sales
  *     Overview" dashboard renders, so dashboard == metrics tool by construction.
- *   • query path — DuckDB `sum(net_amount)` over the SAME Iceberg `mart_sales`,
+ *   • query path — Trino `sum(net_amount)` over the SAME Iceberg `mart_sales`,
  *     same region + date filter (the agent's ad-hoc tool).
  *
  * Because both read the one Sales mart, the numbers are identical. Both calls are
@@ -83,7 +83,7 @@ export async function GET() {
     region,
     quarter: label,
     metrics: { value: m, source: 'Cube · mart_sales.revenue', tool: 'metrics', error: metricsError || undefined, traced: tracedM },
-    query: { value: q, source: `DuckDB · sum(${SALES.netAmountColumn}) over Iceberg ${SALES.mart}`, sql, tool: 'query', error: queryError || undefined, traced: tracedQ },
+    query: { value: q, source: `Trino · sum(${SALES.netAmountColumn}) over Iceberg ${SALES.mart}`, sql, tool: 'query', error: queryError || undefined, traced: tracedQ },
     dashboard: { value: m, source: 'Superset "Sales Overview" (built on the same Cube metric)' },
     equal,
     policy: authz.policy,

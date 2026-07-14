@@ -235,6 +235,132 @@ function liveLine(p: LiveProgress): string {
   return `${p.node} · ${p.tool} — ${verb}${step}${where}`;
 }
 
+/**
+ * The per-agent, step-by-step reveal for a multi-agent run — each agent as a card with
+ * its status, input, output and (grouped) tool calls. Extracted so it can render in BOTH
+ * Developer mode's combined Run view AND Simple mode's Evaluate phase (understanding the
+ * run IS evaluating it) from ONE source, with no behavioural change.
+ */
+function TeamStepByStep({
+  run, openNodes, openSteps, toggleNode, toggleStep,
+}: {
+  run: RunReport;
+  openNodes: Record<string, boolean>;
+  openSteps: Record<string, boolean>;
+  toggleNode: (k: string) => void;
+  toggleStep: (k: string) => void;
+}) {
+  if (!run.nodes || run.nodes.length === 0) return null;
+  return (
+    <>
+      <div className="section-title" style={{ marginTop: 0 }}>The team, step by step</div>
+      <p className="hint" style={{ marginTop: 0 }}>Click an agent to see what it was given, what it produced, and each tool call.</p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+        {run.nodes.map((n, i) => {
+          const nk = `${n.node}-${i}`;
+          const open = !!openNodes[nk];
+          return (
+            <div key={nk} className="node-card" style={{ border: '1px solid var(--border, #e5e5e5)', borderRadius: 10, padding: '10px 12px' }}>
+              {/* Collapsed header — a clean summary; click to drill in. */}
+              <button
+                type="button"
+                onClick={() => toggleNode(nk)}
+                aria-expanded={open}
+                style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}
+              >
+                <span style={{ opacity: 0.5, width: 12, display: 'inline-block' }}>{open ? '▾' : '▸'}</span>
+                <span className="mono" style={{ fontWeight: 600 }}>{n.node}</span>
+                <span className={`badge ${NODE_STATUS_BADGE[n.status]}`}>{NODE_STATUS_LABEL[n.status]}</span>
+                {n.steps.length > 0 ? <span className="hint" style={{ fontSize: 11 }}>{n.steps.length} tool call{n.steps.length === 1 ? '' : 's'}</span> : null}
+                {n.tier ? <span className="badge muted" style={{ marginLeft: 'auto', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 0.3 }}>{n.tier}</span> : null}
+                {n.model ? <span className="hint mono" style={{ marginLeft: n.tier ? 0 : 'auto', fontSize: 11, opacity: 0.7 }}>{n.model}</span> : null}
+              </button>
+              {n.error ? <div className="b-off" style={{ marginTop: 6 }}>{n.error}</div> : null}
+
+              {open ? (
+                <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {/* AUTO model routing — why this agent got its tier (zero-cost, deterministic). */}
+                  {n.tierReason ? (
+                    <div className="hint" style={{ fontSize: 11.5 }}>
+                      Model: <strong>{n.tier}</strong> — {n.tierReason}
+                    </div>
+                  ) : null}
+                  {/* INPUT — what this agent was given. */}
+                  {n.input ? (
+                    <div>
+                      <div className="hint" style={{ fontWeight: 600, marginBottom: 2 }}>Input — what this agent was given</div>
+                      <pre className="mono" style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 11.5, maxHeight: 200, overflow: 'auto', background: 'var(--surface-2, #f6f6f6)', borderRadius: 8, padding: '8px 10px' }}>{n.input}</pre>
+                    </div>
+                  ) : null}
+                  {/* OUTPUT — what it produced. */}
+                  {n.finalText ? (
+                    <div>
+                      <div className="hint" style={{ fontWeight: 600, marginBottom: 2 }}>Output</div>
+                      <p style={{ margin: 0, whiteSpace: 'pre-wrap', opacity: 0.92 }}>{n.finalText}</p>
+                    </div>
+                  ) : null}
+                  {/* Tool calls — CONSECUTIVE identical rows collapsed to one
+                      "tool ×N" line so a 34× error loop reads as a single row. */}
+                  {n.steps.length > 0 ? (
+                    <div>
+                      <div className="hint" style={{ fontWeight: 600, marginBottom: 4 }}>Tool calls</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {groupSteps(n.steps).map((g) => {
+                          const s = g.step;
+                          const j = g.firstIndex;
+                          const sk = `${nk}-${s.tool}-${j}`;
+                          const sOpen = !!openSteps[sk];
+                          const inspectable = !!(s.args || s.result);
+                          const badge = stepBadge(s);
+                          return (
+                            <div key={sk} style={{ fontSize: 12.5 }}>
+                              <button
+                                type="button"
+                                onClick={() => inspectable && toggleStep(sk)}
+                                aria-expanded={sOpen}
+                                style={{ all: 'unset', cursor: inspectable ? 'pointer' : 'default', display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}
+                              >
+                                {inspectable ? <span style={{ opacity: 0.5, width: 10, display: 'inline-block' }}>{sOpen ? '▾' : '▸'}</span> : <span style={{ width: 10, display: 'inline-block' }} />}
+                                <span className={`badge ${badge.cls}`}>{badge.label}</span>
+                                <span className="mono">{s.tool}</span>
+                                {g.count > 1 ? <span className="mono" style={{ opacity: 0.6 }}>×{g.count}</span> : null}
+                                {!sOpen && s.summary ? <span style={{ opacity: 0.7 }}> — {s.summary}</span> : null}
+                              </button>
+                              {sOpen ? (
+                                <div style={{ margin: '4px 0 6px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  {s.args ? (
+                                    <div>
+                                      <div className="hint" style={{ fontSize: 11 }}>args (input)</div>
+                                      <pre className="mono" style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 11.5, maxHeight: 160, overflow: 'auto', background: 'var(--surface-2, #f6f6f6)', borderRadius: 8, padding: '6px 8px' }}>{s.args}</pre>
+                                    </div>
+                                  ) : null}
+                                  {s.result ? (
+                                    <div>
+                                      <div className="hint" style={{ fontSize: 11 }}>result (output)</div>
+                                      <pre className="mono" style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 11.5, maxHeight: 200, overflow: 'auto', background: 'var(--surface-2, #f6f6f6)', borderRadius: 8, padding: '6px 8px' }}>{s.result}</pre>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                // Collapsed: keep a one-line taste of the output so the card still reads.
+                n.finalText ? <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', opacity: 0.75, fontSize: 12.5, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{n.finalText}</p> : null
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
 export default function BuildRunPanel({
   systemId,
   running,
@@ -556,8 +682,8 @@ export default function BuildRunPanel({
       <>
       <div className="section-title" style={{ marginTop: 4 }}>
         {phase === 'build' ? 'Build' : 'Build — execute + verify'}
-        <button className="btn sm" style={{ marginLeft: 'auto' }} onClick={doBuild} disabled={building || !canEdit}>
-          {building ? <span className="spin" /> : 'Build'}
+        <button className="btn lg" style={{ marginLeft: 'auto' }} onClick={doBuild} disabled={building || !canEdit}>
+          {building ? <span className="spin" /> : builtAt ? 'Rebuild' : 'Build'}
         </button>
       </div>
       {/* In-progress marker: shown to a returning user while the build is still running. */}
@@ -656,7 +782,7 @@ export default function BuildRunPanel({
           fills a real, purpose-derived default when the prompt is empty — no need to
           re-type the task. An optional collapsible adds a one-off input for this run. */}
       <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <button className="btn" onClick={() => doRun(false)} disabled={runningNow || !canEdit}>
+        <button className="btn lg" onClick={() => doRun(false)} disabled={runningNow || !canEdit}>
           {runningNow ? <span className="spin" /> : '▶ Run'}
         </button>
         {running ? (
@@ -732,114 +858,12 @@ export default function BuildRunPanel({
           </div>
           {/* FIX 2 — node-by-node reveal (multi-agent runs): each agent as a card with
               its status, what it concluded, and the tool calls it made (with a short
-              result summary + denial/error flags). One scroll, Apple-clean. */}
-          {run.nodes && run.nodes.length > 0 ? (
-            <>
-              <div className="section-title" style={{ marginTop: 0 }}>The team, step by step</div>
-              <p className="hint" style={{ marginTop: 0 }}>Click an agent to see what it was given, what it produced, and each tool call.</p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
-                {run.nodes.map((n, i) => {
-                  const nk = `${n.node}-${i}`;
-                  const open = !!openNodes[nk];
-                  return (
-                    <div key={nk} className="node-card" style={{ border: '1px solid var(--border, #e5e5e5)', borderRadius: 10, padding: '10px 12px' }}>
-                      {/* Collapsed header — a clean summary; click to drill in. */}
-                      <button
-                        type="button"
-                        onClick={() => toggleNode(nk)}
-                        aria-expanded={open}
-                        style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}
-                      >
-                        <span style={{ opacity: 0.5, width: 12, display: 'inline-block' }}>{open ? '▾' : '▸'}</span>
-                        <span className="mono" style={{ fontWeight: 600 }}>{n.node}</span>
-                        <span className={`badge ${NODE_STATUS_BADGE[n.status]}`}>{NODE_STATUS_LABEL[n.status]}</span>
-                        {n.steps.length > 0 ? <span className="hint" style={{ fontSize: 11 }}>{n.steps.length} tool call{n.steps.length === 1 ? '' : 's'}</span> : null}
-                        {n.tier ? <span className="badge muted" style={{ marginLeft: 'auto', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 0.3 }}>{n.tier}</span> : null}
-                        {n.model ? <span className="hint mono" style={{ marginLeft: n.tier ? 0 : 'auto', fontSize: 11, opacity: 0.7 }}>{n.model}</span> : null}
-                      </button>
-                      {n.error ? <div className="b-off" style={{ marginTop: 6 }}>{n.error}</div> : null}
-
-                      {open ? (
-                        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                          {/* AUTO model routing — why this agent got its tier (zero-cost, deterministic). */}
-                          {n.tierReason ? (
-                            <div className="hint" style={{ fontSize: 11.5 }}>
-                              Model: <strong>{n.tier}</strong> — {n.tierReason}
-                            </div>
-                          ) : null}
-                          {/* INPUT — what this agent was given. */}
-                          {n.input ? (
-                            <div>
-                              <div className="hint" style={{ fontWeight: 600, marginBottom: 2 }}>Input — what this agent was given</div>
-                              <pre className="mono" style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 11.5, maxHeight: 200, overflow: 'auto', background: 'var(--surface-2, #f6f6f6)', borderRadius: 8, padding: '8px 10px' }}>{n.input}</pre>
-                            </div>
-                          ) : null}
-                          {/* OUTPUT — what it produced. */}
-                          {n.finalText ? (
-                            <div>
-                              <div className="hint" style={{ fontWeight: 600, marginBottom: 2 }}>Output</div>
-                              <p style={{ margin: 0, whiteSpace: 'pre-wrap', opacity: 0.92 }}>{n.finalText}</p>
-                            </div>
-                          ) : null}
-                          {/* Tool calls — CONSECUTIVE identical rows collapsed to one
-                              "tool ×N" line so a 34× error loop reads as a single row. */}
-                          {n.steps.length > 0 ? (
-                            <div>
-                              <div className="hint" style={{ fontWeight: 600, marginBottom: 4 }}>Tool calls</div>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                {groupSteps(n.steps).map((g) => {
-                                  const s = g.step;
-                                  const j = g.firstIndex;
-                                  const sk = `${nk}-${s.tool}-${j}`;
-                                  const sOpen = !!openSteps[sk];
-                                  const inspectable = !!(s.args || s.result);
-                                  const badge = stepBadge(s);
-                                  return (
-                                    <div key={sk} style={{ fontSize: 12.5 }}>
-                                      <button
-                                        type="button"
-                                        onClick={() => inspectable && toggleStep(sk)}
-                                        aria-expanded={sOpen}
-                                        style={{ all: 'unset', cursor: inspectable ? 'pointer' : 'default', display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}
-                                      >
-                                        {inspectable ? <span style={{ opacity: 0.5, width: 10, display: 'inline-block' }}>{sOpen ? '▾' : '▸'}</span> : <span style={{ width: 10, display: 'inline-block' }} />}
-                                        <span className={`badge ${badge.cls}`}>{badge.label}</span>
-                                        <span className="mono">{s.tool}</span>
-                                        {g.count > 1 ? <span className="mono" style={{ opacity: 0.6 }}>×{g.count}</span> : null}
-                                        {!sOpen && s.summary ? <span style={{ opacity: 0.7 }}> — {s.summary}</span> : null}
-                                      </button>
-                                      {sOpen ? (
-                                        <div style={{ margin: '4px 0 6px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                          {s.args ? (
-                                            <div>
-                                              <div className="hint" style={{ fontSize: 11 }}>args (input)</div>
-                                              <pre className="mono" style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 11.5, maxHeight: 160, overflow: 'auto', background: 'var(--surface-2, #f6f6f6)', borderRadius: 8, padding: '6px 8px' }}>{s.args}</pre>
-                                            </div>
-                                          ) : null}
-                                          {s.result ? (
-                                            <div>
-                                              <div className="hint" style={{ fontSize: 11 }}>result (output)</div>
-                                              <pre className="mono" style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 11.5, maxHeight: 200, overflow: 'auto', background: 'var(--surface-2, #f6f6f6)', borderRadius: 8, padding: '6px 8px' }}>{s.result}</pre>
-                                            </div>
-                                          ) : null}
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : (
-                        // Collapsed: keep a one-line taste of the output so the card still reads.
-                        n.finalText ? <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', opacity: 0.75, fontSize: 12.5, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{n.finalText}</p> : null
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </>
+              result summary + denial/error flags). One scroll, Apple-clean.
+              In Simple mode this per-agent breakdown lives under EVALUATE (understanding
+              the run IS evaluating it) — see the mirrored block below; here it renders
+              only in Developer mode's combined view. */}
+          {phase === 'all' ? (
+            <TeamStepByStep run={run} openNodes={openNodes} openSteps={openSteps} toggleNode={toggleNode} toggleStep={toggleStep} />
           ) : null}
 
           {/* Final output — always shown, straight from the run (no Langfuse needed).
@@ -863,6 +887,11 @@ export default function BuildRunPanel({
             )}
           </div>
 
+          {/* Path, governed-call counts and the raw tool-call table are run DETAIL —
+              in Simple mode they belong under Evaluate (mirrored below), so Run stays
+              progress + final result. Developer mode ('all') keeps them here, unchanged. */}
+          {phase === 'all' ? (
+          <>
           <div><strong>Path:</strong> <span className="mono">{run.path.join(' → ')} → END</span></div>
           <div style={{ marginTop: 6 }}>
             <span className="badge ok">{run.steps.length} governed call{run.steps.length === 1 ? '' : 's'}</span>{' '}
@@ -894,6 +923,8 @@ export default function BuildRunPanel({
           ) : null}
           </>
           ) : null}
+          </>
+          ) : null}
 
           {/* EVALUATE-phase assessment: the PDF report button, the diagnostics table
               and the Langfuse trace link — relocated here so Run stays about results
@@ -914,6 +945,42 @@ export default function BuildRunPanel({
 
           {showEvaluate ? (
           <>
+          {/* Per-agent breakdown — in Simple mode the run's step-by-step detail lives HERE
+              (understanding the run IS evaluating it): the per-agent cards, the path, the
+              governed-call counts and the raw tool-call table. Developer mode ('all') shows
+              these in the Run block above instead, so they are not repeated here. */}
+          {phase !== 'all' ? (
+            <>
+              <TeamStepByStep run={run} openNodes={openNodes} openSteps={openSteps} toggleNode={toggleNode} toggleStep={toggleStep} />
+              <div><strong>Path:</strong> <span className="mono">{run.path.join(' → ')} → END</span></div>
+              <div style={{ marginTop: 6, marginBottom: 4 }}>
+                <span className="badge ok">{run.steps.length} governed call{run.steps.length === 1 ? '' : 's'}</span>{' '}
+                <span className="badge">{run.traces} trace{run.traces === 1 ? '' : 's'}</span>{' '}
+                {run.held > 0 ? <span className="badge warn">{run.held} held for approval ↗ Governance</span> : <span className="badge ok">no approvals needed</span>}
+                {run.mode === 'offline-mock' ? <span className="badge" style={{ marginLeft: 6 }}>offline mock</span> : null}
+              </div>
+              {run.steps.length > 0 ? (
+                <div className="table-wrap" style={{ marginTop: 10, marginBottom: 4 }}>
+                  <table>
+                    <thead><tr><th>#</th><th>Agent</th><th>Tool call</th><th>Decision</th></tr></thead>
+                    <tbody>
+                      {run.steps.map((s, i) => (
+                        <tr key={`ev-${s.node}-${s.tool}-${i}`}>
+                          <td className="mono">{i + 1}</td>
+                          <td className="mono">{s.node}</td>
+                          <td className="mono">{s.tool}</td>
+                          <td>
+                            <span className={`badge ${EFFECT_BADGE[s.effect] ?? ''}`}>{s.effect}</span>
+                            {s.ran === false ? <span className="b-off" style={{ marginLeft: 6 }}>not run</span> : null}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </>
+          ) : null}
           {/* DIAGNOSTICS — a compact, one-scroll summary of the whole run: one row per
               agent, its governed calls + decision + model tier, enriched with Langfuse
               tokens/latency/cost when the trace store is reachable (honest note when not). */}

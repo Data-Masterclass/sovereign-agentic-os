@@ -15,6 +15,92 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.3.1] — 2026-07-14
+
+### Hardening — Northpeak durability guards (belt-and-suspenders on the 0.1.99 fix)
+- **CTAS won't zero-out populated data.** `assertNoZeroRowReplace` (in `lib/data/build/live-clients.ts`) runs before any `CREATE OR REPLACE TABLE <fqn> AS <select>` in the Silver/Gold build + promote-publish paths: if the target already has rows and the incoming SELECT would produce 0, it aborts instead of replacing. Fresh targets / >0-row results / transient probe errors proceed normally.
+- **Post-upgrade OPA hook re-asserts domain self-principals.** A new `post-install,post-upgrade` Job re-`PUT`s each governed domain's self-principal into live OPA (the row-filter membership the governed query tool depends on), idempotent + non-blocking — so a stray UI policy push can never leave a domain's tables invisible across an upgrade.
+
+### Repo hygiene
+- Removed two stray tracked duplicate files (`* 2.*`); added a `.gitleaks.toml` allowlist for the obviously-fake unit-test password fixtures.
+
+## [os-ui 0.3.0] — 2026-07-13
+
+### Feature (Phase 1, behind a flag) — external-warehouse connector foundation
+- First slice of "connect any lakehouse, govern it in one plane": a design (`docs/external-warehouse-connectors.md`) and the pure, unit-tested core under `lib/connections/warehouse/` — a typed `WarehouseSource` model, a `trinoCatalogProps()` generator (**AWS Glue** fully implemented, IRSA-only, provably no static keys; Snowflake/BigQuery/Databricks/Fabric are typed stubs), external-table FQN mapping, and a `FederatedDataset` shape + mapper. All gated behind `EXTERNAL_CONNECTORS_ENABLED` (**default off**), so nothing changes at runtime yet. Live catalog registration, OpenMetadata ingestion, cloud auth, and import-as-product are Phase 1b/2 (they need a real source to validate). Architecture: external sources federate through **central Trino** (one governed path + OPA); a *data product* = imported into the sovereign Iceberg lakehouse; OpenMetadata mirrors the estate for discovery.
+
+## [os-ui 0.2.1] — 2026-07-13
+
+### Fix — embedded Superset dashboards: "guest token mint failed" (4 stacked defects)
+- **Embedding was never enabled.** Superset gates its guest-token API behind `FEATURE_FLAGS.EMBEDDED_SUPERSET`, which was off → 403 for everyone. Now set in `superset.configOverrides` (with `GUEST_ROLE_NAME = "Gamma"`, a 300s token TTL, and a **stable** `GUEST_TOKEN_JWT_SECRET` from `extraSecretEnv` — was the insecure 27-char default).
+- **The mint call was unauthenticated.** `realEmbed().mint()` POSTed the guest-token endpoint with no CSRF/cookie/service-user headers (the source of the 400/403). It now runs the same authenticated handshake as every other Superset call — shared `lib/superset/auth.ts` (`csrf`/`serviceUser`/`serviceHeaders`).
+- **Dashboards weren't registered as embeddable.** Guest tokens require a dashboard's *embedded UUID*, not the OS id. New `ensureEmbedded()` auto-registers a dashboard for embedding on first view and mints against that UUID; the embed API now returns `embeddedId` for the SDK.
+
+## [os-ui 0.2.0] — 2026-07-13
+
+### Feature — Simple agent-builder bundle: usable grants + clearer phases
+
+The "What your team can use" section is now truthful and the 5-phase builder is clearer:
+
+- **Grants that actually work.** The section grows from Data+Knowledge to **Data · Knowledge · Files · Connections**, each with a **Read / Can-write** toggle that **auto-provisions the matching governed tools** into the team (via `capability-tools`), so granting a resource makes it *usable* — not just listed. Writes run directly or need approval per the team-wide safety setting (one honest knob, noted inline).
+- **Trigger moved to Define.** "How is this team triggered?" (Manual · On schedule · Called by another system) + the Outlook-style recurrence editor now live in **Define** (team setup, next to the safety preset). **Run** is execution-only.
+- **Run leaner, Evaluate richer.** The per-agent status + output breakdown moved from Run into **Evaluate** (understanding the run = evaluating it); Run shows progress + the final result.
+- **Runtime badge.** The builder header shows whether a team is **Graph (LangGraph)** or **Autonomous (Hermes)**.
+- **Sharper AI judge.** Define's description is now persisted and feeds the Evaluate judge (which also auto-gathers granted-workflow tacit criteria, 0.1.100) — so it grades the real task, not a generic one.
+
+## [os-ui 0.1.103] — 2026-07-13
+
+### Change (UX consistency) — Metrics & Dashboards are single-view now, with the standard Promote button
+- **Metrics detail** drops its Explore/Govern/Alert subtabs for one scrolling view: Explore → **Alerts inline** → a Lifecycle row (Promote + Archive/Delete/Version) at the bottom.
+- **Dashboards detail** drops its subtabs the same way: View (Superset embed) → **Reports inline** → Lifecycle row.
+- New shared `components/lifecycle/PromoteButton.tsx` gives every tab the **same Promote experience**: a non-approver owner's press *files a request* ("⏳ Requested — awaiting a domain admin's approval", persisted across reload) and an approver promotes directly; Certify runs behind a confirm. Backed by new `dashboards`/`metrics` `[id]/promote` routes (with GET status) on the 0.1.102 `promoteOrRequest` contract.
+
+## [os-ui 0.1.102] — 2026-07-13
+
+### Change (governance) — Promote = propose everywhere (no more "requires a Domain admin" dead-end)
+- Pressing **Promote to Shared** on an artifact you OWN but can't yet approve (creator/builder) now **files a promotion request** that a domain-admin approves in Governance — consistent with the Data/Files/Knowledge tabs — instead of a hard 403. Approvers still promote directly. New shared `promoteOrRequest` ladder helper; the **Apps, Connections, Agent-systems and generic Artifacts** promote routes now route through it, each with a GET status endpoint so the UI can show "awaiting approval". Separation-of-duties is unchanged (only the owner may propose; a non-owner still can't publish someone's draft; certification stays admin-only).
+- An OS-wide audit confirmed **Builders can already create/build in every tab** — the 0.1.95 edit-scope tightening only affected editing others' shared work, not creating your own. (The one exception, metric-define, was fixed in 0.1.101.)
+
+### Polish — Users & Access
+- The **Reset password** button (admin → edit user → set a new temporary password) is now a full-size, prominent button with a 🔑 label (was a tiny link).
+
+## [os-ui 0.1.101] — 2026-07-13
+
+### Fix (cohort blockers) — metric creation for Builders + the Cube "did not resolve" collision
+- **Builders can define metrics again.** The 0.1.95 edit-scope tightening accidentally gated metric definition behind *structural dataset edit* (owner/domain_admin/admin), so a Builder defining a metric on a shared-in-domain gold mart got "Not permitted to edit this dataset". Defining a metric is additive semantic work (the Metrics tab is built for it), not a structural edit — `defineMeasure`/`removeMeasure` now use a dedicated scope: the dataset **owner** (any rank) or a **Builder+** who can use the data. Structural edits (silver/gold rebuild, docs, promote, delete) stay owner/admin.
+- **"metric did not resolve" root cause fixed.** Two datasets with the SAME name map to the same Cube model file (`metrics/<slug>.cube.yml`) and the same domain gold table, so the model-sync sidecar overwrote one with the other every poll — a newly-defined measure silently vanished from live Cube. Now `createDataset` rejects a duplicate name within a domain (409, clear message), and `buildCubeModels` collapses any pre-existing duplicate to one entry per file (keeping the richest) so the delivered payload can never thrash.
+
+## [os-ui 0.1.100] — 2026-07-13
+
+### Builder — Build & Evaluate phases now show completion (first slice of the 0.2.0 bundle)
+- The **Build** phase gets a green ✓ in the stepper once the team is built, the button reads **Rebuild** afterward, and a "Last built …" note shows when — no more guessing whether a build finished.
+- The **Evaluate** phase gets a green ✓ once a run's deterministic checks all pass.
+- **Sharper AI judge:** the Evaluate judge now scores against the REAL task — it uses a persisted team description when set and **auto-gathers the success criteria (tacit notes) from the granted knowledge workflows**, instead of a generic fallback. Groundwork also landed for capability→tool auto-provisioning (`lib/agents/capability-tools.ts`) surfaced in the next bundle slice.
+
+## [os-ui 0.1.99] — 2026-07-13
+
+### Fix (data governance) — a UI policy push could blank every domain-scoped table
+- Root cause of "Northpeak Campaign Performance suddenly empty": the governed query tool runs **as the domain name** (`user.domains[0]`), so OPA must carry a **domain self-principal** (`agentic-leader-q3-2026 → domains:[agentic-leader-q3-2026]`) or the Trino row filter resolves the domain's membership to `[]` and injects `WHERE false` → **0 rows** (the data is untouched, just hidden on read). Two durable guards so a publish/promote can never blank a table again:
+  - `lib/data/policy/compiler.ts` now **emits a domain self-principal for every governing/shared domain** on every compile — independent of whether the user directory lists it.
+  - `lib/data/build/live-clients.ts` now pushes governance as an **upsert-per-key merge** (`PUT …/principals/<id>`) instead of a whole-object replace, so a push can never delete the statically-seeded self-principals it didn't recompute.
+- Live remediation applied: re-pushed the `agentic-leader-q3-2026` / `sales` / `test` self-principals; the 14 Northpeak rows are visible again for the domain session user.
+
+## [os-ui 0.1.98] — 2026-07-13
+
+### Fix (blocker) — bounded / full-in-scope agent teams could not write or create artifacts
+- An agent system's **safety preset** (Read-only · Read+propose · Read+bounded · Full-in-scope) was ignored by the run-time tool executor: **every** write tool (`upload_file`, `create_dataset`, `author_knowledge`, …) was unconditionally held for Governance approval, so even a team explicitly set to **Read+bounded** or **Full in-scope** could never create a new file/dataset — it reported "requires approval — enqueued to Governance" and stalled. The executor (`lib/agents/build/os-tools.ts`) now honours the preset, matching `governance.ts` `resolveAutonomous`: `read-only`/`read-propose` still HOLD writes for a human; `read-bounded`/`full-in-scope` run the write **directly as the acting user**. This is safe — the write still passes gate 2 (the runner's own OPA/DLS/role, exactly what they could do by hand in the UI), and promotion (Personal→Shared) keeps its own separate approval gate. Creating a Personal-lane artifact never needs approval, so a team acting as its runner no longer waits on one.
+
+## [os-ui 0.1.97] — 2026-07-13
+
+### Feature — business-friendly recurring schedule + run/build/deploy prominence
+- The agent-system "On schedule" trigger now uses an **Outlook-style recurrence editor** (Daily · Weekly · Monthly + time + weekday picker, plain-language summary like "Every Monday at 09:00"), generating the cron under the hood; a raw-cron "Advanced" option remains for power users. The trigger TYPE is shown read-only in the header; changing it happens in the editor. Build / ▶ Run / Deploy are now consistently prominent primary buttons.
+
+### Fix — a completed run no longer shows as still "running"
+- The run route set the persistent running flag on COMPLETION (backwards), so a finished manual run lingered as "running" with a live Stop button. It now clears the flag when the run finishes.
+
+### Change — DuckDB → Trino labels
+- The query engine was Trino stack-wide since 2026-06-29, but the Components tab, the data-parity proof, a tutorial label, and the license list still said "DuckDB". Relabeled to Trino.
+
 ## [os-ui 0.1.96] — 2026-07-13
 
 ### Feature — the agent-system builder is now a clear 5-phase flow
