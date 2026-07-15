@@ -4,6 +4,7 @@
 import 'server-only';
 import { config } from '@/lib/core/config';
 import { getAssistantModel } from '@/lib/platform-admin/models';
+import { checkCap } from '@/lib/governance/cost';
 
 /**
  * THE ONE ASSISTANT LLM.
@@ -30,6 +31,19 @@ export class AssistantNotConfiguredError extends Error {
   ) {
     super(message);
     this.name = 'AssistantNotConfiguredError';
+  }
+}
+
+/**
+ * Thrown when a governance cost cap (Governance → Cost & limits) would be breached
+ * by this completion — the model is NOT called. 402 Payment Required is the honest
+ * status: the request is well-formed but the spend ceiling is reached.
+ */
+export class CostCapExceededError extends Error {
+  status = 402;
+  constructor(reason: string) {
+    super(`Cost cap reached: ${reason}. Raise the cap in Governance → Cost & limits or wait for the period to reset.`);
+    this.name = 'CostCapExceededError';
   }
 }
 
@@ -105,10 +119,31 @@ export function liteLlmAssistantCaller(): AssistantCaller {
  * Run a single completion on the ONE assistant model through the governed gateway.
  * Throws {@link AssistantNotConfiguredError} when no assistant model is configured.
  */
+// Tiny probe amount for the pre-call cap check. Self-hosted models cost $0/token,
+// so a cap primarily BLOCKS once live LiteLLM spend has been reconciled toward the
+// ceiling (Governance cost.reconcileSpendFromLiteLLM). A cap already AT its limit
+// blocks the next call; a cap with headroom lets it through.
+const CAP_PROBE = 0.01;
+
+/**
+ * Enforce governance cost caps for this caller BEFORE the model runs. Checks the
+ * most-specific applicable cap (caller's domain, then tenant). Over cap → throws
+ * {@link CostCapExceededError} and the transport is never called. No cap → allowed.
+ * This is the live enforcement seam for the Governance → Cost & limits caps.
+ */
+function enforceCostCaps(domains: string[] | undefined): void {
+  for (const subject of domains ?? []) {
+    const check = checkCap({ scope: 'domain', subject, amount: CAP_PROBE });
+    if (!check.allowed) throw new CostCapExceededError(check.reason);
+  }
+  const tenant = checkCap({ scope: 'tenant', subject: 'tenant', amount: CAP_PROBE });
+  if (!tenant.allowed) throw new CostCapExceededError(tenant.reason);
+}
+
 export async function assistantComplete(
   messages: AssistantMessage[],
   opts: {
-    user?: { id: string } | string;
+    user?: { id: string; domains?: string[] } | string;
     temperature?: number;
     caller?: AssistantCaller;
     signal?: AbortSignal;
@@ -117,6 +152,9 @@ export async function assistantComplete(
   const model = resolveAssistantModelId();
   const caller = opts.caller ?? liteLlmAssistantCaller();
   const user = typeof opts.user === 'string' ? opts.user : opts.user?.id;
+  const domains = typeof opts.user === 'string' ? undefined : opts.user?.domains;
+  // Live cost-cap enforcement: an over-cap caller is blocked before spend.
+  enforceCostCaps(domains);
   const content = await caller({ model, messages, temperature: opts.temperature, user, signal: opts.signal });
   return { content, model };
 }

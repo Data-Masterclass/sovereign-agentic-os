@@ -40,20 +40,19 @@ test('GAP 3: marketplace import paths gate on Builder+ (rank-based — domain_ad
   assert.match(read('lib/core/tabs.ts'), /Marketplace'[^\n]*role: 'Builder/, 'Marketplace tab carries a role hint');
 });
 
-test('GAP 7 (4-rank migration): the governance users route enforces the domain_admin scoping predicates server-side', () => {
-  const src = read('app/api/governance/users/route.ts');
-  // Floor: user administration is Domain admin+ (builders are NOT people-admins).
-  assert.match(src, /canAdministerUsers/, 'floor gate wired');
-  // Subset rule: target domains ⊆ actor domains, on list AND every mutation.
-  assert.match(src, /userAdminInScope/, 'subset rule wired');
-  // No-lateral/no-upward: a domain_admin never touches an admin/domain_admin.
-  assert.match(src, /canTouchUser|canTouchTarget/, 'target-protection wired');
-  // Role-assignment ceiling: canManageRole caps a domain_admin at builder.
-  assert.match(src, /canManageRole/, 'role ceiling wired');
-  // Hard delete stays platform-admin-only.
-  assert.match(src, /user\.role !== 'admin'/, 'DELETE stays admin-only');
-  // Every mutation audits the actor.
-  assert.match(src, /actor: user\.id/, 'mutations audited with the actor');
+test('GAP 7 (consolidation): the duplicate governance users route is GONE; user admin is the single Admin surface', () => {
+  // The Governance "Users & access" component + /api/governance/users route
+  // duplicated Admin → Users & Access (same `users` store). They were removed in
+  // the Governance/Admin consolidation; Admin (/api/platform-admin/access) is the
+  // single canonical user-admin surface.
+  assert.ok(!existsSync(resolve(OSUI, 'app/api/governance/users/route.ts')), 'duplicate governance users route deleted');
+  assert.ok(!existsSync(resolve(OSUI, 'components/governance/UsersAccess.tsx')), 'orphaned governance UsersAccess component deleted');
+  // The domain_admin scoping predicates still exist (pure + unit-tested) in
+  // lib/governance/roles.ts so the capability model is preserved for reuse.
+  const roles = read('lib/governance/roles.ts');
+  for (const pred of ['canAdministerUsers', 'userAdminInScope', 'canTouchUser', 'canManageRole']) {
+    assert.match(roles, new RegExp(pred), `${pred} predicate preserved in roles.ts`);
+  }
 });
 
 test('GAP 8 (4-rank migration): the Platform-group user routes stay requireAdmin (tab gating from 0.1.31 not reopened)', () => {

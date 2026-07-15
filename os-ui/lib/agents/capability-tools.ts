@@ -17,8 +17,20 @@
  *                        team safety preset at run-time — see os-tools `writesAreHeld`).
  *   - `Write-bounded`  → read tools + create/write tools, run directly (no hold).
  * `Off` / `Blocked` grant no tools.
+ *
+ * ### Per-agent capability chips (Simple builder Design phase)
+ *
+ * Instead of showing a raw tool list, the Simple builder offers plain capability
+ * chips — each maps to the underlying tool set the team was actually granted.
+ * `CAPABILITY_CHIPS` is the ordered list; `capabilityChipsForGrants` filters it to
+ * what the team's grants allow; `toolsForCapabilityChips` builds the tool list to
+ * persist; `chipIdsForTools` reads an existing agent.tools list back into chips.
+ *
+ * When `agent.tools` is `undefined` (inherits the system grant pool) that is the
+ * **Auto** default — the agent gets whatever the team was granted. Only when the
+ * author explicitly narrows (picks chips) does `agent.tools` get set.
  */
-import type { Capability, SafetyPreset } from './system-schema.ts';
+import type { Capability, Grants, SafetyPreset } from './system-schema.ts';
 
 /** The four resource kinds the Simple builder grants. `files` has no per-artifact
  * grant list (file tools act over the caller's own DLS), so it is provisioned by
@@ -70,6 +82,126 @@ export function allToolsForKind(kind: GrantKind): string[] {
 export function writeToolsForKind(kind: GrantKind): string[] {
   return [...WRITE_TOOLS[kind]];
 }
+
+// ─── Per-agent capability chips ──────────────────────────────────────────────
+
+/**
+ * The grant kind (from `Grants`) that must have at least one entry before a chip
+ * is offered. `null` means the chip is always available (ungated by a resource
+ * grant — it just needs to be in the catalog).
+ */
+export type ChipGrantKind = 'data' | 'knowledge' | 'connections' | 'metrics' | null;
+
+export type CapabilityChip = {
+  /** Stable id persisted nowhere — used only in UI state and tests. */
+  id: string;
+  label: string;
+  description: string;
+  /**
+   * Which `Grants` key must be non-empty for this chip to appear. `null` = always
+   * shown (the tool just needs to exist in the catalog).
+   */
+  grantKind: ChipGrantKind;
+  /** The MCP tools this chip provisions on the agent (read set only — agents read). */
+  tools: string[];
+};
+
+/** Ordered list of all possible per-agent capability chips. */
+export const CAPABILITY_CHIPS: CapabilityChip[] = [
+  {
+    id: 'read-data',
+    label: 'Read data',
+    description: 'Query and explore the datasets the team was given access to.',
+    grantKind: 'data',
+    tools: READ_TOOLS.data,
+  },
+  {
+    id: 'search-knowledge',
+    label: 'Search knowledge',
+    description: 'Search and read the knowledge workflows and documents the team can use.',
+    grantKind: 'knowledge',
+    tools: READ_TOOLS.knowledge,
+  },
+  {
+    id: 'use-connection',
+    label: 'Use a connection',
+    description: 'Call the external connections (APIs, databases) the team was given.',
+    grantKind: 'connections',
+    tools: READ_TOOLS.connections,
+  },
+  {
+    id: 'create-files',
+    label: 'Create/edit files',
+    description: "Read, write and search files in the team's file space.",
+    grantKind: null,
+    tools: [...READ_TOOLS.files, ...WRITE_TOOLS.files],
+  },
+  {
+    id: 'query-metrics',
+    label: 'Query metrics',
+    description: 'Read the metrics and KPIs the team tracks.',
+    grantKind: 'metrics',
+    tools: ['list_metrics', 'query_metric', 'get_metric'],
+  },
+  {
+    id: 'use-goals',
+    label: 'Use goals',
+    description: "Read the team's big bets and strategic goals.",
+    grantKind: null,
+    tools: ['list_big_bets', 'get_big_bet'],
+  },
+];
+
+/**
+ * The chips a specific agent SHOULD be offered, given the team's grants and the
+ * caller's role-floor catalog. Rules:
+ *
+ * 1. A chip whose `grantKind` is non-null is only offered when `grants[grantKind]`
+ *    has at least one entry (i.e. the team was actually granted that resource).
+ * 2. Every tool in a chip's `tools` list must appear in `catalog` (the role-scoped
+ *    list from the platform) — if any tool is absent the chip is not offered.
+ *    When `catalog` is `null` (still loading) no filtering by catalog is applied.
+ *
+ * Returns a subset of `CAPABILITY_CHIPS` in the same order.
+ */
+export function capabilityChipsForGrants(
+  grants: Pick<Grants, 'data' | 'knowledge' | 'connections' | 'metrics'>,
+  catalog: string[] | null,
+): CapabilityChip[] {
+  return CAPABILITY_CHIPS.filter((chip) => {
+    // Must have the resource grant when grantKind is non-null.
+    if (chip.grantKind !== null) {
+      const list = grants[chip.grantKind as keyof Pick<Grants, 'data' | 'knowledge' | 'connections' | 'metrics'>];
+      if (!Array.isArray(list) || list.length === 0) return false;
+    }
+    // All tools must be in the catalog (when catalog has loaded).
+    if (catalog !== null && chip.tools.some((t) => !catalog.includes(t))) return false;
+    return true;
+  });
+}
+
+/** The union of all tools for a set of chip ids. */
+export function toolsForCapabilityChips(chipIds: string[]): string[] {
+  const chipMap = new Map(CAPABILITY_CHIPS.map((c) => [c.id, c]));
+  const out = new Set<string>();
+  for (const id of chipIds) {
+    const chip = chipMap.get(id);
+    if (chip) for (const t of chip.tools) out.add(t);
+  }
+  return Array.from(out);
+}
+
+/**
+ * Best-effort reverse mapping: given an agent's explicit `tools` list, return the
+ * chip ids that are fully covered. Used to read an existing narrowed agent back into
+ * the chip UI without losing the user's previous selection.
+ */
+export function chipIdsForTools(tools: string[]): string[] {
+  const toolSet = new Set(tools);
+  return CAPABILITY_CHIPS.filter((c) => c.tools.every((t) => toolSet.has(t))).map((c) => c.id);
+}
+
+// ─── Team-level grant ↔ tool provisioning ────────────────────────────────────
 
 /** The safety preset a single grant's capability implies (its contribution to the
  * team-wide posture). Read contributes the floor; write-approval holds; write-bounded

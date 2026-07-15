@@ -61,6 +61,8 @@ export type ModelInfo = {
   params?: string;
   tier: Tier;
   provenance: Provenance;
+  /** Provider family (from litellm_params); set by the models API off /model/info. */
+  providerType?: ProviderType;
 };
 
 /**
@@ -77,6 +79,88 @@ export const MODEL_CATALOG: Record<string, ModelInfo> = {
   // reachable. Presented so an admin can pick it per role for testing.
   'sovereign-mock': { model_name: 'sovereign-mock', display: 'Mock model (offline / testing)', tier: 'light', provenance: 'external' },
 };
+
+/**
+ * Provider TYPE of a registered LiteLLM model — the family the Models & Providers
+ * catalog groups a row under. Inferred from the `litellm_params.model` prefix (the
+ * LiteLLM provider protocol, e.g. `openai/…`, `azure/…`, `bedrock/…`) plus the
+ * `api_base` host (to tell a STACKIT-managed endpoint from a generic self-hosted
+ * OpenAI-compatible one — both speak `openai/…`). It is a DISPLAY grouping, not a
+ * routing decision; unknown shapes fall back to `openai-compatible`.
+ */
+export type ProviderType = 'stackit' | 'openai-compatible' | 'azure' | 'bedrock' | 'self-hosted';
+
+/** Human label for a provider type (the catalog group heading). */
+export const PROVIDER_TYPE_LABELS: Record<ProviderType, string> = {
+  stackit: 'STACKIT managed inference',
+  'openai-compatible': 'OpenAI-compatible',
+  azure: 'Azure OpenAI',
+  bedrock: 'AWS Bedrock',
+  'self-hosted': 'Self-hosted (in-cluster / WireGuard)',
+};
+
+/** Hosts that identify a STACKIT-managed inference endpoint. */
+function isStackitHost(host: string): boolean {
+  return host.includes('stackit') || host.endsWith('.iaas.eu01.onstackit.cloud') || host.includes('onstackit');
+}
+
+/** Hosts that are NOT public internet — in-cluster services or the WireGuard tunnel. */
+function isInClusterHost(host: string): boolean {
+  if (!host) return false;
+  if (host === 'localhost' || host === '127.0.0.1') return false; // dev, but still "self-hosted"
+  if (host.includes('wireguard')) return true;
+  if (!host.includes('.')) return true; // bare service name (e.g. `mock-model`, `agentic-os-litellm`)
+  if (/\.(local|svc|cluster\.local)$/.test(host)) return true;
+  return false;
+}
+
+/**
+ * Classify the provider TYPE of a LiteLLM model from its `litellm_params`. Signals,
+ * strongest first:
+ *   1. The `model` prefix — the LiteLLM provider protocol: `azure/…` → azure,
+ *      `bedrock/…` → bedrock. These are unambiguous.
+ *   2. For the ambiguous `openai/…` protocol (STACKIT, generic hosted endpoints AND
+ *      in-cluster self-hosted all speak it), the `api_base` host decides: a STACKIT
+ *      host → `stackit`; an in-cluster / WireGuard host → `self-hosted`; anything
+ *      else → `openai-compatible`.
+ * Pure, deterministic, client-safe. `undefined`/empty params → `openai-compatible`.
+ */
+export function classifyProviderType(params?: { model?: string; api_base?: string }): ProviderType {
+  const model = (params?.model ?? '').toLowerCase();
+  const host = egressHostOf(params?.api_base ?? '');
+  const prefix = model.includes('/') ? model.split('/')[0] : '';
+  if (prefix === 'azure') return 'azure';
+  if (prefix === 'bedrock') return 'bedrock';
+  // openai/… (or an unprefixed model): disambiguate by host.
+  if (isStackitHost(host)) return 'stackit';
+  if (isInClusterHost(host)) return 'self-hosted';
+  return 'openai-compatible';
+}
+
+/**
+ * Build the LiteLLM `litellm_params.model` string for an OpenAI-compatible backend.
+ * Both MVP wizard types speak the OpenAI protocol, so the prefix is `openai/`. The
+ * KEY STACKIT rule: STACKIT keeps its ORG PREFIX in the model id (e.g.
+ * `Qwen/Qwen3-VL-235B…`), so the final value is the DOUBLE prefix `openai/Qwen/…`;
+ * a SINGLE prefix 404s at the STACKIT gateway. We never strip a prefix the admin
+ * typed — we only add `openai/` when it is absent.
+ */
+export function litellmModelString(modelName: string): string {
+  const name = (modelName || '').trim();
+  return name.startsWith('openai/') ? name : `openai/${name}`;
+}
+
+/** Bare host of an api_base URL (no server dep; mirrors secrets.egressHost). */
+function egressHostOf(endpoint: string): string {
+  const raw = (endpoint || '').trim();
+  if (!raw) return '';
+  try {
+    const u = new URL(raw.includes('://') ? raw : `https://${raw}`);
+    return u.hostname.toLowerCase();
+  } catch {
+    return raw.replace(/^[a-z]+:\/\//i, '').split('/')[0].split(':')[0].toLowerCase();
+  }
+}
 
 /**
  * Classify a model_name as in-box (internal) or hosted (external). The catalog is

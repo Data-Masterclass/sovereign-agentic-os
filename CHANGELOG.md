@@ -15,6 +15,68 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.8] — 2026-07-16
+
+Big Bet solution wizard, self-service model providers, simpler agent tooling, and a real
+Superset embed fix.
+
+### Added
+- **Big Bet solution wizard (Phase 3).** A 3-step wizard (Anchor workflow · Components ·
+  Context) with attach-existing / create-new deep-links, plus **connect-mode** on the
+  interplay canvas (click source → target → relation). New governed write API + MCP tools
+  (`set_bet_workflow`, `attach_bet_component`, `wire/unwire_bet_components`,
+  `get_bet_solution`). (software/connection are attachable by id today; the browsable
+  picker for those two is a follow-up.)
+- **Models & Providers — self-service (MVP).** Durable model persistence
+  (`store_model_in_db`), a provider-grouped catalog, and an "Add provider" wizard
+  (OpenAI-compatible + STACKIT live; Azure/Bedrock scaffolded). Credentials are write-only
+  secrets. Model list pruned to the STACKIT set.
+- **Connector Design Standard** — `docs/CONNECTOR-STANDARD.md`, the high quality-bar every
+  new connector must meet (governance, write-only secrets, federate-first-party-MCP rule,
+  lifecycle, tests, DoD checklist).
+
+### Changed
+- **Agent builder: per-agent tooling simplified.** Each agent defaults to **Auto** (the OS
+  picks tools from its job + the team's resources); optional plain **capability chips**
+  (Read data · Search knowledge · Use a connection · …) that only appear for what the team
+  was granted; Developer view keeps the raw tool list.
+
+### Fixed
+- **Superset dashboards now embed same-origin.** They failed because Superset sends
+  `X-Frame-Options: SAMEORIGIN` (cross-origin iframe blocked) and the dashboard was looked
+  up by title. The embed now routes through the OS's same-origin `/tools/superset` proxy
+  (no CSP/CORS/cookie issues), matches the exact title only (no wrong-dashboard fallback),
+  and enables Superset ProxyFix so prefixed URLs resolve. (Needs a published dashboard in
+  Superset + a browser check to confirm the render.)
+
+## [os-ui 0.5.7] — 2026-07-16
+
+Big Bet solution canvas, a real "members-only" fix, and Governance consolidation.
+
+### Added
+- **Big Bet solution-design canvas (Phase 2).** The bet detail now opens on a **Design**
+  view: a banded **interplay canvas** (Anchor workflow ▸ Components ▸ Context) with typed,
+  labeled edges (dashed for `triggers`/`monitors`), click-through to each artifact's tab,
+  and a read-only anchor-workflow swimlane. Value tracking moves under a **Value** tab,
+  untouched. (Wizard + write path come in Phase 3.)
+
+### Fixed
+- **Big Bet components no longer show "🔒 members only" for everyone.** They were resolved
+  through an in-memory registry that resets on every pod restart; after any redeploy all
+  components (even for an admin) fell back to "members only". They now resolve from the
+  **durable per-tab stores** with the real viewer gate — real titles across restarts, admin
+  sees all, genuine cross-domain restrictions preserved — plus an honest **"unavailable"**
+  state for a truly-missing artifact.
+
+### Changed (Governance → Policies & Approvals consolidation)
+- Deleted the orphaned duplicate **Users** panel (Admin owns user administration).
+- **Audit** now writes through to the persistent `os-audit` store (one durable trail that
+  survives restart), keeping the hash-chain integrity check.
+- **Egress** allowlist consolidated onto Admin → Security's real store.
+- **Cost caps now actually enforce** — checked at the assistant-completion chokepoint
+  (over-cap → 402, model never runs); honest caveat that self-hosted spend reconciles via
+  live LiteLLM accounting.
+
 ## [os-ui 0.5.6] — 2026-07-16
 
 MCP surface brought up to date with this session's capabilities; workflow-detail tidy.

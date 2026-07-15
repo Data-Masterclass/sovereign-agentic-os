@@ -15,7 +15,28 @@ type Key = { provider: string; fingerprint: string; addedBy: string; addedAt: st
 // `modelRoles`, resolved at runtime by lib/models/roles.ts. This page shows the
 // SAME values (and writes the SAME store) as Settings → Model roles.
 type RoleKey = 'standard' | 'reasoning' | 'embeddings';
-type CatalogModel = { model_name: string; display: string; provenance: 'internal' | 'external' };
+type ProviderType = 'stackit' | 'openai-compatible' | 'azure' | 'bedrock' | 'self-hosted';
+type CatalogModel = { model_name: string; display: string; provenance: 'internal' | 'external'; providerType?: ProviderType; tier?: string };
+
+// Provider-family group headings for the live Catalog. Order = display order.
+const PROVIDER_GROUPS: { type: ProviderType; label: string }[] = [
+  { type: 'stackit', label: 'STACKIT managed inference' },
+  { type: 'openai-compatible', label: 'OpenAI-compatible' },
+  { type: 'self-hosted', label: 'Self-hosted (in-cluster / WireGuard)' },
+  { type: 'azure', label: 'Azure OpenAI' },
+  { type: 'bedrock', label: 'AWS Bedrock' },
+];
+
+// "Add provider" wizard — MVP ships OpenAI-compatible + STACKIT; Azure/Bedrock are
+// scaffolded (disabled) so the stepper already has their slot for a later phase.
+type WizardType = { type: ProviderType; label: string; blurb: string; enabled: boolean };
+const WIZARD_TYPES: WizardType[] = [
+  { type: 'openai-compatible', label: 'OpenAI-compatible', blurb: 'Any server that speaks the OpenAI API (vLLM, Ollama, LM Studio, a hosted endpoint).', enabled: true },
+  { type: 'stackit', label: 'STACKIT managed inference', blurb: 'STACKIT-hosted models. Keep the org prefix in the model id (e.g. Qwen/Qwen3-VL-235B…).', enabled: true },
+  { type: 'azure', label: 'Azure OpenAI', blurb: 'Coming soon.', enabled: false },
+  { type: 'bedrock', label: 'AWS Bedrock', blurb: 'Coming soon.', enabled: false },
+];
+const EMPTY_WIZARD = { alias: '', baseUrl: '', modelName: '', apiKey: '', task: 'chat' as Task };
 const ROLE_META: { key: RoleKey; label: string; help: string }[] = [
   { key: 'standard', label: 'Standard', help: 'Assistants, agent execution and light work. Default: sovereign-default.' },
   { key: 'reasoning', label: 'Reasoning', help: 'Planning and deep reasoning across the OS. Default: sovereign-reasoning.' },
@@ -41,6 +62,9 @@ export default function ModelsPage() {
   const [value, setValue] = useState('');
   const [reg, setReg] = useState(EMPTY_ASSISTANT);
   const [toast, setToast] = useState('');
+  // "Add provider" wizard: step 1 = pick type, step 2 = fields.
+  const [wizType, setWizType] = useState<ProviderType | null>(null);
+  const [wiz, setWiz] = useState(EMPTY_WIZARD);
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -87,6 +111,23 @@ export default function ModelsPage() {
       }
     } finally { setBusy(''); }
   }, [reg, load]);
+
+  const addProvider = useCallback(async () => {
+    if (!wizType || !wiz.alias.trim() || !wiz.baseUrl.trim() || !wiz.modelName.trim() || !wiz.apiKey.trim()) return;
+    setBusy('provider'); setError('');
+    try {
+      const res = await fetch('/api/platform-admin/providers', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ providerType: wizType, ...wiz }),
+      });
+      const body = await res.json();
+      if (!res.ok) setError(body.error ?? 'Failed to add the provider');
+      else {
+        setToast(`Registered ${body.model.label} under ${body.providerType} — key stored in the secrets manager (${body.fingerprint}), gateway ${body.gateway}. The raw key was never returned.`);
+        setWiz(EMPTY_WIZARD); setWizType(null); await load();
+      }
+    } finally { setBusy(''); }
+  }, [wizType, wiz, load]);
 
   const patch = useCallback(async (id: string, payload: Record<string, unknown>) => {
     setBusy(id); setError('');
@@ -206,10 +247,72 @@ export default function ModelsPage() {
           </div>
         </div>
 
+        <div className="section-title" style={{ marginTop: 22 }}>Add a provider · connect your own LLM backend</div>
+        <p className="hint">
+          Register your own model behind the governed LiteLLM gateway. Pick a provider type,
+          give the minimal details, and the OS stores the key <strong>write-only in the secrets
+          manager</strong> and registers the model with the gateway (durable across restarts).
+        </p>
+        <div className="card" style={{ marginBottom: 16 }}>
+          {!wizType ? (
+            <>
+              <div className="hint" style={{ marginBottom: 10 }}>Step 1 — choose a provider type</div>
+              <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+                {WIZARD_TYPES.map((t) => (
+                  <button
+                    key={t.type} className="btn ghost" disabled={!t.enabled}
+                    onClick={() => { setWizType(t.type); setWiz({ ...EMPTY_WIZARD, baseUrl: t.type === 'stackit' ? 'https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1' : '' }); }}
+                    style={{ flex: '1 1 220px', textAlign: 'left', opacity: t.enabled ? 1 : 0.5, cursor: t.enabled ? 'pointer' : 'not-allowed' }}
+                    title={t.enabled ? '' : 'Coming in a later phase'}
+                  >
+                    <strong>{t.label}</strong>
+                    <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{t.blurb}</div>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <div className="hint">Step 2 — <strong>{WIZARD_TYPES.find((t) => t.type === wizType)?.label}</strong> details</div>
+                <button className="btn ghost" onClick={() => { setWizType(null); setWiz(EMPTY_WIZARD); }}>← Back</button>
+              </div>
+              <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                <input style={{ flex: '1 1 150px' }} value={wiz.alias} onChange={(e) => setWiz({ ...wiz, alias: e.target.value })} placeholder="alias (gateway model_name)" autoComplete="off" />
+                <input style={{ flex: '1 1 230px' }} value={wiz.baseUrl} onChange={(e) => setWiz({ ...wiz, baseUrl: e.target.value })} placeholder="api_base (https://…/v1)" autoComplete="off" />
+                <input style={{ flex: '1 1 180px' }} value={wiz.modelName} onChange={(e) => setWiz({ ...wiz, modelName: e.target.value })} placeholder={wizType === 'stackit' ? 'model id (Qwen/Qwen3-VL-235B…)' : 'model id (upstream)'} autoComplete="off" />
+                <select value={wiz.task} onChange={(e) => setWiz({ ...wiz, task: e.target.value as Task })} style={{ flex: '0 1 140px' }}>
+                  <option value="chat">chat</option>
+                  <option value="reasoning">reasoning</option>
+                  <option value="embedding">embedding</option>
+                </select>
+                <input style={{ flex: '1 1 200px' }} type="password" value={wiz.apiKey} onChange={(e) => setWiz({ ...wiz, apiKey: e.target.value })} placeholder="API key value" autoComplete="off" />
+                <button className="btn" onClick={addProvider} disabled={busy === 'provider' || !wiz.alias.trim() || !wiz.baseUrl.trim() || !wiz.modelName.trim() || !wiz.apiKey.trim()}>
+                  {busy === 'provider' ? <span className="spin" /> : 'Register model'}
+                </button>
+              </div>
+              {wizType === 'stackit' ? (
+                <div className="hint" style={{ marginTop: 8, fontSize: 12 }}>
+                  STACKIT keeps its org prefix — the gateway needs the double prefix <code>openai/Qwen/…</code>;
+                  a single prefix 404s. Enter the model id <strong>with</strong> its org (e.g. <code>Qwen/Qwen3-VL-235B-A22B-Instruct-FP8</code>); the OS adds the <code>openai/</code> protocol prefix.
+                </div>
+              ) : null}
+              <div className="hint" style={{ marginTop: 8, fontSize: 12 }}>
+                The API key is written once to the secrets manager and handed to the gateway once. The catalog keeps only a <code>sha256</code> fingerprint — the raw key is never shown, logged or returned.
+              </div>
+            </>
+          )}
+        </div>
+
         <div className="section-title" style={{ marginTop: 22 }}>Catalog<span className="count-pill">{models.length}</span></div>
+        <div className="hint" style={{ marginBottom: 10 }}>
+          Grouped by provider family from the LIVE gateway (<code>/model/info</code>), each row showing its
+          OS tier mapping. Enable/disable + per-model caps are governed here.
+          {catalogSource === 'offline' ? ' LiteLLM is unreachable — showing the install catalog.' : ''}
+        </div>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Model</th><th>Route</th><th>Tier</th><th>Cap €/mo</th><th>Enabled</th></tr></thead>
+            <thead><tr><th>Model</th><th>Tier</th><th>Route</th><th>Cap €/mo</th><th>Enabled</th></tr></thead>
             <tbody>
               {(() => {
                 // The effective per-role default ids: the override else the platform baseline.
@@ -218,36 +321,61 @@ export default function ModelsPage() {
                   modelRoles.reasoning || 'sovereign-reasoning',
                   modelRoles.embeddings || 'sovereign-embed',
                 ]);
-                return models.map((m) => {
-                const isDefault = roleDefaults.has(m.id);
-                const isAssistant = assistant === m.id;
-                return (
-                  <tr key={m.id}>
-                    <td>
-                      <strong>{m.label}</strong>{isDefault ? <span className="pa-tag" style={{ marginLeft: 8 }}>default</span> : null}{isAssistant ? <span className="pa-tag" style={{ marginLeft: 8 }}>assistant</span> : null}
-                      <div className="muted" style={{ fontSize: 11 }}>{m.id} · {m.task}</div>
-                    </td>
-                    <td>{m.route}</td>
-                    <td><span className="pa-tag">{m.tier}</span></td>
-                    <td>
-                      <input
-                        type="number" min={0} defaultValue={m.capEUR ?? ''} placeholder="none"
-                        style={{ width: 90 }} disabled={busy === m.id}
-                        onBlur={(e) => { const v = e.target.value.trim(); patch(m.id, { op: 'cap', capEUR: v === '' ? null : Number(v) }); }}
-                      />
-                    </td>
-                    <td>
-                      <button
-                        className={`switch${m.enabled ? ' on' : ''}`} disabled={busy === m.id}
-                        onClick={() => patch(m.id, { op: 'enable', enabled: !m.enabled })}
-                        title={isDefault && m.enabled ? 'A default model cannot be disabled' : ''}
-                      >
-                        <span className="switch-track"><span className="switch-thumb" /></span>
-                        <span className="switch-text">{m.enabled ? 'On' : 'Off'}</span>
-                      </button>
-                    </td>
-                  </tr>
-                );
+                // Group the LIVE catalog (from /model/info) by provider family. Any
+                // governance-only model not seen live still shows under its own family
+                // (or STACKIT for the seed). Join to `models` for enable/cap controls.
+                const govById = new Map(models.map((m) => [m.id, m]));
+                const liveByName = new Map(catalog.map((c) => [c.model_name, c]));
+                const allNames = new Set<string>([...liveByName.keys(), ...govById.keys()]);
+                const groupOf = (name: string): ProviderType =>
+                  liveByName.get(name)?.providerType
+                  ?? (govById.get(name)?.provider as ProviderType | undefined)
+                  ?? 'stackit';
+                return PROVIDER_GROUPS.flatMap((g) => {
+                  const names = [...allNames].filter((n) => groupOf(n) === g.type).sort();
+                  if (names.length === 0) return [];
+                  return [
+                    <tr key={`grp-${g.type}`}><td colSpan={5} style={{ background: 'var(--panel-2, rgba(0,0,0,0.03))', fontWeight: 600, fontSize: 12 }}>{g.label}<span className="count-pill">{names.length}</span></td></tr>,
+                    ...names.map((name) => {
+                      const live = liveByName.get(name);
+                      const m = govById.get(name);
+                      const isDefault = roleDefaults.has(name);
+                      const isAssistant = assistant === name;
+                      return (
+                        <tr key={name}>
+                          <td>
+                            <strong>{live?.display ?? m?.label ?? name}</strong>
+                            {isDefault ? <span className="pa-tag" style={{ marginLeft: 8 }}>default</span> : null}
+                            {isAssistant ? <span className="pa-tag" style={{ marginLeft: 8 }}>assistant</span> : null}
+                            <div className="muted" style={{ fontSize: 11 }}>{name}{m ? ` · ${m.task}` : ''}{live?.tier ? ` · ${live.tier} tier` : ''}</div>
+                          </td>
+                          <td>{live?.tier ? <span className="pa-tag">{live.tier}</span> : (m ? <span className="pa-tag">{m.tier}</span> : <span className="muted">—</span>)}</td>
+                          <td>{m?.route ?? (live?.provenance === 'internal' ? 'self-hosted' : 'stackit')}</td>
+                          <td>
+                            {m ? (
+                              <input
+                                type="number" min={0} defaultValue={m.capEUR ?? ''} placeholder="none"
+                                style={{ width: 90 }} disabled={busy === name}
+                                onBlur={(e) => { const v = e.target.value.trim(); patch(name, { op: 'cap', capEUR: v === '' ? null : Number(v) }); }}
+                              />
+                            ) : <span className="muted">—</span>}
+                          </td>
+                          <td>
+                            {m ? (
+                              <button
+                                className={`switch${m.enabled ? ' on' : ''}`} disabled={busy === name}
+                                onClick={() => patch(name, { op: 'enable', enabled: !m.enabled })}
+                                title={isDefault && m.enabled ? 'A default model cannot be disabled' : ''}
+                              >
+                                <span className="switch-track"><span className="switch-thumb" /></span>
+                                <span className="switch-text">{m.enabled ? 'On' : 'Off'}</span>
+                              </button>
+                            ) : <span className="muted" style={{ fontSize: 11 }}>live-only</span>}
+                          </td>
+                        </tr>
+                      );
+                    }),
+                  ];
                 });
               })()}
             </tbody>

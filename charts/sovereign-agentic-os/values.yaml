@@ -623,17 +623,12 @@ litellmAgentKey:
     - sovereign-default   # standard/worker tier (STACKIT gpt-oss-20b)
     - sovereign-mock      # back-compat alias -> same standard/worker tier
     - sovereign-reasoning # reasoning tier (STACKIT Qwen3-VL-235B)
-    - sovereign-reasoning-fast # fast reasoning + fallback (STACKIT Qwen3-VL)
     - sovereign-embed     # offline embeddings (mock-model)
-    - sovereign-vision    # vision route -> STACKIT Qwen3-VL
-    - sovereign-premium   # last-resort fallback -> STACKIT Qwen3-VL
   # HARD COST GUARDRAIL: a dedicated per-model USD cap for the pay-per-token
   # STACKIT routes. LiteLLM blocks calls to a model once its cap is hit —
-  # independent of the overall cap.
-  modelMaxBudget:
-    sovereign-premium: 2
-    sovereign-vision: 2
-    sovereign-reasoning-fast: 2
+  # independent of the overall cap. (The pruned duplicate Qwen routes that carried
+  # these caps are gone; the reasoning tier is covered by the overall maxBudget.)
+  modelMaxBudget: {}
   # Per-key rate limits with graceful queueing (security.md). rpm/tpm soft-limit
   # the key; max_parallel_requests caps in-flight calls; the router's num_retries
   # back-pressures bursts instead of hard-failing.
@@ -789,6 +784,12 @@ litellm:
   # turned on by an admin, once: UI → Model Hub → "Select Models to Make Public".
   envVars:
     SERVER_ROOT_PATH: "/tools/litellm"
+    # DURABLE admin-registered models. Without this, models an admin adds via the
+    # Models & Providers wizard (LiteLLM /model/new) live in the router's memory and
+    # VANISH on pod restart. With store-in-db they persist in the existing
+    # CloudNativePG `litellm` database (DATABASE_URL above). The static model_list
+    # below is still the shipped SEED — LiteLLM MERGES config models + DB models.
+    STORE_MODEL_IN_DB: "true"
   # Middleware tier — wave 1. deploymentAnnotations lands on the Deployment
   # metadata (Argo ordering). NOTE: litellm-helm exposes NO priorityClassName
   # value, so this pod runs at the cluster-default priority (0) — already below
@@ -822,60 +823,27 @@ litellm:
           model: openai/gpt-oss-20b
           api_base: os.environ/STACKIT_API_BASE
           api_key: os.environ/STACKIT_API_KEY
-      # --- External self-hosted over WireGuard (Mac Mini's Ollama qwen3:14b) ----
-      # `local-qwen` reaches a Mac Mini's Ollama at 10.10.0.2:11434 THROUGH the
-      # durable in-cluster WireGuard tunnel (wireguard.enabled). LiteLLM targets
-      # the NAT-forwarder Service `wireguard-ollama` (the pod DNATs it out the
-      # tunnel to 10.10.0.2:11434) — the tunnel subnet is NOT routable elsewhere in
-      # the cluster, so this Service name is the reachable address. DEFINED even
-      # when wireguard is OFF: like the STACKIT routes, it simply errors if called
-      # while the tunnel is down (never a boot failure). Free (self-hosted); no cap.
-      - model_name: local-qwen
-        litellm_params:
-          model: openai/qwen3:14b            # == the Mac's Ollama model tag
-          api_base: http://wireguard-ollama:11434/v1   # NAT forwarder -> 10.10.0.2:11434
-          api_key: "sk-local-unused"         # self-hosted; ignored, not a secret
       # --- Reasoning tier (STACKIT Qwen3-VL-235B, pay-per-token) ---------------
       # `sovereign-reasoning` is the reasoning default (the routing.ts reasoning
       # tier points here). STACKIT-routed; the key is empty unless stackitPremium
-      # is configured. A *connection* failure still trips the router breaker
-      # (allowed_fails) and fails over to `sovereign-reasoning-fast`.
+      # is configured.
       - model_name: sovereign-reasoning
         litellm_params:
           model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8   # == stackitPremium.chatModelId
           api_base: os.environ/STACKIT_API_BASE
           api_key: os.environ/STACKIT_API_KEY
           timeout: 300                        # generous: reasoning generations are long
-      # --- Fast reasoning + fallback (STACKIT Qwen, pay-per-token, capped) ------
-      # `sovereign-reasoning-fast` is the explicit FAST alternative AND the LiteLLM
-      # fallback for `sovereign-reasoning`. Pay-per-token, so it carries a hard
-      # per-model spend cap on the agent key (modelMaxBudget). Key is empty unless
-      # stackitPremium is configured (then it only errors if reached).
-      - model_name: sovereign-reasoning-fast
-        litellm_params:
-          model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8   # == stackitPremium.chatModelId
-          api_base: os.environ/STACKIT_API_BASE
-          api_key: os.environ/STACKIT_API_KEY
       # --- Offline embeddings (mock-model, deterministic 384-dim) -------------
       - model_name: sovereign-embed
         litellm_params:
           model: openai/mock-embed
           api_base: http://mock-model:8080/v1
           api_key: "sk-mock-unused"
-      # --- STACKIT premium: VISION route + LAST-RESORT fallback (pay-per-token) -
-      # Not the default. Key is empty unless stackitPremium is configured, so these
-      # only succeed when STACKIT is wired; otherwise they error (acceptable — they
-      # are the final fallback). Spend is capped on the virtual key (modelMaxBudget).
-      - model_name: sovereign-vision          # vision inputs route here
-        litellm_params:
-          model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8   # == stackitPremium.visionModelId
-          api_base: os.environ/STACKIT_API_BASE
-          api_key: os.environ/STACKIT_API_KEY
-      - model_name: sovereign-premium         # last-resort text fallback
-        litellm_params:
-          model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8   # == stackitPremium.chatModelId
-          api_base: os.environ/STACKIT_API_BASE
-          api_key: os.environ/STACKIT_API_KEY
+      # NOTE: this list is the shipped SEED only — the four aliases the OS actually
+      # uses (sovereign-default/-mock/-reasoning/-embed). The former extras
+      # (local-qwen, sovereign-reasoning-fast/-vision/-premium — all duplicate
+      # STACKIT Qwen routes or the WireGuard tunnel) are pruned; admins add their own
+      # backends self-service via Models & Providers (durable via store_model_in_db).
     # ------------------------------------------------------------------------
     # Router — fallback chain, retries, timeouts, circuit-breaking, load-balancing.
     # STACKIT managed three-tier set: reasoning (Qwen3-VL-235B) · standard/worker
@@ -890,16 +858,19 @@ litellm:
       timeout: 120                            # per-request timeout (s)
       allowed_fails: 3                        # circuit-breaking: trip after N fails...
       cooldown_time: 60                       # ...then cool the deployment down (s)
-      fallbacks:
-        # If the reasoning tier (sovereign-reasoning) trips the breaker, fail over
-        # to the fast reasoning route (sovereign-reasoning-fast). Both resolve to
-        # STACKIT; the fast route carries the per-model spend cap on the agent key.
-        - sovereign-reasoning: ["sovereign-reasoning-fast"]
+      # No static fallbacks: the pruned model_list is the four seed aliases, none of
+      # which is a duplicate reasoning route to fail over to. If the reasoning tier
+      # trips the breaker the request errors honestly (num_retries still applies);
+      # admins who want a fallback register a second backend via Models & Providers.
     litellm_settings:
       success_callback: ["langfuse"]          # gateway-level tracing to Langfuse
       drop_params: true
     general_settings:
       master_key: os.environ/PROXY_MASTER_KEY
+      # Persist admin-registered models (via /model/new) in the litellm Postgres DB
+      # so they survive pod restarts. LiteLLM merges these DB models with the static
+      # model_list above; the seed aliases below remain the shipped defaults.
+      store_model_in_db: true
     # MCP gateway — register tool servers; agents call them via LiteLLM
     # (per-key access). The governed Trino lakehouse query tool; Superset/
     # OpenMetadata/dbt MCP servers get added as they come online.
@@ -2009,6 +1980,20 @@ superset:
       GUEST_ROLE_NAME = "Gamma"
       GUEST_TOKEN_JWT_SECRET = os.environ["SUPERSET_GUEST_TOKEN_JWT_SECRET"]
       GUEST_TOKEN_JWT_EXP_SECONDS = 300
+    # ------------------------------------------------------------------------
+    # Reverse-proxy prefix awareness. The OS embeds Superset SAME-ORIGIN through
+    # the os-ui proxy at `<os-host>/tools/superset` (lib/tool-proxy.ts) — this is
+    # what makes the embedded-dashboard iframe load at all: Superset ships
+    # `X-Frame-Options: SAMEORIGIN` + a Talisman CSP with no `frame-ancestors`, so
+    # a CROSS-origin iframe (os.* framing superset.*) is blocked by the browser.
+    # Under the `/tools/superset` prefix Superset must honor the proxy's
+    # `X-Forwarded-Prefix` so the embedded page emits `/tools/superset/...`
+    # asset + API URLs instead of root-absolute ones that would escape the prefix
+    # and 404 against os-ui. PROXY_FIX_CONFIG already carries x_prefix:1 by
+    # default; we just switch ProxyFix ON. configOverrides merge by key.
+    # ------------------------------------------------------------------------
+    proxyfix: |
+      ENABLE_PROXY_FIX = True
     # ------------------------------------------------------------------------
     # OS single sign-on. The os-ui reverse proxy (/tools/superset) injects the
     # trusted X-Forwarded-User + X-Forwarded-Roles headers for the already-

@@ -9,7 +9,12 @@ import {
   capabilityWrites,
   presetForCapability,
   strongestPreset,
+  capabilityChipsForGrants,
+  toolsForCapabilityChips,
+  chipIdsForTools,
+  CAPABILITY_CHIPS,
 } from './capability-tools.ts';
+import type { Grants } from './system-schema.ts';
 
 test('Read grants provision only read + discovery tools', () => {
   assert.deepEqual(toolsForGrant('data', 'Read'), ['query_data', 'list_datasets', 'get_dataset', 'profile_dataset']);
@@ -63,4 +68,102 @@ test('allToolsForKind covers read ∪ write for pruning', () => {
   const data = allToolsForKind('data');
   assert.ok(data.includes('query_data') && data.includes('create_dataset'));
   assert.equal(new Set(data).size, data.length); // deduped
+});
+
+// ─── Capability chips ─────────────────────────────────────────────────────────
+
+/** A grants object where every resource list is populated. */
+const FULL_GRANTS: Pick<Grants, 'data' | 'knowledge' | 'connections' | 'metrics'> = {
+  data: [{ id: 'ds_sales', capability: 'Read' }],
+  knowledge: [{ id: 'wf_playbook', capability: 'Read' }],
+  connections: [{ id: 'conn_crm', capability: 'Read' }],
+  metrics: [{ id: 'mt_revenue', capability: 'Read' }],
+};
+
+/** Grants where only data was granted. */
+const DATA_ONLY_GRANTS: Pick<Grants, 'data' | 'knowledge' | 'connections' | 'metrics'> = {
+  data: [{ id: 'ds_sales', capability: 'Read' }],
+  knowledge: [],
+  connections: [],
+  metrics: [],
+};
+
+/** Grants where nothing was granted. */
+const EMPTY_GRANTS: Pick<Grants, 'data' | 'knowledge' | 'connections' | 'metrics'> = {
+  data: [],
+  knowledge: [],
+  connections: [],
+  metrics: [],
+};
+
+test('capabilityChipsForGrants: ungranted kind is not offered', () => {
+  const chips = capabilityChipsForGrants(DATA_ONLY_GRANTS, null);
+  const ids = chips.map((c) => c.id);
+  // data was granted → offered
+  assert.ok(ids.includes('read-data'), 'read-data should be offered when data is granted');
+  // knowledge/connections/metrics were NOT granted → their chips absent
+  assert.ok(!ids.includes('search-knowledge'), 'search-knowledge must not appear when knowledge not granted');
+  assert.ok(!ids.includes('use-connection'), 'use-connection must not appear when connections not granted');
+  assert.ok(!ids.includes('query-metrics'), 'query-metrics must not appear when metrics not granted');
+  // null-grantKind chips (create-files, use-goals) are always offered
+  assert.ok(ids.includes('create-files'), 'create-files always offered (no resource gate)');
+  assert.ok(ids.includes('use-goals'), 'use-goals always offered (no resource gate)');
+});
+
+test('capabilityChipsForGrants: no grants → only null-grantKind chips offered', () => {
+  const chips = capabilityChipsForGrants(EMPTY_GRANTS, null);
+  const ids = chips.map((c) => c.id);
+  assert.ok(!ids.includes('read-data'));
+  assert.ok(!ids.includes('search-knowledge'));
+  assert.ok(!ids.includes('use-connection'));
+  assert.ok(!ids.includes('query-metrics'));
+  // null-grantKind chips still present
+  assert.ok(ids.includes('create-files'));
+  assert.ok(ids.includes('use-goals'));
+});
+
+test('capabilityChipsForGrants: full grants → all chips offered (catalog null = no catalog filter)', () => {
+  const chips = capabilityChipsForGrants(FULL_GRANTS, null);
+  assert.equal(chips.length, CAPABILITY_CHIPS.length, 'all chips present when fully granted + no catalog filter');
+});
+
+test('capabilityChipsForGrants: catalog filtering removes chips whose tools are absent', () => {
+  // A catalog that only has query_data and its siblings (data read tools).
+  const catalogWithDataOnly = ['query_data', 'list_datasets', 'get_dataset', 'profile_dataset'];
+  const chips = capabilityChipsForGrants(FULL_GRANTS, catalogWithDataOnly);
+  const ids = chips.map((c) => c.id);
+  assert.ok(ids.includes('read-data'), 'data tools in catalog → read-data offered');
+  // search-knowledge requires search_knowledge etc. which is not in this catalog
+  assert.ok(!ids.includes('search-knowledge'), 'search-knowledge missing from catalog → chip hidden');
+  assert.ok(!ids.includes('use-connection'), 'connection tools missing → hidden');
+  assert.ok(!ids.includes('query-metrics'), 'metric tools missing → hidden');
+  assert.ok(!ids.includes('create-files'), 'file tools missing → hidden');
+  assert.ok(!ids.includes('use-goals'), 'goals tools missing → hidden');
+});
+
+test('Auto default: agent.tools === undefined means Auto (no chip implies no tools set)', () => {
+  // The contract: when no chips are selected and the user reverts, we pass tools=undefined.
+  // toolsForCapabilityChips([]) returns [] → callers revert to Auto.
+  assert.deepEqual(toolsForCapabilityChips([]), []);
+});
+
+test('toolsForCapabilityChips returns union of selected chip tools', () => {
+  const tools = toolsForCapabilityChips(['read-data', 'search-knowledge']);
+  assert.ok(tools.includes('query_data'));
+  assert.ok(tools.includes('search_knowledge'));
+  // deduped
+  assert.equal(tools.length, new Set(tools).size);
+});
+
+test('chipIdsForTools round-trips a selection of chips', () => {
+  const original = ['read-data', 'search-knowledge'];
+  const tools = toolsForCapabilityChips(original);
+  const recovered = chipIdsForTools(tools);
+  assert.ok(original.every((id) => recovered.includes(id)), 'round-trip preserves selected chips');
+});
+
+test('chipIdsForTools: partial tool match does NOT recover the chip', () => {
+  // Only one of the data tools — should not recover the chip since not all are present.
+  const recovered = chipIdsForTools(['query_data']);
+  assert.ok(!recovered.includes('read-data'), 'partial match does not count as the chip');
 });

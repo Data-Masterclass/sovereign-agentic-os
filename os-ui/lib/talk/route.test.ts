@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
  *
  * Requires `--experimental-test-module-mocks` (set in the npm test script) + the test-only
  * `next/server` shim (mapped by the alias hook). Lives under lib/ so the `lib/**` test glob
- * runs it (same convention as lib/governance/users-route.test.ts).
+ * runs it (same convention as the other lib route.test.ts suites).
  */
 type Actor = { id: string; name: string; domains: string[]; role: string } | null;
 

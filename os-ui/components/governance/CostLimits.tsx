@@ -100,8 +100,10 @@ export default function CostLimits() {
         </button>
       </div>
       <p className="hint" style={{ marginTop: 0, marginBottom: 14 }}>
-        Live spend metrics live in the Monitoring tab. Caps here enforce hard limits before
-        costs are incurred.
+        Caps are enforced live: a built-in assistant call is blocked before it runs the model
+        when its domain or the tenant is at/over cap (checked against reconciled LiteLLM spend).
+        Live spend lives in the Monitoring tab; self-hosted models report $0/token, so a cap
+        bites once real spend approaches its ceiling.
       </p>
 
       {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}

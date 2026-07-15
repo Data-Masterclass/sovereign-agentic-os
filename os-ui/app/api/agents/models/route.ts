@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/core/config';
 import { requireUser } from '@/lib/core/auth';
-import { MODEL_CATALOG, modelInfo, type ModelInfo } from '@/lib/agents/routing';
+import { MODEL_CATALOG, modelInfo, classifyProviderType, type ModelInfo } from '@/lib/agents/routing';
 import { roleModels } from '@/lib/models/roles';
 
 export const dynamic = 'force-dynamic';
@@ -12,22 +12,21 @@ export const dynamic = 'force-dynamic';
 /** One /model/info row we care about (the alias the caller pins). */
 type LiteLLMModel = {
   model_name?: string;
-  litellm_params?: { model?: string };
+  litellm_params?: { model?: string; api_base?: string };
   model_info?: { mode?: string };
 };
 
 /**
- * Enrich a live LiteLLM alias with catalog display + provenance. NB: this stack
- * fronts EVERY sovereign model through the OpenAI-compatible protocol, so the
- * `litellm_params.model` prefix is always `openai/…` (protocol, NOT provider) with
- * a STACKIT api_base — it is a misleading provenance signal here. We therefore
- * classify by the ALIAS (catalog first, then the `sovereign-*` name heuristic in
- * modelInfo), which is correct for this deployment: all `sovereign-*` = internal.
+ * Enrich a live LiteLLM alias with catalog display + provenance + provider TYPE.
+ * The Models & Providers page groups the catalog by `providerType`, inferred from
+ * the model's `litellm_params` (model prefix + api_base host) so an admin-registered
+ * endpoint (STACKIT / OpenAI-compatible / self-hosted) surfaces under its family.
+ * Display + provenance still come from the catalog/heuristics on the ALIAS.
  */
 function enrich(m: LiteLLMModel): ModelInfo | null {
   const name = m.model_name;
   if (typeof name !== 'string' || name.length === 0) return null;
-  return modelInfo(name);
+  return { ...modelInfo(name), providerType: classifyProviderType(m.litellm_params) };
 }
 
 /**
@@ -73,6 +72,7 @@ export async function GET() {
     clearTimeout(timer);
   }
   // Offline: the install catalog (Standard gpt-oss-20b / Reasoning + Vision Qwen3-VL-235B / Embeddings Qwen3-VL-Embedding-8B).
-  const models: ModelInfo[] = Object.values(MODEL_CATALOG);
+  // The shipped seed models are all STACKIT-managed inference, so group them there.
+  const models: ModelInfo[] = Object.values(MODEL_CATALOG).map((m) => ({ ...m, providerType: 'stackit' as const }));
   return NextResponse.json({ models, source: 'offline', roles: roleModels() });
 }

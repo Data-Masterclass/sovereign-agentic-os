@@ -17,6 +17,7 @@ import Roadmap from './Roadmap';
 import Components from './Components';
 import Planner from './Planner';
 import ValuePanel from './ValuePanel';
+import Design from './Design';
 import DomainTag from '@/components/DomainTag';
 
 /**
@@ -35,6 +36,7 @@ export default function BetDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showAudit, setShowAudit] = useState(false);
+  const [tab, setTab] = useState<'design' | 'value'>('design');
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -70,6 +72,13 @@ export default function BetDetailPage() {
           <>
             <HeaderBand view={view} onMutate={load} />
 
+            <div className="mode-toggle" style={{ marginTop: 16 }} role="tablist" aria-label="Bet view">
+              <button className={tab === 'design' ? 'active' : ''} role="tab" aria-selected={tab === 'design'} onClick={() => setTab('design')}>Design</button>
+              <button className={tab === 'value' ? 'active' : ''} role="tab" aria-selected={tab === 'value'} onClick={() => setTab('value')}>Value</button>
+            </div>
+
+            {tab === 'design' ? <Design view={view} onMutate={load} /> : (
+            <>
             {/* 1 — Value */}
             <div className="section-title">Value</div>
             <div className="card bb-value-card">
@@ -121,6 +130,8 @@ export default function BetDetailPage() {
                 )}
               </div>
             ) : null}
+            </>
+            )}
 
             <div className="row" style={{ marginTop: 20, justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
               <div className="hint" style={{ margin: 0 }}>

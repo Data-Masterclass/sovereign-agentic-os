@@ -27,6 +27,7 @@
 
 import { osMirror } from '../infra/os-mirror.ts';
 import { roleModel } from '../models/roles.ts';
+import type { ProviderType } from '../agents/routing.ts';
 
 export type ModelTask = 'chat' | 'reasoning' | 'embedding';
 export type ModelTier = 'sovereign' | 'premium';
@@ -58,6 +59,8 @@ export type Model = {
   capEUR: number | null;
   /** Present only for admin-registered OpenAI-compatible models (ref, never raw). */
   endpoint?: ModelEndpoint;
+  /** Provider family for grouping (admin-registered models); seed models omit it. */
+  providerType?: ProviderType;
 };
 
 /** A provider key as the catalog holds it: a REFERENCE + fingerprint, never raw. */
@@ -291,6 +294,46 @@ export function registerAssistantModel(input: {
     enabled: true,
     capEUR: null,
     endpoint: input.endpoint,
+  };
+  modelsState().catalog.set(id, m);
+  mirror.writeThrough(id, m);
+  return m;
+}
+
+/**
+ * Register an admin-supplied model from the "Add provider" wizard. Like
+ * {@link registerAssistantModel} the SECRETS RULE holds — the caller passes only the
+ * secrets-manager `keyRef` + `fingerprint`; the raw key was written to the vault and
+ * handed to the gateway server-side, and this catalog NEVER stores a raw key. Unlike
+ * the assistant path this does NOT pin the assistant — it just adds the model to the
+ * governed catalog under its provider family (`providerType`), so it appears in the
+ * grouped Catalog and is eligible per role.
+ */
+export function registerModel(input: {
+  id: string;
+  label: string;
+  task: ModelTask;
+  providerType: ProviderType;
+  endpoint: ModelEndpoint;
+  addedBy: string;
+}): Model {
+  seed();
+  const id = input.id.trim();
+  if (!id) throw fail('A model id/alias is required', 400);
+  if (!input.label.trim()) throw fail('A model label is required', 400);
+  if (!input.endpoint.baseUrl.trim() || !input.endpoint.modelName.trim()) throw fail('A base URL and model name are required', 400);
+  if (!input.endpoint.keyRef?.name || !input.endpoint.keyRef?.key) throw fail('A secrets-manager key reference is required', 400);
+  const m: Model = {
+    id,
+    label: input.label.trim(),
+    provider: input.providerType,
+    task: input.task,
+    tier: 'premium',
+    route: input.providerType === 'stackit' ? 'stackit' : 'self-hosted',
+    enabled: true,
+    capEUR: null,
+    endpoint: input.endpoint,
+    providerType: input.providerType,
   };
   modelsState().catalog.set(id, m);
   mirror.writeThrough(id, m);

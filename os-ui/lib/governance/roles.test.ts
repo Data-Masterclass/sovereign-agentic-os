@@ -114,7 +114,8 @@ test('canManageRole: Admin any role tenant-wide; Domain admin up to Builder in o
   assert.equal(canManageRole(user, 'creator', 'sales'), false);
 });
 
-// ---- The domain user-administration scoping matrix (enforced by /api/governance/users) ----
+// ---- The domain user-administration scoping matrix (pure predicates; the user-admin
+// surface is Admin → Users & Access, /api/platform-admin/access) ----
 
 test('USER-ADMIN floor: Domain admin and Admin may administer users; Builder/Creator may not', () => {
   assert.equal(canAdministerUsers('admin'), true);

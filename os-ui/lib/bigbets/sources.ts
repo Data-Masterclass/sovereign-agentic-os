@@ -297,6 +297,45 @@ export function resolveArtifact(artifactId: string): Artifact | null {
   return artifacts.get(artifactId) ?? null;
 }
 
+/**
+ * DURABLE, viewer-scoped resolve of a bet component's artifact.
+ *
+ * The in-memory `artifacts` map above is EPHEMERAL — it is repopulated only when a
+ * component is attached (`registerLinkedArtifact`) or scaffolded this process, so
+ * after any pod restart a bet's linked references cannot resolve through it. That
+ * is why every component rendered "🔒 members only": a null resolution, not a real
+ * access denial.
+ *
+ * The fix: when the in-memory map misses, read the REAL per-tab store through the
+ * registered `RealTabReader` — the SAME governed `list(viewer)` gate the picker
+ * uses, so the viewer only ever resolves what they may see (admin sees all; domain
+ * members their domain; owners their own). This is the durable source of truth and
+ * survives restarts. Returns null ONLY when the artifact genuinely does not exist
+ * (or the viewer's own gate excludes it) — an honest "unavailable", distinct from
+ * a members-only redaction.
+ *
+ * `tab` comes from the ComponentRef; the reader needs it to pick the right store.
+ */
+export function resolveArtifactFor(tab: Tab, artifactId: string, viewer: Principal): Artifact | null {
+  ensureSeeded();
+  // 1) In-memory (scaffolded drafts + anything registered this process). Still
+  //    apply the picker's visibility filter so a non-member never resolves a
+  //    personal draft they may not see.
+  const inMem = artifacts.get(artifactId);
+  if (inMem && inMem.tab === tab && inMemoryVisible(inMem, viewer)) return inMem;
+  // 2) DURABLE fallback: the real per-tab store, already canView-scoped by the
+  //    tab's own gate. Survives restarts (the reference card is derived live).
+  if (realTabReaderFn) {
+    for (const a of realTabReaderFn(tab, viewer)) {
+      if (a.id === artifactId && a.tab === tab) return a;
+    }
+  }
+  // 3) In-memory hit that the viewer may NOT see (personal draft, other domain) —
+  //    return it so the visibility gate above can redact ("members only") rather
+  //    than mislabel it "unavailable". A genuine miss falls through to null.
+  return inMem && inMem.tab === tab ? inMem : null;
+}
+
 /** Every known artifact (for the composition map's lineage join). */
 export function allArtifacts(): Artifact[] {
   ensureSeeded();

@@ -18,8 +18,14 @@ import { deriveBet, completion, type ComponentStatus } from './status.ts';
 import { rollup } from './roadmap.ts';
 import { buildComposition } from './composition.ts';
 import { realizedValue, distribute } from './value.ts';
-import { resolveArtifact, getPillar, getMetric, sourceMode, READY_VERB } from './sources.ts';
+import { resolveArtifactFor, getPillar, getMetric, sourceMode, READY_VERB } from './sources.ts';
 import { listPillars as listStrategyPillars } from '@/lib/strategy/pillars';
+// Side-effect import: registers the REAL, DURABLE cross-tab reader so a bet's
+// linked components resolve to their real title/lifecycle through each tab's own
+// governed list(viewer) gate — surviving pod restarts (the in-memory registry
+// does not). Without this the view falls back to the ephemeral map and every
+// component reads "members only" after a redeploy.
+import './real-sources.ts';
 
 /**
  * The server boundary for Big Bets: turns the authenticated CurrentUser into a
@@ -74,6 +80,13 @@ export type ComponentView = {
   /** Redacted to nulls for a user who may not see a not-yet-shared component. */
   artifact: { id: string; tab: string; title: string; lifecycle: string; visibility: string; omFqn?: string; readyVerb: string } | null;
   visible: boolean;
+  /**
+   * TRUE only when the referenced artifact genuinely does not resolve (deleted or
+   * never findable) — an honest "unavailable" state, DISTINCT from `!visible`
+   * which is a real members-only access denial. `visible` stays false in both
+   * cases (no detail is shown); the UI can label them differently.
+   */
+  unavailable: boolean;
 };
 
 export type BetView = {
@@ -118,11 +131,18 @@ export async function buildBetView(
 
   const components: ComponentView[] = bet.components.map((ref) => {
     const visible = canViewComponentDetail(bet, ref, p);
-    const art = resolveArtifact(ref.artifactId);
+    // Resolve DURABLY + viewer-scoped from the real per-tab store (falls back to
+    // the in-memory registry) — the same gate `canViewComponentDetail` used, so a
+    // visible component always populates its real title/lifecycle after a restart.
+    const art = resolveArtifactFor(ref.tab, ref.artifactId, p);
     return {
       ref,
       status: statusByRef.get(ref.id)!,
       visible,
+      // Unavailable = genuinely unresolvable (deleted / never findable). A
+      // members-only redaction still resolves the artifact for gating purposes
+      // (admins/members), so a null resolution is the honest "unavailable" case.
+      unavailable: art === null,
       artifact:
         visible && art
           ? {

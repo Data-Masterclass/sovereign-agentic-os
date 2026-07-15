@@ -2325,6 +2325,52 @@ select:focus {
   border-top: 2px dashed var(--teal);
 }
 
+/* ---- Big-Bet interplay canvas (read-only solution view) ---- */
+.bb-band-label {
+  font-family: var(--font-head);
+  font-size: 9px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  fill: var(--text-faint);
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+}
+.bb-node-glyph {
+  font-size: 14px;
+}
+.bb-node-status {
+  font-size: 10px;
+  fill: var(--text-faint);
+}
+.bb-edge-label {
+  font-size: 9.5px;
+  fill: var(--text-faint);
+  font-style: italic;
+}
+.bb-anchor-ring {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 1.6;
+  pointer-events: none;
+}
+.bb-canvas-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 200px;
+  color: var(--text-faint);
+}
+.bb-canvas-empty-mark {
+  font-size: 30px;
+  color: var(--gold-line);
+}
+.bb-canvas-empty p {
+  margin: 0;
+  font-size: 13px;
+}
+
 /* ---- Agent chips (per-agent toggle row under the canvas) ---- */
 .agent-chips {
   display: flex;

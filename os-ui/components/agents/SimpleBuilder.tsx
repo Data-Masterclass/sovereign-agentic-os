@@ -14,9 +14,11 @@ import {
   setAgentInstructions, setAgentRole, setArtifactGrant, removeArtifactGrant,
   setDescription, addAgentTool, removeAgentTool, setDataGrantLayer,
 } from '@/lib/agents/simple-edit';
-import { writeToolsForKind, type GrantKind } from '@/lib/agents/capability-tools';
+import {
+  writeToolsForKind, type GrantKind,
+  capabilityChipsForGrants, toolsForCapabilityChips, chipIdsForTools,
+} from '@/lib/agents/capability-tools';
 import { setEntrypoint } from '@/lib/agents/canvas-edit';
-import { suggestTools } from '@/lib/agents/suggest-tools';
 import { AGENT_TEMPLATES, agentTemplate, type AgentTemplateKey } from '@/lib/agents/agent-templates';
 import { runChecks, allChecksPass } from '@/lib/agents/build/run-checks';
 import type { DiagRun } from '@/lib/agents/build/run-diagnostics';
@@ -652,12 +654,6 @@ function AgentCard({
   useEffect(() => { setInstr(instructionsOf(agent.agent_md)); }, [agent.agent_md]);
 
   const effectiveTools = agent.tools ?? system.grants.tools;
-
-  const suggestions = useMemo(() => {
-    const text = `${agent.id} ${role} ${instr}`;
-    return suggestTools(text, catalog ?? undefined).filter((s) => !effectiveTools.includes(s.tool));
-  }, [agent.id, role, instr, catalog, effectiveTools]);
-
   const auto = classifyModelNeed(effectiveTools, `${agent.id} ${role} ${instr}`);
 
   const saveRole = () => {
@@ -722,35 +718,186 @@ function AgentCard({
         </div>
       </div>
 
-      <div className="sb-tools">
-        <span className="sb-field-label" style={{ margin: '4px 0' }}>Tools this agent can use</span>
-        <div className="sb-chips">
-          {effectiveTools.length === 0 ? <span className="hint" style={{ marginTop: 0 }}>None yet — accept a suggestion below.</span> : null}
-          {effectiveTools.map((t) => (
-            <span key={t} className="sb-chip granted">
-              <span className="mono">{t}</span>
-              {canEdit ? (
-                <button className="sb-chip-x" title="Remove" onClick={() => onCommit(removeAgentTool(system, agentId, t))}>✕</button>
-              ) : null}
-            </span>
-          ))}
-        </div>
-        {suggestions.length > 0 && canEdit ? (
-          <div className="sb-suggest">
-            <span className="hint" style={{ marginTop: 0 }}>Suggested for this role:</span>
-            <div className="sb-chips">
-              {suggestions.map((s) => (
-                <button
-                  key={s.tool}
-                  className="sb-chip suggest"
-                  title={s.why}
-                  onClick={() => onCommit(addAgentTool(system, agentId, s.tool))}
-                >
-                  + <span className="mono">{s.tool}</span>
-                  <span className="sb-chip-why">{s.why}</span>
-                </button>
-              ))}
+      <AgentCapabilities
+        system={system}
+        agentId={agentId}
+        canEdit={canEdit}
+        catalog={catalog}
+        onCommit={onCommit}
+      />
+    </div>
+  );
+}
+
+/* ───────────────────── Per-agent capability chips (Design) ─────────────────── */
+
+/**
+ * Per-agent tool selection in Simple mode. Default = **Auto** (`agent.tools`
+ * is `undefined` → the agent inherits the full team grant pool and the OS picks
+ * the right tools for each step). The user can opt in to "Pick capabilities" to
+ * narrow — they see plain capability chips scoped to what the TEAM was actually
+ * granted (no connection chip when no connection was granted, etc.).
+ *
+ * A "Developer view" toggle reveals the raw tool list for power users — the same
+ * pool that Developer mode shows — without removing the feature.
+ */
+function AgentCapabilities({
+  system,
+  agentId,
+  canEdit,
+  catalog,
+  onCommit,
+}: {
+  system: System;
+  agentId: string;
+  canEdit: boolean;
+  catalog: string[] | null;
+  onCommit: (next: System) => void;
+}) {
+  const agent = system.agents.find((a) => a.id === agentId)!;
+  // Auto = agent.tools is undefined (inherits system grants). Narrowed = explicit list.
+  const isAuto = agent.tools === undefined;
+  const [showDev, setShowDev] = useState(false);
+
+  // Chips scoped to what the team was actually granted.
+  const offeredChips = useMemo(
+    () => capabilityChipsForGrants(system.grants, catalog),
+    [system.grants, catalog],
+  );
+
+  // Current chip selection: reverse-mapped from agent.tools (best-effort).
+  const [selectedChipIds, setSelectedChipIds] = useState<string[]>(
+    () => (agent.tools ? chipIdsForTools(agent.tools) : []),
+  );
+  // Keep chip selection in sync if agent.tools changes externally (e.g. scaffold).
+  useEffect(() => {
+    setSelectedChipIds(agent.tools ? chipIdsForTools(agent.tools) : []);
+  }, [agent.tools]);
+
+  const effectiveTools = agent.tools ?? system.grants.tools;
+
+  const toggleChip = (chipId: string) => {
+    if (!canEdit) return;
+    const next = selectedChipIds.includes(chipId)
+      ? selectedChipIds.filter((id) => id !== chipId)
+      : [...selectedChipIds, chipId];
+    setSelectedChipIds(next);
+    // Persist: build the tool list from selected chips and commit.
+    const tools = toolsForCapabilityChips(next);
+    // An empty chip selection (user un-ticked everything) → revert to Auto.
+    if (tools.length === 0) {
+      onCommit({ ...system, agents: system.agents.map((a) => a.id === agentId ? { ...a, tools: undefined } : a) });
+    } else {
+      // addAgentTool/removeAgentTool operate one tool at a time; it's cleaner to
+      // directly set the agent's narrowed list (still a subset of grants.tools).
+      const pool = new Set(system.grants.tools);
+      const narrow = tools.filter((t) => pool.has(t));
+      onCommit({ ...system, agents: system.agents.map((a) => a.id === agentId ? { ...a, tools: narrow.length > 0 ? narrow : undefined } : a) });
+    }
+  };
+
+  const switchToAuto = () => {
+    if (!canEdit || isAuto) return;
+    setSelectedChipIds([]);
+    onCommit({ ...system, agents: system.agents.map((a) => a.id === agentId ? { ...a, tools: undefined } : a) });
+  };
+
+  return (
+    <div className="sb-tools">
+      {/* Mode toggle: Auto (default) vs Pick capabilities */}
+      <div className="row" style={{ alignItems: 'center', gap: 6, marginBottom: 6 }}>
+        <span className="sb-field-label" style={{ margin: 0 }}>Tools</span>
+        <span className="sb-access" role="group" aria-label="Tool selection mode" style={{ display: 'inline-flex', gap: 4 }}>
+          <button
+            type="button"
+            className={`btn ghost sm${isAuto ? ' active' : ''}`}
+            aria-pressed={isAuto}
+            disabled={!canEdit}
+            onClick={switchToAuto}
+            title="The OS picks tools automatically from this agent's job and the team's resources"
+          >
+            Auto
+          </button>
+          <button
+            type="button"
+            className={`btn ghost sm${!isAuto ? ' active' : ''}`}
+            aria-pressed={!isAuto}
+            disabled={!canEdit}
+            onClick={() => {
+              if (!canEdit || !isAuto) return;
+              // Switching to Pick: pre-tick all offered chips (reasonable starting point).
+              const all = offeredChips.map((c) => c.id);
+              setSelectedChipIds(all);
+              const tools = toolsForCapabilityChips(all);
+              const pool = new Set(system.grants.tools);
+              const narrow = tools.filter((t) => pool.has(t));
+              onCommit({ ...system, agents: system.agents.map((a) => a.id === agentId ? { ...a, tools: narrow.length > 0 ? narrow : undefined } : a) });
+            }}
+            title="Pick specific capabilities for this agent"
+          >
+            Pick capabilities
+          </button>
+        </span>
+      </div>
+
+      {isAuto ? (
+        <p className="hint" style={{ marginTop: 0, marginBottom: 0 }}>
+          Auto — the OS selects tools from this agent's role and the team's granted resources.
+          Switch to "Pick capabilities" to narrow.
+        </p>
+      ) : (
+        <>
+          {offeredChips.length === 0 ? (
+            <p className="hint" style={{ marginTop: 0 }}>
+              No capabilities available — grant the team some data, knowledge or connections first (in Define).
+            </p>
+          ) : (
+            <div className="sb-chips" style={{ flexWrap: 'wrap', gap: 6 }}>
+              {offeredChips.map((chip) => {
+                const on = selectedChipIds.includes(chip.id);
+                return (
+                  <button
+                    key={chip.id}
+                    type="button"
+                    className={`sb-chip${on ? ' granted' : ' suggest'}`}
+                    aria-pressed={on}
+                    disabled={!canEdit}
+                    title={chip.description}
+                    onClick={() => toggleChip(chip.id)}
+                    style={{ cursor: canEdit ? 'pointer' : 'default' }}
+                  >
+                    {on ? '✓ ' : '+ '}{chip.label}
+                  </button>
+                );
+              })}
             </div>
+          )}
+        </>
+      )}
+
+      {/* Developer view — collapsible raw tool list; power-user path always present. */}
+      <div style={{ marginTop: 8 }}>
+        <button
+          type="button"
+          className="btn ghost sm"
+          style={{ fontSize: 11, opacity: 0.65 }}
+          onClick={() => setShowDev((v) => !v)}
+        >
+          {showDev ? 'Hide' : 'Developer view'}
+        </button>
+        {showDev ? (
+          <div className="sb-chips" style={{ marginTop: 6 }}>
+            {effectiveTools.length === 0 ? (
+              <span className="hint" style={{ marginTop: 0 }}>No tools in pool yet.</span>
+            ) : null}
+            {effectiveTools.map((t) => (
+              <span key={t} className={`sb-chip${agent.tools ? ' granted' : ''}`}>
+                <span className="mono" style={{ fontSize: 11 }}>{t}</span>
+                {canEdit && agent.tools ? (
+                  <button className="sb-chip-x" title="Remove" onClick={() => onCommit(removeAgentTool(system, agentId, t))}>✕</button>
+                ) : null}
+              </span>
+            ))}
           </div>
         ) : null}
       </div>

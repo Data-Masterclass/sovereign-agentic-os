@@ -7,16 +7,28 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { canViewPolicyPlane, addAccessGrant, addEgressEndpoint, listEgress, policySources, __resetPlane } from './policy-view.ts';
+import { canViewPolicyPlane, addAccessGrant, addEgressEndpoint, isEgressAllowed, listEgress, policySources, __resetPlane } from './policy-view.ts';
+import { listAllowlist } from '../platform-admin/security.ts';
 
-test('cross-instance: access grants and egress visible through globalThis symbol', () => {
+test('cross-instance: access grants visible through globalThis symbol', () => {
   __resetPlane();
   addAccessGrant({ principal: 'user:ci', tool: 'read_data', domain: 'sales' });
-  addEgressEndpoint('https://api.example.com', 'sales', 'admin');
-  const raw = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.governance.policyView')] as { accessGrants: unknown[]; egressAllowlist: Map<string, unknown> };
+  const raw = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.governance.policyView')] as { accessGrants: unknown[] };
   assert.ok(raw && raw.accessGrants.length === 1, 'grant visible in globalThis');
-  assert.ok(raw.egressAllowlist.has('https://api.example.com'), 'egress visible in globalThis');
-  assert.equal(listEgress().length, 1);
+});
+
+test('CONSOLIDATION: egress delegates to Admin → Security\'s REAL allowlist (one source of truth)', () => {
+  __resetPlane();
+  // policy-view no longer keeps its own egress Map.
+  const raw = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.governance.policyView')] as Record<string, unknown>;
+  assert.ok(!('egressAllowlist' in raw), 'policy-view keeps no separate egress list');
+
+  // Approving an egress endpoint writes to the REAL Admin allowlist…
+  addEgressEndpoint('https://api.example.com', 'sales', 'admin');
+  assert.ok(listAllowlist().includes('api.example.com'), 'host joins the real Admin allowlist');
+  // …and the checks/reads flow through that same store.
+  assert.equal(isEgressAllowed('https://api.example.com'), true);
+  assert.ok(listEgress().some((e) => e.endpoint === 'api.example.com'), 'listEgress reads the real allowlist');
 });
 
 test('SECURITY: only policy.view holders (Builder/Admin) may read the policy plane', () => {

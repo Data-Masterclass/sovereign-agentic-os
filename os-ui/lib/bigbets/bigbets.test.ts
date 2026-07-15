@@ -34,8 +34,18 @@ import { deriveBet } from './status.ts';
 import { rollup } from './roadmap.ts';
 import { buildComposition } from './composition.ts';
 import { realizedValue, distribute } from './value.ts';
-import { __resetSources, __resetStrategy, __seedStrategy, resolveArtifact, sourceFor, isReady } from './sources.ts';
-import { type Actor, type BigBet, type Principal } from './model.ts';
+import {
+  __resetSources,
+  __resetStrategy,
+  __seedStrategy,
+  registerLinkedArtifact,
+  resolveArtifact,
+  resolveArtifactFor,
+  setRealTabReader,
+  sourceFor,
+  isReady,
+} from './sources.ts';
+import { type Actor, type Artifact, type BigBet, type Principal, type Tab } from './model.ts';
 
 /**
  * A deterministic assistant completer standing in for the ONE governed LLM: it
@@ -61,6 +71,7 @@ const arya: Actor = { id: 'arya', domains: ['sales'], role: 'admin', kind: 'huma
 function reset() {
   __resetBets();
   __resetSources();
+  setRealTabReader(null); // clear any durable reader a prior test registered
   __resetStrategy();
   // The strategy up-link ships EMPTY now; inject the NRR metric + Retention
   // pillar the churn bet measures against (RLS: sara full slice, kenji less).
@@ -449,4 +460,100 @@ test('authz: archive / delete / restore obey edit-scope (non-editor is rejected 
   // A same-domain viewer (if the bet were Shared) would pass list but not restore.
   // Here we just assert amir cannot view at all.
   assert.throws(() => listBetVersions(bet.id, amir), /not permitted to view/i);
+});
+
+// ---------------------------------------------------------------------------
+// DURABLE component resolution (the "🔒 members only" bug).
+//
+// The in-memory `artifacts` map is EPHEMERAL — it is repopulated only when a
+// component is scaffolded/attached this process, so after a pod restart a bet's
+// linked references cannot resolve through it and every component rendered
+// "🔒 members only" (a null resolution, mislabelled as an access denial). The fix
+// resolves each component DURABLY + viewer-scoped through the real per-tab store
+// (the registered RealTabReader — same gate the picker uses), surviving restarts.
+// ---------------------------------------------------------------------------
+
+/** A tiny real-store stand-in: the durable artifacts a viewer may see per tab. */
+function seedRealStore(rows: Artifact[]): void {
+  setRealTabReader((tab: Tab, viewer: Principal) =>
+    rows.filter((a) => {
+      if (a.tab !== tab) return false;
+      // Mirror the tab's own governed gate: admin sees all; personal is owner/
+      // domain-scoped; shared/certified/marketplace is domain-visible.
+      if (viewer.role === 'admin') return true;
+      if (a.visibility === 'personal') return viewer.domains.includes(a.domain);
+      return viewer.domains.includes(a.domain) || a.visibility === 'marketplace';
+    }),
+  );
+}
+
+function realCard(over: Partial<Artifact> & { id: string; tab: Tab }): Artifact {
+  return {
+    title: 'Real artifact', domain: 'sales', visibility: 'shared', lifecycle: 'certified',
+    consumes: [], bigBetIds: [], usage30d: 0, ...over,
+  } as Artifact;
+}
+
+test('durable: a linked component resolves to its REAL title after a pod restart (not "members only")', () => {
+  reset();
+  const bet = newChurnBet(); // sara, sales
+  // A real, durable dataset the tab's store owns (shared → domain-visible).
+  const real = realCard({ id: 'data_real1', tab: 'data', title: 'Retention feature mart', visibility: 'shared', lifecycle: 'certified' });
+  seedRealStore([real]);
+  // Attach it exactly as the MCP attach door does: record the reference card, then link.
+  registerLinkedArtifact({ id: real.id, tab: 'data', title: real.title, domain: real.domain, visibility: real.visibility, lifecycle: real.lifecycle });
+  const { ref } = addComponent(bet.id, sara, { tab: 'data', artifactId: real.id, plannedReady: '2026-08-01' });
+
+  // Simulate a POD RESTART: the ephemeral in-memory registry is wiped, but the
+  // durable per-tab store (the real reader) and the mirrored bet survive.
+  const savedBet = getBet(bet.id, sara);
+  __resetSources();
+  seedRealStore([real]); // durable store is re-read live, not from the wiped map
+
+  const c = savedBet.components.find((x) => x.id === ref.id)!;
+  // OLD BUG: resolveArtifact() → empty map → null → members only. FIXED:
+  const resolved = resolveArtifactFor(c.tab, c.artifactId, sara);
+  assert.ok(resolved, 'component still resolves durably after restart');
+  assert.equal(resolved!.title, 'Retention feature mart', 'real title, not "members only"');
+  assert.equal(canViewComponentDetail(savedBet, c, sara), true, 'owner sees the real component');
+});
+
+test('durable: admin sees ALL components; a cross-domain non-member is redacted, not "unavailable"', () => {
+  reset();
+  const bet = newChurnBet(); // sara, sales
+  const real = realCard({ id: 'data_real2', tab: 'data', title: 'Sales churn mart', domain: 'sales', visibility: 'personal', lifecycle: 'building' });
+  seedRealStore([real]);
+  registerLinkedArtifact({ id: real.id, tab: 'data', title: real.title, domain: real.domain, visibility: real.visibility, lifecycle: real.lifecycle });
+  const { ref } = addComponent(bet.id, sara, { tab: 'data', artifactId: real.id, plannedReady: '2026-08-01' });
+  const b = getBet(bet.id, sara);
+  const c = b.components.find((x) => x.id === ref.id)!;
+
+  // Admin resolves + sees everything.
+  assert.ok(resolveArtifactFor(c.tab, c.artifactId, arya), 'admin resolves the real artifact');
+  assert.equal(canViewComponentDetail(b, c, arya), true, 'admin sees all');
+
+  // Cross-domain non-member: the artifact EXISTS (resolvable while the in-memory
+  // card is present) but is a members-only redaction — canView is false yet the
+  // artifact is NOT null, so the view labels it "members only", not "unavailable".
+  assert.equal(canViewComponentDetail(b, c, amir), false, 'non-member is redacted');
+  assert.ok(resolveArtifactFor(c.tab, c.artifactId, sara), 'still resolvable for a member (durable path)');
+});
+
+test('honest state: a component referencing a NONEXISTENT artifact is "unavailable", not "members only"', () => {
+  reset();
+  const bet = newChurnBet();
+  seedRealStore([]); // the durable store has nothing
+  // Attach a real card, then delete it from BOTH the in-memory map and the store —
+  // a dangling reference (the artifact was hard-deleted).
+  registerLinkedArtifact({ id: 'data_ghost', tab: 'data', title: 'Ghost', domain: 'sales', visibility: 'shared', lifecycle: 'certified' });
+  const { ref } = addComponent(bet.id, sara, { tab: 'data', artifactId: 'data_ghost', plannedReady: '2026-08-01' });
+  const b = getBet(bet.id, sara);
+  const c = b.components.find((x) => x.id === ref.id)!;
+  __resetSources();      // wipe the in-memory card
+  seedRealStore([]);     // durable store never had it → genuinely unresolvable
+
+  assert.equal(resolveArtifactFor(c.tab, c.artifactId, sara), null, 'genuinely unavailable → null');
+  // canView is false too — but this is the UNAVAILABLE case (null resolution),
+  // which the server view flags separately (art === null) from a members-only denial.
+  assert.equal(canViewComponentDetail(b, c, sara), false, 'no detail for an unresolvable ref');
 });

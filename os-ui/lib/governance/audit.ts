@@ -2,14 +2,20 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { config } from '../core/config.ts';
+import { audit as persistAudit } from '../platform-admin/audit.ts';
 
 /**
  * Audit integrity (governance-golden-path.md §3) — the trustworthy record of
  * WHO did/approved WHAT, WHEN, and on WHICH inputs. Every governed effect,
- * policy override, cost cap and role change appends one entry here. The log is
- * the authoritative in-process record (so it works with no cluster) and is
- * mirrored best-effort to Langfuse so it joins agent-run traces + OpenMetadata
- * lineage in the same observability plane.
+ * policy override, cost cap and role change appends one entry here.
+ *
+ * CONSOLIDATED store: this module keeps a hash-chained integrity view (so the
+ * Governance "Audit" tab can prove tamper-evidence), but it is NOT a parallel
+ * durable log. Every `record()` also WRITE-THROUGHs into the persistent Admin
+ * audit store (lib/platform-admin/audit.ts → an os-audit ring + durable mirror
+ * that hydrates on restart). Platform Admin and Governance therefore read ONE
+ * durable, restart-surviving trail; nothing is silently dropped on a restart.
+ * The best-effort Langfuse mirror joins these to agent-run traces + lineage.
  *
  * Integrity: entries are append-only and hash-chained — each carries the hash of
  * the previous entry, so a tampered/removed record breaks the chain and
@@ -134,6 +140,22 @@ export function record(input: {
     hash: hashOf(body),
   };
   log.push(e);
+  // Write-through into the persistent Admin store so this event survives a
+  // restart and joins the ONE durable trail both tabs read. The Governance shape
+  // (actor/action/subject/domain/reason) maps onto the Admin shape; the domain is
+  // preserved in `detail` (parseable prefix) so Builder domain-scoping still works.
+  try {
+    persistAudit({
+      tenant: 'tenant',
+      actor: input.actor,
+      role: '',
+      action: `governance.${input.action}`,
+      target: input.subject,
+      detail: `[domain:${input.domain}] ${input.reason}`,
+    });
+  } catch {
+    /* never let a mirror failure break the governed action */
+  }
   void mirrorToLangfuse(e);
   return e;
 }

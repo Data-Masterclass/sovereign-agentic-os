@@ -36,7 +36,7 @@ import {
   INTERPLAY_RELATIONS,
   roleAtLeast,
 } from './model.ts';
-import { resolveArtifact, sourceFor } from './sources.ts';
+import { resolveArtifact, resolveArtifactFor, sourceFor } from './sources.ts';
 import { canManageArtifact } from '../governance/edit-scope.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
@@ -182,7 +182,11 @@ export function canEdit(bet: BigBet, user: Principal): boolean {
  * peers; a personal (draft) one is members-only — the "no governance shortcut".
  */
 export function canViewComponentDetail(bet: BigBet, ref: ComponentRef, user: Principal): boolean {
-  const art = resolveArtifact(ref.artifactId);
+  // Resolve DURABLY + viewer-scoped: the real per-tab store (survives restarts),
+  // falling back to the in-memory registry. A null here means the artifact is
+  // genuinely unavailable (deleted / never resolvable) — NOT a members-only
+  // redaction; the server view reports that distinctly.
+  const art = resolveArtifactFor(ref.tab, ref.artifactId, user);
   if (!art) return false;
   if (art.visibility !== 'personal') {
     if (user.role === 'admin') return true;

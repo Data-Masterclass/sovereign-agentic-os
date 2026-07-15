@@ -46,13 +46,23 @@ export default function EmbedPanel({ dashboard, supersetUrl }: { dashboard: Dash
   // Live: mount the real Superset Embedded SDK, handing it the already-minted per-viewer
   // guest token (RLS baked in, R3). Re-runs when the token re-mints (region switch); the
   // cleanup unmounts the previous iframe so we never stack embeds.
+  //
+  // supersetDomain is the SAME-ORIGIN reverse proxy (`<os-origin>/tools/superset`), NOT the
+  // cross-origin public console. Superset ships `X-Frame-Options: SAMEORIGIN` + a Talisman
+  // CSP with no `frame-ancestors`, so a cross-origin iframe (os.* framing superset.*) is
+  // blocked by the browser. Routing through `/tools/superset` (lib/tool-proxy.ts) makes the
+  // iframe same-origin — the proxy strips X-Frame-Options and pins `frame-ancestors 'self'`
+  // — eliminating the CSP / third-party-cookie problems entirely. The SDK sets the iframe
+  // src to `${supersetDomain}/embedded/<uuid>` and uses the origin of supersetDomain as its
+  // postMessage targetOrigin, so an absolute same-origin URL is required (a bare path throws).
   useEffect(() => {
     const node = mountRef.current;
     if (!embed || embed.mode !== 'live' || !embed.embeddedId || !node) return;
+    const supersetDomain = `${window.location.origin}/tools/superset`;
     let unmount: (() => void) | undefined;
     embedDashboard({
       id: embed.embeddedId,
-      supersetDomain: supersetUrl,
+      supersetDomain,
       mountPoint: node,
       fetchGuestToken: () => Promise.resolve(embed.token),
       dashboardUiConfig: { hideTitle: true },
@@ -60,7 +70,7 @@ export default function EmbedPanel({ dashboard, supersetUrl }: { dashboard: Dash
       .then((instance) => { unmount = instance.unmount; })
       .catch(() => { /* live mount failed — the token/RLS summary above still stands */ });
     return () => { unmount?.(); };
-  }, [embed, supersetUrl]);
+  }, [embed]);
 
   return (
     <div className="agent-editor" style={{ marginTop: 16 }}>

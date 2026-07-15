@@ -12,7 +12,7 @@ import { listWorkflows, getWorkflow } from '@/lib/knowledge/store';
 import { listFiles, searchFiles, getFile } from '@/lib/files/store';
 import { listMetrics } from '@/lib/metrics/store';
 import { listDashboards, getDashboard } from '@/lib/dashboards/store';
-import { listBets } from '@/lib/bigbets/store';
+import { listBets, getSolution } from '@/lib/bigbets/store';
 import { buildBetView } from '@/lib/bigbets/server';
 import { getSystem } from '@/lib/agents/store';
 import {
@@ -569,6 +569,33 @@ const waveBReadTools: McpTool[] = [
         })),
         canEdit: view.canEdit,
         sourceMode: view.sourceMode,
+      };
+    },
+  },
+  {
+    name: 'get_bet_solution',
+    tab: 'bigbets',
+    minRole: 'creator',
+    description:
+      'Read a Big Bet’s SOLUTION BLUEPRINT — the runtime interplay graph the Design canvas renders: the anchor workflow ref, every attached ComponentRef (id · tab · role), the typed interplay edges (consumes/produces/triggers/feeds/monitors) and the saved canvas positions. Distinct from get_big_bet’s roadmap (build order): this is how the FINISHED pieces work together at run time. Purpose: read the blueprint back before set_bet_workflow / attach_bet_component / wire_bet_components mutate it (you need the ComponentRef ids + edge ids from here). Governance: read-only through the store’s OWN view scope (members + domain peers; cross-domain bets are members/Admin-only) — an unseeable id is a typed not_found/forbidden.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        betId: { type: 'string', description: 'Big Bet id from list_big_bets.' },
+      },
+      required: ['betId'],
+      examples: [{ betId: 'bet_ab12cd34' }],
+    },
+    call: async (user, args) => {
+      const betId = str(args.betId).trim();
+      if (!betId) fail('get_bet_solution needs a `betId` (from list_big_bets)', 400);
+      const sol = getSolution(betId, P(user)); // view gate (403/404)
+      return {
+        betId,
+        anchor: sol.anchor ? { refId: sol.anchor.id, artifactId: sol.anchor.artifactId, tab: sol.anchor.tab } : null,
+        nodes: sol.nodes.map((n) => ({ refId: n.id, artifactId: n.artifactId, tab: n.tab, role: n.role ?? 'component' })),
+        edges: sol.edges.map((e) => ({ edgeId: e.id, from: e.from, to: e.to, relation: e.relation })),
+        positions: sol.positions,
       };
     },
   },

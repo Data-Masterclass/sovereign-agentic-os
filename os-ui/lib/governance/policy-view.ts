@@ -4,6 +4,7 @@
 import { config } from '../core/config.ts';
 import type { Role } from '../core/session.ts';
 import { ROLE_RIGHTS, rightsToTools } from './roles.ts';
+import { addAllowlist, listAllowlist, _reset as _resetSecurity } from '../platform-admin/security.ts';
 
 /**
  * May this role SEE the consolidated policy plane? Gated on the `policy.view`
@@ -38,12 +39,16 @@ export type GrantRow = {
   compiledTo: 'OPA' | 'Cube' | 'OpenSearch-DLS';
 };
 
-// Dynamic plane state (access grants + egress allowlist + revocations).
-type PolicyViewState = { accessGrants: GrantRow[]; egressAllowlist: Map<string, { endpoint: string; domain: string; approvedBy: string }>; overrides: Set<string> };
+// Dynamic plane state (access grants + revocations). The egress allowlist is NO
+// longer kept here — it delegates to Admin → Security's REAL allowlist
+// (lib/platform-admin/security.ts), the single source of truth that compiles to
+// the OPA egress_allow resource + egress proxy. Governance only READS it (for the
+// consolidated plane) and an approval effect ADDS to it via the same store.
+type PolicyViewState = { accessGrants: GrantRow[]; overrides: Set<string> };
 const PV_KEY = Symbol.for('soa.governance.policyView');
 function pvState(): PolicyViewState {
   const g = globalThis as unknown as Record<symbol, PolicyViewState | undefined>;
-  if (!g[PV_KEY]) g[PV_KEY] = { accessGrants: [], egressAllowlist: new Map(), overrides: new Set() };
+  if (!g[PV_KEY]) g[PV_KEY] = { accessGrants: [], overrides: new Set() };
   return g[PV_KEY]!;
 }
 
@@ -74,17 +79,33 @@ export function addAccessGrant(input: {
   return row;
 }
 
-/** Approval effect: allowlist an egress endpoint for a domain. */
-export function addEgressEndpoint(endpoint: string, domain: string, approvedBy: string): void {
-  pvState().egressAllowlist.set(endpoint, { endpoint, domain, approvedBy });
+/**
+ * Approval effect: allowlist an egress endpoint. Writes to Admin → Security's
+ * REAL allowlist (the single source of truth), normalising to a host. `domain`
+ * and `approvedBy` are audited by the caller; the allowlist itself is tenant-wide
+ * (Admin-curated), so we don't fabricate a per-host domain here.
+ */
+export function addEgressEndpoint(endpoint: string, _domain: string, _approvedBy: string): void {
+  try {
+    addAllowlist(endpoint);
+  } catch {
+    /* invalid host → the caller's audit still records the request; allowlist unchanged */
+  }
 }
 
+/** Is this endpoint on Admin's real egress allowlist? Host-normalised there. */
 export function isEgressAllowed(endpoint: string): boolean {
-  return pvState().egressAllowlist.has(endpoint);
+  const host = endpoint.replace(/^[a-z]+:\/\//i, '').split('/')[0].split(':')[0].toLowerCase();
+  return listAllowlist().includes(host);
 }
 
-export function listEgress(domains?: string[]): { endpoint: string; domain: string; approvedBy: string }[] {
-  return [...pvState().egressAllowlist.values()].filter((e) => (domains ? domains.includes(e.domain) : true));
+/**
+ * Read-only view of Admin's real egress allowlist for the consolidated plane.
+ * Each host is tenant-wide (Admin-curated), so `domain: 'tenant'`. When a Builder
+ * scope is passed we still surface the tenant allowlist (it applies to them too).
+ */
+export function listEgress(_domains?: string[]): { endpoint: string; domain: string; approvedBy: string }[] {
+  return listAllowlist().map((host) => ({ endpoint: host, domain: 'tenant', approvedBy: 'admin' }));
 }
 
 /** Admin override: revoke a grant from the plane. Returns whether a row matched. */
@@ -129,8 +150,9 @@ export function consolidatedPlane(
     if (isRevoked(g.principal, g.tool)) continue;
     rows.push(g);
   }
-  for (const e of pv.egressAllowlist.values()) {
-    if (domains && !domains.includes(e.domain)) continue;
+  // Egress allowlist rows come from Admin → Security's real allowlist (tenant-wide).
+  // A Builder scope still sees them — the tenant allowlist applies to their domain too.
+  for (const e of listEgress(domains)) {
     rows.push({ principal: `domain:${e.domain}`, tool: `egress:${e.endpoint}`, source: 'egress', domain: e.domain, compiledTo: 'OPA' });
   }
   return rows.sort((a, b) => a.principal.localeCompare(b.principal) || a.tool.localeCompare(b.tool));
@@ -167,6 +189,7 @@ export async function readOpaGrants(): Promise<Record<string, string[]> | null> 
 export function __resetPlane(): void {
   const pv = pvState();
   pv.accessGrants.length = 0;
-  pv.egressAllowlist.clear();
   pv.overrides.clear();
+  // Egress lives in Admin → Security's store; reset it there so tests start clean.
+  _resetSecurity();
 }

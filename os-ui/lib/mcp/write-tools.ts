@@ -81,7 +81,7 @@ import {
 import { reindexFile } from '@/lib/files/pipeline-server';
 import type { Sensitivity } from '@/lib/files/asset-schema';
 
-import { saveDashboard, getDashboard } from '@/lib/dashboards/store';
+import { saveDashboard } from '@/lib/dashboards/store';
 import { fromTiles, type ChartSpec } from '@/lib/dashboards/model';
 import { buildDashboard } from '@/lib/dashboards/build/server';
 import { claimsFromUser, delegate } from '@/lib/data/identity';
@@ -95,17 +95,19 @@ import {
   unarchiveBet,
   deleteBet,
   restoreBetVersion,
+  setBetWorkflow,
+  wireComponents,
+  unwireComponents,
   canEdit as canEditBet,
   type CreateBetInput,
 } from '@/lib/bigbets/store';
 import { getPillar } from '@/lib/strategy/pillars';
-import { deriveBetName, type BigBet, type ValueBasis } from '@/lib/bigbets/model';
-import { registerLinkedArtifact, type LinkedArtifactInput } from '@/lib/bigbets/sources';
+import { deriveBetName, INTERPLAY_RELATIONS, type BigBet, type InterplayRelation, type Tab as BetTab, type ValueBasis } from '@/lib/bigbets/model';
+import { resolveLinkedComponent } from '@/lib/bigbets/attach-server';
 
 import {
   createSystem,
   writeFile as writeAgentFile,
-  getSystem as getAgentSystem,
   getSystemForEdit,
   getSystemForRun,
 } from '@/lib/agents/store';
@@ -1291,37 +1293,11 @@ export const bigbetWriteTools: McpTool[] = [
       const bet = getBet(betId, p); // view guard (403/404)
       if (!canEditBet(bet, p)) fail('Not permitted to edit this bet', 403);
 
-      // Re-resolve the component through ITS OWN canView gate — a forged/unseen id
-      // is a typed not_found/forbidden BEFORE anything is attached.
-      let art: LinkedArtifactInput;
-      if (kind === 'dataset') {
-        const d = getDataset(id, p);
-        const anyBuilt = d.versions.bronze.built || d.versions.silver.built || d.versions.gold.built;
-        art = {
-          id: d.id, tab: 'data', title: d.name, domain: d.domain,
-          visibility: d.tier === 'dataset' ? 'personal' : d.tier === 'asset' ? 'shared' : 'marketplace',
-          // Data's ready verb is `certified` — a promoted asset/product has passed it.
-          lifecycle: d.tier !== 'dataset' ? 'certified' : anyBuilt ? 'building' : 'draft',
-        };
-      } else if (kind === 'dashboard') {
-        const d = getDashboard(id, p);
-        art = {
-          id: d.id, tab: 'dashboard', title: d.spec.name, domain: d.domain,
-          visibility: d.tier === 'personal' ? 'personal' : d.tier === 'domain' ? 'shared' : 'marketplace',
-          lifecycle: d.tier === 'personal' ? 'draft' : 'published',
-        };
-      } else {
-        const s = getAgentSystem(id, p);
-        art = {
-          id: s.id, tab: 'agent', title: s.name, domain: s.domain,
-          visibility: s.visibility === 'Personal' ? 'personal' : s.visibility === 'Shared' ? 'shared' : 'marketplace',
-          // Agents' ready verb is `live` — reached only by the governed promote.
-          lifecycle: s.visibility === 'Personal' ? 'draft' : 'live',
-        };
-      }
-      // Record the REFERENCE CARD in the bet's cross-tab registry (the per-tab
-      // store stays the source of truth), then link through the store's own door.
-      registerLinkedArtifact(art);
+      // Re-resolve the component through ITS OWN canView gate (shared helper) — a
+      // forged/unseen id is a typed not_found/forbidden BEFORE anything is attached.
+      // Map the legacy kind names to their tab: dataset→data, agent-system→agent.
+      const LEGACY_TAB: Record<string, BetTab> = { dataset: 'data', dashboard: 'dashboard', 'agent-system': 'agent' };
+      const art = await resolveLinkedComponent(LEGACY_TAB[kind], id, user);
       const plannedReady = str(args.plannedReady).trim() || new Date(Date.now() + 28 * 86400000).toISOString().slice(0, 10);
       const { ref } = addComponent(betId, { ...p, kind: 'human' }, {
         tab: art.tab,
@@ -1331,6 +1307,136 @@ export const bigbetWriteTools: McpTool[] = [
         weight: typeof args.weight === 'number' ? args.weight : undefined,
       });
       return { betId, refId: ref.id, artifactId: ref.artifactId, tab: ref.tab, title: art.title, plannedReady: ref.plannedReady, origin: ref.origin };
+    },
+  },
+  // ---- SOLUTION BLUEPRINT (the runtime interplay graph over a bet's components) --
+  // The anchor workflow + typed interplay edges the Design canvas renders. Distinct
+  // from the roadmap dependsOn (build order) — these describe how the FINISHED pieces
+  // work together at run time. All three are edit-gated in the store (the owner edits;
+  // cross-domain bets are Admin-only), no new role floor invented.
+  {
+    name: 'attach_bet_component',
+    tab: 'bigbets',
+    minRole: 'creator',
+    description:
+      'ATTACH any of the NINE kinds of real OS component to a Big Bet you may edit — a dataset, dashboard, agent system, knowledge workflow, metric, file, ML model, software app or connection. Superset of `attach_component` (which handles dataset/dashboard/agent only). The bet records a REFERENCE (id · planned-ready date), never a copy; progress is DERIVED from the component’s real lifecycle. Purpose: build out the solution in the Big Bets Design wizard — the anchor workflow (attach a `knowledge` kind, then set_bet_workflow), the solution components (agent/software/ml/dashboard) and the context (data/metric/knowledge/files/connection). Before: the component must exist — pick it from the matching list_* tool. After: wire_bet_components to draw the interplay, get_bet_solution to read the blueprint back. Governance: runs AS YOU — the bet edit gate is the store’s own, and EVERY component id is re-resolved through its OWN tab’s canView gate FIRST (an id you cannot see is a typed not_found/forbidden), so a forged id can never attach an unseen component. Idempotency: re-attaching the same artifact adds a second reference — check get_bet_solution first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        betId: { type: 'string', description: 'The Big Bet to attach to (from list_big_bets).' },
+        kind: { type: 'string', enum: ['data', 'metric', 'dashboard', 'software', 'agent', 'ml', 'knowledge', 'files', 'connection'], description: 'Which tab the component id lives in.' },
+        id: { type: 'string', description: 'The component id YOU can see (a dataset/dashboard/agent/knowledge/metric/file/model/app/connection id).' },
+        plannedReady: { type: 'string', description: 'Planned-ready date yyyy-mm-dd (default: +4 weeks).' },
+        start: { type: 'string', description: 'Optional start date yyyy-mm-dd (default: today).' },
+        weight: { type: 'number', description: 'Optional manual allocation weight 0–100.' },
+      },
+      required: ['betId', 'kind', 'id'],
+      examples: [
+        { betId: 'bet_ab12cd34', kind: 'knowledge', id: 'wf_ab12cd', plannedReady: '2026-09-01' },
+        { betId: 'bet_ab12cd34', kind: 'software', id: 'app_ab12cd' },
+      ],
+    },
+    call: async (user, args) => {
+      const betId = str(args.betId).trim();
+      if (!betId) fail('attach_bet_component needs a `betId` (from list_big_bets)', 400);
+      const id = str(args.id).trim();
+      if (!id) fail('attach_bet_component needs the component `id`', 400);
+      const kind = str(args.kind) as BetTab;
+      const KINDS: BetTab[] = ['data', 'metric', 'dashboard', 'software', 'agent', 'ml', 'knowledge', 'files', 'connection'];
+      if (!KINDS.includes(kind)) fail(`attach_bet_component needs \`kind\` = ${KINDS.join(' | ')}`, 400);
+      const p = P(user);
+      // Edit gate FIRST (the store's own rule) — no side effect on a forbidden bet.
+      const bet = getBet(betId, p); // view guard (403/404)
+      if (!canEditBet(bet, p)) fail('Not permitted to edit this bet', 403);
+      // Re-resolve through the component's OWN canView gate (all 9 kinds).
+      const art = await resolveLinkedComponent(kind, id, user);
+      const plannedReady = str(args.plannedReady).trim() || new Date(Date.now() + 28 * 86400000).toISOString().slice(0, 10);
+      const { ref } = addComponent(betId, { ...p, kind: 'human' }, {
+        tab: art.tab,
+        artifactId: art.id,
+        plannedReady,
+        start: str(args.start).trim() || undefined,
+        weight: typeof args.weight === 'number' ? args.weight : undefined,
+      });
+      return { betId, refId: ref.id, artifactId: ref.artifactId, tab: ref.tab, title: art.title, plannedReady: ref.plannedReady, origin: ref.origin };
+    },
+  },
+  {
+    name: 'set_bet_workflow',
+    tab: 'bigbets',
+    minRole: 'creator',
+    description:
+      'Set (or move, or clear) a Big Bet’s ANCHOR WORKFLOW — the single knowledge/workflow component that anchors the solution blueprint. Invariant enforced in the store: EXACTLY ONE component may be the anchor, and it MUST be a `knowledge` (workflow) component already attached to the bet (attach it with attach_bet_component kind:"knowledge" first). Pass its ComponentRef id OR the underlying workflow artifact id; pass none (or empty) to CLEAR the anchor. Purpose: step 1 of the Big Bets Design wizard. After: attach solution components + wire_bet_components. Governance: runs AS YOU through the SAME store edit gate as the Big Bets tab (the owner edits their bet; cross-domain bets are Admin-only) — an unseen id is a typed not_found/forbidden; a non-knowledge anchor is a typed bad_request.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        betId: { type: 'string', description: 'The Big Bet to set the anchor on (from list_big_bets).' },
+        refId: { type: 'string', description: 'The anchor’s ComponentRef id (from get_bet_solution) OR the workflow artifact id. Omit/empty to CLEAR the anchor.' },
+      },
+      required: ['betId'],
+      examples: [{ betId: 'bet_ab12cd34', refId: 'ref_ab12cd' }, { betId: 'bet_ab12cd34' }],
+    },
+    call: async (user, args) => {
+      const betId = str(args.betId).trim();
+      if (!betId) fail('set_bet_workflow needs a `betId` (from list_big_bets)', 400);
+      const refId = str(args.refId).trim() || undefined;
+      setBetWorkflow(betId, refId, P(user)); // store edit gate + single-anchor + knowledge invariant
+      return { betId, anchorCleared: !refId, ...(refId ? { anchorRefOrArtifact: refId } : {}) };
+    },
+  },
+  {
+    name: 'wire_bet_components',
+    tab: 'bigbets',
+    minRole: 'creator',
+    description:
+      'WIRE a typed interplay edge between two of a Big Bet’s attached components — how the FINISHED pieces work together at run time (a dashboard `consumes` a metric; an agent `triggers` a workflow; a model `feeds` a dashboard). Distinct from the roadmap’s build-order dependsOn — a separate graph with separate semantics. `from`/`to` are ComponentRef ids (from get_bet_solution), never artifact ids; `relation` ∈ consumes | produces | triggers | feeds | monitors. Purpose: step 2 of the Big Bets Design wizard — draw the solution interplay canvas. Governance: runs AS YOU through the SAME store edit gate as the Big Bets tab. Validation (in-store): both refs must be on THIS bet (else not_found), no self-edge (bad_request), a valid relation (bad_request) and no duplicate edge (same from/to/relation → conflict).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        betId: { type: 'string', description: 'The Big Bet whose components to wire (from list_big_bets).' },
+        from: { type: 'string', description: 'Source ComponentRef id (from get_bet_solution).' },
+        to: { type: 'string', description: 'Target ComponentRef id (from get_bet_solution).' },
+        relation: { type: 'string', enum: [...INTERPLAY_RELATIONS], description: 'The interplay relation.' },
+      },
+      required: ['betId', 'from', 'to', 'relation'],
+      examples: [{ betId: 'bet_ab12cd34', from: 'ref_data1', to: 'ref_agent1', relation: 'feeds' }],
+    },
+    call: async (user, args) => {
+      const betId = str(args.betId).trim();
+      if (!betId) fail('wire_bet_components needs a `betId` (from list_big_bets)', 400);
+      const from = str(args.from).trim();
+      const to = str(args.to).trim();
+      if (!from || !to) fail('wire_bet_components needs `from` and `to` ComponentRef ids (from get_bet_solution)', 400);
+      const relation = str(args.relation) as InterplayRelation;
+      if (!INTERPLAY_RELATIONS.includes(relation)) {
+        fail(`wire_bet_components needs \`relation\` = ${INTERPLAY_RELATIONS.join(' | ')}`, 400);
+      }
+      const { edge } = wireComponents(betId, from, to, relation, P(user)); // store edit gate + validation
+      return { betId, edgeId: edge.id, from: edge.from, to: edge.to, relation: edge.relation };
+    },
+  },
+  {
+    name: 'unwire_bet_components',
+    tab: 'bigbets',
+    minRole: 'creator',
+    description:
+      'REMOVE an interplay edge from a Big Bet’s solution blueprint by its edge id (from get_bet_solution). The inverse of wire_bet_components — the components themselves stay attached; only the interplay edge is dropped. Governance: runs AS YOU through the SAME store edit gate as the Big Bets tab (the owner edits their bet; cross-domain bets are Admin-only). Idempotency: an unknown edge id is a typed not_found.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        betId: { type: 'string', description: 'The Big Bet whose edge to remove (from list_big_bets).' },
+        edgeId: { type: 'string', description: 'The interplay edge id to remove (from get_bet_solution).' },
+      },
+      required: ['betId', 'edgeId'],
+      examples: [{ betId: 'bet_ab12cd34', edgeId: 'edge_ab12cd' }],
+    },
+    call: async (user, args) => {
+      const betId = str(args.betId).trim();
+      if (!betId) fail('unwire_bet_components needs a `betId` (from list_big_bets)', 400);
+      const edgeId = str(args.edgeId).trim();
+      if (!edgeId) fail('unwire_bet_components needs an `edgeId` (from get_bet_solution)', 400);
+      unwireComponents(betId, edgeId, P(user)); // store edit gate + 404 on unknown edge
+      return { betId, edgeId, removed: true };
     },
   },
   {

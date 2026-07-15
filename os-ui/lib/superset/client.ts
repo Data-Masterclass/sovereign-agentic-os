@@ -85,7 +85,12 @@ export async function resolveDashboardIdByTitle(
   });
   if (!listRes || !listRes.ok) throw new Error(`Superset dashboard lookup failed (${listRes?.status ?? 'unreachable'})`);
   const data = (await listRes.json().catch(() => ({}))) as { result?: { id: number; dashboard_title?: string }[] };
-  const match = (data.result ?? []).find((d) => d.dashboard_title === name) ?? data.result?.[0];
+  // EXACT title only. The query is a `contains` filter (Superset has no exact-match opr for
+  // this column), so it can return near-matches; binding to `result[0]` would silently embed
+  // the WRONG dashboard on a rename/typo (e.g. "Contribution" vs "Contrib. by region"). We
+  // resolve only on an exact title match and return null otherwise — an honest "not found"
+  // the caller surfaces, rather than a plausible-but-wrong embed.
+  const match = (data.result ?? []).find((d) => d.dashboard_title === name);
   return match ? match.id : null;
 }
 

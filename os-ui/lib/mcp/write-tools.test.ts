@@ -219,6 +219,69 @@ test('BIG BET lifecycle: a non-owner outsider cannot archive/delete someone else
   assert.ok(errDel.code === 'forbidden' || errDel.code === 'not_found', `delete is edit-gated too (got ${errDel.code})`);
 });
 
+// ---- BIG BET SOLUTION BLUEPRINT (Phase 3): anchor · attach · wire · read -----
+test('SOLUTION: attach_bet_component re-resolves canView, set_bet_workflow anchors, wire validates + dedupes, get_bet_solution reads back', async () => {
+  resetAll();
+  const pillarId = await seedPillar();
+  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Wire the solution', pillarId, targetValue: 100 }));
+
+  // Real components authored through their OWN governed stores (not forged ids).
+  const wf = payload<{ id: string }>(await call(builder, 'author_knowledge', { title: 'Retention playbook' }));
+  const sys = payload<{ id: string }>(await call(builder, 'create_agent_system', { name: 'Retention agent', template: 'analyze' }));
+
+  // attach_bet_component handles the extra kinds (knowledge, agent) — each re-resolved
+  // through its tab's canView gate before the reference is recorded.
+  const attWf = payload<{ refId: string; tab: string }>(await call(builder, 'attach_bet_component', { betId: bet.id, kind: 'knowledge', id: wf.id }));
+  const attSys = payload<{ refId: string; tab: string }>(await call(builder, 'attach_bet_component', { betId: bet.id, kind: 'agent', id: sys.id }));
+  assert.equal(attWf.tab, 'knowledge');
+  assert.equal(attSys.tab, 'agent');
+
+  // A forged/unseen id is a typed not_found/forbidden BEFORE anything attaches.
+  const forged = errorOf(await call(builder, 'attach_bet_component', { betId: bet.id, kind: 'knowledge', id: 'wf_does_not_exist' }));
+  assert.ok(forged.code === 'not_found' || forged.code === 'forbidden', `forged id refused (got ${forged.code})`);
+
+  // set_bet_workflow anchors the knowledge ref; a non-knowledge anchor is refused.
+  payload(await call(builder, 'set_bet_workflow', { betId: bet.id, refId: attWf.refId }));
+  const badAnchor = errorOf(await call(builder, 'set_bet_workflow', { betId: bet.id, refId: attSys.refId }));
+  assert.equal(badAnchor.code, 'bad_request', 'the anchor must be a knowledge component');
+
+  // wire_bet_components validates the relation + dedupes.
+  const badRel = errorOf(await call(builder, 'wire_bet_components', { betId: bet.id, from: attWf.refId, to: attSys.refId, relation: 'bogus' }));
+  assert.equal(badRel.code, 'bad_request', 'an invalid relation is refused');
+  const edge = payload<{ edgeId: string; relation: string }>(await call(builder, 'wire_bet_components', { betId: bet.id, from: attWf.refId, to: attSys.refId, relation: 'triggers' }));
+  assert.equal(edge.relation, 'triggers');
+  const dup = errorOf(await call(builder, 'wire_bet_components', { betId: bet.id, from: attWf.refId, to: attSys.refId, relation: 'triggers' }));
+  assert.equal(dup.code, 'conflict', 'a duplicate edge is refused');
+
+  // get_bet_solution reads the blueprint back — anchor, nodes (with roles), edges.
+  const sol = payload<{ anchor: { refId: string } | null; nodes: { refId: string; role: string }[]; edges: { edgeId: string }[] }>(
+    await call(builder, 'get_bet_solution', { betId: bet.id }),
+  );
+  assert.equal(sol.anchor?.refId, attWf.refId, 'the anchor is read back');
+  assert.equal(sol.nodes.find((n) => n.refId === attWf.refId)?.role, 'anchor-workflow');
+  assert.equal(sol.edges.length, 1, 'the one interplay edge is read back');
+
+  // unwire_bet_components removes it; an unknown edge id is a typed not_found.
+  payload(await call(builder, 'unwire_bet_components', { betId: bet.id, edgeId: edge.edgeId }));
+  const gone = errorOf(await call(builder, 'unwire_bet_components', { betId: bet.id, edgeId: edge.edgeId }));
+  assert.equal(gone.code, 'not_found', 'unwiring a missing edge is a typed not_found');
+});
+
+test('SOLUTION: a non-editor outsider is denied every blueprint write (edit-gate, typed forbidden)', async () => {
+  resetAll();
+  const pillarId = await seedPillar();
+  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Owned by Ben', pillarId }));
+  const wf = payload<{ id: string }>(await call(builder, 'author_knowledge', { title: 'Ben SOP' }));
+  const att = payload<{ refId: string }>(await call(builder, 'attach_bet_component', { betId: bet.id, kind: 'knowledge', id: wf.id }));
+
+  // A builder in another domain — not the owner, not an admin — cannot edit the blueprint.
+  const outsider: CurrentUser = { id: 'zed', name: 'Zed', domains: ['finance'], role: 'builder' };
+  const a = errorOf(await call(outsider, 'set_bet_workflow', { betId: bet.id, refId: att.refId }));
+  assert.ok(a.code === 'forbidden' || a.code === 'not_found', `set_bet_workflow is edit-gated (got ${a.code})`);
+  const b = errorOf(await call(outsider, 'attach_bet_component', { betId: bet.id, kind: 'knowledge', id: wf.id }));
+  assert.ok(b.code === 'forbidden' || b.code === 'not_found', `attach_bet_component is edit-gated (got ${b.code})`);
+});
+
 // ---- THE CREATOR LOCKDOWN: create yes, promote/publish NO --------------------
 test('LOCKDOWN: a creator may create but is denied every promote/publish (typed forbidden, not a crash)', async () => {
   resetAll();

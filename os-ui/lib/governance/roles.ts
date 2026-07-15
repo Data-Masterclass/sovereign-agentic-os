@@ -175,8 +175,10 @@ export function canManageRole(actor: Actor, targetRole: Role, domain: string): b
 }
 
 // ---- Domain-scoped USER ADMINISTRATION (the domain_admin's people powers) ----
-// Enforced SERVER-SIDE per call by /api/governance/users; kept here (pure) so the
-// scoping matrix is directly unit-testable.
+// The single user-admin surface is Admin → Users & Access
+// (/api/platform-admin/access). These pure predicates capture the domain_admin
+// scoping matrix (floor / subset / no-lateral / role ceiling) so it is directly
+// unit-testable and reusable by any user-admin path.
 
 /** Floor: user administration needs a Domain admin (in-domain) or the Admin. */
 export function canAdministerUsers(role: Role): boolean {
