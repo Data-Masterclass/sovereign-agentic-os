@@ -15,6 +15,24 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.1] — 2026-07-15
+
+Metrics-tab polish — two surgical fixes, no backend/chart change.
+
+### Fixed
+- **Newly-defined metric no longer shows "Cube failed".** During the ~5s window
+  after Define, the model-sync sidecar hasn't yet pushed the measure to Cube, so a
+  resolve returns "not found for path" — which `buildMetric` already fail-softs to
+  `pending: true`. But `BuildRowsView` ignored that flag and rendered a hard
+  `✗ Build failed` beneath the "saved, syncing" banner. It now shows `⟳ Build
+  syncing` and per-row `⟳ … syncing — resolves shortly` while pending, never a hard
+  ✗. The sync path itself was verified healthy end-to-end (sidecar → `.cube.yml` →
+  Cube `/meta` → governed `/load` 200); this was purely a mislabel.
+- **Metric tile domain chip no longer wraps across several lines.** The source-domain
+  chip had no `nowrap`, so a long domain name broke mid-word and cramped the tile.
+  It now stays on one line and ellipsizes (full name in the hover title), and tiles
+  are slightly wider. CSS-only, so every tab's domain chip benefits.
+
 ## [os-ui 0.5.0] — 2026-07-15
 
 Connectors deepened into real per-engine services, a real Science training runtime, and

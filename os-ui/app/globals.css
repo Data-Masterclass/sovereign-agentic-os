@@ -2450,8 +2450,21 @@ select:focus {
 
 .tile-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
   gap: 14px;
+}
+
+/* Source-domain chip on a tile: never wrap the domain name mid-word (it read as
+   several ragged lines); keep it to one line and ellipsize a long name — the full
+   name stays in the hover title. Bounds the tile-top right cluster so the metric
+   name keeps its room. */
+.domain-tag {
+  display: inline-block;
+  max-width: 148px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
 /* A dataset tile: a clickable card. Inherits .card visuals, drops the
