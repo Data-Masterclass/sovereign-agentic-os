@@ -176,7 +176,31 @@ export const databricksProvider: WarehouseProvider = {
   nativeInImage: true,
   capabilities: { federate: true, import: true },
   catalogProps: (source) => databricksProps(source as DatabricksDeltaConfig),
+  // Discovery is `SHOW TABLES FROM <catalog>.<schema>` in BOTH modes, but WHAT
+  // `<schema>` addresses differs: in the Thrift/Glue metastore mode the Trino catalog
+  // is the metastore and `<schema>` is a Hive-style database; Unity's native model is
+  // 3-LEVEL `catalog.schema.table`, so the Unity CATALOG is fixed by `unity.catalog.name`
+  // and `<schema>` is the Unity schema underneath it (the third level is the table).
   discoverTables: (source, schema) => showTablesQuery(source, schema),
+  // Databricks/Delta identifiers are backtick-quoted at the engine and case-preserving
+  // (Unity object names are stored as written; matching is exact/lower by convention).
+  identifierRules: { quote: '`', unquotedCase: 'preserve' },
+  // `show` in both modes, but Fabric-style honesty: Unity-as-metastore keys are
+  // UNVERIFIED on OSS Trino 476 (Starburst-only), so a live Unity SHOW may not resolve.
+  discoveryMode: 'show',
+  // Delta's nested types (STRUCT/ARRAY/MAP) have no faithful flat-Iceberg equivalent;
+  // cast to json on import. Scalars pass through (Delta ⊂ Iceberg for scalar types).
+  importTypeRules: [
+    { match: /^(struct|row)/, castTo: 'json', note: 'Delta STRUCT cast to Iceberg json (nested fields serialized)' },
+    { match: /^array/, castTo: 'json', note: 'Delta ARRAY cast to Iceberg json (not a typed Iceberg list)' },
+    { match: /^map/, castTo: 'json', note: 'Delta MAP cast to Iceberg json (key/value pairs serialized)' },
+  ],
+  notes: [
+    'TWO metastore modes: Unity Catalog (3-level catalog.schema.table) vs Thrift/Glue metastore (`delta_lake`, 2-level). PREFER the Thrift/Glue storage mode — Unity-as-metastore (`hive.metastore=unity`) is a Starburst-only feature and UNVERIFIED on OSS Trino 476.',
+    'Delta tables support TIME-TRAVEL (query an older snapshot) and VACUUM (purges old files past the retention window). Federating/importing reads the CURRENT snapshot; a table VACUUMed below its retention can break time-travel reads.',
+    'Reading the Delta files needs a STORAGE CREDENTIAL: either Unity vends short-lived creds, or the Trino pod identity (IRSA / Managed Identity) must have direct S3/ADLS read on the table location. No static storage keys are ever emitted.',
+    'Auth is a PAT / OAuth token, vault-referenced via ${ENV:DATABRICKS_TOKEN} (Unity mode); never inlined.',
+  ],
   credentialFields: [
     {
       key: 'host',

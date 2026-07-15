@@ -171,3 +171,25 @@ test('fabric openly declares live verification is required', () => {
     'must state the OneLake Trino path is undocumented',
   );
 });
+
+// ------------------------------------------------------- engine-specific ----------
+
+test('fabric discoveryMode is honestly "none" (no metastore) and it has no discoverTables', () => {
+  assert.equal(fabricProvider.discoveryMode, 'none');
+  assert.equal(fabricProvider.discoverTables, undefined);
+});
+
+test('fabric still maps Delta nested types to json for known-location imports', () => {
+  const rules = fabricProvider.importTypeRules!;
+  const hit = (t: string) => rules.find((r) => r.match.test(t));
+  assert.equal(hit('struct<a:int>')!.castTo, 'json');
+  assert.equal(hit('array<int>')!.castTo, 'json');
+  assert.equal(hit('map<string,int>')!.castTo, 'json');
+});
+
+test('fabric notes state EXPERIMENTAL + no-auto-discovery + ABFS addressing', () => {
+  const joined = (fabricProvider.notes ?? []).join(' ');
+  assert.ok(/EXPERIMENTAL/.test(joined), 'flags experimental');
+  assert.ok(/does NOT auto-enumerate/i.test(joined), 'flags no auto-discovery');
+  assert.ok(/abfss:\/\//.test(joined), 'documents the OneLake ABFS addressing');
+});

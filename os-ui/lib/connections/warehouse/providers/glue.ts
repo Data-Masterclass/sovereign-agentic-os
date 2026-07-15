@@ -73,6 +73,24 @@ export const glueProvider: WarehouseProvider = {
   capabilities: { federate: true, import: true },
   catalogProps: (source) => glueProps(source as GlueConfig & { catalog: string }),
   discoverTables: (source, schema) => showTablesQuery(source, schema),
+  // Glue/Athena identifiers are case-insensitive and stored LOWER-CASED; Trino/Athena
+  // quote with double-quotes. Matching is effectively lower-case.
+  identifierRules: { quote: '"', unquotedCase: 'lower' },
+  discoveryMode: 'show',
+  // Iceberg-format Glue tables carry native complex types straight into the OS Iceberg
+  // lakehouse (no cast). Hive-format tables' STRUCT/ARRAY/MAP have no flat equivalent →
+  // cast to json on import. One rule set covers both; scalars pass through either way.
+  importTypeRules: [
+    { match: /^(struct|row)/, castTo: 'json', note: 'Hive/Glue STRUCT cast to Iceberg json (Iceberg-format Glue tables keep it native; only Hive-format needs this)' },
+    { match: /^array/, castTo: 'json', note: 'Hive/Glue ARRAY cast to Iceberg json (Hive-format only; Iceberg-format keeps the typed list)' },
+    { match: /^map/, castTo: 'json', note: 'Hive/Glue MAP cast to Iceberg json (Hive-format only)' },
+  ],
+  notes: [
+    'A Glue database can hold BOTH Hive- and Iceberg-format tables. The connector is chosen per catalog: Iceberg-format → `iceberg` + `iceberg.catalog.type=glue`; Hive-format → `hive` + `hive.metastore=glue`. Point one catalog at the format that database predominantly holds.',
+    'Hive-format Glue tables rely on PARTITION metadata: partitions added out-of-band need `MSCK REPAIR TABLE` (or Athena partition projection) to be visible; Trino sees what the Glue catalog knows. Iceberg-format tables track partitions in their own metadata — no MSCK.',
+    'Auth is IRSA only (the pod IAM role) — provably NO static AWS keys in the props. Cross-account catalogs set `hive.metastore.glue.catalogid` (the owning account id).',
+    'COST: federated scans bill as Athena/S3 reads (bytes scanned on S3); Iceberg/partition pruning cuts it, Hive full-scans are the most expensive. Import a hot table to control cost.',
+  ],
   // IRSA only — the pod's IAM role is the credential. There are NO collected secrets.
   credentialFields: [
     {

@@ -18,6 +18,8 @@ import DomainTag from '@/components/DomainTag';
 import { useApi } from '@/lib/useApi';
 import { WarehouseBrowser } from '@/components/data/WarehouseImportPanel';
 import ConnectorWizard, { type WizardStart } from '@/components/connections/ConnectorWizard';
+import InstallationGuide from '@/components/connections/InstallationGuide';
+import { installGuideFor, type InstallGuide } from '@/lib/connections/install-guides';
 
 /**
  * Governed Connections surface — ONE scroll, no sub-tabs.
@@ -187,6 +189,9 @@ export default function GovernedConnections() {
     requestAnimationFrame(() => wizardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   }, []);
 
+  // The Supported Connector whose Installation Guide side-panel is open (null = none).
+  const [guide, setGuide] = useState<InstallGuide | null>(null);
+
   const warehouseMeta = data?.warehouse?.enabled ? data.warehouse : null;
   const canCreate = data?.canCreate ?? false;
   const canCreatePersonal = data?.canCreatePersonal ?? false;
@@ -296,36 +301,72 @@ export default function GovernedConnections() {
       </p>
       {(() => {
         if (!data) return null;
-        // Dynamic: one card per user-facing template the API returned, plus the warehouse
-        // template when the operator enabled external connectors. No hardcoded catalog.
-        const cards: { key: string; label: string; type: string; auth: string }[] = data.templates.map((t) => ({
-          key: t.key, label: t.label, type: t.type, auth: t.auth === 'oauth' ? 'personal OAuth' : 'service credentials',
+        // A gallery card. `guideKey` resolves its Installation Guide (a warehouse card
+        // uses its provider platform; a template card uses its template key). `start`
+        // is how Connect opens the shared wizard (a warehouse card pins the platform).
+        type Card = { key: string; guideKey: string; label: string; meta: string; blurb?: string; start: WizardStart };
+
+        // Dynamic: one card per user-facing template the API returned…
+        const cards: Card[] = data.templates.map((t) => ({
+          key: t.key,
+          guideKey: t.key,
+          label: t.label,
+          meta: `${t.type} · ${t.auth === 'oauth' ? 'personal OAuth' : 'service credentials'}`,
+          start: { mode: 'type', template: t.key },
         }));
-        if (warehouseMeta) cards.push({ key: 'warehouse', label: warehouseMeta.template.label, type: warehouseMeta.template.type, auth: 'service credentials · federated' });
+
+        // …plus ONE card PER warehouse provider (not a single generic warehouse card)
+        // when the operator enabled external connectors. Each Connect opens the wizard
+        // pre-set to that platform so it skips the generic platform-choice step.
+        if (warehouseMeta) {
+          for (const p of warehouseMeta.providers) {
+            const caps = [p.capabilities.federate ? 'federate' : null, p.capabilities.import ? 'import' : null]
+              .filter(Boolean).join(' · ');
+            cards.push({
+              key: `warehouse:${p.platform}`,
+              guideKey: p.platform,
+              label: p.label,
+              meta: `Warehouse · federated Trino catalog${caps ? ` · ${caps}` : ''}`,
+              blurb: 'Federate this lakehouse as one governed catalog — query live under OPA, then import tables as owned products.',
+              start: { mode: 'type', template: 'warehouse', presetPlatform: p.platform },
+            });
+          }
+        }
+
         if (cards.length === 0) return <div className="stub-page">No connector types available on this deployment.</div>;
         const canOpen = canCreate || canCreatePersonal;
         return (
           <div className="grid">
-            {cards.map((c) => (
-              <div className="card" key={c.key}>
-                <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ margin: 0 }}>{c.label}</h3>
-                  <span className="badge ok">available</span>
-                </div>
-                <div className="muted" style={{ marginTop: 8 }}>{c.type} · {c.auth}</div>
-                {canOpen ? (
-                  <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
-                    <button className="btn ghost" onClick={() => openWizard({ mode: 'type', template: c.key })}>Connect →</button>
+            {cards.map((c) => {
+              const g = installGuideFor(c.guideKey);
+              return (
+                <div className="card" key={c.key}>
+                  <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3 style={{ margin: 0 }}>{c.label}</h3>
+                    <span className="badge ok">available</span>
                   </div>
-                ) : null}
-              </div>
-            ))}
+                  <div className="muted" style={{ marginTop: 8 }}>{c.meta}</div>
+                  {c.blurb ? <p className="hint" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>{c.blurb}</p> : null}
+                  <div className="row" style={{ marginTop: 12, gap: 8, justifyContent: 'flex-end' }}>
+                    {g ? (
+                      <button className="btn ghost" onClick={() => setGuide(g)}>Installation Guide</button>
+                    ) : null}
+                    {canOpen ? (
+                      <button className="btn ghost" onClick={() => openWizard(c.start)}>Connect →</button>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         );
       })()}
 
       {/* ── 3. Outbound access (Builder/Admin only) ── */}
       {canCreate ? <EgressSection /> : null}
+
+      {/* Installation Guide side panel — opened from any Supported Connector card. */}
+      {guide ? <InstallationGuide guide={guide} onClose={() => setGuide(null)} /> : null}
 
     </ConfirmProvider>
   );

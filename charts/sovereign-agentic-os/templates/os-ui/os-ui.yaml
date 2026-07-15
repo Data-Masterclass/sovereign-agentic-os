@@ -54,6 +54,16 @@ rules:
     resources: ["configmaps", "secrets"]
     verbs: ["get", "list", "create", "patch", "update"]
   {{- end }}
+  {{- if .Values.ml.enabled }}
+  # Science training runtime (Science tab): the train route submits a per-model
+  # batch/v1 Job (lib/science/training.ts) as the os-ui ServiceAccount and polls it
+  # by name for completion. Least-privilege: namespaced Jobs get/list/create only —
+  # no delete, no pod exec — and gated on the same flag as the Science surface, so a
+  # deployment with ml OFF grants no batch access at all.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create"]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

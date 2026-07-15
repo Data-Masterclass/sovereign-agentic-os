@@ -157,11 +157,39 @@ test('delete removes a draft', () => {
   assert.ok(!groups.mine.some((w) => w.id === rec.id));
 });
 
-test('cannot delete a live workflow', () => {
+test('cannot delete a live workflow while it is unarchived (must archive first)', () => {
   __resetStore();
   const rec = createWorkflow(builder, { title: 'Published', domain: 'sales' });
   publishWorkflow(rec.id, dom);
-  assert.throws(() => deleteWorkflow(rec.id, builder), /unpublish/i);
+  assert.throws(() => deleteWorkflow(rec.id, builder), /archive/i);
+});
+
+test('archived-live delete regression: an ARCHIVED published workflow deletes from the LIST source-of-truth for its owner, is denied for a non-owner non-admin, and is then gone', () => {
+  // Reproduces the reported bug: a published (Shared/live) workflow could be
+  // archived but NEVER deleted — the guard blocked all `live` records — so the
+  // archived tile persisted forever. Delete must physically remove it from the
+  // authoritative list store (ks().workflows, surfaced by listWorkflows), not
+  // just soft-hide it.
+  __resetStore();
+  const rec = createWorkflow(builder, { title: 'Undeletable', domain: 'sales' });
+  publishWorkflow(rec.id, dom); // Personal draft → Shared LIVE
+  archiveWorkflow(rec.id, builder);
+
+  // Still present in the LIST (as archived), not yet gone.
+  assert.ok(
+    listWorkflows(builder, { includeArchived: true }).domain.some((w) => w.id === rec.id),
+    'archived-live workflow is still listed before delete',
+  );
+
+  // A non-owner non-admin from another domain cannot delete it.
+  assert.throws(() => deleteWorkflow(rec.id, outsider), /not permitted/i);
+
+  // The owner deletes the archived-live workflow — it is physically gone.
+  deleteWorkflow(rec.id, builder);
+  assert.throws(() => getWorkflow(rec.id, builder), /not found/i);
+  // Gone from the LIST source-of-truth in every scope, archived or not.
+  const all = listWorkflows(builder, { includeArchived: true });
+  assert.ok(![...all.mine, ...all.domain, ...all.marketplace].some((w) => w.id === rec.id));
 });
 
 test('getDomainKnowledge returns the empty domain-knowledge template (4 sections)', () => {

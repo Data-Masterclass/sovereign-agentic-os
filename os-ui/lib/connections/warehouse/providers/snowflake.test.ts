@@ -119,3 +119,44 @@ test('snowflake test probe is a cheap reachability SHOW SCHEMAS', () => {
     assert.equal(snowflakeProvider.testProbe.query(src()), 'SHOW SCHEMAS FROM sf_sales');
   }
 });
+
+// -------------------------------------------------- engine-specific: identifiers ----
+
+test('snowflake identifier rules: upper-cased unquoted, double-quote', () => {
+  assert.deepEqual(snowflakeProvider.identifierRules, { quote: '"', unquotedCase: 'upper' });
+});
+
+test('snowflake native listing is TERSE, scoped to the UPPER-CASED quoted database', () => {
+  assert.equal(snowflakeProvider.discoveryMode, 'terse');
+  assert.equal(
+    // lower-case input must survive Snowflake's unquoted-upper-casing
+    snowflakeProvider.nativeSchemaListing!(src({ database: 'analytics' } as Partial<WarehouseSource>)),
+    'SHOW TERSE SCHEMAS IN DATABASE "ANALYTICS"',
+  );
+});
+
+test('snowflake native listing rejects a missing database', () => {
+  assert.throws(
+    () => snowflakeProvider.nativeSchemaListing!(src({ database: '' } as Partial<WarehouseSource>)),
+    (e: unknown) => e instanceof WarehouseError && /database/.test((e as Error).message),
+  );
+});
+
+// -------------------------------------------------- engine-specific: type handling ----
+
+test('snowflake VARIANT/OBJECT/ARRAY map to json, GEOGRAPHY to varchar on import', () => {
+  const rules = snowflakeProvider.importTypeRules!;
+  const hit = (t: string) => rules.find((r) => r.match.test(t));
+  assert.equal(hit('variant')!.castTo, 'json');
+  assert.equal(hit('object')!.castTo, 'json');
+  assert.equal(hit('array')!.castTo, 'json');
+  assert.equal(hit('geography')!.castTo, 'varchar');
+  // a plain scalar has no rule → passes through unchanged
+  assert.equal(hit('number'), undefined);
+});
+
+test('snowflake notes call out unquoted upper-casing + warehouse credit cost', () => {
+  const joined = (snowflakeProvider.notes ?? []).join(' ');
+  assert.ok(/UPPER-CASED/.test(joined), 'flags identifier casing');
+  assert.ok(/credit|AUTO-RESUME/i.test(joined), 'flags warehouse cost');
+});

@@ -1,0 +1,44 @@
+{{- if and .Values.ml.enabled .Values.kserve.enabled }}
+{{- /*
+  Per-model InferenceServices (Layer 4 Science, Phase 2/3 — real training runtime).
+
+  For each entry in kserve.servedModels, render a CPU sklearn InferenceService that
+  serves the artifact the training runtime uploaded to s3://mlflow/models/<name>/
+  (lib/science/training.ts modelStorageUri). This is the DECLARATIVE half of the
+  per-model deploy: the os-ui train route creates the training Job at runtime; adding
+  a model here makes its served endpoint reproducible (the Northpeak seed / an
+  operator lists trained models). Mirrors the sampleModel InferenceService exactly
+  (RawDeployment, v2 protocol, the mlserver_sklearn runtime via modelClass), only
+  parameterized by name so /v2/models/<name>/infer works for each.
+
+  CPU-only by construction (kserve.resources) — GPU stays off for this first runtime.
+*/}}
+{{- $k := .Values.kserve }}
+{{- range $m := $k.servedModels }}
+---
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: {{ $m.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" $ "component" "kserve") | nindent 4 }}
+    # The kserve-mlserver ClusterServingRuntime templates MLSERVER_MODEL_IMPLEMENTATION
+    # from this label — without it the v2 runtime boots with an empty implementation.
+    modelClass: mlserver_sklearn.SKLearnModel
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+spec:
+  predictor:
+    serviceAccountName: {{ $k.serviceAccountName }}
+    model:
+      modelFormat:
+        name: {{ $m.format | default "sklearn" }}
+      protocolVersion: v2
+      # The training runtime uploads model.joblib + model-settings.json here.
+      storageUri: "s3://mlflow/models/{{ $m.name }}"
+      resources:
+        {{- toYaml $k.resources | nindent 8 }}
+{{- end }}
+{{- end }}

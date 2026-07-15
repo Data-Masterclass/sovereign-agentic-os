@@ -163,3 +163,26 @@ test('liveVerificationRequired flags the unverified Unity key names', () => {
   assert.ok(/unity/i.test(joined), 'mentions Unity');
   assert.ok(/476/.test(joined), 'flags the trino-476 key uncertainty');
 });
+
+// ------------------------------------------------------- engine-specific ----------
+
+test('databricks identifier rules: backtick-quoted, case-preserving', () => {
+  assert.deepEqual(databricksProvider.identifierRules, { quote: '`', unquotedCase: 'preserve' });
+  assert.equal(databricksProvider.discoveryMode, 'show');
+});
+
+test('databricks Delta STRUCT/ARRAY/MAP cast to json on import', () => {
+  const rules = databricksProvider.importTypeRules!;
+  const hit = (t: string) => rules.find((r) => r.match.test(t));
+  assert.equal(hit('struct<a:int>')!.castTo, 'json');
+  assert.equal(hit('array<int>')!.castTo, 'json');
+  assert.equal(hit('map<string,int>')!.castTo, 'json');
+  assert.equal(hit('bigint'), undefined);
+});
+
+test('databricks notes contrast Unity vs Thrift/Glue + Delta time-travel/VACUUM', () => {
+  const joined = (databricksProvider.notes ?? []).join(' ');
+  assert.ok(/Unity/.test(joined) && /Thrift\/Glue/.test(joined), 'contrasts the two metastore modes');
+  assert.ok(/TIME-TRAVEL/i.test(joined) && /VACUUM/i.test(joined), 'flags Delta time-travel/VACUUM');
+  assert.ok(/STORAGE CREDENTIAL/i.test(joined), 'flags the storage-credential requirement');
+});

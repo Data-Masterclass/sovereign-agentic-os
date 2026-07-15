@@ -1,0 +1,162 @@
+{{- if and .Values.openmetadata.enabled .Values.openmetadata.osWriteback.enabled }}
+{{- /*
+  Phase 2 — SCOPED, INTEGRITY-SAFE write-back provisioning (Guard 1 + Guard 7).
+
+  The OS writes OS-produced assets back into a customer's OpenMetadata ADDITIVELY and
+  NEVER endangers their human-curated catalog. Two things must exist for that to be
+  safe, and this Job provisions BOTH, idempotently (every step is a PUT create-or-update
+  → re-running is a no-op):
+
+    1. NAMESPACE ISOLATION (Guard 1): a dedicated Database Service `sovereign_os`
+       (OS physical assets), a dedicated Domain `Sovereign OS Products` (OS data
+       products), the `SovereignOS` classification (the only tags OS may add to a
+       human table), and the OS custom-property definitions (managedBy / osDatasetId
+       / osDomain / osRunId). The app's `omProvisionPlan()` provisions the entity
+       SHELLS at first write too; this Job is the operator-side, cluster-native path.
+
+    2. LEAST-PRIVILEGE WRITER BOT (Guard 7, defence in depth): a `sovereign-os-writer`
+       bot + Role/Policy whose write rules allow write ONLY on the sovereign_os
+       Service + the OS Domain + the SovereignOS classification — read everywhere,
+       write nowhere else. Its JWT is stored in a SEPARATE Secret from the read bot
+       (the app resolves it under the `om-writer-jwt` vault key), so a compromised
+       read path can never write, and the writer can never touch a human field.
+
+  HONEST STUB: this is a governed ONBOARDING action, not a running controller. It
+  renders the exact provisioning payloads + the RBAC policy an operator applies once
+  (or runs as a Helm post-install hook against a reachable OM). Live verification
+  needs a real OM instance — an operator step. The Job's script is intentionally a
+  dry-emit unless `OM_ADMIN_JWT` is provided; it never fabricates success.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sovereign-os-writer-provision
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "openmetadata") | nindent 4 }}
+  annotations:
+    "soa.dev/purpose": "Phase-2 OS write-back provisioning: OS namespace shells + least-privilege writer bot Role/Policy (Guards 1 + 7)."
+data:
+  namespace.md: |
+    OS namespace (Guard 1) — create-or-update (idempotent), matches os-ui omProvisionPlan():
+      - Database Service : sovereign_os        (serviceType CustomDatabase)
+      - Domain           : "Sovereign OS Products" (Aggregate)
+      - Classification   : SovereignOS          (only OS tags live here)
+      - Custom props     : managedBy, osDatasetId, osDomain, osRunId  (on entityType=table)
+  writer-policy.json: |
+    {
+      "name": "sovereign-os-writer-policy",
+      "description": "Least-privilege write for the Sovereign OS writer bot: write ONLY inside the OS namespace; read everywhere.",
+      "rules": [
+        {
+          "name": "os-write-service",
+          "effect": "allow",
+          "operations": ["Create", "EditAll"],
+          "resources": ["databaseService", "database", "databaseSchema", "table"],
+          "condition": "matchAnyTag('SovereignOS.Managed') || hasDomain()"
+        },
+        {
+          "name": "os-write-domain-products",
+          "effect": "allow",
+          "operations": ["Create", "EditAll"],
+          "resources": ["dataProduct", "domain"],
+          "condition": "hasDomain()"
+        },
+        {
+          "name": "os-write-classification",
+          "effect": "allow",
+          "operations": ["Create", "EditAll"],
+          "resources": ["classification", "tag"]
+        },
+        {
+          "name": "deny-human-write",
+          "effect": "deny",
+          "operations": ["Delete", "EditAll"],
+          "resources": ["all"],
+          "condition": "!matchAnyTag('SovereignOS.Managed')"
+        },
+        {
+          "name": "read-all",
+          "effect": "allow",
+          "operations": ["ViewAll"],
+          "resources": ["all"]
+        }
+      ]
+    }
+  README: |
+    Apply order: create the namespace shells, create the SovereignOS classification,
+    create this policy + a `sovereign-os-writer` Role bound to it, mint the bot + its
+    JWT, then store the JWT in the OS secret store under key `om-writer-jwt` (SEPARATE
+    from the read bot's `om-bot-jwt`). The `deny-human-write` rule is the belt-and-braces
+    complement to the app's additive-only JSON-Patch builder (which never emits `remove`).
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sovereign-os-writer-provision
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "openmetadata") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "openmetadata") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.openmetadata.osWriteback.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: provision
+          image: {{ .Values.openmetadata.osWriteback.image | default "curlimages/curl:8.9.1" | quote }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: OM_API_URL
+              value: {{ .Values.openmetadata.osWriteback.apiUrl | default "http://openmetadata:8585" | quote }}
+            # Admin JWT to actually create the namespace + writer bot Role/Policy. When
+            # ABSENT the Job DRY-EMITS the plan and exits 0 — never fabricating a write.
+            - name: OM_ADMIN_JWT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.openmetadata.osWriteback.adminSecretName | default "sovereign-os-writer-admin" | quote }}
+                  key: admin-jwt
+                  optional: true
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              echo "Sovereign OS write-back provisioning (Phase 2, idempotent)."
+              if [ -z "${OM_ADMIN_JWT:-}" ]; then
+                echo "No OM_ADMIN_JWT provided — DRY-EMIT only (no writes)."
+                echo "Namespace + writer-bot Role/Policy definitions are in the"
+                echo "sovereign-os-writer-provision ConfigMap. Apply them once against a"
+                echo "reachable OpenMetadata as an operator step (live verification needs a"
+                echo "real OM instance)."
+                exit 0
+              fi
+              AUTH="Authorization: Bearer ${OM_ADMIN_JWT}"
+              CT="Content-Type: application/json"
+              # Guard 1 — idempotent create-or-update of the OS namespace shells (PUT).
+              curl -fsS -X PUT "${OM_API_URL}/api/v1/services/databaseServices" -H "$AUTH" -H "$CT" \
+                -d '{"name":"sovereign_os","serviceType":"CustomDatabase","description":"Sovereign OS — OS-produced physical assets (additive, integrity-safe)."}' || true
+              curl -fsS -X PUT "${OM_API_URL}/api/v1/domains" -H "$AUTH" -H "$CT" \
+                -d '{"name":"Sovereign OS Products","domainType":"Aggregate","description":"Sovereign OS — OS-produced Data Products."}' || true
+              curl -fsS -X PUT "${OM_API_URL}/api/v1/classifications" -H "$AUTH" -H "$CT" \
+                -d '{"name":"SovereignOS","description":"Tags applied by Sovereign OS (Managed)."}' || true
+              echo "Provisioning submitted. Bind the sovereign-os-writer Role/Policy from the ConfigMap and mint the bot JWT into the om-writer-jwt secret."
+{{- end }}

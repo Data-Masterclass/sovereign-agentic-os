@@ -74,6 +74,14 @@ export type EffectDeps = {
   promoteArtifact?: LadderApplier;
   /** App promote/certify (Personal→Shared→Certified single-step advance). */
   promoteApp?: LadderApplier;
+  /** Execute an APPROVED OpenMetadata write-back (apply_om_sync). Resolves the
+   *  connection + dataset AS the approver (DLS), recomputes the plan server-side
+   *  and writes through the least-privilege writer bot. Injected by the route so
+   *  this module (and its tests) stay free of the server-only OM bridge. */
+  applyOmSync?: (
+    payload: { connId: string; datasetId: string; humanServiceFqn?: string | null },
+    approver: { id: string; role: Principal['role']; domains: string[] },
+  ) => Promise<{ ok: boolean; summary: string; live: boolean }>;
 };
 
 /** The model-service Actor for a human approver (agents can never decide — the
@@ -284,10 +292,40 @@ export async function applyEffect(a: Approval, approver: EffectApprover, deps: E
         },
       };
     }
+    case 'connection_write': {
+      // OpenMetadata write-back (apply_om_sync): EXECUTE the held write on approval.
+      // The plan is recomputed server-side from the datasetId (the held payload can
+      // never smuggle a wider write). The injected bridge resolves conn + dataset AS
+      // the approver (DLS) and writes through the least-privilege writer bot.
+      if (a.tool === 'apply_om_sync' && deps.applyOmSync) {
+        const connId = s(p.connId);
+        const datasetId = s(p.datasetId);
+        const approverP = approverPrincipal(approver, 'builder', a.domain);
+        const out = await deps.applyOmSync(
+          { connId, datasetId, humanServiceFqn: p.humanServiceFqn as string | null | undefined },
+          approverP,
+        );
+        return {
+          ok: out.ok,
+          applied: out.ok
+            ? `OpenMetadata write-back applied: ${out.summary}`
+            : `OpenMetadata write-back did not complete: ${out.summary}`,
+          live: out.live,
+          audit: {
+            action: 'approve',
+            subject: a.tool,
+            reason: `OpenMetadata sync approved by ${who}`,
+            detail: { kind: a.kind, connId, datasetId, agent: a.agent },
+          },
+        };
+      }
+      // Fall through: other connection_write kinds (legacy agent write-backs) are
+      // cleared below alongside knowledge_certify.
+    }
+    // eslint-disable-next-line no-fallthrough
     // Legacy agent write-backs — consolidated here for the control plane. The
     // rich apply (CRM patch / curate fact) stays in the Agents route; here we
     // record that the held action was cleared.
-    case 'connection_write':
     case 'knowledge_certify':
     default: {
       return {

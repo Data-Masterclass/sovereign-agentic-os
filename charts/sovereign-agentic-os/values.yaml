@@ -1540,6 +1540,20 @@ marts:
 # -----------------------------------------------------------------------------
 openmetadata:
   enabled: true
+  # Phase 2 — scoped, integrity-safe write-back of OS-produced assets into a
+  # customer's existing OpenMetadata. Default OFF (matches OPENMETADATA_CONNECT_ENABLED
+  # on the app). When enabled, a post-install Job provisions the dedicated OS namespace
+  # (Service sovereign_os + Domain "Sovereign OS Products" + SovereignOS classification +
+  # custom props) and renders the least-privilege sovereign-os-writer Role/Policy (write
+  # ONLY inside the OS namespace). Idempotent; dry-emits unless an OM admin JWT is wired.
+  osWriteback:
+    enabled: false
+    apiUrl: "http://openmetadata:8585"
+    image: "curlimages/curl:8.9.1"
+    # Optional Secret holding the OM ADMIN jwt (key: admin-jwt) used ONCE to create the
+    # namespace + writer bot Role/Policy. Absent → the Job dry-emits (no writes).
+    adminSecretName: "sovereign-os-writer-admin"
+    nodeSelector: {}
   replicaCount: 1
   openmetadata:
     config:
@@ -2676,6 +2690,33 @@ kserve:
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "1", memory: 1Gi }
+  # Per-model InferenceServices the OS deploys AFTER training (Phase 2/3). Each
+  # entry renders a CPU sklearn InferenceService serving s3://mlflow/models/<model>/
+  # — the exact path lib/science/training.ts uploads the trained artifact to. The
+  # os-ui train route submits the training Job; listing a model here makes its
+  # served endpoint declarative (GitOps-friendly). Empty by default (a fresh tenant
+  # trains + deploys through the UI); the Northpeak seed / an operator adds entries.
+  servedModels: []
+    # - name: lead_scoring            # == ServiceModel.model (KServe IS name + /v2/models path)
+    #   format: sklearn
+
+# -----------------------------------------------------------------------------
+# Science TRAINING RUNTIME (Layer 4) — a per-model batch/v1 Job (submitted by the
+# os-ui train route via the in-cluster k8s API) trains a small CPU sklearn model
+# from a governed Gold product THROUGH Trino (least-privilege read principal), logs
+# to MLflow and uploads the artifact to s3://mlflow/models/<model>/. This block only
+# holds the trainer IMAGE + the read principal; the Job is not a chart object (it is
+# created per-train at runtime). CPU-only; no GPU. See images/ml-trainer/.
+# -----------------------------------------------------------------------------
+mlTrainer:
+  image:
+    repository: sovereign-os/ml-trainer   # built locally (linux/amd64), loaded into kind
+    tag: "0.1.0"
+  # The LEAST-PRIVILEGE Trino principal the trainer reads Gold as (BI/science read,
+  # NOT a write role). The Trino->OPA row/column plugin enforces its entitlements.
+  trino:
+    user: science-reader
+    catalog: iceberg
 
 # -----------------------------------------------------------------------------
 # ML agent (LangGraph) — drives features -> train+track -> deploy from plain

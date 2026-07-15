@@ -374,6 +374,23 @@ export const config = {
   featureformUrl: base(env('FEATUREFORM_URL', 'http://featureform:7878')),
   kserveUrl: base(env('KSERVE_URL', 'http://kserve:80')),
 
+  // ---- Science TRAINING RUNTIME. A per-model batch/v1 Job (lib/science/training.ts)
+  // trains a small CPU sklearn model from the governed Gold product THROUGH Trino
+  // (a read-only BI/science principal), logs to MLflow and uploads the artifact to
+  // s3://mlflow/models/<model>/ for a per-model KServe InferenceService. These fill
+  // the injected TrainingRuntime; the AWS creds are pulled from the named Secret by
+  // the job (never inlined). Chart-set from the same values the seed hook uses. ---
+  mlTrainerImage: env('ML_TRAINER_IMAGE', 'sovereign-os/ml-trainer:0.1.0'),
+  awsCliImage: env('AWS_CLI_IMAGE', 'amazon/aws-cli:2.31.13'),
+  s3SecretName: env('S3_SECRET_NAME', 'object-storage-credentials'),
+  // (s3Region + s3Endpoint are defined above — reused by the trainer runtime.)
+  // The trainer reads Gold via the governed query engine (least-privilege read
+  // principal — the SAME Trino/OPA path the `query` tool uses, never a write role).
+  trinoHost: env('TRINO_HOST', 'trino'),
+  trinoPort: Number(env('TRINO_PORT', '8080')),
+  trinoReadUser: env('TRINO_SCIENCE_USER', 'science-reader'),
+  trinoCatalog: env('TRINO_CATALOG', 'iceberg'),
+
   // ---- External-warehouse connectors (Phase 1, opt-in). GATED OFF by default:
   // federating an external lakehouse (AWS Glue today) as a governed Trino catalog
   // is code-complete + unit-tested but NOT yet validated against a live source, so

@@ -237,6 +237,81 @@ export function createModel(input: CreateModelInput, actor: Actor): ServiceModel
   return upsertModel(m);
 }
 
+// ------------------------------------------------------------ train transitions ---
+
+/**
+ * A model-service can only be TRAINED by its owner (or an in-domain admin) — the
+ * same edit-scope gate archive/delete use, plus the human invariant. Reused by the
+ * train route before it submits the (least-privilege, run-as-user) training Job.
+ */
+export function assertCanTrain(model: string, actor: Actor): ServiceModel {
+  const m = getModel(model);
+  if (!m) throw withStatus(new Error(`unknown model ${model}`), 404);
+  assertHuman(actor, 'train a model');
+  requireEditScope(actor, m, 'train');
+  if (!m.spec) throw withStatus(new Error('This model has no spec to train from — define it first'), 400);
+  return m;
+}
+
+/**
+ * Flip a model draft→training and stamp the submitted run handle. Guarded so a
+ * second submit while a run is in flight is a typed 409 (never two Jobs racing the
+ * same artifact). Returns the updated model.
+ */
+export function startTraining(model: string, actor: Actor, run: { jobName: string; namespace: string }): ServiceModel {
+  const m = assertCanTrain(model, actor);
+  if (m.buildState === 'training') throw withStatus(new Error('A training run is already in flight for this model'), 409);
+  m.buildState = 'training';
+  m.trainingJob = run.jobName;
+  m.trainingNamespace = run.namespace;
+  m.updatedAt = new Date().toISOString();
+  store().set(m.model, m);
+  return m;
+}
+
+/**
+ * Complete a training run: training→trained, register the new version and record
+ * the run's metrics (from MLflow if the route resolved them; a placeholder value
+ * otherwise so the version is honest about being untracked). Edit-scoped + human.
+ */
+export function completeTraining(
+  model: string,
+  actor: Actor,
+  result: { runId: string; metric?: number; metricName?: string },
+): ServiceModel {
+  const m = getModel(model);
+  if (!m) throw withStatus(new Error(`unknown model ${model}`), 404);
+  assertHuman(actor, 'complete training');
+  requireEditScope(actor, m, 'train');
+  const version = `v${m.versions.length + 1}`;
+  const metricName = result.metricName ?? m.spec?.optimizeMetric ?? 'metric';
+  const value = typeof result.metric === 'number' ? result.metric : 0;
+  m.versions.push({ version, stage: 'Staging', auc: value, certified: false, runId: result.runId });
+  m.buildState = 'trained';
+  m.mlflowRunId = result.runId;
+  m.metrics = { primary: value, primaryMetric: metricName };
+  m.trainingJob = undefined;
+  m.trainingNamespace = undefined;
+  m.updatedAt = new Date().toISOString();
+  store().set(m.model, m);
+  return m;
+}
+
+/** Mark a training run failed (training→draft) so the owner can fix the spec + retry. */
+export function failTraining(model: string, actor: Actor, reason: string): ServiceModel {
+  const m = getModel(model);
+  if (!m) throw withStatus(new Error(`unknown model ${model}`), 404);
+  assertHuman(actor, 'fail training');
+  requireEditScope(actor, m, 'train');
+  m.buildState = 'draft';
+  m.trainingJob = undefined;
+  m.trainingNamespace = undefined;
+  m.lastTrainingError = reason;
+  m.updatedAt = new Date().toISOString();
+  store().set(m.model, m);
+  return m;
+}
+
 // --------------------------------------------------- The policy compiler (mirror) ---
 
 /**

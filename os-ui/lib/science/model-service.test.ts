@@ -21,6 +21,10 @@ import {
   createModel,
   ensureChurnSeed,
   churnSeedModel,
+  assertCanTrain,
+  startTraining,
+  completeTraining,
+  failTraining,
 } from './model-service.ts';
 import {
   proposePlan,
@@ -387,4 +391,64 @@ test('churnSeedModel is a self-consistent Personal-tier template (walkable ladde
   assert.equal(m.tier, 'Personal'); // owner-only start → the whole ladder is walkable
   assert.equal(nextTier(m.tier), 'Domain');
   assert.equal(compilePredictPolicy(m).allowedDomains.length, 0); // Personal = owner only
+});
+
+// ------------------------------------------------------------ train transitions ---
+
+const owner = (): Actor => ({ id: 'sara', role: 'user', domains: ['sales'], isAgent: false });
+
+test('startTraining flips draft→training and stamps the run handle (owner-scoped)', () => {
+  _resetModels();
+  createModel({ name: 'Lead scoring', spec: spec() }, owner());
+  const m = startTraining('lead_scoring', owner(), { jobName: 'train-lead-scoring-x', namespace: 'agentic-os' });
+  assert.equal(m.buildState, 'training');
+  assert.equal(m.trainingJob, 'train-lead-scoring-x');
+  assert.equal(m.trainingNamespace, 'agentic-os');
+});
+
+test('startTraining is a typed 409 while a run is already in flight', () => {
+  _resetModels();
+  createModel({ name: 'Lead scoring', spec: spec() }, owner());
+  startTraining('lead_scoring', owner(), { jobName: 'j1', namespace: 'ns' });
+  assert.throws(
+    () => startTraining('lead_scoring', owner(), { jobName: 'j2', namespace: 'ns' }),
+    (e: any) => e.status === 409,
+  );
+});
+
+test('assertCanTrain rejects a non-owner, an agent, and a specless model', () => {
+  _resetModels();
+  createModel({ name: 'Lead scoring', spec: spec() }, owner());
+  // A different user in the same domain but NOT owner/admin cannot train.
+  assert.throws(
+    () => assertCanTrain('lead_scoring', { id: 'other', role: 'user', domains: ['sales'], isAgent: false }),
+    /Only the owner/i,
+  );
+  // An agent can never drive training.
+  assert.throws(() => assertCanTrain('lead_scoring', agentActor('sales')), /agent cannot/i);
+});
+
+test('completeTraining registers a Staging version + metric and lands trained', () => {
+  _resetModels();
+  createModel({ name: 'Lead scoring', spec: spec() }, owner());
+  startTraining('lead_scoring', owner(), { jobName: 'j', namespace: 'ns' });
+  const m = completeTraining('lead_scoring', owner(), { runId: 'mlf-run-1', metric: 0.83, metricName: 'auc' });
+  assert.equal(m.buildState, 'trained');
+  assert.equal(m.versions.length, 1);
+  assert.equal(m.versions[0].version, 'v1');
+  assert.equal(m.versions[0].stage, 'Staging');
+  assert.equal(m.versions[0].certified, false);
+  assert.equal(m.metrics?.primary, 0.83);
+  assert.equal(m.mlflowRunId, 'mlf-run-1');
+  assert.equal(m.trainingJob, undefined); // handle cleared on completion
+});
+
+test('failTraining resets training→draft and records the reason', () => {
+  _resetModels();
+  createModel({ name: 'Lead scoring', spec: spec() }, owner());
+  startTraining('lead_scoring', owner(), { jobName: 'j', namespace: 'ns' });
+  const m = failTraining('lead_scoring', owner(), 'BackoffLimitExceeded');
+  assert.equal(m.buildState, 'draft');
+  assert.equal(m.lastTrainingError, 'BackoffLimitExceeded');
+  assert.equal(m.trainingJob, undefined);
 });

@@ -139,6 +139,12 @@ export type ServiceModel = {
   mlflowRunId?: string;
   /** The KServe InferenceService name backing `predict` (defaults to `model`). */
   kserveService?: string;
+  /** The in-flight training Job name (set while `buildState==='training'`). */
+  trainingJob?: string;
+  /** The namespace that training Job runs in (for the poll path). */
+  trainingNamespace?: string;
+  /** The last training failure reason (set on failTraining; shown in the builder). */
+  lastTrainingError?: string;
   /** ISO timestamps (creation / last mutation). */
   createdAt?: string;
   updatedAt?: string;

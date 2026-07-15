@@ -406,11 +406,43 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
     endpointHint: 'https://airflow.example.com',
     secretKey: 'airflow-secret',
     tools: [
+      // Observe (Read — side-effect-free, auto-allowed).
       { name: 'list_dags', description: 'List DAGs in the Airflow instance (read).', write: false, mode: 'Read' },
       { name: 'get_dag_run', description: 'Read one DAG run by dag id + run id (read).', write: false, mode: 'Read' },
+      { name: 'list_dag_runs', description: 'List a DAG’s run history, optionally filtered by state (read).', write: false, mode: 'Read' },
+      { name: 'get_task_instances', description: 'Task-level status of one run — which tasks ran/failed (read).', write: false, mode: 'Read' },
+      { name: 'get_task_logs', description: 'Fetch a task attempt’s log text, truncated for output (read).', write: false, mode: 'Read' },
+      // Retrieve (Read). XCom holds SMALL return values/pointers, not datasets — large
+      // outputs land in a warehouse the OS reads via its warehouse connectors.
+      { name: 'get_xcom', description: 'Read a task’s XCom entry (small return value / pointer) (read).', write: false, mode: 'Read' },
+      // Data-aware scheduling (Read). v2 "assets" ↔ v1 "datasets".
+      { name: 'list_datasets', description: 'List data-driven assets/datasets (read).', write: false, mode: 'Read' },
+      { name: 'get_dataset_events', description: 'List asset/dataset update events (read).', write: false, mode: 'Read' },
+      // Control (Write-approval — real side effects, held for Governance; honor allowlist).
       {
         name: 'trigger_dag',
         description: 'Trigger a DAG run (write — a real side effect).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'DAGs on this Airflow instance', rateLimitPerMin: 10 },
+      },
+      {
+        name: 'pause_dag',
+        description: 'Pause a DAG so it stops scheduling (write — a real side effect).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'DAGs on this Airflow instance', rateLimitPerMin: 10 },
+      },
+      {
+        name: 'unpause_dag',
+        description: 'Unpause a DAG so it resumes scheduling (write — a real side effect).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'DAGs on this Airflow instance', rateLimitPerMin: 10 },
+      },
+      {
+        name: 'clear_task',
+        description: 'Clear (retry/rerun) task instances of a run (write — a real side effect).',
         write: true,
         mode: 'Write-approval',
         limits: { dataScope: 'DAGs on this Airflow instance', rateLimitPerMin: 10 },

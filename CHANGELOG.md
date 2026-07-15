@@ -15,6 +15,29 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.0] — 2026-07-15
+
+Connectors deepened into real per-engine services, a real Science training runtime, and
+OpenMetadata write-back. `tsc` clean; **2336 tests pass**. Pieces needing a live source /
+cloud creds are labeled honestly, not faked.
+
+### Feature — real per-engine warehouse connectors (not a generic template)
+- Each warehouse provider is now genuinely engine-specific: **identifier casing/quoting** (Snowflake upper-folds + quotes; BigQuery/Databricks/Fabric preserve; Glue lower), **native discovery forms** (Snowflake `SHOW TERSE SCHEMAS IN DATABASE`, Fabric honestly *none* → operator-configured OneLake locations), **engine-aware import type-casts** (VARIANT/STRUCT/ARRAY/MAP/GEOGRAPHY → sane Iceberg types via `buildTypedImportCtas`, with lossy-cast warnings), and real **guardrail notes** (BigQuery bytes-scanned billing; Databricks Unity-is-Starburst-only → prefer Thrift/Glue; Glue IRSA/partition-projection; Fabric experimental).
+- **Connections UI**: the single "External data warehouse" card is now **five real cards** — Snowflake · BigQuery · Databricks/Delta · AWS Glue/Athena · Microsoft Fabric/OneLake (experimental) — each Connect pre-set to its platform. **Every** connector (warehouses + Drive/OneDrive/Notion/Airflow/OpenMetadata) now has an **Installation Guide** button (prerequisites · steps · what the OS does).
+
+### Feature — Airflow deepened (operate · observe · retrieve)
+- From 3 tools to **12**: `list_dag_runs`, `get_task_instances`, `get_task_logs`, `get_xcom`, `list_datasets`/`get_dataset_events` (Read); `pause_dag`/`unpause_dag`/`clear_task` (Write-approval, honoring the DAG allowlist); plus the existing list/trigger/get-run. v2-first with v1 fallback. (Airflow's REST API operates *existing* DAGs — it cannot author DAGs; large outputs land in a warehouse the OS reads via its connectors, not XCom.)
+
+### Feature — Science training runtime (Phase 2/3)
+- A real, governed **on-platform training Job** (`images/ml-trainer` + a `batch/v1` Job builder + submit/poll state machine): ＋New model → Define → **▶Train** trains sklearn from a governed **Gold** product (read as a least-privilege Trino principal), MLflow-tracks, uploads a KServe-servable artifact, and a per-model InferenceService serves it. The os-ui RBAC now permits `batch/jobs` (gated on `ml.enabled`). Live train E2E needs a real Gold product + the deployed job (a cluster step); the code + chart are complete and unit-tested.
+
+### Feature — OpenMetadata Phase-2: integrity-safe write-back (flag-gated off)
+- Scoped **additive** write of OS-produced assets into a customer's existing OM, with all seven integrity guards enforced in code: namespace isolation (`sovereign_os` service + OS domain), **additive JSON-Patch only** (no `remove` is even representable in the type), `managedBy` markers, idempotency, optimistic-concurrency **yield** on a human edit, **preview-diff before write**, and an OM-side least-privilege writer bot. `preview_om_sync` (read) + `apply_om_sync` (**held for approval**, executed via the governance effect). Live verification needs a real OM instance.
+
+### Fixes
+- **Dataset Restore** now works from the detail view (the GET route wasn't returning the record-level `archived` flag, so it offered Archive instead of Restore/Delete).
+- **Knowledge delete** genuinely fixed — the real cause was `deleteWorkflow` hard-blocking *any* published (`live`/Shared) workflow ("unpublish first", but there's no unpublish), so shared workflows could be archived but never deleted; now archive-first then delete regardless of tier, purging all three stores + the search index.
+
 ## [os-ui 0.4.0] — 2026-07-15
 
 Integration + honesty release. `tsc` clean; **2262 tests pass**. Several features ship as

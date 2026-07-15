@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
-import { getDataset, archiveDataset, unarchiveDataset, deleteDataset } from '@/lib/data/store';
+import { getDataset, isDatasetArchived, archiveDataset, unarchiveDataset, deleteDataset } from '@/lib/data/store';
 import { dropPhysicalTables } from '@/lib/data/physical-delete';
 import { executeRun } from '@/lib/infra/governed';
 import { stepperStages } from '@/lib/data/panels';
@@ -16,7 +16,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     const user = await requirePrincipal();
     const { id } = await ctx.params;
     const dataset = getDataset(id, user);
-    return NextResponse.json({ dataset, stages: stepperStages(dataset) });
+    // `archived` is a record-level flag (not in the yaml-derived Dataset), so fold it
+    // in here — the detail view needs it to offer Restore instead of Archive.
+    const archived = isDatasetArchived(id, user);
+    return NextResponse.json({ dataset: { ...dataset, archived }, stages: stepperStages(dataset) });
   } catch (e) {
     return errorResponse(e);
   }

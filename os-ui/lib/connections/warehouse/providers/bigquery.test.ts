@@ -93,3 +93,28 @@ test('bigquery throws WarehouseError on missing projectId', () => {
       e instanceof WarehouseError && /projectId/.test((e as Error).message),
   );
 });
+
+// ------------------------------------------------------- engine-specific ----------
+
+test('bigquery identifier rules: backtick-quoted, case-preserving', () => {
+  assert.deepEqual(bigqueryProvider.identifierRules, { quote: '`', unquotedCase: 'preserve' });
+  assert.equal(bigqueryProvider.discoveryMode, 'show');
+});
+
+test('bigquery STRUCT/ARRAY → json, GEOGRAPHY → varchar on import', () => {
+  const rules = bigqueryProvider.importTypeRules!;
+  const hit = (t: string) => rules.find((r) => r.match.test(t));
+  assert.equal(hit('struct<a int64>')!.castTo, 'json');
+  assert.equal(hit('array<string>')!.castTo, 'json');
+  assert.equal(hit('geography')!.castTo, 'varchar');
+  // scalars have no rule → pass through
+  assert.equal(hit('int64'), undefined);
+  assert.equal(hit('numeric'), undefined);
+});
+
+test('bigquery notes flag project.dataset.table addressing + bytes-scanned cost', () => {
+  const joined = (bigqueryProvider.notes ?? []).join(' ');
+  assert.ok(/project\.dataset\.table/.test(joined), 'flags the addressing model');
+  assert.ok(/BYTES SCANNED/i.test(joined), 'flags the bytes-scanned billing');
+  assert.ok(/cross-project/i.test(joined), 'flags no cross-project schema listing');
+});

@@ -63,6 +63,40 @@ test('list_dags is a Read — auto-allowed (it reaches execution, honest reason 
   assert.equal(res.reason, 'unreachable');
 });
 
+test('pause_dag / unpause_dag / clear_task are all HELD for approval (never fire)', async () => {
+  __resetConnections();
+  const c = await makeAirflow();
+  for (const call of [
+    { tool: 'pause_dag', args: { dagId: 'etl' } },
+    { tool: 'unpause_dag', args: { dagId: 'etl' } },
+    { tool: 'clear_task', args: { dagId: 'etl', runId: 'r1' } },
+  ]) {
+    const out = await callConnectionTool(c.id, builder, call);
+    assert.equal(out.decision, 'requires_approval', `${call.tool} is a Write held for approval`);
+    assert.ok(out.approvalId, `${call.tool} enqueued a Governance approval`);
+    assert.equal(out.result, undefined, `${call.tool} did not run`);
+  }
+});
+
+test('the new observe/retrieve reads all auto-allow (reach execution, honest offline)', async () => {
+  __resetConnections();
+  const c = await makeAirflow();
+  for (const call of [
+    { tool: 'list_dag_runs', args: { dagId: 'etl' } },
+    { tool: 'get_task_instances', args: { dagId: 'etl', runId: 'r1' } },
+    { tool: 'get_task_logs', args: { dagId: 'etl', runId: 'r1', taskId: 't' } },
+    { tool: 'get_xcom', args: { dagId: 'etl', runId: 'r1', taskId: 't' } },
+    { tool: 'list_datasets', args: {} },
+    { tool: 'get_dataset_events', args: {} },
+  ]) {
+    const out = await callConnectionTool(c.id, builder, call);
+    assert.equal(out.decision, 'allow', `${call.tool} is a Read — auto-allowed`);
+    const res = out.result as { ok?: boolean; reason?: string };
+    assert.equal(res.ok, false, `${call.tool} degraded honestly offline`);
+    assert.equal(res.reason, 'unreachable');
+  }
+});
+
 // restore
 test('cleanup', () => {
   globalThis.fetch = _realFetch;

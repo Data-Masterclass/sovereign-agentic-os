@@ -57,6 +57,27 @@ export type AirflowDagRun = {
   state: string;
   logicalDate: string;
 };
+/** A lightly-typed task instance (task-level status inside a run). */
+export type AirflowTaskInstance = {
+  taskId: string;
+  state: string;
+  tryNumber: number;
+  startDate: string;
+  endDate: string;
+};
+/** A lightly-typed data-driven asset/dataset (v2 "assets" / v1 "datasets"). */
+export type AirflowDataset = { id: number; uri: string };
+/** A lightly-typed asset/dataset event (a producing task updated the asset). */
+export type AirflowDatasetEvent = {
+  datasetId: number;
+  datasetUri: string;
+  sourceDagId: string;
+  sourceRunId: string;
+  timestamp: string;
+};
+
+/** Max characters of task-log text returned to a tool caller (logs can be huge). */
+export const AIRFLOW_LOG_MAX = 8000;
 
 async function withTimeout(
   fetchImpl: AirflowFetch,
@@ -114,6 +135,60 @@ async function afGet(conn: AirflowConn, path: string): Promise<AirflowRead<unkno
       if (res.status === 404 && version === 'v2') continue;
       if (!res.ok) return { ok: false, reason: `Airflow ${res.status}` };
       return { ok: true, data: await res.json() };
+    } catch {
+      return { ok: false, reason: 'unreachable' };
+    }
+  }
+  return { ok: false, reason: 'Airflow 404' };
+}
+
+/**
+ * GET one Airflow API path as TEXT (task logs are text, not JSON), v2→v1 on 404.
+ * Never throws. Used only for `get_task_logs`; the caller truncates for tool output.
+ */
+async function afGetText(conn: AirflowConn, path: string): Promise<AirflowRead<string>> {
+  const headers = { ...airflowAuthHeaders(conn), accept: 'text/plain' };
+  for (const version of ['v2', 'v1'] as const) {
+    try {
+      const res = await withTimeout(
+        conn.fetchImpl,
+        `${base(conn)}/api/${version}${path}`,
+        { method: 'GET', headers },
+        conn.timeoutMs ?? 4000,
+      );
+      if (res.status === 404 && version === 'v2') continue;
+      if (!res.ok) return { ok: false, reason: `Airflow ${res.status}` };
+      return { ok: true, data: await res.text() };
+    } catch {
+      return { ok: false, reason: 'unreachable' };
+    }
+  }
+  return { ok: false, reason: 'Airflow 404' };
+}
+
+/**
+ * Send a WRITE (PATCH/POST) with a JSON body to one Airflow path, v2→v1 on 404.
+ * Never throws. NOTE: the GOVERNANCE gate is enforced UPSTREAM in `callConnectionTool`
+ * — a write helper is only reached once the call is allowed.
+ */
+async function afSend(
+  conn: AirflowConn,
+  method: 'PATCH' | 'POST',
+  path: string,
+  body: Record<string, unknown>,
+): Promise<AirflowRead<unknown>> {
+  const headers = { ...airflowAuthHeaders(conn), 'content-type': 'application/json' };
+  for (const version of ['v2', 'v1'] as const) {
+    try {
+      const res = await withTimeout(
+        conn.fetchImpl,
+        `${base(conn)}/api/${version}${path}`,
+        { method, headers, body: JSON.stringify(body) },
+        conn.timeoutMs ?? 4000,
+      );
+      if (res.status === 404 && version === 'v2') continue;
+      if (!res.ok) return { ok: false, reason: `Airflow ${res.status}` };
+      return { ok: true, data: await res.json().catch(() => ({})) };
     } catch {
       return { ok: false, reason: 'unreachable' };
     }
@@ -234,6 +309,219 @@ export async function triggerDag(
     }
   }
   return { ok: false, reason: 'Airflow 404' };
+}
+
+// --------------------------------------------------- observe (Read) -------------
+
+function shapeRun(d: Record<string, unknown>, dagId: string): AirflowDagRun {
+  return {
+    dagId: String(d.dag_id ?? dagId),
+    dagRunId: String(d.dag_run_id ?? ''),
+    state: String(d.state ?? ''),
+    logicalDate: String(d.logical_date ?? ''),
+  };
+}
+
+/**
+ * GET /dags/{dagId}/dagRuns — run history. Optional `state` filters (queued/running/
+ * success/failed/…); `limit` bounds the page. Read: side-effect-free, auto-allowed.
+ */
+export async function listDagRuns(
+  conn: AirflowConn,
+  dagId: string,
+  opts?: { limit?: number; state?: string },
+): Promise<AirflowRead<AirflowDagRun[]>> {
+  const q = new URLSearchParams({ limit: String(opts?.limit ?? 25) });
+  if (opts?.state) q.set('state', opts.state);
+  const r = await afGet(conn, `/dags/${encodeURIComponent(dagId)}/dagRuns?${q.toString()}`);
+  if (!r.ok) return r;
+  const rows = (r.data as { dag_runs?: Record<string, unknown>[] })?.dag_runs;
+  if (!Array.isArray(rows)) return { ok: false, reason: 'Airflow returned no DAG-run list' };
+  return { ok: true, data: rows.map((d) => shapeRun(d, dagId)) };
+}
+
+/**
+ * GET /dags/{dagId}/dagRuns/{runId}/taskInstances — task-level status of one run.
+ * Read: which tasks ran, which failed, retry counts. Auto-allowed.
+ */
+export async function getTaskInstances(
+  conn: AirflowConn,
+  dagId: string,
+  runId: string,
+): Promise<AirflowRead<AirflowTaskInstance[]>> {
+  const r = await afGet(
+    conn,
+    `/dags/${encodeURIComponent(dagId)}/dagRuns/${encodeURIComponent(runId)}/taskInstances`,
+  );
+  if (!r.ok) return r;
+  const rows = (r.data as { task_instances?: Record<string, unknown>[] })?.task_instances;
+  if (!Array.isArray(rows)) return { ok: false, reason: 'Airflow returned no task-instance list' };
+  return {
+    ok: true,
+    data: rows.map((d) => ({
+      taskId: String(d.task_id ?? ''),
+      state: String(d.state ?? ''),
+      tryNumber: Number(d.try_number ?? 0),
+      startDate: String(d.start_date ?? ''),
+      endDate: String(d.end_date ?? ''),
+    })),
+  };
+}
+
+/**
+ * GET /dags/{dagId}/dagRuns/{runId}/taskInstances/{taskId}/logs/{tryNumber} — the
+ * task's log text (returned as text, not JSON). Truncated to `AIRFLOW_LOG_MAX` chars
+ * for tool output (logs can be enormous). Read: auto-allowed. `truncated` flags a cut.
+ */
+export async function getTaskLogs(
+  conn: AirflowConn,
+  dagId: string,
+  runId: string,
+  taskId: string,
+  opts?: { tryNumber?: number },
+): Promise<AirflowRead<{ text: string; truncated: boolean }>> {
+  const t = opts?.tryNumber ?? 1;
+  const r = await afGetText(
+    conn,
+    `/dags/${encodeURIComponent(dagId)}/dagRuns/${encodeURIComponent(runId)}` +
+      `/taskInstances/${encodeURIComponent(taskId)}/logs/${encodeURIComponent(String(t))}`,
+  );
+  if (!r.ok) return r;
+  const full = r.data ?? '';
+  const truncated = full.length > AIRFLOW_LOG_MAX;
+  return { ok: true, data: { text: truncated ? full.slice(0, AIRFLOW_LOG_MAX) : full, truncated } };
+}
+
+/**
+ * GET /dags/{dagId}/dagRuns/{runId}/taskInstances/{taskId}/xcomEntries/{key} — read
+ * a task's XCom entry (default key `return_value`, its return value). Read.
+ *
+ * HONEST NOTE ON DATA SIZE: XCom is for SMALL control values (ids, counts, flags),
+ * not datasets. Large outputs of a DAG land in a warehouse / object store, which the
+ * OS reads via its WAREHOUSE connectors (the federated catalog) — NOT via XCom. Use
+ * this to retrieve a small return value or a pointer (a table name / S3 URI), then
+ * read the actual data through the warehouse connection.
+ */
+export async function getXcom(
+  conn: AirflowConn,
+  dagId: string,
+  runId: string,
+  taskId: string,
+  opts?: { key?: string },
+): Promise<AirflowRead<{ key: string; value: unknown }>> {
+  const key = opts?.key ?? 'return_value';
+  const r = await afGet(
+    conn,
+    `/dags/${encodeURIComponent(dagId)}/dagRuns/${encodeURIComponent(runId)}` +
+      `/taskInstances/${encodeURIComponent(taskId)}/xcomEntries/${encodeURIComponent(key)}`,
+  );
+  if (!r.ok) return r;
+  const d = r.data as Record<string, unknown>;
+  return { ok: true, data: { key: String(d.key ?? key), value: d.value } };
+}
+
+/**
+ * GET /assets (v2) or /datasets (v1) — Airflow data-driven scheduling objects. In
+ * Airflow 3 "datasets" were renamed "assets"; we TRY assets first then fall back to
+ * datasets, so one connection works on either. Read: auto-allowed.
+ */
+export async function listDatasets(
+  conn: AirflowConn,
+  limit = 50,
+): Promise<AirflowRead<AirflowDataset[]>> {
+  for (const noun of ['assets', 'datasets'] as const) {
+    const r = await afGet(conn, `/${noun}?limit=${limit}`);
+    if (!r.ok) {
+      // "assets" absent (older instance) → try "datasets"; a hard error is the answer.
+      if (noun === 'assets' && r.reason.includes('404')) continue;
+      return r;
+    }
+    const rows =
+      (r.data as { assets?: Record<string, unknown>[]; datasets?: Record<string, unknown>[] })?.assets ??
+      (r.data as { datasets?: Record<string, unknown>[] })?.datasets;
+    if (!Array.isArray(rows)) return { ok: false, reason: 'Airflow returned no asset/dataset list' };
+    return { ok: true, data: rows.map((d) => ({ id: Number(d.id ?? 0), uri: String(d.uri ?? '') })) };
+  }
+  return { ok: false, reason: 'Airflow 404' };
+}
+
+/**
+ * GET /assets/events (v2) or /datasets/events (v1) — asset/dataset update events
+ * (which producing task updated which asset, when — the data-driven scheduling feed).
+ * Try assets then datasets. Read: auto-allowed.
+ */
+export async function getDatasetEvents(
+  conn: AirflowConn,
+  limit = 50,
+): Promise<AirflowRead<AirflowDatasetEvent[]>> {
+  for (const noun of ['assets', 'datasets'] as const) {
+    const r = await afGet(conn, `/${noun}/events?limit=${limit}`);
+    if (!r.ok) {
+      if (noun === 'assets' && r.reason.includes('404')) continue;
+      return r;
+    }
+    const rows =
+      (r.data as { asset_events?: Record<string, unknown>[]; dataset_events?: Record<string, unknown>[] })
+        ?.asset_events ??
+      (r.data as { dataset_events?: Record<string, unknown>[] })?.dataset_events;
+    if (!Array.isArray(rows)) return { ok: false, reason: 'Airflow returned no asset/dataset events' };
+    return {
+      ok: true,
+      data: rows.map((d) => ({
+        datasetId: Number(d.dataset_id ?? d.asset_id ?? 0),
+        datasetUri: String(d.dataset_uri ?? d.asset_uri ?? ''),
+        sourceDagId: String(d.source_dag_id ?? ''),
+        sourceRunId: String(d.source_run_id ?? ''),
+        timestamp: String(d.timestamp ?? ''),
+      })),
+    };
+  }
+  return { ok: false, reason: 'Airflow 404' };
+}
+
+// --------------------------------------------- control (Write-approval) ---------
+
+/**
+ * PATCH /dags/{dagId} `{ is_paused }` — pause or unpause a DAG. A real side effect
+ * (a paused DAG stops scheduling), so this is Write-approval upstream. Never throws.
+ */
+export async function setDagPaused(
+  conn: AirflowConn,
+  dagId: string,
+  isPaused: boolean,
+): Promise<AirflowRead<AirflowDag>> {
+  const r = await afSend(conn, 'PATCH', `/dags/${encodeURIComponent(dagId)}`, { is_paused: isPaused });
+  if (!r.ok) return r;
+  const d = r.data as Record<string, unknown>;
+  return {
+    ok: true,
+    data: {
+      dagId: String(d.dag_id ?? dagId),
+      isPaused: d.is_paused === undefined ? isPaused : Boolean(d.is_paused),
+      description: String(d.description ?? ''),
+    },
+  };
+}
+
+/**
+ * POST /dags/{dagId}/clearTaskInstances — clear (retry/rerun) task instances of a run.
+ * `taskIds` scopes to specific tasks; `onlyFailed` limits to failed tasks. `dry_run`
+ * is forced FALSE so the clear actually happens (this path is only reached post-gate).
+ * A real side effect (re-runs tasks), so Write-approval upstream. Never throws.
+ */
+export async function clearTask(
+  conn: AirflowConn,
+  dagId: string,
+  runId: string,
+  opts?: { taskIds?: string[]; onlyFailed?: boolean },
+): Promise<AirflowRead<{ cleared: number }>> {
+  const body: Record<string, unknown> = { dry_run: false, dag_run_id: runId };
+  if (opts?.taskIds && opts.taskIds.length) body.task_ids = opts.taskIds;
+  if (opts?.onlyFailed) body.only_failed = true;
+  const r = await afSend(conn, 'POST', `/dags/${encodeURIComponent(dagId)}/clearTaskInstances`, body);
+  if (!r.ok) return r;
+  const rows = (r.data as { task_instances?: unknown[] })?.task_instances;
+  return { ok: true, data: { cleared: Array.isArray(rows) ? rows.length : 0 } };
 }
 
 // ------------------------------------------------------- server-side bridge -----

@@ -12,6 +12,7 @@ import DomainTag from '@/components/DomainTag';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import PromoteButton, { type PromoteTier } from '@/components/lifecycle/PromoteButton';
+import TrainStep from './builder/TrainStep';
 import {
   TIER_BADGE,
   TIER_LABEL,
@@ -121,18 +122,20 @@ export default function ModelDetail({
       <div className="section-title">Predict</div>
       <PredictPanel model={model} />
 
-      {/* 3 — Train / Evaluate / Monitor: honest Phase-2+ template states */}
+      {/* 3 — Train (real runtime) · Evaluate / Monitor (honest Phase-4 placeholders) */}
       <div className="section-title">Train · Evaluate · Monitor</div>
-      <div className="card" style={{ borderLeft: '3px solid var(--gold)' }}>
+      {spec ? (
+        <TrainStep model={model} canManage={canManage} onChanged={onChanged} />
+      ) : (
+        <div className="card"><div className="muted">Define a build spec before training this model.</div></div>
+      )}
+      <div className="card" style={{ borderLeft: '3px solid var(--gold)', marginTop: 12 }}>
         <p style={{ marginTop: 0 }} className="muted">
-          Guided <strong>training</strong>, inline <strong>evaluation</strong> and drift{' '}
-          <strong>monitoring</strong> are coming in the next phases. Today the model is defined and, when
-          it wraps the live churn slice, served for real — but a one-click train/deploy runtime and the
-          eval/monitor charts are not built yet. Use the <em>Developer console</em> below to reach MLflow,
-          Featureform, JupyterHub and KServe directly in the meantime.
+          Inline <strong>evaluation</strong> and drift <strong>monitoring</strong> charts land in the next
+          phase. Training runs for real above; a one-click deploy of the trained artifact to a per-model
+          KServe endpoint follows the same governed path.
         </p>
         <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <span className="badge muted">Train — Phase 2 (guided)</span>
           <span className="badge muted">Evaluate — Phase 4 (inline)</span>
           <span className="badge muted">Monitor — Phase 4 (drift)</span>
         </div>

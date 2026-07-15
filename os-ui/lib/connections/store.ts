@@ -27,6 +27,14 @@ import {
   listDags as afListDags,
   getDagRun as afGetDagRun,
   triggerDag as afTriggerDag,
+  listDagRuns as afListDagRuns,
+  getTaskInstances as afGetTaskInstances,
+  getTaskLogs as afGetTaskLogs,
+  getXcom as afGetXcom,
+  listDatasets as afListDatasets,
+  getDatasetEvents as afGetDatasetEvents,
+  setDagPaused as afSetDagPaused,
+  clearTask as afClearTask,
   airflowDagAllowed,
 } from '@/lib/connections/airflow';
 import type { WarehousePlatform } from '@/lib/connections/warehouse/types';
@@ -1189,6 +1197,62 @@ async function executeAirflow(c: Connection, tool: string, args: Record<string, 
       if (!dagId || !runId) return { connection: c.name, ok: false, reason: 'get_dag_run needs a dagId and a runId' };
       const r = await afGetDagRun(conn, dagId, runId);
       return r.ok ? { connection: c.name, run: r.data } : { connection: c.name, ok: false, reason: r.reason };
+    }
+    case 'list_dag_runs': {
+      if (!dagId) return { connection: c.name, ok: false, reason: 'list_dag_runs needs a dagId' };
+      const limit = args.limit !== undefined ? Number(args.limit) : undefined;
+      const state = args.state ? String(args.state) : undefined;
+      const r = await afListDagRuns(conn, dagId, { limit, state });
+      return r.ok ? { connection: c.name, runs: r.data } : { connection: c.name, ok: false, reason: r.reason };
+    }
+    case 'get_task_instances': {
+      const runId = String(args.runId ?? args.dag_run_id ?? '');
+      if (!dagId || !runId) return { connection: c.name, ok: false, reason: 'get_task_instances needs a dagId and a runId' };
+      const r = await afGetTaskInstances(conn, dagId, runId);
+      return r.ok ? { connection: c.name, taskInstances: r.data } : { connection: c.name, ok: false, reason: r.reason };
+    }
+    case 'get_task_logs': {
+      const runId = String(args.runId ?? args.dag_run_id ?? '');
+      const taskId = String(args.taskId ?? args.task_id ?? '');
+      if (!dagId || !runId || !taskId) return { connection: c.name, ok: false, reason: 'get_task_logs needs a dagId, runId and taskId' };
+      const tryNumber = args.tryNumber !== undefined ? Number(args.tryNumber) : undefined;
+      const r = await afGetTaskLogs(conn, dagId, runId, taskId, { tryNumber });
+      return r.ok ? { connection: c.name, logs: r.data } : { connection: c.name, ok: false, reason: r.reason };
+    }
+    case 'get_xcom': {
+      const runId = String(args.runId ?? args.dag_run_id ?? '');
+      const taskId = String(args.taskId ?? args.task_id ?? '');
+      if (!dagId || !runId || !taskId) return { connection: c.name, ok: false, reason: 'get_xcom needs a dagId, runId and taskId' };
+      const key = args.key ? String(args.key) : undefined;
+      const r = await afGetXcom(conn, dagId, runId, taskId, { key });
+      return r.ok ? { connection: c.name, xcom: r.data } : { connection: c.name, ok: false, reason: r.reason };
+    }
+    case 'list_datasets': {
+      const limit = args.limit !== undefined ? Number(args.limit) : undefined;
+      const r = await afListDatasets(conn, limit);
+      return r.ok ? { connection: c.name, datasets: r.data } : { connection: c.name, ok: false, reason: r.reason };
+    }
+    case 'get_dataset_events': {
+      const limit = args.limit !== undefined ? Number(args.limit) : undefined;
+      const r = await afGetDatasetEvents(conn, limit);
+      return r.ok ? { connection: c.name, events: r.data } : { connection: c.name, ok: false, reason: r.reason };
+    }
+    case 'pause_dag':
+    case 'unpause_dag': {
+      if (!dagId) return { connection: c.name, ok: false, reason: `${tool} needs a dagId` };
+      if (!airflowDagAllowed(c, dagId)) return { connection: c.name, ok: false, reason: `DAG "${dagId}" is not on this connection's allowlist` };
+      const r = await afSetDagPaused(conn, dagId, tool === 'pause_dag');
+      return r.ok ? { connection: c.name, dag: r.data } : { connection: c.name, ok: false, reason: r.reason };
+    }
+    case 'clear_task': {
+      const runId = String(args.runId ?? args.dag_run_id ?? '');
+      if (!dagId || !runId) return { connection: c.name, ok: false, reason: 'clear_task needs a dagId and a runId' };
+      if (!airflowDagAllowed(c, dagId)) return { connection: c.name, ok: false, reason: `DAG "${dagId}" is not on this connection's allowlist` };
+      const taskIds = Array.isArray(args.taskIds) ? (args.taskIds as unknown[]).map(String)
+        : Array.isArray(args.task_ids) ? (args.task_ids as unknown[]).map(String) : undefined;
+      const onlyFailed = Boolean(args.onlyFailed ?? args.only_failed);
+      const r = await afClearTask(conn, dagId, runId, { taskIds, onlyFailed });
+      return r.ok ? { connection: c.name, cleared: r.data } : { connection: c.name, ok: false, reason: r.reason };
     }
     case 'trigger_dag': {
       if (!dagId) return { connection: c.name, ok: false, reason: 'trigger_dag needs a dagId' };

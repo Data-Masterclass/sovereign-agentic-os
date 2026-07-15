@@ -367,7 +367,16 @@ export function updateWorkflow(
 
 export function deleteWorkflow(id: string, user: Principal): void {
   const rec = requireEdit(id, user);
-  if (rec.status === 'live') fail('Cannot delete a published workflow — unpublish it first', 400);
+  // OS-wide lifecycle: Delete is reachable only after Archive (the UI exposes
+  // Delete solely on an archived artifact). A live workflow is still shared with
+  // the domain, so it may NOT be deleted directly — archive it first. But once
+  // archived it is out of every working list and safe to permanently remove,
+  // regardless of its prior published/live tier. Blocking live-AND-archived was
+  // the bug that made every published workflow undeletable (it could be archived
+  // but never removed, so the tile persisted forever).
+  if (rec.status === 'live' && !rec.archived) {
+    fail('Archive this published workflow before deleting it', 400);
+  }
   mirror.deleteThrough(id);
   versions.purge(id);
   ks().workflows.delete(id);

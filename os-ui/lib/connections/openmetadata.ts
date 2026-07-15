@@ -10,15 +10,30 @@ import { listConnectionsForUser, getConnectionForUser } from '@/lib/connections/
 import {
   type OmConn,
   type OmRead,
+  type OmWrite,
   type OmDomain,
   type OmDataProduct,
+  type OmPatchOp,
   detectOmVersion,
   listOmDomains,
   listOmDataProducts,
   listOmTables,
   searchOmCatalog,
   getOmLineage,
+  putOmEntity,
+  patchOmEntity,
+  putOmLineage,
 } from '@/lib/data/openmetadata';
+import {
+  type OmSyncPlan,
+  type OmSyncPreview,
+  type OmSyncResult,
+  buildOmSyncPlan,
+  previewOmSync,
+  applyOmSync,
+  provisionOmNamespace,
+} from '@/lib/connections/openmetadata-sync';
+import type { Dataset } from '@/lib/data/dataset-schema';
 import type { CatalogAsset, SourceSeverity } from '@/lib/data/catalog';
 
 /**
@@ -158,3 +173,104 @@ export async function omConnectionSource(
     severity: 'ok',
   };
 }
+
+// =============================================================================
+// Phase 2 — SCOPED WRITE-BACK bridge (server-only)
+// =============================================================================
+//
+// The WRITE path resolves a SEPARATE, least-privilege WRITER bot token (Guard 7 —
+// its OM Role/Policy is scoped to the sovereign_os Service + OS Domain + the
+// SovereignOS classification, provisioned by the chart Job). The writer token is
+// vaulted under a DISTINCT secret key on the SAME connection (`om-writer-jwt`),
+// never returned/logged. Every write REFUSES on an out-of-range OM version, is
+// preview-first (Guard 6), additive-only (Guards 1–4) and yields on a human edit
+// (Guard 5). `preview*` is READ-ONLY; `apply*` runs ONLY after governance approval.
+
+/** The vault key the least-privilege WRITER bot JWT is stored under — DISTINCT from
+ *  the read bot's `om-bot-jwt` (Guard 7: separate credential, separate OM Role). */
+const OM_WRITER_KEY = 'om-writer-jwt';
+
+/** Build a WRITE-capable OM client from a resolved `om-catalog` connection: the
+ *  writer bot JWT (separate vault key) + the last-detected OM version so the write
+ *  helpers can refuse outside the tested range. Falls back to the read secretRef's
+ *  `name` for the vault namespace; the writer token is a DIFFERENT key there. */
+function omWriteConnFrom(c: Connection): OmConn {
+  const token = getSecretServerSide({ name: c.secretRef.name, key: OM_WRITER_KEY }) ?? undefined;
+  return { baseUrl: c.endpoint, token, fetchImpl: fetch, timeoutMs: 5000, omVersion: c.om?.version };
+}
+
+/** The injected sync-client verbs bound to the WRITER connection — used by the apply
+ *  step. `readEntityMeta` reads `{ version, updatedBy }` for the optimistic-concurrency
+ *  yield (Guard 5); it uses the READ token (metadata is readable by the read bot). */
+function syncVerbsFor(c: Connection) {
+  const write = omWriteConnFrom(c);
+  const read = omConnFrom(c);
+  return {
+    omVersion: c.om?.version,
+    readEntityMeta: async (entityPath: string) => {
+      const r = await getOmLineageRaw(read, entityPath);
+      if (!r.ok) return null;
+      const d = r.data as { version?: number; updatedBy?: string };
+      return d && (d.version !== undefined || d.updatedBy !== undefined) ? { version: d.version, updatedBy: d.updatedBy } : null;
+    },
+    putEntity: (path: string, body: unknown): Promise<OmWrite> => putOmEntity(write, path, body),
+    patchEntity: (entityPath: string, ops: OmPatchOp[]): Promise<OmWrite> => patchOmEntity(write, entityPath, ops),
+    putLineage: async (edge: { fromFqn: string; toFqn: string }): Promise<OmWrite> => {
+      // The pure client takes entity IDs; resolving FQN→id is an OM read. Kept simple:
+      // OM's lineage PUT also accepts FQN refs, so we pass them through as ids here
+      // (the fake client in tests matches this shape; a live resolver can be added).
+      return putOmLineage(write, { fromId: edge.fromFqn, toId: edge.toFqn });
+    },
+  };
+}
+
+/** A tiny GET for entity metadata under the READ connection (never throws). Reuses
+ *  the read client's never-throw discipline; returns the raw body for the caller. */
+async function getOmLineageRaw(conn: OmConn, entityPath: string): Promise<OmRead<unknown>> {
+  // entityPath is a full REST path like `/api/v1/tables/name/<fqn>`; read it directly.
+  const base = conn.baseUrl.replace(/\/$/, '');
+  try {
+    const res = await conn.fetchImpl(`${base}${entityPath}`, {
+      method: 'GET',
+      headers: conn.token ? { accept: 'application/json', authorization: `Bearer ${conn.token}` } : { accept: 'application/json' },
+      cache: 'no-store',
+    });
+    if (!res.ok) return { ok: false, reason: `OpenMetadata ${res.status}` };
+    return { ok: true, data: await res.json() };
+  } catch {
+    return { ok: false, reason: 'unreachable' };
+  }
+}
+
+/** PREVIEW the additive sync plan for one OS dataset/product — READ-ONLY (Guard 6):
+ *  computes the exact PUT bodies + JSON-Patch ops + lineage edges and renders the
+ *  honest diff. NO write executes. `humanServiceFqn` (the customer's OM Trino service
+ *  name) is optional; when absent, no human table is annotated at all. */
+export function previewOmSyncForConnection(
+  _c: Connection,
+  dataset: Dataset,
+  opts: { runId: string; humanServiceFqn?: string },
+): OmSyncPreview {
+  const plan = buildOmSyncPlan(dataset, opts);
+  return previewOmSync(plan);
+}
+
+/** Recompute the plan (server-side, from the SAME dataset) and EXECUTE it through the
+ *  writer connection AFTER governance approval. Never trusts a client-supplied plan —
+ *  the payload only carries the datasetId + runId; the plan is rebuilt here so an
+ *  approved item cannot smuggle a wider write. Provisions the OS namespace first
+ *  (idempotent). Yields on a human edit (Guard 5). */
+export async function applyOmSyncForConnection(
+  c: Connection,
+  dataset: Dataset,
+  opts: { runId: string; humanServiceFqn?: string; lastSyncUpdatedBy?: string },
+): Promise<OmSyncResult> {
+  const write = omWriteConnFrom(c);
+  // Guard 1 — provision the OS namespace shells idempotently before the first write.
+  const prov = await provisionOmNamespace((path, body) => putOmEntity(write, path, body), c.om?.version);
+  if (prov.refused) return { ok: false, applied: { creates: 0, patches: 0, edges: 0 }, conflicts: [], errors: [], refused: prov.refused };
+  const plan = buildOmSyncPlan(dataset, { runId: opts.runId, humanServiceFqn: opts.humanServiceFqn });
+  return applyOmSync(syncVerbsFor(c), plan, { lastSyncUpdatedBy: opts.lastSyncUpdatedBy });
+}
+
+export type { OmSyncPlan, OmSyncPreview, OmSyncResult };

@@ -4,7 +4,14 @@
 import 'server-only';
 import { config } from '@/lib/core/config';
 import { CHURN } from '@/lib/science/churn';
-import type { FeatureRow, ModelVersion } from '@/lib/science/types';
+import {
+  submitTrainingJob,
+  readTrainingJob,
+  type TrainingRun,
+  type TrainingRuntime,
+  type TrainingStatus,
+} from '@/lib/science/training';
+import type { FeatureRow, ModelSpec, ModelVersion } from '@/lib/science/types';
 
 /**
  * The five Science adapters (Science golden path §"Build the needed adapters").
@@ -58,6 +65,27 @@ export const featuresAdapter = {
 
 // ----------------------------------------------------------- 2. train/track ---
 
+/**
+ * The cluster wiring the training Job needs, assembled from `config` (chart-set
+ * env). Held here so the route never rebuilds it inline; no secrets — the AWS
+ * creds are pulled from `s3SecretName` by the Job, never read into the UI process.
+ */
+export function trainingRuntime(): TrainingRuntime {
+  return {
+    namespace: config.platformNamespace,
+    trainerImage: config.mlTrainerImage,
+    awsCliImage: config.awsCliImage,
+    s3Endpoint: config.s3Endpoint,
+    s3SecretName: config.s3SecretName,
+    s3Region: config.s3Region,
+    trinoHost: config.trinoHost,
+    trinoPort: config.trinoPort,
+    trinoUser: config.trinoReadUser,
+    trinoCatalog: config.trinoCatalog,
+    mlflowUrl: config.mlflowUrl,
+  };
+}
+
 export const trainTrackAdapter = {
   name: 'MLflow · Dagster',
   async probe(): Promise<boolean> {
@@ -73,6 +101,14 @@ export const trainTrackAdapter = {
       tracking: 'MLflow experiment churn_model (params/metrics/artifacts logged per run)',
       job: 'Dagster job train_churn_model (repeatable + schedulable)',
     };
+  },
+  /** Submit a REAL per-model training Job (draft→training). Delegates to the runner. */
+  async submit(model: string, spec: ModelSpec): Promise<TrainingRun> {
+    return submitTrainingJob(model, spec, trainingRuntime());
+  },
+  /** Poll a submitted training Job's status (training→trained/failed on the route). */
+  async poll(jobName: string, namespace: string): Promise<TrainingStatus> {
+    return readTrainingJob(jobName, namespace);
   },
 };
 

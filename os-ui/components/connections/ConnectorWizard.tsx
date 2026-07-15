@@ -65,7 +65,13 @@ export type WizardData = {
 /** How the wizard was opened. `custom` = header button (pick any type). */
 export type WizardStart =
   | { mode: 'custom' }
-  | { mode: 'type'; template: string };
+  /**
+   * A gallery card was clicked, pre-set to that template. `presetPlatform` — set by a
+   * per-platform warehouse card — pins the warehouse provider so the platform-picker
+   * defaults to it (Snowflake/BigQuery/…): the builder lands straight on that
+   * platform's credential fields.
+   */
+  | { mode: 'type'; template: string; presetPlatform?: string };
 
 type Conn = { id: string; name: string; visibility: string; secretRef: { name: string; key: string } };
 
@@ -116,8 +122,10 @@ export default function ConnectorWizard({
   const [msg, setMsg] = useState('');
   const [done, setDone] = useState(false);
 
-  // Warehouse-specific.
-  const [whPlatform, setWhPlatform] = useState('');
+  // Warehouse-specific. A per-platform gallery card passes `presetPlatform`, so the
+  // provider dropdown defaults straight to that platform (skipping the generic choice).
+  const presetPlatform = start.mode === 'type' ? start.presetPlatform : undefined;
+  const [whPlatform, setWhPlatform] = useState(presetPlatform ?? '');
   const [whCatalog, setWhCatalog] = useState('');
   const [whFields, setWhFields] = useState<Record<string, string>>({});
   const whProvider = wh?.providers.find((p) => p.platform === whPlatform) ?? wh?.providers[0];

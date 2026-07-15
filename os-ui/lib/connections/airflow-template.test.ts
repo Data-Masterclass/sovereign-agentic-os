@@ -25,18 +25,50 @@ test('airflow IS user-facing (shows in the Supported Connectors gallery)', () =>
   assert.ok(userFacingTemplates().some((t) => t.key === 'airflow'));
 });
 
-test('trigger_dag defaults to Write-approval; the two reads are Read', () => {
+test('every observe/retrieve tool is a side-effect-free Read (auto-allowed)', () => {
   const t = templateByKey('airflow')!;
   const byName = Object.fromEntries(t.tools.map((x) => [x.name, x]));
-  assert.equal(byName.list_dags.mode, 'Read');
-  assert.equal(byName.list_dags.write, false);
-  assert.equal(byName.get_dag_run.mode, 'Read');
-  assert.equal(byName.get_dag_run.write, false);
-  assert.equal(byName.trigger_dag.mode, 'Write-approval', 'triggering a DAG is a real side effect — held for approval');
-  assert.equal(byName.trigger_dag.write, true);
+  for (const name of [
+    'list_dags',
+    'get_dag_run',
+    'list_dag_runs',
+    'get_task_instances',
+    'get_task_logs',
+    'get_xcom',
+    'list_datasets',
+    'get_dataset_events',
+  ]) {
+    assert.equal(byName[name].mode, 'Read', `${name} is Read`);
+    assert.equal(byName[name].write, false, `${name} is non-write`);
+  }
 });
 
-test('the airflow preset carries exactly the three promised tools', () => {
+test('every control tool is a Write held for approval (real side effects)', () => {
   const t = templateByKey('airflow')!;
-  assert.deepEqual(t.tools.map((x) => x.name).sort(), ['get_dag_run', 'list_dags', 'trigger_dag']);
+  const byName = Object.fromEntries(t.tools.map((x) => [x.name, x]));
+  for (const name of ['trigger_dag', 'pause_dag', 'unpause_dag', 'clear_task']) {
+    assert.equal(byName[name].mode, 'Write-approval', `${name} is held for approval`);
+    assert.equal(byName[name].write, true, `${name} is a write`);
+  }
+});
+
+test('the airflow preset carries exactly the promised operate+observe+retrieve tools', () => {
+  const t = templateByKey('airflow')!;
+  assert.deepEqual(
+    t.tools.map((x) => x.name).sort(),
+    [
+      'clear_task',
+      'get_dag_run',
+      'get_dataset_events',
+      'get_task_instances',
+      'get_task_logs',
+      'get_xcom',
+      'list_dag_runs',
+      'list_dags',
+      'list_datasets',
+      'pause_dag',
+      'trigger_dag',
+      'unpause_dag',
+    ],
+  );
 });

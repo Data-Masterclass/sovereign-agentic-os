@@ -358,6 +358,17 @@ export function getDataset(id: string, user: Principal): Dataset {
   return viewOf(get(id), user);
 }
 
+/**
+ * The soft-archive flag is a RECORD-level property (`DatasetRecord.archived`), not
+ * part of the yaml-derived {@link Dataset}. The detail view needs it to show
+ * Restore instead of Archive, so expose it view-scoped alongside `getDataset`.
+ */
+export function isDatasetArchived(id: string, user: Principal): boolean {
+  const rec = get(id);
+  viewOf(rec, user); // authz: caller must be allowed to see it
+  return !!rec.archived;
+}
+
 /** Prove EDIT authority on a dataset (owner or domain admin) and return it. The metric
  *  lifecycle uses this so archive/history stay edit-scoped — consistent with the other
  *  artifact tabs — even for ops (archive/history) that don't themselves write the yaml. */

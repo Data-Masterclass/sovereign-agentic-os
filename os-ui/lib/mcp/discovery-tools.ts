@@ -48,10 +48,12 @@ import {
   omListTables,
   omSearch,
   omLineage,
+  previewOmSyncForConnection,
 } from '@/lib/connections/openmetadata';
 import { WAREHOUSE_PROVIDERS } from '@/lib/connections/warehouse/registry';
 import { WAREHOUSE_PLATFORMS, type WarehousePlatform } from '@/lib/connections/warehouse/types';
 import { promoteThroughSeam } from '@/lib/governance/ladder';
+import { enqueue } from '@/lib/governance/approvals';
 import { scaffoldCubeYaml, cubeViewName } from '@/lib/data/metrics';
 import { cubeDeliverable } from '@/lib/data/cube-models';
 import { loadGuide, isGuidePath, GUIDE_PATHS } from '@/lib/tabs/guides';
@@ -1105,6 +1107,82 @@ const omCatalogTools: McpTool[] = [
       return omLineage(c, fqn, str(args.entity) || undefined);
     },
   },
+  {
+    name: 'preview_om_sync',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'PREVIEW the additive, integrity-safe write-back of one OS dataset/product into an external OpenMetadata (om-catalog connection) — READ-ONLY (Guard 6, dry-run). Computes the EXACT PUT bodies (into the dedicated `sovereign_os` Service / `Sovereign OS Products` Domain), JSON-Patch ops (additive `add`/`replace`/`test` only — NEVER `remove`), and lineage edges, then renders an honest diff ("will create N entities … touch ZERO human fields"). NOTHING is written. Before: list_connections (an om-catalog connection) + list_datasets (a promoted asset/product with Gold built). After: apply_om_sync (held for approval). Governance: read-only; unseeable connId/datasetId → not_found; a dataset that is not a promoted asset/product or has no built Gold is rejected with the reason.',
+    inputSchema: omArg({
+      datasetId: { type: 'string', description: 'The OS dataset/product id from list_datasets (must be a promoted asset/product with Gold built).' },
+      humanServiceFqn: { type: 'string', description: 'Optional: the customer OM Trino Service name whose catalogued copy of the mart should be ADDITIVELY annotated (tag + managedBy props). Omit to annotate no human table.' },
+    }),
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('preview_om_sync needs a `connId`', 400);
+      const datasetId = str(args.datasetId).trim();
+      if (!datasetId) fail('preview_om_sync needs a `datasetId`', 400);
+      const c = await resolveOmCatalog(id, user); // DLS 404 on an unseeable connection
+      const d = getDataset(datasetId, P(user)); // canView guard (403/404)
+      return previewOmSyncForConnection(c, d, {
+        runId: `preview_${Date.now().toString(36)}`,
+        humanServiceFqn: str(args.humanServiceFqn) || undefined,
+      });
+    },
+  },
+  {
+    name: 'apply_om_sync',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'APPLY the additive write-back of one OS dataset/product into an external OpenMetadata (om-catalog connection). This is a real WRITE side effect — its CapabilityMode is Write-approval, so the call is HELD for human approval in the Governance tab and returns "requires_approval"; only once approved does the OS write. The write is additive-only and integrity-safe by construction: it PUT-creates ONLY inside the dedicated `sovereign_os` Service / `Sovereign OS Products` Domain, stamps `managedBy=SovereignOS`, emits NO `remove` op ever, writes a description only when empty (behind a `test` precondition), and YIELDS (records a conflict) on any human edit since the last OS sync. Re-sync is idempotent (a no-op). The plan is RECOMPUTED server-side from the datasetId on approval — the held item cannot smuggle a wider write. Before: preview_om_sync (see the exact diff). Governance: Write-approval; the writer bot token is separate + least-privilege (OM Role scoped to the OS namespace); unseeable connId/datasetId → not_found.',
+    inputSchema: omArg({
+      datasetId: { type: 'string', description: 'The OS dataset/product id to write back (from list_datasets).' },
+      humanServiceFqn: { type: 'string', description: 'Optional: the customer OM Trino Service name whose mart copy is additively annotated. Omit to annotate no human table.' },
+    }),
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('apply_om_sync needs a `connId`', 400);
+      const datasetId = str(args.datasetId).trim();
+      if (!datasetId) fail('apply_om_sync needs a `datasetId`', 400);
+      const c = await resolveOmCatalog(id, user); // DLS 404 on an unseeable connection
+      const d = getDataset(datasetId, P(user)); // canView guard (403/404)
+      const humanServiceFqn = str(args.humanServiceFqn) || undefined;
+      // Preview-first, ALWAYS: reject an unbuildable plan with the honest reason before
+      // ever queueing a write (never enqueue a no-op or an unsafe request).
+      const preview = previewOmSyncForConnection(c, d, { runId: 'plan', humanServiceFqn });
+      if (!preview.ok) fail(preview.rejected ?? 'This dataset cannot be synced to OpenMetadata.', 400);
+
+      // Guard 6 — HOLD for human approval (Write-approval). The effect that runs on
+      // approval recomputes the plan server-side and executes it through the writer bot.
+      const approval = enqueue({
+        kind: 'connection_write',
+        title: `Write-back "${d.name}" → OpenMetadata (${c.name})`,
+        detail: preview.summary,
+        agent: user.id,
+        domain: d.domain,
+        requestedBy: user.id,
+        tool: 'apply_om_sync',
+        approverRole: 'builder',
+        scope: 'domain',
+        source: 'Connections',
+        payload: { connId: c.id, datasetId: d.id, humanServiceFqn: humanServiceFqn ?? null },
+        preview: {
+          what: preview.summary,
+          who: `Sovereign OS writer bot (least-privilege, scoped to the ${'sovereign_os'} namespace)`,
+          why: `Additively publish the OS ${d.tier} into the external catalog for discovery + lineage.`,
+          impact: `${preview.counts.creates} create/update, ${preview.counts.patches} additive annotation(s), ${preview.counts.edges} lineage edge(s); ZERO human fields touched.`,
+          diff: preview.lines.join('\n'),
+        },
+      });
+      return {
+        decision: 'requires_approval',
+        approvalId: approval.id,
+        summary: preview.summary,
+        note: 'Held for human approval in the Governance tab (Write-approval). The write runs only once approved; the plan is recomputed server-side on approval.',
+      };
+    },
+  },
 ];
 
 // ================================= AIRFLOW =====================================
@@ -1180,6 +1258,243 @@ const airflowTools: McpTool[] = [
       if (args.conf && typeof args.conf === 'object') toolArgs.conf = args.conf;
       if (str(args.logicalDate).trim()) toolArgs.logicalDate = str(args.logicalDate).trim();
       return callConnectionTool(id, user, { tool: 'trigger_dag', args: toolArgs });
+    },
+  },
+  // ---- Reads (auto-allowed) — deeper monitoring of runs, tasks, XCom + assets. ----
+  {
+    name: 'list_dag_runs',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'List a DAG’s run history in a customer Apache Airflow (airflow connection), optionally filtered by run state. Read-only monitoring — the credential is injected server-side and never returned. Before: list_dags (pick a dagId). After: get_dag_run / get_task_instances to drill into a run. Governance: read-only, auto-allowed; an unseeable connId → not_found; an unreachable Airflow → { ok:false, reason }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connId: { type: 'string', description: 'The airflow connection id from list_connections.' },
+        dagId: { type: 'string', description: 'The DAG id, e.g. "example_etl".' },
+        limit: { type: 'number', description: 'Optional max runs to return (most recent first).' },
+        state: { type: 'string', description: 'Optional run-state filter, e.g. "success", "failed", "running".' },
+      },
+      required: ['connId', 'dagId'],
+      examples: [{ connId: 'conn_ab12cd', dagId: 'example_etl' }, { connId: 'conn_ab12cd', dagId: 'example_etl', state: 'failed', limit: 5 }],
+    },
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('list_dag_runs needs a `connId`', 400);
+      const dagId = str(args.dagId).trim();
+      if (!dagId) fail('list_dag_runs needs a `dagId`', 400);
+      const toolArgs: Record<string, unknown> = { dagId };
+      if (args.limit !== undefined) toolArgs.limit = Number(args.limit);
+      if (str(args.state).trim()) toolArgs.state = str(args.state).trim();
+      return callConnectionTool(id, user, { tool: 'list_dag_runs', args: toolArgs });
+    },
+  },
+  {
+    name: 'get_task_instances',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'Read the task-level status of one DAG run in a customer Apache Airflow (airflow connection) — which tasks ran, succeeded or failed. Read-only monitoring. Before: list_dag_runs / get_dag_run (take the returned dagRunId). After: get_task_logs to read a failed task’s log, or clear_task to retry it. Governance: read-only, auto-allowed; unseeable connId → not_found; unreachable Airflow or unknown run → { ok:false, reason }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connId: { type: 'string', description: 'The airflow connection id from list_connections.' },
+        dagId: { type: 'string', description: 'The DAG id, e.g. "example_etl".' },
+        runId: { type: 'string', description: 'The DAG run id (from trigger_dag / list_dag_runs).' },
+      },
+      required: ['connId', 'dagId', 'runId'],
+      examples: [{ connId: 'conn_ab12cd', dagId: 'example_etl', runId: 'manual__2026-01-01T00:00:00+00:00' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('get_task_instances needs a `connId`', 400);
+      const dagId = str(args.dagId).trim();
+      const runId = str(args.runId).trim();
+      if (!dagId || !runId) fail('get_task_instances needs a `dagId` and a `runId`', 400);
+      return callConnectionTool(id, user, { tool: 'get_task_instances', args: { dagId, runId } });
+    },
+  },
+  {
+    name: 'get_task_logs',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'Fetch one task attempt’s log text (truncated for output) in a customer Apache Airflow (airflow connection). Read-only monitoring — the credential is injected server-side and never returned. Before: get_task_instances (find the failing taskId). Governance: read-only, auto-allowed; unseeable connId → not_found; unreachable Airflow or unknown task → { ok:false, reason }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connId: { type: 'string', description: 'The airflow connection id from list_connections.' },
+        dagId: { type: 'string', description: 'The DAG id, e.g. "example_etl".' },
+        runId: { type: 'string', description: 'The DAG run id (from list_dag_runs).' },
+        taskId: { type: 'string', description: 'The task id inside the run (from get_task_instances).' },
+        tryNumber: { type: 'number', description: 'Optional attempt number (defaults to the latest try).' },
+      },
+      required: ['connId', 'dagId', 'runId', 'taskId'],
+      examples: [{ connId: 'conn_ab12cd', dagId: 'example_etl', runId: 'manual__2026-01-01T00:00:00+00:00', taskId: 'extract' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('get_task_logs needs a `connId`', 400);
+      const dagId = str(args.dagId).trim();
+      const runId = str(args.runId).trim();
+      const taskId = str(args.taskId).trim();
+      if (!dagId || !runId || !taskId) fail('get_task_logs needs a `dagId`, `runId` and `taskId`', 400);
+      const toolArgs: Record<string, unknown> = { dagId, runId, taskId };
+      if (args.tryNumber !== undefined) toolArgs.tryNumber = Number(args.tryNumber);
+      return callConnectionTool(id, user, { tool: 'get_task_logs', args: toolArgs });
+    },
+  },
+  {
+    name: 'get_xcom',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'Read a task’s XCom entry (a small return value / pointer, not a dataset) in a customer Apache Airflow (airflow connection). Read-only monitoring. XCom holds SMALL values — large outputs land in a warehouse the OS reads via its warehouse connectors. Before: get_task_instances (find the taskId). Governance: read-only, auto-allowed; unseeable connId → not_found; unreachable Airflow or unknown key → { ok:false, reason }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connId: { type: 'string', description: 'The airflow connection id from list_connections.' },
+        dagId: { type: 'string', description: 'The DAG id, e.g. "example_etl".' },
+        runId: { type: 'string', description: 'The DAG run id (from list_dag_runs).' },
+        taskId: { type: 'string', description: 'The task id inside the run (from get_task_instances).' },
+        key: { type: 'string', description: 'Optional XCom key (defaults to the task’s return value).' },
+      },
+      required: ['connId', 'dagId', 'runId', 'taskId'],
+      examples: [{ connId: 'conn_ab12cd', dagId: 'example_etl', runId: 'manual__2026-01-01T00:00:00+00:00', taskId: 'extract' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('get_xcom needs a `connId`', 400);
+      const dagId = str(args.dagId).trim();
+      const runId = str(args.runId).trim();
+      const taskId = str(args.taskId).trim();
+      if (!dagId || !runId || !taskId) fail('get_xcom needs a `dagId`, `runId` and `taskId`', 400);
+      const toolArgs: Record<string, unknown> = { dagId, runId, taskId };
+      if (str(args.key).trim()) toolArgs.key = str(args.key).trim();
+      return callConnectionTool(id, user, { tool: 'get_xcom', args: toolArgs });
+    },
+  },
+  {
+    name: 'list_datasets',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'List the data-driven assets/datasets in a customer Apache Airflow (airflow connection) — Airflow’s data-aware scheduling surface (v2 "assets" ↔ v1 "datasets"). Read-only monitoring — the credential is injected server-side and never returned. After: get_dataset_events to see which task last updated an asset. Governance: read-only, auto-allowed; unseeable connId → not_found; unreachable Airflow → { ok:false, reason }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connId: { type: 'string', description: 'The airflow connection id from list_connections.' },
+        limit: { type: 'number', description: 'Optional max assets/datasets to return.' },
+      },
+      required: ['connId'],
+      examples: [{ connId: 'conn_ab12cd' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('list_datasets needs a `connId`', 400);
+      const toolArgs: Record<string, unknown> = {};
+      if (args.limit !== undefined) toolArgs.limit = Number(args.limit);
+      return callConnectionTool(id, user, { tool: 'list_datasets', args: toolArgs });
+    },
+  },
+  {
+    name: 'get_dataset_events',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'List asset/dataset update events in a customer Apache Airflow (airflow connection) — which producing task updated which asset, and when. Read-only monitoring. Before: list_datasets. Governance: read-only, auto-allowed; unseeable connId → not_found; unreachable Airflow → { ok:false, reason }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connId: { type: 'string', description: 'The airflow connection id from list_connections.' },
+        limit: { type: 'number', description: 'Optional max events to return (most recent first).' },
+      },
+      required: ['connId'],
+      examples: [{ connId: 'conn_ab12cd' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('get_dataset_events needs a `connId`', 400);
+      const toolArgs: Record<string, unknown> = {};
+      if (args.limit !== undefined) toolArgs.limit = Number(args.limit);
+      return callConnectionTool(id, user, { tool: 'get_dataset_events', args: toolArgs });
+    },
+  },
+  // ---- Control (Write-approval — real side effects, HELD for Governance; honor dagAllowlist). ----
+  {
+    name: 'pause_dag',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'Pause a DAG so it stops scheduling in a customer Apache Airflow (airflow connection). This is a real WRITE side effect — by default its CapabilityMode is Write-approval, so the call is HELD for human approval in the Governance tab (response decision "requires_approval" until approved). The connection’s `dagAllowlist` is honoured: a DAG not on the allowlist is refused. Before: list_dags (pick a dagId). Governance: written through the same capability gate + DAG allowlist as the UI; the token is never sent to the model. Honest: an unreachable Airflow → { ok:false, reason }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connId: { type: 'string', description: 'The airflow connection id from list_connections.' },
+        dagId: { type: 'string', description: 'The DAG id to pause, e.g. "example_etl".' },
+      },
+      required: ['connId', 'dagId'],
+      examples: [{ connId: 'conn_ab12cd', dagId: 'example_etl' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('pause_dag needs a `connId`', 400);
+      const dagId = str(args.dagId).trim();
+      if (!dagId) fail('pause_dag needs a `dagId`', 400);
+      return callConnectionTool(id, user, { tool: 'pause_dag', args: { dagId } });
+    },
+  },
+  {
+    name: 'unpause_dag',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'Unpause a DAG so it resumes scheduling in a customer Apache Airflow (airflow connection). This is a real WRITE side effect — by default its CapabilityMode is Write-approval, so the call is HELD for human approval in the Governance tab (response decision "requires_approval" until approved). The connection’s `dagAllowlist` is honoured. Before: list_dags (pick a dagId). Governance: written through the same capability gate + DAG allowlist as the UI; the token is never sent to the model. Honest: an unreachable Airflow → { ok:false, reason }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connId: { type: 'string', description: 'The airflow connection id from list_connections.' },
+        dagId: { type: 'string', description: 'The DAG id to unpause, e.g. "example_etl".' },
+      },
+      required: ['connId', 'dagId'],
+      examples: [{ connId: 'conn_ab12cd', dagId: 'example_etl' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('unpause_dag needs a `connId`', 400);
+      const dagId = str(args.dagId).trim();
+      if (!dagId) fail('unpause_dag needs a `dagId`', 400);
+      return callConnectionTool(id, user, { tool: 'unpause_dag', args: { dagId } });
+    },
+  },
+  {
+    name: 'clear_task',
+    tab: 'connections',
+    minRole: 'creator',
+    description:
+      'Clear (retry/rerun) task instances of a DAG run in a customer Apache Airflow (airflow connection). This is a real WRITE side effect — by default its CapabilityMode is Write-approval, so the call is HELD for human approval in the Governance tab (response decision "requires_approval" until approved). The connection’s `dagAllowlist` is honoured. Optionally scope to specific `taskIds` and/or only failed tasks. Before: get_task_instances (find the failed taskIds). Governance: written through the same capability gate + DAG allowlist as the UI; the token is never sent to the model. Honest: an unreachable Airflow → { ok:false, reason }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connId: { type: 'string', description: 'The airflow connection id from list_connections.' },
+        dagId: { type: 'string', description: 'The DAG id, e.g. "example_etl".' },
+        runId: { type: 'string', description: 'The DAG run id whose tasks to clear (from list_dag_runs).' },
+        taskIds: { type: 'array', items: { type: 'string' }, description: 'Optional specific task ids to clear (default: all tasks in the run).' },
+        onlyFailed: { type: 'boolean', description: 'Optional — clear only failed task instances.' },
+      },
+      required: ['connId', 'dagId', 'runId'],
+      examples: [{ connId: 'conn_ab12cd', dagId: 'example_etl', runId: 'manual__2026-01-01T00:00:00+00:00', onlyFailed: true }],
+    },
+    call: async (user, args) => {
+      const id = str(args.connId).trim();
+      if (!id) fail('clear_task needs a `connId`', 400);
+      const dagId = str(args.dagId).trim();
+      const runId = str(args.runId).trim();
+      if (!dagId || !runId) fail('clear_task needs a `dagId` and a `runId`', 400);
+      const toolArgs: Record<string, unknown> = { dagId, runId };
+      if (Array.isArray(args.taskIds)) toolArgs.taskIds = (args.taskIds as unknown[]).map(String);
+      if (args.onlyFailed !== undefined) toolArgs.onlyFailed = Boolean(args.onlyFailed);
+      return callConnectionTool(id, user, { tool: 'clear_task', args: toolArgs });
     },
   },
 ];

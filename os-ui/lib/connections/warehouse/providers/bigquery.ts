@@ -89,7 +89,29 @@ export const bigqueryProvider: WarehouseProvider = {
   nativeInImage: true,
   capabilities: { federate: true, import: true },
   catalogProps: (source: WarehouseSource) => bigqueryProps(source as BigQueryConfig),
+  // A BigQuery DATASET is the Trino schema; `SHOW TABLES FROM <catalog>.<dataset>`
+  // lists it. BigQuery only exposes datasets in the configured project (no cross-
+  // project schema listing unless a parent/billing project is set) — see `notes`.
   discoverTables: (source, schema) => showTablesQuery(source, schema),
+  // BigQuery identifiers are CASE-SENSITIVE and quoted with backticks at the engine.
+  // Dataset/table names are preserved exactly (not folded), so matching is exact.
+  identifierRules: { quote: '`', unquotedCase: 'preserve' },
+  discoveryMode: 'show',
+  // BigQuery's complex + spatial types have no faithful Iceberg equivalent. Cast them
+  // HONESTLY on import: nested STRUCT/ARRAY → json, GEOGRAPHY → varchar (WKT). Scalars
+  // (NUMERIC/BIGNUMERIC/BYTES) pass through — Trino maps them to decimal/varbinary.
+  importTypeRules: [
+    { match: /^struct/, castTo: 'json', note: 'BigQuery STRUCT/RECORD cast to Iceberg json (nested fields flattened into a json document)' },
+    { match: /^array/, castTo: 'json', note: 'BigQuery ARRAY cast to Iceberg json (repeated field serialized; not a typed Iceberg list)' },
+    { match: /^geography$/, castTo: 'varchar', note: 'BigQuery GEOGRAPHY cast to varchar (WKT text; Iceberg has no native geography)' },
+    { match: /^json$/, castTo: 'json', note: 'BigQuery JSON carried through as Iceberg json' },
+  ],
+  notes: [
+    'Addressing is project.dataset.table — a DATASET is the Trino schema. There is NO cross-project schema listing unless a parent/billing project is configured (`bigquery.parent-project-id`).',
+    'COST: BigQuery bills on BYTES SCANNED per federated query. Prefer partition-pruned, column-projected reads; a `SELECT *` over an unpartitioned table scans (and bills for) the whole table. Import once a table is hot.',
+    'BigQuery tables can be PARTITIONED (date/ingestion/range) and CLUSTERED; predicate pushdown on the partition column is what keeps scan cost down — filter on it during discovery/import.',
+    'Auth prefers KEYLESS GKE Workload Identity (no secret mounted); the SA-JSON file mode is the fallback and is mounted as a file, never inlined.',
+  ],
   credentialFields: [
     {
       key: 'projectId',

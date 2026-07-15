@@ -17,3 +17,4 @@ export * from '@/lib/science/model-service';
 export * from '@/lib/science/agent-control';
 export * from '@/lib/science/marketplace';
 export * from '@/lib/science/adapters';
+export * from '@/lib/science/training';

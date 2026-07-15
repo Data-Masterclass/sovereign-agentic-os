@@ -60,6 +60,52 @@ export type SecretMaterial = {
 };
 
 /**
+ * How an engine addresses and folds identifiers. Engines disagree on this in ways
+ * that silently break discovery + FQN building if ignored:
+ *   - `quote`      — the character a provider wraps an identifier in when it must be
+ *                    passed to the ENGINE verbatim (Snowflake `"`, BigQuery/Databricks
+ *                    backtick). Trino itself always double-quotes; this is the engine's
+ *                    OWN quote, surfaced so discovery/OM/agents can reason about casing.
+ *   - `unquotedCase` — what the engine does to an UNQUOTED identifier: Snowflake
+ *                    upper-cases it, BigQuery/Databricks/Glue preserve/lower-case it.
+ *                    Discovery has to match case-insensitively when this is not
+ *                    `preserve`, or a lower-case schema name will never match.
+ */
+export type IdentifierRules = {
+  quote: string;
+  unquotedCase: 'upper' | 'lower' | 'preserve';
+};
+
+/**
+ * How a provider ENUMERATES objects. Not every engine answers `SHOW SCHEMAS` the
+ * same cheap way, and one (Fabric/OneLake) has no metastore at all:
+ *   - `show`  — plain `SHOW SCHEMAS/TABLES FROM …` (Glue/Iceberg, Delta w/ metastore).
+ *   - `terse` — the engine has a cheaper terse listing the provider prefers to push
+ *               down (Snowflake `SHOW TERSE … IN <db>`); Trino federation still uses
+ *               `SHOW SCHEMAS`, but the provider records + can render the native form.
+ *   - `none`  — no metastore; discovery honestly degrades (Fabric known-locations).
+ */
+export type DiscoveryMode = 'show' | 'terse' | 'none';
+
+/**
+ * How an engine-specific column type is carried into the OS Iceberg lakehouse on
+ * IMPORT (CTAS). Some source types have no faithful Iceberg equivalent and must be
+ * cast HONESTLY rather than silently mangled:
+ *   - `match`   — a regexp matched against a discovered/declared source type name.
+ *   - `castTo`  — the Trino type to CAST the column to in the CTAS select list, or
+ *                 `undefined` to pass the column through unchanged.
+ *   - `note`    — the honest caveat (why the cast, what is lost) surfaced to callers.
+ */
+export type TypeRule = {
+  match: RegExp;
+  castTo?: string;
+  note: string;
+};
+
+/** The parts an engine-specific CTAS select list needs to honour source types. */
+export type ImportColumn = { name: string; type: string };
+
+/**
  * The complete per-platform contract. One object per platform, one file per object,
  * all registered in `registry.ts`. `catalogProps` is PURE and throws
  * `WarehouseError` on bad input (mirrors the old switch's behavior exactly).
@@ -88,4 +134,43 @@ export type WarehouseProvider = {
   openMetadata: { connectorType: string; configKeys: string[] };
   /** Honest: what needs live customer creds to verify (empty = fully verifiable). */
   liveVerificationRequired: string[];
+
+  // ---- Engine-specific hooks (all optional + additive; defaults are back-compatible) ----
+
+  /**
+   * How this engine addresses + folds identifiers (Snowflake upper-cases unquoted,
+   * BigQuery/Databricks quote with backticks, …). Absent = the generic Trino default
+   * (double-quote, case preserved). Discovery + FQN matching consult this.
+   */
+  identifierRules?: IdentifierRules;
+
+  /**
+   * How this engine enumerates objects. Absent ⇒ inferred: `show` when
+   * `discoverTables` is present, `none` when it is not.
+   */
+  discoveryMode?: DiscoveryMode;
+
+  /**
+   * The engine's NATIVE (often cheaper/terse) schema-listing form, for the provider's
+   * own discovery/diagnostics — distinct from the Trino-federated `SHOW SCHEMAS FROM
+   * <catalog>` the store runs. Pure; validates its inputs. Absent = no native form
+   * beyond the federated one.
+   */
+  nativeSchemaListing?(source: WarehouseSource): string;
+
+  /**
+   * Engine-specific semi-structured / complex column handling for IMPORT. Ordered
+   * rules matched against a source column's declared type; the FIRST match wins. Used
+   * by `import.ts` to build an honest CTAS select list (e.g. Snowflake VARIANT →
+   * `CAST(col AS json)`), and surfaced so callers can warn about lossy casts. Absent =
+   * plain `SELECT *` (every column passed through unchanged).
+   */
+  importTypeRules?: TypeRule[];
+
+  /**
+   * Freeform, honest engine guardrails NOT already covered by
+   * `liveVerificationRequired` — casing gotchas, cost model, pushdown, experimental
+   * status. Surfaced in the editor / registration snippet. Absent = none.
+   */
+  notes?: string[];
 };

@@ -138,6 +138,24 @@ export const fabricProvider: WarehouseProvider = {
   // SHOW TABLES to render. The store surfaces "not discoverable — OneLake exposes no
   // metastore; provide explicit Delta table locations" instead of a query that would
   // lie about what can be enumerated.
+  // EXPERIMENTAL + honest: no metastore, so discovery HONESTLY degrades to the
+  // operator's configured OneLake Delta table locations — there is no auto-enumeration.
+  discoveryMode: 'none',
+  // OneLake Delta is ABFS-pathed; Trino/ADLS addressing quotes with double-quotes and
+  // preserves case (workspace/lakehouse item names are case-preserving).
+  identifierRules: { quote: '"', unquotedCase: 'preserve' },
+  // Delta nested types cast to json on import (same discipline as Databricks/Delta);
+  // import works from operator-supplied OneLake locations since discovery is `none`.
+  importTypeRules: [
+    { match: /^(struct|row)/, castTo: 'json', note: 'Delta STRUCT cast to Iceberg json' },
+    { match: /^array/, castTo: 'json', note: 'Delta ARRAY cast to Iceberg json' },
+    { match: /^map/, castTo: 'json', note: 'Delta MAP cast to Iceberg json' },
+  ],
+  notes: [
+    'EXPERIMENTAL — ship LAST, behind EXTERNAL_CONNECTORS_ENABLED. Trino-over-OneLake is not a documented Trino or Microsoft path; the azure.* / azure.oauth.* keys are UNVERIFIED against a live Fabric tenant.',
+    'NO metastore: discovery does NOT auto-enumerate. The operator configures explicit OneLake Delta table locations (abfss://<workspace>@onelake.dfs.fabric.microsoft.com/<lakehouse>.lakehouse/Tables/<t>) and import reads those directly.',
+    'Addressing is workspace → lakehouse → Tables/<table> over ABFS; auth is an Entra service principal (client id/secret/tenant) referenced via ${ENV:AZURE_*}, never inlined.',
+  ],
   credentialFields: [
     {
       key: 'workspaceId',

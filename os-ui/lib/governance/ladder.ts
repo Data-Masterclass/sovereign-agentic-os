@@ -12,6 +12,8 @@ import { getWorkflow } from '@/lib/knowledge/store';
 import { getPersonalKnowledge, decertifyPersonalKnowledge, unsharePersonalKnowledge } from '@/lib/knowledge/personal-store';
 import { getDashboard } from '@/lib/dashboards/store';
 import { getConnectionForUser, promoteConnection, demoteConnection } from '@/lib/connections';
+import { resolveOmCatalog, applyOmSyncForConnection } from '@/lib/connections/openmetadata';
+import { getDataset } from '@/lib/data/store';
 import { getModel } from '@/lib/science/model-service';
 import { getArtifact, promoteArtifact, demoteArtifact } from '@/lib/core/artifacts';
 import { getAppForUser, promoteApp } from '@/lib/software/apps';
@@ -199,6 +201,21 @@ export function buildEffectDeps(): EffectDeps {
     promoteApp: async (id, approver) => {
       const app = await promoteApp(id, asCurrentUser(approver));
       return { id: app.id, name: app.name, visibility: app.visibility };
+    },
+    applyOmSync: async (payload, approver) => {
+      const user = asCurrentUser(approver);
+      const c = await resolveOmCatalog(payload.connId, user); // DLS guard (404)
+      const dataset = getDataset(payload.datasetId, { id: user.id, role: user.role, domains: user.domains });
+      const result = await applyOmSyncForConnection(c, dataset, {
+        runId: `approval-${Date.now()}`,
+        humanServiceFqn: payload.humanServiceFqn ?? undefined,
+      });
+      const summary = result.refused
+        ? `refused (${result.refused})`
+        : `${result.applied.creates} create/update, ${result.applied.patches} annotation(s), ${result.applied.edges} lineage edge(s)` +
+          (result.conflicts.length ? `; ${result.conflicts.length} conflict(s) yielded` : '') +
+          (result.errors.length ? `; ${result.errors.length} error(s)` : '');
+      return { ok: result.ok, summary, live: true };
     },
   };
 }

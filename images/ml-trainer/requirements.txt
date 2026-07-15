@@ -1,0 +1,10 @@
+# Science training runtime (Layer 4). CPU-only, small honest algorithm set.
+# scikit-learn is pinned to the SAME family the kserve-mlserver runtime serves
+# (mlserver_sklearn.SKLearnModel) so the pickled model.joblib is version-safe.
+scikit-learn==1.5.2
+numpy==2.1.3
+joblib==1.4.2
+# Governed Gold read THROUGH Trino (least-privilege BI/science principal).
+trino==0.330.0
+# Experiment tracking + registry.
+mlflow-skinny==2.19.0

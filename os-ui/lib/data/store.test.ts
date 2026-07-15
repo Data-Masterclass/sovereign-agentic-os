@@ -19,6 +19,7 @@ import {
   buildGoldJoin,
   archiveDataset,
   unarchiveDataset,
+  isDatasetArchived,
   deleteDataset,
   setDocs,
   listDatasetVersions,
@@ -334,6 +335,16 @@ test('archive hides a dataset from the working lists; unarchive restores it', ()
   assert.equal(back.archived, false);
   assert.equal(listDatasets(amir).mine.length, 1);
   assert.equal(listDatasets(amir).mine[0].archived, false);
+});
+
+test('isDatasetArchived exposes the record-level flag (view-scoped) so the detail can offer Restore', () => {
+  __resetStore();
+  const d = createDataset(amir, { name: 'Scratch' });
+  assert.equal(isDatasetArchived(d.id, amir), false);
+  archiveDataset(d.id, amir);
+  assert.equal(isDatasetArchived(d.id, amir), true, 'archived flag is visible to the owner');
+  unarchiveDataset(d.id, amir);
+  assert.equal(isDatasetArchived(d.id, amir), false, 'restore clears the flag');
 });
 
 test('SECURITY: archive/unarchive/delete are edit-scoped (a non-owner viewer is 403)', () => {
