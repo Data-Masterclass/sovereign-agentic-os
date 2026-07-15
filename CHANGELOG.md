@@ -15,6 +15,20 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.3] — 2026-07-15
+
+Workflows + builder polish (follow-up to 0.5.2).
+
+### Changed
+- **Domain Operating Manual moved to the Workflows tab.** The domain operating-manual
+  card (overview/glossary/goals/context) now renders at the top of the Workflows tab,
+  where it belongs — above the workflow list. The **Knowledge tab is now reference-only**:
+  personal/certified markdown entries + Talk-to, for adding additional knowledge as needed.
+  Pure relocation — same `/api/knowledge/domain` wiring, schema, and edit gate. (#164 Phase 2, Domain scope.)
+- **Agent builder: "What your team can use" moved to the bottom of the Define phase**
+  (from the top of Design). Define now reads goal → deliverable → resources, so the team's
+  allowed context is the closing step of scoping the job, before you design the team.
+
 ## [os-ui 0.5.2] — 2026-07-15
 
 Workflows: richer actors, a standalone tab, PDF export, and an MCP how-to guide.

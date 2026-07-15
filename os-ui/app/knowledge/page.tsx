@@ -5,14 +5,12 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
-import type { DomainKnowledge } from '@/lib/knowledge/schema';
 import { roleAtLeast, type Role } from '@/lib/core/session';
 import { useTabNavReset } from '@/lib/core/tab-nav';
 import { SCOPE_GROUPS, type ScopeKey } from '@/lib/core/scopes';
 import type { PersonalKnowledgeSummary } from '@/lib/knowledge/personal-store';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
-import VersionHistory from '@/components/lifecycle/VersionHistory';
 import DomainTag from '@/components/DomainTag';
 import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
 import TalkTo from '@/components/talk/TalkTo';
@@ -23,12 +21,14 @@ const lcVis = (v: 'Personal' | 'Shared' | 'Marketplace'): LcVisibility =>
   v === 'Shared' ? 'shared' : v === 'Marketplace' ? 'certified' : 'personal';
 
 /**
- * Knowledge tab — the domain's operating manual.
+ * Knowledge tab — reference knowledge (markdown) added by users.
  *
- * Four guided sections (overview / glossary / goals / context) plus personal
- * knowledge entries. Automatically the base context for every domain agent.
+ * My knowledge: personal notes about how you work (owner-only, promotable).
+ * Shared in Domain: notes promoted to domain scope.
+ * Marketplace: certified knowledge from across the org.
  *
- * Workflows have moved to the standalone Workflows tab (/workflows).
+ * The Domain Operating Manual (overview / glossary / goals / context) has
+ * moved to the top of the Workflows tab (/workflows).
  */
 
 type UserInfo = { id: string; role: Role; domains: string[] };
@@ -39,31 +39,11 @@ type PersonalGroups = {
   marketplace: PersonalKnowledgeSummary[];
 };
 
-const SECTION_PLACEHOLDERS: Record<string, string> = {
-  overview:
-    'A short description of this domain — what it does, who it serves, and what makes it distinct…',
-  glossary:
-    'Key terms and their definitions — e.g.\n\n**Data Product:** A certified, shared dataset in the marketplace.',
-  goals:
-    'The domain\'s current objectives — e.g.\n\n- Reduce submission error rate below 0.1%\n- Achieve 48h SLA on bank submissions',
-  context:
-    'Background knowledge agents need — key partners, systems, constraints, deadlines…',
-};
-
 export default function KnowledgePage() {
   // Clicking the Knowledge sidebar link returns to this page root.
   useTabNavReset(() => {});
 
-  // Domain knowledge (top section)
-  const [domainKnowledge, setDomainKnowledge] = useState<DomainKnowledge | null>(null);
-  const [dkLoading, setDkLoading] = useState(true);
-  const [editingSection, setEditingSection] = useState<string | null>(null);
-  const [sectionDraft, setSectionDraft] = useState('');
-  const [dkSaving, setDkSaving] = useState(false);
-  const [dkMsg, setDkMsg] = useState('');
-  const [dkHistory, setDkHistory] = useState(false);
-
-  // Knowledge scope (Shared = domain sections · My = personal entries · Marketplace).
+  // Knowledge scope (My · Shared · Marketplace).
   const [kScope, setKScope] = useState<ScopeKey>('all');
 
   // Personal general-knowledge entries ("My knowledge").
@@ -81,18 +61,6 @@ export default function KnowledgePage() {
   // User info for role-based UI
   const [user, setUser] = useState<UserInfo | null>(null);
 
-  const loadDomainKnowledge = useCallback(async () => {
-    setDkLoading(true);
-    try {
-      const res = await fetch('/api/knowledge/domain', { cache: 'no-store' });
-      if (res.ok) setDomainKnowledge(await res.json());
-    } catch {
-      /* leave domainKnowledge null → the "Could not load" surface renders */
-    } finally {
-      setDkLoading(false);
-    }
-  }, []);
-
   const loadPersonal = useCallback(async () => {
     try {
       const res = await fetch(`/api/knowledge/personal${showArchived ? '?archived=1' : ''}`, { cache: 'no-store' });
@@ -103,49 +71,15 @@ export default function KnowledgePage() {
   }, [showArchived]);
 
   useEffect(() => {
-    void loadDomainKnowledge();
     fetch('/api/auth/me', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => d?.user && setUser(d.user))
       .catch(() => null);
-  }, [loadDomainKnowledge]);
+  }, []);
 
   useEffect(() => {
     void loadPersonal();
   }, [loadPersonal]);
-
-  // ── Domain section editing ───────────────────────────────────────────────
-
-  function startEditSection(id: string) {
-    const sec = domainKnowledge?.sections.find((s) => s.id === id);
-    setSectionDraft(sec?.content ?? '');
-    setEditingSection(id);
-    setDkMsg('');
-  }
-
-  async function saveSectionDraft() {
-    if (!editingSection || dkSaving) return;
-    setDkSaving(true);
-    try {
-      const res = await fetch('/api/knowledge/domain', {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sections: [{ id: editingSection, content: sectionDraft }] }),
-      });
-      if (res.ok) {
-        setDomainKnowledge(await res.json());
-        setEditingSection(null);
-        setDkMsg('Saved.');
-        setTimeout(() => setDkMsg(''), 2000);
-      } else {
-        setDkMsg('Could not save — please retry.');
-      }
-    } catch {
-      setDkMsg('Could not save — please retry.');
-    } finally {
-      setDkSaving(false);
-    }
-  }
 
   // ── Personal knowledge ("My knowledge") ──────────────────────────────────
 
@@ -336,14 +270,15 @@ export default function KnowledgePage() {
 
   return (
     <ConfirmProvider>
-      <PageHeader title="Knowledge" crumb="domain operating manual · personal notes · context" tutorial="knowledge" />
+      <PageHeader title="Knowledge" crumb="personal notes · shared in domain · marketplace" tutorial="knowledge" />
       <div className="content">
 
         <p className="lead" style={{ marginTop: 18 }}>
-          General knowledge that grounds your agents. <strong>My knowledge</strong> is
-          personal context about how you work; <strong>Shared in Domain</strong> is the
-          domain&rsquo;s operating manual; <strong>Marketplace</strong> is certified
-          knowledge from across the org.
+          Reference knowledge (markdown) that grounds your agents. <strong>My knowledge</strong> is
+          personal context about how you work; <strong>Shared in Domain</strong> are notes promoted
+          by domain members; <strong>Marketplace</strong> is certified knowledge from across the org.
+          The <strong>Domain Operating Manual</strong> (overview / glossary / goals / context) lives
+          at the top of the <strong>Workflows</strong> tab.
         </p>
 
         {/* ── CREATE — capture a note in one line. ── */}
@@ -375,10 +310,7 @@ export default function KnowledgePage() {
         <div className="seg" style={{ marginTop: 14 }}>
           {SCOPE_GROUPS.map((g) => {
             const n = g.key === 'mine' ? (personal?.mine.length ?? 0)
-              : g.key === 'shared' ? (
-                  (domainKnowledge?.sections.filter((s) => s.content).length ?? 0) +
-                  (personal?.domain.length ?? 0)
-                )
+              : g.key === 'shared' ? (personal?.domain.length ?? 0)
               : g.key === 'marketplace' ? (personal?.marketplace.length ?? 0)
               : undefined; // 'all' has no single count
             return (
@@ -393,92 +325,19 @@ export default function KnowledgePage() {
             My knowledge to the top in the combined "All" view. */}
         <div style={{ display: 'flex', flexDirection: 'column' }}>
 
-        {/* ── SHARED: the domain operating manual (four guided sections) ── */}
+        {/* ── SHARED: personal notes promoted to domain scope ── */}
         {(kScope === 'all' || kScope === 'shared') && (
           <div style={{ marginTop: 20, order: 2 }}>
-            <div className="section-title">Shared in Domain · the domain operating manual</div>
-            <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-              Pinned as base context for every agent in this domain. Keep it short and current.
-            </p>
-            {dkLoading ? (
+            <div className="section-title">Shared in Domain · promoted notes</div>
+            {personal === null ? (
               <div className="stub-page"><span className="spin" /> Loading…</div>
-            ) : domainKnowledge ? (
-              <>
-                {domainKnowledge.sections.map((section) => (
-                  <div key={section.id} className="k-section">
-                    <div className="k-section-head">
-                      <span className="k-section-label">{section.title}</span>
-                      {editingSection !== section.id && (
-                        <button className="btn ghost sm" onClick={() => startEditSection(section.id)}>Edit</button>
-                      )}
-                    </div>
-                    {editingSection === section.id ? (
-                      <>
-                        <textarea
-                          className="k-section-editor"
-                          rows={6}
-                          value={sectionDraft}
-                          onChange={(e) => setSectionDraft(e.target.value)}
-                          placeholder={SECTION_PLACEHOLDERS[section.id]}
-                          autoFocus
-                        />
-                        <div className="row" style={{ gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
-                          <button className="btn ghost sm" onClick={() => setEditingSection(null)} disabled={dkSaving}>Cancel</button>
-                          <button className="btn sm" onClick={() => void saveSectionDraft()} disabled={dkSaving}>
-                            {dkSaving ? <span className="spin" /> : 'Save'}
-                          </button>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="k-section-body">
-                        {section.content ? (
-                          <pre className="k-prose">{section.content}</pre>
-                        ) : (
-                          <span className="muted" style={{ fontSize: 13, fontStyle: 'italic' }}>
-                            {SECTION_PLACEHOLDERS[section.id]}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
-                {dkMsg && (
-                  dkMsg === 'Saved.'
-                    ? <div className="hint" style={{ marginTop: 8, color: 'var(--teal)' }}>{dkMsg}</div>
-                    : <div className="error" style={{ marginTop: 8 }}>{dkMsg}</div>
-                )}
-                {/* Version history for the whole card. */}
-                <div className="lc-actions row" style={{ gap: 8, alignItems: 'center', marginTop: 12 }}>
-                  <button
-                    type="button"
-                    className={`btn ghost sm${dkHistory ? ' on' : ''}`}
-                    onClick={() => setDkHistory((v) => !v)}
-                    aria-expanded={dkHistory}
-                  >
-                    {dkHistory ? 'Hide history' : 'Version history'}
-                  </button>
-                </div>
-                {dkHistory && (
-                  <div className="lc-history-panel">
-                    <VersionHistory
-                      basePath={`/api/knowledge/domain/${encodeURIComponent(domainKnowledge.domain)}`}
-                      name="Domain knowledge"
-                      onRestored={() => void loadDomainKnowledge()}
-                    />
-                  </div>
-                )}
-              </>
+            ) : personal.domain.length === 0 ? (
+              <div className="stub-page" style={{ marginTop: 8 }}>
+                No shared notes yet. Promote a personal note to share it with your domain.
+              </div>
             ) : (
-              <div className="stub-page">Could not load domain knowledge.</div>
-            )}
-
-            {/* Personal notes promoted to the domain (Shared visibility). */}
-            {personal && personal.domain.length > 0 && (
-              <div style={{ marginTop: 18 }}>
-                <div className="section-title" style={{ marginTop: 0, fontSize: 12 }}>Shared notes</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
-                  {personal.domain.map((e) => renderPersonalEntry(e, e.owner === uid || canPublish))}
-                </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
+                {personal.domain.map((e) => renderPersonalEntry(e, e.owner === uid || canPublish))}
               </div>
             )}
           </div>

@@ -408,6 +408,9 @@ function DefineStep({
       {/* How the team is triggered — part of team setup, so it lives on Define. */}
       <TriggerMode systemId={systemId} system={system} canEdit={canEdit} onReload={onReload} />
 
+      {/* What your team can use — grants/resource picker, at the bottom of Define */}
+      <TeamResources systemId={systemId} system={system} canEdit={canEdit} onCommit={onCommit} />
+
       {hasAgents ? (
         <div className="row" style={{ justifyContent: 'flex-end', marginTop: 14 }}>
           <button className="btn ghost sm" onClick={() => { saveName(); onNext(); }}>Design your team →</button>
@@ -471,8 +474,6 @@ function DesignStep({
 
   return (
     <div className="sb-agents">
-      <TeamResources systemId={systemId} system={system} canEdit={canEdit} onCommit={onCommit} />
-
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
         <div>
           <h2 className="sb-section-title">Your team</h2>
