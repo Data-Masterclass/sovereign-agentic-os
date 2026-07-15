@@ -207,30 +207,43 @@ test('PLATFORM-GATE 1: /components has a server-side admin layout', () => {
   assert.match(src, /role !== 'admin'/, 'app/components/layout.tsx must gate non-admins');
 });
 
-test('PLATFORM-GATE 2: /terminal is admin-only at the page level', () => {
-  const src = read('app/terminal/page.tsx');
-  assert.match(src, /role !== 'admin'/, 'app/terminal/page.tsx must have admin-only gate');
+test('PLATFORM-GATE 2: /console (merged Terminal+Query) is admin-only at the page level', () => {
+  // /terminal was consolidated into /console (Shell | Query switch). The Console
+  // page server component re-checks the admin gate before rendering.
+  const src = read('app/console/page.tsx');
+  assert.match(src, /role !== 'admin'/, 'app/console/page.tsx must have admin-only gate');
 });
 
-test('PLATFORM-GATE 3: /about has a server-side admin gate in the page', () => {
+test('PLATFORM-GATE 3: /about is open to all roles (moved from Admin group to Entry for transparency)', () => {
+  // About / Licenses (open-source component list) is purely informational.
+  // It was moved from the dissolved Admin group to the Entry group — all roles
+  // can now read it. The server still calls currentUser() for future personalisation.
   const src = read('app/about/page.tsx');
-  assert.match(src, /currentUser/, 'app/about/page.tsx must call currentUser');
-  assert.match(src, /role !== 'admin'/, 'app/about/page.tsx must gate non-admins');
+  assert.match(src, /currentUser/, 'app/about/page.tsx must still call currentUser');
+  assert.doesNotMatch(src, /role !== 'admin'/, "app/about/page.tsx must NOT gate non-admins (all-roles accessible)");
 });
 
-test('PLATFORM-GATE 4: consolidated Platform tabs — Governance is builder+, the rest admin', () => {
+test('PLATFORM-GATE 4: consolidated tab gates — Policies & Approvals is builder+, admin tabs unchanged', () => {
   const src = read('lib/core/tabs.ts');
-  for (const label of ['Admin', 'Components', 'Terminal', 'About / Licenses']) {
+  // Admin-gated tabs: Admin (/platform), Components, Console (merged Terminal+Query).
+  for (const label of ['Admin', 'Components', 'Console']) {
     assert.match(src, new RegExp(`label: '${label.replace('/', '\\/')}[^']*'[^}]*minRole: 'admin'`, 's'),
-      `Platform tab "${label}" must declare minRole: 'admin'`);
+      `Tab "${label}" must declare minRole: 'admin'`);
   }
-  // Governance: builders approve promotions here — admin-gating it would break
-  // the sharing ladder.
-  assert.match(src, /label: 'Governance'[^}]*minRole: 'builder'/s,
-    "Governance must declare minRole: 'builder'");
-  // Tutorials (OS group) must NOT carry minRole (visible to all — students need it).
+  // Policies & Approvals (renamed from Governance): builders approve promotions.
+  assert.match(src, /label: 'Policies & Approvals'[^}]*minRole: 'builder'/s,
+    "Policies & Approvals must declare minRole: 'builder'");
+  // About / Licenses: moved to Entry — visible to all roles, no minRole.
+  const aboutBlock = src.match(/label: 'About \/ Licenses'[^}]*/s)?.[0] ?? '';
+  assert.doesNotMatch(aboutBlock, /minRole/, "About / Licenses must not declare minRole (all-roles visible)");
+  // Tutorials must NOT carry minRole (visible to all — students need it).
   const tutBlock = src.match(/label: 'Tutorials'[^}]*/s)?.[0] ?? '';
   assert.doesNotMatch(tutBlock, /minRole/, "Tutorials must not declare minRole (all-roles visible)");
+  // Terminal and Query must be gone from the nav (merged into Console).
+  assert.doesNotMatch(src, /label: 'Terminal'/, "Terminal tab must be gone (merged into Console)");
+  assert.doesNotMatch(src, /label: 'Query'/, "Query tab must be gone (merged into Console)");
+  // Governance label renamed to Policies & Approvals.
+  assert.doesNotMatch(src, /label: 'Governance'/, "Governance label must be gone (renamed to Policies & Approvals)");
 });
 
 test('PLATFORM-GATE 5: removed tab routes are redirect stubs, not content (no 404s for old links)', () => {
@@ -240,6 +253,8 @@ test('PLATFORM-GATE 5: removed tab routes are redirect stubs, not content (no 40
     'app/orchestration/page.tsx': '/components',
     'app/consoles/page.tsx': '/components',
     'app/workbench/page.tsx': '/components',
+    'app/terminal/page.tsx': '/console',
+    'app/admin-query/page.tsx': '/console',
   };
   for (const [p, target] of Object.entries(targets)) {
     const src = read(p);

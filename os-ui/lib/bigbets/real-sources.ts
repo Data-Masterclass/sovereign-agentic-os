@@ -26,6 +26,7 @@ import { listDashboards } from '@/lib/dashboards/store';
 import { listWorkflows } from '@/lib/knowledge/store';
 import { listFiles } from '@/lib/files/store';
 import { listMetrics } from '@/lib/metrics/store';
+import { listModelsForUser } from '@/lib/science/model-service';
 
 function card(input: {
   id: string;
@@ -141,13 +142,33 @@ const READERS: Partial<Record<Tab, (viewer: Principal) => Artifact[]>> = {
       }),
     );
   },
+  ml(viewer) {
+    // Science models: listModelsForUser is synchronous + RLS-scoped by the model
+    // tier ladder (Personal→owner, Domain→domain members, Marketplace→all), the
+    // same shape every other reader relies on. Map the tier → reference visibility
+    // and the stage → lifecycle (ml's ready verb is `production`).
+    const models = listModelsForUser({ id: viewer.id, domains: viewer.domains });
+    return models.map((m) =>
+      card({
+        id: m.id,
+        tab: 'ml',
+        title: m.name,
+        domain: m.domain,
+        visibility: m.tier === 'Personal' ? 'personal' : m.tier === 'Domain' ? 'shared' : 'marketplace',
+        lifecycle: m.stage === 'Production' ? 'production' : 'staging',
+      }),
+    );
+  },
 };
 
 /**
  * Read the REAL artifacts a viewer may see for `tab`, via that tab's own governed
- * list gate. Tabs without a store yet (software / ml / connection) return [] and
- * fall back to the in-memory registry. Defensive: a store error never breaks the
- * picker — it just yields no real artifacts for that tab.
+ * list gate. `software` and `connection` are NOT wired here: their governed list
+ * gates (`listAppsForUser` / `listConnectionsForUser`) are ASYNC, and this reader
+ * seam (`RealTabReader` → `sourceFor(tab).list()`) is synchronous — wiring them
+ * cleanly needs the seam made async (a later phase), so they return [] and fall
+ * back to the in-memory registry. Defensive: a store error never breaks the picker
+ * — it just yields no real artifacts for that tab.
  */
 export function listRealArtifacts(tab: Tab, viewer: Principal): Artifact[] {
   const reader = READERS[tab];

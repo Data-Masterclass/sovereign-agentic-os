@@ -153,6 +153,52 @@ export type StatusOverride = {
   at: string;
 };
 
+/**
+ * The kind of runtime interplay one solution node has with another — DISTINCT from
+ * `dependsOn` (which is BUILD-ORDER for the Gantt). These edges describe how the
+ * finished pieces work together at run time (a dashboard *consumes* a metric; an
+ * agent *triggers* a workflow; a model *feeds* a dashboard).
+ */
+export type InterplayRelation = 'consumes' | 'produces' | 'triggers' | 'feeds' | 'monitors';
+
+/** Every valid interplay relation, for runtime validation. */
+export const INTERPLAY_RELATIONS: InterplayRelation[] = ['consumes', 'produces', 'triggers', 'feeds', 'monitors'];
+
+/**
+ * A single interplay edge on the solution blueprint. `from`/`to` reference a
+ * {@link ComponentRef.id} (the on-bet ref id), NEVER the underlying artifactId —
+ * the same artifact can be referenced by many bets, so the edge is scoped to THIS
+ * bet's refs. Kept separate from `dependsOn`: different array, different semantics.
+ */
+export type SolutionEdge = {
+  id: string;
+  /** Source ComponentRef.id. */
+  from: string;
+  /** Target ComponentRef.id. */
+  to: string;
+  relation: InterplayRelation;
+  note?: string;
+  addedBy: string;
+  addedAt: string;
+};
+
+/** A node's part in the solution: the one anchoring workflow, a component, or context. */
+export type SolutionRole = 'anchor-workflow' | 'component' | 'context';
+
+/**
+ * The solution blueprint for a bet — how its referenced pieces fit together at run
+ * time. Additive + back-compat: a bet with no `solution` still parses. Serialize
+ * with omit-when-empty so a bet that never opened the canvas stays clean.
+ */
+export type BigBetSolution = {
+  /** The single anchor-workflow node's ComponentRef.id (a knowledge/workflow ref). */
+  anchorWorkflowRefId?: string;
+  /** Runtime interplay edges between ComponentRefs. */
+  edges: SolutionEdge[];
+  /** Canvas layout — ComponentRef.id → {x,y}. */
+  positions?: Record<string, { x: number; y: number }>;
+};
+
 /** A reference to a real artifact, on the roadmap. The bet never holds a copy. */
 export type ComponentRef = {
   /** Ref id (the edge), distinct from the artifact id (a component can be in many bets). */
@@ -167,6 +213,8 @@ export type ComponentRef = {
   /** Manual allocation weight (0–100) when allocation = manual. */
   weight: number;
   override?: StatusOverride;
+  /** This ref's part in the solution blueprint (anchor-workflow | component | context). */
+  role?: SolutionRole;
   /** Provenance — was it scaffolded by the planner or linked to an existing artifact. */
   origin: 'scaffolded' | 'linked';
   addedBy: string;
@@ -198,6 +246,12 @@ export type BigBet = {
   goLive: string;
   status: 'draft' | 'active' | 'shipped' | 'archived';
   components: ComponentRef[];
+  /**
+   * The solution BLUEPRINT (anchor + interplay edges + canvas layout). Omitted
+   * when empty. NB: named `blueprint`, not `solution`, because `solution: string`
+   * above is the pre-existing free-form idea field — this is the structured graph.
+   */
+  blueprint?: BigBetSolution;
   createdBy: string;
   createdAt: string;
   updatedAt: string;

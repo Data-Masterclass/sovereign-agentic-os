@@ -22,14 +22,18 @@ import {
   type AllocationMethod,
   type AuditEvent,
   type BigBet,
+  type BigBetSolution,
   type ComponentRef,
+  type InterplayRelation,
   type Lifecycle,
   type Principal,
   type ProblemStatement,
+  type SolutionEdge,
   type StatusOverride,
   type Tab,
   type ValueBasis,
   BetError,
+  INTERPLAY_RELATIONS,
   roleAtLeast,
 } from './model.ts';
 import { resolveArtifact, sourceFor } from './sources.ts';
@@ -86,6 +90,7 @@ function snapshotState(bet: BigBet): {
   targetValue: number; goLive: string; valueBasis: BigBet['valueBasis'];
   allocation: BigBet['allocation']; ownerDeclaredValue?: number;
   members: string[]; status: BigBet['status'];
+  blueprint?: BigBetSolution;
 } {
   return {
     name: bet.name,
@@ -98,6 +103,8 @@ function snapshotState(bet: BigBet): {
     ownerDeclaredValue: bet.ownerDeclaredValue,
     members: [...bet.members],
     status: bet.status,
+    // Deep-clone the solution blueprint so a restored snapshot is independent.
+    blueprint: bet.blueprint ? structuredClone(bet.blueprint) : undefined,
   };
 }
 
@@ -421,6 +428,13 @@ export function removeComponent(betId: string, user: Principal, refId: string): 
   bet.components = bet.components.filter((c) => c.id !== refId);
   // Drop dangling dependency edges to the removed ref.
   for (const c of bet.components) c.dependsOn = c.dependsOn.filter((d) => d !== refId);
+  // Solution blueprint: drop any interplay edges that reference the removed ref, and
+  // clear the anchor if it WAS the removed ref (mirrors the dependsOn cleanup above).
+  if (bet.blueprint) {
+    bet.blueprint.edges = bet.blueprint.edges.filter((e) => e.from !== refId && e.to !== refId);
+    if (bet.blueprint.anchorWorkflowRefId === refId) bet.blueprint.anchorWorkflowRefId = undefined;
+    if (bet.blueprint.positions) delete bet.blueprint.positions[refId];
+  }
   bet.updatedAt = now();
   writeThrough(bet);
   log(user.id, 'component.remove', bet.id, { refId, artifactId: ref.artifactId, note: 'untag only, artifact kept' });
@@ -462,6 +476,152 @@ function wouldCycle(bet: BigBet, refId: string, newDeps: string[]): boolean {
     stack.push(...(deps.get(n) ?? []));
   }
   return false;
+}
+
+// --------------------------------------------------- solution blueprint ------
+//
+// The solution BLUEPRINT is the runtime interplay graph over a bet's components:
+// ONE anchor workflow + interplay edges (consumes/produces/triggers/feeds/monitors)
+// between ComponentRefs. Distinct from `dependsOn` (build order for the Gantt) —
+// a separate array with separate semantics. All setters are edit-gated; reads are
+// view-gated. The invariants (single anchor, anchor must be a knowledge/workflow
+// ref, edges reference on-bet ref ids, no duplicate edges) are enforced HERE.
+
+/** Ensure the blueprint object exists, returning it. Never serialized when empty. */
+function ensureBlueprint(bet: BigBet): BigBetSolution {
+  if (!bet.blueprint) bet.blueprint = { edges: [] };
+  return bet.blueprint;
+}
+
+/**
+ * Set (or move) the bet's anchor workflow. Invariant enforced in the store:
+ * EXACTLY ONE component may carry `role:'anchor-workflow'`, and it MUST be a
+ * `knowledge`-tab ref (workflows live in lib/knowledge). Pass a ComponentRef.id
+ * OR an artifactId (a knowledge ref for that artifact must already be on the bet).
+ * Passing an empty/undefined refId CLEARS the anchor.
+ */
+export function setBetWorkflow(betId: string, workflowRefIdOrArtifact: string | undefined, user: Principal): BigBet {
+  const bet = requireEdit(betId, user);
+  const bp = ensureBlueprint(bet);
+  // Clear the anchor.
+  if (!workflowRefIdOrArtifact) {
+    for (const c of bet.components) if (c.role === 'anchor-workflow') c.role = 'component';
+    bp.anchorWorkflowRefId = undefined;
+    bet.updatedAt = now();
+    writeThrough(bet);
+    log(user.id, 'bet.solution.anchor', bet.id, { cleared: true });
+    return bet;
+  }
+  // Resolve the target ref by ref-id first, then by artifactId.
+  const ref =
+    bet.components.find((c) => c.id === workflowRefIdOrArtifact) ??
+    bet.components.find((c) => c.artifactId === workflowRefIdOrArtifact);
+  if (!ref) throw new BetError(`No component on this bet matches '${workflowRefIdOrArtifact}'`, 404);
+  if (ref.tab !== 'knowledge') {
+    throw new BetError('The anchor workflow must be a knowledge (workflow) component', 400);
+  }
+  // Single-anchor invariant: demote any prior anchor, promote this one.
+  for (const c of bet.components) if (c.role === 'anchor-workflow' && c.id !== ref.id) c.role = 'component';
+  ref.role = 'anchor-workflow';
+  bp.anchorWorkflowRefId = ref.id;
+  bet.updatedAt = now();
+  writeThrough(bet);
+  log(user.id, 'bet.solution.anchor', bet.id, { refId: ref.id, artifactId: ref.artifactId });
+  return bet;
+}
+
+/**
+ * Wire an interplay edge between two of the bet's components. Validates: both refs
+ * exist on THIS bet, the relation is valid, and the edge is not a duplicate (same
+ * from/to/relation). `from`/`to` are ComponentRef ids, never artifactIds.
+ */
+export function wireComponents(
+  betId: string,
+  fromRefId: string,
+  toRefId: string,
+  relation: InterplayRelation,
+  user: Principal,
+): { bet: BigBet; edge: SolutionEdge } {
+  const bet = requireEdit(betId, user);
+  if (fromRefId === toRefId) throw new BetError('A component cannot wire to itself', 400);
+  if (!INTERPLAY_RELATIONS.includes(relation)) {
+    throw new BetError(`relation must be one of ${INTERPLAY_RELATIONS.join(' | ')}`, 400);
+  }
+  if (!bet.components.some((c) => c.id === fromRefId)) throw new BetError(`Unknown component ref '${fromRefId}'`, 404);
+  if (!bet.components.some((c) => c.id === toRefId)) throw new BetError(`Unknown component ref '${toRefId}'`, 404);
+  const bp = ensureBlueprint(bet);
+  if (bp.edges.some((e) => e.from === fromRefId && e.to === toRefId && e.relation === relation)) {
+    throw new BetError('That interplay edge already exists', 409);
+  }
+  const edge: SolutionEdge = {
+    id: id('edge'),
+    from: fromRefId,
+    to: toRefId,
+    relation,
+    addedBy: user.id,
+    addedAt: now(),
+  };
+  bp.edges.push(edge);
+  bet.updatedAt = now();
+  writeThrough(bet);
+  log(user.id, 'bet.solution.wire', bet.id, { edgeId: edge.id, from: fromRefId, to: toRefId, relation });
+  return { bet, edge };
+}
+
+/** Remove an interplay edge by id (no-op-safe: unknown id → 404). */
+export function unwireComponents(betId: string, edgeId: string, user: Principal): BigBet {
+  const bet = requireEdit(betId, user);
+  const bp = bet.blueprint;
+  if (!bp || !bp.edges.some((e) => e.id === edgeId)) throw new BetError(`Edge ${edgeId} not found on this bet`, 404);
+  bp.edges = bp.edges.filter((e) => e.id !== edgeId);
+  bet.updatedAt = now();
+  writeThrough(bet);
+  log(user.id, 'bet.solution.unwire', bet.id, { edgeId });
+  return bet;
+}
+
+/**
+ * Read the solution blueprint (view-gated): the anchor ref, the nodes (the bet's
+ * ComponentRefs), the interplay edges, and the canvas positions. Returns empty
+ * shapes when the bet has no blueprint yet — never null, so the UI can render a
+ * blank canvas.
+ */
+export function getSolution(
+  betId: string,
+  user: Principal,
+): { anchor: ComponentRef | null; nodes: ComponentRef[]; edges: SolutionEdge[]; positions: Record<string, { x: number; y: number }> } {
+  const bet = requireView(betId, user);
+  const bp = bet.blueprint;
+  const anchor = bp?.anchorWorkflowRefId ? bet.components.find((c) => c.id === bp.anchorWorkflowRefId) ?? null : null;
+  return {
+    anchor,
+    nodes: [...bet.components],
+    edges: bp ? [...bp.edges] : [],
+    positions: bp?.positions ? { ...bp.positions } : {},
+  };
+}
+
+/** Persist canvas node positions (edit-gated). Only positions for on-bet refs are kept. */
+export function savePositions(
+  betId: string,
+  positions: Record<string, { x: number; y: number }>,
+  user: Principal,
+): BigBet {
+  const bet = requireEdit(betId, user);
+  const bp = ensureBlueprint(bet);
+  const valid: Record<string, { x: number; y: number }> = {};
+  for (const [refId, p] of Object.entries(positions ?? {})) {
+    if (!bet.components.some((c) => c.id === refId)) continue; // ignore stray ids
+    if (typeof p?.x !== 'number' || typeof p?.y !== 'number' || !Number.isFinite(p.x) || !Number.isFinite(p.y)) {
+      throw new BetError(`Position for '${refId}' must be finite {x,y} numbers`, 400);
+    }
+    valid[refId] = { x: p.x, y: p.y };
+  }
+  bp.positions = valid;
+  bet.updatedAt = now();
+  writeThrough(bet);
+  log(user.id, 'bet.solution.positions', bet.id, { count: Object.keys(valid).length });
+  return bet;
 }
 
 /** Owner override shown BESIDE the derived state (never replacing it). Audited. */
@@ -558,6 +718,8 @@ export function restoreBetVersion(betId: string, user: Principal, version: numbe
   bet.ownerDeclaredValue = s.ownerDeclaredValue;
   if (Array.isArray(s.members)) bet.members = [...new Set([bet.owner, ...s.members])];
   bet.status = s.status;
+  // Restore the solution blueprint too (undefined when the snapshot had none).
+  bet.blueprint = s.blueprint ? structuredClone(s.blueprint) : undefined;
   bet.updatedAt = now();
   writeThrough(bet);
   log(user.id, 'bet.restore', betId, { version });

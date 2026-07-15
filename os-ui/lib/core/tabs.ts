@@ -5,13 +5,21 @@
  * The OS sidebar tab set. The first group is the canonical OS tab order
  * (os-application.md §4); every tab routes to a real surface in v1.0.
  *
- * Six sections:
- *   Ungrouped (entry): Home, Cockpit, Tutorials, MCP
+ * Six sections (5 tabs each):
+ *   Ungrouped (entry): Home, Cockpit, Tutorials, MCP, About / Licenses
  *   Plan:    Strategy, Big Bets, Operating Manual, Workflows, Marketplace
  *   Context: Knowledge, Files, Data, Connections, Metrics
- *   Build:   Agents, Software, Science, Dashboards
- *   Monitor: Governance (builder+), Monitoring, Components (admin), LLM Gateway
- *   Admin:   Admin (admin), Terminal (admin), Query (admin), About / Licenses (admin)
+ *   Build:   Agents, Software, Science, Dashboards, Console (admin)
+ *   Govern:  Policies & Approvals (builder+), Monitoring (builder+), Components (admin), LLM Gateway (builder+), Admin (admin)
+ *
+ * The former Admin group (Admin, Terminal, Query, About / Licenses) was dissolved:
+ *   - About / Licenses moved to the Entry group (transparency — every user can read it).
+ *   - Admin moved to the Govern group.
+ *   - Terminal + Query merged into Console (/console), hosted in the Build group.
+ *   - Old /terminal and /admin-query routes redirect to /console.
+ *
+ * The former Monitor group was renamed Govern. The Governance tab was relabelled
+ * "Policies & Approvals" (route unchanged: /governance).
  *
  * The former Users / Gateway / Orchestration / Consoles / Workbench tabs were
  * consolidated: Users & Access lives in Admin (/platform), and the gateway /
@@ -36,8 +44,9 @@ export type TabGroup = {
 
 export const TAB_GROUPS: TabGroup[] = [
   {
-    // Entry points — ungrouped, always at the top (Home + Cockpit, then the
-    // cross-cutting Tutorials + MCP setup that aren't part of the Plan workflow).
+    // Entry points — ungrouped, always at the top. About / Licenses lives here for
+    // transparency (every role can read it); the admin gate on the page itself was
+    // the only real constraint — moving it here keeps it accessible and honest.
     tabs: [
       { label: 'Home', icon: '◇', href: '/' },
       { label: 'Cockpit', icon: '◉', href: '/cockpit' },
@@ -46,6 +55,7 @@ export const TAB_GROUPS: TabGroup[] = [
       // /api/mcp endpoint + their per-user token are unaffected) — only this
       // configuration tab is hidden from the creator menu.
       { label: 'MCP', icon: '⌗', href: '/mcp', role: 'Builder / Administrator', minRole: 'builder' },
+      { label: 'About / Licenses', icon: '©', href: '/about' },
     ],
   },
   {
@@ -75,26 +85,22 @@ export const TAB_GROUPS: TabGroup[] = [
       { label: 'Software', icon: '⌘', href: '/software' },
       { label: 'Science', icon: '∿', href: '/science' },
       { label: 'Dashboards', icon: '▦', href: '/dashboards' },
+      // Console merges the former Terminal (/terminal) and Query (/admin-query)
+      // operator tools into one page with a Shell | Query switch. Admin-only; the
+      // old routes redirect here. Not a student surface — see TUTORIAL_EXEMPT_ROUTES.
+      { label: 'Console', icon: '▶', href: '/console', role: 'Administrator', minRole: 'admin' },
     ],
   },
   {
-    heading: 'Monitor',
+    // Renamed Monitor → Govern. Tabs: relabelled Governance → Policies & Approvals
+    // (route /governance unchanged), plus Admin moved from the dissolved Admin group.
+    heading: 'Govern',
     tabs: [
-      // Governance (approvals / the sharing ladder) is oversight — it lives in Monitor.
-      // Builder+ (its own minRole) see it here.
-      { label: 'Governance', icon: '⚖', href: '/governance', role: 'Builder / Administrator', minRole: 'builder' },
+      { label: 'Policies & Approvals', icon: '⚖', href: '/governance', role: 'Builder / Administrator', minRole: 'builder' },
       { label: 'Monitoring', icon: '◷', href: '/monitoring', role: 'Builder / Administrator', minRole: 'builder' },
       { label: 'Components', icon: '▥', href: '/components', role: 'Administrator', minRole: 'admin' },
       { label: 'LLM Gateway', icon: '⌁', href: '/llm-gateway', role: 'Builder / Administrator', minRole: 'builder' },
-    ],
-  },
-  {
-    heading: 'Admin',
-    tabs: [
       { label: 'Admin', icon: '❖', href: '/platform', role: 'Administrator', minRole: 'admin' },
-      { label: 'Terminal', icon: '▮', href: '/terminal', role: 'Administrator', minRole: 'admin' },
-      { label: 'Query', icon: '⌥', href: '/admin-query', role: 'Administrator', minRole: 'admin' },
-      { label: 'About / Licenses', icon: '©', href: '/about', role: 'Administrator', minRole: 'admin' },
     ],
   },
 ];

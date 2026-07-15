@@ -25,7 +25,7 @@ type ScopeDef = { key: ManualScope; label: string; blurb: string; readOnlyNote: 
 const SCOPES: ScopeDef[] = [
   {
     key: 'my',
-    label: 'My',
+    label: 'My Operating Manual',
     blurb: 'Your personal operating manual — how you work, your context. Private to you.',
     readOnlyNote: '',
   },
@@ -203,7 +203,7 @@ export default function OperatingManualPage() {
               <div className="lc-history-panel">
                 <VersionHistory
                   basePath={`/api/knowledge/manual/${scope}`}
-                  name={`${def.label} operating manual`}
+                  name={def.key === 'my' ? def.label : `${def.label} operating manual`}
                   onRestored={() => void load()}
                 />
               </div>

@@ -15,6 +15,28 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.5] — 2026-07-15
+
+Navigation restructure + Big Bet solution-blueprint foundation.
+
+### Changed
+- **Navigation is now five tabs per section.** **Console** (Terminal + Query merged into
+  one admin page with a Shell | Query switch) joins **Build**; the **Admin group is
+  dissolved** — the Admin tab moves into **Govern** (renamed from Monitor), and About /
+  Licenses moves into **Entry** (readable by everyone, for transparency). The
+  **Governance** tab is renamed **Policies & Approvals** (route unchanged; page content
+  unchanged — the consolidation is separate). `/terminal` and `/admin-query` redirect to
+  `/console`.
+- The Operating Manual's personal scope now reads **"My Operating Manual."**
+
+### Added (foundation, not yet surfaced)
+- **Big Bet solution-blueprint model + store** (Phase 1) — typed interplay edges
+  (`consumes/produces/triggers/feeds/monitors`, kept separate from build-order
+  `dependsOn`), an anchor-workflow role, and governed store setters
+  (`setBetWorkflow`/`wireComponents`/`getSolution`/…), versioned through the existing
+  mirror. Stored on `blueprint` (the existing free-text `solution` field is untouched).
+  The wizard + interplay canvas that use it come in later phases.
+
 ## [os-ui 0.5.4] — 2026-07-15
 
 Operating Manual gets its own tab; Strategy/Big-Bet foundations; admin tidy-up.
