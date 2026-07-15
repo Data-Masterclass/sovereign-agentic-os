@@ -7,7 +7,7 @@ import { listPillars, createPillar } from '@/lib/strategy/pillars';
 import { rollupForPillar, valueHistory } from '@/lib/strategy/value-rollup';
 import { snapshotHistory, ensureHydrated } from '@/lib/strategy/snapshots';
 import { recentStrategyAudit } from '@/lib/strategy/audit';
-import { canCreatePillar, canEditPillar, type PillarScope } from '@/lib/strategy/model';
+import { canCreatePillar, canEditPillar, canPromotePillar, nextPillarScope, type PillarScope } from '@/lib/strategy/model';
 import { getSettings } from '@/lib/platform-admin/settings';
 
 export const dynamic = 'force-dynamic';
@@ -23,11 +23,13 @@ function fail(e: unknown) {
  * + bets + components, masked to the caller's entitled domains) and its value
  * history, so the pillars-centric page renders everything from one fetch.
  */
-export async function GET() {
+export async function GET(req: Request) {
   try {
     await ensureHydrated();
     const user = await requireUser();
-    const pillars = await listPillars(user);
+    // Archived pillars are hidden by default; the UI opts them in via ?archived=1.
+    const includeArchived = new URL(req.url).searchParams.get('archived') === '1';
+    const pillars = await listPillars(user, { includeArchived });
     const items = await Promise.all(
       pillars.map(async (pillar) => {
         const rollup = await rollupForPillar(pillar, user);
@@ -37,6 +39,8 @@ export async function GET() {
           history: valueHistory(pillar, snapshotHistory(pillar.id)),
           audit: recentStrategyAudit(pillar.id, 6),
           canEdit: canEditPillar(user, pillar),
+          canPromote: canPromotePillar(user, pillar),
+          promoteTo: nextPillarScope(pillar.scope),
         };
       }),
     );
@@ -45,7 +49,8 @@ export async function GET() {
       items,
       // The tenant currency (set in Admin) the card uses to format monetary metrics.
       currency: getSettings().currency,
-      // Surface what the caller may create so the UI can gate the buttons.
+      // Surface what the caller may create per tier so the UI can gate the buttons.
+      canCreatePersonal: user.domains.some((d) => canCreatePillar(user, 'personal', d)),
       canCreateTenant: canCreatePillar(user, 'tenant', 'tenant'),
       canCreateDomain: user.domains.some((d) => canCreatePillar(user, 'domain', d)),
     });
@@ -59,7 +64,9 @@ export async function POST(req: Request) {
   try {
     const user = await requireUser();
     const body = await req.json().catch(() => ({} as Record<string, unknown>));
-    const scope = (body?.scope === 'tenant' ? 'tenant' : 'domain') as PillarScope;
+    const scope = (
+      body?.scope === 'tenant' ? 'tenant' : body?.scope === 'personal' ? 'personal' : 'domain'
+    ) as PillarScope;
     const vm = body?.valueMetric as { name?: unknown; description?: unknown } | undefined;
     const item = await createPillar(user, {
       name: String(body?.name ?? ''),

@@ -87,6 +87,8 @@ export const TUTORIAL_EXEMPT_ROUTES: Record<string, string> = {
     'Read-only observability over the LiteLLM gateway (tenant usage + the public Model Hub embed); nothing to configure or practise — the actionable model/cost controls live in Platform.',
   '/workflows':
     'Newly split out of Knowledge (its tutorial still lives under the Knowledge golden path). A dedicated Workflows tutorial ships with the Workflows redesign (Operating Manual + 2-tab detail); exempt until then.',
+  '/operating-manual':
+    'The My/Domain/Company operating manual — authored prose (guided sections) governed per scope, not a sandbox golden path. A dedicated tutorial ships with the Operating Manual redesign (content model + agent-context bundle); exempt until then.',
 };
 
 /** Resolve one tutorial. Returns `undefined` for an unknown key. */

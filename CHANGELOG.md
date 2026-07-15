@@ -15,6 +15,27 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.4] — 2026-07-15
+
+Operating Manual gets its own tab; Strategy/Big-Bet foundations; admin tidy-up.
+
+### Added
+- **Operating Manual is its own top-level tab** (Plan group, after Big Bets) with a
+  **My · Domain · Company** switcher, governed per scope: My = owner-only; Domain =
+  domain-admin+ edit / domain read; Company = admin-only edit / everyone read. Reuses
+  the domain-knowledge card + version history for all three. Removed from the Workflows
+  tab (Workflows is workflows-only again); Knowledge stays reference-only.
+- **My/Domain/Company tiering for Strategic Pillars + Big Bets.** Pillars gain a personal
+  **My** tier on top of Domain/Company (`personal|domain|tenant`); bets inherit their
+  pillar's tier by containment. Both tabs get a My·Domain·Company segment. Governance:
+  My=owner, Domain=Builder+/domain-admin, Company=Admin; promote My→Domain→Company.
+- **Full lifecycle for pillars + bets** — archive → restore / physical-delete (confirm
+  popups) + version history, via the shared lifecycle components. Deleting a pillar with
+  linked bets is blocked (unlink first); bets are never cascaded.
+
+### Fixed / Changed
+- Removed the duplicate **Components** quick-link from the Admin overview (it has its own tab).
+
 ## [os-ui 0.5.3] — 2026-07-15
 
 Workflows + builder polish (follow-up to 0.5.2).

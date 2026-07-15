@@ -7,7 +7,7 @@
  *
  * Six sections:
  *   Ungrouped (entry): Home, Cockpit, Tutorials, MCP
- *   Plan:    Strategy, Big Bets, Workflows, Marketplace
+ *   Plan:    Strategy, Big Bets, Operating Manual, Workflows, Marketplace
  *   Context: Knowledge, Files, Data, Connections, Metrics
  *   Build:   Agents, Software, Science, Dashboards
  *   Monitor: Governance (builder+), Monitoring, Components (admin), LLM Gateway
@@ -53,6 +53,7 @@ export const TAB_GROUPS: TabGroup[] = [
     tabs: [
       { label: 'Strategy', icon: '▲', href: '/strategy' },
       { label: 'Big Bets', icon: '◆', href: '/big-bets' },
+      { label: 'Operating Manual', icon: '❧', href: '/operating-manual' },
       { label: 'Workflows', icon: '⧉', href: '/workflows' },
       { label: 'Marketplace', icon: '⊞', href: '/marketplace', role: 'Builder / Administrator' },
     ],

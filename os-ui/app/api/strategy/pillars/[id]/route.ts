@@ -3,11 +3,18 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
-import { getPillar, updatePillar, deletePillar } from '@/lib/strategy/pillars';
+import {
+  getPillar,
+  updatePillar,
+  deletePillar,
+  archivePillar,
+  unarchivePillar,
+  promotePillar,
+} from '@/lib/strategy/pillars';
 import { rollupForPillar } from '@/lib/strategy/value-rollup';
 import { targetsVsActuals } from '@/lib/strategy/snapshots';
 import { recentStrategyAudit } from '@/lib/strategy/audit';
-import { canEditPillar } from '@/lib/strategy/model';
+import { canEditPillar, canPromotePillar, nextPillarScope } from '@/lib/strategy/model';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,7 +44,35 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       progress,
       audit: recentStrategyAudit(id, 25),
       canEdit: canEditPillar(user, pillar),
+      canPromote: canPromotePillar(user, pillar),
+      promoteTo: nextPillarScope(pillar.scope),
     });
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * POST → pillar lifecycle actions (mirrors the Big Bets [id] route so the shared
+ * <LifecycleActions> component drives it identically):
+ *   { action: 'archive' | 'unarchive' | 'promote' }
+ * Edit-scoped in the store (promote additionally role-gated per tier).
+ */
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    const user = await requireUser();
+    const { id } = await ctx.params;
+    const body = (await req.json().catch(() => ({}))) as { action?: string };
+    switch (body.action) {
+      case 'archive':
+        return NextResponse.json({ item: await archivePillar(user, id) });
+      case 'unarchive':
+        return NextResponse.json({ item: await unarchivePillar(user, id) });
+      case 'promote':
+        return NextResponse.json({ item: await promotePillar(user, id) });
+      default:
+        return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+    }
   } catch (e) {
     return fail(e);
   }

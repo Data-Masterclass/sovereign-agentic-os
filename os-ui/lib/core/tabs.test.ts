@@ -51,10 +51,10 @@ test('TAB-SET entry group is exactly Home + Cockpit + Tutorials + MCP', () => {
   );
 });
 
-test('TAB-SET Plan group is Strategy, Big Bets, Workflows, Marketplace', () => {
+test('TAB-SET Plan group is Strategy, Big Bets, Operating Manual, Workflows, Marketplace', () => {
   assert.deepEqual(
     PLAN_GROUP.tabs.map((t) => t.label),
-    ['Strategy', 'Big Bets', 'Workflows', 'Marketplace'],
+    ['Strategy', 'Big Bets', 'Operating Manual', 'Workflows', 'Marketplace'],
   );
 });
 

@@ -26,6 +26,7 @@ export type ArtifactKind =
   | 'connection'
   | 'knowledge'
   | 'bigbet'
+  | 'pillar'
   | 'model';
 
 /** Visibility tier — Shared/Certified artifacts affect others, so delete is gated harder. */
@@ -42,6 +43,7 @@ const BACKING: Record<ArtifactKind, string> = {
   connection: 'purges its stored credential',
   knowledge: 'removes it from the search index',
   bigbet: 'deletes the bet and its plan',
+  pillar: 'deletes the strategic pillar and its targets',
   model: 'tears down its serving endpoint and registry entry',
 };
 
@@ -56,6 +58,7 @@ const NOUN: Record<ArtifactKind, string> = {
   connection: 'connection',
   knowledge: 'knowledge item',
   bigbet: 'big bet',
+  pillar: 'strategic pillar',
   model: 'model',
 };
 

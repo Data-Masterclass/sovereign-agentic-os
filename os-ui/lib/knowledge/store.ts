@@ -17,8 +17,10 @@ import type { Role } from '../core/session.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
 import { canManageArtifact } from '../governance/edit-scope.ts';
+import { type ManualScope, resolveManual } from './manual.ts';
 
 export type { ArtifactVersion };
+export type { ManualScope };
 
 /**
  * Knowledge workflow store — the mock Forgejo repo behind the Knowledge tab
@@ -521,6 +523,91 @@ export function restoreDomainKnowledgeVersion(
   }
   dk.updatedAt = now();
   ks().domainKnowledge.set(domain, dk);
+  return dk;
+}
+
+// ------------------------------------ Operating Manual (My/Domain/Company) ---
+// The Operating Manual tab renders the SAME guided-sections card at three scopes,
+// each backed by a `DomainKnowledge` record keyed by a reserved storage key
+// (`user:<id>`, the real domain, or `tenant`). These wrappers resolve the key +
+// per-scope gating (see lib/knowledge/manual.ts) then reuse the exact domain-card
+// primitives above, so version history + restore work identically for all three.
+// Governance is enforced HERE (server-side), never trusted from the client.
+
+function fail403(): never {
+  fail('Not permitted', 403);
+}
+
+export function getManual(scope: ManualScope, user: Principal, domain?: string): DomainKnowledge {
+  const r = resolveManual(scope, user, domain);
+  if (!r.canView) fail403();
+  ensureSeeded();
+  return ks().domainKnowledge.get(r.key) ?? emptyDomainKnowledge(r.key);
+}
+
+export function updateManual(
+  scope: ManualScope,
+  user: Principal,
+  patch: DomainKnowledgePatch,
+  domain?: string,
+): DomainKnowledge {
+  const r = resolveManual(scope, user, domain);
+  if (!r.canEdit) fail403();
+  ensureSeeded();
+  const dk = ks().domainKnowledge.get(r.key) ?? emptyDomainKnowledge(r.key);
+  if (patch.sections) {
+    const changes = patch.sections.some((s) => {
+      const sec = dk.sections.find((x) => x.id === s.id);
+      return sec !== undefined && sec.content !== s.content;
+    });
+    if (changes) {
+      domainVersions.record(r.key, user.id, snapshotDomain(dk), `edit ${scope} operating manual`);
+      for (const s of patch.sections) {
+        const sec = dk.sections.find((x) => x.id === s.id);
+        if (sec) sec.content = s.content;
+      }
+      dk.updatedAt = now();
+    }
+  }
+  ks().domainKnowledge.set(r.key, dk);
+  return dk;
+}
+
+export function listManualVersions(
+  scope: ManualScope,
+  user: Principal,
+  domain?: string,
+): ArtifactVersion[] {
+  const r = resolveManual(scope, user, domain);
+  if (!r.canView) fail403();
+  ensureSeeded();
+  return domainVersions.list(r.key);
+}
+
+export function restoreManualVersion(
+  scope: ManualScope,
+  user: Principal,
+  version: number,
+  domain?: string,
+): DomainKnowledge {
+  const r = resolveManual(scope, user, domain);
+  if (!r.canEdit) fail403();
+  ensureSeeded();
+  const snap = domainVersions.get(r.key, version);
+  if (!snap) fail(`Version ${version} not found`, 404);
+  const state = snap.state as { sections?: DomainSection[] };
+  const restored = state.sections;
+  if (!Array.isArray(restored) || restored.some((s) => typeof s?.content !== 'string')) {
+    fail(`Version ${version} has no restorable source`, 422);
+  }
+  const dk = ks().domainKnowledge.get(r.key) ?? emptyDomainKnowledge(r.key);
+  domainVersions.record(r.key, user.id, snapshotDomain(dk), `restore of v${version}`);
+  for (const sec of dk.sections) {
+    const from = restored.find((s) => s.id === sec.id);
+    if (from) sec.content = from.content;
+  }
+  dk.updatedAt = now();
+  ks().domainKnowledge.set(r.key, dk);
   return dk;
 }
 

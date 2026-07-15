@@ -16,9 +16,10 @@ import type {
   Horizon,
   HorizonTarget,
   Pillar,
+  PillarScope,
 } from '@/lib/strategy/model';
 
-export type { ArtifactKind, ComponentBuildStatus, ValueMode, ValueMetric, MetricType, Horizon, HorizonTarget, Pillar };
+export type { ArtifactKind, ComponentBuildStatus, ValueMode, ValueMetric, MetricType, Horizon, HorizonTarget, Pillar, PillarScope };
 
 export type DComponent = {
   id: string;
@@ -65,6 +66,10 @@ export type PillarCard = {
   history: ValuePoint[];
   audit: AuditEvent[];
   canEdit: boolean;
+  /** Whether the caller may promote this pillar one tier up. */
+  canPromote: boolean;
+  /** The tier it would promote INTO (null at the top / when not promotable). */
+  promoteTo: PillarScope | null;
 };
 
 export type ListResp = {
@@ -72,6 +77,7 @@ export type ListResp = {
   items: PillarCard[];
   /** Tenant currency (from Admin) used to format monetary headline targets. */
   currency: string;
+  canCreatePersonal: boolean;
   canCreateTenant: boolean;
   canCreateDomain: boolean;
 };

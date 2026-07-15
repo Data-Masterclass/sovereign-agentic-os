@@ -25,7 +25,14 @@ import {
   FOUNDATION_LABEL,
   type FoundationType,
 } from '@/lib/strategy/scorecard-core';
+import {
+  PILLAR_SCOPES,
+  PILLAR_SCOPE_LABEL,
+  type PillarScope,
+} from '@/lib/strategy/model';
 import { useTileOrder } from '@/lib/prefs/useTileOrder';
+import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
+import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import BetDetail from './BetDetail';
 import ValueChart from './ValueChart';
 import {
@@ -67,18 +74,30 @@ type Scorecard = {
 const NO_CARDS: PillarCard[] = [];
 const pillarIdOf = (card: PillarCard) => card.pillar.id;
 
+/** The three strategy tiers, shown as a segment switcher (+ "All"). */
+type TierKey = 'all' | PillarScope;
+const TIER_SEG: { key: TierKey; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'personal', label: PILLAR_SCOPE_LABEL.personal }, // My
+  { key: 'domain', label: PILLAR_SCOPE_LABEL.domain },
+  { key: 'tenant', label: PILLAR_SCOPE_LABEL.tenant }, // Company
+];
+
 export default function StrategyPage() {
   const [resp, setResp] = useState<ListResp | null>(null);
   const [scorecard, setScorecard] = useState<Scorecard | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState<{ card: PillarCard; bet: DBet } | null>(null);
+  // Strategy tier segment (My · Domain · Company) + archived affordance.
+  const [tier, setTier] = useState<TierKey>('all');
+  const [showArchived, setShowArchived] = useState(false);
 
   const reload = useCallback(async () => {
     setError('');
     try {
       const [pr, sr] = await Promise.all([
-        fetch('/api/strategy/pillars', { cache: 'no-store' }),
+        fetch(`/api/strategy/pillars${showArchived ? '?archived=1' : ''}`, { cache: 'no-store' }),
         fetch('/api/strategy/scorecard', { cache: 'no-store' }),
       ]);
       const pj = await pr.json();
@@ -91,11 +110,11 @@ export default function StrategyPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [showArchived]);
 
   useEffect(() => { reload(); }, [reload]);
 
-  const canCreate = Boolean(resp?.canCreateTenant || resp?.canCreateDomain);
+  const canCreate = Boolean(resp?.canCreatePersonal || resp?.canCreateTenant || resp?.canCreateDomain);
 
   // Tile-order drag — everyone can arrange their own pillar view.
   const { orderedItems: orderedCards, itemDragProps, dragHandleProps } = useTileOrder(
@@ -104,8 +123,16 @@ export default function StrategyPage() {
     pillarIdOf,
   );
 
+  // Per-tier counts (active only) for the segment labels.
+  const tierCount = useCallback(
+    (k: TierKey) => orderedCards.filter((c) => !c.pillar.archived && (k === 'all' || c.pillar.scope === k)).length,
+    [orderedCards],
+  );
+  // The cards shown for the selected tier (My/Domain/Company grouping).
+  const shownCards = orderedCards.filter((c) => tier === 'all' || c.pillar.scope === tier);
+
   return (
-    <>
+    <ConfirmProvider>
       <PageHeader title="Strategy" crumb="where this company invests in its agentic transformation" tutorial="strategy" />
       <div className="content strat-page">
         {error ? <div className="error" style={{ marginTop: 12 }}>{error}</div> : null}
@@ -120,13 +147,34 @@ export default function StrategyPage() {
                 Your strategic priorities and the big bets that deliver each one&apos;s value.
               </p>
             </div>
+
+            {/* Tier switcher — My · Domain · Company (+ All). The strategy analogue
+                of the OS-wide scope segment; no Marketplace here. */}
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <div className="seg">
+                {TIER_SEG.map((t) => (
+                  <button key={t.key} type="button" className={tier === t.key ? 'on' : ''} onClick={() => setTier(t.key)}>
+                    {t.label}{t.key !== 'all' ? ` (${tierCount(t.key)})` : ''}
+                  </button>
+                ))}
+              </div>
+              <button
+                className="btn ghost sm"
+                style={{ opacity: showArchived ? 1 : 0.7 }}
+                onClick={() => setShowArchived((s) => !s)}
+                title="Archived pillars are hidden by default"
+              >
+                {showArchived ? 'Hide archived' : 'Show archived'}
+              </button>
+            </div>
+
             {resp.items.length === 0 && !canCreate ? (
               <div className="stub-page">
-                No strategic pillars yet. A Builder (domain) or Admin (company) defines the first one.
+                No strategic pillars yet. Anyone can define a My pillar; a Builder (domain) or Admin (company) defines shared ones.
               </div>
             ) : (
-              <div className="strat-pillars">
-                {orderedCards.map((card) => (
+              <div className="strat-pillars" style={{ marginTop: 14 }}>
+                {shownCards.map((card) => (
                   <PillarColumn
                     key={card.pillar.id}
                     card={card}
@@ -137,7 +185,7 @@ export default function StrategyPage() {
                     dragHandleProps={dragHandleProps}
                   />
                 ))}
-                {canCreate ? <NewPillarColumn resp={resp} onCreated={reload} /> : null}
+                {canCreate ? <NewPillarColumn resp={resp} initialTier={tier} onCreated={reload} /> : null}
               </div>
             )}
           </section>
@@ -151,7 +199,7 @@ export default function StrategyPage() {
       </div>
 
       {open ? <BetDetail card={open.card} bet={open.bet} onClose={() => setOpen(null)} /> : null}
-    </>
+    </ConfirmProvider>
   );
 }
 
@@ -245,16 +293,29 @@ function PillarColumn({
   dragProps?: ItemDragProps;
   dragHandleProps?: DragHandleProps;
 }) {
-  const { pillar, rollup, canEdit } = card;
+  const { pillar, rollup, canEdit, canPromote, promoteTo } = card;
   const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
 
-  const scopeLabel = pillar.scope === 'tenant' ? 'company' : pillar.domain;
+  // Tier badge — My · Domain (its domain) · Company.
+  const scopeLabel =
+    pillar.scope === 'tenant' ? 'Company' : pillar.scope === 'personal' ? 'My' : pillar.domain;
+  const archived = !!pillar.archived;
+
+  const promote = async () => {
+    if (!promoteTo) return;
+    setBusy(true); setErr('');
+    try { await api(`/api/strategy/pillars/${pillar.id}`, 'POST', { action: 'promote' }); onChanged(); }
+    catch (e) { setErr((e as Error).message); setBusy(false); }
+  };
 
   return (
-    <section className="strat-pillar" {...(dragProps ?? {})}>
+    <section className="strat-pillar" style={{ opacity: archived ? 0.62 : 1 }} {...(dragProps ?? {})}>
       <div className="strat-pillar-top">
-        <span className={`badge ${pillar.scope === 'tenant' ? 'ok' : 'muted'}`}>{scopeLabel}</span>
+        <span className={`badge ${pillar.scope === 'tenant' ? 'ok' : pillar.scope === 'domain' ? 'muted' : ''}`}>{scopeLabel}</span>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          {archived ? <span className="chip">archived</span> : null}
           {dragHandleProps ? (
             <span
               className="drag-handle"
@@ -317,6 +378,32 @@ function PillarColumn({
             <p className="strat-pillar-audit">
               Last edit: {card.audit[0].action} · {card.audit[0].actor} · {new Date(card.audit[0].at).toLocaleDateString()}
             </p>
+          ) : null}
+
+          {/* Promote one tier up (My→Domain→Company), role-gated server-side. */}
+          {canPromote && promoteTo && !archived ? (
+            <button className="btn ghost sm" style={{ marginTop: 8 }} disabled={busy} onClick={promote}>
+              {busy ? <span className="spin" /> : `Promote to ${PILLAR_SCOPE_LABEL[promoteTo]} →`}
+            </button>
+          ) : null}
+          {err ? <div className="error" style={{ fontSize: 11.5, marginTop: 6 }}>{err}</div> : null}
+
+          {/* Lifecycle: archive → restore / delete + version history, via the
+              SAME shared cluster every OS tab uses. Only for editors. */}
+          {canEdit ? (
+            <div className="strat-pillar-lifecycle" style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+              <LifecycleActions
+                id={pillar.id}
+                name={pillar.name}
+                kind="pillar"
+                visibility={pillar.scope === 'personal' ? 'personal' : 'shared'}
+                archived={archived}
+                api={`/api/strategy/pillars/${pillar.id}`}
+                onChanged={onChanged}
+                compact
+                surface="detail"
+              />
+            </div>
           ) : null}
         </>
       )}
@@ -562,12 +649,6 @@ function EditPillar({ card, onDone, onCancel }: { card: PillarCard; onDone: () =
       onDone();
     } catch (e) { setErr((e as Error).message); setBusy(false); }
   };
-  const del = async () => {
-    if (!confirm(`Delete pillar "${pillar.name}"?`)) return;
-    setBusy(true); setErr('');
-    try { await api(`/api/strategy/pillars/${pillar.id}`, 'DELETE'); onDone(); }
-    catch (e) { setErr((e as Error).message); setBusy(false); }
-  };
 
   return (
     <div className="strat-edit">
@@ -577,12 +658,11 @@ function EditPillar({ card, onDone, onCancel }: { card: PillarCard; onDone: () =
       <input value={vmName} onChange={(e) => setVmName(e.target.value)} placeholder="e.g. Net Revenue Retention" />
       <textarea value={vmDesc} rows={2} onChange={(e) => setVmDesc(e.target.value)} placeholder="What this value measures" />
       {err ? <div className="error" style={{ fontSize: 11.5 }}>{err}</div> : null}
-      <div className="row" style={{ gap: 8, justifyContent: 'space-between' }}>
-        <button className="btn ghost sm" onClick={del} disabled={busy} style={{ color: 'var(--danger)' }}>Delete</button>
-        <div className="row" style={{ gap: 8 }}>
-          <button className="btn ghost sm" onClick={onCancel} disabled={busy}>Cancel</button>
-          <button className="btn sm" onClick={save} disabled={busy || !name.trim()}>Save</button>
-        </div>
+      {/* Delete lives with the lifecycle cluster (archive first, then delete) — the
+          calm-edit form just saves content. */}
+      <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+        <button className="btn ghost sm" onClick={onCancel} disabled={busy}>Cancel</button>
+        <button className="btn sm" onClick={save} disabled={busy || !name.trim()}>Save</button>
       </div>
     </div>
   );
@@ -631,11 +711,21 @@ function LinkBet({ pillarId, linkedIds, onChanged }: { pillarId: string; linkedI
   );
 }
 
-function NewPillarColumn({ resp, onCreated }: { resp: ListResp; onCreated: () => void }) {
+function NewPillarColumn({ resp, initialTier, onCreated }: { resp: ListResp; initialTier: TierKey; onCreated: () => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [scope, setScope] = useState<'tenant' | 'domain'>(resp.canCreateTenant ? 'tenant' : 'domain');
+  // Default the new-pillar scope to the currently-viewed tier when the caller may
+  // create it there, else the highest tier they can create.
+  const defaultScope: PillarScope =
+    initialTier !== 'all' && (
+      (initialTier === 'tenant' && resp.canCreateTenant) ||
+      (initialTier === 'domain' && resp.canCreateDomain) ||
+      (initialTier === 'personal' && resp.canCreatePersonal)
+    )
+      ? initialTier
+      : resp.canCreateTenant ? 'tenant' : resp.canCreateDomain ? 'domain' : 'personal';
+  const [scope, setScope] = useState<PillarScope>(defaultScope);
   const [domain, setDomain] = useState(resp.user.domains[0] ?? '');
   const [vmName, setVmName] = useState('');
   const [vmDesc, setVmDesc] = useState('');
@@ -643,12 +733,13 @@ function NewPillarColumn({ resp, onCreated }: { resp: ListResp; onCreated: () =>
   const [err, setErr] = useState('');
 
   const create = async () => {
-    if (scope === 'domain' && !domain.trim()) { setErr('No domain available'); return; }
+    if ((scope === 'domain' || scope === 'personal') && !domain.trim()) { setErr('No domain available'); return; }
     setBusy(true); setErr('');
     try {
       await api('/api/strategy/pillars', 'POST', {
         name, description, scope,
-        domain: scope === 'domain' ? domain : undefined,
+        // tenant → server uses literal 'tenant'; domain/personal carry a home domain.
+        domain: scope === 'tenant' ? undefined : domain,
         valueMetric: vmName || vmDesc ? { name: vmName, description: vmDesc } : undefined,
       });
       setOpen(false); setName(''); setDescription(''); setVmName(''); setVmDesc('');
@@ -673,16 +764,19 @@ function NewPillarColumn({ resp, onCreated }: { resp: ListResp; onCreated: () =>
       <div className="strat-edit">
         <input className="strat-edit-title" value={name} onChange={(e) => setName(e.target.value)} placeholder="Pillar name (e.g. Retention)" />
         <textarea value={description} rows={2} onChange={(e) => setDescription(e.target.value)} placeholder="Strategic intent (business terms)" />
-        <span className="muted" style={{ fontSize: 11, fontWeight: 600 }}>Scope</span>
+        <span className="muted" style={{ fontSize: 11, fontWeight: 600 }}>Tier</span>
         <div className="rt-seg">
+          {resp.canCreatePersonal ? (
+            <button className={`rt-seg-opt${scope === 'personal' ? ' active' : ''}`} onClick={() => setScope('personal')}>My</button>
+          ) : null}
+          {resp.canCreateDomain ? (
+            <button className={`rt-seg-opt${scope === 'domain' ? ' active' : ''}`} onClick={() => setScope('domain')}>Domain</button>
+          ) : null}
           {resp.canCreateTenant ? (
             <button className={`rt-seg-opt${scope === 'tenant' ? ' active' : ''}`} onClick={() => setScope('tenant')}>Company</button>
           ) : null}
-          {resp.user.domains.length > 0 ? (
-            <button className={`rt-seg-opt${scope === 'domain' ? ' active' : ''}`} onClick={() => setScope('domain')}>Domain</button>
-          ) : null}
         </div>
-        {scope === 'domain' ? (
+        {(scope === 'domain' || scope === 'personal') && resp.user.domains.length > 0 ? (
           <select value={domain} onChange={(e) => setDomain(e.target.value)}>
             {resp.user.domains.map((d) => <option key={d} value={d}>{d}</option>)}
           </select>

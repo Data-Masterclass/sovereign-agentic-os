@@ -8,13 +8,11 @@ import PageHeader from '@/components/PageHeader';
 import WorkflowTile from '@/components/knowledge/WorkflowTile';
 import WorkflowView from '@/components/knowledge/WorkflowView';
 import type { WorkflowSummary } from '@/lib/knowledge/store';
-import type { DomainKnowledge } from '@/lib/knowledge/schema';
 import { roleAtLeast, type Role } from '@/lib/core/session';
 import { useTabNavReset } from '@/lib/core/tab-nav';
 import { SCOPE_GROUPS, groupByScope, activeScopeCounts, type ScopeKey } from '@/lib/core/scopes';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
-import VersionHistory from '@/components/lifecycle/VersionHistory';
 import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
 
 /** Workflow visibility → OS-wide lifecycle visibility. */
@@ -27,17 +25,6 @@ type WorkflowGroups = {
   marketplace: WorkflowSummary[];
 };
 
-const SECTION_PLACEHOLDERS: Record<string, string> = {
-  overview:
-    'A short description of this domain — what it does, who it serves, and what makes it distinct…',
-  glossary:
-    'Key terms and their definitions — e.g.\n\n**Data Product:** A certified, shared dataset in the marketplace.',
-  goals:
-    'The domain\'s current objectives — e.g.\n\n- Reduce submission error rate below 0.1%\n- Achieve 48h SLA on bank submissions',
-  context:
-    'Background knowledge agents need — key partners, systems, constraints, deadlines…',
-};
-
 type UserInfo = { id: string; role: Role; domains: string[] };
 
 export default function WorkflowsPage() {
@@ -46,15 +33,6 @@ export default function WorkflowsPage() {
 
   // Clicking the Workflows sidebar link while inside a detail returns to the list.
   useTabNavReset(() => { setSelectedWorkflowId(null); setView('list'); });
-
-  // Domain Operating Manual
-  const [domainKnowledge, setDomainKnowledge] = useState<DomainKnowledge | null>(null);
-  const [dkLoading, setDkLoading] = useState(true);
-  const [editingSection, setEditingSection] = useState<string | null>(null);
-  const [sectionDraft, setSectionDraft] = useState('');
-  const [dkSaving, setDkSaving] = useState(false);
-  const [dkMsg, setDkMsg] = useState('');
-  const [dkHistory, setDkHistory] = useState(false);
 
   const [groups, setGroups] = useState<WorkflowGroups | null>(null);
   const [wfScope, setWfScope] = useState<ScopeKey>('all');
@@ -69,18 +47,6 @@ export default function WorkflowsPage() {
 
   // User info for role-based UI
   const [user, setUser] = useState<UserInfo | null>(null);
-
-  const loadDomainKnowledge = useCallback(async () => {
-    setDkLoading(true);
-    try {
-      const res = await fetch('/api/knowledge/domain', { cache: 'no-store' });
-      if (res.ok) setDomainKnowledge(await res.json());
-    } catch {
-      /* leave domainKnowledge null → the "Could not load" surface renders */
-    } finally {
-      setDkLoading(false);
-    }
-  }, []);
 
   const loadWorkflows = useCallback(async () => {
     setWfLoading(true);
@@ -97,46 +63,12 @@ export default function WorkflowsPage() {
   }, [showArchived]);
 
   useEffect(() => {
-    void loadDomainKnowledge();
     void loadWorkflows();
     fetch('/api/auth/me', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => d?.user && setUser(d.user))
       .catch(() => null);
-  }, [loadDomainKnowledge, loadWorkflows]);
-
-  // ── Domain section editing ───────────────────────────────────────────────
-
-  function startEditSection(id: string) {
-    const sec = domainKnowledge?.sections.find((s) => s.id === id);
-    setSectionDraft(sec?.content ?? '');
-    setEditingSection(id);
-    setDkMsg('');
-  }
-
-  async function saveSectionDraft() {
-    if (!editingSection || dkSaving) return;
-    setDkSaving(true);
-    try {
-      const res = await fetch('/api/knowledge/domain', {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sections: [{ id: editingSection, content: sectionDraft }] }),
-      });
-      if (res.ok) {
-        setDomainKnowledge(await res.json());
-        setEditingSection(null);
-        setDkMsg('Saved.');
-        setTimeout(() => setDkMsg(''), 2000);
-      } else {
-        setDkMsg('Could not save — please retry.');
-      }
-    } catch {
-      setDkMsg('Could not save — please retry.');
-    } finally {
-      setDkSaving(false);
-    }
-  }
+  }, [loadWorkflows]);
 
   async function createWorkflow() {
     const title = newTitle.trim();
@@ -211,88 +143,7 @@ export default function WorkflowsPage() {
       <PageHeader title="Workflows" crumb="business processes · steps · decision rules" tutorial="knowledge" />
       <div className="content">
 
-        {/* ── DOMAIN OPERATING MANUAL ─────────────────────────────────────── */}
-        <div style={{ marginTop: 18 }}>
-          <div className="section-title" style={{ marginBottom: 6 }}>Domain Operating Manual</div>
-          <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-            Pinned as base context for every agent in this domain. Keep it short and current.
-          </p>
-          {dkLoading ? (
-            <div className="stub-page"><span className="spin" /> Loading…</div>
-          ) : domainKnowledge ? (
-            <>
-              {domainKnowledge.sections.map((section) => (
-                <div key={section.id} className="k-section">
-                  <div className="k-section-head">
-                    <span className="k-section-label">{section.title}</span>
-                    {editingSection !== section.id && (
-                      <button className="btn ghost sm" onClick={() => startEditSection(section.id)}>Edit</button>
-                    )}
-                  </div>
-                  {editingSection === section.id ? (
-                    <>
-                      <textarea
-                        className="k-section-editor"
-                        rows={6}
-                        value={sectionDraft}
-                        onChange={(e) => setSectionDraft(e.target.value)}
-                        placeholder={SECTION_PLACEHOLDERS[section.id]}
-                        autoFocus
-                      />
-                      <div className="row" style={{ gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
-                        <button className="btn ghost sm" onClick={() => setEditingSection(null)} disabled={dkSaving}>Cancel</button>
-                        <button className="btn sm" onClick={() => void saveSectionDraft()} disabled={dkSaving}>
-                          {dkSaving ? <span className="spin" /> : 'Save'}
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="k-section-body">
-                      {section.content ? (
-                        <pre className="k-prose">{section.content}</pre>
-                      ) : (
-                        <span className="muted" style={{ fontSize: 13, fontStyle: 'italic' }}>
-                          {SECTION_PLACEHOLDERS[section.id]}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
-              {dkMsg && (
-                dkMsg === 'Saved.'
-                  ? <div className="hint" style={{ marginTop: 8, color: 'var(--teal)' }}>{dkMsg}</div>
-                  : <div className="error" style={{ marginTop: 8 }}>{dkMsg}</div>
-              )}
-              {/* Version history for the whole card. */}
-              <div className="lc-actions row" style={{ gap: 8, alignItems: 'center', marginTop: 12 }}>
-                <button
-                  type="button"
-                  className={`btn ghost sm${dkHistory ? ' on' : ''}`}
-                  onClick={() => setDkHistory((v) => !v)}
-                  aria-expanded={dkHistory}
-                >
-                  {dkHistory ? 'Hide history' : 'Version history'}
-                </button>
-              </div>
-              {dkHistory && (
-                <div className="lc-history-panel">
-                  <VersionHistory
-                    basePath={`/api/knowledge/domain/${encodeURIComponent(domainKnowledge.domain)}`}
-                    name="Domain knowledge"
-                    onRestored={() => void loadDomainKnowledge()}
-                  />
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="stub-page">Could not load domain knowledge.</div>
-          )}
-        </div>
-
-        <hr style={{ margin: '28px 0', borderColor: 'var(--border)', borderWidth: '1px 0 0' }} />
-
-        <div className="row" style={{ marginTop: 0, justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 10 }}>
+        <div className="row" style={{ marginTop: 18, justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 10 }}>
           <p className="lead" style={{ margin: 0 }}>
             One tile per business process — steps, decision rules, and tacit knowledge
             that agents follow.
@@ -406,51 +257,6 @@ export default function WorkflowsPage() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const WorkflowStyles = `
-/* Domain Operating Manual sections */
-.k-section {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 18px 20px;
-  margin-top: 14px;
-  background: var(--panel);
-}
-.k-section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-.k-section-label {
-  font-family: var(--font-head);
-  font-weight: 600;
-  font-size: 12px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  color: var(--gold-text);
-}
-.k-section-editor {
-  width: 100%;
-  font-family: var(--font-body);
-  font-size: 13.5px;
-  line-height: 1.6;
-  background: var(--bg-input);
-  color: var(--text);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-  resize: vertical;
-}
-.k-section-body { margin-top: 2px; }
-.k-prose {
-  font-family: var(--font-body);
-  font-size: 13.5px;
-  line-height: 1.65;
-  white-space: pre-wrap;
-  word-break: break-word;
-  margin: 0;
-  color: var(--text);
-}
-
 .k-workflow-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(256px, 1fr));

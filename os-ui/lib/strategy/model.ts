@@ -26,7 +26,29 @@ import { roleAtLeast, type Role } from '@/lib/core/session';
 
 // ---------------------------------------------------------------- Scope --------
 
-export type PillarScope = 'tenant' | 'domain';
+/**
+ * A pillar's TIER, lowest→highest reach (presented in the UI as My · Domain ·
+ * Company):
+ *   • 'personal' — **My**: private to its owner; only the owner sees/edits it.
+ *   • 'domain'   — visible to that domain's members; editable by the owner or a
+ *                  Builder+ in the domain (the shared-edit rule).
+ *   • 'tenant'   — **Company**: visible to everyone in the tenant; Admin-owned.
+ *
+ * Back-compat: `'personal'` is NEW. Pre-existing pillars only ever carried
+ * 'domain' | 'tenant', so no stored data changes — the new tier is purely additive
+ * and existing pillars keep their current scope.
+ */
+export type PillarScope = 'personal' | 'domain' | 'tenant';
+
+/** The three tiers, lowest→highest, for iteration + the promote ladder. */
+export const PILLAR_SCOPES: PillarScope[] = ['personal', 'domain', 'tenant'];
+
+/** User-facing tier label — My · Domain · Company. */
+export const PILLAR_SCOPE_LABEL: Record<PillarScope, string> = {
+  personal: 'My',
+  domain: 'Domain',
+  tenant: 'Company',
+};
 
 /** The six promoted/certified artifact kinds the scoreboard tracks. */
 export type ArtifactKind = 'data' | 'metric' | 'dashboard' | 'agent' | 'software' | 'ml';
@@ -303,7 +325,8 @@ export type Pillar = {
   scope: PillarScope;
   /**
    * For scope='domain' the owning domain; for scope='tenant' the literal
-   * 'tenant' (a shared pillar every domain contributes to).
+   * 'tenant' (a shared pillar every domain contributes to); for scope='personal'
+   * the owner's home domain (retained so a later promote to Domain has a target).
    */
   domain: string;
   /** User id of the creating Builder/Admin. */
@@ -321,6 +344,8 @@ export type Pillar = {
   targets?: TargetSet;
   /** The pillar's headline target (the card's big number); absent until set. */
   headlineTarget?: HorizonTarget;
+  /** Soft-archive flag (reversible hide). Absent/false = live. Additive. */
+  archived?: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -345,40 +370,89 @@ export function entitledToDomain(
   return user.role === 'admin' && user.domains.includes('platform');
 }
 
-/** Whether a user may view a pillar at all (tenant pillars: everyone). */
+/**
+ * Whether a user may view a pillar at all.
+ *   • personal (My) → the owner ONLY.
+ *   • domain        → members of that domain (+ tenant-wide Admin).
+ *   • tenant (Company) → everyone in the tenant.
+ * `owner` is only consulted for the personal tier (legacy callers that pass just
+ * `{ scope, domain }` keep working for the domain/tenant tiers).
+ */
 export function canViewPillar(
-  user: { domains: string[]; role: Role },
-  pillar: Pick<Pillar, 'scope' | 'domain'>,
+  user: { id?: string; domains: string[]; role: Role },
+  pillar: Pick<Pillar, 'scope' | 'domain' | 'owner'>,
 ): boolean {
+  if (pillar.scope === 'personal') return !!user.id && pillar.owner === user.id;
   if (pillar.scope === 'tenant') return true;
   return entitledToDomain(user, pillar.domain);
 }
 
 /**
- * Whether a user may define/edit a pillar or its targets. Builder edits their
- * own domain pillars; Admin edits tenant pillars + any domain they belong to.
- * Creators/Users (participant) never edit. (`strategy-golden-path.md` §Roles.)
+ * Whether a user may define/edit a pillar or its targets.
+ *   • personal (My) → the OWNER only (any role, including a Creator, edits their
+ *                     own My pillar).
+ *   • domain        → the owner, OR a Builder+ / domain_admin who belongs to that
+ *                     domain (the OS shared-edit rule; a non-member never edits).
+ *   • tenant (Company) → Admin-owned.
+ * (`strategy-golden-path.md` §Roles + the 4-rank shared-edit rule.)
  */
 export function canEditPillar(
-  user: { domains: string[]; role: Role },
-  pillar: Pick<Pillar, 'scope' | 'domain'>,
+  user: { id?: string; domains: string[]; role: Role },
+  pillar: Pick<Pillar, 'scope' | 'domain' | 'owner'>,
 ): boolean {
-  if (user.role === 'creator') return false;
+  if (pillar.scope === 'personal') return !!user.id && pillar.owner === user.id;
   if (pillar.scope === 'tenant') {
     // Tenant-wide pillars are Admin-owned.
     return user.role === 'admin';
   }
-  // Domain pillar: a Builder+ who belongs to that domain.
+  // Domain pillar: the owner, or a Builder+ who belongs to that domain.
+  if (!!user.id && pillar.owner === user.id) return roleAtLeast(user.role, 'builder');
   return roleAtLeast(user.role, 'builder') && user.domains.includes(pillar.domain);
 }
 
-/** Whether a user may create a pillar of the given scope. */
+/**
+ * Whether a user may create a pillar of the given scope. A **My** (personal)
+ * pillar is open to any authenticated user in a domain they belong to; Domain
+ * needs Builder+; Company needs Admin.
+ */
 export function canCreatePillar(
-  user: { domains: string[]; role: Role },
+  user: { id?: string; domains: string[]; role: Role },
   scope: PillarScope,
   domain: string,
 ): boolean {
-  return canEditPillar(user, { scope, domain });
+  // A NEW pillar has no owner yet, so the owner-edit shortcut must NOT apply —
+  // creating in a shared tier requires the tier's role floor + domain membership.
+  if (scope === 'personal') return domain === 'personal' || user.domains.includes(domain);
+  if (scope === 'tenant') return user.role === 'admin';
+  return roleAtLeast(user.role, 'builder') && user.domains.includes(domain);
+}
+
+/**
+ * Whether a user may PROMOTE a pillar one tier UP (personal→domain→tenant),
+ * mirroring the OS promote ladder (`promoteConnection`): promoting TO Domain needs
+ * a Builder+ in the target domain; promoting TO Company (tenant) needs an Admin.
+ * Only the owner (or an Admin) can initiate. Returns false at the top tier.
+ */
+export function nextPillarScope(scope: PillarScope): PillarScope | null {
+  const i = PILLAR_SCOPES.indexOf(scope);
+  return i >= 0 && i < PILLAR_SCOPES.length - 1 ? PILLAR_SCOPES[i + 1] : null;
+}
+
+export function canPromotePillar(
+  user: { id?: string; domains: string[]; role: Role },
+  pillar: Pick<Pillar, 'scope' | 'domain' | 'owner'>,
+): boolean {
+  const next = nextPillarScope(pillar.scope);
+  if (!next) return false;
+  // Owner or Admin may initiate the promotion.
+  const isOwner = !!user.id && pillar.owner === user.id;
+  if (!isOwner && user.role !== 'admin') return false;
+  if (next === 'domain') {
+    // Promote My → Domain: Builder+ in the owning domain (or Admin).
+    return roleAtLeast(user.role, 'builder') && (user.role === 'admin' || user.domains.includes(pillar.domain));
+  }
+  // Promote Domain → Company: Admin only.
+  return user.role === 'admin';
 }
 
 // ------------------------------------------------------- Trend / pacing --------
@@ -418,6 +492,33 @@ export function currentQuarter(date = new Date()): Quarter {
 /** Year-month key (e.g. `2026-06`) used to key monthly snapshots. */
 export function monthKey(date = new Date()): string {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+// ------------------------------------------------- Bet tier by containment ----
+//
+// A bet has NO tier of its own — its effective tier is its PARENT pillar's tier
+// (via pillarId). A bet with no linked pillar (or an unknown one) is treated as
+// personal ('My') so it never leaks into a shared surface by default. These pure
+// helpers let both the server and the client segment bets by My/Domain/Company
+// through the pillar map without duplicating the containment rule.
+
+/** The tier a bet inherits from its parent pillar (personal when unlinked/unknown). */
+export function betTier(
+  pillarId: string | undefined,
+  pillarScopeById: Map<string, PillarScope>,
+): PillarScope {
+  if (!pillarId) return 'personal';
+  return pillarScopeById.get(pillarId) ?? 'personal';
+}
+
+/** Group a list of bets (anything carrying a `pillarId`) by inherited tier. */
+export function groupBetsByTier<T extends { pillarId?: string }>(
+  bets: T[],
+  pillarScopeById: Map<string, PillarScope>,
+): Record<PillarScope, T[]> {
+  const out: Record<PillarScope, T[]> = { personal: [], domain: [], tenant: [] };
+  for (const b of bets) out[betTier(b.pillarId, pillarScopeById)].push(b);
+  return out;
 }
 
 // --------------------------------------------------------- Reconciliation ------

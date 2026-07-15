@@ -18,6 +18,11 @@ import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
 import DomainTag from '@/components/DomainTag';
+import {
+  PILLAR_SCOPE_LABEL,
+  betTier,
+  type PillarScope,
+} from '@/lib/strategy/model';
 
 /** A bet's reach → the OS-wide lifecycle visibility (cross-domain bets affect others). */
 const betVisibility = (b: BetSummary): LcVisibility => (b.crossDomain ? 'shared' : 'personal');
@@ -40,11 +45,21 @@ function unitGlyph(unit?: string): string {
 const NO_BETS: BetSummary[] = [];
 const betIdOf = (b: BetSummary) => b.id;
 
+/** The three strategy tiers as a segment (+ All), mirroring the Strategy tab. */
+type TierKey = 'all' | PillarScope;
+const TIER_SEG: { key: TierKey; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'personal', label: PILLAR_SCOPE_LABEL.personal }, // My
+  { key: 'domain', label: PILLAR_SCOPE_LABEL.domain },
+  { key: 'tenant', label: PILLAR_SCOPE_LABEL.tenant }, // Company
+];
+
 export default function BigBetsPage() {
   const { data, loading, error, reload } = useApi<ListData>('/api/big-bets');
   const { data: strat } = useApi<StrategyData>('/api/big-bets/strategy');
   const { user } = useUser();
   const [creating, setCreating] = useState(false);
+  const [tier, setTier] = useState<TierKey>('all');
 
   // A bet is the caller's to manage when they own it or are an Admin (the route
   // re-checks either way — this only decides whether to surface the controls).
@@ -54,7 +69,26 @@ export default function BigBetsPage() {
   );
 
   const pillars = useMemo(() => strat?.pillars ?? [], [strat]);
-  const bets = data?.bets ?? NO_BETS;
+  const allBets = data?.bets ?? NO_BETS;
+
+  // A bet inherits its parent pillar's tier by containment (unlinked → My).
+  const pillarScopeById = useMemo(
+    () => new Map<string, PillarScope>(pillars.map((p) => [p.id, (p.scope as PillarScope) ?? 'personal'])),
+    [pillars],
+  );
+  const tierOf = useCallback(
+    (b: BetSummary) => betTier(b.pillarId, pillarScopeById),
+    [pillarScopeById],
+  );
+  const tierCount = useCallback(
+    (k: TierKey) => allBets.filter((b) => k === 'all' || tierOf(b) === k).length,
+    [allBets, tierOf],
+  );
+  // Bets shown for the selected tier — the existing pillar grouping runs WITHIN it.
+  const bets = useMemo(
+    () => (tier === 'all' ? allBets : allBets.filter((b) => tierOf(b) === tier)),
+    [allBets, tier, tierOf],
+  );
 
   // The bet list renders in pillar groups — constrain drops to the source's
   // group so a cross-group highlight never promises a move the re-grouping
@@ -95,6 +129,18 @@ export default function BigBetsPage() {
           </div>
           <button className="btn" onClick={() => setCreating(true)}>New Big Bet</button>
         </div>
+
+        {/* Tier switcher — My · Domain · Company. A bet's tier is its pillar's tier
+            by containment; the pillar grouping below runs within the selected tier. */}
+        {!creating ? (
+          <div className="seg" style={{ marginTop: 12 }}>
+            {TIER_SEG.map((t) => (
+              <button key={t.key} type="button" className={tier === t.key ? 'on' : ''} onClick={() => setTier(t.key)}>
+                {t.label}{t.key !== 'all' ? ` (${tierCount(t.key)})` : ''}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         {creating ? (
           <CreatePanel

@@ -20,8 +20,12 @@ import {
   canCreatePillar,
   canEditPillar,
   canViewPillar,
+  canPromotePillar,
+  nextPillarScope,
+  PILLAR_SCOPE_LABEL,
 } from '@/lib/strategy/model';
 import { auditStrategy } from '@/lib/strategy/audit';
+import { type ArtifactVersion, versionLog } from '@/lib/core/versioning';
 import {
   linkBetStub,
   unlinkBetStub,
@@ -78,6 +82,30 @@ function writeThrough(p: Pillar): void {
 }
 function deleteThrough(pid: string): void {
   mirror.deleteThrough(pid);
+}
+
+// Durable, per-pillar version history — the SAME shared helper Big Bets/Data/etc.
+// use. A pillar's editable content is snapshotted on every meaningful mutation +
+// on restore, and surfaced through the shared <VersionHistory> panel.
+const versions = versionLog('pillar');
+
+/** The versioned slice of a pillar — the fields a user edits. */
+function snapshotState(p: Pillar): {
+  name: string; description: string; scope: PillarScope; metrics: MetricLink[];
+  valueMetric?: ValueMetric; targets?: TargetSet; headlineTarget?: HorizonTarget;
+  betIds: string[]; archived: boolean;
+} {
+  return {
+    name: p.name,
+    description: p.description,
+    scope: p.scope,
+    metrics: p.metrics,
+    valueMetric: p.valueMetric,
+    targets: p.targets,
+    headlineTarget: p.headlineTarget,
+    betIds: [...p.betIds],
+    archived: !!p.archived,
+  };
 }
 
 // ------------------------------------------------------------------- Seeding ---
@@ -153,14 +181,24 @@ async function getCache(): Promise<Map<string, Pillar>> {
 
 // --------------------------------------------------------------- Read paths ----
 
-/** Pillars a user may view: tenant pillars + the user's domain pillars. */
-export async function listPillars(user: CurrentUser): Promise<Pillar[]> {
+/**
+ * Pillars a user may view: their own personal (My) pillars + their domain
+ * pillars + all tenant (Company) pillars. Archived pillars are hidden from the
+ * default working list; `includeArchived` opts them back in for the owner/editor
+ * to restore or delete.
+ */
+const SCOPE_ORDER: Record<PillarScope, number> = { tenant: 0, domain: 1, personal: 2 };
+
+export async function listPillars(
+  user: CurrentUser,
+  opts: { includeArchived?: boolean } = {},
+): Promise<Pillar[]> {
   const map = await getCache();
   return [...map.values()]
-    .filter((p) => canViewPillar(user, p))
+    .filter((p) => canViewPillar(user, p) && (opts.includeArchived || !p.archived))
     .sort((a, b) => {
-      // Tenant pillars first, then by recency.
-      if (a.scope !== b.scope) return a.scope === 'tenant' ? -1 : 1;
+      // Company → Domain → My, then by recency within a tier.
+      if (a.scope !== b.scope) return SCOPE_ORDER[a.scope] - SCOPE_ORDER[b.scope];
       return b.updatedAt.localeCompare(a.updatedAt);
     });
 }
@@ -187,14 +225,20 @@ export async function createPillar(
     valueMetric?: { name: string; description: string };
   },
 ): Promise<Pillar> {
-  const scope = input.scope === 'tenant' ? 'tenant' : 'domain';
-  const domain = scope === 'tenant' ? 'tenant' : (input.domain || user.domains[0]);
+  const scope: PillarScope =
+    input.scope === 'tenant' ? 'tenant' : input.scope === 'personal' ? 'personal' : 'domain';
+  // tenant → literal 'tenant'; personal/domain → a real home domain (personal
+  // retains it so a later My→Domain promote has a target). Falls back to the
+  // user's first domain.
+  const domain = scope === 'tenant' ? 'tenant' : (input.domain || user.domains[0] || 'personal');
   if (!canCreatePillar(user, scope, domain)) {
     throw withStatus(
       new Error(
         scope === 'tenant'
-          ? 'Defining a shared tenant pillar requires an Administrator'
-          : 'Defining a domain pillar requires a Builder or Admin in that domain',
+          ? 'Defining a Company pillar requires an Administrator'
+          : scope === 'domain'
+            ? 'Defining a Domain pillar requires a Builder or Admin in that domain'
+            : 'Defining a My pillar requires a domain you belong to',
       ),
       403,
     );
@@ -215,11 +259,13 @@ export async function createPillar(
       : undefined,
     betIds: [],
     targets: undefined,
+    archived: false,
     createdAt: t,
     updatedAt: t,
   };
   map.set(p.id, p);
   writeThrough(p);
+  versions.record(p.id, user.id, snapshotState(p), 'create');
   await auditStrategy({
     action: 'pillar.create',
     actor: user.id,
@@ -247,6 +293,8 @@ export async function updatePillar(
   patch: { name?: string; description?: string; metrics?: MetricLink[] },
 ): Promise<Pillar> {
   const { map, p } = await requireEditable(user, pid);
+  // Snapshot the PRIOR state before overwriting so every edit is restorable.
+  versions.record(pid, user.id, snapshotState(p), 'edit');
   if (patch.name !== undefined) p.name = patch.name.trim() || p.name;
   if (patch.description !== undefined) p.description = patch.description.trim();
   if (patch.metrics !== undefined) p.metrics = patch.metrics;
@@ -257,11 +305,140 @@ export async function updatePillar(
   return p;
 }
 
+// ------------------------------------------------ archive / restore / delete ---
+//
+// The SAME reversible-soft-hide → restore-or-physical-delete lifecycle every OS
+// tab uses, wired through the shared lifecycle helpers on the UI. All three are
+// edit-scoped (canEditPillar) and version-logged.
+
+/** Ensure the version log is hydrated (mirrors Big Bets' ensureHydrated). */
+export async function ensureHydrated(): Promise<void> {
+  await Promise.all([getCache(), versions.ensureHydrated()]);
+}
+
+/** Archive a pillar: reversible soft-hide (leaves the working list). Edit-scoped. */
+export async function archivePillar(user: CurrentUser, pid: string): Promise<Pillar> {
+  const { map, p } = await requireEditable(user, pid);
+  versions.record(pid, user.id, snapshotState(p), 'archive');
+  p.archived = true;
+  p.updatedAt = now();
+  map.set(p.id, p);
+  writeThrough(p);
+  await auditStrategy({ action: 'pillar.archive', actor: user.id, domain: p.domain, pillarId: pid, pillarName: p.name });
+  return p;
+}
+
+/** Restore an archived pillar back into the working list. Edit-scoped. */
+export async function unarchivePillar(user: CurrentUser, pid: string): Promise<Pillar> {
+  const { map, p } = await requireEditable(user, pid);
+  versions.record(pid, user.id, snapshotState(p), 'restore');
+  p.archived = false;
+  p.updatedAt = now();
+  map.set(p.id, p);
+  writeThrough(p);
+  await auditStrategy({ action: 'pillar.unarchive', actor: user.id, domain: p.domain, pillarId: pid, pillarName: p.name });
+  return p;
+}
+
+/**
+ * Physically delete a pillar + its version history (edit-scoped, irreversible).
+ *
+ * SAFE-BY-DEFAULT rule for a pillar-with-bets: a pillar that still has LINKED
+ * bets is BLOCKED from deletion (409) — the non-destructive option — so a delete
+ * never silently strands or destroys the bets that deliver it. Unlink the bets
+ * (they live on in the Big Bets tab) first, then delete. Bets themselves are
+ * never touched here.
+ */
 export async function deletePillar(user: CurrentUser, pid: string): Promise<void> {
   const { map, p } = await requireEditable(user, pid);
+  if (p.betIds.length > 0) {
+    throw withStatus(
+      new Error(
+        `This pillar still has ${p.betIds.length} linked big bet${p.betIds.length === 1 ? '' : 's'}. Unlink them first — they stay in the Big Bets tab.`,
+      ),
+      409,
+    );
+  }
   map.delete(pid);
   deleteThrough(pid);
+  versions.purge(pid);
   await auditStrategy({ action: 'pillar.delete', actor: user.id, domain: p.domain, pillarId: pid, pillarName: p.name });
+}
+
+// ------------------------------------------------------------------- promote ---
+
+/**
+ * Promote a pillar ONE tier up: My (personal) → Domain → Company (tenant),
+ * mirroring the OS promote ladder (`promoteConnection`). Builder+ gate to Domain,
+ * Admin gate to Company (enforced by `canPromotePillar`). Version-logged.
+ */
+export async function promotePillar(user: CurrentUser, pid: string): Promise<Pillar> {
+  const map = await getCache();
+  const p = map.get(pid);
+  if (!p) throw withStatus(new Error('Pillar not found'), 404);
+  const next = nextPillarScope(p.scope);
+  if (!next) throw withStatus(new Error('This pillar is already at the Company tier'), 400);
+  if (!canPromotePillar(user, p)) {
+    throw withStatus(
+      new Error(
+        next === 'domain'
+          ? 'Promoting to Domain requires a Builder or Admin in the owning domain'
+          : 'Promoting to Company requires an Administrator',
+      ),
+      403,
+    );
+  }
+  versions.record(pid, user.id, snapshotState(p), `promote to ${PILLAR_SCOPE_LABEL[next]}`);
+  p.scope = next;
+  if (next === 'tenant') p.domain = 'tenant';
+  p.updatedAt = now();
+  map.set(p.id, p);
+  writeThrough(p);
+  await auditStrategy({
+    action: 'pillar.promote',
+    actor: user.id,
+    domain: p.domain,
+    pillarId: pid,
+    pillarName: p.name,
+    detail: { to: next },
+  });
+  return p;
+}
+
+// --------------------------------------------------------------- versions ------
+
+/** Version history for a pillar, newest first (view-scoped). */
+export async function listPillarVersions(user: CurrentUser, pid: string): Promise<ArtifactVersion[]> {
+  await getPillar(user, pid); // view-scope check (throws 404/403)
+  return versions.list(pid);
+}
+
+/**
+ * Restore a prior version of a pillar's editable content. The CURRENT state is
+ * snapshotted first (so restore is itself reversible), then the chosen version's
+ * fields are applied. Edit-scoped. Scope/tier is NOT changed by a restore (a
+ * demotion via restore would bypass the promote gate); only content fields move.
+ */
+export async function restorePillarVersion(user: CurrentUser, pid: string, version: number): Promise<Pillar> {
+  const { map, p } = await requireEditable(user, pid);
+  const snap = versions.get(pid, version);
+  if (!snap) throw withStatus(new Error(`Version ${version} not found`), 404);
+  const s = snap.state as ReturnType<typeof snapshotState> | null;
+  if (!s || typeof s.name !== 'string') throw withStatus(new Error(`Version ${version} has no restorable state`), 422);
+  versions.record(pid, user.id, snapshotState(p), `restore of v${version}`);
+  p.name = s.name;
+  p.description = s.description;
+  p.metrics = s.metrics;
+  p.valueMetric = s.valueMetric;
+  p.targets = s.targets;
+  p.headlineTarget = s.headlineTarget;
+  p.archived = !!s.archived;
+  // scope/domain/betIds are governed relationships, not restored here.
+  p.updatedAt = now();
+  map.set(p.id, p);
+  writeThrough(p);
+  await auditStrategy({ action: 'pillar.restore', actor: user.id, domain: p.domain, pillarId: pid, pillarName: p.name, detail: { version } });
+  return p;
 }
 
 export async function setTargets(user: CurrentUser, pid: string, targets: TargetSet): Promise<Pillar> {
@@ -448,4 +625,5 @@ export function __resetForTests(): void {
   const s = state();
   s.cache = null;
   mirror.__reset();
+  versions.__reset();
 }
