@@ -77,19 +77,32 @@ components/core/*.tsx      shared UI primitives (PageHeader, tiles, lifecycle
 Moving to this layout in phases; the live system stays up (tsc + full suite green
 + deploy between phases). See `CHANGELOG.md` for the phase releases.
 
-- **Phase 0** — this document + a pilot tab on the contract.
-- **Phase 1** — carve `lib/core` + `lib/infra` out of the loose `lib/*.ts` files.
-- **Phase 2** — bring each `lib/<tab>` to the contract (+ README) — one tab at a time.
-- **Phase 3** — `components/core` + thin route handlers.
+**Current state (Phase A complete):** the three-layer contract is in place and
+fully inhabited. All `lib/` modules listed in the Phase 1 map below have been moved
+to their destinations; `lib/connections` is the reference template (index.ts + schema.ts
++ store.ts + README, full contract). Every `lib/<tab>/` has a README.
 
-### Where the loose files land (Phase 1 map)
+- **Phase 0** ✓ — this document + a pilot tab on the contract.
+- **Phase 1** ✓ — carved `lib/core` + `lib/infra` out of the loose `lib/*.ts` files.
+- **Phase 2** ✓ — all `lib/<tab>` modules have the contract shape + README.
+- **Phase A** ✓ — dead-code pruned (`components/knowledge/ContextPanel.tsx` deleted),
+  READMEs added to the 13 previously doc-less `lib/` modules.
+- **Phase B** (planned) — barrel cleanup: `index.ts` + `schema.ts` in every tab that lacks them.
+- **Phase C** (planned) — `lib/models/roles.ts` role-resolution audit.
+- **Phase D** (planned) — `components/core` thin-route-handler pass.
+- **Phase E** (planned) — `lib/agents/build/live.ts`, `lib/infra/forgejo.ts`, `lib/core/git-versioning.ts` (live-adapter hardening; do NOT touch until Phase E).
+- **Phase F** (planned) — OpenMetadata connector promotion.
+- **Phase G** (planned) — Hermes lib wiring (currently pure + unwired; the gateway is configured via `lib/core/config` + agent schema, not a lib import).
+- **Phase H** (planned) — `components/core` + thin route handlers (Phase 3 original intent).
+
+### Where the loose files landed (Phase 1 map — complete)
 
 | Loose file(s) | Destination |
 |---|---|
 | `governed.ts`, `agent-governed.ts`, `os-mirror.ts`, `app-registry.ts`, `capability-compiler.ts`, `secrets.ts`, `k8s.ts`, `identity-server.ts`, `mailer.ts`, `tool-proxy.ts`, `tool-sso-langfuse.ts` | `lib/infra/` |
 | `config.ts`, `session.ts`, `auth.ts`, `scopes.ts`, `lifecycle.ts`, `versioning.ts`, `git-versioning.ts`, `artifact-model.ts`, `artifacts.ts`, `tabs.ts`, `tab-nav.ts`, `url-params.ts`, `markdown.ts`, `password.ts`, `ratelimit.ts`, `licenses.ts`, `componentDocs.ts` | `lib/core/` |
-| `useApi.ts`, `useUser.ts` | `components/core/` (client hooks) |
-| `connections.ts`, `connection-adapters.ts`, `connection-model.ts`, `connections-physical-delete.ts`, `connectors.ts`, `egress-requests.ts` | `lib/connections/` (currently empty) |
+| `useApi.ts`, `useUser.ts` | `lib/` root (client hooks — `components/core/` move is Phase H) |
+| `connections.ts`, `connection-adapters.ts`, `connection-model.ts`, `connections-physical-delete.ts`, `connectors.ts`, `egress-requests.ts` | `lib/connections/` (reference template, fully on contract) |
 | `apps.ts` | `lib/software/` |
 | `agent-chat-response.ts`, `agent-memory.ts` | `lib/agents/` |
 | `governance.ts`, `approvals.ts` | `lib/governance/` |
@@ -97,5 +110,4 @@ Moving to this layout in phases; the live system stays up (tsc + full suite gree
 | `gateway-usage.ts` | `lib/monitoring/` (LLM Gateway lives under Monitor) |
 | `data-handoff.ts`, `planning.ts` | `lib/data/` / `lib/strategy/` respectively |
 
-Moves are TypeScript-path-alias (`@/lib/x` → `@/lib/core/x`); the compiler +
-the full test suite are the safety net for every move.
+The compiler + the full test suite are the safety net for every move.

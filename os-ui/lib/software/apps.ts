@@ -34,7 +34,7 @@ import { parseAppManifest, renderAppYaml, defaultOpenApi, detectSurface } from '
 import { osMirror } from '@/lib/infra/os-mirror';
 import { type ArtifactVersion, versionLog } from '@/lib/core/versioning';
 import { listGitVersions, restoreGitVersion, shaForVersion, type GitVersion } from '@/lib/core/git-versioning';
-import type { ForgejoClient, ForgejoCommit, ForgejoCommitFiles } from '@/lib/agents/build/live';
+import type { ForgejoClient, ForgejoCommit, ForgejoCommitFiles } from '@/lib/infra/forgejo';
 
 /**
  * App registry — the home of record for every application built in the Software

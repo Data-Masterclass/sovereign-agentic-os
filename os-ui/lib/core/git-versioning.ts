@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { ForgejoClient } from '../agents/build/live.ts';
+import type { ForgejoClient } from '../infra/forgejo.ts';
 
 /**
  * GIT-backed version history — the reusable helper that turns a Forgejo repo's

@@ -15,6 +15,24 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.9] — 2026-07-16
+
+Internal refactor — **no user-facing change** (behavior-preserving; 2417 tests green).
+
+### Changed (structure/docs/heal)
+- **Documented** 13 previously-undocumented `lib/` modules (READMEs) + refreshed
+  `ARCHITECTURE.md` to the actual state.
+- **Contract barrels** — added `index.ts`/`schema.ts` to the 13 tab modules that lacked
+  them (off the `connections` reference template), so every module exposes a clean public
+  API (additive; no importers changed yet).
+- **Layering fix** — moved the Forgejo client type to `lib/infra`, removing the one
+  `core → tab` upward-import violation.
+- Removed the orphaned `ContextPanel.tsx` (dead after the workflow Context sub-tab removal).
+
+_(The deeper structural moves — routing cross-tab imports onto the barrels, extracting
+shared code to core, relocating external clients into `lib/infra`, and the components
+folder reorg — continue incrementally under #171, gated by the test suite + `next build`.)_
+
 ## [os-ui 0.5.8] — 2026-07-16
 
 Big Bet solution wizard, self-service model providers, simpler agent tooling, and a real
