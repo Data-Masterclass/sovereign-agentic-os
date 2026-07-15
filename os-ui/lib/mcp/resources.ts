@@ -8,7 +8,7 @@ import type { ToolTab, McpTab } from './server';
 
 // --- Governed read/list lib functions (the SAME the UI + discovery tools call) --
 import { listDatasets, getDataset } from '@/lib/data/store';
-import { listWorkflows, getWorkflow } from '@/lib/knowledge/store';
+import { listWorkflows, getWorkflow, getManual } from '@/lib/knowledge/store';
 import { listFiles, getFile } from '@/lib/files/store';
 import { listMetrics } from '@/lib/metrics/store';
 import { listDashboards, getDashboard } from '@/lib/dashboards/store';

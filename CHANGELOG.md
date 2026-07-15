@@ -15,6 +15,26 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.6] — 2026-07-16
+
+MCP surface brought up to date with this session's capabilities; workflow-detail tidy.
+
+### Added
+- **MCP: Operating Manual tools** — read/update/list-versions/restore the My · Domain ·
+  Company operating manual, governed per scope.
+- **MCP: pillar `personal` (My) scope + full pillar lifecycle** — `create_pillar` accepts
+  the personal scope (creator-floored; per-scope create rights enforced in-lib); new
+  `archive_pillar`/`unarchive_pillar`/`delete_pillar`/`promote_pillar`/`restore_pillar_version`.
+- **MCP: Big Bet lifecycle** — `archive_big_bet`/`unarchive_big_bet`/`delete_big_bet`/
+  `restore_big_bet_version`, plus `create_big_bet` now requires a real, viewable `pillarId`
+  (containment; dropped the stub pillar/metric defaults).
+- Refreshed the MCP orientation NAV line + strategy/knowledge guides to the current nav
+  (Console, Govern, Policies & Approvals, Operating Manual tab, Workflows as its own tab).
+
+### Changed
+- **Workflow detail: removed the "Context" sub-tab** (the pinned/retrieved context layer) —
+  trimming the detail toward the planned two-view layout.
+
 ## [os-ui 0.5.5] — 2026-07-15
 
 Navigation restructure + Big Bet solution-blueprint foundation.

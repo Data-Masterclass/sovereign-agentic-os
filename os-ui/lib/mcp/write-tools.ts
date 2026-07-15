@@ -91,9 +91,14 @@ import {
   getBet,
   updateBet,
   addComponent,
+  archiveBet,
+  unarchiveBet,
+  deleteBet,
+  restoreBetVersion,
   canEdit as canEditBet,
   type CreateBetInput,
 } from '@/lib/bigbets/store';
+import { getPillar } from '@/lib/strategy/pillars';
 import { deriveBetName, type BigBet, type ValueBasis } from '@/lib/bigbets/model';
 import { registerLinkedArtifact, type LinkedArtifactInput } from '@/lib/bigbets/sources';
 
@@ -1213,32 +1218,38 @@ export const bigbetWriteTools: McpTool[] = [
     tab: 'bigbets',
     minRole: 'creator',
     description:
-      'Frame a Big Bet — an initiative roadmap over real OS components. A creator files a draft; a Builder/Admin owns an active bet (cross-domain bets are Admin-only). Same governed store as the Big Bets tab.',
+      'Frame a Big Bet — an initiative roadmap over real OS components — under a REAL strategy pillar it rolls up to. A creator files a draft; a Builder/Admin owns an active bet (cross-domain bets are Admin-only). Same governed store as the Big Bets tab. Containment: `pillarId` is REQUIRED and re-resolved through canViewPillar FIRST — a pillar you cannot see is a typed not_found/forbidden, so a bet can never be filed under an unseen pillar. Before: list_pillars (pick the pillar this bet delivers). After: attach_component to hang real artifacts, get_big_bet to read the derived status back.',
     inputSchema: {
       type: 'object',
       properties: {
         problem: { type: 'string', description: 'The problem statement (the bet’s name is derived from it unless `name` given).' },
+        pillarId: { type: 'string', description: 'The strategy pillar this bet rolls up to (REQUIRED, from list_pillars — must be one you can view).' },
         owner: { type: 'string', description: 'Who owns the problem (goes into the problem statement’s "who").' },
         solution: { type: 'string', description: 'Optional solution idea.' },
-        pillarId: { type: 'string', description: 'Strategy pillar id (default pillar_retention).' },
-        metricId: { type: 'string', description: 'North-star metric id (default metric_nrr).' },
+        metricId: { type: 'string', description: 'Optional north-star metric id to associate.' },
         targetValue: { type: 'number', description: 'Value target.' },
         goLive: { type: 'string', description: 'Planned go-live YYYY-MM-DD (default +8 weeks).' },
         domain: { type: 'string', description: 'One of YOUR domains; defaults to your first.' },
         name: { type: 'string', description: 'Optional explicit display name.' },
       },
-      required: ['problem'],
-      examples: [{ problem: 'Churn is rising among SMB accounts', owner: 'ben', solution: 'Proactive health-score outreach', pillarId: 'pillar_retention', targetValue: 250000 }],
+      required: ['problem', 'pillarId'],
+      examples: [{ problem: 'Churn is rising among SMB accounts', pillarId: 'pillar_ab12cd3', owner: 'ben', solution: 'Proactive health-score outreach', targetValue: 250000 }],
     },
     call: async (user, args) => {
       const problem = str(args.problem).trim();
       if (!problem) fail('create_big_bet needs a `problem` statement', 400);
+      const pillarId = str(args.pillarId).trim();
+      if (!pillarId) fail('create_big_bet needs a `pillarId` (from list_pillars)', 400);
+      // Containment: re-resolve the pillar through its own canViewPillar gate
+      // FIRST — an id you cannot see is a typed not_found/forbidden.
+      await getPillar(user, pillarId);
+      const metricId = str(args.metricId).trim();
       const input: CreateBetInput = {
         name: str(args.name).trim() || deriveBetName(problem),
         problem: { who: str(args.owner), need: problem, obstacle: '', impact: '' },
         solution: str(args.solution) || undefined,
-        pillarId: str(args.pillarId) || 'pillar_retention',
-        metricId: str(args.metricId) || 'metric_nrr',
+        pillarId,
+        metricId: metricId || undefined,
         targetValue: num(args.targetValue),
         goLive: str(args.goLive) || defaultGoLive(),
         domain: str(args.domain) || undefined,
@@ -1383,6 +1394,92 @@ export const bigbetWriteTools: McpTool[] = [
           ? { note: `realizedValue is recorded as the owner-declared value, but this bet resolves value by "${bet.valueBasis}" — set valueBasis: "owner-declared" for it to count.` }
           : {}),
       };
+    },
+  },
+  // ---- Big Bet LIFECYCLE (archive · unarchive · delete · restore) ------------
+  // Distinct from update_big_bet's `status:'archived'` (a status FIELD): these
+  // are the true lifecycle transitions, each wrapping the real store fn behind
+  // its own edit gate (canEdit — the owner edits their bet; cross-domain bets
+  // are Admin-only). No new role floor is invented — the write floor is creator.
+  {
+    name: 'archive_big_bet',
+    tab: 'bigbets',
+    minRole: 'creator',
+    description:
+      'Archive a Big Bet you may edit — a reversible soft-hide that removes it from the working list (retained + restorable). Purpose: retire a bet without destroying its roadmap or history. Before: get_big_bet. After: unarchive_big_bet to bring it back, or delete_big_bet to remove it for good. Governance: runs AS YOU through the SAME store edit gate as the Big Bets tab (the owner edits their bet; cross-domain bets are Admin-only) — an unseen id is a typed not_found/forbidden. Note: distinct from update_big_bet with status:"archived" (a status field); this is the lifecycle transition and is audited as bet.archive.',
+    inputSchema: {
+      type: 'object',
+      properties: { betId: { type: 'string', description: 'The Big Bet to archive (from list_big_bets).' } },
+      required: ['betId'],
+      examples: [{ betId: 'bet_ab12cd34' }],
+    },
+    call: async (user, args) => {
+      const betId = str(args.betId).trim();
+      if (!betId) fail('archive_big_bet needs a `betId` (from list_big_bets)', 400);
+      const bet = archiveBet(betId, P(user));
+      return { id: bet.id, status: bet.status, updatedAt: bet.updatedAt };
+    },
+  },
+  {
+    name: 'unarchive_big_bet',
+    tab: 'bigbets',
+    minRole: 'creator',
+    description:
+      'Restore an archived Big Bet back into the working list (returns it to active). Purpose: undo an archive. Before: list_big_bets with includeArchived (archived bets are hidden from the default list — the owner/Admin knows the id). After: get_big_bet to read the roadmap back. Governance: runs AS YOU through the SAME store edit gate as archive_big_bet (the owner edits their bet; cross-domain bets are Admin-only) — an unseen id is a typed not_found/forbidden.',
+    inputSchema: {
+      type: 'object',
+      properties: { betId: { type: 'string', description: 'The archived Big Bet to restore (from list_big_bets, includeArchived).' } },
+      required: ['betId'],
+      examples: [{ betId: 'bet_ab12cd34' }],
+    },
+    call: async (user, args) => {
+      const betId = str(args.betId).trim();
+      if (!betId) fail('unarchive_big_bet needs a `betId` (from list_big_bets)', 400);
+      const bet = unarchiveBet(betId, P(user));
+      return { id: bet.id, status: bet.status, updatedAt: bet.updatedAt };
+    },
+  },
+  {
+    name: 'delete_big_bet',
+    tab: 'bigbets',
+    minRole: 'creator',
+    description:
+      'Physically delete a Big Bet + its version history (edit-scoped, IRREVERSIBLE). Purpose: permanently remove a bet you no longer need. Before: archive_big_bet (the OS lifecycle reaches delete via archive) — the attached component REFERENCES are dropped with the bet, but the components themselves (datasets, dashboards, agent systems) live on in their own tabs; a delete never destroys the artifacts a bet points at. Governance: runs AS YOU through the SAME store edit gate as the Big Bets tab (the owner edits their bet; cross-domain bets are Admin-only) — an unseen id is a typed not_found/forbidden.',
+    inputSchema: {
+      type: 'object',
+      properties: { betId: { type: 'string', description: 'The Big Bet to permanently delete (from list_big_bets).' } },
+      required: ['betId'],
+      examples: [{ betId: 'bet_ab12cd34' }],
+    },
+    call: async (user, args) => {
+      const betId = str(args.betId).trim();
+      if (!betId) fail('delete_big_bet needs a `betId` (from list_big_bets)', 400);
+      deleteBet(betId, P(user));
+      return { deleted: true, betId };
+    },
+  },
+  {
+    name: 'restore_big_bet_version',
+    tab: 'bigbets',
+    minRole: 'creator',
+    description:
+      'Restore a prior version of a Big Bet’s editable content (name, problem, solution, target value, go-live, value basis, allocation, members, status, solution blueprint). Restore is itself reversible — the CURRENT state is snapshotted as a new version first, THEN the chosen version is applied. Purpose: roll a bet back to an earlier framing. Before: get_big_bet (the audit tail lists versions; each has a number). After: get_big_bet to read the restored content back. Governance: runs AS YOU through the SAME store edit gate as the Big Bets tab (the owner edits their bet; cross-domain bets are Admin-only) — an unseen id is a typed not_found/forbidden; an unknown version is a typed not_found.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        betId: { type: 'string', description: 'The Big Bet to restore (from list_big_bets).' },
+        versionId: { type: 'number', description: 'The version number to restore (from get_big_bet’s version history).' },
+      },
+      required: ['betId', 'versionId'],
+      examples: [{ betId: 'bet_ab12cd34', versionId: 2 }],
+    },
+    call: async (user, args) => {
+      const betId = str(args.betId).trim();
+      if (!betId) fail('restore_big_bet_version needs a `betId` (from list_big_bets)', 400);
+      const version = Number(args.versionId);
+      if (!Number.isInteger(version)) fail('restore_big_bet_version needs an integer `versionId`', 400);
+      const bet = restoreBetVersion(betId, P(user), version);
+      return { id: bet.id, name: bet.name, status: bet.status, updatedAt: bet.updatedAt };
     },
   },
 ];

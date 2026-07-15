@@ -1,8 +1,24 @@
 # Knowledge — golden path
 
+## Where things live now
+
+The Plan section splits this into three sibling tabs — don't conflate them:
+
+- **Workflows** is its own tab. The authored, step-by-step "how work gets done"
+  records (steps · actors · rules · tacit) live there and are the subject of the
+  `author_knowledge` / `index_knowledge` / `publish_knowledge` loop below.
+- **Operating Manual** is its own tab with three scopes — **My · Domain · Company** —
+  for the durable policy/handbook prose (get · update · list-versions · restore per
+  scope), separate from workflows.
+- **Knowledge** is now **reference-only**: the canonical, searchable, RLS-scoped
+  knowledge store you read from (`search_knowledge` · `list_knowledge` ·
+  `get_knowledge`) to ground agents. Authoring still flows through this surface's
+  `author_knowledge`, but the browsing home for the workflow records is the
+  Workflows tab.
+
 ## What this is
 
-The Knowledge tab is the OS's canonical store for how work gets done. A
+The knowledge store is the OS's canonical store for how work gets done. A
 workflow holds these kinds of content that complement each other:
 
 - **steps** — ordered sequence of actions, each owned by an actor, with inputs,

@@ -11,7 +11,6 @@ import StepInspector from './StepInspector';
 import ActorsPanel from './ActorsPanel';
 import RulesPanel from './RulesPanel';
 import TacitPanel from './TacitPanel';
-import ContextPanel from './ContextPanel';
 import HandoverPanel from './HandoverPanel';
 import { commitWorkflow } from './commitWorkflow';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
@@ -54,7 +53,7 @@ type WorkflowData = {
   canPublish: boolean;
 };
 
-type Panel = 'visual' | 'actors' | 'rules' | 'tacit' | 'context' | 'handover' | 'markdown' | 'mermaid' | 'gaps';
+type Panel = 'visual' | 'actors' | 'rules' | 'tacit' | 'handover' | 'markdown' | 'mermaid' | 'gaps';
 
 const VIS_CLASS: Record<string, string> = {
   Personal: 'vis-personal',
@@ -427,7 +426,6 @@ export default function WorkflowView({
           </button>
           <button className={panel === 'rules' ? 'active' : ''} onClick={() => setPanel('rules')}>Rules</button>
           <button className={panel === 'tacit' ? 'active' : ''} onClick={() => setPanel('tacit')}>Tacit</button>
-          <button className={panel === 'context' ? 'active' : ''} onClick={() => setPanel('context')}>Context</button>
           <button className={panel === 'handover' ? 'active' : ''} onClick={() => setPanel('handover')}>Handover</button>
           <button className={panel === 'markdown' ? 'active' : ''} onClick={() => setPanel('markdown')}>Markdown</button>
           <button className={panel === 'mermaid' ? 'active' : ''} onClick={() => setPanel('mermaid')}>Diagram (read-only)</button>
@@ -535,9 +533,6 @@ export default function WorkflowView({
               canEdit={data.canEdit}
             />
           )}
-
-          {/* ── CONTEXT (the context layer: pinned vs retrieved) ── */}
-          {panel === 'context' && <ContextPanel workflowId={workflowId} />}
 
           {/* ── HANDOVER (workflow → agent scaffold + attach-as-context) ── */}
           {panel === 'handover' && (

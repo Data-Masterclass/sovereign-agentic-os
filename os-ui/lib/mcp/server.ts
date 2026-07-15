@@ -22,6 +22,7 @@ import { ALL_WRITE_TOOLS } from '@/lib/mcp/write-tools';
 import { DISCOVERY_TOOLS } from '@/lib/mcp/discovery-tools';
 import { governanceTools } from '@/lib/mcp/governance-tools';
 import { strategyReadTools } from '@/lib/mcp/strategy-tools';
+import { MANUAL_TOOLS } from '@/lib/mcp/manual-tools';
 import { marketplaceReadTools } from '@/lib/mcp/marketplace-tools';
 import { MONITORING_TOOLS } from '@/lib/mcp/monitoring-tools';
 import {
@@ -79,7 +80,10 @@ export type JsonSchema = {
 // wave adds `strategy` (pillars/value) + `monitoring` (runs/traces, read-only) as
 // full tabs alongside the marketplace/governance READ additions. `platform` lands
 // WHEN its tools ship (every declared tab must carry ≥1 tool — the tabs.test invariant).
-export const MCP_TABS = ['software', 'data', 'science', 'knowledge', 'agents', 'files', 'metrics', 'dashboards', 'bigbets', 'connections', 'governance', 'marketplace', 'strategy', 'monitoring'] as const;
+// `operating-manual` is the Plan-group tab that owns the My/Domain/Company
+// Operating Manual — its four MCP tools (get/update/list-versions/restore) wrap the
+// governed manual store, so the tab now carries a real MCP surface.
+export const MCP_TABS = ['software', 'data', 'science', 'knowledge', 'agents', 'files', 'metrics', 'dashboards', 'bigbets', 'connections', 'governance', 'marketplace', 'strategy', 'monitoring', 'operating-manual'] as const;
 export type McpTab = (typeof MCP_TABS)[number];
 export function isMcpTab(x: string): x is McpTab {
   return (MCP_TABS as readonly string[]).includes(x);
@@ -387,6 +391,7 @@ export const ALL_MCP_TOOLS: McpTool[] = [
   ...DISCOVERY_TOOLS,
   ...governanceTools,
   ...strategyReadTools,
+  ...MANUAL_TOOLS,
   ...marketplaceReadTools,
   ...MONITORING_TOOLS,
   ...discoveryTools,

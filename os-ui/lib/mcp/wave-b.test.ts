@@ -14,6 +14,7 @@ import { __resetBets, auditLog } from '@/lib/bigbets/store';
 import { __resetSources, __resetStrategy, __seedStrategy } from '@/lib/bigbets/sources';
 import { __resetApprovals } from '@/lib/governance/approvals';
 import { __resetAppsCache } from '@/lib/software/apps';
+import { __resetForTests as resetPillars, createPillar } from '@/lib/strategy/pillars';
 
 /**
  * MCP WAVE B — operate & read-back parity. Seven single-reads (get_metric,
@@ -42,6 +43,7 @@ function resetAll(): void {
   __resetStrategy();
   __resetApprovals();
   __resetAppsCache();
+  resetPillars();
 }
 
 async function call(user: CurrentUser, name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -162,17 +164,22 @@ test('get_dashboard: reads back the charts + governed members; visibility-scoped
 
 // ---- GET_BIG_BET + the operate writes -------------------------------------------
 
-function seedStrategy(): void {
+// Seed a REAL, viewable strategy pillar (create_big_bet re-resolves pillarId
+// through canViewPillar) AND mirror it into the sources bridge under the SAME id
+// so get_big_bet renders the pillar/metric card. Returns the real pillar id.
+async function seedStrategy(): Promise<string> {
+  const pillar = await createPillar(builder, { name: 'Retention', scope: 'domain', domain: 'sales' });
   __seedStrategy(
     { id: 'metric_nrr', name: 'Net Revenue Retention', cubeMeasure: 'nrr', unit: '€', baseline: 100, current: 150, rls: { ben: 400 } },
-    { id: 'pillar_retention', name: 'Retention', scope: 'tenant', metricId: 'metric_nrr' },
+    { id: pillar.id, name: 'Retention', scope: 'tenant', metricId: 'metric_nrr' },
   );
+  return pillar.id;
 }
 
 test('get_big_bet: the full bet card, with the realized value resolved RLS-scoped to THE CALLER', async () => {
   resetAll();
-  seedStrategy();
-  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Churn is rising among SMB accounts', owner: 'ben', solution: 'Outreach', targetValue: 250000 }));
+  const pillarId = await seedStrategy();
+  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Churn is rising among SMB accounts', pillarId, metricId: 'metric_nrr', owner: 'ben', solution: 'Outreach', targetValue: 250000 }));
 
   // Ben's entitled `current` is RLS-overridden to 400 → uplift realized = 300.
   const forBen = payload<{ value: { realized: number }; status: string; pillar: { name: string }; metric: { name: string }; solution: string }>(
@@ -191,8 +198,8 @@ test('get_big_bet: the full bet card, with the realized value resolved RLS-scope
 
 test('get_big_bet: out-of-domain viewer → typed forbidden; unknown id → typed not_found', async () => {
   resetAll();
-  seedStrategy();
-  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Sales-domain bet' }));
+  const pillarId = await seedStrategy();
+  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Sales-domain bet', pillarId }));
   const e = errorOf(await call(outsider, 'get_big_bet', { betId: bet.id }));
   assert.equal(e.code, 'forbidden');
   const missing = errorOf(await call(builder, 'get_big_bet', { betId: 'bet_nope' }));
@@ -201,8 +208,8 @@ test('get_big_bet: out-of-domain viewer → typed forbidden; unknown id → type
 
 test('attach_component: re-resolves the id through its own canView gate, links AS THE CALLER, and get_big_bet reads it back', async () => {
   resetAll();
-  seedStrategy();
-  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Churn is rising' }));
+  const pillarId = await seedStrategy();
+  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Churn is rising', pillarId }));
   const ds = payload<{ id: string }>(await call(builder, 'create_dataset', { name: 'Churn mart' }));
   payload(await call(builder, 'add_dataset_version', { datasetId: ds.id, layer: 'bronze' }));
 
@@ -227,8 +234,8 @@ test('attach_component: re-resolves the id through its own canView gate, links A
 
 test('attach_component: a creator can grow their own DRAFT; dashboards and agent systems attach through the same gates', async () => {
   resetAll();
-  seedStrategy();
-  const bet = payload<{ id: string; status: string }>(await call(creator, 'create_big_bet', { problem: 'Cara’s draft initiative' }));
+  const pillarId = await seedStrategy();
+  const bet = payload<{ id: string; status: string }>(await call(creator, 'create_big_bet', { problem: 'Cara’s draft initiative', pillarId }));
   assert.equal(bet.status, 'draft');
   const dash = payload<{ id: string }>(await call(creator, 'create_dashboard', { name: 'My view', view: 'Orders', charts: [{ name: 'N', vizType: 'line', metric: 'Orders.n' }] }));
   const sys = payload<{ id: string }>(await call(creator, 'create_agent_system', { name: 'My triage', template: 'analyze' }));
@@ -244,8 +251,8 @@ test('attach_component: a creator can grow their own DRAFT; dashboards and agent
 
 test('attach_component: a forged id → typed not_found; an unseen component → typed forbidden; a non-editor → typed forbidden', async () => {
   resetAll();
-  seedStrategy();
-  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Churn is rising' }));
+  const pillarId = await seedStrategy();
+  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Churn is rising', pillarId }));
 
   // Forged id: nothing is attached, the error is typed.
   const forged = errorOf(await call(builder, 'attach_component', { betId: bet.id, kind: 'dataset', id: 'ds_forged' }));
@@ -266,8 +273,8 @@ test('attach_component: a forged id → typed not_found; an unseen component →
 
 test('update_big_bet: the owner updates solution/status/realized value through the store’s own gate; honesty note on basis', async () => {
   resetAll();
-  seedStrategy();
-  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Churn is rising', targetValue: 250000 }));
+  const pillarId = await seedStrategy();
+  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Churn is rising', pillarId, targetValue: 250000 }));
 
   // Realized value under the default uplift basis → the response says it won't count yet.
   const first = payload<{ ownerDeclaredValue: number; valueBasis: string; note?: string }>(
@@ -290,8 +297,8 @@ test('update_big_bet: the owner updates solution/status/realized value through t
 
 test('update_big_bet: a non-editor → typed forbidden; an empty patch → typed bad_request; unknown → not_found', async () => {
   resetAll();
-  seedStrategy();
-  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Sales bet' }));
+  const pillarId = await seedStrategy();
+  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Sales bet', pillarId }));
   const peer = errorOf(await call(creator, 'update_big_bet', { betId: bet.id, status: 'archived' }));
   assert.equal(peer.code, 'forbidden', 'a domain peer may view but not edit — the store’s own gate, no new floors');
   const empty = errorOf(await call(builder, 'update_big_bet', { betId: bet.id }));

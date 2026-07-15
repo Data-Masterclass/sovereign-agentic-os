@@ -34,7 +34,22 @@ function errorOf(r: Record<string, unknown>): ToolError {
   return (r.structuredContent as { error: ToolError }).error;
 }
 
-const WRITE = ['create_pillar', 'update_pillar', 'link_bet_to_pillar', 'record_value_entry', 'set_pillar_target'];
+// create_pillar floors at CREATOR: a personal (My) pillar is open to any member,
+// and canCreatePillar re-gates per scope in-lib (My→any member, Domain→Builder+,
+// Company→Admin). Every OTHER strategy write — including the lifecycle tools
+// (archive/unarchive/delete/promote/restore) — floors at BUILDER.
+const CREATOR_WRITE = ['create_pillar'];
+const BUILDER_WRITE = [
+  'update_pillar',
+  'link_bet_to_pillar',
+  'record_value_entry',
+  'set_pillar_target',
+  'archive_pillar',
+  'unarchive_pillar',
+  'delete_pillar',
+  'promote_pillar',
+  'restore_pillar_version',
+];
 const READ = ['list_pillars', 'get_pillar'];
 
 test('STRATEGY registry: tools present, exampled, floored, and W-classified under the strategy tab', () => {
@@ -50,14 +65,18 @@ test('STRATEGY registry: tools present, exampled, floored, and W-classified unde
     assert.ok(!writeNames.has(n), `${n} is read-only`);
     assert.ok((t.inputSchema.examples ?? []).length >= 1, `${n} carries a worked example`);
   }
-  for (const n of WRITE) {
+  const assertWrite = (n: string, floor: 'creator' | 'builder') => {
     const t = byName.get(n)!;
     assert.ok(t, `${n} registered`);
-    assert.equal(t.minRole, 'builder', `${n} floors at builder`);
-    assert.ok(writeNames.has(n), `${n} in ALL_WRITE_TOOLS`);
+    assert.equal(t.minRole, floor, `${n} floors at ${floor}`);
+    assert.equal(t.tab, 'strategy', `${n} is on the strategy tab`);
+    assert.ok(tabNames.has(n), `${n} surfaces on the strategy tab`);
+    assert.ok(writeNames.has(n), `${n} in ALL_WRITE_TOOLS (W-classified)`);
     assert.ok((t.inputSchema.examples ?? []).length >= 1, `${n} carries a worked example`);
     assert.ok(t.description.length > 200, `${n} carries a rich description`);
-  }
+  };
+  for (const n of CREATOR_WRITE) assertWrite(n, 'creator');
+  for (const n of BUILDER_WRITE) assertWrite(n, 'builder');
 });
 
 test('STRATEGY happy path: builder creates → creator reads the roll-up → value + bet recorded', async () => {

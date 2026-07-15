@@ -12,6 +12,7 @@ import { __resetStore as resetKnowledge } from '@/lib/knowledge/store';
 import { __resetStore as resetFiles } from '@/lib/files/store';
 import { __resetDashboards } from '@/lib/dashboards/store';
 import { __resetBets } from '@/lib/bigbets/store';
+import { __resetForTests as resetPillars, createPillar } from '@/lib/strategy/pillars';
 import { __resetStore as resetAgents } from '@/lib/agents/store';
 import { __resetApprovals } from '@/lib/governance/approvals';
 
@@ -42,6 +43,7 @@ function resetAll(): void {
   __resetBets();
   resetAgents();
   __resetApprovals();
+  resetPillars();
 }
 
 async function raw(user: CurrentUser, name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -263,7 +265,8 @@ test('P0.5 get_lineage returns a normalized graph, scoped at the root (not_found
 test('P0.5 get_lineage redacts per-node: a bet component the caller cannot see renders {redacted:true}', async () => {
   resetAll();
   // ben (builder, sales) owns an ACTIVE bet + a PERSONAL dashboard component.
-  const bet = await call<{ id: string }>(ben, 'create_big_bet', { problem: 'Churn is rising', owner: 'ben', targetValue: 100000 });
+  const pillar = await createPillar(ben, { name: 'Retention', scope: 'domain', domain: 'sales' });
+  const bet = await call<{ id: string }>(ben, 'create_big_bet', { problem: 'Churn is rising', pillarId: pillar.id, owner: 'ben', targetValue: 100000 });
   const dash = await call<{ id: string }>(ben, 'create_dashboard', { name: 'Ops', view: 'Orders', charts: [{ name: 'n', vizType: 'big_number_total', metric: 'Orders.revenue' }] });
   await call(ben, 'attach_component', { betId: bet.id, kind: 'dashboard', id: dash.id });
 

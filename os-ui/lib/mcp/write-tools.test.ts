@@ -13,6 +13,7 @@ import { __resetDashboards } from '@/lib/dashboards/store';
 import { __resetBets } from '@/lib/bigbets/store';
 import { __resetStore as resetAgents } from '@/lib/agents/store';
 import { __resetApprovals } from '@/lib/governance/approvals';
+import { __resetForTests as resetPillars } from '@/lib/strategy/pillars';
 
 /**
  * The governed MCP WRITE tools: each must delegate to the SAME lib function the UI
@@ -34,6 +35,14 @@ function resetAll(): void {
   __resetBets();
   resetAgents();
   __resetApprovals();
+  resetPillars();
+}
+
+/** Create a real domain pillar (as a builder) and return its id — a Big Bet must
+ *  be filed under a pillar the caller can view (containment). */
+async function seedPillar(user: CurrentUser = builder): Promise<string> {
+  const p = payload<{ id: string }>(await call(user, 'create_pillar', { name: 'Grow NRR', scope: 'domain', domain: 'sales' }));
+  return p.id;
 }
 
 async function call(user: CurrentUser, name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -128,8 +137,9 @@ test('FILES: upload a documented file, then a builder promotes it to a domain as
 // ---- BIG BETS + AGENTS ------------------------------------------------------
 test('BIG BETS + AGENTS: create a bet and assemble + build an agent system as the caller', async () => {
   resetAll();
+  const pillarId = await seedPillar();
   const bet = payload<{ id: string; status: string }>(await call(builder, 'create_big_bet', {
-    problem: 'Churn is rising among SMB accounts', owner: 'ben', targetValue: 250000,
+    problem: 'Churn is rising among SMB accounts', pillarId, owner: 'ben', targetValue: 250000,
   }));
   assert.ok(bet.id);
   assert.equal(bet.status, 'active', 'a builder owns an ACTIVE bet');
@@ -146,6 +156,67 @@ test('BIG BETS + AGENTS: create a bet and assemble + build an agent system as th
   // Build runs the governed adapters (offline-mock in the test env) — as the caller.
   const build = payload<{ mode: string }>(await call(builder, 'build_agent_system', { systemId: sys.id }));
   assert.ok(build.mode, 'build_agent_system returns a build report');
+});
+
+// ---- BIG BET containment: pillarId is required + view-gated ------------------
+test('BIG BET containment: create_big_bet needs a viewable pillarId', async () => {
+  resetAll();
+  // Missing pillarId → bad_request (400).
+  const missing = errorOf(await call(builder, 'create_big_bet', { problem: 'No pillar given' }));
+  assert.equal(missing.code, 'bad_request', 'a bet with no pillarId is refused');
+
+  // A pillarId the caller cannot view → typed forbidden/not_found (no existence leak).
+  const finPillar = payload<{ id: string }>(
+    await call({ id: 'fin', name: 'Fin', domains: ['finance'], role: 'builder' }, 'create_pillar', {
+      name: 'Finance spine', scope: 'domain', domain: 'finance',
+    }),
+  );
+  const unseen = errorOf(await call(builder, 'create_big_bet', { problem: 'Cross-domain grab', pillarId: finPillar.id }));
+  assert.ok(unseen.code === 'forbidden' || unseen.code === 'not_found', `no cross-domain pillar leak (got ${unseen.code})`);
+
+  // A real, viewable pillar → the bet is filed under it.
+  const pillarId = await seedPillar();
+  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Real bet', pillarId }));
+  assert.ok(bet.id, 'a bet under a viewable pillar is created');
+});
+
+// ---- BIG BET lifecycle: archive · unarchive · delete · restore (gated) ------
+test('BIG BET lifecycle: owner archives → unarchives → restores → deletes; a creator draft owner runs their own', async () => {
+  resetAll();
+  const pillarId = await seedPillar();
+  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Lifecycle bet', pillarId, targetValue: 100 }));
+  const betId = bet.id;
+
+  // archive → status archived.
+  const arch = payload<{ status: string }>(await call(builder, 'archive_big_bet', { betId }));
+  assert.equal(arch.status, 'archived', 'archive_big_bet soft-hides the bet');
+
+  // unarchive → back to active.
+  const un = payload<{ status: string }>(await call(builder, 'unarchive_big_bet', { betId }));
+  assert.equal(un.status, 'active', 'unarchive_big_bet returns it to the working list');
+
+  // An edit records a version; restore_big_bet_version rolls the content back.
+  payload(await call(builder, 'update_big_bet', { betId, name: 'Renamed bet' }));
+  const restored = payload<{ id: string }>(await call(builder, 'restore_big_bet_version', { betId, versionId: 1 }));
+  assert.equal(restored.id, betId, 'restore_big_bet_version returns the bet');
+
+  // delete → gone.
+  const del = payload<{ deleted: boolean }>(await call(builder, 'delete_big_bet', { betId }));
+  assert.equal(del.deleted, true, 'delete_big_bet permanently removes it');
+  const gone = errorOf(await call(builder, 'get_big_bet', { betId }));
+  assert.ok(gone.code === 'not_found' || gone.code === 'forbidden', 'the deleted bet is gone');
+});
+
+test('BIG BET lifecycle: a non-owner outsider cannot archive/delete someone elses bet (typed error)', async () => {
+  resetAll();
+  const pillarId = await seedPillar();
+  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Owned by Ben', pillarId }));
+  // A builder in another domain — not the owner, not an admin — cannot edit.
+  const outsider: CurrentUser = { id: 'zed', name: 'Zed', domains: ['finance'], role: 'builder' };
+  const err = errorOf(await call(outsider, 'archive_big_bet', { betId: bet.id }));
+  assert.ok(err.code === 'forbidden' || err.code === 'not_found', `the store edit gate re-gates (got ${err.code})`);
+  const errDel = errorOf(await call(outsider, 'delete_big_bet', { betId: bet.id }));
+  assert.ok(errDel.code === 'forbidden' || errDel.code === 'not_found', `delete is edit-gated too (got ${errDel.code})`);
 });
 
 // ---- THE CREATOR LOCKDOWN: create yes, promote/publish NO --------------------

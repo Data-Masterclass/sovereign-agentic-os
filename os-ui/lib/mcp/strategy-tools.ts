@@ -16,6 +16,11 @@ import {
   linkBet,
   unlinkBet,
   addValueEntry,
+  archivePillar,
+  unarchivePillar,
+  deletePillar,
+  promotePillar,
+  restorePillarVersion,
 } from '@/lib/strategy/pillars';
 import { rollupForPillar, valueHistory } from '@/lib/strategy/value-rollup';
 import { snapshotHistory } from '@/lib/strategy/snapshots';
@@ -99,16 +104,16 @@ export const strategyWriteTools: McpTool[] = [
   {
     name: 'create_pillar',
     tab: 'strategy',
-    minRole: 'builder',
+    minRole: 'creator',
     description:
-      'Create a strategy pillar (a tenant or domain value spine), optionally describing its value metric up front. Purpose: frame the strategy the org rolls up to. Before: list_pillars (reuse first). After: link_bet_to_pillar to attach real bets, record_value_entry to track value. Governance: canCreatePillar re-gates in-lib — a DOMAIN pillar needs a Builder/Admin IN that domain; a TENANT pillar needs a platform Admin. A creator is refused (forbidden).',
+      'Create a strategy pillar (a personal/My, domain, or tenant/Company value spine), optionally describing its value metric up front. Purpose: frame the strategy the org rolls up to. Before: list_pillars (reuse first). After: link_bet_to_pillar to attach real bets, record_value_entry to track value, promote_pillar to raise its tier. Governance: canCreatePillar re-gates in-lib — a PERSONAL (My) pillar is open to any user in a domain they belong to; a DOMAIN pillar needs a Builder/Admin IN that domain; a TENANT pillar needs a platform Admin. A creator asking for domain/tenant is refused (forbidden) — create it Personal and hand off a promote.',
     inputSchema: {
       type: 'object',
       properties: {
         name: { type: 'string', description: 'Pillar name.' },
         description: { type: 'string', description: 'One-line what this pillar is about.' },
-        scope: { type: 'string', enum: ['tenant', 'domain'], description: 'tenant (Admin) or domain (Builder+). Default: domain.' },
-        domain: { type: 'string', description: 'For a domain pillar: one of YOUR domains (defaults to your first).' },
+        scope: { type: 'string', enum: ['personal', 'domain', 'tenant'], description: 'personal (My — any user) · domain (Builder+) · tenant (Admin). Default: domain.' },
+        domain: { type: 'string', description: 'For a domain/personal pillar: one of YOUR domains (defaults to your first). A personal pillar keeps it as its home for a later My→Domain promote.' },
         valueMetric: {
           type: 'object',
           description: 'Optional value-metric description up front (mode starts "describe").',
@@ -117,6 +122,7 @@ export const strategyWriteTools: McpTool[] = [
       },
       required: ['name'],
       examples: [
+        { name: 'My retention focus', scope: 'personal', domain: 'sales' },
         { name: 'Grow Net Revenue Retention', scope: 'domain', domain: 'sales' },
         { name: 'Company value', scope: 'tenant', valueMetric: { name: 'ARR', description: 'Annual recurring revenue' } },
       ],
@@ -124,7 +130,8 @@ export const strategyWriteTools: McpTool[] = [
     call: async (user, args) => {
       const name = str(args.name).trim();
       if (!name) fail('create_pillar needs a `name`', 400);
-      const scope = (str(args.scope) === 'tenant' ? 'tenant' : 'domain') as PillarScope;
+      const rawScope = str(args.scope);
+      const scope = (rawScope === 'tenant' ? 'tenant' : rawScope === 'personal' ? 'personal' : 'domain') as PillarScope;
       const vm = args.valueMetric as { name?: unknown; description?: unknown } | undefined;
       return createPillar(user, {
         name,
@@ -281,6 +288,108 @@ export const strategyWriteTools: McpTool[] = [
         ? (str(args.horizon) as Horizon)
         : 'year-end';
       return setHeadlineTarget(user, id, { value, metricType, horizon });
+    },
+  },
+  // ----------------------------- lifecycle -------------------------------------
+  // The SAME reversible archive → restore-or-delete + promote-ladder + version
+  // history the Strategy tab exposes, each a THIN wrapper over the store's own
+  // edit/promote gate (canEditPillar / canPromotePillar). No new role floor is
+  // invented here — the visibility floor is `builder` (the write floor), and the
+  // store re-gates: a My pillar's owner (any role) still edits/archives their own.
+  {
+    name: 'archive_pillar',
+    tab: 'strategy',
+    minRole: 'builder',
+    description:
+      'Archive a pillar you can edit — a reversible soft-hide that removes it from the working list (retained + restorable). Purpose: retire a pillar without destroying its history. Before: get_pillar. After: unarchive_pillar to bring it back, or delete_pillar once archived. Governance: canEditPillar re-gates in-lib (a My pillar → its owner; a Domain pillar → a Builder in that domain; a Company pillar → an Admin). A creator or out-of-domain builder is refused (forbidden).',
+    inputSchema: {
+      type: 'object',
+      properties: { pillarId: { type: 'string', description: 'Pillar id from list_pillars.' } },
+      required: ['pillarId'],
+      examples: [{ pillarId: 'pillar_ab12cd3' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.pillarId).trim();
+      if (!id) fail('archive_pillar needs a `pillarId`', 400);
+      return archivePillar(user, id);
+    },
+  },
+  {
+    name: 'unarchive_pillar',
+    tab: 'strategy',
+    minRole: 'builder',
+    description:
+      'Restore an archived pillar back into the working list. Purpose: undo an archive. Before: list_pillars (archived pillars are hidden from the default list — the owner/editor knows the id). After: get_pillar. Governance: canEditPillar re-gates in-lib exactly like archive_pillar.',
+    inputSchema: {
+      type: 'object',
+      properties: { pillarId: { type: 'string', description: 'Pillar id (an archived pillar you can edit).' } },
+      required: ['pillarId'],
+      examples: [{ pillarId: 'pillar_ab12cd3' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.pillarId).trim();
+      if (!id) fail('unarchive_pillar needs a `pillarId`', 400);
+      return unarchivePillar(user, id);
+    },
+  },
+  {
+    name: 'delete_pillar',
+    tab: 'strategy',
+    minRole: 'builder',
+    description:
+      'Physically delete a pillar + its version history (edit-scoped, IRREVERSIBLE). Purpose: permanently remove a pillar you no longer need. Before: archive_pillar (the OS lifecycle reaches delete via archive), and unlink any bets. Safe-by-default: a pillar that still has LINKED bets is BLOCKED (conflict/409) — unlink them first (they live on in the Big Bets tab); a delete never strands or destroys the bets that deliver it. Governance: canEditPillar re-gates in-lib.',
+    inputSchema: {
+      type: 'object',
+      properties: { pillarId: { type: 'string', description: 'Pillar id to permanently delete (unlink its bets first).' } },
+      required: ['pillarId'],
+      examples: [{ pillarId: 'pillar_ab12cd3' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.pillarId).trim();
+      if (!id) fail('delete_pillar needs a `pillarId`', 400);
+      await deletePillar(user, id);
+      return { deleted: true, pillarId: id };
+    },
+  },
+  {
+    name: 'promote_pillar',
+    tab: 'strategy',
+    minRole: 'builder',
+    description:
+      'Promote a pillar ONE tier up the ladder My (personal) → Domain → Company (tenant), mirroring the OS promote ladder. Purpose: widen a pillar’s reach once it is proven. Before: get_pillar. After: get_pillar to read the new scope. Governance: canPromotePillar re-gates in-lib — the OWNER (or an Admin) initiates; promoting TO Domain needs a Builder+ in the owning domain, promoting TO Company needs an Admin. Already at Company → bad_request. A pillar promoted to Company re-homes to the tenant scope.',
+    inputSchema: {
+      type: 'object',
+      properties: { pillarId: { type: 'string', description: 'Pillar id from list_pillars.' } },
+      required: ['pillarId'],
+      examples: [{ pillarId: 'pillar_ab12cd3' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.pillarId).trim();
+      if (!id) fail('promote_pillar needs a `pillarId`', 400);
+      return promotePillar(user, id);
+    },
+  },
+  {
+    name: 'restore_pillar_version',
+    tab: 'strategy',
+    minRole: 'builder',
+    description:
+      'Restore a prior version of a pillar’s editable content (name, description, value metric, targets, archived flag). Restore is itself reversible — the current state is snapshotted first. Purpose: roll a pillar back to an earlier framing. Before: get_pillar (the audit tail lists versions; each version has a number). After: get_pillar to read the restored content. Governance: canEditPillar re-gates in-lib. Scope/domain/linked bets are governed relationships and are NOT moved by a restore (so a restore can never bypass the promote gate).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pillarId: { type: 'string', description: 'Pillar id from list_pillars.' },
+        versionId: { type: 'number', description: 'The version number to restore.' },
+      },
+      required: ['pillarId', 'versionId'],
+      examples: [{ pillarId: 'pillar_ab12cd3', versionId: 2 }],
+    },
+    call: async (user, args) => {
+      const id = str(args.pillarId).trim();
+      if (!id) fail('restore_pillar_version needs a `pillarId`', 400);
+      const version = Number(args.versionId);
+      if (!Number.isInteger(version)) fail('restore_pillar_version needs an integer `versionId`', 400);
+      return restorePillarVersion(user, id, version);
     },
   },
 ];
