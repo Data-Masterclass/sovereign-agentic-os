@@ -288,6 +288,7 @@ export function createWorkflow(
     status: 'draft',
     version: '1',
     rules: [],
+    actors: [],
     steps: [],
     body: '',
   };

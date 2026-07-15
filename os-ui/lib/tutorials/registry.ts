@@ -85,6 +85,8 @@ export const TUTORIAL_EXEMPT_ROUTES: Record<string, string> = {
     'Static reference/teaching page that documents the MCP protocol and tool catalog; the connection instructions are self-contained and nothing needs practising in a sandbox.',
   '/llm-gateway':
     'Read-only observability over the LiteLLM gateway (tenant usage + the public Model Hub embed); nothing to configure or practise — the actionable model/cost controls live in Platform.',
+  '/workflows':
+    'Newly split out of Knowledge (its tutorial still lives under the Knowledge golden path). A dedicated Workflows tutorial ships with the Workflows redesign (Operating Manual + 2-tab detail); exempt until then.',
 };
 
 /** Resolve one tutorial. Returns `undefined` for an unknown key. */

@@ -23,6 +23,9 @@ function nodeShape(actor: ActorType, label: string): string {
       return `["${safe}"]`; // rectangle
     case 'Agent':
       return `{{"${safe}"}}`; // hexagon
+    case 'Customer':
+    case 'Partner':
+      return `[["${safe}"]]`; // subroutine box — external actor
     case 'Human':
     default:
       return `(["${safe}"])`; // stadium
@@ -33,6 +36,8 @@ const ACTOR_CLASS: Record<ActorType, string> = {
   Human: 'human',
   Software: 'software',
   Agent: 'agent',
+  Customer: 'customer',
+  Partner: 'partner',
 };
 
 /** Sanitise a step id into a mermaid-safe node id. */
@@ -71,6 +76,9 @@ export function renderMermaid(workflow: Workflow): string {
   lines.push('  classDef human fill:#1f8f8822,stroke:#1f8f88,color:#0f6e6e;');
   lines.push('  classDef software fill:#0f406d22,stroke:#0f406d,color:#0f406d;');
   lines.push('  classDef agent fill:#c8a24a22,stroke:#c8a24a,color:#8a6516;');
+  // External actors — cooler, muted tones + dashed stroke (outside the organisation).
+  lines.push('  classDef customer fill:#5b7a9918,stroke:#5b7a99,color:#3f5a73,stroke-dasharray:4 3;');
+  lines.push('  classDef partner fill:#8a6f9e18,stroke:#8a6f9e,color:#63507a,stroke-dasharray:4 3;');
 
   // Assign classes.
   workflow.steps.forEach((s, i) => {

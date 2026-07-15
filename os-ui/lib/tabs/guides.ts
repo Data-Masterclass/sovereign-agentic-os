@@ -16,6 +16,7 @@ import { join } from 'node:path';
 
 /** The stable guide keys ("paths"). Two meta guides + one per golden pathway. */
 export const GUIDE_PATHS = [
+  'how-to-use',
   'overview',
   'governance',
   'data',
@@ -56,6 +57,7 @@ export function loadGuide(path: GuidePath): string {
 }
 
 const TITLES: Record<GuidePath, string> = {
+  'how-to-use': 'How to use this MCP',
   overview: 'OS Overview',
   governance: 'Governance & Roles',
   data: 'Data — golden path',

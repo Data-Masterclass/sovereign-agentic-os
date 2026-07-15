@@ -3,10 +3,16 @@
 ## What this is
 
 The Knowledge tab is the OS's canonical store for how work gets done. A
-workflow holds three kinds of content that complement each other:
+workflow holds these kinds of content that complement each other:
 
-- **steps** — ordered sequence of actions, each owned by a Human, Software, or
-  Agent actor, with inputs, outputs, and an optional per-step inline tacit note.
+- **steps** — ordered sequence of actions, each owned by an actor, with inputs,
+  outputs, and an optional per-step inline tacit note.
+- **actors** — the workflow's first-class actor registry. Each actor is a described
+  entity (name · category · description) in one of five categories: **Human ·
+  Software · Agent · Customer · Partner**. Customer and Partner are *external*
+  (outside the organisation) and render as visually distinct swimlane lanes. Steps
+  reference actors from this registry; omit `actors` and one is derived from the
+  steps' distinct (category, name) pairs automatically.
 - **rules** — guardrails (`hard: true` = must-not-violate; `hard: false` = soft
   guideline). Both workflow-level and step-level rules are supported.
 - **tacit** — unstructured know-how that resists formalization: the gotchas, the
@@ -52,12 +58,21 @@ author_knowledge({
   steps: [                   // ordered steps
     {
       title:      string,    // required
-      actor:      "Human" | "Software" | "Agent",
-      actor_name: string?,   // e.g. "Loan Officer"
+      actor:      "Human" | "Software" | "Agent" | "Customer" | "Partner",
+                             // Customer + Partner are EXTERNAL actors
+      actor_name: string?,   // e.g. "Loan Officer"; matches actors[].name
       inputs:     string[],  // artefacts consumed
       outputs:    string[],  // artefacts produced
       tacit:      string?,   // per-step inline note — gotchas, edge cases,
                              // undocumented nuances for THIS step
+    }
+  ],
+  actors: [                  // optional actor registry (else derived from steps)
+    {
+      name:        string,   // required — e.g. "Salesforce API"
+      category:    "Human" | "Software" | "Agent" | "Customer" | "Partner",
+      description: string?,  // its role — applies to EVERY category, e.g.
+                             // "Salesforce API — nightly REST ingestion"
     }
   ],
   rules: [                   // workflow-level decision rules

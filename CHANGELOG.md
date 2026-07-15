@@ -15,6 +15,29 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.2] — 2026-07-15
+
+Workflows: richer actors, a standalone tab, PDF export, and an MCP how-to guide.
+
+### Added
+- **Actors registry in workflows.** Five actor categories — Human · Software · Agent ·
+  **Customer** · **Partner** — each a first-class described entity (name · category ·
+  description) defined once in a new **Actors** tab and chosen per step from a dropdown
+  (with an inline "＋ New actor"). Customer and Partner are *external* actors, rendered
+  as dashed, muted swimlane lanes. Back-compat: existing workflows derive a registry
+  from their steps. The `author_knowledge` MCP tool gained the 5 categories + a
+  workflow-level `actors[]`.
+- **Standalone Workflows tab.** Workflows moved out from under Knowledge into their own
+  top-level tab (Plan group, right after Big Bets). Knowledge is now knowledge-only
+  (domain manual + personal entries).
+- **Workflow PDF export.** An "Export PDF" button (top-right of the workflow detail)
+  produces a PDF that leads with the swimlane visual flow on page 1, then the full
+  workflow — actors with descriptions, ordered steps (actor, inputs/outputs, rules,
+  know-how), and handover/gaps. Reuses the OS's existing jsPDF pipeline.
+- **"How to use this MCP" guidance.** `get_guide()` with no argument now returns a
+  role-aware orientation (governance model, the three first moves, the pathway list,
+  the role summary), also exposed as `sovereign-os://guide/how-to-use`.
+
 ## [os-ui 0.5.1] — 2026-07-15
 
 Metrics-tab polish — two surgical fixes, no backend/chart change.

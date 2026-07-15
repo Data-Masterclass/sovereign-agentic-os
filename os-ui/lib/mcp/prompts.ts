@@ -103,7 +103,7 @@ export const PROMPTS: McpPrompt[] = [
       'Steps:',
       `1. whoami.`,
       `2. search_knowledge(query: "${a.topic || '<topic>'}") — dedupe before authoring.`,
-      '3. author_knowledge — steps (each with a Human/Software/Agent actor), rules (mark hard rules), and tacit context.',
+      '3. author_knowledge — steps (each with a Human/Software/Agent/Customer/Partner actor; Customer + Partner are external), an optional described actors registry, rules (mark hard rules), and tacit context.',
       '4. index_knowledge — so search returns it.',
       '5. search_knowledge again to verify it is retrievable (cite provenance).',
       '⛔ Builder+ only: publish_knowledge(workflowId) — draft→live + reindex. A creator STOPS here.',

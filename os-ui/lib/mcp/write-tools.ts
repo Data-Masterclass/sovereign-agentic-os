@@ -61,10 +61,13 @@ import { fileArtifactPromotion, promoteThroughSeam, isLadderKind, type LadderKin
 import { pendingHandle } from '@/lib/mcp/pending';
 import {
   serializeWorkflow,
+  deriveActors,
+  ACTOR_TYPES,
   type Workflow,
   type WorkflowStep,
   type WorkflowRule,
   type ActorType,
+  type Actor,
 } from '@/lib/knowledge/schema';
 import { indexWorkflow, indexDomain, purgeKnowledgeUnits } from '@/lib/knowledge/index-pipeline';
 
@@ -149,7 +152,7 @@ function colDocs(v: unknown): ColumnDoc[] {
 
 function mapSteps(v: unknown): WorkflowStep[] {
   if (!Array.isArray(v)) return [];
-  const actors: ActorType[] = ['Human', 'Software', 'Agent'];
+  const actors: ActorType[] = ['Human', 'Software', 'Agent', 'Customer', 'Partner'];
   return v
     .map((s) => (typeof s === 'object' && s ? (s as Record<string, unknown>) : {}))
     .map((s, i): WorkflowStep => {
@@ -180,6 +183,21 @@ function mapRules(v: unknown): WorkflowRule[] {
       scope: r.scope === 'step' ? 'step' : 'workflow',
     }))
     .filter((r) => r.text);
+}
+
+function mapActors(v: unknown): Actor[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .map((a) => (typeof a === 'object' && a ? (a as Record<string, unknown>) : {}))
+    .map((a): Actor | null => {
+      const name = str(a.name).trim();
+      const category = ACTOR_TYPES.includes(str(a.category) as ActorType) ? (str(a.category) as ActorType) : 'Human';
+      if (!name) return null;
+      const actor: Actor = { name, category };
+      if (str(a.description).trim()) actor.description = str(a.description).trim();
+      return actor;
+    })
+    .filter((a): a is Actor => a !== null);
 }
 
 function normFiles(args: Record<string, unknown>): { path: string; content: string }[] {
@@ -639,7 +657,7 @@ export const knowledgeWriteTools: McpTool[] = [
     tab: 'knowledge',
     minRole: 'creator',
     description:
-      'Author a Personal (draft) knowledge workflow — the operating manual for a task: an optional markdown body, ordered `steps` (each with an actor and optional per-step `tacit` note), workflow `rules`, and an optional workflow-level `tacit` string (the TACIT.md companion — unstructured know-how that resists formalization: the gotchas, the "why", the tribal memory). Same governed store as the Knowledge tab. Publish it later with `publish_knowledge`.',
+      'Author a Personal (draft) knowledge workflow — the operating manual for a task: an optional markdown body, ordered `steps` (each with an actor and optional per-step `tacit` note), workflow `rules`, an optional `actors` registry, and an optional workflow-level `tacit` string (the TACIT.md companion — unstructured know-how that resists formalization: the gotchas, the "why", the tribal memory). Actors have five categories — Human · Software · Agent · Customer · Partner — where Customer and Partner are EXTERNAL (outside the organisation). The optional `actors` array lets you describe each actor once (name · category · description) and steps reference them by name; if you omit it, a registry is derived from the steps automatically. Same governed store as the Knowledge tab. Publish it later with `publish_knowledge`.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -653,8 +671,12 @@ export const knowledgeWriteTools: McpTool[] = [
             type: 'object',
             properties: {
               title: { type: 'string' },
-              actor: { type: 'string', enum: ['Human', 'Software', 'Agent'] },
-              actor_name: { type: 'string' },
+              actor: {
+                type: 'string',
+                enum: ['Human', 'Software', 'Agent', 'Customer', 'Partner'],
+                description: 'Actor category. Customer and Partner are EXTERNAL (outside the organisation).',
+              },
+              actor_name: { type: 'string', description: 'Actor name; matches an `actors[].name` when a registry is supplied.' },
               inputs: { type: 'array', items: { type: 'string' } },
               outputs: { type: 'array', items: { type: 'string' } },
               tacit: {
@@ -664,6 +686,20 @@ export const knowledgeWriteTools: McpTool[] = [
               },
             },
             required: ['title'],
+          },
+        },
+        actors: {
+          type: 'array',
+          description:
+            'Optional actor registry — describe each actor once so steps can reference it by name. Five categories: Human · Software · Agent · Customer · Partner (Customer and Partner are external). Omit to derive a registry from the steps automatically.',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: 'e.g. "Loan Officer", "Salesforce API", "Campaign Optimizer".' },
+              category: { type: 'string', enum: ['Human', 'Software', 'Agent', 'Customer', 'Partner'] },
+              description: { type: 'string', description: 'One line on this actor\'s role — applies to every category, e.g. "Salesforce API — nightly REST ingestion".' },
+            },
+            required: ['name', 'category'],
           },
         },
         rules: {
@@ -682,9 +718,15 @@ export const knowledgeWriteTools: McpTool[] = [
         {
           title: 'Refund handling',
           domain: 'support',
+          actors: [
+            { name: 'Support Agent', category: 'Human', description: 'Front-line agent who verifies the order.' },
+            { name: 'Billing System', category: 'Software', description: 'Issues the refund via the payments API.' },
+            { name: 'Customer', category: 'Customer', description: 'Requests the refund (external).' },
+          ],
           steps: [
-            { title: 'Verify order', actor: 'Human', outputs: ['Verified order'], tacit: 'Check section 4 — the date field is frequently missed by new agents.' },
-            { title: 'Issue refund', actor: 'Software', inputs: ['Verified order'] },
+            { title: 'Request refund', actor: 'Customer', actor_name: 'Customer', outputs: ['Refund request'] },
+            { title: 'Verify order', actor: 'Human', actor_name: 'Support Agent', outputs: ['Verified order'], tacit: 'Check section 4 — the date field is frequently missed by new agents.' },
+            { title: 'Issue refund', actor: 'Software', actor_name: 'Billing System', inputs: ['Verified order'] },
           ],
           rules: [{ text: 'Refunds over 500 EUR need a manager', hard: true }],
           tacit: '## Edge cases\nHigh-value refunds (> 1 000 EUR) route to the finance team even on weekends — the on-call number is in the finance Notion.\n\n## Cultural note\nThe support team uses "RT" as shorthand for "refund ticket" in Slack.',
@@ -699,9 +741,19 @@ export const knowledgeWriteTools: McpTool[] = [
       const body = str(args.markdown);
       const steps = mapSteps(args.steps);
       const rules = mapRules(args.rules);
-      if (body || steps.length || rules.length) {
+      const declaredActors = mapActors(args.actors);
+      // Registry = declared actors (with descriptions) merged with the distinct
+      // (category, name) pairs found in the steps, so both explicit and implied
+      // actors are captured.
+      const actors = deriveActors(steps, declaredActors);
+      if (body || steps.length || rules.length || actors.length) {
         const view = getWorkflow(rec.id, p);
-        const w: Workflow = { ...view.workflow, steps: steps.length ? steps : view.workflow.steps, rules: rules.length ? rules : view.workflow.rules };
+        const w: Workflow = {
+          ...view.workflow,
+          steps: steps.length ? steps : view.workflow.steps,
+          rules: rules.length ? rules : view.workflow.rules,
+          actors: actors.length ? actors : view.workflow.actors,
+        };
         // serializeWorkflow emits frontmatter + step blocks (including > tacit: blockquotes
         // for any step with a tacit note); splice the prose body back in right after the
         // frontmatter so it round-trips through the store.

@@ -20,7 +20,7 @@ FIRST: call whoami then list_capabilities. DISCOVER before you create: read the 
 /** The full orientation for the overarching endpoint (~340 words). */
 const OVERVIEW = `You are connected to the SOVEREIGN AGENTIC OS — one governed operating system for data, knowledge, connections, files, metrics, dashboards, software, agents, science and big bets. Everything you do here runs AS the signed-in user, is OPA-policy-checked, row/document-level-security filtered, and audit-traced. This MCP is a front door, not a back door: it is the SAME governed path as the UI.
 
-FIRST, ALWAYS: call \`whoami\` (your identity, role, domains, and what you can/cannot do), then \`list_capabilities\` (every tool, split into available vs gated). Then read \`sovereign-os://guide/overview\` and, before building anything, \`sovereign-os://guide/path/<pathway>\` for the exact tool sequence (or call \`get_guide\`).
+FIRST, ALWAYS: call \`whoami\` (your identity, role, domains, and what you can/cannot do), then \`list_capabilities\` (every tool, split into available vs gated). For a "how do I use this MCP" orientation read \`sovereign-os://guide/how-to-use\` or call \`get_guide()\` with no argument. Then read \`sovereign-os://guide/overview\` and, before building anything, \`sovereign-os://guide/path/<pathway>\` for the exact tool sequence (or call \`get_guide('<pathway>')\`).
 
 ROLES (4, lowest→highest — the caller's role decides everything):
 - creator — creates and runs their OWN work in their own domain(s) and consumes shared assets. CANNOT promote/publish/approve/certify. When a golden path reaches a promote step, a creator FILES a request (\`request_promotion\`) and hands off to a Builder.

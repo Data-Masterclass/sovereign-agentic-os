@@ -56,7 +56,7 @@ import { promoteThroughSeam } from '@/lib/governance/ladder';
 import { enqueue } from '@/lib/governance/approvals';
 import { scaffoldCubeYaml, cubeViewName } from '@/lib/data/metrics';
 import { cubeDeliverable } from '@/lib/data/cube-models';
-import { loadGuide, isGuidePath, GUIDE_PATHS } from '@/lib/tabs/guides';
+import { loadGuide, isGuidePath, GUIDE_PATHS, type GuidePath } from '@/lib/tabs/guides';
 import { config } from '@/lib/core/config';
 import { queryRun } from '@/lib/infra/governed';
 import { versionTarget } from '@/lib/data/store-fqn';
@@ -1579,16 +1579,16 @@ const guideTool: McpTool = {
   tab: 'meta',
   minRole: 'creator',
   description:
-    `Read a golden-path GUIDE (the same markdown as the sovereign-os://guide/* resources) so tools-only clients get the full pathway. Path: read this BEFORE building. Valid paths: ${GUIDE_PATHS.join(', ')}. Governance: read-only, identical for every role.`,
+    `Read a golden-path GUIDE (the same markdown as the sovereign-os://guide/* resources) so tools-only clients get the full pathway. Call with NO argument (or path="how-to-use") for a "How to use this MCP" orientation: what the OS is, your first 3 moves, the role summary, all pathway names, and the build-on-what-exists rule. Valid paths: ${GUIDE_PATHS.join(', ')}. Governance: read-only, identical for every role.`,
   inputSchema: {
     type: 'object',
-    properties: { path: { type: 'string', enum: [...GUIDE_PATHS], description: 'Which guide to read.' } },
-    required: ['path'],
-    examples: [{ path: 'overview' }, { path: 'data' }],
+    properties: { path: { type: 'string', enum: [...GUIDE_PATHS], description: 'Which guide to read. Omit (or pass "how-to-use") for the "How to use this MCP" orientation.' } },
+    required: [],
+    examples: [{}, { path: 'how-to-use' }, { path: 'overview' }, { path: 'data' }],
   },
   call: async (_user, args) => {
-    const path = str(args.path).trim();
-    if (!isGuidePath(path)) fail(`get_guide needs a valid \`path\` (one of: ${GUIDE_PATHS.join(', ')})`, 400);
+    const raw = str(args.path).trim();
+    const path: GuidePath = isGuidePath(raw) ? raw : 'how-to-use';
     const text = loadGuide(path);
     if (!text) fail(`Guide not found: ${path}`, 404);
     return text;

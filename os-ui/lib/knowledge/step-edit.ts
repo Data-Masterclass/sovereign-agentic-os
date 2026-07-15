@@ -7,6 +7,7 @@ import {
   type StepLink,
   type StepRule,
   type ActorType,
+  type Actor,
   KnowledgeError,
 } from './schema.ts';
 
@@ -161,5 +162,65 @@ export function removeStepRule(input: Workflow, id: string, ruleId: string): Wor
   const w = structuredClone(input);
   const s = w.steps.find((x) => x.id === id)!;
   s.rules = s.rules.filter((r) => r.id !== ruleId);
+  return w;
+}
+
+// ------------------------------------------------------ actor registry -------
+
+/** Add an actor to the workflow's registry. Deduped by (category, name). */
+export function addActor(
+  input: Workflow,
+  actor: { name: string; category: ActorType; description?: string },
+): Workflow {
+  const name = actor.name.trim();
+  if (!name) throw new KnowledgeError('An actor needs a name');
+  const w = structuredClone(input);
+  const dup = w.actors.some(
+    (a) => a.category === actor.category && a.name.trim().toLowerCase() === name.toLowerCase(),
+  );
+  if (dup) return w; // idempotent
+  const next: Actor = {
+    id: `actor-${w.actors.length + 1}-${Math.random().toString(36).slice(2, 5)}`,
+    name,
+    category: actor.category,
+  };
+  if (actor.description?.trim()) next.description = actor.description.trim();
+  w.actors.push(next);
+  return w;
+}
+
+/** Patch a registry actor (name / category / description) by id. */
+export function updateActor(
+  input: Workflow,
+  actorId: string,
+  patch: Partial<Pick<Actor, 'name' | 'category' | 'description'>>,
+): Workflow {
+  const w = structuredClone(input);
+  const a = w.actors.find((x) => x.id === actorId);
+  if (!a) throw new KnowledgeError(`Actor '${actorId}' is not in this workflow`);
+  if (patch.name !== undefined) a.name = patch.name.trim() || a.name;
+  if (patch.category !== undefined) a.category = patch.category;
+  if (patch.description !== undefined) {
+    const d = patch.description.trim();
+    if (d) a.description = d;
+    else delete a.description;
+  }
+  return w;
+}
+
+/** Remove a registry actor by id. Does not touch steps (their actor_name stays). */
+export function removeActor(input: Workflow, actorId: string): Workflow {
+  const w = structuredClone(input);
+  w.actors = w.actors.filter((a) => a.id !== actorId);
+  return w;
+}
+
+/** Set a step's actor from a registry entry — sets BOTH category and actor_name. */
+export function setStepActorFromRegistry(input: Workflow, stepId: string, actor: Actor): Workflow {
+  requireStep(input, stepId);
+  const w = structuredClone(input);
+  const s = w.steps.find((x) => x.id === stepId)!;
+  s.actor = actor.category;
+  s.actor_name = actor.name.trim();
   return w;
 }

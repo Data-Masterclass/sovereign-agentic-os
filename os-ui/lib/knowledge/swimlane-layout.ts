@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { type Workflow, type WorkflowStep, type ActorType } from './schema.ts';
+import { type Workflow, type WorkflowStep, type ActorType, EXTERNAL_ACTORS } from './schema.ts';
 
 /**
  * Pure layout for the hand-rolled SVG workflow swimlane (no heavy graph dep,
@@ -25,6 +25,8 @@ export type Lane = {
   width: number;
   /** Lane column index (0-based, in display order). */
   index: number;
+  /** True for external actors (Customer / Partner) — rendered visually distinct. */
+  external: boolean;
 };
 
 export type StepBlock = {
@@ -66,7 +68,7 @@ export type SwimlaneLayout = {
 };
 
 /** Fixed display order for lanes — only lanes with steps are drawn. */
-const LANE_ORDER: ActorType[] = ['Human', 'Software', 'Agent'];
+const LANE_ORDER: ActorType[] = ['Human', 'Software', 'Agent', 'Customer', 'Partner'];
 
 const BLOCK_W = 200;
 // Tall enough for a WRAPPED title (up to 3 lines) + the actor line + the meta line,
@@ -98,6 +100,7 @@ export function layoutSwimlanes(
     index,
     x: PAD + index * laneWidth,
     width: laneWidth,
+    external: EXTERNAL_ACTORS.includes(actor),
   }));
   const laneX = new Map<ActorType, Lane>();
   for (const l of lanes) laneX.set(l.actor, l);

@@ -4,7 +4,8 @@
 'use client';
 
 import { useState } from 'react';
-import type { Workflow, WorkflowStep, ActorType, LinkType } from '@/lib/knowledge/schema';
+import type { Workflow, WorkflowStep, ActorType, LinkType, Actor } from '@/lib/knowledge/schema';
+import { ACTOR_TYPES, EXTERNAL_ACTORS } from '@/lib/knowledge/schema';
 import type { Gap } from '@/lib/knowledge/gaps';
 import {
   updateStep,
@@ -16,6 +17,8 @@ import {
   removeStepRule,
   removeStep,
   moveStep,
+  addActor,
+  setStepActorFromRegistry,
 } from '@/lib/knowledge/step-edit';
 
 /**
@@ -25,8 +28,12 @@ import {
  * and flags any that reference a missing entity with a jump-to-build link.
  */
 
-const ACTORS: ActorType[] = ['Human', 'Software', 'Agent'];
 const LINK_TYPES: LinkType[] = ['data', 'app', 'agent', 'file'];
+
+const isExternal = (c: ActorType) => EXTERNAL_ACTORS.includes(c);
+
+/** Stable option value for a registry actor (category + name uniquely identify one). */
+const actorOptionValue = (a: Actor) => `${a.category}::${a.name}`;
 
 export default function StepInspector({
   workflow,
@@ -52,7 +59,38 @@ export default function StepInspector({
   const [newRule, setNewRule] = useState('');
   const [newRuleHard, setNewRuleHard] = useState(false);
 
+  // Inline "＋ New actor" form (adds to the registry + selects it for this step).
+  const [addingActor, setAddingActor] = useState(false);
+  const [naName, setNaName] = useState('');
+  const [naCategory, setNaCategory] = useState<ActorType>('Human');
+  const [naDesc, setNaDesc] = useState('');
+
   const idx = workflow.steps.findIndex((s) => s.id === step.id);
+
+  // The registry entry (if any) that matches this step's current (category, name).
+  const currentActor = workflow.actors.find(
+    (a) => a.category === step.actor && a.name.trim().toLowerCase() === step.actor_name.trim().toLowerCase(),
+  );
+
+  function selectActor(value: string) {
+    if (value === '__new__') { setAddingActor(true); return; }
+    const found = workflow.actors.find((a) => actorOptionValue(a) === value);
+    if (found) mutate(setStepActorFromRegistry(workflow, step.id, found));
+  }
+
+  function submitNewActor(e: React.FormEvent) {
+    e.preventDefault();
+    const name = naName.trim();
+    if (!name) return;
+    // Add to the registry, then select the just-added actor for this step — one commit.
+    const withActor = addActor(workflow, { name, category: naCategory, ...(naDesc.trim() ? { description: naDesc.trim() } : {}) });
+    const added = withActor.actors.find(
+      (a) => a.category === naCategory && a.name.trim().toLowerCase() === name.toLowerCase(),
+    );
+    mutate(added ? setStepActorFromRegistry(withActor, step.id, added) : withActor);
+    setAddingActor(false);
+    setNaName(''); setNaCategory('Human'); setNaDesc('');
+  }
 
   return (
     <div className="step-inspector">
@@ -79,28 +117,58 @@ export default function StepInspector({
         <label className="si-field">
           <span className="si-label">Actor</span>
           <select
-            value={step.actor}
+            value={currentActor ? actorOptionValue(currentActor) : ''}
             disabled={!canEdit}
-            onChange={(e) => mutate(updateStep(workflow, step.id, { actor: e.target.value as ActorType }))}
+            onChange={(e) => selectActor(e.target.value)}
           >
-            {ACTORS.map((a) => <option key={a} value={a}>{a}</option>)}
+            {!currentActor && (
+              <option value="" disabled>
+                {step.actor_name ? `${step.actor}: ${step.actor_name} (unlisted)` : 'Choose an actor…'}
+              </option>
+            )}
+            {workflow.actors.map((a) => (
+              <option key={actorOptionValue(a)} value={actorOptionValue(a)}>
+                {a.name} — {a.category}{isExternal(a.category) ? ' · external' : ''}
+              </option>
+            ))}
+            {canEdit && <option value="__new__">＋ New actor…</option>}
           </select>
         </label>
-        <label className="si-field">
-          <span className="si-label">Actor name</span>
-          <input
-            type="text"
-            defaultValue={step.actor_name}
-            placeholder="e.g. Loan Officer"
-            disabled={!canEdit}
-            onBlur={(e) => {
-              if (e.target.value !== step.actor_name) {
-                mutate(updateStep(workflow, step.id, { actor_name: e.target.value }));
-              }
-            }}
-          />
-        </label>
       </div>
+
+      {/* Inline "＋ New actor" — create a registry actor (all 5 categories,
+          optional description) and select it for this step without leaving here. */}
+      {canEdit && addingActor && (
+        <form className="si-new-actor" onSubmit={submitNewActor}>
+          <div className="si-grid" style={{ marginTop: 4 }}>
+            <label className="si-field">
+              <span className="si-label">Name</span>
+              <input type="text" value={naName} autoFocus onChange={(e) => setNaName(e.target.value)}
+                placeholder="e.g. Salesforce API" />
+            </label>
+            <label className="si-field">
+              <span className="si-label">Category</span>
+              <select value={naCategory} onChange={(e) => setNaCategory(e.target.value as ActorType)}>
+                {ACTOR_TYPES.map((a) => (
+                  <option key={a} value={a}>{a}{isExternal(a) ? ' (external)' : ''}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <label className="si-field" style={{ marginTop: 10 }}>
+            <span className="si-label">Description (optional)</span>
+            <input type="text" value={naDesc} onChange={(e) => setNaDesc(e.target.value)}
+              placeholder="e.g. Nightly REST ingestion" />
+          </label>
+          <div className="row" style={{ gap: 8, marginTop: 10 }}>
+            <button className="btn sm" type="submit" disabled={!naName.trim()}>Add & select</button>
+            <button className="btn ghost sm" type="button" onClick={() => setAddingActor(false)}>Cancel</button>
+          </div>
+        </form>
+      )}
+      {currentActor?.description && !addingActor && (
+        <p className="si-actor-desc muted">{currentActor.description}</p>
+      )}
 
       {canEdit && (
         <div className="row" style={{ gap: 8, marginTop: 4 }}>
@@ -296,4 +364,14 @@ const StepInspectorStyles = `
   border: 1px solid var(--border-strong); border-radius: 8px;
 }
 .si-hard-toggle { font-size: 12px; display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); }
+.si-new-actor {
+  margin-top: 10px; padding: 12px 14px;
+  border: 1px dashed var(--gold-line); border-radius: 10px; background: var(--gold-soft);
+}
+.si-new-actor input, .si-new-actor select {
+  font-family: var(--font-body); font-size: 13px; padding: 7px 9px;
+  background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: 8px;
+}
+.si-actor-desc { font-size: 12.5px; margin: 6px 2px 0; }
 `;

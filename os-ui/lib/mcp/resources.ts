@@ -66,6 +66,7 @@ const json = (v: unknown): string => JSON.stringify(v, null, 2);
 // ================================ GUIDES ======================================
 type GuideDef = { uri: string; path: GuidePath; tab: ToolTab; priority?: number };
 const GUIDE_DEFS: GuideDef[] = [
+  { uri: 'sovereign-os://guide/how-to-use', path: 'how-to-use', tab: 'meta', priority: 1 },
   { uri: 'sovereign-os://guide/overview', path: 'overview', tab: 'meta', priority: 1 },
   { uri: 'sovereign-os://guide/governance', path: 'governance', tab: 'meta', priority: 1 },
   { uri: 'sovereign-os://guide/path/data', path: 'data', tab: 'data' },

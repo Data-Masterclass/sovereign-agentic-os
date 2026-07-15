@@ -18,11 +18,18 @@ import type { Gap } from '@/lib/knowledge/gaps';
  * step; the inspector lists the jump-to-build action.
  */
 
+// Internal actors use the warm house palette (teal / navy / gold). External
+// actors (Customer / Partner) use cooler, muted tones + a dashed lane outline so a
+// step that leaves the organisation reads as external at a glance — quietly, not loudly.
 const ACTOR_FILL: Record<string, string> = {
   Human: 'var(--teal)',
   Software: 'var(--navy)',
   Agent: 'var(--gold)',
+  Customer: '#5b7a99', // muted slate-blue (cool, external)
+  Partner: '#8a6f9e', // muted mauve (cool, external)
 };
+
+const EXTERNAL_ACTOR = new Set(['Customer', 'Partner']);
 
 // Wrap a step title onto up to `maxLines` lines that fit the box width by whole
 // words (usable ~172px at 13px ≈ 24 chars/line). The last line is ellipsised only
@@ -82,6 +89,13 @@ export default function SwimlaneCanvas({
           <span><span className="swim-dot" style={{ background: 'var(--teal)' }} /> Human</span>
           <span><span className="swim-dot" style={{ background: 'var(--navy)' }} /> Software</span>
           <span><span className="swim-dot" style={{ background: 'var(--gold)' }} /> Agent</span>
+          <span className="swim-legend-sep" aria-hidden="true" />
+          <span title="External actor — outside the organisation">
+            <span className="swim-dot ext" style={{ background: ACTOR_FILL.Customer, borderColor: ACTOR_FILL.Customer }} /> Customer
+          </span>
+          <span title="External actor — outside the organisation">
+            <span className="swim-dot ext" style={{ background: ACTOR_FILL.Partner, borderColor: ACTOR_FILL.Partner }} /> Partner
+          </span>
         </div>
       </div>
 
@@ -100,9 +114,11 @@ export default function SwimlaneCanvas({
               </marker>
             </defs>
 
-            {/* Lane backgrounds + labels (one vertical column per actor) */}
+            {/* Lane backgrounds + labels (one vertical column per actor).
+                External lanes (Customer / Partner) get a dashed outline + an
+                "external" caption so the boundary of the organisation is legible. */}
             {layout.lanes.map((lane) => (
-              <g key={lane.actor} className="swim-lane">
+              <g key={lane.actor} className={`swim-lane${lane.external ? ' external' : ''}`}>
                 <rect
                   x={lane.x + 4}
                   y={4}
@@ -110,9 +126,10 @@ export default function SwimlaneCanvas({
                   height={layout.height - 8}
                   rx={8}
                   fill={ACTOR_FILL[lane.actor]}
-                  fillOpacity={0.05}
+                  fillOpacity={lane.external ? 0.035 : 0.05}
                   stroke={ACTOR_FILL[lane.actor]}
-                  strokeOpacity={0.18}
+                  strokeOpacity={lane.external ? 0.45 : 0.18}
+                  strokeDasharray={lane.external ? '5 4' : undefined}
                 />
                 <text
                   x={lane.x + lane.width / 2}
@@ -123,6 +140,18 @@ export default function SwimlaneCanvas({
                 >
                   {lane.actor.toUpperCase()}
                 </text>
+                {lane.external && (
+                  <text
+                    x={lane.x + lane.width / 2}
+                    y={22}
+                    dy={11}
+                    textAnchor="middle"
+                    className="swim-lane-ext"
+                    fill={ACTOR_FILL[lane.actor]}
+                  >
+                    external
+                  </text>
+                )}
               </g>
             ))}
 
@@ -222,9 +251,12 @@ const SwimStyles = `
   flex-wrap: wrap;
 }
 .swim-hint { font-size: 12px; color: var(--text-muted); }
-.swim-legend { display: flex; gap: 14px; font-size: 11px; color: var(--text-muted); }
+.swim-legend { display: flex; gap: 14px; font-size: 11px; color: var(--text-muted); flex-wrap: wrap; align-items: center; }
 .swim-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .swim-dot { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
+/* External actors: dashed-ring dot echoes their dashed swimlane. */
+.swim-dot.ext { background: transparent !important; border: 1.5px dashed; }
+.swim-legend-sep { width: 1px; height: 12px; background: var(--border-strong); }
 .swim-scroll { overflow-y: auto; overflow-x: auto; max-height: 72vh; }
 .swim-empty { padding: 28px; text-align: center; font-size: 13px; }
 .swim-svg { display: block; }
@@ -234,6 +266,14 @@ const SwimStyles = `
   font-weight: 600;
   letter-spacing: 1.2px;
   opacity: 0.8;
+}
+.swim-lane-ext {
+  font-family: var(--font-body);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  opacity: 0.7;
 }
 .swim-block { cursor: default; }
 .swim-block.editable { cursor: pointer; }

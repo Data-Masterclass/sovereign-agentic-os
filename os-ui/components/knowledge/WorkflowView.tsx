@@ -8,6 +8,7 @@ import PageHeader from '@/components/PageHeader';
 import SwimlaneCanvas from './SwimlaneCanvas';
 import MermaidPreview from './MermaidPreview';
 import StepInspector from './StepInspector';
+import ActorsPanel from './ActorsPanel';
 import RulesPanel from './RulesPanel';
 import TacitPanel from './TacitPanel';
 import ContextPanel from './ContextPanel';
@@ -17,6 +18,8 @@ import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import DomainTag from '@/components/DomainTag';
 import { addStep } from '@/lib/knowledge/step-edit';
+import { buildWorkflowReport, workflowPdfFilename } from '@/lib/knowledge/workflow-pdf';
+import { renderSwimlaneSvg } from '@/lib/knowledge/swimlane-svg';
 import type { Workflow, ActorType } from '@/lib/knowledge/schema';
 import type { Gap } from '@/lib/knowledge/gaps';
 
@@ -51,7 +54,7 @@ type WorkflowData = {
   canPublish: boolean;
 };
 
-type Panel = 'visual' | 'rules' | 'tacit' | 'context' | 'handover' | 'markdown' | 'mermaid' | 'gaps';
+type Panel = 'visual' | 'actors' | 'rules' | 'tacit' | 'context' | 'handover' | 'markdown' | 'mermaid' | 'gaps';
 
 const VIS_CLASS: Record<string, string> = {
   Personal: 'vis-personal',
@@ -95,6 +98,10 @@ export default function WorkflowView({
   const [mdDraft, setMdDraft] = useState('');
   const [mdSaving, setMdSaving] = useState(false);
   const [mdMsg, setMdMsg] = useState('');
+
+  // Export PDF (client-side jsPDF — same stack as the Agents run report).
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfErr, setPdfErr] = useState('');
 
   const reload = useCallback(async () => {
     try {
@@ -154,6 +161,132 @@ export default function WorkflowView({
       setMdMsg(`✗ ${(e as Error).message}`);
     } finally {
       setMdSaving(false);
+    }
+  }
+
+  /**
+   * Rasterise a standalone SVG string to a PNG data URL at `scale`× so the flow
+   * embeds crisply in the PDF. Browser-only (Image + canvas); the SVG itself is
+   * built by the pure `renderSwimlaneSvg`. Returns null if the raster fails so the
+   * export can still produce the text sections.
+   */
+  async function svgToPng(svg: string, w: number, h: number, scale = 2): Promise<{ dataUrl: string; w: number; h: number } | null> {
+    try {
+      const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const el = new Image();
+        el.onload = () => resolve(el);
+        el.onerror = () => reject(new Error('swimlane image failed to load'));
+        el.src = url;
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(w * scale);
+      canvas.height = Math.round(h * scale);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      return { dataUrl: canvas.toDataURL('image/png'), w, h };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Build + download a PDF of the whole workflow — swimlane on page 1, then content. */
+  async function exportPdf() {
+    if (!data || pdfBusy) return;
+    setPdfBusy(true);
+    setPdfErr('');
+    try {
+      const { jsPDF } = await import('jspdf');
+      const wf = data.workflow;
+      const report = buildWorkflowReport(wf, data.gaps);
+
+      // Per-step gap counts so the printed swimlane carries the ⚠ markers.
+      const gapByStep = new Map<string, number>();
+      for (const g of data.gaps) gapByStep.set(g.stepId, (gapByStep.get(g.stepId) ?? 0) + 1);
+      const { svg, width, height } = renderSwimlaneSvg(wf, { gapFor: (s) => gapByStep.get(s.id) ?? 0 });
+      const png = wf.steps.length > 0 ? await svgToPng(svg, width, height) : null;
+
+      const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+      const M = 40;
+      const W = doc.internal.pageSize.getWidth();
+      const H = doc.internal.pageSize.getHeight();
+      let y = M;
+      const line = (text: string, size = 10, bold = false, gap = 14, color: [number, number, number] = [20, 20, 20]) => {
+        doc.setFont('helvetica', bold ? 'bold' : 'normal');
+        doc.setFontSize(size);
+        doc.setTextColor(...color);
+        for (const l of doc.splitTextToSize(text, W - M * 2)) {
+          if (y > H - M) { doc.addPage(); y = M; }
+          doc.text(l, M, y);
+          y += gap;
+        }
+      };
+      const space = (h = 8) => { y += h; };
+
+      // ── Page 1: the beautiful visual flow (swimlane) ──────────────────────
+      line(report.title, 18, true, 22);
+      if (report.subtitle) line(report.subtitle, 10, false, 16, [110, 110, 110]);
+      space(6);
+      if (png) {
+        // Fit the swimlane inside the page's content box, preserving aspect.
+        const availW = W - M * 2;
+        const availH = H - y - M;
+        const ratio = Math.min(availW / png.w, availH / png.h, 1);
+        const dw = png.w * ratio;
+        const dh = png.h * ratio;
+        doc.addImage(png.dataUrl, 'PNG', M + (availW - dw) / 2, y, dw, dh);
+      } else {
+        line(wf.steps.length === 0 ? 'No steps yet — the visual flow is empty.' : 'The visual flow could not be rendered.', 10, false, 16, [110, 110, 110]);
+      }
+
+      // ── Actors — the registry ─────────────────────────────────────────────
+      doc.addPage();
+      y = M;
+      line('Actors', 14, true, 18);
+      if (report.actors.length === 0) {
+        line('No actors registered.', 10, false, 14, [110, 110, 110]);
+      } else {
+        for (const a of report.actors) {
+          space(2);
+          line(`${a.name} · ${a.category}${a.external ? '  (external)' : ''}`, 11, true, 15);
+          if (a.description) line(a.description, 10, false, 14, [60, 60, 60]);
+        }
+      }
+
+      // ── Steps — in order ──────────────────────────────────────────────────
+      space(10);
+      line('Steps', 14, true, 18);
+      report.steps.forEach((s, i) => {
+        if (i > 0) space(6);
+        line(`${s.seq}. ${s.title}`, 12, true, 16);
+        line(`Actor: ${s.actor} (${s.category})`, 9.5, false, 13, [90, 90, 90]);
+        if (s.inputs.length > 0) line(`Inputs: ${s.inputs.join(', ')}`, 9.5, false, 13);
+        if (s.outputs.length > 0) line(`Outputs: ${s.outputs.join(', ')}`, 9.5, false, 13);
+        for (const r of s.rules) line(`Rule${r.hard ? ' (hard)' : ''}: ${r.text}`, 9.5, false, 13, r.hard ? [150, 40, 40] : [90, 90, 90]);
+        if (s.tacit) line(`Know-how: ${s.tacit}`, 9.5, false, 13, [120, 90, 20]);
+      });
+
+      // ── Workflow rules + Handover / gaps summary ──────────────────────────
+      if (report.workflowRules.length > 0) {
+        space(10);
+        line('Workflow rules', 14, true, 18);
+        for (const r of report.workflowRules) line(`•  ${r.text}${r.hard ? ' (hard)' : ''}`, 10, false, 14);
+      }
+      if (report.gaps.length > 0) {
+        space(10);
+        line('Handover / gaps', 14, true, 18);
+        line(`${report.gaps.length} step link${report.gaps.length === 1 ? '' : 's'} reference an entity that does not exist yet:`, 10, false, 15, [110, 110, 110]);
+        for (const g of report.gaps) line(`•  ${g.step} — ${g.kind}: ${g.ref}`, 9.5, false, 13, [150, 40, 40]);
+      }
+
+      doc.save(workflowPdfFilename(report.title));
+    } catch (e) {
+      setPdfErr(`Could not export the PDF: ${(e as Error).message}`);
+    } finally {
+      setPdfBusy(false);
     }
   }
 
@@ -228,27 +361,39 @@ export default function WorkflowView({
           {acting ? <span className="spin" title="saving…" /> : null}
           {data.publishedBy && <span className="muted" style={{ fontSize: 12 }}>published by {data.publishedBy}</span>}
 
+          {/* Export PDF — top-right of the workflow detail. Leads with the visual
+              flow (swimlane) on page 1, then the full content below. */}
+          <button
+            className="btn ghost sm"
+            style={{ marginLeft: 'auto' }}
+            onClick={() => void exportPdf()}
+            disabled={pdfBusy}
+            title="Export this workflow as a PDF — the visual flow first, then all content"
+          >
+            {pdfBusy ? <span className="spin" /> : 'Export PDF'}
+          </button>
+
           {data.canPublish && data.status === 'draft' && (
-            <button className="btn sm" style={{ marginLeft: 'auto' }} onClick={() => void publish('publish')} disabled={publishing}>
+            <button className="btn sm" onClick={() => void publish('publish')} disabled={publishing}>
               {publishing ? <span className="spin" /> : 'Publish'}
             </button>
           )}
           {data.canPublish && data.status === 'live' && data.visibility === 'Shared' && (
-            <button className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={() => void publish('certify')} disabled={publishing}>
+            <button className="btn ghost sm" onClick={() => void publish('certify')} disabled={publishing}>
               {publishing ? <span className="spin" /> : 'Certify to Marketplace'}
             </button>
           )}
           {/* Creator (can edit, cannot publish) files a governed promotion request
               — docs-first; a domain builder approves it. */}
           {!data.canPublish && data.canEdit && data.status === 'draft' && (
-            <button className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={() => void publish('publish')} disabled={publishing}>
+            <button className="btn ghost sm" onClick={() => void publish('publish')} disabled={publishing}>
               {publishing ? <span className="spin" /> : 'Request promotion'}
             </button>
           )}
           {/* Live & Shared but not a publisher → file a certification request for a
               platform admin (the Marketplace rung of the ladder — creators can ask). */}
           {!data.canPublish && data.canEdit && data.status === 'live' && data.visibility === 'Shared' && (
-            <button className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={() => void publish('certify')} disabled={publishing}>
+            <button className="btn ghost sm" onClick={() => void publish('certify')} disabled={publishing}>
               {publishing ? <span className="spin" /> : 'Request certification'}
             </button>
           )}
@@ -272,10 +417,14 @@ export default function WorkflowView({
         {pubMsg && <div className="hint" style={{ marginBottom: 10, color: 'var(--teal)' }}>{pubMsg}</div>}
         {pubError && <div className="error" style={{ marginBottom: 10 }}>{pubError}</div>}
         {actErr && <div className="error" style={{ marginBottom: 10 }}>{actErr}</div>}
+        {pdfErr && <div className="error" style={{ marginBottom: 10 }}>{pdfErr}</div>}
 
         {/* Surface tabs */}
         <div className="tabstrip">
           <button className={panel === 'visual' ? 'active' : ''} onClick={() => setPanel('visual')}>Visual flow</button>
+          <button className={panel === 'actors' ? 'active' : ''} onClick={() => setPanel('actors')}>
+            Actors {wf.actors.length > 0 && <span className="badge muted" style={{ marginLeft: 6, fontSize: 10 }}>{wf.actors.length}</span>}
+          </button>
           <button className={panel === 'rules' ? 'active' : ''} onClick={() => setPanel('rules')}>Rules</button>
           <button className={panel === 'tacit' ? 'active' : ''} onClick={() => setPanel('tacit')}>Tacit</button>
           <button className={panel === 'context' ? 'active' : ''} onClick={() => setPanel('context')}>Context</button>
@@ -357,6 +506,15 @@ export default function WorkflowView({
                 The same source the visual flow + diagram render from. Edits here commit to one source.
               </p>
             </div>
+          )}
+
+          {/* ── ACTORS (the workflow's first-class actor registry) ── */}
+          {panel === 'actors' && (
+            <ActorsPanel
+              workflow={wf}
+              canEdit={data.canEdit}
+              mutate={(next) => void mutate(next)}
+            />
           )}
 
           {/* ── RULES (workflow-level + guardrail apply) ── */}

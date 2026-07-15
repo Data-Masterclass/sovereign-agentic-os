@@ -171,6 +171,101 @@ test('throws KnowledgeError on invalid status', () => {
   assert.throws(() => parseWorkflow(bad), KnowledgeError);
 });
 
+// ------------------------------------------------------------ actors ---------
+
+const WORKFLOW_WITH_ACTORS = `---
+id: onboarding
+title: Partner Onboarding
+domain: sales
+visibility: Personal
+status: draft
+version: "1"
+actors:
+  - name: Loan Officer
+    category: Human
+    description: Approves deals over EUR 50k.
+  - name: Salesforce API
+    category: Software
+    description: Nightly REST ingestion of leads.
+  - name: Campaign Optimizer
+    category: Agent
+    description: The OS agent system that tunes spend.
+  - name: Acme Buyer
+    category: Customer
+    description: The external customer placing the order.
+  - name: Fulfilment Partner
+    category: Partner
+    description: External 3PL that ships the goods.
+---
+
+\`\`\`step
+id: intake
+title: Intake request
+actor: Customer
+actor_name: Acme Buyer
+\`\`\`
+
+\`\`\`step
+id: sync
+title: Sync to CRM
+actor: Software
+actor_name: Salesforce API
+\`\`\`
+
+\`\`\`step
+id: ship
+title: Hand to fulfilment
+actor: Partner
+actor_name: Fulfilment Partner
+\`\`\`
+`;
+
+test('parses the five actor categories on steps', () => {
+  const w = parseWorkflow(WORKFLOW_WITH_ACTORS);
+  assert.equal(w.steps[0].actor, 'Customer');
+  assert.equal(w.steps[1].actor, 'Software');
+  assert.equal(w.steps[2].actor, 'Partner');
+});
+
+test('parses the actors registry with descriptions incl external', () => {
+  const w = parseWorkflow(WORKFLOW_WITH_ACTORS);
+  assert.equal(w.actors.length, 5);
+  const officer = w.actors.find((a) => a.name === 'Loan Officer');
+  assert.equal(officer?.category, 'Human');
+  assert.equal(officer?.description, 'Approves deals over EUR 50k.');
+  const buyer = w.actors.find((a) => a.name === 'Acme Buyer');
+  assert.equal(buyer?.category, 'Customer');
+  const partner = w.actors.find((a) => a.name === 'Fulfilment Partner');
+  assert.equal(partner?.category, 'Partner');
+  assert.ok(partner?.description?.includes('3PL'));
+});
+
+test('round-trip: serialize → parse preserves the actors registry (incl external + descriptions)', () => {
+  const w = parseWorkflow(WORKFLOW_WITH_ACTORS);
+  const again = parseWorkflow(serializeWorkflow(w));
+  assert.equal(again.actors.length, 5);
+  for (const a of w.actors) {
+    const match = again.actors.find((x) => x.category === a.category && x.name === a.name);
+    assert.ok(match, `actor ${a.category}:${a.name} lost on round-trip`);
+    assert.equal(match?.description, a.description);
+  }
+  assert.equal(again.steps[0].actor, 'Customer');
+  assert.equal(again.steps[2].actor, 'Partner');
+});
+
+test('back-compat: an old workflow.md with NO actors section derives a registry from steps', () => {
+  // VALID_WORKFLOW predates the actors section — parsing must not crash and the
+  // registry is derived from the steps' distinct (category, name) pairs.
+  const w = parseWorkflow(VALID_WORKFLOW);
+  assert.equal(w.actors.length, 3);
+  assert.deepEqual(
+    w.actors.map((a) => `${a.category}:${a.name}`).sort(),
+    ['Agent:Verification Agent', 'Human:Loan Officer', 'Software:BankPortal'].sort(),
+  );
+  // Derived actors carry no description (none was declared).
+  assert.ok(w.actors.every((a) => a.description === undefined));
+});
+
 test('emptyDomainKnowledge returns four sections', () => {
   const dk = emptyDomainKnowledge('sales');
   assert.equal(dk.domain, 'sales');
