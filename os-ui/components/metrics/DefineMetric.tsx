@@ -4,6 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useToast } from '@/components/core/Toast';
 import {
   type DatasetGroups,
   type DefineResult,
@@ -190,6 +191,7 @@ export default function DefineMetric({ onDefined }: { onDefined: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [result, setResult] = useState<DefineResult | null>(null);
+  const toast = useToast();
 
   const { columns, measures, deliverable } = useDataset(datasetId);
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
@@ -281,11 +283,15 @@ export default function DefineMetric({ onDefined }: { onDefined: () => void }) {
         body: JSON.stringify({ datasetId, form: payload, agent: usedAgent ? payload : undefined }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Could not define the metric'); return; }
+      if (!res.ok) {
+        const msg = data.error ?? 'Could not define the metric';
+        setErr(msg); toast.error(msg); return;
+      }
       setResult(data);
+      toast.success(`Metric "${form.name || 'metric'}" saved`);
       onDefined();
-    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
-  }, [datasetId, form, usedAgent, onDefined]);
+    } catch (e) { const msg = (e as Error).message; setErr(msg); toast.error(msg); } finally { setBusy(false); }
+  }, [datasetId, form, usedAgent, onDefined, toast]);
 
   const previewCols = preview && preview.rows.length ? Object.keys(preview.rows[0]) : [];
 
@@ -533,7 +539,7 @@ export default function DefineMetric({ onDefined }: { onDefined: () => void }) {
 
       {/* Save */}
       <div className="row" style={{ marginTop: 18 }}>
-        <button className="btn" onClick={submit} disabled={!canSubmit}>
+        <button className="btn" onClick={submit} disabled={!canSubmit || busy}>
           {busy ? <span className="spin" /> : 'Save metric'}
         </button>
       </div>

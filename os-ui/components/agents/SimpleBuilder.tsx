@@ -22,6 +22,7 @@ import {
 import { membersOf, isWorkflowId, type ResourceMember } from '@/lib/agents/resource-groups';
 import { scopeLabel, type ScopeKey } from '@/lib/core/scopes';
 import FolderTree, { type FolderSelection } from '@/components/core/FolderTree';
+import { useToast } from '@/components/core/Toast';
 import { itemsUnderFolder, normaliseFolderPath } from '@/lib/core/folders';
 import {
   capabilityChipsForGrants, toolsForCapabilityChips, chipIdsForTools,
@@ -312,6 +313,7 @@ function DefineStep({
   onCommit: (next: System) => void;
   onNext: () => void;
 }) {
+  const toast = useToast();
   const [name, setName] = useState(system.system.name === 'Untitled system' ? '' : system.system.name);
   // Seed the describe box from the persisted team description so the judge's task and
   // the scaffold prompt share one source of truth (re-seeded when it changes server-side).
@@ -340,6 +342,7 @@ function DefineStep({
   const describe = async () => {
     const instruction = desc.trim();
     if (!instruction || scaffolding) return;
+    const before = system.agents.length;
     setScaffolding(true);
     setScaffoldErr('');
     try {
@@ -352,13 +355,24 @@ function DefineStep({
       const raw = await res.text();
       let body: { error?: string } = {};
       try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
-      if (!res.ok) { setScaffoldErr(body.error ?? 'The OS could not build that yet.'); return; }
+      if (!res.ok) {
+        const msg = body.error ?? 'The OS could not build that yet.';
+        setScaffoldErr(msg);
+        toast.error(msg);
+        return;
+      }
       // Persist the description so the Evaluate judge grades THIS task; the scaffold
       // reload re-seeds `desc` from it, so the box keeps what the author wrote.
       onCommit(setDescription(system, instruction));
       await onScaffolded();
+      // Make the store UNMISTAKABLE: a success toast confirms the team changed, the
+      // step-done tick fires (via onScaffolded), and we advance to Design so the new
+      // agents are visible on screen. The button no longer looks like a no-op.
+      toast.success(before > 0 ? 'Added to your team — see it in Design' : 'Your team is built — review it in Design');
     } catch (e) {
-      setScaffoldErr((e as Error).message);
+      const msg = (e as Error).message;
+      setScaffoldErr(msg);
+      toast.error(msg);
     } finally {
       setScaffolding(false);
     }
@@ -994,6 +1008,7 @@ function TriggerMode({
   canEdit: boolean;
   onReload: () => void | Promise<void>;
 }) {
+  const toast = useToast();
   const current: TriggerKind = system.schedule?.kind ?? 'manual';
   const [kind, setKind] = useState<TriggerKind>(current);
   const [cron, setCron] = useState(system.schedule?.cron ?? '0 9 * * 1');
@@ -1018,9 +1033,13 @@ function TriggerMode({
       if (b.cron && next.kind === 'cron') {
         setNote(b.cron.ok && b.cron.live ? `✓ CronJob ${b.cron.action} — runs on schedule` : `⚠ schedule saved but not scheduled — ${b.cron.detail}`);
       }
+      const TRIGGER_WORD: Record<TriggerKind, string> = { manual: 'Manual', cron: 'Scheduled', event: 'On-demand' };
+      toast.success(`Trigger set to ${TRIGGER_WORD[next.kind]}`);
       await onReload();
     } catch (e) {
-      setErr((e as Error).message);
+      const msg = (e as Error).message;
+      setErr(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }

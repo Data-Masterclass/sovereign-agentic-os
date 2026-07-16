@@ -24,6 +24,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useConfirm } from './ConfirmDialog';
+import { useToast } from '@/components/core/Toast';
 import { promoteVerb } from '@/lib/core/scopes';
 
 export type PromoteTier = 'Personal' | 'Shared' | 'Marketplace';
@@ -51,6 +52,7 @@ export default function PromoteButton({
   label?: string;
 }) {
   const confirm = useConfirm();
+  const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [requested, setRequested] = useState(false);
   const [err, setErr] = useState('');
@@ -103,20 +105,26 @@ export default function PromoteButton({
       const res = await fetch(promoteUrl, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setErr((data as { error?: string }).error ?? 'Promotion failed');
+        const msg = (data as { error?: string }).error ?? 'Promotion failed';
+        setErr(msg);
+        toast.error(msg);
         return;
       }
       if ((data as { requested?: boolean }).requested) {
         setRequested(true);
+        toast.info(`Request filed — a domain admin will review this ${kind}`);
         return;
       }
+      toast.success(isCertify ? `${text} — done` : `${kind} promoted to ${isCertify ? 'Company' : 'Domain'}`);
       onDone?.();
     } catch (e) {
-      setErr((e as Error).message);
+      const msg = (e as Error).message;
+      setErr(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }
-  }, [confirm, isCertify, kind, promoteUrl, onDone]);
+  }, [confirm, isCertify, kind, promoteUrl, onDone, toast, text]);
 
   // Top of the ladder — nothing to promote.
   if (tier === 'Marketplace') return null;

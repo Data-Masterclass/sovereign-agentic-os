@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { TEMPLATES, type TemplateKey } from '@/lib/agents/templates';
 import { getUrlParam } from '@/lib/core/url-params';
+import { useToast } from '@/components/core/Toast';
 
 /**
  * Create a new agent system, guided. Pick a plain-language starter template
@@ -20,9 +21,11 @@ export default function NewSystemPanel({ onCreated }: { onCreated: (id: string) 
   const [template, setTemplate] = useState<TemplateKey>('blank');
   const [creating, setCreating] = useState(false);
   const [err, setErr] = useState('');
+  const toast = useToast();
 
   const create = async () => {
     if (!name.trim() || creating) return;
+    const teamName = name.trim();
     setCreating(true);
     setErr('');
     try {
@@ -34,9 +37,12 @@ export default function NewSystemPanel({ onCreated }: { onCreated: (id: string) 
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? 'Could not create the system');
       setName('');
+      toast.success(`"${teamName}" created`);
       onCreated(body.id);
     } catch (e) {
-      setErr((e as Error).message);
+      const msg = (e as Error).message;
+      setErr(msg);
+      toast.error(msg);
     } finally {
       setCreating(false);
     }

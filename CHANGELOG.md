@@ -15,6 +15,16 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.22] — 2026-07-16
+
+### Added
+- **Every action now visibly confirms itself.** A new OS-wide feedback pattern (a tasteful toast +
+  a busy/disabled button state) makes button presses *feel* like they did something: async buttons
+  show a spinner and disable while working (no double-submit), then a clear success — or error —
+  confirmation. The agent-builder **"Add to my team"** (which stored silently) now confirms and
+  takes you to Design; and promote/certify, create-system, approve/reject, save-metric, and
+  compile-guardrails all confirm on press.
+
 ## [os-ui 0.5.21] — 2026-07-16
 
 ### Fixed (governance)

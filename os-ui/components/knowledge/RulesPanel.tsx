@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import type { Workflow } from '@/lib/knowledge/schema';
 import { addWorkflowRule, setWorkflowRuleHard, removeWorkflowRule } from '@/lib/knowledge/rules-edit';
+import { useToast } from '@/components/core/Toast';
 
 /**
  * Decision-rules panel — the WORKFLOW-level rules (step rules are edited in the
@@ -42,6 +43,7 @@ export default function RulesPanel({
   const [applying, setApplying] = useState(false);
   const [result, setResult] = useState<ApplyResult | null>(null);
   const [applyErr, setApplyErr] = useState('');
+  const toast = useToast();
 
   const workflowRules = workflow.rules.filter((r) => r.scope === 'workflow');
   const hardCount = workflowRules.filter((r) => r.hard).length
@@ -54,10 +56,18 @@ export default function RulesPanel({
     try {
       const res = await fetch(`/api/knowledge/workflows/${workflowId}/guardrails`, { method: 'POST' });
       const data = await res.json();
-      if (!res.ok) setApplyErr(data.error ?? 'Failed to apply guardrails');
-      else setResult(data);
+      if (!res.ok) {
+        const msg = data.error ?? 'Failed to apply guardrails';
+        setApplyErr(msg); toast.error(msg);
+      } else {
+        setResult(data);
+        const applied = (data as ApplyResult).apply;
+        if (applied?.status === 'ok') toast.success('Guardrails compiled & applied');
+        else toast.error(applied?.error ?? applied?.detail ?? 'Guardrails did not verify');
+      }
     } catch (e) {
-      setApplyErr((e as Error).message);
+      const msg = (e as Error).message;
+      setApplyErr(msg); toast.error(msg);
     } finally {
       setApplying(false);
     }

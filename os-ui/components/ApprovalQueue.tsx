@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { roleAtLeast } from '@/lib/core/session';
+import { useToast } from '@/components/core/Toast';
 
 /**
  * Governance approval queue (golden path §7). Held write-backs — connection
@@ -37,6 +38,7 @@ function statusBadge(s: Approval['status']) {
 
 export default function ApprovalQueue() {
   const { user } = useUser();
+  const toast = useToast();
   const [items, setItems] = useState<Approval[] | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -67,15 +69,23 @@ export default function ApprovalQueue() {
           body: JSON.stringify({ id, decision }),
         });
         const body = await res.json();
-        if (!res.ok) setError(body.error ?? 'Decision failed');
+        if (!res.ok) {
+          const msg = body.error ?? 'Decision failed';
+          setError(msg);
+          toast.error(msg);
+        } else {
+          toast.success(decision === 'approve' ? 'Approved — the write was applied' : 'Rejected');
+        }
         await load();
       } catch (e) {
-        setError((e as Error).message);
+        const msg = (e as Error).message;
+        setError(msg);
+        toast.error(msg);
       } finally {
         setBusy('');
       }
     },
-    [load],
+    [load, toast],
   );
 
   const pending = (items ?? []).filter((a) => a.status === 'pending');

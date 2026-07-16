@@ -4,6 +4,7 @@ import { rubik, oswald, marcellus, fraunces } from './fonts';
 import Sidebar from '@/components/Sidebar';
 import TutorialProvider from '@/components/tutorials/TutorialProvider';
 import { ToolWindowProvider } from '@/components/ToolWindowProvider';
+import { ToastProvider } from '@/components/core/Toast';
 import AuthGate from '@/components/AuthGate';
 import OsAssistant from '@/components/OsAssistant';
 
@@ -39,13 +40,17 @@ export default function RootLayout({
         />
         <TutorialProvider>
           <ToolWindowProvider>
-            <div className="shell">
-              <Sidebar />
-              <div className="main">{children}</div>
-            </div>
-            {/* The ONE overarching, tab-aware OS assistant — on every tab, acts
-                through the OS's own governed MCP. */}
-            <OsAssistant />
+            {/* ToastProvider wraps the whole shell so any button on any tab can
+                fire the ONE OS-wide "that did something" confirmation. */}
+            <ToastProvider>
+              <div className="shell">
+                <Sidebar />
+                <div className="main">{children}</div>
+              </div>
+              {/* The ONE overarching, tab-aware OS assistant — on every tab, acts
+                  through the OS's own governed MCP. */}
+              <OsAssistant />
+            </ToastProvider>
           </ToolWindowProvider>
         </TutorialProvider>
         <AuthGate />

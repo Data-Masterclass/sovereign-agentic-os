@@ -5,6 +5,7 @@
 
 import { useState } from 'react';
 import type { Workflow, WorkflowStep } from '@/lib/knowledge/schema';
+import ActionButton from '@/components/core/ActionButton';
 
 /**
  * Handovers-out panel — how this workflow flows into the rest of the OS:
@@ -40,30 +41,28 @@ export default function HandoverPanel({
   const [disp, setDisp] = useState<Record<string, Disposition>>(
     Object.fromEntries(workflow.steps.map((s) => [s.id, defaultDisp(s)])),
   );
-  const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<{ systemId: string } | null>(null);
   const [error, setError] = useState('');
 
   const agentCount = Object.values(disp).filter((d) => d !== 'manual').length;
 
+  // Returns a promise so <ActionButton> can drive busy → ✓/error + the success toast.
+  // We throw on failure; ActionButton catches it and toasts the message, and we also
+  // keep the inline error/created panels for the persistent, in-context detail.
   async function createAgent() {
-    if (creating) return;
-    setCreating(true);
     setError('');
-    try {
-      const res = await fetch(`/api/knowledge/workflows/${workflowId}/scaffold-agent`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ dispositions: disp, create: true }),
-      });
-      const data = await res.json();
-      if (!res.ok) setError(data.error ?? 'Failed to create agent system');
-      else setCreated({ systemId: data.systemId });
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setCreating(false);
+    const res = await fetch(`/api/knowledge/workflows/${workflowId}/scaffold-agent`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ dispositions: disp, create: true }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const msg = data.error ?? 'Failed to create agent system';
+      setError(msg);
+      throw new Error(msg);
     }
+    setCreated({ systemId: data.systemId });
   }
 
   const attachRef = `knowledge:workflow:${workflowId}`;
@@ -107,9 +106,12 @@ export default function HandoverPanel({
 
       {canEdit && workflow.steps.length > 0 && (
         <div className="row" style={{ marginTop: 14, alignItems: 'center', gap: 12 }}>
-          <button className="btn" onClick={() => void createAgent()} disabled={creating}>
-            {creating ? <span className="spin" /> : `Create agent system (${agentCount} agent${agentCount === 1 ? '' : 's'})`}
-          </button>
+          <ActionButton
+            onAction={createAgent}
+            successToast="Agent system created — open it in the Agents tab"
+          >
+            {`Create agent system (${agentCount} agent${agentCount === 1 ? '' : 's'})`}
+          </ActionButton>
           <span className="muted" style={{ fontSize: 12 }}>
             {agentCount === 0 ? 'No agentified steps — a coordinator with the workflow as context will be created.' : 'Opens in the Agents tab to refine + run.'}
           </span>
