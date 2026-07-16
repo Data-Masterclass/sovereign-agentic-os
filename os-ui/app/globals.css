@@ -5623,6 +5623,46 @@ button.card.tile:hover .tile-action { opacity: 1; }
 .sb-step.done .sb-step-n { background: var(--teal); border-color: var(--teal-dim); color: #fff; }
 .sb-step-label { font-weight: 600; }
 
+/* --- build progress (determinate stepper + live commentary) --- */
+.sb-build-progress { display: flex; flex-direction: column; gap: 10px; }
+.sb-build-bar {
+  height: 6px; width: 100%; border-radius: 999px;
+  background: var(--border); overflow: hidden;
+}
+.sb-build-bar-fill {
+  height: 100%; border-radius: 999px;
+  background: linear-gradient(90deg, var(--gold), var(--gold-deep));
+  transition: width 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.sb-build-bar-fill.animating {
+  background-image: linear-gradient(90deg, var(--gold), var(--gold-deep), var(--gold));
+  background-size: 200% 100%;
+  animation: sb-build-shimmer 1.5s linear infinite;
+}
+.sb-build-bar-fill.ok { background: linear-gradient(90deg, var(--teal-dim), var(--teal)); animation: none; }
+.sb-build-bar-fill.fail { background: linear-gradient(90deg, #c0392b, #e05a4a); animation: none; }
+@keyframes sb-build-shimmer { from { background-position: 200% 0; } to { background-position: 0 0; } }
+
+.sb-build-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.sb-build-step {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 12.5px; color: var(--text-muted);
+  transition: color 0.2s ease, opacity 0.2s ease;
+  opacity: 0.55;
+}
+.sb-build-step.active { color: var(--text); opacity: 1; font-weight: 600; }
+.sb-build-step.done { color: var(--text); opacity: 1; }
+.sb-build-step.fail { color: #c0392b; opacity: 1; font-weight: 600; }
+.sb-build-dot {
+  width: 20px; height: 20px; flex: 0 0 20px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%; font-size: 11px; font-weight: 700;
+  border: 1px solid var(--border-strong); background: var(--panel); color: var(--text-muted);
+}
+.sb-build-step.active .sb-build-dot { border-color: var(--gold-deep); color: var(--gold-deep); }
+.sb-build-step.done .sb-build-dot { background: var(--teal); border-color: var(--teal-dim); color: #fff; }
+.sb-build-step.fail .sb-build-dot { background: #c0392b; border-color: #a5281c; color: #fff; }
+
 /* --- describe hero --- */
 .sb-hero {
   border: 1px solid var(--gold-line);

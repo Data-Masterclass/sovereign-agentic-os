@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { TEMPLATES, templateYaml } from './templates.ts';
 import { parseSystem } from './system-schema.ts';
 import { compile } from './langgraph-compile.ts';
+import { CAPABILITY_CHIPS } from './capability-tools.ts';
 import { ALL_MCP_TOOLS } from '@/lib/mcp/server.ts';
 
 /** The canonical set of valid OS MCP tool names. */
@@ -29,6 +30,22 @@ test('every template grants.tools ⊆ ALL_MCP_TOOLS names (no legacy leftovers)'
           `template '${key}', agent '${agent.id}': tool '${tool}' is not a canonical MCP tool name`,
         );
       }
+    }
+  }
+});
+
+test('every capability chip tool is a canonical MCP tool (granted chip → runtime-authorizable)', () => {
+  // A chip that surfaces on the agent card must map to tools the runtime can actually
+  // authorize (they must be in ALL_MCP_TOOLS, the set os-tools filters grants.tools
+  // against). A chip tool absent here would surface a capability the agent can never
+  // call — exactly the class of bug this whole fix closes, guarded for Files/goals too.
+  for (const chip of CAPABILITY_CHIPS) {
+    assert.ok(chip.tools.length > 0, `chip '${chip.id}' provisions at least one tool`);
+    for (const tool of chip.tools) {
+      assert.ok(
+        MCP_TOOL_NAMES.has(tool),
+        `capability chip '${chip.id}': tool '${tool}' is not a canonical MCP tool name`,
+      );
     }
   }
 });

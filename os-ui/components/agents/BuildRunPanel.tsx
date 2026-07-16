@@ -23,6 +23,9 @@ import {
   type ContextKind,
   type RunContextUsage,
 } from '@/lib/agents/build/context-usage';
+import type { System } from '@/lib/agents/system-schema';
+import { downloadRunPdf } from '@/lib/agents/build/agent-pdf';
+import { agentDisplayName } from '@/lib/agents/build/eval-report';
 
 /**
  * Build = execute + verify (Task 4) and Run (Task 7). Build runs the 5 adapters
@@ -168,6 +171,78 @@ const EFFECT_BADGE: Record<string, string> = { allow: 'ok', deny: 'warn', error:
 // failure (neutral, not a governance verdict); 'failed' = the node itself threw.
 const NODE_STATUS_BADGE: Record<NodeStatus, string> = { ok: 'ok', denied: 'warn', error: 'err', failed: 'err' };
 const NODE_STATUS_LABEL: Record<NodeStatus, string> = { ok: '✓ ok', denied: 'denied', error: 'error', failed: '✗ failed' };
+
+/**
+ * The real build phases — the SAME work the server's 5 adapters do (forgejo · opa ·
+ * litellm · langgraph · langfuse), in order, described in plain words. The build route
+ * is a single call (no per-stage stream), so the stepper advances through these on a
+ * gentle timer while the build is in flight, then settles on the real ✓/✗ outcome the
+ * moment the report lands. Honest: these are the actual phases, not invented steps.
+ */
+const BUILD_STAGES: { key: string; label: string; tools: string[] }[] = [
+  { key: 'scaffold', label: 'Scaffolding agents…', tools: ['forgejo'] },
+  { key: 'grants', label: 'Provisioning tools & grants…', tools: ['opa', 'litellm'] },
+  { key: 'graph', label: 'Wiring the graph…', tools: ['langgraph'] },
+  { key: 'trace', label: 'Linking traces…', tools: ['langfuse'] },
+  { key: 'commit', label: 'Committing agent files…', tools: [] },
+];
+
+/**
+ * A tasteful, determinate build stepper. While `building`, it walks BUILD_STAGES on a
+ * timer (the build is one call, so we pace it); on completion it reflects the REAL
+ * outcome — every stage ✓ when the report is green, or the failing stage(s) marked ✗
+ * from the report rows. `done` + `ok` come from the landed report.
+ */
+function BuildProgress({ building, report }: { building: boolean; report: BuildReport | null }) {
+  const [stage, setStage] = useState(0);
+  useEffect(() => {
+    if (!building) return;
+    setStage(0);
+    const id = setInterval(() => {
+      setStage((s) => (s < BUILD_STAGES.length - 1 ? s + 1 : s));
+    }, 700);
+    return () => clearInterval(id);
+  }, [building]);
+
+  const done = !building && !!report;
+  // Which stages the report says failed — a stage fails if ANY of its adapter rows failed.
+  const failedTools = new Set((report?.rows ?? []).filter((r) => r.status === 'fail').map((r) => r.tool));
+  const stageFailed = (tools: string[]) => tools.some((t) => failedTools.has(t));
+
+  const pct = done
+    ? 100
+    : Math.round(((stage + 1) / (BUILD_STAGES.length + 1)) * 100); // never hit 100 until landed
+
+  return (
+    <div className="sb-build-progress" aria-live="polite" style={{ marginTop: 8, marginBottom: 8 }}>
+      <div className="sb-build-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+        <div
+          className={`sb-build-bar-fill${building ? ' animating' : ''}${done && report?.ok ? ' ok' : ''}${done && report && !report.ok ? ' fail' : ''}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <ol className="sb-build-steps">
+        {BUILD_STAGES.map((st, i) => {
+          const failed = done && stageFailed(st.tools);
+          const complete = done ? !failed : i < stage;
+          const active = building && i === stage;
+          return (
+            <li key={st.key} className={`sb-build-step${active ? ' active' : ''}${complete ? ' done' : ''}${failed ? ' fail' : ''}`}>
+              <span className="sb-build-dot" aria-hidden>
+                {failed ? '✗' : complete ? '✓' : active ? <span className="spin" /> : i + 1}
+              </span>
+              <span className="sb-build-label">{st.label}</span>
+            </li>
+          );
+        })}
+        <li className={`sb-build-step${done && report?.ok ? ' done' : ''}${done && report && !report.ok ? ' fail' : ''}`}>
+          <span className="sb-build-dot" aria-hidden>{done ? (report?.ok ? '✓' : '✗') : '·'}</span>
+          <span className="sb-build-label">{done ? (report?.ok ? 'Ready' : 'Build failed — see below') : 'Ready'}</span>
+        </li>
+      </ol>
+    </div>
+  );
+}
 
 /**
  * Collapse CONSECUTIVE identical tool rows (same tool + same error-flag/kind) into one
@@ -436,13 +511,15 @@ function liveLine(p: LiveProgress): string {
  * run IS evaluating it) from ONE source, with no behavioural change.
  */
 function TeamStepByStep({
-  run, openNodes, openSteps, toggleNode, toggleStep,
+  run, openNodes, openSteps, toggleNode, toggleStep, labelOf,
 }: {
   run: RunReport;
   openNodes: Record<string, boolean>;
   openSteps: Record<string, boolean>;
   toggleNode: (k: string) => void;
   toggleStep: (k: string) => void;
+  /** Map an agent id to its display (short) name — falls back to the id. */
+  labelOf: (id: string) => string;
 }) {
   if (!run.nodes || run.nodes.length === 0) return null;
   return (
@@ -463,7 +540,7 @@ function TeamStepByStep({
                 style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}
               >
                 <span style={{ opacity: 0.5, width: 12, display: 'inline-block' }}>{open ? '▾' : '▸'}</span>
-                <span className="mono" style={{ fontWeight: 600 }}>{n.node}</span>
+                <span className="mono" style={{ fontWeight: 600 }}>{labelOf(n.node)}</span>
                 <span className={`badge ${NODE_STATUS_BADGE[n.status]}`}>{NODE_STATUS_LABEL[n.status]}</span>
                 {n.steps.length > 0 ? <span className="hint" style={{ fontSize: 11 }}>{n.steps.length} tool call{n.steps.length === 1 ? '' : 's'}</span> : null}
                 {n.tier ? <span className="badge muted" style={{ marginLeft: 'auto', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 0.3 }}>{n.tier}</span> : null}
@@ -559,6 +636,7 @@ function TeamStepByStep({
 
 export default function BuildRunPanel({
   systemId,
+  system,
   running,
   canEdit,
   lastBuild,
@@ -569,6 +647,9 @@ export default function BuildRunPanel({
   phase = 'all',
 }: {
   systemId: string;
+  /** The full System — for display (short) names, the graph, and the Evaluate PDF.
+   *  Optional so Developer mode (which doesn't pass it) is unchanged. */
+  system?: System;
   running: boolean;
   canEdit: boolean;
   lastBuild?: LastBuild | null;
@@ -621,6 +702,12 @@ export default function BuildRunPanel({
 
   const runComplete = !!run && !runningNow && ((run.nodes && run.nodes.length > 0) || !!run.output);
 
+  /** Agent id → display (short) name, from the System. Falls back to the id. */
+  const labelOf = (id: string): string => {
+    const a = system?.agents.find((x) => x.id === id);
+    return a ? agentDisplayName(a) : id;
+  };
+
   // Fetch Langfuse trace metrics when a run completes. Degrades silently: any
   // failure just leaves `metrics` null and the table shows its honest note.
   useEffect(() => {
@@ -635,6 +722,26 @@ export default function BuildRunPanel({
     // Re-fetch per distinct run (path is a cheap identity for a completed run).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runComplete, systemId, run?.path.join('>')]);
+
+  /**
+   * RUN-phase PDF — EXACTLY the Run screen (final output + per-agent results + status),
+   * nothing else. Uses the shared painter so it matches the Evaluate report's look.
+   */
+  const downloadRunResultsPdf = async () => {
+    if (!run || !system) return;
+    setPdfBusy(true);
+    try {
+      await downloadRunPdf(system, runToDiag(run), {
+        ranBy: user?.name ?? 'unknown',
+        at: lastRun?.at ?? Date.now(),
+        prompt,
+      });
+    } catch (e) {
+      setRunErr(`Could not generate the PDF report: ${(e as Error).message}`);
+    } finally {
+      setPdfBusy(false);
+    }
+  };
 
   /** Build + download a clean, legible PDF of the current run (client-side, offline-safe). */
   const downloadPdf = async () => {
@@ -892,6 +999,11 @@ export default function BuildRunPanel({
           {building ? <span className="spin" /> : builtAt ? 'Rebuild' : 'Build'}
         </button>
       </div>
+      {/* Live build progress + commentary — the real 5-adapter phases as a determinate
+          stepper. Shown while building, and holds the final ✓/✗ state after it lands. */}
+      {building || (builtAt !== null && report) ? (
+        <BuildProgress building={building} report={report} />
+      ) : null}
       {/* In-progress marker: shown to a returning user while the build is still running. */}
       {activity?.kind === 'building' && !building ? (
         <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
@@ -953,8 +1065,8 @@ export default function BuildRunPanel({
       <>
       <div className="section-title">
         Run
-        {/* The PDF report belongs to the Evaluate phase — shown here only in the
-            combined 'all' view (Developer mode). */}
+        {/* Developer mode ('all') keeps the combined run+assessment PDF. Simple mode's
+            Run phase gets a Run-ONLY "Results Report" — exactly what's on screen. */}
         {phase === 'all' ? (
           <button
             className="btn ghost"
@@ -964,6 +1076,16 @@ export default function BuildRunPanel({
             title={runComplete ? 'Download a PDF report of this run' : 'Run the team first'}
           >
             {pdfBusy ? <span className="spin" /> : 'Download PDF report'}
+          </button>
+        ) : phase === 'run' ? (
+          <button
+            className="btn ghost"
+            style={{ marginLeft: 'auto' }}
+            onClick={downloadRunResultsPdf}
+            disabled={!runComplete || pdfBusy || !system}
+            title={runComplete ? 'Download a PDF of the run results shown here' : 'Run the team first'}
+          >
+            {pdfBusy ? <span className="spin" /> : 'Download PDF Results Report'}
           </button>
         ) : null}
       </div>
@@ -1069,7 +1191,7 @@ export default function BuildRunPanel({
               the run IS evaluating it) — see the mirrored block below; here it renders
               only in Developer mode's combined view. */}
           {phase === 'all' ? (
-            <TeamStepByStep run={run} openNodes={openNodes} openSteps={openSteps} toggleNode={toggleNode} toggleStep={toggleStep} />
+            <TeamStepByStep run={run} openNodes={openNodes} openSteps={openSteps} toggleNode={toggleNode} toggleStep={toggleStep} labelOf={labelOf} />
           ) : null}
 
           {/* Final output — always shown, straight from the run (no Langfuse needed).
@@ -1132,23 +1254,10 @@ export default function BuildRunPanel({
           </>
           ) : null}
 
-          {/* EVALUATE-phase assessment: the PDF report button, the diagnostics table
-              and the Langfuse trace link — relocated here so Run stays about results
-              and Evaluate is about assessment. In Developer mode (phase 'all') all of
-              it shows together, unchanged. */}
-          {showEvaluate && phase !== 'all' ? (
-            <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 6 }}>
-              <button
-                className="btn ghost"
-                onClick={downloadPdf}
-                disabled={!runComplete || pdfBusy}
-                title={runComplete ? 'Download a PDF report of this run' : 'Run the team first'}
-              >
-                {pdfBusy ? <span className="spin" /> : 'Download PDF report'}
-              </button>
-            </div>
-          ) : null}
-
+          {/* EVALUATE-phase assessment: the diagnostics table, the context roll-up and
+              the Langfuse trace link. The Evaluate PDF button lives in the Evaluate
+              step above this panel (it owns the checks + AI-judge state). In Developer
+              mode (phase 'all') the combined run+assessment PDF shows in the Run header. */}
           {showEvaluate ? (
           <>
           {/* Run-level roll-up: what the whole run actually read/retrieved/wrote (#177). */}
@@ -1159,7 +1268,7 @@ export default function BuildRunPanel({
               these in the Run block above instead, so they are not repeated here. */}
           {phase !== 'all' ? (
             <>
-              <TeamStepByStep run={run} openNodes={openNodes} openSteps={openSteps} toggleNode={toggleNode} toggleStep={toggleStep} />
+              <TeamStepByStep run={run} openNodes={openNodes} openSteps={openSteps} toggleNode={toggleNode} toggleStep={toggleStep} labelOf={labelOf} />
               <div><strong>Path:</strong> <span className="mono">{run.path.join(' → ')} → END</span></div>
               <div style={{ marginTop: 6, marginBottom: 4 }}>
                 <span className="badge ok">{run.steps.length} governed call{run.steps.length === 1 ? '' : 's'}</span>{' '}

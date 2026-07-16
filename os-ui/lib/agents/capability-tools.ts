@@ -30,7 +30,7 @@
  * **Auto** default — the agent gets whatever the team was granted. Only when the
  * author explicitly narrows (picks chips) does `agent.tools` get set.
  */
-import type { Capability, Grants, SafetyPreset } from './system-schema.ts';
+import type { Capability, Grants, SafetyPreset, ArtifactGrant } from './system-schema.ts';
 import { planTargetOf } from './plan-grants.ts';
 
 /** The resource kinds the Simple builder grants. `files` has no per-artifact
@@ -51,6 +51,18 @@ const READ_TOOLS: Record<GrantKind, string[]> = {
   metrics: ['list_metrics', 'query_metric', 'get_metric'],
   plan: ['get_operating_manual'],
 };
+
+/**
+ * The ALWAYS-available core connection read tools — a strict subset of
+ * `READ_TOOLS.connections` that excludes `warehouse_registration`, which is only
+ * registered when `config.externalConnectorsEnabled` is on. The capability CHIP gates
+ * on this core set so a granted connection ALWAYS surfaces its chip (the catalog check
+ * would otherwise hide the whole chip whenever external connectors are off). Grant
+ * PROVISIONING still uses the full `READ_TOOLS.connections`, so the warehouse tool is
+ * added to `grants.tools` and becomes usable the moment the connector config is on
+ * (the runtime just drops it when unregistered — harmless).
+ */
+const CONNECTIONS_CHIP_TOOLS = ['list_connections', 'get_connection', 'test_connection', 'list_connection_templates'];
 
 /** Create/write tools per kind — added on top of the read set when the grant writes.
  * Promotion/lifecycle tools (request_promotion, publish_knowledge, promote_connection,
@@ -126,7 +138,10 @@ export function writeToolsForKind(kind: GrantKind): string[] {
  * is offered. `null` means the chip is always available (ungated by a resource
  * grant — it just needs to be in the catalog).
  */
-export type ChipGrantKind = 'data' | 'knowledge' | 'connections' | 'metrics' | 'plan' | null;
+export type ChipGrantKind = 'data' | 'knowledge' | 'files' | 'connections' | 'metrics' | 'plan' | null;
+
+/** The grant lists a chip's surfacing predicate may inspect (every grantable kind). */
+type ChipGrants = Pick<Grants, 'data' | 'knowledge' | 'files' | 'connections' | 'metrics' | 'plan'>;
 
 export type CapabilityChip = {
   /** Stable id persisted nowhere — used only in UI state and tests. */
@@ -168,15 +183,15 @@ export const CAPABILITY_CHIPS: CapabilityChip[] = [
     description: 'Call the external connections (APIs, databases) the team was given.',
     domain: 'Connections',
     grantKind: 'connections',
-    tools: READ_TOOLS.connections,
+    tools: CONNECTIONS_CHIP_TOOLS,
   },
   {
     id: 'create-files',
-    label: 'Create/edit files',
-    description: "Read, write and search files in the team's file space.",
+    label: 'Use files',
+    description: "Read and search the files in the folders the team was given access to.",
     domain: 'Files',
-    grantKind: null,
-    tools: [...READ_TOOLS.files, ...WRITE_TOOLS.files],
+    grantKind: 'files',
+    tools: READ_TOOLS.files,
   },
   {
     id: 'query-metrics',
@@ -184,15 +199,18 @@ export const CAPABILITY_CHIPS: CapabilityChip[] = [
     description: 'Read the metrics and KPIs the team tracks.',
     domain: 'Metrics',
     grantKind: 'metrics',
-    tools: ['list_metrics', 'query_metric', 'get_metric'],
+    tools: READ_TOOLS.metrics,
   },
   {
     id: 'use-goals',
     label: 'Use goals',
-    description: "Read the team's big bets and strategic goals.",
+    description: "Read the team's strategic pillars and big bets that were granted.",
     domain: 'Goals',
-    grantKind: null,
-    tools: ['list_big_bets', 'get_big_bet'],
+    grantKind: 'plan',
+    // The pillar + big-bet governed read tools (the two GOAL plan targets) — kept in
+    // step with what `planToolsForId` provisions for a pillar/bet grant so the chip
+    // round-trips against a granted goal.
+    tools: [...PLAN_TOOLS_BY_TARGET.pillar, ...PLAN_TOOLS_BY_TARGET.bigbet],
   },
   {
     id: 'read-operating-manual',
@@ -209,7 +227,11 @@ export const CAPABILITY_CHIPS: CapabilityChip[] = [
  * caller's role-floor catalog. Rules:
  *
  * 1. A chip whose `grantKind` is non-null is only offered when `grants[grantKind]`
- *    has at least one entry (i.e. the team was actually granted that resource).
+ *    has at least one entry (i.e. the team was actually granted that resource). The
+ *    `plan` grant is heterogeneous — an Operating-Model grant (`manual:*`) surfaces the
+ *    operating-manual chip, while a Strategic-Pillar/Big-Bet grant (`pillar:*`/`bigbet:*`)
+ *    surfaces the goals chip — so plan chips gate on the plan-grant TARGETS, not merely
+ *    on a non-empty list (see {@link planChipMatches}).
  * 2. Every tool in a chip's `tools` list must appear in `catalog` (the role-scoped
  *    list from the platform) — if any tool is absent the chip is not offered.
  *    When `catalog` is `null` (still loading) no filtering by catalog is applied.
@@ -217,19 +239,34 @@ export const CAPABILITY_CHIPS: CapabilityChip[] = [
  * Returns a subset of `CAPABILITY_CHIPS` in the same order.
  */
 export function capabilityChipsForGrants(
-  grants: Pick<Grants, 'data' | 'knowledge' | 'connections' | 'metrics' | 'plan'>,
+  grants: ChipGrants,
   catalog: string[] | null,
 ): CapabilityChip[] {
   return CAPABILITY_CHIPS.filter((chip) => {
     // Must have the resource grant when grantKind is non-null.
     if (chip.grantKind !== null) {
-      const list = grants[chip.grantKind as keyof Pick<Grants, 'data' | 'knowledge' | 'connections' | 'metrics' | 'plan'>];
+      const list = grants[chip.grantKind];
       if (!Array.isArray(list) || list.length === 0) return false;
+      // Plan grants are heterogeneous — surface by the specific plan target.
+      if (chip.grantKind === 'plan' && !planChipMatches(chip.id, list)) return false;
     }
     // All tools must be in the catalog (when catalog has loaded).
     if (catalog !== null && chip.tools.some((t) => !catalog.includes(t))) return false;
     return true;
   });
+}
+
+/**
+ * Whether a plan-gated chip is warranted by the plan grants held. The goals chip
+ * (`use-goals`) needs a `pillar:`/`bigbet:` grant; the operating-manual chip
+ * (`read-operating-manual`) needs a `manual:` grant. Keeps the two plan chips from
+ * both firing off one another's grant.
+ */
+function planChipMatches(chipId: string, planGrants: ArtifactGrant[]): boolean {
+  const targets = new Set(planGrants.map((g) => planTargetOf(g.id)));
+  if (chipId === 'use-goals') return targets.has('pillar') || targets.has('bigbet');
+  if (chipId === 'read-operating-manual') return targets.has('manual');
+  return true;
 }
 
 /** The union of all tools for a set of chip ids. */

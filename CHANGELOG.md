@@ -15,6 +15,36 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.24] — 2026-07-16
+
+### Added
+- **Optional short name per agent.** In Design you can give any agent a friendly short name; it
+  carries through the Run and Evaluate node cards, the multi-agent graph, and both PDF reports.
+  The agent's identity/id is untouched and `system.yaml` stays byte-for-byte identical when no
+  short name is set.
+- **Build-phase progress indicator.** Building a team now shows a determinate progress bar that
+  walks the real provisioning phases (scaffold → tools & grants → wire graph → traces → commit)
+  with live commentary, then settles on the actual outcome — every stage ticked on success, or the
+  failing step marked, straight from the build report.
+- **Run — "Download PDF Results Report":** exactly what's on the Run screen (summary, final output
+  with real tables, per-agent results), nothing else.
+- **Evaluate — "Download PDF Evaluation Report":** opens with the multi-agent graph, then the
+  on-screen evaluation content, then Appendix 1 Results, Appendix 2 Define-stage settings, and
+  Appendix 3 each agent's description. Both reports reuse the Workflow-export PDF engine.
+
+## [os-ui 0.5.23] — 2026-07-16
+
+### Fixed
+- **A Define grant is now automatically a usable capability, for every type.** Granting a resource in
+  "What your team can use" surfaces its capability chip on the agent card by default and provisions
+  the matching tools — this fixes Files and goals (which never surfaced), and a latent Connections
+  case (the chip vanished when external connectors were off). Runtime authorization, folder/plan
+  grant resolution, and access-level caps were already correct.
+- **Files search reliability:** the file embeddings now enforce the index's vector dimension (a
+  mis-pointed embeddings model could otherwise make files silently unsearchable) — matching the
+  knowledge pipeline. Added end-to-end retrieval + grant-scoping tests for Knowledge and Files, and
+  a test that Data surfaces the real table name to agents (no guessed FQNs).
+
 ## [os-ui 0.5.22] — 2026-07-16
 
 ### Added

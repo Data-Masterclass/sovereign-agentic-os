@@ -72,21 +72,28 @@ test('allToolsForKind covers read ∪ write for pruning', () => {
 
 // ─── Capability chips ─────────────────────────────────────────────────────────
 
-type ChipGrants = Pick<Grants, 'data' | 'knowledge' | 'connections' | 'metrics' | 'plan'>;
+type ChipGrants = Pick<Grants, 'data' | 'knowledge' | 'files' | 'connections' | 'metrics' | 'plan'>;
 
-/** A grants object where every resource list is populated. */
+/** A grants object where every resource list is populated. The plan list carries all
+ * three plan targets (manual + pillar + big bet) so both plan-gated chips surface. */
 const FULL_GRANTS: ChipGrants = {
   data: [{ id: 'ds_sales', capability: 'Read' }],
   knowledge: [{ id: 'wf_playbook', capability: 'Read' }],
+  files: [{ id: '', capability: 'Read', folder: { path: '/reports', scope: 'domain' } }],
   connections: [{ id: 'conn_crm', capability: 'Read' }],
   metrics: [{ id: 'mt_revenue', capability: 'Read' }],
-  plan: [{ id: 'manual:domain', capability: 'Read' }],
+  plan: [
+    { id: 'manual:domain', capability: 'Read' },
+    { id: 'pillar:p_1', capability: 'Read' },
+    { id: 'bigbet:b_1', capability: 'Read' },
+  ],
 };
 
 /** Grants where only data was granted. */
 const DATA_ONLY_GRANTS: ChipGrants = {
   data: [{ id: 'ds_sales', capability: 'Read' }],
   knowledge: [],
+  files: [],
   connections: [],
   metrics: [],
   plan: [],
@@ -96,6 +103,7 @@ const DATA_ONLY_GRANTS: ChipGrants = {
 const EMPTY_GRANTS: ChipGrants = {
   data: [],
   knowledge: [],
+  files: [],
   connections: [],
   metrics: [],
   plan: [],
@@ -106,31 +114,46 @@ test('capabilityChipsForGrants: ungranted kind is not offered', () => {
   const ids = chips.map((c) => c.id);
   // data was granted → offered
   assert.ok(ids.includes('read-data'), 'read-data should be offered when data is granted');
-  // knowledge/connections/metrics were NOT granted → their chips absent
+  // every other kind was NOT granted → their chips absent (every chip is grant-tied now)
   assert.ok(!ids.includes('search-knowledge'), 'search-knowledge must not appear when knowledge not granted');
   assert.ok(!ids.includes('use-connection'), 'use-connection must not appear when connections not granted');
   assert.ok(!ids.includes('query-metrics'), 'query-metrics must not appear when metrics not granted');
-  // null-grantKind chips (create-files, use-goals) are always offered
-  assert.ok(ids.includes('create-files'), 'create-files always offered (no resource gate)');
-  assert.ok(ids.includes('use-goals'), 'use-goals always offered (no resource gate)');
+  assert.ok(!ids.includes('create-files'), 'create-files must not appear when files not granted');
+  assert.ok(!ids.includes('use-goals'), 'use-goals must not appear when no goal plan granted');
+  assert.ok(!ids.includes('read-operating-manual'), 'operating-manual must not appear when no manual granted');
 });
 
-test('capabilityChipsForGrants: no grants → only null-grantKind chips offered', () => {
+test('capabilityChipsForGrants: no grants → NO chips offered (every chip is grant-tied)', () => {
   const chips = capabilityChipsForGrants(EMPTY_GRANTS, null);
-  const ids = chips.map((c) => c.id);
-  assert.ok(!ids.includes('read-data'));
-  assert.ok(!ids.includes('search-knowledge'));
-  assert.ok(!ids.includes('use-connection'));
-  assert.ok(!ids.includes('query-metrics'));
-  assert.ok(!ids.includes('read-operating-manual')); // plan-gated
-  // null-grantKind chips still present
-  assert.ok(ids.includes('create-files'));
-  assert.ok(ids.includes('use-goals'));
+  assert.equal(chips.length, 0, 'nothing granted ⇒ no capability chips surface');
 });
 
-test('capabilityChipsForGrants: a plan (Operating Manual) grant offers the manual chip', () => {
-  const ids = capabilityChipsForGrants(FULL_GRANTS, null).map((c) => c.id);
-  assert.ok(ids.includes('read-operating-manual'));
+test('capabilityChipsForGrants: granting a files folder surfaces the Files chip', () => {
+  const grants: ChipGrants = { ...EMPTY_GRANTS, files: [{ id: '', capability: 'Read', folder: { path: '/x', scope: 'domain' } }] };
+  const ids = capabilityChipsForGrants(grants, null).map((c) => c.id);
+  assert.ok(ids.includes('create-files'), 'a files folder grant surfaces the Files chip');
+  assert.ok(!ids.includes('read-data'));
+});
+
+test('capabilityChipsForGrants: a Strategic-Pillar plan grant surfaces goals, not the manual', () => {
+  const grants: ChipGrants = { ...EMPTY_GRANTS, plan: [{ id: 'pillar:p_1', capability: 'Read' }] };
+  const ids = capabilityChipsForGrants(grants, null).map((c) => c.id);
+  assert.ok(ids.includes('use-goals'), 'a pillar grant surfaces the goals chip');
+  assert.ok(!ids.includes('read-operating-manual'), 'a pillar grant must NOT surface the operating-manual chip');
+});
+
+test('capabilityChipsForGrants: a Big-Bet plan grant surfaces the goals chip', () => {
+  const grants: ChipGrants = { ...EMPTY_GRANTS, plan: [{ id: 'bigbet:b_1', capability: 'Read' }] };
+  const ids = capabilityChipsForGrants(grants, null).map((c) => c.id);
+  assert.ok(ids.includes('use-goals'), 'a big-bet grant surfaces the goals chip');
+  assert.ok(!ids.includes('read-operating-manual'));
+});
+
+test('capabilityChipsForGrants: an Operating-Model plan grant surfaces the manual, not goals', () => {
+  const grants: ChipGrants = { ...EMPTY_GRANTS, plan: [{ id: 'manual:domain', capability: 'Read' }] };
+  const ids = capabilityChipsForGrants(grants, null).map((c) => c.id);
+  assert.ok(ids.includes('read-operating-manual'), 'a manual grant surfaces the operating-manual chip');
+  assert.ok(!ids.includes('use-goals'), 'a manual grant must NOT surface the goals chip');
 });
 
 test('capabilityChipsForGrants: full grants → all chips offered (catalog null = no catalog filter)', () => {

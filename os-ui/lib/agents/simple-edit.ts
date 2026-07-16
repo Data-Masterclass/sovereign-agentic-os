@@ -37,6 +37,22 @@ export function setAgentRole(input: System, id: string, role: string): System {
 }
 
 /**
+ * Set an agent's optional SHORT NAME — a concise handle shown in Run/Evaluate in
+ * place of the full role. Presentation-only: the agent `id` is untouched. A blank
+ * value CLEARS it (delete the key) so the serialized `system.yaml` stays byte-stable
+ * when no short name is set.
+ */
+export function setAgentShortName(input: System, id: string, shortName: string): System {
+  const sys = structuredClone(input);
+  const a = sys.agents.find((x) => x.id === id);
+  if (!a) throw new SystemError(`Simple: '${id}' is not a declared agent`);
+  const trimmed = shortName.trim();
+  if (trimmed) a.shortName = trimmed;
+  else delete a.shortName;
+  return sys;
+}
+
+/**
  * Set an agent's plain "Instructions" — mapped losslessly to the AGENT.md body via
  * {@link setInstructions}, keeping any leading `# Title` heading. This writes the
  * exact same `agents[].agent_md` (projected to `agents/<id>/AGENT.md`) that

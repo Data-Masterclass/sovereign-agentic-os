@@ -11,7 +11,7 @@ import { classifyModelNeed } from '@/lib/agents/routing';
 import { instructionsOf } from '@/lib/agents/agent-md';
 import {
   addSimpleAgent, moveAgent, removeAgentSimple,
-  setAgentInstructions, setAgentRole, setArtifactGrant, removeArtifactGrant,
+  setAgentInstructions, setAgentRole, setAgentShortName, setArtifactGrant, removeArtifactGrant,
   setDescription, addAgentTool, setDataGrantLayer,
   setFolderGrant, removeFolderGrant, setArtifactGrantLevel, setFolderGrantLevel,
 } from '@/lib/agents/simple-edit';
@@ -33,6 +33,8 @@ import { AGENT_TEMPLATES, agentTemplate, type AgentTemplateKey } from '@/lib/age
 import { runChecks, allChecksPass } from '@/lib/agents/build/run-checks';
 import type { DiagRun } from '@/lib/agents/build/run-diagnostics';
 import { dimensionLabel, type JudgeResult } from '@/lib/agents/evaluate-judge';
+import { downloadEvalPdf } from '@/lib/agents/build/agent-pdf';
+import { useUser } from '@/lib/useUser';
 
 /**
  * Simple mode — the guided builder for non-coders, now a FIVE-phase path:
@@ -214,6 +216,7 @@ export default function SimpleBuilder({
           </p>
           <BuildRunPanel
             systemId={systemId}
+            system={system}
             running={buildRun.running}
             canEdit={canEdit}
             lastBuild={buildRun.lastBuild}
@@ -239,6 +242,7 @@ export default function SimpleBuilder({
           </p>
           <BuildRunPanel
             systemId={systemId}
+            system={system}
             running={buildRun.running}
             canEdit={canEdit}
             lastBuild={buildRun.lastBuild}
@@ -262,9 +266,10 @@ export default function SimpleBuilder({
             Check the run against clear, honest tests — deterministic checks first, then an optional
             AI judge — and download a report.
           </p>
-          <EvaluateStep systemId={systemId} lastRun={buildRun.lastRun} canEdit={editable} />
+          <EvaluateStep systemId={systemId} system={system} lastRun={buildRun.lastRun} canEdit={editable} />
           <BuildRunPanel
             systemId={systemId}
+            system={system}
             running={buildRun.running}
             canEdit={canEdit}
             lastBuild={buildRun.lastBuild}
@@ -699,8 +704,10 @@ function AgentCard({
 
   const [role, setRole] = useState(agent.role);
   const [instr, setInstr] = useState(() => instructionsOf(agent.agent_md));
+  const [shortName, setShortName] = useState(agent.shortName ?? '');
   useEffect(() => { setRole(agent.role); }, [agent.role]);
   useEffect(() => { setInstr(instructionsOf(agent.agent_md)); }, [agent.agent_md]);
+  useEffect(() => { setShortName(agent.shortName ?? ''); }, [agent.shortName]);
 
   const effectiveTools = agent.tools ?? system.grants.tools;
   const auto = classifyModelNeed(effectiveTools, `${agent.id} ${role} ${instr}`);
@@ -712,6 +719,10 @@ function AgentCard({
   const saveInstr = () => {
     if (instr === instructionsOf(agent.agent_md)) return;
     onCommit(setAgentInstructions(system, agentId, instr));
+  };
+  const saveShortName = () => {
+    if (shortName.trim() === (agent.shortName ?? '').trim()) return;
+    onCommit(setAgentShortName(system, agentId, shortName));
   };
 
   return (
@@ -743,6 +754,18 @@ function AgentCard({
         onChange={(e) => setRole(e.target.value)}
         onBlur={saveRole}
         placeholder="e.g. Analyst — reads sources and explains the findings"
+      />
+
+      <label className="sb-field-label" htmlFor={`short-${agentId}`} style={{ marginTop: 10 }}>Short name (optional)</label>
+      <input
+        id={`short-${agentId}`}
+        type="text"
+        value={shortName}
+        disabled={!canEdit}
+        onChange={(e) => setShortName(e.target.value)}
+        onBlur={saveShortName}
+        onKeyDown={(e) => { if (e.key === 'Enter') saveShortName(); }}
+        placeholder="e.g. Analyst — a concise handle shown in Run & Evaluate"
       />
 
       <label className="sb-field-label" htmlFor={`instr-${agentId}`} style={{ marginTop: 10 }}>Instructions</label>
@@ -1125,18 +1148,41 @@ function lastRunToDiag(lastRun: NonNullable<BuildRunProps['lastRun']>): DiagRun 
  * relocated into the shared panel's `evaluate` phase.
  */
 function EvaluateStep({
-  systemId, lastRun, canEdit,
+  systemId, system, lastRun, canEdit,
 }: {
   systemId: string;
+  system: System;
   lastRun: BuildRunProps['lastRun'];
   canEdit: boolean;
 }) {
+  const { user } = useUser();
   const [judge, setJudge] = useState<JudgeResult | null>(null);
   const [judging, setJudging] = useState(false);
   const [judgeErr, setJudgeErr] = useState('');
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfErr, setPdfErr] = useState('');
 
   const checks = useMemo(() => (lastRun ? runChecks(lastRunToDiag(lastRun)) : []), [lastRun]);
   const output = lastRun?.output ?? '';
+
+  // The Evaluate PDF: the visual graph first, then the on-screen Evaluate content
+  // (checks + AI judge — the judge only when it has actually been run), then the
+  // three mandated appendices (Results · Define settings · Agent descriptions).
+  const downloadEval = async () => {
+    if (!lastRun) return;
+    setPdfBusy(true);
+    setPdfErr('');
+    try {
+      await downloadEvalPdf(system, lastRunToDiag(lastRun), checks, judge, {
+        ranBy: user?.name ?? 'unknown',
+        at: lastRun.at ?? Date.now(),
+      });
+    } catch (e) {
+      setPdfErr(`Could not generate the PDF report: ${(e as Error).message}`);
+    } finally {
+      setPdfBusy(false);
+    }
+  };
 
   const runJudge = async () => {
     if (judging) return;
@@ -1164,6 +1210,20 @@ function EvaluateStep({
 
   return (
     <div className="sb-resources" style={{ marginBottom: 12 }}>
+      {/* The Evaluate PDF button sits ABOVE the content it captures: the visual graph,
+          then this on-screen Evaluate content, then the three appendices. */}
+      <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 6 }}>
+        <button
+          className="btn ghost"
+          onClick={downloadEval}
+          disabled={pdfBusy}
+          title="Download a PDF: the system graph, this evaluation, and the results / settings / agent appendices"
+        >
+          {pdfBusy ? <span className="spin" /> : 'Download PDF Evaluation Report'}
+        </button>
+      </div>
+      {pdfErr ? <div className="error" style={{ marginBottom: 8 }}>{pdfErr}</div> : null}
+
       {/* Deterministic checks — green/red, zero-cost, no model. */}
       <div className="row" style={{ alignItems: 'center', gap: 8 }}>
         <h2 className="sb-section-title" style={{ margin: 0 }}>Checks</h2>

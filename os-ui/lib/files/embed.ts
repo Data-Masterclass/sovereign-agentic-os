@@ -72,8 +72,18 @@ export async function embedTexts(texts: string[]): Promise<EmbedResult> {
     try {
       const json = (await res.json()) as { data?: { embedding: number[] }[] };
       const data = json.data ?? [];
-      if (data.length === texts.length && Array.isArray(data[0]?.embedding) && data[0].embedding.length > 0) {
-        return { vectors: data.map((d) => d.embedding), model, dim: data[0].embedding.length, mode: 'live' };
+      // Only trust the live result if EVERY row came back at the index's configured
+      // dimension. The `files` knn_vector field is mapped at `config.filesEmbedDim`;
+      // a live vector of any other length is REJECTED by OpenSearch at write time and
+      // can never match a query vector — so a dim mismatch (a mis-pointed alias) must
+      // fall back to the deterministic mock at the correct dim, never silently index
+      // un-searchable rows. Mirrors the knowledge `embed.ts` dim guard.
+      const dim = config.filesEmbedDim;
+      if (
+        data.length === texts.length &&
+        data.every((d) => Array.isArray(d?.embedding) && d.embedding.length === dim)
+      ) {
+        return { vectors: data.map((d) => d.embedding), model, dim, mode: 'live' };
       }
     } catch {
       /* fall through to mock */

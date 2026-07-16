@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSystem, serializeSystem } from './system-schema.ts';
 import {
-  setAgentRole, setAgentInstructions, setSystemTools, addSystemTool, removeSystemTool,
+  setAgentRole, setAgentInstructions, setAgentShortName, setSystemTools, addSystemTool, removeSystemTool,
   addSimpleAgent, moveAgent, nextAgentId, addArtifactGrant, removeArtifactGrant,
   addAgentTool, removeAgentTool, removeAgentSimple, setArtifactGrant, setDataGrantLayer,
   setFolderGrant, removeFolderGrant, linearizeChain,
@@ -306,4 +306,20 @@ edges:
   const chained = linearizeChain(sys);
   const e = chained.edges.find((x) => x.from === 'a' && x.to === 'b')!;
   assert.equal(e.when, 'A complete', 'label carried through the re-chain');
+});
+
+test('setAgentShortName sets, clears on blank, and never touches the id', () => {
+  const sys = parseSystem(BASE);
+  const set = setAgentShortName(sys, 'analyst', 'Ana');
+  assert.equal(set.agents[0].shortName, 'Ana');
+  assert.equal(set.agents[0].id, 'analyst', 'id is stable');
+  assert.ok(serializeSystem(set).includes('shortName: Ana'));
+
+  // A blank value CLEARS the short name (byte-stable — key removed).
+  const cleared = setAgentShortName(set, 'analyst', '   ');
+  assert.equal(cleared.agents[0].shortName, undefined);
+  assert.ok(!serializeSystem(cleared).includes('shortName'));
+
+  // Never mutates the input System.
+  assert.equal(sys.agents[0].shortName, undefined);
 });
