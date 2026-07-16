@@ -11,11 +11,13 @@ import {
 } from '@/lib/mcp/server';
 import { ALL_WRITE_TOOLS } from '@/lib/mcp/write-tools';
 import type { ToolExecutor, ToolSpec } from '@/lib/assistant/agentic';
-import type { System, SafetyPreset } from '../system-schema.ts';
+import type { ArtifactGrant, System, SafetyPreset } from '../system-schema.ts';
 import { type Effect } from '../gateway.ts';
 import { principalFor } from './runtime-contract.ts';
 import { trace as realTrace } from '@/lib/infra/agent-governed';
 import { enqueue as realEnqueue } from '@/lib/governance/approvals';
+import { resolveFolderGrant } from '@/lib/core/folders';
+import { config } from '@/lib/core/config';
 
 /**
  * THE ONE reusable core that lets an INTERNAL agent (Agents tab) call the SAME
@@ -126,6 +128,182 @@ const LAYER_AWARE_DATA_TOOLS = new Set(['get_dataset', 'profile_dataset']);
  */
 export function grantedLayerFor(sys: System, datasetId: string): 'bronze' | 'silver' | 'gold' | undefined {
   return sys.grants.data.find((g) => g.id === datasetId)?.layer;
+}
+
+// ------------------------------------------------------------- folder grants --
+
+/** A folder-grant kind — the tabs that carry per-item folders (Wave 2/3). */
+export type FolderGrantKind = 'data' | 'knowledge' | 'files';
+export const FOLDER_GRANT_KINDS: FolderGrantKind[] = ['data', 'knowledge', 'files'];
+
+/** One already-DLS-scoped item the folder-grant kernel resolves against. */
+export type ScopedItem = { id: string; folder: string };
+
+/**
+ * Loads the OWNER-delegated, already-canView/DLS-scoped item list for `(kind, scope)`
+ * — the SAME scoped list the `grants/available` route surfaces. Injected so the pure
+ * folder-grant resolution is unit-testable without the server-only stores.
+ */
+export type ScopedItemsLoader = (
+  kind: FolderGrantKind,
+  scope: 'personal' | 'domain',
+) => Promise<ScopedItem[]>;
+
+/** One folder grant's resolution outcome (for the trace + honesty). */
+export type FolderResolution = {
+  kind: FolderGrantKind;
+  path: string;
+  scope: 'personal' | 'domain';
+  /** Item ids the grant resolves to (already budget-capped). */
+  ids: string[];
+  /** Items under the folder BEFORE the budget cap (P) — `ids.length` is M. */
+  total: number;
+  /** True when the budget cap dropped items (`total > ids.length`). */
+  capped: boolean;
+};
+
+/**
+ * THE RUN/BUILD-TIME FOLDER-GRANT RESOLVER. For each folder grant in data/knowledge/
+ * files, load the owner's ALREADY-DLS-scoped item list for `(kind, folder.scope)` and
+ * resolve it through the pure kernel `resolveFolderGrant` → the concrete item ids the
+ * folder currently covers, capped at `config.folderGrantBudget`. Each id is then fed
+ * into the EXISTING per-item grant list (`grants.data` / `grants.knowledge`) at the
+ * folder grant's capability — the same path an explicit item grant takes, which the
+ * data plane DLS/OPA-checks independently per call. This makes the folder grant SAFE:
+ * because `scopedItems` is bounded by what the owner may see, the resolved set can only
+ * ever be a SUBSET of the owner's grantable set — a folder grant can never widen access.
+ *
+ * Late-binding: the live scoped list is read on every call, so an item added under a
+ * granted folder is picked up on the NEXT run with no re-save. Files carry no per-item
+ * grant list (file tools act over the caller's own DLS), so a files folder grant only
+ * contributes to the trace/subset accounting — its per-file access stays live at call
+ * time. Pure input → new System; the folder grants themselves are LEFT in place so the
+ * next run re-resolves them.
+ *
+ * Returns the expanded system + the per-grant resolutions (for the "resolved M of P"
+ * trace). Budget is `budget ?? config.folderGrantBudget`.
+ */
+export async function resolveFolderGrants(
+  sys: System,
+  load: ScopedItemsLoader,
+  budget: number = config.folderGrantBudget,
+): Promise<{ system: System; resolutions: FolderResolution[] }> {
+  const resolutions: FolderResolution[] = [];
+  // Shallow-clone the grant lists we may extend (never mutate the input).
+  const next: System = {
+    ...sys,
+    grants: {
+      ...sys.grants,
+      data: [...sys.grants.data],
+      knowledge: [...sys.grants.knowledge],
+      files: [...sys.grants.files],
+    },
+  };
+
+  for (const kind of FOLDER_GRANT_KINDS) {
+    const list = next.grants[kind];
+    const folderGrants = list.filter((g) => g.folder);
+    if (folderGrants.length === 0) continue;
+    // Item ids ALREADY granted explicitly (so a folder never double-adds an item).
+    const already = new Set(list.filter((g) => !g.folder && g.id).map((g) => g.id));
+    for (const g of folderGrants) {
+      const folder = g.folder!;
+      const scoped = await load(kind, folder.scope);
+      const allIds = resolveFolderGrant(folder.path, scoped);
+      const capped = allIds.length > budget;
+      const ids = capped ? allIds.slice(0, budget) : allIds;
+      resolutions.push({ kind, path: folder.path, scope: folder.scope, ids, total: allIds.length, capped });
+      // Materialise into the per-item grant list (data/knowledge only — files carry no
+      // per-item list). New item grants inherit the folder grant's capability.
+      if (kind !== 'files') {
+        for (const id of ids) {
+          if (already.has(id)) continue;
+          already.add(id);
+          const grant: ArtifactGrant = { id, capability: g.capability };
+          list.push(grant);
+        }
+      }
+    }
+  }
+  return { system: next, resolutions };
+}
+
+/**
+ * The REAL, server-backed {@link ScopedItemsLoader}: reads the SAME canView/DLS-scoped
+ * lists the `grants/available` route surfaces, as the acting `user`, and projects each
+ * item to `{ id, folder }` for the folder kernel. `personal` reads the caller's own
+ * lane (`mine`); `domain` reads the shared-in-domain lane. Knowledge folds BOTH the
+ * workflow catalog (no folders → root) and the foldered personal-knowledge entries.
+ * Never widens: it is exactly the owner-grantable universe, so the kernel's result is
+ * provably a subset.
+ */
+export function serverScopedItemsLoader(user: CurrentUser): ScopedItemsLoader {
+  const principal = { id: user.id, domains: user.domains, role: user.role };
+  return async (kind, scope) => {
+    if (kind === 'data') {
+      const { listDatasets, ensureHydrated } = await import('@/lib/data/store');
+      await ensureHydrated();
+      const g = listDatasets(principal);
+      const group = scope === 'personal' ? g.mine : g.domain;
+      return group.map((d) => ({ id: d.id, folder: d.folder }));
+    }
+    if (kind === 'files') {
+      const { listFiles, ensureHydrated } = await import('@/lib/files/store');
+      await ensureHydrated();
+      const g = listFiles(principal);
+      const group = scope === 'personal' ? g.mine : g.domain;
+      return group.map((f) => ({ id: f.id, folder: f.folder }));
+    }
+    // knowledge — workflows (no folder → root) ∪ foldered personal-knowledge entries.
+    const [{ listWorkflows, ensureHydrated: ensureWf }, { listPersonalKnowledge, ensureHydrated: ensurePk }] =
+      await Promise.all([import('@/lib/knowledge/store'), import('@/lib/knowledge/personal-store')]);
+    await Promise.all([ensureWf(), ensurePk()]);
+    const wf = listWorkflows(principal);
+    const pk = listPersonalKnowledge(principal);
+    const wfGroup = scope === 'personal' ? wf.mine : wf.domain;
+    const pkGroup = scope === 'personal' ? pk.mine : pk.domain;
+    return [
+      ...wfGroup.map((w) => ({ id: w.id, folder: '/' })),
+      ...pkGroup.map((p) => ({ id: p.id, folder: p.folder })),
+    ];
+  };
+}
+
+/**
+ * Resolve a system's folder grants against the acting user's live scoped lists and
+ * mirror a "resolved M of P" note per grant to the Monitoring trace (best-effort; a
+ * trace failure never blocks the run). The single governed entry point the run/build
+ * seam calls before compiling tools. Returns the expanded system.
+ */
+export async function resolveFolderGrantsForRun(
+  user: CurrentUser,
+  sys: System,
+  systemId: string,
+  deps: Pick<OsToolDeps, 'trace'> = { trace: realTrace },
+): Promise<System> {
+  // Fast path: no folder grants anywhere ⇒ nothing to resolve (zero store reads).
+  const hasFolder =
+    sys.grants.data.some((g) => g.folder) ||
+    sys.grants.knowledge.some((g) => g.folder) ||
+    sys.grants.files.some((g) => g.folder);
+  if (!hasFolder) return sys;
+
+  const { system, resolutions } = await resolveFolderGrants(sys, serverScopedItemsLoader(user));
+  const principal = principalFor(systemId);
+  for (const r of resolutions) {
+    try {
+      await deps.trace({
+        principal,
+        tool: `folder_grant.${r.kind}`,
+        input: { path: r.path, scope: r.scope },
+        output: { decision: 'allow', resolved: r.ids.length, of: r.total, capped: r.capped },
+        decision: 'allow',
+      });
+    } catch {
+      /* attribution is best-effort */
+    }
+  }
+  return system;
 }
 
 /**

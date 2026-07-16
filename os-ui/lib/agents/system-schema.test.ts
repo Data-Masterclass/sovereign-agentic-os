@@ -354,3 +354,67 @@ agents:
   assert.equal(downgradeGrantsForRole(sys, 'builder').grants.data[0].capability, 'Write-bounded');
   assert.equal(downgradeGrantsForRole(sys, 'admin').grants.data[0].capability, 'Write-bounded');
 });
+
+// ── Wave 3: folder grants ───────────────────────────────────────────────────
+
+test('folder grant round-trips through parse → serialize → parse', () => {
+  const yaml = `
+version: "1"
+system: { name: T, domain: sales, visibility: Personal }
+entrypoint: a
+grants:
+  data:
+    - { id: d1, capability: Read }
+    - { folder: { path: /contracts, scope: personal }, capability: Read }
+  files:
+    - { folder: { path: /invoices, scope: domain }, capability: Write-bounded }
+agents:
+  - { id: a, role: r, agent_md: "", memory_md: "" }
+`;
+  const sys = parseSystem(yaml);
+  // The folder grant carries an empty id + a normalised {path,scope}.
+  const fg = sys.grants.data.find((g) => g.folder)!;
+  assert.equal(fg.id, '');
+  assert.equal(fg.folder!.path, '/contracts');
+  assert.equal(fg.folder!.scope, 'personal');
+  assert.equal(sys.grants.files[0].folder!.path, '/invoices');
+  assert.equal(sys.grants.files[0].folder!.scope, 'domain');
+  assert.equal(sys.grants.files[0].capability, 'Write-bounded');
+  // Item grant is still present alongside the folder grant.
+  assert.ok(sys.grants.data.some((g) => g.id === 'd1' && !g.folder));
+  // Byte-stable across a second round-trip.
+  const round = serializeSystem(sys);
+  assert.equal(serializeSystem(parseSystem(round)), round);
+});
+
+test('back-compat: a pre-Wave-3 system.yaml stays byte-stable (no grants.files key)', () => {
+  const yaml = serializeSystem(parseSystem(`
+version: "1"
+system: { name: T, domain: sales, visibility: Personal }
+entrypoint: a
+grants:
+  tools: [search_knowledge]
+  data: [{ id: d1, capability: Read }]
+agents:
+  - { id: a, role: r, agent_md: "", memory_md: "" }
+`));
+  // No folder grant anywhere ⇒ the additive `files` key is NEVER emitted.
+  assert.ok(!yaml.includes('files:'), 'grants.files omitted when empty');
+  // And a re-parse + re-serialize is identical (stable).
+  assert.equal(serializeSystem(parseSystem(yaml)), yaml);
+});
+
+test('a Write-bounded folder grant is builder-gated like an item grant', () => {
+  const sys = parseSystem(`
+entrypoint: a
+grants:
+  data:
+    - { folder: { path: /x, scope: personal }, capability: Write-bounded }
+agents:
+  - { id: a, role: r, agent_md: "", memory_md: "" }
+`);
+  // A creator introducing a direct-write folder grant is rejected at the save boundary.
+  assert.throws(() => assertGrantsWithinRole(sys, 'creator'), /Write-bounded|direct/i);
+  // Runtime downgrade folds it to held-for-approval for a non-builder owner.
+  assert.equal(downgradeGrantsForRole(sys, 'creator').grants.data[0].capability, 'Write-approval');
+});

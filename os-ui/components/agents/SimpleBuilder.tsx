@@ -13,9 +13,11 @@ import {
   addSimpleAgent, moveAgent, removeAgentSimple,
   setAgentInstructions, setAgentRole, setArtifactGrant, removeArtifactGrant,
   setDescription, addAgentTool, removeAgentTool, setDataGrantLayer,
+  setFolderGrant, removeFolderGrant,
 } from '@/lib/agents/simple-edit';
+import FolderTree, { type FolderSelection } from '@/components/core/FolderTree';
+import { itemsUnderFolder, normaliseFolderPath } from '@/lib/core/folders';
 import {
-  writeToolsForKind, type GrantKind,
   capabilityChipsForGrants, toolsForCapabilityChips, chipIdsForTools,
 } from '@/lib/agents/capability-tools';
 import { setEntrypoint } from '@/lib/agents/canvas-edit';
@@ -1130,7 +1132,9 @@ function EvaluateStep({
   );
 }
 
-type Available = { id: string; name: string; scope: 'personal' | 'domain' | 'marketplace'; layers?: DataLayer[] };
+type Available = { id: string; name: string; scope: 'personal' | 'domain' | 'marketplace'; layers?: DataLayer[]; folder?: string };
+type FolderNode = { path: string; scope: 'personal' | 'domain' };
+type AvailableFeed = { items: Available[]; folders?: FolderNode[] };
 
 /** Highest built layer of a dataset (Gold > Silver > Bronze), or null if none built. */
 function highestLayer(layers: DataLayer[] | undefined): DataLayer | null {
@@ -1141,10 +1145,229 @@ function highestLayer(layers: DataLayer[] | undefined): DataLayer | null {
   return null;
 }
 
-/** True when the write tools for `kind` are all present in the team's tool pool. */
-function hasWriteTools(system: System, kind: GrantKind): boolean {
-  const w = writeToolsForKind(kind);
-  return w.length > 0 && w.every((t) => system.grants.tools.includes(t));
+/** The folder grants of a kind currently on the system (each `{path,scope}`). */
+function folderGrantsOf(system: System, kind: 'data' | 'knowledge' | 'files'): FolderNode[] {
+  return system.grants[kind]
+    .filter((g) => g.folder)
+    .map((g) => ({ path: g.folder!.path, scope: g.folder!.scope }));
+}
+
+/**
+ * Apply a FolderTree {@link FolderSelection} onto the system for one foldered kind,
+ * as a minimal diff that PRESERVES existing per-item write capabilities. Folder grants
+ * and item grants both default to Read on first tick; the write toggle below the tree
+ * is what lifts a specific grant. Files carry NO per-item list, so only their folder
+ * grants are applied (individual file ticks are inert — surfaced in the UI hint).
+ */
+function applyFolderSelection(
+  system: System,
+  kind: 'data' | 'knowledge' | 'files',
+  sel: FolderSelection,
+  itemLayer: (id: string) => DataLayer,
+): System {
+  let next = system;
+  const key = (f: { path: string; scope: string }) => `${f.scope}:${normaliseFolderPath(f.path)}`;
+
+  // ── Folder grants: add newly-selected, remove de-selected. ──
+  const wantFolders = new Set(sel.folderGrants.map(key));
+  const haveFolders = folderGrantsOf(system, kind);
+  for (const f of sel.folderGrants) {
+    if (!haveFolders.some((h) => key(h) === key(f))) next = setFolderGrant(next, kind, f, false);
+  }
+  for (const h of haveFolders) {
+    if (!wantFolders.has(key(h))) next = removeFolderGrant(next, kind, h);
+  }
+
+  // ── Item grants (data/knowledge only — files have no per-item list). ──
+  if (kind !== 'files') {
+    const wantItems = new Set(sel.itemGrants);
+    const haveItems = next.grants[kind].filter((g) => !g.folder && g.id).map((g) => g.id);
+    for (const id of sel.itemGrants) {
+      if (!haveItems.includes(id)) next = setArtifactGrant(next, kind, id, false, itemLayer(id));
+    }
+    for (const id of haveItems) {
+      if (!wantItems.has(id)) next = removeArtifactGrant(next, kind, id);
+    }
+  }
+  return next;
+}
+
+/**
+ * Wave-3 folder-aware grant picker for the FOLDERED kinds (data · knowledge · files).
+ * Renders the shared `<FolderTree variant="checkbox">` over the DLS-scoped feed so the
+ * author ticks whole FOLDERS (→ a folder grant that late-binds to every item under it,
+ * incl. future ones) or individual ITEMS. The feed is already DLS-scoped, so only
+ * grantable items show — a folder that also holds ungrantable items simply renders as
+ * a partial (tri-state) tick, honest by construction. Granted resources are listed
+ * below with their access toggle (Read / Can-write) + medallion layer (data), reusing
+ * the same controls the flat picker used. Marketplace items (no folder tree) keep a
+ * small supplementary add-picker so nothing that was grantable before is lost.
+ */
+function FolderResourcePicker({
+  systemId, system, kind, label, canEdit, onCommit,
+}: {
+  systemId: string;
+  system: System;
+  kind: 'data' | 'knowledge' | 'files';
+  label: string;
+  canEdit: boolean;
+  onCommit: (next: System) => void;
+}) {
+  const [feed, setFeed] = useState<AvailableFeed | null>(null);
+  const [loadErr, setLoadErr] = useState('');
+  const [mktOpen, setMktOpen] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    setLoadErr('');
+    fetch(`/api/agents/systems/${systemId}/grants/available?kind=${kind}`, { cache: 'no-store' })
+      .then(async (res) => {
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? 'Failed to load');
+        if (alive) setFeed(body as AvailableFeed);
+      })
+      .catch((e) => { if (alive) setLoadErr((e as Error).message); });
+    return () => { alive = false; };
+  }, [systemId, kind]);
+
+  const items = feed?.items ?? [];
+  const folders = feed?.folders ?? [];
+  const availOf = (id: string) => items.find((a) => a.id === id);
+  const nameOf = (id: string) => availOf(id)?.name ?? (id.includes('_') ? id.split('_').slice(1).join('_') : id);
+  const layersOf = (id: string): DataLayer[] => availOf(id)?.layers ?? [];
+  const layerFor = (id: string): DataLayer => (kind === 'data' ? (highestLayer(layersOf(id)) ?? 'gold') : 'gold');
+
+  // Split the feed: foldered (personal/domain) items feed the tree; marketplace items
+  // (no folder tree) keep a flat supplementary picker.
+  const treeItems = items
+    .filter((a) => a.scope === 'personal' || a.scope === 'domain')
+    .map((a) => ({ id: a.id, folder: a.folder ?? '/', name: a.name }));
+  const personalNodes = folders.filter((f) => f.scope === 'personal').map((f) => ({ path: f.path }));
+  const domainNodes = folders.filter((f) => f.scope === 'domain').map((f) => ({ path: f.path }));
+  const mktItems = items.filter((a) => a.scope === 'marketplace');
+
+  // Currently-checked ids = explicit item grants ∪ every feed item under a granted folder
+  // (so a folder grant renders as a fully-ticked folder). Files: only folders drive checks.
+  const grantList = system.grants[kind];
+  const itemGrantIds = new Set(grantList.filter((g) => !g.folder && g.id).map((g) => g.id));
+  const checked = new Set<string>(kind === 'files' ? [] : itemGrantIds);
+  for (const g of grantList) {
+    if (!g.folder) continue;
+    for (const it of itemsUnderFolder(g.folder.path, treeItems)) checked.add(it.id);
+  }
+
+  const onChange = (sel: FolderSelection) => {
+    if (!canEdit) return;
+    onCommit(applyFolderSelection(system, kind, sel, layerFor));
+  };
+
+  // The granted chips (item grants + folder grants) shown below the tree with controls.
+  const grantedItems = grantList.filter((g) => !g.folder && g.id);
+  const grantedFolders = grantList.filter((g) => g.folder);
+  const writes = (cap: string) => cap === 'Write-approval' || cap === 'Write-bounded';
+  const mktGrantedIds = new Set(grantedItems.map((g) => g.id));
+  const addableMkt = mktItems.filter((a) => !mktGrantedIds.has(a.id));
+
+  return (
+    <div className="sb-resource">
+      <div className="sb-field-label" style={{ margin: '4px 0' }}>{label}</div>
+      {loadErr ? <div className="error" style={{ marginBottom: 6 }}>{loadErr}</div> : null}
+      {feed === null ? (
+        <p className="hint" style={{ marginTop: 0 }}>Loading…</p>
+      ) : treeItems.length === 0 && folders.length === 0 ? (
+        <p className="hint" style={{ marginTop: 0 }}>Nothing to grant — create or share {label.toLowerCase()} first.</p>
+      ) : (
+        <FolderTree
+          variant="checkbox"
+          personalNodes={personalNodes}
+          domainNodes={domainNodes}
+          items={treeItems}
+          checkedIds={[...checked]}
+          onChange={onChange}
+        />
+      )}
+
+      {/* Granted-resource controls — access level + (data) medallion layer. */}
+      {(grantedItems.length > 0 || grantedFolders.length > 0) ? (
+        <div className="sb-chips" style={{ marginTop: 8 }}>
+          {grantedFolders.map((g) => (
+            <span key={`f:${g.folder!.scope}:${g.folder!.path}`} className="sb-chip granted" style={{ gap: 8 }}>
+              <span>📁 {g.folder!.path === '/' ? 'All' : g.folder!.path}<span className="badge muted" style={{ marginLeft: 6 }}>{g.folder!.scope}</span></span>
+              {kind !== 'files' ? (
+                <AccessToggle
+                  write={writes(g.capability)}
+                  canEdit={canEdit}
+                  onRead={() => onCommit(setFolderGrant(system, kind, g.folder!, false))}
+                  onWrite={() => onCommit(setFolderGrant(system, kind, g.folder!, true))}
+                />
+              ) : null}
+              {canEdit ? (
+                <button className="sb-chip-x" title="Remove" onClick={() => onCommit(removeFolderGrant(system, kind, g.folder!))}>✕</button>
+              ) : null}
+            </span>
+          ))}
+          {grantedItems.map((g) => (
+            <span key={g.id} className="sb-chip granted" style={{ gap: 8 }}>
+              <span>{nameOf(g.id)}</span>
+              <AccessToggle
+                write={writes(g.capability)}
+                canEdit={canEdit}
+                onRead={() => onCommit(setArtifactGrant(system, kind, g.id, false))}
+                onWrite={() => onCommit(setArtifactGrant(system, kind, g.id, true))}
+              />
+              {kind === 'data' ? (
+                <LayerToggle
+                  layer={g.layer ?? highestLayer(layersOf(g.id)) ?? 'gold'}
+                  built={layersOf(g.id)}
+                  canEdit={canEdit}
+                  onPick={(l) => onCommit(setDataGrantLayer(system, g.id, l))}
+                />
+              ) : null}
+              {canEdit ? (
+                <button className="sb-chip-x" title="Remove" onClick={() => onCommit(removeArtifactGrant(system, kind, g.id))}>✕</button>
+              ) : null}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      {kind === 'files' ? (
+        <p className="hint" style={{ marginTop: 6, marginBottom: 0 }}>
+          Files are granted by <strong>folder</strong> — tick a folder to give the team every file under it (now and later).
+          Access follows the file store’s own permissions at run time.
+        </p>
+      ) : null}
+
+      {/* Marketplace supplementary picker — foldered trees only cover personal + domain. */}
+      {kind !== 'files' && canEdit && mktItems.length > 0 ? (
+        !mktOpen ? (
+          <button className="btn ghost sm" style={{ marginTop: 6 }} onClick={() => setMktOpen(true)}>
+            + Add from marketplace
+          </button>
+        ) : (
+          <div className="sb-resource-picker">
+            {addableMkt.length === 0 ? (
+              <p className="hint" style={{ marginTop: 0 }}>Nothing left to add.</p>
+            ) : (
+              <div className="sb-picker-list">
+                {addableMkt.map((a) => (
+                  <button
+                    key={a.id}
+                    className="sb-picker-row"
+                    title={a.id}
+                    onClick={() => onCommit(setArtifactGrant(system, kind, a.id, false, layerFor(a.id)))}
+                  >
+                    +<span>{a.name}</span><span className="badge muted">{a.scope}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <button className="btn ghost sm" style={{ marginTop: 8 }} onClick={() => setMktOpen(false)}>Done</button>
+          </div>
+        )
+      ) : null}
+    </div>
+  );
 }
 
 /**
@@ -1170,9 +1393,9 @@ function TeamResources({
         these. Choose <strong>Read</strong> to look only, or <strong>Can write</strong> to also create
         and change. The matching tools are granted automatically.
       </p>
-      <ResourcePicker systemId={systemId} system={system} kind="data" label="Data" canEdit={canEdit} onCommit={onCommit} />
-      <ResourcePicker systemId={systemId} system={system} kind="knowledge" label="Knowledge" canEdit={canEdit} onCommit={onCommit} />
-      <FilesGrant system={system} canEdit={canEdit} onCommit={onCommit} />
+      <FolderResourcePicker systemId={systemId} system={system} kind="data" label="Data" canEdit={canEdit} onCommit={onCommit} />
+      <FolderResourcePicker systemId={systemId} system={system} kind="knowledge" label="Knowledge" canEdit={canEdit} onCommit={onCommit} />
+      <FolderResourcePicker systemId={systemId} system={system} kind="files" label="Files" canEdit={canEdit} onCommit={onCommit} />
       <ResourcePicker systemId={systemId} system={system} kind="connections" label="Connections" canEdit={canEdit} onCommit={onCommit} />
       <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>
         Writes run directly or wait for approval depending on this team’s safety setting on the Define page.
@@ -1372,53 +1595,6 @@ function ResourcePicker({
             <button className="btn ghost sm" style={{ marginTop: 8 }} onClick={() => { setOpen(false); setSearch(''); }}>Done</button>
           </div>
         )
-      ) : null}
-    </div>
-  );
-}
-
-/**
- * Files grant — files carry NO per-artifact id list (file tools act over the caller's
- * own DLS), so this is a single Off / Read / Can-write control. State is derived from
- * whether the team's tool pool holds the file read/write tools (see capability-tools).
- */
-function FilesGrant({
-  system, canEdit, onCommit,
-}: {
-  system: System;
-  canEdit: boolean;
-  onCommit: (next: System) => void;
-}) {
-  const write = hasWriteTools(system, 'files');
-  const on = write || system.grants.tools.includes('list_files');
-
-  return (
-    <div className="sb-resource">
-      <div className="sb-field-label" style={{ margin: '4px 0' }}>Files</div>
-      <div className="sb-chips" style={{ alignItems: 'center' }}>
-        {on ? (
-          <span className="sb-chip granted" style={{ gap: 8 }}>
-            <span>Team files</span>
-            <AccessToggle
-              write={write}
-              canEdit={canEdit}
-              onRead={() => onCommit(setArtifactGrant(system, 'files', null, false))}
-              onWrite={() => onCommit(setArtifactGrant(system, 'files', null, true))}
-            />
-          </span>
-        ) : (
-          <span className="hint" style={{ marginTop: 0 }}>None yet.</span>
-        )}
-      </div>
-      {canEdit && !on ? (
-        <button className="btn ghost sm" style={{ marginTop: 6 }} onClick={() => onCommit(setArtifactGrant(system, 'files', null, false))}>
-          + Give file access
-        </button>
-      ) : null}
-      {canEdit && write ? (
-        <p className="hint" style={{ marginTop: 4, marginBottom: 0 }}>
-          File read tools stay granted; switch back to <strong>Read</strong> to drop write. Full removal lives in Developer mode.
-        </p>
       ) : null}
     </div>
   );

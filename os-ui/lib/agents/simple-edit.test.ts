@@ -8,6 +8,7 @@ import {
   setAgentRole, setAgentInstructions, setSystemTools, addSystemTool, removeSystemTool,
   addSimpleAgent, moveAgent, nextAgentId, addArtifactGrant, removeArtifactGrant,
   addAgentTool, removeAgentTool, removeAgentSimple, setArtifactGrant, setDataGrantLayer,
+  setFolderGrant, removeFolderGrant,
 } from './simple-edit.ts';
 import { instructionsOf } from './agent-md.ts';
 
@@ -199,4 +200,44 @@ test('setDataGrantLayer sets/clears the layer only on data grants', () => {
 
 test('setDataGrantLayer throws for an ungranted dataset', () => {
   assert.throws(() => setDataGrantLayer(parseSystem(BASE), 'ds_missing', 'silver'), /not a granted dataset/);
+});
+
+// ── Wave 3: folder grants ───────────────────────────────────────────────────
+
+test('setFolderGrant adds a folder grant AND provisions the SAME tools an item grant would', () => {
+  const next = setFolderGrant(parseSystem(BASE), 'data', { path: '/contracts', scope: 'personal' }, false);
+  const fg = next.grants.data.find((g) => g.folder)!;
+  assert.equal(fg.id, '');
+  assert.equal(fg.folder!.path, '/contracts');
+  assert.equal(fg.capability, 'Read');
+  // Same read tools an item grant of data would auto-provision (from capability-tools).
+  for (const t of ['query_data', 'list_datasets', 'get_dataset', 'profile_dataset']) {
+    assert.ok(next.grants.tools.includes(t), `provisions ${t}`);
+  }
+});
+
+test('setFolderGrant is idempotent + a write folder grant lifts read-only → read-bounded', () => {
+  let sys = parseSystem(BASE);
+  sys = setFolderGrant(sys, 'files', { path: '/invoices', scope: 'domain' }, true);
+  assert.equal(sys.safetyPreset, 'read-bounded');
+  assert.ok(sys.grants.tools.includes('upload_file'));
+  // Re-granting the same folder updates the SAME entry in place (no duplicate).
+  sys = setFolderGrant(sys, 'files', { path: '/invoices', scope: 'domain' }, false);
+  assert.equal(sys.grants.files.filter((g) => g.folder).length, 1);
+  assert.equal(sys.grants.files[0].capability, 'Read');
+});
+
+test('removeFolderGrant drops the folder grant + strips write tools when nothing writes', () => {
+  let sys = setFolderGrant(parseSystem(BASE), 'files', { path: '/invoices', scope: 'domain' }, true);
+  assert.ok(sys.grants.tools.includes('upload_file'));
+  sys = removeFolderGrant(sys, 'files', { path: '/invoices', scope: 'domain' });
+  assert.equal(sys.grants.files.length, 0);
+  assert.ok(!sys.grants.tools.includes('upload_file'), 'write tool stripped when no grant writes');
+});
+
+test('setFolderGrant is a pure edit (input untouched)', () => {
+  const base = parseSystem(BASE);
+  const before = serializeSystem(base);
+  setFolderGrant(base, 'knowledge', { path: '/policies', scope: 'personal' }, false);
+  assert.equal(serializeSystem(base), before);
 });

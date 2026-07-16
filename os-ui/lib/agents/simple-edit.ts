@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { type AgentSpec, type System, type Capability, type DataLayer, SystemError } from './system-schema.ts';
+import { type AgentSpec, type System, type Capability, type DataLayer, type FolderGrantTarget, SystemError } from './system-schema.ts';
+import { normaliseFolderPath } from '../core/folders.ts';
 import { setInstructions } from './agent-md.ts';
 import {
   type GrantKind,
@@ -209,6 +210,56 @@ export function removeArtifactGrant(input: System, kind: GrantKind, id: string |
   if (kind !== 'files' && id) sys.grants[kind] = sys.grants[kind].filter((g) => g.id !== id);
   const stillWrites =
     kind === 'files' ? false : sys.grants[kind].some((g) => capabilityWrites(g.capability));
+  if (!stillWrites) for (const t of writeToolsForKind(kind)) stripTool(sys, t);
+  return sys;
+}
+
+/**
+ * FOLDER grant (Wave 3) — grant the whole team every item CURRENTLY under a folder,
+ * late-bound at run time. A folder grant lives in the SAME per-kind list as item
+ * grants (`grants.<kind>`), keyed on `{path,scope}` with an empty `id`; Files (which
+ * carry no per-item list) hold their folder grants in the new `grants.files` list.
+ * Granting AUTO-PROVISIONS the exact SAME `toolsForGrant(kind, cap)` an item grant
+ * would (reusing the pure `capability-tools` map), so the team can actually USE what
+ * the folder covers — and a `write` grant lifts a still-`read-only` team to
+ * `read-bounded` so those writes RUN, exactly like {@link setArtifactGrant}. The
+ * concrete item ids are resolved at run/build time, never persisted here (so newly
+ * added items under the folder are picked up automatically). Idempotent — re-granting
+ * the same folder updates its capability in place.
+ */
+export function setFolderGrant(
+  input: System,
+  kind: GrantKind,
+  target: FolderGrantTarget,
+  write: boolean,
+): System {
+  const sys = structuredClone(input);
+  const cap: Capability = write ? 'Write-bounded' : 'Read';
+  const path = normaliseFolderPath(target.path);
+  const arr = sys.grants[kind];
+  const existing = arr.find((g) => g.folder && g.folder.scope === target.scope && g.folder.path === path);
+  if (existing) existing.capability = cap;
+  else arr.push({ id: '', capability: cap, folder: { path, scope: target.scope } });
+  // Provision the matching tools (ADD-only — never removes a hand-picked tool), the
+  // SAME set an item grant of this kind+capability provisions.
+  for (const t of toolsForGrant(kind, cap)) if (!sys.grants.tools.includes(t)) sys.grants.tools.push(t);
+  if (write && sys.safetyPreset === 'read-only') sys.safetyPreset = 'read-bounded';
+  return sys;
+}
+
+/**
+ * Remove a folder grant (idempotent). Read tools are LEFT in place (harmless, may be
+ * hand-picked); the kind's WRITE tools are stripped once no remaining grant of the
+ * kind writes — mirroring {@link removeArtifactGrant}, and counting BOTH item and
+ * folder grants of the kind.
+ */
+export function removeFolderGrant(input: System, kind: GrantKind, target: FolderGrantTarget): System {
+  const sys = structuredClone(input);
+  const path = normaliseFolderPath(target.path);
+  sys.grants[kind] = sys.grants[kind].filter(
+    (g) => !(g.folder && g.folder.scope === target.scope && g.folder.path === path),
+  );
+  const stillWrites = sys.grants[kind].some((g) => capabilityWrites(g.capability));
   if (!stillWrites) for (const t of writeToolsForKind(kind)) stripTool(sys, t);
   return sys;
 }

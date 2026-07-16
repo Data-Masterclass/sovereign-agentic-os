@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
-import { parseSystem, type System } from '../system-schema.ts';
+import { parseSystem, serializeSystem, type System } from '../system-schema.ts';
 import { handleRpc as realHandleRpc } from '@/lib/mcp/server';
 import {
   OS_TOOL_ALIASES,
@@ -14,6 +14,8 @@ import {
   grantedToolSpecs,
   grantedToolExecutor,
   grantedLayerFor,
+  resolveFolderGrants,
+  type ScopedItemsLoader,
   type OsToolDeps,
 } from './os-tools.ts';
 
@@ -294,4 +296,76 @@ test('an explicit layer arg from the agent is NOT overridden by the grant', asyn
   await exec('profile_dataset', { datasetId: 'ds_orders', layer: 'bronze' });
   const call = deps.calls.handleRpc[0] as { req: { params: { arguments: Record<string, unknown> } } };
   assert.equal(call.req.params.arguments.layer, 'bronze', 'agent-supplied layer wins');
+});
+
+// ── Wave 3: folder-grant resolution ─────────────────────────────────────────
+
+/** A system with one Read folder grant on data (personal /contracts). */
+function sysWithFolderGrant(): System {
+  return parseSystem({
+    version: '1',
+    system: { name: 'T', domain: 'sales', visibility: 'Personal' },
+    runtime: 'langgraph',
+    entrypoint: 'a',
+    grants: {
+      tools: ['query_data'],
+      data: [
+        { id: 'ds_explicit', capability: 'Read' },
+        { folder: { path: '/contracts', scope: 'personal' }, capability: 'Read' },
+      ],
+    },
+    agents: [{ id: 'a', role: 'agent', agent_md: '', memory_md: '' }],
+  });
+}
+
+test('resolveFolderGrants materialises ONLY items under the folder from the SCOPED list (subset invariant)', async () => {
+  const scoped = [
+    { id: 'ds_a', folder: '/contracts' },
+    { id: 'ds_b', folder: '/contracts/2024' }, // subfolder counts
+    { id: 'ds_c', folder: '/other' },          // NOT under the folder
+  ];
+  const load: ScopedItemsLoader = async (kind, scope) => {
+    assert.equal(kind, 'data');
+    assert.equal(scope, 'personal');
+    return scoped;
+  };
+  const { system, resolutions } = await resolveFolderGrants(sysWithFolderGrant(), load);
+  const ids = new Set(system.grants.data.filter((g) => !g.folder).map((g) => g.id));
+  // Resolved set ⊆ owner's grantable (scoped) set — never widened.
+  assert.ok([...ids].every((id) => id === 'ds_explicit' || scoped.some((s) => s.id === id)));
+  assert.ok(ids.has('ds_a') && ids.has('ds_b'), 'items under the folder are materialised');
+  assert.ok(!ids.has('ds_c'), 'an item OUTSIDE the folder is never granted');
+  assert.ok(ids.has('ds_explicit'), 'the pre-existing explicit item grant is preserved');
+  // The folder grant itself is LEFT in place so the next run re-resolves it.
+  assert.ok(system.grants.data.some((g) => g.folder), 'folder grant retained for late-binding');
+  assert.equal(resolutions[0].ids.length, 2);
+  assert.equal(resolutions[0].total, 2);
+});
+
+test('resolveFolderGrants caps at the folder-grant budget (records M of P)', async () => {
+  const scoped = Array.from({ length: 10 }, (_, i) => ({ id: `ds_${i}`, folder: '/contracts' }));
+  const load: ScopedItemsLoader = async () => scoped;
+  const { system, resolutions } = await resolveFolderGrants(sysWithFolderGrant(), load, 3);
+  const materialised = system.grants.data.filter((g) => !g.folder && g.id !== 'ds_explicit');
+  assert.equal(materialised.length, 3, 'capped to the budget');
+  assert.equal(resolutions[0].ids.length, 3); // M
+  assert.equal(resolutions[0].total, 10);     // P
+  assert.equal(resolutions[0].capped, true);
+});
+
+test('resolveFolderGrants is LATE-BINDING: an item added under the folder resolves next run', async () => {
+  const before = [{ id: 'ds_a', folder: '/contracts' }];
+  const after = [...before, { id: 'ds_new', folder: '/contracts' }];
+  const first = await resolveFolderGrants(sysWithFolderGrant(), async () => before);
+  assert.ok(!first.system.grants.data.some((g) => g.id === 'ds_new'));
+  // Re-resolve the ORIGINAL system against the now-larger live list — no re-save needed.
+  const second = await resolveFolderGrants(sysWithFolderGrant(), async () => after);
+  assert.ok(second.system.grants.data.some((g) => g.id === 'ds_new'), 'newly-added item picked up');
+});
+
+test('resolveFolderGrants is pure (input system untouched)', async () => {
+  const sys = sysWithFolderGrant();
+  const before = serializeSystem(sys);
+  await resolveFolderGrants(sys, async () => [{ id: 'ds_a', folder: '/contracts' }]);
+  assert.equal(serializeSystem(sys), before);
 });

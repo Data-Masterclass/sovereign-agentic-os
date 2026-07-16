@@ -7,11 +7,11 @@ import { getSystemForRun, setRunning, recordActivity, setActivity, clearActivity
 import type { LastRun } from '@/lib/agents/store';
 import { runSystem } from '@/lib/agents/build/server';
 import { runOsTeam } from '@/lib/agents/build/agentic-graph-server';
-import { isAgenticOsTeam } from '@/lib/agents/build/os-tools';
+import { isAgenticOsTeam, resolveFolderGrantsForRun } from '@/lib/agents/build/os-tools';
 import { classifyStepError, type AgenticGraphResult } from '@/lib/agents/build/agentic-graph';
 import { governYamlForOwner } from '@/lib/agents/build/owner-grants';
 import { deriveContextUsage } from '@/lib/agents/build/context-usage';
-import { parseSystem } from '@/lib/agents/system-schema';
+import { parseSystem, serializeSystem } from '@/lib/agents/system-schema';
 
 export const dynamic = 'force-dynamic';
 // A multi-node team walk (each node a PLAN→ACT loop on a large model) can run long;
@@ -226,7 +226,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // direct-write grant (set while the owner was a builder, or by an admin) is
     // downgraded to held-for-approval before this run — read live, never trusted
     // from the saved yaml.
-    const yaml = await governYamlForOwner(view.yaml, view.owner);
+    let yaml = await governYamlForOwner(view.yaml, view.owner);
+
+    // Wave 3 — resolve FOLDER grants to the concrete item ids they currently cover
+    // against the acting user's live DLS-scoped lists (late-binding; the resolved set
+    // is provably a subset of what the runner may see). No-op when there are no folder
+    // grants. Records a "resolved M of P" note per grant to the trace.
+    yaml = serializeSystem(
+      await resolveFolderGrantsForRun(resolvedUser, parseSystem(yaml), id),
+    );
 
     // Any agentic-os LangGraph team (data + knowledge + connections + software
     // grants, all resolving to the MCP registry) runs LIVE, in-process, as the

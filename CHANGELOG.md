@@ -15,6 +15,23 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.11] — 2026-07-16
+
+Folders, end to end — the agent-builder folder-grant browse-tree (completes #175).
+
+### Added
+- **Agent builder: grant folders or items via a browse-tree.** In "What your team can use",
+  Data · Knowledge · Files now render a `FolderTree` with tri-state checkboxes — tick a
+  **folder** to grant everything in it (and future contents), or tick individual **items**.
+  A folder grant (`ArtifactGrant.folder`) resolves to the folder's contents at run time
+  (late-binding — add an item later and the team gets it next run), capped by a budget, and
+  **every resolved item is still per-item DLS/OPA-checked** — so a folder grant is provably a
+  *subset* of what the owner could grant, never a widening. `system.yaml` stays byte-stable
+  when no folder grant is present.
+
+This closes the full folder feature: create folders on Data/Knowledge/Files → file items into
+them → grant folders or items to agents by checkbox.
+
 ## [os-ui 0.5.10] — 2026-07-16
 
 Folder management for Data/Knowledge/Files + "context actually used" in Evaluate.
