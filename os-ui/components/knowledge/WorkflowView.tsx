@@ -60,10 +60,12 @@ const VIS_CLASS: Record<string, string> = {
   Shared: 'vis-shared',
   Marketplace: 'vis-certified',
 };
+// Display labels from the OS-wide scope vocabulary (lib/core/scopes.ts):
+// Shared→Domain, Marketplace→Company. Keys stay the persisted visibility values.
 const VIS_LABEL: Record<string, string> = {
-  Personal: 'Personal',
-  Shared: 'Shared in Domain',
-  Marketplace: 'Marketplace',
+  Personal: 'My',
+  Shared: 'Domain',
+  Marketplace: 'Company',
 };
 
 const ACTORS: ActorType[] = ['Human', 'Software', 'Agent'];
@@ -307,7 +309,7 @@ export default function WorkflowView({
           : 'Promotion requested — a domain builder will review it.');
         return;
       }
-      setPubMsg(`Workflow is now ${d.visibility === 'Marketplace' ? 'in the Marketplace' : 'live'}.`);
+      setPubMsg(`Workflow is now ${d.visibility === 'Marketplace' ? 'certified company-wide' : 'live'}.`);
       await reload();
     } finally {
       setPublishing(false);
@@ -379,7 +381,7 @@ export default function WorkflowView({
           )}
           {data.canPublish && data.status === 'live' && data.visibility === 'Shared' && (
             <button className="btn ghost sm" onClick={() => void publish('certify')} disabled={publishing}>
-              {publishing ? <span className="spin" /> : 'Certify to Marketplace'}
+              {publishing ? <span className="spin" /> : 'Certify to Company'}
             </button>
           )}
           {/* Creator (can edit, cannot publish) files a governed promotion request

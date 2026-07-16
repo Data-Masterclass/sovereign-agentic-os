@@ -5,7 +5,7 @@
  * Tab visibility gate tests for the consolidated nav. The five-section matrix
  * (5 tabs each):
  *   Ungrouped (entry): Home, Cockpit, Tutorials, MCP (builder+), About / Licenses
- *   Plan:    Strategy, Big Bets, Operating Manual, Workflows, Marketplace
+ *   Plan:    Strategy, Big Bets, Operating Model, Workflows, Marketplace
  *   Context: Knowledge, Files, Data, Connections, Metrics
  *   Build:   Agents, Software, Science, Dashboards, Console (admin)
  *   Govern:  Policies & Approvals (builder+), Monitoring (builder+),
@@ -60,10 +60,10 @@ test('TAB-SET entry group is exactly Home + Cockpit + Tutorials + MCP + About / 
   );
 });
 
-test('TAB-SET Plan group is Strategy, Big Bets, Operating Manual, Workflows, Marketplace', () => {
+test('TAB-SET Plan group is Strategy, Big Bets, Operating Model, Workflows, Marketplace', () => {
   assert.deepEqual(
     PLAN_GROUP.tabs.map((t) => t.label),
-    ['Strategy', 'Big Bets', 'Operating Manual', 'Workflows', 'Marketplace'],
+    ['Strategy', 'Big Bets', 'Operating Model', 'Workflows', 'Marketplace'],
   );
 });
 

@@ -265,8 +265,8 @@ function FoundationsSection({ sc }: { sc: Scorecard }) {
       </div>
       {total === 0 ? (
         <p className="strat-section-empty">
-          No promoted or certified foundations yet — promote an artifact to Shared or certify it to the
-          Marketplace and it counts here.
+          No promoted or certified foundations yet — promote an artifact to Domain or certify it to
+          Company and it counts here.
         </p>
       ) : null}
     </section>

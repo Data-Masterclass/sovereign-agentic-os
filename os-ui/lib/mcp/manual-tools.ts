@@ -6,7 +6,7 @@ import type { CurrentUser } from '@/lib/core/auth';
 import type { Role } from '@/lib/core/session';
 import type { McpTool } from './server';
 
-// --- The EXACT governed store fns the Operating Manual tab + its API routes call --
+// --- The EXACT governed store fns the Operating Model tab + its API routes call --
 import {
   getManual,
   updateManual,
@@ -16,23 +16,23 @@ import {
 import { type ManualScope } from '@/lib/knowledge/manual';
 
 /**
- * THE OPERATING MANUAL MCP SURFACE. Four THIN wrappers over the SAME governed
- * `lib/knowledge/store` manual functions the Operating Manual tab + its `/api`
- * routes call, under the caller's delegated identity. The manual comes in three
+ * THE OPERATING MODEL MCP SURFACE. Four THIN wrappers over the SAME governed
+ * `lib/knowledge/store` manual functions the Operating Model tab + its `/api`
+ * routes call, under the caller's delegated identity. The model comes in three
  * scopes, each keyed + governed differently by `resolveManual` (lib/knowledge/manual.ts):
  *
- *   • my      — a PERSONAL manual, one per user.       Read + edit: OWNER only.
- *   • domain  — the per-domain operating manual.        Read: everyone in-domain.
- *                                                       Edit: domain_admin+ / owner.
- *   • company — the tenant-wide manual, one per org.    Read: everyone.
- *                                                       Edit: platform Admin only.
+ *   • my      — a PERSONAL operating model, one per user.  Read + edit: OWNER only.
+ *   • domain  — the per-domain operating model.             Read: everyone in-domain.
+ *                                                           Edit: domain_admin+ / owner.
+ *   • company — the tenant-wide operating model.            Read: everyone.
+ *                                                           Edit: platform Admin only.
  *
  * The per-scope view/edit gate is enforced INSIDE the store via `resolveManual`
  * (`canView` / `canEdit`) — never trusted from the client. A read floors at
  * `creator`; an edit/restore floors at `creator` too (a user always owns their My
- * manual), and the store refuses a Domain/Company edit the caller isn't entitled
- * to with a typed `forbidden`. Version history + restore reuse the shared version
- * log, identical for all three scopes.
+ * operating model), and the store refuses a Domain/Company edit the caller isn't
+ * entitled to with a typed `forbidden`. Version history + restore reuse the shared
+ * version log, identical for all three scopes.
  */
 
 const MANUAL_SCOPES: ManualScope[] = ['my', 'domain', 'company'];
@@ -66,7 +66,7 @@ export const MANUAL_TOOLS: McpTool[] = [
     tab: 'operating-manual',
     minRole: 'creator',
     description:
-      'Read an Operating Manual at one scope — its guided sections (overview · glossary · goals · context). Purpose: the canonical "how we operate" card that grounds a domain or the whole org. Before: whoami (to know your domains). After: update_operating_manual to edit (if you may). Governance: view is per-scope via resolveManual — a My manual is your own; a Domain manual is readable by anyone in that domain; the Company manual by everyone. A scope you cannot view is a typed forbidden.',
+      'Read an Operating Model at one scope — its guided sections (general · strategy · business · organization · architecture · data · glossary). Purpose: the canonical "how we operate" card that grounds a domain or the whole org. Before: whoami (to know your domains). After: update_operating_manual to edit (if you may). Governance: view is per-scope via resolveManual — a My operating model is your own; a Domain model is readable by anyone in that domain; the Company model by everyone. A scope you cannot view is a typed forbidden.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -87,7 +87,7 @@ export const MANUAL_TOOLS: McpTool[] = [
     tab: 'operating-manual',
     minRole: 'creator',
     description:
-      'Edit an Operating Manual at one scope by patching its guided sections (overview · glossary · goals · context). Only the sections you pass are changed; a no-op save creates no version churn. Purpose: keep the "how we operate" card current. Before: get_operating_manual (read the current sections + their ids). After: get_operating_manual to read it back. Governance: edit is per-scope via resolveManual and enforced server-side — My = the owner (any role); Domain = a domain_admin of that domain (or the owner); Company = a platform Admin. Anyone else is refused (forbidden). Section ids are fixed: overview · glossary · goals · context.',
+      'Edit an Operating Model at one scope by patching its guided sections (general · strategy · business · organization · architecture · data · glossary). Only the sections you pass are changed; a no-op save creates no version churn. Purpose: keep the "how we operate" card current. Before: get_operating_manual (read the current sections + their ids). After: get_operating_manual to read it back. Governance: edit is per-scope via resolveManual and enforced server-side — My = the owner (any role); Domain = a domain_admin of that domain (or the owner); Company = a platform Admin. Anyone else is refused (forbidden). Section ids are fixed: general · strategy · business · organization · architecture · data · glossary.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -95,11 +95,11 @@ export const MANUAL_TOOLS: McpTool[] = [
         domain: { type: 'string', description: 'For scope=domain: one of YOUR domains (defaults to your first).' },
         sections: {
           type: 'array',
-          description: 'The sections to overwrite. Each is { id, content }; id ∈ overview | glossary | goals | context.',
+          description: 'The sections to overwrite. Each is { id, content }; id ∈ general | strategy | business | organization | architecture | data | glossary.',
           items: {
             type: 'object',
             properties: {
-              id: { type: 'string', description: 'overview | glossary | goals | context' },
+              id: { type: 'string', description: 'general | strategy | business | organization | architecture | data | glossary' },
               content: { type: 'string', description: 'The new markdown content for this section.' },
             },
             required: ['id', 'content'],
@@ -108,8 +108,8 @@ export const MANUAL_TOOLS: McpTool[] = [
       },
       required: ['scope', 'sections'],
       examples: [
-        { scope: 'my', sections: [{ id: 'goals', content: 'Ship the Q3 retention playbook.' }] },
-        { scope: 'domain', domain: 'sales', sections: [{ id: 'overview', content: 'The Sales domain owns pipeline → close.' }] },
+        { scope: 'my', sections: [{ id: 'strategy', content: 'Ship the Q3 retention playbook.' }] },
+        { scope: 'domain', domain: 'sales', sections: [{ id: 'general', content: 'The Sales domain owns pipeline → close.' }] },
       ],
     },
     call: async (user, args) => {
@@ -129,7 +129,7 @@ export const MANUAL_TOOLS: McpTool[] = [
     tab: 'operating-manual',
     minRole: 'creator',
     description:
-      'List the version history of an Operating Manual at one scope (newest first) — every edit is snapshotted, so you can see what changed and restore. Purpose: audit + pick a version to roll back to. Before: get_operating_manual. After: restore_operating_manual_version with a chosen version number. Governance: view is per-scope via resolveManual (same as get_operating_manual) — a scope you cannot view is a typed forbidden.',
+      'List the version history of an Operating Model at one scope (newest first) — every edit is snapshotted, so you can see what changed and restore. Purpose: audit + pick a version to roll back to. Before: get_operating_manual. After: restore_operating_manual_version with a chosen version number. Governance: view is per-scope via resolveManual (same as get_operating_manual) — a scope you cannot view is a typed forbidden.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -150,7 +150,7 @@ export const MANUAL_TOOLS: McpTool[] = [
     tab: 'operating-manual',
     minRole: 'creator',
     description:
-      'Restore a prior version of an Operating Manual at one scope. Restore is itself reversible — the current card is snapshotted first, then the chosen version’s sections are applied. Purpose: roll the manual back to an earlier state. Before: list_operating_manual_versions (to get the version number). After: get_operating_manual to read the restored card. Governance: edit is per-scope via resolveManual and enforced server-side (My = owner; Domain = domain_admin+ / owner; Company = Admin) — anyone else is refused (forbidden).',
+      'Restore a prior version of an Operating Model at one scope. Restore is itself reversible — the current card is snapshotted first, then the chosen version\'s sections are applied. Purpose: roll the operating model back to an earlier state. Before: list_operating_manual_versions (to get the version number). After: get_operating_manual to read the restored card. Governance: edit is per-scope via resolveManual and enforced server-side (My = owner; Domain = domain_admin+ / owner; Company = Admin) — anyone else is refused (forbidden).',
     inputSchema: {
       type: 'object',
       properties: {

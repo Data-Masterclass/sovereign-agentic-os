@@ -115,8 +115,8 @@ export type PredictResult = {
 
 export const TIER_LABEL: Record<ModelTier, string> = {
   Personal: 'Personal',
-  Domain: 'Shared in Domain',
-  Marketplace: 'Certified',
+  Domain: 'Domain',
+  Marketplace: 'Company',
 };
 export const TIER_BADGE: Record<ModelTier, string> = {
   Personal: 'vis-personal',

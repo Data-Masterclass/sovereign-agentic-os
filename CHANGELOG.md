@@ -15,6 +15,37 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.14] — 2026-07-16
+
+One consistent scope vocabulary, a clearer Operating Model, sharper folder handling, and a
+per-agent view of the context each agent actually used.
+
+### Added
+- **One scope vocabulary across the whole OS: My · Domain · Company.** "Shared" → **Domain**,
+  "Marketplace" → **Company**, everywhere, driven from one place in core (`lib/core/scopes.ts`).
+  Promote reads "Promote to Domain"; certify "…to Company". Display + verbs only — no stored
+  value, policy key, or route changed. (The Marketplace *storefront* keeps its name.)
+- **Operating Manual → Operating Model.** The tab and its three scopes are now "My / Domain /
+  Company Operating Model", and each holds a fixed set of sections: **General · Strategy ·
+  Business · Organization · Architecture · Data · Glossary** (existing content migrated into the
+  closest new section; nothing lost).
+- **Evaluate shows what each agent actually used, per agent.** The "context used" panel now
+  attributes artifacts per agent, each a clickable deep link, and shows how it was used
+  (tool + read/retrieved/written + a short args hint). Errored/inferred items stay honestly marked.
+- **Folder Rename.** A "Rename…" action on the folder ••• menu (in-place leaf rename), across
+  Files · Data · Knowledge · Metrics.
+
+### Fixed
+- **Folders show only the root that matches the active scope.** No more empty "Shared folders"
+  section under My (or vice-versa) — the rail and pickers render just the active-scope root, the
+  same way on every tab.
+- **Archive is available on every folder you see** — implicit folders (made only by moving items
+  in) now materialise a registry row on demand so Archive/Rename/Move always appear.
+- **Big Bets: Archive is easy to find** — moved from the bottom of the detail page into the detail
+  header, next to Edit (Restore/Delete when archived; owner/admin only).
+- **Data explore: the Bronze/Silver/Gold picker is colour-coded per tier** with a clear selected
+  state; the highest available layer stays selected by default.
+
 ## [os-ui 0.5.13] — 2026-07-16
 
 Folders + lifecycle become one shared core primitive across the context tabs; four real

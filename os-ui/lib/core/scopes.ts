@@ -3,31 +3,39 @@
  */
 
 /**
- * SCOPE grouping — the ONE artifact-grouping model shared across the whole OS.
+ * SCOPE vocabulary + grouping — the ONE artifact-scope model shared across the
+ * whole OS. This module is the SINGLE SOURCE OF TRUTH for the words users see
+ * when they think about "how far does this reach": every artifact list (Data,
+ * Files, Knowledge, Workflows, Agents, Dashboards, Metrics, Big Bets, Software,
+ * Connections, Science, Marketplace) slices the caller's visible items into the
+ * SAME four groups and labels them with the SAME nouns and verbs.
  *
- * Every artifact list (Data, Files, Knowledge, Workflows, Agents, Dashboards,
- * Metrics, Big Bets, Software, Connections) slices the caller's visible items
- * into the SAME four groups:
+ *   All      — everything the caller can see (union of the three groups)
+ *   My …     — the caller's OWN items (owner), regardless of tier — a
+ *              promoted asset they authored still shows under "My"
+ *   Domain   — shared to the caller's domain (tier `asset` / visibility Shared)
+ *   Company  — certified, cross-domain (tier `product` / visibility Marketplace)
  *
- *   All          — everything the caller can see (union of the three groups)
- *   My …         — the caller's OWN items (owner), regardless of tier — a
- *                  promoted asset they authored still shows under "My"
- *   Shared       — shared to the caller's domain (tier `asset` / visibility Shared)
- *   Marketplace  — certified, cross-domain (tier `product` / visibility Marketplace)
+ * VOCABULARY (locked): the scope LABELS are All · My · Domain · Company
+ * (e.g. "My Data", "Domain Data", "Company Data"), matching the Strategic
+ * Pillars / Operating Manual scopes. The promotion VERBS read "Promote to
+ * Domain" (Personal → Shared) and "Certify to Company" (Shared → Certified).
  *
- * VOCABULARY (locked): the group LABELS are All · My · Shared · Marketplace
- * (e.g. "My Data", "My Files"). The promotion VERBS/BADGES stay
- * Personal → Shared → Certified — only these grouping nouns are unified here.
+ * IMPORTANT — this is a DISPLAY vocabulary only. The internal enum / persisted
+ * values are UNCHANGED: `ScopeKey` stays `mine|shared|marketplace`, the store
+ * payload stays `{ mine, domain, marketplace }`, and visibility values stay
+ * `Personal|Shared|Certified|Marketplace`. Only the human-facing strings below
+ * moved from "Shared in Domain"/"Marketplace" to "Domain"/"Company".
  *
  * SEMANTICS are lifted verbatim from the Data tab's `dataset-scopes.ts`:
  *   • the store already returns a canView-scoped `{ mine, domain, marketplace }`
  *     payload (grouped server-side by tier/visibility);
  *   • "All"    = the union of all three groups;
  *   • "My"     = OWNERSHIP — everything in the union whose `owner` is the caller,
- *                so a Shared/Marketplace item the caller authored appears under
- *                BOTH All and My (and also under Shared/Marketplace);
- *   • "Shared" = the `domain` group as returned by the store;
- *   • "Market" = the `marketplace` group as returned by the store.
+ *                so a Domain/Company item the caller authored appears under BOTH
+ *                All and My (and also under Domain/Company);
+ *   • "Domain" = the `domain` group as returned by the store;
+ *   • "Company" = the `marketplace` group as returned by the store.
  *
  * Pure + client-safe (no server-only / Next imports): this only re-slices an
  * already-authz'd payload for DISPLAY. Authz stays in the stores.
@@ -37,15 +45,49 @@ export type ScopeKey = 'all' | 'mine' | 'shared' | 'marketplace';
 
 /** The ordered four groups. `label(kind?)` renders "My Data", "All", etc. */
 export const SCOPE_GROUPS: { key: ScopeKey; label: (kind?: string) => string }[] = [
-  { key: 'all', label: () => 'All' },
+  { key: 'all', label: (kind) => (kind ? `All ${kind}` : 'All') },
   { key: 'mine', label: (kind) => (kind ? `My ${kind}` : 'My') },
-  { key: 'shared', label: () => 'Shared in Domain' },
-  { key: 'marketplace', label: () => 'Marketplace' },
+  { key: 'shared', label: (kind) => (kind ? `Domain ${kind}` : 'Domain') },
+  { key: 'marketplace', label: (kind) => (kind ? `Company ${kind}` : 'Company') },
 ];
 
 /** One place to render a scope's user-facing label. `scopeLabel('mine', 'Data') → "My Data"`. */
 export function scopeLabel(key: ScopeKey, kind?: string): string {
   return SCOPE_GROUPS.find((g) => g.key === key)!.label(kind);
+}
+
+/** A stored visibility/tier value — internal, unchanged. Mapped to a scope for DISPLAY. */
+export type Visibility = 'Personal' | 'Shared' | 'Certified' | 'Marketplace' | string;
+
+/**
+ * Map a persisted visibility/tier value to its scope key. This is how an artifact
+ * BADGE reads the same word ("Domain", "Company") everywhere without re-hardcoding
+ * strings per tab. Internal values are unchanged — this only interprets them.
+ *   Personal            → 'mine'   ("My")
+ *   Shared              → 'shared' ("Domain")
+ *   Certified/Marketplace → 'marketplace' ("Company")
+ */
+export function visibilityScope(visibility: Visibility): ScopeKey {
+  if (visibility === 'Shared') return 'shared';
+  if (visibility === 'Certified' || visibility === 'Marketplace') return 'marketplace';
+  return 'mine';
+}
+
+/** Display label for a stored visibility/tier value — routes through `scopeLabel`. */
+export function visibilityLabel(visibility: Visibility, kind?: string): string {
+  return scopeLabel(visibilityScope(visibility), kind);
+}
+
+/**
+ * The promotion VERBS, one place. The ladder is Personal → Shared → Certified
+ * under the hood; users read it as "Promote to Domain" then "Certify to Company".
+ *   fromVisibility 'Personal' → "Promote to Domain"
+ *   fromVisibility 'Shared'   → "Certify to Company"
+ * `propose` softens the Personal rung to "Propose to Domain" for a non-approver.
+ */
+export function promoteVerb(fromVisibility: Visibility, opts: { propose?: boolean } = {}): string {
+  if (fromVisibility === 'Shared') return 'Certify to Company';
+  return opts.propose ? 'Propose to Domain' : 'Promote to Domain';
 }
 
 /** The `{ mine, domain, marketplace }` payload every OS store returns. */

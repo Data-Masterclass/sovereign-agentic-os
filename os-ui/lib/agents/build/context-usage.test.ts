@@ -3,7 +3,12 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { deriveContextUsage, type UsageNode } from './context-usage.ts';
+import {
+  deriveContextUsage,
+  deriveContextUsageByNode,
+  deepLinkFor,
+  type UsageNode,
+} from './context-usage.ts';
 
 test('captures a direct id-arg read with best-effort name from the result', () => {
   const nodes: UsageNode[] = [
@@ -11,7 +16,15 @@ test('captures a direct id-arg read with best-effort name from the result', () =
   ];
   const u = deriveContextUsage(nodes);
   assert.deepEqual(u.items, [
-    { kind: 'data', id: 'ds_orders', name: 'Orders', via: 'get_dataset', mode: 'read', confidence: 'captured' },
+    {
+      kind: 'data',
+      id: 'ds_orders',
+      name: 'Orders',
+      via: 'get_dataset',
+      mode: 'read',
+      confidence: 'captured',
+      deepLink: '/data?focus=ds_orders',
+    },
   ]);
   assert.deepEqual(u.byKind.data, ['ds_orders']);
 });
@@ -51,8 +64,17 @@ test('query_data infers the physical FQN from SQL and marks it inferred', () => 
   ];
   const u = deriveContextUsage(nodes);
   assert.deepEqual(u.items, [
-    { kind: 'data', id: 'iceberg.sales.gold_orders', via: 'query_data', mode: 'read', confidence: 'inferred' },
+    {
+      kind: 'data',
+      id: 'iceberg.sales.gold_orders',
+      via: 'query_data',
+      mode: 'read',
+      confidence: 'inferred',
+      // FQNs have no registry id → no deep link; the SQL is captured as the how-used hint.
+      hint: 'select region, sum(revenue) from iceberg.sales.gold_orders group by region',
+    },
   ]);
+  assert.equal(u.items[0].deepLink, undefined);
 });
 
 test('query_data with no parseable FQN falls back to an opaque inferred touch', () => {
@@ -112,4 +134,73 @@ test('rolls up across nodes, deduping repeated reads, and truncated results just
 test('empty / missing nodes are safe', () => {
   assert.deepEqual(deriveContextUsage([]).items, []);
   assert.deepEqual(deriveContextUsage([{}]).items, []);
+});
+
+// ── deep links ───────────────────────────────────────────────────────────────
+
+test('deepLinkFor maps every resolvable kind to its real tab route + ?focus id', () => {
+  assert.equal(deepLinkFor('data', 'ds_1'), '/data?focus=ds_1');
+  assert.equal(deepLinkFor('knowledge', 'ku_1'), '/knowledge?focus=ku_1');
+  assert.equal(deepLinkFor('files', 'as_1'), '/unstructured?focus=as_1');
+  assert.equal(deepLinkFor('metrics', 'm_1'), '/metrics?focus=m_1');
+  assert.equal(deepLinkFor('connections', 'c_1'), '/connections?focus=c_1');
+});
+
+test('deepLinkFor encodes the id and refuses unresolvable ids', () => {
+  assert.equal(deepLinkFor('files', 'a b/c'), '/unstructured?focus=a%20b%2Fc');
+  assert.equal(deepLinkFor('data', 'data:sql'), undefined); // opaque touch
+  assert.equal(deepLinkFor('data', 'iceberg.sales.gold_orders'), undefined); // physical FQN
+  assert.equal(deepLinkFor('data', ''), undefined);
+});
+
+test('a captured search hit carries a deep link to its item', () => {
+  const nodes: UsageNode[] = [
+    { steps: [{ tool: 'search_files', args: { query: 'contract' }, result: JSON.stringify({ hits: [{ id: 'as_9', title: 'Acme' }] }) }] },
+  ];
+  const u = deriveContextUsage(nodes);
+  assert.equal(u.items[0].deepLink, '/unstructured?focus=as_9');
+});
+
+// ── how it was used (hint) ────────────────────────────────────────────────────
+
+test('a search retrieval captures the query as its how-used hint', () => {
+  const nodes: UsageNode[] = [
+    { steps: [{ tool: 'search_knowledge', args: { query: 'refund policy' }, result: JSON.stringify({ hits: [{ id: 'ku_1' }] }) }] },
+  ];
+  const u = deriveContextUsage(nodes);
+  assert.equal(u.items[0].hint, 'refund policy');
+});
+
+test('hints are clipped to a single short line (no raw blobs)', () => {
+  const long = 'select '.repeat(60);
+  const nodes: UsageNode[] = [{ steps: [{ tool: 'query_data', args: { sql: long }, result: '[]' }] }];
+  const u = deriveContextUsage(nodes);
+  assert.ok((u.items[0].hint ?? '').length <= 120);
+  assert.ok((u.items[0].hint ?? '').endsWith('…'));
+});
+
+// ── per-agent attribution ─────────────────────────────────────────────────────
+
+test('deriveContextUsageByNode attributes context to each agent separately', () => {
+  const nodes: UsageNode[] = [
+    { node: 'researcher', steps: [{ tool: 'get_dataset', args: { datasetId: 'ds_1' }, result: '{"name":"One"}' }] },
+    { node: 'writer', steps: [{ tool: 'get_knowledge', args: { knowledgeId: 'ku_1' }, result: '{"title":"P"}' }] },
+  ];
+  const byNode = deriveContextUsageByNode(nodes);
+  assert.equal(byNode.length, 2);
+  assert.equal(byNode[0].node, 'researcher');
+  assert.deepEqual(byNode[0].items.map((i) => i.id), ['ds_1']);
+  assert.equal(byNode[1].node, 'writer');
+  assert.deepEqual(byNode[1].items.map((i) => i.id), ['ku_1']);
+});
+
+test('deriveContextUsageByNode omits nodes that touched nothing and labels unnamed nodes', () => {
+  const nodes: UsageNode[] = [
+    { node: 'planner', steps: [{ tool: 'noop_tool', args: {} }] }, // touches nothing
+    { steps: [{ tool: 'get_dataset', args: { datasetId: 'ds_2' }, result: '{}' }] }, // unnamed
+  ];
+  const byNode = deriveContextUsageByNode(nodes);
+  assert.equal(byNode.length, 1);
+  assert.equal(byNode[0].node, 'agent 2'); // positional fallback keeps its index
+  assert.deepEqual(byNode[0].items.map((i) => i.id), ['ds_2']);
 });

@@ -38,7 +38,7 @@ import yaml from 'js-yaml';
  *   > tacit: Check section 4 — the date field is frequently missed.
  *
  * General domain knowledge is stored as a separate `DomainKnowledge` object with
- * four guided sections (overview / glossary / goals / context).
+ * seven guided sections (general / strategy / business / organization / architecture / data / glossary).
  */
 
 export type Visibility = 'Personal' | 'Shared' | 'Marketplace';
@@ -122,9 +122,22 @@ export type Workflow = WorkflowMeta & {
   body: string;
 };
 
-/** General domain knowledge — the pinned domain card; base context for every domain agent. */
+/** General domain knowledge — the pinned operating-model card; base context for every domain agent. */
+export type DomainSectionId =
+  | 'general'
+  | 'strategy'
+  | 'business'
+  | 'organization'
+  | 'architecture'
+  | 'data'
+  | 'glossary'
+  // Legacy section ids — carried forward during migration, never created fresh.
+  | 'overview'
+  | 'goals'
+  | 'context';
+
 export type DomainSection = {
-  id: 'overview' | 'glossary' | 'goals' | 'context';
+  id: DomainSectionId;
   title: string;
   content: string;
 };
@@ -429,13 +442,73 @@ export function serializeWorkflow(w: Workflow): string {
 
 // ---------------------------------------------- domain knowledge helpers ----
 
-export const DOMAIN_SECTION_IDS = ['overview', 'glossary', 'goals', 'context'] as const;
+/**
+ * Canonical section ids for the Operating Model card (7 sections, fixed order).
+ * The old 4-section ids (overview / goals / context) are legacy and never created
+ * fresh; `glossary` survived intact.
+ */
+export const DOMAIN_SECTION_IDS = [
+  'general',
+  'strategy',
+  'business',
+  'organization',
+  'architecture',
+  'data',
+  'glossary',
+] as const;
+
 export const DOMAIN_SECTION_TITLES: Record<string, string> = {
-  overview: 'Overview',
+  general: 'General',
+  strategy: 'Strategy',
+  business: 'Business',
+  organization: 'Organization',
+  architecture: 'Architecture',
+  data: 'Data',
   glossary: 'Glossary',
-  goals: 'Goals',
-  context: 'Key Context',
 };
+
+/**
+ * Migration mapping: old 4-section ids → new canonical section ids.
+ * `glossary` is identity (survived unchanged).
+ */
+export const DOMAIN_SECTION_MIGRATION: Record<string, string> = {
+  overview: 'general',
+  goals: 'strategy',
+  context: 'business',
+  glossary: 'glossary',
+};
+
+/**
+ * Reconcile a stored DomainKnowledge card (potentially old 4-section shape) to the
+ * canonical 7-section shape. Migration rules:
+ *   overview → general, goals → strategy, context → business, glossary → glossary
+ * New sections (organization / architecture / data) start empty.
+ * If the card already has the new shape, it is returned with all 7 sections present
+ * (missing ones are filled as empty). No content is ever lost.
+ */
+export function reconcileSections(dk: DomainKnowledge): DomainKnowledge {
+  // Build a lookup of existing sections by id (old or new).
+  const byId: Record<string, string> = {};
+  for (const sec of dk.sections) {
+    byId[sec.id] = sec.content;
+  }
+
+  // Carry old-id content into the new id (only if the new id has no content yet).
+  for (const [oldId, newId] of Object.entries(DOMAIN_SECTION_MIGRATION)) {
+    if (oldId !== newId && oldId in byId && !(newId in byId)) {
+      byId[newId] = byId[oldId];
+    }
+  }
+
+  return {
+    ...dk,
+    sections: DOMAIN_SECTION_IDS.map((id) => ({
+      id,
+      title: DOMAIN_SECTION_TITLES[id],
+      content: byId[id] ?? '',
+    })),
+  };
+}
 
 export function emptyDomainKnowledge(domain: string): DomainKnowledge {
   return {

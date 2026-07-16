@@ -106,6 +106,36 @@ export function itemsUnderFolder<T extends Foldered>(path: string, items: T[]): 
  *  folders carry no `id`, so those actions are offered only on real rows. */
 export type FolderPathNode = { path: string; name?: string; id?: string; archived?: boolean };
 
+/** The two folder roots every foldered tab renders side by side: the caller's own
+ *  private tree ("My folders") and the shared domain tree ("Domain folders"). */
+export type FolderRootScope = 'personal' | 'domain';
+
+/**
+ * Which root SECTIONS the folder rail (and picker) should render for the active
+ * My/Domain/Company scope. `requested` comes from the tab's `rootsForScope` mapping;
+ * `undefined` means "show both" (backward-compatible default). A root not in the list
+ * is fully hidden — header included — so the inactive scope's empty root never shows
+ * as a bare "Domain folders" / "My folders" heading. An active-but-empty root still
+ * renders (so a user with no folders yet can still create their first one).
+ */
+export function visibleFolderRoots(requested?: FolderRootScope[]): FolderRootScope[] {
+  const want = requested ?? ['personal', 'domain'];
+  return (['personal', 'domain'] as FolderRootScope[]).filter((r) => want.includes(r));
+}
+
+/**
+ * The full path for a RENAME — same parent, new leaf name. Renaming changes only a
+ * folder's last segment (its display name); its parent is untouched (that is a MOVE).
+ * The name is trimmed + normalised; a blank name returns `null` (a no-op the caller
+ * skips). E.g. renameLeafPath('/a/b', 'c') → '/a/c'; renameLeafPath('/b', 'c') → '/c'.
+ */
+export function renameLeafPath(fromPath: string, newName: string): string | null {
+  const name = newName.trim();
+  if (!name) return null;
+  const parent = parentPath(normaliseFolderPath(fromPath));
+  return normaliseFolderPath(parent === '/' ? `/${name}` : `${parent}/${name}`);
+}
+
 /** One node of the nested folder tree. `synthetic` marks an intermediate folder
  *  that has NO registry row of its own (an implicit folder derived from a member
  *  item's path) — it still renders so the hierarchy is never broken. */

@@ -215,8 +215,8 @@ export default function WorkflowsPage() {
                 {wfScope === 'mine' || wfScope === 'all'
                   ? 'No workflows yet. Create one above to document a business process.'
                   : wfScope === 'shared'
-                    ? 'Nothing shared in your domain yet — publish a workflow to share it.'
-                    : 'Nothing in the marketplace yet.'}
+                    ? 'Nothing in Domain yet — promote a workflow to share it with your domain.'
+                    : 'Nothing in Company yet.'}
               </div>
             )}
 

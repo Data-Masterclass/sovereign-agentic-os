@@ -71,7 +71,10 @@ function visBadge(v: Visibility): string {
   return `badge vis-${v.toLowerCase()}`;
 }
 function visDisplayLabel(v: Visibility): string {
-  return v === 'Shared' ? 'Shared in Domain' : v;
+  // Display vocabulary: Shared → "Domain", Certified → "Company" (My stays for Personal).
+  if (v === 'Shared') return 'Domain';
+  if (v === 'Certified') return 'Company';
+  return v;
 }
 function deployBadge(state: App['deploy']['state']): { cls: string; label: string } {
   if (state === 'live') return { cls: 'badge ok', label: 'Live' };
@@ -80,8 +83,9 @@ function deployBadge(state: App['deploy']['state']): { cls: string; label: strin
   return { cls: 'badge muted', label: 'Draft' };
 }
 function promoteLabel(v: Visibility): string | null {
-  if (v === 'Personal') return 'Promote to Shared';
-  if (v === 'Shared') return 'Promote to Marketplace';
+  // Display verbs: Personal → "Promote to Domain"; Shared → "Certify to Company".
+  if (v === 'Personal') return 'Promote to Domain';
+  if (v === 'Shared') return 'Certify to Company';
   return null;
 }
 
@@ -151,7 +155,7 @@ export default function AppPage() {
     try {
       const res = await fetch(`/api/apps/${id}/promote`, { method: 'POST' });
       const body = await res.json();
-      setMsg(res.ok ? `✓ Promoted to ${body.app.visibility === 'Shared' ? 'Shared in Domain' : body.app.visibility}.` : `✗ ${body.error}`);
+      setMsg(res.ok ? `✓ Promoted to ${visDisplayLabel(body.app.visibility)}.` : `✗ ${body.error}`);
       reload();
     } catch (e) {
       setMsg((e as Error).message);
@@ -167,7 +171,7 @@ export default function AppPage() {
     try {
       const res = await fetch(`/api/apps/${id}/demote`, { method: 'POST' });
       const body = await res.json();
-      setMsg(res.ok ? `✓ Revoked → ${body.app.visibility === 'Shared' ? 'Shared in Domain' : body.app.visibility}.` : `✗ ${body.error}`);
+      setMsg(res.ok ? `✓ Revoked → ${visDisplayLabel(body.app.visibility)}.` : `✗ ${body.error}`);
       reload();
     } catch (e) {
       setMsg((e as Error).message);
@@ -253,8 +257,8 @@ export default function AppPage() {
   const canDemoteUI =
     (app.visibility === 'Certified' && data.user.role === 'admin') ||
     (app.visibility === 'Shared' && roleAtLeast(data.user.role, 'builder'));
-  const demoteLabel = app.visibility === 'Certified' ? 'Revoke from Marketplace' : 'Unshare';
-  const confirmDemoteLabel = app.visibility === 'Certified' ? 'Confirm revoke → Shared' : 'Confirm unshare → Personal';
+  const demoteLabel = app.visibility === 'Certified' ? 'Revoke from Company' : 'Unshare';
+  const confirmDemoteLabel = app.visibility === 'Certified' ? 'Confirm revoke → Domain' : 'Confirm unshare → My';
   // A deploy is already awaiting a Builder — block re-requesting (it would open a
   // duplicate review card and orphan the pending one). Point to the review inbox.
   const inReview = app.deploy.state === 'review';
@@ -448,13 +452,13 @@ export default function AppPage() {
 
                 <div className="section-title">Promotion ladder</div>
                 <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-                  Personal → Shared (Builder/Admin) → Marketplace (Admin only). Cascades to the app&apos;s data, files and MCP connection.
+                  My → Domain (Builder/Admin) → Company (Admin only). Cascades to the app&apos;s data, files and MCP connection.
                 </p>
                 <div className="row" style={{ gap: 8, alignItems: 'center' }}>
                   {canPromoteUI ? (
                     <button className="btn" onClick={promote} disabled={busy}>{busy ? <span className="spin" /> : canPromoteUI}</button>
                   ) : (
-                    <span className="badge vis-certified">In the Marketplace</span>
+                    <span className="badge vis-certified">In Company</span>
                   )}
                   {canDemoteUI ? (
                     confirmDemote ? (

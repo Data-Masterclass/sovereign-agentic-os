@@ -14,6 +14,7 @@ import {
   type FolderPathNode,
 } from '@/lib/core/folders';
 import FolderTree, { FolderPickerModal, type FolderRef } from '@/components/core/FolderTree';
+import { ensureFolderId, renamedPath } from '@/lib/folders/client';
 import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
 import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
 import DomainTag from '@/components/DomainTag';
@@ -230,14 +231,26 @@ function MetricsRegistryInner({
 
   const folderAction = useCallback(async (ref: FolderRef, method: 'PATCH' | 'DELETE' | 'archive' | 'restore', path?: string) => {
     setErr('');
-    const opts: RequestInit =
-      method === 'DELETE' ? { method: 'DELETE' }
-      : method === 'PATCH' ? { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path }) }
-      : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: method }) };
-    const res = await fetch(`/api/folders/${ref.id}`, opts);
-    if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? 'Folder action failed'); return; }
-    reload();
+    try {
+      // A synthetic (implicit) folder has no registry row → materialise one so any
+      // folder the user sees can be archived/renamed/moved (delete/restore only ever
+      // reach a real archived row, so ensureFolderId is a no-op there).
+      const id = await ensureFolderId('metrics', ref);
+      const opts: RequestInit =
+        method === 'DELETE' ? { method: 'DELETE' }
+        : method === 'PATCH' ? { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path }) }
+        : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: method }) };
+      const res = await fetch(`/api/folders/${id}`, opts);
+      if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? 'Folder action failed'); return; }
+      reload();
+    } catch (e) { setErr((e as Error).message); }
   }, [reload]);
+
+  const renameFolderRow = useCallback((ref: FolderRef, newName: string) => {
+    const path = renamedPath(ref.path, newName);
+    if (!path || path === ref.path) return;
+    void folderAction(ref, 'PATCH', path);
+  }, [folderAction]);
 
   return (
     <>
@@ -274,6 +287,7 @@ function MetricsRegistryInner({
       <FolderPickerModal
         open={moveIds !== null}
         tab="metrics"
+        roots={moveIds ? [moveIds.root] : roots}
         personalNodes={moveIds?.root === 'personal' ? personalTreeNodes : []}
         domainNodes={moveIds?.root === 'domain' ? domainTreeNodes : []}
         title={`Move ${moveIds && moveIds.ids.length > 1 ? `${moveIds.ids.length} metrics` : 'metric'} to folder`}
@@ -286,10 +300,11 @@ function MetricsRegistryInner({
       <FolderPickerModal
         open={folderMove !== null}
         tab="metrics"
+        roots={folderMove ? [folderMove.scope] : roots}
         personalNodes={folderMove?.scope === 'personal' ? personalTreeNodes : []}
         domainNodes={folderMove?.scope === 'domain' ? domainTreeNodes : []}
         title="Move folder"
-        onConfirm={({ path }) => { const ref = folderMove; setFolderMove(null); if (ref?.id) void folderAction(ref, 'PATCH', path); }}
+        onConfirm={({ path }) => { const ref = folderMove; setFolderMove(null); if (ref) void folderAction(ref, 'PATCH', path); }}
         onCancel={() => setFolderMove(null)}
         onCreate={async (root, path) => { await createFolder(root, path); }}
       />
@@ -299,8 +314,8 @@ function MetricsRegistryInner({
           {scope === 'mine' || scope === 'all'
             ? <>No metrics yet. <strong>Define</strong> one on a governed Gold dataset to see it here.</>
             : scope === 'shared'
-              ? 'Nothing shared in your domain yet — promote a metric to share it.'
-              : 'Nothing in the marketplace yet.'}
+              ? 'Nothing in your domain yet — promote a metric to share it.'
+              : 'Nothing at the company tier yet.'}
         </div>
       ) : null}
 
@@ -327,6 +342,7 @@ function MetricsRegistryInner({
               </button>
               <FolderTree
                 variant="nav"
+                roots={roots}
                 personalNodes={roots.includes('personal') ? personalTreeNodes : []}
                 domainNodes={roots.includes('domain') ? domainTreeNodes : []}
                 items={treeItems.filter((i) => {
@@ -334,11 +350,12 @@ function MetricsRegistryInner({
                   return r ? roots.includes(rootOf(r)) : true;
                 })}
                 personalLabel="My folders"
-                domainLabel="Shared in domain"
+                domainLabel="Domain folders"
                 selectedPath={sel?.path}
                 onSelect={(root, path) => setSel((cur) => (cur && cur.root === root && cur.path === path ? null : { root, path }))}
                 onCreate={createFolder}
-                onMove={(ref) => { if (ref.id) setFolderMove(ref); }}
+                onMove={(ref) => setFolderMove(ref)}
+                onRename={renameFolderRow}
                 onArchive={async (ref) => {
                   if (!(await confirm(archiveFolderCopy(folderName(ref.path), countUnder(ref.scope, ref.path))))) return;
                   void folderAction(ref, 'archive');

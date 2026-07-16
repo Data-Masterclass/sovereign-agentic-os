@@ -4,6 +4,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import Markdown from '@/components/Markdown';
 import {
   buildDiagnostics,
@@ -16,6 +17,8 @@ import {
 import { useUser } from '@/lib/useUser';
 import {
   deriveContextUsage,
+  deriveContextUsageByNode,
+  deepLinkFor,
   type ContextItem,
   type ContextKind,
   type RunContextUsage,
@@ -246,7 +249,9 @@ type LiveProgress = {
 };
 
 // ── Context actually used (#177) ────────────────────────────────────────────
-/** Human label + deep-link tab route per artifact kind. Files live under /unstructured. */
+/** Human label + tab route per artifact kind. Files live under /unstructured. The
+ *  per-ITEM deep link comes from `deepLinkFor(kind,id)`; this is the tab-level fallback
+ *  used for the "kind" group label and when an item has no resolvable item id. */
 const KIND_META: Record<ContextKind, { label: string; href: string }> = {
   data: { label: 'Data', href: '/data' },
   files: { label: 'Files', href: '/unstructured' },
@@ -259,14 +264,27 @@ const KIND_ORDER: ContextKind[] = ['data', 'files', 'knowledge', 'metrics', 'con
 /** The read/retrieved/written verb shown on each chip. */
 const MODE_LABEL: Record<ContextItem['mode'], string> = { read: 'read', retrieved: 'retrieved', written: 'written' };
 
-/** One artifact chip — deep-links to its tab; muted when the tool call failed. */
+/**
+ * One artifact chip — a real same-app deep link to the item (its tab, `?focus=<id>`),
+ * showing HOW it was used: the mode verb, the tool (`via`), a short arg hint when we
+ * have one, and honest markers. Errored calls are muted and read "not obtained" (the
+ * context was never actually gained); inferred ids are flagged and, having no resolvable
+ * item id, fall back to opening the tab.
+ */
 function ContextChip({ item }: { item: ContextItem }) {
-  const meta = KIND_META[item.kind];
   const label = item.name ? `${item.name} (${item.id})` : item.id;
+  // Prefer the derived per-item deep link; else recompute; else fall back to the tab.
+  const href = item.deepLink ?? deepLinkFor(item.kind, item.id) ?? KIND_META[item.kind].href;
+  const modeText = item.errored ? 'not obtained' : MODE_LABEL[item.mode];
+  const title =
+    `${MODE_LABEL[item.mode]} via ${item.via}` +
+    (item.hint ? ` — ${item.hint}` : '') +
+    (item.errored ? ' — not obtained (call failed)' : '') +
+    (item.confidence === 'inferred' ? ' — inferred' : '');
   return (
-    <a
-      href={meta.href}
-      title={`${MODE_LABEL[item.mode]} via ${item.via}${item.errored ? ' — not obtained (call failed)' : ''}${item.confidence === 'inferred' ? ' — inferred' : ''}`}
+    <Link
+      href={href}
+      title={title}
       className="chip"
       style={{
         textDecoration: 'none',
@@ -277,9 +295,11 @@ function ContextChip({ item }: { item: ContextItem }) {
       }}
     >
       <span className="mono" style={{ fontSize: 11.5 }}>{label}</span>
-      <span className="hint" style={{ fontSize: 10 }}>{item.errored ? 'not obtained' : MODE_LABEL[item.mode]}</span>
+      <span className="hint" style={{ fontSize: 10 }}>{modeText}</span>
+      <span className="hint mono" style={{ fontSize: 10, opacity: 0.6 }}>{item.via}</span>
+      {item.hint ? <span className="hint" style={{ fontSize: 10, opacity: 0.7, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>“{item.hint}”</span> : null}
       {item.confidence === 'inferred' ? <span className="hint" style={{ fontSize: 10, opacity: 0.7 }}>·inferred</span> : null}
-    </a>
+    </Link>
   );
 }
 
@@ -378,16 +398,17 @@ function GrantsVsUsage({ granted, usage }: { granted: GrantedIds; usage?: RunCon
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {r.ids.map((id) => {
                 const isUsed = r.used.has(id);
+                const href = deepLinkFor(r.kind, id) ?? KIND_META[r.kind].href;
                 return (
-                  <a
+                  <Link
                     key={id}
-                    href={KIND_META[r.kind].href}
+                    href={href}
                     className={isUsed ? 'chip ok' : 'chip'}
                     title={isUsed ? 'granted and used this run' : 'granted but unused this run (dead grant)'}
                     style={{ textDecoration: 'none', opacity: isUsed ? 1 : 0.55 }}
                   >
                     <span className="mono" style={{ fontSize: 11.5 }}>{id}</span>
-                  </a>
+                  </Link>
                 );
               })}
             </div>

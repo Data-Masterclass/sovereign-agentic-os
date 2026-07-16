@@ -53,7 +53,7 @@ test('buildWorkflowReport maps identity, actors, steps in order', () => {
   // Subtitle carries domain · status · visibility.
   assert.match(report.subtitle, /Sales/);
   assert.match(report.subtitle, /Live/);
-  assert.match(report.subtitle, /Shared in Domain/);
+  assert.match(report.subtitle, /Domain/);
 
   // Actor registry preserved, external flagged, description carried.
   const applicant = report.actors.find((a) => a.name === 'Applicant');

@@ -70,7 +70,7 @@ export default function BetDetailPage() {
 
         {view ? (
           <>
-            <HeaderBand view={view} onMutate={load} />
+            <HeaderBand view={view} onMutate={load} onArchived={() => router.push('/big-bets')} />
 
             <div className="mode-toggle" style={{ marginTop: 16 }} role="tablist" aria-label="Bet view">
               <button className={tab === 'design' ? 'active' : ''} role="tab" aria-selected={tab === 'design'} onClick={() => setTab('design')}>Design</button>
@@ -133,25 +133,11 @@ export default function BetDetailPage() {
             </>
             )}
 
-            <div className="row" style={{ marginTop: 20, justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+            <div className="row" style={{ marginTop: 20 }}>
               <div className="hint" style={{ margin: 0 }}>
                 Source: <span className="mono">{view.sourceMode}</span>. The bet shows delivery;{' '}
                 <Link href="/monitoring" style={{ color: 'var(--teal)' }}>Monitoring</Link> shows runtime health.
               </div>
-              {view.canEdit ? (
-                // OS-wide rule: live → Archive; only an ARCHIVED bet exposes Delete.
-                <LifecycleActions
-                  id={view.bet.id}
-                  name={view.bet.name}
-                  kind="bigbet"
-                  visibility={view.bet.crossDomain ? 'shared' : 'personal'}
-                  archived={view.bet.status === 'archived'}
-                  api={`/api/big-bets/${view.bet.id}`}
-                  onChanged={() => { router.push('/big-bets'); }}
-                  showVersions={false}
-                  compact
-                />
-              ) : null}
             </div>
           </>
         ) : null}
@@ -160,7 +146,7 @@ export default function BetDetailPage() {
   );
 }
 
-function HeaderBand({ view, onMutate }: { view: BetView; onMutate: () => void }) {
+function HeaderBand({ view, onMutate, onArchived }: { view: BetView; onMutate: () => void; onArchived: () => void }) {
   const b = view.bet;
   const r = view.roadmap;
   const archived = b.status === 'archived';
@@ -233,8 +219,25 @@ function HeaderBand({ view, onMutate }: { view: BetView; onMutate: () => void })
             realized · {view.value.realized.basis} basis
           </div>
           <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>{eur(b.targetValue)} target</div>
-          {view.canEdit && !archived ? (
-            <button className="btn ghost sm" style={{ marginTop: 8 }} onClick={openEdit}>Edit bet</button>
+          {view.canEdit ? (
+            // Bet-level actions live HERE in the header where the user looks first:
+            // Edit + the OS-wide lifecycle cluster (live → Archive; archived → Restore/Delete).
+            <div className="row" style={{ gap: 8, justifyContent: 'flex-end', marginTop: 8, flexWrap: 'wrap' }}>
+              {!archived ? (
+                <button className="btn ghost sm" onClick={openEdit}>Edit bet</button>
+              ) : null}
+              <LifecycleActions
+                id={b.id}
+                name={b.name}
+                kind="bigbet"
+                visibility={b.crossDomain ? 'shared' : 'personal'}
+                archived={archived}
+                api={`/api/big-bets/${b.id}`}
+                onChanged={onArchived}
+                showVersions={false}
+                compact
+              />
+            </div>
           ) : null}
         </div>
       </div>

@@ -4,6 +4,7 @@
 import Link from 'next/link';
 import type { HomeFeed } from '@/lib/home/feed';
 import type { ModuleKey } from '@/lib/home/scope';
+import { visibilityLabel } from '@/lib/core/scopes';
 import AskAssistant from './AskAssistant';
 
 /**
@@ -74,7 +75,7 @@ export default function Cockpit({ feed }: { feed: HomeFeed }) {
                     <span className="cm-item-detail">{w.type}</span>
                   </span>
                 </Link>
-                <span className="badge vis-personal">{w.visibility === 'Shared' ? 'Shared in Domain' : w.visibility}</span>
+                <span className="badge vis-personal">{visibilityLabel(w.visibility)}</span>
               </li>
             ))}
           </ul>
@@ -167,7 +168,7 @@ export default function Cockpit({ feed }: { feed: HomeFeed }) {
                   <span>
                     <span className="cm-item-label">{a.name}</span>
                     <span className="cm-item-detail">
-                      {a.event === 'certified' ? 'Certified' : 'Shared in Domain'} · {a.type} · {a.domain}
+                      {a.event === 'certified' ? 'Company' : 'Domain'} · {a.type} · {a.domain}
                     </span>
                   </span>
                 </Link>

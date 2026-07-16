@@ -266,11 +266,10 @@ test('back-compat: an old workflow.md with NO actors section derives a registry 
   assert.ok(w.actors.every((a) => a.description === undefined));
 });
 
-test('emptyDomainKnowledge returns four sections', () => {
+test('emptyDomainKnowledge returns seven sections in canonical order', () => {
   const dk = emptyDomainKnowledge('sales');
   assert.equal(dk.domain, 'sales');
-  assert.equal(dk.sections.length, 4);
-  for (const id of DOMAIN_SECTION_IDS) {
-    assert.ok(dk.sections.some((s) => s.id === id), `missing section ${id}`);
-  }
+  assert.equal(dk.sections.length, 7);
+  assert.deepEqual(dk.sections.map((s) => s.id), [...DOMAIN_SECTION_IDS]);
+  assert.ok(dk.sections.every((s) => s.content === ''), 'all sections start empty');
 });

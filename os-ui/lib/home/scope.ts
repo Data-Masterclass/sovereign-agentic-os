@@ -153,8 +153,8 @@ export function whatNeedsMe(
       kind: 'promote',
       label: adminCertify ? `Certify “${art.name}”` : `Promote “${art.name}”`,
       detail: adminCertify
-        ? `Shared ${art.type} ready to certify into the Marketplace.`
-        : `Your Personal ${art.type} — promote to Shared when ready.`,
+        ? `Domain ${art.type} ready to certify to Company.`
+        : `Your ${art.type} — promote to Domain when ready.`,
       actionable: adminCertify ? true : isBuilderish(viewer), // Creator drafts: a Builder promotes
       href: TAB_FOR_TYPE[art.type] ?? '/data',
     });

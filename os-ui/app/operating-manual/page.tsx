@@ -11,11 +11,12 @@ import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import VersionHistory from '@/components/lifecycle/VersionHistory';
 
 /**
- * The Operating Manual tab. One guided-sections card (overview / glossary / goals /
- * key context) at THREE scopes, each governed independently server-side:
- *   • My      — a personal manual; only you read + edit it.
- *   • Domain  — your domain's shared manual; everyone reads, domain admins edit.
- *   • Company — the org-wide manual; everyone reads, a platform admin edits.
+ * The Operating Model tab. One guided-sections card (general / strategy / business /
+ * organization / architecture / data / glossary) at THREE scopes, each governed
+ * independently server-side:
+ *   • My      — a personal operating model; only you read + edit it.
+ *   • Domain  — your domain's shared operating model; everyone reads, domain admins edit.
+ *   • Company — the org-wide operating model; everyone reads, a platform admin edits.
  * The edit affordance appears only when the API says the caller may edit
  * (`canEdit`); everyone else sees a calm, read-only view.
  */
@@ -25,33 +26,39 @@ type ScopeDef = { key: ManualScope; label: string; blurb: string; readOnlyNote: 
 const SCOPES: ScopeDef[] = [
   {
     key: 'my',
-    label: 'My Operating Manual',
-    blurb: 'Your personal operating manual — how you work, your context. Private to you.',
+    label: 'My Operating Model',
+    blurb: 'Your personal operating model — how you work, your context. Private to you.',
     readOnlyNote: '',
   },
   {
     key: 'domain',
-    label: 'Domain',
+    label: 'Domain Operating Model',
     blurb: 'Pinned as base context for every agent in this domain. Keep it short and current.',
-    readOnlyNote: 'Read-only — a domain admin keeps the domain manual current.',
+    readOnlyNote: 'Read-only — a domain admin keeps the domain operating model current.',
   },
   {
     key: 'company',
-    label: 'Company',
-    blurb: 'The organisation-wide operating manual — shared by every domain.',
-    readOnlyNote: 'Read-only — a platform admin keeps the company manual current.',
+    label: 'Company Operating Model',
+    blurb: 'The organisation-wide operating model — shared by every domain.',
+    readOnlyNote: 'Read-only — a platform admin keeps the company operating model current.',
   },
 ];
 
 const SECTION_PLACEHOLDERS: Record<string, string> = {
-  overview:
-    'A short description — what this covers, who it serves, and what makes it distinct…',
+  general:
+    'What this org / domain / person does and what makes it distinct — purpose, scope, and identity…',
+  strategy:
+    'Objectives, priorities, and horizons — e.g.\n\n- Q3: reduce submission error rate below 0.1%\n- H2: expand to three new markets',
+  business:
+    'Business model, customers, market position, and operating constraints — what drives value and what limits it…',
+  organization:
+    'Teams, roles, ownership, and decision rights — who does what and who decides…',
+  architecture:
+    'Key systems, platforms, and integrations — the technical landscape agents need to understand…',
+  data:
+    'Key datasets, data domains, sources, and governance — what data exists and how it is managed…',
   glossary:
     'Key terms and their definitions — e.g.\n\n**Data Product:** A certified, shared dataset in the marketplace.',
-  goals:
-    'Current objectives — e.g.\n\n- Reduce submission error rate below 0.1%\n- Achieve 48h SLA on bank submissions',
-  context:
-    'Background knowledge agents need — key partners, systems, constraints, deadlines…',
 };
 
 type ManualPayload = DomainKnowledge & { canEdit: boolean };
@@ -123,7 +130,7 @@ export default function OperatingManualPage() {
 
   return (
     <ConfirmProvider>
-      <PageHeader title="Operating Manual" crumb="how this org · domain · you actually work" />
+      <PageHeader title="Operating Model" crumb="how this org · domain · you actually work" />
       <div className="content">
 
         {/* My · Domain · Company scope switcher */}
@@ -203,14 +210,14 @@ export default function OperatingManualPage() {
               <div className="lc-history-panel">
                 <VersionHistory
                   basePath={`/api/knowledge/manual/${scope}`}
-                  name={def.key === 'my' ? def.label : `${def.label} operating manual`}
+                  name={def.label}
                   onRestored={() => void load()}
                 />
               </div>
             )}
           </div>
         ) : (
-          <div className="stub-page" style={{ marginTop: 18 }}>Could not load this operating manual.</div>
+          <div className="stub-page" style={{ marginTop: 18 }}>Could not load this operating model.</div>
         )}
 
       </div>

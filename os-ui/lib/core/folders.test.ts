@@ -14,7 +14,36 @@ import {
   buildTree,
   resolveFolderGrant,
   triState,
+  visibleFolderRoots,
+  renameLeafPath,
 } from './folders.ts';
+
+test('visibleFolderRoots: default shows both, active scope hides the inactive root', () => {
+  // Backward-compatible default: no `roots` given → both roots render.
+  assert.deepEqual(visibleFolderRoots(undefined), ['personal', 'domain']);
+  // "My" scope → only the personal root renders (the empty Domain root is NOT shown).
+  assert.deepEqual(visibleFolderRoots(['personal']), ['personal']);
+  // "Domain"/"Company" scope → only the domain root renders (no bare "My folders").
+  assert.deepEqual(visibleFolderRoots(['domain']), ['domain']);
+  // Explicit both → both, in canonical order regardless of input order.
+  assert.deepEqual(visibleFolderRoots(['domain', 'personal']), ['personal', 'domain']);
+  // Empty request → nothing renders (neither root section).
+  assert.deepEqual(visibleFolderRoots([]), []);
+});
+
+test('renameLeafPath: changes only the LEAF name, keeps the parent (the PATCH path)', () => {
+  // Rename a nested folder → same parent /a, new leaf. This is the path the ••• Rename
+  // action PATCHes to /api/folders/:id, distinct from a Move (which changes the parent).
+  assert.equal(renameLeafPath('/a/b', 'c'), '/a/c');
+  // A root-level folder renames within the root.
+  assert.equal(renameLeafPath('/contracts', 'legal'), '/legal');
+  // Name is trimmed + normalised (no stray slashes/spaces leak into the path).
+  assert.equal(renameLeafPath('/a/b', '  c '), '/a/c');
+  assert.equal(renameLeafPath('/a/b', 'c/d'), '/a/c/d');
+  // Blank name → null (a no-op the caller skips — never issues a PATCH).
+  assert.equal(renameLeafPath('/a/b', ''), null);
+  assert.equal(renameLeafPath('/a/b', '   '), null);
+});
 
 test('normaliseFolderPath: leading slash, no trailing, root for empty', () => {
   assert.equal(normaliseFolderPath(undefined), '/');

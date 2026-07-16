@@ -78,7 +78,7 @@ export const TIER_BADGE: Record<MetricTier, string> = {
 export const TIER_WORD: Record<MetricTier, string> = {
   personal: 'Personal',
   domain: 'Domain',
-  marketplace: 'Marketplace',
+  marketplace: 'Company',
 };
 
 /** The leaf of a Cube member — `DailyRevenue.region` → `region`. */

@@ -14,9 +14,9 @@ interface OnboardingWizardProps {
 
 const ROLE_BLURB: Record<Role, string> = {
   'creator': 'As an Agentic Leader you build and run your own agents, apps and artifacts, and use everything shared into your domain.',
-  builder: 'As a builder you can author Personal artifacts and promote your best work to Shared.',
+  builder: 'As a builder you can author My artifacts and promote your best work to Domain.',
   domain_admin: 'As a domain admin you approve domain work and administer the users of your own domain(s) — inviting, editing and assigning roles up to builder.',
-  admin: 'As an admin you can certify artifacts to the Marketplace and manage users across domains.',
+  admin: 'As an admin you can certify artifacts to Company and manage users across domains.',
 };
 
 const GOLDEN_PATHS = [

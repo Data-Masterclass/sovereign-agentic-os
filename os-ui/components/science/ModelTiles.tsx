@@ -100,7 +100,7 @@ export default function ModelTiles({
         <div className="stub-page" style={{ marginTop: 16 }}>
           {scope === 'mine' || scope === 'all'
             ? 'No models yet — register one with ＋ New model.'
-            : scope === 'shared' ? 'Nothing shared in your domain yet.' : 'Nothing in the marketplace yet.'}
+            : scope === 'shared' ? 'Nothing in your domain yet.' : 'Nothing at the company tier yet.'}
         </div>
       ) : null}
 

@@ -17,6 +17,8 @@
  *                 workspace, rendered with a "Certified" badge.
  */
 
+import { promoteVerb } from './scopes.ts';
+
 export type ArtifactType =
   | 'dataset'
   | 'transformation'
@@ -88,8 +90,9 @@ export function nextVisibility(v: Visibility): Visibility | null {
 }
 
 export function promoteLabel(v: Visibility): string | null {
-  if (v === 'Personal') return 'Promote to Shared';
-  if (v === 'Shared') return 'Certify → Marketplace';
+  // Verb copy lives in core/scopes (single source of truth): "Promote to Domain"
+  // (Personal → Shared) then "Certify to Company" (Shared → Certified).
+  if (v === 'Personal' || v === 'Shared') return promoteVerb(v);
   return null;
 }
 

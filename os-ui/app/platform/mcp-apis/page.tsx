@@ -8,6 +8,7 @@ import PageHeader from '@/components/PageHeader';
 import McpConnect from '@/components/McpConnect';
 import { useApi } from '@/lib/useApi';
 import type { McpRegistry, RegistryEntry, RegistrySection } from '@/lib/platform-admin/mcp-registry';
+import { visibilityLabel } from '@/lib/core/scopes';
 
 type Data = { registry: McpRegistry; opa: string; gatewayReachable: boolean };
 
@@ -40,7 +41,7 @@ function EntryCard({
 
       <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 10, alignItems: 'center' }}>
         <span className="badge muted">{entry.scope}</span>
-        {entry.visibility ? <span className="badge">{entry.visibility === 'Shared' ? 'Shared in Domain' : entry.visibility}</span> : null}
+        {entry.visibility ? <span className="badge">{visibilityLabel(entry.visibility)}</span> : null}
         {entry.live === false ? <span className="badge warn">not live yet</span> : null}
       </div>
 

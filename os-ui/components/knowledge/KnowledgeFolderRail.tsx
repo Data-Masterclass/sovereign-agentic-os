@@ -5,6 +5,7 @@
 
 import { useState } from 'react';
 import FolderTree, { FolderPickerModal, type FolderRef, type FolderTreeItem } from '@/components/core/FolderTree';
+import { ensureFolderId, renamedPath } from '@/lib/folders/client';
 import { useConfirm } from '@/components/lifecycle/ConfirmDialog';
 import {
   itemsUnderFolder,
@@ -58,13 +59,23 @@ export default function KnowledgeFolderRail({
 
   async function moveFolder(ref: FolderRef, dest: string) {
     setErr('');
-    const res = await fetch(`/api/folders/${ref.id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ path: dest }),
-    });
-    if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? 'Move failed'); return; }
-    onChanged();
+    try {
+      // Synthetic (implicit) folder → materialise a registry row, then reparent it.
+      const id = await ensureFolderId('knowledge', ref);
+      const res = await fetch(`/api/folders/${id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path: dest }),
+      });
+      if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? 'Move failed'); return; }
+      onChanged();
+    } catch (e) { setErr((e as Error).message); }
+  }
+
+  async function renameFolder(ref: FolderRef, newName: string) {
+    const path = renamedPath(ref.path, newName);
+    if (!path || path === ref.path) return;
+    await moveFolder(ref, path);
   }
 
   /** Count of entries under a folder (incl. subfolders) — drives the cascade warning. */
@@ -75,13 +86,17 @@ export default function KnowledgeFolderRail({
   async function archiveFolder(ref: FolderRef) {
     if (!(await confirm(archiveFolderCopy(folderName(ref.path), countUnder(ref.path))))) return;
     setErr('');
-    const res = await fetch(`/api/folders/${ref.id}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'archive' }),
-    });
-    if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? 'Archive failed'); return; }
-    onChanged();
+    try {
+      // Materialise a row for a synthetic folder so it can be archived (never a dead-end).
+      const id = await ensureFolderId('knowledge', ref);
+      const res = await fetch(`/api/folders/${id}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'archive' }),
+      });
+      if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? 'Archive failed'); return; }
+      onChanged();
+    } catch (e) { setErr((e as Error).message); }
   }
 
   async function restoreFolder(ref: FolderRef) {
@@ -108,13 +123,15 @@ export default function KnowledgeFolderRail({
       {err ? <div className="error" style={{ marginTop: 8 }}>{err}</div> : null}
       <FolderTree
         variant="nav"
+        roots={['personal']}
         personalNodes={nodes}
         items={items}
         selectedPath={selectedPath}
         personalLabel="My folders"
         onSelect={(_scope, path) => onSelect(path)}
         onCreate={(_scope, parentPath) => void createFolder(parentPath)}
-        onMove={(ref) => { if (ref.id) setFolderMove(ref); }}
+        onMove={(ref) => setFolderMove(ref)}
+        onRename={(ref, newName) => void renameFolder(ref, newName)}
         onArchive={(ref) => void archiveFolder(ref)}
         onRestore={(ref) => void restoreFolder(ref)}
         onDelete={(ref) => void deleteFolder(ref)}
@@ -122,12 +139,13 @@ export default function KnowledgeFolderRail({
       <FolderPickerModal
         open={folderMove !== null}
         tab="knowledge"
+        roots={['personal']}
         personalNodes={nodes}
         title="Move folder"
         onConfirm={({ path }) => {
           const ref = folderMove;
           setFolderMove(null);
-          if (ref?.id) void moveFolder(ref, path);
+          if (ref) void moveFolder(ref, path);
         }}
         onCancel={() => setFolderMove(null)}
         onCreate={async (_scope, path) => {

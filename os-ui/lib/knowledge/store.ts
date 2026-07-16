@@ -11,6 +11,7 @@ import {
   parseWorkflow,
   serializeWorkflow,
   emptyDomainKnowledge,
+  reconcileSections,
 } from './schema.ts';
 import { canPromote, roleAtLeast } from '../core/session.ts';
 import type { Role } from '../core/session.ts';
@@ -526,8 +527,8 @@ export function restoreDomainKnowledgeVersion(
   return dk;
 }
 
-// ------------------------------------ Operating Manual (My/Domain/Company) ---
-// The Operating Manual tab renders the SAME guided-sections card at three scopes,
+// ------------------------------------ Operating Model (My/Domain/Company) ----
+// The Operating Model tab renders the SAME guided-sections card at three scopes,
 // each backed by a `DomainKnowledge` record keyed by a reserved storage key
 // (`user:<id>`, the real domain, or `tenant`). These wrappers resolve the key +
 // per-scope gating (see lib/knowledge/manual.ts) then reuse the exact domain-card
@@ -542,7 +543,11 @@ export function getManual(scope: ManualScope, user: Principal, domain?: string):
   const r = resolveManual(scope, user, domain);
   if (!r.canView) fail403();
   ensureSeeded();
-  return ks().domainKnowledge.get(r.key) ?? emptyDomainKnowledge(r.key);
+  const raw = ks().domainKnowledge.get(r.key) ?? emptyDomainKnowledge(r.key);
+  // Migrate old 4-section cards (overview/goals/context/glossary) to the canonical
+  // 7-section shape (general/strategy/business/organization/architecture/data/glossary)
+  // on every read — no data loss, version history preserved, no schema migration needed.
+  return reconcileSections(raw);
 }
 
 export function updateManual(
@@ -570,7 +575,8 @@ export function updateManual(
     }
   }
   ks().domainKnowledge.set(r.key, dk);
-  return dk;
+  // Always return the reconciled (new 7-section) shape to the caller.
+  return reconcileSections(dk);
 }
 
 export function listManualVersions(
@@ -602,13 +608,24 @@ export function restoreManualVersion(
   }
   const dk = ks().domainKnowledge.get(r.key) ?? emptyDomainKnowledge(r.key);
   domainVersions.record(r.key, user.id, snapshotDomain(dk), `restore of v${version}`);
-  for (const sec of dk.sections) {
+  // Restore onto the reconciled template — handles both old and new section ids.
+  const reconciled = reconcileSections(dk);
+  for (const sec of reconciled.sections) {
     const from = restored.find((s) => s.id === sec.id);
     if (from) sec.content = from.content;
+    else {
+      // Try migration mapping for old-shaped snapshots (overview→general etc.)
+      const legacyId = Object.entries({ overview: 'general', goals: 'strategy', context: 'business', glossary: 'glossary' })
+        .find(([, newId]) => newId === sec.id)?.[0];
+      if (legacyId) {
+        const legacySec = restored.find((s) => s.id === legacyId);
+        if (legacySec) sec.content = legacySec.content;
+      }
+    }
   }
-  dk.updatedAt = now();
-  ks().domainKnowledge.set(r.key, dk);
-  return dk;
+  reconciled.updatedAt = now();
+  ks().domainKnowledge.set(r.key, reconciled);
+  return reconciled;
 }
 
 // ----------------------------------------------- tacit (sibling tacit.md) ----

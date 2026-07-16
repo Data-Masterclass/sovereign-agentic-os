@@ -14,6 +14,7 @@ import {
   badgeClass,
   TYPE_LABELS,
 } from '@/lib/core/artifact-model';
+import { visibilityLabel } from '@/lib/core/scopes';
 
 export type SpecField = {
   key: string;
@@ -249,7 +250,7 @@ export default function ArtifactPanel({
       }
     }
     if (filter === 'All' || filter === 'Certified') {
-      if (certified.length) out.push({ key: 'certified', heading: 'Certified (from Marketplace)', sub: 'added by you', items: certified });
+      if (certified.length) out.push({ key: 'certified', heading: 'Certified · Company', sub: 'added by you', items: certified });
     }
     return out;
   }, [items, filter]);
@@ -286,14 +287,14 @@ export default function ArtifactPanel({
           <div className="row" style={{ gap: 6, alignItems: 'center' }}>
             {a.archived ? <span className="badge" style={{ opacity: 0.75 }}>Archived</span> : null}
             <span className={isCert ? badgeClass('Certified') : badgeClass(a.visibility)}>
-              {isCert ? 'Certified' : a.visibility === 'Shared' ? 'Shared in Domain' : a.visibility}
+              {isCert ? 'Company' : visibilityLabel(a.visibility)}
             </span>
           </div>
         </div>
         {a.description ? <div className="muted" style={{ marginTop: 8, whiteSpace: 'normal' }}>{a.description}</div> : null}
         {renderSpec ? <div style={{ marginTop: 8 }}>{renderSpec(a)}</div> : null}
         <div className="muted mono" style={{ marginTop: 8, fontSize: 11 }}>
-          {a.owner} · {a.domain}{isCert ? ' · via Marketplace' : ''}
+          {a.owner} · {a.domain}{isCert ? ' · company-certified' : ''}
         </div>
         {a.tags.length ? (
           <div className="sources" style={{ marginTop: 8 }}>
@@ -303,12 +304,12 @@ export default function ArtifactPanel({
         <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end', gap: 8 }}>
           {canShare ? (
             <button className="btn" style={{ padding: '5px 12px' }} disabled={busyId === a.id} onClick={() => act(a, `/api/artifacts/${a.id}/promote`, 'POST')}>
-              {busyId === a.id ? <span className="spin" /> : 'Promote to Shared'}
+              {busyId === a.id ? <span className="spin" /> : 'Promote to Domain'}
             </button>
           ) : null}
           {canCertify ? (
             <button className="btn" style={{ padding: '5px 12px' }} disabled={busyId === a.id} onClick={() => act(a, `/api/artifacts/${a.id}/promote`, 'POST')}>
-              {busyId === a.id ? <span className="spin" /> : 'Certify → Marketplace'}
+              {busyId === a.id ? <span className="spin" /> : 'Certify to Company'}
             </button>
           ) : null}
           {(canRevokeCert || canUnshare) ? (
@@ -316,7 +317,7 @@ export default function ArtifactPanel({
               <>
                 <button className="btn" style={{ padding: '5px 12px', background: 'var(--danger, #b42318)' }} disabled={busyId === a.id}
                   onClick={() => { setConfirmDemoteId(''); act(a, `/api/artifacts/${a.id}/demote`, 'POST'); }}>
-                  {busyId === a.id ? <span className="spin" /> : (canRevokeCert ? 'Confirm revoke → Shared' : 'Confirm unshare → Personal')}
+                  {busyId === a.id ? <span className="spin" /> : (canRevokeCert ? 'Confirm revoke → Domain' : 'Confirm unshare → My')}
                 </button>
                 <button className="btn ghost" style={{ padding: '5px 12px' }} disabled={busyId === a.id} onClick={() => setConfirmDemoteId('')}>
                   Cancel
@@ -324,7 +325,7 @@ export default function ArtifactPanel({
               </>
             ) : (
               <button className="btn ghost" style={{ padding: '5px 12px' }} disabled={busyId === a.id} onClick={() => setConfirmDemoteId(a.id)}>
-                {canRevokeCert ? 'Revoke from Marketplace' : 'Unshare'}
+                {canRevokeCert ? 'Revoke from Company' : 'Unshare'}
               </button>
             )
           ) : null}
@@ -390,10 +391,10 @@ export default function ArtifactPanel({
           </div>
         ) : null}
         {!isCert && a.visibility === 'Personal' && user && !canPromote(user.role, 'Personal') ? (
-          <div className="hint" style={{ marginTop: 6, fontSize: 11 }}>Promotion to Shared is for builders/admins.</div>
+          <div className="hint" style={{ marginTop: 6, fontSize: 11 }}>Promotion to Domain is for builders/admins.</div>
         ) : null}
         {!isCert && a.visibility === 'Shared' && user && !canPromote(user.role, 'Shared') ? (
-          <div className="hint" style={{ marginTop: 6, fontSize: 11 }}>Certifying to the Marketplace is admin-only.</div>
+          <div className="hint" style={{ marginTop: 6, fontSize: 11 }}>Certifying to Company is admin-only.</div>
         ) : null}
       </div>
     );
@@ -452,7 +453,7 @@ export default function ArtifactPanel({
           <div className="tabstrip" style={{ marginBottom: 0 }}>
             {(['All', 'Personal', 'Shared', 'Certified'] as const).map((f) => (
               <button key={f} className={filter === f ? 'active' : ''} onClick={() => setFilter(f)}>
-                {f === 'Shared' ? 'Shared in Domain' : f}{f !== 'All' ? ` (${counts[f]})` : ''}
+                {f === 'Shared' ? 'Domain' : f === 'Certified' ? 'Company' : f === 'Personal' ? 'My' : f}{f !== 'All' ? ` (${counts[f]})` : ''}
               </button>
             ))}
           </div>

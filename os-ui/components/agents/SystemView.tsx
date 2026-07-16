@@ -19,6 +19,7 @@ import { addAgent, addHandoffEdge, addSuperviseEdge, removeAgent, removeEdge, se
 import type { Schedule, System } from '@/lib/agents/system-schema';
 import type { ModelInfo } from '@/lib/agents/routing';
 import { roleAtLeast, type Role } from '@/lib/core/session';
+import { promoteVerb, visibilityLabel } from '@/lib/core/scopes';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import type { Visibility } from '@/lib/core/lifecycle';
@@ -109,7 +110,8 @@ function resolveInitialMode(_role: Role): ViewMode {
 }
 
 const visClass = (v: string) => (v === 'Shared' ? 'vis-shared' : v === 'Marketplace' ? 'vis-certified' : 'vis-personal');
-const visLabel = (v: string) => (v === 'Shared' ? 'Shared in Domain' : v);
+// Display label from the OS-wide scope vocabulary: Shared→Domain, Marketplace→Company, Personal→My.
+const visLabel = (v: string) => visibilityLabel(v);
 
 /** Systems visibility → the OS-wide lifecycle visibility (drives the delete gate). */
 const lcVis = (v: SystemViewData['visibility']): Visibility =>
@@ -275,7 +277,9 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
     data.origin !== 'forked' &&
     ((data.visibility === 'Personal' && roleAtLeast(data.role, 'builder')) ||
       (data.visibility === 'Shared' && data.role === 'admin'));
-  const promoteLabel = data.visibility === 'Personal' ? 'Promote to Shared' : 'Publish to Marketplace';
+  // Display verbs from the OS-wide scope vocabulary (lib/core/scopes.ts):
+  // Personal → "Promote to Domain", Shared → "Certify to Company".
+  const promoteLabel = data.visibility === 'Personal' ? promoteVerb('Personal') : promoteVerb('Shared');
   // Revoke sharing (demote), mirroring who could have promoted it: Marketplace→Shared
   // is admin-only; Shared→Personal is the owner (canEdit) or an in-domain builder+.
   const canDemote =
@@ -283,7 +287,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
     data.origin !== 'forked' &&
     ((data.visibility === 'Marketplace' && data.role === 'admin') ||
       (data.visibility === 'Shared' && roleAtLeast(data.role, 'builder')));
-  const demoteLabel = data.visibility === 'Marketplace' ? 'Revoke from Marketplace → Shared' : 'Unshare → Personal';
+  const demoteLabel = data.visibility === 'Marketplace' ? 'Revoke from Company → Domain' : 'Unshare → My';
   const editable = data.canEdit && !acting;
   // The mode to render NOW: the resolved state once known, else Simple — the
   // universal default (never flash the Developer surface before the pref resolves).
@@ -362,7 +366,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
               </>
             ) : (
               <button className="btn ghost sm" onClick={() => setConfirmDemote(true)} disabled={acting} title={`Revoke sharing — ${demoteLabel}`}>
-                {data.visibility === 'Marketplace' ? 'Revoke from Marketplace' : 'Unshare'}
+                {data.visibility === 'Marketplace' ? 'Revoke from Company' : 'Unshare'}
               </button>
             )
           ) : null}

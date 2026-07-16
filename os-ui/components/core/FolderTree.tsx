@@ -9,6 +9,7 @@ import {
   triState,
   itemsUnderFolder,
   normaliseFolderPath,
+  visibleFolderRoots,
   type FolderPathNode,
   type FolderTreeNode,
 } from '@/lib/core/folders';
@@ -72,9 +73,17 @@ type CommonProps = {
   items: FolderTreeItem[];
   /** Render one leaf item (the tab decides the row: filename, doc title, …). */
   renderLeaf?: (item: FolderTreeItem) => ReactNode;
-  /** Labels for the two roots (defaults: "My folders" / "Shared in domain"). */
+  /** Labels for the two roots (defaults: "My folders" / "Domain folders"). */
   personalLabel?: string;
   domainLabel?: string;
+  /**
+   * Which root sections to render — the active My/Domain scope decides this. When a
+   * root is omitted, its whole section (header included) is hidden, so the inactive
+   * scope's empty root never shows as a bare "Domain folders" / "My folders" heading.
+   * Defaults to BOTH roots for backward-compatibility. An active-but-empty root still
+   * renders (so a user with no folders yet can create their first one).
+   */
+  roots?: RootScope[];
 };
 
 /** The folder-row handle passed to every lifecycle callback — the path (always) plus
@@ -90,6 +99,9 @@ type NavProps = CommonProps & {
   onCreate?: (scope: RootScope, parentPath: string) => void;
   /** Move a folder (its ••• menu) — reparents the row AND its member items. */
   onMove?: (ref: FolderRef) => void;
+  /** Rename a folder in place — changes its LEAF name (same parent), keeping the row.
+   *  `newName` is the raw user input (the caller normalises + builds the new path). */
+  onRename?: (ref: FolderRef, newName: string) => void;
   /** Archive a folder (cascades to the items inside). Real rows only. */
   onArchive?: (ref: FolderRef) => void;
   /** Restore an archived folder (cascades). Real, archived rows only. */
@@ -336,10 +348,13 @@ function FolderRow({
             </button>
             {menuOpen && (() => {
               const ref = { scope, path: node.path, id: node.id, archived: node.archived };
-              // Lifecycle ops target the registry ROW, so they appear on real folders
-              // only (a synthetic/implicit folder has no `id` to act on). Archive vs
-              // Restore/Delete is driven by the row's archived state — identical across
-              // every foldered tab (one primitive, one menu).
+              // Rename / Move / Archive are offered on EVERY folder the user sees —
+              // including synthetic/implicit ones (folders that exist only because items
+              // were moved into a path). Those have no registry row (`id`), so the tab's
+              // handler MATERIALISES a row on demand (idempotent create, then act) — never
+              // a dead-end. Restore/Delete act on an already-archived ROW, which is always
+              // real (archiving materialises), so they keep the `isReal` guard. One menu,
+              // identical across every foldered tab.
               const isReal = node.id !== undefined && !node.synthetic;
               const close = () => setMenuOpen(false);
               const item = (label: string, onClick: () => void, danger = false) => (
@@ -359,8 +374,14 @@ function FolderRow({
                   className="card"
                   style={{ position: 'absolute', top: '100%', right: 0, zIndex: 5, padding: 4, minWidth: 140 }}
                 >
+                  {nav.onRename && !node.archived
+                    ? item('Rename…', () => {
+                        const next = window.prompt('New folder name', node.name);
+                        if (next && next.trim()) nav.onRename!(ref, next.trim());
+                      })
+                    : null}
                   {nav.onMove ? item('Move…', () => nav.onMove!(ref)) : null}
-                  {isReal && !node.archived && nav.onArchive ? item('Archive', () => nav.onArchive!(ref)) : null}
+                  {!node.archived && nav.onArchive ? item('Archive', () => nav.onArchive!(ref)) : null}
                   {isReal && node.archived && nav.onRestore ? item('Restore', () => nav.onRestore!(ref)) : null}
                   {isReal && node.archived && nav.onDelete ? item('Delete permanently', () => nav.onDelete!(ref), true) : null}
                 </div>
@@ -636,6 +657,10 @@ function computeSelection(
 
 export default function FolderTree(props: FolderTreeProps) {
   const domainNodes = props.domainNodes ?? [];
+  // Which root sections to render — defaults to BOTH (backward-compatible). A root not
+  // in this list is fully hidden (no bare header), so the inactive scope's empty root
+  // never shows. An active-but-empty root still renders (create-your-first-folder).
+  const roots = visibleFolderRoots(props.roots);
 
   // Picker variant: track which (path, scope) is currently highlighted.
   const [pickerSelected, setPickerSelected] = useState<{ path: string; scope: RootScope } | null>(null);
@@ -643,22 +668,26 @@ export default function FolderTree(props: FolderTreeProps) {
 
   return (
     <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
-      <Root
-        scope="personal"
-        label={props.personalLabel ?? 'My folders'}
-        nodes={props.personalNodes}
-        props={props}
-        pickerSelected={pickerSelected}
-        onPickerSelect={setPickerSelected}
-      />
-      <Root
-        scope="domain"
-        label={props.domainLabel ?? 'Shared in domain'}
-        nodes={domainNodes}
-        props={props}
-        pickerSelected={pickerSelected}
-        onPickerSelect={setPickerSelected}
-      />
+      {roots.includes('personal') && (
+        <Root
+          scope="personal"
+          label={props.personalLabel ?? 'My folders'}
+          nodes={props.personalNodes}
+          props={props}
+          pickerSelected={pickerSelected}
+          onPickerSelect={setPickerSelected}
+        />
+      )}
+      {roots.includes('domain') && (
+        <Root
+          scope="domain"
+          label={props.domainLabel ?? 'Domain folders'}
+          nodes={domainNodes}
+          props={props}
+          pickerSelected={pickerSelected}
+          onPickerSelect={setPickerSelected}
+        />
+      )}
       {picker && (
         <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 8, paddingTop: 24, alignSelf: 'stretch' }}>
           <button
@@ -695,6 +724,7 @@ export function FolderPickerModal({
   tab,
   personalNodes,
   domainNodes,
+  roots,
   onConfirm,
   onCancel,
   onCreate,
@@ -704,6 +734,8 @@ export function FolderPickerModal({
   tab: string;
   personalNodes: FolderPathNode[];
   domainNodes?: FolderPathNode[];
+  /** Which roots the picker may offer (defaults to both). Mirrors FolderTree.roots. */
+  roots?: RootScope[];
   onConfirm: (dest: { path: string; scope: RootScope }) => void;
   onCancel: () => void;
   onCreate?: (scope: RootScope, path: string) => Promise<void>;
@@ -750,9 +782,10 @@ export function FolderPickerModal({
           variant="picker"
           personalNodes={personalNodes}
           domainNodes={domainNodes ?? []}
+          roots={roots}
           items={[]}
           personalLabel="My folders"
-          domainLabel="Shared in domain"
+          domainLabel="Domain folders"
           onConfirm={onConfirm}
           onCancel={onCancel}
           onCreate={onCreate}

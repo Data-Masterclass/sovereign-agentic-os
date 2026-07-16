@@ -272,7 +272,7 @@ export default function GovernedConnections() {
               <div className="stub-page">
                 {scope === 'mine' || scope === 'all'
                   ? <>No connections yet{(canCreate || canCreatePersonal) ? ' — use ＋ New connector, or pick a Supported connector below.' : '.'}</>
-                  : scope === 'shared' ? 'Nothing shared in your domain yet.' : 'Nothing in the marketplace yet.'}
+                  : scope === 'shared' ? 'Nothing in Domain yet.' : 'Nothing in Company yet.'}
               </div>
             ) : (
               <>
@@ -605,6 +605,11 @@ type AutonomousPreset = typeof AUTONOMOUS_PRESETS[number];
 const connVisibility = (v: Conn['visibility']): Visibility =>
   v === 'Shared' ? 'shared' : v === 'Certified' ? 'certified' : 'personal';
 
+/** Display word for a connection's stored visibility. Mirrors lib/core/scopes.ts
+ *  (source of truth): Personal→"My", Shared→"Domain", Certified→"Company". */
+const visWord = (v: Conn['visibility']): string =>
+  v === 'Shared' ? 'Domain' : v === 'Certified' ? 'Company' : 'My';
+
 /** Register outcome (backend route wraps registerWarehouseCatalog → RegisterK8sOutcome). */
 type RegisterResult = { ok?: boolean; catalog?: string; detail?: string; error?: string };
 /** Test outcome (existing route: SHOW SCHEMAS through the governed query path). */
@@ -730,7 +735,7 @@ function AppConnectionCard({ c }: { c: AppConn }) {
         </div>
         <div className="row" style={{ gap: 6, alignItems: 'center', flexShrink: 0, marginLeft: 12 }}>
           {(c.visibility === 'Shared' || c.visibility === 'Certified') ? <DomainTag domain={c.domain} /> : null}
-          <span className={badge(c.visibility)}>{c.visibility === 'Shared' ? 'Shared in Domain' : c.visibility}</span>
+          <span className={badge(c.visibility)}>{visWord(c.visibility)}</span>
         </div>
       </div>
       <p className="hint" style={{ marginTop: 10, marginBottom: 0, fontSize: 11.5 }}>
@@ -877,14 +882,14 @@ function ConnectionCard({
   async function promote() {
     const r = await doPost(`/api/connections/${c.id}/promote`);
     const conn = r.data.connection as Conn | undefined;
-    setMsg(r.ok ? `✓ Promoted to ${conn?.visibility ?? ''}` : `✗ ${r.data.error as string}`);
+    setMsg(r.ok ? `✓ Promoted to ${conn ? visWord(conn.visibility) : ''}` : `✗ ${r.data.error as string}`);
     if (r.ok) onChange();
   }
 
   async function demote() {
     const r = await doPost(`/api/connections/${c.id}/demote`);
     const conn = r.data.connection as Conn | undefined;
-    setMsg(r.ok ? `✓ Revoked → ${conn?.visibility ?? ''}` : `✗ ${r.data.error as string}`);
+    setMsg(r.ok ? `✓ Revoked → ${conn ? visWord(conn.visibility) : ''}` : `✗ ${r.data.error as string}`);
     if (r.ok) onChange();
   }
 
@@ -1005,7 +1010,7 @@ function ConnectionCard({
           {dataUsage === 'bronze' && <span className="badge warn">Bronze source</span>}
           {dataUsage === 'files' && <span className="badge warn">Files index</span>}
           {(c.visibility === 'Shared' || c.visibility === 'Certified') ? <DomainTag domain={c.domain} /> : null}
-          <span className={badge(c.visibility)}>{c.visibility === 'Shared' ? 'Shared in Domain' : c.visibility}</span>
+          <span className={badge(c.visibility)}>{visWord(c.visibility)}</span>
         </div>
       </div>
 
@@ -1124,7 +1129,7 @@ function ConnectionCard({
         </button>
         {canManage && c.visibility !== 'Certified' ? (
           <button className="btn ghost" onClick={promote} disabled={busy !== ''}>
-            {c.visibility === 'Personal' ? 'Promote → Shared' : 'List → Marketplace'}
+            {c.visibility === 'Personal' ? 'Promote to Domain' : 'Certify to Company'}
           </button>
         ) : null}
         {/* Revoke sharing (demote). Certified→Shared is admin-only; Shared→Personal is
@@ -1133,13 +1138,13 @@ function ConnectionCard({
           confirmDemote ? (
             <>
               <button className="btn" style={{ background: 'var(--danger, #b42318)' }} onClick={() => { setConfirmDemote(false); void demote(); }} disabled={busy !== ''}>
-                {c.visibility === 'Certified' ? 'Confirm revoke → Shared' : 'Confirm unshare → Personal'}
+                {c.visibility === 'Certified' ? 'Confirm revoke → Domain' : 'Confirm unshare → My'}
               </button>
               <button className="btn ghost" onClick={() => setConfirmDemote(false)} disabled={busy !== ''}>Cancel</button>
             </>
           ) : (
             <button className="btn ghost" onClick={() => setConfirmDemote(true)} disabled={busy !== ''}>
-              {c.visibility === 'Certified' ? 'Revoke from Marketplace' : 'Unshare'}
+              {c.visibility === 'Certified' ? 'Revoke from Company' : 'Unshare'}
             </button>
           )
         ) : null}

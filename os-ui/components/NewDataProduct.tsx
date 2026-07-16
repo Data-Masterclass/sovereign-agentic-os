@@ -99,8 +99,8 @@ export default function NewDataProduct({ onDone }: { onDone?: () => void }) {
       });
       if (!reg.ok) { setError(reg.data.error ?? 'Could not register the data product'); return; }
       const note = visibility === 'Shared'
-        ? 'Data product registered + lineage cataloged. Ask a builder to promote it to Shared, then certify to the Marketplace.'
-        : 'Data product registered (Personal) + lineage cataloged.';
+        ? 'Data product registered + lineage cataloged. Ask a builder to promote it to Domain, then certify to Company.'
+        : 'Data product registered (My) + lineage cataloged.';
       mark(2, note);
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }, [name, description, visibility]);
@@ -227,7 +227,7 @@ export default function NewDataProduct({ onDone }: { onDone?: () => void }) {
           <div className="row" style={{ gap: 10, marginTop: 10, alignItems: 'center' }}>
             <span className="hint" style={{ marginTop: 0 }}>Target visibility:</span>
             {(['Personal', 'Shared'] as const).map((v) => (
-              <button key={v} className={`chip${visibility === v ? '' : ''}`} style={{ cursor: 'pointer', background: visibility === v ? undefined : 'transparent' }} onClick={() => setVisibility(v)}>{v === 'Shared' ? 'Shared in Domain' : v}</button>
+              <button key={v} className={`chip${visibility === v ? '' : ''}`} style={{ cursor: 'pointer', background: visibility === v ? undefined : 'transparent' }} onClick={() => setVisibility(v)}>{v === 'Shared' ? 'Domain' : v === 'Personal' ? 'My' : v}</button>
             ))}
             <button className="btn" style={{ marginLeft: 'auto' }} onClick={runDocument} disabled={busy}>{busy ? <span className="spin" /> : 'Register data product'}</button>
           </div>

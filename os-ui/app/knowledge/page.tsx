@@ -27,8 +27,8 @@ const lcVis = (v: 'Personal' | 'Shared' | 'Marketplace'): LcVisibility =>
  * Knowledge tab — reference knowledge (markdown) added by users.
  *
  * My knowledge: personal notes about how you work (owner-only, promotable).
- * Shared in Domain: notes promoted to domain scope.
- * Marketplace: certified knowledge from across the org.
+ * Domain: notes promoted to domain scope.
+ * Company: certified knowledge from across the org.
  *
  * The Domain Operating Manual (overview / glossary / goals / context) has
  * moved to the top of the Workflows tab (/workflows).
@@ -216,8 +216,8 @@ export default function KnowledgePage() {
           <div className="row" style={{ gap: 6, alignItems: 'center' }}>
             {e.archived && <span className="badge muted">archived</span>}
             {shared && <DomainTag domain={e.domain} />}
-            {e.visibility === 'Shared' && <span className="badge vis-shared">Shared in Domain</span>}
-            {e.visibility === 'Marketplace' && <span className="badge vis-certified">Certified</span>}
+            {e.visibility === 'Shared' && <span className="badge vis-shared">Domain</span>}
+            {e.visibility === 'Marketplace' && <span className="badge vis-certified">Company</span>}
             <button className="btn ghost sm" onClick={() => void (open ? setPkOpenId(null) : openPersonal(e.id))}>
               {open ? 'Close' : 'Open'}
             </button>
@@ -260,8 +260,8 @@ export default function KnowledgePage() {
                   <button className="btn ghost sm" onClick={() => void promotePersonal(e.id)} disabled={pkPromoting} title="Share this note along the governed promotion ladder">
                     {pkPromoting ? <span className="spin" /> : (
                       e.visibility === 'Shared'
-                        ? (canCertify ? 'Certify to marketplace' : 'Request certification')
-                        : (canPublish ? 'Promote to domain' : 'Request promotion')
+                        ? (canCertify ? 'Certify to Company' : 'Request certification')
+                        : (canPublish ? 'Promote to Domain' : 'Request promotion')
                     )}
                   </button>
                 )}
@@ -278,7 +278,7 @@ export default function KnowledgePage() {
                     </>
                   ) : (
                     <button className="btn ghost sm" onClick={() => setConfirmDemoteId(e.id)} disabled={pkPromoting} title="Revoke sharing one governed rung">
-                      {e.visibility === 'Marketplace' ? 'Revoke from Marketplace' : 'Unshare'}
+                      {e.visibility === 'Marketplace' ? 'Revoke from Company' : 'Unshare'}
                     </button>
                   ))}
                 {editable && (
@@ -302,13 +302,13 @@ export default function KnowledgePage() {
 
   return (
     <ConfirmProvider>
-      <PageHeader title="Knowledge" crumb="personal notes · shared in domain · marketplace" tutorial="knowledge" />
+      <PageHeader title="Knowledge" crumb="personal notes · domain · company" tutorial="knowledge" />
       <div className="content">
 
         <p className="lead" style={{ marginTop: 18 }}>
           Reference knowledge (markdown) that grounds your agents. <strong>My knowledge</strong> is
-          personal context about how you work; <strong>Shared in Domain</strong> are notes promoted
-          by domain members; <strong>Marketplace</strong> is certified knowledge from across the org.
+          personal context about how you work; <strong>Domain</strong> are notes promoted
+          by domain members; <strong>Company</strong> is certified knowledge from across the org.
           The <strong>Domain Operating Manual</strong> (overview / glossary / goals / context) lives
           at the top of the <strong>Workflows</strong> tab.
         </p>
@@ -360,7 +360,7 @@ export default function KnowledgePage() {
         {/* ── SHARED: personal notes promoted to domain scope ── */}
         {(kScope === 'all' || kScope === 'shared') && (
           <div style={{ marginTop: 20, order: 2 }}>
-            <div className="section-title">Shared in Domain · promoted notes</div>
+            <div className="section-title">Domain · promoted notes</div>
             {personal === null ? (
               <div className="stub-page"><span className="spin" /> Loading…</div>
             ) : personal.domain.length === 0 ? (
@@ -444,12 +444,12 @@ export default function KnowledgePage() {
         {/* ── MARKETPLACE: certified general-knowledge entries ── */}
         {(kScope === 'all' || kScope === 'marketplace') && (
           <div style={{ marginTop: 24, order: 3 }}>
-            <div className="section-title">Marketplace · certified knowledge</div>
+            <div className="section-title">Company · certified knowledge</div>
             {personal === null ? (
               <div className="stub-page"><span className="spin" /> Loading…</div>
             ) : personal.marketplace.length === 0 ? (
               <div className="stub-page" style={{ marginTop: 8 }}>
-                Nothing certified yet. Admins certify general knowledge into the marketplace.
+                Nothing certified yet. Admins certify general knowledge to Company.
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>

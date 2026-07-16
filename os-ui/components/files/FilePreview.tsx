@@ -36,7 +36,8 @@ const KIND_LABEL: Record<Asset['kind'], string> = {
   doc: 'DOC', image: 'IMG', audio: 'AUD', video: 'VID', table: 'TAB', archive: 'ZIP', other: 'FILE',
 };
 const SENSITIVITIES = ['public', 'internal', 'confidential', 'restricted'] as const;
-const TIER_WORD: Record<Asset['tier'], string> = { dataset: 'Private', asset: 'Shared in Domain', product: 'Marketplace' };
+// Scope vocabulary mirrors lib/core/scopes.ts (source of truth): Shared→"Domain", Certified→"Company".
+const TIER_WORD: Record<Asset['tier'], string> = { dataset: 'Private', asset: 'Domain', product: 'Company' };
 
 function bytesLabel(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -236,7 +237,7 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         <dt>Owner</dt><dd>{a.owner}</dd>
         <dt>Folder</dt><dd>{a.folder}</dd>
         <dt>Updated</dt><dd>{fresh(a.freshness)}</dd>
-        <dt>Sharing</dt><dd>{a.visibility === 'Shared' ? 'Shared in Domain' : a.visibility}</dd>
+        <dt>Sharing</dt><dd>{a.visibility === 'Shared' ? 'Domain' : a.visibility === 'Certified' ? 'Company' : a.visibility}</dd>
         <dt>Storage</dt><dd>{a.storage}</dd>
         <dt>Link</dt><dd className="deep-link">{a.deepLink}</dd>
       </dl>
@@ -317,8 +318,8 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
           ) : <p className="hint" style={{ margin: 0 }}>Private to {a.owner}.</p>
         ) : a.tier === 'asset' ? (
           <div className="preview-row">
-            <span className="hint" style={{ margin: 0 }}>Shared in domain.</span>
-            {isAdmin ? <button className="btn ghost sm" onClick={certify}>Certify to marketplace →</button> : null}
+            <span className="hint" style={{ margin: 0 }}>Shared with your domain.</span>
+            {isAdmin ? <button className="btn ghost sm" onClick={certify}>Certify to Company →</button> : null}
           </div>
         ) : (
           <span className="hint" style={{ margin: 0 }}>Published in the marketplace.</span>

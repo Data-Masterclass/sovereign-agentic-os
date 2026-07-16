@@ -54,12 +54,13 @@ const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 /** Map a loaded {@link Workflow} (+ its computed gaps) into a clean WorkflowReport. */
 export function buildWorkflowReport(workflow: Workflow, gaps: Gap[] = []): WorkflowReport {
   const status = workflow.status === 'live' ? 'Live' : 'Draft';
+  // Display vocabulary: Shared → "Domain", Marketplace → "Company", Personal → "My".
   const visLabel =
     workflow.visibility === 'Shared'
-      ? 'Shared in Domain'
+      ? 'Domain'
       : workflow.visibility === 'Marketplace'
-        ? 'Marketplace'
-        : 'Personal';
+        ? 'Company'
+        : 'My';
   const subtitleParts = [workflow.domain ? cap(workflow.domain) : null, status, visLabel].filter(Boolean) as string[];
 
   const actors: ReportActor[] = workflow.actors.map((a: Actor) => ({

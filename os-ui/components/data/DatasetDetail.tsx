@@ -114,7 +114,10 @@ function formatDate(iso: string): string {
 
 const TIER_BADGE: Record<Dataset['tier'], string> = { dataset: 'vis-personal', asset: 'vis-shared', product: 'vis-certified' };
 const TIER_WORD: Record<Dataset['tier'], string> = { dataset: 'Personal dataset', asset: 'Data asset', product: 'Data product' };
-const VIS_WORD: Record<string, string> = { private: 'Private', domain: 'Domain', shared: 'Shared in Domain', public: 'Public' };
+// Display words for a dataset's stored visibility. Core (lib/core/scopes.ts) is the
+// source of truth for scope vocabulary; these lowercase keys are this tab's own field
+// values, mirrored to the same nouns ("Shared"→"Domain").
+const VIS_WORD: Record<string, string> = { private: 'Private', domain: 'Domain', shared: 'Domain', public: 'Public' };
 
 /** "Show the code" — the same Forgejo-versioned files the panels + agent edit.
  *  Inlined from DatasetStepper so the dbt SQL editor lives in the detail. */
@@ -939,7 +942,7 @@ export default function DatasetDetail({
                 <div className="row" style={{ marginTop: 8 }}>
                   <button className="btn" disabled={shareBusy || !!(promote && !promote.gate.ok)} onClick={requestPromote}
                     title={promote && !promote.gate.ok ? 'Complete the transparency gate first' : 'A domain Builder approves this and moves it into Trino'}>
-                    {shareBusy ? <span className="spin" /> : 'Promote to Shared →'}
+                    {shareBusy ? <span className="spin" /> : 'Promote to Domain →'}
                   </button>
                 </div>
               </>
@@ -961,7 +964,7 @@ export default function DatasetDetail({
         )
       ) : dataset.tier === 'asset' ? (
         <div className="gate-check gate-ok" style={{ marginTop: 4 }}>
-          <span className="badge vis-shared">Shared in Domain</span>{' '}
+          <span className="badge vis-shared">Domain</span>{' '}
           <span className="muted" style={{ fontSize: 13 }}>
             Promoted data asset in <strong>Trino/Iceberg</strong> ({dataset.domain} domain).
           </span>
@@ -974,7 +977,7 @@ export default function DatasetDetail({
               {isAdmin ? (
                 <button className="btn" disabled={shareBusy} onClick={() => certifyAsset('certify')}
                   title="Certify this asset as a data product and list it in the marketplace">
-                  {shareBusy ? <span className="spin" /> : 'Promote to Marketplace →'}
+                  {shareBusy ? <span className="spin" /> : 'Certify to Company →'}
                 </button>
               ) : canEdit ? (
                 <button className="btn ghost" disabled={shareBusy} onClick={() => certifyAsset('request')}
@@ -989,7 +992,7 @@ export default function DatasetDetail({
         </div>
       ) : dataset.tier === 'product' ? (
         <div className="gate-check gate-ok" style={{ marginTop: 4 }}>
-          <span className="badge vis-certified">Certified</span>{' '}
+          <span className="badge vis-certified">Company</span>{' '}
           <span className="muted" style={{ fontSize: 13 }}>
             Certified data product — discoverable across the marketplace.
           </span>

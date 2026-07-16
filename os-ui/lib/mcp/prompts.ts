@@ -48,10 +48,10 @@ const isAdmin = (role: Role) => rank(role) >= rank('admin');
 function roleBanner(user: CurrentUser): string {
   const gate = isBuilder(user.role)
     ? isAdmin(user.role)
-      ? 'You CAN approve promotions, deploys, AND certify to the marketplace / own cross-domain bets / administer users tenant-wide.'
+      ? 'You CAN approve promotions, deploys, AND certify to Company / own cross-domain bets / administer users tenant-wide.'
       : isDomainAdmin(user.role)
-        ? 'You CAN approve promotions/deploys AND administer users in your own domain(s) (roles up to builder). You CANNOT certify to the marketplace or appoint domain admins (Admin only).'
-        : 'You CAN approve Personal→Shared promotions and deploys in your domain(s). You CANNOT certify to the marketplace (Admin only) or administer users (Domain admin+).'
+        ? 'You CAN approve promotions/deploys AND administer users in your own domain(s) (roles up to builder). You CANNOT certify to Company or appoint domain admins (Admin only).'
+        : 'You CAN approve Personal→Shared promotions and deploys in your domain(s). You CANNOT certify to Company (Admin only) or administer users (Domain admin+).'
     : 'You are a CREATOR: you build/run your own work and FILE promotion requests, but you CANNOT promote/publish/approve. At a ⛔ step, hand off to a Builder.';
   return `— YOUR ROLE: ${user.role} in domain(s) [${user.domains.join(', ') || 'none'}]. ${gate} —`;
 }
@@ -145,7 +145,7 @@ export const PROMPTS: McpPrompt[] = [
       `4. create_agent_system(name${a.domain ? `, domain: "${a.domain}"` : ''}${a.template ? `, template: "${a.template}"` : ''}).`,
       '5. commit_agent_files — ONLY system.yaml, agents/<id>/AGENT.md, MEMORY.md (a whitelist). Sub-agent grants ⊆ system grants.',
       '6. build_agent_system(systemId) — compile + verify (✓/✗ rows + Langfuse traces).',
-      '⛔ Sharing is the promote ladder: Builder→Shared, Admin→Marketplace. A creator keeps it Personal.',
+      '⛔ Sharing is the promote ladder: Builder→Domain, Admin→Company. A creator keeps it My.',
     ].join('\n'),
   },
   {
@@ -263,7 +263,7 @@ export const PROMPTS: McpPrompt[] = [
       '5. Wire the score into a consumer through the same governed door:',
       '   • an AGENT: grant the system the predict tool in system.yaml (commit_agent_files) — its calls run grant-scoped, as the runner;',
       '   • an APP: consume by reference (use_data / the REST predict door) — never embed a model endpoint or secret.',
-      '⛔ Widening WHO can call the model is the promote ladder (Builder → Domain, Admin → Marketplace), always a human — an agent can never promote a model.',
+      '⛔ Widening WHO can call the model is the promote ladder (Builder → Domain, Admin → Company), always a human — an agent can never promote a model.',
     ].join('\n'),
   },
   {

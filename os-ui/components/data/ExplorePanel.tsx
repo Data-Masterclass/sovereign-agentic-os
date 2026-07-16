@@ -97,13 +97,38 @@ export default function ExplorePanel({ datasetId, builtLayers, showPreview = tru
           A quiet look at what you actually have — rows, completeness, spread and range, all masked to what you can see.
         </p>
         {layers.length > 1 ? (
-          <div className="seg">
+          <div className="bsg-seg" role="group" aria-label="Layer">
             {layers.map((l) => (
-              <button key={l} className={layer === l ? 'on' : ''} onClick={() => setLayer(l)}>{l}</button>
+              <button
+                key={l}
+                type="button"
+                className={`bsg-tier bsg-${l}${layer === l ? ' on' : ''}`}
+                aria-pressed={layer === l}
+                onClick={() => setLayer(l)}
+              >
+                {l[0].toUpperCase() + l.slice(1)}
+              </button>
             ))}
           </div>
         ) : null}
       </div>
+
+      {/* Bronze/Silver/Gold layer picker: each tier its own colour, the highest
+          available tier selected by default (see initial state), click to switch. */}
+      <style>{`
+        .bsg-seg { display: inline-flex; gap: 6px; flex-shrink: 0; }
+        .bsg-tier {
+          padding: 3px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;
+          cursor: pointer; background: transparent; transition: background .12s, color .12s;
+          border: 1px solid transparent;
+        }
+        .bsg-bronze { color: #c8813f; border-color: #c8813f55; }
+        .bsg-silver { color: #9aa1ab; border-color: #9aa1ab55; }
+        .bsg-gold   { color: var(--gold-text, #d4af37); border-color: #d4af3755; }
+        .bsg-tier.on.bsg-bronze { background: #c8813f; border-color: #c8813f; color: #1a1205; }
+        .bsg-tier.on.bsg-silver { background: #c9ccd1; border-color: #c9ccd1; color: #16181c; }
+        .bsg-tier.on.bsg-gold   { background: var(--gold, #d4af37); border-color: var(--gold, #d4af37); color: #1a1205; }
+      `}</style>
 
       {err ? <div className="error" style={{ marginTop: 12 }}>{err}</div> : null}
 

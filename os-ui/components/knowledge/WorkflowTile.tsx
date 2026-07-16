@@ -23,10 +23,12 @@ const VIS_CLASS: Record<string, string> = {
   Shared: 'vis-shared',
   Marketplace: 'vis-certified',
 };
+// Display labels from the OS-wide scope vocabulary (lib/core/scopes.ts):
+// Shared→Domain, Marketplace→Company. Keys stay the persisted visibility values.
 const VIS_LABEL: Record<string, string> = {
-  Personal: 'Personal',
-  Shared: 'Shared in Domain',
-  Marketplace: 'Marketplace',
+  Personal: 'My',
+  Shared: 'Domain',
+  Marketplace: 'Company',
 };
 
 export default function WorkflowTile({ workflow: w, onClick }: Props) {

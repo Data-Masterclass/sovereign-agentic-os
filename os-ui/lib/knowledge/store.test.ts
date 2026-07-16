@@ -192,28 +192,28 @@ test('archived-live delete regression: an ARCHIVED published workflow deletes fr
   assert.ok(![...all.mine, ...all.domain, ...all.marketplace].some((w) => w.id === rec.id));
 });
 
-test('getDomainKnowledge returns the empty domain-knowledge template (4 sections)', () => {
+test('getDomainKnowledge returns the empty domain-knowledge template (7 sections)', () => {
   __resetStore();
   const dk = getDomainKnowledge('sales');
   assert.equal(dk.domain, 'sales');
-  assert.equal(dk.sections.length, 4);
+  assert.equal(dk.sections.length, 7);
   // The section TEMPLATE is structural; a fresh tenant has no content yet.
-  assert.equal(dk.sections.find((s) => s.id === 'overview')?.content, '');
+  assert.equal(dk.sections.find((s) => s.id === 'general')?.content, '');
 });
 
 test('updateDomainKnowledge patches section content', () => {
   __resetStore();
   updateDomainKnowledge('sales', builder, {
-    sections: [{ id: 'overview', content: 'Updated overview.' }],
+    sections: [{ id: 'general', content: 'Updated general.' }],
   });
   const dk = getDomainKnowledge('sales');
-  assert.equal(dk.sections.find((s) => s.id === 'overview')?.content, 'Updated overview.');
+  assert.equal(dk.sections.find((s) => s.id === 'general')?.content, 'Updated general.');
 });
 
 test('outsider cannot update domain knowledge', () => {
   __resetStore();
   assert.throws(
-    () => updateDomainKnowledge('sales', outsider, { sections: [{ id: 'overview', content: 'x' }] }),
+    () => updateDomainKnowledge('sales', outsider, { sections: [{ id: 'general', content: 'x' }] }),
     /permitted/i,
   );
 });
@@ -222,8 +222,8 @@ test('updateDomainKnowledge snapshots the prior card; restore reverts + is itsel
   __resetStore();
   assert.equal(listDomainKnowledgeVersions('sales', builder).length, 0, 'no history before first edit');
 
-  updateDomainKnowledge('sales', builder, { sections: [{ id: 'overview', content: 'v1 overview' }] });
-  updateDomainKnowledge('sales', builder, { sections: [{ id: 'overview', content: 'v2 overview' }] });
+  updateDomainKnowledge('sales', builder, { sections: [{ id: 'general', content: 'v1 general' }] });
+  updateDomainKnowledge('sales', builder, { sections: [{ id: 'general', content: 'v2 general' }] });
 
   const history = listDomainKnowledgeVersions('sales', builder);
   assert.equal(history.length, 2);
@@ -232,13 +232,13 @@ test('updateDomainKnowledge snapshots the prior card; restore reverts + is itsel
   assert.equal(history[1].version, 1);
 
   // A no-op save (same content) does NOT churn a new version.
-  updateDomainKnowledge('sales', builder, { sections: [{ id: 'overview', content: 'v2 overview' }] });
+  updateDomainKnowledge('sales', builder, { sections: [{ id: 'general', content: 'v2 general' }] });
   assert.equal(listDomainKnowledgeVersions('sales', builder).length, 2);
 
   // Restore v1 (prior of the first edit = empty template) → content reverts AND
   // the pre-restore card is snapshotted as v3, so restore is auditable + reversible.
   restoreDomainKnowledgeVersion('sales', builder, 1);
-  assert.equal(getDomainKnowledge('sales').sections.find((s) => s.id === 'overview')?.content, '');
+  assert.equal(getDomainKnowledge('sales').sections.find((s) => s.id === 'general')?.content, '');
   const after = listDomainKnowledgeVersions('sales', builder);
   assert.equal(after.length, 3);
   assert.equal(after[0].version, 3);
@@ -250,7 +250,7 @@ test('updateDomainKnowledge snapshots the prior card; restore reverts + is itsel
 
 test('domain-knowledge history is view-scoped; restore is edit-scoped (outsider rejected)', () => {
   __resetStore();
-  updateDomainKnowledge('sales', builder, { sections: [{ id: 'overview', content: 'shared' }] });
+  updateDomainKnowledge('sales', builder, { sections: [{ id: 'general', content: 'shared' }] });
 
   // An outsider (finance) is not in the sales domain → cannot view OR restore.
   assert.throws(() => listDomainKnowledgeVersions('sales', outsider), /permitted/i);
@@ -263,10 +263,10 @@ test('domain-knowledge history is view-scoped; restore is edit-scoped (outsider 
 
 test('restoreDomainKnowledgeVersion rejects a corrupt snapshot', () => {
   __resetStore();
-  updateDomainKnowledge('sales', builder, { sections: [{ id: 'overview', content: 'ok' }] });
+  updateDomainKnowledge('sales', builder, { sections: [{ id: 'general', content: 'ok' }] });
   // Corrupt v1's snapshot in place, then attempt a restore → 422.
   const v = listDomainKnowledgeVersions('sales', builder)[0];
-  (v.state as { sections: unknown }).sections = [{ id: 'overview', content: 123 }];
+  (v.state as { sections: unknown }).sections = [{ id: 'general', content: 123 }];
   assert.throws(() => restoreDomainKnowledgeVersion('sales', builder, 1), /no restorable source/i);
 });
 

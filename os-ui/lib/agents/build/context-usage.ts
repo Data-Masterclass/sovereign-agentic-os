@@ -45,7 +45,21 @@ export type ContextItem = {
   confidence: ContextConfidence;
   /** True when the tool call itself failed — the context was NOT obtained. */
   errored?: boolean;
+  /**
+   * A route to open this artifact in the OS (same-app link), or undefined when the
+   * id can't be resolved to a navigable item (e.g. an inferred SQL FQN with no
+   * registry id). See `deepLinkFor`.
+   */
+  deepLink?: string;
+  /**
+   * A short, human "how it was used" hint pulled cheaply from the step — e.g. the
+   * SQL/query text or a knowledge query. Never a raw blob; capped and single-line.
+   */
+  hint?: string;
 };
+
+/** The per-agent slice of context usage — one entry per node that touched anything. */
+export type NodeContextUsage = { node: string; items: ContextItem[] };
 
 /** The derived per-run context-usage record. */
 export type RunContextUsage = {
@@ -62,8 +76,61 @@ export type UsageStep = {
   isError?: boolean;
 };
 
-/** The minimal node shape — a list of steps. */
-export type UsageNode = { steps?: UsageStep[] };
+/** The minimal node shape — an (optional) agent name + its list of steps. */
+export type UsageNode = { node?: string; steps?: UsageStep[] };
+
+// ---------------------------------------------------------------- deep links
+
+/**
+ * The five context kinds are SINGLE-PAGE tabs in this OS (verified against
+ * `lib/core/tabs.ts`: /data, /knowledge, /unstructured, /metrics, /connections) —
+ * none has a per-item `[id]` route (only Big Bets and Software do). So the honest
+ * deep link is the real tab route carrying the item id as a `?focus=<id>` param: it
+ * always resolves to the CORRECT tab, never fabricates a wrong page, and gives the
+ * tab a hook to auto-open the item. `data:sql` (an opaque inferred touch) and
+ * inferred physical FQNs have no registry id → no link is produced for them.
+ */
+const KIND_ROUTE: Record<ContextKind, string> = {
+  data: '/data',
+  knowledge: '/knowledge',
+  files: '/unstructured',
+  metrics: '/metrics',
+  connections: '/connections',
+};
+
+/** True for ids that don't name a real registry artifact (opaque / physical FQN). */
+function isUnlinkableId(id: string): boolean {
+  return id === 'data:sql' || id.includes('.'); // FQNs like iceberg.sales.gold_orders
+}
+
+/** A same-app route that opens this artifact, or undefined when it isn't resolvable. */
+export function deepLinkFor(kind: ContextKind, id: string): string | undefined {
+  if (!id || isUnlinkableId(id)) return undefined;
+  const route = KIND_ROUTE[kind];
+  return route ? `${route}?focus=${encodeURIComponent(id)}` : undefined;
+}
+
+// ---------------------------------------------------------------- how-it-was-used hint
+
+/** One-line, capped snippet of a string — no raw blobs in the UI. */
+function clip(s: string, max = 120): string {
+  const one = s.replace(/\s+/g, ' ').trim();
+  return one.length > max ? `${one.slice(0, max - 1)}…` : one;
+}
+
+/**
+ * A short "how it was used" hint, cheaply from the step's own args — the SQL for a
+ * query, the search query for a retrieval. Returns undefined when nothing legible is
+ * cheaply available (we never fabricate). Result blobs are deliberately NOT dumped.
+ */
+function hintFrom(tool: string, args: Record<string, unknown>): string | undefined {
+  const q =
+    strField(args, 'sql') ??
+    strField(args, 'query') ??
+    strField(args, 'question') ??
+    strField(args, 'prompt');
+  return q ? clip(q) : undefined;
+}
 
 // ---------------------------------------------------------------- tool → extraction
 
@@ -209,12 +276,15 @@ export function deriveContextUsage(nodes: UsageNode[]): RunContextUsage {
       const errored = !!step.isError;
       const result = parseResult(step.result);
 
+      const hint = hintFrom(tool, args);
+
       // 1) Direct id-arg reads.
       const idArg = ID_ARG[tool];
       if (idArg) {
         const id = strField(args, idArg.field);
         if (id) {
           const name = nameFromResult(result);
+          const deepLink = deepLinkFor(idArg.kind, id);
           items.push({
             kind: idArg.kind,
             id,
@@ -223,6 +293,8 @@ export function deriveContextUsage(nodes: UsageNode[]): RunContextUsage {
             mode: idArg.mode,
             confidence: 'captured',
             ...(errored ? { errored: true } : {}),
+            ...(deepLink ? { deepLink } : {}),
+            ...(hint ? { hint } : {}),
           });
         }
         continue;
@@ -233,6 +305,7 @@ export function deriveContextUsage(nodes: UsageNode[]): RunContextUsage {
       if (searchKind) {
         if (!errored) {
           for (const hit of searchHits(result)) {
+            const deepLink = deepLinkFor(searchKind, hit.id);
             items.push({
               kind: searchKind,
               id: hit.id,
@@ -240,6 +313,8 @@ export function deriveContextUsage(nodes: UsageNode[]): RunContextUsage {
               via: tool,
               mode: 'retrieved',
               confidence: 'captured',
+              ...(deepLink ? { deepLink } : {}),
+              ...(hint ? { hint } : {}),
             });
           }
         }
@@ -247,6 +322,7 @@ export function deriveContextUsage(nodes: UsageNode[]): RunContextUsage {
       }
 
       // 3) query_data → infer dataset FQN(s) from the SQL, else an opaque touch.
+      //    (Inferred FQNs / the opaque touch have no registry id → no deep link.)
       if (tool === 'query_data') {
         const sql = strField(args, 'sql') ?? '';
         const fqns = fqnsFromSql(sql);
@@ -259,6 +335,7 @@ export function deriveContextUsage(nodes: UsageNode[]): RunContextUsage {
               mode: 'read',
               confidence: 'inferred',
               ...(errored ? { errored: true } : {}),
+              ...(hint ? { hint } : {}),
             });
           }
         } else {
@@ -269,6 +346,7 @@ export function deriveContextUsage(nodes: UsageNode[]): RunContextUsage {
             mode: 'read',
             confidence: 'inferred',
             ...(errored ? { errored: true } : {}),
+            ...(hint ? { hint } : {}),
           });
         }
         continue;
@@ -284,6 +362,7 @@ export function deriveContextUsage(nodes: UsageNode[]): RunContextUsage {
         }
         if (id) {
           const name = nameFromResult(result);
+          const deepLink = deepLinkFor(write.kind, id);
           items.push({
             kind: write.kind,
             id,
@@ -292,6 +371,8 @@ export function deriveContextUsage(nodes: UsageNode[]): RunContextUsage {
             mode: 'written',
             confidence: 'captured',
             ...(errored ? { errored: true } : {}),
+            ...(deepLink ? { deepLink } : {}),
+            ...(hint ? { hint } : {}),
           });
         }
       }
@@ -299,6 +380,21 @@ export function deriveContextUsage(nodes: UsageNode[]): RunContextUsage {
   }
 
   return { items, byKind: rollUp(items) };
+}
+
+/**
+ * Per-agent context usage — the SAME derivation applied per node, so the panel can
+ * show, FOR EACH AGENT, exactly what that agent read/retrieved/wrote (not one merged
+ * list). Nodes that touched nothing are omitted. Node order is preserved; an unnamed
+ * node falls back to a positional label.
+ */
+export function deriveContextUsageByNode(nodes: UsageNode[]): NodeContextUsage[] {
+  const out: NodeContextUsage[] = [];
+  (nodes ?? []).forEach((node, i) => {
+    const { items } = deriveContextUsage([node]);
+    if (items.length > 0) out.push({ node: node.node ?? `agent ${i + 1}`, items });
+  });
+  return out;
 }
 
 /** Deduped ids per kind, counting only successfully-obtained context. */

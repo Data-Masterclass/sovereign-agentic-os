@@ -9,7 +9,7 @@ import { useUser } from '@/lib/useUser';
 import { canManageArtifact } from '@/lib/governance/edit-scope';
 import NewSystemPanel from './NewSystemPanel';
 import { roleAtLeast } from '@/lib/core/session';
-import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/core/scopes';
+import { SCOPE_GROUPS, groupByScope, scopeCounts, visibilityLabel, type ScopeKey } from '@/lib/core/scopes';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import type { Visibility } from '@/lib/core/lifecycle';
@@ -35,7 +35,8 @@ type Summary = {
 type Groups = { mine: Summary[]; domain: Summary[]; marketplace: Summary[] };
 
 const visClass = (v: string) => (v === 'Shared' ? 'vis-shared' : v === 'Marketplace' ? 'vis-certified' : 'vis-personal');
-const visLabel = (v: string) => (v === 'Shared' ? 'Shared in Domain' : v);
+// Display label from the OS-wide scope vocabulary: Shared→Domain, Marketplace→Company, Personal→My.
+const visLabel = (v: string) => visibilityLabel(v);
 
 /** Systems visibility → the OS-wide lifecycle visibility (drives the delete gate). */
 const lcVis = (v: Summary['visibility']): Visibility =>
@@ -168,7 +169,7 @@ export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }
             <div className="stub-page" style={{ padding: 24 }}>
               {scope === 'mine' || scope === 'all'
                 ? 'No agent systems yet — create one above.'
-                : scope === 'shared' ? 'Nothing shared in your domain yet.' : 'Nothing in the marketplace yet.'}
+                : scope === 'shared' ? 'Nothing in your domain yet.' : 'Nothing company-wide yet.'}
             </div>
           ) : (
             <div className="grid">{visible.map((s) => card(s, kindFor(s)))}</div>

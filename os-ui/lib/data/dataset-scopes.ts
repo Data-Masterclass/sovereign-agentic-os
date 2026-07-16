@@ -15,6 +15,8 @@
 
 import {
   type ScopeKey,
+  SCOPE_GROUPS,
+  scopeLabel,
   tilesForScope as tilesForScopeCore,
   activeScopeCounts,
   type ScopeGroups as CoreScopeGroups,
@@ -23,12 +25,11 @@ import {
 
 export type DatasetScope = ScopeKey;
 
-export const DATASET_SCOPES: { key: DatasetScope; label: string }[] = [
-  { key: 'all', label: 'All Data' },
-  { key: 'mine', label: 'My Data' },
-  { key: 'shared', label: 'Shared in Domain Data' },
-  { key: 'marketplace', label: 'Marketplace Data' },
-];
+/** Derived from core so "All/My/Domain/Company Data" always matches the OS vocabulary. */
+export const DATASET_SCOPES: { key: DatasetScope; label: string }[] = SCOPE_GROUPS.map((g) => ({
+  key: g.key,
+  label: scopeLabel(g.key, 'Data'),
+}));
 
 type ScopeTile = { name: string; owner: string; archived?: boolean };
 export type ScopeGroups<T extends ScopeTile> = CoreScopeGroups<T>;

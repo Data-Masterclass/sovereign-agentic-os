@@ -14,6 +14,7 @@ import {
   type FolderPathNode,
 } from '@/lib/core/folders';
 import FolderTree, { FolderPickerModal, type FolderRef } from '@/components/core/FolderTree';
+import { ensureFolderId, renamedPath } from '@/lib/folders/client';
 import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
 import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
 import FilePreview from './FilePreview';
@@ -313,6 +314,7 @@ function FilesBrowserInner() {
       <FolderPickerModal
         open={pickerIds !== null}
         tab="files"
+        roots={activeRoots}
         personalNodes={visiblePersonalNodes}
         domainNodes={visibleDomainNodes}
         title={`Move ${pickerIds && pickerIds.length > 1 ? `${pickerIds.length} files` : 'file'} to folder`}
@@ -336,21 +338,25 @@ function FilesBrowserInner() {
       <FolderPickerModal
         open={folderMove !== null}
         tab="files"
+        roots={folderMove ? [folderMove.scope] : activeRoots}
         personalNodes={folderMove?.scope === 'personal' ? visiblePersonalNodes : []}
         domainNodes={folderMove?.scope === 'domain' ? visibleDomainNodes : []}
         title="Move folder"
         onConfirm={async ({ path }) => {
-          if (!folderMove?.id) return;
+          const ref = folderMove;
+          setFolderMove(null);
+          if (!ref) return;
           setErr('');
           try {
-            const res = await fetch(`/api/folders/${folderMove.id}`, {
+            // Materialise a row for a synthetic folder before reparenting it.
+            const id = await ensureFolderId('files', ref);
+            const res = await fetch(`/api/folders/${id}`, {
               method: 'PATCH', headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ path }),
             });
             if (!res.ok) { setErr((await res.json()).error ?? 'Could not move folder'); }
             else { refresh(); void loadFolders(); }
           } catch (e) { setErr((e as Error).message); }
-          setFolderMove(null);
         }}
         onCancel={() => setFolderMove(null)}
         onCreate={async (scope, path) => {
@@ -378,18 +384,37 @@ function FilesBrowserInner() {
                 New-folder edit the registry. */}
             <FolderTree
               variant="nav"
+              roots={activeRoots}
               personalNodes={visiblePersonalNodes}
               domainNodes={visibleDomainNodes}
               items={[...visiblePersonalItems, ...visibleDomainItems]}
               personalLabel="My folders"
-              domainLabel="Shared folders"
+              domainLabel="Domain folders"
               renderLeaf={(i) => <span className="file-sub">{i.name ?? i.id}</span>}
               selectedPath={sel?.path}
               onSelect={(root, path) =>
                 setSel((cur) => (cur && cur.root === root && cur.path === path ? null : { root, path }))
               }
               onCreate={(root, parentPath) => void createFolder(root, parentPath)}
-              onMove={(ref) => { if (ref.id) setFolderMove(ref); }}
+              onMove={(ref) => setFolderMove(ref)}
+              onRename={(ref, newName) => {
+                const path = renamedPath(ref.path, newName);
+                if (!path || path === ref.path) return;
+                void (async () => {
+                  setErr('');
+                  try {
+                    // Synthetic (implicit) folders have no row → materialise, then rename.
+                    const id = await ensureFolderId('files', ref);
+                    const res = await fetch(`/api/folders/${id}`, {
+                      method: 'PATCH', headers: { 'content-type': 'application/json' },
+                      body: JSON.stringify({ path }),
+                    });
+                    if (!res.ok) { setErr((await res.json()).error ?? 'Could not rename folder'); return; }
+                    if (sel?.path === ref.path) setSel({ root: ref.scope, path });
+                    refresh(); void loadFolders();
+                  } catch (e) { setErr((e as Error).message); }
+                })();
+              }}
               onArchive={(ref) => {
                 const count = itemsUnderFolder(
                   ref.path,
@@ -399,7 +424,9 @@ function FilesBrowserInner() {
                   if (!await confirm(archiveFolderCopy(folderName(ref.path), count))) return;
                   setErr('');
                   try {
-                    const res = await fetch(`/api/folders/${ref.id}`, {
+                    // Materialise a registry row for a synthetic folder so it can be archived.
+                    const id = await ensureFolderId('files', ref);
+                    const res = await fetch(`/api/folders/${id}`, {
                       method: 'POST', headers: { 'content-type': 'application/json' },
                       body: JSON.stringify({ action: 'archive' }),
                     });
@@ -481,7 +508,7 @@ function FilesBrowserInner() {
                 <div className="stub-page">
                   {scope === 'mine' || scope === 'all'
                     ? 'No files here yet. Drag a file in, or use Upload — any type works.'
-                    : `Nothing ${scope === 'shared' ? 'shared in your domain' : 'in the marketplace'} yet.`}
+                    : `Nothing in ${scope === 'shared' ? 'Domain' : 'Company'} yet.`}
                 </div>
               ) : (
                 <>

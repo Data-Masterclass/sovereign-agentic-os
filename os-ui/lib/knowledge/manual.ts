@@ -5,9 +5,9 @@ import type { Role } from '../core/session.ts';
 import { canManageArtifact } from '../governance/edit-scope.ts';
 
 /**
- * The Operating Manual comes in THREE scopes, each a guided-sections card that
- * reuses the same `DomainKnowledge` shape (overview / glossary / goals / context)
- * but is keyed + governed differently:
+ * The Operating Model comes in THREE scopes, each a guided-sections card that
+ * reuses the same `DomainKnowledge` shape (general / strategy / business /
+ * organization / architecture / data / glossary) but is keyed + governed differently:
  *
  *   • my      — a PERSONAL manual, one per user. Read + edit: OWNER only.
  *   • domain  — the existing per-domain operating manual. Read: everyone in the

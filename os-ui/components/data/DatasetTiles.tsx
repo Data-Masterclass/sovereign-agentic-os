@@ -10,6 +10,7 @@ import { canManageArtifact } from '@/lib/governance/edit-scope';
 import { DATASET_SCOPES, tilesForScope, scopeCounts, type DatasetScope } from '@/lib/data/dataset-scopes';
 import { itemsUnderFolder, normaliseFolderPath, folderName, type FolderPathNode } from '@/lib/core/folders';
 import FolderTree, { FolderPickerModal, type FolderRef } from '@/components/core/FolderTree';
+import { ensureFolderId, renamedPath } from '@/lib/folders/client';
 import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import DomainTag from '@/components/DomainTag';
@@ -300,14 +301,15 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
   // Folder lifecycle handlers — archive, restore, delete a folder row via the
   // governed registry API. All three refresh both the dataset tiles and the rail.
   const handleFolderArchive = useCallback(async (ref: FolderRef) => {
-    if (!ref.id) return;
     const active = groups ? [...(groups.mine ?? []), ...(groups.domain ?? []), ...(groups.marketplace ?? [])] : [];
     const count = itemsUnderFolder(ref.path, active.filter((t) => rootOf(t) === ref.scope)).length;
     const ok = await confirm(archiveFolderCopy(folderName(ref.path), count));
     if (!ok) return;
     setErr('');
     try {
-      const res = await fetch(`/api/folders/${ref.id}`, {
+      // Synthetic (implicit) folder → materialise a row first, then archive it.
+      const id = await ensureFolderId('data', ref);
+      const res = await fetch(`/api/folders/${id}`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ action: 'archive' }),
       });
@@ -315,6 +317,21 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
       await refresh();
     } catch (e) { setErr((e as Error).message); }
   }, [confirm, groups, refresh]);
+
+  const handleFolderRename = useCallback(async (ref: FolderRef, newName: string) => {
+    const path = renamedPath(ref.path, newName);
+    if (!path || path === ref.path) return;
+    setErr('');
+    try {
+      const id = await ensureFolderId('data', ref);
+      const res = await fetch(`/api/folders/${id}`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+      if (!res.ok) { setErr((await res.json()).error ?? 'Rename failed'); return; }
+      await refresh();
+    } catch (e) { setErr((e as Error).message); }
+  }, [refresh]);
 
   const handleFolderRestore = useCallback(async (ref: FolderRef) => {
     if (!ref.id) return;
@@ -470,6 +487,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
       <FolderPickerModal
         open={pickerIds !== null}
         tab="data"
+        roots={visibleRoots}
         personalNodes={visibleRoots.includes('personal') ? personalTreeNodes : []}
         domainNodes={visibleRoots.includes('domain') ? domainTreeNodes : []}
         title={`Move ${pickerIds && pickerIds.length > 1 ? `${pickerIds.length} datasets` : 'dataset'} to folder`}
@@ -493,16 +511,18 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
       <FolderPickerModal
         open={folderMove !== null}
         tab="data"
+        roots={folderMove ? [folderMove.scope] : visibleRoots}
         personalNodes={folderMove?.scope === 'personal' ? personalTreeNodes : []}
         domainNodes={folderMove?.scope === 'domain' ? domainTreeNodes : []}
         title="Move folder"
         onConfirm={async ({ path }) => {
           const ref = folderMove;
           setFolderMove(null);
-          if (!ref?.id) return;
+          if (!ref) return;
           setErr('');
           try {
-            const res = await fetch(`/api/folders/${ref.id}`, {
+            const id = await ensureFolderId('data', ref);
+            const res = await fetch(`/api/folders/${id}`, {
               method: 'PATCH', headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ path }),
             });
@@ -526,8 +546,8 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
           {scope === 'mine' || scope === 'all'
             ? <>No datasets yet. <strong>+ New dataset</strong> starts one — bring a file in, and you're at Bronze.</>
             : scope === 'shared'
-              ? 'Nothing shared in your domain yet — promote a dataset to share it.'
-              : 'Nothing in the marketplace yet — an Admin certifies assets into data products.'}
+              ? 'Nothing in Domain yet — promote a dataset to share it with your domain.'
+              : 'Nothing in Company yet — an Admin certifies assets into data products.'}
         </div>
       ) : null}
 
@@ -555,15 +575,17 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
                 </button>
                 <FolderTree
                   variant="nav"
+                  roots={visibleRoots}
                   personalNodes={treePersonalNodes}
                   domainNodes={treeDomainNodes}
                   items={treeItems}
                   personalLabel="My folders"
-                  domainLabel="Shared in domain"
+                  domainLabel="Domain folders"
                   selectedPath={sel?.path}
                   onSelect={(root, path) => setSel({ root, path })}
                   onCreate={createFolder}
                   onMove={(ref) => setFolderMove(ref)}
+                  onRename={handleFolderRename}
                   onArchive={handleFolderArchive}
                   onRestore={handleFolderRestore}
                   onDelete={handleFolderDelete}

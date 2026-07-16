@@ -6,6 +6,9 @@ import assert from 'node:assert/strict';
 import {
   SCOPE_GROUPS,
   scopeLabel,
+  visibilityScope,
+  visibilityLabel,
+  promoteVerb,
   groupByScope,
   groupsFromVisibility,
   itemsForScope,
@@ -25,17 +28,40 @@ const groups = {
   marketplace: [t('Certified Orders', 'sara', 'product')],
 };
 
-test('the four groups are exactly All · My · Shared · Marketplace, in order', () => {
+test('the four internal keys are exactly all · mine · shared · marketplace, in order', () => {
   assert.deepEqual(SCOPE_GROUPS.map((g) => g.key), ['all', 'mine', 'shared', 'marketplace']);
 });
 
-test('scopeLabel renders "My <kind>" and plain group nouns', () => {
+test('scopeLabel renders the My · Domain · Company vocabulary', () => {
   assert.equal(scopeLabel('all'), 'All');
+  assert.equal(scopeLabel('all', 'Data'), 'All Data');
   assert.equal(scopeLabel('mine', 'Data'), 'My Data');
   assert.equal(scopeLabel('mine', 'Files'), 'My Files');
   assert.equal(scopeLabel('mine'), 'My');
-  assert.equal(scopeLabel('shared'), 'Shared in Domain');
-  assert.equal(scopeLabel('marketplace'), 'Marketplace');
+  assert.equal(scopeLabel('shared'), 'Domain');
+  assert.equal(scopeLabel('shared', 'Data'), 'Domain Data');
+  assert.equal(scopeLabel('marketplace'), 'Company');
+  assert.equal(scopeLabel('marketplace', 'Data'), 'Company Data');
+});
+
+test('visibilityScope maps stored values to scope keys (internal values unchanged)', () => {
+  assert.equal(visibilityScope('Personal'), 'mine');
+  assert.equal(visibilityScope('Shared'), 'shared');
+  assert.equal(visibilityScope('Certified'), 'marketplace');
+  assert.equal(visibilityScope('Marketplace'), 'marketplace');
+});
+
+test('visibilityLabel renders the scope word for a stored visibility', () => {
+  assert.equal(visibilityLabel('Personal'), 'My');
+  assert.equal(visibilityLabel('Shared'), 'Domain');
+  assert.equal(visibilityLabel('Certified'), 'Company');
+  assert.equal(visibilityLabel('Shared', 'Data'), 'Domain Data');
+});
+
+test('promoteVerb reads Promote to Domain then Certify to Company', () => {
+  assert.equal(promoteVerb('Personal'), 'Promote to Domain');
+  assert.equal(promoteVerb('Personal', { propose: true }), 'Propose to Domain');
+  assert.equal(promoteVerb('Shared'), 'Certify to Company');
 });
 
 test('All = the union of every group', () => {

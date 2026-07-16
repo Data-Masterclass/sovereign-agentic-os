@@ -24,6 +24,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useConfirm } from './ConfirmDialog';
+import { promoteVerb } from '@/lib/core/scopes';
 
 export type PromoteTier = 'Personal' | 'Shared' | 'Marketplace';
 
@@ -77,20 +78,21 @@ export default function PromoteButton({
   const isCertify = tier === 'Shared';
   // Honest copy: a non-approver at Personal is PROPOSING (their POST files a request);
   // an approver promotes directly. Marketplace is the top — nothing to do.
+  // Display verbs from the OS-wide scope vocabulary (lib/core/scopes.ts): the
+  // Personal rung reads "Promote/Propose to Domain", the Shared rung "Certify to
+  // Company". The PromoteTier enum values are unchanged.
   const defaultLabel =
     tier === 'Personal'
-      ? canApprove
-        ? 'Promote to Shared'
-        : 'Propose to Shared'
-      : 'Certify to Marketplace';
+      ? promoteVerb('Personal', { propose: !canApprove })
+      : promoteVerb('Shared');
   const text = label ?? defaultLabel;
 
   const run = useCallback(async () => {
     setErr('');
     if (isCertify) {
       const ok = await confirm({
-        title: `Certify this ${kind} to the Marketplace?`,
-        body: `Certifying makes this ${kind} available across every domain in the Marketplace. This is a governed step that a platform admin vouches for.`,
+        title: `Certify this ${kind} to Company?`,
+        body: `Certifying makes this ${kind} available across every domain, company-wide. This is a governed step that a platform admin vouches for.`,
         confirmLabel: 'Certify',
         danger: false,
       });
