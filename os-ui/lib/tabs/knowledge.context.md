@@ -13,10 +13,10 @@ filter).
 - `index_knowledge(workflowId)` — chunk → embed → index; required before
   `search_knowledge` returns the workflow. Both per-step tacit notes and the
   workflow-level tacit doc are indexed as separate `type: "tacit"` units.
-- `publish_knowledge(workflowId)` — Builder+ only; Personal → Shared.
+- `publish_knowledge(workflowId)` — Builder+ only; My → Domain.
 - `retire_knowledge(workflowId, action?)` — `archive` (default, reversible) or
   `delete` (physical + index purge). Edit-gated (owner, or same-domain Builder+ for
-  a Shared workflow). LINEAGE-AWARE: blocked (409) if any App/Agent still consumes
+  a Domain workflow). LINEAGE-AWARE: blocked (409) if any App/Agent still consumes
   it. `delete` also refuses a still-live workflow.
 - `search_knowledge(query, k?)` — governed hybrid retrieval (dense + lexical,
   reranked) with provenance. OPA `retrieve` gate + DLS grant filter; returns only
@@ -34,5 +34,5 @@ Three sections: "1. The workflow, step by step", "2. Rules and decisions",
 **Golden path:** author workflow (steps + rules + tacit) → index → `search_knowledge`
 to ground an agent/answer with citations.
 
-**Constraints:** default-deny OPA gate; DLS filters to owner / domain-shared /
-marketplace visibility; hits carry provenance — cite it.
+**Constraints:** default-deny OPA gate; DLS filters to owner / domain /
+Company visibility; hits carry provenance — cite it.

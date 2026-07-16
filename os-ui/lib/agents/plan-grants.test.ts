@@ -38,9 +38,9 @@ test('plan-grant id encodes + round-trips each Operating-Manual scope', () => {
 });
 
 test('labels + available-scope buckets use the My/Domain/Company vocabulary', () => {
-  assert.equal(manualLabel('my'), 'My Operating Manual');
-  assert.equal(manualLabel('domain'), 'Domain Operating Manual');
-  assert.equal(manualLabel('company'), 'Company Operating Manual');
+  assert.equal(manualLabel('my'), 'My Operating Model');
+  assert.equal(manualLabel('domain'), 'Domain Operating Model');
+  assert.equal(manualLabel('company'), 'Company Operating Model');
   assert.equal(manualAvailableScope('my'), 'personal');
   assert.equal(manualAvailableScope('domain'), 'domain');
   assert.equal(manualAvailableScope('company'), 'marketplace');

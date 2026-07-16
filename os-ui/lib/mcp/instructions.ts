@@ -14,7 +14,7 @@ import { loadTabContext, tabTitle } from '@/lib/tabs/context';
 
 /** The ~90-word governance core appended to every per-tab brief (single source). */
 const GOVERNANCE_CORE = `GOVERNANCE (same for every surface): everything runs AS the signed-in user — OPA-policy-checked, row/document-level-security filtered, Langfuse audit-traced. This MCP is the SAME governed path as the UI, never a bypass.
-ROLES (4): creator — creates/builds/runs their OWN work + consumes shared assets + FILES promotion requests; CANNOT promote/publish/approve. builder — + approve Personal→Shared in-domain, approve deploys. domain_admin — + administer users in their OWN domain(s) (invite/edit/deactivate, roles up to builder) and all domain-scoped approvals. admin — + certify to Company, cross-domain bets, policy overrides, tenant user admin.
+ROLES (4): creator — creates/builds/runs their OWN work + consumes shared assets + FILES promotion requests; CANNOT promote/publish/approve. builder — + approve My→Domain (promote to Domain) in-domain, approve deploys. domain_admin — + administer users in their OWN domain(s) (invite/edit/deactivate, roles up to builder) and all domain-scoped approvals. admin — + certify to Company, cross-domain bets, policy overrides, tenant user admin.
 FIRST: call whoami then list_capabilities. DISCOVER before you create: read the caller's sovereign-os://my/* inventory (or the matching list_* tool) and reuse ids. Tool errors are typed {code, reason, hint} — follow the hint.`;
 
 /** The full orientation for the overarching endpoint (~340 words). */
@@ -24,10 +24,10 @@ FIRST, ALWAYS: call \`whoami\` (your identity, role, domains, and what you can/c
 
 ROLES (4, lowest→highest — the caller's role decides everything):
 - creator — creates and runs their OWN work in their own domain(s) and consumes shared assets. CANNOT promote/publish/approve/certify. When a golden path reaches a promote step, a creator FILES a request (\`request_promotion\`) and hands off to a Builder.
-- builder — creator rights + approve Personal→Shared in their domain (\`approve_promotion\`, \`publish_knowledge\`, \`decide_deploy\`, \`promote_connection\`). An approver, not a people-admin.
+- builder — creator rights + approve My→Domain (promote to Domain) in their domain (\`approve_promotion\`, \`publish_knowledge\`, \`decide_deploy\`, \`promote_connection\`). An approver, not a people-admin.
 - domain_admin — builder rights + administer users in their OWN domain(s) only (invite, edit, deactivate, assign roles up to builder — never domain_admin/admin) and every domain-scoped governance approval. No tenant/platform powers.
 - admin — everything tenant-wide + certify to Company, cross-domain big bets, policy overrides and cost caps. The only role that appoints a domain_admin.
-Tier ladder: Personal → Shared (Builder gate) → Certified (Admin gate). Promotion ALWAYS requires documentation first.
+Scope ladder: My → Domain (Builder gate: "Promote to Domain") → Company (Admin gate: "Promote to Company"/certify). Promotion ALWAYS requires documentation first.
 
 NAV (so you can orient the user): Entry (Home · Cockpit · Tutorials · MCP · About) · Plan (Strategy · Big Bets · Operating Model · Workflows · Marketplace) · Context (Knowledge · Files · Data · Connections · Metrics) · Build (Agents · Software · Science · Dashboards · Console) · Govern (Policies & Approvals · Monitoring · Components · LLM Gateway · Admin). There is no Settings tab and no separate personal (DuckDB) query engine — one governed Trino/Iceberg engine for everything.
 

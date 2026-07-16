@@ -106,7 +106,7 @@ export const strategyWriteTools: McpTool[] = [
     tab: 'strategy',
     minRole: 'creator',
     description:
-      'Create a strategy pillar (a personal/My, domain, or tenant/Company value spine), optionally describing its value metric up front. Purpose: frame the strategy the org rolls up to. Before: list_pillars (reuse first). After: link_bet_to_pillar to attach real bets, record_value_entry to track value, promote_pillar to raise its tier. Governance: canCreatePillar re-gates in-lib — a PERSONAL (My) pillar is open to any user in a domain they belong to; a DOMAIN pillar needs a Builder/Admin IN that domain; a TENANT pillar needs a platform Admin. A creator asking for domain/tenant is refused (forbidden) — create it Personal and hand off a promote.',
+      'Create a strategy pillar (a personal/My, domain, or tenant/Company value spine), optionally describing its value metric up front. Purpose: frame the strategy the org rolls up to. Before: list_pillars (reuse first). After: link_bet_to_pillar to attach real bets, record_value_entry to track value, promote_pillar to raise its tier. Governance: canCreatePillar re-gates in-lib — a PERSONAL (My) pillar is open to any user in a domain they belong to; a DOMAIN pillar needs a Builder/Admin IN that domain; a TENANT pillar needs a platform Admin. A creator asking for domain/tenant is refused (forbidden) — create it My-scope (scope "personal") and hand off a promote to Domain.',
     inputSchema: {
       type: 'object',
       properties: {

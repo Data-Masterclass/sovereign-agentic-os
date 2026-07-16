@@ -7,8 +7,8 @@
 - `get_connection(connId)` — one connection (metadata + sync state, never the secret).
 - `create_connection(name, template, endpoint?, credential?, domain?)` — a PERSONAL connection.
 - `test_connection(connId)` — probe it (live | offline).
-- `promote_connection(connId)` — Builder+: Personal → a SHARED domain source.
+- `promote_connection(connId)` — Builder+: My → a DOMAIN source.
 
 **Golden path:** `list_connections` (reuse) → `create_connection` (Personal) → `test_connection` → ⛔ Builder+ `promote_connection` → apps consume via `use_connection(appId, ref)` BY REFERENCE.
 
-**Constraints:** any user may connect a PERSONAL account; SHARED (service-credential) templates and promotion require a Builder/Admin. The model NEVER sees raw credentials — the reference is the contract. External endpoints must be on the egress allowlist. Every action runs as you, OPA-checked and audited.
+**Constraints:** any user may connect a per-user (personal-OAuth) account; service-credential templates and promotion require a Builder/Admin. The model NEVER sees raw credentials — the reference is the contract. External endpoints must be on the egress allowlist. Every action runs as you, OPA-checked and audited.

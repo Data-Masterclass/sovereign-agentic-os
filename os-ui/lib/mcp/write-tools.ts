@@ -664,7 +664,7 @@ export const knowledgeWriteTools: McpTool[] = [
     tab: 'knowledge',
     minRole: 'creator',
     description:
-      'Author a Personal (draft) knowledge workflow — the operating manual for a task: an optional markdown body, ordered `steps` (each with an actor and optional per-step `tacit` note), workflow `rules`, an optional `actors` registry, and an optional workflow-level `tacit` string (the TACIT.md companion — unstructured know-how that resists formalization: the gotchas, the "why", the tribal memory). Actors have five categories — Human · Software · Agent · Customer · Partner — where Customer and Partner are EXTERNAL (outside the organisation). The optional `actors` array lets you describe each actor once (name · category · description) and steps reference them by name; if you omit it, a registry is derived from the steps automatically. Same governed store as the Knowledge tab. Publish it later with `publish_knowledge`.',
+      'Author a Personal (draft) knowledge workflow — the runbook for a task: an optional markdown body, ordered `steps` (each with an actor and optional per-step `tacit` note), workflow `rules`, an optional `actors` registry, and an optional workflow-level `tacit` string (the TACIT.md companion — unstructured know-how that resists formalization: the gotchas, the "why", the tribal memory). Actors have five categories — Human · Software · Agent · Customer · Partner — where Customer and Partner are EXTERNAL (outside the organisation). The optional `actors` array lets you describe each actor once (name · category · description) and steps reference them by name; if you omit it, a registry is derived from the steps automatically. Same governed store as the Knowledge tab. Publish it later with `publish_knowledge`.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -780,7 +780,7 @@ export const knowledgeWriteTools: McpTool[] = [
     tab: 'knowledge',
     minRole: 'domain_admin',
     description:
-      'Publish a draft workflow Personal → Shared (draft→live) and re-index it for retrieval. Builder+ only (the creator lockdown). This is the compat "approve half" of the ladder: the flip runs THROUGH the governance effect seam (no direct publish back door). Idempotency: publishing an already-live workflow returns a `conflict`.',
+      'Publish a draft workflow My → Domain (draft→live) and re-index it for retrieval. Builder+ only (the creator lockdown). This is the compat "approve half" of the ladder: the flip runs THROUGH the governance effect seam (no direct publish back door). Idempotency: publishing an already-live workflow returns a `conflict`.',
     inputSchema: {
       type: 'object',
       properties: { workflowId: { type: 'string', description: 'Draft workflow id to publish.' } },
@@ -941,7 +941,7 @@ export const promotionTools: McpTool[] = [
     extraTabs: ['files'],
     minRole: 'creator',
     description:
-      'FILE a rung-1 promotion request (Personal → a governed DOMAIN asset) for ANY ownable artifact: a dataset, file, knowledge workflow, connection, dashboard, model, app or agent system. Path: the promote step of every tab’s golden path — the ONE governed ladder. Before: create + document the artifact. After: a Builder/Admin in the domain runs `decide_approval` (or `approve_promotion` for dataset/file). Governance: OWNER-ONLY trigger — edit rights are not enough; it does NOT promote, it enqueues the governed request and returns the pending handle. Certification (Domain→Marketplace) is the separate `request_certification`. Idempotency: filing while a request is pending returns the existing handle.',
+      'FILE a rung-1 promotion request (My → a governed DOMAIN asset) for ANY ownable artifact: a dataset, file, knowledge workflow, connection, dashboard, model, app or agent system. Path: the promote step of every tab’s golden path — the ONE governed ladder. Before: create + document the artifact. After: a Builder/Admin in the domain runs `decide_approval` (or `approve_promotion` for dataset/file). Governance: OWNER-ONLY trigger — edit rights are not enough; it does NOT promote, it enqueues the governed request and returns the pending handle. Certification (Domain → Company) is the separate `request_certification`. Idempotency: filing while a request is pending returns the existing handle.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1597,7 +1597,7 @@ export const agentWriteTools: McpTool[] = [
     tab: 'agents',
     minRole: 'creator',
     description:
-      'Create a new agent system (LangGraph). Always starts Personal/owner-only; sharing is the governed promote ladder (Builder→Shared, Admin→Marketplace). Optionally start from a server-authored template.',
+      'Create a new agent system (LangGraph). Always starts My-scope/owner-only; sharing is the governed promote ladder (Builder promotes to Domain, Admin certifies to Company). Optionally start from a server-authored template.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1624,7 +1624,7 @@ export const agentWriteTools: McpTool[] = [
     tab: 'agents',
     minRole: 'creator',
     description:
-      'Commit one or more whitelisted files into an agent system you can edit (only `system.yaml` and `agents/<id>/AGENT.md` | `MEMORY.md`). system.yaml is validated on write. Idempotent per identical content.',
+      'Commit one or more whitelisted files into an agent system you can edit (only `system.yaml` and `agents/<id>/AGENT.md` | `MEMORY.md`). system.yaml is validated on write. Idempotent per identical content. GRANTS (what the team "can use") are authored IN system.yaml under `grants`, grouped exactly like the Agents-builder "What your team can use" surface: CONTEXT grants — `data` · `knowledge` · `metrics` · `connections` (each a list of { id, capability } items, plus `data` items may carry a `layer`) and `files` (folder grants only); and PLAN-ITEM grants — `plan` (the Operating Model, Strategic Pillars and Big Bets an agent may load as read context). Per-item ACCESS LEVEL is the `capability`: `Read` (read-only) · `Write-approval` (read + propose — a write is HELD in the Governance queue for a human) · `Write-bounded` (read + write, in-scope). A grant may instead target a whole FOLDER — set `folder: { path, scope }` (scope = personal|domain) with an empty `id`; it late-binds to every item currently under that folder at build/run time, each still per-item DLS-checked. Sub-agent grants ⊆ system grants; nothing here can exceed the caller\'s own entitlements. (The interactive labelled selector, category headings and folder-tree picker are the Agents-tab UI over this same schema.)',
     inputSchema: {
       type: 'object',
       properties: {

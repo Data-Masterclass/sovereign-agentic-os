@@ -1,6 +1,6 @@
 # Dashboards tab — build context
 
-**Purpose:** Charts + tiles over GOVERNED metric members (Superset/Cube). A shared/certified dashboard stays per-viewer RLS-scoped via the guest token.
+**Purpose:** Charts + tiles over GOVERNED metric members (Superset/Cube). A Domain/Company dashboard stays per-viewer RLS-scoped via the guest token.
 
 **Tools (MCP `dashboards`):**
 - `create_dashboard(name, view, charts[], id?)` — create (or replace, by `id`) a dashboard you own. Each chart references a governed metric member (e.g. `Orders.revenue`). Runs as you.

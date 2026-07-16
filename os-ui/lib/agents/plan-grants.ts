@@ -2,11 +2,11 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 /**
- * PLAN-ITEM grant encoding — how an Operating Manual, a Strategic Pillar or a Big Bet
+ * PLAN-ITEM grant encoding — how an Operating Model, a Strategic Pillar or a Big Bet
  * is named in `grants.plan`. A plan item is not a free artifact id; its grant `id`
  * encodes the plan target so the runtime knows WHICH governed thing to load:
  *
- *   Operating Manual → `manual:my` · `manual:domain` · `manual:company`
+ *   Operating Model → `manual:my` · `manual:domain` · `manual:company`
  *   Strategic Pillar → `pillar:<pillarId>`
  *   Big Bet          → `bigbet:<betId>`
  *
@@ -49,9 +49,9 @@ export function manualScopeOfPlanId(id: string): ManualScope | null {
 
 /** The human label for an Operating-Manual scope, matching the OS My/Domain/Company vocabulary. */
 export function manualLabel(scope: ManualScope): string {
-  if (scope === 'my') return 'My Operating Manual';
-  if (scope === 'domain') return 'Domain Operating Manual';
-  return 'Company Operating Manual';
+  if (scope === 'my') return 'My Operating Model';
+  if (scope === 'domain') return 'Domain Operating Model';
+  return 'Company Operating Model';
 }
 
 /** The grants-available `scope` bucket an Operating-Manual scope shows under. */

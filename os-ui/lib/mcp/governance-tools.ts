@@ -198,11 +198,11 @@ export const governanceTools: McpTool[] = [
     extraTabs: ['marketplace'],
     minRole: 'builder',
     description:
-      'FILE a rung-2 CERTIFICATION request (a Domain asset → the cross-domain MARKETPLACE) — the domain vouches for its artifact. Works for any kind: dataset, knowledge, connection, dashboard, model, app. Path: the certify step of the ladder. Before: the artifact is already a Shared/Domain asset (promote it first with request_promotion). After: a platform ADMIN runs `decide_approval`. Governance: TRIGGER = a Builder/Domain-admin IN the artifact’s domain (owner-not-required — the domain vouches); APPROVE = a platform Admin only. Returns the pending handle; it does NOT certify.',
+      'FILE a rung-2 CERTIFICATION request (a Domain asset → Company scope, the cross-domain Marketplace storefront) — the domain vouches for its artifact. Works for any kind: dataset, knowledge, connection, dashboard, model, app. Path: the certify step of the ladder. Before: the artifact is already a Domain asset (promote it to Domain first with request_promotion). After: a platform ADMIN runs `decide_approval`. Governance: TRIGGER = a Builder/Domain-admin IN the artifact’s domain (owner-not-required — the domain vouches); APPROVE = a platform Admin only. Returns the pending handle; it does NOT certify.',
     inputSchema: {
       type: 'object',
       properties: {
-        kind: { type: 'string', enum: ['dataset', 'knowledge', 'connection', 'dashboard', 'model', 'app', 'agent_system'], description: 'What to certify (a Shared/Domain asset).' },
+        kind: { type: 'string', enum: ['dataset', 'knowledge', 'connection', 'dashboard', 'model', 'app', 'agent_system'], description: 'What to certify (a Domain asset).' },
         id: { type: 'string', description: 'The domain asset id.' },
         mode: { type: 'string', description: 'Optional marketplace consumption mode (e.g. read-in-place | fork-allowed for models).' },
       },

@@ -12,13 +12,13 @@ import {
 
 /**
  * The two-section grouping of "What your team can use": Plan Items (Strategy · Big
- * Bets · Operating Manual · Workflows) and Context (Knowledge · Files · Data ·
+ * Bets · Operating Model · Workflows) and Context (Knowledge · Files · Data ·
  * Connections · Metrics), with Workflows a SEPARATE member from Knowledge.
  */
 
-test('Plan Items are Strategy · Big Bets · Operating Manual · Workflows, in order', () => {
+test('Plan Items are Strategy · Big Bets · Operating Model · Workflows, in order', () => {
   const labels = membersOf('plan').map((m) => m.label);
-  assert.deepEqual(labels, ['Strategy', 'Big Bets', 'Operating Manual', 'Workflows']);
+  assert.deepEqual(labels, ['Strategy', 'Big Bets', 'Operating Model', 'Workflows']);
 });
 
 test('Context is Knowledge · Files · Data · Connections · Metrics, in order', () => {
@@ -48,7 +48,7 @@ test('the wireable Context members carry a grant field + feed kind', () => {
   }
 });
 
-test('Operating Manual is genuinely wireable via the plan grant list + operating-manual feed', () => {
+test('Operating Model is genuinely wireable via the plan grant list + operating-manual feed', () => {
   const m = RESOURCE_MEMBERS.find((x) => x.key === 'operating-manual')!;
   assert.equal(m.wireable, true);
   assert.equal(m.field, 'plan');

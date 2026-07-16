@@ -166,7 +166,7 @@ const readTools: McpTool[] = [
     tab: 'data',
     minRole: 'creator',
     description:
-      'List the datasets you can see (yours · domain-shared · marketplace), grouped by tier. Path: DISCOVERY for the Data golden path (guide: sovereign-os://guide/path/data). Before: whoami. After: reuse an id with get_dataset / define_metric, or create_dataset only if nothing fits. Governance: read-only, DLS-scoped to your identity — you never see rows you are not entitled to.',
+      'List the datasets you can see (My · Domain · Company), grouped by tier. Path: DISCOVERY for the Data golden path (guide: sovereign-os://guide/path/data). Before: whoami. After: reuse an id with get_dataset / define_metric, or create_dataset only if nothing fits. Governance: read-only, DLS-scoped to your identity — you never see rows you are not entitled to.',
     inputSchema: NO_ARGS,
     call: async (user) => listDatasets(P(user)),
   },
@@ -281,7 +281,7 @@ const readTools: McpTool[] = [
     tab: 'knowledge',
     minRole: 'creator',
     description:
-      'List the knowledge workflows you can see (yours · domain · marketplace). Path: DISCOVERY for the Knowledge golden path (guide: sovereign-os://guide/path/knowledge). Before: whoami. After: get_knowledge, or search_knowledge for content. Governance: read-only, DLS-scoped.',
+      'List the knowledge workflows you can see (My · Domain · Company). Path: DISCOVERY for the Knowledge golden path (guide: sovereign-os://guide/path/knowledge). Before: whoami. After: get_knowledge, or search_knowledge for content. Governance: read-only, DLS-scoped.',
     inputSchema: NO_ARGS,
     call: async (user) => listWorkflows(P(user)),
   },
@@ -303,7 +303,7 @@ const readTools: McpTool[] = [
     tab: 'files',
     minRole: 'creator',
     description:
-      'List the files you can see (yours · domain · marketplace). Path: DISCOVERY for the Files golden path (guide: sovereign-os://guide/path/files). Before: whoami. After: search_files for content, or upload_file only if nothing fits. Governance: read-only, DLS-scoped.',
+      'List the files you can see (My · Domain · Company). Path: DISCOVERY for the Files golden path (guide: sovereign-os://guide/path/files). Before: whoami. After: search_files for content, or upload_file only if nothing fits. Governance: read-only, DLS-scoped.',
     inputSchema: NO_ARGS,
     call: async (user) => listFiles(P(user)),
   },
@@ -384,7 +384,7 @@ const readTools: McpTool[] = [
     tab: 'dashboards',
     minRole: 'creator',
     description:
-      'List the dashboards you can see (yours · domain · marketplace). Path: DISCOVERY for the Dashboards golden path (guide: sovereign-os://guide/path/dashboards). Before: whoami. After: create_dashboard, or attach one to a big bet. Governance: read-only, DLS-scoped.',
+      'List the dashboards you can see (My · Domain · Company). Path: DISCOVERY for the Dashboards golden path (guide: sovereign-os://guide/path/dashboards). Before: whoami. After: create_dashboard, or attach one to a big bet. Governance: read-only, DLS-scoped.',
     inputSchema: NO_ARGS,
     call: async (user) => listDashboards(P(user)),
   },
@@ -415,7 +415,7 @@ const readTools: McpTool[] = [
     tab: 'software',
     minRole: 'creator',
     description:
-      'List the apps you can see (yours · domain · shared). Path: DISCOVERY for the Software golden path (guide: sovereign-os://guide/path/software). Before: whoami. After: get_software, or create_software only if nothing fits. Governance: read-only, same visibility rule as the Software tab.',
+      'List the apps you can see (My · Domain · Company). Path: DISCOVERY for the Software golden path (guide: sovereign-os://guide/path/software). Before: whoami. After: get_software, or create_software only if nothing fits. Governance: read-only, same visibility rule as the Software tab.',
     inputSchema: NO_ARGS,
     call: async (user) => listAppsForUser(user),
   },
@@ -499,7 +499,7 @@ const waveBReadTools: McpTool[] = [
     tab: 'dashboards',
     minRole: 'creator',
     description:
-      'Read ONE dashboard you can see — its charts with their governed metric members, the Cube view they bind to, tier and owner. Purpose: read back exactly what create_dashboard saved so you can iterate (create_dashboard with the same `id` replaces it) or attach it to a Big Bet. Before: list_dashboards. After: query_metric on a chart’s member to read the same number, or attach_component to put it on a bet. Governance: read-only, the SAME visibility rule as list_dashboards (yours · domain-shared · marketplace) — an unseeable id is a typed not_found/forbidden (no existence leak).',
+      'Read ONE dashboard you can see — its charts with their governed metric members, the Cube view they bind to, tier and owner. Purpose: read back exactly what create_dashboard saved so you can iterate (create_dashboard with the same `id` replaces it) or attach it to a Big Bet. Before: list_dashboards. After: query_metric on a chart’s member to read the same number, or attach_component to put it on a bet. Governance: read-only, the SAME visibility rule as list_dashboards (My · Domain · Company) — an unseeable id is a typed not_found/forbidden (no existence leak).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1571,7 +1571,7 @@ const scienceTools: McpTool[] = [
     tab: 'science',
     minRole: 'creator',
     description:
-      'List the ML models YOU can score through the governed predict door — your own Personal models, your domain’s, and Marketplace-certified ones (the same tier ladder as every artifact; promoting a model is what widens who may call it). Path: step 1 of the Science golden path (guide: sovereign-os://guide/path/science). Before: whoami. After: get_model for one card, then science_predict. Governance: read-only, RLS-scoped to your identity — another user’s Personal model never appears. Honest: when ml.enabled=false the response SAYS SO (predict will 404 until an Admin enables it); an empty tenant returns an empty list, never an invented model.',
+      'List the ML models YOU can score through the governed predict door — your own My-scope models, your Domain’s, and Company-certified ones (the same tier ladder as every artifact; promoting a model is what widens who may call it). Path: step 1 of the Science golden path (guide: sovereign-os://guide/path/science). Before: whoami. After: get_model for one card, then science_predict. Governance: read-only, RLS-scoped to your identity — another user’s My-scope model never appears. Honest: when ml.enabled=false the response SAYS SO (predict will 404 until an Admin enables it); an empty tenant returns an empty list, never an invented model.',
     inputSchema: NO_ARGS,
     call: async (user) => {
       const viewer: ModelViewer = { id: user.id, domains: user.domains };

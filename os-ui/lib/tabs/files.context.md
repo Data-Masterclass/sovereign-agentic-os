@@ -1,6 +1,6 @@
 # Files tab — build context
 
-**Purpose:** A governed drive for unstructured files (docs, transcripts, policies). Upload → auto-chunk + embed → hybrid search; promote a file from Personal to a shared DOMAIN asset.
+**Purpose:** A governed drive for unstructured files (docs, transcripts, policies). Upload → auto-chunk + embed → hybrid search; promote a file from My to a DOMAIN asset.
 
 **Tools (MCP `files`):**
 - `upload_file(name, folder?, text?, tags?, sensitivity?, domain?)` — create a private file at v1; `text` is chunked + embedded for search. `restricted` = stored, not indexed. Runs as you.

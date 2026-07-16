@@ -81,8 +81,9 @@ export type JsonSchema = {
 // full tabs alongside the marketplace/governance READ additions. `platform` lands
 // WHEN its tools ship (every declared tab must carry ≥1 tool — the tabs.test invariant).
 // `operating-manual` is the Plan-group tab that owns the My/Domain/Company
-// Operating Manual — its four MCP tools (get/update/list-versions/restore) wrap the
-// governed manual store, so the tab now carries a real MCP surface.
+// Operating Model — its four MCP tools (get/update/list-versions/restore) wrap the
+// governed manual store, so the tab now carries a real MCP surface. (The tab id + tool
+// identifiers keep the `manual` name for wire stability; the product name is "Operating Model".)
 export const MCP_TABS = ['software', 'data', 'science', 'knowledge', 'agents', 'files', 'metrics', 'dashboards', 'bigbets', 'connections', 'governance', 'marketplace', 'strategy', 'monitoring', 'operating-manual'] as const;
 export type McpTab = (typeof MCP_TABS)[number];
 export function isMcpTab(x: string): x is McpTab {

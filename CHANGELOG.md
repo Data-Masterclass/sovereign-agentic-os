@@ -15,6 +15,16 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.19] — 2026-07-16
+
+### Changed
+- **MCP surface synced to the current product.** Tool descriptions, prompts, instructions, and the
+  per-tab briefs now consistently use My/Domain/Company (promote→Domain, certify→Company), name the
+  **Operating Model** (7 sections), and teach the agent **grant schema** (`commit_agent_files`:
+  Context vs Plan items, per-item access levels, folder grants). Connector templates and
+  `create_big_bet`'s required pillar were already correct. No tool identifiers changed.
+- **Agent grant-picker Plan Items** now read "Operating Model" (matching the tab rename).
+
 ## [os-ui 0.5.18] — 2026-07-16
 
 ### Changed

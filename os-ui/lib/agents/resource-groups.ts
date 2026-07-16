@@ -5,7 +5,7 @@
  * The two labelled SECTIONS of the Simple builder's "What your team can use" grant
  * panel, matching the OS information architecture:
  *
- *   ① Plan Items   — Strategy · Big Bets · Operating Manual · Workflows
+ *   ① Plan Items   — Strategy · Big Bets · Operating Model · Workflows
  *   ② Context      — Knowledge · Files · Data · Connections · Metrics
  *
  * Workflows is its OWN member of Plan Items, SEPARATE from Knowledge (they were
@@ -16,7 +16,7 @@
  * Each member names the underlying GRANTABLE mechanism:
  *   • `field`  — the `system.grants` key its per-item grants land in (when wireable).
  *   • `feedKind` — the `…/grants/available?kind=` feed to browse (when wireable).
- *   • `wireable` — every Plan-item kind (Strategy · Big Bets · Operating Manual) and
+ *   • `wireable` — every Plan-item kind (Strategy · Big Bets · Operating Model) and
  *                  every Context kind is now a real per-item picker; `false` is reserved
  *                  for any future kind that lacks a scoped available feed, which would
  *                  surface as a labelled, explained placeholder rather than inventing a
@@ -68,7 +68,7 @@ export function isWorkflowId(id: string): boolean {
  * Metrics are wireable (they already have grant lists + available feeds). Workflows is
  * wireable via the shared knowledge feed, filtered to `wf_…` ids. The three Plan-item
  * kinds are all wireable through the ONE `plan` grant list, each with its own available
- * feed: Operating Manual (`operating-manual` feed → `get_operating_manual`), Strategy
+ * feed: Operating Model (`operating-manual` feed → `get_operating_manual`), Strategy
  * (`strategy` feed → `get_pillar`) and Big Bets (`big-bets` feed → `get_big_bet`). A
  * granted plan item is loaded at run time via its governed read tool, RLS/DLS-checked
  * as the caller in-store — read-only, never widening.
@@ -84,7 +84,7 @@ export const RESOURCE_MEMBERS: ResourceMember[] = [
     field: 'plan', feedKind: 'big-bets',
   },
   {
-    key: 'operating-manual', label: 'Operating Manual', section: 'plan', wireable: true,
+    key: 'operating-manual', label: 'Operating Model', section: 'plan', wireable: true,
     field: 'plan', feedKind: 'operating-manual',
   },
   {
