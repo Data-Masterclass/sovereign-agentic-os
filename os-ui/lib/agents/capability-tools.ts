@@ -31,13 +31,15 @@
  * author explicitly narrows (picks chips) does `agent.tools` get set.
  */
 import type { Capability, Grants, SafetyPreset } from './system-schema.ts';
+import { planTargetOf } from './plan-grants.ts';
 
 /** The resource kinds the Simple builder grants. `files` has no per-artifact
  * grant list (file tools act over the caller's own DLS), so it is provisioned by
  * tools alone; the others also carry a `grants.<kind>` id list. `metrics` and `plan`
  * are read-only (no agent author path), so they provision read tools only. `plan`
- * holds Operating-Manual (and future Pillar/Big-Bet) grants → the governed manual
- * read tool, which DLS/scope-checks the requested manual inside the store. */
+ * holds heterogeneous Plan grants — Operating Manual (`manual:*`), Strategic Pillar
+ * (`pillar:*`) and Big Bet (`bigbet:*`) — each of which provisions its OWN governed
+ * read tool (see {@link planToolsForId}); the store DLS/scope-checks the request. */
 export type GrantKind = 'data' | 'knowledge' | 'files' | 'connections' | 'metrics' | 'plan';
 
 /** Read + discovery tools per kind — always provisioned for any usable grant. */
@@ -83,6 +85,32 @@ export function toolsForGrant(kind: GrantKind, capability: Capability): string[]
 /** Every tool this module could ever provision for `kind` (read ∪ write). */
 export function allToolsForKind(kind: GrantKind): string[] {
   return Array.from(new Set([...READ_TOOLS[kind], ...WRITE_TOOLS[kind]]));
+}
+
+/**
+ * The governed READ tools a single `grants.plan` grant provisions, chosen by which
+ * plan target its id encodes. A manual grant provisions the manual read tool; a pillar
+ * grant provisions `get_pillar` (+ `list_pillars` for discovery); a bet grant provisions
+ * `get_big_bet` (+ `list_big_bets`). Each tool DLS/scope-checks the request inside its
+ * store at run time — read-only, never widening beyond what the caller may view. An
+ * unrecognised id provisions nothing (fail-closed). Plan grants are always read-only,
+ * so `capability` only gates Off/Blocked (which grant nothing).
+ */
+const PLAN_TOOLS_BY_TARGET: Record<'manual' | 'pillar' | 'bigbet', string[]> = {
+  manual: ['get_operating_manual'],
+  pillar: ['get_pillar', 'list_pillars'],
+  bigbet: ['get_big_bet', 'list_big_bets'],
+};
+
+export function planToolsForId(id: string, capability: Capability): string[] {
+  if (capability === 'Off' || capability === 'Blocked') return [];
+  const target = planTargetOf(id);
+  return target ? [...PLAN_TOOLS_BY_TARGET[target]] : [];
+}
+
+/** Every tool a plan grant could ever provision across all plan targets. */
+export function allPlanTools(): string[] {
+  return Array.from(new Set(Object.values(PLAN_TOOLS_BY_TARGET).flat()));
 }
 
 /** Just the create/write tools for `kind` — stripped when a kind stops writing.

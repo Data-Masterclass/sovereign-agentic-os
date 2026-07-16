@@ -9,6 +9,7 @@ import {
   toolsForGrant,
   writeToolsForKind,
   capabilityWrites,
+  planToolsForId,
 } from './capability-tools.ts';
 import { type AccessLevel, accessToCapability } from './access-levels.ts';
 
@@ -185,8 +186,12 @@ function setArtifactGrantCapability(
       // (an existing grant keeps its stored layer when re-toggled Read/Write)
     }
   }
-  // Provision the matching tools (ADD-only — never removes a hand-picked tool).
-  for (const t of toolsForGrant(kind, cap)) if (!sys.grants.tools.includes(t)) sys.grants.tools.push(t);
+  // Provision the matching tools (ADD-only — never removes a hand-picked tool). Plan
+  // grants are heterogeneous (manual / pillar / bet), so each grant provisions the
+  // read tool for its OWN target (`planToolsForId`); every other kind uses the flat
+  // per-kind map.
+  const provision = kind === 'plan' && id ? planToolsForId(id, cap) : toolsForGrant(kind, cap);
+  for (const t of provision) if (!sys.grants.tools.includes(t)) sys.grants.tools.push(t);
   // A Read grant of Files strips only the write tool (files have no id list, so a
   // Read after a Write must drop upload_file); the id-kinds keep write tools until
   // no grant writes (handled on removal/downgrade below).

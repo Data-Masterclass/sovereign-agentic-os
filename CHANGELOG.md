@@ -15,6 +15,15 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.17] — 2026-07-16
+
+### Added
+- **Strategy pillars and Big Bets can now be granted to an agent team** as read-only context,
+  completing the Plan Items group in "What your team can use" (alongside Workflows and the
+  Operating Model). Granting a pillar or bet provisions its governed read tools
+  (`get_pillar`/`get_big_bet`), DLS-scoped to what the caller may view — the same governance the
+  Strategy and Big Bets tabs use.
+
 ## [os-ui 0.5.16] — 2026-07-16
 
 An interactive agent-grants surface, four cloud governance/ML connectors, and an honest

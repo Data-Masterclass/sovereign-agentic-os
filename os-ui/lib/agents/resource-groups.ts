@@ -16,10 +16,11 @@
  * Each member names the underlying GRANTABLE mechanism:
  *   • `field`  — the `system.grants` key its per-item grants land in (when wireable).
  *   • `feedKind` — the `…/grants/available?kind=` feed to browse (when wireable).
- *   • `wireable` — false for kinds not yet grantable as per-item artifacts in the
- *                  builder (Strategy · Big Bets · Operating Manual): they surface as
- *                  labelled, explained placeholders so the IA is complete and honest,
- *                  without inventing a grant channel that doesn't exist server-side.
+ *   • `wireable` — every Plan-item kind (Strategy · Big Bets · Operating Manual) and
+ *                  every Context kind is now a real per-item picker; `false` is reserved
+ *                  for any future kind that lacks a scoped available feed, which would
+ *                  surface as a labelled, explained placeholder rather than inventing a
+ *                  grant channel that doesn't exist server-side.
  *
  * PURE + client-safe — the SimpleBuilder UI and the unit tests share this ONE list.
  */
@@ -32,7 +33,9 @@ export type ResourceSection = 'plan' | 'context';
 export type GrantField = keyof Pick<Grants, 'data' | 'knowledge' | 'metrics' | 'connections' | 'files' | 'plan'>;
 
 /** The `…/grants/available?kind=` feed a member browses. */
-export type FeedKind = 'data' | 'knowledge' | 'files' | 'connections' | 'metric' | 'operating-manual';
+export type FeedKind =
+  | 'data' | 'knowledge' | 'files' | 'connections' | 'metric'
+  | 'operating-manual' | 'strategy' | 'big-bets';
 
 export type ResourceMember = {
   /** Stable key — used in UI state + tests. */
@@ -63,21 +66,22 @@ export function isWorkflowId(id: string): boolean {
 /**
  * The ordered members of both sections. Data · Knowledge · Files · Connections ·
  * Metrics are wireable (they already have grant lists + available feeds). Workflows is
- * wireable via the shared knowledge feed, filtered to `wf_…` ids. Operating Manual is
- * wireable via the `plan` grant list + the `operating-manual` feed (its scopes → the
- * `get_operating_manual` read tool, DLS-checked at run time). Strategy · Big Bets stay
- * labelled placeholders (no per-item grant channel in the builder yet — they reach
- * agents through granted tools list_big_bets / get_big_bet).
+ * wireable via the shared knowledge feed, filtered to `wf_…` ids. The three Plan-item
+ * kinds are all wireable through the ONE `plan` grant list, each with its own available
+ * feed: Operating Manual (`operating-manual` feed → `get_operating_manual`), Strategy
+ * (`strategy` feed → `get_pillar`) and Big Bets (`big-bets` feed → `get_big_bet`). A
+ * granted plan item is loaded at run time via its governed read tool, RLS/DLS-checked
+ * as the caller in-store — read-only, never widening.
  */
 export const RESOURCE_MEMBERS: ResourceMember[] = [
   // ① Plan Items
   {
-    key: 'strategy', label: 'Strategy', section: 'plan', wireable: false,
-    note: 'Strategic Pillars reach agents through granted tools — per-item grants are a labelled follow-up.',
+    key: 'strategy', label: 'Strategy', section: 'plan', wireable: true,
+    field: 'plan', feedKind: 'strategy',
   },
   {
-    key: 'bigbets', label: 'Big Bets', section: 'plan', wireable: false,
-    note: 'Big Bets reach agents through granted tools (list_big_bets / get_big_bet) — per-item grants are a labelled follow-up.',
+    key: 'bigbets', label: 'Big Bets', section: 'plan', wireable: true,
+    field: 'plan', feedKind: 'big-bets',
   },
   {
     key: 'operating-manual', label: 'Operating Manual', section: 'plan', wireable: true,

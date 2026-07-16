@@ -55,13 +55,20 @@ test('Operating Manual is genuinely wireable via the plan grant list + operating
   assert.equal(m.feedKind, 'operating-manual');
 });
 
-test('Strategy · Big Bets remain labelled non-wireable placeholders with a note', () => {
-  for (const key of ['strategy', 'bigbets']) {
-    const m = RESOURCE_MEMBERS.find((x) => x.key === key)!;
-    assert.equal(m.wireable, false, `${key} is not per-item grantable yet`);
-    assert.ok(m.note && m.note.length > 0, `${key} needs an honest note`);
-    assert.equal(m.field, undefined);
-  }
+test('Strategy · Big Bets are now genuinely wireable via the plan grant list + their feeds', () => {
+  const strategy = RESOURCE_MEMBERS.find((x) => x.key === 'strategy')!;
+  assert.equal(strategy.wireable, true);
+  assert.equal(strategy.field, 'plan');
+  assert.equal(strategy.feedKind, 'strategy');
+
+  const bigbets = RESOURCE_MEMBERS.find((x) => x.key === 'bigbets')!;
+  assert.equal(bigbets.wireable, true);
+  assert.equal(bigbets.field, 'plan');
+  assert.equal(bigbets.feedKind, 'big-bets');
+
+  // No placeholder note lingers now that they are real pickers.
+  assert.equal(strategy.note, undefined);
+  assert.equal(bigbets.note, undefined);
 });
 
 test('isWorkflowId splits the shared knowledge feed', () => {

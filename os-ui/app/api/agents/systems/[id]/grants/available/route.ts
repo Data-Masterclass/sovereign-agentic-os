@@ -13,7 +13,17 @@ import { listFiles, ensureHydrated as ensureFilesHydrated } from '@/lib/files/st
 import { listFolders, ensureHydrated as ensureFoldersHydrated, type FolderTab } from '@/lib/folders';
 import { grantFolderNodes } from '@/lib/agents/grant-folders';
 import { resolveManual } from '@/lib/knowledge/manual';
-import { MANUAL_SCOPES, planGrantId, manualLabel, manualAvailableScope } from '@/lib/agents/plan-grants';
+import { listPillars } from '@/lib/strategy/pillars';
+import type { PillarScope } from '@/lib/strategy/model';
+import { listBets, ensureHydrated as ensureBetsHydrated } from '@/lib/bigbets/store';
+import {
+  MANUAL_SCOPES,
+  planGrantId,
+  manualLabel,
+  manualAvailableScope,
+  pillarPlanId,
+  bigBetPlanId,
+} from '@/lib/agents/plan-grants';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,11 +43,30 @@ export const dynamic = 'force-dynamic';
  * Wave-3 checkbox tree can render folders + items and emit folder grants. The feed is
  * ALREADY DLS-scoped, so a folder that holds ungrantable items simply shows fewer
  * items — the tree renders tri-state and the "grants N of M" honesty follows.
+ *
+ * The Plan-item kinds return grantable PLAN targets rather than raw artifacts:
+ * `operating-manual` (the manual scopes the caller may view), `strategy` (the Strategic
+ * Pillars via `listPillars`) and `big-bets` (the Big Bets via `listBets`). Each item's
+ * `id` is the encoded `grants.plan` id (`manual:*` / `pillar:*` / `bigbet:*`) and its
+ * `scope` groups it My/Domain/Company like the others. All three use the SAME RLS/DLS
+ * listing the corresponding tab uses, so nothing the caller can't see is ever offered.
  */
 // `connections` (plural) is the Simple-builder GrantKind spelling; `connection`
 // (singular) is the original Grants-panel spelling — both resolve to the same list.
-type Kind = 'data' | 'knowledge' | 'files' | 'connection' | 'connections' | 'metric' | 'operating-manual';
-const KINDS: Kind[] = ['data', 'knowledge', 'files', 'connection', 'connections', 'metric', 'operating-manual'];
+type Kind =
+  | 'data' | 'knowledge' | 'files' | 'connection' | 'connections' | 'metric'
+  | 'operating-manual' | 'strategy' | 'big-bets';
+const KINDS: Kind[] = [
+  'data', 'knowledge', 'files', 'connection', 'connections', 'metric',
+  'operating-manual', 'strategy', 'big-bets',
+];
+
+/** Strategy pillar tier → the picker's My/Domain/Company (personal/domain/marketplace) bucket. */
+function pillarScopeBucket(scope: PillarScope): 'personal' | 'domain' | 'marketplace' {
+  if (scope === 'personal') return 'personal';
+  if (scope === 'tenant') return 'marketplace'; // Company tier ↔ marketplace bucket, matching scopeLabel
+  return 'domain';
+}
 
 /** The kinds that carry folders — the ones whose feed returns folder nodes. */
 const FOLDER_TABS: Record<string, FolderTab> = { data: 'data', knowledge: 'knowledge', files: 'files' };
@@ -131,6 +160,29 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       items = MANUAL_SCOPES
         .filter((scope) => resolveManual(scope, principal).canView)
         .map((scope) => ({ id: planGrantId(scope), name: manualLabel(scope), scope: manualAvailableScope(scope) }));
+    } else if (kind === 'strategy') {
+      // The Strategic Pillars the caller may VIEW — the SAME RLS-scoped `listPillars`
+      // the Strategy tab (and the Big Bets create dropdown) uses; never leaks another
+      // user's personal pillar or another domain's. Each grant id encodes the pillar
+      // (`pillar:<id>`); granting provisions the governed `get_pillar` read tool.
+      const pillars = await listPillars(user);
+      items = pillars.map((p) => ({
+        id: pillarPlanId(p.id),
+        name: p.name,
+        scope: pillarScopeBucket(p.scope),
+      }));
+    } else if (kind === 'big-bets') {
+      // The Big Bets the caller may VIEW — the SAME canView-scoped `listBets` the Big
+      // Bets tab uses. Scope buckets by ownership/reach: the caller's own bets → My,
+      // Admin-owned cross-domain bets → Company, otherwise the owning Domain. Each grant
+      // id encodes the bet (`bigbet:<id>`); granting provisions `get_big_bet`.
+      await ensureBetsHydrated();
+      const bets = listBets(principal);
+      items = bets.map((b) => ({
+        id: bigBetPlanId(b.id),
+        name: b.name,
+        scope: b.owner === user.id ? ('personal' as const) : b.crossDomain ? ('marketplace' as const) : ('domain' as const),
+      }));
     } else {
       // connection / connections — the async, already canView-scoped list.
       const conns = await listConnectionsForUser(user);

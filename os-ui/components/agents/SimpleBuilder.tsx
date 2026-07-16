@@ -1548,9 +1548,10 @@ function ResourceSectionBlock({
 
 /**
  * Render ONE group member. Wireable members route to the right picker (foldered tree
- * for data/knowledge/files/workflows, flat picker for connections/metrics); the
- * non-wireable Plan placeholders (Strategy · Big Bets · Operating Manual) render a
- * labelled, honest note so the IA is complete without inventing a grant channel.
+ * for data/knowledge/files/workflows, flat picker for connections/metrics and the three
+ * Plan items — Operating Manual · Strategy · Big Bets — through the shared `plan` grant
+ * list). A non-wireable member (none today) would render a labelled, honest note so the
+ * IA stays complete without inventing a grant channel.
  */
 function ResourceMemberBlock({
   member, systemId, system, canEdit, onCommit,
@@ -1580,11 +1581,11 @@ function ResourceMemberBlock({
           canEdit={canEdit} onCommit={onCommit}
         />
       ) : (
-        // Flat kinds — Connections · Metrics · Operating Manual (plan).
+        // Flat kinds — Connections · Metrics · Plan Items (Operating Manual · Strategy · Big Bets).
         <ResourcePicker
           systemId={systemId} system={system}
           kind={member.field as 'connections' | 'metrics' | 'plan'}
-          feedKind={member.feedKind as 'connections' | 'metric' | 'operating-manual'}
+          feedKind={member.feedKind as 'connections' | 'metric' | 'operating-manual' | 'strategy' | 'big-bets'}
           label={member.label}
           hideLabel
           canEdit={canEdit} onCommit={onCommit}
@@ -1706,11 +1707,12 @@ function ResourcePicker({
   systemId: string;
   system: System;
   /** An id-carrying grant kind (Files is handled separately by FolderResourcePicker).
-   *  `plan` holds Operating-Manual grants (`manual:<scope>` ids). */
+   *  `plan` holds heterogeneous Plan grants — Operating Manual (`manual:<scope>`),
+   *  Strategic Pillar (`pillar:<id>`) and Big Bet (`bigbet:<id>`) ids. */
   kind: 'data' | 'knowledge' | 'connections' | 'metrics' | 'plan';
-  /** The `…/grants/available?kind=` feed to browse — `metric` (singular) for metrics,
-   *  `operating-manual` for the plan kind. */
-  feedKind: 'data' | 'knowledge' | 'connections' | 'metric' | 'operating-manual';
+  /** The `…/grants/available?kind=` feed to browse — `metric` (singular) for metrics;
+   *  `operating-manual` · `strategy` · `big-bets` for the three plan feeds. */
+  feedKind: 'data' | 'knowledge' | 'connections' | 'metric' | 'operating-manual' | 'strategy' | 'big-bets';
   label: string;
   /** Suppress the internal category label — the caller renders a prominent one. */
   hideLabel?: boolean;
@@ -1793,8 +1795,13 @@ function ResourcePicker({
       ) : null}
       {kind === 'plan' ? (
         <p className="hint" style={{ marginTop: 4, marginBottom: 0 }}>
-          A granted manual is loaded on demand via the governed <span className="mono">get_operating_manual</span> tool,
-          scope-checked as you. Nothing is auto-injected — grant the Domain manual to have the team load it explicitly.
+          {feedKind === 'strategy' ? (
+            <>A granted pillar is loaded on demand via the governed <span className="mono">get_pillar</span> tool, scope-checked as you. Nothing is auto-injected — the read tool + your access is the only path it reaches the team.</>
+          ) : feedKind === 'big-bets' ? (
+            <>A granted big bet is loaded on demand via the governed <span className="mono">get_big_bet</span> tool, scope-checked as you. Nothing is auto-injected — the read tool + your access is the only path it reaches the team.</>
+          ) : (
+            <>A granted manual is loaded on demand via the governed <span className="mono">get_operating_manual</span> tool, scope-checked as you. Nothing is auto-injected — grant the Domain manual to have the team load it explicitly.</>
+          )}
         </p>
       ) : null}
       {canEdit ? (

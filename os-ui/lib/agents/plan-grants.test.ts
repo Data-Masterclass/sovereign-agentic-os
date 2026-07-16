@@ -9,10 +9,15 @@ import {
   manualLabel,
   manualAvailableScope,
   MANUAL_SCOPES,
+  pillarPlanId,
+  pillarIdOfPlanId,
+  bigBetPlanId,
+  bigBetIdOfPlanId,
+  planTargetOf,
 } from './plan-grants.ts';
 import { parseSystem, serializeSystem } from './system-schema.ts';
 import { setArtifactGrantLevel, removeArtifactGrant } from './simple-edit.ts';
-import { toolsForGrant } from './capability-tools.ts';
+import { toolsForGrant, planToolsForId } from './capability-tools.ts';
 
 /**
  * Operating-Manual PLAN grants: the id encoding round-trips, granting one records the
@@ -46,6 +51,61 @@ test('a plan grant provisions the governed manual read tool', () => {
   assert.deepEqual(toolsForGrant('plan', 'Read'), ['get_operating_manual']);
   // Read-only: a "write" plan grant provisions nothing extra.
   assert.deepEqual(toolsForGrant('plan', 'Write-bounded'), ['get_operating_manual']);
+});
+
+test('pillar + big-bet plan-grant ids encode + round-trip; classify to the right target', () => {
+  assert.equal(pillarPlanId('p_42'), 'pillar:p_42');
+  assert.equal(pillarIdOfPlanId(pillarPlanId('p_42')), 'p_42');
+  assert.equal(bigBetPlanId('bet_7'), 'bigbet:bet_7');
+  assert.equal(bigBetIdOfPlanId(bigBetPlanId('bet_7')), 'bet_7');
+
+  // Cross-parse is fail-closed (a pillar id is not a bet id, and vice-versa).
+  assert.equal(bigBetIdOfPlanId('pillar:p_42'), null);
+  assert.equal(pillarIdOfPlanId('bigbet:bet_7'), null);
+  assert.equal(pillarIdOfPlanId('pillar:'), null); // empty id → null
+  assert.equal(bigBetIdOfPlanId('bigbet:'), null);
+
+  // planTargetOf classifies every plan id and null for anything else.
+  assert.equal(planTargetOf('manual:domain'), 'manual');
+  assert.equal(planTargetOf('pillar:p_42'), 'pillar');
+  assert.equal(planTargetOf('bigbet:bet_7'), 'bigbet');
+  assert.equal(planTargetOf('wf_123'), null);
+});
+
+test('planToolsForId provisions the read tool matching the plan target (read-only)', () => {
+  assert.deepEqual(planToolsForId('manual:my', 'Read'), ['get_operating_manual']);
+  assert.deepEqual(planToolsForId('pillar:p_1', 'Read'), ['get_pillar', 'list_pillars']);
+  assert.deepEqual(planToolsForId('bigbet:bet_1', 'Read'), ['get_big_bet', 'list_big_bets']);
+  // A "write" plan grant is still read-only — the tools don't change, nothing widens.
+  assert.deepEqual(planToolsForId('pillar:p_1', 'Write-bounded'), ['get_pillar', 'list_pillars']);
+  // Off/Blocked + unrecognised ids provision nothing (fail-closed).
+  assert.deepEqual(planToolsForId('pillar:p_1', 'Off'), []);
+  assert.deepEqual(planToolsForId('nonsense', 'Read'), []);
+});
+
+test('granting a pillar records grants.plan + provisions get_pillar; a bet provisions get_big_bet', () => {
+  const sys = parseSystem(BASE);
+
+  const withPillar = setArtifactGrantLevel(sys, 'plan', pillarPlanId('p_9'), 'read-only');
+  assert.deepEqual(withPillar.grants.plan, [{ id: 'pillar:p_9', capability: 'Read' }]);
+  assert.ok(withPillar.grants.tools.includes('get_pillar'));
+  assert.ok(withPillar.grants.tools.includes('list_pillars'));
+  // The manual tool is NOT provisioned by a pillar grant (per-target, not per-kind).
+  assert.ok(!withPillar.grants.tools.includes('get_operating_manual'));
+
+  const withBet = setArtifactGrantLevel(withPillar, 'plan', bigBetPlanId('bet_3'), 'read-only');
+  assert.deepEqual(withBet.grants.plan, [
+    { id: 'pillar:p_9', capability: 'Read' },
+    { id: 'bigbet:bet_3', capability: 'Read' },
+  ]);
+  assert.ok(withBet.grants.tools.includes('get_big_bet'));
+  assert.ok(withBet.grants.tools.includes('list_big_bets'));
+
+  // Round-trips through serialize/parse, and removing reverts the grant list.
+  const round = parseSystem(serializeSystem(withBet));
+  assert.deepEqual(round.grants.plan, withBet.grants.plan);
+  const without = removeArtifactGrant(withBet, 'plan', bigBetPlanId('bet_3'));
+  assert.deepEqual(without.grants.plan, [{ id: 'pillar:p_9', capability: 'Read' }]);
 });
 
 const BASE = `
