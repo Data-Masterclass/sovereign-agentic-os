@@ -25,8 +25,9 @@ type Params = { params: Promise<{ id: string }> };
  * seam every other artifact rides (`lib/governance/ladder.ts`), keyed on the
  * `personal_knowledge` kind.
  *
- * Personal → Shared: a Builder+ promotes in one shot; a creator (owner, no
- *   promote rights) FILES request_promotion (docs-first) for a Builder to approve.
+ * Personal → Shared: a domain_admin+ promotes in one shot; a creator/builder (owner,
+ *   no promote rights) FILES request_promotion (docs-first) for a domain admin to
+ *   approve — a builder PROPOSES their own entry, it is not self-approved.
  * Shared → Marketplace: an Admin certifies in one shot; a Builder/Domain-admin
  *   files a certification request for a platform Admin to approve.
  *
@@ -39,9 +40,10 @@ export async function POST(_req: Request, { params }: Params) {
     const { id } = await params;
     const entry = getPersonalKnowledge(id, user); // view-gate + current tier
 
-    // Personal → Shared (rung 1). Builder+ one-shots; a creator files a request.
+    // Personal → Shared (rung 1). domain_admin+ one-shots; a creator/builder files a
+    // request (the OWNER proposes their own entry; a domain admin approves).
     if (entry.visibility === 'Personal') {
-      if (roleAtLeast(user.role, 'builder')) {
+      if (roleAtLeast(user.role, 'domain_admin')) {
         const r = await promoteThroughSeam('personal_knowledge', id, user, { rung: 'promote' });
         return NextResponse.json({ ok: r.ok, visibility: r.artifact.visibility, applied: r.applied });
       }

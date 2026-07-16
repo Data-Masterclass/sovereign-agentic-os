@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
  * Promote a file → a domain asset, separation-of-duties (mirrors the Data tab):
  *   POST — the OWNER (Creator) REQUESTS promotion; we validate ownership + the
  *          light docs gate (owner + description + ≥1 tag), then enqueue a
- *          `file_promote` into the SHARED approvals queue. A domain Builder
+ *          `file_promote` into the SHARED approvals queue. A domain admin
  *          approves it in Governance (which applies dataset→asset + re-governs the
  *          object-store prefix + DLS). The Creator cannot self-promote.
  *   GET  — the docs-gate status + any pending request (so the preview shows it).
@@ -33,12 +33,18 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const approval = enqueue({
       kind: 'file_promote',
       title: `Promote “${request.fileName}” to a domain asset`,
-      detail: `${user.id} requests sharing ${request.fileName} with the ${request.domain} domain (visibility: ${request.visibility}). A domain Builder must approve.`,
+      detail: `${user.id} requests sharing ${request.fileName} with the ${request.domain} domain (visibility: ${request.visibility}). A domain admin must approve.`,
       agent: user.id,
       domain: request.domain,
       requestedBy: user.id,
       tool: 'file_promote',
       payload: request as unknown as Record<string, unknown>,
+      // Personal→Domain is a governed rung: a domain_admin+ approves (a builder is an
+      // owner who PROPOSES, not the approver). Matches the MCP request_promotion path
+      // + the ladder tabs (metrics/artifacts/…). The inbox `canApprove` gate is the
+      // fail-closed enforcement point.
+      approverRole: 'domain_admin',
+      scope: 'domain',
     });
     return NextResponse.json({ approval });
   } catch (e) {

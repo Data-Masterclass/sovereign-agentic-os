@@ -15,6 +15,16 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.21] — 2026-07-16
+
+### Fixed (governance)
+- **A builder can propose promoting an artifact to Domain, and it's reviewed by a domain admin** —
+  not by another builder. The Files and Data promote requests were routing approval to the wrong
+  role (defaulting to builder), and a personal Knowledge entry could be self-promoted by a builder;
+  all now correctly require **domain admin+** approval. The Files action reads "Propose to Domain →"
+  with a clear "awaiting a domain admin's approval" pending state. (Owner still proposes their own
+  artifact regardless of role; only the approver gate changed.)
+
 ## [os-ui 0.5.20] — 2026-07-16
 
 ### Changed

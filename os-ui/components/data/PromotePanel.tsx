@@ -24,8 +24,8 @@ type Approval = {
 /**
  * Promote → Data Asset (data-architecture-model.md). The documentation form (OM
  * required fields) + the live transparency-gate checklist, then the separation-of-
- * duties handoff: a Creator REQUESTS promotion (gated green); a domain Builder
- * APPROVES it from here or in Governance, which moves the dataset into Trino.
+ * duties handoff: an OWNER (creator or builder) REQUESTS promotion (gated green);
+ * a domain admin APPROVES it in Governance, which moves the dataset into Trino.
  */
 export default function PromotePanel({
   datasetId,
@@ -107,7 +107,7 @@ export default function PromotePanel({
     <div className="guided-panel">
       <p className="muted" style={{ marginTop: 0 }}>
         Sharing this dataset with your domain promotes it into governed Trino storage. It needs
-        documentation first — then a <strong>Builder approves</strong> the promotion (you can’t promote your own).
+        documentation first — then a <strong>domain admin approves</strong> the promotion (you can’t promote your own).
       </p>
 
       {isOwner ? (
@@ -168,12 +168,12 @@ export default function PromotePanel({
         </div>
       ) : null}
 
-      {/* Pending request status — a domain Builder approves it in the Governance tab. */}
+      {/* Pending request status — a domain admin approves it in the Governance tab. */}
       {pending ? (
         <div className="gate-check" style={{ marginTop: 14 }}>
           <span className="badge warn">promotion requested</span>{' '}
           <span className="muted">{request?.detail}</span>
-          <div className="hint" style={{ marginTop: 6 }}>A domain Builder approves this in the <strong>Governance</strong> tab, which moves it into Trino.</div>
+          <div className="hint" style={{ marginTop: 6 }}>A domain admin approves this in the <strong>Governance</strong> tab, which moves it into Trino.</div>
         </div>
       ) : null}
 

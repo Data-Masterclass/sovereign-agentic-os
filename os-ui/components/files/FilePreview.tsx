@@ -298,21 +298,23 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         </button>
       </div>
 
-      {/* ---- Sharing lifecycle (governed exactly like Data): a Creator requests a
-              promotion (a Builder approves); an Admin certifies to the marketplace. ---- */}
+      {/* ---- Sharing lifecycle (governed exactly like Data): the OWNER (creator or
+              builder) PROPOSES a promotion, a domain admin approves; an Admin certifies
+              to the marketplace. The propose button is owner-gated, never role-gated —
+              a builder proposes their OWN file; the approval is the governed gate. ---- */}
       <div className="preview-share" {...anchorAttr(ANCHORS.files.share)}>
         <label className="rail-group-title">Sharing</label>
         {a.tier === 'dataset' ? (
           promote?.request ? (
-            <p className="hint" style={{ margin: 0 }}>Pending a domain Builder’s approval…</p>
+            <p className="hint" style={{ margin: 0 }}>⏳ Proposed — awaiting a domain admin’s approval…</p>
           ) : isOwner ? (
             <>
               {promote && !promote.gate.ok ? (
-                <p className="hint" style={{ margin: '0 0 6px' }}>To share, add {promote.gate.missing.join(', ')}.</p>
+                <p className="hint" style={{ margin: '0 0 6px' }}>To propose sharing, add {promote.gate.missing.join(', ')}.</p>
               ) : null}
               <button className="btn ghost sm" disabled={!promote?.gate.ok} onClick={requestPromote}
-                title="Ask a domain Builder to share this file with your domain">
-                Share to domain →
+                title="Propose sharing this file with your domain — a domain admin reviews it">
+                Propose to Domain →
               </button>
             </>
           ) : <p className="hint" style={{ margin: 0 }}>Private to {a.owner}.</p>
