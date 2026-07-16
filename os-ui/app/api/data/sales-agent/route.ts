@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic';
  *   • KPI questions ("revenue/orders in DE last quarter") -> the Cube `metrics`
  *     tool — the SAME canonical metric the dashboard uses.
  *   • ad-hoc questions ("net_amount / breakdown / which product…") -> the
- *     `query` tool — DuckDB over the SAME Iceberg `mart_sales`.
+ *     `query` tool — Trino over the SAME Iceberg `mart_sales`.
  *
  * Routing is deterministic (so it works against the offline mock model and the
  * validation is repeatable); both branches are OPA-authorized + Langfuse-traced.

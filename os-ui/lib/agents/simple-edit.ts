@@ -10,6 +10,7 @@ import {
   writeToolsForKind,
   capabilityWrites,
 } from './capability-tools.ts';
+import { type AccessLevel, accessToCapability } from './access-levels.ts';
 
 /**
  * Pure, immutable `system.yaml` edits for Simple mode (the guided, plain-fields
@@ -139,8 +140,36 @@ export function setArtifactGrant(
   write: boolean,
   layer: DataLayer = 'gold',
 ): System {
+  return setArtifactGrantCapability(input, kind, id, write ? 'Write-bounded' : 'Read', layer);
+}
+
+/**
+ * Set a per-item access LEVEL (read-only · read+propose · read+write) on a grant,
+ * mapping the plain level onto the ONE grant {@link Capability} model. This is the
+ * three-level entry point the "What your team can use" per-item selector uses; the
+ * `read+propose` level (→ `Write-approval`) records a per-item HELD write, so it
+ * needs the same create/write tools a direct write does — provisioned here.
+ */
+export function setArtifactGrantLevel(
+  input: System,
+  kind: GrantKind,
+  id: string | null,
+  level: AccessLevel,
+  layer: DataLayer = 'gold',
+): System {
+  return setArtifactGrantCapability(input, kind, id, accessToCapability(level), layer);
+}
+
+/** Core: set a per-item grant to an explicit capability, provisioning matching tools. */
+function setArtifactGrantCapability(
+  input: System,
+  kind: GrantKind,
+  id: string | null,
+  cap: Capability,
+  layer: DataLayer = 'gold',
+): System {
   const sys = structuredClone(input);
-  const cap: Capability = write ? 'Write-bounded' : 'Read';
+  const write = capabilityWrites(cap);
   if (kind !== 'files' && id) {
     const arr = sys.grants[kind];
     const existing = arr.find((g) => g.id === id);
@@ -233,8 +262,28 @@ export function setFolderGrant(
   target: FolderGrantTarget,
   write: boolean,
 ): System {
+  return setFolderGrantCapability(input, kind, target, write ? 'Write-bounded' : 'Read');
+}
+
+/** Folder-grant variant that takes a plain access LEVEL (read-only · propose · write). */
+export function setFolderGrantLevel(
+  input: System,
+  kind: GrantKind,
+  target: FolderGrantTarget,
+  level: AccessLevel,
+): System {
+  return setFolderGrantCapability(input, kind, target, accessToCapability(level));
+}
+
+/** Core: set a folder grant to an explicit capability, provisioning matching tools. */
+function setFolderGrantCapability(
+  input: System,
+  kind: GrantKind,
+  target: FolderGrantTarget,
+  cap: Capability,
+): System {
   const sys = structuredClone(input);
-  const cap: Capability = write ? 'Write-bounded' : 'Read';
+  const write = capabilityWrites(cap);
   const path = normaliseFolderPath(target.path);
   const arr = sys.grants[kind];
   const existing = arr.find((g) => g.folder && g.folder.scope === target.scope && g.folder.path === path);

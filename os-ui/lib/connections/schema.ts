@@ -257,7 +257,23 @@ export type ConnectionTemplateKey =
   | 'outlook'
   // Microsoft Teams over Microsoft Graph — Microsoft OAuth 2.0. Reads (list teams/
   // channels/messages) auto-allow; post_channel_message is Write-approval; delete Blocked.
-  | 'teams';
+  | 'teams'
+  // Cloud key-services wave — governance / identity / ML metadata (mostly READ).
+  // Microsoft Entra ID (Azure AD) over Microsoft Graph — Microsoft OAuth 2.0.
+  // Read-only identity/directory governance (list/get users, list groups, list
+  // directory-role assignments). No writes.
+  | 'entra'
+  // Microsoft Purview data governance/catalog over the account's Atlas/Purview URL
+  // — Microsoft OAuth 2.0. Read-only (search assets, get asset, list
+  // classifications, get lineage). No writes.
+  | 'purview'
+  // Azure AI Foundry / Azure AI over the workspace/region base — Microsoft OAuth 2.0.
+  // Read-only (list models, list/get deployments). No writes.
+  | 'ai-foundry'
+  // AWS SageMaker over api.sagemaker.<region>.amazonaws.com — AWS SigV4 (access key
+  // id + secret access key vaulted; region a non-secret config). Read-only (list
+  // models/endpoints/training jobs, describe endpoint). No writes.
+  | 'sagemaker';
 
 export type ConnectionTemplate = {
   key: ConnectionTemplateKey;
@@ -791,6 +807,83 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
       { name: 'delete_channel_message', description: 'Delete a channel message (write — destructive).', write: true, mode: 'Blocked' },
     ],
   },
+  {
+    // Microsoft Entra ID (Azure AD) over Microsoft Graph. Microsoft OAuth 2.0 access
+    // token. READ-ONLY identity/directory governance — every tool is a read; there
+    // is no write tool at all (a directory mutation is out of scope for this
+    // connector).
+    key: 'entra',
+    label: 'Microsoft Entra ID (Azure AD · Microsoft Graph)',
+    type: 'SaaS',
+    connector: 'saas',
+    auth: 'service',
+    endpointHint: 'https://graph.microsoft.com/v1.0',
+    secretKey: 'entra-oauth-token',
+    tools: [
+      // Reads (side-effect-free, auto-allowed). No writes on this connector.
+      { name: 'list_users', description: 'List directory users, optionally $search (read).', write: false, mode: 'Read' },
+      { name: 'get_user', description: 'Read one directory user by id / userPrincipalName (read).', write: false, mode: 'Read' },
+      { name: 'list_groups', description: 'List directory groups (read).', write: false, mode: 'Read' },
+      { name: 'list_role_assignments', description: 'List directory-role assignments — who holds which directory role (read).', write: false, mode: 'Read' },
+    ],
+  },
+  {
+    // Microsoft Purview data governance/catalog over the account's Atlas/Purview URL
+    // (`https://<account>.purview.azure.com`). Microsoft OAuth 2.0 access token.
+    // READ-ONLY catalog + lineage governance — no write tool.
+    key: 'purview',
+    label: 'Microsoft Purview (data governance · catalog)',
+    type: 'SaaS',
+    connector: 'saas',
+    auth: 'service',
+    endpointHint: 'https://<account>.purview.azure.com',
+    secretKey: 'purview-oauth-token',
+    tools: [
+      // Reads (side-effect-free, auto-allowed). No writes on this connector.
+      { name: 'search_assets', description: 'Search the Purview catalog for assets (read).', write: false, mode: 'Read' },
+      { name: 'get_asset', description: 'Read one catalog asset (entity) by guid (read).', write: false, mode: 'Read' },
+      { name: 'list_classifications', description: 'List the classification definitions in the catalog (read).', write: false, mode: 'Read' },
+      { name: 'get_lineage', description: 'Read the lineage graph for an asset by guid (read).', write: false, mode: 'Read' },
+    ],
+  },
+  {
+    // Azure AI Foundry / Azure AI over the workspace/region base
+    // (`https://<region>.api.azureml.ms`). Microsoft OAuth 2.0 access token.
+    // READ-ONLY ML metadata — list models/deployments, get a deployment. No write tool.
+    key: 'ai-foundry',
+    label: 'Azure AI Foundry (Azure AI / ML)',
+    type: 'SaaS',
+    connector: 'saas',
+    auth: 'service',
+    endpointHint: 'https://<region>.api.azureml.ms',
+    secretKey: 'ai-foundry-oauth-token',
+    tools: [
+      // Reads (side-effect-free, auto-allowed). No writes on this connector.
+      { name: 'list_models', description: 'List registered models in the workspace (read).', write: false, mode: 'Read' },
+      { name: 'list_deployments', description: 'List online/model deployments in the workspace (read).', write: false, mode: 'Read' },
+      { name: 'get_deployment', description: 'Read one deployment by name (read).', write: false, mode: 'Read' },
+    ],
+  },
+  {
+    // AWS SageMaker over api.sagemaker.<region>.amazonaws.com. AWS SigV4 (the access
+    // key id + secret access key are the vaulted credential; region derives from the
+    // endpoint host). READ-ONLY ML metadata. No write tool. Credentials NEVER leave
+    // the vault — the record only holds the endpoint + a secretRef.
+    key: 'sagemaker',
+    label: 'AWS SageMaker (ML · SigV4)',
+    type: 'SaaS',
+    connector: 'saas',
+    auth: 'service',
+    endpointHint: 'https://api.sagemaker.eu-central-1.amazonaws.com',
+    secretKey: 'sagemaker-aws-credentials',
+    tools: [
+      // Reads (side-effect-free, auto-allowed). No writes on this connector.
+      { name: 'list_models', description: 'List SageMaker models (read).', write: false, mode: 'Read' },
+      { name: 'list_endpoints', description: 'List SageMaker inference endpoints (read).', write: false, mode: 'Read' },
+      { name: 'list_training_jobs', description: 'List SageMaker training jobs (read).', write: false, mode: 'Read' },
+      { name: 'describe_endpoint', description: 'Describe one SageMaker endpoint by name (read).', write: false, mode: 'Read' },
+    ],
+  },
 ];
 
 /**
@@ -801,7 +894,7 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
  * import, the connections gate, adapter tests) and is deliberately NOT offered in
  * the create picker — a user can never stand up a non-working mock connection.
  */
-export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp', 'airflow', 'github', 'supabase', 'atlassian', 'slack', 'gmail', 'gcal', 'outlook', 'teams'];
+export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp', 'airflow', 'github', 'supabase', 'atlassian', 'slack', 'gmail', 'gcal', 'outlook', 'teams', 'entra', 'purview', 'ai-foundry', 'sagemaker'];
 
 export function isUserFacingTemplate(key: string): boolean {
   return (USER_FACING_TEMPLATE_KEYS as string[]).includes(key);

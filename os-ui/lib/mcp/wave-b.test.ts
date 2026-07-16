@@ -411,10 +411,11 @@ test('list_connection_templates: the catalog from the SAME registry create_conne
   );
   // Flag-off default: the external-warehouse + om-catalog templates are hidden
   // (EXTERNAL_CONNECTORS_ENABLED / OPENMETADATA_CONNECT_ENABLED off), so the catalog
-  // is the 12 user-facing (gdrive, onedrive, notion-mcp, airflow, github, supabase,
-  // atlassian, slack, gmail, gcal, outlook, teams) + 4 internal building blocks —
-  // warehouse does NOT appear (the flag-off invariant).
-  assert.equal(r.templates.length, 16, 'the full template catalog (12 user-facing + 4 internal building blocks); warehouse hidden flag-off');
+  // is the 16 user-facing (gdrive, onedrive, notion-mcp, airflow, github, supabase,
+  // atlassian, slack, gmail, gcal, outlook, teams, entra, purview, ai-foundry,
+  // sagemaker) + 4 internal building blocks — warehouse does NOT appear (the
+  // flag-off invariant).
+  assert.equal(r.templates.length, 20, 'the full template catalog (16 user-facing + 4 internal building blocks); warehouse hidden flag-off');
   assert.ok(!r.templates.some((t) => t.key === 'warehouse'), 'warehouse hidden when external connectors are off');
 
   // ONE source of truth: the listed keys are exactly the keys create_connection accepts

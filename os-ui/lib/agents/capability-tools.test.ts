@@ -72,28 +72,33 @@ test('allToolsForKind covers read ∪ write for pruning', () => {
 
 // ─── Capability chips ─────────────────────────────────────────────────────────
 
+type ChipGrants = Pick<Grants, 'data' | 'knowledge' | 'connections' | 'metrics' | 'plan'>;
+
 /** A grants object where every resource list is populated. */
-const FULL_GRANTS: Pick<Grants, 'data' | 'knowledge' | 'connections' | 'metrics'> = {
+const FULL_GRANTS: ChipGrants = {
   data: [{ id: 'ds_sales', capability: 'Read' }],
   knowledge: [{ id: 'wf_playbook', capability: 'Read' }],
   connections: [{ id: 'conn_crm', capability: 'Read' }],
   metrics: [{ id: 'mt_revenue', capability: 'Read' }],
+  plan: [{ id: 'manual:domain', capability: 'Read' }],
 };
 
 /** Grants where only data was granted. */
-const DATA_ONLY_GRANTS: Pick<Grants, 'data' | 'knowledge' | 'connections' | 'metrics'> = {
+const DATA_ONLY_GRANTS: ChipGrants = {
   data: [{ id: 'ds_sales', capability: 'Read' }],
   knowledge: [],
   connections: [],
   metrics: [],
+  plan: [],
 };
 
 /** Grants where nothing was granted. */
-const EMPTY_GRANTS: Pick<Grants, 'data' | 'knowledge' | 'connections' | 'metrics'> = {
+const EMPTY_GRANTS: ChipGrants = {
   data: [],
   knowledge: [],
   connections: [],
   metrics: [],
+  plan: [],
 };
 
 test('capabilityChipsForGrants: ungranted kind is not offered', () => {
@@ -117,9 +122,15 @@ test('capabilityChipsForGrants: no grants → only null-grantKind chips offered'
   assert.ok(!ids.includes('search-knowledge'));
   assert.ok(!ids.includes('use-connection'));
   assert.ok(!ids.includes('query-metrics'));
+  assert.ok(!ids.includes('read-operating-manual')); // plan-gated
   // null-grantKind chips still present
   assert.ok(ids.includes('create-files'));
   assert.ok(ids.includes('use-goals'));
+});
+
+test('capabilityChipsForGrants: a plan (Operating Manual) grant offers the manual chip', () => {
+  const ids = capabilityChipsForGrants(FULL_GRANTS, null).map((c) => c.id);
+  assert.ok(ids.includes('read-operating-manual'));
 });
 
 test('capabilityChipsForGrants: full grants → all chips offered (catalog null = no catalog filter)', () => {

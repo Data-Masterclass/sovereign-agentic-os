@@ -5779,6 +5779,41 @@ button.card.tile:hover .tile-action { opacity: 1; }
 .sb-chip-x:hover { color: var(--danger); }
 .sb-suggest { margin-top: 10px; }
 
+/* ── Per-item access-level segmented control (Simple Define, "What your team can use") ──
+   A labelled 3-way segment. The ACTIVE option is filled + bold so the current level is
+   unambiguous at a glance; inactive options are quiet. Fully controlled = no flicker. */
+.sb-access-seg {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px;
+  background: var(--bg-elevated);
+}
+.sb-access-seg-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 4px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.sb-access-seg-btn:hover:not(:disabled):not(.active) { color: var(--text); background: var(--gold-soft); }
+.sb-access-seg-btn.active {
+  background: var(--teal);
+  color: #fff;
+  font-weight: 650;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+.sb-access-seg-btn:disabled { cursor: default; }
+/* Locked (system read-only / full-in-scope): keep the active value legible but dimmed. */
+.sb-access-seg.locked { opacity: 0.85; }
+.sb-access-seg.locked .sb-access-seg-btn.active { background: var(--text-faint); color: #fff; }
+
 /* ── Per-agent capabilities box + picker (Simple Design) ── */
 .sb-cap-box {
   display: flex;
@@ -5862,6 +5897,57 @@ button.card.tile:hover .tile-action { opacity: 1; }
 }
 .sb-resource { margin-top: 12px; }
 .sb-resource:first-of-type { margin-top: 6px; }
+
+/* ── Grant-panel heading HIERARCHY ("What your team can use") ──
+   The two GROUP headings (Plan Items / Context) are the primary structure; each
+   CATEGORY heading (Data, Knowledge, Operating Manual…) is the secondary structure;
+   the My/Domain/Company scope labels inside a picker are tertiary sub-labels. Before,
+   categories reused the tiny faint uppercase `.sb-field-label`, so they read SMALLER
+   than the My/Domain sub-labels — inverted hierarchy. These give each level a clear,
+   distinct weight/size/contrast. */
+.sb-grant-group {
+  margin-top: 20px;
+  padding-top: 4px;
+}
+.sb-grant-group:first-of-type { margin-top: 10px; }
+.sb-grant-group-title {
+  font-size: 17px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  margin: 0 0 2px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--border-strong, var(--border));
+}
+.sb-grant-group-sub {
+  font-size: 12.5px;
+  color: var(--text-faint);
+  margin: 6px 0 4px;
+}
+.sb-grant-cat {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated, var(--panel));
+}
+.sb-grant-cat-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text);
+  display: block;
+  margin: 0 0 8px;
+}
+/* Scope sub-labels (My/Domain/Company + the folder-tree roots) inside a category read
+   as clearly SECONDARY to the category title. */
+.sb-grant-cat .sb-field-label,
+.sb-grant-cat .section-title {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  font-weight: 600;
+}
 .sb-resource-picker {
   margin-top: 8px;
   border: 1px solid var(--border);

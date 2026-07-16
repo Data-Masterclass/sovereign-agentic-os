@@ -32,10 +32,13 @@
  */
 import type { Capability, Grants, SafetyPreset } from './system-schema.ts';
 
-/** The four resource kinds the Simple builder grants. `files` has no per-artifact
+/** The resource kinds the Simple builder grants. `files` has no per-artifact
  * grant list (file tools act over the caller's own DLS), so it is provisioned by
- * tools alone; the other three also carry a `grants.<kind>` id list. */
-export type GrantKind = 'data' | 'knowledge' | 'files' | 'connections';
+ * tools alone; the others also carry a `grants.<kind>` id list. `metrics` and `plan`
+ * are read-only (no agent author path), so they provision read tools only. `plan`
+ * holds Operating-Manual (and future Pillar/Big-Bet) grants → the governed manual
+ * read tool, which DLS/scope-checks the requested manual inside the store. */
+export type GrantKind = 'data' | 'knowledge' | 'files' | 'connections' | 'metrics' | 'plan';
 
 /** Read + discovery tools per kind — always provisioned for any usable grant. */
 const READ_TOOLS: Record<GrantKind, string[]> = {
@@ -43,16 +46,21 @@ const READ_TOOLS: Record<GrantKind, string[]> = {
   knowledge: ['search_knowledge', 'list_knowledge', 'get_knowledge'],
   files: ['list_files', 'search_files', 'get_file'],
   connections: ['list_connections', 'get_connection', 'test_connection', 'list_connection_templates', 'warehouse_registration'],
+  metrics: ['list_metrics', 'query_metric', 'get_metric'],
+  plan: ['get_operating_manual'],
 };
 
 /** Create/write tools per kind — added on top of the read set when the grant writes.
  * Promotion/lifecycle tools (request_promotion, publish_knowledge, promote_connection,
- * approve_*) are DELIBERATELY excluded: those are governed hand-offs, not "use it". */
+ * approve_*) are DELIBERATELY excluded: those are governed hand-offs, not "use it".
+ * Metrics + plan have no author path in the builder, so writing grants nothing extra. */
 const WRITE_TOOLS: Record<GrantKind, string[]> = {
   data: ['create_dataset', 'ingest_dataset', 'transform_silver', 'build_gold_join', 'add_dataset_version', 'document_dataset'],
   knowledge: ['author_knowledge', 'index_knowledge'],
   files: ['upload_file'],
   connections: ['create_connection', 'import_warehouse_table'],
+  metrics: [],
+  plan: [],
 };
 
 /** True when the capability lets the team WRITE (not just read). */
@@ -90,7 +98,7 @@ export function writeToolsForKind(kind: GrantKind): string[] {
  * is offered. `null` means the chip is always available (ungated by a resource
  * grant — it just needs to be in the catalog).
  */
-export type ChipGrantKind = 'data' | 'knowledge' | 'connections' | 'metrics' | null;
+export type ChipGrantKind = 'data' | 'knowledge' | 'connections' | 'metrics' | 'plan' | null;
 
 export type CapabilityChip = {
   /** Stable id persisted nowhere — used only in UI state and tests. */
@@ -158,6 +166,14 @@ export const CAPABILITY_CHIPS: CapabilityChip[] = [
     grantKind: null,
     tools: ['list_big_bets', 'get_big_bet'],
   },
+  {
+    id: 'read-operating-manual',
+    label: 'Read operating manual',
+    description: "Load the granted Operating Manual (how the team/company operates) as context.",
+    domain: 'Plan',
+    grantKind: 'plan',
+    tools: READ_TOOLS.plan,
+  },
 ];
 
 /**
@@ -173,13 +189,13 @@ export const CAPABILITY_CHIPS: CapabilityChip[] = [
  * Returns a subset of `CAPABILITY_CHIPS` in the same order.
  */
 export function capabilityChipsForGrants(
-  grants: Pick<Grants, 'data' | 'knowledge' | 'connections' | 'metrics'>,
+  grants: Pick<Grants, 'data' | 'knowledge' | 'connections' | 'metrics' | 'plan'>,
   catalog: string[] | null,
 ): CapabilityChip[] {
   return CAPABILITY_CHIPS.filter((chip) => {
     // Must have the resource grant when grantKind is non-null.
     if (chip.grantKind !== null) {
-      const list = grants[chip.grantKind as keyof Pick<Grants, 'data' | 'knowledge' | 'connections' | 'metrics'>];
+      const list = grants[chip.grantKind as keyof Pick<Grants, 'data' | 'knowledge' | 'connections' | 'metrics' | 'plan'>];
       if (!Array.isArray(list) || list.length === 0) return false;
     }
     // All tools must be in the catalog (when catalog has loaded).

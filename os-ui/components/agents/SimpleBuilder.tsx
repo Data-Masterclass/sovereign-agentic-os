@@ -13,8 +13,14 @@ import {
   addSimpleAgent, moveAgent, removeAgentSimple,
   setAgentInstructions, setAgentRole, setArtifactGrant, removeArtifactGrant,
   setDescription, addAgentTool, setDataGrantLayer,
-  setFolderGrant, removeFolderGrant,
+  setFolderGrant, removeFolderGrant, setArtifactGrantLevel, setFolderGrantLevel,
 } from '@/lib/agents/simple-edit';
+import {
+  accessCap, allowedAccessLevels, capabilityToAccess, clampAccess,
+  ACCESS_LABELS, type AccessLevel, type AccessCap,
+} from '@/lib/agents/access-levels';
+import { membersOf, isWorkflowId, type ResourceMember } from '@/lib/agents/resource-groups';
+import { scopeLabel, type ScopeKey } from '@/lib/core/scopes';
 import FolderTree, { type FolderSelection } from '@/components/core/FolderTree';
 import { itemsUnderFolder, normaliseFolderPath } from '@/lib/core/folders';
 import {
@@ -1221,25 +1227,33 @@ function applyFolderSelection(
   kind: 'data' | 'knowledge' | 'files',
   sel: FolderSelection,
   itemLayer: (id: string) => DataLayer,
+  // When the knowledge feed is split into Workflows vs Knowledge, each picker
+  // reconciles ONLY its own item family so it never removes the other's grants.
+  // `manageFolders` is false for the Workflows picker (workflows carry no folders).
+  opts: { inFamily?: (id: string) => boolean; manageFolders?: boolean } = {},
 ): System {
+  const inFamily = opts.inFamily ?? (() => true);
+  const manageFolders = opts.manageFolders ?? true;
   let next = system;
   const key = (f: { path: string; scope: string }) => `${f.scope}:${normaliseFolderPath(f.path)}`;
 
   // ── Folder grants: add newly-selected, remove de-selected. ──
-  const wantFolders = new Set(sel.folderGrants.map(key));
-  const haveFolders = folderGrantsOf(system, kind);
-  for (const f of sel.folderGrants) {
-    if (!haveFolders.some((h) => key(h) === key(f))) next = setFolderGrant(next, kind, f, false);
-  }
-  for (const h of haveFolders) {
-    if (!wantFolders.has(key(h))) next = removeFolderGrant(next, kind, h);
+  if (manageFolders) {
+    const wantFolders = new Set(sel.folderGrants.map(key));
+    const haveFolders = folderGrantsOf(system, kind);
+    for (const f of sel.folderGrants) {
+      if (!haveFolders.some((h) => key(h) === key(f))) next = setFolderGrant(next, kind, f, false);
+    }
+    for (const h of haveFolders) {
+      if (!wantFolders.has(key(h))) next = removeFolderGrant(next, kind, h);
+    }
   }
 
   // ── Item grants (data/knowledge only — files have no per-item list). ──
   if (kind !== 'files') {
-    const wantItems = new Set(sel.itemGrants);
-    const haveItems = next.grants[kind].filter((g) => !g.folder && g.id).map((g) => g.id);
-    for (const id of sel.itemGrants) {
+    const wantItems = new Set(sel.itemGrants.filter(inFamily));
+    const haveItems = next.grants[kind].filter((g) => !g.folder && g.id && inFamily(g.id)).map((g) => g.id);
+    for (const id of wantItems) {
       if (!haveItems.includes(id)) next = setArtifactGrant(next, kind, id, false, itemLayer(id));
     }
     for (const id of haveItems) {
@@ -1261,7 +1275,7 @@ function applyFolderSelection(
  * small supplementary add-picker so nothing that was grantable before is lost.
  */
 function FolderResourcePicker({
-  systemId, system, kind, label, canEdit, onCommit,
+  systemId, system, kind, label, canEdit, onCommit, idFamily, hideLabel,
 }: {
   systemId: string;
   system: System;
@@ -1269,6 +1283,10 @@ function FolderResourcePicker({
   label: string;
   canEdit: boolean;
   onCommit: (next: System) => void;
+  /** Knowledge feed only — narrow to workflows (`wf_…`) or knowledge docs (everything else). */
+  idFamily?: 'workflow' | 'knowledge';
+  /** Suppress the internal category label — the caller renders a prominent one. */
+  hideLabel?: boolean;
 }) {
   const [feed, setFeed] = useState<AvailableFeed | null>(null);
   const [loadErr, setLoadErr] = useState('');
@@ -1287,7 +1305,11 @@ function FolderResourcePicker({
     return () => { alive = false; };
   }, [systemId, kind]);
 
-  const items = feed?.items ?? [];
+  // Split the shared knowledge feed so Workflows (own Plan-Items member) and Knowledge
+  // (Context) each show ONLY their own item family. Other kinds pass every item.
+  const inFamily = (id: string) =>
+    !idFamily ? true : idFamily === 'workflow' ? isWorkflowId(id) : !isWorkflowId(id);
+  const items = (feed?.items ?? []).filter((a) => inFamily(a.id));
   const folders = feed?.folders ?? [];
   const availOf = (id: string) => items.find((a) => a.id === id);
   const nameOf = (id: string) => availOf(id)?.name ?? (id.includes('_') ? id.split('_').slice(1).join('_') : id);
@@ -1307,8 +1329,10 @@ function FolderResourcePicker({
 
   // Currently-checked ids = explicit item grants ∪ every feed item under a granted folder
   // (so a folder grant renders as a fully-ticked folder). Files: only folders drive checks.
+  // Workflows carry no folders, so the Workflows picker manages item grants only.
+  const managesFolders = idFamily !== 'workflow';
   const grantList = system.grants[kind];
-  const itemGrantIds = new Set(grantList.filter((g) => !g.folder && g.id).map((g) => g.id));
+  const itemGrantIds = new Set(grantList.filter((g) => !g.folder && g.id && inFamily(g.id)).map((g) => g.id));
   const checked = new Set<string>(kind === 'files' ? [] : itemGrantIds);
   for (const g of grantList) {
     if (!g.folder) continue;
@@ -1317,19 +1341,20 @@ function FolderResourcePicker({
 
   const onChange = (sel: FolderSelection) => {
     if (!canEdit) return;
-    onCommit(applyFolderSelection(system, kind, sel, layerFor));
+    onCommit(applyFolderSelection(system, kind, sel, layerFor, { inFamily, manageFolders: managesFolders }));
   };
 
   // The granted chips (item grants + folder grants) shown below the tree with controls.
-  const grantedItems = grantList.filter((g) => !g.folder && g.id);
-  const grantedFolders = grantList.filter((g) => g.folder);
-  const writes = (cap: string) => cap === 'Write-approval' || cap === 'Write-bounded';
+  const grantedItems = grantList.filter((g) => !g.folder && g.id && inFamily(g.id));
+  const grantedFolders = managesFolders ? grantList.filter((g) => g.folder) : [];
+  const cap = accessCap(system.safetyPreset);
+  const scopeOf = (id: string): 'personal' | 'domain' | 'marketplace' => availOf(id)?.scope ?? 'personal';
   const mktGrantedIds = new Set(grantedItems.map((g) => g.id));
   const addableMkt = mktItems.filter((a) => !mktGrantedIds.has(a.id));
 
   return (
     <div className="sb-resource">
-      <div className="sb-field-label" style={{ margin: '4px 0' }}>{label}</div>
+      {hideLabel ? null : <div className="sb-field-label" style={{ margin: '4px 0' }}>{label}</div>}
       {loadErr ? <div className="error" style={{ marginBottom: 6 }}>{loadErr}</div> : null}
       {feed === null ? (
         <p className="hint" style={{ marginTop: 0 }}>Loading…</p>
@@ -1351,13 +1376,13 @@ function FolderResourcePicker({
         <div className="sb-chips" style={{ marginTop: 8 }}>
           {grantedFolders.map((g) => (
             <span key={`f:${g.folder!.scope}:${g.folder!.path}`} className="sb-chip granted" style={{ gap: 8 }}>
-              <span>📁 {g.folder!.path === '/' ? 'All' : g.folder!.path}<span className="badge muted" style={{ marginLeft: 6 }}>{g.folder!.scope}</span></span>
+              <span>📁 {g.folder!.path === '/' ? 'All' : g.folder!.path}<span className="badge muted" style={{ marginLeft: 6 }}>{scopeLabel(g.folder!.scope === 'domain' ? 'shared' : 'mine')}</span></span>
               {kind !== 'files' ? (
-                <AccessToggle
-                  write={writes(g.capability)}
+                <AccessLevelSelect
+                  cap={cap}
+                  capability={g.capability}
                   canEdit={canEdit}
-                  onRead={() => onCommit(setFolderGrant(system, kind, g.folder!, false))}
-                  onWrite={() => onCommit(setFolderGrant(system, kind, g.folder!, true))}
+                  onLevel={(l) => onCommit(setFolderGrantLevel(system, kind, g.folder!, l))}
                 />
               ) : null}
               {canEdit ? (
@@ -1367,12 +1392,12 @@ function FolderResourcePicker({
           ))}
           {grantedItems.map((g) => (
             <span key={g.id} className="sb-chip granted" style={{ gap: 8 }}>
-              <span>{nameOf(g.id)}</span>
-              <AccessToggle
-                write={writes(g.capability)}
+              <span>{nameOf(g.id)}<span className="badge muted" style={{ marginLeft: 6 }}>{scopeLabel(scopeKeyOf(scopeOf(g.id)))}</span></span>
+              <AccessLevelSelect
+                cap={cap}
+                capability={g.capability}
                 canEdit={canEdit}
-                onRead={() => onCommit(setArtifactGrant(system, kind, g.id, false))}
-                onWrite={() => onCommit(setArtifactGrant(system, kind, g.id, true))}
+                onLevel={(l) => onCommit(setArtifactGrantLevel(system, kind, g.id, l))}
               />
               {kind === 'data' ? (
                 <LayerToggle
@@ -1414,9 +1439,9 @@ function FolderResourcePicker({
                     key={a.id}
                     className="sb-picker-row"
                     title={a.id}
-                    onClick={() => onCommit(setArtifactGrant(system, kind, a.id, false, layerFor(a.id)))}
+                    onClick={() => onCommit(setArtifactGrantLevel(system, kind, a.id, cap.default, layerFor(a.id)))}
                   >
-                    +<span>{a.name}</span><span className="badge muted">{a.scope}</span>
+                    +<span>{a.name}</span><span className="badge muted">{scopeLabel(scopeKeyOf(a.scope))}</span>
                   </button>
                 ))}
               </div>
@@ -1444,54 +1469,193 @@ function TeamResources({
   canEdit: boolean;
   onCommit: (next: System) => void;
 }) {
+  const cap = accessCap(system.safetyPreset);
   return (
     <div className="sb-resources">
       <h2 className="sb-section-title" style={{ marginTop: 0 }}>What your team can use</h2>
       <p className="hint" style={{ marginTop: 0 }}>
-        Give the whole team the data, knowledge, files and connections it needs — every agent shares
-        these. Choose <strong>Read</strong> to look only, or <strong>Can write</strong> to also create
-        and change. The matching tools are granted automatically.
+        Give the whole team the resources it needs — every agent shares these. For each item, choose{' '}
+        <strong>Read-only</strong>, <strong>Read + propose</strong> (writes wait for a human), or{' '}
+        <strong>Read + write</strong> (writes run directly). The matching tools are granted automatically.
       </p>
-      <FolderResourcePicker systemId={systemId} system={system} kind="data" label="Data" canEdit={canEdit} onCommit={onCommit} />
-      <FolderResourcePicker systemId={systemId} system={system} kind="knowledge" label="Knowledge" canEdit={canEdit} onCommit={onCommit} />
-      <FolderResourcePicker systemId={systemId} system={system} kind="files" label="Files" canEdit={canEdit} onCommit={onCommit} />
-      <ResourcePicker systemId={systemId} system={system} kind="connections" label="Connections" canEdit={canEdit} onCommit={onCommit} />
-      <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>
-        Writes run directly or wait for approval depending on this team’s safety setting on the Define page.
-      </p>
+
+      {/* The system-wide access cap, explained — why items may be locked or capped. */}
+      <AccessCapNote cap={cap} preset={system.safetyPreset} />
+
+      {/* ① Plan Items ─ Strategy · Big Bets · Operating Manual · Workflows */}
+      <ResourceSectionBlock
+        title="① Plan Items"
+        subtitle="Your strategy, big bets, operating manual and workflows."
+        members={membersOf('plan')}
+        systemId={systemId} system={system} canEdit={canEdit} onCommit={onCommit}
+      />
+
+      {/* ② Context ─ Knowledge · Files · Data · Connections · Metrics */}
+      <ResourceSectionBlock
+        title="② Context"
+        subtitle="The folders and items the team reads from and writes to."
+        members={membersOf('context')}
+        systemId={systemId} system={system} canEdit={canEdit} onCommit={onCommit}
+      />
     </div>
   );
 }
 
-/** A compact two-state Read / Can-write toggle (segmented control, house styling). */
-function AccessToggle({
-  write, canEdit, onRead, onWrite,
+/**
+ * The inline explanation of the agent-system-wide access cap. Reads the system's
+ * safety preset and says, in one honest line, HOW the per-item selector is bounded:
+ * locked at the extremes (read-only / full-in-scope), downgrade-only in the middle.
+ */
+function AccessCapNote({ cap, preset }: { cap: AccessCap; preset: SafetyPreset }) {
+  const msg = cap.locked
+    ? cap.reason
+    : preset === 'read-bounded'
+      ? 'The system allows writes in-scope — each item defaults to Read + write; you may downgrade any item, never go above it.'
+      : 'The system default is Read + propose — each item defaults to that; you may downgrade any item to Read-only, never grant direct write above the system setting.';
+  return (
+    <div className={`badge ${cap.locked ? 'warn' : 'muted'}`} role="note" style={{ display: 'block', padding: '8px 10px', marginBottom: 10, lineHeight: 1.4, whiteSpace: 'normal' }}>
+      {cap.locked ? '🔒 ' : 'ℹ '}{msg} Change it under <strong>What this team is allowed to do</strong> above.
+    </div>
+  );
+}
+
+/** One labelled section (Plan Items / Context) rendering its members' grant pickers. */
+function ResourceSectionBlock({
+  title, subtitle, members, systemId, system, canEdit, onCommit,
 }: {
-  write: boolean;
+  title: string;
+  subtitle: string;
+  members: ResourceMember[];
+  systemId: string;
+  system: System;
   canEdit: boolean;
-  onRead: () => void;
-  onWrite: () => void;
+  onCommit: (next: System) => void;
 }) {
   return (
-    <span className="sb-access" role="group" aria-label="Access level" style={{ display: 'inline-flex', gap: 4 }}>
-      <button
-        type="button"
-        className={`btn ghost sm${write ? '' : ' active'}`}
-        aria-pressed={!write}
-        disabled={!canEdit}
-        onClick={() => canEdit && write && onRead()}
-      >
-        Read
-      </button>
-      <button
-        type="button"
-        className={`btn ghost sm${write ? ' active' : ''}`}
-        aria-pressed={write}
-        disabled={!canEdit}
-        onClick={() => canEdit && !write && onWrite()}
-      >
-        Can write
-      </button>
+    <div className="sb-grant-group">
+      <div className="sb-grant-group-title">{title}</div>
+      <p className="sb-grant-group-sub">{subtitle}</p>
+      {members.map((m) => (
+        <ResourceMemberBlock
+          key={m.key}
+          member={m}
+          systemId={systemId} system={system} canEdit={canEdit} onCommit={onCommit}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Render ONE group member. Wireable members route to the right picker (foldered tree
+ * for data/knowledge/files/workflows, flat picker for connections/metrics); the
+ * non-wireable Plan placeholders (Strategy · Big Bets · Operating Manual) render a
+ * labelled, honest note so the IA is complete without inventing a grant channel.
+ */
+function ResourceMemberBlock({
+  member, systemId, system, canEdit, onCommit,
+}: {
+  member: ResourceMember;
+  systemId: string;
+  system: System;
+  canEdit: boolean;
+  onCommit: (next: System) => void;
+}) {
+  // Each category is a titled card — the prominent CATEGORY heading lives HERE (the
+  // pickers render their My/Domain/Company sub-labels beneath it), so the heading
+  // hierarchy reads group → category → scope.
+  return (
+    <div className="sb-grant-cat">
+      <div className="sb-grant-cat-title">{member.label}</div>
+      {!member.wireable ? (
+        <p className="hint" style={{ marginTop: 0, marginBottom: 0 }}>{member.note}</p>
+      ) : member.feedKind === 'data' || member.feedKind === 'knowledge' || member.feedKind === 'files' ? (
+        // Foldered kinds (data · knowledge · files) + Workflows (knowledge feed, wf_ family).
+        <FolderResourcePicker
+          systemId={systemId} system={system}
+          kind={member.feedKind}
+          idFamily={member.idFamily}
+          label={member.label}
+          hideLabel
+          canEdit={canEdit} onCommit={onCommit}
+        />
+      ) : (
+        // Flat kinds — Connections · Metrics · Operating Manual (plan).
+        <ResourcePicker
+          systemId={systemId} system={system}
+          kind={member.field as 'connections' | 'metrics' | 'plan'}
+          feedKind={member.feedKind as 'connections' | 'metric' | 'operating-manual'}
+          label={member.label}
+          hideLabel
+          canEdit={canEdit} onCommit={onCommit}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Map the grants-available `scope` string to a core `ScopeKey` for `scopeLabel`. */
+function scopeKeyOf(scope: 'personal' | 'domain' | 'marketplace'): ScopeKey {
+  return scope === 'domain' ? 'shared' : scope === 'marketplace' ? 'marketplace' : 'mine';
+}
+
+/** Per-level tooltip — what each access level actually grants, in plain words. */
+const ACCESS_HINTS: Record<AccessLevel, string> = {
+  'read-only': 'Can read only — never changes anything.',
+  'read-propose': 'Can suggest changes — a human approves each one before it runs.',
+  'read-write': 'Can change directly — no approval step.',
+};
+
+/**
+ * The per-item ACCESS-LEVEL selector — a labelled three-option SEGMENTED control
+ * (Read-only · Read + propose · Read + write) CAPPED by the agent-system-wide safety
+ * preset (`cap`). It offers only the levels at or below the system ceiling.
+ *
+ * Fully CONTROLLED — the highlighted option is derived ONLY from the persisted
+ * `capability` prop (clamped to the cap), never from local optimistic state, so there
+ * is NO flicker or press-then-revert repaint: the commit awaits the reload and the
+ * segment repaints once, cleanly, to the new value. The active option is always shown
+ * filled with its text label, so the current level is unambiguous at a glance.
+ *
+ * When the system is LOCKED (read-only / full-in-scope) the control is non-interactive
+ * but still legible: the fixed level stays highlighted, dimmed, with a 🔒 and the reason.
+ */
+function AccessLevelSelect({
+  cap, capability, canEdit, onLevel,
+}: {
+  cap: AccessCap;
+  capability: string;
+  canEdit: boolean;
+  onLevel: (level: AccessLevel) => void;
+}) {
+  const current = clampAccess(capabilityToAccess(capability as Parameters<typeof capabilityToAccess>[0]), cap);
+  const options = allowedAccessLevels(cap);
+  const interactive = canEdit && !cap.locked;
+  return (
+    <span
+      className={`sb-access-seg${cap.locked ? ' locked' : ''}`}
+      role="radiogroup"
+      aria-label="Access level"
+      title={cap.locked ? cap.reason : undefined}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}
+    >
+      {options.map((l) => {
+        const active = l === current;
+        return (
+          <button
+            key={l}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            disabled={!interactive}
+            title={ACCESS_HINTS[l] + (cap.locked ? ` — ${cap.reason}` : '')}
+            className={`sb-access-seg-btn${active ? ' active' : ''}`}
+            onClick={() => interactive && !active && onLevel(l)}
+          >
+            {cap.locked && active ? '🔒 ' : ''}{ACCESS_LABELS[l]}
+          </button>
+        );
+      })}
     </span>
   );
 }
@@ -1537,13 +1701,19 @@ function LayerToggle({
 }
 
 function ResourcePicker({
-  systemId, system, kind, label, canEdit, onCommit,
+  systemId, system, kind, feedKind, label, canEdit, onCommit, hideLabel,
 }: {
   systemId: string;
   system: System;
-  /** An id-carrying grant kind (Files is handled separately by FilesGrant). */
-  kind: 'data' | 'knowledge' | 'connections';
+  /** An id-carrying grant kind (Files is handled separately by FolderResourcePicker).
+   *  `plan` holds Operating-Manual grants (`manual:<scope>` ids). */
+  kind: 'data' | 'knowledge' | 'connections' | 'metrics' | 'plan';
+  /** The `…/grants/available?kind=` feed to browse — `metric` (singular) for metrics,
+   *  `operating-manual` for the plan kind. */
+  feedKind: 'data' | 'knowledge' | 'connections' | 'metric' | 'operating-manual';
   label: string;
+  /** Suppress the internal category label — the caller renders a prominent one. */
+  hideLabel?: boolean;
   canEdit: boolean;
   onCommit: (next: System) => void;
 }) {
@@ -1555,7 +1725,7 @@ function ResourcePicker({
   useEffect(() => {
     let alive = true;
     setLoadErr('');
-    fetch(`/api/agents/systems/${systemId}/grants/available?kind=${kind}`, { cache: 'no-store' })
+    fetch(`/api/agents/systems/${systemId}/grants/available?kind=${feedKind}`, { cache: 'no-store' })
       .then(async (res) => {
         const body = await res.json();
         if (!res.ok) throw new Error(body.error ?? 'Failed to load');
@@ -1563,36 +1733,45 @@ function ResourcePicker({
       })
       .catch((e) => { if (alive) setLoadErr((e as Error).message); });
     return () => { alive = false; };
-  }, [systemId, kind]);
+  }, [systemId, feedKind]);
 
   const granted = system.grants[kind];
   const availOf = (id: string) => available?.find((a) => a.id === id);
   const nameOf = (id: string) =>
     availOf(id)?.name
     ?? (id.includes('_') ? id.split('_').slice(1).join('_') : id);
+  const scopeOf = (id: string): 'personal' | 'domain' | 'marketplace' => availOf(id)?.scope ?? 'personal';
   /** Built medallion layers for a granted dataset (empty until `available` loads). */
   const layersOf = (id: string): DataLayer[] => availOf(id)?.layers ?? [];
   const grantedIds = new Set(granted.map((g) => g.id));
   const addable = (available ?? []).filter((a) => !grantedIds.has(a.id));
   const q = search.trim().toLowerCase();
   const shown = q ? addable.filter((a) => a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q)) : addable;
-  const writes = (cap: string) => cap === 'Write-approval' || cap === 'Write-bounded';
+  // Metrics + Plan (Operating Manual) are read-only (no agent author path) — cap the
+  // selector at read-only regardless of the system posture; other kinds obey the full cap.
+  const readOnlyKind = kind === 'metrics' || kind === 'plan';
+  const baseCap = accessCap(system.safetyPreset);
+  const cap: AccessCap = readOnlyKind
+    ? { ...baseCap, ceiling: 'read-only', default: 'read-only', reason: baseCap.reason || `${label} is read-only.` }
+    : baseCap;
 
   return (
     <div className="sb-resource">
-      <div className="sb-field-label" style={{ margin: '4px 0' }}>{label}</div>
+      {hideLabel ? null : <div className="sb-field-label" style={{ margin: '4px 0' }}>{label}</div>}
       {loadErr ? <div className="error" style={{ marginBottom: 6 }}>{loadErr}</div> : null}
       <div className="sb-chips">
         {granted.length === 0 ? <span className="hint" style={{ marginTop: 0 }}>None yet.</span> : null}
         {granted.map((g) => (
           <span key={g.id} className="sb-chip granted" style={{ gap: 8 }}>
-            <span>{nameOf(g.id)}</span>
-            <AccessToggle
-              write={writes(g.capability)}
-              canEdit={canEdit}
-              onRead={() => onCommit(setArtifactGrant(system, kind, g.id, false))}
-              onWrite={() => onCommit(setArtifactGrant(system, kind, g.id, true))}
-            />
+            <span>{nameOf(g.id)}<span className="badge muted" style={{ marginLeft: 6 }}>{scopeLabel(scopeKeyOf(scopeOf(g.id)))}</span></span>
+            {readOnlyKind ? null : (
+              <AccessLevelSelect
+                cap={cap}
+                capability={g.capability}
+                canEdit={canEdit}
+                onLevel={(l) => onCommit(setArtifactGrantLevel(system, kind, g.id, l))}
+              />
+            )}
             {kind === 'data' ? (
               <LayerToggle
                 layer={g.layer ?? highestLayer(layersOf(g.id)) ?? 'gold'}
@@ -1610,6 +1789,12 @@ function ResourcePicker({
       {kind === 'data' && granted.length > 0 ? (
         <p className="hint" style={{ marginTop: 4, marginBottom: 0 }}>
           Which refined layer this team reads — Gold is the curated default.
+        </p>
+      ) : null}
+      {kind === 'plan' ? (
+        <p className="hint" style={{ marginTop: 4, marginBottom: 0 }}>
+          A granted manual is loaded on demand via the governed <span className="mono">get_operating_manual</span> tool,
+          scope-checked as you. Nothing is auto-injected — grant the Domain manual to have the team load it explicitly.
         </p>
       ) : null}
       {canEdit ? (
@@ -1641,12 +1826,13 @@ function ResourcePicker({
                     className="sb-picker-row"
                     title={a.id}
                     onClick={() =>
-                      // DATA grants default to the HIGHEST built layer (Gold if built,
-                      // else Silver, else Bronze); non-data kinds ignore the layer arg.
-                      onCommit(setArtifactGrant(system, kind, a.id, false, highestLayer(a.layers) ?? 'gold'))
+                      // A newly-granted item adopts the system posture's DEFAULT access
+                      // level (the author can then downgrade it). DATA grants default to
+                      // the HIGHEST built layer; non-data kinds ignore the layer arg.
+                      onCommit(setArtifactGrantLevel(system, kind, a.id, cap.default, highestLayer(a.layers) ?? 'gold'))
                     }
                   >
-                    +<span>{a.name}</span><span className="badge muted">{a.scope}</span>
+                    +<span>{a.name}</span><span className="badge muted">{scopeLabel(scopeKeyOf(a.scope))}</span>
                   </button>
                 ))}
               </div>

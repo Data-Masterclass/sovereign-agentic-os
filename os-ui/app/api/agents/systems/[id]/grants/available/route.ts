@@ -11,6 +11,9 @@ import { listMetrics } from '@/lib/metrics/store';
 import { listConnectionsForUser } from '@/lib/connections';
 import { listFiles, ensureHydrated as ensureFilesHydrated } from '@/lib/files/store';
 import { listFolders, ensureHydrated as ensureFoldersHydrated, type FolderTab } from '@/lib/folders';
+import { grantFolderNodes } from '@/lib/agents/grant-folders';
+import { resolveManual } from '@/lib/knowledge/manual';
+import { MANUAL_SCOPES, planGrantId, manualLabel, manualAvailableScope } from '@/lib/agents/plan-grants';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,8 +36,8 @@ export const dynamic = 'force-dynamic';
  */
 // `connections` (plural) is the Simple-builder GrantKind spelling; `connection`
 // (singular) is the original Grants-panel spelling — both resolve to the same list.
-type Kind = 'data' | 'knowledge' | 'files' | 'connection' | 'connections' | 'metric';
-const KINDS: Kind[] = ['data', 'knowledge', 'files', 'connection', 'connections', 'metric'];
+type Kind = 'data' | 'knowledge' | 'files' | 'connection' | 'connections' | 'metric' | 'operating-manual';
+const KINDS: Kind[] = ['data', 'knowledge', 'files', 'connection', 'connections', 'metric', 'operating-manual'];
 
 /** The kinds that carry folders — the ones whose feed returns folder nodes. */
 const FOLDER_TABS: Record<string, FolderTab> = { data: 'data', knowledge: 'knowledge', files: 'files' };
@@ -120,6 +123,14 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
         ...g.domain.map((m) => ({ id: m.id, name: nm(m), scope: 'domain' as const })),
         ...g.marketplace.map((m) => ({ id: m.id, name: nm(m), scope: 'marketplace' as const })),
       ];
+    } else if (kind === 'operating-manual') {
+      // The three Operating-Manual scopes the caller may VIEW — gated by the SAME
+      // `resolveManual` the Operating-Manual tab uses (My = own, Domain = in-domain,
+      // Company = everyone). Each grantable item's id encodes its scope (`manual:<scope>`)
+      // so the grant records the exact governed target; granting provisions the read tool.
+      items = MANUAL_SCOPES
+        .filter((scope) => resolveManual(scope, principal).canView)
+        .map((scope) => ({ id: planGrantId(scope), name: manualLabel(scope), scope: manualAvailableScope(scope) }));
     } else {
       // connection / connections — the async, already canView-scoped list.
       const conns = await listConnectionsForUser(user);
@@ -132,17 +143,26 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     }
 
     // For the foldered kinds, also return the folder nodes (personal + domain trees)
-    // so the Wave-3 checkbox tree can render folders alongside items. The SAME governed
-    // `listFolders(viewer, tab, scope)` the tabs use — never another user's private tree.
+    // so the Wave-3 checkbox tree can render folders alongside items. Two sources are
+    // UNIONED so the tree is never blank when items sit in a folder:
+    //   1. the governed `listFolders(viewer, tab, scope)` registry rows (explicit, incl.
+    //      EMPTY folders) — the SAME the tabs use, never another user's private tree;
+    //   2. the IMPLICIT ancestor folders synthesized from each grantable item's own
+    //      `folder` path. Files use an implicit-rail model (a file's folder often exists
+    //      only as a path on the file, with no registry row), so without this the Files
+    //      section rendered BLANK even though the user has folders. Data/Knowledge get
+    //      the same union for consistency. Every synthesized node inherits ITS ITEM's
+    //      scope (marketplace items fold under no tree — the picker only trees My/Domain).
     let folders: FolderNodeOut[] | undefined;
     const tab = FOLDER_TABS[kind];
     if (tab) {
       await ensureFoldersHydrated();
       const viewer = { id: user.id, role: user.role, domains: user.domains };
-      folders = [
+      const explicit = [
         ...listFolders(viewer, tab, 'personal').map((f) => ({ path: f.path, scope: 'personal' as const })),
         ...listFolders(viewer, tab, 'domain').map((f) => ({ path: f.path, scope: 'domain' as const })),
       ];
+      folders = grantFolderNodes(explicit, items);
     }
 
     return NextResponse.json(folders ? { items, folders } : { items });

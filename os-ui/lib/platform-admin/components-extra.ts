@@ -62,9 +62,10 @@ export function pools(): Pool[] {
 const VERSIONS: Record<string, string> = {
   litellm: 'v1.55.3', langfuse: 'v3.22.0', opa: 'v0.70.0', opensearch: 'v2.17.1',
   postgres: 'CNPG 1.24', clickhouse: 'v24.8', minio: 'RELEASE.2026-05', valkey: 'v8.0',
-  dagster: 'v1.9.1', cube: 'v1.1', superset: 'v4.1', forgejo: 'v10.0', argocd: 'v2.13',
-  'mock-model': 'v0.1', 'query-tool': 'v0.3', polaris: 'v0.9', haystack: 'v2.8',
-  mlflow: 'v2.18', jupyterhub: 'v5.2', 'os-ui': 'v1.0.0',
+  dagster: 'v1.9.1', cube: 'v1.1', superset: 'v6.1', forgejo: 'v11', argocd: 'v2.13',
+  'mock-model': 'v0.1.1', 'query-tool': 'v0.4', polaris: 'v1.1.0-incubating', haystack: 'v2.8',
+  trino: '476', 'data-runner': 'v0.1.0', 'agent-runtime': 'v0.1.1',
+  mlflow: 'v2.19', jupyterhub: 'v5.2', 'os-ui': 'v0.5.14',
 };
 
 export function versionFor(id: string): string {

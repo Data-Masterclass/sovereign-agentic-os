@@ -15,6 +15,30 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.16] — 2026-07-16
+
+An interactive agent-grants surface, four cloud governance/ML connectors, and an honest
+Components registry.
+
+### Added
+- **"What your team can use" is now interactive.** Per item, choose **read-only ·
+  read + propose · read + write** (a clear labelled selector — no more ambiguous toggle),
+  capped by the agent system's overall access setting (locked at read-only or full-in-scope;
+  otherwise downgrade-only, explained inline). Grants are grouped into **Plan Items** (Strategy ·
+  Big Bets · Operating Model · Workflows) and **Context** (Knowledge · Files · Data · Connections ·
+  Metrics), with prominent category headings. **Workflows and the Operating Model are now genuinely
+  grantable** to a team (Strategy and Big Bets remain labelled for a later pass).
+- **Cloud governance / ML connectors — Microsoft Entra · Purview · Azure AI Foundry · AWS
+  SageMaker.** Read-only, governed (identity, catalog/lineage, model deployments, ML endpoints/jobs).
+  SageMaker uses a dependency-free, test-verified AWS SigV4 signer; secrets are write-only. Setup
+  (Azure app registration / read-only AWS IAM keys) is documented as the operator's step.
+
+### Fixed
+- **Files folders now appear in the agent grant picker** (the Files feed returns its scoped folders).
+- **Components tab tells the truth.** Trino (not DuckDB) as the query engine, the real runtimes
+  (agent-runtime, data-runner) added from what the chart actually deploys, mock-model marked
+  local-dev-only, and versions corrected.
+
 ## [os-ui 0.5.15] — 2026-07-16
 
 Consistent folder UX across every context tab, deep links that open the actual item, five

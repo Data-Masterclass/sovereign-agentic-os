@@ -126,6 +126,37 @@ import {
   teamsListChannelMessages,
   teamsPostChannelMessage,
 } from '@/lib/connections/teams';
+import {
+  entraConnFrom,
+  entraHealth,
+  entraListUsers,
+  entraGetUser,
+  entraListGroups,
+  entraListRoleAssignments,
+} from '@/lib/connections/entra';
+import {
+  purviewConnFrom,
+  purviewHealth,
+  purviewSearchAssets,
+  purviewGetAsset,
+  purviewListClassifications,
+  purviewGetLineage,
+} from '@/lib/connections/purview';
+import {
+  aiFoundryConnFrom,
+  aiFoundryHealth,
+  aiFoundryListModels,
+  aiFoundryListDeployments,
+  aiFoundryGetDeployment,
+} from '@/lib/connections/ai-foundry';
+import {
+  sagemakerConnFrom,
+  sagemakerHealth,
+  sagemakerListModels,
+  sagemakerListEndpoints,
+  sagemakerListTrainingJobs,
+  sagemakerDescribeEndpoint,
+} from '@/lib/connections/sagemaker';
 import type { WarehousePlatform } from '@/lib/connections/warehouse/types';
 import { splitWarehouseFields, toWarehouseSource } from '@/lib/connections/warehouse/connection';
 import { providerFor } from '@/lib/connections/warehouse/registry';
@@ -759,6 +790,54 @@ export async function testConnection(
       : { ok: false, mode: 'offline', detail: `Teams is unreachable (${h.reason ?? 'network error'}) — the access token may be expired; refresh it + check egress, then re-test.` };
   }
 
+  // ENTRA: real GET /me over Microsoft Graph with the vaulted OAuth token.
+  if (c.template === 'entra') {
+    const h = await entraHealth(entraConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    c.updatedAt = now();
+    writeThrough(c);
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Microsoft Entra (Graph) is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Entra is unreachable (${h.reason ?? 'network error'}) — the access token may be expired; refresh it + check egress, then re-test.` };
+  }
+
+  // PURVIEW: real GET of the classification typedefs over the account's Atlas URL.
+  if (c.template === 'purview') {
+    const h = await purviewHealth(purviewConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    c.updatedAt = now();
+    writeThrough(c);
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Microsoft Purview is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Purview is unreachable (${h.reason ?? 'network error'}) — check the account URL + token, then re-test.` };
+  }
+
+  // AI FOUNDRY: real GET of the model registry over the workspace/region base.
+  if (c.template === 'ai-foundry') {
+    const h = await aiFoundryHealth(aiFoundryConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    c.updatedAt = now();
+    writeThrough(c);
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Azure AI Foundry is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Azure AI Foundry is unreachable (${h.reason ?? 'network error'}) — check the workspace endpoint + token, then re-test.` };
+  }
+
+  // SAGEMAKER: real signed ListModels round-trip (SigV4) with the vaulted AWS keys.
+  if (c.template === 'sagemaker') {
+    const h = await sagemakerHealth(sagemakerConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    c.updatedAt = now();
+    writeThrough(c);
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `AWS SageMaker is reachable${h.detail ? ` (${h.detail})` : ''}. The AWS keys never leave the server.` }
+      : { ok: false, mode: 'offline', detail: `SageMaker is unreachable (${h.reason ?? 'network error'}) — check the region endpoint + IAM keys, then re-test.` };
+  }
+
   const secret = getSecretServerSide(c.secretRef); // server-side only
   if (!secret) {
     return { ok: false, mode: 'offline', detail: 'No credential set in Secrets Manager for this connection.' };
@@ -1267,6 +1346,10 @@ const CONNECTION_EXECUTORS: Partial<Record<ConnectionTemplateKey, Executor>> = {
   gcal: (c, tool, args) => executeGcal(c, tool, args),
   outlook: (c, tool, args) => executeOutlook(c, tool, args),
   teams: (c, tool, args) => executeTeams(c, tool, args),
+  entra: (c, tool, args) => executeEntra(c, tool, args),
+  purview: (c, tool, args) => executePurview(c, tool, args),
+  'ai-foundry': (c, tool, args) => executeAiFoundry(c, tool, args),
+  sagemaker: (c, tool, args) => executeSageMaker(c, tool, args),
 };
 
 /** Execute an allowed call: inject the secret SERVER-SIDE (never logged), trace + log egress. */
@@ -1785,6 +1868,100 @@ async function executeTeams(c: Connection, tool: string, args: Record<string, un
       return done(await teamsPostChannelMessage(conn, team, channel, String(args.text ?? args.body ?? '')), 'posted');
     default:
       return fail(`Unknown Teams tool: ${tool}`);
+  }
+}
+
+/**
+ * Execute an ALLOWED Microsoft Entra tool over Microsoft Graph. READ-ONLY connector —
+ * every tool is a read (governance already passed upstream). Never throws. The OAuth
+ * access token is injected server-side, never logged/returned.
+ */
+async function executeEntra(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
+  const conn = entraConnFrom(c);
+  const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
+  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
+    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  switch (tool) {
+    case 'list_users':
+      return done(await entraListUsers(conn, { search: args.search ? String(args.search) : undefined }), 'users');
+    case 'get_user':
+      return done(await entraGetUser(conn, String(args.id ?? args.userId ?? args.userPrincipalName ?? '')), 'user');
+    case 'list_groups':
+      return done(await entraListGroups(conn), 'groups');
+    case 'list_role_assignments':
+      return done(await entraListRoleAssignments(conn), 'roleAssignments');
+    default:
+      return fail(`Unknown Entra tool: ${tool}`);
+  }
+}
+
+/**
+ * Execute an ALLOWED Microsoft Purview tool over the account's Atlas/Purview URL.
+ * READ-ONLY connector — every tool is a read. Never throws. The OAuth access token is
+ * injected server-side, never logged/returned.
+ */
+async function executePurview(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
+  const conn = purviewConnFrom(c);
+  const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
+  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
+    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  switch (tool) {
+    case 'search_assets':
+      return done(await purviewSearchAssets(conn, String(args.keywords ?? args.query ?? args.q ?? '')), 'assets');
+    case 'get_asset':
+      return done(await purviewGetAsset(conn, String(args.guid ?? args.id ?? '')), 'asset');
+    case 'list_classifications':
+      return done(await purviewListClassifications(conn), 'classifications');
+    case 'get_lineage':
+      return done(await purviewGetLineage(conn, String(args.guid ?? args.id ?? '')), 'lineage');
+    default:
+      return fail(`Unknown Purview tool: ${tool}`);
+  }
+}
+
+/**
+ * Execute an ALLOWED Azure AI Foundry tool over the workspace/region base. READ-ONLY
+ * connector — every tool is a read. Never throws. The OAuth access token is injected
+ * server-side, never logged/returned.
+ */
+async function executeAiFoundry(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
+  const conn = aiFoundryConnFrom(c);
+  const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
+  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
+    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  switch (tool) {
+    case 'list_models':
+      return done(await aiFoundryListModels(conn), 'models');
+    case 'list_deployments':
+      return done(await aiFoundryListDeployments(conn), 'deployments');
+    case 'get_deployment':
+      return done(await aiFoundryGetDeployment(conn, String(args.name ?? args.deployment ?? '')), 'deployment');
+    default:
+      return fail(`Unknown Azure AI Foundry tool: ${tool}`);
+  }
+}
+
+/**
+ * Execute an ALLOWED AWS SageMaker tool over api.sagemaker.<region>.amazonaws.com.
+ * READ-ONLY connector — every tool is a read. Never throws. The AWS keys are injected
+ * server-side (SigV4-signed), never logged/returned.
+ */
+async function executeSageMaker(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
+  const conn = sagemakerConnFrom(c);
+  const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
+  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
+    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  switch (tool) {
+    case 'list_models':
+      return done(await sagemakerListModels(conn), 'models');
+    case 'list_endpoints':
+      return done(await sagemakerListEndpoints(conn), 'endpoints');
+    case 'list_training_jobs':
+      return done(await sagemakerListTrainingJobs(conn), 'trainingJobs');
+    case 'describe_endpoint':
+      return done(await sagemakerDescribeEndpoint(conn, String(args.name ?? args.endpointName ?? '')), 'endpoint');
+    default:
+      return fail(`Unknown SageMaker tool: ${tool}`);
   }
 }
 

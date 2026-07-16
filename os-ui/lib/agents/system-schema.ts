@@ -84,6 +84,17 @@ export type Grants = {
    * from `system.yaml` when empty so pre-Wave-3 files stay byte-stable.
    */
   files: ArtifactGrant[];
+  /**
+   * PLAN-ITEM grants — the Operating Manual (and, when generalised, Strategic Pillars
+   * / Big Bets) an agent may load as context. Each `id` encodes the plan target, not a
+   * free artifact id: an Operating Manual is `manual:my` · `manual:domain` · `manual:company`
+   * (the scope the caller may view via `resolveManual`). Granting one provisions the
+   * governed READ tool (`get_operating_manual`) — the SAME runtime path the tab uses —
+   * so the agent loads it under its own DLS/scope check; nothing is pre-injected. Read-
+   * only in the builder (a manual has no agent-authored write path). Additive + omitted
+   * from `system.yaml` when empty, so every pre-plan-grants system stays byte-stable.
+   */
+  plan: ArtifactGrant[];
 };
 
 export type AgentSpec = {
@@ -241,6 +252,8 @@ function parseGrants(v: unknown): Grants {
     // Files hold ONLY folder grants (no per-item list) — parsed with the same
     // reader; a pre-Wave-3 file has no `grants.files` key ⇒ empty list.
     files: parseArtifactGrants(g.files, 'grants.files'),
+    // Plan-item grants (Operating Manual, …) — same reader; absent ⇒ empty list.
+    plan: parseArtifactGrants(g.plan, 'grants.plan'),
   };
 }
 
@@ -253,6 +266,7 @@ function grantKinds(sys: System): { kind: string; arr: ArtifactGrant[] }[] {
     { kind: 'metric', arr: sys.grants.metrics },
     { kind: 'connection', arr: sys.grants.connections },
     { kind: 'files', arr: sys.grants.files },
+    { kind: 'plan', arr: sys.grants.plan },
   ];
 }
 
@@ -318,6 +332,7 @@ export function downgradeGrantsForRole(sys: System, role: Role): System {
       metrics: fix(sys.grants.metrics),
       connections: fix(sys.grants.connections),
       files: fix(sys.grants.files),
+      plan: fix(sys.grants.plan),
     },
   };
 }
@@ -463,6 +478,8 @@ function serializeGrants(g: Grants): Record<string, unknown> {
   };
   // Defensive: hand-rolled System literals may omit the additive `files` list.
   if (g.files && g.files.length > 0) out.files = g.files;
+  // Additive plan-item grants — emitted only when present so pre-plan systems stay byte-stable.
+  if (g.plan && g.plan.length > 0) out.plan = g.plan;
   return out;
 }
 

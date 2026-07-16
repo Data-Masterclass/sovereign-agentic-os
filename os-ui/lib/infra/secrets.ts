@@ -109,6 +109,13 @@ const DEFAULT_ALLOWLIST = [
   // googleapis.com (above) already covers www.googleapis.com — Google Calendar API
   // graph.microsoft.com (above) already covers Outlook + Teams over Microsoft Graph
   // login.microsoftonline.com (above) already covers Microsoft OAuth token endpoint
+  // Cloud key-services wave — governance / identity / ML metadata connectors (each
+  // host also added to the chart egressProxy.allowlist + Cilium FQDN policy on a
+  // real deploy). Entra reuses graph.microsoft.com (already above) — no new host.
+  'purview.azure.com', // Microsoft Purview (<account>.purview.azure.com via subdomain rule)
+  'api.azureml.ms', // Azure AI Foundry / Azure ML data plane (<region>.api.azureml.ms)
+  'ml.azure.com', // Azure ML control-plane / OAuth audience host
+  'amazonaws.com', // AWS SageMaker (api.sagemaker.<region>.amazonaws.com via subdomain rule)
 ];
 
 function allowlist(): string[] {

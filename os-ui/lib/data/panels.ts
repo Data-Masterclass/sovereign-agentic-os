@@ -23,7 +23,7 @@ export const STAGE_COPY: Record<Layer, StageCopy> = {
   bronze: {
     title: 'Bring it in',
     subtitle: 'The raw version, exactly as loaded.',
-    tool: 'dlt / upload → DuckDB',
+    tool: 'dlt / upload → Iceberg (via Trino)',
   },
   silver: {
     title: 'Clean it up + set the key',

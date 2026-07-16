@@ -73,7 +73,7 @@ export function templateYaml(key: TemplateKey, name: string, domain: string, vis
     safetyPreset: 'read-only',
     entrypoint: spec.agentId,
     state: { channels: { messages: 'add_messages' } },
-    grants: { data: [], knowledge: [], metrics: [], tools: ['search_knowledge'], connections: [], files: [] },
+    grants: { data: [], knowledge: [], metrics: [], tools: ['search_knowledge'], connections: [], files: [], plan: [] },
     routing: { overrides: {} },
     agents: [
       { id: spec.agentId, role: spec.role, agent_md: spec.agentMd, memory_md: spec.memoryMd, tools: ['search_knowledge'] },

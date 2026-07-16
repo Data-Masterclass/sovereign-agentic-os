@@ -472,6 +472,88 @@ const TEAMS: InstallGuide = {
   caveat: 'The pasted Microsoft OAuth access token is short-lived; automatic refresh-token rotation is a documented follow-up. Registering the Azure app and minting the token are YOUR steps.',
 };
 
+const ENTRA: InstallGuide = {
+  key: 'entra',
+  title: 'Microsoft Entra ID (Azure AD · Microsoft Graph)',
+  summary: 'Connect Microsoft Entra ID (Azure AD) read-only via a Microsoft OAuth 2.0 access token over Microsoft Graph, for identity/directory governance. Every tool is a read — there is no write tool.',
+  prerequisites: [
+    'An **Azure app registration** you create (portal.azure.com — this is YOUR step), with delegated Microsoft Graph read permissions: `User.Read.All`, `Group.Read.All`, and `RoleManagement.Read.Directory` (all read-only).',
+    'A **user OAuth access token** minted through your app registration. Paste the **access token**; it goes to Secrets Manager and is **never** on the record.',
+    'The hosts `graph.microsoft.com` and `login.microsoftonline.com` on the **egress allowlist** (already allowlisted for the Microsoft connectors).',
+    'Builder/Admin rights (service-credential connector).',
+  ],
+  steps: [
+    'On the Microsoft Entra ID card, click **Connect**.',
+    'Enter the connection **name**; the base URL is `https://graph.microsoft.com/v1.0`.',
+    'Provide the **OAuth access token** — stored once in Secrets Manager.',
+    'Create the connection, then **Test** on its card (a real `GET /me` round-trip). Browse users, groups, and directory-role assignments.',
+  ],
+  whatTheOsDoes:
+    'Registers a governed, **read-only** Entra connection over Microsoft Graph. `list_users`, `get_user`, `list_groups`, and `list_role_assignments` auto-allow; there is **no** write tool — a directory mutation is out of scope for this connector. All calls are OPA-checked and audit-traced; the token never leaves the server.',
+  caveat: 'The pasted Microsoft OAuth access token is short-lived; automatic refresh-token rotation is a documented follow-up. Registering the Azure app and minting the token are YOUR steps. Directory `$search` (used by `list_users` with a query) needs the app to be consented for advanced queries.',
+};
+
+const PURVIEW: InstallGuide = {
+  key: 'purview',
+  title: 'Microsoft Purview (data governance · catalog)',
+  summary: 'Connect a Microsoft Purview account read-only via a Microsoft OAuth 2.0 access token over the account\'s Atlas/Purview REST API, for catalog + lineage governance. Every tool is a read — there is no write tool.',
+  prerequisites: [
+    'A **Microsoft Purview account** and its endpoint `https://<account>.purview.azure.com`, reachable from the OS — host on the **egress allowlist**.',
+    'An **Azure app registration** / service principal you grant the **Purview Data Reader** role, and a **user/app OAuth access token** for the Purview audience. Paste the **access token**; it goes to Secrets Manager and is **never** on the record.',
+    'Builder/Admin rights (service-credential connector).',
+  ],
+  steps: [
+    'On the Microsoft Purview card, click **Connect**.',
+    'Enter the connection **name** and your **account endpoint** `https://<account>.purview.azure.com`.',
+    'Provide the **OAuth access token** — stored once in Secrets Manager.',
+    'Create the connection, then **Test** on its card (a real classification-typedefs read). Search assets, read an entity, list classifications, and read lineage.',
+  ],
+  whatTheOsDoes:
+    'Registers a governed, **read-only** Purview connection over the Atlas REST API. `search_assets`, `get_asset`, `list_classifications`, and `get_lineage` auto-allow; there is **no** write tool. All calls are OPA-checked and audit-traced; the token never leaves the server.',
+  caveat: 'The pasted OAuth access token is short-lived; automatic refresh-token rotation is a documented follow-up. Account reachability, the Data Reader role, and the exact Atlas route shapes are only confirmed against your live Purview account at Test time.',
+};
+
+const AI_FOUNDRY: InstallGuide = {
+  key: 'ai-foundry',
+  title: 'Azure AI Foundry (Azure AI / ML)',
+  summary: 'Connect an Azure ML workspace read-only via a Microsoft OAuth 2.0 access token over the workspace/region data-plane, for ML metadata (models + deployments). Every tool is a read — there is no write tool.',
+  prerequisites: [
+    'An **Azure ML workspace** and its regional data-plane endpoint `https://<region>.api.azureml.ms`, reachable from the OS — host on the **egress allowlist**.',
+    'An **Azure app registration** / service principal you grant the **AzureML Data Scientist (or Reader)** role, and a **user/app OAuth access token** for the `https://ml.azure.com` audience. Paste the **access token**; it goes to Secrets Manager and is **never** on the record.',
+    'Builder/Admin rights (service-credential connector).',
+  ],
+  steps: [
+    'On the Azure AI Foundry card, click **Connect**.',
+    'Enter the connection **name** and your workspace **endpoint** `https://<region>.api.azureml.ms`.',
+    'Provide the **OAuth access token** — stored once in Secrets Manager.',
+    'Create the connection, then **Test** on its card (a real model-registry read). List models, list deployments, and read one deployment.',
+  ],
+  whatTheOsDoes:
+    'Registers a governed, **read-only** Azure AI Foundry connection over the Azure ML data-plane. `list_models`, `list_deployments`, and `get_deployment` auto-allow; there is **no** write tool — deploying or deleting a model is out of scope. All calls are OPA-checked and audit-traced; the token never leaves the server.',
+  caveat: 'The pasted OAuth access token is short-lived; automatic refresh-token rotation is a documented follow-up. The Azure ML data-plane list routes are workspace-scoped and only verified against a **live workspace** at Test time — the client tolerates the API\'s `value:[]` vs bare-array shapes and degrades to an honest ✗ (never fabricates rows) if a route differs.',
+};
+
+const SAGEMAKER: InstallGuide = {
+  key: 'sagemaker',
+  title: 'AWS SageMaker (ML · SigV4)',
+  summary: 'Connect AWS SageMaker read-only via AWS Signature Version 4, for ML metadata (models, endpoints, training jobs). Every tool is a read — there is no write tool.',
+  prerequisites: [
+    'An **AWS IAM user or role** with a **read-only** SageMaker policy (e.g. `AmazonSageMakerReadOnly`: `sagemaker:List*` / `sagemaker:Describe*`). Least privilege — no write/delete permissions.',
+    'That principal\'s **access key id + secret access key**. Paste them; they are stored **together in Secrets Manager** and are **never** on the record, in a response, or in a log/trace.',
+    'The region endpoint `https://api.sagemaker.<region>.amazonaws.com` (the region is derived from this host) — `amazonaws.com` on the **egress allowlist**.',
+    'Builder/Admin rights (service-credential connector).',
+  ],
+  steps: [
+    'On the AWS SageMaker card, click **Connect**.',
+    'Enter the connection **name** and the region **endpoint** `https://api.sagemaker.<region>.amazonaws.com`.',
+    'Provide the **access key id + secret access key** (as `accessKeyId:secretAccessKey`) — stored once in Secrets Manager.',
+    'Create the connection, then **Test** on its card (a real SigV4-signed `ListModels` round-trip). List models / endpoints / training jobs and describe an endpoint.',
+  ],
+  whatTheOsDoes:
+    'Registers a governed, **read-only** SageMaker connection. Each call is signed with **AWS Signature Version 4** (implemented in-repo, dependency-free, and unit-tested against AWS\'s published signing vector) using the vaulted keys — the secret access key is used **only** to derive the signing key and is never returned or logged. `list_models`, `list_endpoints`, `list_training_jobs`, and `describe_endpoint` auto-allow; there is **no** write tool. All calls are OPA-checked and audit-traced.',
+  caveat: 'The SigV4 signer is verified against the AWS `get-vanilla` test vector; live reachability, the IAM read-only policy, and the exact region endpoint are only confirmed against your real AWS account at Test time. Temporary credentials with an `X-Amz-Security-Token` (STS/role assumption) are a documented follow-up — this connector uses long-lived IAM keys.',
+};
+
 const OM_CATALOG: InstallGuide = {
   key: 'om-catalog',
   title: 'OpenMetadata catalog (external · read-only)',
@@ -499,6 +581,7 @@ const GUIDES: InstallGuide[] = [
   GDRIVE, ONEDRIVE, NOTION, AIRFLOW, OM_CATALOG,
   GITHUB, SUPABASE, ATLASSIAN,
   SLACK, GMAIL, GCAL, OUTLOOK, TEAMS,
+  ENTRA, PURVIEW, AI_FOUNDRY, SAGEMAKER,
 ];
 
 const GUIDE_BY_KEY: Record<string, InstallGuide> = Object.fromEntries(GUIDES.map((g) => [g.key, g]));

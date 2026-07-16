@@ -259,7 +259,7 @@ function starterYaml(name: string, domain: string, visibility: Visibility): stri
     safetyPreset: 'read-only',
     entrypoint: 'assistant',
     state: { channels: { messages: 'add_messages' } },
-    grants: { data: [], knowledge: [], metrics: [], tools: ['search_knowledge'], connections: [], files: [] },
+    grants: { data: [], knowledge: [], metrics: [], tools: ['search_knowledge'], connections: [], files: [], plan: [] },
     routing: { overrides: {} },
     agents: [
       {
