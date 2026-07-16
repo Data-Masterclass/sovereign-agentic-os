@@ -11,7 +11,7 @@ import { classifyModelNeed } from '@/lib/agents/routing';
 import { instructionsOf } from '@/lib/agents/agent-md';
 import {
   addSimpleAgent, moveAgent, removeAgentSimple,
-  setAgentInstructions, setAgentRole, setAgentShortName, setArtifactGrant, removeArtifactGrant,
+  setAgentInstructions, setAgentRole, setArtifactGrant, removeArtifactGrant,
   setDescription, addAgentTool, setDataGrantLayer,
   setFolderGrant, removeFolderGrant, setArtifactGrantLevel, setFolderGrantLevel,
 } from '@/lib/agents/simple-edit';
@@ -704,10 +704,8 @@ function AgentCard({
 
   const [role, setRole] = useState(agent.role);
   const [instr, setInstr] = useState(() => instructionsOf(agent.agent_md));
-  const [shortName, setShortName] = useState(agent.shortName ?? '');
   useEffect(() => { setRole(agent.role); }, [agent.role]);
   useEffect(() => { setInstr(instructionsOf(agent.agent_md)); }, [agent.agent_md]);
-  useEffect(() => { setShortName(agent.shortName ?? ''); }, [agent.shortName]);
 
   const effectiveTools = agent.tools ?? system.grants.tools;
   const auto = classifyModelNeed(effectiveTools, `${agent.id} ${role} ${instr}`);
@@ -719,10 +717,6 @@ function AgentCard({
   const saveInstr = () => {
     if (instr === instructionsOf(agent.agent_md)) return;
     onCommit(setAgentInstructions(system, agentId, instr));
-  };
-  const saveShortName = () => {
-    if (shortName.trim() === (agent.shortName ?? '').trim()) return;
-    onCommit(setAgentShortName(system, agentId, shortName));
   };
 
   return (
@@ -754,18 +748,6 @@ function AgentCard({
         onChange={(e) => setRole(e.target.value)}
         onBlur={saveRole}
         placeholder="e.g. Analyst — reads sources and explains the findings"
-      />
-
-      <label className="sb-field-label" htmlFor={`short-${agentId}`} style={{ marginTop: 10 }}>Short name (optional)</label>
-      <input
-        id={`short-${agentId}`}
-        type="text"
-        value={shortName}
-        disabled={!canEdit}
-        onChange={(e) => setShortName(e.target.value)}
-        onBlur={saveShortName}
-        onKeyDown={(e) => { if (e.key === 'Enter') saveShortName(); }}
-        placeholder="e.g. Analyst — a concise handle shown in Run & Evaluate"
       />
 
       <label className="sb-field-label" htmlFor={`instr-${agentId}`} style={{ marginTop: 10 }}>Instructions</label>

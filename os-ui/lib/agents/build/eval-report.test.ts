@@ -21,7 +21,7 @@ grants:
   knowledge:
     - { id: wf_playbook, capability: Write-approval }
 agents:
-  - { id: analyst, role: Analyzes campaigns, agent_md: "# analyst\\n\\nRead the data and score it.", memory_md: "", shortName: Ana }
+  - { id: analyst, role: Analyzes campaigns, agent_md: "# analyst\\n\\nRead the data and score it.", memory_md: "" }
   - { id: writer, role: Writes the recommendation, agent_md: "# writer\\n\\nWrite it up.", memory_md: "" }
 `);
 
@@ -36,10 +36,10 @@ const RUN: DiagRun = {
   ],
 };
 
-test('agentDisplayName prefers shortName, then role, then id', () => {
-  assert.equal(agentDisplayName({ id: 'a', role: 'Analyst', shortName: 'Ana' }), 'Ana');
+test('agentDisplayName is the role (its Name), else the id', () => {
   assert.equal(agentDisplayName({ id: 'a', role: 'Analyst' }), 'Analyst');
-  assert.equal(agentDisplayName({ id: 'a', role: '', shortName: '  ' }), 'a');
+  assert.equal(agentDisplayName({ id: 'a', role: '  ' }), 'a');
+  assert.equal(agentDisplayName({ id: 'a' }), 'a');
 });
 
 test('buildEvalReport assembles the exact mandated section structure', () => {
@@ -61,11 +61,11 @@ test('buildEvalReport assembles the exact mandated section structure', () => {
   assert.equal(r.judge.overall, 4.3);
   assert.equal(r.judge.rows[0].dimension, 'Clarity');
 
-  // APPENDIX 1 — Results (final output + per-agent, using the short name).
+  // APPENDIX 1 — Results (final output + per-agent, using the role as the name).
   assert.match(r.results.finalOutput, /Budget up 10%/);
   assert.equal(r.results.path, 'analyst → writer → END');
-  assert.equal(r.results.agents[0].name, 'Ana', 'per-agent output uses the short name');
-  assert.equal(r.results.agents[1].name, 'Writes the recommendation', 'falls back to role when no short name');
+  assert.equal(r.results.agents[0].name, 'Analyzes campaigns', 'per-agent output uses the role');
+  assert.equal(r.results.agents[1].name, 'Writes the recommendation', 'per-agent output uses the role');
   assert.equal(r.results.agents.length, 2);
 
   // APPENDIX 2 — Define settings (purpose, safety, trigger, grants).
@@ -75,9 +75,9 @@ test('buildEvalReport assembles the exact mandated section structure', () => {
   const kinds = r.define.grants.map((g) => g.kind);
   assert.ok(kinds.includes('Data') && kinds.includes('Knowledge'));
 
-  // APPENDIX 3 — Agent descriptions (name/short-name + role + instructions).
+  // APPENDIX 3 — Agent descriptions (name/role + instructions).
   assert.equal(r.agentDescriptions.length, 2);
-  assert.equal(r.agentDescriptions[0].name, 'Ana');
+  assert.equal(r.agentDescriptions[0].name, 'Analyzes campaigns');
   assert.equal(r.agentDescriptions[0].role, 'Analyzes campaigns');
   assert.match(r.agentDescriptions[0].instructions, /Read the data/);
 });

@@ -418,32 +418,3 @@ agents:
   // Runtime downgrade folds it to held-for-approval for a non-builder owner.
   assert.equal(downgradeGrantsForRole(sys, 'creator').grants.data[0].capability, 'Write-approval');
 });
-
-test('agent shortName round-trips and is byte-stable when empty', () => {
-  // Present + non-empty ⇒ parsed and re-serialized.
-  const withShort = parseSystem(`
-entrypoint: a
-agents:
-  - { id: a, role: Analyst, agent_md: "", memory_md: "", shortName: Ana }
-`);
-  assert.equal(withShort.agents[0].shortName, 'Ana');
-  assert.ok(serializeSystem(withShort).includes('shortName: Ana'));
-
-  // Absent ⇒ never introduced into the serialized file (byte-stable).
-  const noShort = parseSystem(`
-entrypoint: a
-agents:
-  - { id: a, role: Analyst, agent_md: "", memory_md: "" }
-`);
-  assert.equal(noShort.agents[0].shortName, undefined);
-  assert.ok(!serializeSystem(noShort).includes('shortName'), 'shortName omitted when unset');
-
-  // A blank/whitespace shortName is treated as unset (not persisted).
-  const blank = parseSystem(`
-entrypoint: a
-agents:
-  - { id: a, role: Analyst, agent_md: "", memory_md: "", shortName: "  " }
-`);
-  assert.equal(blank.agents[0].shortName, undefined);
-  assert.ok(!serializeSystem(blank).includes('shortName'), 'blank shortName omitted');
-});

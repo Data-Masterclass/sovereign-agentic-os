@@ -18,7 +18,7 @@ import type { JudgeResult, JudgeDimension } from '../evaluate-judge.ts';
  *      + the AI-judge scores.
  *   2. Appendix 1 — Results: the run's final output + per-agent outputs.
  *   3. Appendix 2 — Define-stage settings: purpose, safety preset, trigger mode, grants.
- *   4. Appendix 3 — Agent descriptions: each agent's name/short-name + role + instructions.
+ *   4. Appendix 3 — Agent descriptions: each agent's name/role + instructions.
  */
 
 const DIMENSION_LABEL: Record<JudgeDimension, string> = {
@@ -42,12 +42,9 @@ const CAPABILITY_LABEL: Record<string, string> = {
   Blocked: 'Blocked',
 };
 
-/** The display name for an agent — its short name when set, else its role, else its id. */
-export function agentDisplayName(agent: { id: string; role?: string; shortName?: string }): string {
-  const short = agent.shortName?.trim();
-  if (short) return short;
-  const role = agent.role?.trim();
-  return role || agent.id;
+/** The display name for an agent — its role (its Name) when set, else its id. */
+export function agentDisplayName(agent: { id: string; role?: string }): string {
+  return agent.role?.trim() || agent.id;
 }
 
 /** Human trigger word for a schedule (matches the Define trigger cards). */

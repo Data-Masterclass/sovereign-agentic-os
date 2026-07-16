@@ -102,13 +102,6 @@ export type AgentSpec = {
   role: string;
   agent_md: string;
   memory_md: string;
-  /**
-   * Optional concise handle for the agent (e.g. "Analyst") shown in place of the
-   * full role/name in the Run + Evaluate views. The stable identifier is always
-   * `id`; this is presentation-only. Omitted from `system.yaml` when empty so files
-   * stay byte-stable.
-   */
-  shortName?: string;
   /** Non-empty ⇒ this agent is a supervisor routing to these member ids. */
   members?: string[];
   /** Per-agent tool narrowing; omitted ⇒ inherits the system grants. */
@@ -356,9 +349,6 @@ function parseAgents(v: unknown): AgentSpec[] {
       agent_md: typeof raw.agent_md === 'string' ? raw.agent_md : '',
       memory_md: typeof raw.memory_md === 'string' ? raw.memory_md : '',
     };
-    // Presentation-only short handle — kept only when a non-empty string so an
-    // absent/blank value never appears in the serialized file (byte-stable).
-    if (typeof raw.shortName === 'string' && raw.shortName.trim()) a.shortName = raw.shortName;
     if (raw.members !== undefined) a.members = strArray(raw.members, `agents.${raw.id}.members`);
     if (raw.tools !== undefined) a.tools = strArray(raw.tools, `agents.${raw.id}.tools`);
     if (raw.model !== undefined && raw.model !== null) a.model = String(raw.model);

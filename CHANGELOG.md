@@ -15,6 +15,13 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.26] — 2026-07-16
+
+### Changed
+- **Simplified the Agents Design stage:** removed the separate "Short name (optional)" field per
+  agent. An agent's **Name / Role** is now its label everywhere — the Run and Evaluate node cards,
+  the multi-agent graph, and both PDF reports. One name, no duplication.
+
 ## [os-ui 0.5.25] — 2026-07-16
 
 ### Changed
