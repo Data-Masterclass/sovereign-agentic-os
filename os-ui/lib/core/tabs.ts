@@ -86,9 +86,12 @@ export const TAB_GROUPS: TabGroup[] = [
       { label: 'Science', icon: '∿', href: '/science' },
       { label: 'Dashboards', icon: '▦', href: '/dashboards' },
       // Console merges the former Terminal (/terminal) and Query (/admin-query)
-      // operator tools into one page with a Shell | Query switch. Admin-only; the
-      // old routes redirect here. Not a student surface — see TUTORIAL_EXEMPT_ROUTES.
-      { label: 'Console', icon: '▶', href: '/console', role: 'Administrator', minRole: 'admin' },
+      // operator tools into one page with a Shell | Query switch. The tab is
+      // builder-visible so course participants get the GOVERNED Query surface
+      // (SQL over Trino/Cube, OPA/RLS-checked per-caller, audited). The raw
+      // Shell sub-panel INSIDE it stays admin-only (ConsoleClient gates it) —
+      // exposing the tab does NOT expose arbitrary command execution.
+      { label: 'Console', icon: '▶', href: '/console', role: 'Builder / Administrator', minRole: 'builder' },
     ],
   },
   {
@@ -100,7 +103,12 @@ export const TAB_GROUPS: TabGroup[] = [
       { label: 'Monitoring', icon: '◷', href: '/monitoring', role: 'Builder / Administrator', minRole: 'builder' },
       { label: 'Components', icon: '▥', href: '/components', role: 'Administrator', minRole: 'admin' },
       { label: 'LLM Gateway', icon: '⌁', href: '/llm-gateway', role: 'Builder / Administrator', minRole: 'builder' },
-      { label: 'Admin', icon: '❖', href: '/platform', role: 'Administrator', minRole: 'admin' },
+      // Admin (Platform) is builder-visible, but the page renders ONLY the tiles
+      // a builder is authorised for (fail-closed per-tile minRole). Every
+      // platform-admin tile stays admin-only, and each /platform sub-page's API
+      // is hard-gated by adminCtx()/requireAdmin — a builder sees only the
+      // self-service Settings tile and never reaches an admin control.
+      { label: 'Admin', icon: '❖', href: '/platform', role: 'Builder / Administrator', minRole: 'builder' },
     ],
   },
 ];

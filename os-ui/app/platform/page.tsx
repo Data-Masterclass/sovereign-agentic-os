@@ -6,6 +6,31 @@
 import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
 import { useApi } from '@/lib/useApi';
+import { useUser } from '@/lib/useUser';
+import { roleAtLeast, type Role } from '@/lib/core/session';
+
+/**
+ * The Platform-Admin quick-link tiles, each with a machine-readable minimum role.
+ * The grid is filtered FAIL-CLOSED: a tile with no `minRole` a builder clears is
+ * hidden (never rendered). Every real platform-admin control is `admin`; the one
+ * builder-visible tile is self-service Settings (theme + read-only deployment
+ * config at /settings — NOT the tenant-admin /platform/settings page).
+ */
+type Tile = { label: string; href: string; sub: string; minRole: Role };
+
+const TILES: Tile[] = [
+  { label: 'My Settings', href: '/settings', sub: 'Theme · deployment info', minRole: 'builder' },
+  { label: 'Domains', href: '/platform/domains', sub: 'Create & toggle optional layers', minRole: 'admin' },
+  { label: 'Users & Access', href: '/platform/access', sub: 'Invite via Ory · tenant Admin', minRole: 'admin' },
+  { label: 'Models & Providers', href: '/platform/models', sub: 'Defaults · caps · provider keys', minRole: 'admin' },
+  { label: 'Drive OAuth apps', href: '/platform/oauth-apps', sub: 'Google & Microsoft apps for connected drives', minRole: 'admin' },
+  { label: 'Security & Egress', href: '/platform/security', sub: 'Allowlist · OPA bundle · residency', minRole: 'admin' },
+  { label: 'Backups & Restore', href: '/platform/backups', sub: 'Status · guarded restore', minRole: 'admin' },
+  { label: 'Plugins', href: '/platform/plugins', sub: 'Curate & install MCPs / skills', minRole: 'admin' },
+  { label: 'MCPs & APIs', href: '/platform/mcp-apis', sub: 'Registered MCP servers & API keys', minRole: 'admin' },
+  { label: 'Cost & Billing', href: '/platform/billing', sub: 'Envelope · premium cap', minRole: 'admin' },
+  { label: 'Settings', href: '/platform/settings', sub: 'SSO · branding · tenant defaults', minRole: 'admin' },
+];
 
 type Overview = {
   tenant: { id: string; name: string; residency: string; plan: string };
@@ -19,7 +44,49 @@ type Overview = {
 };
 
 export default function PlatformOverview() {
+  const { user } = useUser();
+  const role = user?.role ?? null;
+  const isAdmin = role === 'admin';
+
+  // The cockpit aggregate is adminCtx-gated. The builder view early-returns
+  // below and never reads this, so its 403 for a builder is inert (never shown).
   const { data, loading, error, reload } = useApi<Overview>('/api/platform-admin/overview');
+
+  // Fail-closed tile filter: hidden means not rendered. A tile shows only if the
+  // caller's role clears its minRole; an unknown role (null) sees nothing.
+  const tiles = TILES.filter((t) => role !== null && roleAtLeast(role, t.minRole));
+
+  const tileGrid = (
+    <>
+      <div className="section-title" style={{ marginTop: 22 }}>{isAdmin ? 'Quick links' : 'Available to you'}</div>
+      <div className="grid">
+        {tiles.map((t) => (
+          <Link key={t.href} href={t.href} className="golden">
+            <span className="ico">❖</span>
+            <span><strong>{t.label}</strong><div className="muted" style={{ fontSize: 11.5 }}>{t.sub}</div></span>
+            <span className="arr">→</span>
+          </Link>
+        ))}
+      </div>
+    </>
+  );
+
+  // Builder view: a tidy self-service surface — no admin KPIs, alerts or audit.
+  if (!isAdmin) {
+    return (
+      <>
+        <PageHeader title="Admin" crumb="your platform surface" />
+        <div className="content">
+          <p className="lead">
+            Tenant configuration — identity, users, models, security, billing — is managed by a{' '}
+            <strong>platform admin</strong>. Your own domain roles and approvals live in{' '}
+            <Link href="/governance">Policies &amp; Approvals</Link>. Below is what you can manage here.
+          </p>
+          {tileGrid}
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -80,27 +147,7 @@ export default function PlatformOverview() {
               ))
             )}
 
-            <div className="section-title" style={{ marginTop: 22 }}>Quick links</div>
-            <div className="grid">
-              {[
-                ['Domains', '/platform/domains', 'Create & toggle optional layers'],
-                ['Users & Access', '/platform/access', 'Invite via Ory · tenant Admin'],
-                ['Models & Providers', '/platform/models', 'Defaults · caps · provider keys'],
-                ['Drive OAuth apps', '/platform/oauth-apps', 'Google & Microsoft apps for connected drives'],
-                ['Security & Egress', '/platform/security', 'Allowlist · OPA bundle · residency'],
-                ['Backups & Restore', '/platform/backups', 'Status · guarded restore'],
-                ['Plugins', '/platform/plugins', 'Curate & install MCPs / skills'],
-                ['MCPs & APIs', '/platform/mcp-apis', 'Registered MCP servers & API keys'],
-                ['Cost & Billing', '/platform/billing', 'Envelope · premium cap'],
-                ['Settings', '/platform/settings', 'SSO · branding · tenant defaults'],
-              ].map(([label, href, sub]) => (
-                <Link key={href} href={href} className="golden">
-                  <span className="ico">❖</span>
-                  <span><strong>{label}</strong><div className="muted" style={{ fontSize: 11.5 }}>{sub}</div></span>
-                  <span className="arr">→</span>
-                </Link>
-              ))}
-            </div>
+            {tileGrid}
 
             <div className="section-title" style={{ marginTop: 22 }}>
               Recent audit

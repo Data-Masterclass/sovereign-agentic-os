@@ -2422,7 +2422,9 @@ mail:
 terminal:
   enabled: false
   # Roles permitted to open a terminal (maps to lib/session.ts Role union).
-  allowedRoles: ["builder", "admin"]
+  # Admin-only by default: the raw shell is an operator surface. Builders reach the
+  # governed Query console but NOT the shell. Override to widen per environment.
+  allowedRoles: ["admin"]
   # Shared HMAC secret: the OS UI mints a short-lived single-use token, the broker
   # verifies it. OVERRIDE per environment (or wire an ExternalSecret). The OS UI
   # reads the same value via TERMINAL_BROKER_SECRET. Never commit a real value.

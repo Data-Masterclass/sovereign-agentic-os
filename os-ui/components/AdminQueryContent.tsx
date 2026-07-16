@@ -10,12 +10,12 @@
  * page (/console) without a duplicate page header. The standalone /admin-query
  * route redirects to /console; this component hosts the actual query logic.
  *
- * Access: admin-only. The /api/admin-query route enforces the admin gate
- * server-side (fail-closed: 403 for non-admins even if they reach the URL directly).
- *
- * The admin principal runs as their own governed identity — broad visibility via
- * Trino OPA + Cube RLS — NOT a policy bypass. Every read still flows through the
- * governed query-tool and cubeLoad paths in lib/governed.ts.
+ * Access: builder+ for Lakehouse SQL (runs under the CALLER's own Trino OPA
+ * principal — governed per-caller, not a bypass). The Cube semantic-layer mode is
+ * admin-only (`canCube`) because it runs unscoped; the API 403s a non-admin Cube
+ * request as defence in depth, and this component hides the toggle so builders
+ * only ever see Lakehouse SQL. Every read flows through the governed query-tool
+ * and cubeLoad paths in lib/governed.ts.
  */
 
 import { useCallback, useState } from 'react';
@@ -57,7 +57,7 @@ const DEFAULT_CUBE_JSON = JSON.stringify(
 
 // ---- Component --------------------------------------------------------------
 
-export default function AdminQueryContent() {
+export default function AdminQueryContent({ canCube = false }: { canCube?: boolean }) {
   const [mode, setMode] = useState<Mode>('lakehouse');
 
   // Lakehouse state
@@ -157,13 +157,15 @@ export default function AdminQueryContent() {
         >
           Lakehouse SQL
         </button>
-        <button
-          type="button"
-          className={mode === 'cube' ? 'btn' : 'btn btn-ghost'}
-          onClick={() => { setMode('cube'); setResult(null); setRunError(''); }}
-        >
-          Cube (semantic layer)
-        </button>
+        {canCube ? (
+          <button
+            type="button"
+            className={mode === 'cube' ? 'btn' : 'btn btn-ghost'}
+            onClick={() => { setMode('cube'); setResult(null); setRunError(''); }}
+          >
+            Cube (semantic layer)
+          </button>
+        ) : null}
       </div>
 
       {/* Editor */}

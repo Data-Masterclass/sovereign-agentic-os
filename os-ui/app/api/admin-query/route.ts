@@ -3,6 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
+import { roleAtLeast } from '@/lib/core/session';
 import { errorResponse } from '@/lib/data/server';
 import { queryRun } from '@/lib/infra/governed';
 import { cubeLoad, type CubeQuery } from '@/lib/infra/governed';
@@ -21,17 +22,21 @@ export const dynamic = 'force-dynamic';
  * because the admin console is meant for exploring the semantic layer structure,
  * not impersonating a viewer region; the admin principal sees all governed members.
  *
- * NON-ADMINS CANNOT REACH THIS ROUTE: requireUser() checks session, and the role
- * gate below returns 403 immediately. The tab itself is also minRole:admin in the
- * sidebar so non-admin users never see the entry point.
+ * ACCESS: builder+. The query runs with the CALLER's own principal, so Trino OPA
+ * / RLS governs exactly what this user may read — a builder sees only their own
+ * governed visibility, never a bypass. requireUser() checks session and the role
+ * gate below returns 403 for creators. The Console tab is builder+ in the sidebar;
+ * the raw Shell sub-surface (arbitrary command execution) stays admin-only and is
+ * gated separately (ConsoleClient + the terminal broker), not here.
  */
 export async function POST(req: Request) {
   try {
     const u = await requireUser();
 
-    // Fail-closed admin gate — defence in depth alongside the minRole nav guard.
-    if (u.role !== 'admin') {
-      return NextResponse.json({ error: 'admin role required' }, { status: 403 });
+    // Fail-closed gate — builder+ for the governed query surface; defence in depth
+    // alongside the minRole nav guard. Creators file requests, they don't query here.
+    if (!roleAtLeast(u.role, 'builder')) {
+      return NextResponse.json({ error: 'builder role required' }, { status: 403 });
     }
 
     let body: { mode?: string; sql?: string; query?: CubeQuery };
@@ -57,6 +62,14 @@ export async function POST(req: Request) {
 
     // ---- Cube (semantic layer) -----------------------------------------------
     if (mode === 'cube') {
+      // The raw Cube branch runs UNSCOPED (no per-viewer securityContext — it is
+      // meant for an admin exploring the semantic-layer structure, seeing all
+      // governed members). That would leak rows to a builder, so Cube mode stays
+      // admin-only. Builders use Lakehouse SQL, which runs under their own Trino
+      // OPA principal. (The governed per-viewer metric path is the Metrics tab.)
+      if (u.role !== 'admin') {
+        return NextResponse.json({ error: 'Cube semantic-layer mode is admin-only; use Lakehouse SQL for governed per-caller queries' }, { status: 403 });
+      }
       const cubeQuery = body?.query;
       if (!cubeQuery || typeof cubeQuery !== 'object') {
         return NextResponse.json(

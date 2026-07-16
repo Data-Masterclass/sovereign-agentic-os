@@ -206,11 +206,18 @@ test('PLATFORM-GATE 1: /components has a server-side admin layout', () => {
   assert.match(src, /role !== 'admin'/, 'app/components/layout.tsx must gate non-admins');
 });
 
-test('PLATFORM-GATE 2: /console (merged Terminal+Query) is admin-only at the page level', () => {
-  // /terminal was consolidated into /console (Shell | Query switch). The Console
-  // page server component re-checks the admin gate before rendering.
+test('PLATFORM-GATE 2: /console is builder+ for the governed Query surface; the raw Shell stays admin-only', () => {
+  // /terminal + /admin-query were consolidated into /console (Shell | Query switch).
+  // The page is now builder+ (governed Query — OPA/RLS per caller). The page re-checks
+  // that gate, and gates the raw Shell (arbitrary command execution) to admins only
+  // via canShell; the admin-query API + terminal broker enforce the same server-side.
   const src = read('app/console/page.tsx');
-  assert.match(src, /role !== 'admin'/, 'app/console/page.tsx must have admin-only gate');
+  assert.match(src, /roleAtLeast\(user\.role, 'builder'\)/, 'app/console/page.tsx must have a builder+ page gate');
+  assert.match(src, /canShell=\{user\.role === 'admin'\}/, 'app/console/page.tsx must gate the raw Shell to admins');
+  // The Query API must be builder+, and Cube mode must stay admin-only.
+  const api = read('app/api/admin-query/route.ts');
+  assert.match(api, /roleAtLeast\(u\.role, 'builder'\)/, 'admin-query must gate to builder+');
+  assert.match(api, /mode === 'cube'[\s\S]*?u\.role !== 'admin'/, 'admin-query Cube mode must stay admin-only');
 });
 
 test('PLATFORM-GATE 3: /about is open to all roles (moved from Admin group to Entry for transparency)', () => {
@@ -224,10 +231,13 @@ test('PLATFORM-GATE 3: /about is open to all roles (moved from Admin group to En
 
 test('PLATFORM-GATE 4: consolidated tab gates — Policies & Approvals is builder+, admin tabs unchanged', () => {
   const src = read('lib/core/tabs.ts');
-  // Admin-gated tabs: Admin (/platform), Components, Console (merged Terminal+Query).
-  for (const label of ['Admin', 'Components', 'Console']) {
-    assert.match(src, new RegExp(`label: '${label.replace('/', '\\/')}[^']*'[^}]*minRole: 'admin'`, 's'),
-      `Tab "${label}" must declare minRole: 'admin'`);
+  // Components stays strictly admin-only.
+  assert.match(src, /label: 'Components'[^}]*minRole: 'admin'/s, "Tab 'Components' must declare minRole: 'admin'");
+  // Admin (/platform) + Console are builder-visible: the pages themselves fail-closed
+  // (Admin tile-filters to self-service; Console gates the raw Shell to admins).
+  for (const label of ['Admin', 'Console']) {
+    assert.match(src, new RegExp(`label: '${label}'[^}]*minRole: 'builder'`, 's'),
+      `Tab "${label}" must declare minRole: 'builder' (page fail-closes for non-admins)`);
   }
   // Policies & Approvals (renamed from Governance): builders approve promotions.
   assert.match(src, /label: 'Policies & Approvals'[^}]*minRole: 'builder'/s,

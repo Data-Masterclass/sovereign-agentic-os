@@ -287,7 +287,7 @@ export const config = {
   // browser. terminalBrokerWsUrl is browser-reachable (ingress host on a deploy;
   // a `kubectl port-forward svc/terminal-broker 8090:8080` address locally). ----
   terminalEnabled: env('TERMINAL_ENABLED', '') === 'true',
-  terminalAllowedRoles: env('TERMINAL_ALLOWED_ROLES', 'builder,admin')
+  terminalAllowedRoles: env('TERMINAL_ALLOWED_ROLES', 'admin')
     .split(',')
     .map((r) => r.trim())
     .filter(Boolean),

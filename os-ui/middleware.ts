@@ -46,7 +46,12 @@ export async function middleware(req: NextRequest) {
     url.searchParams.set('next', pathname);
     return NextResponse.redirect(url);
   }
-  return NextResponse.next();
+  // Expose the request pathname to server layouts/pages (Next.js does not surface
+  // it to a layout otherwise). The Platform-Admin layout reads it to keep every
+  // /platform sub-page admin-only while the /platform overview is builder-visible.
+  const headers = new Headers(req.headers);
+  headers.set('x-pathname', pathname);
+  return NextResponse.next({ request: { headers } });
 }
 
 export const config = {

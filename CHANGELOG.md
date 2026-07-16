@@ -15,6 +15,22 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.25] — 2026-07-16
+
+### Changed
+- **Console is now available to builders** — they get the governed Query surface (Lakehouse SQL
+  runs through Trino with the caller's OPA row/document-level security). The raw Shell and the
+  unscoped Cube query mode remain admin-only, in both the UI and the API.
+- **The Admin tab is now visible to builders, filtered to what they can actually use.** Every
+  tenant-admin tile (Users, Security, Models, Backups, Cost, tenant Settings, …) stays admin-only
+  and hidden; a builder sees a single tidy "My Settings" self-service tile. Deeper Admin sub-pages
+  redirect non-admins back to the overview. Tile visibility is fail-closed (default-deny).
+
+### Security
+- **The raw terminal shell is admin-only by default** (`terminal.allowedRoles: ["admin"]`, env
+  `TERMINAL_ALLOWED_ROLES`). Previously the token endpoint accepted builders; now that Console is
+  builder-visible, the operator shell is locked to admins by default and remains admin-configurable.
+
 ## [os-ui 0.5.24] — 2026-07-16
 
 ### Added

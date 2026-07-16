@@ -104,10 +104,12 @@ test('TAB-SET dissolved tabs are gone from the nav entirely', () => {
 
 // ---- Key tab properties ----------------------------------------------------
 
-test('TAB-SET Console tab has minRole=admin and href=/console', () => {
+test('TAB-SET Console tab has minRole=builder and href=/console', () => {
   const c = BUILD_GROUP.tabs.find((t) => t.label === 'Console');
   assert.ok(c, 'Console tab must exist in Build group');
-  assert.equal(c!.minRole, 'admin', 'Console tab must have minRole: admin');
+  // Console is builder-visible for the governed Query surface; the raw Shell
+  // sub-panel inside it stays admin-only (gated in ConsoleClient + the broker).
+  assert.equal(c!.minRole, 'builder', 'Console tab must have minRole: builder');
   assert.equal(c!.href, '/console', 'Console tab must link to /console');
 });
 
@@ -121,7 +123,9 @@ test('TAB-SET Policies & Approvals tab has minRole=builder and href=/governance'
 test('TAB-SET Admin tab is in Govern group (moved from dissolved Admin group)', () => {
   const a = GOVERN_GROUP.tabs.find((t) => t.label === 'Admin');
   assert.ok(a, 'Admin tab must be in the Govern group');
-  assert.equal(a!.minRole, 'admin', 'Admin tab must have minRole: admin');
+  // Admin is builder-visible; the /platform overview renders only the tiles a
+  // builder is authorised for (fail-closed) and every sub-page stays admin-only.
+  assert.equal(a!.minRole, 'builder', 'Admin tab must have minRole: builder');
   assert.equal(a!.href, '/platform', 'Admin tab must link to /platform');
 });
 
@@ -179,16 +183,22 @@ test('TAB-VIS builder: Govern group is visible and includes Policies & Approvals
   const govern = groups.find((g) => g.heading === 'Govern');
   assert.ok(govern, 'Govern group must be present for builder');
   assert.ok(govern!.tabs.some((t) => t.label === 'Policies & Approvals'), 'builder must see Policies & Approvals');
-  // Admin-only tabs (Console, Components, Admin) remain hidden for builder
-  assert.ok(!govern!.tabs.some((t) => t.label === 'Admin'), 'builder must not see Admin tab');
+  // Admin tab is now builder-visible (tile-filtered overview); Components stays admin-only.
+  assert.ok(govern!.tabs.some((t) => t.label === 'Admin'), 'builder must see the Admin tab (tile-filtered)');
   assert.ok(!govern!.tabs.some((t) => t.label === 'Components'), 'builder must not see Components tab');
 });
 
-test('TAB-VIS builder: Console tab in Build group is hidden (admin-only)', () => {
+test('TAB-VIS builder: Console tab in Build group is visible (governed Query surface)', () => {
   const groups = filterTabGroups(TAB_GROUPS, 'builder');
   const build = groups.find((g) => g.heading === 'Build');
   assert.ok(build, 'Build group must be present for builder');
-  assert.ok(!build!.tabs.some((t) => t.label === 'Console'), 'builder must not see Console (admin-only)');
+  assert.ok(build!.tabs.some((t) => t.label === 'Console'), 'builder must see Console (Query is builder+; the raw Shell inside stays admin-only)');
+});
+
+test('TAB-VIS creator: Console tab is still hidden (builder+)', () => {
+  const groups = filterTabGroups(TAB_GROUPS, 'creator');
+  const build = groups.find((g) => g.heading === 'Build');
+  assert.ok(!build!.tabs.some((t) => t.label === 'Console'), 'creator must not see Console (builder+)');
 });
 
 test('TAB-VIS domain_admin: sees no admin-only tabs', () => {
@@ -259,7 +269,7 @@ test('TAB-VIS tabVisible: null/undefined userRole passes (middleware handles aut
 });
 
 test('TAB-VIS entry/Context/Build/Plan tabs are open to creators except the MCP setup tab and Console', () => {
-  // MCP is builder+; Console is admin-only; every other tab in these groups is open to creators.
+  // MCP + Console are builder+; every other tab in these groups is open to creators.
   const openGroups = [ENTRY_GROUP, CONTEXT_GROUP, BUILD_GROUP, PLAN_GROUP];
   for (const group of openGroups) {
     for (const tab of group.tabs) {
@@ -268,7 +278,7 @@ test('TAB-VIS entry/Context/Build/Plan tabs are open to creators except the MCP 
         continue;
       }
       if (tab.label === 'Console') {
-        assert.equal(tab.minRole, 'admin', 'Console operator tab is admin-gated');
+        assert.equal(tab.minRole, 'builder', 'Console tab is builder-gated (Query is builder+; Shell inside stays admin-only)');
         continue;
       }
       assert.equal(tab.minRole, undefined,
