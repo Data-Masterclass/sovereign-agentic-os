@@ -18,21 +18,31 @@ import { snowflakeProvider } from './providers/snowflake.ts';
 import { bigqueryProvider } from './providers/bigquery.ts';
 import { databricksProvider } from './providers/databricks.ts';
 import { fabricProvider } from './providers/fabric.ts';
+import { postgresProvider } from './providers/postgres.ts';
+import { mysqlProvider } from './providers/mysql.ts';
+import { sqlServerProvider } from './providers/sqlserver.ts';
+import { mongoProvider } from './providers/mongodb.ts';
 
-/** Every supported warehouse platform → its provider. Total over WarehousePlatform. */
-export const WAREHOUSE_PROVIDERS: Record<WarehousePlatform, WarehouseProvider> = {
+/** Every supported warehouse platform → its provider. Not all platforms may have a
+ *  provider yet (operational-database platforms are registered incrementally as their
+ *  provider modules land); `providerFor` throws on an unregistered platform. */
+export const WAREHOUSE_PROVIDERS: Partial<Record<WarehousePlatform, WarehouseProvider>> = {
   glue: glueProvider,
   snowflake: snowflakeProvider,
   bigquery: bigqueryProvider,
   'databricks-delta': databricksProvider,
   fabric: fabricProvider,
+  postgresql: postgresProvider,
+  mysql: mysqlProvider,
+  sqlserver: sqlServerProvider,
+  mongodb: mongoProvider,
 };
 
 /** Resolve the provider for a platform. Throws `WarehouseError` on an unknown one. */
 export function providerFor(platform: WarehousePlatform): WarehouseProvider {
   const provider = WAREHOUSE_PROVIDERS[platform];
-  if (!provider) {
+  if (provider == null) {
     throw new WarehouseError(`unknown warehouse platform: ${String(platform)}`);
   }
-  return provider;
+  return provider as WarehouseProvider;
 }

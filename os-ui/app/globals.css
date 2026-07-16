@@ -5863,4 +5863,16 @@ button.card.tile:hover .tile-action { opacity: 1; }
   cursor: pointer; font-size: 12px; color: var(--text-muted);
   padding: 2px 0; user-select: none; width: fit-content;
 }
+
+/* ── Folder Picker (FolderTree variant="picker") ───────────────────────── */
+/* Hide the inline "New folder here" (+) button until the row is hovered.   */
+.fp-new-here {
+  opacity: 0;
+  transition: opacity 0.12s;
+  pointer-events: none;
+}
+.folder-row:hover .fp-new-here {
+  opacity: 1;
+  pointer-events: auto;
+}
 .rec-advanced > summary:hover { color: var(--text); }

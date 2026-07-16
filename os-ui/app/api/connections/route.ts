@@ -45,16 +45,17 @@ export async function GET(req: Request) {
             const t = templateByKey('warehouse')!;
             return { key: t.key, label: t.label, type: t.type, connector: t.connector, auth: t.auth, endpointHint: t.endpointHint };
           })(),
-          providers: WAREHOUSE_PLATFORMS.map((p) => {
+          providers: WAREHOUSE_PLATFORMS.flatMap((p) => {
             const pr = WAREHOUSE_PROVIDERS[p];
-            return {
+            if (!pr) return []; // platform registered in types but provider not yet wired
+            return [{
               platform: pr.platform,
               label: pr.label,
               capabilities: pr.capabilities,
               credentialFields: pr.credentialFields,
               secretKeys: pr.secretMaterial.secretKeys,
               liveVerificationRequired: pr.liveVerificationRequired,
-            };
+            }];
           }),
         }
       : { enabled: false as const };

@@ -15,7 +15,7 @@ import DomainTag from '@/components/DomainTag';
 import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
 import TalkTo from '@/components/talk/TalkTo';
 import { TALK_PRESENTATION } from '@/lib/talk/schema';
-import FolderTree from '@/components/core/FolderTree';
+import FolderTree, { FolderPickerModal } from '@/components/core/FolderTree';
 import { isUnderFolder } from '@/lib/core/folders';
 
 /** Knowledge visibility (Personal/Shared/Marketplace) → OS-wide lifecycle visibility. */
@@ -63,8 +63,8 @@ export default function KnowledgePage() {
   // Folder navigation state for "My knowledge"
   const [pkFolder, setPkFolder] = useState<string>('/');
   const [pkFolderNodes, setPkFolderNodes] = useState<{ path: string }[]>([]);
+  // Picker modal: which entry id is being moved; null = closed.
   const [pkMoveId, setPkMoveId] = useState<string | null>(null);
-  const [pkMoveTarget, setPkMoveTarget] = useState('');
 
   // User info for role-based UI
   const [user, setUser] = useState<UserInfo | null>(null);
@@ -276,32 +276,10 @@ export default function KnowledgePage() {
                     </button>
                   ))}
                 {editable && (
-                  pkMoveId === e.id ? (
-                    <>
-                      <input
-                        value={pkMoveTarget}
-                        onChange={(ev) => setPkMoveTarget(ev.target.value)}
-                        placeholder="/folder-path"
-                        style={{ width: 160 }}
-                      />
-                      <button className="btn ghost sm" onClick={async () => {
-                        await fetch(`/api/knowledge/personal/${e.id}/folder`, {
-                          method: 'POST',
-                          headers: { 'content-type': 'application/json' },
-                          body: JSON.stringify({ folder: pkMoveTarget }),
-                        });
-                        setPkMoveId(null);
-                        await loadPersonal();
-                        await loadFolders();
-                      }}>Move</button>
-                      <button className="btn ghost sm" onClick={() => setPkMoveId(null)}>Cancel</button>
-                    </>
-                  ) : (
-                    <button className="btn ghost sm" onClick={() => { setPkMoveId(e.id); setPkMoveTarget(e.folder ?? '/'); }}
-                      title="Move to a folder">
-                      Move…
-                    </button>
-                  )
+                  <button className="btn ghost sm" onClick={() => setPkMoveId(e.id)}
+                    title="Move to a folder">
+                    Move…
+                  </button>
                 )}
                 {editable && (
                   <button className="btn sm" onClick={() => void savePersonal()} disabled={pkSaving}>
@@ -434,10 +412,7 @@ export default function KnowledgePage() {
                   body: JSON.stringify({ tab: 'knowledge', scope: 'personal', path: full }),
                 }).then(() => void loadFolders());
               }}
-              onMove={(_scope, path) => {
-                setPkMoveId(path);
-                setPkMoveTarget(path);
-              }}
+              onMove={() => { /* folder rename not implemented here */ }}
               personalLabel="My folders"
             />
 
@@ -501,6 +476,35 @@ export default function KnowledgePage() {
           );
         })()}
       </div>
+
+      {/* Folder picker modal — used by the "Move…" button on any knowledge entry. */}
+      <FolderPickerModal
+        open={pkMoveId !== null}
+        tab="knowledge"
+        personalNodes={pkFolderNodes}
+        title="Move note to folder"
+        onConfirm={async ({ path }) => {
+          const id = pkMoveId;
+          setPkMoveId(null);
+          if (!id) return;
+          await fetch(`/api/knowledge/personal/${id}/folder`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ folder: path }),
+          });
+          await loadPersonal();
+          await loadFolders();
+        }}
+        onCancel={() => setPkMoveId(null)}
+        onCreate={async (_scope, path) => {
+          await fetch('/api/folders', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ tab: 'knowledge', scope: 'personal', path }),
+          });
+          await loadFolders();
+        }}
+      />
 
       <style>{KnowledgeStyles}</style>
     </ConfirmProvider>

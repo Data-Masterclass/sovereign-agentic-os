@@ -3,7 +3,7 @@
  */
 'use client';
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import {
   buildTree,
   triState,
@@ -20,7 +20,7 @@ import {
  * `renderLeaf` for a file/doc/dataset row, and the handlers it wants. The tree +
  * tri-state maths come from `lib/core/folders`.
  *
- * TWO variants, ONE component:
+ * THREE variants, ONE component:
  *   • `variant="nav"`      — the folder rail: a breadcrumb-free hierarchy the user
  *                            navigates. Selecting a folder calls `onSelect`; an
  *                            inline "New folder" affordance calls `onCreate`; each
@@ -30,10 +30,19 @@ import {
  *                            via `onChange` — a folder whose every item is checked
  *                            becomes a FOLDER grant (auto-covers future items);
  *                            a partial folder emits its checked items individually.
+ *   • `variant="picker"`   — single-select destination picker. Clicking a folder
+ *                            highlights it; "Move here" confirms the selection.
+ *                            Inline "New folder" creates under the selected node.
+ *                            Emits `{ path, scope }` via `onConfirm`; `onCancel`
+ *                            dismisses without a selection. Leaf items are hidden —
+ *                            only folders (and the root `/`) are selectable.
  *
  * Renders a PERSONAL root and a DOMAIN root side by side (mirrors My / Shared) so
  * the same primitive serves both scopes. Apple-clean: quiet rows, a single gold
  * accent for the active row, generous hit targets, no chrome noise.
+ *
+ * `FolderPickerModal` — a thin modal wrapper around `variant="picker"`. Import it
+ * alongside `FolderTree` when you need the move-to-folder UX in a popover.
  */
 
 export type FolderTreeItem = { id: string; folder: string; name?: string };
@@ -75,7 +84,17 @@ type CheckboxProps = CommonProps & {
   onChange?: (next: FolderSelection) => void;
 };
 
-export type FolderTreeProps = NavProps | CheckboxProps;
+type PickerProps = CommonProps & {
+  variant: 'picker';
+  /** Called with the chosen destination when the user clicks "Move here". */
+  onConfirm: (dest: { path: string; scope: RootScope }) => void;
+  /** Called when the user dismisses without choosing. */
+  onCancel: () => void;
+  /** Async callback to create a new folder in `scope` at `path` (mirrors nav onCreate). */
+  onCreate?: (scope: RootScope, path: string) => Promise<void>;
+};
+
+export type FolderTreeProps = NavProps | CheckboxProps | PickerProps;
 
 // ------------------------------------------------------------------- utils --
 
@@ -135,6 +154,8 @@ function FolderRow({
   allItems,
   checked,
   emit,
+  pickerSelected,
+  onPickerSelect,
 }: {
   node: FolderTreeNode;
   depth: number;
@@ -144,9 +165,12 @@ function FolderRow({
   allItems: FolderTreeItem[];
   checked: Set<string>;
   emit: (nextChecked: Set<string>) => void;
+  pickerSelected?: { path: string; scope: RootScope } | null;
+  onPickerSelect?: (dest: { path: string; scope: RootScope }) => void;
 }) {
   const [open, setOpen] = useState(depth < 1);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [creatingHere, setCreatingHere] = useState(false);
 
   const directItems = itemsByFolder.get(node.path) ?? [];
   const hasChildren = node.children.length > 0 || directItems.length > 0;
@@ -158,9 +182,14 @@ function FolderRow({
 
   const nav = props.variant === 'nav' ? props : null;
   const box = props.variant === 'checkbox' ? props : null;
+  const picker = props.variant === 'picker' ? props : null;
 
   const isSelected =
     nav?.selectedPath !== undefined && normaliseFolderPath(nav.selectedPath) === node.path;
+  const isPickerSelected =
+    picker !== null &&
+    pickerSelected?.path === node.path &&
+    pickerSelected?.scope === scope;
 
   function toggleFolder() {
     const state = triState(node.path, checked, underIds);
@@ -173,10 +202,35 @@ function FolderRow({
     emit(next);
   }
 
+  const handleNewFolderInPicker = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!picker?.onCreate) return;
+    const name = window.prompt('New folder name');
+    if (!name?.trim()) return;
+    const full = normaliseFolderPath(
+      node.path === '/' ? `/${name.trim()}` : `${node.path}/${name.trim()}`,
+    );
+    setCreatingHere(true);
+    try {
+      await picker.onCreate(scope, full);
+      // Auto-select the newly created folder.
+      onPickerSelect?.({ path: full, scope });
+      setOpen(true);
+    } finally {
+      setCreatingHere(false);
+    }
+  }, [picker, node.path, scope, onPickerSelect]);
+
+  const rowClickHandler = nav
+    ? () => nav.onSelect?.(scope, node.path)
+    : picker
+      ? () => onPickerSelect?.({ path: node.path, scope })
+      : undefined;
+
   return (
     <div>
       <div
-        className={`folder-row${isSelected ? ' is-selected' : ''}`}
+        className={`folder-row${isSelected || isPickerSelected ? ' is-selected' : ''}`}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -185,11 +239,11 @@ function FolderRow({
           paddingRight: 8,
           height: 32,
           borderRadius: 8,
-          cursor: nav ? 'pointer' : 'default',
-          background: isSelected ? 'var(--gold-soft)' : 'transparent',
-          color: isSelected ? 'var(--gold-text)' : 'var(--text)',
+          cursor: nav || picker ? 'pointer' : 'default',
+          background: isSelected || isPickerSelected ? 'var(--gold-soft)' : 'transparent',
+          color: isSelected || isPickerSelected ? 'var(--gold-text)' : 'var(--text)',
         }}
-        onClick={nav ? () => nav.onSelect?.(scope, node.path) : undefined}
+        onClick={rowClickHandler}
       >
         <button
           type="button"
@@ -282,6 +336,20 @@ function FolderRow({
             )}
           </span>
         )}
+
+        {/* Picker: "New subfolder" affordance on every row (only shown when hovered
+            via CSS, but always present for keyboard access). */}
+        {picker?.onCreate && (
+          <button
+            type="button"
+            className="btn ghost sm fp-new-here"
+            title="New folder here"
+            disabled={creatingHere}
+            onClick={handleNewFolderInPicker}
+          >
+            {creatingHere ? '…' : '+'}
+          </button>
+        )}
       </div>
 
       {open && (
@@ -297,9 +365,12 @@ function FolderRow({
               allItems={allItems}
               checked={checked}
               emit={emit}
+              pickerSelected={pickerSelected}
+              onPickerSelect={onPickerSelect}
             />
           ))}
-          {directItems.map((item) => (
+          {/* In picker mode, leaf items are not shown — only folders are destinations. */}
+          {!picker && directItems.map((item) => (
             <LeafRow
               key={item.id}
               item={item}
@@ -368,11 +439,15 @@ function Root({
   label,
   nodes,
   props,
+  pickerSelected,
+  onPickerSelect,
 }: {
   scope: RootScope;
   label: string;
   nodes: FolderPathNode[];
   props: FolderTreeProps;
+  pickerSelected?: { path: string; scope: RootScope } | null;
+  onPickerSelect?: (dest: { path: string; scope: RootScope }) => void;
 }) {
   const rootItems = props.items.filter((i) => normaliseFolderPath(i.folder) === '/');
   const tree = useMemo(() => buildTree(nodes), [nodes]);
@@ -395,6 +470,10 @@ function Root({
   }
 
   const nav = props.variant === 'nav' ? props : null;
+  const picker = props.variant === 'picker' ? props : null;
+
+  // In picker mode, root "/" is a selectable destination.
+  const rootIsPickerSelected = picker !== null && pickerSelected?.path === '/' && pickerSelected?.scope === scope;
 
   return (
     <div style={{ flex: 1, minWidth: 220 }}>
@@ -408,7 +487,39 @@ function Root({
             New folder
           </button>
         )}
+        {picker?.onCreate && (
+          <button
+            type="button"
+            className="btn ghost sm"
+            title="New folder at root"
+            onClick={async () => {
+              const name = window.prompt('New folder name');
+              if (!name?.trim()) return;
+              const full = normaliseFolderPath(`/${name.trim()}`);
+              await picker.onCreate!(scope, full);
+              onPickerSelect?.({ path: full, scope });
+            }}
+          >
+            New folder
+          </button>
+        )}
       </div>
+      {/* In picker mode, the root "/" row is a selectable destination. */}
+      {picker && (
+        <div
+          className={`folder-row${rootIsPickerSelected ? ' is-selected' : ''}`}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 8, paddingRight: 8,
+            height: 32, borderRadius: 8, cursor: 'pointer',
+            background: rootIsPickerSelected ? 'var(--gold-soft)' : 'transparent',
+            color: rootIsPickerSelected ? 'var(--gold-text)' : 'var(--text)',
+          }}
+          onClick={() => onPickerSelect?.({ path: '/', scope })}
+        >
+          <span aria-hidden style={{ opacity: 0.85 }}>📂</span>
+          <span style={{ flex: 1 }}>/ (root)</span>
+        </div>
+      )}
       <div>
         {tree.map((node) => (
           <FolderRow
@@ -421,12 +532,14 @@ function Root({
             allItems={props.items}
             checked={checked}
             emit={emit}
+            pickerSelected={pickerSelected}
+            onPickerSelect={onPickerSelect}
           />
         ))}
-        {rootItems.map((item) => (
+        {!picker && rootItems.map((item) => (
           <LeafRow key={item.id} item={item} depth={0} props={props} checked={checked} emit={emit} />
         ))}
-        {tree.length === 0 && rootItems.length === 0 && (
+        {tree.length === 0 && (picker ? null : rootItems.length === 0) && (
           <p className="muted" style={{ paddingLeft: 8, fontSize: 13 }}>
             No folders yet.
           </p>
@@ -480,10 +593,128 @@ function computeSelection(
 
 export default function FolderTree(props: FolderTreeProps) {
   const domainNodes = props.domainNodes ?? [];
+
+  // Picker variant: track which (path, scope) is currently highlighted.
+  const [pickerSelected, setPickerSelected] = useState<{ path: string; scope: RootScope } | null>(null);
+  const picker = props.variant === 'picker' ? props : null;
+
   return (
     <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
-      <Root scope="personal" label={props.personalLabel ?? 'My folders'} nodes={props.personalNodes} props={props} />
-      <Root scope="domain" label={props.domainLabel ?? 'Shared in domain'} nodes={domainNodes} props={props} />
+      <Root
+        scope="personal"
+        label={props.personalLabel ?? 'My folders'}
+        nodes={props.personalNodes}
+        props={props}
+        pickerSelected={pickerSelected}
+        onPickerSelect={setPickerSelected}
+      />
+      <Root
+        scope="domain"
+        label={props.domainLabel ?? 'Shared in domain'}
+        nodes={domainNodes}
+        props={props}
+        pickerSelected={pickerSelected}
+        onPickerSelect={setPickerSelected}
+      />
+      {picker && (
+        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 8, paddingTop: 24, alignSelf: 'stretch' }}>
+          <button
+            className="btn sm"
+            disabled={!pickerSelected}
+            onClick={() => pickerSelected && picker.onConfirm(pickerSelected)}
+            style={{ minWidth: 100 }}
+          >
+            Move here
+          </button>
+          <button className="btn ghost sm" onClick={picker.onCancel}>
+            Cancel
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --------------------------------------------------------- FolderPickerModal --
+
+/**
+ * A thin modal that wraps `FolderTree` in `variant="picker"` mode.
+ * Open it by rendering with `open={true}`; it dismisses on confirm or cancel.
+ *
+ * @param tab      — the tab namespace fed to `/api/folders` (`files`, `data`, `knowledge`).
+ * @param scope    — which scope to load (`personal` only, or both roots if `'both'`).
+ * @param onConfirm — receives `{ path, scope }` of the chosen destination folder.
+ * @param onCancel  — called when the user dismisses without choosing.
+ * @param onCreate  — async: create a new folder in `scope` at `path` (calls POST /api/folders).
+ */
+export function FolderPickerModal({
+  open,
+  tab,
+  personalNodes,
+  domainNodes,
+  onConfirm,
+  onCancel,
+  onCreate,
+  title,
+}: {
+  open: boolean;
+  tab: string;
+  personalNodes: FolderPathNode[];
+  domainNodes?: FolderPathNode[];
+  onConfirm: (dest: { path: string; scope: RootScope }) => void;
+  onCancel: () => void;
+  onCreate?: (scope: RootScope, path: string) => Promise<void>;
+  title?: string;
+}) {
+  if (!open) return null;
+  void tab; // consumed by the parent; kept in props for documentation clarity
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title ?? 'Move to folder'}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 300,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(0,0,0,0.45)',
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
+    >
+      <div
+        className="card"
+        style={{
+          minWidth: 480, maxWidth: 700, width: '90vw',
+          maxHeight: '75vh', overflowY: 'auto',
+          padding: '20px 24px', borderRadius: 12,
+          boxShadow: '0 8px 40px rgba(0,0,0,0.32)',
+          display: 'flex', flexDirection: 'column', gap: 16,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, letterSpacing: 0.2 }}>
+            {title ?? 'Move to folder'}
+          </h3>
+          <button
+            className="btn ghost sm"
+            onClick={onCancel}
+            aria-label="Close"
+            style={{ fontSize: 18, lineHeight: 1 }}
+          >
+            ×
+          </button>
+        </div>
+        <FolderTree
+          variant="picker"
+          personalNodes={personalNodes}
+          domainNodes={domainNodes ?? []}
+          items={[]}
+          personalLabel="My folders"
+          domainLabel="Shared in domain"
+          onConfirm={onConfirm}
+          onCancel={onCancel}
+          onCreate={onCreate}
+        />
+      </div>
     </div>
   );
 }

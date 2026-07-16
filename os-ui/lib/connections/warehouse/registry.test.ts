@@ -66,7 +66,7 @@ test('Glue provider produces the same props the old switch did (hive)', () => {
 });
 
 test('every registered provider is implemented — no 501 stub remains', () => {
-  for (const platform of ['snowflake', 'bigquery', 'databricks-delta', 'fabric'] as const) {
+  for (const platform of ['snowflake', 'bigquery', 'databricks-delta', 'fabric', 'postgresql', 'mysql', 'sqlserver', 'mongodb'] as const) {
     assert.throws(
       () => providerFor(platform).catalogProps({ catalog: 'x', platform } as unknown as WarehouseSource),
       (e: unknown) =>

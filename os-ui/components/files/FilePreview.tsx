@@ -10,6 +10,8 @@ import { previewText } from '@/lib/files/preview';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import type { Visibility } from '@/lib/core/lifecycle';
+import { FolderPickerModal } from '@/components/core/FolderTree';
+import type { FolderPathNode } from '@/lib/core/folders';
 
 /** File tier → the OS-wide lifecycle visibility (drives the delete gate). */
 const lcVis = (tier: Asset['tier']): Visibility =>
@@ -58,6 +60,10 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
   const [useAsMsg, setUseAsMsg] = useState('');
   const [showFullText, setShowFullText] = useState(false);
   const reuploadRef = useRef<HTMLInputElement>(null);
+  // Folder picker modal state.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [personalNodes, setPersonalNodes] = useState<FolderPathNode[]>([]);
+  const [domainNodes, setDomainNodes] = useState<FolderPathNode[]>([]);
 
   const load = useCallback(async () => {
     setErr('');
@@ -77,6 +83,17 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
     } catch (e) { setErr((e as Error).message); }
   }, [id]);
   useEffect(() => { load(); }, [load]);
+
+  const loadFolders = useCallback(async () => {
+    try {
+      const [pRes, dRes] = await Promise.all([
+        fetch('/api/folders?tab=files&scope=personal', { cache: 'no-store' }),
+        fetch('/api/folders?tab=files&scope=domain', { cache: 'no-store' }),
+      ]);
+      if (pRes.ok) setPersonalNodes(((await pRes.json()).folders ?? []) as FolderPathNode[]);
+      if (dRes.ok) setDomainNodes(((await dRes.json()).folders ?? []) as FolderPathNode[]);
+    } catch { /* ignore */ }
+  }, []);
 
   const requestPromote = useCallback(async () => {
     setErr('');
@@ -230,14 +247,28 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         <div className="preview-row">
           <button
             className="btn ghost sm"
-            onClick={() => {
-              const dest = window.prompt('Move to folder (path, e.g. /contracts)', a.folder);
-              if (dest !== null) void move(dest);
-            }}
+            onClick={() => { void loadFolders(); setPickerOpen(true); }}
             title="Move this file into a folder"
           >
             Move to folder…
           </button>
+          <FolderPickerModal
+            open={pickerOpen}
+            tab="files"
+            personalNodes={personalNodes}
+            domainNodes={domainNodes}
+            title="Move file to folder"
+            onConfirm={({ path }) => { setPickerOpen(false); void move(path); }}
+            onCancel={() => setPickerOpen(false)}
+            onCreate={async (scope, path) => {
+              const res = await fetch('/api/folders', {
+                method: 'POST', headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ tab: 'files', scope, path }),
+              });
+              if (!res.ok) { setErr((await res.json()).error ?? 'Could not create folder'); return; }
+              await loadFolders();
+            }}
+          />
         </div>
       ) : null}
 

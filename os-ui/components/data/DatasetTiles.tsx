@@ -9,7 +9,7 @@ import { roleAtLeast } from '@/lib/core/session';
 import { canManageArtifact } from '@/lib/governance/edit-scope';
 import { DATASET_SCOPES, tilesForScope, scopeCounts, type DatasetScope } from '@/lib/data/dataset-scopes';
 import { itemsUnderFolder, normaliseFolderPath, type FolderPathNode } from '@/lib/core/folders';
-import FolderTree from '@/components/core/FolderTree';
+import FolderTree, { FolderPickerModal } from '@/components/core/FolderTree';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import DomainTag from '@/components/DomainTag';
@@ -70,7 +70,7 @@ function Dots({ dots }: { dots: Tile['dots'] }) {
   );
 }
 
-function TileCard({ t, onOpen, onImport, onMove, canManage, onChanged, showDomain }: { t: Tile; onOpen: (id: string) => void; onImport?: (id: string) => void; onMove?: (id: string, from: string) => void; canManage?: boolean; onChanged: () => void; showDomain?: boolean }) {
+function TileCard({ t, onOpen, onImport, onMove, canManage, onChanged, showDomain }: { t: Tile; onOpen: (id: string) => void; onImport?: (id: string) => void; onMove?: (id: string) => void; canManage?: boolean; onChanged: () => void; showDomain?: boolean }) {
   // A role="button" DIV (not a <button>) so the optional Import / lifecycle controls
   // can be real nested <button>s without invalid button-in-button nesting. Every
   // nested control stops propagation so it never also opens the card.
@@ -118,7 +118,7 @@ function TileCard({ t, onOpen, onImport, onMove, canManage, onChanged, showDomai
           onClick={(e) => e.stopPropagation()}
         >
           {onMove ? (
-            <button type="button" className="btn ghost sm" title="Move to folder" onClick={stop(() => onMove(t.id, t.folder))}>
+            <button type="button" className="btn ghost sm" title="Move to folder" onClick={stop(() => onMove(t.id))}>
               Move…
             </button>
           ) : null}
@@ -165,6 +165,8 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
   const [domainNodes, setDomainNodes] = useState<FolderPathNode[]>([]);
   // Multi-select in the grid → bulk "Move selected…".
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  // Folder picker modal: ids being moved; null = closed.
+  const [pickerIds, setPickerIds] = useState<string[] | null>(null);
   // Archive/lifecycle UI (mirrors the Knowledge tab's reference pattern).
   const [showArchived, setShowArchived] = useState(false);
   // Import-from-warehouse affordance: registered warehouse connections a builder can
@@ -275,12 +277,10 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
     refresh();
   }, [refresh]);
 
-  const promptMove = useCallback((ids: string[], from?: string) => {
+  const promptMove = useCallback((ids: string[]) => {
     if (ids.length === 0) return;
-    const dest = window.prompt('Move to folder (path, e.g. /contracts)', from ?? '/');
-    if (dest === null) return;
-    void moveInto(ids, dest);
-  }, [moveInto]);
+    setPickerIds(ids);
+  }, []);
 
   // A dataset is the caller's to manage under the ONE canonical edit-scope rule the
   // DELETE/archive routes enforce: owner, domain_admin of the owning domain, or admin.
@@ -394,6 +394,27 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
 
       {err ? <div className="error" style={{ marginTop: 14 }}>{err}</div> : null}
 
+      <FolderPickerModal
+        open={pickerIds !== null}
+        tab="data"
+        personalNodes={personalTreeNodes}
+        domainNodes={domainTreeNodes}
+        title={`Move ${pickerIds && pickerIds.length > 1 ? `${pickerIds.length} datasets` : 'dataset'} to folder`}
+        onConfirm={({ path }) => {
+          if (pickerIds) void moveInto(pickerIds, path);
+          setPickerIds(null);
+        }}
+        onCancel={() => setPickerIds(null)}
+        onCreate={async (scope, path) => {
+          const res = await fetch('/api/folders', {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ tab: 'data', scope, path }),
+          });
+          if (!res.ok) { setErr((await res.json()).error ?? 'Could not create folder'); return; }
+          await loadFolders();
+        }}
+      />
+
       {empty ? (
         <div className="stub-page" style={{ marginTop: 20 }}>
           {scope === 'mine' || scope === 'all'
@@ -439,7 +460,7 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
                   onMove={(root, path) => {
                     // Move every dataset the caller manages that lives under this folder.
                     const ids = itemsUnderFolder(path, active.filter((t) => rootOf(t) === root && canManage(t))).map((t) => t.id);
-                    promptMove(ids, path);
+                    promptMove(ids);
                   }}
                   renderLeaf={(item) => item.name ?? item.id}
                 />
@@ -481,7 +502,7 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
                           onOpen={onOpen}
                           // Import applies to marketplace products only (Builder+; store re-checks).
                           onImport={canImport && t.tier === 'product' && t.owner !== uid ? importProduct : undefined}
-                          onMove={canManage(t) ? (id, from) => promptMove([id], from) : undefined}
+                          onMove={canManage(t) ? (id) => promptMove([id]) : undefined}
                           canManage={canManage(t)}
                           onChanged={refresh}
                           showDomain={showDomain}

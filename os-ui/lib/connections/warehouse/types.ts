@@ -32,7 +32,11 @@ export type WarehousePlatform =
   | 'snowflake'
   | 'bigquery'
   | 'databricks-delta'
-  | 'fabric';
+  | 'fabric'
+  | 'postgresql'
+  | 'mysql'
+  | 'sqlserver'
+  | 'mongodb';
 
 export const WAREHOUSE_PLATFORMS: WarehousePlatform[] = [
   'glue',
@@ -40,6 +44,10 @@ export const WAREHOUSE_PLATFORMS: WarehousePlatform[] = [
   'bigquery',
   'databricks-delta',
   'fabric',
+  'postgresql',
+  'mysql',
+  'sqlserver',
+  'mongodb',
 ];
 
 /**
@@ -70,7 +78,11 @@ export type WarehousePlatformConfig =
   | SnowflakeConfig
   | BigQueryConfig
   | DatabricksDeltaConfig
-  | FabricConfig;
+  | FabricConfig
+  | PostgresConfig
+  | MySqlConfig
+  | SqlServerConfig
+  | MongoConfig;
 
 /** AWS Glue / Athena via the Trino Hive/Iceberg connector (`hive.metastore=glue`). */
 export type GlueConfig = {
@@ -143,6 +155,80 @@ export type FabricConfig = {
   servicePrincipalSecretRef?: string;
   /** OneLake ABFS endpoint for the workspace (legacy alias of onelakeEndpoint). */
   oneLakeUri?: string;
+};
+
+/**
+ * PostgreSQL via the Trino native `postgresql` JDBC connector. Read-only federation
+ * of ONE database; the login password is the only secret (vault-referenced via
+ * `${ENV:...}`, NEVER inlined). Phase 1c (operational databases).
+ */
+export type PostgresConfig = {
+  platform: 'postgresql';
+  /** Host (or host:port) of the PostgreSQL server, e.g. `db.internal:5432`. */
+  host: string;
+  /** TCP port; defaults to 5432 when omitted. */
+  port?: string;
+  /** The single database the JDBC catalog connects to (its schemas become Trino schemas). */
+  database: string;
+  /** Login user (least-privilege, read-only recommended). */
+  username: string;
+  /** Vault ref name for the password (NEVER inlined; referenced via `${ENV:...}`). */
+  passwordSecretRef?: string;
+};
+
+/**
+ * MySQL / MariaDB via the Trino native `mysql` JDBC connector. Read-only federation;
+ * a MySQL DATABASE maps to a Trino schema. Password vault-referenced, never inlined.
+ * Phase 1c (operational databases).
+ */
+export type MySqlConfig = {
+  platform: 'mysql';
+  /** Host (or host:port) of the MySQL server, e.g. `mysql.internal:3306`. */
+  host: string;
+  /** TCP port; defaults to 3306 when omitted. */
+  port?: string;
+  /** Login user (least-privilege, read-only recommended). */
+  username: string;
+  /** Vault ref name for the password (NEVER inlined; referenced via `${ENV:...}`). */
+  passwordSecretRef?: string;
+};
+
+/**
+ * Microsoft SQL Server via the Trino native `sqlserver` JDBC connector. The catalog
+ * is pinned to ONE database (`databaseName=`); its schemas become Trino schemas.
+ * Password vault-referenced, never inlined. Phase 1c (operational databases).
+ */
+export type SqlServerConfig = {
+  platform: 'sqlserver';
+  /** Host (or host:port) of the SQL Server instance, e.g. `sql.internal:1433`. */
+  host: string;
+  /** TCP port; defaults to 1433 when omitted. */
+  port?: string;
+  /** The single database the JDBC catalog pins to (`databaseName=`). */
+  database: string;
+  /** Login user (least-privilege, read-only recommended). */
+  username: string;
+  /** Vault ref name for the password (NEVER inlined; referenced via `${ENV:...}`). */
+  passwordSecretRef?: string;
+};
+
+/**
+ * MongoDB via the Trino native `mongodb` connector. Schemaless: the connector infers
+ * a schema per collection into its `_schema` collection. The credentials live in the
+ * `mongodb.connection-url`; to keep them out of the rendered props the user:password
+ * portion is supplied via `${ENV:MONGODB_CONNECTION_URL}`, never inlined.
+ * Phase 1c (operational databases).
+ */
+export type MongoConfig = {
+  platform: 'mongodb';
+  /** Host (or host:port / SRV host) of the MongoDB deployment, e.g. `mongo.internal:27017`. */
+  host: string;
+  /** TCP port; defaults to 27017 when omitted. Ignored for `mongodb+srv`. */
+  port?: string;
+  /** Use the `mongodb+srv://` seed-list scheme (Atlas / replica-set DNS). */
+  srv?: boolean;
+  /** Vault ref name for the FULL connection URL incl. credentials (NEVER inlined). */
+  connectionUrlSecretRef?: string;
 };
 
 /**

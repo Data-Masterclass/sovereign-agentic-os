@@ -4,8 +4,9 @@
 /**
  * Per-connector installation guides — PURE + client-safe (no secrets, no server
  * imports). One record per Supported Connector the Connections gallery renders:
- * the warehouse platforms (glue / snowflake / bigquery / databricks-delta / fabric)
- * and the user-facing templates (gdrive / onedrive / notion-mcp / airflow / om-catalog).
+ * the warehouse platforms (glue / snowflake / bigquery / databricks-delta / fabric /
+ * postgresql / mysql / sqlserver / mongodb) and the user-facing templates
+ * (gdrive / onedrive / notion-mcp / airflow / om-catalog).
  *
  * Each guide answers three questions honestly:
  *   • Prerequisites — what the USER must already have (their own cloud creds / apps).
@@ -142,6 +143,90 @@ const FABRIC: InstallGuide = {
   caveat: 'EXPERIMENTAL: Trino-over-OneLake is not a documented first-class Trino path. The Azure OAuth wiring is UNVERIFIED against a live Fabric tenant; ship last and expect known-locations federation, not auto-discovery.',
 };
 
+const POSTGRESQL: InstallGuide = {
+  key: 'postgresql',
+  title: 'PostgreSQL',
+  summary: 'Federate one PostgreSQL database through the native Trino postgresql JDBC connector, read-only. The password is vaulted, never inlined.',
+  prerequisites: [
+    'A reachable PostgreSQL **host** (or host:port) and the **database** to federate — its schemas become Trino schemas.',
+    'A **least-privilege, read-only login** (a role with USAGE + SELECT on the target schemas is enough). The **password** goes to Secrets Manager and is **never** on the record.',
+    'Network reachability from the Trino pod to the PostgreSQL port (default 5432).',
+    'Builder/Admin rights (this is a service-credential connector, not personal OAuth).',
+  ],
+  steps: [
+    'On the PostgreSQL card, click **Connect**.',
+    'Name the connection; pick a Trino **catalog name** (e.g. `pg_orders`).',
+    'Enter the **host** (and port if not in the host), **database**, **username**, and **password**.',
+    'Create the connection, then on its card **Register** → **Test** (`SHOW SCHEMAS`) → **Browse**. Import a table (CTAS) into the OS lakehouse from the Data tab when you want an owned copy.',
+  ],
+  whatTheOsDoes:
+    'Registers **one governed Trino catalog** over the `postgresql` connector, so every table is queryable live as `catalog.schema.table` under the OS\'s OPA policy — no bytes copied. The password is stored once in Secrets Manager and mounted to Trino via `${ENV:...}`; it never appears in the rendered catalog config.',
+  caveat: 'Range predicates on text columns do not push down (they run in Trino). PostgreSQL reachability and the read-only login are only confirmed against your live server at Register/Test time.',
+};
+
+const MYSQL: InstallGuide = {
+  key: 'mysql',
+  title: 'MySQL / MariaDB',
+  summary: 'Federate a MySQL/MariaDB server through the native Trino mysql JDBC connector, read-only. Each database becomes a Trino schema; the password is vaulted.',
+  prerequisites: [
+    'A reachable MySQL/MariaDB **host** (or host:port). Every database on the server is exposed as a Trino schema.',
+    'A **least-privilege, read-only user** (SELECT only). The **password** goes to Secrets Manager and is **never** on the record.',
+    'Network reachability from the Trino pod to the MySQL port (default 3306).',
+    'Builder/Admin rights (service-credential connector, not personal OAuth).',
+  ],
+  steps: [
+    'On the MySQL card, click **Connect**.',
+    'Name the connection; pick a Trino **catalog name** (e.g. `mysql_shop`).',
+    'Enter the **host** (and port if not in the host), **username**, and **password**.',
+    'Create the connection, then on its card **Register** → **Test** (`SHOW SCHEMAS`) → **Browse**. Import a table (CTAS) into the OS lakehouse from the Data tab for an owned copy.',
+  ],
+  whatTheOsDoes:
+    'Registers **one governed Trino catalog** over the `mysql` connector; each MySQL database is a Trino schema, queryable live under OPA. The password is stored in Secrets Manager and mounted via `${ENV:...}`; it never appears in the rendered config.',
+  caveat: 'MySQL identifier case-sensitivity is OS-dependent; the OS sets case-insensitive matching so discovery is robust. Predicates on text columns do not push down. Reachability and the read-only user are confirmed against your live server at Register/Test time.',
+};
+
+const SQLSERVER: InstallGuide = {
+  key: 'sqlserver',
+  title: 'Microsoft SQL Server',
+  summary: 'Federate one SQL Server database through the native Trino sqlserver JDBC connector, read-only. The password is vaulted, never inlined.',
+  prerequisites: [
+    'A reachable SQL Server **host** (or host:port) and the **database** to pin the catalog to.',
+    'A **least-privilege, read-only login** (`db_datareader` on the database). The **password** goes to Secrets Manager and is **never** on the record.',
+    '`ALLOW_SNAPSHOT_ISOLATION` enabled on the database (Trino reads use snapshot isolation by default for consistent, non-blocking reads).',
+    'Network reachability from the Trino pod to the SQL Server port (default 1433). Builder/Admin rights.',
+  ],
+  steps: [
+    'On the SQL Server card, click **Connect**.',
+    'Name the connection; pick a Trino **catalog name** (e.g. `mssql_erp`).',
+    'Enter the **host** (and port if not in the host), **database**, **username**, and **password**.',
+    'Create the connection, then on its card **Register** → **Test** (`SHOW SCHEMAS`) → **Browse**. Import a table (CTAS) into the OS lakehouse from the Data tab for an owned copy.',
+  ],
+  whatTheOsDoes:
+    'Registers **one governed Trino catalog** over the `sqlserver` connector, pinned to the chosen database, queryable live as `catalog.schema.table` under OPA. The password is stored in Secrets Manager and mounted via `${ENV:...}`; TLS `encrypt` is left to the JDBC driver default (never forced off).',
+  caveat: 'Text-column predicates push down only under case-sensitive collation; otherwise they run in Trino. money/uniqueidentifier/xml are cast to text on import. Reachability, the read-only login, and snapshot isolation are confirmed against your live server at Register/Test time.',
+};
+
+const MONGODB: InstallGuide = {
+  key: 'mongodb',
+  title: 'MongoDB',
+  summary: 'Federate a MongoDB deployment through the native Trino mongodb connector, read-only. The whole connection URL (with credentials) is the vaulted secret.',
+  prerequisites: [
+    'A reachable MongoDB **host** (or host:port), or an Atlas/replica-set **SRV** host for `mongodb+srv://`.',
+    'A **connection user** with read on the target databases AND write on the `_schema` collection — Trino persists inferred schemas there (a documented MongoDB-connector requirement).',
+    'The **full connection URL** (`mongodb://user:pass@host/...` or `mongodb+srv://...`, ideally with `?tls=true`). It goes to Secrets Manager whole and is **never** on the record.',
+    'Network reachability from the Trino pod (default 27017, or SRV DNS). Builder/Admin rights.',
+  ],
+  steps: [
+    'On the MongoDB card, click **Connect**.',
+    'Name the connection; pick a Trino **catalog name** (e.g. `mongo_events`).',
+    'Enter the **host** (metadata) and paste the **full connection URL with credentials** — stored once in Secrets Manager.',
+    'Create the connection, then on its card **Register** → **Test** (`SHOW SCHEMAS`) → **Browse**. Import a collection (CTAS) into the OS lakehouse from the Data tab for an owned copy.',
+  ],
+  whatTheOsDoes:
+    'Registers **one governed Trino catalog** over the `mongodb` connector; each database is a Trino schema and each collection a table, queryable live under OPA. The connector **infers a schema per collection** into a `_schema` collection. The whole connection URL (with credentials) is stored in Secrets Manager and mounted via `${ENV:...}`; it never appears in the rendered config.',
+  caveat: 'MongoDB is schemaless: schema inference can be imperfect and a brand-new/empty collection may not list until sampled or given a manual `_schema` entry — this is how a document store is catalogued, not a failure. Reachability, credentials, and `_schema` write access are confirmed against your live deployment at Register/Test time.',
+};
+
 // ---- User-facing templates --------------------------------------------------
 
 const GDRIVE: InstallGuide = {
@@ -243,6 +328,7 @@ const OM_CATALOG: InstallGuide = {
 
 const GUIDES: InstallGuide[] = [
   GLUE, SNOWFLAKE, BIGQUERY, DATABRICKS, FABRIC,
+  POSTGRESQL, MYSQL, SQLSERVER, MONGODB,
   GDRIVE, ONEDRIVE, NOTION, AIRFLOW, OM_CATALOG,
 ];
 

@@ -799,9 +799,10 @@ const connectionTools: McpTool[] = [
         ? {
             enabled: true,
             note: 'Create a warehouse connection with template="warehouse" and a warehouse block {platform, catalog, fields}. Fields render from the provider below; secret-keyed fields go to Secrets Manager, the rest onto the record. Live registration is an operator GitOps step (values.trino.externalCatalogs + rolling restart).',
-            platforms: WAREHOUSE_PLATFORMS.map((p) => {
+            platforms: WAREHOUSE_PLATFORMS.flatMap((p) => {
               const pr = WAREHOUSE_PROVIDERS[p];
-              return {
+              if (!pr) return []; // platform registered in types but provider not yet wired
+              return [{
                 platform: pr.platform,
                 label: pr.label,
                 capabilities: pr.capabilities,
@@ -812,7 +813,7 @@ const connectionTools: McpTool[] = [
                   secret: pr.secretMaterial.secretKeys.includes(f.key),
                 })),
                 liveVerificationRequired: pr.liveVerificationRequired,
-              };
+              }];
             }),
           }
         : { enabled: false as const },

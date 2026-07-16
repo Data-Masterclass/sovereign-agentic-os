@@ -12,7 +12,7 @@ import {
   normaliseFolderPath,
   type FolderPathNode,
 } from '@/lib/core/folders';
-import FolderTree from '@/components/core/FolderTree';
+import FolderTree, { FolderPickerModal } from '@/components/core/FolderTree';
 import FilePreview from './FilePreview';
 
 type Summary = {
@@ -98,6 +98,8 @@ export default function FilesBrowser() {
   // ?archived=1 additionally returns soft-archived files (their own section), so an
   // archived file stays openable → its preview exposes Restore + Delete (OS-wide rule).
   const [showArchived, setShowArchived] = useState(false);
+  // Folder picker modal: which file ids are being moved; null = closed.
+  const [pickerIds, setPickerIds] = useState<string[] | null>(null);
 
   // search
   const [query, setQuery] = useState('');
@@ -201,12 +203,10 @@ export default function FilesBrowser() {
     refresh();
   }, [refresh]);
 
-  const promptMove = useCallback((ids: string[], from?: string) => {
+  const promptMove = useCallback((ids: string[]) => {
     if (ids.length === 0) return;
-    const dest = window.prompt('Move to folder (path, e.g. /contracts)', from ?? '/');
-    if (dest === null) return;
-    void moveInto(ids, dest);
-  }, [moveInto]);
+    setPickerIds(ids);
+  }, []);
 
   const uid = user?.id ?? '';
   const scoped = groups ? groupByScope(groups, uid) : null;
@@ -282,6 +282,27 @@ export default function FilesBrowser() {
       </div>
 
       {err ? <div className="error" style={{ marginBottom: 14 }}>{err}</div> : null}
+
+      <FolderPickerModal
+        open={pickerIds !== null}
+        tab="files"
+        personalNodes={personalTreeNodes}
+        domainNodes={domainTreeNodes}
+        title={`Move ${pickerIds && pickerIds.length > 1 ? `${pickerIds.length} files` : 'file'} to folder`}
+        onConfirm={({ path }) => {
+          if (pickerIds) void moveInto(pickerIds, path);
+          setPickerIds(null);
+        }}
+        onCancel={() => setPickerIds(null)}
+        onCreate={async (scope, path) => {
+          const res = await fetch('/api/folders', {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ tab: 'files', scope, path }),
+          });
+          if (!res.ok) { setErr((await res.json()).error ?? 'Could not create folder'); return; }
+          await loadFolders();
+        }}
+      />
 
       <div className={`files-layout${selected ? ' with-preview' : ''}`}>
         {/* ---- folder rail + tag cloud (the owner's drive) ---- */}

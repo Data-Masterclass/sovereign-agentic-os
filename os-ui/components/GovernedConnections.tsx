@@ -192,6 +192,10 @@ export default function GovernedConnections() {
   // The Supported Connector whose Installation Guide side-panel is open (null = none).
   const [guide, setGuide] = useState<InstallGuide | null>(null);
 
+  // Supported Connectors: search query + which category groups are collapsed.
+  const [connSearch, setConnSearch] = useState('');
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+
   const warehouseMeta = data?.warehouse?.enabled ? data.warehouse : null;
   const canCreate = data?.canCreate ?? false;
   const canCreatePersonal = data?.canCreatePersonal ?? false;
@@ -291,7 +295,7 @@ export default function GovernedConnections() {
         );
       })()}
 
-      {/* ── 2. Supported Connectors (dynamic gallery from the template registry) ── */}
+      {/* ── 2. Supported Connectors (grouped by category + search) ── */}
       <div className="section-title" style={{ marginTop: 28 }}>Supported connectors</div>
       <p className="hint" style={{ marginTop: 0, marginBottom: 14 }}>
         The connector types you can connect, straight from the template registry — inbound
@@ -304,7 +308,31 @@ export default function GovernedConnections() {
         // A gallery card. `guideKey` resolves its Installation Guide (a warehouse card
         // uses its provider platform; a template card uses its template key). `start`
         // is how Connect opens the shared wizard (a warehouse card pins the platform).
-        type Card = { key: string; guideKey: string; label: string; meta: string; blurb?: string; start: WizardStart };
+        type Card = { key: string; guideKey: string; label: string; meta: string; blurb?: string; category: string; start: WizardStart };
+
+        // Category taxonomy — maps template keys and warehouse platforms to display categories.
+        // Warehouse platforms → Data warehouses; operational databases → Operational databases.
+        // New connectors (e.g. postgres/mysql/sqlserver/mongodb from the DB agent) are derived
+        // by provider name below so they group correctly without touching warehouse-provider files.
+        const TEMPLATE_CATEGORY: Record<string, string> = {
+          'gdrive':        'Docs & Knowledge',
+          'onedrive':      'Docs & Knowledge',
+          'notion-mcp':    'Docs & Knowledge',
+          'airflow':       'Orchestration',
+          'om-catalog':    'Catalog',
+          'salesforce-api':'Enterprise apps',
+          'generic-mcp':   'LLM providers',
+          'generic-api':   'Enterprise apps',
+          'database':      'Operational databases',
+          'warehouse':     'Data warehouses',
+        };
+        const WAREHOUSE_PLATFORM_CATEGORY: Record<string, string> = {
+          'glue':             'Data warehouses',
+          'snowflake':        'Data warehouses',
+          'bigquery':         'Data warehouses',
+          'databricks-delta': 'Data warehouses',
+          'fabric':           'Data warehouses',
+        };
 
         // Dynamic: one card per user-facing template the API returned…
         const cards: Card[] = data.templates.map((t) => ({
@@ -312,6 +340,7 @@ export default function GovernedConnections() {
           guideKey: t.key,
           label: t.label,
           meta: `${t.type} · ${t.auth === 'oauth' ? 'personal OAuth' : 'service credentials'}`,
+          category: TEMPLATE_CATEGORY[t.key] ?? t.type,
           start: { mode: 'type', template: t.key },
         }));
 
@@ -322,12 +351,16 @@ export default function GovernedConnections() {
           for (const p of warehouseMeta.providers) {
             const caps = [p.capabilities.federate ? 'federate' : null, p.capabilities.import ? 'import' : null]
               .filter(Boolean).join(' · ');
+            // Derive category: known platforms → Data warehouses; anything db-like → Operational databases.
+            const cat = WAREHOUSE_PLATFORM_CATEGORY[p.platform]
+              ?? (/postgres|mysql|sqlserver|mongodb|mongo/i.test(p.platform) ? 'Operational databases' : 'Data warehouses');
             cards.push({
               key: `warehouse:${p.platform}`,
               guideKey: p.platform,
               label: p.label,
               meta: `Warehouse · federated Trino catalog${caps ? ` · ${caps}` : ''}`,
               blurb: 'Federate this lakehouse as one governed catalog — query live under OPA, then import tables as owned products.',
+              category: cat,
               start: { mode: 'type', template: 'warehouse', presetPlatform: p.platform },
             });
           }
@@ -335,30 +368,128 @@ export default function GovernedConnections() {
 
         if (cards.length === 0) return <div className="stub-page">No connector types available on this deployment.</div>;
         const canOpen = canCreate || canCreatePersonal;
+
+        // Filter by search query (name or category, case-insensitive).
+        const q = connSearch.trim().toLowerCase();
+        const filtered = q
+          ? cards.filter((c) => c.label.toLowerCase().includes(q) || c.category.toLowerCase().includes(q))
+          : cards;
+
+        // Group filtered cards by category, preserving a consistent category order.
+        const CATEGORY_ORDER = [
+          'Docs & Knowledge',
+          'Messaging',
+          'Calendar',
+          'Code & DevOps',
+          'Operational databases',
+          'Data warehouses',
+          'Data ingest',
+          'Enterprise apps',
+          'Orchestration',
+          'Catalog',
+          'Observability',
+          'LLM providers',
+        ];
+        const grouped = new Map<string, Card[]>();
+        for (const c of filtered) {
+          const list = grouped.get(c.category) ?? [];
+          list.push(c);
+          grouped.set(c.category, list);
+        }
+        // Sort categories: known order first, unknowns appended alphabetically.
+        const sortedCategories = [...grouped.keys()].sort((a, b) => {
+          const ia = CATEGORY_ORDER.indexOf(a);
+          const ib = CATEGORY_ORDER.indexOf(b);
+          if (ia !== -1 && ib !== -1) return ia - ib;
+          if (ia !== -1) return -1;
+          if (ib !== -1) return 1;
+          return a.localeCompare(b);
+        });
+
         return (
-          <div className="grid">
-            {cards.map((c) => {
-              const g = installGuideFor(c.guideKey);
-              return (
-                <div className="card" key={c.key}>
-                  <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-                    <h3 style={{ margin: 0 }}>{c.label}</h3>
-                    <span className="badge ok">available</span>
-                  </div>
-                  <div className="muted" style={{ marginTop: 8 }}>{c.meta}</div>
-                  {c.blurb ? <p className="hint" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>{c.blurb}</p> : null}
-                  <div className="row" style={{ marginTop: 12, gap: 8, justifyContent: 'flex-end' }}>
-                    {g ? (
-                      <button className="btn ghost" onClick={() => setGuide(g)}>Installation Guide</button>
+          <>
+            {/* Search bar */}
+            <div style={{ marginBottom: 18 }}>
+              <input
+                type="search"
+                value={connSearch}
+                onChange={(e) => setConnSearch(e.target.value)}
+                placeholder="Search connectors by name or category…"
+                style={{ width: '100%', maxWidth: 400 }}
+              />
+            </div>
+
+            {filtered.length === 0 ? (
+              <div className="stub-page">No connectors match &ldquo;{connSearch}&rdquo;.</div>
+            ) : (
+              sortedCategories.map((cat) => {
+                const group = grouped.get(cat)!;
+                const isOpen = !collapsedCategories.has(cat);
+                return (
+                  <div key={cat} style={{ marginBottom: 20 }}>
+                    {/* Group header */}
+                    <button
+                      type="button"
+                      onClick={() => setCollapsedCategories((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(cat)) next.delete(cat); else next.add(cat);
+                        return next;
+                      })}
+                      style={{
+                        all: 'unset',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        marginBottom: isOpen ? 10 : 0,
+                        width: '100%',
+                      }}
+                    >
+                      <span style={{
+                        fontFamily: 'var(--font-mono, monospace)',
+                        fontSize: 10,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.08em',
+                        color: 'var(--text-faint)',
+                        userSelect: 'none',
+                      }}>
+                        {isOpen ? '▾' : '▸'} {cat}
+                      </span>
+                      <span className="badge muted" style={{ fontSize: 10 }}>{group.length}</span>
+                      <span style={{ flex: 1, height: 1, background: 'var(--border)', marginLeft: 4 }} />
+                    </button>
+
+                    {/* Cards grid — hidden when collapsed */}
+                    {isOpen ? (
+                      <div className="grid">
+                        {group.map((c) => {
+                          const g = installGuideFor(c.guideKey);
+                          return (
+                            <div className="card" key={c.key}>
+                              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                                <h3 style={{ margin: 0 }}>{c.label}</h3>
+                                <span className="badge ok">available</span>
+                              </div>
+                              <div className="muted" style={{ marginTop: 8 }}>{c.meta}</div>
+                              {c.blurb ? <p className="hint" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>{c.blurb}</p> : null}
+                              <div className="row" style={{ marginTop: 12, gap: 8, justifyContent: 'flex-end' }}>
+                                {g ? (
+                                  <button className="btn ghost" onClick={() => setGuide(g)}>Installation Guide</button>
+                                ) : null}
+                                {canOpen ? (
+                                  <button className="btn ghost" onClick={() => openWizard(c.start)}>Connect →</button>
+                                ) : null}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     ) : null}
-                    {canOpen ? (
-                      <button className="btn ghost" onClick={() => openWizard(c.start)}>Connect →</button>
-                    ) : null}
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })
+            )}
+          </>
         );
       })()}
 

@@ -15,6 +15,26 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.12] — 2026-07-16
+
+Connector wave (batch 1): operational databases, a grouped/searchable Connections tab, and a
+proper folder picker.
+
+### Added
+- **Operational-database connectors via Trino — PostgreSQL · MySQL · SQL Server · MongoDB.**
+  Real, governed, federated (reuse the warehouse framework). Deep-researched per engine (Trino
+  476 catalog config, identifier rules, discovery, type mapping, pushdown notes); credentials
+  vaulted via `${ENV:}` (Mongo's whole connection URL is the secret — nothing inlined); one
+  Installation Guide each. Meets the CONNECTOR-STANDARD Definition of Done.
+- **Connections tab: grouped by type + search.** Supported Connectors now group into 11
+  categories (Messaging · Calendar · Code & DevOps · Docs & Knowledge · Operational databases ·
+  Data warehouses · Data ingest · Enterprise apps · Orchestration · Catalog · LLM providers)
+  with a live search bar; the 4-section IA intact.
+
+### Fixed
+- **"Move to folder…" is now a folder-tree picker, not a text field** (Data · Knowledge ·
+  Files) — browse and click the destination folder, with inline New-folder, like a file explorer.
+
 ## [os-ui 0.5.11] — 2026-07-16
 
 Folders, end to end — the agent-builder folder-grant browse-tree (completes #175).
