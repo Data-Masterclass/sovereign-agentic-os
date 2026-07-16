@@ -18,7 +18,7 @@ import { generateAndCompile } from './auto-mcp.ts';
 import { stopApp as stopRunner, deleteApp as deleteRunner } from './runner.ts';
 import type { ConsumedResource } from './model.ts';
 import { roleAtLeast } from '@/lib/core/session';
-import { canManageArtifact } from '@/lib/governance/edit-scope';
+import { canManageArtifact, type ArtifactScope } from '@/lib/governance/edit-scope';
 import type { Visibility } from '@/lib/core/artifact-model';
 import { getArtifact, demoteArtifact } from '@/lib/core/artifacts';
 
@@ -38,8 +38,11 @@ import { getArtifact, demoteArtifact } from '@/lib/core/artifacts';
  */
 
 function isOwnerOrAdmin(app: App, user: CurrentUser): boolean {
-  // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
-  return canManageArtifact(user, { owner: app.owner, domain: app.domain });
+  // Fail-closed edit-scope: owner always; a Personal app is owner-only (no admin/
+  // domain_admin reaches another user's private app). A Shared / Certified app
+  // admits an in-domain domain_admin or a platform admin.
+  const scope: ArtifactScope = app.visibility === 'Personal' ? 'personal' : app.visibility === 'Certified' ? 'certified' : 'shared';
+  return canManageArtifact(user, { owner: app.owner, domain: app.domain, scope });
 }
 
 // --------------------------------------------------------------- Archive -------
@@ -182,7 +185,7 @@ export async function demoteApp(appId: string, user: CurrentUser): Promise<App> 
     if (user.role !== 'admin') throw withStatus(new Error('Revoking from the Marketplace requires an Administrator'), 403);
     next = 'Shared';
   } else if (app.visibility === 'Shared') {
-    if (!canManageArtifact(user, { owner: app.owner, domain: app.domain })) {
+    if (!canManageArtifact(user, { owner: app.owner, domain: app.domain, scope: 'shared' })) {
       throw withStatus(new Error('Unsharing requires the owner, an in-domain Domain admin, or an Administrator'), 403);
     }
     next = 'Personal';

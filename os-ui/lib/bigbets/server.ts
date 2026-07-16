@@ -13,7 +13,7 @@ import {
   type Principal,
 } from './model.ts';
 import { type PlannerHooks } from './planner.ts';
-import { canViewComponentDetail, getBet, auditLog } from './store.ts';
+import { canViewComponentDetail, canEdit, getBet, auditLog } from './store.ts';
 import { deriveBet, completion, type ComponentStatus } from './status.ts';
 import { rollup } from './roadmap.ts';
 import { buildComposition } from './composition.ts';
@@ -184,12 +184,9 @@ export async function buildBetView(
     composition,
     sourceMode: sourceMode(),
     audit: auditLog(betId).slice(0, 50),
-    canEdit: canEditFor(bet, p),
+    // The SAME central edit-scope rule the store enforces (personal → owner-only;
+    // shared/certified → in-domain domain_admin or admin; cross-domain → admin),
+    // so the UI's edit affordance never diverges from what the server permits.
+    canEdit: canEdit(bet, p),
   };
-}
-
-function canEditFor(bet: BigBet, p: Principal): boolean {
-  if (p.role === 'admin') return true;
-  if (bet.crossDomain) return false;
-  return bet.owner === p.id;
 }

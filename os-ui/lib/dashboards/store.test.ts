@@ -3,7 +3,7 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { __resetDashboards, listDashboards, getDashboard, saveDashboard, setDashboardArchived, deleteDashboard, listDashboardVersions, restoreDashboardVersion, type Principal } from './store.ts';
+import { __resetDashboards, listDashboards, getDashboard, saveDashboard, setDashboardArchived, deleteDashboard, listDashboardVersions, restoreDashboardVersion, transitionDashboard, type Principal } from './store.ts';
 import type { DashboardSpec } from './model.ts';
 
 const admin: Principal = { id: 'sara', domains: ['sales'], role: 'admin' };
@@ -93,10 +93,17 @@ test('archive / delete / restore obey edit-scope (a non-owner without manage rig
   assert.throws(() => restoreDashboardVersion('dash_o', intruder, 1), (e: { status?: number }) => e.status === 403);
 });
 
-test('archive obeys edit-scope: a domain_admin of the owning domain and an admin MAY manage a non-owned dashboard', () => {
-  saveDashboard(builder, 'dash_da', spec('Owned')); // owned by amir (creator) in sales
+test('archive: a PERSONAL dashboard is owner-only; a SHARED one admits domain_admin + admin', () => {
+  const ownerBuilder: Principal = { id: 'ivy', domains: ['sales'], role: 'builder' };
+  saveDashboard(ownerBuilder, 'dash_da', spec('Owned')); // Personal tier, owned by ivy
   const domainAdmin: Principal = { id: 'dana', domains: ['sales'], role: 'domain_admin' };
   const platformAdmin: Principal = { id: 'sara', domains: ['ops'], role: 'admin' };
+  // A PERSONAL dashboard is owner-only — not even a domain_admin/admin may manage it.
+  assert.throws(() => setDashboardArchived('dash_da', domainAdmin, true), (e: { status?: number }) => e.status === 403);
+  assert.throws(() => setDashboardArchived('dash_da', platformAdmin, true), (e: { status?: number }) => e.status === 403);
+  // The owner (a Builder) promotes their own dashboard Personal→Domain (shared).
+  transitionDashboard('dash_da', ownerBuilder, 'promote');
+  // Now the in-domain domain_admin + platform admin manage the shared dashboard.
   assert.equal(setDashboardArchived('dash_da', domainAdmin, true).archived, true);
   assert.equal(setDashboardArchived('dash_da', platformAdmin, false).archived, false);
   // A domain_admin of ANOTHER domain is denied.

@@ -564,6 +564,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
                 rail={
                   <FolderTree
                     variant="nav"
+                    canCreateDomain={!!user && roleAtLeast(user.role, 'domain_admin')}
                     roots={visibleRoots}
                     personalNodes={treePersonalNodes}
                     domainNodes={treeDomainNodes}

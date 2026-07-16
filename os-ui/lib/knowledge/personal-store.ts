@@ -7,7 +7,7 @@ import { roleAtLeast } from '../core/session.ts';
 import type { Role } from '../core/session.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
-import { canManageArtifact } from '../governance/edit-scope.ts';
+import { canManageArtifact, type ArtifactScope } from '../governance/edit-scope.ts';
 import { normaliseFolderPath } from '../core/folders.ts';
 import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '../folders/index.ts';
 
@@ -136,9 +136,12 @@ function canView(rec: PersonalKnowledgeRecord, user: Principal): boolean {
 }
 
 function canEdit(rec: PersonalKnowledgeRecord, user: Principal): boolean {
-  // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
-  // (Closes the gap where any in-domain Builder could mutate/unshare another's entry.)
-  return canManageArtifact(user, { owner: rec.owner, domain: rec.domain });
+  // Fail-closed edit-scope: owner always; a Personal entry is owner-only (no admin/
+  // domain_admin reaches another user's private know-how). Shared / Marketplace
+  // admits an in-domain domain_admin or a platform admin. (Closes the gap where any
+  // in-domain Builder could mutate/unshare another's entry.)
+  const scope: ArtifactScope = rec.visibility === 'Personal' ? 'personal' : rec.visibility === 'Marketplace' ? 'certified' : 'shared';
+  return canManageArtifact(user, { owner: rec.owner, domain: rec.domain, scope });
 }
 
 function requireView(id: string, user: Principal): PersonalKnowledgeRecord {

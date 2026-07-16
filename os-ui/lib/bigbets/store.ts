@@ -168,12 +168,16 @@ export function canView(bet: BigBet, user: Principal): boolean {
   return !bet.crossDomain && user.domains.includes(bet.domain);
 }
 
-/** Who can EDIT the bet (its owner; Admin for cross-domain). */
+/** Who can EDIT the bet. A big bet is a DOMAIN-scoped strategic object (its domain
+ *  peers can view a non-cross-domain bet), so it edits under the SHARED-artifact
+ *  rule: its owner, an in-domain domain_admin, or a platform admin (any domain).
+ *  A CROSS-DOMAIN bet spans domains — no single domain_admin owns it — so it is
+ *  admin-only, though its own owner still edits it. (There is no owner-private
+ *  "personal" bet tier here; the personal-privacy carve-out does not apply.) */
 export function canEdit(bet: BigBet, user: Principal): boolean {
-  if (user.role === 'admin') return true;
-  if (bet.crossDomain) return false; // cross-domain edits are Admin-only
-  // Fail-closed edit-scope: owner, or domain_admin of the owning domain.
-  return canManageArtifact(user, { owner: bet.owner, domain: bet.domain });
+  if (bet.owner === user.id) return true; // the owner always edits their own bet
+  if (bet.crossDomain) return user.role === 'admin'; // cross-domain edits are Admin-only
+  return canManageArtifact(user, { owner: bet.owner, domain: bet.domain, scope: 'shared' });
 }
 
 /**

@@ -145,15 +145,17 @@ test('moving a file upserts an explicit personal FolderNode (persists when empty
   assert.ok(after.includes('/elsewhere'), 'the new folder row exists too');
 });
 
-test('the folder-move gate: only the owner (or in-domain admin) may move a file', () => {
+test('the folder-move gate: a PRIVATE file is owner-only (no admin reaches it)', () => {
   // The /api/files/:id/folder route delegates to moveFile, whose edit-scope gate is
-  // the route\'s enforcement. A foreign user is rejected; the owner + admin pass.
+  // the route's enforcement. A fresh file is PRIVATE (dataset tier) → owner-only.
   const a = createFile(amir, { name: 'gate.pdf', text: 'g' });
   assert.throws(() => moveFile(a.id, kenji, '/nope'), /permitted|403/i);
   moveFile(a.id, amir, '/mine');           // owner passes
   assert.equal(getFile(a.id, amir).asset.folder, '/mine');
-  moveFile(a.id, sara, '/by-admin');        // in-domain admin passes
-  assert.equal(getFile(a.id, amir).asset.folder, '/by-admin');
+  // NEW manage-rights rule: not even a platform admin may move another user's
+  // PRIVATE file (privacy is absolute for the personal tier).
+  assert.throws(() => moveFile(a.id, sara, '/by-admin'), /permitted|403/i);
+  assert.equal(getFile(a.id, amir).asset.folder, '/mine');
 });
 
 test('a non-owner cannot edit a private file', () => {

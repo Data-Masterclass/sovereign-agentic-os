@@ -12,7 +12,7 @@ import {
 } from './system-schema.ts';
 import { canPromote, roleAtLeast } from '../core/session.ts';
 import { type TemplateKey, templateYaml } from './templates.ts';
-import { canManageArtifact } from '../governance/edit-scope.ts';
+import { canManageArtifact, type ArtifactScope } from '../governance/edit-scope.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
 
@@ -322,14 +322,26 @@ function canView(rec: SystemRecord, user: Principal): boolean {
 }
 
 function canEdit(rec: SystemRecord, user: Principal): boolean {
-  // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
-  return canManageArtifact(user, { owner: rec.owner, domain: rec.domain });
+  // Fail-closed edit-scope: owner always; a Personal agent system is owner-only
+  // (no admin/domain_admin reaches another user's private agent). A Shared /
+  // Marketplace one admits an in-domain domain_admin or a platform admin.
+  const scope: ArtifactScope = rec.visibility === 'Personal' ? 'personal' : rec.visibility === 'Marketplace' ? 'certified' : 'shared';
+  return canManageArtifact(user, { owner: rec.owner, domain: rec.domain, scope });
 }
 
 function requireView(systemId: string, user: Principal): SystemRecord {
   const rec = get(systemId);
   if (!canView(rec, user)) fail('Not permitted to view this system', 403);
   return rec;
+}
+
+/** The PROMOTE/APPROVE governance authority (separate from private-artifact
+ *  management): owner, in-domain domain_admin, or admin — scope-agnostic, so a
+ *  Builder/Admin can still SHARE a filed Personal system. A non-owner Builder is
+ *  still blocked (not a domain_admin/admin). Preserves the promotion gate the
+ *  manage-rights change must not alter. */
+function canGovern(rec: SystemRecord, user: Principal): boolean {
+  return canManageArtifact(user, { owner: rec.owner, domain: rec.domain, scope: 'shared' });
 }
 
 function requireEdit(systemId: string, user: Principal): SystemRecord {
@@ -504,7 +516,11 @@ export function reassignOwner(fromId: string, toId: string): number {
  * the ladder holds regardless of any client input.
  */
 export function promoteSystem(systemId: string, user: Principal): SystemRecord {
-  const rec = requireEdit(systemId, user);
+  const rec = get(systemId);
+  // Promotion is the sanctioned SHARE action — gate on the governance authority
+  // (owner/domain_admin/admin), NOT the owner-only private-manage gate, so an
+  // admin can approve a filed Personal→Shared promotion.
+  if (!canGovern(rec, user)) fail('Not permitted to promote this system', 403);
   if (rec.origin === 'forked') fail('An installed (forked) system cannot be re-published', 400);
   if (rec.visibility === 'Personal') {
     if (!canPromote(user.role, 'Personal')) fail('Promoting to Shared requires a Domain admin or Admin', 403);
@@ -536,7 +552,7 @@ export function demoteSystem(systemId: string, user: Principal): SystemRecord {
     if (user.role !== 'admin') fail('Revoking from the Marketplace requires an Admin', 403);
     rec.visibility = 'Shared';
   } else if (rec.visibility === 'Shared') {
-    if (!canManageArtifact(user, { owner: rec.owner, domain: rec.domain })) {
+    if (!canManageArtifact(user, { owner: rec.owner, domain: rec.domain, scope: 'shared' })) {
       fail('Unsharing requires the owner, an in-domain Domain admin, or an Admin', 403);
     }
     rec.visibility = 'Personal';

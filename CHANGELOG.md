@@ -15,6 +15,22 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.20] — 2026-07-16
+
+### Changed
+- **Tenant admin can manage all Domain and Company artifacts, across every domain** — view, edit,
+  archive, restore, delete — via one scope-aware permission rule applied to every tab.
+
+### Fixed (governance / privacy)
+- **Personal ("My") artifacts are strictly owner-only.** A platform admin or domain admin can no
+  longer view or manage another user's personal datasets, files, dashboards, connections, agent
+  systems, knowledge, workflows, science models, pillars, or **personal folders**. (Previously an
+  admin could reach some of these.)
+- **Creating a Domain folder now requires domain admin (or platform admin).** A builder/creator can
+  no longer create domain-scoped folders (server-enforced 403), and the "New folder" affordance for
+  the Domain root is hidden from them in Files/Data/Metrics. Personal folders are unchanged.
+- Promotion/approval paths are unaffected (a builder still proposes; domain admin+ approves).
+
 ## [os-ui 0.5.19] — 2026-07-16
 
 ### Changed

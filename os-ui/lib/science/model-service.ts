@@ -18,7 +18,7 @@ import type {
   ServiceModel,
 } from '@/lib/science/types';
 // Pure edit-scope helper (type-only dep chain — safe under `node --test`).
-import { canManageArtifact } from '../governance/edit-scope.ts';
+import { canManageArtifact, type ArtifactScope } from '../governance/edit-scope.ts';
 
 /**
  * Model-as-service governance — the Opus spine of the Science golden path.
@@ -528,7 +528,10 @@ function requireEditScope(actor: Actor, m: ServiceModel, action: string): void {
   // Map the science Actor role onto the session Role for the shared gate:
   // 'user' has no manage rights (→ creator); builder/domain_admin/admin pass through.
   const role = actor.role === 'user' ? 'creator' : actor.role;
-  if (!canManageArtifact({ id: actor.id, role, domains: actor.domains }, { owner: m.owner, domain: m.domain })) {
+  // A Personal-tier model is owner-only; a shared/marketplace model admits an in-
+  // domain domain_admin or a platform admin.
+  const scope: ArtifactScope = m.tier === 'Personal' ? 'personal' : m.tier === 'Marketplace' ? 'certified' : 'shared';
+  if (!canManageArtifact({ id: actor.id, role, domains: actor.domains }, { owner: m.owner, domain: m.domain, scope })) {
     throw withStatus(new Error(`Only the owner, an in-domain Domain admin, or an Admin can ${action} this model`), 403);
   }
 }

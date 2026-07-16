@@ -6,7 +6,7 @@ import { type DashTier, type DashboardRecord, dashboardRecord, governDashboard }
 import { type DashboardSpec } from './model.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
-import { canManageArtifact } from '../governance/edit-scope.ts';
+import { canManageArtifact, type ArtifactScope } from '../governance/edit-scope.ts';
 
 /**
  * A small in-memory dashboard registry (mirrors lib/data/store's shape + discipline:
@@ -19,6 +19,13 @@ import { canManageArtifact } from '../governance/edit-scope.ts';
 export type Principal = { id: string; domains: string[]; role: Role };
 
 type Stored = DashboardRecord & { domain: string; archived?: boolean };
+
+/** The edit-scope arg for a dashboard. A `personal`-tier dashboard is owner-only
+ *  (no admin/domain_admin reaches another user's private dashboard). */
+function manageArg(d: Stored): { owner: string; domain: string; scope: ArtifactScope } {
+  const scope: ArtifactScope = d.tier === 'personal' ? 'personal' : d.tier === 'marketplace' ? 'certified' : 'shared';
+  return { owner: d.owner, domain: d.domain, scope };
+}
 
 // A fresh tenant starts EMPTY. Dashboards are created only through the
 // platform's own governed flows (e.g. the Northpeak e-commerce seed).
@@ -121,7 +128,7 @@ export function saveDashboard(user: Principal, id: string, spec: DashboardSpec):
   const existing = dashState().dashboards.find((x) => x.id === id);
   if (existing) {
     // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
-    if (!canManageArtifact(user, { owner: existing.owner, domain: existing.domain })) throw status('only the owner, an in-domain domain admin, or an admin can edit this dashboard', 403);
+    if (!canManageArtifact(user, manageArg(existing))) throw status('only the owner, an in-domain domain admin, or an admin can edit this dashboard', 403);
     // Snapshot the PRIOR spec before overwriting so the edit is restorable.
     versions.record(existing.id, user.id, snapshotState(existing), 'edit');
     existing.spec = spec;
@@ -149,7 +156,7 @@ function requireOwned(id: string, user: Principal): Stored {
   const d = dashState().dashboards.find((x) => x.id === id);
   if (!d) throw status(`dashboard '${id}' not found`, 404);
   // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
-  if (!canManageArtifact(user, { owner: d.owner, domain: d.domain })) throw status('only the owner, an in-domain domain admin, or an admin can modify this dashboard', 403);
+  if (!canManageArtifact(user, manageArg(d))) throw status('only the owner, an in-domain domain admin, or an admin can modify this dashboard', 403);
   return d;
 }
 

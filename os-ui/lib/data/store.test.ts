@@ -372,8 +372,9 @@ test('FOLDER: moveDataset is edit-scoped, normalises, and reflects in the summar
   assert.equal(listDatasets(amir).mine[0].folder, '/contracts');
   // A non-owner, non-admin in the same domain cannot move it (fail-closed 403).
   assert.throws(() => moveDataset(id, bea, '/elsewhere'), (e: DatasetError) => e.status === 403);
-  // An in-domain admin may (same edit-scope rule as archive/delete).
-  assert.equal(moveDataset(id, sara, '/legal').folder, '/legal');
+  // NEW manage-rights rule: a PRIVATE (personal) dataset is owner-only — not even a
+  // platform admin may move (manage) another user's private data.
+  assert.throws(() => moveDataset(id, sara, '/legal'), (e: DatasetError) => e.status === 403);
   // Moving back to root serializes without a folder key (byte-stable) — folder is '/'.
   assert.equal(moveDataset(id, amir, '/').folder, '/');
 });

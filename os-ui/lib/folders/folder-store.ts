@@ -7,7 +7,7 @@ import {
   folderName,
   renamePrefix,
 } from '../core/folders.ts';
-import { canManageArtifact } from '../governance/edit-scope.ts';
+import { canManageArtifact, type ArtifactScope } from '../governance/edit-scope.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { versionLog } from '../core/versioning.ts';
 
@@ -142,15 +142,13 @@ function persist(node: FolderNode): void {
   mirror.writeThrough(node.id, node);
 }
 
-/** The owner+domain the edit-scope gate reads for a folder. Personal folders are
- *  gated on the owner alone (a domain admin has no say over another user's
- *  private tree); domain folders additionally admit a domain_admin of the
- *  folder's domain. Encoded by which `domain` we hand the shared gate. */
-function gateArt(node: Pick<FolderNode, 'owner' | 'domain' | 'scope'>): { owner: string; domain: string } {
-  // For a personal folder, pass a domain no admin can match ('' — a user's
-  // domains never include the empty string) so ONLY the owner (or platform
-  // admin) passes. For a domain folder, pass its real domain.
-  return { owner: node.owner, domain: node.scope === 'domain' ? node.domain : '' };
+/** The edit-scope arg the shared gate reads for a folder. A PERSONAL folder is
+ *  owner-only — no admin AND no domain_admin may touch another user's private tree
+ *  (the 'personal' scope closes the platform-admin gap too). A DOMAIN folder is a
+ *  shared artifact: its owner, an in-domain domain_admin, or a platform admin. */
+function gateArt(node: Pick<FolderNode, 'owner' | 'domain' | 'scope'>): { owner: string; domain: string; scope: ArtifactScope } {
+  if (node.scope === 'domain') return { owner: node.owner, domain: node.domain, scope: 'shared' };
+  return { owner: node.owner, domain: node.domain, scope: 'personal' };
 }
 
 function requireManage(user: Principal, node: Pick<FolderNode, 'owner' | 'domain' | 'scope'>): void {
@@ -228,6 +226,14 @@ export function createFolder(
   if (scope === 'domain') {
     if (!domain) throw new FolderError('A domain folder needs a domain', 400);
     if (!user.domains.includes(domain)) throw new FolderError('You are not a member of that domain', 403);
+    // Creating DOMAIN-level structure is a domain-admin act: only an in-domain
+    // domain_admin (membership checked above) or a platform admin may mint a
+    // domain folder. A builder/creator proposes to Domain but does not own or
+    // create domain structure — fail-closed BEFORE the owner-passes manage gate
+    // (which would otherwise wave them through as the row's would-be owner).
+    if (user.role !== 'admin' && user.role !== 'domain_admin') {
+      throw new FolderError('Creating a domain folder requires a domain admin or a platform admin', 403);
+    }
   }
 
   // Gate BEFORE any write (fail-closed).

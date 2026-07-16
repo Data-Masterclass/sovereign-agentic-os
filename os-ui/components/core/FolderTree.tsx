@@ -84,6 +84,15 @@ type CommonProps = {
    * renders (so a user with no folders yet can create their first one).
    */
   roots?: RootScope[];
+  /**
+   * May the viewer CREATE a DOMAIN folder? Creating domain-level structure is a
+   * domain_admin+ act (mirrors the server gate in `createFolder`), so a builder/
+   * creator must not be offered the affordance. Defaults to `true` for backward-
+   * compatibility; callers that know the viewer's role pass `false` for non-admins
+   * to hide/disable the domain-scope "New folder" buttons. Personal-scope creation
+   * is always allowed (a user owns their own tree).
+   */
+  canCreateDomain?: boolean;
 };
 
 /** The folder-row handle passed to every lifecycle callback — the path (always) plus
@@ -323,6 +332,8 @@ function FolderRow({
 
         {nav && (
           <span style={{ display: 'flex', gap: 4, position: 'relative' }}>
+            {/* A DOMAIN subfolder needs domain_admin+ (mirrors the server gate). */}
+            {(scope !== 'domain' || props.canCreateDomain !== false) && (
             <button
               type="button"
               className="btn ghost sm"
@@ -334,6 +345,7 @@ function FolderRow({
             >
               +
             </button>
+            )}
             <button
               type="button"
               className="btn ghost sm"
@@ -536,6 +548,11 @@ function Root({
   const nav = props.variant === 'nav' ? props : null;
   const picker = props.variant === 'picker' ? props : null;
 
+  // Create affordances: a DOMAIN folder needs domain_admin+ (mirrors the server
+  // gate). Personal-scope creation is always offered; domain-scope creation is
+  // suppressed for a viewer the caller marked as unable to create domain folders.
+  const canCreateHere = scope !== 'domain' || props.canCreateDomain !== false;
+
   // In picker mode, root "/" is a selectable destination.
   const rootIsPickerSelected = picker !== null && pickerSelected?.path === '/' && pickerSelected?.scope === scope;
 
@@ -546,7 +563,7 @@ function Root({
         style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}
       >
         <span>{label}</span>
-        {nav && (
+        {nav && canCreateHere && (
           <button type="button" className="btn ghost sm" onClick={() => nav.onCreate?.(scope, '/')}>
             New folder
           </button>

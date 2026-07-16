@@ -6,6 +6,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useUser } from '@/lib/useUser';
+import { roleAtLeast } from '@/lib/core/session';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/core/scopes';
 import {
@@ -403,6 +404,7 @@ function FilesBrowserInner() {
                 New-folder edit the registry. */}
             <FolderTree
               variant="nav"
+              canCreateDomain={!!user && roleAtLeast(user.role, 'domain_admin')}
               roots={activeRoots}
               personalNodes={visiblePersonalNodes}
               domainNodes={visibleDomainNodes}

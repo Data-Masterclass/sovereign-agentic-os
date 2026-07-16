@@ -28,7 +28,7 @@ import {
   visibilityFor,
 } from '../data/dataset-schema.ts';
 import { canRead } from './dls.ts';
-import { canManageArtifact } from '../governance/edit-scope.ts';
+import { canManageArtifact, type ArtifactScope } from '../governance/edit-scope.ts';
 import { promotionGate, gateReason } from './promotion.ts';
 import { recordLineage } from './lineage.ts';
 import { osMirror } from '../infra/os-mirror.ts';
@@ -283,8 +283,11 @@ function canView(a: FileAsset, user: Principal): boolean {
 }
 
 function canEdit(a: FileAsset, user: Principal): boolean {
-  // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
-  return canManageArtifact(user, { owner: a.owner, domain: a.domain });
+  // Fail-closed edit-scope: owner always; a PRIVATE (dataset-tier) file is owner-
+  // only — no admin/domain_admin may touch another user's private file. A shared
+  // (asset) / product file admits an in-domain domain_admin or a platform admin.
+  const scope: ArtifactScope = a.tier === 'dataset' ? 'personal' : a.tier === 'product' ? 'certified' : 'shared';
+  return canManageArtifact(user, { owner: a.owner, domain: a.domain, scope });
 }
 
 function viewOf(rec: FileRecord, user: Principal): FileAsset {

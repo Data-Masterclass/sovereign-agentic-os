@@ -56,6 +56,13 @@ function personalModel(): ServiceModel {
   };
 }
 
+// A SHARED (Domain-tier) model — the scope where a non-owner domain_admin/admin
+// has management authority (a Personal model is owner-only under the manage-rights
+// rule, so admin/domain_admin lifecycle tests use this shared model).
+function domainModel(): ServiceModel {
+  return { ...personalModel(), tier: 'Domain' };
+}
+
 // The store ships EMPTY now; tests that exercise the churn worked-example
 // register it themselves (Personal tier, Production stage) right after reset.
 function churnModel(): ServiceModel {
@@ -280,7 +287,7 @@ test('cannot import a model that is not yet certified to the Marketplace', () =>
 
 test('setModelArchived archives + restores; archived drops out of the viewer list', () => {
   _resetModels();
-  upsertModel(personalModel()); // owner sara, domain sales, model test_model
+  upsertModel(domainModel()); // SHARED model → an in-domain admin may manage it
   const viewer = { id: 'sara', domains: ['sales'] };
   assert.equal(listModelsForUser(viewer).length, 1);
   setModelArchived('test_model', admin('sales'), true);
@@ -292,7 +299,7 @@ test('setModelArchived archives + restores; archived drops out of the viewer lis
 
 test('deleteModel requires archive first, then removes the record', () => {
   _resetModels();
-  upsertModel(personalModel());
+  upsertModel(domainModel()); // SHARED model → an in-domain admin may manage it
   assert.throws(() => deleteModel('test_model', admin('sales')), /archive the model before deleting/i);
   setModelArchived('test_model', admin('sales'), true);
   deleteModel('test_model', admin('sales'));
@@ -308,14 +315,26 @@ test('archive/delete reject agents and out-of-domain / non-owner non-admin actor
   assert.throws(() => setModelArchived('test_model', builder('sales'), true), /owner|Domain admin|Admin/i);
 });
 
-test('archive/delete: a domain_admin of the owning domain MAY manage a non-owned model', () => {
+test('archive/delete: a domain_admin of the owning domain MAY manage a non-owned SHARED model', () => {
   _resetModels();
-  upsertModel(personalModel()); // owner sara, domain sales
+  upsertModel(domainModel()); // owner sara, domain sales, SHARED (Domain) tier
   const domainAdmin: Actor = { id: 'dana', role: 'domain_admin', domains: ['sales'], isAgent: false };
   assert.equal(setModelArchived('test_model', domainAdmin, true).archived, true);
   // a domain_admin of ANOTHER domain is out of scope.
   const otherDomainAdmin: Actor = { id: 'omar', role: 'domain_admin', domains: ['ops'], isAgent: false };
   assert.throws(() => setModelArchived('test_model', otherDomainAdmin, false), /domain you belong to/i);
+});
+
+test('archive/delete: a PERSONAL model is owner-only — no admin, no domain_admin', () => {
+  _resetModels();
+  upsertModel(personalModel()); // owner sara, domain sales, Personal tier
+  // A platform admin (not the owner) may NOT manage another user's private model.
+  assert.throws(() => setModelArchived('test_model', admin('sales'), true), /owner|Domain admin|Admin/i);
+  const domainAdmin: Actor = { id: 'dana', role: 'domain_admin', domains: ['sales'], isAgent: false };
+  assert.throws(() => setModelArchived('test_model', domainAdmin, true), /owner|Domain admin|Admin/i);
+  // The owner still manages their own private model.
+  const sara: Actor = { id: 'sara', role: 'creator', domains: ['sales'], isAgent: false };
+  assert.equal(setModelArchived('test_model', sara, true).archived, true);
 });
 
 // ------------------------------------------------------------- createModel (Phase 1)

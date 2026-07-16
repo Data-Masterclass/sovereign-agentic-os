@@ -6,7 +6,7 @@ import { config } from '@/lib/core/config';
 import { osMirror } from '@/lib/infra/os-mirror';
 import type { CurrentUser } from '@/lib/core/auth';
 import { canPromote, roleAtLeast } from '@/lib/core/session';
-import { canManageArtifact } from '@/lib/governance/edit-scope';
+import { canManageArtifact, type ArtifactScope } from '@/lib/governance/edit-scope';
 import type { Visibility } from '@/lib/core/artifact-model';
 import {
   type Connection,
@@ -301,6 +301,13 @@ function visibleToUser(c: Connection, user: CurrentUser): boolean {
   return true; // Certified (Marketplace) — discoverable across domains
 }
 
+/** The edit-scope arg for a connection. A Personal connection is owner-only —
+ *  no admin/domain_admin reaches another user's private connection. */
+function manageArg(c: Connection): { owner: string; domain: string; scope: ArtifactScope } {
+  const scope: ArtifactScope = c.visibility === 'Personal' ? 'personal' : c.visibility === 'Certified' ? 'certified' : 'shared';
+  return { owner: c.owner, domain: c.domain, scope };
+}
+
 export async function listConnectionsForUser(
   user: CurrentUser,
   opts: { includeArchived?: boolean } = {},
@@ -561,7 +568,7 @@ export async function updateCapabilities(
   const c = map.get(connId);
   if (!c) throw withStatus(new Error('Connection not found'), 404);
   // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
-  if (!canManageArtifact(user, { owner: c.owner, domain: c.domain })) {
+  if (!canManageArtifact(user, manageArg(c))) {
     throw withStatus(new Error('Not permitted to edit this connection'), 403);
   }
   if (!roleAtLeast(user.role, 'builder')) {
@@ -1017,7 +1024,7 @@ export async function registerWarehouseCatalog(
   if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
   if (c.template !== 'warehouse' || !c.warehouse) throw withStatus(new Error('Not a warehouse connection'), 400);
   // Governed: registering a live catalog writes cluster state — edit rights + Builder+.
-  if (!canManageArtifact(user, { owner: c.owner, domain: c.domain })) {
+  if (!canManageArtifact(user, manageArg(c))) {
     throw withStatus(new Error('Not permitted to register this connection'), 403);
   }
   if (!roleAtLeast(user.role, 'builder')) {
@@ -1073,7 +1080,7 @@ export async function importWarehouseTable(
   const c = map.get(connId);
   if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
   if (c.template !== 'warehouse' || !c.warehouse) throw withStatus(new Error('Not a warehouse connection'), 400);
-  if (!canManageArtifact(user, { owner: c.owner, domain: c.domain })) {
+  if (!canManageArtifact(user, manageArg(c))) {
     throw withStatus(new Error('Not permitted to import from this connection'), 403);
   }
   const provider = providerFor(c.warehouse.platform);
@@ -1158,7 +1165,7 @@ export async function demoteConnection(connId: string, user: CurrentUser): Promi
     if (user.role !== 'admin') throw withStatus(new Error('Revoking from the Marketplace requires an Administrator'), 403);
     next = 'Shared';
   } else if (c.visibility === 'Shared') {
-    if (!canManageArtifact(user, { owner: c.owner, domain: c.domain })) {
+    if (!canManageArtifact(user, manageArg(c))) {
       throw withStatus(new Error('Unsharing requires the owner, an in-domain Domain admin, or an Administrator'), 403);
     }
     next = 'Personal';
@@ -1196,7 +1203,7 @@ export async function grantToAgent(
   const c = map.get(connId);
   if (!c) throw withStatus(new Error('Connection not found'), 404);
   // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
-  if (!canManageArtifact(user, { owner: c.owner, domain: c.domain })) {
+  if (!canManageArtifact(user, manageArg(c))) {
     throw withStatus(new Error('Not permitted to grant this connection'), 403);
   }
   if (!roleAtLeast(user.role, 'builder')) {
@@ -2170,7 +2177,7 @@ export async function verifyNotionConnection(
 function requireConnEdit(c: Connection | undefined, user: CurrentUser): Connection {
   if (!c) throw withStatus(new Error('Connection not found'), 404);
   // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
-  if (!canManageArtifact(user, { owner: c.owner, domain: c.domain })) {
+  if (!canManageArtifact(user, manageArg(c))) {
     throw withStatus(new Error('Not permitted to modify this connection'), 403);
   }
   return c;

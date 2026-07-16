@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { type Role, roleAtLeast } from '../core/session.ts';
-import { canManageArtifact } from '../governance/edit-scope.ts';
+import { canManageArtifact, type ArtifactScope } from '../governance/edit-scope.ts';
 import {
   type Dataset,
   type DataVisibility,
@@ -256,8 +256,23 @@ function canView(d: Dataset, user: Principal): boolean {
 }
 
 function canEdit(d: Dataset, user: Principal): boolean {
-  // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
-  return canManageArtifact(user, { owner: d.owner, domain: d.domain });
+  // Fail-closed edit-scope: owner always; a PRIVATE (dataset-tier) dataset is
+  // owner-only — no admin/domain_admin may touch another user's private data. A
+  // shared (asset) / product dataset admits an in-domain domain_admin or admin.
+  const scope: ArtifactScope = d.tier === 'dataset' ? 'personal' : d.tier === 'product' ? 'certified' : 'shared';
+  return canManageArtifact(user, { owner: d.owner, domain: d.domain, scope });
+}
+
+/**
+ * The PROMOTE/APPROVE governance authority (separate from private-artifact
+ * management). Promotion is the sanctioned path by which a Builder/Admin SHARES a
+ * dataset — so even for a still-Personal (dataset-tier) dataset it admits an
+ * in-domain domain_admin or a platform admin, NOT owner-only. The role/tier
+ * separation-of-duties is enforced additionally by {@link canTransition}. Keeping
+ * this on the pre-existing (scope-agnostic) rule preserves the promotion gates the
+ * manage-rights change must NOT alter. */
+function canGovern(d: Dataset, user: Principal): boolean {
+  return canManageArtifact(user, { owner: d.owner, domain: d.domain, scope: 'shared' });
 }
 
 function viewOf(rec: DatasetRecord, user: Principal): Dataset {
@@ -794,7 +809,9 @@ export function transition(
 ): Dataset {
   const rec = get(id);
   const d = parseDataset(rec.yaml);
-  if (!canEdit(d, user)) fail('Not permitted to change this dataset', 403);
+  // Promote/approve governance authority — NOT the owner-only private-manage gate,
+  // so a Builder/Admin can still SHARE a Personal dataset (unchanged promotion gate).
+  if (!canGovern(d, user)) fail('Not permitted to change this dataset', 403);
 
   const gate = canTransition(user.role, d.tier, t);
   if (!gate.ok) fail(gate.reason ?? 'transition not allowed', 403);

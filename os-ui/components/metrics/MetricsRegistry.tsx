@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useUser } from '@/lib/useUser';
+import { roleAtLeast } from '@/lib/core/session';
 import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/core/scopes';
 import { canManageArtifact } from '@/lib/governance/edit-scope';
 import {
@@ -331,6 +332,7 @@ function MetricsRegistryInner({
               rail={
                 <FolderTree
                   variant="nav"
+                  canCreateDomain={!!user && roleAtLeast(user.role, 'domain_admin')}
                   roots={roots}
                   personalNodes={roots.includes('personal') ? personalTreeNodes : []}
                   domainNodes={roots.includes('domain') ? domainTreeNodes : []}

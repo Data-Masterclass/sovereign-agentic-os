@@ -56,27 +56,41 @@ test('createFolder is idempotent on (tab, scope, path) — no duplicate row', ()
 
 // ---- governance gate: personal = owner only; domain = canManageArtifact ----
 
-test('personal folder: only the OWNER (or platform admin) may manage it', () => {
+test('personal folder: ONLY the OWNER may manage it (no admin, no domain_admin)', () => {
   const f = createFolder(amir, { tab: 'files', scope: 'personal', path: '/mine' });
   // A builder in the same domain must NOT touch another user's personal folder.
   assert.throws(() => renameFolder(bea, f.id, '/mine2'), (e: unknown) => e instanceof FolderError && (e as FolderError).status === 403);
-  // A DOMAIN ADMIN of the domain still has no say over a private tree.
+  // A DOMAIN ADMIN of the domain has no say over a private tree.
   assert.throws(() => renameFolder(dina, f.id, '/mine2'), (e: unknown) => e instanceof FolderError && (e as FolderError).status === 403);
+  // A PLATFORM ADMIN also has NO say over another user's private tree (privacy is
+  // absolute for the personal tier — the manage-rights rule).
+  assert.throws(() => renameFolder(sara, f.id, '/mine3'), (e: unknown) => e instanceof FolderError && (e as FolderError).status === 403);
   // The owner can.
   assert.equal(renameFolder(amir, f.id, '/mine2').path, '/mine2');
-  // A platform admin can (tenant-wide), even from another domain.
-  assert.equal(renameFolder(sara, f.id, '/mine3').path, '/mine3');
 });
 
 test('domain folder: owner, in-domain domain_admin, or platform admin may manage', () => {
   const f = createFolder(dina, { tab: 'files', scope: 'domain', path: '/team', domain: 'sales' });
-  // The owner (dina) can; another domain's admin (kenji) cannot.
+  // The owner (dina, a domain_admin) can; another domain's admin (kenji) cannot.
   assert.throws(() => renameFolder(kenji, f.id, '/team2'), (e: unknown) => e instanceof FolderError && (e as FolderError).status === 403);
   // A builder who is NOT the owner cannot mutate a shared folder (edit-scope rule).
   assert.throws(() => renameFolder(bea, f.id, '/team2'), (e: unknown) => e instanceof FolderError && (e as FolderError).status === 403);
-  // A domain admin OF sales who is not the owner CAN (canManageArtifact).
-  const f2 = createFolder(bea, { tab: 'files', scope: 'domain', path: '/beas', domain: 'sales' });
-  assert.equal(renameFolder(dina, f2.id, '/beas-renamed').path, '/beas-renamed');
+  // The owner (in-domain domain_admin) renames it.
+  assert.equal(renameFolder(dina, f.id, '/team2').path, '/team2');
+  // A PLATFORM ADMIN (tenant-wide, even from another domain) may manage it too.
+  assert.equal(renameFolder(sara, f.id, '/team3').path, '/team3');
+});
+
+test('domain folder CREATION requires domain_admin+ (a builder/creator cannot)', () => {
+  // A builder proposes to Domain but does not mint domain-level structure.
+  assert.throws(() => createFolder(bea, { tab: 'files', scope: 'domain', path: '/nope', domain: 'sales' }),
+    (e: unknown) => e instanceof FolderError && (e as FolderError).status === 403);
+  assert.throws(() => createFolder(amir, { tab: 'files', scope: 'domain', path: '/nope', domain: 'sales' }),
+    (e: unknown) => e instanceof FolderError && (e as FolderError).status === 403);
+  // A creator/builder CAN create their own personal folder freely.
+  assert.ok(createFolder(bea, { tab: 'files', scope: 'personal', path: '/beas' }));
+  // An in-domain domain_admin CREATES a domain folder.
+  assert.ok(createFolder(dina, { tab: 'files', scope: 'domain', path: '/ok', domain: 'sales' }));
 });
 
 // -------------------------------- archive → restore → delete lifecycle -----

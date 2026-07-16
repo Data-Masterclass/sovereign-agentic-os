@@ -338,9 +338,12 @@ test('RUN-SCOPE: owner + in-domain admin unchanged; a Personal system stays owne
   __resetStore();
   const personal = createSystem(sara, { name: 'Sara Desk', domain: 'sales' });
   assert.ok(getSystemForRun(personal.id, sara)); // owner runs their own
-  assert.ok(getSystemForRun(personal.id, admin)); // in-domain admin (edit ⇒ run)
-  // A Creator cannot run someone else's PERSONAL system (not shared).
+  // NEW manage-rights rule: a PERSONAL system is owner-only — NOT even a platform
+  // admin may run (manage) another user's private agent system.
+  assert.throws(() => getSystemForRun(personal.id, admin), /not permitted to run/i);
+  // A Creator likewise cannot run someone else's PERSONAL system (not shared).
   assert.throws(() => getSystemForRun(personal.id, creator), /not permitted to run/i);
+  // Once SHARED, an in-domain admin (and domain peers) may run it.
   const shared = makeShared(sara, { name: 'Shared', domain: 'sales' });
   assert.ok(getSystemForRun(shared.id, admin));
 });

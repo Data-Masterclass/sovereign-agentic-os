@@ -17,7 +17,7 @@ import { canPromote, roleAtLeast } from '../core/session.ts';
 import type { Role } from '../core/session.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
-import { canManageArtifact } from '../governance/edit-scope.ts';
+import { canManageArtifact, type ArtifactScope } from '../governance/edit-scope.ts';
 import { type ManualScope, resolveManual } from './manual.ts';
 
 export type { ArtifactVersion };
@@ -206,9 +206,13 @@ function canView(rec: WorkflowRecord, user: Principal): boolean {
 }
 
 function canEdit(rec: WorkflowRecord, user: Principal): boolean {
-  // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
-  // (Closes the gap where any in-domain Builder could mutate another's workflow.)
-  return canManageArtifact(user, { owner: rec.owner, domain: rec.domain });
+  // Fail-closed edit-scope: owner always; a Personal draft is owner-only to MANAGE
+  // (no admin/domain_admin mutates another user's private workflow, even though a
+  // Builder+ may view it). A Shared / Marketplace workflow admits an in-domain
+  // domain_admin or a platform admin. (Closes the gap where any in-domain Builder
+  // could mutate another's workflow.)
+  const scope: ArtifactScope = rec.visibility === 'Personal' ? 'personal' : rec.visibility === 'Marketplace' ? 'certified' : 'shared';
+  return canManageArtifact(user, { owner: rec.owner, domain: rec.domain, scope });
 }
 
 function requireView(id: string, user: Principal): WorkflowRecord {

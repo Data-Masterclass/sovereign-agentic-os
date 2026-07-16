@@ -400,10 +400,15 @@ export function canEditPillar(
   user: { id?: string; domains: string[]; role: Role },
   pillar: Pick<Pillar, 'scope' | 'domain' | 'owner'>,
 ): boolean {
+  // PERSONAL (My) is owner-only — no admin, no domain_admin may edit another
+  // user's private pillar (privacy is absolute for the personal tier).
   if (pillar.scope === 'personal') return !!user.id && pillar.owner === user.id;
+  // A platform admin has FULL reach over every SHARED tier (domain + tenant),
+  // across all domains — the central admin-rights rule.
+  if (user.role === 'admin') return true;
   if (pillar.scope === 'tenant') {
-    // Tenant-wide pillars are Admin-owned.
-    return user.role === 'admin';
+    // Tenant-wide pillars are otherwise Admin-owned.
+    return false;
   }
   // Domain pillar: the owner, or a Builder+ who belongs to that domain.
   if (!!user.id && pillar.owner === user.id) return roleAtLeast(user.role, 'builder');

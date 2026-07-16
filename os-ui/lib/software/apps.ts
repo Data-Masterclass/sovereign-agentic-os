@@ -5,7 +5,7 @@ import 'server-only';
 import { config } from '@/lib/core/config';
 import type { CurrentUser } from '@/lib/core/auth';
 import { canPromote, roleAtLeast } from '@/lib/core/session';
-import { canManageArtifact } from '@/lib/governance/edit-scope';
+import { canManageArtifact, type ArtifactScope } from '@/lib/governance/edit-scope';
 import type { Visibility } from '@/lib/core/artifact-model';
 import {
   createArtifact,
@@ -449,8 +449,11 @@ function snapshotState(a: App): { designDecisions: string; dataDescriptions: str
 }
 
 function isOwnerOrAdminApp(a: App, user: CurrentUser): boolean {
-  // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
-  return canManageArtifact(user, { owner: a.owner, domain: a.domain });
+  // Fail-closed edit-scope: owner always; a Personal app is owner-only (no admin/
+  // domain_admin reaches another user's private app). A Shared / Certified app
+  // admits an in-domain domain_admin or a platform admin.
+  const scope: ArtifactScope = a.visibility === 'Personal' ? 'personal' : a.visibility === 'Certified' ? 'certified' : 'shared';
+  return canManageArtifact(user, { owner: a.owner, domain: a.domain, scope });
 }
 
 async function getCache(): Promise<Map<string, App>> {

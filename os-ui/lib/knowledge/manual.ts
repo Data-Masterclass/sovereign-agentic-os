@@ -72,7 +72,8 @@ export function resolveManual(
     key: dom,
     canView: inDomain, // everyone in the domain reads it
     // Shared-edit rule on an owner-less domain card → domain_admin OF this domain,
-    // or a platform admin. A creator/builder never matches (empty owner).
-    canEdit: inDomain && canManageArtifact(user, { owner: '', domain: dom }),
+    // or a platform admin. A creator/builder never matches (empty owner). The
+    // 'shared' scope keeps this a domain artifact (never treated as owner-private).
+    canEdit: inDomain && canManageArtifact(user, { owner: '', domain: dom, scope: 'shared' }),
   };
 }
