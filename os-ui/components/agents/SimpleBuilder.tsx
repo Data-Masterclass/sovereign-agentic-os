@@ -25,7 +25,7 @@ import FolderTree, { type FolderSelection } from '@/components/core/FolderTree';
 import { useToast } from '@/components/core/Toast';
 import { itemsUnderFolder, normaliseFolderPath } from '@/lib/core/folders';
 import {
-  capabilityChipsForGrants, toolsForCapabilityChips, chipIdsForTools,
+  capabilityChipsForGrants, toolsForCapabilityChipsInPool, chipIdsForTools,
   type CapabilityChip,
 } from '@/lib/agents/capability-tools';
 import { setEntrypoint } from '@/lib/agents/canvas-edit';
@@ -843,8 +843,10 @@ function AgentCapabilities({
     if (isFull) {
       tools = undefined;
     } else {
-      const pool = new Set(system.grants.tools);
-      const narrow = toolsForCapabilityChips(nextIds).filter((t) => pool.has(t));
+      // Pool-aware: each selected chip resolves to its kind's read ∪ granted-write tools
+      // ∩ the team pool — so a capability keeps the write access the team was granted
+      // (not just read). The ∩ pool keeps the agent ⊆ grants.tools (never widens).
+      const narrow = toolsForCapabilityChipsInPool(nextIds, system.grants.tools);
       tools = narrow.length > 0 ? narrow : [];
     }
     onCommit({ ...system, agents: system.agents.map((a) => a.id === agentId ? { ...a, tools } : a) });
@@ -1438,14 +1440,15 @@ function FolderResourcePicker({
           {grantedFolders.map((g) => (
             <span key={`f:${g.folder!.scope}:${g.folder!.path}`} className="sb-chip granted" style={{ gap: 8 }}>
               <span>📁 {g.folder!.path === '/' ? 'All' : g.folder!.path}<span className="badge muted" style={{ marginLeft: 6 }}>{scopeLabel(g.folder!.scope === 'domain' ? 'shared' : 'mine')}</span></span>
-              {kind !== 'files' ? (
-                <AccessLevelSelect
-                  cap={cap}
-                  capability={g.capability}
-                  canEdit={canEdit}
-                  onLevel={(l) => onCommit(setFolderGrantLevel(system, kind, g.folder!, l))}
-                />
-              ) : null}
+              {/* Files are folder-granted only, so the folder chip carries the SAME access
+                  selector item grants use — this is the only place a Files write can be set.
+                  `cap` (from the system safety preset) bounds it exactly like every kind. */}
+              <AccessLevelSelect
+                cap={cap}
+                capability={g.capability}
+                canEdit={canEdit}
+                onLevel={(l) => onCommit(setFolderGrantLevel(system, kind, g.folder!, l))}
+              />
               {canEdit ? (
                 <button className="sb-chip-x" title="Remove" onClick={() => onCommit(removeFolderGrant(system, kind, g.folder!))}>✕</button>
               ) : null}

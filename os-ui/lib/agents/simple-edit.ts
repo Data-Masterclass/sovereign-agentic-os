@@ -242,8 +242,10 @@ export function setDescription(input: System, text: string): System {
 export function removeArtifactGrant(input: System, kind: GrantKind, id: string | null): System {
   const sys = structuredClone(input);
   if (kind !== 'files' && id) sys.grants[kind] = sys.grants[kind].filter((g) => g.id !== id);
-  const stillWrites =
-    kind === 'files' ? false : sys.grants[kind].some((g) => capabilityWrites(g.capability));
+  // Keep the kind's WRITE tools while ANY remaining grant of the kind writes. Files carry
+  // only folder grants (no item list), so count those — otherwise removing an unrelated
+  // grant would wrongly strip `upload_file` while a write files-folder grant still stands.
+  const stillWrites = sys.grants[kind].some((g) => capabilityWrites(g.capability));
   if (!stillWrites) for (const t of writeToolsForKind(kind)) stripTool(sys, t);
   return sys;
 }
@@ -297,6 +299,13 @@ function setFolderGrantCapability(
   // Provision the matching tools (ADD-only — never removes a hand-picked tool), the
   // SAME set an item grant of this kind+capability provisions.
   for (const t of toolsForGrant(kind, cap)) if (!sys.grants.tools.includes(t)) sys.grants.tools.push(t);
+  // Files carry no per-item grant list, so a Files folder DOWNGRADE to read must strip
+  // the write tool once NO remaining files grant writes — mirroring the item path
+  // (`setArtifactGrantCapability`) and `removeFolderGrant`. Other kinds keep write tools
+  // while any item/folder grant of the kind still writes (stripped on removal/downgrade).
+  if (kind === 'files' && !write && !sys.grants.files.some((g) => capabilityWrites(g.capability))) {
+    for (const t of writeToolsForKind('files')) stripTool(sys, t);
+  }
   if (write && sys.safetyPreset === 'read-only') sys.safetyPreset = 'read-bounded';
   return sys;
 }

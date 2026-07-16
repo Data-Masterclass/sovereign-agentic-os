@@ -281,6 +281,47 @@ export function toolsForCapabilityChips(chipIds: string[]): string[] {
 }
 
 /**
+ * Every tool a selected chip COULD map to (read ∪ write for its kind), regardless of
+ * what the team granted. A resource chip (`grantKind` data/knowledge/files/…) spans
+ * that kind's full read+write set; the two plan chips span their governed plan read
+ * tools (plan grants are read-only). This is the candidate set — the caller intersects
+ * it with the team pool to get the actual per-agent tools (see
+ * {@link toolsForCapabilityChipsInPool}).
+ */
+function candidateToolsForChip(chip: CapabilityChip): string[] {
+  if (chip.grantKind !== null && chip.grantKind !== 'plan') {
+    // A resource kind: the agent gets the kind at WHATEVER access the team granted it,
+    // so offer read ∪ write and let the pool intersection decide.
+    return allToolsForKind(chip.grantKind);
+  }
+  // Plan (and any always-on) chip: plan grants are read-only, so its static read tools
+  // ARE its full candidate set.
+  return chip.tools;
+}
+
+/**
+ * The per-agent tools a set of selected capability chips resolves to, GIVEN the team
+ * pool (`system.grants.tools`). For each selected chip we take every tool its kind
+ * could ever provision (read ∪ write) and INTERSECT it with the pool — so a chip means
+ * "this kind, at whatever access the team was actually granted" (read + any granted
+ * write), never more. The `∩ pool` is the security invariant: the result is always a
+ * subset of the team grant, so a per-agent capability can never widen beyond it. This
+ * is what {@link toolsForCapabilityChips} could not do — that only knew a chip's static
+ * READ tools and so dropped every granted write tool.
+ */
+export function toolsForCapabilityChipsInPool(chipIds: string[], pool: string[]): string[] {
+  const chipMap = new Map(CAPABILITY_CHIPS.map((c) => [c.id, c]));
+  const poolSet = new Set(pool);
+  const out = new Set<string>();
+  for (const id of chipIds) {
+    const chip = chipMap.get(id);
+    if (!chip) continue;
+    for (const t of candidateToolsForChip(chip)) if (poolSet.has(t)) out.add(t);
+  }
+  return Array.from(out);
+}
+
+/**
  * Best-effort reverse mapping: given an agent's explicit `tools` list, return the
  * chip ids that are fully covered. Used to read an existing narrowed agent back into
  * the chip UI without losing the user's previous selection.

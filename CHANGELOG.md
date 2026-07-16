@@ -15,6 +15,18 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.28] — 2026-07-16
+
+### Fixed
+- **Write access granted in Define now actually reaches the agents (and Files can be granted write).**
+  Previously, setting a capability to read+write in Define — even system-wide — still left every
+  agent read-only in Design, so writes like uploading a file or creating a dataset were denied at
+  run time. Now each agent **inherits exactly the rights the team was granted** (read+write as
+  granted) by default, and a per-agent capability carries its write tools; narrowing per agent is
+  still possible. **Files** also gained the Read / Read+propose / Read+write selector in Define, so
+  file-writing agents (e.g. `upload_file`) work. A hard invariant guarantees an agent can never
+  exceed the team's grants.
+
 ## [os-ui 0.5.27] — 2026-07-16
 
 ### Added

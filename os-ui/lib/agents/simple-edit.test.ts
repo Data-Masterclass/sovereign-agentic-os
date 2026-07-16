@@ -8,8 +8,9 @@ import {
   setAgentRole, setAgentInstructions, setSystemTools, addSystemTool, removeSystemTool,
   addSimpleAgent, moveAgent, nextAgentId, addArtifactGrant, removeArtifactGrant,
   addAgentTool, removeAgentTool, removeAgentSimple, setArtifactGrant, setDataGrantLayer,
-  setFolderGrant, removeFolderGrant, linearizeChain,
+  setFolderGrant, removeFolderGrant, setFolderGrantLevel, linearizeChain,
 } from './simple-edit.ts';
+import { toolsForCapabilityChipsInPool } from './capability-tools.ts';
 import { instructionsOf } from './agent-md.ts';
 
 const BASE = `
@@ -233,6 +234,63 @@ test('removeFolderGrant drops the folder grant + strips write tools when nothing
   sys = removeFolderGrant(sys, 'files', { path: '/invoices', scope: 'domain' });
   assert.equal(sys.grants.files.length, 0);
   assert.ok(!sys.grants.tools.includes('upload_file'), 'write tool stripped when no grant writes');
+});
+
+test('removeArtifactGrant of an unrelated grant does NOT strip a live files-folder write', () => {
+  // A team with a WRITE files-folder grant (→ upload_file) plus a data item grant.
+  let sys = parseSystem(BASE);
+  sys = setFolderGrant(sys, 'files', { path: '/invoices', scope: 'domain' }, true);
+  sys = setArtifactGrant(sys, 'data', 'ds_sales', false); // unrelated read grant
+  assert.ok(sys.grants.tools.includes('upload_file'), 'files write tool provisioned');
+  // Removing the unrelated DATA grant must not touch the files write tool.
+  sys = removeArtifactGrant(sys, 'data', 'ds_sales');
+  assert.ok(
+    sys.grants.tools.includes('upload_file'),
+    'upload_file survives while a write files-folder grant remains',
+  );
+  // And removing the files folder grant DOES strip it (files use removeFolderGrant).
+  sys = removeFolderGrant(sys, 'files', { path: '/invoices', scope: 'domain' });
+  assert.ok(!sys.grants.tools.includes('upload_file'), 'stripped once no files grant writes');
+});
+
+test('setFolderGrantLevel can set a Files-folder write; downgrade strips the write tool', () => {
+  let sys = parseSystem(BASE);
+  sys = setFolderGrantLevel(sys, 'files', { path: '/invoices', scope: 'domain' }, 'read-write');
+  assert.ok(sys.grants.tools.includes('upload_file'), 'read-write files folder provisions upload_file');
+  assert.equal(sys.grants.files[0].capability, 'Write-bounded');
+  // Downgrade the ONLY files grant to read-only → upload_file gone (files carry no item list).
+  sys = setFolderGrantLevel(sys, 'files', { path: '/invoices', scope: 'domain' }, 'read-only');
+  assert.ok(!sys.grants.tools.includes('upload_file'), 'downgrade to read-only strips upload_file');
+});
+
+test('end-to-end: a Write-bounded data+files team, narrowed via chips, keeps read AND write tools', () => {
+  // Team granted data (item) + files (folder) at read+write.
+  let sys = parseSystem(BASE);
+  sys = setArtifactGrant(sys, 'data', 'ds_sales', true);
+  sys = setFolderGrant(sys, 'files', { path: '/invoices', scope: 'domain' }, true);
+  // Simulate the Design capability picker narrowing an agent to data + files chips.
+  const narrowed = toolsForCapabilityChipsInPool(['read-data', 'create-files'], sys.grants.tools);
+  sys.agents[0].tools = narrowed;
+  const agentTools = new Set(sys.agents[0].tools);
+  // The agent can now call BOTH the read and the granted write tools.
+  assert.ok(agentTools.has('query_data'), 'query_data present');
+  assert.ok(agentTools.has('create_dataset'), 'create_dataset present');
+  assert.ok(agentTools.has('get_file'), 'get_file present');
+  assert.ok(agentTools.has('upload_file'), 'upload_file present');
+  // Subset invariant: agent tools ⊆ system.grants.tools.
+  const pool = new Set(sys.grants.tools);
+  for (const t of sys.agents[0].tools!) assert.ok(pool.has(t), `${t} ⊆ grants.tools`);
+});
+
+test('end-to-end: a read-only team, narrowed via chips, gets read tools and NO write tools', () => {
+  let sys = parseSystem(BASE);
+  sys = setArtifactGrant(sys, 'data', 'ds_sales', false);
+  sys = setFolderGrant(sys, 'files', { path: '/invoices', scope: 'domain' }, false);
+  const narrowed = toolsForCapabilityChipsInPool(['read-data', 'create-files'], sys.grants.tools);
+  const agentTools = new Set(narrowed);
+  assert.ok(agentTools.has('query_data') && agentTools.has('get_file'), 'read tools present');
+  assert.ok(!agentTools.has('create_dataset'), 'no data write tool');
+  assert.ok(!agentTools.has('upload_file'), 'no files write tool');
 });
 
 test('setFolderGrant is a pure edit (input untouched)', () => {

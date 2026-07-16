@@ -11,6 +11,7 @@ import {
   strongestPreset,
   capabilityChipsForGrants,
   toolsForCapabilityChips,
+  toolsForCapabilityChipsInPool,
   chipIdsForTools,
   CAPABILITY_CHIPS,
 } from './capability-tools.ts';
@@ -212,4 +213,57 @@ test('chipIdsForTools: partial tool match does NOT recover the chip', () => {
   // Only one of the data tools — should not recover the chip since not all are present.
   const recovered = chipIdsForTools(['query_data']);
   assert.ok(!recovered.includes('read-data'), 'partial match does not count as the chip');
+});
+
+test('chipIdsForTools: a chip reads as selected from its READ tools alone (write implied by grant)', () => {
+  // An agent that holds only the data READ tools (no create_dataset) still counts the
+  // read-data chip as selected — write is implied by the team grant, not the chip.
+  const recovered = chipIdsForTools(['query_data', 'list_datasets', 'get_dataset', 'profile_dataset']);
+  assert.ok(recovered.includes('read-data'), 'read tools alone select the chip');
+});
+
+// ─── Pool-aware chip resolution (the write-access fix) ────────────────────────
+
+test('toolsForCapabilityChipsInPool: a Write-bounded team pool gives read AND write tools', () => {
+  // The team was granted data + files at Write-bounded → the pool holds read + write.
+  const pool = [...toolsForGrant('data', 'Write-bounded'), ...toolsForGrant('files', 'Write-bounded')];
+  const tools = toolsForCapabilityChipsInPool(['read-data', 'create-files'], pool);
+  // Read tools present…
+  assert.ok(tools.includes('query_data'), 'query_data present');
+  assert.ok(tools.includes('get_file'), 'get_file present');
+  // …AND the write tools the team granted (the whole point of the fix).
+  assert.ok(tools.includes('create_dataset'), 'create_dataset present');
+  assert.ok(tools.includes('ingest_dataset'), 'ingest_dataset present');
+  assert.ok(tools.includes('upload_file'), 'upload_file present');
+});
+
+test('toolsForCapabilityChipsInPool: a read-only team pool gives read tools, NOT write', () => {
+  const pool = [...toolsForGrant('data', 'Read'), ...toolsForGrant('files', 'Read')];
+  const tools = toolsForCapabilityChipsInPool(['read-data', 'create-files'], pool);
+  assert.ok(tools.includes('query_data') && tools.includes('get_file'), 'read tools present');
+  assert.ok(!tools.includes('create_dataset'), 'no write tool leaks when team is read-only');
+  assert.ok(!tools.includes('upload_file'), 'no upload_file when files read-only');
+});
+
+test('toolsForCapabilityChipsInPool: result is ALWAYS ⊆ pool (subset invariant)', () => {
+  const pool = [...toolsForGrant('data', 'Write-bounded')]; // only data granted, at write
+  // Select every possible chip — connections/knowledge/etc. are NOT in the pool.
+  const allChipIds = CAPABILITY_CHIPS.map((c) => c.id);
+  const tools = toolsForCapabilityChipsInPool(allChipIds, pool);
+  const poolSet = new Set(pool);
+  for (const t of tools) assert.ok(poolSet.has(t), `${t} must be within the team pool`);
+  // A capability whose kind was never granted contributes nothing (no widening).
+  assert.ok(!tools.includes('search_knowledge'), 'ungranted knowledge chip adds no tools');
+});
+
+test('toolsForCapabilityChipsInPool: plan chips resolve read tools from the pool', () => {
+  const pool = ['get_pillar', 'list_pillars', 'get_big_bet', 'list_big_bets', 'get_operating_manual'];
+  const goals = toolsForCapabilityChipsInPool(['use-goals'], pool);
+  assert.ok(goals.includes('get_pillar') && goals.includes('get_big_bet'), 'goal read tools resolved');
+  const manual = toolsForCapabilityChipsInPool(['read-operating-manual'], pool);
+  assert.ok(manual.includes('get_operating_manual'), 'manual read tool resolved');
+});
+
+test('toolsForCapabilityChipsInPool: empty selection ⇒ no tools', () => {
+  assert.deepEqual(toolsForCapabilityChipsInPool([], ['query_data']), []);
 });
