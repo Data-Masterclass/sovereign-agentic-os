@@ -49,7 +49,7 @@ export type IngestReport = {
 function bronzeCtxDataset(name: string, schema: string): Dataset {
   return {
     version: '1', id: '', name, owner: '', domain: schema, tier: 'dataset',
-    visibility: 'private', description: '', versions: emptyVersions(),
+    visibility: 'private', folder: '/', description: '', versions: emptyVersions(),
     grants: [], measures: [], columns: [],
   };
 }

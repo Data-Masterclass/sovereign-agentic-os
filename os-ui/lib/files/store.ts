@@ -33,6 +33,10 @@ import { promotionGate, gateReason } from './promotion.ts';
 import { recordLineage } from './lineage.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
+// The GOVERNED folder registry (Wave 1) — a moved-into folder is upserted as an
+// explicit row so it persists even when empty. Reused, never forked.
+import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '../folders/index.ts';
+import { normaliseFolderPath } from '../core/folders.ts';
 
 /**
  * The file registry — the MOCK store behind the Files tab (kind-only, in-process;
@@ -478,7 +482,34 @@ export function moveFile(id: string, user: Principal, folder: string): FileAsset
   a.folder = normalise(folder);
   a.deepLink = deepLinkFor(a);
   persist(rec, a);
+  // Upsert an EXPLICIT folder row (Wave 1 registry) so the folder persists even
+  // when it later holds no files — the implicit facet rail forgot empty folders.
+  // The move already passed the file's edit-scope gate above, so this same-owner
+  // folder create can only mirror an authorised move.
+  upsertFolderRow(a, user);
   return a;
+}
+
+/** The folder scope a file lives in: a private (dataset) file's folders are the
+ *  owner's PERSONAL tree; a shared (asset) / marketplace (product) file's folders
+ *  are the owning DOMAIN's tree. Mirrors how `listFiles` groups by tier. */
+function folderScopeOf(a: FileAsset): FolderScope {
+  return a.tier === 'dataset' ? 'personal' : 'domain';
+}
+
+/** Best-effort: mirror a file's folder path into the governed folder registry so
+ *  an empty folder still shows in the rail. The root is implicit (never a row).
+ *  createFolder is idempotent and edit-scoped; any gate failure is swallowed so a
+ *  successful file move is never rolled back by a folder-registry hiccup. */
+function upsertFolderRow(a: FileAsset, user: Principal): void {
+  const path = normaliseFolderPath(a.folder);
+  if (path === '/') return;
+  const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
+  try {
+    createFolder(principal, { tab: 'files', scope: folderScopeOf(a), path, domain: a.domain });
+  } catch {
+    /* folder-registry mirror is best-effort; the file move already succeeded */
+  }
 }
 
 export function setTags(id: string, user: Principal, tags: string[]): FileAsset {

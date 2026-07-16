@@ -14,6 +14,12 @@ import {
   type TraceMetrics,
 } from '@/lib/agents/build/run-diagnostics';
 import { useUser } from '@/lib/useUser';
+import {
+  deriveContextUsage,
+  type ContextItem,
+  type ContextKind,
+  type RunContextUsage,
+} from '@/lib/agents/build/context-usage';
 
 /**
  * Build = execute + verify (Task 4) and Run (Task 7). Build runs the 5 adapters
@@ -39,11 +45,18 @@ type LastRun = {
   steps: RunStep[];
   /** The persisted per-agent drill-down — so the cards survive a tab-switch/reseed. */
   nodes?: RunNode[];
+  /** "Context actually used per run" (#177). Absent on pre-feature runs → re-derived from nodes. */
+  contextUsage?: RunContextUsage;
+  /** Declared grant ids per kind at run time — for the granted-vs-used strip. */
+  grantedIds?: GrantedIds;
   output?: string;
   mode?: 'live' | 'offline-mock';
   traceStoreAvailable?: boolean;
   traceUrl?: string;
 };
+
+/** Grant ids per kind, mirroring ContextKind — for the Evaluate granted-vs-used strip. */
+type GrantedIds = Record<ContextKind, string[]>;
 
 /** Formats a Unix-ms timestamp as a compact relative time string. */
 function timeAgo(atMs: number): string {
@@ -82,6 +95,8 @@ type RunReport = {
   held: number;
   steps: RunStep[];
   nodes?: RunNode[];
+  contextUsage?: RunContextUsage;
+  grantedIds?: GrantedIds;
   output?: string;
   mode?: 'live' | 'offline-mock';
   traceStoreAvailable?: boolean;
@@ -100,7 +115,7 @@ type TeamNode = {
   finalText?: string;
   steps?: (NodeStep & { errorKind?: ErrorKind })[];
 };
-type RawRun = Partial<RunReport> & { team?: boolean; finalText?: string; nodes?: TeamNode[] };
+type RawRun = Partial<RunReport> & { team?: boolean; finalText?: string; nodes?: TeamNode[]; contextUsage?: RunContextUsage; grantedIds?: GrantedIds };
 
 function normalizeRun(body: RawRun): RunReport {
   const steps: RunStep[] =
@@ -125,6 +140,9 @@ function normalizeRun(body: RawRun): RunReport {
     steps: (n.steps ?? []).map((s) => ({ tool: s.tool, isError: s.isError, errorKind: s.errorKind, summary: s.summary, args: s.args, result: s.result })),
   }));
   const rawOut = body.output ?? body.finalText;
+  // Context actually used: prefer the server-derived record; for runs persisted
+  // before #177 shipped, re-derive client-side from the same nodes[].steps[] trace.
+  const contextUsage = body.contextUsage ?? (nodes ? deriveContextUsage(nodes) : undefined);
   return {
     running: body.running ?? false,
     ok: body.ok ?? true,
@@ -133,6 +151,8 @@ function normalizeRun(body: RawRun): RunReport {
     held: body.held ?? 0,
     steps,
     nodes,
+    contextUsage,
+    grantedIds: body.grantedIds,
     output: typeof rawOut === 'string' ? rawOut : rawOut ? JSON.stringify(rawOut) : undefined,
     mode: body.mode,
     traceStoreAvailable: body.traceStoreAvailable,
@@ -224,6 +244,159 @@ type LiveProgress = {
   started: string[];
   completed: string[];
 };
+
+// ── Context actually used (#177) ────────────────────────────────────────────
+/** Human label + deep-link tab route per artifact kind. Files live under /unstructured. */
+const KIND_META: Record<ContextKind, { label: string; href: string }> = {
+  data: { label: 'Data', href: '/data' },
+  files: { label: 'Files', href: '/unstructured' },
+  knowledge: { label: 'Knowledge', href: '/knowledge' },
+  metrics: { label: 'Metrics', href: '/metrics' },
+  connections: { label: 'Connections', href: '/connections' },
+};
+const KIND_ORDER: ContextKind[] = ['data', 'files', 'knowledge', 'metrics', 'connections'];
+
+/** The read/retrieved/written verb shown on each chip. */
+const MODE_LABEL: Record<ContextItem['mode'], string> = { read: 'read', retrieved: 'retrieved', written: 'written' };
+
+/** One artifact chip — deep-links to its tab; muted when the tool call failed. */
+function ContextChip({ item }: { item: ContextItem }) {
+  const meta = KIND_META[item.kind];
+  const label = item.name ? `${item.name} (${item.id})` : item.id;
+  return (
+    <a
+      href={meta.href}
+      title={`${MODE_LABEL[item.mode]} via ${item.via}${item.errored ? ' — not obtained (call failed)' : ''}${item.confidence === 'inferred' ? ' — inferred' : ''}`}
+      className="chip"
+      style={{
+        textDecoration: 'none',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        opacity: item.errored ? 0.5 : 1,
+      }}
+    >
+      <span className="mono" style={{ fontSize: 11.5 }}>{label}</span>
+      <span className="hint" style={{ fontSize: 10 }}>{item.errored ? 'not obtained' : MODE_LABEL[item.mode]}</span>
+      {item.confidence === 'inferred' ? <span className="hint" style={{ fontSize: 10, opacity: 0.7 }}>·inferred</span> : null}
+    </a>
+  );
+}
+
+/** De-dupe items by (kind,id,mode) — one chip per artifact, errored items kept distinct. */
+function dedupeItems(items: ContextItem[]): ContextItem[] {
+  const seen = new Map<string, ContextItem>();
+  for (const it of items) {
+    const key = `${it.kind}:${it.id}:${it.mode}:${it.errored ? 'e' : 'o'}`;
+    if (!seen.has(key)) seen.set(key, it);
+  }
+  return [...seen.values()];
+}
+
+/**
+ * "Context this agent used" — the artifacts a node (or the whole run) actually read,
+ * retrieved or wrote, grouped by kind. Honest by design: errored calls are shown muted
+ * ("not obtained"), inferred ids are marked. Empty → renders nothing.
+ */
+function ContextUsed({ items, title }: { items: ContextItem[]; title: string }) {
+  const rows = dedupeItems(items);
+  if (rows.length === 0) return null;
+  const groups = KIND_ORDER.map((k) => ({ kind: k, items: rows.filter((r) => r.kind === k) })).filter((g) => g.items.length > 0);
+  return (
+    <div>
+      <div className="hint" style={{ fontWeight: 600, marginBottom: 4 }}>{title}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {groups.map((g) => (
+          <div key={g.kind} style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+            <span className="hint" style={{ fontSize: 11, minWidth: 78 }}>{KIND_META[g.kind].label}</span>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {g.items.map((it, i) => <ContextChip key={`${it.id}-${it.mode}-${i}`} item={it} />)}
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="hint" style={{ fontSize: 10.5, marginTop: 6, opacity: 0.75 }}>
+        Agents discover context at runtime — this is the real consumption. Truncated tool results may under-count.
+      </p>
+    </div>
+  );
+}
+
+/** Context items scoped to ONE node — re-derived from that node's own tool steps. */
+function nodeContextItems(node: RunNode): ContextItem[] {
+  return deriveContextUsage([{ steps: node.steps }]).items;
+}
+
+/**
+ * Run-level roll-up at the top of Evaluate: a count-per-kind summary line + the full
+ * deduped chip list of everything the whole run touched. Empty → renders nothing.
+ */
+function ContextRollup({ run }: { run: RunReport }) {
+  const usage = run.contextUsage;
+  const items = usage?.items ?? [];
+  if (items.length === 0) return null;
+  const counts = KIND_ORDER
+    .map((k) => ({ k, n: usage?.byKind[k].length ?? 0 }))
+    .filter((c) => c.n > 0);
+  return (
+    <div style={{ marginBottom: 14, padding: '10px 12px', border: '1px solid var(--border, #e5e5e5)', borderRadius: 10 }}>
+      <div className="section-title" style={{ marginTop: 0 }}>Context actually used</div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+        {counts.map((c) => (
+          <span key={c.k} className="badge">{KIND_META[c.k].label}: {c.n}</span>
+        ))}
+      </div>
+      <ContextUsed items={items} title="Everything this run touched" />
+    </div>
+  );
+}
+
+/**
+ * The Evaluate "Grants vs. usage" strip: for each granted artifact, is it USED (green)
+ * or a granted-but-unused "dead grant" (muted). Reads grants + used ids off the run —
+ * never edits the grant editor. Renders nothing when no grants were recorded.
+ */
+function GrantsVsUsage({ granted, usage }: { granted: GrantedIds; usage?: RunContextUsage }) {
+  const usedByKind = usage?.byKind;
+  const rows = KIND_ORDER.map((kind) => {
+    const ids = granted[kind] ?? [];
+    if (ids.length === 0) return null;
+    const used = new Set(usedByKind?.[kind] ?? []);
+    return { kind, ids, used };
+  }).filter((r): r is { kind: ContextKind; ids: string[]; used: Set<string> } => r !== null);
+  if (rows.length === 0) return null;
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="section-title" style={{ marginTop: 0 }}>Grants vs. usage</div>
+      <p className="hint" style={{ marginTop: 0 }}>
+        What the team was granted, and what this run actually touched. A muted grant is a “dead grant” — held but unused.
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {rows.map((r) => (
+          <div key={r.kind} style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+            <span className="hint" style={{ fontSize: 11, minWidth: 78 }}>{KIND_META[r.kind].label}</span>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {r.ids.map((id) => {
+                const isUsed = r.used.has(id);
+                return (
+                  <a
+                    key={id}
+                    href={KIND_META[r.kind].href}
+                    className={isUsed ? 'chip ok' : 'chip'}
+                    title={isUsed ? 'granted and used this run' : 'granted but unused this run (dead grant)'}
+                    style={{ textDecoration: 'none', opacity: isUsed ? 1 : 0.55 }}
+                  >
+                    <span className="mono" style={{ fontSize: 11.5 }}>{id}</span>
+                  </a>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 /** A calm one-line "what is happening right now" for the live banner. */
 function liveLine(p: LiveProgress): string {
@@ -348,6 +521,8 @@ function TeamStepByStep({
                       </div>
                     </div>
                   ) : null}
+                  {/* Context this agent actually used — derived from ITS OWN tool steps. */}
+                  <ContextUsed items={nodeContextItems(n)} title="Context this agent used" />
                 </div>
               ) : (
                 // Collapsed: keep a one-line taste of the output so the card still reads.
@@ -955,6 +1130,8 @@ export default function BuildRunPanel({
 
           {showEvaluate ? (
           <>
+          {/* Run-level roll-up: what the whole run actually read/retrieved/wrote (#177). */}
+          <ContextRollup run={run} />
           {/* Per-agent breakdown — in Simple mode the run's step-by-step detail lives HERE
               (understanding the run IS evaluating it): the per-agent cards, the path, the
               governed-call counts and the raw tool-call table. Developer mode ('all') shows
@@ -1061,6 +1238,9 @@ export default function BuildRunPanel({
               </div>
             );
           })()}
+
+          {/* Grants vs. usage (#177 Phase 4): granted-but-unused = a muted "dead grant". */}
+          {run.grantedIds ? <GrantsVsUsage granted={run.grantedIds} usage={run.contextUsage} /> : null}
 
           {/* Trace store: honest note when the durable store is down; deep-link when up. */}
           <div className="hint" style={{ marginTop: 8 }}>

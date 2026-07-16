@@ -83,6 +83,19 @@ export type LastRun = {
     finalText?: string;
     steps: { tool: string; isError?: boolean; summary?: string; args?: string; result?: string }[];
   }[];
+  /**
+   * "Context actually used per run" (#177) — derived from `nodes[].steps[]`: which
+   * datasets/knowledge/files/metrics/connections the run read, retrieved or wrote.
+   * Additive + back-compatible: absent on runs recorded before it shipped (the UI
+   * re-derives client-side from `nodes` as a fallback). See `build/context-usage.ts`.
+   */
+  contextUsage?: import('./build/context-usage.ts').RunContextUsage;
+  /**
+   * The system's declared grant ids at run time, per kind — so the Evaluate view can
+   * show granted-but-unused ("dead") grants next to what was actually used. Best-effort:
+   * absent when the yaml could not be parsed. Purely for the used-vs-granted strip.
+   */
+  grantedIds?: { data: string[]; knowledge: string[]; files: string[]; metrics: string[]; connections: string[] };
   output?: string;
   mode?: 'live' | 'offline-mock';
   traceStoreAvailable?: boolean;

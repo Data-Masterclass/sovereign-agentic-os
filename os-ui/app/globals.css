@@ -2734,6 +2734,24 @@ button.card.tile:hover .tile-action { opacity: 1; }
 .rail-count { font-size: 11px; color: var(--text-faint); }
 .rail-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 
+/* ---- folder-tree rail (Wave-1 FolderTree, nav variant) ---- */
+/* The FolderTree lays its two roots (My / Shared) side by side via an inline flex
+   that sets no flex-wrap; in the narrow files rail we let them wrap so the roots
+   stack vertically instead of overflowing the 210px column. */
+.files-rail-tree > div > div { flex-wrap: wrap; gap: 10px !important; }
+.files-rail-tree .section-title {
+  font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-faint);
+}
+
+/* ---- bulk (multi-select) actions ---- */
+.files-bulk {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+  padding: 8px 12px; border: 1px solid var(--gold-line); background: var(--gold-soft);
+  border-radius: 10px; font-size: 13px; color: var(--gold-text);
+}
+.file-pick { accent-color: var(--gold-deep); cursor: pointer; }
+.file-card.picked { border-color: var(--gold-line); box-shadow: 0 0 0 1px var(--gold-line); }
+
 /* ---- file grid ---- */
 .file-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
 .file-card {

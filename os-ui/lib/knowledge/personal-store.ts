@@ -8,6 +8,8 @@ import type { Role } from '../core/session.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
 import { canManageArtifact } from '../governance/edit-scope.ts';
+import { normaliseFolderPath } from '../core/folders.ts';
+import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '../folders/index.ts';
 
 /**
  * PERSONAL general-knowledge store — the "My knowledge" layer of the Knowledge
@@ -34,6 +36,7 @@ export type PersonalKnowledgeRecord = {
   title: string;
   md: string;
   visibility: Visibility;
+  folder: string;
   updatedAt: string;
   archived?: boolean;
 };
@@ -72,6 +75,7 @@ const mirror = osMirror({
         domain: { type: 'keyword' },
         title: { type: 'keyword' },
         visibility: { type: 'keyword' },
+        folder: { type: 'keyword' },
         updatedAt: { type: 'date' },
         md: { type: 'text', index: false },
         archived: { type: 'boolean' },
@@ -190,7 +194,7 @@ export function getPersonalKnowledge(id: string, user: Principal): PersonalKnowl
 
 export function createPersonalKnowledge(
   user: Principal,
-  input: { title: string; md?: string; domain?: string },
+  input: { title: string; md?: string; domain?: string; folder?: string },
 ): PersonalKnowledgeRecord {
   ensureSeeded();
   const domain = input.domain && user.domains.includes(input.domain) ? input.domain : user.domains[0] ?? 'default';
@@ -203,10 +207,32 @@ export function createPersonalKnowledge(
     title,
     md: input.md ?? '',
     visibility: 'Personal',
+    folder: normaliseFolderPath(input.folder),
     updatedAt: now(),
   };
   st().entries.set(id, rec);
   writeThrough(rec);
+  return rec;
+}
+
+/** Move a personal knowledge entry into a folder. Edit-scoped — owner, in-domain domain_admin, or admin. */
+export function moveKnowledge(id: string, user: Principal, folder: string): PersonalKnowledgeRecord {
+  const rec = requireEdit(id, user);
+  const normalised = normaliseFolderPath(folder);
+  versions.record(id, user.id, { title: rec.title, md: rec.md, folder: rec.folder }, 'move');
+  rec.folder = normalised;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  // Upsert an explicit folder row — best-effort, swallow errors so a move is never rolled back.
+  if (normalised !== '/') {
+    const scope: FolderScope = rec.visibility === 'Personal' ? 'personal' : 'domain';
+    const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
+    try {
+      createFolder(principal, { tab: 'knowledge', scope, path: normalised, domain: rec.domain });
+    } catch {
+      /* folder-registry mirror is best-effort */
+    }
+  }
   return rec;
 }
 

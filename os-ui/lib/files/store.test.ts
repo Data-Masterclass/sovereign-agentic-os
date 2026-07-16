@@ -25,13 +25,20 @@ import {
   type Principal,
 } from './store.ts';
 import { listLineage, __resetLineage } from './lineage.ts';
+import {
+  listFolders,
+  __resetStore as __resetFolders,
+  type Principal as FolderPrincipal,
+} from '../folders/index.ts';
 
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' };  // Creator
 const bea: Principal = { id: 'bea', domains: ['sales'], role: 'builder' };        // Builder, amir's domain
 const sara: Principal = { id: 'sara', domains: ['sales'], role: 'admin' };        // Admin, sales
 const kenji: Principal = { id: 'kenji', domains: ['finance'], role: 'builder' };  // outside sales
 
-beforeEach(() => { __resetStore(); __resetLineage(); });
+const amirF: FolderPrincipal = { id: 'amir', role: 'creator', domains: ['sales'] };
+
+beforeEach(() => { __resetStore(); __resetLineage(); __resetFolders(); });
 
 /**
  * The store ships EMPTY now. Build the validation-gate corpus (a PDF, an image
@@ -123,6 +130,30 @@ test('move + retag + docs edit the single source for the owner only', () => {
   assert.equal(got.asset.folder, '/contracts/2026');
   assert.deepEqual(got.asset.tags, ['contract', 'acme']);
   assert.equal(got.asset.description, 'the acme contract');
+});
+
+test('moving a file upserts an explicit personal FolderNode (persists when empty)', () => {
+  const a = createFile(amir, { name: 'x.pdf', text: 'x' }); // starts at root, dataset tier
+  assert.equal(listFolders(amirF, 'files', 'personal').length, 0, 'no rows before a move');
+  moveFile(a.id, amir, '/contracts/2026');
+  const rows = listFolders(amirF, 'files', 'personal');
+  assert.ok(rows.some((r) => r.path === '/contracts/2026'), 'the destination folder now has a row');
+  // The row survives the file leaving it (empty-folder persistence — the whole point).
+  moveFile(a.id, amir, '/elsewhere');
+  const after = listFolders(amirF, 'files', 'personal').map((r) => r.path);
+  assert.ok(after.includes('/contracts/2026'), 'the now-empty folder row is retained');
+  assert.ok(after.includes('/elsewhere'), 'the new folder row exists too');
+});
+
+test('the folder-move gate: only the owner (or in-domain admin) may move a file', () => {
+  // The /api/files/:id/folder route delegates to moveFile, whose edit-scope gate is
+  // the route\'s enforcement. A foreign user is rejected; the owner + admin pass.
+  const a = createFile(amir, { name: 'gate.pdf', text: 'g' });
+  assert.throws(() => moveFile(a.id, kenji, '/nope'), /permitted|403/i);
+  moveFile(a.id, amir, '/mine');           // owner passes
+  assert.equal(getFile(a.id, amir).asset.folder, '/mine');
+  moveFile(a.id, sara, '/by-admin');        // in-domain admin passes
+  assert.equal(getFile(a.id, amir).asset.folder, '/by-admin');
 });
 
 test('a non-owner cannot edit a private file', () => {

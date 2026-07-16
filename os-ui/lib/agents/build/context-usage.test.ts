@@ -1,0 +1,115 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { deriveContextUsage, type UsageNode } from './context-usage.ts';
+
+test('captures a direct id-arg read with best-effort name from the result', () => {
+  const nodes: UsageNode[] = [
+    { steps: [{ tool: 'get_dataset', args: { datasetId: 'ds_orders' }, result: JSON.stringify({ name: 'Orders' }) }] },
+  ];
+  const u = deriveContextUsage(nodes);
+  assert.deepEqual(u.items, [
+    { kind: 'data', id: 'ds_orders', name: 'Orders', via: 'get_dataset', mode: 'read', confidence: 'captured' },
+  ]);
+  assert.deepEqual(u.byKind.data, ['ds_orders']);
+});
+
+test('tolerates args persisted as a JSON string (client fallback path)', () => {
+  const nodes: UsageNode[] = [
+    { steps: [{ tool: 'get_knowledge', args: JSON.stringify({ knowledgeId: 'ku_1' }), result: '{"title":"Policy"}' }] },
+  ];
+  const u = deriveContextUsage(nodes);
+  assert.equal(u.items[0].id, 'ku_1');
+  assert.equal(u.items[0].name, 'Policy');
+  assert.equal(u.items[0].kind, 'knowledge');
+  assert.equal(u.items[0].confidence, 'captured');
+});
+
+test('search_knowledge surfaces retrieved ids + titles from the result', () => {
+  const nodes: UsageNode[] = [
+    {
+      steps: [
+        {
+          tool: 'search_knowledge',
+          args: { query: 'pricing' },
+          result: JSON.stringify({ hits: [{ id: 'ku_a', title: 'A' }, { id: 'ku_b', title: 'B' }] }),
+        },
+      ],
+    },
+  ];
+  const u = deriveContextUsage(nodes);
+  assert.deepEqual(u.items.map((i) => i.id), ['ku_a', 'ku_b']);
+  assert.ok(u.items.every((i) => i.mode === 'retrieved' && i.confidence === 'captured'));
+  assert.deepEqual(u.byKind.knowledge, ['ku_a', 'ku_b']);
+});
+
+test('query_data infers the physical FQN from SQL and marks it inferred', () => {
+  const nodes: UsageNode[] = [
+    { steps: [{ tool: 'query_data', args: { sql: 'select region, sum(revenue) from iceberg.sales.gold_orders group by region' }, result: '[]' }] },
+  ];
+  const u = deriveContextUsage(nodes);
+  assert.deepEqual(u.items, [
+    { kind: 'data', id: 'iceberg.sales.gold_orders', via: 'query_data', mode: 'read', confidence: 'inferred' },
+  ]);
+});
+
+test('query_data with no parseable FQN falls back to an opaque inferred touch', () => {
+  const nodes: UsageNode[] = [{ steps: [{ tool: 'query_data', args: { sql: 'select 1' }, result: '[]' }] }];
+  const u = deriveContextUsage(nodes);
+  assert.equal(u.items[0].id, 'data:sql');
+  assert.equal(u.items[0].confidence, 'inferred');
+});
+
+test('an errored read is surfaced but NOT counted in the roll-up', () => {
+  const nodes: UsageNode[] = [
+    { steps: [{ tool: 'get_dataset', args: { datasetId: 'ds_denied' }, result: '{"error":{"code":"not_found"}}', isError: true }] },
+  ];
+  const u = deriveContextUsage(nodes);
+  assert.equal(u.items.length, 1);
+  assert.equal(u.items[0].errored, true);
+  assert.deepEqual(u.byKind.data, []); // errored context was never obtained
+});
+
+test('an errored search yields no retrieved ids', () => {
+  const nodes: UsageNode[] = [
+    { steps: [{ tool: 'search_files', args: { query: 'x' }, result: '{"error":{"code":"forbidden"}}', isError: true }] },
+  ];
+  const u = deriveContextUsage(nodes);
+  assert.equal(u.items.length, 0);
+  assert.deepEqual(u.byKind.files, []);
+});
+
+test('a write tool that ran records the target as written', () => {
+  const nodes: UsageNode[] = [
+    { steps: [{ tool: 'define_metric', args: { metricId: 'm_gm', name: 'Gross Margin' }, result: '{"id":"m_gm"}' }] },
+  ];
+  const u = deriveContextUsage(nodes);
+  assert.equal(u.items[0].kind, 'metrics');
+  assert.equal(u.items[0].mode, 'written');
+  assert.equal(u.items[0].id, 'm_gm');
+  assert.deepEqual(u.byKind.metrics, ['m_gm']);
+});
+
+test('rolls up across nodes, deduping repeated reads, and truncated results just under-count', () => {
+  const nodes: UsageNode[] = [
+    { steps: [{ tool: 'get_dataset', args: { datasetId: 'ds_1' }, result: '{"name":"One"}' }] },
+    {
+      steps: [
+        { tool: 'get_dataset', args: { datasetId: 'ds_1' }, result: '{"name":"One"}' }, // dup
+        { tool: 'use_connection', args: { connectionId: 'c_pg' }, result: 'not-json-truncated…' }, // no name, tolerated
+      ],
+    },
+  ];
+  const u = deriveContextUsage(nodes);
+  assert.deepEqual(u.byKind.data, ['ds_1']);
+  assert.deepEqual(u.byKind.connections, ['c_pg']);
+  // The connection read had a non-JSON (truncated) result → no name, still counted.
+  assert.equal(u.items.find((i) => i.id === 'c_pg')?.name, undefined);
+});
+
+test('empty / missing nodes are safe', () => {
+  assert.deepEqual(deriveContextUsage([]).items, []);
+  assert.deepEqual(deriveContextUsage([{}]).items, []);
+});

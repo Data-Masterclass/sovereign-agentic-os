@@ -32,6 +32,10 @@ import { assetTarget, productTarget, personalSchema, domainSchema, slug, version
 import { config } from '../core/config.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
+// The GOVERNED folder registry (Wave 1) — a moved-into folder is upserted as an
+// explicit row so it persists even when empty. Reused, never forked (mirrors Files).
+import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '../folders/index.ts';
+import { normaliseFolderPath } from '../core/folders.ts';
 
 // Re-export the FQN helpers so existing consumers keep importing them from the store.
 export { assetTarget, productTarget } from './store-fqn.ts';
@@ -71,6 +75,8 @@ export type DatasetSummary = {
   domain: string;
   tier: Tier;
   visibility: DataVisibility;
+  /** The folder this dataset lives in (normalised path; `'/'` = root). */
+  folder: string;
   /** Furthest built medallion layer, or null if nothing built. */
   freshness: string | null;
   quality: Quality;
@@ -321,6 +327,7 @@ function summarise(d: Dataset, archived = false): DatasetSummary {
     domain: d.domain,
     tier: d.tier,
     visibility: d.visibility,
+    folder: d.folder,
     freshness: f.freshness,
     quality: built ? built.quality : 'unknown',
     dots: { bronze: d.versions.bronze.built, silver: d.versions.silver.built, gold: d.versions.gold.built },
@@ -514,6 +521,7 @@ export function createDataset(user: Principal, input: { name: string; domain?: s
     domain,
     tier: 'dataset',
     visibility: 'private',
+    folder: '/',
     description: '',
     versions: emptyVersions(),
     grants: [],
@@ -615,6 +623,47 @@ export function setDocs(
   }
   persist(rec, d, { author: user.id, summary: 'edit docs' });
   return d;
+}
+
+/**
+ * Move a dataset into a folder (edit-scoped, versioned/write-through like every other
+ * mutation). Mirrors `lib/files/store.moveFile`: the folder is a normalised path on the
+ * dataset's single source; the folder ROOT (personal vs domain tree) is decided by tier.
+ * On move we also upsert an EXPLICIT folder row in the governed registry so the
+ * destination folder persists even when it holds no datasets. A viewer who cannot edit
+ * is rejected 403 and nothing is written.
+ */
+export function moveDataset(id: string, user: Principal, folder: string): Dataset {
+  const rec = get(id);
+  const d = editOf(rec, user);
+  d.folder = normaliseFolderPath(folder);
+  persist(rec, d, { author: user.id, summary: 'edit folder' });
+  // The move already passed the dataset's edit-scope gate above, so this same-owner
+  // folder create can only mirror an authorised move (best-effort; never rolls it back).
+  upsertFolderRow(d, user);
+  return d;
+}
+
+/** The folder scope a dataset lives in: a private (dataset) tile's folders are the
+ *  owner's PERSONAL tree; a shared (asset) / marketplace (product) tile's folders are
+ *  the owning DOMAIN's tree. Mirrors how `listDatasets` groups by tier. */
+function folderScopeOf(d: Dataset): FolderScope {
+  return d.tier === 'dataset' ? 'personal' : 'domain';
+}
+
+/** Best-effort: mirror a dataset's folder path into the governed folder registry so an
+ *  empty folder still shows in the rail. The root is implicit (never a row). createFolder
+ *  is idempotent and edit-scoped; any gate failure is swallowed so a successful move is
+ *  never rolled back by a folder-registry hiccup (mirrors Files' upsertFolderRow). */
+function upsertFolderRow(d: Dataset, user: Principal): void {
+  const path = normaliseFolderPath(d.folder);
+  if (path === '/') return;
+  const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
+  try {
+    createFolder(principal, { tab: 'data', scope: folderScopeOf(d), path, domain: d.domain });
+  } catch {
+    /* folder-registry mirror is best-effort; the dataset move already succeeded */
+  }
 }
 
 /**

@@ -10,6 +10,8 @@ import { runOsTeam } from '@/lib/agents/build/agentic-graph-server';
 import { isAgenticOsTeam } from '@/lib/agents/build/os-tools';
 import { classifyStepError, type AgenticGraphResult } from '@/lib/agents/build/agentic-graph';
 import { governYamlForOwner } from '@/lib/agents/build/owner-grants';
+import { deriveContextUsage } from '@/lib/agents/build/context-usage';
+import { parseSystem } from '@/lib/agents/system-schema';
 
 export const dynamic = 'force-dynamic';
 // A multi-node team walk (each node a PLAN→ACT loop on a large model) can run long;
@@ -88,12 +90,33 @@ function nodeReveal(r: {
 }
 
 /**
+ * The system's declared grant ids per kind, read from the (already governed) yaml —
+ * for the Evaluate "granted vs. used" strip. Best-effort: an unparseable yaml yields
+ * empty lists (the strip then just shows what was used). Files carry no grant list in
+ * the schema, so `files` is always empty here.
+ */
+function grantedIdsFromYaml(yaml: string) {
+  try {
+    const g = parseSystem(yaml).grants;
+    return {
+      data: g.data.map((x) => x.id),
+      knowledge: g.knowledge.map((x) => x.id),
+      files: [] as string[],
+      metrics: g.metrics.map((x) => x.id),
+      connections: g.connections.map((x) => x.id),
+    };
+  } catch {
+    return { data: [], knowledge: [], files: [], metrics: [], connections: [] };
+  }
+}
+
+/**
  * Finalize a completed team run into (a) the exact JSON body the non-streaming path
  * has always returned AND (b) the `LastRun` record persisted so the 0.1.80 legible
  * render + per-node persistence keep working. Kept as ONE function so the streaming
  * `done` frame and the non-streaming JSON response are byte-for-byte the same shape.
  */
-function finalizeTeamRun(team: AgenticGraphResult, running: boolean) {
+function finalizeTeamRun(team: AgenticGraphResult, running: boolean, yaml: string) {
   // Normalise team run into LastRun shape and persist it.
   const teamSteps = team.runs.flatMap((r) =>
     r.result.steps.map((s) => ({
@@ -110,6 +133,12 @@ function finalizeTeamRun(team: AgenticGraphResult, running: boolean) {
   // it concluded (finalText) + its tool calls with args → result. Built once, and
   // PERSISTED into LastRun so the per-agent cards survive a tab-switch / reseed.
   const nodes = team.runs.map(nodeReveal);
+  // "Context actually used per run" (#177): derived from the RAW team runs — args are
+  // real objects here (highest fidelity), before the per-node persistence stringifies
+  // them. Agents discover context at runtime (no pre-injected pack), so this trace IS
+  // the honest consumption record. Attached to the response + LastRun.
+  const contextUsage = deriveContextUsage(team.runs.map((r) => ({ steps: r.result.steps })));
+  const grantedIds = grantedIdsFromYaml(yaml);
   const lastRun: LastRun = {
     at: Date.now(),
     running,
@@ -119,10 +148,12 @@ function finalizeTeamRun(team: AgenticGraphResult, running: boolean) {
     held: 0,
     steps: teamSteps,
     nodes,
+    contextUsage,
+    grantedIds,
     output: team.finalText,
     mode: 'live',
   };
-  const body = { running, mode: 'live' as const, team: true, ok: teamOk, path: team.path, finalText: team.finalText, nodes };
+  const body = { running, mode: 'live' as const, team: true, ok: teamOk, path: team.path, finalText: team.finalText, nodes, contextUsage, grantedIds };
   return { body, lastRun };
 }
 
@@ -212,7 +243,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       // non-streaming response, so the final render is identical either way).
       const complete = (team: AgenticGraphResult) => {
         const running = markRunFinished(id, user);
-        const { body: out, lastRun } = finalizeTeamRun(team, running);
+        const { body: out, lastRun } = finalizeTeamRun(team, running, yaml);
         try { setLastRun(id, user, lastRun); } catch { /* run-only consumer: persist best-effort */ }
         return out;
       };

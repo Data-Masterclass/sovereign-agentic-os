@@ -3,11 +3,13 @@
  */
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { roleAtLeast } from '@/lib/core/session';
 import { canManageArtifact } from '@/lib/governance/edit-scope';
 import { DATASET_SCOPES, tilesForScope, scopeCounts, type DatasetScope } from '@/lib/data/dataset-scopes';
+import { itemsUnderFolder, normaliseFolderPath, type FolderPathNode } from '@/lib/core/folders';
+import FolderTree from '@/components/core/FolderTree';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import DomainTag from '@/components/DomainTag';
@@ -22,6 +24,7 @@ type Tile = {
   domain: string;
   tier: 'dataset' | 'asset' | 'product';
   visibility: string;
+  folder: string;
   freshness: string | null;
   quality: 'unknown' | 'passing' | 'failing';
   dots: { bronze: boolean; silver: boolean; gold: boolean };
@@ -30,6 +33,13 @@ type Tile = {
   archived?: boolean;
 };
 type Groups = { mine: Tile[]; domain: Tile[]; marketplace: Tile[] };
+
+/** Which folder ROOT a dataset's folders live in — its private tree (dataset) or the
+ *  domain tree (shared/certified). Mirrors how the store groups by tier. */
+type FolderRoot = 'personal' | 'domain';
+function rootOf(t: Tile): FolderRoot {
+  return t.tier === 'dataset' ? 'personal' : 'domain';
+}
 
 /** Tile tier → the OS-wide lifecycle visibility (drives the delete gate). */
 const lcVis = (tier: Tile['tier']): Visibility =>
@@ -60,7 +70,7 @@ function Dots({ dots }: { dots: Tile['dots'] }) {
   );
 }
 
-function TileCard({ t, onOpen, onImport, canManage, onChanged, showDomain }: { t: Tile; onOpen: (id: string) => void; onImport?: (id: string) => void; canManage?: boolean; onChanged: () => void; showDomain?: boolean }) {
+function TileCard({ t, onOpen, onImport, onMove, canManage, onChanged, showDomain }: { t: Tile; onOpen: (id: string) => void; onImport?: (id: string) => void; onMove?: (id: string, from: string) => void; canManage?: boolean; onChanged: () => void; showDomain?: boolean }) {
   // A role="button" DIV (not a <button>) so the optional Import / lifecycle controls
   // can be real nested <button>s without invalid button-in-button nesting. Every
   // nested control stops propagation so it never also opens the card.
@@ -107,6 +117,11 @@ function TileCard({ t, onOpen, onImport, canManage, onChanged, showDomain }: { t
           style={{ gap: 6, marginTop: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}
           onClick={(e) => e.stopPropagation()}
         >
+          {onMove ? (
+            <button type="button" className="btn ghost sm" title="Move to folder" onClick={stop(() => onMove(t.id, t.folder))}>
+              Move…
+            </button>
+          ) : null}
           <LifecycleActions
             id={t.id}
             name={t.name}
@@ -141,6 +156,15 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
   const [newName, setNewName] = useState('');
   // Scope switcher — the Files-tab mental model: All · My · Shared · Marketplace.
   const [scope, setScope] = useState<DatasetScope>('all');
+  // Folder rail (Wave 1 primitive, mirrors Files): a (root, path) selection filters
+  // the grid to datasets under that folder. `null` = every dataset in the scope.
+  const [sel, setSel] = useState<{ root: FolderRoot; path: string } | null>(null);
+  // Explicit folder rows from the governed registry, per root — unioned with folders
+  // synthesised from the visible datasets' own paths so implicit folders keep showing.
+  const [personalNodes, setPersonalNodes] = useState<FolderPathNode[]>([]);
+  const [domainNodes, setDomainNodes] = useState<FolderPathNode[]>([]);
+  // Multi-select in the grid → bulk "Move selected…".
+  const [picked, setPicked] = useState<Set<string>>(new Set());
   // Archive/lifecycle UI (mirrors the Knowledge tab's reference pattern).
   const [showArchived, setShowArchived] = useState(false);
   // Import-from-warehouse affordance: registered warehouse connections a builder can
@@ -167,6 +191,17 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
     return () => { cancelled = true; };
   }, [canImportWarehouse]);
 
+  const loadFolders = useCallback(async () => {
+    try {
+      const [pRes, dRes] = await Promise.all([
+        fetch('/api/folders?tab=data&scope=personal', { cache: 'no-store' }),
+        fetch('/api/folders?tab=data&scope=domain', { cache: 'no-store' }),
+      ]);
+      if (pRes.ok) setPersonalNodes(((await pRes.json()).folders ?? []) as FolderPathNode[]);
+      if (dRes.ok) setDomainNodes(((await dRes.json()).folders ?? []) as FolderPathNode[]);
+    } catch { /* the synthesised rail still renders without the registry */ }
+  }, []);
+
   const refresh = useCallback(async () => {
     setErr('');
     try {
@@ -175,8 +210,9 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
       const data = await res.json();
       if (!res.ok) { setErr(data.error ?? 'Failed to load datasets'); return; }
       setGroups(data);
+      void loadFolders();
     } catch (e) { setErr((e as Error).message); }
-  }, [showArchived]);
+  }, [showArchived, loadFolders]);
   useEffect(() => { refresh(); }, [refresh]);
 
   const create = useCallback(async () => {
@@ -205,6 +241,47 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
     } catch (e) { setErr((e as Error).message); }
   }, [refresh]);
 
+  // Create a folder row in the registry, then re-load the rail. New-folder + the •••
+  // "Move folder" both live on the FolderTree; move-folder reuses create-at-path
+  // (mirrors the Files browser exactly — one primitive, consistent behaviour).
+  const createFolder = useCallback(async (root: FolderRoot, parentPath: string) => {
+    const name = window.prompt('Folder name');
+    if (!name || !name.trim()) return;
+    const path = normaliseFolderPath(`${parentPath === '/' ? '' : parentPath}/${name.trim()}`);
+    setErr('');
+    try {
+      const res = await fetch('/api/folders', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ tab: 'data', scope: root, path }),
+      });
+      if (!res.ok) { setErr((await res.json()).error ?? 'Could not create folder'); return; }
+      await loadFolders();
+    } catch (e) { setErr((e as Error).message); }
+  }, [loadFolders]);
+
+  // Move one or many datasets into a folder via the edit-gated folder route.
+  const moveInto = useCallback(async (ids: string[], folder: string) => {
+    setErr('');
+    for (const id of ids) {
+      try {
+        const res = await fetch(`/api/data/datasets/${id}/folder`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ folder }),
+        });
+        if (!res.ok) { setErr((await res.json()).error ?? 'Move failed'); }
+      } catch (e) { setErr((e as Error).message); }
+    }
+    setPicked(new Set());
+    refresh();
+  }, [refresh]);
+
+  const promptMove = useCallback((ids: string[], from?: string) => {
+    if (ids.length === 0) return;
+    const dest = window.prompt('Move to folder (path, e.g. /contracts)', from ?? '/');
+    if (dest === null) return;
+    void moveInto(ids, dest);
+  }, [moveInto]);
+
   // A dataset is the caller's to manage under the ONE canonical edit-scope rule the
   // DELETE/archive routes enforce: owner, domain_admin of the owning domain, or admin.
   // Using the shared predicate (not a hand-rolled owner-or-admin check) keeps the
@@ -222,6 +299,38 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
   // where a dataset's origin domain disambiguates same-named assets. DomainTag itself
   // no-ops on a missing domain, so this is always safe.
   const showDomain = scope === 'shared' || scope === 'marketplace';
+
+  // Folder rows fed to the tree = the governed registry rows UNIONed with folders
+  // synthesised from the visible datasets' own paths, so implicit (pre-registry)
+  // folders keep showing with zero migration. Split by root (personal/domain).
+  const active = scoped.active as Tile[];
+  const [personalTreeNodes, domainTreeNodes] = useMemo(() => {
+    const synth = (rows: FolderPathNode[], paths: string[]): FolderPathNode[] => {
+      const seen = new Set(rows.map((r) => normaliseFolderPath(r.path)));
+      const out = [...rows];
+      for (const p of paths) {
+        const n = normaliseFolderPath(p);
+        if (n !== '/' && !seen.has(n)) { seen.add(n); out.push({ path: n }); }
+      }
+      return out;
+    };
+    const personalPaths = active.filter((t) => rootOf(t) === 'personal').map((t) => t.folder);
+    const domainPaths = active.filter((t) => rootOf(t) === 'domain').map((t) => t.folder);
+    return [synth(personalNodes, personalPaths), synth(domainNodes, domainPaths)];
+  }, [personalNodes, domainNodes, active]);
+
+  // The items the tree lays out under each root (leaves live inside their folder).
+  const treeItems = useMemo(
+    () => active.map((t) => ({ id: t.id, folder: t.folder, name: t.name })),
+    [active],
+  );
+
+  // Grid filter: when a folder is selected, show the datasets under it (incl. subfolders,
+  // via itemsUnderFolder) that live in the selected root. Else the whole scope list.
+  const shown = sel
+    ? itemsUnderFolder(sel.path, active.filter((t) => rootOf(t) === sel.root))
+    : active;
+  const canBulkMove = shown.filter((t) => picked.has(t.id) && canManage(t)).map((t) => t.id);
 
   return (
     <ConfirmProvider>
@@ -276,7 +385,7 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
             key={s.key}
             type="button"
             className={scope === s.key ? 'on' : ''}
-            onClick={() => setScope(s.key)}
+            onClick={() => { setScope(s.key); setSel(null); setPicked(new Set()); }}
           >
             {s.label}{counts ? ` (${counts[s.key]})` : ''}
           </button>
@@ -297,20 +406,91 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
 
       {groups ? (
         <>
-          {scoped.active.length > 0 ? (
-            <div className="tile-grid" style={{ marginTop: 16 }}>
-              {scoped.active.map((t) => (
-                <TileCard
-                  key={t.id}
-                  t={t}
-                  onOpen={onOpen}
-                  // Import applies to marketplace products only (Builder+; store re-checks).
-                  onImport={canImport && t.tier === 'product' && t.owner !== uid ? importProduct : undefined}
-                  canManage={canManage(t)}
-                  onChanged={refresh}
-                  showDomain={showDomain}
+          {active.length > 0 ? (
+            <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', marginTop: 16 }}>
+              {/* ---- folder rail (the Wave 1 primitive, one component across tabs) ---- */}
+              <nav style={{ flex: '0 0 260px', minWidth: 220 }}>
+                <button
+                  type="button"
+                  className={`folder-row${sel === null ? ' is-selected' : ''}`}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                    height: 32, padding: '0 8px', marginBottom: 6, borderRadius: 8,
+                    border: 'none', cursor: 'pointer', textAlign: 'left',
+                    background: sel === null ? 'var(--gold-soft)' : 'transparent',
+                    color: sel === null ? 'var(--gold-text)' : 'var(--text)',
+                  }}
+                  onClick={() => setSel(null)}
+                >
+                  <span aria-hidden style={{ opacity: 0.85 }}>🗂️</span>
+                  <span style={{ flex: 1 }}>All datasets</span>
+                  <span className="muted" style={{ fontSize: 12 }}>{active.length}</span>
+                </button>
+                <FolderTree
+                  variant="nav"
+                  personalNodes={personalTreeNodes}
+                  domainNodes={domainTreeNodes}
+                  items={treeItems}
+                  personalLabel="My folders"
+                  domainLabel="Shared in domain"
+                  selectedPath={sel?.path}
+                  onSelect={(root, path) => setSel({ root, path })}
+                  onCreate={createFolder}
+                  onMove={(root, path) => {
+                    // Move every dataset the caller manages that lives under this folder.
+                    const ids = itemsUnderFolder(path, active.filter((t) => rootOf(t) === root && canManage(t))).map((t) => t.id);
+                    promptMove(ids, path);
+                  }}
+                  renderLeaf={(item) => item.name ?? item.id}
                 />
-              ))}
+              </nav>
+
+              {/* ---- the dataset grid, filtered to the selected folder ---- */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {canBulkMove.length > 0 ? (
+                  <div className="row" style={{ gap: 8, marginBottom: 12, alignItems: 'center' }}>
+                    <span className="muted">{canBulkMove.length} selected</span>
+                    <button className="btn ghost sm" onClick={() => promptMove(canBulkMove)}>Move selected…</button>
+                    <button className="btn ghost sm" onClick={() => setPicked(new Set())}>Clear</button>
+                  </div>
+                ) : null}
+                {shown.length === 0 ? (
+                  <div className="stub-page">This folder is empty.</div>
+                ) : (
+                  <div className="tile-grid">
+                    {shown.map((t) => (
+                      <div key={t.id} style={{ position: 'relative' }}>
+                        {canManage(t) ? (
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${t.name}`}
+                            checked={picked.has(t.id)}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              setPicked((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(t.id)) next.delete(t.id); else next.add(t.id);
+                                return next;
+                              });
+                            }}
+                            style={{ position: 'absolute', top: 12, left: 12, zIndex: 2, accentColor: 'var(--gold-deep)', cursor: 'pointer' }}
+                          />
+                        ) : null}
+                        <TileCard
+                          t={t}
+                          onOpen={onOpen}
+                          // Import applies to marketplace products only (Builder+; store re-checks).
+                          onImport={canImport && t.tier === 'product' && t.owner !== uid ? importProduct : undefined}
+                          onMove={canManage(t) ? (id, from) => promptMove([id], from) : undefined}
+                          canManage={canManage(t)}
+                          onChanged={refresh}
+                          showDomain={showDomain}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           ) : null}
 

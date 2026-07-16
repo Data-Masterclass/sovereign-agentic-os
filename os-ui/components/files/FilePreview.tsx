@@ -121,6 +121,22 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
     } catch (e) { setErr((e as Error).message); }
   }, [id, load, onMutated]);
 
+  // Move this file into another folder via the edit-gated folder route. A viewer
+  // (non-owner, non-admin) is rejected 403 by the store; the button is owner-only.
+  const move = useCallback(async (folder: string) => {
+    setErr('');
+    try {
+      const res = await fetch(`/api/files/${id}/folder`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ folder }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setErr(data.error ?? 'Move failed'); return; }
+      await load();
+      onMutated();
+    } catch (e) { setErr((e as Error).message); }
+  }, [id, load, onMutated]);
+
   const reupload = useCallback(async (file: File) => {
     const isText = /^text\/|json|csv|markdown/.test(file.type) || /\.(txt|md|csv|json|tsv)$/i.test(file.name);
     const text = isText ? await file.text() : undefined;
@@ -207,6 +223,23 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         <dt>Storage</dt><dd>{a.storage}</dd>
         <dt>Link</dt><dd className="deep-link">{a.deepLink}</dd>
       </dl>
+
+      {/* Move to folder — edit-gated (owner / in-domain admin). The folder route
+          also upserts the destination folder into the governed registry. */}
+      {isOwner || isAdmin ? (
+        <div className="preview-row">
+          <button
+            className="btn ghost sm"
+            onClick={() => {
+              const dest = window.prompt('Move to folder (path, e.g. /contracts)', a.folder);
+              if (dest !== null) void move(dest);
+            }}
+            title="Move this file into a folder"
+          >
+            Move to folder…
+          </button>
+        </div>
+      ) : null}
 
       {/* Editable: description, tags, sensitivity, index opt-out (owner-only; 403 otherwise). */}
       <div>

@@ -15,6 +15,8 @@ import DomainTag from '@/components/DomainTag';
 import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
 import TalkTo from '@/components/talk/TalkTo';
 import { TALK_PRESENTATION } from '@/lib/talk/schema';
+import FolderTree from '@/components/core/FolderTree';
+import { isUnderFolder } from '@/lib/core/folders';
 
 /** Knowledge visibility (Personal/Shared/Marketplace) → OS-wide lifecycle visibility. */
 const lcVis = (v: 'Personal' | 'Shared' | 'Marketplace'): LcVisibility =>
@@ -58,6 +60,12 @@ export default function KnowledgePage() {
   const [confirmDemoteId, setConfirmDemoteId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
 
+  // Folder navigation state for "My knowledge"
+  const [pkFolder, setPkFolder] = useState<string>('/');
+  const [pkFolderNodes, setPkFolderNodes] = useState<{ path: string }[]>([]);
+  const [pkMoveId, setPkMoveId] = useState<string | null>(null);
+  const [pkMoveTarget, setPkMoveTarget] = useState('');
+
   // User info for role-based UI
   const [user, setUser] = useState<UserInfo | null>(null);
 
@@ -70,6 +78,16 @@ export default function KnowledgePage() {
     }
   }, [showArchived]);
 
+  async function loadFolders() {
+    try {
+      const res = await fetch('/api/folders?tab=knowledge&scope=personal', { cache: 'no-store' });
+      if (res.ok) {
+        const d = await res.json();
+        setPkFolderNodes((d.folders ?? []).map((f: { path: string }) => ({ path: f.path })));
+      }
+    } catch { /* leave empty */ }
+  }
+
   useEffect(() => {
     fetch('/api/auth/me', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
@@ -79,6 +97,8 @@ export default function KnowledgePage() {
 
   useEffect(() => {
     void loadPersonal();
+    void loadFolders();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadPersonal]);
 
   // ── Personal knowledge ("My knowledge") ──────────────────────────────────
@@ -256,6 +276,34 @@ export default function KnowledgePage() {
                     </button>
                   ))}
                 {editable && (
+                  pkMoveId === e.id ? (
+                    <>
+                      <input
+                        value={pkMoveTarget}
+                        onChange={(ev) => setPkMoveTarget(ev.target.value)}
+                        placeholder="/folder-path"
+                        style={{ width: 160 }}
+                      />
+                      <button className="btn ghost sm" onClick={async () => {
+                        await fetch(`/api/knowledge/personal/${e.id}/folder`, {
+                          method: 'POST',
+                          headers: { 'content-type': 'application/json' },
+                          body: JSON.stringify({ folder: pkMoveTarget }),
+                        });
+                        setPkMoveId(null);
+                        await loadPersonal();
+                        await loadFolders();
+                      }}>Move</button>
+                      <button className="btn ghost sm" onClick={() => setPkMoveId(null)}>Cancel</button>
+                    </>
+                  ) : (
+                    <button className="btn ghost sm" onClick={() => { setPkMoveId(e.id); setPkMoveTarget(e.folder ?? '/'); }}
+                      title="Move to a folder">
+                      Move…
+                    </button>
+                  )
+                )}
+                {editable && (
                   <button className="btn sm" onClick={() => void savePersonal()} disabled={pkSaving}>
                     {pkSaving ? <span className="spin" /> : 'Save'}
                   </button>
@@ -345,7 +393,9 @@ export default function KnowledgePage() {
 
         {/* ── MY KNOWLEDGE: personal general-knowledge entries ── */}
         {(kScope === 'all' || kScope === 'mine') && (() => {
-          const mineActive = (personal?.mine ?? []).filter((e) => !e.archived);
+          const mineActive = (personal?.mine ?? [])
+            .filter((e) => !e.archived)
+            .filter((e) => isUnderFolder(pkFolder, e.folder ?? '/'));
           const mineArchived = (personal?.mine ?? []).filter((e) => e.archived);
           return (
           <div style={{ marginTop: 24, order: 1 }}>
@@ -367,6 +417,29 @@ export default function KnowledgePage() {
 
             {pkMsg && pkMsg !== 'Saved.' && pkMsg !== 'Promoted.' && !pkMsg.startsWith('Requested') ? <div className="error" style={{ marginTop: 8 }}>{pkMsg}</div> : null}
             {(pkMsg === 'Promoted.' || pkMsg.startsWith('Requested')) ? <div className="hint" style={{ marginTop: 8, color: 'var(--teal)' }}>{pkMsg}</div> : null}
+
+            <FolderTree
+              variant="nav"
+              personalNodes={pkFolderNodes}
+              items={(personal?.mine ?? []).map((e) => ({ id: e.id, folder: e.folder ?? '/', name: e.title }))}
+              selectedPath={pkFolder}
+              onSelect={(_scope, path) => setPkFolder(path)}
+              onCreate={(_scope, parentPath) => {
+                const name = window.prompt('Folder name:');
+                if (!name?.trim()) return;
+                const full = parentPath === '/' ? `/${name.trim()}` : `${parentPath}/${name.trim()}`;
+                fetch('/api/folders', {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/json' },
+                  body: JSON.stringify({ tab: 'knowledge', scope: 'personal', path: full }),
+                }).then(() => void loadFolders());
+              }}
+              onMove={(_scope, path) => {
+                setPkMoveId(path);
+                setPkMoveTarget(path);
+              }}
+              personalLabel="My folders"
+            />
 
             {personal === null ? (
               <div className="stub-page"><span className="spin" /> Loading…</div>

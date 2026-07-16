@@ -410,6 +410,13 @@ export const config = {
   // above), which is unchanged. See docs/openmetadata-connectors.md (Phase 1).
   openmetadataConnectEnabled: env('OPENMETADATA_CONNECT_ENABLED', '').toLowerCase() === 'true',
 
+  // ---- Folder grants (Wave 3 agent-grant kernel). The MAX number of folder
+  // grants one agent may carry — a folder grant resolves at run time to every
+  // item under it (lib/core/folders → resolveFolderGrant), so this bounds the
+  // fan-out of a single grant set. Admin-overridable; the default is a
+  // teaching-safe ceiling, not a hard product limit.
+  folderGrantBudget: Number(env('OS_FOLDER_GRANT_BUDGET', '')) || 50,
+
   // ---- Deployment identity (read-only, surfaced on Settings; non-secret) ----
   deploymentProfile: env('OS_PROFILE', 'local'),
   deploymentNamespace: env('OS_NAMESPACE', 'agentic-os'),

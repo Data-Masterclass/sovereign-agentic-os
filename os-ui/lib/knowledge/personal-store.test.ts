@@ -18,6 +18,7 @@ import {
   certifyPersonalKnowledge,
   decertifyPersonalKnowledge,
   unsharePersonalKnowledge,
+  moveKnowledge,
 } from './personal-store.ts';
 
 const amir = { id: 'amir', domains: ['sales'], role: 'creator' as const };
@@ -175,6 +176,32 @@ test('DEMOTE fail-closed: a creator cannot unshare a Shared entry they do not ow
   // A plain builder (non-owner) also cannot unshare someone else's shared entry.
   assert.throws(() => unsharePersonalKnowledge(rec.id, bea), /Not permitted/i);
   assert.equal(getPersonalKnowledge(rec.id, amir).visibility, 'Shared');
+});
+
+test('folder field defaults to "/" on create', () => {
+  __resetStore();
+  const rec = createPersonalKnowledge(amir, { title: 'Test' });
+  assert.equal(rec.folder, '/');
+});
+
+test('folder can be set on create', () => {
+  __resetStore();
+  const rec = createPersonalKnowledge(amir, { title: 'Test', folder: '/work/notes' });
+  assert.equal(rec.folder, '/work/notes');
+});
+
+test('moveKnowledge: owner can move their own entry', () => {
+  __resetStore();
+  const rec = createPersonalKnowledge(amir, { title: 'Test' });
+  const moved = moveKnowledge(rec.id, amir, '/project/alpha');
+  assert.equal(moved.folder, '/project/alpha');
+  assert.equal(getPersonalKnowledge(rec.id, amir).folder, '/project/alpha');
+});
+
+test('moveKnowledge: non-owner in same domain cannot move entry', () => {
+  __resetStore();
+  const rec = createPersonalKnowledge(amir, { title: 'Private' });
+  assert.throws(() => moveKnowledge(rec.id, bea, '/shared'), /Not permitted/);
 });
 
 test('Shared-count bug regression: after Personal→Shared promotion the domain group count increments', () => {

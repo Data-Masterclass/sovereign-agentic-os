@@ -4,6 +4,7 @@
 import yaml from 'js-yaml';
 import { roleAtLeast } from '../core/session.ts';
 import type { Role } from '../core/session.ts';
+import { normaliseFolderPath } from '../core/folders.ts';
 
 /**
  * `dataset.yaml` — the SINGLE source of truth for one logical dataset (Data tab).
@@ -154,6 +155,11 @@ export type Dataset = {
   domain: string;
   tier: Tier;
   visibility: DataVisibility;
+  /** The folder this dataset lives in — a normalised path (leading slash; `'/'` is
+   *  the root). Mirrors Files: additive + defaulted, so old datasets parse unchanged
+   *  at the root and it is OMITTED from the yaml when at root (byte-stable). The
+   *  folder ROOT (personal vs domain tree) is decided by tier, exactly like Files. */
+  folder: string;
   description: string;
   versions: Versions;
   grants: Grant[];
@@ -422,6 +428,8 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
     tier,
     // A dataset is always private; tier+visibility are kept consistent on parse.
     visibility: visibilityFor(tier, visRaw),
+    // Additive + defaulted: absent → root. Normalised so equality/prefix checks are stable.
+    folder: normaliseFolderPath(typeof doc.folder === 'string' ? doc.folder : undefined),
     description: typeof doc.description === 'string' ? doc.description : '',
     versions: parseVersions(doc.versions),
     grants: grantsRaw.map(parseGrant),
@@ -444,6 +452,9 @@ export function serializeDataset(d: Dataset): string {
     tier: d.tier,
     visibility: d.visibility,
   };
+  // Omit-when-root (byte-stable, like the `layer !== 'gold'` omit precedent): a
+  // dataset at the root serializes exactly as before, so no old record churns.
+  if (d.folder && normaliseFolderPath(d.folder) !== '/') doc.folder = normaliseFolderPath(d.folder);
   if (d.description) doc.description = d.description;
   doc.versions = d.versions;
   if (d.grants.length > 0) doc.grants = d.grants;

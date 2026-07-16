@@ -92,6 +92,27 @@ test('grant cardinality is tagged at the source (R1) and defaults to low', () =>
   assert.deepEqual(d.grants[0].scope.rows, ['region = $region']);
 });
 
+test('folder defaults to root and is normalised on parse', () => {
+  // Absent → root (old datasets parse unchanged at root).
+  assert.equal(parseDataset({ name: 'X', owner: 'a', domain: 'sales' }).folder, '/');
+  // Any spelling normalises to a single leading slash, no trailing slash.
+  assert.equal(parseDataset({ name: 'X', owner: 'a', domain: 'sales', folder: 'contracts/' }).folder, '/contracts');
+  assert.equal(parseDataset({ name: 'X', owner: 'a', domain: 'sales', folder: '/a/b' }).folder, '/a/b');
+});
+
+test('folder is byte-stable: omitted at root, round-trips off-root', () => {
+  // A root dataset serializes EXACTLY as before — no `folder:` key appears, so no old
+  // record churns (the omit-when-root precedent).
+  const rootYaml = serializeDataset(sample({ folder: '/' }));
+  assert.equal(rootYaml, serializeDataset(sample()));
+  assert.ok(!/(^|\n)folder:/.test(rootYaml), 'root dataset must not emit a folder key');
+  // An off-root folder is emitted and survives a round-trip.
+  const moved = sample({ folder: '/contracts' });
+  const yaml = serializeDataset(moved);
+  assert.match(yaml, /(^|\n)folder: \/contracts/);
+  assert.equal(parseDataset(yaml).folder, '/contracts');
+});
+
 test('bad shape throws a DatasetError (store never holds garbage)', () => {
   assert.throws(() => parseDataset({ tier: 'nonsense' }), DatasetError);
   assert.throws(() => parseDataset({ grants: [{ grantee: { kind: 'bogus', id: 'x' } }] }), DatasetError);

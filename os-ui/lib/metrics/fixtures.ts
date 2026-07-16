@@ -11,7 +11,7 @@ export function goldSales(over: Partial<Dataset> = {}): Dataset {
   versions.bronze.built = true; versions.silver.built = true; versions.gold.built = true;
   return {
     version: '1', id: 'ds_sales', name: 'Sales', owner: 'amir', domain: 'sales',
-    tier: 'asset', visibility: 'domain', description: 'Sales orders.', versions,
+    tier: 'asset', visibility: 'domain', folder: '/', description: 'Sales orders.', versions,
     grants: [], measures: [{ name: 'revenue', type: 'sum', sql: 'net_amount' }],
     columns: [
       { name: 'order_id', description: 'Key.' },

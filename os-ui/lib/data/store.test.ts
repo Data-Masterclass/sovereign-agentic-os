@@ -21,12 +21,14 @@ import {
   unarchiveDataset,
   isDatasetArchived,
   deleteDataset,
+  moveDataset,
   setDocs,
   listDatasetVersions,
   restoreDatasetVersion,
   type Principal,
 } from './store.ts';
 import { DatasetError } from './dataset-schema.ts';
+import { listFolders as folderList, __resetStore as resetFolders } from '../folders/index.ts';
 
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' }; // Creator
 const bea: Principal = { id: 'bea', domains: ['sales'], role: 'builder' };
@@ -358,6 +360,32 @@ test('SECURITY: archive/unarchive/delete are edit-scoped (a non-owner viewer is 
   // The owner may; an in-domain admin may too.
   assert.equal(archiveDataset(id, amir).archived, true);
   assert.equal(unarchiveDataset(id, sara).archived, false);
+});
+
+test('FOLDER: moveDataset is edit-scoped, normalises, and reflects in the summary', () => {
+  __resetStore();
+  const id = seedOrders(); // amir-owned private dataset (personal lane)
+  // The owner may move it; the path is normalised.
+  const moved = moveDataset(id, amir, 'contracts/');
+  assert.equal(moved.folder, '/contracts');
+  // The tile summary carries the new folder for the rail/grid filter.
+  assert.equal(listDatasets(amir).mine[0].folder, '/contracts');
+  // A non-owner, non-admin in the same domain cannot move it (fail-closed 403).
+  assert.throws(() => moveDataset(id, bea, '/elsewhere'), (e: DatasetError) => e.status === 403);
+  // An in-domain admin may (same edit-scope rule as archive/delete).
+  assert.equal(moveDataset(id, sara, '/legal').folder, '/legal');
+  // Moving back to root serializes without a folder key (byte-stable) — folder is '/'.
+  assert.equal(moveDataset(id, amir, '/').folder, '/');
+});
+
+test('FOLDER: moving into a folder upserts an explicit registry row (persists when empty)', () => {
+  __resetStore();
+  resetFolders();
+  const id = seedOrders();
+  moveDataset(id, amir, '/contracts');
+  // The governed folder registry now holds a `tab:'data'` personal row for the path.
+  const rows = folderList(amir, 'data', 'personal');
+  assert.ok(rows.some((r) => r.path === '/contracts'), 'move must upsert the folder row');
 });
 
 test('LIFECYCLE: archive THEN delete — the owner purges an archived dataset; a non-owner non-admin is 403', () => {

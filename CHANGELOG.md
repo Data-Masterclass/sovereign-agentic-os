@@ -15,6 +15,23 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.10] — 2026-07-16
+
+Folder management for Data/Knowledge/Files + "context actually used" in Evaluate.
+
+### Added
+- **Folders on Data · Knowledge · Files.** Create folders, move items into them (single +
+  multi-select), and navigate a folder tree per tab. Governed (`canManageArtifact`), folders
+  persist even when empty, and Files' old implicit rail is reconciled to explicit folders with
+  zero migration. Built on a shared primitive (`lib/core/folders.ts` pure algebra +
+  `lib/folders/` governed store + `components/core/FolderTree.tsx`). *(The agent-builder
+  folder-grant browse-tree — checkbox folders or items — is the next wave.)*
+- **Evaluate: "Context actually used" per run.** Each agent's Evaluate/Run view now shows the
+  real artifacts it consumed — data · files · knowledge · metrics · connections — with
+  read/retrieved/written, per-agent and a run-level roll-up, each chip deep-linked to its tab.
+  Plus a **granted-vs-used** strip flagging "dead grants" (granted but never used). Derived
+  from the already-persisted tool-call trace; honest about inferred (`query_data`) vs captured.
+
 ## [os-ui 0.5.9] — 2026-07-16
 
 Internal refactor — **no user-facing change** (behavior-preserving; 2417 tests green).
