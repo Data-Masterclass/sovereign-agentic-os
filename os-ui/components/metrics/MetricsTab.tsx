@@ -63,6 +63,7 @@ export default function MetricsTab() {
       error={metrics.error}
       onOpen={(m) => setView({ kind: 'detail', metric: m })}
       onDefine={() => setView({ kind: 'define' })}
+      onReload={() => metrics.reload()}
       showArchived={showArchived}
       onToggleArchived={() => setShowArchived((v) => !v)}
     />

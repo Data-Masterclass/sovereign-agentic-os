@@ -97,6 +97,8 @@ export type CapabilityChip = {
   id: string;
   label: string;
   description: string;
+  /** The tab/domain this capability belongs to — used to GROUP the picker window. */
+  domain: string;
   /**
    * Which `Grants` key must be non-empty for this chip to appear. `null` = always
    * shown (the tool just needs to exist in the catalog).
@@ -112,6 +114,7 @@ export const CAPABILITY_CHIPS: CapabilityChip[] = [
     id: 'read-data',
     label: 'Read data',
     description: 'Query and explore the datasets the team was given access to.',
+    domain: 'Data',
     grantKind: 'data',
     tools: READ_TOOLS.data,
   },
@@ -119,6 +122,7 @@ export const CAPABILITY_CHIPS: CapabilityChip[] = [
     id: 'search-knowledge',
     label: 'Search knowledge',
     description: 'Search and read the knowledge workflows and documents the team can use.',
+    domain: 'Knowledge',
     grantKind: 'knowledge',
     tools: READ_TOOLS.knowledge,
   },
@@ -126,6 +130,7 @@ export const CAPABILITY_CHIPS: CapabilityChip[] = [
     id: 'use-connection',
     label: 'Use a connection',
     description: 'Call the external connections (APIs, databases) the team was given.',
+    domain: 'Connections',
     grantKind: 'connections',
     tools: READ_TOOLS.connections,
   },
@@ -133,6 +138,7 @@ export const CAPABILITY_CHIPS: CapabilityChip[] = [
     id: 'create-files',
     label: 'Create/edit files',
     description: "Read, write and search files in the team's file space.",
+    domain: 'Files',
     grantKind: null,
     tools: [...READ_TOOLS.files, ...WRITE_TOOLS.files],
   },
@@ -140,6 +146,7 @@ export const CAPABILITY_CHIPS: CapabilityChip[] = [
     id: 'query-metrics',
     label: 'Query metrics',
     description: 'Read the metrics and KPIs the team tracks.',
+    domain: 'Metrics',
     grantKind: 'metrics',
     tools: ['list_metrics', 'query_metric', 'get_metric'],
   },
@@ -147,6 +154,7 @@ export const CAPABILITY_CHIPS: CapabilityChip[] = [
     id: 'use-goals',
     label: 'Use goals',
     description: "Read the team's big bets and strategic goals.",
+    domain: 'Goals',
     grantKind: null,
     tools: ['list_big_bets', 'get_big_bet'],
   },

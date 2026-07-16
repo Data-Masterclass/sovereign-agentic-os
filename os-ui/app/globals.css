@@ -5775,6 +5775,80 @@ button.card.tile:hover .tile-action { opacity: 1; }
 }
 .sb-chip-x:hover { color: var(--danger); }
 .sb-suggest { margin-top: 10px; }
+
+/* ── Per-agent capabilities box + picker (Simple Design) ── */
+.sb-cap-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+.sb-cap-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--bg-elevated);
+  padding: 6px 8px;
+}
+.sb-cap-row.open { border-color: var(--gold-line); }
+.sb-cap-row-head { display: flex; align-items: center; gap: 8px; }
+.sb-cap-row-name {
+  appearance: none;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+  padding: 0;
+}
+.sb-cap-caret { margin-left: auto; color: var(--text-faint); font-size: 11px; }
+.sb-cap-desc { font-size: 12px; line-height: 1.5; }
+
+.sb-cap-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+  padding: 24px;
+}
+.sb-cap-modal {
+  width: min(560px, 100%);
+  max-height: 82vh;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-lg, 0 20px 50px rgba(0, 0, 0, 0.25));
+}
+.sb-cap-groups { display: flex; flex-direction: column; gap: 14px; }
+.sb-cap-group { display: flex; flex-direction: column; gap: 4px; }
+.sb-cap-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--bg);
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+.sb-cap-option:hover { border-color: var(--gold-line); }
+.sb-cap-option.on { border-color: var(--teal); background: rgba(31, 143, 136, 0.06); }
+.sb-cap-option input[type='checkbox'] { margin-top: 2px; cursor: pointer; }
+.sb-cap-option-body { display: flex; flex-direction: column; gap: 2px; }
+.sb-cap-option-name { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.sb-cap-option-desc { font-size: 12px; color: var(--text-faint); line-height: 1.45; }
+
 .sb-run { margin-top: 4px; }
 .sb-resources {
   border: 1px solid var(--border);

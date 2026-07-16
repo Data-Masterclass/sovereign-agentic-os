@@ -84,6 +84,17 @@ test('buildTree nests rows and SYNTHESISES missing intermediate folders', () => 
   assert.equal(x.synthetic, false);
 });
 
+test('buildTree carries id + archived onto real rows, leaves synthetic ones bare', () => {
+  const tree = buildTree([{ path: '/a/b', id: 'fld_b', archived: true }]);
+  const a = tree[0]; // synthesised ancestor
+  assert.equal(a.synthetic, true);
+  assert.equal(a.id, undefined, 'a synthetic folder has no row id to act on');
+  const b = a.children[0];
+  assert.equal(b.synthetic, false);
+  assert.equal(b.id, 'fld_b');
+  assert.equal(b.archived, true);
+});
+
 test('buildTree: a real row supersedes a synthesised placeholder regardless of order', () => {
   const tree = buildTree([{ path: '/a/b' }, { path: '/a', name: 'Alpha' }]);
   const a = tree[0];

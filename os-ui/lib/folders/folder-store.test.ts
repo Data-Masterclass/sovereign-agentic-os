@@ -7,7 +7,10 @@ import {
   __resetStore,
   createFolder,
   renameFolder,
-  deleteFolder,
+  archiveFolderRows,
+  restoreFolderRows,
+  deleteFolderRows,
+  folderAndDescendants,
   listFolders,
   getFolder,
   FolderError,
@@ -76,32 +79,82 @@ test('domain folder: owner, in-domain domain_admin, or platform admin may manage
   assert.equal(renameFolder(dina, f2.id, '/beas-renamed').path, '/beas-renamed');
 });
 
-// -------------------------------------- delete: empty vs re-parent --------
+// -------------------------------- archive → restore → delete lifecycle -----
 
-test('deleteFolder: an EMPTY folder is removed', () => {
-  const f = createFolder(amir, { tab: 'files', scope: 'personal', path: '/tmp' });
-  const res = deleteFolder(amir, f.id);
-  assert.deepEqual(res.deleted, [f.id]);
-  assert.equal(res.reparented.length, 0);
-  assert.equal(getFolder(f.id), undefined);
+test('archiveFolderRows: archives the folder ROW + its descendant rows, reversibly', () => {
+  const a = createFolder(amir, { tab: 'files', scope: 'personal', path: '/a' });
+  const b = createFolder(amir, { tab: 'files', scope: 'personal', path: '/a/b' });
+  const other = createFolder(amir, { tab: 'files', scope: 'personal', path: '/other' });
+  archiveFolderRows(amir, a.id);
+  assert.equal(getFolder(a.id)?.archived, true);
+  assert.equal(getFolder(b.id)?.archived, true, 'descendant row archived too');
+  assert.ok(getFolder(a.id)?.archivedAt, 'archivedAt stamped');
+  assert.notEqual(getFolder(other.id)?.archived, true, 'a sibling folder is untouched');
 });
 
-test('deleteFolder: a NON-EMPTY folder RE-PARENTS its descendants, never orphans them', () => {
-  const parent = createFolder(amir, { tab: 'files', scope: 'personal', path: '/a' });
-  const child = createFolder(amir, { tab: 'files', scope: 'personal', path: '/a/b' });
+test('listFolders hides archived folders by default, shows them with includeArchived', () => {
+  const a = createFolder(amir, { tab: 'files', scope: 'personal', path: '/a' });
+  createFolder(amir, { tab: 'files', scope: 'personal', path: '/live' });
+  archiveFolderRows(amir, a.id);
+  assert.deepEqual(listFolders(amir, 'files', 'personal').map((f) => f.path), ['/live']);
+  assert.deepEqual(
+    listFolders(amir, 'files', 'personal', { includeArchived: true }).map((f) => f.path).sort(),
+    ['/a', '/live'],
+  );
+});
+
+test('restoreFolderRows reverses archive on the folder + descendants', () => {
+  const a = createFolder(amir, { tab: 'files', scope: 'personal', path: '/a' });
+  const b = createFolder(amir, { tab: 'files', scope: 'personal', path: '/a/b' });
+  archiveFolderRows(amir, a.id);
+  restoreFolderRows(amir, a.id);
+  assert.notEqual(getFolder(a.id)?.archived, true);
+  assert.notEqual(getFolder(b.id)?.archived, true);
+  assert.equal(getFolder(a.id)?.archivedAt, undefined, 'archivedAt cleared on restore');
+});
+
+test('deleteFolderRows: PHYSICAL delete is ARCHIVED-ONLY', () => {
+  const a = createFolder(amir, { tab: 'files', scope: 'personal', path: '/a' });
+  // A live folder cannot be physically deleted — archive first.
+  assert.throws(
+    () => deleteFolderRows(amir, a.id),
+    (e: unknown) => e instanceof FolderError && (e as FolderError).status === 409,
+  );
+  assert.ok(getFolder(a.id), 'still present after a refused physical delete');
+  archiveFolderRows(amir, a.id);
+  const deleted = deleteFolderRows(amir, a.id);
+  assert.deepEqual(deleted, [a.id]);
+  assert.equal(getFolder(a.id), undefined, 'archived folder is now physically gone');
+});
+
+test('deleteFolderRows removes the folder ROW + every descendant row', () => {
+  const a = createFolder(amir, { tab: 'files', scope: 'personal', path: '/a' });
+  const b = createFolder(amir, { tab: 'files', scope: 'personal', path: '/a/b' });
   const grand = createFolder(amir, { tab: 'files', scope: 'personal', path: '/a/b/c' });
-  const res = deleteFolder(amir, parent.id);
-  assert.deepEqual(res.deleted, [parent.id]);
-  // /a/b → /b and /a/b/c → /b/c (re-parented to root, /a's parent).
-  assert.equal(getFolder(child.id)?.path, '/b');
-  assert.equal(getFolder(grand.id)?.path, '/b/c');
-  assert.equal(getFolder(parent.id), undefined, 'the deleted row is gone');
+  archiveFolderRows(amir, a.id);
+  const deleted = deleteFolderRows(amir, a.id).sort();
+  assert.deepEqual(deleted, [a.id, b.id, grand.id].sort());
+  assert.equal(getFolder(a.id), undefined);
+  assert.equal(getFolder(b.id), undefined);
+  assert.equal(getFolder(grand.id), undefined);
 });
 
-test('deleteFolder is edit-scoped (a non-owner is rejected, nothing deleted)', () => {
+test('folder lifecycle row ops are edit-scoped (a non-owner is rejected, nothing changes)', () => {
   const f = createFolder(amir, { tab: 'files', scope: 'personal', path: '/keep' });
-  assert.throws(() => deleteFolder(bea, f.id), (e: unknown) => e instanceof FolderError && (e as FolderError).status === 403);
+  assert.throws(() => archiveFolderRows(bea, f.id), (e: unknown) => e instanceof FolderError && (e as FolderError).status === 403);
+  assert.notEqual(getFolder(f.id)?.archived, true, 'not archived after a rejected op');
+  archiveFolderRows(amir, f.id);
+  assert.throws(() => deleteFolderRows(bea, f.id), (e: unknown) => e instanceof FolderError && (e as FolderError).status === 403);
   assert.ok(getFolder(f.id), 'the folder still exists after a rejected delete');
+});
+
+test('folderAndDescendants returns the folder + its descendant rows in the same lane', () => {
+  const a = createFolder(amir, { tab: 'files', scope: 'personal', path: '/a' });
+  const b = createFolder(amir, { tab: 'files', scope: 'personal', path: '/a/b' });
+  createFolder(amir, { tab: 'files', scope: 'personal', path: '/ab' }); // name-substring, NOT a child
+  const paths = folderAndDescendants(getFolder(a.id)!).map((n) => n.path).sort();
+  assert.deepEqual(paths, ['/a', '/a/b']);
+  void b;
 });
 
 // --------------------------------------------------- rename cascade -------

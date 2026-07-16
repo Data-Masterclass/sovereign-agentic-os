@@ -3,11 +3,10 @@
  */
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
-import { useApi } from '@/lib/useApi';
 import { useUser } from '@/lib/useUser';
 import { useTileOrder } from '@/lib/prefs/useTileOrder';
 import {
@@ -55,11 +54,35 @@ const TIER_SEG: { key: TierKey; label: string }[] = [
 ];
 
 export default function BigBetsPage() {
-  const { data, loading, error, reload } = useApi<ListData>('/api/big-bets');
-  const { data: strat } = useApi<StrategyData>('/api/big-bets/strategy');
+  const [data, setData] = useState<ListData | null>(null);
+  const [strat, setStrat] = useState<StrategyData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
   const { user } = useUser();
   const [creating, setCreating] = useState(false);
   const [tier, setTier] = useState<TierKey>('all');
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const [betsRes, stratRes] = await Promise.all([
+        fetch(`/api/big-bets${showArchived ? '?archived=1' : ''}`, { cache: 'no-store' }),
+        fetch('/api/big-bets/strategy', { cache: 'no-store' }),
+      ]);
+      const betsBody = await betsRes.json();
+      if (!betsRes.ok) setError(betsBody.error ?? `Request failed (${betsRes.status})`);
+      else setData(betsBody as ListData);
+      if (stratRes.ok) setStrat(await stratRes.json() as StrategyData);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [showArchived]);
+
+  useEffect(() => { void reload(); }, [reload]);
 
   // A bet is the caller's to manage when they own it or are an Admin (the route
   // re-checks either way — this only decides whether to surface the controls).
@@ -80,9 +103,11 @@ export default function BigBetsPage() {
     (b: BetSummary) => betTier(b.pillarId, pillarScopeById),
     [pillarScopeById],
   );
+  // Active bets only for tier counts (archived bets don't count toward the segment totals).
+  const activeBets = useMemo(() => allBets.filter((b) => b.status !== 'archived'), [allBets]);
   const tierCount = useCallback(
-    (k: TierKey) => allBets.filter((b) => k === 'all' || tierOf(b) === k).length,
-    [allBets, tierOf],
+    (k: TierKey) => activeBets.filter((b) => k === 'all' || tierOf(b) === k).length,
+    [activeBets, tierOf],
   );
   // Bets shown for the selected tier — the existing pillar grouping runs WITHIN it.
   const bets = useMemo(
@@ -127,7 +152,17 @@ export default function BigBetsPage() {
             Portfolio
             {data ? <span className="count-pill" style={{ marginLeft: 8 }}>{bets.length}</span> : null}
           </div>
-          <button className="btn" onClick={() => setCreating(true)}>New Big Bet</button>
+          <div className="row" style={{ gap: 8 }}>
+            <button
+              className="btn ghost"
+              style={{ opacity: showArchived ? 1 : 0.7 }}
+              onClick={() => setShowArchived((s) => !s)}
+              title="Archived bets are hidden by default"
+            >
+              {showArchived ? 'Hide archived' : 'Show archived'}
+            </button>
+            <button className="btn" onClick={() => setCreating(true)}>New Big Bet</button>
+          </div>
         </div>
 
         {/* Tier switcher — My · Domain · Company. A bet's tier is its pillar's tier

@@ -100,8 +100,11 @@ export function itemsUnderFolder<T extends Foldered>(path: string, items: T[]): 
 // -------------------------------------------------------------------- tree --
 
 /** A registry folder row — the minimum the tree algebra reads. The store's
- *  richer `FolderNode` (id/tab/scope/owner/…) structurally satisfies this. */
-export type FolderPathNode = { path: string; name?: string };
+ *  richer `FolderNode` (id/tab/scope/owner/…) structurally satisfies this. The
+ *  optional `id`/`archived` let the nav rail drive the folder LIFECYCLE (move /
+ *  archive / restore / delete) against the registry row; synthesised (implicit)
+ *  folders carry no `id`, so those actions are offered only on real rows. */
+export type FolderPathNode = { path: string; name?: string; id?: string; archived?: boolean };
 
 /** One node of the nested folder tree. `synthetic` marks an intermediate folder
  *  that has NO registry row of its own (an implicit folder derived from a member
@@ -111,6 +114,10 @@ export type FolderTreeNode = {
   name: string;
   /** True when no registry row exists for this path (implicit / derived). */
   synthetic: boolean;
+  /** The registry row id (real folders only) — the handle the lifecycle ops target. */
+  id?: string;
+  /** Whether the registry row is archived (real folders only). */
+  archived?: boolean;
   children: FolderTreeNode[];
 };
 
@@ -125,23 +132,25 @@ export function buildTree(nodes: FolderPathNode[]): FolderTreeNode[] {
   // Map every path (and each of its ancestors) to a node, synthesising as we go.
   const byPath = new Map<string, FolderTreeNode>();
 
-  function ensure(path: string, synthetic: boolean, name?: string): FolderTreeNode {
+  function ensure(path: string, synthetic: boolean, row?: FolderPathNode): FolderTreeNode {
     const p = normaliseFolderPath(path);
     let node = byPath.get(p);
     if (!node) {
-      node = { path: p, name: name?.trim() || folderName(p), synthetic, children: [] };
+      node = { path: p, name: row?.name?.trim() || folderName(p), synthetic, children: [] };
+      if (row && !synthetic) { node.id = row.id; node.archived = row.archived; }
       byPath.set(p, node);
       // Walk up so every ancestor exists (synthetic unless later given a row).
       if (p !== '/') ensure(parentPath(p), true);
     } else if (!synthetic) {
       // A real row supersedes a previously-synthesised placeholder.
       node.synthetic = false;
-      if (name?.trim()) node.name = name.trim();
+      if (row?.name?.trim()) node.name = row.name.trim();
+      if (row) { node.id = row.id; node.archived = row.archived; }
     }
     return node;
   }
 
-  for (const n of nodes) ensure(n.path, false, n.name);
+  for (const n of nodes) ensure(n.path, false, n);
 
   // Link children to parents (skip the implicit root).
   const roots: FolderTreeNode[] = [];

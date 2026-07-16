@@ -102,6 +102,38 @@ export function deleteCopy(kind: ArtifactKind, name: string, visibility: Visibil
   };
 }
 
+/**
+ * The SHARED folder-archive confirm — one copy every foldered tab (Files, Data,
+ * Knowledge, Metrics) uses, because they share the core folder primitive. Archiving a
+ * folder cascades to the N items inside it (reversible). `count` is how many items are
+ * under the folder (incl. subfolders).
+ */
+export function archiveFolderCopy(name: string, count: number): ConfirmCopy {
+  const items = count === 1 ? '1 item' : `${count} items`;
+  return {
+    title: `Archive folder “${name}”?`,
+    body:
+      `Archiving “${name}” also archives the ${items} inside it. ` +
+      `Move items out first if you want to keep them active. You can restore the folder later.`,
+    confirmLabel: 'Archive folder',
+    danger: false,
+  };
+}
+
+/** The SHARED folder physical-delete confirm — permanent, archived-only, cascades to
+ *  the items inside. One copy for every foldered tab. */
+export function deleteFolderCopy(name: string, count: number): ConfirmCopy {
+  const items = count === 1 ? 'the 1 item' : `all ${count} items`;
+  return {
+    title: `Delete folder “${name}” permanently?`,
+    body:
+      `This permanently deletes the folder “${name}” and ${items} inside it. ` +
+      `This cannot be undone.`,
+    confirmLabel: 'Delete permanently',
+    danger: true,
+  };
+}
+
 /** Restore-from-version confirm — changes current state, so it asks first (light). */
 export function restoreVersionCopy(name: string, version: number): ConfirmCopy {
   return {

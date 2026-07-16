@@ -10,9 +10,12 @@ import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/co
 import {
   itemsUnderFolder,
   normaliseFolderPath,
+  folderName,
   type FolderPathNode,
 } from '@/lib/core/folders';
-import FolderTree, { FolderPickerModal } from '@/components/core/FolderTree';
+import FolderTree, { FolderPickerModal, type FolderRef } from '@/components/core/FolderTree';
+import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
+import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
 import FilePreview from './FilePreview';
 
 type Summary = {
@@ -79,7 +82,18 @@ function rootOf(f: Summary): FolderRoot {
   return f.tier === 'dataset' ? 'personal' : 'domain';
 }
 
-export default function FilesBrowser() {
+/** Which folder roots to show in the rail + picker for each scope tab.
+ *  - mine       → personal only (dataset-tier files)
+ *  - shared     → domain only (asset/product-tier files)
+ *  - marketplace → domain only (product-tier files)
+ *  - all        → both (keep the current behaviour for the All view) */
+function rootsForScope(scope: ScopeKey): FolderRoot[] {
+  if (scope === 'mine') return ['personal'];
+  if (scope === 'shared' || scope === 'marketplace') return ['domain'];
+  return ['personal', 'domain'];
+}
+
+function FilesBrowserInner() {
   const { user } = useUser();
   const [scope, setScope] = useState<ScopeKey>('mine');
   const [groups, setGroups] = useState<Groups | null>(null);
@@ -100,6 +114,10 @@ export default function FilesBrowser() {
   const [showArchived, setShowArchived] = useState(false);
   // Folder picker modal: which file ids are being moved; null = closed.
   const [pickerIds, setPickerIds] = useState<string[] | null>(null);
+  // Folder lifecycle: folder being moved (opens a second picker); null = closed.
+  const [folderMove, setFolderMove] = useState<FolderRef | null>(null);
+
+  const confirm = useConfirm();
 
   // search
   const [query, setQuery] = useState('');
@@ -110,15 +128,16 @@ export default function FilesBrowser() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const loadFolders = useCallback(async () => {
+    const archivedParam = showArchived ? '&archived=1' : '';
     try {
       const [pRes, dRes] = await Promise.all([
-        fetch('/api/folders?tab=files&scope=personal', { cache: 'no-store' }),
-        fetch('/api/folders?tab=files&scope=domain', { cache: 'no-store' }),
+        fetch(`/api/folders?tab=files&scope=personal${archivedParam}`, { cache: 'no-store' }),
+        fetch(`/api/folders?tab=files&scope=domain${archivedParam}`, { cache: 'no-store' }),
       ]);
       if (pRes.ok) setPersonalNodes(((await pRes.json()).folders ?? []) as FolderPathNode[]);
       if (dRes.ok) setDomainNodes(((await dRes.json()).folders ?? []) as FolderPathNode[]);
     } catch { /* the facet-synthesised rail still renders without the registry */ }
-  }, []);
+  }, [showArchived]);
 
   const refresh = useCallback(async () => {
     setErr('');
@@ -240,6 +259,14 @@ export default function FilesBrowser() {
   const personalItems = treeItems.filter((i) => i.root === 'personal');
   const domainItems = treeItems.filter((i) => i.root === 'domain');
 
+  // Scope-filtered nodes/items: only show the root(s) that apply to the active scope.
+  // This ensures the rail and both pickers only offer folders the item can actually live in.
+  const activeRoots = rootsForScope(scope);
+  const visiblePersonalNodes = activeRoots.includes('personal') ? personalTreeNodes : [];
+  const visibleDomainNodes = activeRoots.includes('domain') ? domainTreeNodes : [];
+  const visiblePersonalItems = activeRoots.includes('personal') ? personalItems : [];
+  const visibleDomainItems = activeRoots.includes('domain') ? domainItems : [];
+
   // Grid filter: when a folder is selected, show the files under it (incl. subfolders,
   // via itemsUnderFolder) that live in the selected root. Else the whole scope list.
   const inFolder = sel
@@ -286,14 +313,46 @@ export default function FilesBrowser() {
       <FolderPickerModal
         open={pickerIds !== null}
         tab="files"
-        personalNodes={personalTreeNodes}
-        domainNodes={domainTreeNodes}
+        personalNodes={visiblePersonalNodes}
+        domainNodes={visibleDomainNodes}
         title={`Move ${pickerIds && pickerIds.length > 1 ? `${pickerIds.length} files` : 'file'} to folder`}
         onConfirm={({ path }) => {
           if (pickerIds) void moveInto(pickerIds, path);
           setPickerIds(null);
         }}
         onCancel={() => setPickerIds(null)}
+        onCreate={async (scope, path) => {
+          const res = await fetch('/api/folders', {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ tab: 'files', scope, path }),
+          });
+          if (!res.ok) { setErr((await res.json()).error ?? 'Could not create folder'); return; }
+          await loadFolders();
+        }}
+      />
+
+      {/* Folder lifecycle: move a folder to a new parent path. Only real (registry)
+          folders have an id, so this modal only opens when ref.id is set. */}
+      <FolderPickerModal
+        open={folderMove !== null}
+        tab="files"
+        personalNodes={folderMove?.scope === 'personal' ? visiblePersonalNodes : []}
+        domainNodes={folderMove?.scope === 'domain' ? visibleDomainNodes : []}
+        title="Move folder"
+        onConfirm={async ({ path }) => {
+          if (!folderMove?.id) return;
+          setErr('');
+          try {
+            const res = await fetch(`/api/folders/${folderMove.id}`, {
+              method: 'PATCH', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ path }),
+            });
+            if (!res.ok) { setErr((await res.json()).error ?? 'Could not move folder'); }
+            else { refresh(); void loadFolders(); }
+          } catch (e) { setErr((e as Error).message); }
+          setFolderMove(null);
+        }}
+        onCancel={() => setFolderMove(null)}
         onCreate={async (scope, path) => {
           const res = await fetch('/api/folders', {
             method: 'POST', headers: { 'content-type': 'application/json' },
@@ -319,9 +378,9 @@ export default function FilesBrowser() {
                 New-folder edit the registry. */}
             <FolderTree
               variant="nav"
-              personalNodes={personalTreeNodes}
-              domainNodes={domainTreeNodes}
-              items={[...personalItems, ...domainItems]}
+              personalNodes={visiblePersonalNodes}
+              domainNodes={visibleDomainNodes}
+              items={[...visiblePersonalItems, ...visibleDomainItems]}
               personalLabel="My folders"
               domainLabel="Shared folders"
               renderLeaf={(i) => <span className="file-sub">{i.name ?? i.id}</span>}
@@ -330,9 +389,53 @@ export default function FilesBrowser() {
                 setSel((cur) => (cur && cur.root === root && cur.path === path ? null : { root, path }))
               }
               onCreate={(root, parentPath) => void createFolder(root, parentPath)}
-              onMove={(root, path) => {
-                const dest = window.prompt('Move folder to (new path)', path);
-                if (dest && dest.trim()) void createFolder(root, normaliseFolderPath(dest));
+              onMove={(ref) => { if (ref.id) setFolderMove(ref); }}
+              onArchive={(ref) => {
+                const count = itemsUnderFolder(
+                  ref.path,
+                  list.filter((f) => rootOf(f) === ref.scope),
+                ).length;
+                void (async () => {
+                  if (!await confirm(archiveFolderCopy(folderName(ref.path), count))) return;
+                  setErr('');
+                  try {
+                    const res = await fetch(`/api/folders/${ref.id}`, {
+                      method: 'POST', headers: { 'content-type': 'application/json' },
+                      body: JSON.stringify({ action: 'archive' }),
+                    });
+                    if (!res.ok) { setErr((await res.json()).error ?? 'Could not archive folder'); return; }
+                    refresh(); void loadFolders();
+                  } catch (e) { setErr((e as Error).message); }
+                })();
+              }}
+              onRestore={(ref) => {
+                void (async () => {
+                  setErr('');
+                  try {
+                    const res = await fetch(`/api/folders/${ref.id}`, {
+                      method: 'POST', headers: { 'content-type': 'application/json' },
+                      body: JSON.stringify({ action: 'restore' }),
+                    });
+                    if (!res.ok) { setErr((await res.json()).error ?? 'Could not restore folder'); return; }
+                    refresh(); void loadFolders();
+                  } catch (e) { setErr((e as Error).message); }
+                })();
+              }}
+              onDelete={(ref) => {
+                const count = itemsUnderFolder(
+                  ref.path,
+                  list.filter((f) => rootOf(f) === ref.scope),
+                ).length;
+                void (async () => {
+                  if (!await confirm(deleteFolderCopy(folderName(ref.path), count))) return;
+                  setErr('');
+                  try {
+                    const res = await fetch(`/api/folders/${ref.id}`, { method: 'DELETE' });
+                    if (!res.ok) { setErr((await res.json()).error ?? 'Could not delete folder'); return; }
+                    if (sel?.path === ref.path) setSel(null);
+                    refresh(); void loadFolders();
+                  } catch (e) { setErr((e as Error).message); }
+                })();
               }}
             />
           </div>
@@ -429,5 +532,13 @@ export default function FilesBrowser() {
         ) : null}
       </div>
     </>
+  );
+}
+
+export default function FilesBrowser() {
+  return (
+    <ConfirmProvider>
+      <FilesBrowserInner />
+    </ConfirmProvider>
   );
 }

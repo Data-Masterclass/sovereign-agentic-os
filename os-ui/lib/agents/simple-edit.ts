@@ -270,6 +270,36 @@ function stripTool(sys: System, tool: string): void {
   for (const a of sys.agents) if (a.tools) a.tools = a.tools.filter((t) => t !== tool);
 }
 
+/**
+ * Wire the team as a LINEAR handoff chain in declared order —
+ * `agents[0] → agents[1] → … → agents[n]` — the auto-topology Simple mode presents.
+ * Every existing `handoff` edge is REPLACED by the chain (so add/remove/reorder keep
+ * it coherent); `supervise` edges and their memberships are LEFT untouched (a
+ * supervisor team is a different shape the user chose). A 0- or 1-agent team gets no
+ * handoff edges. Pure/immutable, like every other edit here.
+ *
+ * Developer mode never calls this — it edits edges freely and those edits persist.
+ * Simple mode calls it after each structural change so the graph is never disconnected.
+ */
+export function linearizeChain(input: System): System {
+  const sys = structuredClone(input);
+  // Preserve any human-readable `when` label on an existing consecutive handoff so a
+  // re-chain (after add/remove/reorder) keeps the scaffold's "<role> complete" hints.
+  const whenOf = new Map<string, string | undefined>();
+  for (const e of sys.edges) if (e.type === 'handoff') whenOf.set(`${e.from}→${e.to}`, e.when);
+  // Keep supervise edges (a supervisor topology the user built); drop all handoffs.
+  const kept = sys.edges.filter((e) => e.type !== 'handoff');
+  const chain: typeof sys.edges = [];
+  for (let i = 0; i < sys.agents.length - 1; i += 1) {
+    const from = sys.agents[i].id;
+    const to = sys.agents[i + 1].id;
+    const when = whenOf.get(`${from}→${to}`);
+    chain.push(when ? { from, to, type: 'handoff', when } : { from, to, type: 'handoff' });
+  }
+  sys.edges = [...kept, ...chain];
+  return sys;
+}
+
 /** Next free `agentN` id (matches Developer mode's canvas guided-add naming). */
 export function nextAgentId(sys: System): string {
   const ids = new Set(sys.agents.map((a) => a.id));
@@ -309,7 +339,8 @@ export function addSimpleAgent(
   };
   sys.agents.push(agent);
   if (!sys.entrypoint) sys.entrypoint = id;
-  return sys;
+  // Simple mode presents a linear team — chain the new agent onto the end.
+  return linearizeChain(sys);
 }
 
 /**
@@ -333,13 +364,16 @@ export function removeAgentSimple(input: System, agentId: string): System {
     if (a.members) a.members = a.members.filter((m) => m !== agentId);
   }
   sys.edges = sys.edges.filter((e) => e.from !== agentId && e.to !== agentId);
-  return sys;
+  // Re-chain the remaining agents so the linear team stays connected (no gap where
+  // the removed agent sat).
+  return linearizeChain(sys);
 }
 
 /**
- * Move an agent up/down in the declared order (presentation of the guided list).
- * The declared order is meaningful only as the fallback run order; reordering never
- * changes edges/entrypoint. Clamped — a no-op at the ends.
+ * Move an agent up/down in the declared order (the guided list order). In Simple mode
+ * this order IS the linear handoff chain, so reordering re-wires the chain to match
+ * (via {@link linearizeChain}); the entrypoint is left as-is. Clamped — a no-op at the
+ * ends (and then edges are unchanged since the order didn't move).
  */
 export function moveAgent(input: System, id: string, dir: -1 | 1): System {
   const sys = structuredClone(input);
@@ -349,5 +383,6 @@ export function moveAgent(input: System, id: string, dir: -1 | 1): System {
   if (j < 0 || j >= sys.agents.length) return sys; // clamp: no-op at the ends
   const [a] = sys.agents.splice(i, 1);
   sys.agents.splice(j, 0, a);
-  return sys;
+  // Reordering changes the chain order — re-wire the linear handoffs to match.
+  return linearizeChain(sys);
 }

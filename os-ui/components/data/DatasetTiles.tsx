@@ -8,12 +8,13 @@ import { useUser } from '@/lib/useUser';
 import { roleAtLeast } from '@/lib/core/session';
 import { canManageArtifact } from '@/lib/governance/edit-scope';
 import { DATASET_SCOPES, tilesForScope, scopeCounts, type DatasetScope } from '@/lib/data/dataset-scopes';
-import { itemsUnderFolder, normaliseFolderPath, type FolderPathNode } from '@/lib/core/folders';
-import FolderTree, { FolderPickerModal } from '@/components/core/FolderTree';
-import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
+import { itemsUnderFolder, normaliseFolderPath, folderName, type FolderPathNode } from '@/lib/core/folders';
+import FolderTree, { FolderPickerModal, type FolderRef } from '@/components/core/FolderTree';
+import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import DomainTag from '@/components/DomainTag';
 import type { Visibility } from '@/lib/core/lifecycle';
+import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
 import WarehouseImportPanel, { type WarehouseConn } from './WarehouseImportPanel';
 
 /** Mirrors lib/data/store `DatasetSummary`. */
@@ -39,6 +40,15 @@ type Groups = { mine: Tile[]; domain: Tile[]; marketplace: Tile[] };
 type FolderRoot = 'personal' | 'domain';
 function rootOf(t: Tile): FolderRoot {
   return t.tier === 'dataset' ? 'personal' : 'domain';
+}
+
+/** Which folder roots are relevant for the active scope. Used to trim the rail and
+ *  the folder picker so the user only sees roots that contain items in-scope. */
+function rootsForScope(scope: DatasetScope): FolderRoot[] {
+  if (scope === 'mine') return ['personal'];
+  if (scope === 'shared') return ['domain'];
+  if (scope === 'marketplace') return ['domain'];
+  return ['personal', 'domain']; // 'all'
 }
 
 /** Tile tier → the OS-wide lifecycle visibility (drives the delete gate). */
@@ -144,8 +154,10 @@ function TileCard({ t, onOpen, onImport, onMove, canManage, onChanged, showDomai
   );
 }
 
-export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void }) {
+/** The real body — lives INSIDE <ConfirmProvider> so useConfirm() is in-context. */
+function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
   const { user } = useUser();
+  const confirm = useConfirm();
   // Importing a marketplace product grants the WHOLE domain read access, so the store
   // gates it to Builder/Admin (store.importProduct 403s others). Only surface Import to
   // those roles — no dead control (mirrors CertifyPanel's "no dead controls").
@@ -165,8 +177,10 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
   const [domainNodes, setDomainNodes] = useState<FolderPathNode[]>([]);
   // Multi-select in the grid → bulk "Move selected…".
   const [picked, setPicked] = useState<Set<string>>(new Set());
-  // Folder picker modal: ids being moved; null = closed.
+  // Folder picker modal for dataset moves: ids being moved; null = closed.
   const [pickerIds, setPickerIds] = useState<string[] | null>(null);
+  // Folder picker modal for folder moves: the folder ref being moved; null = closed.
+  const [folderMove, setFolderMove] = useState<FolderRef | null>(null);
   // Archive/lifecycle UI (mirrors the Knowledge tab's reference pattern).
   const [showArchived, setShowArchived] = useState(false);
   // Import-from-warehouse affordance: registered warehouse connections a builder can
@@ -195,14 +209,15 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
 
   const loadFolders = useCallback(async () => {
     try {
+      const suffix = showArchived ? '&archived=1' : '';
       const [pRes, dRes] = await Promise.all([
-        fetch('/api/folders?tab=data&scope=personal', { cache: 'no-store' }),
-        fetch('/api/folders?tab=data&scope=domain', { cache: 'no-store' }),
+        fetch(`/api/folders?tab=data&scope=personal${suffix}`, { cache: 'no-store' }),
+        fetch(`/api/folders?tab=data&scope=domain${suffix}`, { cache: 'no-store' }),
       ]);
       if (pRes.ok) setPersonalNodes(((await pRes.json()).folders ?? []) as FolderPathNode[]);
       if (dRes.ok) setDomainNodes(((await dRes.json()).folders ?? []) as FolderPathNode[]);
     } catch { /* the synthesised rail still renders without the registry */ }
-  }, []);
+  }, [showArchived]);
 
   const refresh = useCallback(async () => {
     setErr('');
@@ -282,6 +297,52 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
     setPickerIds(ids);
   }, []);
 
+  // Folder lifecycle handlers — archive, restore, delete a folder row via the
+  // governed registry API. All three refresh both the dataset tiles and the rail.
+  const handleFolderArchive = useCallback(async (ref: FolderRef) => {
+    if (!ref.id) return;
+    const active = groups ? [...(groups.mine ?? []), ...(groups.domain ?? []), ...(groups.marketplace ?? [])] : [];
+    const count = itemsUnderFolder(ref.path, active.filter((t) => rootOf(t) === ref.scope)).length;
+    const ok = await confirm(archiveFolderCopy(folderName(ref.path), count));
+    if (!ok) return;
+    setErr('');
+    try {
+      const res = await fetch(`/api/folders/${ref.id}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'archive' }),
+      });
+      if (!res.ok) { setErr((await res.json()).error ?? 'Archive failed'); return; }
+      await refresh();
+    } catch (e) { setErr((e as Error).message); }
+  }, [confirm, groups, refresh]);
+
+  const handleFolderRestore = useCallback(async (ref: FolderRef) => {
+    if (!ref.id) return;
+    setErr('');
+    try {
+      const res = await fetch(`/api/folders/${ref.id}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'restore' }),
+      });
+      if (!res.ok) { setErr((await res.json()).error ?? 'Restore failed'); return; }
+      await refresh();
+    } catch (e) { setErr((e as Error).message); }
+  }, [refresh]);
+
+  const handleFolderDelete = useCallback(async (ref: FolderRef) => {
+    if (!ref.id) return;
+    const active = groups ? [...(groups.mine ?? []), ...(groups.domain ?? []), ...(groups.marketplace ?? [])] : [];
+    const count = itemsUnderFolder(ref.path, active.filter((t) => rootOf(t) === ref.scope)).length;
+    const ok = await confirm(deleteFolderCopy(folderName(ref.path), count));
+    if (!ok) return;
+    setErr('');
+    try {
+      const res = await fetch(`/api/folders/${ref.id}`, { method: 'DELETE' });
+      if (!res.ok) { setErr((await res.json()).error ?? 'Delete failed'); return; }
+      await refresh();
+    } catch (e) { setErr((e as Error).message); }
+  }, [confirm, groups, refresh]);
+
   // A dataset is the caller's to manage under the ONE canonical edit-scope rule the
   // DELETE/archive routes enforce: owner, domain_admin of the owning domain, or admin.
   // Using the shared predicate (not a hand-rolled owner-or-admin check) keeps the
@@ -299,6 +360,11 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
   // where a dataset's origin domain disambiguates same-named assets. DomainTag itself
   // no-ops on a missing domain, so this is always safe.
   const showDomain = scope === 'shared' || scope === 'marketplace';
+
+  // Which folder roots to surface in the nav rail and picker — driven by the active
+  // scope so only the relevant tree is shown (mine→personal, shared/marketplace→domain,
+  // all→both). This also ensures a moved dataset lands under a valid root.
+  const visibleRoots = rootsForScope(scope);
 
   // Folder rows fed to the tree = the governed registry rows UNIONed with folders
   // synthesised from the visible datasets' own paths, so implicit (pre-registry)
@@ -319,6 +385,11 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
     return [synth(personalNodes, personalPaths), synth(domainNodes, domainPaths)];
   }, [personalNodes, domainNodes, active]);
 
+  // When a root is not visible for the current scope, pass [] so the tree column
+  // renders empty (a single-root layout).
+  const treePersonalNodes = visibleRoots.includes('personal') ? personalTreeNodes : [];
+  const treeDomainNodes = visibleRoots.includes('domain') ? domainTreeNodes : [];
+
   // The items the tree lays out under each root (leaves live inside their folder).
   const treeItems = useMemo(
     () => active.map((t) => ({ id: t.id, folder: t.folder, name: t.name })),
@@ -333,7 +404,7 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
   const canBulkMove = shown.filter((t) => picked.has(t.id) && canManage(t)).map((t) => t.id);
 
   return (
-    <ConfirmProvider>
+    <>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-end' }}>
         <p className="lead" style={{ margin: 0, maxWidth: 560 }}>
           Your datasets. Open one to refine it through <strong>Bronze → Silver → Gold</strong>,
@@ -394,11 +465,13 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
 
       {err ? <div className="error" style={{ marginTop: 14 }}>{err}</div> : null}
 
+      {/* Dataset picker modal — bulk move of selected tiles into a folder.
+          Only shows roots valid for the current scope. */}
       <FolderPickerModal
         open={pickerIds !== null}
         tab="data"
-        personalNodes={personalTreeNodes}
-        domainNodes={domainTreeNodes}
+        personalNodes={visibleRoots.includes('personal') ? personalTreeNodes : []}
+        domainNodes={visibleRoots.includes('domain') ? domainTreeNodes : []}
         title={`Move ${pickerIds && pickerIds.length > 1 ? `${pickerIds.length} datasets` : 'dataset'} to folder`}
         onConfirm={({ path }) => {
           if (pickerIds) void moveInto(pickerIds, path);
@@ -415,10 +488,43 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
         }}
       />
 
+      {/* Folder move modal — reparents a folder row via PATCH /api/folders/{id}.
+          Scoped to the folder's own root only (personal or domain). */}
+      <FolderPickerModal
+        open={folderMove !== null}
+        tab="data"
+        personalNodes={folderMove?.scope === 'personal' ? personalTreeNodes : []}
+        domainNodes={folderMove?.scope === 'domain' ? domainTreeNodes : []}
+        title="Move folder"
+        onConfirm={async ({ path }) => {
+          const ref = folderMove;
+          setFolderMove(null);
+          if (!ref?.id) return;
+          setErr('');
+          try {
+            const res = await fetch(`/api/folders/${ref.id}`, {
+              method: 'PATCH', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ path }),
+            });
+            if (!res.ok) { setErr((await res.json()).error ?? 'Move failed'); return; }
+            await refresh();
+          } catch (e) { setErr((e as Error).message); }
+        }}
+        onCancel={() => setFolderMove(null)}
+        onCreate={async (scope, path) => {
+          const res = await fetch('/api/folders', {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ tab: 'data', scope, path }),
+          });
+          if (!res.ok) { setErr((await res.json()).error ?? 'Could not create folder'); return; }
+          await loadFolders();
+        }}
+      />
+
       {empty ? (
         <div className="stub-page" style={{ marginTop: 20 }}>
           {scope === 'mine' || scope === 'all'
-            ? <>No datasets yet. <strong>+ New dataset</strong> starts one — bring a file in, and you’re at Bronze.</>
+            ? <>No datasets yet. <strong>+ New dataset</strong> starts one — bring a file in, and you're at Bronze.</>
             : scope === 'shared'
               ? 'Nothing shared in your domain yet — promote a dataset to share it.'
               : 'Nothing in the marketplace yet — an Admin certifies assets into data products.'}
@@ -449,19 +555,18 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
                 </button>
                 <FolderTree
                   variant="nav"
-                  personalNodes={personalTreeNodes}
-                  domainNodes={domainTreeNodes}
+                  personalNodes={treePersonalNodes}
+                  domainNodes={treeDomainNodes}
                   items={treeItems}
                   personalLabel="My folders"
                   domainLabel="Shared in domain"
                   selectedPath={sel?.path}
                   onSelect={(root, path) => setSel({ root, path })}
                   onCreate={createFolder}
-                  onMove={(root, path) => {
-                    // Move every dataset the caller manages that lives under this folder.
-                    const ids = itemsUnderFolder(path, active.filter((t) => rootOf(t) === root && canManage(t))).map((t) => t.id);
-                    promptMove(ids);
-                  }}
+                  onMove={(ref) => setFolderMove(ref)}
+                  onArchive={handleFolderArchive}
+                  onRestore={handleFolderRestore}
+                  onDelete={handleFolderDelete}
                   renderLeaf={(item) => item.name ?? item.id}
                 />
               </nav>
@@ -533,6 +638,14 @@ export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void 
           ) : null}
         </>
       ) : !err ? <div className="stub-page" style={{ marginTop: 20 }}>Loading datasets…</div> : null}
+    </>
+  );
+}
+
+export default function DatasetTiles({ onOpen }: { onOpen: (id: string) => void }) {
+  return (
+    <ConfirmProvider>
+      <DatasetTilesInner onOpen={onOpen} />
     </ConfirmProvider>
   );
 }

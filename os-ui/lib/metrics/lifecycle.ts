@@ -11,6 +11,8 @@ import {
 } from '../data/store.ts';
 import { MetricError } from './model.ts';
 import { osMirror } from '../infra/os-mirror.ts';
+import { normaliseFolderPath } from '../core/folders.ts';
+import { createFolder, type FolderScope } from '../folders/index.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
 import {
   type PhysicalDeleteReport,
@@ -50,7 +52,10 @@ function splitId(metricId: string): { datasetId: string; measure: string } {
 }
 
 // --------------------------------------------------- archive-flag overlay state --
-type ArchiveFlag = { id: string; datasetId: string; measure: string; archived: boolean; updatedAt: string };
+// A metric IS a measure on a dataset — it has no store row of its own, so its
+// lifecycle OVERLAY (archive flag + FOLDER) is keyed here by metric id. The folder is
+// a normalised path exactly like every other foldered artifact; absent ⇒ root `'/'`.
+type ArchiveFlag = { id: string; datasetId: string; measure: string; archived: boolean; folder?: string; updatedAt: string };
 type LifecycleState = { flags: Map<string, ArchiveFlag>; hydration: Promise<void> | null };
 const LC_KEY = Symbol.for('soa.metrics.lifecycle');
 function lc(): LifecycleState {
@@ -68,6 +73,7 @@ const mirror = osMirror({
         datasetId: { type: 'keyword' },
         measure: { type: 'keyword' },
         archived: { type: 'boolean' },
+        folder: { type: 'keyword' },
         updatedAt: { type: 'date' },
       },
     },
@@ -105,11 +111,59 @@ export function isMetricArchived(metricId: string): boolean {
   return lc().flags.get(metricId)?.archived ?? false;
 }
 
-function setFlag(metricId: string, archived: boolean): void {
+/** The folder a metric lives in (normalised; root `'/'` when unset). */
+export function metricFolder(metricId: string): string {
+  return normaliseFolderPath(lc().flags.get(metricId)?.folder);
+}
+
+/** Write the lifecycle overlay for a metric, PRESERVING the fields the caller
+ *  doesn't set (flip archived without losing folder, and vice-versa). */
+function writeFlag(metricId: string, patch: { archived?: boolean; folder?: string }): void {
   const { datasetId, measure } = splitId(metricId);
-  const flag: ArchiveFlag = { id: metricId, datasetId, measure, archived, updatedAt: now() };
+  const prev = lc().flags.get(metricId);
+  const flag: ArchiveFlag = {
+    id: metricId,
+    datasetId,
+    measure,
+    archived: patch.archived ?? prev?.archived ?? false,
+    ...(patch.folder !== undefined ? { folder: patch.folder } : prev?.folder ? { folder: prev.folder } : {}),
+    updatedAt: now(),
+  };
   lc().flags.set(metricId, flag);
   mirror.writeThrough(metricId, flag);
+}
+
+function setFlag(metricId: string, archived: boolean): void {
+  writeFlag(metricId, { archived });
+}
+
+/**
+ * MOVE a metric into a folder. Edit-scoped (proves edit authority on the metric's
+ * dataset + that the measure exists). The folder is a normalised path stored in the
+ * metric lifecycle overlay — mirrors `moveFile`/`moveDataset` on the other tabs, but a
+ * metric has no store row of its own so the path rides the overlay. Upserts an explicit
+ * folder row (best-effort) so an empty destination folder still shows in the rail.
+ */
+export function moveMetric(metricId: string, user: Principal, folder: string): { id: string; folder: string } {
+  const { datasetId } = requireMeasure(metricId, user); // authorize + prove it exists
+  const normalised = normaliseFolderPath(folder);
+  writeFlag(metricId, { folder: normalised });
+  // Best-effort: upsert an explicit folder row so an empty destination folder still
+  // shows in the rail. The metric's scope is tier-bound (personal vs domain), mirroring
+  // Files/Data. Swallowed on failure — the move already succeeded.
+  if (normalised !== '/') {
+    try {
+      const d = getDataset(datasetId, user);
+      const scope: FolderScope = d.tier === 'dataset' ? 'personal' : 'domain';
+      createFolder(
+        { id: user.id, role: user.role, domains: user.domains },
+        { tab: 'metrics', scope, path: normalised, domain: d.domain },
+      );
+    } catch {
+      /* folder-registry mirror is best-effort */
+    }
+  }
+  return { id: metricId, folder: normalised };
 }
 
 /** Resolve the current measure for a metric id, EDIT-scoped (owner or domain admin). */

@@ -18,12 +18,13 @@ function fail(e: unknown) {
 }
 
 /** GET → the bets the caller may view, each with a headline rollup + realized value. */
-export async function GET() {
+export async function GET(req: Request) {
   try {
     await ensureHydrated();
     const user = await requireUser();
     const p = principal(user);
-    const bets = listBets(p).map((bet) => {
+    const includeArchived = new URL(req.url).searchParams.get('archived') === '1';
+    const bets = listBets(p, { includeArchived }).map((bet) => {
       const statuses = deriveBet(bet.components);
       const road = rollup(bet.components, statuses, bet.goLive);
       return {

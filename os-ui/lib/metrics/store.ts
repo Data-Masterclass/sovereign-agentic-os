@@ -4,7 +4,7 @@
 import { type Principal, getDataset, listDatasets } from '../data/store.ts';
 import { type MetricRecord, metricRecord } from './governance.ts';
 import { measureMember } from './model.ts';
-import { isMetricArchived } from './lifecycle.ts';
+import { isMetricArchived, metricFolder } from './lifecycle.ts';
 
 /**
  * Metrics derived from the Data tab's datasets (read-only over lib/data/store) — a metric
@@ -27,6 +27,9 @@ export type MetricSummary = {
   type: string;
   /** Source domain — set on shared/marketplace metrics for provenance display. */
   domain?: string;
+  /** The folder this metric lives in (normalised path; `'/'` = root). Rides the metric
+   *  lifecycle overlay — a metric has no store row of its own (it is a measure). */
+  folder: string;
   /** Soft-archived (retained, reversible). Absent/false = live. */
   archived?: boolean;
   /** FAIL-SOFT (#91): set when this one metric/model couldn't be loaded — the tile
@@ -48,6 +51,7 @@ function summariesFor(datasetId: string, user: Principal): MetricSummary[] {
       owner: d.owner,
       type: m.type,
       domain: d.domain || undefined,
+      folder: metricFolder(id),
       archived: isMetricArchived(id),
     };
   });
@@ -73,6 +77,7 @@ export function safeSummariesFor(datasetId: string, user: Principal): MetricSumm
       tier: 'personal',
       owner: user.id,
       type: 'error',
+      folder: '/',
       error: e instanceof Error ? e.message : 'this metric could not be loaded',
     }];
   }

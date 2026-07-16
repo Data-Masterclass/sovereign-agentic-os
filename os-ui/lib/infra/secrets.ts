@@ -92,6 +92,14 @@ const DEFAULT_ALLOWLIST = [
   'accounts.google.com', // Google authorize endpoint
   'graph.microsoft.com', // OneDrive via Microsoft Graph
   'login.microsoftonline.com', // Microsoft OAuth authorize + token endpoints
+  // Connector wave — hand-built typed API clients (each host also added to the chart
+  // egressProxy.allowlist + Cilium FQDN policy on a real deploy).
+  'api.github.com', // GitHub REST + GraphQL (covered by github.com, listed explicitly)
+  'uploads.github.com', // GitHub release/asset uploads
+  'api.supabase.com', // Supabase Management API (projects/tables/migrations/advisors/logs)
+  'atlassian.net', // Jira + Confluence Cloud sites (*.atlassian.net via subdomain rule)
+  'api.atlassian.com', // Atlassian OAuth 3LO gateway (cloudId-scoped API)
+  'auth.atlassian.com', // Atlassian OAuth token endpoint
 ];
 
 function allowlist(): string[] {

@@ -45,12 +45,23 @@ import {
  * alongside `FolderTree` when you need the move-to-folder UX in a popover.
  */
 
-export type FolderTreeItem = { id: string; folder: string; name?: string };
+type RootScope = 'personal' | 'domain';
+
+export type FolderTreeItem = {
+  id: string;
+  folder: string;
+  name?: string;
+  /**
+   * Which root this item belongs to. OPTIONAL and backward-compatible: when omitted
+   * (the historical shape) the item is shown under BOTH roots as before. When set, the
+   * item renders ONLY under its own root — so a root-level ('/') item granted in one
+   * scope is no longer duplicated across the "My" and "Shared" trees.
+   */
+  scope?: RootScope;
+};
 
 export type FolderGrant = { path: string; scope: 'personal' | 'domain' };
 export type FolderSelection = { folderGrants: FolderGrant[]; itemGrants: string[] };
-
-type RootScope = 'personal' | 'domain';
 
 type CommonProps = {
   /** Folder rows for the personal root. */
@@ -66,6 +77,10 @@ type CommonProps = {
   domainLabel?: string;
 };
 
+/** The folder-row handle passed to every lifecycle callback — the path (always) plus
+ *  the registry `id` + `archived` state (real rows only; synthetic folders omit `id`). */
+export type FolderRef = { scope: RootScope; path: string; id?: string; archived?: boolean };
+
 type NavProps = CommonProps & {
   variant: 'nav';
   /** The currently-selected folder path (within the active root). */
@@ -73,8 +88,14 @@ type NavProps = CommonProps & {
   onSelect?: (scope: RootScope, path: string) => void;
   /** Create a subfolder under `parentPath` in `scope`. */
   onCreate?: (scope: RootScope, parentPath: string) => void;
-  /** Move `path` (its ••• menu) in `scope`. */
-  onMove?: (scope: RootScope, path: string) => void;
+  /** Move a folder (its ••• menu) — reparents the row AND its member items. */
+  onMove?: (ref: FolderRef) => void;
+  /** Archive a folder (cascades to the items inside). Real rows only. */
+  onArchive?: (ref: FolderRef) => void;
+  /** Restore an archived folder (cascades). Real, archived rows only. */
+  onRestore?: (ref: FolderRef) => void;
+  /** Physically delete an archived folder (cascades). Real, archived rows only. */
+  onDelete?: (ref: FolderRef) => void;
 };
 
 type CheckboxProps = CommonProps & {
@@ -313,27 +334,38 @@ function FolderRow({
             >
               •••
             </button>
-            {menuOpen && (
-              <div
-                role="menu"
-                className="card"
-                style={{ position: 'absolute', top: '100%', right: 0, zIndex: 5, padding: 4, minWidth: 120 }}
-              >
+            {menuOpen && (() => {
+              const ref = { scope, path: node.path, id: node.id, archived: node.archived };
+              // Lifecycle ops target the registry ROW, so they appear on real folders
+              // only (a synthetic/implicit folder has no `id` to act on). Archive vs
+              // Restore/Delete is driven by the row's archived state — identical across
+              // every foldered tab (one primitive, one menu).
+              const isReal = node.id !== undefined && !node.synthetic;
+              const close = () => setMenuOpen(false);
+              const item = (label: string, onClick: () => void, danger = false) => (
                 <button
                   type="button"
                   role="menuitem"
                   className="btn ghost sm"
-                  style={{ width: '100%', justifyContent: 'flex-start' }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setMenuOpen(false);
-                    nav.onMove?.(scope, node.path);
-                  }}
+                  style={{ width: '100%', justifyContent: 'flex-start', ...(danger ? { color: 'var(--danger)' } : {}) }}
+                  onClick={(e) => { e.stopPropagation(); close(); onClick(); }}
                 >
-                  Move…
+                  {label}
                 </button>
-              </div>
-            )}
+              );
+              return (
+                <div
+                  role="menu"
+                  className="card"
+                  style={{ position: 'absolute', top: '100%', right: 0, zIndex: 5, padding: 4, minWidth: 140 }}
+                >
+                  {nav.onMove ? item('Move…', () => nav.onMove!(ref)) : null}
+                  {isReal && !node.archived && nav.onArchive ? item('Archive', () => nav.onArchive!(ref)) : null}
+                  {isReal && node.archived && nav.onRestore ? item('Restore', () => nav.onRestore!(ref)) : null}
+                  {isReal && node.archived && nav.onDelete ? item('Delete permanently', () => nav.onDelete!(ref), true) : null}
+                </div>
+              );
+            })()}
           </span>
         )}
 
@@ -449,23 +481,34 @@ function Root({
   pickerSelected?: { path: string; scope: RootScope } | null;
   onPickerSelect?: (dest: { path: string; scope: RootScope }) => void;
 }) {
-  const rootItems = props.items.filter((i) => normaliseFolderPath(i.folder) === '/');
+  // Items belonging to THIS root. When items carry a `scope`, an item shows only under
+  // its own root (no My/Shared duplication of root-level items); when none carry a
+  // scope (the historical shape), every item shows under both roots as before.
+  const scopedItems = useMemo(
+    () => props.items.filter((i) => i.scope === undefined || i.scope === scope),
+    [props.items, scope],
+  );
+  const rootItems = scopedItems.filter((i) => normaliseFolderPath(i.folder) === '/');
   const tree = useMemo(() => buildTree(nodes), [nodes]);
   const itemsByFolder = useMemo(() => {
     const m = new Map<string, FolderTreeItem[]>();
-    for (const i of props.items) {
+    for (const i of scopedItems) {
       const p = normaliseFolderPath(i.folder);
       const arr = m.get(p) ?? [];
       arr.push(i);
       m.set(p, arr);
     }
     return m;
-  }, [props.items]);
+  }, [scopedItems]);
 
   const checked = props.variant === 'checkbox' ? new Set(props.checkedIds) : new Set<string>();
 
   function emit(nextChecked: Set<string>) {
     if (props.variant !== 'checkbox') return;
+    // Compute the emitted selection over the FULL item list (both scopes share the one
+    // `checkedIds`/`onChange`), so a toggle in this root never drops the OTHER root's
+    // grants during the caller's reconcile. Only RENDERING (rootItems/itemsByFolder/
+    // tri-state) is scoped, above.
     props.onChange?.(computeSelection(nodes, props.items, nextChecked, scope));
   }
 
@@ -529,7 +572,7 @@ function Root({
             scope={scope}
             props={props}
             itemsByFolder={itemsByFolder}
-            allItems={props.items}
+            allItems={scopedItems}
             checked={checked}
             emit={emit}
             pickerSelected={pickerSelected}

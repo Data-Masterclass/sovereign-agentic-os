@@ -162,6 +162,18 @@ test('chipIdsForTools round-trips a selection of chips', () => {
   assert.ok(original.every((id) => recovered.includes(id)), 'round-trip preserves selected chips');
 });
 
+test('every capability chip carries a non-empty domain + description (picker groups by domain)', () => {
+  for (const c of CAPABILITY_CHIPS) {
+    assert.ok(c.domain && c.domain.length > 0, `${c.id} has a domain`);
+    assert.ok(c.description && c.description.length > 0, `${c.id} has a description`);
+  }
+  // The picker groups per domain — data reads live under "Data", knowledge under "Knowledge".
+  const byId = new Map(CAPABILITY_CHIPS.map((c) => [c.id, c]));
+  assert.equal(byId.get('read-data')!.domain, 'Data');
+  assert.equal(byId.get('search-knowledge')!.domain, 'Knowledge');
+  assert.equal(byId.get('create-files')!.domain, 'Files');
+});
+
 test('chipIdsForTools: partial tool match does NOT recover the chip', () => {
   // Only one of the data tools — should not recover the chip since not all are present.
   const recovered = chipIdsForTools(['query_data']);

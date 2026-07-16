@@ -15,6 +15,36 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.13] — 2026-07-16
+
+Folders + lifecycle become one shared core primitive across the context tabs; four real
+service connectors; and a batch of Agents-builder and Big Bets fixes.
+
+### Added
+- **One shared folder + archive/restore/delete primitive across Files · Data · Knowledge ·
+  Metrics.** A core `ArtifactAdapter` registry + a single folder-lifecycle orchestrator (mirrors
+  the warehouse-provider registry): folder logic and the archive→delete/restore lifecycle are
+  written once in core and each tab registers a thin adapter — no per-tab divergence. Metrics gain
+  folders too. Moving a folder now carries its contents; archiving a folder cascades to the items
+  inside (with a clear warning; move items out first to keep them active); physical delete is
+  archived-only, per-item permission-checked.
+- **Four real, governed service connectors — GitHub · Supabase · Notion · Atlassian.** Hand-built
+  typed API clients on the Airflow reference pattern (reads auto; writes approval-gated;
+  destructive ops blocked; secrets write-only). Notion's tool execution is now real (was a mock).
+  `runAllow` moves from an Airflow-only branch to an executor registry.
+
+### Fixed
+- **Moving a file now lands it in the destination folder.** The folder rail + move picker are tied
+  to the active My/Domain scope, so a move can only target a valid (tier-bound) root — the moved
+  file no longer vanishes. The folder "Move" action is a tree picker, not a text field.
+- **Big Bets: "Show archived" toggle** — archived bets were unreachable; they now appear (dimmed)
+  with Restore + Delete via the shared lifecycle controls.
+- **Agents Simple builder:** always opens on Define with no pre-set phase checkmarks; "What your
+  team can use" lists each item once (no My/Shared duplication); an agent's editable role is its
+  name and templates prefill it; Simple mode auto-connects agents linearly (Developer rewiring
+  still wins); rebuilt capability picker — recommended capabilities prefilled, a described
+  per-domain picker, selected chips shown in a box (click to explain, ✕ to remove).
+
 ## [os-ui 0.5.12] — 2026-07-16
 
 Connector wave (batch 1): operational databases, a grouped/searchable Connections tab, and a

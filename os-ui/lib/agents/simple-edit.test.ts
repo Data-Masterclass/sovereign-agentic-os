@@ -8,7 +8,7 @@ import {
   setAgentRole, setAgentInstructions, setSystemTools, addSystemTool, removeSystemTool,
   addSimpleAgent, moveAgent, nextAgentId, addArtifactGrant, removeArtifactGrant,
   addAgentTool, removeAgentTool, removeAgentSimple, setArtifactGrant, setDataGrantLayer,
-  setFolderGrant, removeFolderGrant,
+  setFolderGrant, removeFolderGrant, linearizeChain,
 } from './simple-edit.ts';
 import { instructionsOf } from './agent-md.ts';
 
@@ -240,4 +240,70 @@ test('setFolderGrant is a pure edit (input untouched)', () => {
   const before = serializeSystem(base);
   setFolderGrant(base, 'knowledge', { path: '/policies', scope: 'personal' }, false);
   assert.equal(serializeSystem(base), before);
+});
+
+// ── Simple-mode LINEAR auto-connect ──────────────────────────────────────────
+
+const chainEdges = (sys: ReturnType<typeof parseSystem>) =>
+  sys.edges.filter((e) => e.type === 'handoff').map((e) => `${e.from}->${e.to}`);
+
+test('linearizeChain wires agents in declared order as a handoff chain', () => {
+  const sys = parseSystem(BASE); // analyst, writer
+  const chained = linearizeChain(sys);
+  assert.deepEqual(chainEdges(chained), ['analyst->writer']);
+});
+
+test('linearizeChain replaces stale handoffs and keeps supervise edges', () => {
+  const sys = parseSystem(`
+system: { name: T, domain: d, visibility: Personal }
+entrypoint: a
+grants: {}
+agents:
+  - { id: a, role: A, agent_md: "", memory_md: "", members: [b] }
+  - { id: b, role: B, agent_md: "", memory_md: "" }
+  - { id: c, role: C, agent_md: "", memory_md: "" }
+edges:
+  - { from: a, to: b, type: supervise }
+  - { from: c, to: a, type: handoff }
+`);
+  const chained = linearizeChain(sys);
+  // Supervise preserved; handoffs rebuilt as a->b->c in declared order.
+  assert.ok(chained.edges.some((e) => e.from === 'a' && e.to === 'b' && e.type === 'supervise'));
+  assert.deepEqual(chainEdges(chained), ['a->b', 'b->c']);
+});
+
+test('addSimpleAgent auto-chains the new agent onto the end', () => {
+  const sys = parseSystem(BASE);
+  const next = addSimpleAgent(sys, { role: 'Reviewer' }); // agent3
+  assert.deepEqual(chainEdges(next), ['analyst->writer', `writer->${next.agents[2].id}`]);
+});
+
+test('removeAgentSimple re-chains the remaining agents (no gap)', () => {
+  let sys = parseSystem(BASE);
+  sys = addSimpleAgent(sys, { id: 'third', role: 'Third' }); // analyst->writer->third
+  const next = removeAgentSimple(sys, 'writer');
+  assert.deepEqual(chainEdges(next), ['analyst->third']);
+});
+
+test('moveAgent re-wires the chain to the new order', () => {
+  const sys = parseSystem(BASE); // analyst->writer
+  const moved = moveAgent(sys, 'writer', -1); // writer, analyst
+  assert.deepEqual(moved.agents.map((a) => a.id), ['writer', 'analyst']);
+  assert.deepEqual(chainEdges(moved), ['writer->analyst']);
+});
+
+test('linearizeChain preserves an existing consecutive handoff `when` label', () => {
+  const sys = parseSystem(`
+system: { name: T, domain: d, visibility: Personal }
+entrypoint: a
+grants: {}
+agents:
+  - { id: a, role: A, agent_md: "", memory_md: "" }
+  - { id: b, role: B, agent_md: "", memory_md: "" }
+edges:
+  - { from: a, to: b, type: handoff, when: "A complete" }
+`);
+  const chained = linearizeChain(sys);
+  const e = chained.edges.find((x) => x.from === 'a' && x.to === 'b')!;
+  assert.equal(e.when, 'A complete', 'label carried through the re-chain');
 });

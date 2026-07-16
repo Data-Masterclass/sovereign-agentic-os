@@ -305,6 +305,68 @@ const AIRFLOW: InstallGuide = {
     'Registers a governed outbound API connection. `list_dags` and `get_dag_run` (reads) auto-allow; `trigger_dag` is a real side effect held at **Write-approval** until a Builder trusts it. All calls are OPA-checked and audit-traced.',
 };
 
+const GITHUB: InstallGuide = {
+  key: 'github',
+  title: 'GitHub (REST + GraphQL)',
+  summary: 'Connect a GitHub account/org via a personal access token. Reads auto-allow; opening issues/PRs is held for approval; deletes are blocked.',
+  prerequisites: [
+    'A GitHub **personal access token (PAT)** — a fine-grained token scoped to the exact repos, with **read** grants where the agent only reads (Contents, Issues, Pull requests: Read) and Write only if you will approve writes. It goes to Secrets Manager and is **never** on the record.',
+    'The API host `api.github.com` on the **egress allowlist** (GitHub Enterprise Server: add your GHE host and set it as the base URL).',
+    'Builder/Admin rights (service-credential connector, not personal OAuth).',
+  ],
+  steps: [
+    'On the GitHub card, click **Connect**.',
+    'Enter the connection **name**; leave the base URL as `https://api.github.com` (or your GHE host).',
+    'Provide the **PAT** — stored once in Secrets Manager.',
+    'Create the connection, then **Test** on its card (a real `GET /user` round-trip). Tune the per-tool capability profile.',
+  ],
+  whatTheOsDoes:
+    'Registers a governed outbound GitHub connection. Reads (list/get repos, issues, PRs, commits, code search) auto-allow, paginated with a `truncated` flag. Writes (`create_issue`, `add_issue_comment`, `create_pull_request`) are held at **Write-approval** and **deduped on title** so an approved retry can’t double-open. `delete_repo` / `delete_branch` stay **Blocked**. All calls respect GitHub’s secondary rate limits (honest `retry-after`), are OPA-checked, and audit-traced.',
+  caveat: 'GitHub has no idempotency key for issue/PR creation, so the OS dedupes on the open item’s title (+ head/base for PRs). Token validity and repo scope are only confirmed against your live account at Test time.',
+};
+
+const SUPABASE: InstallGuide = {
+  key: 'supabase',
+  title: 'Supabase (Management API + Postgres)',
+  summary: 'Connect a Supabase organization via a management access token for project ops, and federate the project Postgres separately as a read-only warehouse catalog.',
+  prerequisites: [
+    'A Supabase **management access token** (`sbp_…`) from your account. It goes to Secrets Manager and is **never** on the record. Service-role keys are never used here.',
+    'The API host `api.supabase.com` on the **egress allowlist**.',
+    'Builder/Admin rights (service-credential connector).',
+    'For querying your data: a **read-only Postgres role** on the project database — you will register the project Postgres as a separate **PostgreSQL warehouse** catalog (see the PostgreSQL guide).',
+  ],
+  steps: [
+    'On the Supabase card, click **Connect**.',
+    'Enter the connection **name**; the base URL is `https://api.supabase.com`.',
+    'Provide the **management access token** (`sbp_…`) — stored once in Secrets Manager.',
+    'Create the connection, then **Test** on its card (a real `GET /v1/projects` round-trip).',
+    'To query your tables as data, ALSO register the **project Postgres** as a PostgreSQL warehouse catalog with a **read-only role** — follow the **PostgreSQL** guide. The OS reads your data through that governed Trino catalog, not through this connection.',
+  ],
+  whatTheOsDoes:
+    'Registers a governed Supabase **Management API** connection. Reads (`list_projects`, `list_tables`, `list_migrations`, `get_advisors`, `get_logs`, `get_project_url`) auto-allow. `execute_sql` is held at **Write-approval** and refuses DDL; `apply_migration` and `deploy_edge_function` are **Blocked** by default (DDL/deploys need an Admin override). Service-role keys are never surfaced in any result. Actual data lives in the project Postgres, federated separately as a read-only warehouse catalog.',
+  caveat: 'This connection manages the PROJECT (schema/ops), not bulk data — query your tables through the federated Postgres catalog. `execute_sql` runs against the project DB and is DDL-refused; treat it as a governed admin escape hatch, not a data pipe. Token scope is confirmed against your live org at Test time.',
+};
+
+const ATLASSIAN: InstallGuide = {
+  key: 'atlassian',
+  title: 'Atlassian (Jira + Confluence)',
+  summary: 'Connect a Jira + Confluence Cloud site via an API token or OAuth. Reads auto-allow; creating issues/pages and transitions are held for approval; deletes are blocked.',
+  prerequisites: [
+    'Your Atlassian Cloud **site** (e.g. `https://your-site.atlassian.net`) on the **egress allowlist** (plus `api.atlassian.com` / `auth.atlassian.com` for OAuth).',
+    'A **credential**: an **API token** (with the account email, sent as Basic auth) or an **OAuth 3LO** access token. It goes to Secrets Manager and is **never** on the record.',
+    'Least-privilege project/space grants for the account behind the token. Builder/Admin rights.',
+  ],
+  steps: [
+    'On the Atlassian card, click **Connect**.',
+    'Enter the connection **name** and your **site URL** (`https://your-site.atlassian.net`). For API-token auth, provide the **account email** as the username.',
+    'Provide the **API token** (or OAuth access token) — stored once in Secrets Manager.',
+    'Create the connection, then **Test** on its card (a real `GET /rest/api/3/myself` round-trip). Tune the per-tool capability profile.',
+  ],
+  whatTheOsDoes:
+    'Registers a governed outbound Atlassian connection spanning **Jira** (`/rest/api/3/…`) and **Confluence** (`/wiki/rest/api/…`). Reads (`jira_search_issues`, `jira_get_issue`, `jira_list_projects`, `confluence_search`, `confluence_get_page`) auto-allow, paginated (`startAt`/`maxResults`) with a `truncated` flag. Writes (`jira_create_issue`, `jira_add_comment`, `jira_transition_issue`, `confluence_create_page`) are held at **Write-approval**; bodies are sent as **ADF**. `jira_delete_issue` / `confluence_delete_page` stay **Blocked**. Rate limits (`429` + `Retry-After`) are respected.',
+  caveat: 'Jira and Confluence bodies use the Atlassian Document Format (ADF); the OS wraps plain text into ADF. Site reachability, token scope, and project/space access are only confirmed against your live site at Test time.',
+};
+
 const OM_CATALOG: InstallGuide = {
   key: 'om-catalog',
   title: 'OpenMetadata catalog (external · read-only)',
@@ -330,6 +392,7 @@ const GUIDES: InstallGuide[] = [
   GLUE, SNOWFLAKE, BIGQUERY, DATABRICKS, FABRIC,
   POSTGRESQL, MYSQL, SQLSERVER, MONGODB,
   GDRIVE, ONEDRIVE, NOTION, AIRFLOW, OM_CATALOG,
+  GITHUB, SUPABASE, ATLASSIAN,
 ];
 
 const GUIDE_BY_KEY: Record<string, InstallGuide> = Object.fromEntries(GUIDES.map((g) => [g.key, g]));

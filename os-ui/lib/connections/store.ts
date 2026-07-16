@@ -18,6 +18,8 @@ import {
   type WarehouseConnectionConfig,
   type AirflowConnectionConfig,
   type AirflowAuthType,
+  type AtlassianConnectionConfig,
+  type AtlassianAuthKind,
   templateByKey,
   isPersonalConnectable,
 } from '@/lib/connections/schema';
@@ -37,6 +39,51 @@ import {
   clearTask as afClearTask,
   airflowDagAllowed,
 } from '@/lib/connections/airflow';
+import {
+  githubConnFrom,
+  githubHealth,
+  listRepos as ghListRepos,
+  getRepo as ghGetRepo,
+  listIssues as ghListIssues,
+  getIssue as ghGetIssue,
+  searchCode as ghSearchCode,
+  listPulls as ghListPulls,
+  getPull as ghGetPull,
+  listCommits as ghListCommits,
+  createIssue as ghCreateIssue,
+  addIssueComment as ghAddIssueComment,
+  createPullRequest as ghCreatePullRequest,
+} from '@/lib/connections/github';
+import {
+  supabaseConnFrom,
+  supabaseHealth,
+  listProjects as sbListProjects,
+  listTables as sbListTables,
+  listMigrations as sbListMigrations,
+  getAdvisors as sbGetAdvisors,
+  getLogs as sbGetLogs,
+  getProjectUrl as sbGetProjectUrl,
+  executeSql as sbExecuteSql,
+} from '@/lib/connections/supabase';
+import {
+  atlassianConnFrom,
+  atlassianHealth,
+  jiraSearchIssues as atlJiraSearchIssues,
+  jiraGetIssue as atlJiraGetIssue,
+  jiraListProjects as atlJiraListProjects,
+  confluenceSearch as atlConfluenceSearch,
+  confluenceGetPage as atlConfluenceGetPage,
+  jiraCreateIssue as atlJiraCreateIssue,
+  jiraAddComment as atlJiraAddComment,
+  jiraTransitionIssue as atlJiraTransitionIssue,
+  confluenceCreatePage as atlConfluenceCreatePage,
+} from '@/lib/connections/atlassian';
+import {
+  notionConnFrom,
+  notionSearch as apiNotionSearch,
+  notionGetPage as apiNotionGetPage,
+  notionCreatePage as apiNotionCreatePage,
+} from '@/lib/connections/notion';
 import type { WarehousePlatform } from '@/lib/connections/warehouse/types';
 import { splitWarehouseFields, toWarehouseSource } from '@/lib/connections/warehouse/connection';
 import { providerFor } from '@/lib/connections/warehouse/registry';
@@ -225,9 +272,17 @@ export type AirflowCreateInput = {
   dagAllowlist?: string[];
 };
 
+/** The non-secret Atlassian config on the create input (only for the `atlassian` template). */
+export type AtlassianCreateInput = {
+  /** 'basic' = API token (with the account email); 'bearer' = OAuth 3LO access token. */
+  authKind: AtlassianAuthKind;
+  /** Basic-auth account email (non-secret); empty for Bearer. */
+  email?: string;
+};
+
 export async function createConnection(
   user: CurrentUser,
-  input: { name: string; template: ConnectionTemplateKey; endpoint: string; credential: string; domain?: string; openApiSpec?: unknown; warehouse?: WarehouseCreateInput; omService?: string; airflow?: AirflowCreateInput },
+  input: { name: string; template: ConnectionTemplateKey; endpoint: string; credential: string; domain?: string; openApiSpec?: unknown; warehouse?: WarehouseCreateInput; omService?: string; airflow?: AirflowCreateInput; atlassian?: AtlassianCreateInput },
 ): Promise<Connection> {
   const tpl = templateByKey(input.template);
   if (!tpl) throw withStatus(new Error('Unknown connection template'), 400);
@@ -386,6 +441,16 @@ export async function createConnection(
             username: (input.airflow?.username ?? '').trim() || undefined,
             dagAllowlist: (input.airflow?.dagAllowlist ?? []).map((d) => d.trim()).filter(Boolean),
           } satisfies AirflowConnectionConfig,
+        }
+      : {}),
+    // For an atlassian connection, stamp the non-secret auth config (Basic API-token
+    // + account email, or OAuth bearer). The token stays in the vault.
+    ...(tpl.key === 'atlassian'
+      ? {
+          atlassian: {
+            authKind: input.atlassian?.authKind ?? 'basic',
+            email: (input.atlassian?.email ?? '').trim() || undefined,
+          } satisfies AtlassianConnectionConfig,
         }
       : {}),
     createdAt: t,
@@ -548,6 +613,46 @@ export async function testConnection(
     return h.connected
       ? { ok: true, mode: 'live', detail: `Airflow at ${c.egress.host} is reachable${h.detail ? ` (${h.detail})` : ''}. The token is never sent on the health probe.` }
       : { ok: false, mode: 'offline', detail: `Airflow at ${c.egress.host} is unreachable (${h.reason ?? 'network error'}) — check the base URL + egress, then re-test.` };
+  }
+
+  // GITHUB: the honest test is a real GET /user with the vaulted PAT. A 2xx proves
+  // the token is live; a 401 is an honest ✗ (never a fake green). The token is used
+  // ONLY as the bearer server-side and is never returned to the browser.
+  if (c.template === 'github') {
+    const h = await githubHealth(githubConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    c.updatedAt = now();
+    writeThrough(c);
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `GitHub is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `GitHub is unreachable (${h.reason ?? 'network error'}) — check the token + egress, then re-test.` };
+  }
+
+  // SUPABASE: real GET /v1/projects with the vaulted management PAT (sbp_…). A 2xx
+  // proves the token is live; a 401 is an honest ✗. Never a stub; the token stays server-side.
+  if (c.template === 'supabase') {
+    const h = await supabaseHealth(supabaseConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    c.updatedAt = now();
+    writeThrough(c);
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Supabase Management API is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Supabase is unreachable (${h.reason ?? 'network error'}) — check the access token + egress, then re-test.` };
+  }
+
+  // ATLASSIAN: real GET of the current user (Jira `/rest/api/3/myself`) with the
+  // vaulted token. A 2xx proves auth; a 401 is an honest ✗. Token stays server-side.
+  if (c.template === 'atlassian') {
+    const h = await atlassianHealth(atlassianConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    c.updatedAt = now();
+    writeThrough(c);
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Atlassian at ${c.egress.host} is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Atlassian at ${c.egress.host} is unreachable (${h.reason ?? 'network error'}) — check the site URL, token + egress, then re-test.` };
   }
 
   const secret = getSecretServerSide(c.secretRef); // server-side only
@@ -1032,6 +1137,29 @@ export async function callConnectionTool(
   return runAllow(c, tool, args, input.asAgent, authz.reason, authz.mode);
 }
 
+/**
+ * A per-template EXECUTOR: runs one ALREADY-ALLOWED tool call against the real
+ * backing system and returns an honest result. The governance gate (Read auto /
+ * Write-approval / Blocked) has already been applied UPSTREAM in
+ * `callConnectionTool` — an executor is only reached once a call is allowed, and it
+ * NEVER throws (each hand-built client degrades to `{ ok:false, reason }`).
+ *
+ * This is the connector REGISTRY the CONNECTOR-STANDARD praises: instead of one
+ * growing `template === 'airflow' ? … : …` ternary, each real connector registers
+ * its dispatch here (mirroring `warehouse/registry.ts`), so connectors append
+ * cleanly on disjoint branches. A template with no entry falls through to the
+ * offline `executeMock` (the demonstrable, LABELLED offline path).
+ */
+type Executor = (c: Connection, tool: string, args: Record<string, unknown>) => Promise<unknown>;
+
+const CONNECTION_EXECUTORS: Partial<Record<ConnectionTemplateKey, Executor>> = {
+  airflow: (c, tool, args) => executeAirflow(c, tool, args),
+  github: (c, tool, args) => executeGithub(c, tool, args),
+  supabase: (c, tool, args) => executeSupabase(c, tool, args),
+  'notion-mcp': (c, tool, args) => executeNotion(c, tool, args),
+  atlassian: (c, tool, args) => executeAtlassian(c, tool, args),
+};
+
 /** Execute an allowed call: inject the secret SERVER-SIDE (never logged), trace + log egress. */
 async function runAllow(
   c: Connection,
@@ -1042,10 +1170,12 @@ async function runAllow(
   mode?: string,
 ): Promise<ToolCallResult> {
   const secret = getSecretServerSide(c.secretRef);
-  // Airflow tools hit the REAL REST API (the secret is injected server-side inside
-  // the client and never logged); every other connector uses the offline mock.
-  const result = c.template === 'airflow'
-    ? await executeAirflow(c, tool, args)
+  // A registered executor hits the REAL API (the secret is injected server-side
+  // inside the client and never logged); every other connector uses the offline
+  // mock (the LABELLED demonstrable path). Look up the executor for this template.
+  const executor = CONNECTION_EXECUTORS[c.template];
+  const result = executor
+    ? await executor(c, tool, args)
     : executeMock(c, tool, args, Boolean(secret));
   if (c.egress.external) logEgress({ host: c.egress.host, connectionId: c.id, tool }); // monitored egress
   const tr = await trace({
@@ -1267,13 +1397,165 @@ async function executeAirflow(c: Connection, tool: string, args: Record<string, 
   }
 }
 
+/**
+ * Execute an ALLOWED GitHub tool against the real REST API. The governance gate
+ * (reads auto · writes Write-approval · deletes Blocked) already passed upstream;
+ * here we only run the call and shape an honest result. Never throws — the client
+ * degrades to `{ ok:false, reason }` and we surface it as `{ ok:false, reason }`.
+ */
+async function executeGithub(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
+  const conn = githubConnFrom(c);
+  const repo = String(args.repo ?? args.repository ?? '');
+  const number = Number(args.number ?? args.issue ?? args.pull ?? 0);
+  const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
+  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
+    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  switch (tool) {
+    case 'list_repos':
+      return done(await ghListRepos(conn), 'repos');
+    case 'get_repo':
+      return done(await ghGetRepo(conn, repo), 'repo');
+    case 'list_issues':
+      return done(await ghListIssues(conn, repo, { state: args.state ? String(args.state) : undefined }), 'issues');
+    case 'get_issue':
+      if (!number) return fail('get_issue needs a number');
+      return done(await ghGetIssue(conn, repo, number), 'issue');
+    case 'search_code':
+      return done(await ghSearchCode(conn, String(args.query ?? args.q ?? '')), 'results');
+    case 'list_pull_requests':
+      return done(await ghListPulls(conn, repo, { state: args.state ? String(args.state) : undefined }), 'pullRequests');
+    case 'get_pull_request':
+      if (!number) return fail('get_pull_request needs a number');
+      return done(await ghGetPull(conn, repo, number), 'pullRequest');
+    case 'list_commits':
+      return done(await ghListCommits(conn, repo), 'commits');
+    case 'create_issue':
+      return done(await ghCreateIssue(conn, repo, { title: String(args.title ?? ''), body: args.body ? String(args.body) : undefined }), 'issue');
+    case 'add_issue_comment':
+      if (!number) return fail('add_issue_comment needs a number');
+      return done(await ghAddIssueComment(conn, repo, number, String(args.body ?? '')), 'comment');
+    case 'create_pull_request':
+      return done(await ghCreatePullRequest(conn, repo, {
+        title: String(args.title ?? ''),
+        head: String(args.head ?? ''),
+        base: String(args.base ?? ''),
+        body: args.body ? String(args.body) : undefined,
+      }), 'pullRequest');
+    default:
+      return fail(`Unknown GitHub tool: ${tool}`);
+  }
+}
+
+/**
+ * Execute an ALLOWED Supabase Management-API tool. Governance already passed
+ * upstream (reads auto · execute_sql Write-approval + DDL-refused · apply_migration/
+ * deploy_edge_function Blocked). Never throws. Service-role keys are never surfaced.
+ */
+async function executeSupabase(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
+  const conn = supabaseConnFrom(c);
+  const ref = String(args.ref ?? args.project ?? args.projectRef ?? '');
+  const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
+  const done = <T>(r: { ok: true; data: T } | { ok: false; reason: string }, key: string) =>
+    r.ok ? { connection: c.name, [key]: r.data } : fail(r.reason);
+  const needsRef = (): string | null => (ref ? null : `${tool} needs a project ref`);
+  switch (tool) {
+    case 'list_projects':
+      return done(await sbListProjects(conn), 'projects');
+    case 'list_tables':
+      return needsRef() ? fail(needsRef()!) : done(await sbListTables(conn, ref), 'tables');
+    case 'list_migrations':
+      return needsRef() ? fail(needsRef()!) : done(await sbListMigrations(conn, ref), 'migrations');
+    case 'get_advisors':
+      return needsRef() ? fail(needsRef()!) : done(await sbGetAdvisors(conn, ref, args.type === 'performance' ? 'performance' : 'security'), 'advisors');
+    case 'get_logs':
+      return needsRef() ? fail(needsRef()!) : done(await sbGetLogs(conn, ref), 'logs');
+    case 'get_project_url':
+      return needsRef() ? fail(needsRef()!) : done(await sbGetProjectUrl(conn, ref), 'project');
+    case 'execute_sql':
+      return needsRef() ? fail(needsRef()!) : done(await sbExecuteSql(conn, ref, String(args.sql ?? args.query ?? '')), 'result');
+    default:
+      return fail(`Unknown Supabase tool: ${tool}`);
+  }
+}
+
+/**
+ * Execute an ALLOWED Atlassian (Jira + Confluence) tool. Governance already passed
+ * upstream (reads auto · writes Write-approval · deletes Blocked). Never throws.
+ */
+async function executeAtlassian(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
+  const conn = atlassianConnFrom(c);
+  const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
+  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
+    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  switch (tool) {
+    case 'jira_search_issues':
+      return done(await atlJiraSearchIssues(conn, String(args.jql ?? args.query ?? '')), 'issues');
+    case 'jira_get_issue':
+      return done(await atlJiraGetIssue(conn, String(args.key ?? args.issue ?? '')), 'issue');
+    case 'jira_list_projects':
+      return done(await atlJiraListProjects(conn), 'projects');
+    case 'confluence_search':
+      return done(await atlConfluenceSearch(conn, String(args.cql ?? args.query ?? '')), 'results');
+    case 'confluence_get_page':
+      return done(await atlConfluenceGetPage(conn, String(args.id ?? args.pageId ?? '')), 'page');
+    case 'jira_create_issue':
+      return done(await atlJiraCreateIssue(conn, {
+        projectKey: String(args.projectKey ?? args.project ?? ''),
+        issueType: String(args.issueType ?? args.type ?? 'Task'),
+        summary: String(args.summary ?? args.title ?? ''),
+        description: args.description ? String(args.description) : undefined,
+      }), 'issue');
+    case 'jira_add_comment':
+      return done(await atlJiraAddComment(conn, String(args.key ?? args.issue ?? ''), String(args.body ?? args.comment ?? '')), 'comment');
+    case 'jira_transition_issue':
+      return done(await atlJiraTransitionIssue(conn, String(args.key ?? args.issue ?? ''), String(args.transitionId ?? args.transition ?? '')), 'transition');
+    case 'confluence_create_page':
+      return done(await atlConfluenceCreatePage(conn, {
+        spaceKey: String(args.spaceKey ?? args.space ?? ''),
+        title: String(args.title ?? ''),
+        body: String(args.body ?? args.content ?? ''),
+      }), 'page');
+    default:
+      return fail(`Unknown Atlassian tool: ${tool}`);
+  }
+}
+
+/**
+ * Execute an ALLOWED Notion tool against the REAL Notion API using the token the
+ * hosted-MCP OAuth flow already stored. Governance already passed upstream (reads
+ * auto · notion_create_page Write-approval · delete Blocked). Never throws. This
+ * makes the already-user-visible Notion connector HONEST (was executeMock fixtures).
+ */
+async function executeNotion(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
+  const conn = notionConnFor(c);
+  const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
+  const done = <T>(r: { ok: true; data: T } | { ok: false; reason: string }, key: string) =>
+    r.ok ? { connection: c.name, [key]: r.data } : fail(r.reason);
+  switch (tool) {
+    case 'notion_search':
+      return done(await apiNotionSearch(conn, String(args.query ?? args.q ?? '')), 'results');
+    case 'notion_get_page':
+      return done(await apiNotionGetPage(conn, String(args.id ?? args.pageId ?? '')), 'page');
+    case 'notion_create_page':
+      return done(await apiNotionCreatePage(conn, {
+        parentId: String(args.parentId ?? args.parent ?? ''),
+        title: String(args.title ?? ''),
+        text: args.text ? String(args.text) : undefined,
+      }), 'page');
+    default:
+      return fail(`Unknown Notion tool: ${tool}`);
+  }
+}
+
+/** Build the pure Notion API client config — the OAuth access token is resolved from
+ *  the vault HERE (server-side) and never leaves this process. */
+function notionConnFor(c: Connection) {
+  return notionConnFrom(c, readTokens(c.secretRef)?.accessToken);
+}
+
 function executeMock(c: Connection, tool: string, args: Record<string, unknown>, credentialPresent: boolean): unknown {
   const base = { connection: c.name, credentialInjectedServerSide: credentialPresent };
   switch (tool) {
-    case 'notion_search':
-      return { ...base, results: [{ id: 'pg_demo', title: 'Q3 Planning', url: 'notion://pg_demo' }] };
-    case 'notion_get_page':
-      return { ...base, page: { id: String(args.id ?? 'pg_demo'), title: 'Q3 Planning', blocks: 12 } };
     case 'read_account':
       return { ...base, account: { id: String(args.id ?? 'acct-1'), name: 'Sample Account', owner: 'Sales', arr: 48000 } };
     case 'read_opportunity':

@@ -23,7 +23,7 @@ import {
  */
 export const dynamic = 'force-dynamic';
 
-const TABS: FolderTab[] = ['files', 'knowledge', 'data'];
+const TABS: FolderTab[] = ['files', 'knowledge', 'data', 'metrics'];
 const SCOPES: FolderScope[] = ['personal', 'domain'];
 
 async function principal(): Promise<Principal> {
@@ -50,7 +50,8 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const tab = readTab(url.searchParams.get('tab'));
     const scope = readScope(url.searchParams.get('scope'));
-    return NextResponse.json({ folders: listFolders(user, tab, scope) });
+    const includeArchived = url.searchParams.get('archived') === '1';
+    return NextResponse.json({ folders: listFolders(user, tab, scope, { includeArchived }) });
   } catch (e) {
     return errorResponse(e);
   }

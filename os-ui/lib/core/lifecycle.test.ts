@@ -12,12 +12,32 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   archiveCopy,
+  archiveFolderCopy,
+  deleteFolderCopy,
   deleteCopy,
   restoreVersionCopy,
   phraseSatisfied,
   affectsOthers,
   type ArtifactKind,
 } from './lifecycle.ts';
+
+test('folder archive copy names the item count + is light/reversible', () => {
+  const c = archiveFolderCopy('Contracts', 3);
+  assert.equal(c.danger, false);
+  assert.equal(c.confirmPhrase, undefined);
+  assert.match(c.body, /3 items/);
+  assert.match(c.body, /restore the folder later/);
+  // Singular grammar.
+  assert.match(archiveFolderCopy('Solo', 1).body, /1 item\b/);
+});
+
+test('folder delete copy is danger, permanent, and cascades to the items inside', () => {
+  const c = deleteFolderCopy('Contracts', 3);
+  assert.equal(c.danger, true);
+  assert.match(c.body, /permanently deletes/);
+  assert.match(c.body, /all 3 items/);
+  assert.match(c.body, /cannot be undone/);
+});
 
 test('archive copy is light + reversible (never danger, no type-to-confirm)', () => {
   const c = archiveCopy('Q3 revenue');

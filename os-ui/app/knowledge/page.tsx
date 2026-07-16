@@ -15,8 +15,9 @@ import DomainTag from '@/components/DomainTag';
 import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
 import TalkTo from '@/components/talk/TalkTo';
 import { TALK_PRESENTATION } from '@/lib/talk/schema';
-import FolderTree, { FolderPickerModal } from '@/components/core/FolderTree';
-import { isUnderFolder } from '@/lib/core/folders';
+import { FolderPickerModal } from '@/components/core/FolderTree';
+import KnowledgeFolderRail from '@/components/knowledge/KnowledgeFolderRail';
+import { isUnderFolder, type FolderPathNode } from '@/lib/core/folders';
 
 /** Knowledge visibility (Personal/Shared/Marketplace) → OS-wide lifecycle visibility. */
 const lcVis = (v: 'Personal' | 'Shared' | 'Marketplace'): LcVisibility =>
@@ -62,7 +63,7 @@ export default function KnowledgePage() {
 
   // Folder navigation state for "My knowledge"
   const [pkFolder, setPkFolder] = useState<string>('/');
-  const [pkFolderNodes, setPkFolderNodes] = useState<{ path: string }[]>([]);
+  const [pkFolderNodes, setPkFolderNodes] = useState<FolderPathNode[]>([]);
   // Picker modal: which entry id is being moved; null = closed.
   const [pkMoveId, setPkMoveId] = useState<string | null>(null);
 
@@ -78,15 +79,21 @@ export default function KnowledgePage() {
     }
   }, [showArchived]);
 
-  async function loadFolders() {
+  const loadFolders = useCallback(async () => {
     try {
-      const res = await fetch('/api/folders?tab=knowledge&scope=personal', { cache: 'no-store' });
+      // Include archived folder rows when the user is viewing archived, so the shared
+      // ••• menu can offer Restore / Delete on them (one lifecycle, every tab).
+      const res = await fetch(
+        `/api/folders?tab=knowledge&scope=personal${showArchived ? '&archived=1' : ''}`,
+        { cache: 'no-store' },
+      );
       if (res.ok) {
         const d = await res.json();
-        setPkFolderNodes((d.folders ?? []).map((f: { path: string }) => ({ path: f.path })));
+        // Keep the FULL rows (id + archived) so the lifecycle menu can target the row.
+        setPkFolderNodes((d.folders ?? []) as FolderPathNode[]);
       }
     } catch { /* leave empty */ }
-  }
+  }, [showArchived]);
 
   useEffect(() => {
     fetch('/api/auth/me', { cache: 'no-store' })
@@ -98,8 +105,7 @@ export default function KnowledgePage() {
   useEffect(() => {
     void loadPersonal();
     void loadFolders();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadPersonal]);
+  }, [loadPersonal, loadFolders]);
 
   // ── Personal knowledge ("My knowledge") ──────────────────────────────────
 
@@ -396,24 +402,12 @@ export default function KnowledgePage() {
             {pkMsg && pkMsg !== 'Saved.' && pkMsg !== 'Promoted.' && !pkMsg.startsWith('Requested') ? <div className="error" style={{ marginTop: 8 }}>{pkMsg}</div> : null}
             {(pkMsg === 'Promoted.' || pkMsg.startsWith('Requested')) ? <div className="hint" style={{ marginTop: 8, color: 'var(--teal)' }}>{pkMsg}</div> : null}
 
-            <FolderTree
-              variant="nav"
-              personalNodes={pkFolderNodes}
+            <KnowledgeFolderRail
+              nodes={pkFolderNodes}
               items={(personal?.mine ?? []).map((e) => ({ id: e.id, folder: e.folder ?? '/', name: e.title }))}
               selectedPath={pkFolder}
-              onSelect={(_scope, path) => setPkFolder(path)}
-              onCreate={(_scope, parentPath) => {
-                const name = window.prompt('Folder name:');
-                if (!name?.trim()) return;
-                const full = parentPath === '/' ? `/${name.trim()}` : `${parentPath}/${name.trim()}`;
-                fetch('/api/folders', {
-                  method: 'POST',
-                  headers: { 'content-type': 'application/json' },
-                  body: JSON.stringify({ tab: 'knowledge', scope: 'personal', path: full }),
-                }).then(() => void loadFolders());
-              }}
-              onMove={() => { /* folder rename not implemented here */ }}
-              personalLabel="My folders"
+              onSelect={setPkFolder}
+              onChanged={() => { void loadPersonal(); void loadFolders(); }}
             />
 
             {personal === null ? (

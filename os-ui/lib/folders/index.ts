@@ -17,8 +17,19 @@ export {
   ensureHydrated,
   listFolders,
   getFolder,
+  folderAndDescendants,
   createFolder,
   renameFolder,
-  deleteFolder,
+  archiveFolderRows,
+  restoreFolderRows,
+  deleteFolderRows,
   __resetStore,
 } from './folder-store.ts';
+
+// The lifecycle orchestrator — the folder-row op + the member-item cascade, one place.
+export {
+  moveFolder,
+  archiveFolder,
+  restoreFolder,
+  deleteFolder,
+} from './folder-lifecycle.ts';

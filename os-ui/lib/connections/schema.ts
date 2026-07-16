@@ -55,6 +55,23 @@ export type AirflowConnectionConfig = {
   dagAllowlist?: string[];
 };
 
+/** How an Atlassian connection authenticates: an API token (Basic, with the account
+ *  email) or an OAuth 3LO access token (Bearer). Both are vaulted; the email is the
+ *  only non-secret bit Basic additionally needs. */
+export type AtlassianAuthKind = 'basic' | 'bearer';
+
+/**
+ * The NON-SECRET config carried on an `atlassian` Connection record. The site base
+ * URL is the connection `endpoint`; the API token / OAuth bearer is the vaulted
+ * secret (secretRef, NEVER here). `authKind` picks Basic (API token) vs Bearer
+ * (OAuth 3LO); `email` is only meaningful for Basic (non-secret).
+ */
+export type AtlassianConnectionConfig = {
+  authKind: AtlassianAuthKind;
+  /** Basic-auth account email (non-secret). Empty for Bearer. */
+  email?: string;
+};
+
 /** The adapter family that implements a connection type (see lib/connection-adapters). */
 export type ConnectorKind = 'drive' | 'database' | 'api' | 'mcp' | 'saas';
 
@@ -175,6 +192,9 @@ export type Connection = {
   /** For an `airflow` template only: the non-secret REST config (auth type, basic
    *  username, optional trigger allowlist). The password/token lives in the vault. */
   airflow?: AirflowConnectionConfig;
+  /** For an `atlassian` template only: the non-secret auth config (Basic vs Bearer +
+   *  the account email for Basic). The API token / OAuth bearer lives in the vault. */
+  atlassian?: AtlassianConnectionConfig;
   /** Soft-archived: hidden from the working lists, reversible, retained (the vault
    *  secret + OAuth token are KEPT). Absent/false = live. */
   archived?: boolean;
@@ -206,7 +226,20 @@ export type ConnectionTemplateKey =
   // outbound connection to a customer's Airflow so OS agents can trigger + monitor
   // DAGs. Read tools (list DAGs, get a run) auto-allow; `trigger_dag` is a real
   // side effect held for approval by default. User-facing (a plain API connector).
-  | 'airflow';
+  | 'airflow'
+  // GitHub REST + GraphQL over api.github.com — a governed outbound connection with
+  // a service PAT. Reads (repos/issues/PRs/commits/code search) auto-allow; writes
+  // (open issue/comment/PR) are Write-approval; delete-repo/branch stay Blocked.
+  | 'github'
+  // Supabase Management API over api.supabase.com — a governed outbound connection
+  // with a service PAT (sbp_…). Reads (projects/tables/migrations/advisors/logs)
+  // auto-allow; execute_sql is Write-approval; apply_migration/DDL stay Blocked.
+  // (The project's Postgres as DATA is federated via the `postgresql` warehouse.)
+  | 'supabase'
+  // Atlassian Jira + Confluence Cloud over *.atlassian.net (+ api.atlassian.com).
+  // Reads (search/get issue/page, list projects) auto-allow; writes (create issue/
+  // comment/transition, create page) are Write-approval; deletes stay Blocked.
+  | 'atlassian';
 
 export type ConnectionTemplate = {
   key: ConnectionTemplateKey;
@@ -449,6 +482,139 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
       },
     ],
   },
+  {
+    // GitHub REST + GraphQL over api.github.com. Service PAT (read scope where
+    // possible). Reads auto-allow; the three writes default to Write-approval with a
+    // rate cap; delete-repo/branch are Blocked (need an Admin override to enable).
+    key: 'github',
+    label: 'GitHub (REST + GraphQL)',
+    type: 'API',
+    connector: 'api',
+    auth: 'service',
+    endpointHint: 'https://api.github.com',
+    secretKey: 'github-token',
+    tools: [
+      // Reads (side-effect-free, auto-allowed).
+      { name: 'list_repos', description: 'List repositories the token can see (read).', write: false, mode: 'Read' },
+      { name: 'get_repo', description: 'Read one repository by owner/repo (read).', write: false, mode: 'Read' },
+      { name: 'list_issues', description: 'List issues in a repo, optionally by state (read).', write: false, mode: 'Read' },
+      { name: 'get_issue', description: 'Read one issue by repo + number (read).', write: false, mode: 'Read' },
+      { name: 'search_code', description: 'Search code across visible repos (read).', write: false, mode: 'Read' },
+      { name: 'list_pull_requests', description: 'List pull requests in a repo (read).', write: false, mode: 'Read' },
+      { name: 'get_pull_request', description: 'Read one pull request by repo + number (read).', write: false, mode: 'Read' },
+      { name: 'list_commits', description: 'List commits in a repo (read).', write: false, mode: 'Read' },
+      // Writes (Write-approval — real side effects on GitHub; deduped on title).
+      {
+        name: 'create_issue',
+        description: 'Open an issue (write — deduped on title to avoid a double-open).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'repositories on this connection', rateLimitPerMin: 10 },
+      },
+      {
+        name: 'add_issue_comment',
+        description: 'Comment on an issue or PR (write — a real side effect).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'repositories on this connection', rateLimitPerMin: 10 },
+      },
+      {
+        name: 'create_pull_request',
+        description: 'Open a pull request (write — deduped on title+head+base).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'repositories on this connection', rateLimitPerMin: 10 },
+      },
+      // Destructive — Blocked by default (needs an Admin override to enable).
+      { name: 'delete_repo', description: 'Delete a repository (write — destructive).', write: true, mode: 'Blocked' },
+      { name: 'delete_branch', description: 'Delete a branch (write — destructive).', write: true, mode: 'Blocked' },
+    ],
+  },
+  {
+    // Supabase Management API. Service PAT (sbp_…). Reads auto-allow; execute_sql is
+    // Write-approval and DDL-refused in the client; apply_migration / deploy_edge_function
+    // are Blocked by default (DDL/deploys need an Admin override). Data lives in the
+    // project Postgres, federated separately via the `postgresql` warehouse.
+    key: 'supabase',
+    label: 'Supabase (Management API)',
+    type: 'API',
+    connector: 'api',
+    auth: 'service',
+    endpointHint: 'https://api.supabase.com',
+    secretKey: 'supabase-access-token',
+    tools: [
+      // Reads (side-effect-free, auto-allowed) — metadata/ops only, never the data or keys.
+      { name: 'list_projects', description: 'List projects in the organization (read).', write: false, mode: 'Read' },
+      { name: 'list_tables', description: 'List tables in a project database — metadata (read).', write: false, mode: 'Read' },
+      { name: 'list_migrations', description: 'List applied migrations for a project (read).', write: false, mode: 'Read' },
+      { name: 'get_advisors', description: 'Read security/performance advisors for a project (read).', write: false, mode: 'Read' },
+      { name: 'get_logs', description: 'Read recent project logs (read).', write: false, mode: 'Read' },
+      { name: 'get_project_url', description: 'Get a project’s API URL — never its keys (read).', write: false, mode: 'Read' },
+      // Write — a governed admin escape hatch, DDL-refused in the client.
+      {
+        name: 'execute_sql',
+        description: 'Run one SQL statement on the project DB (write — DDL refused; held for approval).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'one project database', rateLimitPerMin: 5 },
+      },
+      // Schema-changing / deploys — Blocked by default (Admin override to enable).
+      { name: 'apply_migration', description: 'Apply a DDL migration (write — schema change).', write: true, mode: 'Blocked' },
+      { name: 'deploy_edge_function', description: 'Deploy an edge function (write — deploy).', write: true, mode: 'Blocked' },
+    ],
+  },
+  {
+    // Atlassian Jira + Confluence Cloud. Token (Basic w/ email) or OAuth 3LO. Reads
+    // auto-allow; writes are Write-approval (ADF bodies); deletes are Blocked. Tools
+    // are prefixed per product (jira_* / confluence_*) to avoid collisions.
+    key: 'atlassian',
+    label: 'Atlassian (Jira + Confluence)',
+    type: 'API',
+    connector: 'api',
+    auth: 'service',
+    endpointHint: 'https://your-site.atlassian.net',
+    secretKey: 'atlassian-token',
+    tools: [
+      // Reads (side-effect-free, auto-allowed).
+      { name: 'jira_search_issues', description: 'Search Jira issues via JQL (read).', write: false, mode: 'Read' },
+      { name: 'jira_get_issue', description: 'Read one Jira issue by key (read).', write: false, mode: 'Read' },
+      { name: 'jira_list_projects', description: 'List Jira projects (read).', write: false, mode: 'Read' },
+      { name: 'confluence_search', description: 'Search Confluence content via CQL (read).', write: false, mode: 'Read' },
+      { name: 'confluence_get_page', description: 'Read one Confluence page by id (read).', write: false, mode: 'Read' },
+      // Writes (Write-approval — real side effects; ADF bodies).
+      {
+        name: 'jira_create_issue',
+        description: 'Create a Jira issue (write — a real side effect).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'projects on this site', rateLimitPerMin: 10 },
+      },
+      {
+        name: 'jira_add_comment',
+        description: 'Comment on a Jira issue (write — a real side effect).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'projects on this site', rateLimitPerMin: 10 },
+      },
+      {
+        name: 'jira_transition_issue',
+        description: 'Transition a Jira issue’s status (write — a real side effect).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'projects on this site', rateLimitPerMin: 10 },
+      },
+      {
+        name: 'confluence_create_page',
+        description: 'Create a Confluence page (write — a real side effect).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'spaces on this site', rateLimitPerMin: 10 },
+      },
+      // Destructive — Blocked by default (Admin override to enable).
+      { name: 'jira_delete_issue', description: 'Delete a Jira issue (write — destructive).', write: true, mode: 'Blocked' },
+      { name: 'confluence_delete_page', description: 'Delete a Confluence page (write — destructive).', write: true, mode: 'Blocked' },
+    ],
+  },
 ];
 
 /**
@@ -459,7 +625,7 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
  * import, the connections gate, adapter tests) and is deliberately NOT offered in
  * the create picker — a user can never stand up a non-working mock connection.
  */
-export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp', 'airflow'];
+export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp', 'airflow', 'github', 'supabase', 'atlassian'];
 
 export function isUserFacingTemplate(key: string): boolean {
   return (USER_FACING_TEMPLATE_KEYS as string[]).includes(key);

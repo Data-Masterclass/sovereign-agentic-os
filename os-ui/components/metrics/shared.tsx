@@ -23,6 +23,9 @@ export type MetricSummary = {
   type: string;
   /** Source domain — set on shared/marketplace metrics for provenance display. */
   domain?: string;
+  /** The folder this metric lives in (normalised path; `'/'` = root). Rides the metric
+   *  lifecycle overlay — a metric has no store row of its own. Defaults to `'/'`. */
+  folder: string;
   /** Soft-archived (retained, reversible). Absent/false = live. */
   archived?: boolean;
   /** FAIL-SOFT: set when this metric's model couldn't load — rendered inline so the
