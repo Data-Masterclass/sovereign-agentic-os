@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Markdown from '@/components/Markdown';
+import ProgressStepper, { type Step } from '@/components/core/ProgressStepper';
 import {
   buildDiagnostics,
   buildRunReport,
@@ -209,39 +210,26 @@ function BuildProgress({ building, report }: { building: boolean; report: BuildR
   const failedTools = new Set((report?.rows ?? []).filter((r) => r.status === 'fail').map((r) => r.tool));
   const stageFailed = (tools: string[]) => tools.some((t) => failedTools.has(t));
 
+  // Map the 5 real adapter stages + the terminal Ready row onto the generic stepper's
+  // steps. Same states as before: done → teal ✓, fail → red ✗, active → gold spin, else
+  // pending. The pct is paced on the build's single-call timer (never 100% until landed).
+  const steps: Step[] = BUILD_STAGES.map((st, i) => {
+    const failed = done && stageFailed(st.tools);
+    const complete = done ? !failed : i < stage;
+    const active = building && i === stage;
+    return { key: st.key, label: st.label, state: failed ? 'fail' : complete ? 'done' : active ? 'active' : 'pending' };
+  });
+  steps.push({
+    key: 'ready',
+    label: done ? (report?.ok ? 'Ready' : 'Build failed — see below') : 'Ready',
+    state: done ? (report?.ok ? 'done' : 'fail') : 'pending',
+  });
+
   const pct = done
     ? 100
     : Math.round(((stage + 1) / (BUILD_STAGES.length + 1)) * 100); // never hit 100 until landed
 
-  return (
-    <div className="sb-build-progress" aria-live="polite" style={{ marginTop: 8, marginBottom: 8 }}>
-      <div className="sb-build-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-        <div
-          className={`sb-build-bar-fill${building ? ' animating' : ''}${done && report?.ok ? ' ok' : ''}${done && report && !report.ok ? ' fail' : ''}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <ol className="sb-build-steps">
-        {BUILD_STAGES.map((st, i) => {
-          const failed = done && stageFailed(st.tools);
-          const complete = done ? !failed : i < stage;
-          const active = building && i === stage;
-          return (
-            <li key={st.key} className={`sb-build-step${active ? ' active' : ''}${complete ? ' done' : ''}${failed ? ' fail' : ''}`}>
-              <span className="sb-build-dot" aria-hidden>
-                {failed ? '✗' : complete ? '✓' : active ? <span className="spin" /> : i + 1}
-              </span>
-              <span className="sb-build-label">{st.label}</span>
-            </li>
-          );
-        })}
-        <li className={`sb-build-step${done && report?.ok ? ' done' : ''}${done && report && !report.ok ? ' fail' : ''}`}>
-          <span className="sb-build-dot" aria-hidden>{done ? (report?.ok ? '✓' : '✗') : '·'}</span>
-          <span className="sb-build-label">{done ? (report?.ok ? 'Ready' : 'Build failed — see below') : 'Ready'}</span>
-        </li>
-      </ol>
-    </div>
-  );
+  return <ProgressStepper steps={steps} active={building} done={done} ok={!!report?.ok} pct={pct} />;
 }
 
 /**
@@ -502,6 +490,26 @@ function liveLine(p: LiveProgress): string {
   const verb = p.stepStatus === 'running' ? 'running' : p.stepStatus ?? 'done';
   const step = p.stepIndex ? ` · step ${p.stepIndex}` : '';
   return `${p.node} · ${p.tool} — ${verb}${step}${where}`;
+}
+
+/**
+ * Build the generic ProgressStepper steps for an in-flight team run: one step per agent
+ * in the node path, driven off the live stream. A node in `completed` → done; the current
+ * node (or a started-but-not-completed node) → active; a policy-block/execution error on
+ * the CURRENT node's step → fail; not yet started → pending. `labelOf` gives each step its
+ * display (short) name. Empty when the path is unknown (single-shot runs fall back to the line).
+ */
+function runSteps(nodePath: string[], live: LiveProgress | null, labelOf: (id: string) => string): Step[] {
+  const completed = new Set(live?.completed ?? []);
+  const started = new Set(live?.started ?? []);
+  const failedNow = live?.node && (live.stepStatus === 'error' || live.stepStatus === 'denied') ? live.node : undefined;
+  return nodePath.map((n, i) => {
+    let state: Step['state'] = 'pending';
+    if (completed.has(n)) state = 'done';
+    else if (n === failedNow) state = 'fail';
+    else if (n === live?.node || (started.has(n) && !completed.has(n))) state = 'active';
+    return { key: `${n}-${i}`, label: labelOf(n), state };
+  });
 }
 
 /**
@@ -1141,34 +1149,29 @@ export default function BuildRunPanel({
       ) : null}
       {runErr ? <div className="error" style={{ marginTop: 10 }}>{runErr}</div> : null}
 
-      {/* FIX 1 — LIVE in-progress: the instant Run is pressed, show an animated
-          indicator, then update it as events arrive — the CURRENT agent + tool step
-          ("performance_analyst · query_data — running · step 5"), and light up each
-          agent in the path as it starts (▹) and completes (✓). Replaced by the
-          per-node reveal the moment the terminal result lands. */}
+      {/* LIVE in-progress — the SAME fancy determinate stepper the Build phase shows,
+          now for a team run: one step per agent in the path, driven off the live stream
+          (done ✓ / active gold-spin / fail ✗ / pending), with liveLine() as the commentary
+          ("performance_analyst · query_data — running · step 5"). Replaced by the per-node
+          reveal the moment the terminal result lands. A single-shot run with no known path
+          falls back to the calm one-line indicator. */}
       {runningNow && !run ? (
         <div className="answer running-now" style={{ marginTop: 12, fontSize: 13 }} aria-live="polite">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className="spin" />
-            <strong>{live ? liveLine(live) : 'Running the team…'}</strong>
-          </div>
           {nodePath && nodePath.length > 0 ? (
-            <div className="mono" style={{ marginTop: 8, opacity: 0.85, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {nodePath.map((n, i) => {
-                const done = live?.completed.includes(n);
-                const active = !done && live?.started.includes(n);
-                return (
-                  <span key={`${n}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, opacity: done ? 0.9 : active ? 1 : 0.4 }}>
-                    <span aria-hidden="true">{done ? '✓' : active ? '▹' : '·'}</span>
-                    <span style={{ fontWeight: active ? 600 : 400 }}>{n}</span>
-                    {i < nodePath.length - 1 ? <span style={{ opacity: 0.4 }}>→</span> : null}
-                  </span>
-                );
-              })}
-              <span style={{ opacity: 0.4 }}>→ END</span>
+            <>
+              <ProgressStepper
+                steps={runSteps(nodePath, live, labelOf)}
+                active
+                commentary={live ? liveLine(live) : 'Running the team…'}
+              />
+              <p className="hint" style={{ marginTop: 6 }}>Each agent runs in turn, handing its results to the next. This may take a moment.</p>
+            </>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className="spin" />
+              <strong>{live ? liveLine(live) : 'Running the team…'}</strong>
             </div>
-          ) : null}
-          <p className="hint" style={{ marginTop: 6 }}>Each agent runs in turn, handing its results to the next. This may take a moment.</p>
+          )}
         </div>
       ) : null}
       </>

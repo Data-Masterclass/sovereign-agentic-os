@@ -15,6 +15,15 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.27] — 2026-07-16
+
+### Added
+- **A shared, elegant progress indicator across the OS.** The polished progress stepper from the
+  Agents Build phase (a determinate bar with each step lighting up — gold while active, teal when
+  done, red on failure, with live commentary) is now a reusable primitive, and the **Run** phase
+  uses it: a team run shows each agent progressing in turn instead of a bare spinner. This is the
+  new house style for long-running operations; other slow surfaces will adopt it next.
+
 ## [os-ui 0.5.26] — 2026-07-16
 
 ### Changed
