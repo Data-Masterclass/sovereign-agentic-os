@@ -234,6 +234,10 @@ export function createBet(user: Principal, input: CreateBetInput): BigBet {
     throw new BetError('Only a Creator (draft), Builder or Admin can create a Big Bet', 403);
   }
   if (!input.name?.trim()) throw new BetError('A bet name is required', 400);
+  // A bet must belong to a pillar — the pillar drives tier + value spine.
+  // EXISTING bets without a pillarId are grandfathered (stored + displayed as Unassigned);
+  // only NEW creation is gated here.
+  if (!input.pillarId?.trim()) throw new BetError('A strategic pillar is required to create a Big Bet', 400);
   const crossDomain = Boolean(input.crossDomain);
   if (crossDomain && user.role !== 'admin') {
     throw new BetError('A cross-domain Big Bet must be Admin-owned', 403);

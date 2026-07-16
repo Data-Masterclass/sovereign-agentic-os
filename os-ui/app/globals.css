@@ -2719,6 +2719,9 @@ button.card.tile:hover .tile-action { opacity: 1; }
 .files-layout { display: grid; grid-template-columns: 210px 1fr; gap: 22px; align-items: start; }
 .files-layout.with-preview { grid-template-columns: 210px 1.4fr 1fr; }
 @media (max-width: 980px) { .files-layout, .files-layout.with-preview { grid-template-columns: 1fr; } }
+/* Main grid column must be allowed to shrink below its content, else a wide tile
+   grid overflows and reads as "overlapping" the rail. min-width:0 is the fix. */
+.files-main { min-width: 0; }
 
 /* ---- folder rail + tag cloud ---- */
 .files-rail { position: sticky; top: 8px; display: flex; flex-direction: column; gap: 18px; }

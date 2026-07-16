@@ -40,6 +40,7 @@ function seedBet() {
   const bet = createBet(sara, {
     name: 'Reduce churn',
     problem: { who: 'Sales', need: 'cut churn', obstacle: 'no signal', impact: '€1m' },
+    pillarId: 'pillar_retention',
     targetValue: 1_000_000,
     goLive: '2026-12-01',
   });
@@ -191,6 +192,7 @@ test('back-compat: a bet with no blueprint reads empty shapes (never null) and h
   const bet = createBet(sara, {
     name: 'No-canvas bet',
     problem: { who: 'Ops', need: 'x', obstacle: 'y', impact: 'z' },
+    pillarId: 'pillar_retention',
     targetValue: 1,
     goLive: '2026-12-01',
   });

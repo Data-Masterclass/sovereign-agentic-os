@@ -204,3 +204,24 @@ test('deriveContextUsageByNode omits nodes that touched nothing and labels unnam
   assert.equal(byNode[0].node, 'agent 2'); // positional fallback keeps its index
   assert.deepEqual(byNode[0].items.map((i) => i.id), ['ds_2']);
 });
+
+// ── ?focus deep-link round-trip (documents the URL each tab receives) ─────────
+
+test('deepLinkFor produces ?focus=<id> routes for all five context tabs', () => {
+  // The produced deep links are the URLs that land on each tab; the tab reads
+  // `useSearchParams().get("focus")` and decodes it to open the item. This test
+  // pins the format so any route change is immediately visible.
+  assert.equal(deepLinkFor('data',        'ds_orders'),   '/data?focus=ds_orders');
+  assert.equal(deepLinkFor('knowledge',   'ku_policy'),   '/knowledge?focus=ku_policy');
+  assert.equal(deepLinkFor('files',       'as_contract'), '/unstructured?focus=as_contract');
+  assert.equal(deepLinkFor('metrics',     'mt_revenue'),  '/metrics?focus=mt_revenue');
+  assert.equal(deepLinkFor('connections', 'conn_pg'),     '/connections?focus=conn_pg');
+});
+
+test('deepLinkFor url-encodes special chars in the id', () => {
+  // decodeURIComponent on the receiving end should recover the original id.
+  const link = deepLinkFor('data', 'ds/with spaces&special');
+  assert.ok(link !== undefined);
+  const url = new URL(link!, 'http://x');
+  assert.equal(url.searchParams.get('focus'), 'ds/with spaces&special');
+});

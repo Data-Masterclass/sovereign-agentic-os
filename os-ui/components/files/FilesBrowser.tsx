@@ -3,7 +3,8 @@
  */
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useUser } from '@/lib/useUser';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/core/scopes';
@@ -96,6 +97,7 @@ function rootsForScope(scope: ScopeKey): FolderRoot[] {
 
 function FilesBrowserInner() {
   const { user } = useUser();
+  const searchParams = useSearchParams();
   const [scope, setScope] = useState<ScopeKey>('mine');
   const [groups, setGroups] = useState<Groups | null>(null);
   const [err, setErr] = useState('');
@@ -127,6 +129,23 @@ function FilesBrowserInner() {
   // upload / drag-drop
   const [drag, setDrag] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // ?focus=<fileId> deep-link: once groups load, select and preview the target file.
+  // We switch to 'all' scope so the item is visible regardless of which scope owns it.
+  // A ref prevents the effect from re-firing on subsequent renders after the first hit.
+  const focusApplied = useRef(false);
+  const focusId = searchParams.get('focus') ? decodeURIComponent(searchParams.get('focus')!) : null;
+  useEffect(() => {
+    if (!focusId || focusApplied.current || !groups) return;
+    const all = [...groups.mine, ...groups.domain, ...groups.marketplace];
+    const target = all.find((f) => f.id === focusId);
+    if (!target) return; // unknown id — no-op
+    focusApplied.current = true;
+    setScope('all');
+    setSel(null);
+    setTag(null);
+    setSelected(focusId);
+  }, [focusId, groups]);
 
   const loadFolders = useCallback(async () => {
     const archivedParam = showArchived ? '&archived=1' : '';
@@ -564,8 +583,10 @@ function FilesBrowserInner() {
 
 export default function FilesBrowser() {
   return (
-    <ConfirmProvider>
-      <FilesBrowserInner />
-    </ConfirmProvider>
+    <Suspense>
+      <ConfirmProvider>
+        <FilesBrowserInner />
+      </ConfirmProvider>
+    </Suspense>
   );
 }

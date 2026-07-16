@@ -58,17 +58,47 @@ test('problem-optional: createBet with empty problem.need succeeds and derives "
   assert.equal(bet.status, 'active');
 });
 
-test('createBet without pillarId/metricId stores undefined (no seed-ID fallback)', () => {
+test('createBet without pillarId is rejected with 400 (pillar required for new bets)', () => {
+  __resetBets();
+  // New creation without a pillarId is rejected at the store level.
+  // Existing unlinked bets stored in the DB are grandfathered — this gate only
+  // applies to createBet(), not to reads or updates.
+  assert.throws(
+    () => createBet(sara, {
+      name: 'Unlinked bet',
+      problem: { who: 'Team', need: 'No pillar yet', obstacle: '', impact: '' },
+      targetValue: 0,
+      goLive: '2026-12-01',
+    }),
+    /strategic pillar is required/i,
+  );
+});
+
+test('createBet with empty-string pillarId is rejected (not a valid pillar)', () => {
+  __resetBets();
+  assert.throws(
+    () => createBet(sara, {
+      name: 'Empty pillar bet',
+      problem: { who: 'Team', need: 'Bad pillar', obstacle: '', impact: '' },
+      pillarId: '',
+      targetValue: 0,
+      goLive: '2026-12-01',
+    }),
+    /strategic pillar is required/i,
+  );
+});
+
+test('createBet with a pillarId succeeds and stores the pillarId', () => {
   __resetBets();
   const bet = createBet(sara, {
-    name: 'Unlinked bet',
-    problem: { who: 'Team', need: 'No pillar yet', obstacle: '', impact: '' },
+    name: 'Linked bet',
+    problem: { who: 'Team', need: 'Has a pillar', obstacle: '', impact: '' },
+    pillarId: 'pillar_retention',
     targetValue: 0,
     goLive: '2026-12-01',
   });
-  assert.equal(bet.pillarId, undefined);
-  assert.equal(bet.metricId, undefined);
-  assert.equal(bet.name, 'Unlinked bet');
+  assert.equal(bet.pillarId, 'pillar_retention');
+  assert.equal(bet.name, 'Linked bet');
 });
 
 test('updateBet archives a bet (the Archive action)', () => {

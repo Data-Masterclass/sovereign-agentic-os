@@ -367,6 +367,111 @@ const ATLASSIAN: InstallGuide = {
   caveat: 'Jira and Confluence bodies use the Atlassian Document Format (ADF); the OS wraps plain text into ADF. Site reachability, token scope, and project/space access are only confirmed against your live site at Test time.',
 };
 
+const SLACK: InstallGuide = {
+  key: 'slack',
+  title: 'Slack (Web API)',
+  summary: 'Connect a Slack workspace via a bot token. Reads auto-allow; posting a message is held for approval; deletes are blocked.',
+  prerequisites: [
+    'A **Slack app** in your workspace (create one at api.slack.com/apps — this is YOUR step). Add the OAuth **bot scopes** the tools need: `channels:read` + `groups:read` (list channels), `users:read` (list users), `channels:history` + `groups:history` (read messages), and `chat:write` (post). Install the app to the workspace and copy the **Bot User OAuth Token** (`xoxb-…`).',
+    'The bot must be **invited to the channels** it should read or post in (`/invite @your-bot`).',
+    'The API host `slack.com` on the **egress allowlist**.',
+    'Builder/Admin rights (service-credential connector, not personal OAuth).',
+  ],
+  steps: [
+    'On the Slack card, click **Connect**.',
+    'Enter the connection **name**; leave the base URL as `https://slack.com/api`.',
+    'Provide the **Bot User OAuth Token** (`xoxb-…`) — stored once in Secrets Manager.',
+    'Create the connection, then **Test** on its card (a real `auth.test` round-trip). Tune the per-tool capability profile.',
+  ],
+  whatTheOsDoes:
+    'Registers a governed outbound Slack connection. Reads (`list_channels`, `list_users`, `conversations_history`) auto-allow, cursor-paginated with a `truncated` flag. `post_message` is held at **Write-approval** — a message is a real side effect and is **never** auto-posted. `delete_message` stays **Blocked**. Slack signals errors in the response body (not the HTTP status), so an API error surfaces honestly; `ratelimited` responses respect `Retry-After`. All calls are OPA-checked and audit-traced; the bot token never leaves the server.',
+  caveat: 'Slack returns HTTP 200 even on API errors — the OS reads the `ok:false` body and never fabricates a result. Token validity and the bot’s channel membership are only confirmed against your live workspace at Test time.',
+};
+
+const GMAIL: InstallGuide = {
+  key: 'gmail',
+  title: 'Gmail (Google API)',
+  summary: 'Connect a Gmail mailbox via a Google OAuth 2.0 access token. Reads auto-allow; sending or drafting mail is held for approval; deletes are blocked.',
+  prerequisites: [
+    'A **Google Cloud OAuth 2.0 client** you create (console.cloud.google.com — this is YOUR step), with the Gmail API enabled and the least-privilege scopes: `gmail.readonly` for reads, plus `gmail.compose`/`gmail.send` only if you will approve sends.',
+    'A **user OAuth access token** obtained through your OAuth client (e.g. the OAuth Playground or your own consent flow). Paste the **access token**; it goes to Secrets Manager and is **never** on the record.',
+    'The hosts `gmail.googleapis.com` and `oauth2.googleapis.com` on the **egress allowlist**.',
+    'Builder/Admin rights (service-credential connector).',
+  ],
+  steps: [
+    'On the Gmail card, click **Connect**.',
+    'Enter the connection **name**; the base URL is `https://gmail.googleapis.com`.',
+    'Provide the **OAuth access token** — stored once in Secrets Manager.',
+    'Create the connection, then **Test** on its card (a real `users/me/profile` round-trip). Tune the per-tool capability profile.',
+  ],
+  whatTheOsDoes:
+    'Registers a governed outbound Gmail connection. Reads (`list_messages`, `get_message`, `list_labels`) auto-allow. `send_message` and `create_draft` are held at **Write-approval** — an email is a real side effect and is **NEVER** auto-sent. `trash_message` / `delete_message` stay **Blocked**. All calls are OPA-checked and audit-traced; the token never leaves the server.',
+  caveat: 'A pasted OAuth access token is short-lived (Google tokens typically expire in ~1 hour) — automatic **refresh-token rotation** is a documented follow-up; until then, refresh the token and re-Test when it expires. Registering the Google OAuth app and minting the token are YOUR steps; the OS only consumes the credential.',
+};
+
+const GCAL: InstallGuide = {
+  key: 'gcal',
+  title: 'Google Calendar (Google API)',
+  summary: 'Connect a Google Calendar via a Google OAuth 2.0 access token. Reads auto-allow; creating or updating events is held for approval; deletes are blocked.',
+  prerequisites: [
+    'A **Google Cloud OAuth 2.0 client** you create (this is YOUR step), with the Calendar API enabled and the least-privilege scopes: `calendar.readonly` for reads, plus `calendar.events` only if you will approve writes.',
+    'A **user OAuth access token** from your OAuth client. Paste the **access token**; it goes to Secrets Manager and is **never** on the record.',
+    'The hosts `www.googleapis.com` and `oauth2.googleapis.com` on the **egress allowlist**.',
+    'Builder/Admin rights (service-credential connector).',
+  ],
+  steps: [
+    'On the Google Calendar card, click **Connect**.',
+    'Enter the connection **name**; the base URL is `https://www.googleapis.com/calendar/v3`.',
+    'Provide the **OAuth access token** — stored once in Secrets Manager.',
+    'Create the connection, then **Test** on its card (a real `users/me/calendarList` round-trip). Tune the per-tool capability profile.',
+  ],
+  whatTheOsDoes:
+    'Registers a governed outbound Google Calendar connection. Reads (`list_calendars`, `list_events`, `get_event`) auto-allow. `create_event` and `update_event` are held at **Write-approval**. `delete_event` stays **Blocked**. All calls are OPA-checked and audit-traced; the token never leaves the server.',
+  caveat: 'The pasted OAuth access token is short-lived; automatic refresh-token rotation is a documented follow-up. Registering the Google OAuth app and minting the token are YOUR steps.',
+};
+
+const OUTLOOK: InstallGuide = {
+  key: 'outlook',
+  title: 'Outlook (Microsoft Graph)',
+  summary: 'Connect an Outlook mailbox via a Microsoft OAuth 2.0 access token over Microsoft Graph. Reads auto-allow; sending or drafting mail is held for approval; deletes are blocked.',
+  prerequisites: [
+    'An **Azure app registration** you create (portal.azure.com — this is YOUR step), with delegated Microsoft Graph permissions: `Mail.Read` for reads, plus `Mail.Send`/`Mail.ReadWrite` only if you will approve sends.',
+    'A **user OAuth access token** minted through your app registration. Paste the **access token**; it goes to Secrets Manager and is **never** on the record.',
+    'The hosts `graph.microsoft.com` and `login.microsoftonline.com` on the **egress allowlist**.',
+    'Builder/Admin rights (service-credential connector).',
+  ],
+  steps: [
+    'On the Outlook card, click **Connect**.',
+    'Enter the connection **name**; the base URL is `https://graph.microsoft.com/v1.0`.',
+    'Provide the **OAuth access token** — stored once in Secrets Manager.',
+    'Create the connection, then **Test** on its card (a real `GET /me` round-trip). Tune the per-tool capability profile.',
+  ],
+  whatTheOsDoes:
+    'Registers a governed outbound Outlook connection over Microsoft Graph. Reads (`list_messages`, `get_message`) auto-allow. `send_mail` and `create_draft` are held at **Write-approval** — an email is **NEVER** auto-sent. `delete_message` stays **Blocked**. All calls are OPA-checked and audit-traced; the token never leaves the server.',
+  caveat: 'The pasted Microsoft OAuth access token is short-lived; automatic refresh-token rotation is a documented follow-up. Registering the Azure app and minting the token are YOUR steps.',
+};
+
+const TEAMS: InstallGuide = {
+  key: 'teams',
+  title: 'Microsoft Teams (Microsoft Graph)',
+  summary: 'Connect Microsoft Teams via a Microsoft OAuth 2.0 access token over Microsoft Graph. Reads auto-allow; posting a channel message is held for approval; deletes are blocked.',
+  prerequisites: [
+    'An **Azure app registration** you create (this is YOUR step), with delegated Microsoft Graph permissions: `Team.ReadBasic.All` + `Channel.ReadBasic.All` + `ChannelMessage.Read.All` for reads, plus `ChannelMessage.Send` only if you will approve posts.',
+    'A **user OAuth access token** minted through your app registration. Paste the **access token**; it goes to Secrets Manager and is **never** on the record.',
+    'The hosts `graph.microsoft.com` and `login.microsoftonline.com` on the **egress allowlist**.',
+    'Builder/Admin rights (service-credential connector).',
+  ],
+  steps: [
+    'On the Microsoft Teams card, click **Connect**.',
+    'Enter the connection **name**; the base URL is `https://graph.microsoft.com/v1.0`.',
+    'Provide the **OAuth access token** — stored once in Secrets Manager.',
+    'Create the connection, then **Test** on its card (a real `GET /me` round-trip). Tune the per-tool capability profile.',
+  ],
+  whatTheOsDoes:
+    'Registers a governed outbound Teams connection over Microsoft Graph. Reads (`list_teams`, `list_channels`, `list_channel_messages`) auto-allow. `post_channel_message` is held at **Write-approval** — a message is **never** auto-posted. `delete_channel_message` stays **Blocked**. All calls are OPA-checked and audit-traced; the token never leaves the server.',
+  caveat: 'The pasted Microsoft OAuth access token is short-lived; automatic refresh-token rotation is a documented follow-up. Registering the Azure app and minting the token are YOUR steps.',
+};
+
 const OM_CATALOG: InstallGuide = {
   key: 'om-catalog',
   title: 'OpenMetadata catalog (external · read-only)',
@@ -393,6 +498,7 @@ const GUIDES: InstallGuide[] = [
   POSTGRESQL, MYSQL, SQLSERVER, MONGODB,
   GDRIVE, ONEDRIVE, NOTION, AIRFLOW, OM_CATALOG,
   GITHUB, SUPABASE, ATLASSIAN,
+  SLACK, GMAIL, GCAL, OUTLOOK, TEAMS,
 ];
 
 const GUIDE_BY_KEY: Record<string, InstallGuide> = Object.fromEntries(GUIDES.map((g) => [g.key, g]));

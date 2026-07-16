@@ -694,8 +694,15 @@ function LinkBet({ pillarId, linkedIds, onChanged }: { pillarId: string; linkedI
       {cat.length === 0 ? (
         <span className="muted" style={{ fontSize: 11.5 }}>
           No big bets yet.{' '}
-          <Link href="/big-bets" style={{ color: 'var(--teal)' }}>Create one →</Link>
+          <Link href={`/big-bets?pillar=${pillarId}`} style={{ color: 'var(--teal)' }}>Create one under this pillar →</Link>
         </span>
+      ) : null}
+      {cat.length > 0 ? (
+        <div style={{ marginBottom: 6 }}>
+          <Link href={`/big-bets?pillar=${pillarId}`} className="btn ghost sm" style={{ fontSize: 11 }}>
+            + New bet under this pillar
+          </Link>
+        </div>
       ) : null}
       {cat.map((b) => {
         const on = linkedIds.includes(b.id);

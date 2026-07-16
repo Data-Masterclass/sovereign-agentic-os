@@ -21,7 +21,7 @@ import {
   __resetStrategy,
   __seedStrategy,
 } from './sources.ts';
-import { createBet, _getBetRaw, __resetBets } from './store.ts';
+import { createBet, _getBetRaw, _setPillarId, __resetBets } from './store.ts';
 import { __resetSources } from './sources.ts';
 import {
   createPillar,
@@ -89,10 +89,11 @@ test('sources.ts listPillars falls back to phantom when real cache is empty', ()
 });
 
 // ------------------------------------------------------------------
-// 2. Bet creation accepts a real pillarId (no pillar validation in store)
+// 2. Bet creation requires a pillarId; the store stores it as given
+//    (pillar existence is validated at the API/MCP layer, not the store).
 // ------------------------------------------------------------------
 
-test('createBet stores any pillarId without validation', async () => {
+test('createBet stores any pillarId without pillar-existence check in the store', async () => {
   resetAll();
   const p = await createPillar(builder, { name: 'Growth', scope: 'domain' });
 
@@ -158,18 +159,25 @@ test('pillar created via strategy store is immediately visible via sources adapt
 test('linkBet adds betId to pillar.betIds AND stamps bet.pillarId (two-way index)', async () => {
   resetAll();
   const p = await createPillar(builder, { name: 'Backlink Pillar', scope: 'domain' });
+  const pOther = await createPillar(builder, { name: 'Other Pillar', scope: 'domain' });
 
-  // Create a real bet (pillarId intentionally omitted — simulates a pre-existing bet).
+  // Create a real bet under a DIFFERENT pillar, then re-link it to p (simulates a
+  // pillar-move scenario — the most realistic test of the two-way index).
   const bet = createBet(betBuilder, {
     name: 'Backlink Bet',
     problem: { who: 'Sales', need: 'Grow NRR', obstacle: '', impact: '' },
+    pillarId: pOther.id,
     targetValue: 300_000,
     goLive: '2026-12-31',
   });
 
-  // Before linking: pillar.betIds is empty, bet.pillarId is undefined.
+  // Before linking to p: p.betIds is empty; bet is under pOther (not p).
   const pillarBefore = (await stratListPillars(builder)).find((x) => x.id === p.id)!;
   assert.equal(pillarBefore.betIds.length, 0, 'pillar.betIds is empty before link');
+  // The bet has a pillarId from creation but it is NOT p yet — use _setPillarId to
+  // clear it so we can test the "unlinked → linked" transition the same way.
+  // (This mirrors a migrated/grandfathered bet that has no current pillar assignment.)
+  _setPillarId(bet.id, undefined);
   assert.equal(_getBetRaw(bet.id)?.pillarId, undefined, 'bet.pillarId is unset before link');
 
   // Link bet → pillar via the governed path.
@@ -188,6 +196,7 @@ test('unlinkBet removes betId from pillar.betIds AND clears bet.pillarId', async
   const bet = createBet(betBuilder, {
     name: 'Unlink Bet',
     problem: { who: 'Sales', need: 'Cost savings', obstacle: '', impact: '' },
+    pillarId: p.id,
     targetValue: 100_000,
     goLive: '2026-12-31',
   });

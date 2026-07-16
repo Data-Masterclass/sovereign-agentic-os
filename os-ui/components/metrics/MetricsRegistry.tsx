@@ -14,6 +14,7 @@ import {
   type FolderPathNode,
 } from '@/lib/core/folders';
 import FolderTree, { FolderPickerModal, type FolderRef } from '@/components/core/FolderTree';
+import FolderLayout from '@/components/core/FolderLayout';
 import { ensureFolderId, renamedPath } from '@/lib/folders/client';
 import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
 import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
@@ -321,56 +322,42 @@ function MetricsRegistryInner({
 
       {scoped ? (
         active.length > 0 ? (
-          <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', marginTop: 16 }}>
-            {/* ---- folder rail (the shared primitive, one component across tabs) ---- */}
-            <nav style={{ flex: '0 0 260px', minWidth: 220 }}>
-              <button
-                type="button"
-                className={`folder-row${sel === null ? ' is-selected' : ''}`}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 8, width: '100%',
-                  height: 32, padding: '0 8px', marginBottom: 6, borderRadius: 8,
-                  border: 'none', cursor: 'pointer', textAlign: 'left',
-                  background: sel === null ? 'var(--gold-soft)' : 'transparent',
-                  color: sel === null ? 'var(--gold-text)' : 'var(--text)',
-                }}
-                onClick={() => setSel(null)}
-              >
-                <span aria-hidden style={{ opacity: 0.85 }}>🗂️</span>
-                <span style={{ flex: 1 }}>All metrics</span>
-                <span className="muted" style={{ fontSize: 12 }}>{active.length}</span>
-              </button>
-              <FolderTree
-                variant="nav"
-                roots={roots}
-                personalNodes={roots.includes('personal') ? personalTreeNodes : []}
-                domainNodes={roots.includes('domain') ? domainTreeNodes : []}
-                items={treeItems.filter((i) => {
-                  const r = active.find((m) => m.id === i.id);
-                  return r ? roots.includes(rootOf(r)) : true;
-                })}
-                personalLabel="My folders"
-                domainLabel="Domain folders"
-                selectedPath={sel?.path}
-                onSelect={(root, path) => setSel((cur) => (cur && cur.root === root && cur.path === path ? null : { root, path }))}
-                onCreate={createFolder}
-                onMove={(ref) => setFolderMove(ref)}
-                onRename={renameFolderRow}
-                onArchive={async (ref) => {
-                  if (!(await confirm(archiveFolderCopy(folderName(ref.path), countUnder(ref.scope, ref.path))))) return;
-                  void folderAction(ref, 'archive');
-                }}
-                onRestore={(ref) => void folderAction(ref, 'restore')}
-                onDelete={async (ref) => {
-                  if (!(await confirm(deleteFolderCopy(folderName(ref.path), countUnder(ref.scope, ref.path))))) return;
-                  void folderAction(ref, 'DELETE');
-                }}
-                renderLeaf={(item) => item.name ?? item.id}
-              />
-            </nav>
-
-            {/* ---- the metric grid, filtered to the selected folder ---- */}
-            <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ marginTop: 16 }}>
+            <FolderLayout
+              allLabel="All metrics"
+              allCount={active.length}
+              allSelected={sel === null}
+              onSelectAll={() => setSel(null)}
+              rail={
+                <FolderTree
+                  variant="nav"
+                  roots={roots}
+                  personalNodes={roots.includes('personal') ? personalTreeNodes : []}
+                  domainNodes={roots.includes('domain') ? domainTreeNodes : []}
+                  items={treeItems.filter((i) => {
+                    const r = active.find((m) => m.id === i.id);
+                    return r ? roots.includes(rootOf(r)) : true;
+                  })}
+                  personalLabel="My folders"
+                  domainLabel="Domain folders"
+                  selectedPath={sel?.path}
+                  onSelect={(root, path) => setSel((cur) => (cur && cur.root === root && cur.path === path ? null : { root, path }))}
+                  onCreate={createFolder}
+                  onMove={(ref) => setFolderMove(ref)}
+                  onRename={renameFolderRow}
+                  onArchive={async (ref) => {
+                    if (!(await confirm(archiveFolderCopy(folderName(ref.path), countUnder(ref.scope, ref.path))))) return;
+                    void folderAction(ref, 'archive');
+                  }}
+                  onRestore={(ref) => void folderAction(ref, 'restore')}
+                  onDelete={async (ref) => {
+                    if (!(await confirm(deleteFolderCopy(folderName(ref.path), countUnder(ref.scope, ref.path))))) return;
+                    void folderAction(ref, 'DELETE');
+                  }}
+                  renderLeaf={(item) => item.name ?? item.id}
+                />
+              }
+            >
               {shown.length === 0 ? (
                 <div className="stub-page">This folder is empty.</div>
               ) : (
@@ -384,7 +371,7 @@ function MetricsRegistryInner({
                   ))}
                 </div>
               )}
-            </div>
+            </FolderLayout>
           </div>
         ) : null
       ) : loading && !error ? <div className="stub-page" style={{ marginTop: 20 }}>Loading metrics…</div> : null}

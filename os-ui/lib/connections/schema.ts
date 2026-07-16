@@ -239,7 +239,25 @@ export type ConnectionTemplateKey =
   // Atlassian Jira + Confluence Cloud over *.atlassian.net (+ api.atlassian.com).
   // Reads (search/get issue/page, list projects) auto-allow; writes (create issue/
   // comment/transition, create page) are Write-approval; deletes stay Blocked.
-  | 'atlassian';
+  | 'atlassian'
+  // Slack Web API over slack.com/api — a governed outbound connection with a bot
+  // token (xoxb-…). Reads (list channels/users, read messages) auto-allow;
+  // post_message is Write-approval (never auto-post); delete_message stays Blocked.
+  | 'slack'
+  // Gmail API over gmail.googleapis.com — Google OAuth 2.0 access token. Reads
+  // (list/get messages, list labels) auto-allow; send_message/create_draft are
+  // Write-approval (NEVER auto-send); trash/delete stay Blocked.
+  | 'gmail'
+  // Google Calendar API over www.googleapis.com/calendar/v3 — Google OAuth 2.0.
+  // Reads (list calendars/events, get event) auto-allow; create/update event are
+  // Write-approval; delete_event stays Blocked.
+  | 'gcal'
+  // Outlook mail over Microsoft Graph — Microsoft OAuth 2.0. Reads (list/get
+  // messages) auto-allow; send_mail/create_draft are Write-approval; delete Blocked.
+  | 'outlook'
+  // Microsoft Teams over Microsoft Graph — Microsoft OAuth 2.0. Reads (list teams/
+  // channels/messages) auto-allow; post_channel_message is Write-approval; delete Blocked.
+  | 'teams';
 
 export type ConnectionTemplate = {
   key: ConnectionTemplateKey;
@@ -615,6 +633,164 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
       { name: 'confluence_delete_page', description: 'Delete a Confluence page (write — destructive).', write: true, mode: 'Blocked' },
     ],
   },
+  {
+    // Slack Web API. Bot token (xoxb-…) with read scopes for reads and chat:write
+    // for the one write. Reads auto-allow; post_message is a real side effect held
+    // at Write-approval (never auto-post); delete_message stays Blocked.
+    key: 'slack',
+    label: 'Slack (Web API)',
+    type: 'SaaS',
+    connector: 'saas',
+    auth: 'service',
+    endpointHint: 'https://slack.com/api',
+    secretKey: 'slack-bot-token',
+    tools: [
+      // Reads (side-effect-free, auto-allowed).
+      { name: 'list_channels', description: 'List channels the bot can see (read).', write: false, mode: 'Read' },
+      { name: 'list_users', description: 'List workspace users (read).', write: false, mode: 'Read' },
+      { name: 'conversations_history', description: 'Read recent messages in a channel (read).', write: false, mode: 'Read' },
+      // Write (Write-approval — a real message; never auto-post).
+      {
+        name: 'post_message',
+        description: 'Post a message to a channel (write — a real side effect; never auto-posted).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'channels the bot is in', rateLimitPerMin: 10 },
+      },
+      // Destructive — Blocked by default (Admin override to enable).
+      { name: 'delete_message', description: 'Delete a message (write — destructive).', write: true, mode: 'Blocked' },
+    ],
+  },
+  {
+    // Gmail API. Google OAuth 2.0 access token (user-provided; the OS consumes it).
+    // Reads auto-allow; send_message/create_draft are Write-approval (NEVER
+    // auto-send an email); trash/delete stay Blocked.
+    key: 'gmail',
+    label: 'Gmail (Google API)',
+    type: 'SaaS',
+    connector: 'saas',
+    auth: 'service',
+    endpointHint: 'https://gmail.googleapis.com',
+    secretKey: 'gmail-oauth-token',
+    tools: [
+      // Reads (side-effect-free, auto-allowed).
+      { name: 'list_messages', description: 'List/search messages (read).', write: false, mode: 'Read' },
+      { name: 'get_message', description: 'Read one message by id (read).', write: false, mode: 'Read' },
+      { name: 'list_labels', description: 'List mailbox labels (read).', write: false, mode: 'Read' },
+      // Writes (Write-approval — real side effects; NEVER auto-send).
+      {
+        name: 'send_message',
+        description: 'Send an email (write — a real side effect; never auto-sent).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'the connected mailbox', rateLimitPerMin: 5 },
+      },
+      {
+        name: 'create_draft',
+        description: 'Create a draft email — does not send (write).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'the connected mailbox', rateLimitPerMin: 10 },
+      },
+      // Destructive — Blocked by default (Admin override to enable).
+      { name: 'trash_message', description: 'Move a message to trash (write — destructive).', write: true, mode: 'Blocked' },
+      { name: 'delete_message', description: 'Permanently delete a message (write — destructive).', write: true, mode: 'Blocked' },
+    ],
+  },
+  {
+    // Google Calendar API. Google OAuth 2.0 access token. Reads auto-allow;
+    // create/update event are Write-approval; delete_event stays Blocked.
+    key: 'gcal',
+    label: 'Google Calendar (Google API)',
+    type: 'SaaS',
+    connector: 'saas',
+    auth: 'service',
+    endpointHint: 'https://www.googleapis.com/calendar/v3',
+    secretKey: 'gcal-oauth-token',
+    tools: [
+      // Reads (side-effect-free, auto-allowed).
+      { name: 'list_calendars', description: 'List the calendars on the account (read).', write: false, mode: 'Read' },
+      { name: 'list_events', description: 'List events in a calendar (read).', write: false, mode: 'Read' },
+      { name: 'get_event', description: 'Read one event by id (read).', write: false, mode: 'Read' },
+      // Writes (Write-approval — real side effects).
+      {
+        name: 'create_event',
+        description: 'Create a calendar event (write — a real side effect).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'the connected calendars', rateLimitPerMin: 10 },
+      },
+      {
+        name: 'update_event',
+        description: 'Update a calendar event (write — a real side effect).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'the connected calendars', rateLimitPerMin: 10 },
+      },
+      // Destructive — Blocked by default (Admin override to enable).
+      { name: 'delete_event', description: 'Delete a calendar event (write — destructive).', write: true, mode: 'Blocked' },
+    ],
+  },
+  {
+    // Outlook mail over Microsoft Graph. Microsoft OAuth 2.0 access token. Reads
+    // auto-allow; send_mail/create_draft are Write-approval; delete stays Blocked.
+    key: 'outlook',
+    label: 'Outlook (Microsoft Graph)',
+    type: 'SaaS',
+    connector: 'saas',
+    auth: 'service',
+    endpointHint: 'https://graph.microsoft.com/v1.0',
+    secretKey: 'outlook-oauth-token',
+    tools: [
+      // Reads (side-effect-free, auto-allowed).
+      { name: 'list_messages', description: 'List/search mail messages (read).', write: false, mode: 'Read' },
+      { name: 'get_message', description: 'Read one mail message by id (read).', write: false, mode: 'Read' },
+      // Writes (Write-approval — real side effects; NEVER auto-send).
+      {
+        name: 'send_mail',
+        description: 'Send an email (write — a real side effect; never auto-sent).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'the connected mailbox', rateLimitPerMin: 5 },
+      },
+      {
+        name: 'create_draft',
+        description: 'Create a draft mail — does not send (write).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'the connected mailbox', rateLimitPerMin: 10 },
+      },
+      // Destructive — Blocked by default (Admin override to enable).
+      { name: 'delete_message', description: 'Delete a mail message (write — destructive).', write: true, mode: 'Blocked' },
+    ],
+  },
+  {
+    // Microsoft Teams over Microsoft Graph. Microsoft OAuth 2.0 access token. Reads
+    // auto-allow; post_channel_message is Write-approval; delete stays Blocked.
+    key: 'teams',
+    label: 'Microsoft Teams (Microsoft Graph)',
+    type: 'SaaS',
+    connector: 'saas',
+    auth: 'service',
+    endpointHint: 'https://graph.microsoft.com/v1.0',
+    secretKey: 'teams-oauth-token',
+    tools: [
+      // Reads (side-effect-free, auto-allowed).
+      { name: 'list_teams', description: 'List the teams the user is a member of (read).', write: false, mode: 'Read' },
+      { name: 'list_channels', description: 'List channels in a team (read).', write: false, mode: 'Read' },
+      { name: 'list_channel_messages', description: 'Read recent messages in a channel (read).', write: false, mode: 'Read' },
+      // Write (Write-approval — a real message; never auto-post).
+      {
+        name: 'post_channel_message',
+        description: 'Post a message to a team channel (write — a real side effect; never auto-posted).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'channels on the connected teams', rateLimitPerMin: 10 },
+      },
+      // Destructive — Blocked by default (Admin override to enable).
+      { name: 'delete_channel_message', description: 'Delete a channel message (write — destructive).', write: true, mode: 'Blocked' },
+    ],
+  },
 ];
 
 /**
@@ -625,7 +801,7 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
  * import, the connections gate, adapter tests) and is deliberately NOT offered in
  * the create picker — a user can never stand up a non-working mock connection.
  */
-export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp', 'airflow', 'github', 'supabase', 'atlassian'];
+export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp', 'airflow', 'github', 'supabase', 'atlassian', 'slack', 'gmail', 'gcal', 'outlook', 'teams'];
 
 export function isUserFacingTemplate(key: string): boolean {
   return (USER_FACING_TEMPLATE_KEYS as string[]).includes(key);

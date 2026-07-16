@@ -84,6 +84,48 @@ import {
   notionGetPage as apiNotionGetPage,
   notionCreatePage as apiNotionCreatePage,
 } from '@/lib/connections/notion';
+import {
+  slackConnFrom,
+  slackHealth,
+  listChannels as slkListChannels,
+  listUsers as slkListUsers,
+  conversationsHistory as slkConversationsHistory,
+  postMessage as slkPostMessage,
+} from '@/lib/connections/slack';
+import {
+  googleMailConnFrom,
+  gmailHealth,
+  gmailListMessages,
+  gmailGetMessage,
+  gmailListLabels,
+  gmailSendMessage,
+  gmailCreateDraft,
+} from '@/lib/connections/gmail';
+import {
+  gcalConnFrom,
+  gcalHealth,
+  gcalListCalendars,
+  gcalListEvents,
+  gcalGetEvent,
+  gcalCreateEvent,
+  gcalUpdateEvent,
+} from '@/lib/connections/gcal';
+import {
+  graphConnFrom,
+  outlookHealth,
+  outlookListMessages,
+  outlookGetMessage,
+  outlookSendMail,
+  outlookCreateDraft,
+} from '@/lib/connections/outlook';
+import {
+  teamsConnFrom,
+  teamsHealth,
+  teamsListTeams,
+  teamsListChannels,
+  teamsListChannelMessages,
+  teamsPostChannelMessage,
+} from '@/lib/connections/teams';
 import type { WarehousePlatform } from '@/lib/connections/warehouse/types';
 import { splitWarehouseFields, toWarehouseSource } from '@/lib/connections/warehouse/connection';
 import { providerFor } from '@/lib/connections/warehouse/registry';
@@ -655,6 +697,68 @@ export async function testConnection(
       : { ok: false, mode: 'offline', detail: `Atlassian at ${c.egress.host} is unreachable (${h.reason ?? 'network error'}) — check the site URL, token + egress, then re-test.` };
   }
 
+  // SLACK: real GET auth.test with the vaulted bot token. ok:true proves auth; an
+  // invalid_auth body is an honest ✗. Never a stub; the token stays server-side.
+  if (c.template === 'slack') {
+    const h = await slackHealth(slackConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    c.updatedAt = now();
+    writeThrough(c);
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Slack is reachable${h.detail ? ` (${h.detail})` : ''}. The bot token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Slack is unreachable (${h.reason ?? 'network error'}) — check the bot token + egress, then re-test.` };
+  }
+
+  // GMAIL: real GET users/me/profile with the vaulted OAuth access token. A 2xx
+  // proves the token is live; a 401 is an honest ✗. Never a stub; token stays server-side.
+  if (c.template === 'gmail') {
+    const h = await gmailHealth(googleMailConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    c.updatedAt = now();
+    writeThrough(c);
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Gmail is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Gmail is unreachable (${h.reason ?? 'network error'}) — the access token may be expired; refresh it + check egress, then re-test.` };
+  }
+
+  // GOOGLE CALENDAR: real GET users/me/calendarList with the vaulted OAuth token.
+  if (c.template === 'gcal') {
+    const h = await gcalHealth(gcalConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    c.updatedAt = now();
+    writeThrough(c);
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Google Calendar is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Google Calendar is unreachable (${h.reason ?? 'network error'}) — the access token may be expired; refresh it + check egress, then re-test.` };
+  }
+
+  // OUTLOOK: real GET /me over Microsoft Graph with the vaulted OAuth token.
+  if (c.template === 'outlook') {
+    const h = await outlookHealth(graphConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    c.updatedAt = now();
+    writeThrough(c);
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Outlook (Microsoft Graph) is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Outlook is unreachable (${h.reason ?? 'network error'}) — the access token may be expired; refresh it + check egress, then re-test.` };
+  }
+
+  // TEAMS: real GET /me over Microsoft Graph with the vaulted OAuth token.
+  if (c.template === 'teams') {
+    const h = await teamsHealth(teamsConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    c.updatedAt = now();
+    writeThrough(c);
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Microsoft Teams (Graph) is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Teams is unreachable (${h.reason ?? 'network error'}) — the access token may be expired; refresh it + check egress, then re-test.` };
+  }
+
   const secret = getSecretServerSide(c.secretRef); // server-side only
   if (!secret) {
     return { ok: false, mode: 'offline', detail: 'No credential set in Secrets Manager for this connection.' };
@@ -1158,6 +1262,11 @@ const CONNECTION_EXECUTORS: Partial<Record<ConnectionTemplateKey, Executor>> = {
   supabase: (c, tool, args) => executeSupabase(c, tool, args),
   'notion-mcp': (c, tool, args) => executeNotion(c, tool, args),
   atlassian: (c, tool, args) => executeAtlassian(c, tool, args),
+  slack: (c, tool, args) => executeSlack(c, tool, args),
+  gmail: (c, tool, args) => executeGmail(c, tool, args),
+  gcal: (c, tool, args) => executeGcal(c, tool, args),
+  outlook: (c, tool, args) => executeOutlook(c, tool, args),
+  teams: (c, tool, args) => executeTeams(c, tool, args),
 };
 
 /** Execute an allowed call: inject the secret SERVER-SIDE (never logged), trace + log egress. */
@@ -1551,6 +1660,132 @@ async function executeNotion(c: Connection, tool: string, args: Record<string, u
  *  the vault HERE (server-side) and never leaves this process. */
 function notionConnFor(c: Connection) {
   return notionConnFrom(c, readTokens(c.secretRef)?.accessToken);
+}
+
+/**
+ * Execute an ALLOWED Slack Web API tool. Governance already passed upstream (reads
+ * auto · post_message Write-approval · delete_message Blocked). Never throws. The
+ * bot token is injected server-side inside the client and never logged/returned.
+ */
+async function executeSlack(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
+  const conn = slackConnFrom(c);
+  const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
+  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
+    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  switch (tool) {
+    case 'list_channels':
+      return done(await slkListChannels(conn), 'channels');
+    case 'list_users':
+      return done(await slkListUsers(conn), 'users');
+    case 'conversations_history':
+      return done(await slkConversationsHistory(conn, String(args.channel ?? args.channelId ?? ''), { limit: args.limit !== undefined ? Number(args.limit) : undefined }), 'messages');
+    case 'post_message':
+      return done(await slkPostMessage(conn, { channel: String(args.channel ?? ''), text: String(args.text ?? '') }), 'posted');
+    default:
+      return fail(`Unknown Slack tool: ${tool}`);
+  }
+}
+
+/**
+ * Execute an ALLOWED Gmail tool. Governance already passed upstream (reads auto ·
+ * send_message/create_draft Write-approval — NEVER auto-send · trash/delete Blocked).
+ * Never throws. The OAuth access token is injected server-side, never logged/returned.
+ */
+async function executeGmail(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
+  const conn = googleMailConnFrom(c);
+  const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
+  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
+    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  switch (tool) {
+    case 'list_messages':
+      return done(await gmailListMessages(conn, { query: args.query ? String(args.query) : undefined }), 'messages');
+    case 'get_message':
+      return done(await gmailGetMessage(conn, String(args.id ?? args.messageId ?? '')), 'message');
+    case 'list_labels':
+      return done(await gmailListLabels(conn), 'labels');
+    case 'send_message':
+      return done(await gmailSendMessage(conn, { to: String(args.to ?? ''), subject: String(args.subject ?? ''), body: String(args.body ?? args.text ?? '') }), 'sent');
+    case 'create_draft':
+      return done(await gmailCreateDraft(conn, { to: String(args.to ?? ''), subject: String(args.subject ?? ''), body: String(args.body ?? args.text ?? '') }), 'draft');
+    default:
+      return fail(`Unknown Gmail tool: ${tool}`);
+  }
+}
+
+/**
+ * Execute an ALLOWED Google Calendar tool. Governance already passed upstream (reads
+ * auto · create/update event Write-approval · delete_event Blocked). Never throws.
+ */
+async function executeGcal(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
+  const conn = gcalConnFrom(c);
+  const cal = String(args.calendarId ?? args.calendar ?? 'primary');
+  const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
+  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
+    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  switch (tool) {
+    case 'list_calendars':
+      return done(await gcalListCalendars(conn), 'calendars');
+    case 'list_events':
+      return done(await gcalListEvents(conn, cal, { timeMin: args.timeMin ? String(args.timeMin) : undefined }), 'events');
+    case 'get_event':
+      return done(await gcalGetEvent(conn, cal, String(args.id ?? args.eventId ?? '')), 'event');
+    case 'create_event':
+      return done(await gcalCreateEvent(conn, cal, { summary: String(args.summary ?? args.title ?? ''), start: String(args.start ?? ''), end: String(args.end ?? ''), description: args.description ? String(args.description) : undefined }), 'event');
+    case 'update_event':
+      return done(await gcalUpdateEvent(conn, cal, String(args.id ?? args.eventId ?? ''), { summary: args.summary ? String(args.summary) : undefined, start: args.start ? String(args.start) : undefined, end: args.end ? String(args.end) : undefined, description: args.description ? String(args.description) : undefined }), 'event');
+    default:
+      return fail(`Unknown Google Calendar tool: ${tool}`);
+  }
+}
+
+/**
+ * Execute an ALLOWED Outlook tool over Microsoft Graph. Governance already passed
+ * upstream (reads auto · send_mail/create_draft Write-approval — NEVER auto-send ·
+ * delete Blocked). Never throws. The OAuth access token is injected server-side.
+ */
+async function executeOutlook(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
+  const conn = graphConnFrom(c);
+  const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
+  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
+    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  switch (tool) {
+    case 'list_messages':
+      return done(await outlookListMessages(conn, { search: args.search ? String(args.search) : undefined }), 'messages');
+    case 'get_message':
+      return done(await outlookGetMessage(conn, String(args.id ?? args.messageId ?? '')), 'message');
+    case 'send_mail':
+      return done(await outlookSendMail(conn, { to: String(args.to ?? ''), subject: String(args.subject ?? ''), body: String(args.body ?? args.text ?? '') }), 'sent');
+    case 'create_draft':
+      return done(await outlookCreateDraft(conn, { to: String(args.to ?? ''), subject: String(args.subject ?? ''), body: String(args.body ?? args.text ?? '') }), 'draft');
+    default:
+      return fail(`Unknown Outlook tool: ${tool}`);
+  }
+}
+
+/**
+ * Execute an ALLOWED Microsoft Teams tool over Microsoft Graph. Governance already
+ * passed upstream (reads auto · post_channel_message Write-approval · delete Blocked).
+ * Never throws. The OAuth access token is injected server-side, never logged/returned.
+ */
+async function executeTeams(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
+  const conn = teamsConnFrom(c);
+  const team = String(args.teamId ?? args.team ?? '');
+  const channel = String(args.channelId ?? args.channel ?? '');
+  const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
+  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
+    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  switch (tool) {
+    case 'list_teams':
+      return done(await teamsListTeams(conn), 'teams');
+    case 'list_channels':
+      return done(await teamsListChannels(conn, team), 'channels');
+    case 'list_channel_messages':
+      return done(await teamsListChannelMessages(conn, team, channel), 'messages');
+    case 'post_channel_message':
+      return done(await teamsPostChannelMessage(conn, team, channel, String(args.text ?? args.body ?? '')), 'posted');
+    default:
+      return fail(`Unknown Teams tool: ${tool}`);
+  }
 }
 
 function executeMock(c: Connection, tool: string, args: Record<string, unknown>, credentialPresent: boolean): unknown {

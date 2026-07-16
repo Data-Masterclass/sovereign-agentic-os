@@ -15,6 +15,32 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.15] — 2026-07-16
+
+Consistent folder UX across every context tab, deep links that open the actual item, five
+messaging/calendar connectors, and Big Bets that always sit under a pillar.
+
+### Added
+- **Messaging & calendar connectors — Slack · Gmail · Google Calendar · Outlook · Teams.** Real,
+  governed, hand-built (reads auto; sending a message/email is approval-gated and never automatic;
+  deletes blocked; secrets write-only). Each ships an install guide; creating the Slack app /
+  Google OAuth client / Azure app registration is the operator's step, and OAuth token-refresh is
+  a documented follow-up.
+- **Evaluate deep links open the real item.** The per-agent "context used" links now open the
+  actual dataset / doc / file / metric / connection (via `?focus`), switching scope so it's visible.
+
+### Changed
+- **One folder UX on every context tab.** Data, Metrics and Knowledge now use the same shared
+  layout as Files (a factored `FolderLayout`): a scope segment + one active-scope folder rail +
+  the grid. Knowledge's redundant three-lane view is gone — the scope tabs alone drive it.
+
+### Fixed
+- **Folder rail no longer overlaps the tiles** on Data and Metrics (a min-width overflow in the
+  grid layout).
+- **A Big Bet must sit under a Strategic Pillar.** Creation now requires a pillar from both entry
+  points (the Big Bets "New" panel and "New bet under this pillar" from Strategy) and via MCP;
+  existing unlinked bets are grandfathered.
+
 ## [os-ui 0.5.14] — 2026-07-16
 
 One consistent scope vocabulary, a clearer Operating Model, sharper folder handling, and a

@@ -4,7 +4,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { CAPABILITY_MODES, type CapabilityMode, type ConnectionTemplateKey } from '@/lib/connections/schema';
 import { type Role } from '@/lib/core/session';
 import { canManageArtifact } from '@/lib/governance/edit-scope';
@@ -156,12 +157,28 @@ async function postJSON(path: string, body?: unknown): Promise<{ ok: boolean; st
 
 // ---- Main component --------------------------------------------------------
 
-export default function GovernedConnections() {
+function GovernedConnectionsInner() {
+  const searchParams = useSearchParams();
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState('');
   const [open, setOpen] = useState<string>('');
   const [scope, setScope] = useState<ScopeKey>('all');
   const [showArchived, setShowArchived] = useState(false);
+
+  // ?focus=<connectionId> deep-link: once data loads, open (expand) that connection.
+  // We do NOT switch scope — the accordion expansion is visible across all scopes, and
+  // the scope segment is a filter that may hide the card if the user has changed scope;
+  // the simplest honest approach is to leave scope as 'all' (the default) so the target
+  // is always visible. A ref prevents re-firing.
+  const focusApplied = useRef(false);
+  const focusId = searchParams.get('focus') ? decodeURIComponent(searchParams.get('focus')!) : null;
+  useEffect(() => {
+    if (!focusId || focusApplied.current || !data) return;
+    const target = data.connections.find((c) => c.id === focusId);
+    if (!target) return; // unknown id — no-op
+    focusApplied.current = true;
+    setOpen(focusId);
+  }, [focusId, data]);
 
   const load = useCallback(async () => {
     setError('');
@@ -1414,5 +1431,13 @@ function ConnectionCard({
         </div>
       ) : null}
     </div>
+  );
+}
+
+export default function GovernedConnections() {
+  return (
+    <Suspense>
+      <GovernedConnectionsInner />
+    </Suspense>
   );
 }

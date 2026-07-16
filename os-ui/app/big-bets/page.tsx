@@ -3,8 +3,8 @@
  */
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
 import { useUser } from '@/lib/useUser';
@@ -54,13 +54,27 @@ const TIER_SEG: { key: TierKey; label: string }[] = [
 ];
 
 export default function BigBetsPage() {
+  // useSearchParams() must sit under a Suspense boundary or `next build`'s static
+  // prerender of this route bails out. Wrap the client page.
+  return (
+    <Suspense fallback={null}>
+      <BigBetsPageInner />
+    </Suspense>
+  );
+}
+
+function BigBetsPageInner() {
   const [data, setData] = useState<ListData | null>(null);
   const [strat, setStrat] = useState<StrategyData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const { user } = useUser();
-  const [creating, setCreating] = useState(false);
+  const searchParams = useSearchParams();
+  // ?pillar=<id> from a Strategy-tab "New bet under this pillar" link pre-fills
+  // the pillar picker and opens the create panel automatically.
+  const initPillarId = searchParams.get('pillar') ?? '';
+  const [creating, setCreating] = useState(!!initPillarId);
   const [tier, setTier] = useState<TierKey>('all');
 
   const reload = useCallback(async () => {
@@ -182,6 +196,7 @@ export default function BigBetsPage() {
             pillars={pillars}
             canCreatePillar={strat?.canCreatePillar ?? false}
             userDomains={strat?.userDomains ?? []}
+            initPillarId={initPillarId}
             onClose={() => setCreating(false)}
           />
         ) : (
@@ -351,15 +366,18 @@ function CreatePanel({
   pillars: initialPillars,
   canCreatePillar,
   userDomains,
+  initPillarId = '',
   onClose,
 }: {
   pillars: Pillar[];
   canCreatePillar: boolean;
   userDomains: string[];
+  /** Pre-fill (and lock) the pillar when navigating from the Strategy tab. */
+  initPillarId?: string;
   onClose: () => void;
 }) {
   const router = useRouter();
-  const [f, setF] = useState({ ...EMPTY });
+  const [f, setF] = useState({ ...EMPTY, pillarId: initPillarId });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   // inline pillar create state
@@ -377,6 +395,14 @@ function CreatePanel({
     const p = pillars.find((x) => x.id === id);
     setF((s) => ({ ...s, pillarId: id, metricId: p?.metric?.id ?? '' }));
   };
+  // When pillars load (async) and we already have an initPillarId, sync the metricId.
+  useEffect(() => {
+    if (initPillarId && pillars.length > 0 && !f.metricId) {
+      const p = pillars.find((x) => x.id === initPillarId);
+      if (p?.metric?.id) setF((s) => ({ ...s, metricId: p.metric!.id }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pillars, initPillarId]);
 
   /** POST to /api/strategy/pillars, refresh the dropdown, preselect the new pillar. */
   const createPillar = async () => {
@@ -403,9 +429,8 @@ function CreatePanel({
     }
   };
 
-  // No mandatory field — the server derives a name from any text provided, or uses
-  // "Untitled big bet" if nothing is filled in. The submit button is always enabled.
-  const valid = true;
+  // A pillar is required: a bet's tier and value spine are derived from its pillar.
+  const valid = !!f.pillarId;
 
   const submit = async () => {
     if (!valid || busy) return;
@@ -416,7 +441,7 @@ function CreatePanel({
         owner: f.owner,
         problem: f.problem,
         solution: f.solution,
-        pillarId: f.pillarId || undefined,
+        pillarId: f.pillarId, // required — form is disabled until set
         metricId: f.metricId || undefined,
         targetValue: Number(f.targetValue) || 0,
         goLive: f.goLive || undefined,
@@ -449,15 +474,22 @@ function CreatePanel({
         />
       </Field>
 
-      <Field label="Strategic Pillar">
+      <Field label="Strategic Pillar" required>
         {pillar ? (
           <div className="bb-pillar-chip">
             <span className="bb-pillar-chip-name">{pillar.name}</span>
             {pillar.metric ? <span className="bb-pillar-chip-metric">→ {pillar.metric.name}</span> : null}
-            <button type="button" className="bb-pillar-chip-edit" onClick={() => onPillar('')}>Edit</button>
+            {/* Lock the pillar when pre-filled from the Strategy tab (initPillarId set). */}
+            {!initPillarId ? (
+              <button type="button" className="bb-pillar-chip-edit" onClick={() => onPillar('')}>Edit</button>
+            ) : null}
           </div>
         ) : (
           <>
+            <p className="muted" style={{ margin: '0 0 6px', fontSize: 11.5 }}>
+              Every bet must sit under a pillar — the pillar drives its tier (My · Domain · Company)
+              and value spine.
+            </p>
             <select
               className="bb-pillar-select"
               value={f.pillarId}

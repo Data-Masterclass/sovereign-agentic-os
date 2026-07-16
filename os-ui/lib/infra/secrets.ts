@@ -100,6 +100,15 @@ const DEFAULT_ALLOWLIST = [
   'atlassian.net', // Jira + Confluence Cloud sites (*.atlassian.net via subdomain rule)
   'api.atlassian.com', // Atlassian OAuth 3LO gateway (cloudId-scoped API)
   'auth.atlassian.com', // Atlassian OAuth token endpoint
+  // Messaging + calendar wave — hand-built typed API clients (bot token / user-provided
+  // OAuth access token). Each host also added to the chart egressProxy.allowlist +
+  // Cilium FQDN policy on a real deploy.
+  'slack.com', // Slack Web API (slack.com/api) + www.slack.com
+  'gmail.googleapis.com', // Gmail API
+  'oauth2.googleapis.com', // Google OAuth token endpoint (token refresh follow-up)
+  // googleapis.com (above) already covers www.googleapis.com — Google Calendar API
+  // graph.microsoft.com (above) already covers Outlook + Teams over Microsoft Graph
+  // login.microsoftonline.com (above) already covers Microsoft OAuth token endpoint
 ];
 
 function allowlist(): string[] {

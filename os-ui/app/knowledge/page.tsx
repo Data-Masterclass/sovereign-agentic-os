@@ -3,7 +3,8 @@
  */
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
 import { roleAtLeast, type Role } from '@/lib/core/session';
 import { useTabNavReset } from '@/lib/core/tab-nav';
@@ -16,6 +17,7 @@ import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
 import TalkTo from '@/components/talk/TalkTo';
 import { TALK_PRESENTATION } from '@/lib/talk/schema';
 import { FolderPickerModal } from '@/components/core/FolderTree';
+import FolderLayout from '@/components/core/FolderLayout';
 import KnowledgeFolderRail from '@/components/knowledge/KnowledgeFolderRail';
 import { isUnderFolder, type FolderPathNode } from '@/lib/core/folders';
 
@@ -43,6 +45,15 @@ type PersonalGroups = {
 };
 
 export default function KnowledgePage() {
+  return (
+    <Suspense>
+      <KnowledgePageInner />
+    </Suspense>
+  );
+}
+
+function KnowledgePageInner() {
+  const searchParams = useSearchParams();
   // Clicking the Knowledge sidebar link returns to this page root.
   useTabNavReset(() => {});
 
@@ -106,6 +117,23 @@ export default function KnowledgePage() {
     void loadPersonal();
     void loadFolders();
   }, [loadPersonal, loadFolders]);
+
+  // ?focus=<knowledgeId> deep-link: once entries load, open that entry for editing.
+  // Searches across all three scope groups (mine/domain/marketplace). Switches to 'all'
+  // scope so the entry is always visible. A ref prevents re-firing.
+  const focusApplied = useRef(false);
+  const focusId = searchParams.get('focus') ? decodeURIComponent(searchParams.get('focus')!) : null;
+  useEffect(() => {
+    if (!focusId || focusApplied.current || !personal) return;
+    const all = [...(personal.mine ?? []), ...(personal.domain ?? []), ...(personal.marketplace ?? [])];
+    const target = all.find((e) => e.id === focusId);
+    if (!target) return; // unknown id — no-op
+    focusApplied.current = true;
+    setKScope('all');
+    void openPersonal(focusId);
+  // openPersonal is defined below — safe to omit from deps (stable function reference in closure)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId, personal]);
 
   // ── Personal knowledge ("My knowledge") ──────────────────────────────────
 
@@ -353,112 +381,96 @@ export default function KnowledgePage() {
           })}
         </div>
 
-        {/* The three scope lanes in a flex column so `order` can float
-            My knowledge to the top in the combined "All" view. */}
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {/* ── ONE folder shell (identical to Files/Data/Metrics): the scope segment
+            above drives which lane's entries show; the LEFT folder rail filters them;
+            the MAIN area lists the entries. No more three simultaneous lanes. ── */}
+        {(() => {
+          // The active lane's entries — the scope segment picks it (My/Domain/Company),
+          // and 'all' concatenates the three. Each entry lives in exactly one lane
+          // (by visibility), so the concat never duplicates. `editable` is per-entry:
+          // Personal = always; Shared/Company = owner or a publisher (unchanged governance).
+          const lane =
+            kScope === 'mine' ? (personal?.mine ?? [])
+            : kScope === 'shared' ? (personal?.domain ?? [])
+            : kScope === 'marketplace' ? (personal?.marketplace ?? [])
+            : [...(personal?.mine ?? []), ...(personal?.domain ?? []), ...(personal?.marketplace ?? [])];
+          const editableOf = (e: PersonalKnowledgeSummary) =>
+            e.visibility === 'Personal' ? true : (e.owner === uid || canPublish);
 
-        {/* ── SHARED: personal notes promoted to domain scope ── */}
-        {(kScope === 'all' || kScope === 'shared') && (
-          <div style={{ marginTop: 20, order: 2 }}>
-            <div className="section-title">Domain · promoted notes</div>
-            {personal === null ? (
-              <div className="stub-page"><span className="spin" /> Loading…</div>
-            ) : personal.domain.length === 0 ? (
-              <div className="stub-page" style={{ marginTop: 8 }}>
-                No shared notes yet. Promote a personal note to share it with your domain.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
-                {personal.domain.map((e) => renderPersonalEntry(e, e.owner === uid || canPublish))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── MY KNOWLEDGE: personal general-knowledge entries ── */}
-        {(kScope === 'all' || kScope === 'mine') && (() => {
-          const mineActive = (personal?.mine ?? [])
+          const active = lane
             .filter((e) => !e.archived)
             .filter((e) => isUnderFolder(pkFolder, e.folder ?? '/'));
-          const mineArchived = (personal?.mine ?? []).filter((e) => e.archived);
+          const archived = lane.filter((e) => e.archived);
+
+          const emptyCopy =
+            kScope === 'shared' ? 'No shared notes yet. Promote a personal note to share it with your domain.'
+            : kScope === 'marketplace' ? 'Nothing certified yet. Admins certify general knowledge to Company.'
+            : 'No personal knowledge yet. Add a note above — it stays private to you.';
+
           return (
-          <div style={{ marginTop: 24, order: 1 }}>
-            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <div className="section-title" style={{ marginTop: 0 }}>My knowledge</div>
-              <button
-                className="btn ghost sm"
-                style={{ opacity: showArchived ? 1 : 0.7 }}
-                onClick={() => setShowArchived((s) => !s)}
-                title="Archived notes are hidden by default"
+            <div style={{ marginTop: 20 }}>
+              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+                <p className="hint" style={{ margin: 0, maxWidth: 620 }}>
+                  Notes are grounded reference for your agents. Organise <strong>My knowledge</strong> in
+                  folders on the left; the scope tabs above switch between My, Domain and Company.
+                </p>
+                <button
+                  className="btn ghost sm"
+                  style={{ opacity: showArchived ? 1 : 0.7 }}
+                  onClick={() => setShowArchived((s) => !s)}
+                  title="Archived notes are hidden by default"
+                >
+                  {showArchived ? 'Hide archived' : 'Show archived'}
+                </button>
+              </div>
+
+              {pkMsg && pkMsg !== 'Saved.' && pkMsg !== 'Promoted.' && !pkMsg.startsWith('Requested') ? <div className="error" style={{ marginTop: 8 }}>{pkMsg}</div> : null}
+              {(pkMsg === 'Promoted.' || pkMsg.startsWith('Requested')) ? <div className="hint" style={{ marginTop: 8, color: 'var(--teal)' }}>{pkMsg}</div> : null}
+
+              <FolderLayout
+                allLabel="All knowledge"
+                allCount={active.length}
+                allSelected={pkFolder === '/'}
+                onSelectAll={() => setPkFolder('/')}
+                rail={
+                  <KnowledgeFolderRail
+                    nodes={pkFolderNodes}
+                    items={lane.map((e) => ({ id: e.id, folder: e.folder ?? '/', name: e.title }))}
+                    selectedPath={pkFolder}
+                    onSelect={setPkFolder}
+                    onChanged={() => { void loadPersonal(); void loadFolders(); }}
+                  />
+                }
               >
-                {showArchived ? 'Hide archived' : 'Show archived'}
-              </button>
-            </div>
-            <p className="hint" style={{ marginTop: 0 }}>
-              Personal notes about your role and how you work — feeds your own agents &amp; assistant. Owner-only.
-              Add one above; promote a note to share it with your domain.
-            </p>
-
-            {pkMsg && pkMsg !== 'Saved.' && pkMsg !== 'Promoted.' && !pkMsg.startsWith('Requested') ? <div className="error" style={{ marginTop: 8 }}>{pkMsg}</div> : null}
-            {(pkMsg === 'Promoted.' || pkMsg.startsWith('Requested')) ? <div className="hint" style={{ marginTop: 8, color: 'var(--teal)' }}>{pkMsg}</div> : null}
-
-            <KnowledgeFolderRail
-              nodes={pkFolderNodes}
-              items={(personal?.mine ?? []).map((e) => ({ id: e.id, folder: e.folder ?? '/', name: e.title }))}
-              selectedPath={pkFolder}
-              onSelect={setPkFolder}
-              onChanged={() => { void loadPersonal(); void loadFolders(); }}
-            />
-
-            {personal === null ? (
-              <div className="stub-page"><span className="spin" /> Loading…</div>
-            ) : mineActive.length === 0 ? (
-              <div className="stub-page" style={{ marginTop: 8 }}>
-                No personal knowledge yet. Add a note above — it stays private to you.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
-                {mineActive.map((e) => renderPersonalEntry(e, true))}
-              </div>
-            )}
-
-            {showArchived && (
-              mineArchived.length > 0 ? (
-                <>
-                  <div className="section-title" style={{ marginTop: 20, fontSize: 12 }}>Archived</div>
-                  <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>
-                    Archived notes are hidden from your agents. Open one to Restore it or Delete it permanently.
-                  </p>
+                {personal === null ? (
+                  <div className="stub-page"><span className="spin" /> Loading…</div>
+                ) : active.length === 0 ? (
+                  <div className="stub-page">{emptyCopy}</div>
+                ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {mineArchived.map((e) => renderPersonalEntry(e, true))}
+                    {active.map((e) => renderPersonalEntry(e, editableOf(e)))}
                   </div>
-                </>
-              ) : (
-                <div className="hint" style={{ marginTop: 16 }}>No archived notes.</div>
-              )
-            )}
-          </div>
+                )}
+
+                {showArchived && (
+                  archived.length > 0 ? (
+                    <>
+                      <div className="section-title" style={{ marginTop: 20, fontSize: 12 }}>Archived</div>
+                      <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>
+                        Archived notes are hidden from your agents. Open one to Restore it or Delete it permanently.
+                      </p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {archived.map((e) => renderPersonalEntry(e, editableOf(e)))}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="hint" style={{ marginTop: 16 }}>No archived notes.</div>
+                  )
+                )}
+              </FolderLayout>
+            </div>
           );
         })()}
-
-        {/* ── MARKETPLACE: certified general-knowledge entries ── */}
-        {(kScope === 'all' || kScope === 'marketplace') && (
-          <div style={{ marginTop: 24, order: 3 }}>
-            <div className="section-title">Company · certified knowledge</div>
-            {personal === null ? (
-              <div className="stub-page"><span className="spin" /> Loading…</div>
-            ) : personal.marketplace.length === 0 ? (
-              <div className="stub-page" style={{ marginTop: 8 }}>
-                Nothing certified yet. Admins certify general knowledge to Company.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
-                {personal.marketplace.map((e) => renderPersonalEntry(e, e.owner === uid || canPublish))}
-              </div>
-            )}
-          </div>
-        )}
-        </div>
 
         {/* Talk to Knowledge — governed retrieval over knowledge entries. */}
         {(() => {

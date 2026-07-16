@@ -3,6 +3,8 @@
  */
 'use client';
 
+import { Suspense, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
 import DataTab from '@/components/data/DataTab';
 import TalkTo from '@/components/talk/TalkTo';
@@ -15,7 +17,24 @@ import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 // with the model's reasoning shown apart from the grounded answer).
 // Raw SQL lives in Admin → Query (admin-only); conversational Q&A here is governed NL→SQL.
 
+/**
+ * Reads `?focus=<datasetId>` on mount and passes it to DataTab as a one-shot
+ * `openDatasetId` so the Evaluate panel's deep links open the correct dataset.
+ * DataTab already handles this prop — it jumps straight to the detail view and
+ * calls `onDatasetOpened()` to clear the signal so it never re-fires.
+ */
 export default function DataPage() {
+  return (
+    <Suspense>
+      <DataPageInner />
+    </Suspense>
+  );
+}
+
+function DataPageInner() {
+  const searchParams = useSearchParams();
+  const focusId = searchParams.get('focus') ? decodeURIComponent(searchParams.get('focus')!) : null;
+  const [opened, setOpened] = useState(false);
   const talk = TALK_PRESENTATION.data;
   return (
     <>
@@ -23,7 +42,10 @@ export default function DataPage() {
       <div className="content">
         {/* Top: the datasets home (tiles → detail → build flow). */}
         <div {...anchorAttr(ANCHORS.data.sandbox)}>
-          <DataTab />
+          <DataTab
+            openDatasetId={opened ? null : focusId}
+            onDatasetOpened={() => setOpened(true)}
+          />
         </div>
 
         {/* Bottom: the shared "Talk to <Tab>" copilot — governed NL→SQL, same OPA/Trino

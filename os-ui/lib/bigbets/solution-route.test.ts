@@ -42,6 +42,7 @@ function seedBet() {
   const bet = createBet(sara, {
     name: 'Reduce churn',
     problem: { who: 'Sales', need: 'cut churn', obstacle: '', impact: '' },
+    pillarId: 'pillar_retention',
     targetValue: 1_000_000,
     goLive: '2026-12-01',
   });

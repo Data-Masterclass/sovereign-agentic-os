@@ -58,6 +58,7 @@ test('pulse.bets reflects a real bet seeded in the store', async () => {
   const bet = createBet(admin, {
     name: 'Launch feature X',
     problem: { what: 'slow onboarding', why: 'reduces activation' },
+    pillarId: 'pillar_eng_growth',
     targetValue: 100_000,
     goLive: '2026-12-31',
     domain: 'eng',
@@ -80,6 +81,7 @@ test('pulse ignores archived bets', async () => {
   const bet = createBet(admin, {
     name: 'Old campaign',
     problem: { what: 'low awareness', why: 'missing reach' },
+    pillarId: 'pillar_mkt_growth',
     targetValue: 50_000,
     goLive: '2026-06-01',
     domain: 'mkt',
@@ -100,6 +102,7 @@ test('pulse.bets: draft bet maps to status "planned"', async () => {
   const bet = createBet(creator, {
     name: 'Draft idea',
     problem: { what: 'unclear', why: 'TBD' },
+    pillarId: 'pillar_eng_ideas',
     targetValue: 0,
     goLive: '2027-01-01',
     domain: 'eng',
