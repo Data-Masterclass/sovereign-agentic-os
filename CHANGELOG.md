@@ -15,6 +15,18 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.18] — 2026-07-16
+
+### Changed
+- **Official guide refreshed** (`docs/Sovereign-Agentic-OS-Guide.md` + PDF) to the current product:
+  My/Domain/Company vocabulary, the Operating Model, the shared folder UX, the full connector
+  catalogue, the interactive agent-grants surface, per-agent Evaluate context, and Big-Bets-under-a-pillar.
+
+### Internal
+- **Refactor (#171 phases C–D, behavior-preserving):** cross-tab imports routed through public tab
+  barrels; two barrels widened for genuinely-public server-side symbols. No behavior change; client
+  bundles kept free of server-only modules (verified by the production build). tsc + tests + build green.
+
 ## [os-ui 0.5.17] — 2026-07-16
 
 ### Added

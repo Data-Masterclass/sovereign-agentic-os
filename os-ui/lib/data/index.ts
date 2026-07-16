@@ -14,3 +14,6 @@ export * from './store.ts';
 
 // Dataset schema types (Layer, Dataset, Grant, ColumnDoc, etc.).
 export * from './schema.ts';
+
+// OpenMetadata client — the governed catalog's system-of-record probe/pull.
+export * from './openmetadata.ts';

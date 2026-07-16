@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUser } from '@/lib/useUser';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { previewText } from '@/lib/files/preview';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';

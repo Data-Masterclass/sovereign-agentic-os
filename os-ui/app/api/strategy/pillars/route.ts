@@ -7,7 +7,7 @@ import { listPillars, createPillar } from '@/lib/strategy/pillars';
 import { rollupForPillar, valueHistory } from '@/lib/strategy/value-rollup';
 import { snapshotHistory, ensureHydrated } from '@/lib/strategy/snapshots';
 import { recentStrategyAudit } from '@/lib/strategy/audit';
-import { canCreatePillar, canEditPillar, canPromotePillar, nextPillarScope, type PillarScope } from '@/lib/strategy/model';
+import { canCreatePillar, canEditPillar, canPromotePillar, nextPillarScope, type PillarScope } from '@/lib/strategy';
 import { getSettings } from '@/lib/platform-admin/settings';
 
 export const dynamic = 'force-dynamic';

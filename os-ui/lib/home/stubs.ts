@@ -19,11 +19,11 @@ import 'server-only';
  *     a direct listUsers() call (in-process, fast).
  */
 
-import { listUsers } from '@/lib/platform-admin/users';
-import { listCaps, getSpend } from '@/lib/governance/cost';
-import { latestManualValue } from '@/lib/strategy/model';
-import type { Pillar } from '@/lib/strategy/model';
-import type { BigBet } from '@/lib/bigbets/model';
+import { listUsers } from '@/lib/platform-admin';
+import { listCaps, getSpend } from '@/lib/governance';
+import { latestManualValue } from '@/lib/strategy';
+import type { Pillar } from '@/lib/strategy';
+import type { BigBet } from '@/lib/bigbets';
 import { deriveBet, completion } from '@/lib/bigbets/status';
 
 export type FeedSource = 'live' | 'mock';

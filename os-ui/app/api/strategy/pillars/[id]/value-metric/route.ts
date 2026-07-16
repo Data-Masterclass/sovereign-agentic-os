@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { setValueMetric } from '@/lib/strategy/pillars';
-import { METRIC_TYPES, type ValueMode, type MetricType } from '@/lib/strategy/model';
+import { METRIC_TYPES, type ValueMode, type MetricType } from '@/lib/strategy';
 
 export const dynamic = 'force-dynamic';
 

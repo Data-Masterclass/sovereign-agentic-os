@@ -10,7 +10,7 @@ import {
   ARTIFACT_KINDS,
   QUARTERS,
   emptyAnnualQuarterly,
-} from '@/lib/strategy/model';
+} from '@/lib/strategy';
 
 export const dynamic = 'force-dynamic';
 

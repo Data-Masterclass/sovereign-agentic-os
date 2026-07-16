@@ -8,13 +8,13 @@ import { decide, enqueue, listApprovals, recordEffect, type Approval } from '@/l
 import { applyEffect, type EffectDeps, type EffectResult } from '@/lib/governance/effects';
 import { record as auditRecord } from '@/lib/governance/audit';
 import { publishPromotionLive } from '@/lib/data/publish-server';
-import { getWorkflow } from '@/lib/knowledge/store';
+import { getWorkflow } from '@/lib/knowledge';
 import { getPersonalKnowledge, decertifyPersonalKnowledge, unsharePersonalKnowledge } from '@/lib/knowledge/personal-store';
-import { getDashboard } from '@/lib/dashboards/store';
+import { getDashboard } from '@/lib/dashboards';
 import { getConnectionForUser, promoteConnection, demoteConnection } from '@/lib/connections';
 import { resolveOmCatalog, applyOmSyncForConnection } from '@/lib/connections/openmetadata';
-import { getDataset } from '@/lib/data/store';
-import { getModel } from '@/lib/science/model-service';
+import { getDataset } from '@/lib/data';
+import { getModel } from '@/lib/science';
 import { getArtifact, promoteArtifact, demoteArtifact } from '@/lib/core/artifacts';
 import { getAppForUser, promoteApp } from '@/lib/software/apps';
 import { demoteApp } from '@/lib/software/lifecycle';

@@ -6,7 +6,7 @@ import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { requestPromotion, getDataset } from '@/lib/data/store';
 import { transparencyGate } from '@/lib/data/transparency';
 import { enqueue, listApprovals } from '@/lib/governance/approvals';
-import type { DataVisibility, Grant } from '@/lib/data/dataset-schema';
+import type { DataVisibility, Grant } from '@/lib/data';
 
 export const dynamic = 'force-dynamic';
 

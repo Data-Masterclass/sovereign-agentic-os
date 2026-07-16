@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@/lib/useUser';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { roleAtLeast } from '@/lib/core/session';
 
 type Preview = {

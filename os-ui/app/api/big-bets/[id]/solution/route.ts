@@ -14,7 +14,7 @@ import {
   removeComponent,
   ensureHydrated,
 } from '@/lib/bigbets/store';
-import { INTERPLAY_RELATIONS, type InterplayRelation, type Tab } from '@/lib/bigbets/model';
+import { INTERPLAY_RELATIONS, type InterplayRelation, type Tab } from '@/lib/bigbets';
 import { resolveLinkedComponent } from '@/lib/bigbets/attach-server';
 
 export const dynamic = 'force-dynamic';

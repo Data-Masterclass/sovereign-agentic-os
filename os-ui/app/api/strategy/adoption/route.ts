@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { adoptionBoard } from '@/lib/strategy/adoption';
-import { entitledToDomain } from '@/lib/strategy/model';
+import { entitledToDomain } from '@/lib/strategy';
 
 export const dynamic = 'force-dynamic';
 

@@ -14,7 +14,7 @@ import {
 import { rollupForPillar } from '@/lib/strategy/value-rollup';
 import { targetsVsActuals } from '@/lib/strategy/snapshots';
 import { recentStrategyAudit } from '@/lib/strategy/audit';
-import { canEditPillar, canPromotePillar, nextPillarScope } from '@/lib/strategy/model';
+import { canEditPillar, canPromotePillar, nextPillarScope } from '@/lib/strategy';
 
 export const dynamic = 'force-dynamic';
 

@@ -6,7 +6,7 @@ import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { getDataset, builtLayerFqn } from '@/lib/data/store';
 import { queryRun } from '@/lib/infra/governed';
 import { runPreview } from '@/lib/data/preview';
-import type { Layer } from '@/lib/data/dataset-schema';
+import type { Layer } from '@/lib/data';
 
 export const dynamic = 'force-dynamic';
 

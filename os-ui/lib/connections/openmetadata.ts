@@ -23,7 +23,7 @@ import {
   putOmEntity,
   patchOmEntity,
   putOmLineage,
-} from '@/lib/data/openmetadata';
+} from '@/lib/data';
 import {
   type OmSyncPlan,
   type OmSyncPreview,
@@ -33,7 +33,7 @@ import {
   applyOmSync,
   provisionOmNamespace,
 } from '@/lib/connections/openmetadata-sync';
-import type { Dataset } from '@/lib/data/dataset-schema';
+import type { Dataset } from '@/lib/data';
 import type { CatalogAsset, SourceSeverity } from '@/lib/data/catalog';
 
 /**

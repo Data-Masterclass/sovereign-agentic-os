@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { canManageArtifact } from '@/lib/governance/edit-scope';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import LineagePanel from './LineagePanel';
 import RefinePanel from './RefinePanel';
 import GoldJoinPanel from './GoldJoinPanel';

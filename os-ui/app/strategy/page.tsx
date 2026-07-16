@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import {
   euro,
   formatMetricValue,

@@ -16,7 +16,7 @@ import { listBets, getBet } from '@/lib/bigbets/store';
 import { listSystems, getSystem } from '@/lib/agents/store';
 import { listAppsForUser, getAppForUser } from '@/lib/software/apps';
 import { listConnectionsForUser, getConnectionForUser } from '@/lib/connections';
-import { listModelsForUser } from '@/lib/science/model-service';
+import { listModelsForUser } from '@/lib/science';
 import { listPillars } from '@/lib/strategy/pillars';
 import { config } from '@/lib/core/config';
 import { loadGuide, guideTitle, type GuidePath } from '@/lib/tabs/guides';

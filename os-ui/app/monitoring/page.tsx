@@ -6,7 +6,7 @@
 import { useState } from 'react';
 import PageHeader from '@/components/PageHeader';
 import { useApi } from '@/lib/useApi';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import type { HealthItem, Overview } from '@/lib/monitoring';
 import AttentionStrip from '@/components/monitoring/AttentionStrip';
 import LensCard from '@/components/monitoring/LensCard';

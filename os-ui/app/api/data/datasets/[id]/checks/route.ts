@@ -6,7 +6,7 @@ import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { getDataset, addCheck, removeCheck, builtLayerFqn } from '@/lib/data/store';
 import { queryRun } from '@/lib/infra/governed';
 import { runQualityChecks } from '@/lib/data/dq-run';
-import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/data/dataset-schema';
+import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/data';
 
 export const dynamic = 'force-dynamic';
 

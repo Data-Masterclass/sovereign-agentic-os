@@ -9,7 +9,7 @@ import PageHeader from '@/components/PageHeader';
 import DataTab from '@/components/data/DataTab';
 import TalkTo from '@/components/talk/TalkTo';
 import { TALK_PRESENTATION } from '@/lib/talk/schema';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 
 // The Data tab is ONE screen, in one scroll: the datasets home on top (the unified,
 // Files-style grid — All · My · Shared · Marketplace, with catalog detail folded into

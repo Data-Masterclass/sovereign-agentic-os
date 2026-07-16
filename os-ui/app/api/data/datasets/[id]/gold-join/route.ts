@@ -15,7 +15,7 @@ import {
   type GoldMeasure,
   type JoinType,
 } from '@/lib/data/transform';
-import type { DatasetUpstream } from '@/lib/data/dataset-schema';
+import type { DatasetUpstream } from '@/lib/data';
 import type { ExecuteIdentity } from '@/lib/infra/governed';
 
 export const dynamic = 'force-dynamic';

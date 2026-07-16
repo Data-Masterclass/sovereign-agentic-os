@@ -3,7 +3,7 @@
  */
 import Link from 'next/link';
 import type { LauncherCard } from '@/lib/home/launcher';
-import type { GoldenPathKey } from '@/lib/tutorials/types';
+import type { GoldenPathKey } from '@/lib/tutorials';
 import TutorialLink from '@/components/tutorials/TutorialLink';
 import PathIllustration from './illustrations';
 

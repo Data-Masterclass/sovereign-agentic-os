@@ -7,7 +7,7 @@ import { transition } from '@/lib/files/store';
 import { reindexById } from '@/lib/files/pipeline-server';
 import { listLineage } from '@/lib/files/lineage';
 import { pushLineage } from '@/lib/files/catalog';
-import type { DataVisibility, Grant, Transition } from '@/lib/data/dataset-schema';
+import type { DataVisibility, Grant, Transition } from '@/lib/data';
 
 export const dynamic = 'force-dynamic';
 

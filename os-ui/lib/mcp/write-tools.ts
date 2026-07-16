@@ -22,7 +22,7 @@ import {
   type PromotionRequest,
 } from '@/lib/data/store';
 import { runQualityChecks } from '@/lib/data/dq-run';
-import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/data/dataset-schema';
+import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/data';
 import { queryRun } from '@/lib/infra/governed';
 import { publishPromotionLive } from '@/lib/data/publish-server';
 import { enqueue, getApproval, decide, listApprovals } from '@/lib/governance/approvals';
@@ -43,7 +43,7 @@ import {
 } from '@/lib/data/transform';
 import { assetTarget } from '@/lib/data/store-fqn';
 import type { ExecuteIdentity } from '@/lib/infra/governed';
-import type { Layer, Quality, DataVisibility, Grant, ColumnDoc, DatasetUpstream } from '@/lib/data/dataset-schema';
+import type { Layer, Quality, DataVisibility, Grant, ColumnDoc, DatasetUpstream } from '@/lib/data';
 import { measureFromForm, measureMember, type MetricForm, type GuidedFilter, type GuidedWindow } from '@/lib/metrics/model';
 import type { MeasureType } from '@/lib/data/metrics';
 
@@ -102,7 +102,7 @@ import {
   type CreateBetInput,
 } from '@/lib/bigbets/store';
 import { getPillar } from '@/lib/strategy/pillars';
-import { deriveBetName, INTERPLAY_RELATIONS, type BigBet, type InterplayRelation, type Tab as BetTab, type ValueBasis } from '@/lib/bigbets/model';
+import { deriveBetName, INTERPLAY_RELATIONS, type BigBet, type InterplayRelation, type Tab as BetTab, type ValueBasis } from '@/lib/bigbets';
 import { resolveLinkedComponent } from '@/lib/bigbets/attach-server';
 
 import {

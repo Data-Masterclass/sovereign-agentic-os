@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { Dataset } from '@/lib/data/dataset-schema';
+import type { Dataset } from '@/lib/data';
 import { goldMartFqn, slug } from '@/lib/data/metrics';
 import {
   type OmConn,
@@ -10,7 +10,7 @@ import {
   type OmWrite,
   buildAdditivePatch,
   omVersionWritable,
-} from '@/lib/data/openmetadata';
+} from '@/lib/data';
 
 /**
  * Phase 2 — SCOPED, INTEGRITY-SAFE write-back of OS-produced assets into a

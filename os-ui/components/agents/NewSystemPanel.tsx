@@ -4,7 +4,7 @@
 'use client';
 
 import { useState } from 'react';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { TEMPLATES, type TemplateKey } from '@/lib/agents/templates';
 import { getUrlParam } from '@/lib/core/url-params';
 

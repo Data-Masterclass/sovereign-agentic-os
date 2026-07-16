@@ -14,7 +14,7 @@ import { listFolders, ensureHydrated as ensureFoldersHydrated, type FolderTab } 
 import { grantFolderNodes } from '@/lib/agents/grant-folders';
 import { resolveManual } from '@/lib/knowledge/manual';
 import { listPillars } from '@/lib/strategy/pillars';
-import type { PillarScope } from '@/lib/strategy/model';
+import type { PillarScope } from '@/lib/strategy';
 import { listBets, ensureHydrated as ensureBetsHydrated } from '@/lib/bigbets/store';
 import {
   MANUAL_SCOPES,

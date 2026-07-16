@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { listComponentsWithStatus } from '@/lib/platform-admin/platform';
+import { listComponentsWithStatus } from '@/lib/platform-admin';
 import type { Health, HealthItem } from '../types';
 
 /**

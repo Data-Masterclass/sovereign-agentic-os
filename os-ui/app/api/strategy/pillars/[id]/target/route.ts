@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { setHeadlineTarget } from '@/lib/strategy/pillars';
-import { METRIC_TYPES, HORIZONS, type MetricType, type Horizon } from '@/lib/strategy/model';
+import { METRIC_TYPES, HORIZONS, type MetricType, type Horizon } from '@/lib/strategy';
 
 export const dynamic = 'force-dynamic';
 

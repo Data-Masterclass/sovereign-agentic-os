@@ -5,7 +5,7 @@
 
 import PageHeader from '@/components/PageHeader';
 import AgentSystems from '@/components/agents/AgentSystems';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 
 export default function AgentsPage() {
   return (

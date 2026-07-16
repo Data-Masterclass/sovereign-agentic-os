@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyVersions, type Dataset } from '@/lib/data/dataset-schema';
+import { emptyVersions, type Dataset } from '@/lib/data';
 import {
   buildAdditivePatch,
   omVersionWritable,
@@ -11,7 +11,7 @@ import {
   TESTED_OM_MAX,
   type OmPatchOp,
   type OmWrite,
-} from '@/lib/data/openmetadata';
+} from '@/lib/data';
 import {
   buildOmSyncPlan,
   previewOmSync,

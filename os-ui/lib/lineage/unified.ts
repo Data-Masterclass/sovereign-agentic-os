@@ -6,7 +6,7 @@ import type { CurrentUser } from '@/lib/core/auth';
 import { getDataset } from '@/lib/data/store';
 import { lineageFor } from '@/lib/data/lineage';
 import { getDashboard } from '@/lib/dashboards/store';
-import { getModel } from '@/lib/science/model-service';
+import { getModel } from '@/lib/science';
 import { getBet, canViewComponentDetail } from '@/lib/bigbets/store';
 import { buildComposition } from '@/lib/bigbets/composition';
 import { getAppForUser } from '@/lib/software/apps';

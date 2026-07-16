@@ -23,12 +23,12 @@ import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
 import { roleModel } from '@/lib/models/roles';
 import { runAsk, type AskMessage, type AskOutcome } from '@/lib/data/ask';
-import { listAskable, type AskableDataset } from '@/lib/data/store';
+import { listAskable, type AskableDataset } from '@/lib/data';
 import { readPrincipalFor } from '@/lib/data/store-fqn';
 import { queryRun } from '@/lib/infra/governed';
 import { liteLlmCaller } from '@/lib/assistant/runtime';
 import { retrieveKnowledge } from '@/lib/knowledge/retrieve';
-import { searchFiles } from '@/lib/files/store';
+import { searchFiles } from '@/lib/files';
 import { getTabMetadata } from './metadata.ts';
 import { TALK_PRESENTATION, type TalkCitation, type TalkConfig, type TalkRetrieval, type TalkTabId } from './schema.ts';
 

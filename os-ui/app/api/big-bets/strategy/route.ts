@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { listPillars } from '@/lib/strategy/pillars';
-import { canCreatePillar } from '@/lib/strategy/model';
+import { canCreatePillar } from '@/lib/strategy';
 
 export const dynamic = 'force-dynamic';
 

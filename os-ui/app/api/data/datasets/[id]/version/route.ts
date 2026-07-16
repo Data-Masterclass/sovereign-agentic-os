@@ -6,7 +6,7 @@ import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { getDataset } from '@/lib/data/store';
 import { stepperStages, canBuildStage, canPassThrough } from '@/lib/data/panels';
 import { commitLayerVersion } from '@/lib/data/build/server';
-import { LAYERS, type Layer, type Quality } from '@/lib/data/dataset-schema';
+import { LAYERS, type Layer, type Quality } from '@/lib/data';
 
 export const dynamic = 'force-dynamic';
 

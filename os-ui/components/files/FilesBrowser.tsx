@@ -6,7 +6,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useUser } from '@/lib/useUser';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/core/scopes';
 import {
   itemsUnderFolder,

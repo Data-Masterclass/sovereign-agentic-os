@@ -9,7 +9,7 @@ import { ALL_WRITE_TOOLS, __setRunOsTeamForTests } from './write-tools.ts';
 import { __resetStore as resetData } from '@/lib/data/store';
 import { __resetStore as resetAgents } from '@/lib/agents/store';
 import { __resetApprovals } from '@/lib/governance/approvals';
-import { _resetModels, upsertModel } from '@/lib/science/model-service';
+import { _resetModels, upsertModel } from '@/lib/science';
 import type { ServiceModel } from '@/lib/science/types';
 
 /**

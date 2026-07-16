@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { config } from '@/lib/core/config';
-import { listCaps } from '@/lib/governance/cost';
+import { listCaps } from '@/lib/governance';
 import { readFetch } from '../util';
 import { MOCK_COST } from '../mock';
 import type { Health, HealthItem } from '../types';

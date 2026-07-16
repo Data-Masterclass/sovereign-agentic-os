@@ -6,15 +6,15 @@ import type { CurrentUser } from '@/lib/core/auth';
 import { type LinkedArtifactInput, registerLinkedArtifact } from './sources.ts';
 import { BetError, type Tab } from './model.ts';
 
-import { getDataset } from '@/lib/data/store';
-import { getDashboard } from '@/lib/dashboards/store';
-import { getSystem as getAgentSystem } from '@/lib/agents/store';
-import { getWorkflow } from '@/lib/knowledge/store';
-import { getMetric as getMetricRecord } from '@/lib/metrics/store';
-import { getFile } from '@/lib/files/store';
-import { listModelsForUser } from '@/lib/science/model-service';
-import { getAppForUser } from '@/lib/software/apps';
-import { getConnectionForUser } from '@/lib/connections/store';
+import { getDataset } from '@/lib/data';
+import { getDashboard } from '@/lib/dashboards';
+import { getSystem as getAgentSystem } from '@/lib/agents';
+import { getWorkflow } from '@/lib/knowledge';
+import { getMetric as getMetricRecord } from '@/lib/metrics';
+import { getFile } from '@/lib/files';
+import { listModelsForUser } from '@/lib/science';
+import { getAppForUser } from '@/lib/software';
+import { getConnectionForUser } from '@/lib/connections';
 
 /**
  * The GOVERNED resolve of a component id → the reference card a Big Bet attaches.

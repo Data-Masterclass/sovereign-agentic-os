@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { createBet, listBets, ensureHydrated } from '@/lib/bigbets/store';
-import { deriveBetName } from '@/lib/bigbets/model';
+import { deriveBetName } from '@/lib/bigbets';
 import { principal } from '@/lib/bigbets/server';
 import { deriveBet, completion } from '@/lib/bigbets/status';
 import { rollup } from '@/lib/bigbets/roadmap';

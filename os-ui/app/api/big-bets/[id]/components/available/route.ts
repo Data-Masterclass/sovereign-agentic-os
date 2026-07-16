@@ -5,11 +5,11 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { getBet } from '@/lib/bigbets/store';
 import { principal } from '@/lib/bigbets/server';
-import { sourceFor } from '@/lib/bigbets/sources';
+import { sourceFor } from '@/lib/bigbets';
 // Side-effect import: registers the REAL cross-tab reader so the picker surfaces
 // the actual datasets/agents/dashboards/knowledge/files/metrics a student built.
 import '@/lib/bigbets/real-sources';
-import { type Tab } from '@/lib/bigbets/model';
+import { type Tab } from '@/lib/bigbets';
 
 export const dynamic = 'force-dynamic';
 

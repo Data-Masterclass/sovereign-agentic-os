@@ -61,8 +61,8 @@ import { config } from '@/lib/core/config';
 import { queryRun } from '@/lib/infra/governed';
 import { versionTarget } from '@/lib/data/store-fqn';
 import { builtLayerFqn } from '@/lib/data/store';
-import type { Layer } from '@/lib/data/dataset-schema';
-import { LAYERS } from '@/lib/data/dataset-schema';
+import type { Layer } from '@/lib/data';
+import { LAYERS } from '@/lib/data';
 import {
   assembleProfile,
   parseDescribe,
@@ -75,7 +75,7 @@ import { getMetric } from '@/lib/metrics/store';
 import { exploreMetric } from '@/lib/metrics/build/explore-server';
 import type { Granularity } from '@/lib/metrics/explorer';
 import { claimsFromUser, delegate } from '@/lib/data/identity';
-import { listModelsForUser, type ModelViewer } from '@/lib/science/model-service';
+import { listModelsForUser, type ModelViewer } from '@/lib/science';
 import { CHURN, DEFAULT_FEATURES } from '@/lib/science/churn';
 
 /**

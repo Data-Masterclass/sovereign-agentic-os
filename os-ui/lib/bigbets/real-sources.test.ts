@@ -13,7 +13,7 @@ import { sourceFor, __resetSources } from './sources.ts';
 import { realizedValue } from './value.ts';
 import { createBet, __resetBets } from './store.ts';
 import { listRealArtifacts } from './real-sources.ts'; // side-effect: registers the real reader
-import { createDataset, __resetStore as __resetData } from '@/lib/data/store';
+import { createDataset, __resetStore as __resetData } from '@/lib/data';
 import '@/lib/strategy/pillars'; // side-effect: pins the governed metric catalogue to globalThis
 import type { Actor, Principal } from './model.ts';
 

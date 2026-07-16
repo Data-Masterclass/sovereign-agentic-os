@@ -33,7 +33,7 @@ import {
   type ValueMode,
   type MetricType,
   type Horizon,
-} from '@/lib/strategy/model';
+} from '@/lib/strategy';
 import { STUB_BET_CATALOGUE } from '@/lib/strategy/bets-bridge';
 
 /**

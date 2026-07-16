@@ -12,3 +12,6 @@ export * from './store.ts';
 
 // BigBet model types (BigBet, Actor, Tab, Lifecycle, etc.).
 export * from './schema.ts';
+
+// Component sources: cross-tab artifact resolution + Strategy up-link.
+export * from './sources.ts';

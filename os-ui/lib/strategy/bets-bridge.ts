@@ -5,9 +5,9 @@ import 'server-only';
 import type { ArtifactKind, ComponentBuildStatus } from '@/lib/strategy/model';
 import { entitledToDomain } from '@/lib/strategy/model';
 import type { Role } from '@/lib/core/session';
-import type { BigBet, Tab } from '@/lib/bigbets/model';
+import type { BigBet, Tab } from '@/lib/bigbets';
 import { _allBets, canView } from '@/lib/bigbets/store';
-import { resolveArtifact } from '@/lib/bigbets/sources';
+import { resolveArtifact } from '@/lib/bigbets';
 
 /**
  * Pillar ↔ Big-Bet share interface — the CROSS-TAB seam with the Big Bets tab.

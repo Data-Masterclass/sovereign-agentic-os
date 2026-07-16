@@ -25,10 +25,10 @@ import 'server-only';
  */
 
 import { reassignOwner as reassignData } from '@/lib/data/store';
-import { reassignOwner as reassignFiles } from '@/lib/files/store';
-import { reassignOwner as reassignKnowledge } from '@/lib/knowledge/store';
+import { reassignOwner as reassignFiles } from '@/lib/files';
+import { reassignOwner as reassignKnowledge } from '@/lib/knowledge';
 import { reassignOwner as reassignAgents } from '@/lib/agents/store';
-import { reassignOwner as reassignSoftware } from '@/lib/software/apps';
+import { reassignOwner as reassignSoftware } from '@/lib/software';
 
 export type ReassignReport = {
   /** Personal-lane artifacts moved, per store (only stores that moved ≥1). */

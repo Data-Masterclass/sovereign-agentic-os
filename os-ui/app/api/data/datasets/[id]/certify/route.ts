@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { certify, requestCertification, getDataset } from '@/lib/data/store';
 import { enqueue, listApprovals } from '@/lib/governance/approvals';
-import type { DataVisibility, Grant, TrustLevel } from '@/lib/data/dataset-schema';
+import type { DataVisibility, Grant, TrustLevel } from '@/lib/data';
 
 export const dynamic = 'force-dynamic';
 

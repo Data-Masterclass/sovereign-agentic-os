@@ -4,10 +4,10 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { domainPulseStub, healthCostStub } from './stubs.ts';
-import { createBet, __resetBets } from '@/lib/bigbets/store';
-import { setCap, addSpend, __resetCost } from '@/lib/governance/cost';
-import type { BigBet } from '@/lib/bigbets/model';
-import type { Pillar } from '@/lib/strategy/model';
+import { createBet, __resetBets } from '@/lib/bigbets';
+import { setCap, addSpend, __resetCost } from '@/lib/governance';
+import type { BigBet } from '@/lib/bigbets';
+import type { Pillar } from '@/lib/strategy';
 
 // ── Contract: fresh tenant shows real 0s, source is 'live' ────────────────────
 

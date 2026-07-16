@@ -12,7 +12,7 @@ import {
   registryAssets,
   type CatalogAsset,
 } from '@/lib/data/catalog';
-import { openMetadataSource, omEntityUrl } from '@/lib/data/openmetadata';
+import { openMetadataSource, omEntityUrl } from '@/lib/data';
 import { firstOmCatalogFor, omConnectionSource } from '@/lib/connections/openmetadata';
 
 export const dynamic = 'force-dynamic';

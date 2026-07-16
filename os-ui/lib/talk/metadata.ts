@@ -14,11 +14,11 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
-import { listAskable } from '@/lib/data/store';
-import { listWorkflows } from '@/lib/knowledge/store';
-import { listFiles } from '@/lib/files/store';
-import { listMetrics } from '@/lib/metrics/store';
-import { listConnectionsForUser } from '@/lib/connections/store';
+import { listAskable } from '@/lib/data';
+import { listWorkflows } from '@/lib/knowledge';
+import { listFiles } from '@/lib/files';
+import { listMetrics } from '@/lib/metrics';
+import { listConnectionsForUser } from '@/lib/connections';
 import type { TabMetadata, TabMetadataSource, TalkCitation, TalkTabId } from './schema.ts';
 
 /** A Principal is a CurrentUser minus `name` — the shape the data/knowledge/files stores take. */

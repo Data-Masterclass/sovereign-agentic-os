@@ -5,7 +5,7 @@
 
 import { useState } from 'react';
 import PageHeader from '@/components/PageHeader';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import ApprovalsInbox from '@/components/governance/ApprovalsInbox';
 import PoliciesView from '@/components/governance/PoliciesView';
 import AuditLog from '@/components/governance/AuditLog';

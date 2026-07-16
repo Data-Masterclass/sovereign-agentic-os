@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { buildBetView, principal } from '@/lib/bigbets/server';
 import { updateBet, archiveBet, unarchiveBet, deleteBet, ensureHydrated } from '@/lib/bigbets/store';
-import { type ValueBasis, type AllocationMethod, type BigBet } from '@/lib/bigbets/model';
+import { type ValueBasis, type AllocationMethod, type BigBet } from '@/lib/bigbets';
 
 export const dynamic = 'force-dynamic';
 

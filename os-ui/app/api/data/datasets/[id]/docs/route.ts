@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { setDocs } from '@/lib/data/store';
 import { transparencyGate } from '@/lib/data/transparency';
-import type { ColumnDoc } from '@/lib/data/dataset-schema';
+import type { ColumnDoc } from '@/lib/data';
 
 export const dynamic = 'force-dynamic';
 

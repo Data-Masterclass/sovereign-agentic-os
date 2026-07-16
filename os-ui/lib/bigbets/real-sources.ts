@@ -20,13 +20,13 @@
 
 import type { Artifact, Principal, Tab } from './model.ts';
 import { setRealTabReader } from './sources.ts';
-import { listDatasets } from '@/lib/data/store';
-import { listSystems } from '@/lib/agents/store';
-import { listDashboards } from '@/lib/dashboards/store';
-import { listWorkflows } from '@/lib/knowledge/store';
-import { listFiles } from '@/lib/files/store';
-import { listMetrics } from '@/lib/metrics/store';
-import { listModelsForUser } from '@/lib/science/model-service';
+import { listDatasets } from '@/lib/data';
+import { listSystems } from '@/lib/agents';
+import { listDashboards } from '@/lib/dashboards';
+import { listWorkflows } from '@/lib/knowledge';
+import { listFiles } from '@/lib/files';
+import { listMetrics } from '@/lib/metrics';
+import { listModelsForUser } from '@/lib/science';
 
 function card(input: {
   id: string;

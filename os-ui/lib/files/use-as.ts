@@ -5,7 +5,7 @@ import 'server-only';
 import { config } from '@/lib/core/config';
 import { getFile, type Principal } from '@/lib/files/store';
 import { recordLineage } from '@/lib/files/lineage';
-import { createDataset, buildVersion } from '@/lib/data/store';
+import { createDataset, buildVersion } from '@/lib/data';
 
 /**
  * "Use as" — distil a file into another context product (Files golden path §6).

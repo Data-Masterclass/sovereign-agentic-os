@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { allArtifacts } from '@/lib/core/artifacts';
-import { listUsers } from '@/lib/platform-admin/users';
+import { listUsers } from '@/lib/platform-admin';
 import type { CurrentUser } from '@/lib/core/auth';
 import { entitledToDomain } from '@/lib/strategy/model';
 import { buildScorecard, type Scorecard } from '@/lib/strategy/scorecard-core';

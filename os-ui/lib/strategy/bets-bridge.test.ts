@@ -10,8 +10,8 @@ import assert from 'node:assert/strict';
 
 import { betCatalogue, defaultBetShareSource } from './bets-bridge.ts';
 import { createBet, __resetBets } from '@/lib/bigbets/store';
-import { __resetSources } from '@/lib/bigbets/sources';
-import type { Actor } from '@/lib/bigbets/model';
+import { __resetSources } from '@/lib/bigbets';
+import type { Actor } from '@/lib/bigbets';
 
 const owner: Actor = { id: 'owner', domains: ['sales'], role: 'builder', kind: 'human' };
 const stranger = { id: 'stranger', domains: ['research'], role: 'creator' as const };

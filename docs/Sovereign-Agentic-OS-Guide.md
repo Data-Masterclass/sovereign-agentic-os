@@ -115,11 +115,16 @@ metric, a connection, a dashboard — is an **artifact** with the same four attr
 Visibility widens **one rung at a time**, and each move is strictly **two-step** — the person
 who *triggers* a promotion is never the person who *approves* it:
 
-| Visibility | Meaning | Who triggers | Who approves |
+The OS speaks **one scope vocabulary everywhere — My · Domain · Company** (defined once in
+core, `lib/core/scopes.ts`). "My" is your private draft space; "Domain" is your team; "Company"
+is the whole tenant. Promote reads **"Promote to Domain"** and certify **"…to Company"** — the
+same two verbs on every tab.
+
+| Scope | Meaning | Who triggers | Who approves |
 |---|---|---|---|
-| **Personal** | the creator only — the default for drafts | — | — |
-| **Shared (domain)** | usable across the owning domain | the **owner** files a promotion request | a **Builder+ of that domain** |
-| **Marketplace (certified)** | discoverable and importable by *other* domains | a **Builder / Domain admin** — the domain vouches for it | the **platform Administrator** — the platform accepts it |
+| **My** | the creator only — the default for drafts | — | — |
+| **Domain** | usable across the owning domain | the **owner** files a promotion request | a **Builder+ of that domain** |
+| **Company** *(certified)* | discoverable and importable by *other* domains, listed in the Marketplace storefront | a **Builder / Domain admin** — the domain vouches for it | the **platform Administrator** — the platform accepts it |
 
 **Approving *is* the action.** On approve, the platform executes the governed effect — for a
 dataset, a physical publish; the tier flips only once it verifies — and writes the audit.
@@ -132,10 +137,10 @@ The ladder is exactly **creator < builder < domain_admin < admin**.
 
 | Role | What they do |
 |---|---|
-| **Creator** | the base role — creates and runs their **own** artifacts (Personal by default) and consumes anything Shared or Certified. Files promotion requests; cannot approve. |
-| **Builder** | the domain **approver** — everything a Creator can, plus review/approve domain promotions, deploys, knowledge and connections. An approver, *not* a people-admin. |
+| **Creator** | the base role — creates and runs their **own** artifacts (My scope by default) and consumes anything at Domain or Company scope. Files promotion requests; cannot approve. |
+| **Builder** | the domain **approver** — everything a Creator can, plus review/approve My→Domain promotions, deploys, knowledge and connections. An approver, *not* a people-admin. |
 | **Domain admin** | everything a Builder can, plus administering the users of their **own domain(s) only** — invite, edit, assign roles **up to Builder**. Never mints another Domain admin. |
-| **Administrator** | tenant-wide — the only role that appoints **Domain admins**; sets policy, certifies to the Marketplace, sets cost caps; runs the Admin section. |
+| **Administrator** | tenant-wide — the only role that appoints **Domain admins**; sets policy, certifies to Company scope (the Marketplace storefront), sets cost caps; runs the Admin section. |
 
 Roles are assigned **per domain** and **compiled to OPA**, so a person who is a Builder in one
 domain and a Creator in another sees exactly the right controls in every tab, instantly.
@@ -170,20 +175,29 @@ there.
   (*Needs you · In progress · Your items · Spend* vs. cap), your work-in-progress, and a
   scannable "top items, by type" board. Cockpit *reads and routes* — it never recomputes
   another tab's numbers and never bypasses governance.
-- **Marketplace — consume across domains.** The *Consume* counterpart to every tab's *certify*
-  step: discover and reuse Administrator-certified products of every type across the tenant.
-  Importing is a **governed grant**, not a copy — the default is read-in-place, under your own
-  identity and row-level security.
+- **Marketplace — consume across domains.** The *Consume* counterpart to every tab's *certify to
+  Company* step: discover and reuse Administrator-certified (Company-scope) products of every
+  type across the tenant. The storefront keeps its name; importing is a **governed grant**, not a
+  copy — the default is read-in-place, under your own identity and row-level security.
 
 ## Plan
 
 - **Strategy — pillars, value and adoption.** Where the company plans its agentic
-  transformation, in exactly three calm sections: **Big Bets** (your strategic pillars, each
-  with a big value target), **Self Service** (how broadly your people build for themselves),
-  and **Foundations** (the certified asset base every bet builds on).
+  transformation, in exactly three calm sections: **Strategic Pillars** (each with a big value
+  target; Big Bets are created under them), **Self Service** (how broadly your people build for
+  themselves), and **Foundations** (the certified asset base every bet builds on).
 - **Big Bets — initiative roadmaps.** A strategic AI bet as a **goal + dated roadmap** built
-  from real artifacts across the platform, linked up to a Strategy pillar. Status derives
-  *live* from each artifact's real lifecycle; the roadmap rolls up on-track / at-risk.
+  from real artifacts across the platform. **Every bet sits under a Strategic Pillar** — creation
+  requires one from both entry points (the Big Bets "New" panel and "New bet under this pillar"
+  from Strategy) and via MCP. Status derives *live* from each artifact's real lifecycle; the
+  roadmap rolls up on-track / at-risk.
+- **Operating Model — how the company runs, at three scopes.** *My / Domain / Company Operating
+  Model*, each a fixed set of sections — **General · Strategy · Business · Organization ·
+  Architecture · Data · Glossary** — governed per scope (My = owner, Domain = domain_admin+,
+  Company = admin). It's the durable, structured backbone agents can be granted as context.
+- **Workflows — the process spine.** A **workflow** per business process (ordered steps · rules ·
+  know-how, each step owned by a Human / Software / Agent / external actor), retrievable and
+  grantable to agents.
 - **MCP** *(Builder+)* — the setup surface for connecting external AI clients over MCP.
 - **Tutorials.** One illustrated, hands-on tutorial per golden path — reached from Home or a
   tab header — that can spotlight the real controls and let you practice in a sandbox before
@@ -191,10 +205,10 @@ there.
 
 ## Context
 
-- **Knowledge — the domain's operating manual.** Human-authored know-how: general domain
-  knowledge plus a **workflow** per business process (steps · rules · tacit), made retrievable
-  by a knowledge agent behind document-level security. Mark a decision rule **hard** and it
-  compiles into an OPA guardrail.
+- **Knowledge — the domain's captured know-how.** Human-authored reference knowledge, made
+  retrievable by a knowledge agent behind document-level security. Mark a decision rule **hard**
+  and it compiles into an OPA guardrail. (The structured backbone — Operating Model, Strategy,
+  Big Bets, Workflows — lives in the Plan section; Knowledge is the reference library.)
 - **Files — a calm governed drive.** Any unstructured file — documents, images, audio, video —
   uploaded and auto-indexed (parse → embed → hybrid OpenSearch) so agents can search and cite
   it. Governed exactly like Data; *"Use as"* distils a file into Knowledge or Data.
@@ -204,7 +218,17 @@ there.
   validated read-only `SELECT`, executed under your row filters.
 - **Connections — governed bridges to outside systems.** A Connection is `credentials +
   endpoint + a set of governed tools`, never a raw pipe — used to bring data in and to expose
-  external APIs/MCPs as tools. You grant **use**, never the token. For teams already running a
+  external APIs/MCPs as tools. You grant **use**, never the token; **reads are automatic, writes
+  are approval-gated** (destructive ops blocked), and secrets are write-only. The Supported
+  Connectors gallery is **grouped by type and searchable**, and the real catalogue now spans:
+  **operational databases** (PostgreSQL · MySQL · SQL Server · MongoDB, federated through central
+  Trino); **code & DevOps** (GitHub); **docs & knowledge** (Notion, Atlassian); a Supabase
+  connector; **messaging & calendar** (Slack · Gmail · Google Calendar · Outlook · Teams —
+  sending a message or email is always approval-gated, never automatic); **cloud governance /
+  ML** (Microsoft Entra · Purview · Azure AI Foundry · AWS SageMaker, read-only); plus the
+  established data-ingest (Google Drive / OneDrive), orchestration (Airflow) and catalog
+  (OpenMetadata) connectors. Setting up the OAuth app / tokens on the far side is the
+  **operator's step** (each connector ships an install guide). For teams already running a
   lakehouse elsewhere, an admin-enabled **external-warehouse** connector federates it through
   central Trino as a governed catalog — AWS Glue/Athena, Snowflake, BigQuery, Databricks/Delta,
   and (experimental) Microsoft Fabric/OneLake — so you can query it in place under the same OPA
@@ -212,6 +236,16 @@ there.
 - **Metrics — one number, everywhere.** The KPI semantic layer. Define "Revenue" once and it
   resolves to the *same* number in the explorer, in dashboards, and in an agent's `metrics`
   tool — each under the viewer's own row-level security.
+
+**One folder UX on every context tab.** Files, Data, Knowledge and Metrics all share the *same*
+folder experience (one core primitive, `lib/core/folders.ts`, with each tab registering a thin
+adapter — no per-tab divergence). Each tab shows a scope segment (My / Domain) and a single
+**folder rail tied to the active scope** — you only ever see the root that matches. You **create,
+rename and move** folders and items through a **folder-tree picker** (browse-and-click, with
+inline New-folder — never a text field); moving a folder carries its contents. Lifecycle is the
+shared one too: **Archive** a folder and it cascades to the items inside (with a warning — move
+items out first to keep them active); **Restore** or **Delete** (physical delete is
+archived-only, per-item permission-checked).
 
 **Talk to any Context tab.** Every tab above carries a read-only **"Talk to X"** copilot. It
 builds a security-scoped overview of what *you* can see on that tab, runs the tab's own governed
@@ -226,10 +260,19 @@ honestly rather than inventing an answer when retrieval comes back empty.
 - **Agents — compose, govern, run.** One page where a domain's **agent systems** (instructions
   + tools + memory) are composed three equivalent ways — a React-Flow graph builder, Monaco
   YAML editing, or a chat assistant — then granted resources, built (*Build = execute +
-  verify*), and run. Every call routes through **LiteLLM → OPA → Langfuse**. Each **data grant**
-  can target the **medallion layer** the team reads — Bronze, Silver, or Gold — and the picker
-  only offers layers that are actually built, defaulting to the highest (Gold, the curated
-  default). The chosen layer is enforced when the team discovers and profiles that dataset.
+  verify*), and run. Every call routes through **LiteLLM → OPA → Langfuse**. **"What your team
+  can use"** is an interactive grants surface: per item you choose **read-only · read + propose ·
+  read + write** (a clear labelled selector), capped by the system's overall access setting.
+  Grants split into two groups — **Plan Items** (Strategy · Big Bets · Operating Model ·
+  Workflows) and **Context** (Knowledge · Files · Data · Connections · Metrics) — and **all four
+  Plan Items are grantable**: granting a pillar or bet provisions its governed read tools
+  (`get_pillar` / `get_big_bet`), DLS-scoped to what the caller may view. Context items grant via
+  a **folder-tree with tri-state checkboxes** — tick a folder to grant everything in it (and
+  future contents, resolved at run time, budget-capped, every resolved item still per-item
+  DLS/OPA-checked so a folder grant is provably a *subset*), or tick individual items. Each
+  **data grant** can target the **medallion layer** the team reads — Bronze, Silver, or Gold —
+  and the picker only offers layers that are actually built, defaulting to the highest (Gold, the
+  curated default). The chosen layer is enforced when the team discovers and profiles that dataset.
 - **Software — build governed apps, sovereign.** Describe an app in a Claude-style build chat;
   the agent writes and commits code to an in-cluster **Forgejo** repo (no GitHub, no tokens,
   your code never leaves). *Request deploy* assembles a review card — security scan, resource
@@ -308,8 +351,8 @@ Northpeak's campaign playbook lives in people's heads. Let's make it retrievable
 3. **Index & verify.** `index_knowledge` chunks and embeds the workflow into OpenSearch; a
    quick `search_knowledge` confirms it surfaces. Indexing is *not* automatic — this step is
    what makes it findable.
-4. **Publish.** A Builder publishes it Shared, so every domain agent can ground on it. Tacit
-   notes carry provenance, and agents must cite the source.
+4. **Publish.** A Builder publishes it to **Domain** scope, so every domain agent can ground on
+   it. Tacit notes carry provenance, and agents must cite the source.
 
 ## Golden path 3 — Agents: a governed team with real hands
 
@@ -319,8 +362,9 @@ and recommends a budget next-best-action.
 1. **Compose.** In **Agents**, Mara drags an *analysis* agent and a *recommendation* agent onto
    the React-Flow canvas (or edits `system.yaml` directly — same versioned file). Each agent's
    `AGENT.md` grounds it in the published campaign knowledge.
-2. **Grant resources + tools.** She grants the system the shared campaign datasets, the
-   knowledge workflow, and the `query_data` / `search_knowledge` tools. A validation gate must
+2. **Grant resources + tools.** In "What your team can use" she grants the system the
+   Domain-scope campaign datasets, the knowledge workflow, and the `query_data` /
+   `search_knowledge` tools, each at read-only. A validation gate must
    pass; a sub-agent's grants are always a strict subset of the system's.
 3. **Pick models.** The single **Auto / Reasoning / Execution** toggle shows the real gateway
    model names (`sovereign-reasoning`, `sovereign-default`) with an internal/external badge.
@@ -331,8 +375,13 @@ and recommends a budget next-best-action.
    OPA-pre-gated, role-floored. The team returns *INCREASE / CUT / HOLD budget for X days +
    reasoning*. A write pauses for approval and enqueues in **Governance** — the agent is
    *propose-don't-commit* by default.
-6. **Promote.** Once it's good, Mara files a promotion; a Builder shares it so the whole domain
-   can *run* it (but not edit it).
+6. **Evaluate — see what each agent actually used.** The **Evaluate** view attributes context
+   *per agent*: exactly which datasets, docs, files, metrics and connections each agent read,
+   how (tool + read/retrieved/written + a short args hint), each a **clickable deep link** that
+   opens the real artifact (switching scope so it's visible). A granted-vs-used strip flags dead
+   grants. So Mara can prove the team grounded on the campaign knowledge, not on thin air.
+7. **Promote.** Once it's good, Mara files a promotion; a Builder shares it (to Domain) so the
+   whole domain can *run* it (but not edit it).
 
 **Two runtimes, one governed plane.** A system picks **LangGraph** (the default — structured,
 replayable, human-in-the-loop) or the autonomous **Hermes** runtime for long-running work that
@@ -376,8 +425,8 @@ waving the call through.
 ## DLS — row & column security, independent of tier
 
 Document- and row-level security filter what you see **at query time, regardless of tier**.
-Promoting an artifact to a wider tier **never** widens row access — two viewers of the same
-Shared dataset see different rows. Every data-proxy route requires a session and scopes results
+Promoting an artifact to a wider scope **never** widens row access — two viewers of the same
+Domain-scope dataset see different rows. Every data-proxy route requires a session and scopes results
 to the caller's domains.
 
 ## Two policy layers, one inbox
@@ -766,10 +815,10 @@ The live STACKIT deployment doubles as the classroom for the **Agentic Leader Pr
 its setup is a worked example of the whole operating model. A cohort domain hosts the
 instructor as **Builder** plus the participants as **Creators** (each signs in with email as
 username), with a separate `test` domain for dry-runs. The **Northpeak Commerce
-campaign-optimization exercise** — the running example throughout this guide — is seeded
-**domain-Shared** through the platform's *own governed endpoints*: campaign datasets, knowledge
+campaign-optimization exercise** — the running example throughout this guide — is seeded at
+**Domain scope** through the platform's *own governed endpoints*: campaign datasets, knowledge
 documents, sample files, a ready-made Campaign Evaluation Agent, and a Campaign App. Because the
-materials are Shared, every participant can *use and run* them — but as Creators they cannot
+materials are Domain-scoped, every participant can *use and run* them — but as Creators they cannot
 edit them or promote their own work without a Builder. The exercise teaches the promotion ladder
 by living inside it.
 
@@ -799,14 +848,20 @@ image in-cluster (Forgejo CI) and deploy to a live per-app URL — end-to-end, n
 sidebar tab is a real, brand-themed surface with light/dark theming.
 
 **Connections** federate the outside world through one governed door: the tab lists connections
-(All/My/Shared/Marketplace, with app-generated MCP connections folded in), a **Supported
-Connectors** gallery, and **Talk to Connectors**. Supported today: Google Drive / OneDrive / Notion,
-the medallion **layer choice** on agent data grants, an admin-enabled **external-warehouse connector**
-(federate AWS Glue/Athena · Snowflake · BigQuery · Databricks/Delta, plus experimental Fabric/OneLake,
-through Trino — discover → register → import, no YAML), **Power BI** consumption via Cube's SQL API
-with a per-domain BI principal, an **Apache Airflow** connector (governed `trigger_dag`/monitor), and
-**OpenMetadata** (read/discover of a customer's existing catalog as a Connection). External connectors
-are off by default and validated against a live source with your own cloud credentials.
+(All/My/Domain/Company, with app-generated MCP connections folded in), a **grouped, searchable
+Supported Connectors** gallery, and **Talk to Connectors**. The catalogue spans **operational
+databases** (PostgreSQL · MySQL · SQL Server · MongoDB via Trino), **code & DevOps** (GitHub),
+**docs & knowledge** (Notion · Atlassian), **Supabase**, **messaging & calendar** (Slack · Gmail ·
+Google Calendar · Outlook · Teams — reads auto, sending approval-gated and never automatic),
+**cloud governance / ML** (Microsoft Entra · Purview · Azure AI Foundry · AWS SageMaker,
+read-only), data-ingest (Google Drive / OneDrive), the medallion **layer choice** on agent data
+grants, an admin-enabled **external-warehouse connector** (federate AWS Glue/Athena · Snowflake ·
+BigQuery · Databricks/Delta, plus experimental Fabric/OneLake, through Trino — discover → register
+→ import, no YAML), **Power BI** consumption via Cube's SQL API with a per-domain BI principal, an
+**Apache Airflow** connector (governed `trigger_dag`/monitor), and **OpenMetadata** (read/discover
+of a customer's existing catalog as a Connection). Secrets are write-only; setting up each
+connector's OAuth app / tokens is the operator's step (every connector ships an install guide).
+External connectors are off by default and validated against a live source with your own credentials.
 
 Shipped as explicitly-labeled Phase-1 slices (their next phases need new infra or your cloud
 credentials): Science's guided-train + real training runtime, OpenMetadata scoped write-back, a
