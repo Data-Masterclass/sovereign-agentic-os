@@ -18,6 +18,21 @@
 
 export type ToastTone = 'success' | 'error' | 'info';
 
+/**
+ * An optional call-to-action rendered as a button inside the toast. Either a
+ * navigation (`href`, e.g. the "Go to Policies & Approvals →" deep-link) or an
+ * inline handler (`onClick`, e.g. "Approve now"). `busy` marks an action that runs
+ * an async task with its own spinner→✓ feedback (the shell wires that). This is how
+ * the OS-wide "this needs approval" confirmation stays ONE primitive.
+ */
+export type ToastAction = {
+  label: string;
+  href?: string;
+  onClick?: () => void | Promise<unknown>;
+  /** Give the button the ActionButton busy→✓ treatment (for async onClick). */
+  busy?: boolean;
+};
+
 export type Toast = {
   id: string;
   tone: ToastTone;
@@ -25,6 +40,8 @@ export type Toast = {
   /** ms before auto-dismiss; 0 or undefined means "sticky, dismiss by hand". */
   duration: number;
   createdAt: number;
+  /** Optional actions (primary, then secondary) rendered as buttons in the pill. */
+  actions?: ToastAction[];
 };
 
 export type ToastInput = {
@@ -32,6 +49,8 @@ export type ToastInput = {
   message: string;
   /** Override the default dwell; pass 0 to make it sticky. */
   duration?: number;
+  /** Optional actions rendered in the pill (e.g. Policies link + Approve now). */
+  actions?: ToastAction[];
 };
 
 /** Most toasts that can stack at once — older ones fall off the top. */
@@ -44,9 +63,15 @@ export const DEFAULT_DURATION: Record<ToastTone, number> = {
   error: 6000,
 };
 
-/** Resolve the dwell for an input: explicit value wins, else the per-tone default. */
+/** A toast that carries actions needs long enough for the user to reach for a
+ *  button — it lingers before self-dismissing (still passive, never modal). */
+export const ACTION_DURATION = 9000;
+
+/** Resolve the dwell for an input: explicit value wins, else — if it carries
+ *  actions — the longer action dwell, else the per-tone default. */
 export function resolveDuration(input: ToastInput): number {
   if (input.duration !== undefined) return Math.max(0, input.duration);
+  if (input.actions && input.actions.length > 0) return ACTION_DURATION;
   return DEFAULT_DURATION[input.tone ?? 'success'];
 }
 
@@ -64,13 +89,17 @@ export function pushToast(
 ): Toast[] {
   const tone = input.tone ?? 'success';
   const last = queue[queue.length - 1];
-  if (last && last.tone === tone && last.message === input.message) return queue;
+  // Dedup identical newest toasts (double-click guard) — but never a toast that
+  // carries actions, since its buttons make it a distinct, interactive prompt.
+  const hasActions = !!input.actions && input.actions.length > 0;
+  if (!hasActions && last && last.tone === tone && last.message === input.message) return queue;
   const toast: Toast = {
     id,
     tone,
     message: input.message,
     duration: resolveDuration(input),
     createdAt: now,
+    ...(hasActions ? { actions: input.actions } : {}),
   };
   const next = [...queue, toast];
   return next.length > MAX_TOASTS ? next.slice(next.length - MAX_TOASTS) : next;

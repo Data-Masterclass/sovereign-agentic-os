@@ -9,6 +9,8 @@ import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { previewText } from '@/lib/files/preview';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
+import { useApprovalNotifier } from '@/components/lifecycle/useApprovalNotifier';
+import type { FiledApproval } from '@/lib/governance/approval-notice';
 import type { Visibility } from '@/lib/core/lifecycle';
 import { FolderPickerModal } from '@/components/core/FolderTree';
 import type { FolderPathNode } from '@/lib/core/folders';
@@ -52,6 +54,7 @@ function fresh(iso: string | null): string {
 
 export default function FilePreview({ id, onMutated, onClose }: { id: string; onMutated: () => void; onClose: () => void }) {
   const { user, isAdmin } = useUser();
+  const { notifyApprovalFiled } = useApprovalNotifier();
   const [view, setView] = useState<View | null>(null);
   const [err, setErr] = useState('');
   const [tagDraft, setTagDraft] = useState('');
@@ -101,8 +104,11 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
     const res = await fetch(`/api/files/${id}/promote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     const data = await res.json();
     if (!res.ok) { setErr(data.error ?? 'Could not request promotion'); return; }
+    // ONE OS-wide "this needs approval" confirmation (Policies link + inline approve).
+    const approval = data.approval as FiledApproval | undefined;
+    if (approval?.id) notifyApprovalFiled(approval, 'file', () => { void load(); onMutated(); });
     await load(); onMutated();
-  }, [id, load, onMutated]);
+  }, [id, load, onMutated, notifyApprovalFiled]);
 
   const certify = useCallback(async () => {
     setErr('');

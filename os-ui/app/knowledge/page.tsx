@@ -12,6 +12,8 @@ import { SCOPE_GROUPS, type ScopeKey } from '@/lib/core/scopes';
 import type { PersonalKnowledgeSummary } from '@/lib/knowledge/personal-store';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
+import { useApprovalNotifier } from '@/components/lifecycle/useApprovalNotifier';
+import type { FiledApproval } from '@/lib/governance/approval-notice';
 import DomainTag from '@/components/DomainTag';
 import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
 import TalkTo from '@/components/talk/TalkTo';
@@ -54,6 +56,7 @@ export default function KnowledgePage() {
 
 function KnowledgePageInner() {
   const searchParams = useSearchParams();
+  const { notifyApprovalFiled } = useApprovalNotifier();
   // Clicking the Knowledge sidebar link returns to this page root.
   useTabNavReset(() => {});
 
@@ -199,7 +202,10 @@ function KnowledgePageInner() {
       const res = await fetch(`/api/knowledge/personal/${id}/promote`, { method: 'POST' });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { setPkMsg(d.error ?? 'Could not promote.'); return; }
-      setPkMsg(d.requested ? 'Requested — an approver will review it.' : 'Promoted.');
+      setPkMsg(d.requested ? 'Requested — approve it in Policies & Approvals.' : 'Promoted.');
+      // ONE OS-wide "this needs approval" confirmation (Policies link + inline approve).
+      const approval = d.approval as FiledApproval | undefined;
+      if (d.requested && approval?.id) notifyApprovalFiled(approval, 'knowledge', () => { void loadPersonal(); });
       setTimeout(() => setPkMsg(''), 2500);
       await loadPersonal();
     } catch (e) { setPkMsg((e as Error).message); }

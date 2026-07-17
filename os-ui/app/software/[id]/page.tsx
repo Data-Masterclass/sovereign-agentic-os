@@ -12,6 +12,8 @@ import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import { useToolWindow } from '@/components/ToolWindowProvider';
 import { useApi } from '@/lib/useApi';
+import { useApprovalNotifier } from '@/components/lifecycle/useApprovalNotifier';
+import type { FiledApproval } from '@/lib/governance/approval-notice';
 import { getUrlParam, patchUrl } from '@/lib/core/url-params';
 import { roleAtLeast, type Role as SessionRole } from '@/lib/core/session';
 import DomainTag from '@/components/DomainTag';
@@ -125,6 +127,7 @@ export default function AppPage() {
   const params = useParams<{ id: string }>();
   const search = useSearchParams();
   const { openTool } = useToolWindow();
+  const { notifyApprovalFiled } = useApprovalNotifier();
   const id = params?.id;
   const { data, loading, error, reload } = useApi<Data>(`/api/apps/${id ?? ''}`);
 
@@ -170,8 +173,12 @@ export default function AppPage() {
             ? '✓ Preview running — open the app UI above.'
             : '✓ Preview requested — the in-cluster runner is provisioning; the URL appears once the pod is ready (or stays pending if no cluster is reachable).',
         );
-      else if (body.kind === 'review') setDeployMsg('✓ Sent to a Builder for review (see Deploy reviews).');
-      else setDeployMsg('✓ Routine update — published within the approved envelope.');
+      else if (body.kind === 'review') {
+        setDeployMsg('✓ Deploy review filed — approve it in Policies & Approvals.');
+        // ONE OS-wide "this needs approval" confirmation (Policies link + inline approve).
+        const approval = body.approval as FiledApproval | undefined;
+        if (approval?.id) notifyApprovalFiled(approval, 'app deploy', reload);
+      } else setDeployMsg('✓ Routine update — published within the approved envelope.');
       reload();
     } catch (e) {
       setDeployMsg((e as Error).message);

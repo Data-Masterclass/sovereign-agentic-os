@@ -16,7 +16,7 @@
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { pushToast, dismissToast, type Toast, type ToastInput, type ToastTone } from '@/lib/core/toast';
+import { pushToast, dismissToast, type Toast, type ToastAction, type ToastInput, type ToastTone } from '@/lib/core/toast';
 
 type ToastApi = {
   /** Low-level: push any toast. */
@@ -113,16 +113,98 @@ const NOOP: ToastApi = {
 const ICON: Record<ToastTone, string> = { success: '✓', error: '!', info: 'i' };
 
 function ToastCard({ toast, onClose }: { toast: Toast; onClose: () => void }) {
+  const actions = toast.actions ?? [];
   return (
-    <div className={`toast toast-${toast.tone}`} role="status">
-      <span className="toast-icon" aria-hidden>
-        {ICON[toast.tone]}
-      </span>
-      <span className="toast-msg">{toast.message}</span>
-      <button type="button" className="toast-close" onClick={onClose} aria-label="Dismiss">
-        ×
-      </button>
+    <div className={`toast toast-${toast.tone}${actions.length ? ' toast-actionable' : ''}`} role="status">
+      <div className="toast-body">
+        <span className="toast-icon" aria-hidden>
+          {ICON[toast.tone]}
+        </span>
+        <span className="toast-msg">{toast.message}</span>
+        <button type="button" className="toast-close" onClick={onClose} aria-label="Dismiss">
+          ×
+        </button>
+      </div>
+      {actions.length > 0 && (
+        <div className="toast-actions">
+          {actions.map((a, i) => (
+            <ToastActionButton key={i} action={a} primary={i === 0} onDone={onClose} />
+          ))}
+        </div>
+      )}
     </div>
+  );
+}
+
+/**
+ * One action button inside a toast. A plain `href` navigates (client push) and
+ * dismisses the toast. An async `onClick` marked `busy` gets the ActionButton
+ * dance — spinner while pending, a brief ✓, then it closes the toast on success.
+ */
+function ToastActionButton({
+  action,
+  primary,
+  onDone,
+}: {
+  action: ToastAction;
+  primary: boolean;
+  onDone: () => void;
+}) {
+  const [phase, setPhase] = useState<'idle' | 'pending' | 'done'>('idle');
+  const alive = useRef(true);
+  useEffect(() => () => {
+    alive.current = false;
+  }, []);
+
+  const cls = `btn sm${primary ? '' : ' ghost'}`;
+
+  const run = useCallback(async () => {
+    if (phase === 'pending') return;
+    if (action.href) {
+      // Full-page-safe: use a hard nav only if the router isn't handy. We keep it
+      // simple and just navigate the location — the Policies tab is a top-level route.
+      window.location.assign(action.href);
+      onDone();
+      return;
+    }
+    if (!action.onClick) return;
+    if (!action.busy) {
+      await action.onClick();
+      onDone();
+      return;
+    }
+    setPhase('pending');
+    try {
+      await action.onClick();
+      if (!alive.current) return;
+      setPhase('done');
+      setTimeout(() => {
+        if (alive.current) onDone();
+      }, 900);
+    } catch {
+      if (alive.current) setPhase('idle');
+      // The onClick owns its own error toast; we just settle back to idle.
+    }
+  }, [action, phase, onDone]);
+
+  return (
+    <button
+      type="button"
+      className={cls}
+      onClick={run}
+      disabled={phase === 'pending'}
+      aria-busy={phase === 'pending'}
+    >
+      {phase === 'pending' ? (
+        <span className="spin" />
+      ) : phase === 'done' ? (
+        <span className="ab-done" aria-hidden>
+          ✓
+        </span>
+      ) : (
+        action.label
+      )}
+    </button>
   );
 }
 

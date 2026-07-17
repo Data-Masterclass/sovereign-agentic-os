@@ -15,6 +15,22 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.31] — 2026-07-17
+
+### Added
+- **A consistent "needs approval" experience across the whole OS.** Whenever an action files an
+  approval request (promote/certify Files, Data, Knowledge, Metrics, Dashboards, Science; software
+  deploy), you get one calm confirmation — "Request filed — awaiting approval to Domain/Company" —
+  with a **Go to Policies & Approvals →** button that deep-links to and highlights the exact request.
+  If you're an admin who can approve it, an **Approve now** button approves it inline (fail-closed:
+  non-approvers never see it; the server re-checks).
+
+### Changed
+- **The Agent-tab PDF reports are now on-brand.** The Run "Results Report" and Evaluate "Evaluation
+  Report" are fully redesigned to the datamasterclass style — embedded Marcellus/Rubik/Oswald/Fraunces
+  fonts, a gold-lotus cover, gold section rules, styled tables, and a running footer. Same content,
+  far better looking.
+
 ## [os-ui 0.5.30] — 2026-07-17
 
 ### Fixed

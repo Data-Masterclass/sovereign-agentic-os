@@ -3,7 +3,8 @@
  */
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import ApprovalsInbox from '@/components/governance/ApprovalsInbox';
@@ -28,6 +29,18 @@ const SECTION_ANCHOR: Partial<Record<Section, string>> = {
 };
 
 export default function GovernancePage() {
+  return (
+    <Suspense fallback={null}>
+      <GovernancePageInner />
+    </Suspense>
+  );
+}
+
+function GovernancePageInner() {
+  const searchParams = useSearchParams();
+  // A deep-link from a tab's "Go to Policies & Approvals →" carries ?focus=<id>
+  // so we land on the inbox and highlight the just-filed request.
+  const focus = searchParams?.get('focus') ?? null;
   const [section, setSection] = useState<Section>('inbox');
 
   return (
@@ -51,7 +64,7 @@ export default function GovernancePage() {
           ))}
         </div>
 
-        {section === 'inbox' && <ApprovalsInbox />}
+        {section === 'inbox' && <ApprovalsInbox focusId={focus} />}
         {section === 'policies' && <PoliciesView />}
         {section === 'audit' && <AuditLog />}
         {section === 'cost' && <CostLimits />}

@@ -8,6 +8,7 @@ import {
   dismissToast,
   resolveDuration,
   DEFAULT_DURATION,
+  ACTION_DURATION,
   MAX_TOASTS,
   type Toast,
 } from './toast.ts';
@@ -58,6 +59,29 @@ test('dismissToast removes only the matching id', () => {
 test('dismissToast on a missing id is a no-op', () => {
   const q = pushToast([], { message: 'one' }, 1, 'a');
   assert.deepEqual(dismissToast(q, 'zzz'), q);
+});
+
+test('a toast carrying actions is kept (not deduped) and lingers for ACTION_DURATION', () => {
+  const actions = [{ label: 'Go to Policies & Approvals →', href: '/governance' }];
+  let q = pushToast([], { tone: 'info', message: 'Request filed', actions }, 1, 'a');
+  // Same message+tone again — but WITH actions it is a distinct interactive prompt,
+  // so it is NOT deduped away.
+  q = pushToast(q, { tone: 'info', message: 'Request filed', actions }, 2, 'b');
+  assert.equal(q.length, 2);
+  assert.deepEqual(q[0].actions, actions);
+  assert.equal(q[0].duration, ACTION_DURATION);
+});
+
+test('resolveDuration: an actioned toast defaults to ACTION_DURATION', () => {
+  assert.equal(
+    resolveDuration({ message: 'x', actions: [{ label: 'Approve now' }] }),
+    ACTION_DURATION,
+  );
+  // An explicit duration still wins over the action default.
+  assert.equal(
+    resolveDuration({ message: 'x', actions: [{ label: 'Approve now' }], duration: 500 }),
+    500,
+  );
 });
 
 test('resolveDuration: explicit wins, else per-tone default, 0 stays sticky', () => {

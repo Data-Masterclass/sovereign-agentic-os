@@ -25,7 +25,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useConfirm } from './ConfirmDialog';
 import { useToast } from '@/components/core/Toast';
+import { useApprovalNotifier } from './useApprovalNotifier';
 import { promoteVerb } from '@/lib/core/scopes';
+import type { FiledApproval } from '@/lib/governance/approval-notice';
 
 export type PromoteTier = 'Personal' | 'Shared' | 'Marketplace';
 
@@ -53,6 +55,7 @@ export default function PromoteButton({
 }) {
   const confirm = useConfirm();
   const toast = useToast();
+  const { notifyApprovalFiled } = useApprovalNotifier();
   const [busy, setBusy] = useState(false);
   const [requested, setRequested] = useState(false);
   const [err, setErr] = useState('');
@@ -112,7 +115,17 @@ export default function PromoteButton({
       }
       if ((data as { requested?: boolean }).requested) {
         setRequested(true);
-        toast.info(`Request filed — a domain admin will review this ${kind}`);
+        // ONE OS-wide "this needs approval" confirmation: names Policies & Approvals,
+        // links there, and (if this user can) offers Approve now inline.
+        const approval = (data as { approval?: FiledApproval }).approval;
+        if (approval?.id) {
+          notifyApprovalFiled(approval, kind, () => {
+            setRequested(false);
+            onDone?.();
+          });
+        } else {
+          toast.info(`Request filed — approve this ${kind} in Policies & Approvals.`);
+        }
         return;
       }
       toast.success(isCertify ? `${text} — done` : `${kind} promoted to ${isCertify ? 'Company' : 'Domain'}`);
@@ -124,15 +137,20 @@ export default function PromoteButton({
     } finally {
       setBusy(false);
     }
-  }, [confirm, isCertify, kind, promoteUrl, onDone, toast, text]);
+  }, [confirm, isCertify, kind, promoteUrl, onDone, toast, text, notifyApprovalFiled]);
 
   // Top of the ladder — nothing to promote.
   if (tier === 'Marketplace') return null;
 
   if (requested) {
     return (
-      <span className="pill" title="A domain admin will review this in Governance" style={{ textTransform: 'none', letterSpacing: 0 }}>
-        ⏳ Requested — awaiting a domain admin&apos;s approval
+      <span className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span className="pill" title="Awaiting approval in Policies & Approvals" style={{ textTransform: 'none', letterSpacing: 0 }}>
+          ⏳ Requested — awaiting approval
+        </span>
+        <a className="btn ghost sm" href="/governance" style={{ textDecoration: 'none' }}>
+          Policies &amp; Approvals →
+        </a>
       </span>
     );
   }

@@ -15,6 +15,8 @@ import BronzePanel from './BronzePanel';
 import MetricsPanel from './MetricsPanel';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
+import { useApprovalNotifier } from '@/components/lifecycle/useApprovalNotifier';
+import type { FiledApproval } from '@/lib/governance/approval-notice';
 import DomainTag from '@/components/DomainTag';
 import type { Visibility } from '@/lib/core/lifecycle';
 
@@ -214,6 +216,7 @@ export default function DatasetDetail({
   onOpenStepper: (id: string) => void;
 }) {
   const { user } = useUser();
+  const { notifyApprovalFiled } = useApprovalNotifier();
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [checks, setChecks] = useState<DataCheck[]>([]);
   const [loadErr, setLoadErr] = useState('');
@@ -314,9 +317,11 @@ export default function DatasetDetail({
       });
       const data = await res.json();
       if (!res.ok) { setShareErr(data.error ?? 'Could not request promotion'); return; }
+      const approval = data.approval as FiledApproval | undefined;
+      if (approval?.id) notifyApprovalFiled(approval, 'dataset', () => { void Promise.all([loadPromote(), load()]); });
       await Promise.all([loadPromote(), load()]);
     } catch (e) { setShareErr((e as Error).message); } finally { setShareBusy(false); }
-  }, [datasetId, loadPromote, load]);
+  }, [datasetId, loadPromote, load, notifyApprovalFiled]);
 
   // An Admin certifies a Shared asset to the marketplace directly; a Creator/Builder
   // files a certification request for an Admin to approve.
@@ -328,9 +333,13 @@ export default function DatasetDetail({
       });
       const data = await res.json();
       if (!res.ok) { setShareErr(data.error ?? 'Could not certify'); return; }
+      // A Creator/Builder's certify REQUEST files an approval (admin gate); an
+      // Admin's direct certify returns { dataset } and skips the notice.
+      const approval = data.approval as FiledApproval | undefined;
+      if (approval?.id) notifyApprovalFiled(approval, 'dataset', () => { void Promise.all([loadPromote(), load()]); });
       await Promise.all([loadPromote(), load()]);
     } catch (e) { setShareErr((e as Error).message); } finally { setShareBusy(false); }
-  }, [datasetId, loadPromote, load]);
+  }, [datasetId, loadPromote, load, notifyApprovalFiled]);
 
   // Best-effort: surface this dataset's OpenMetadata entry (deep link) from the
   // catalog union. A missing catalog/OM never blocks the detail view.

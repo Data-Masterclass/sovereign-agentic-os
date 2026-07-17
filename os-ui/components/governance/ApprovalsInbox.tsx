@@ -3,7 +3,7 @@
  */
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { roleAtLeast } from '@/lib/core/session';
@@ -29,7 +29,7 @@ type Approval = {
   requestedBy: string;
   tool: string;
   payload: unknown;
-  approverRole: 'builder' | 'admin';
+  approverRole: 'builder' | 'domain_admin' | 'admin';
   scope: 'own' | 'domain' | 'tenant';
   rememberable: boolean;
   source: string;
@@ -50,11 +50,12 @@ function StatusBadge({ s }: { s: Approval['status'] }) {
 
 const PREVIEW_KEYS = ['what', 'who', 'why', 'impact'] as const;
 
-export default function ApprovalsInbox() {
+export default function ApprovalsInbox({ focusId = null }: { focusId?: string | null }) {
   const { user } = useUser();
   const [items, setItems] = useState<Approval[] | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const focusRef = useRef<HTMLDivElement | null>(null);
 
   const isBuilderOrAdmin = !!user && roleAtLeast(user.role, 'builder');
 
@@ -73,6 +74,14 @@ export default function ApprovalsInbox() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Deep-link focus: once the queue is in, scroll the just-filed request into
+  // view (a tab's "Go to Policies & Approvals →" carried ?focus=<id>).
+  useEffect(() => {
+    if (focusId && items && focusRef.current) {
+      focusRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [focusId, items]);
 
   const decide = useCallback(
     async (id: string, decision: 'approve' | 'reject', remember?: boolean) => {
@@ -142,12 +151,17 @@ export default function ApprovalsInbox() {
                 ? 'var(--danger)'
                 : 'var(--gold)';
             const isBusy = busy.startsWith(a.id + ':');
+            const isFocused = focusId === a.id;
 
             return (
               <div
                 key={a.id}
-                className="card"
-                style={{ borderLeft: `3px solid ${accentColor}` }}
+                ref={isFocused ? focusRef : undefined}
+                className={`card${isFocused ? ' focus-ring' : ''}`}
+                style={{
+                  borderLeft: `3px solid ${accentColor}`,
+                  ...(isFocused ? { boxShadow: '0 0 0 2px var(--gold)' } : {}),
+                }}
               >
                 {/* Header */}
                 <div
@@ -411,6 +425,8 @@ export default function ApprovalsInbox() {
                       <span className="muted" style={{ fontSize: 12 }}>
                         {a.approverRole === 'admin'
                           ? 'Needs an Admin'
+                          : a.approverRole === 'domain_admin'
+                          ? `Needs a Domain admin of ${a.domain}`
                           : `Needs a Builder of ${a.domain}`}
                       </span>
                     )}

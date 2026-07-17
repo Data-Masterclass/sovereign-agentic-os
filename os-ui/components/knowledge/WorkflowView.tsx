@@ -15,6 +15,8 @@ import HandoverPanel from './HandoverPanel';
 import { commitWorkflow } from './commitWorkflow';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
+import { useApprovalNotifier } from '@/components/lifecycle/useApprovalNotifier';
+import type { FiledApproval } from '@/lib/governance/approval-notice';
 import DomainTag from '@/components/DomainTag';
 import { addStep } from '@/lib/knowledge/step-edit';
 import { buildWorkflowReport, workflowPdfFilename } from '@/lib/knowledge/workflow-pdf';
@@ -77,6 +79,7 @@ export default function WorkflowView({
   workflowId: string;
   onBack: () => void;
 }) {
+  const { notifyApprovalFiled } = useApprovalNotifier();
   const [data, setData] = useState<WorkflowData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -305,8 +308,11 @@ export default function WorkflowView({
       if (!res.ok) { setPubError(d.error ?? 'Failed'); return; }
       if (d.requested) {
         setPubMsg(action === 'certify'
-          ? 'Certification requested — a platform admin will review it.'
-          : 'Promotion requested — a domain builder will review it.');
+          ? 'Certification requested — approve it in Policies & Approvals.'
+          : 'Promotion requested — approve it in Policies & Approvals.');
+        // ONE OS-wide "this needs approval" confirmation (Policies link + inline approve).
+        const approval = d.approval as FiledApproval | undefined;
+        if (approval?.id) notifyApprovalFiled(approval, 'workflow', () => { void reload(); });
         return;
       }
       setPubMsg(`Workflow is now ${d.visibility === 'Marketplace' ? 'certified company-wide' : 'live'}.`);

@@ -210,9 +210,13 @@ export async function startPreview(appId: string, user: CurrentUser): Promise<Ap
 
 // ---------------------------------------------------------- Request deploy -----
 
+/** The just-filed Governance approval, minimally described for the UI's shared
+ *  "this needs approval" notice (Policies & Approvals link + inline-approve gate). */
+export type FiledApprovalRef = { id: string; domain: string; approverRole: 'builder' | 'domain_admin' | 'admin'; scope: 'own' | 'domain' | 'tenant' };
+
 export type DeployRequestResult =
   | { kind: 'auto-deployed'; app: App }
-  | { kind: 'review'; app: App; card: ReviewCard };
+  | { kind: 'review'; app: App; card: ReviewCard; approval: FiledApprovalRef };
 
 /**
  * Request a domain deploy. Routine in-envelope updates to an already-live app
@@ -280,7 +284,7 @@ export async function requestDeploy(
   await persistApp(app);
 
   // Surface in the Governance inbox so a Domain admin sees it alongside other holds.
-  enqueue({
+  const approval = enqueue({
     kind: 'app_deploy',
     title: `Deploy review: ${app.name}`,
     detail:
@@ -303,7 +307,12 @@ export async function requestDeploy(
     output: { cardId: card.id, scanPassed: scan.passed },
     decision: scan.passed ? 'requires_approval' : 'deny',
   });
-  return { kind: 'review', app, card };
+  return {
+    kind: 'review',
+    app,
+    card,
+    approval: { id: approval.id, domain: approval.domain, approverRole: approval.approverRole, scope: approval.scope },
+  };
 }
 
 // ----------------------------------------------------------- Decide deploy -----
