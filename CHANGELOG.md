@@ -15,6 +15,24 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.30] — 2026-07-17
+
+### Fixed
+- **Agents added from a template now inherit datasets granted afterwards.** Root cause of "granted
+  in Define but the agent still gets denied `query_data`/`get_dataset`": adding a template agent
+  froze its tool set to a snapshot of the grants at that moment, so any dataset granted *later* in
+  Define never reached it. Template agents now inherit the growing grant pool like blank agents do —
+  every agent defaults to the full set of the system's Define grants, with per-agent narrowing still
+  available. (The data-authorization layer itself was verified healthy end-to-end.)
+- **Approving a software release in Policies & Approvals now clears "awaiting review."** The
+  governance effect had no handler for software deploys, so an approval updated the queue but never
+  the release. Approve now takes the release live; reject returns it to preview — durably, from
+  either entry point.
+
+### Changed
+- **The Software builder uses the shared progress stepper** (same as Agents Build/Run): the real
+  pipeline stages — Scaffold → Build image → Publish → Deploy → Live — light up in turn.
+
 ## [os-ui 0.5.29] — 2026-07-17
 
 ### Fixed

@@ -58,6 +58,28 @@ export async function POST(req: Request) {
   if (!updated) return NextResponse.json({ error: 'Could not decide' }, { status: 500 });
 
   if (decision === 'reject') {
+    // A Software deploy-review reject must ALSO write back to the release record —
+    // flip the app's deploy state review → preview so the Software app shows the
+    // deploy was rejected (back to the free preview loop), not stuck "awaiting
+    // review". Same seam the Software UI's deny uses; best-effort (audited on fail).
+    if (updated.kind === 'app_deploy') {
+      const cardId = String((updated.payload as { cardId?: string })?.cardId ?? '');
+      const decideDeploy = buildEffectDeps().decideDeploy;
+      if (cardId && decideDeploy) {
+        try {
+          await decideDeploy(cardId, { id: user.id, role: user.role, domains: user.domains }, 'deny');
+        } catch (e) {
+          audit({
+            actor: user.id,
+            action: 'deny',
+            subject: updated.tool || updated.kind,
+            domain: updated.domain,
+            reason: `Deploy reject write-back failed: ${(e as Error).message}`,
+            detail: { approvalId: updated.id, cardId, error: (e as Error).message },
+          });
+        }
+      }
+    }
     audit({
       actor: user.id,
       action: 'deny',

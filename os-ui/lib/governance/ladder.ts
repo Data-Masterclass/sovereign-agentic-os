@@ -18,6 +18,7 @@ import { getModel } from '@/lib/science';
 import { getArtifact, promoteArtifact, demoteArtifact } from '@/lib/core/artifacts';
 import { getAppForUser, promoteApp } from '@/lib/software/apps';
 import { demoteApp } from '@/lib/software/lifecycle';
+import { decideDeploy } from '@/lib/software/review';
 import { getSystem, demoteSystem } from '@/lib/agents/store';
 
 /**
@@ -201,6 +202,10 @@ export function buildEffectDeps(): EffectDeps {
     promoteApp: async (id, approver) => {
       const app = await promoteApp(id, asCurrentUser(approver));
       return { id: app.id, name: app.name, visibility: app.visibility };
+    },
+    decideDeploy: async (cardId, approver, decision) => {
+      const { app } = await decideDeploy(cardId, asCurrentUser(approver), decision);
+      return { appName: app.name, state: app.deploy.state, live: app.pipeline.live === 'ok' };
     },
     applyOmSync: async (payload, approver) => {
       const user = asCurrentUser(approver);

@@ -237,6 +237,23 @@ test('executor: an allowed tool dispatches as the ACTING USER (not the service p
   assert.equal(call.req.params.name, 'search_knowledge');
 });
 
+test('executor: a granted data read (get_dataset) is AUTHORIZED for the run — dispatched as the user, not denied', async () => {
+  // The reported runtime data-plane deny root cause: a granted dataset must be
+  // authorized for the agent's run. The agent path authorizes a data READ under the
+  // ACTING USER (Gate 2 = handleRpc(user) → OPA `query` + DLS canView), never a
+  // service principal — so a runner who can see the dataset is ALLOWED, not denied.
+  // This asserts the read reaches the governed door (allow), threading `user:<id>`.
+  const deps = spyDeps();
+  const exec = grantedToolExecutor(CREATOR, sysWith(['query_data']), 'sys1', deps); // query_data auto-grants get_dataset
+  const res = await exec('get_dataset', { datasetId: 'ds_granted' });
+  assert.equal(res.isError, false, 'a granted data read is NOT denied at the agent gate');
+  assert.equal(deps.calls.handleRpc.length, 1, 'it reaches the governed dispatch (authorized for the run)');
+  const call = deps.calls.handleRpc[0] as { user: CurrentUser; req: { params: { name: string; arguments: { datasetId: string } } } };
+  assert.equal(call.user.id, 'u1', 'authorized under the ACTING USER (user:<id>), never os-sys1');
+  assert.equal(call.req.params.name, 'get_dataset');
+  assert.equal(call.req.params.arguments.datasetId, 'ds_granted', 'the granted dataset id is the one the tool resolves');
+});
+
 test('executor: a creator hits a typed forbidden on a builder-floor tool (real role floor)', async () => {
   // `get_policy_view` is a builder-floor READ tool: it passes Gate 1 (granted) and
   // Gate 1b (not a write hold), so it reaches the REAL handleRpc — whose role floor

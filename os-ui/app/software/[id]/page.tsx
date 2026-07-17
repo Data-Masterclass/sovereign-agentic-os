@@ -15,6 +15,7 @@ import { useApi } from '@/lib/useApi';
 import { getUrlParam, patchUrl } from '@/lib/core/url-params';
 import { roleAtLeast, type Role as SessionRole } from '@/lib/core/session';
 import DomainTag from '@/components/DomainTag';
+import ProgressStepper, { type Step, type StepState } from '@/components/core/ProgressStepper';
 
 type Visibility = 'Personal' | 'Shared' | 'Certified';
 type Tool = { name: string; description: string; write: boolean };
@@ -54,18 +55,49 @@ type Connection = { id: string; name: string; principal: string; visibility: Vis
 type Data = { user: { id: string; role: SessionRole }; app: App; connection: Connection };
 
 const STAGES = ['forgejo', 'actions', 'harbor', 'argocd', 'live'] as const;
-const STAGE_LABEL: Record<string, string> = {
-  forgejo: 'Forgejo',
-  actions: 'CI',
-  harbor: 'Harbor',
-  argocd: 'Argo CD',
-  live: 'Live',
+
+/**
+ * The REAL software build/deploy pipeline stages, honestly labelled for the shared
+ * <ProgressStepper> — the same fancy progress UX the Agents Build/Run phases wear:
+ * scaffold the repo → build the image (CI) → publish to the registry → deploy →
+ * live/health. Harbor is a default-off heavy workload (`disabled`); when off it is
+ * shown as a skipped/done step (CI uses Forgejo's registry locally), never a failure.
+ */
+const STAGE_STEP_LABEL: Record<(typeof STAGES)[number], string> = {
+  forgejo: 'Scaffold repo',
+  actions: 'Build image (CI)',
+  harbor: 'Publish to registry',
+  argocd: 'Deploy',
+  live: 'Live / health',
 };
-function stageClass(s: string): string {
-  if (s === 'ok') return 'badge ok';
-  if (s === 'pending') return 'badge warn';
-  if (s === 'disabled') return 'badge muted';
-  return 'badge err';
+
+/**
+ * Map the pipeline's per-stage status (`ok | pending | offline | disabled`) onto the
+ * stepper's states, driven by ACTUAL status — not a timer:
+ *   • ok        → done (teal ✓)
+ *   • offline   → fail (red ✗ — a real stage failure/unreachable)
+ *   • disabled  → done (skipped — Harbor off is not a failure)
+ *   • pending   → active (the FIRST pending stage) then pending for the rest.
+ * Settlement is honest: all ✓ once every stage is ok/skipped; ✗ on the failing stage.
+ */
+function pipelineSteps(pipeline: Record<string, string>): { steps: Step[]; active: boolean; done: boolean; ok: boolean } {
+  let firstPendingSeen = false;
+  const steps: Step[] = STAGES.map((s) => {
+    const status = pipeline[s] ?? 'pending';
+    let state: StepState;
+    if (status === 'ok' || status === 'disabled') state = 'done';
+    else if (status === 'offline') state = 'fail';
+    else {
+      // pending — the first one is the live "in-flight" step; the rest wait.
+      state = firstPendingSeen ? 'pending' : 'active';
+      firstPendingSeen = true;
+    }
+    return { key: s, label: STAGE_STEP_LABEL[s], state };
+  });
+  const anyFail = steps.some((st) => st.state === 'fail');
+  const anyPending = steps.some((st) => st.state === 'active' || st.state === 'pending');
+  const done = anyFail || !anyPending; // settled: a failure, or nothing left in flight
+  return { steps, active: !done, done, ok: !anyFail };
 }
 function visBadge(v: Visibility): string {
   return `badge vis-${v.toLowerCase()}`;
@@ -348,11 +380,24 @@ export default function AppPage() {
               </div>
 
               <div className="sw-health">
-                {STAGES.map((s) => (
-                  <span key={s} className={stageClass(app.pipeline[s] ?? 'pending')}>
-                    {STAGE_LABEL[s]}: {app.pipeline[s] ?? 'pending'}
-                  </span>
-                ))}
+                {(() => {
+                  const p = pipelineSteps(app.pipeline);
+                  return (
+                    <ProgressStepper
+                      steps={p.steps}
+                      active={p.active}
+                      done={p.done}
+                      ok={p.ok}
+                      commentary={
+                        p.done
+                          ? p.ok
+                            ? 'Build & deploy complete.'
+                            : 'A build/deploy stage did not complete — see the marked stage.'
+                          : 'Building & deploying…'
+                      }
+                    />
+                  );
+                })()}
               </div>
 
               {(surface.api && showApi) ? (

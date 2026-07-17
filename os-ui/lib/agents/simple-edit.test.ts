@@ -12,6 +12,7 @@ import {
 } from './simple-edit.ts';
 import { toolsForCapabilityChipsInPool } from './capability-tools.ts';
 import { instructionsOf } from './agent-md.ts';
+import { compile } from './langgraph-compile.ts';
 
 const BASE = `
 system: { name: Desk, domain: sales, visibility: Personal }
@@ -364,4 +365,75 @@ edges:
   const chained = linearizeChain(sys);
   const e = chained.edges.find((x) => x.from === 'a' && x.to === 'b')!;
   assert.equal(e.when, 'A complete', 'label carried through the re-chain');
+});
+
+// --- Full inheritance: a dataset granted in Define reaches an EARLIER-added agent ----
+// The runtime data-plane deny root cause was NOT the OPA/DLS layer (a granted dataset
+// authorizes for a runner who can see it) but that a fresh agent could be FROZEN to a
+// tool snapshot taken before the dataset grant — so its node never saw query_data/
+// get_dataset and the granted dataset was unusable for it. A freshly added agent must
+// therefore INHERIT the full, growing grant pool (agent.tools stays undefined), so a
+// data grant added LATER in Define reaches it. This is what the run path compiles into
+// the node's tool set (`compile()` → node.tools = agent.tools ?? grants.tools).
+
+/** The full BASE (blank pool) + one added agent whose tools stay undefined (inherits). */
+const INHERIT_BASE = `
+system: { name: Team, domain: sales, visibility: Personal }
+grants: { tools: [] }
+`;
+
+test('a fresh agent (no explicit tools) inherits a dataset granted LATER in Define', () => {
+  // 1) Add the agent FIRST (Design), when the pool has no data tools yet.
+  let sys = addSimpleAgent(parseSystem(INHERIT_BASE), { role: 'Analyst', instructions: 'Analyze.' });
+  const agentId = sys.agents[sys.agents.length - 1].id;
+  assert.equal(sys.agents[0].tools, undefined, 'a fresh agent carries NO explicit tools (full inheritance)');
+
+  // 2) THEN grant a dataset in Define — this grows the team pool with the data tools.
+  sys = setArtifactGrant(sys, 'data', 'ds_granted', false);
+  const pool = new Set(sys.grants.tools);
+  for (const t of ['query_data', 'list_datasets', 'get_dataset', 'profile_dataset']) {
+    assert.ok(pool.has(t), `Define data grant provisions ${t} into the team pool`);
+  }
+
+  // 3) The agent STILL has no explicit tools, so the run path compiles the FULL pool
+  //    onto its node — query_data/get_dataset are now authorized for its run.
+  assert.equal(
+    sys.agents.find((a) => a.id === agentId)!.tools,
+    undefined,
+    'the earlier-added agent is not frozen — it still inherits the whole pool',
+  );
+  const node = compile(sys).nodes.find((n) => n.id === agentId)!;
+  for (const t of ['query_data', 'get_dataset', 'list_datasets', 'profile_dataset']) {
+    assert.ok(node.tools.includes(t), `run-time node holds ${t} from the inherited pool`);
+  }
+});
+
+test('addSystemTool grows the pool WITHOUT freezing an inheriting agent (template add-path)', () => {
+  // The Design template add-path adds each suggestedTool to the POOL (addSystemTool),
+  // leaving the new agent inheriting — so a later data grant is not missed. Contrast
+  // with addAgentTool, which freezes the agent to the current pool snapshot.
+  let sys = addSimpleAgent(parseSystem(INHERIT_BASE), { role: 'Analyst', instructions: 'x' });
+  const agentId = sys.agents[0].id;
+  // Template suggests query_data → goes into the pool only (agent stays inheriting).
+  sys = addSystemTool(sys, 'query_data');
+  assert.ok(sys.grants.tools.includes('query_data'), 'suggested tool lands in the team pool');
+  assert.equal(sys.agents[0].tools, undefined, 'the new agent is NOT frozen — still inherits');
+
+  // A dataset granted afterwards still reaches the agent (proves no snapshot freeze).
+  sys = setArtifactGrant(sys, 'data', 'ds_later', false);
+  const node = compile(sys).nodes.find((n) => n.id === agentId)!;
+  assert.ok(node.tools.includes('get_dataset'), 'a later Define grant reaches the inheriting agent');
+});
+
+test('CONTRAST: addAgentTool freezes an agent so a LATER grant is missed (why we avoid it on add)', () => {
+  // This pins the exact failure the fix avoids: freezing the agent to the pool snapshot
+  // means a dataset granted afterwards never reaches its node → effective run-time deny.
+  let sys = addSimpleAgent(parseSystem(INHERIT_BASE), { role: 'Analyst', instructions: 'x' });
+  const agentId = sys.agents[0].id;
+  sys = addAgentTool(sys, agentId, 'search_knowledge'); // freezes the agent to the pool snapshot
+  assert.ok(Array.isArray(sys.agents[0].tools), 'addAgentTool makes the agent tools explicit (frozen)');
+
+  sys = setArtifactGrant(sys, 'data', 'ds_missed', false); // grows the pool AFTER the freeze
+  const node = compile(sys).nodes.find((n) => n.id === agentId)!;
+  assert.ok(!node.tools.includes('get_dataset'), 'a frozen agent MISSES the later data grant (the bug we fixed on add)');
 });

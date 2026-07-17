@@ -12,7 +12,7 @@ import { instructionsOf } from '@/lib/agents/agent-md';
 import {
   addSimpleAgent, moveAgent, removeAgentSimple,
   setAgentInstructions, setAgentRole, setArtifactGrant, removeArtifactGrant,
-  setDescription, addAgentTool, setDataGrantLayer,
+  setDescription, addSystemTool, setDataGrantLayer,
   setFolderGrant, removeFolderGrant, setArtifactGrantLevel, setFolderGrantLevel,
 } from '@/lib/agents/simple-edit';
 import {
@@ -505,19 +505,23 @@ function DesignStep({
 }) {
   const [picking, setPicking] = useState(false);
 
-  // Add a curated template: create the agent, then apply its suggested tools that the
-  // caller's role-floor catalog allows (never grant a tool outside the catalog). The
-  // agent's ROLE is its name — prefill it with the template's name (e.g. "Analyst"),
-  // which the user can overwrite in the card; the descriptive prose lives in the
-  // instructions. "Blank" keeps its generic "A helpful assistant" role.
+  // Add a curated template: create the agent, then make sure its suggested tools exist
+  // in the TEAM POOL (catalog-permitting — never a tool outside the caller's role floor).
+  // A fresh agent is left with NO explicit `tools` so it INHERITS THE FULL, GROWING team
+  // grant pool (matching the blank/marketplace add-paths): a dataset granted later in
+  // Define reaches it automatically. We add suggested tools to the pool (not to the
+  // agent) so we never freeze the agent to a snapshot that would then miss later grants;
+  // the user can still narrow per agent afterwards via the capability chips. The agent's
+  // ROLE is its name — prefill it with the template's name (e.g. "Analyst"), which the
+  // user can overwrite in the card; the descriptive prose lives in the instructions.
+  // "Blank" keeps its generic "A helpful assistant" role.
   const addTemplate = (key: AgentTemplateKey) => {
     const tpl = agentTemplate(key);
     const def = AGENT_TEMPLATES.find((t) => t.key === key);
     const roleName = key === 'blank' || !def ? tpl.role : def.label;
     let next = addSimpleAgent(system, { role: roleName, instructions: tpl.instructions });
-    const added = next.agents[next.agents.length - 1];
     for (const t of tpl.suggestedTools ?? []) {
-      if (!catalog || catalog.includes(t)) next = addAgentTool(next, added.id, t);
+      if (!catalog || catalog.includes(t)) next = addSystemTool(next, t);
     }
     onCommit(next);
     setPicking(false);

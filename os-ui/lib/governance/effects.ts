@@ -82,6 +82,15 @@ export type EffectDeps = {
     payload: { connId: string; datasetId: string; humanServiceFqn?: string | null },
     approver: { id: string; role: Principal['role']; domains: string[] },
   ) => Promise<{ ok: boolean; summary: string; live: boolean }>;
+  /** Decide a Software deploy-review card AS the approver — flips the software
+   *  release/app deploy state (review → live | preview) so approving the app_deploy
+   *  item in Policies & Approvals actually clears the app's "awaiting review".
+   *  Injected by the route (server-only `review.ts`) so this module stays light. */
+  decideDeploy?: (
+    cardId: string,
+    approver: { id: string; role: Principal['role']; domains: string[] },
+    decision: 'approve' | 'deny',
+  ) => Promise<{ appName: string; state: string; live: boolean }>;
 };
 
 /** The model-service Actor for a human approver (agents can never decide — the
@@ -123,6 +132,33 @@ export async function applyEffect(a: Approval, approver: EffectApprover, deps: E
   const p = a.payload ?? {};
   const who = approverId(approver);
   switch (a.kind) {
+    case 'app_deploy': {
+      // Approval IS the action: a Software deploy-review filed by `requestDeploy`.
+      // Approving it in Policies & Approvals must write BACK to the software release
+      // record — flip the app's deploy state review → live (or preview on reject) so
+      // the Software app no longer shows "awaiting review". Without this dep the item
+      // would be marked approved in the queue but the app would stay stuck. We route
+      // through the SAME `decideDeploy` seam the Software UI uses (scan re-check +
+      // envelope recorded + runner rolled), so both front doors converge.
+      const cardId = s(p.cardId);
+      if (!cardId) throw new Error('app_deploy requires payload.cardId');
+      if (!deps.decideDeploy) throw new Error('app_deploy requires the injected decideDeploy applier (not injected)');
+      const full = typeof approver === 'string'
+        ? { id: approver, role: 'builder' as Principal['role'], domains: [a.domain] }
+        : approver;
+      const out = await deps.decideDeploy(cardId, full, 'approve');
+      return {
+        ok: true,
+        applied: `Deploy approved: “${out.appName}” is now ${out.state}${out.live ? '' : ' (runner pending)'}.`,
+        live: out.live,
+        audit: {
+          action: 'deploy',
+          subject: out.appName,
+          reason: `Software deploy-review approved by ${who}`,
+          detail: { cardId, appId: p.appId, state: out.state },
+        },
+      };
+    }
     case 'deploy_review': {
       // Live path = Argo CD sync; unwired here, so mock + mark live:false.
       const app = s(p.app, a.title);

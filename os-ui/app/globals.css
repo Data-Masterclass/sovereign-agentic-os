@@ -4958,7 +4958,9 @@ button.card.tile:hover .tile-action { opacity: 1; }
 .sw-dot.off { background: var(--text-faint); box-shadow: 0 0 0 4px rgba(138, 130, 112, 0.12); }
 .sw-monitor-state { font-family: var(--f-display), 'Fraunces', Georgia, serif; font-size: 17px; font-weight: 600; color: var(--text); }
 .sw-monitor-sub { font-size: 12px; color: var(--text-faint); margin-top: 1px; }
-.sw-health { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--warm-border); }
+/* Now wraps the shared <ProgressStepper> (build/deploy pipeline) — a block section
+   divider, not a flex badge row. The stepper owns its own internal layout. */
+.sw-health { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--warm-border); }
 .sw-api { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--warm-border); }
 
 /* ---- Publish block ---- */
