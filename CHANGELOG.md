@@ -15,6 +15,17 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.29] — 2026-07-17
+
+### Fixed
+- **Dashboards now embed live instead of falling back to the offline mock.** Creating/opening a
+  dashboard imported it into Superset via a bundle whose `extra` and chart `params` were emitted as
+  JSON strings; the deployed Superset version needs those as objects, so every import 500'd and the
+  dashboard was never created ("… not found in Superset"). Both are now emitted as YAML mappings —
+  verified end-to-end against live Superset (import → embedded UUID → guest token). Existing
+  dashboards self-heal on next open (the build-on-open now succeeds). Also made the offline-mock
+  hint honest (it no longer always claims Superset is unreachable).
+
 ## [os-ui 0.5.28] — 2026-07-16
 
 ### Fixed

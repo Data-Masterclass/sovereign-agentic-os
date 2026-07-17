@@ -131,8 +131,8 @@ export default function EmbedPanel({ dashboard, supersetUrl }: { dashboard: Dash
             </div>
           ) : (
             <div className="hint" style={{ marginTop: 10 }}>
-              Offline mock — Superset isn’t reachable, so the embed is summarised above instead of mounted.
-              {embed.reason ? <> ({embed.reason})</> : null}
+              Offline mock — the live embed couldn’t be mounted, so it’s summarised above instead.
+              {embed.reason ? <> ({embed.reason})</> : ' (Superset isn’t reachable from here.)'}
             </div>
           )}
         </>

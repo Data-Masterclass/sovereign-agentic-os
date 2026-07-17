@@ -93,7 +93,10 @@ export function importFiles(manifest: SupersetManifest): Record<string, string> 
     allow_cvas: false,
     allow_dml: false,
     allow_file_upload: false,
-    extra: '{}',
+    // Superset's ImportV1DatabaseExtraSchema is a NESTED schema — `extra` MUST be a
+    // YAML object, not a JSON string ('{}' makes its pre_load call .get() on a str →
+    // 500 on import). An empty object satisfies the (all-optional) extra schema.
+    extra: {},
     uuid: dbUuid,
     version: '1.0.0',
   });
@@ -125,13 +128,15 @@ export function importFiles(manifest: SupersetManifest): Record<string, string> 
     files[`${ROOT}/charts/${c.file}.yaml`] = yaml.dump({
       slice_name: c.name,
       viz_type: c.viz_type,
-      params: JSON.stringify({
+      // Superset's chart import schema wants `params` as a MAPPING (object), not a
+      // JSON string ("Not a valid mapping type." otherwise).
+      params: {
         viz_type: c.viz_type,
         datasource: `${dsUuid}__table`,
         metric: c.metric ?? null,
         metrics: c.metric ? [c.metric] : [],
         groupby: c.groupby ?? [],
-      }),
+      },
       query_context: null,
       cache_timeout: null,
       uuid: c.uuid,
