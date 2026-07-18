@@ -4,6 +4,7 @@
 import 'server-only';
 import type { Connection } from '@/lib/connections/schema';
 import { getSecretServerSide } from '@/lib/infra/secrets';
+import { fetchWithBackoff } from '@/lib/connections/retry';
 
 /**
  * Gmail API client (`https://gmail.googleapis.com`) — the per-connection bridge to a
@@ -28,6 +29,8 @@ export type GmailFetch = typeof fetch;
 export const GMAIL_API = 'https://gmail.googleapis.com';
 /** Per-page size requested from the API (bounded — never an unbounded dump). */
 export const GMAIL_PAGE = 25;
+/** Max pages to follow on nextPageToken before flagging `truncated`. */
+export const GMAIL_MAX_PAGES = 4;
 
 export type GmailConn = {
   baseUrl: string;
@@ -62,21 +65,34 @@ async function withTimeout(conn: GmailConn, url: string, init: RequestInit): Pro
   }
 }
 
-async function gSend(
-  conn: GmailConn,
-  method: 'GET' | 'POST',
-  path: string,
-  body?: Record<string, unknown>,
-): Promise<GmailResult<Record<string, unknown>>> {
+function mapGmailResponse(res: Response): GmailResult<Record<string, unknown>> | null {
+  if (res.status === 429) return { ok: false, reason: `rate-limited; retry after ${res.headers.get('retry-after') ?? '30'}s` };
+  if (res.status === 401) return { ok: false, reason: 'unauthorized (access token expired or invalid — refresh it)' };
+  if (res.status === 403) return { ok: false, reason: 'forbidden (missing Gmail scope)' };
+  if (res.status === 404) return { ok: false, reason: 'not_found' };
+  if (!res.ok) return { ok: false, reason: `Gmail ${res.status}` };
+  return null;
+}
+
+/** GET — no retry (429 surfaces immediately as honest reason). */
+async function gGet(conn: GmailConn, path: string): Promise<GmailResult<Record<string, unknown>>> {
   try {
-    const init: RequestInit = { method, headers: { ...gmailAuthHeaders(conn.token), ...(body ? { 'content-type': 'application/json' } : {}) } };
-    if (body) init.body = JSON.stringify(body);
-    const res = await withTimeout(conn, `${base(conn)}${path}`, init);
-    if (res.status === 429) return { ok: false, reason: `rate-limited; retry after ${res.headers.get('retry-after') ?? '30'}s` };
-    if (res.status === 401) return { ok: false, reason: 'unauthorized (access token expired or invalid — refresh it)' };
-    if (res.status === 403) return { ok: false, reason: 'forbidden (missing Gmail scope)' };
-    if (res.status === 404) return { ok: false, reason: 'not_found' };
-    if (!res.ok) return { ok: false, reason: `Gmail ${res.status}` };
+    const res = await withTimeout(conn, `${base(conn)}${path}`, { method: 'GET', headers: gmailAuthHeaders(conn.token) });
+    const err = mapGmailResponse(res);
+    if (err) return err;
+    return { ok: true, data: (await res.json().catch(() => ({}))) as Record<string, unknown> };
+  } catch {
+    return { ok: false, reason: 'unreachable' };
+  }
+}
+
+/** POST — capped exponential backoff with jitter on 429/503 (one retry). */
+async function gPost(conn: GmailConn, path: string, body: Record<string, unknown>): Promise<GmailResult<Record<string, unknown>>> {
+  try {
+    const init: RequestInit = { method: 'POST', headers: { ...gmailAuthHeaders(conn.token), 'content-type': 'application/json' }, body: JSON.stringify(body) };
+    const res = await fetchWithBackoff(`${base(conn)}${path}`, init, (u, i) => withTimeout(conn, u, i!), { maxAttempts: 2 });
+    const err = mapGmailResponse(res);
+    if (err) return err;
     return { ok: true, data: (await res.json().catch(() => ({}))) as Record<string, unknown> };
   } catch {
     return { ok: false, reason: 'unreachable' };
@@ -98,7 +114,7 @@ export function buildRawMessage(input: { to: string; subject: string; body: stri
 
 /** Liveness: GET /users/me/profile. 2xx ⇒ live; 401 ⇒ honest ✗ (never fake green). */
 export async function gmailHealth(conn: GmailConn): Promise<{ connected: boolean; detail?: string; reason?: string }> {
-  const r = await gSend(conn, 'GET', '/gmail/v1/users/me/profile');
+  const r = await gGet(conn, '/gmail/v1/users/me/profile');
   if (r.ok) {
     const email = String(r.data.emailAddress ?? '');
     return { connected: true, detail: email ? `mailbox ${email}` : undefined };
@@ -118,20 +134,33 @@ function headerVal(payload: Record<string, unknown>, name: string): string {
   return h?.value ?? '';
 }
 
-/** GET /users/me/messages — list message ids (optionally by query). Read. Bounded. */
+/** GET /users/me/messages — list message ids (optionally by query). Read.
+ *  Follows `nextPageToken` cursor up to `GMAIL_MAX_PAGES` pages. */
 export async function gmailListMessages(conn: GmailConn, opts?: { query?: string }): Promise<GmailResult<GmailMessageRef[]>> {
-  const qs = new URLSearchParams({ maxResults: String(GMAIL_PAGE), ...(opts?.query ? { q: opts.query } : {}) }).toString();
-  const r = await gSend(conn, 'GET', `/gmail/v1/users/me/messages?${qs}`);
-  if (!r.ok) return r;
-  const rows = Array.isArray(r.data.messages) ? (r.data.messages as Record<string, unknown>[]) : [];
-  const truncated = Boolean(r.data.nextPageToken);
-  return { ok: true, data: rows.map((d) => ({ id: String(d.id ?? ''), threadId: String(d.threadId ?? '') })), truncated };
+  const refs: GmailMessageRef[] = [];
+  let pageToken: string | undefined;
+  let pages = 0;
+  let truncated = false;
+  while (pages < GMAIL_MAX_PAGES) {
+    const params: Record<string, string> = { maxResults: String(GMAIL_PAGE), ...(opts?.query ? { q: opts.query } : {}) };
+    if (pageToken) params.pageToken = pageToken;
+    const qs = new URLSearchParams(params).toString();
+    const r = await gGet(conn, `/gmail/v1/users/me/messages?${qs}`);
+    if (!r.ok) return r;
+    const page = Array.isArray(r.data.messages) ? (r.data.messages as Record<string, unknown>[]) : [];
+    for (const d of page) refs.push({ id: String(d.id ?? ''), threadId: String(d.threadId ?? '') });
+    pages += 1;
+    pageToken = r.data.nextPageToken ? String(r.data.nextPageToken) : undefined;
+    if (!pageToken) break;
+    if (pages >= GMAIL_MAX_PAGES) { truncated = true; break; }
+  }
+  return { ok: true, data: refs, truncated };
 }
 
 /** GET /users/me/messages/{id} — read one message (metadata + snippet). Read. */
 export async function gmailGetMessage(conn: GmailConn, id: string): Promise<GmailResult<GmailMessage>> {
   if (!id.trim()) return { ok: false, reason: 'get_message needs a message id' };
-  const r = await gSend(conn, 'GET', `/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject`);
+  const r = await gGet(conn, `/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject`);
   if (!r.ok) return r;
   const payload = (r.data.payload ?? {}) as Record<string, unknown>;
   return { ok: true, data: { id: String(r.data.id ?? id), threadId: String(r.data.threadId ?? ''), snippet: String(r.data.snippet ?? ''), from: headerVal(payload, 'From'), subject: headerVal(payload, 'Subject') } };
@@ -139,7 +168,7 @@ export async function gmailGetMessage(conn: GmailConn, id: string): Promise<Gmai
 
 /** GET /users/me/labels — list mailbox labels. Read. */
 export async function gmailListLabels(conn: GmailConn): Promise<GmailResult<GmailLabel[]>> {
-  const r = await gSend(conn, 'GET', '/gmail/v1/users/me/labels');
+  const r = await gGet(conn, '/gmail/v1/users/me/labels');
   if (!r.ok) return r;
   const rows = Array.isArray(r.data.labels) ? (r.data.labels as Record<string, unknown>[]) : [];
   return { ok: true, data: rows.map((d) => ({ id: String(d.id ?? ''), name: String(d.name ?? ''), type: String(d.type ?? '') })) };
@@ -154,7 +183,7 @@ export async function gmailListLabels(conn: GmailConn): Promise<GmailResult<Gmai
 export async function gmailSendMessage(conn: GmailConn, input: { to: string; subject: string; body: string }): Promise<GmailResult<{ id: string; threadId: string }>> {
   if (!input.to.trim()) return { ok: false, reason: 'send_message needs a recipient (to)' };
   if (!input.subject.trim()) return { ok: false, reason: 'send_message needs a subject' };
-  const r = await gSend(conn, 'POST', '/gmail/v1/users/me/messages/send', { raw: buildRawMessage(input) });
+  const r = await gPost(conn, '/gmail/v1/users/me/messages/send', { raw: buildRawMessage(input) });
   if (!r.ok) return r;
   return { ok: true, data: { id: String(r.data.id ?? ''), threadId: String(r.data.threadId ?? '') } };
 }
@@ -165,7 +194,7 @@ export async function gmailSendMessage(conn: GmailConn, input: { to: string; sub
  */
 export async function gmailCreateDraft(conn: GmailConn, input: { to: string; subject: string; body: string }): Promise<GmailResult<{ id: string }>> {
   if (!input.to.trim()) return { ok: false, reason: 'create_draft needs a recipient (to)' };
-  const r = await gSend(conn, 'POST', '/gmail/v1/users/me/drafts', { message: { raw: buildRawMessage(input) } });
+  const r = await gPost(conn, '/gmail/v1/users/me/drafts', { message: { raw: buildRawMessage(input) } });
   if (!r.ok) return r;
   return { ok: true, data: { id: String(r.data.id ?? '') } };
 }

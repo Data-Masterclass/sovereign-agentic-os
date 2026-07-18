@@ -15,6 +15,31 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.39] — 2026-07-18
+
+### Added
+- **OpenMetadata ingestion is live.** The native `metadata ingest` CronJob now crawls the bundled
+  Trino/Iceberg lakehouse hourly and populates the Catalog (verified: 14 tables + 2 schemas ingested,
+  zero auth errors). Fixed the job's securityContext (the `openmetadata/ingestion` image runs as the
+  non-numeric `airflow` user, so a numeric `runAsUser: 50000` is required or the pod fails
+  `CreateContainerConfigError`). The buggy query-lineage sub-pass is disabled by default (OM 1.13.0
+  `DatabaseServiceQueryLineagePipeline` is missing `includeTags`/`overrideMetadata`).
+- **Science tab — source dataset is now a file explorer.** Picking the source data product for a model
+  is a `FolderTree` browser over all DLS-scoped datasets (reuses the shared primitive), with a manual
+  FQN override kept as a fallback — instead of typing the FQN by hand.
+- **#146 analytics-as-code monorepo (Phase 1+2, default-off).** Chart seeds an `analytics` Forgejo repo
+  (dbt + Cube + Dagster + validate-only CI), and os-ui dual-writes generated Cube/exposure YAML to it
+  fire-and-forget (byte-identical to what the Cube sidecar consumes; nothing reads the repo yet — zero
+  behavior change).
+
+### Changed
+- **#174 connector hardening.** `testConnection` refactored into a `CONNECTION_HEALTH` registry (mirrors
+  the executor registry — new connectors append one line instead of editing a 200-line if-chain), plus a
+  per-call egress re-check in `runAllow`. Notion gained a real health probe, in-module secret handling,
+  bounded cursor pagination, and 429 backoff. A shared `retry.ts` (capped exponential backoff + jitter,
+  honoring `Retry-After`) + bounded cursor-follow pagination applied across Supabase, Atlassian, Gmail,
+  Google Calendar, Outlook, and Teams.
+
 ## [os-ui 0.5.38] — 2026-07-18
 
 ### Added

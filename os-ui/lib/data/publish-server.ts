@@ -4,7 +4,10 @@
 import 'server-only';
 import { buildStage } from './build/server.ts';
 import { liveDataReachable, realTrino } from './build/live-clients.ts';
+import { realForgejo } from '../agents/build/live-clients.ts';
 import { publishApprovedPromotion, type PublishOutcome } from './publish.ts';
+import { listGovernedDatasets } from './store.ts';
+import { syncAnalyticsRepo } from './analytics-repo.ts';
 import type { MaterializationVerifier, Principal, PromotionRequest } from './store.ts';
 
 /**
@@ -31,8 +34,14 @@ export async function publishPromotionLive(
   req: PromotionRequest,
   approver: Principal,
 ): Promise<PublishOutcome> {
-  return publishApprovedPromotion(req, approver, {
+  const outcome = await publishApprovedPromotion(req, approver, {
     buildPromote: (dataset, principal, write) => buildStage(dataset, 'promote', principal, write),
     verifyDomainTable,
   });
+  // Fire-and-forget analytics repo sync on promote success (#146 Phase 2).
+  // Never throws into the approval flow — the hook is best-effort.
+  if (outcome.ok) {
+    syncAnalyticsRepo(realForgejo(), listGovernedDatasets(), approver.id);
+  }
+  return outcome;
 }

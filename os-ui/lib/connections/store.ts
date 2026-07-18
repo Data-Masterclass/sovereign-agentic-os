@@ -610,6 +610,159 @@ export async function updateCapabilities(
 // ---------------------------------------------------------------------- Test ---
 
 /**
+ * Per-template health probe registry — mirrors `CONNECTION_EXECUTORS`. Each entry
+ * is a function that performs the real round-trip for its template and returns an
+ * honest `{ ok, mode, detail }`. Adding a new connector requires only one new entry
+ * here (and in `CONNECTION_EXECUTORS`) — `testConnection` never needs editing.
+ *
+ * VERBATIM logic per template: same health client, same secret handling via
+ * `getSecretServerSide` (inside each connector's `*ConnFrom` helper), same
+ * never-fake-green semantics. The `c` reference is mutated in-place (mode/health/
+ * updatedAt) and flushed by the caller.
+ */
+type HealthFn = (c: Connection) => Promise<{ ok: boolean; mode: 'live' | 'offline'; detail: string }>;
+
+// AIRFLOW: the honest test is a real, unauthenticated health probe against the
+// Airflow REST API (v2 /api/v2/monitor/health, falling back to v1 /api/v1/health).
+// ANY HTTP response ⇒ Airflow is reachable (live); a network error/timeout ⇒
+// offline. Never a stub — and the credential is never sent on the health probe.
+//
+// GITHUB: real GET /user with the vaulted PAT. A 2xx proves the token is live;
+// a 401 is an honest ✗ (never a fake green). Token stays server-side only.
+//
+// SUPABASE: real GET /v1/projects with the vaulted management PAT (sbp_…).
+// A 2xx proves the token is live; a 401 is an honest ✗. Token stays server-side.
+//
+// ATLASSIAN: real GET of the current user (Jira `/rest/api/3/myself`) with the
+// vaulted token. A 2xx proves auth; a 401 is an honest ✗. Token stays server-side.
+//
+// SLACK: real GET auth.test with the vaulted bot token. ok:true proves auth; an
+// invalid_auth body is an honest ✗. Never a stub; the token stays server-side.
+//
+// GMAIL: real GET users/me/profile with the vaulted OAuth access token. A 2xx
+// proves the token is live; a 401 is an honest ✗. Token stays server-side.
+//
+// GOOGLE CALENDAR: real GET users/me/calendarList with the vaulted OAuth token.
+//
+// OUTLOOK: real GET /me over Microsoft Graph with the vaulted OAuth token.
+//
+// TEAMS: real GET /me over Microsoft Graph with the vaulted OAuth token.
+//
+// ENTRA: real GET /me over Microsoft Graph with the vaulted OAuth token.
+//
+// PURVIEW: real GET of the classification typedefs over the account's Atlas URL.
+//
+// AI FOUNDRY: real GET of the model registry over the workspace/region base.
+//
+// SAGEMAKER: real signed ListModels round-trip (SigV4) with the vaulted AWS keys.
+const CONNECTION_HEALTH: Partial<Record<ConnectionTemplateKey, HealthFn>> = {
+  airflow: async (c) => {
+    const h = await airflowHealth(airflowConnFor(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Airflow at ${c.egress.host} is reachable${h.detail ? ` (${h.detail})` : ''}. The token is never sent on the health probe.` }
+      : { ok: false, mode: 'offline', detail: `Airflow at ${c.egress.host} is unreachable (${h.reason ?? 'network error'}) — check the base URL + egress, then re-test.` };
+  },
+  github: async (c) => {
+    const h = await githubHealth(githubConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `GitHub is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `GitHub is unreachable (${h.reason ?? 'network error'}) — check the token + egress, then re-test.` };
+  },
+  supabase: async (c) => {
+    const h = await supabaseHealth(supabaseConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Supabase Management API is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Supabase is unreachable (${h.reason ?? 'network error'}) — check the access token + egress, then re-test.` };
+  },
+  atlassian: async (c) => {
+    const h = await atlassianHealth(atlassianConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Atlassian at ${c.egress.host} is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Atlassian at ${c.egress.host} is unreachable (${h.reason ?? 'network error'}) — check the site URL, token + egress, then re-test.` };
+  },
+  slack: async (c) => {
+    const h = await slackHealth(slackConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Slack is reachable${h.detail ? ` (${h.detail})` : ''}. The bot token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Slack is unreachable (${h.reason ?? 'network error'}) — check the bot token + egress, then re-test.` };
+  },
+  gmail: async (c) => {
+    const h = await gmailHealth(googleMailConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Gmail is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Gmail is unreachable (${h.reason ?? 'network error'}) — the access token may be expired; refresh it + check egress, then re-test.` };
+  },
+  gcal: async (c) => {
+    const h = await gcalHealth(gcalConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Google Calendar is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Google Calendar is unreachable (${h.reason ?? 'network error'}) — the access token may be expired; refresh it + check egress, then re-test.` };
+  },
+  outlook: async (c) => {
+    const h = await outlookHealth(graphConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Outlook (Microsoft Graph) is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Outlook is unreachable (${h.reason ?? 'network error'}) — the access token may be expired; refresh it + check egress, then re-test.` };
+  },
+  teams: async (c) => {
+    const h = await teamsHealth(teamsConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Microsoft Teams (Graph) is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Teams is unreachable (${h.reason ?? 'network error'}) — the access token may be expired; refresh it + check egress, then re-test.` };
+  },
+  entra: async (c) => {
+    const h = await entraHealth(entraConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Microsoft Entra (Graph) is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Entra is unreachable (${h.reason ?? 'network error'}) — the access token may be expired; refresh it + check egress, then re-test.` };
+  },
+  purview: async (c) => {
+    const h = await purviewHealth(purviewConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Microsoft Purview is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Purview is unreachable (${h.reason ?? 'network error'}) — check the account URL + token, then re-test.` };
+  },
+  'ai-foundry': async (c) => {
+    const h = await aiFoundryHealth(aiFoundryConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Azure AI Foundry is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Azure AI Foundry is unreachable (${h.reason ?? 'network error'}) — check the workspace endpoint + token, then re-test.` };
+  },
+  sagemaker: async (c) => {
+    const h = await sagemakerHealth(sagemakerConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `AWS SageMaker is reachable${h.detail ? ` (${h.detail})` : ''}. The AWS keys never leave the server.` }
+      : { ok: false, mode: 'offline', detail: `SageMaker is unreachable (${h.reason ?? 'network error'}) — check the region endpoint + IAM keys, then re-test.` };
+  },
+};
+
+/**
  * Test the connection inline. Retrieves the secret SERVER-SIDE (never returned to
  * the client) and probes the endpoint best-effort; offline returns a deterministic
  * ok so the flow works with no live endpoint. Never echoes the secret.
@@ -680,169 +833,15 @@ export async function testConnection(
     }
   }
 
-  // AIRFLOW: the honest test is a real, unauthenticated health probe against the
-  // Airflow REST API (v2 /api/v2/monitor/health, falling back to v1 /api/v1/health).
-  // ANY HTTP response ⇒ Airflow is reachable (live); a network error/timeout ⇒
-  // offline. Never a stub — and the credential is never sent on the health probe.
-  if (c.template === 'airflow') {
-    const h = await airflowHealth(airflowConnFor(c));
-    c.mode = h.connected ? 'live' : 'offline';
-    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+  // Registered connectors: look up the per-template health probe in CONNECTION_HEALTH.
+  // Each entry performs a real round-trip and mutates c.mode/c.health in-place.
+  // Unknown templates fall through to the generic credential-presence check below.
+  const healthFn = CONNECTION_HEALTH[c.template];
+  if (healthFn) {
     c.updatedAt = now();
+    const result = await healthFn(c);
     writeThrough(c);
-    return h.connected
-      ? { ok: true, mode: 'live', detail: `Airflow at ${c.egress.host} is reachable${h.detail ? ` (${h.detail})` : ''}. The token is never sent on the health probe.` }
-      : { ok: false, mode: 'offline', detail: `Airflow at ${c.egress.host} is unreachable (${h.reason ?? 'network error'}) — check the base URL + egress, then re-test.` };
-  }
-
-  // GITHUB: the honest test is a real GET /user with the vaulted PAT. A 2xx proves
-  // the token is live; a 401 is an honest ✗ (never a fake green). The token is used
-  // ONLY as the bearer server-side and is never returned to the browser.
-  if (c.template === 'github') {
-    const h = await githubHealth(githubConnFrom(c));
-    c.mode = h.connected ? 'live' : 'offline';
-    c.health = h.connected ? 'healthy' : 'needs-reconnect';
-    c.updatedAt = now();
-    writeThrough(c);
-    return h.connected
-      ? { ok: true, mode: 'live', detail: `GitHub is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
-      : { ok: false, mode: 'offline', detail: `GitHub is unreachable (${h.reason ?? 'network error'}) — check the token + egress, then re-test.` };
-  }
-
-  // SUPABASE: real GET /v1/projects with the vaulted management PAT (sbp_…). A 2xx
-  // proves the token is live; a 401 is an honest ✗. Never a stub; the token stays server-side.
-  if (c.template === 'supabase') {
-    const h = await supabaseHealth(supabaseConnFrom(c));
-    c.mode = h.connected ? 'live' : 'offline';
-    c.health = h.connected ? 'healthy' : 'needs-reconnect';
-    c.updatedAt = now();
-    writeThrough(c);
-    return h.connected
-      ? { ok: true, mode: 'live', detail: `Supabase Management API is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
-      : { ok: false, mode: 'offline', detail: `Supabase is unreachable (${h.reason ?? 'network error'}) — check the access token + egress, then re-test.` };
-  }
-
-  // ATLASSIAN: real GET of the current user (Jira `/rest/api/3/myself`) with the
-  // vaulted token. A 2xx proves auth; a 401 is an honest ✗. Token stays server-side.
-  if (c.template === 'atlassian') {
-    const h = await atlassianHealth(atlassianConnFrom(c));
-    c.mode = h.connected ? 'live' : 'offline';
-    c.health = h.connected ? 'healthy' : 'needs-reconnect';
-    c.updatedAt = now();
-    writeThrough(c);
-    return h.connected
-      ? { ok: true, mode: 'live', detail: `Atlassian at ${c.egress.host} is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
-      : { ok: false, mode: 'offline', detail: `Atlassian at ${c.egress.host} is unreachable (${h.reason ?? 'network error'}) — check the site URL, token + egress, then re-test.` };
-  }
-
-  // SLACK: real GET auth.test with the vaulted bot token. ok:true proves auth; an
-  // invalid_auth body is an honest ✗. Never a stub; the token stays server-side.
-  if (c.template === 'slack') {
-    const h = await slackHealth(slackConnFrom(c));
-    c.mode = h.connected ? 'live' : 'offline';
-    c.health = h.connected ? 'healthy' : 'needs-reconnect';
-    c.updatedAt = now();
-    writeThrough(c);
-    return h.connected
-      ? { ok: true, mode: 'live', detail: `Slack is reachable${h.detail ? ` (${h.detail})` : ''}. The bot token never leaves the server.` }
-      : { ok: false, mode: 'offline', detail: `Slack is unreachable (${h.reason ?? 'network error'}) — check the bot token + egress, then re-test.` };
-  }
-
-  // GMAIL: real GET users/me/profile with the vaulted OAuth access token. A 2xx
-  // proves the token is live; a 401 is an honest ✗. Never a stub; token stays server-side.
-  if (c.template === 'gmail') {
-    const h = await gmailHealth(googleMailConnFrom(c));
-    c.mode = h.connected ? 'live' : 'offline';
-    c.health = h.connected ? 'healthy' : 'needs-reconnect';
-    c.updatedAt = now();
-    writeThrough(c);
-    return h.connected
-      ? { ok: true, mode: 'live', detail: `Gmail is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
-      : { ok: false, mode: 'offline', detail: `Gmail is unreachable (${h.reason ?? 'network error'}) — the access token may be expired; refresh it + check egress, then re-test.` };
-  }
-
-  // GOOGLE CALENDAR: real GET users/me/calendarList with the vaulted OAuth token.
-  if (c.template === 'gcal') {
-    const h = await gcalHealth(gcalConnFrom(c));
-    c.mode = h.connected ? 'live' : 'offline';
-    c.health = h.connected ? 'healthy' : 'needs-reconnect';
-    c.updatedAt = now();
-    writeThrough(c);
-    return h.connected
-      ? { ok: true, mode: 'live', detail: `Google Calendar is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
-      : { ok: false, mode: 'offline', detail: `Google Calendar is unreachable (${h.reason ?? 'network error'}) — the access token may be expired; refresh it + check egress, then re-test.` };
-  }
-
-  // OUTLOOK: real GET /me over Microsoft Graph with the vaulted OAuth token.
-  if (c.template === 'outlook') {
-    const h = await outlookHealth(graphConnFrom(c));
-    c.mode = h.connected ? 'live' : 'offline';
-    c.health = h.connected ? 'healthy' : 'needs-reconnect';
-    c.updatedAt = now();
-    writeThrough(c);
-    return h.connected
-      ? { ok: true, mode: 'live', detail: `Outlook (Microsoft Graph) is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
-      : { ok: false, mode: 'offline', detail: `Outlook is unreachable (${h.reason ?? 'network error'}) — the access token may be expired; refresh it + check egress, then re-test.` };
-  }
-
-  // TEAMS: real GET /me over Microsoft Graph with the vaulted OAuth token.
-  if (c.template === 'teams') {
-    const h = await teamsHealth(teamsConnFrom(c));
-    c.mode = h.connected ? 'live' : 'offline';
-    c.health = h.connected ? 'healthy' : 'needs-reconnect';
-    c.updatedAt = now();
-    writeThrough(c);
-    return h.connected
-      ? { ok: true, mode: 'live', detail: `Microsoft Teams (Graph) is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
-      : { ok: false, mode: 'offline', detail: `Teams is unreachable (${h.reason ?? 'network error'}) — the access token may be expired; refresh it + check egress, then re-test.` };
-  }
-
-  // ENTRA: real GET /me over Microsoft Graph with the vaulted OAuth token.
-  if (c.template === 'entra') {
-    const h = await entraHealth(entraConnFrom(c));
-    c.mode = h.connected ? 'live' : 'offline';
-    c.health = h.connected ? 'healthy' : 'needs-reconnect';
-    c.updatedAt = now();
-    writeThrough(c);
-    return h.connected
-      ? { ok: true, mode: 'live', detail: `Microsoft Entra (Graph) is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
-      : { ok: false, mode: 'offline', detail: `Entra is unreachable (${h.reason ?? 'network error'}) — the access token may be expired; refresh it + check egress, then re-test.` };
-  }
-
-  // PURVIEW: real GET of the classification typedefs over the account's Atlas URL.
-  if (c.template === 'purview') {
-    const h = await purviewHealth(purviewConnFrom(c));
-    c.mode = h.connected ? 'live' : 'offline';
-    c.health = h.connected ? 'healthy' : 'needs-reconnect';
-    c.updatedAt = now();
-    writeThrough(c);
-    return h.connected
-      ? { ok: true, mode: 'live', detail: `Microsoft Purview is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
-      : { ok: false, mode: 'offline', detail: `Purview is unreachable (${h.reason ?? 'network error'}) — check the account URL + token, then re-test.` };
-  }
-
-  // AI FOUNDRY: real GET of the model registry over the workspace/region base.
-  if (c.template === 'ai-foundry') {
-    const h = await aiFoundryHealth(aiFoundryConnFrom(c));
-    c.mode = h.connected ? 'live' : 'offline';
-    c.health = h.connected ? 'healthy' : 'needs-reconnect';
-    c.updatedAt = now();
-    writeThrough(c);
-    return h.connected
-      ? { ok: true, mode: 'live', detail: `Azure AI Foundry is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
-      : { ok: false, mode: 'offline', detail: `Azure AI Foundry is unreachable (${h.reason ?? 'network error'}) — check the workspace endpoint + token, then re-test.` };
-  }
-
-  // SAGEMAKER: real signed ListModels round-trip (SigV4) with the vaulted AWS keys.
-  if (c.template === 'sagemaker') {
-    const h = await sagemakerHealth(sagemakerConnFrom(c));
-    c.mode = h.connected ? 'live' : 'offline';
-    c.health = h.connected ? 'healthy' : 'needs-reconnect';
-    c.updatedAt = now();
-    writeThrough(c);
-    return h.connected
-      ? { ok: true, mode: 'live', detail: `AWS SageMaker is reachable${h.detail ? ` (${h.detail})` : ''}. The AWS keys never leave the server.` }
-      : { ok: false, mode: 'offline', detail: `SageMaker is unreachable (${h.reason ?? 'network error'}) — check the region endpoint + IAM keys, then re-test.` };
+    return result;
   }
 
   const secret = getSecretServerSide(c.secretRef); // server-side only
@@ -1368,6 +1367,17 @@ async function runAllow(
   reason: string,
   mode?: string,
 ): Promise<ToolCallResult> {
+  // CONNECTOR-STANDARD §3.3: egress allowlist re-checked before EVERY external call
+  // (fail-closed — mirrors the create-time check at ~line 465). An internal/offline
+  // endpoint (external:false) is always allowed; only external hosts are gated.
+  if (c.egress.external) {
+    const egress = isEgressAllowed(c.endpoint);
+    if (!egress.allowed) {
+      const tr = await trace({ principal: c.principal, tool, input: { args, asAgent }, output: { denied: `egress not allowed: ${egress.host}` }, decision: 'deny' });
+      return { tool, principal: c.principal, decision: 'deny', reason: `Egress to "${egress.host}" is not on the allowlist — an Administrator must approve it first`, traceId: tr.id };
+    }
+  }
+
   const secret = getSecretServerSide(c.secretRef);
   // A registered executor hits the REAL API (the secret is injected server-side
   // inside the client and never logged); every other connector uses the offline

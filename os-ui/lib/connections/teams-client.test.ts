@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { type GraphConn } from './outlook.ts';
+import { type GraphConn, GRAPH_MAX_PAGES } from './outlook.ts';
 import {
   teamsHealth,
   teamsListTeams,
@@ -115,4 +115,40 @@ test('no token ⇒ no Authorization header sent (honest auth failure)', async ()
   const f = fakeFetch(() => ({ status: 200, body: { value: [] } }));
   await teamsListTeams({ baseUrl: 'https://graph.microsoft.com/v1.0', fetchImpl: f.impl });
   assert.equal((f.calls[0].init.headers as Record<string, string>).authorization, undefined);
+});
+
+// --- bounded pagination ---
+
+test('listTeams follows @odata.nextLink across two pages and concatenates', async () => {
+  let call = 0;
+  const f = fakeFetch(() => {
+    call += 1;
+    const team = { id: `T${call}`, displayName: `Team${call}` };
+    const next = call === 1 ? 'https://graph.microsoft.com/v1.0/me/joinedTeams?$skip=25' : undefined;
+    return { status: 200, body: { value: [team], ...(next ? { '@odata.nextLink': next } : {}) } };
+  });
+  const r = await teamsListTeams(conn(f.impl));
+  assert.ok(r.ok && r.data.length === 2 && r.data[0].id === 'T1' && r.data[1].id === 'T2');
+  assert.equal(r.truncated, false);
+  assert.equal(f.calls.length, 2);
+});
+
+test('listTeams caps at GRAPH_MAX_PAGES and sets truncated=true', async () => {
+  const f = fakeFetch(() => ({ status: 200, body: { value: [{ id: 'T1', displayName: 'Team' }], '@odata.nextLink': 'https://graph.microsoft.com/v1.0/me/joinedTeams?$skip=999' } }));
+  const r = await teamsListTeams(conn(f.impl));
+  assert.ok(r.ok && r.truncated === true);
+  assert.equal(f.calls.length, GRAPH_MAX_PAGES);
+});
+
+test('listChannelMessages follows @odata.nextLink across two pages', async () => {
+  let call = 0;
+  const f = fakeFetch(() => {
+    call += 1;
+    const msg = { id: `M${call}`, from: { user: { displayName: 'Ada' } }, body: { content: `msg${call}` }, createdDateTime: 'd' };
+    const next = call === 1 ? 'https://graph.microsoft.com/v1.0/teams/T1/channels/C1/messages?$skip=25' : undefined;
+    return { status: 200, body: { value: [msg], ...(next ? { '@odata.nextLink': next } : {}) } };
+  });
+  const r = await teamsListChannelMessages(conn(f.impl), 'T1', 'C1');
+  assert.ok(r.ok && r.data.length === 2 && r.data[0].text === 'msg1' && r.data[1].text === 'msg2');
+  assert.equal(r.truncated, false);
 });

@@ -12,6 +12,7 @@ import {
   outlookGetMessage,
   outlookSendMail,
   outlookCreateDraft,
+  GRAPH_MAX_PAGES,
 } from './outlook.ts';
 
 function fakeFetch(
@@ -115,4 +116,27 @@ test('no token ⇒ no Authorization header sent (honest auth failure)', async ()
   const f = fakeFetch(() => ({ status: 200, body: { value: [] } }));
   await outlookListMessages({ baseUrl: 'https://graph.microsoft.com/v1.0', fetchImpl: f.impl });
   assert.equal((f.calls[0].init.headers as Record<string, string>).authorization, undefined);
+});
+
+// --- bounded pagination ---
+
+test('listMessages follows @odata.nextLink across two pages and concatenates', async () => {
+  let call = 0;
+  const f = fakeFetch(() => {
+    call += 1;
+    const msg = { id: `m${call}`, subject: `Subj${call}`, from: { emailAddress: { address: 'a@x.com' } }, receivedDateTime: 'd', bodyPreview: 'hi' };
+    const next = call === 1 ? 'https://graph.microsoft.com/v1.0/me/messages?$skip=25' : undefined;
+    return { status: 200, body: { value: [msg], ...(next ? { '@odata.nextLink': next } : {}) } };
+  });
+  const r = await outlookListMessages(conn(f.impl));
+  assert.ok(r.ok && r.data.length === 2 && r.data[0].id === 'm1' && r.data[1].id === 'm2');
+  assert.equal(r.truncated, false);
+  assert.equal(f.calls.length, 2);
+});
+
+test('listMessages caps at GRAPH_MAX_PAGES and sets truncated=true', async () => {
+  const f = fakeFetch(() => ({ status: 200, body: { value: [{ id: 'x', subject: 'S', from: { emailAddress: { address: 'a@b.com' } }, receivedDateTime: 'd', bodyPreview: 'p' }], '@odata.nextLink': 'https://graph.microsoft.com/v1.0/me/messages?$skip=999' } }));
+  const r = await outlookListMessages(conn(f.impl));
+  assert.ok(r.ok && r.truncated === true);
+  assert.equal(f.calls.length, GRAPH_MAX_PAGES);
 });

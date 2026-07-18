@@ -6,6 +6,7 @@ import type { CurrentUser } from '@/lib/core/auth';
 import type { Connection } from '@/lib/connections/schema';
 import { getSecretServerSide } from '@/lib/infra/secrets';
 import { getConnectionForUser } from '@/lib/connections/store';
+import { fetchWithBackoff } from '@/lib/connections/retry';
 
 /**
  * Atlassian client — Jira (`/rest/api/3/…`) + Confluence (`/wiki/rest/api/…`) Cloud
@@ -33,8 +34,10 @@ export type AtlassianFetch = typeof fetch;
 /** How the credential authenticates. */
 export type AtlassianAuthKind = 'basic' | 'bearer';
 
-/** Max rows a paginated read returns before flagging `truncated`. */
+/** Max rows per Atlassian page (Jira/Confluence both accept 50 max). */
 export const ATLASSIAN_MAX_RESULTS = 50;
+/** Max pages to follow before flagging `truncated` (guards against huge result sets). */
+export const ATLASSIAN_MAX_PAGES = 5;
 
 export type AtlassianConn = {
   /** The site base, e.g. https://acme.atlassian.net (Jira + Confluence live under it). */
@@ -97,21 +100,39 @@ async function withTimeout(conn: AtlassianConn, url: string, init: RequestInit):
   }
 }
 
-async function atlSend(
+function mapAtlResponse(res: Response, tag: string): AtlassianResult<unknown> | null {
+  const rl = rateReason(res);
+  if (rl) return { ok: false, reason: rl };
+  if (res.status === 401 || res.status === 403) return { ok: false, reason: 'unauthorized (bad token or missing project/space access)' };
+  if (res.status === 404) return { ok: false, reason: 'not_found' };
+  if (!res.ok) return { ok: false, reason: `${tag} ${res.status}` };
+  return null; // ok — caller reads the body
+}
+
+/** GET — no retry (429 surfaces immediately as honest reason). */
+async function atlGet(conn: AtlassianConn, path: string): Promise<AtlassianResult<unknown>> {
+  try {
+    const res = await withTimeout(conn, `${base(conn)}${path}`, { method: 'GET', headers: atlassianAuthHeaders(conn) });
+    const err = mapAtlResponse(res, 'Atlassian');
+    if (err) return err;
+    return { ok: true, data: await res.json().catch(() => ({})) };
+  } catch {
+    return { ok: false, reason: 'unreachable' };
+  }
+}
+
+/** POST/PUT — capped exponential backoff with jitter on 429/503 (one retry). */
+async function atlWrite(
   conn: AtlassianConn,
-  method: 'GET' | 'POST' | 'PUT',
+  method: 'POST' | 'PUT',
   path: string,
-  body?: Record<string, unknown>,
+  body: Record<string, unknown>,
 ): Promise<AtlassianResult<unknown>> {
   try {
-    const init: RequestInit = { method, headers: { ...atlassianAuthHeaders(conn), ...(body ? { 'content-type': 'application/json' } : {}) } };
-    if (body) init.body = JSON.stringify(body);
-    const res = await withTimeout(conn, `${base(conn)}${path}`, init);
-    const rl = rateReason(res);
-    if (rl) return { ok: false, reason: rl };
-    if (res.status === 401 || res.status === 403) return { ok: false, reason: 'unauthorized (bad token or missing project/space access)' };
-    if (res.status === 404) return { ok: false, reason: 'not_found' };
-    if (!res.ok) return { ok: false, reason: `Atlassian ${res.status}` };
+    const init: RequestInit = { method, headers: { ...atlassianAuthHeaders(conn), 'content-type': 'application/json' }, body: JSON.stringify(body) };
+    const res = await fetchWithBackoff(`${base(conn)}${path}`, init, (u, i) => withTimeout(conn, u, i!), { maxAttempts: 2 });
+    const err = mapAtlResponse(res, 'Atlassian');
+    if (err) return err;
     return { ok: true, data: await res.json().catch(() => ({})) };
   } catch {
     return { ok: false, reason: 'unreachable' };
@@ -127,7 +148,7 @@ async function atlSend(
 export async function atlassianHealth(
   conn: AtlassianConn,
 ): Promise<{ connected: boolean; detail?: string; reason?: string }> {
-  const r = await atlSend(conn, 'GET', '/rest/api/3/myself');
+  const r = await atlGet(conn, '/rest/api/3/myself');
   if (r.ok) {
     const d = r.data as { displayName?: string; emailAddress?: string };
     return { connected: true, detail: d.displayName ? `authenticated as ${d.displayName}` : undefined };
@@ -153,55 +174,93 @@ function shapeJiraIssue(d: Record<string, unknown>): JiraIssue {
   };
 }
 
-/** GET /rest/api/3/search?jql=… — search Jira issues. Read, bounded → truncated. */
+/** GET /rest/api/3/search?jql=… — search Jira issues. Read, bounded → truncated.
+ *  Follows `startAt` cursor up to `ATLASSIAN_MAX_PAGES` pages. */
 export async function jiraSearchIssues(conn: AtlassianConn, jql: string): Promise<AtlassianResult<JiraIssue[]>> {
-  const q = new URLSearchParams({ jql: jql || 'order by created DESC', startAt: '0', maxResults: String(ATLASSIAN_MAX_RESULTS) });
-  const r = await atlSend(conn, 'GET', `/rest/api/3/search?${q.toString()}`);
-  if (!r.ok) return r;
-  const body = r.data as { issues?: Record<string, unknown>[]; total?: number };
-  const rows = (body.issues ?? []).map(shapeJiraIssue);
-  const truncated = typeof body.total === 'number' && body.total > rows.length;
+  const rows: JiraIssue[] = [];
+  let startAt = 0;
+  let pages = 0;
+  let truncated = false;
+  while (pages < ATLASSIAN_MAX_PAGES) {
+    const q = new URLSearchParams({ jql: jql || 'order by created DESC', startAt: String(startAt), maxResults: String(ATLASSIAN_MAX_RESULTS) });
+    const r = await atlGet(conn, `/rest/api/3/search?${q.toString()}`);
+    if (!r.ok) return r;
+    const body = r.data as { issues?: Record<string, unknown>[]; total?: number };
+    const page = (body.issues ?? []).map(shapeJiraIssue);
+    for (const row of page) rows.push(row);
+    pages += 1;
+    const total = typeof body.total === 'number' ? body.total : 0;
+    startAt += page.length;
+    // Use total as the primary signal; fall back to empty page as safety guard.
+    if (startAt >= total || page.length === 0) break;
+    if (pages >= ATLASSIAN_MAX_PAGES) { truncated = true; break; }
+  }
   return { ok: true, data: rows, truncated };
 }
 
 /** GET /rest/api/3/issue/{key} — read one Jira issue. Read. */
 export async function jiraGetIssue(conn: AtlassianConn, key: string): Promise<AtlassianResult<JiraIssue>> {
   if (!key.trim()) return { ok: false, reason: 'jira_get_issue needs an issue key' };
-  const r = await atlSend(conn, 'GET', `/rest/api/3/issue/${encodeURIComponent(key)}`);
+  const r = await atlGet(conn, `/rest/api/3/issue/${encodeURIComponent(key)}`);
   if (!r.ok) return r;
   return { ok: true, data: shapeJiraIssue(r.data as Record<string, unknown>) };
 }
 
-/** GET /rest/api/3/project/search — list Jira projects. Read, bounded → truncated. */
+/** GET /rest/api/3/project/search — list Jira projects. Read, bounded → truncated.
+ *  Follows `startAt` cursor up to `ATLASSIAN_MAX_PAGES` pages. */
 export async function jiraListProjects(conn: AtlassianConn): Promise<AtlassianResult<JiraProject[]>> {
-  const r = await atlSend(conn, 'GET', `/rest/api/3/project/search?startAt=0&maxResults=${ATLASSIAN_MAX_RESULTS}`);
-  if (!r.ok) return r;
-  const body = r.data as { values?: Record<string, unknown>[]; total?: number; isLast?: boolean };
-  const rows = (body.values ?? []).map((d) => ({ key: String(d.key ?? ''), name: String(d.name ?? '') }));
-  const truncated = body.isLast === false || (typeof body.total === 'number' && body.total > rows.length);
+  const rows: JiraProject[] = [];
+  let startAt = 0;
+  let pages = 0;
+  let truncated = false;
+  while (pages < ATLASSIAN_MAX_PAGES) {
+    const r = await atlGet(conn, `/rest/api/3/project/search?startAt=${startAt}&maxResults=${ATLASSIAN_MAX_RESULTS}`);
+    if (!r.ok) return r;
+    const body = r.data as { values?: Record<string, unknown>[]; total?: number; isLast?: boolean };
+    const page = (body.values ?? []).map((d) => ({ key: String(d.key ?? ''), name: String(d.name ?? '') }));
+    for (const row of page) rows.push(row);
+    pages += 1;
+    // `isLast` is the primary signal; empty page is a safety guard.
+    if (body.isLast === true || page.length === 0) break;
+    startAt += page.length;
+    if (pages >= ATLASSIAN_MAX_PAGES) { truncated = true; break; }
+  }
   return { ok: true, data: rows, truncated };
 }
 
-/** GET /wiki/rest/api/content/search?cql=… — search Confluence. Read, bounded → truncated. */
+/** GET /wiki/rest/api/content/search?cql=… — search Confluence. Read, bounded → truncated.
+ *  Follows `start` cursor up to `ATLASSIAN_MAX_PAGES` pages. */
 export async function confluenceSearch(conn: AtlassianConn, cql: string): Promise<AtlassianResult<ConfluencePage[]>> {
   if (!cql.trim()) return { ok: false, reason: 'confluence_search needs a CQL query' };
-  const q = new URLSearchParams({ cql, start: '0', limit: String(ATLASSIAN_MAX_RESULTS) });
-  const r = await atlSend(conn, 'GET', `/wiki/rest/api/content/search?${q.toString()}`);
-  if (!r.ok) return r;
-  const body = r.data as { results?: Record<string, unknown>[]; size?: number; totalSize?: number };
-  const rows = (body.results ?? []).map((d) => ({
-    id: String(d.id ?? ''),
-    title: String(d.title ?? ''),
-    url: String(((d._links as { webui?: string })?.webui) ?? ''),
-  }));
-  const truncated = typeof body.totalSize === 'number' && body.totalSize > rows.length;
+  const rows: ConfluencePage[] = [];
+  let start = 0;
+  let pages = 0;
+  let truncated = false;
+  while (pages < ATLASSIAN_MAX_PAGES) {
+    const q = new URLSearchParams({ cql, start: String(start), limit: String(ATLASSIAN_MAX_RESULTS) });
+    const r = await atlGet(conn, `/wiki/rest/api/content/search?${q.toString()}`);
+    if (!r.ok) return r;
+    const body = r.data as { results?: Record<string, unknown>[]; size?: number; totalSize?: number };
+    const page = (body.results ?? []).map((d) => ({
+      id: String(d.id ?? ''),
+      title: String(d.title ?? ''),
+      url: String(((d._links as { webui?: string })?.webui) ?? ''),
+    }));
+    for (const row of page) rows.push(row);
+    pages += 1;
+    const totalSize = typeof body.totalSize === 'number' ? body.totalSize : 0;
+    start += page.length;
+    // Use totalSize as the primary signal; fall back to empty page as safety guard.
+    if (start >= totalSize || page.length === 0) break;
+    if (pages >= ATLASSIAN_MAX_PAGES) { truncated = true; break; }
+  }
   return { ok: true, data: rows, truncated };
 }
 
 /** GET /wiki/rest/api/content/{id} — read one Confluence page. Read. */
 export async function confluenceGetPage(conn: AtlassianConn, id: string): Promise<AtlassianResult<ConfluencePage>> {
   if (!id.trim()) return { ok: false, reason: 'confluence_get_page needs a page id' };
-  const r = await atlSend(conn, 'GET', `/wiki/rest/api/content/${encodeURIComponent(id)}`);
+  const r = await atlGet(conn, `/wiki/rest/api/content/${encodeURIComponent(id)}`);
   if (!r.ok) return r;
   const d = r.data as Record<string, unknown>;
   return { ok: true, data: { id: String(d.id ?? id), title: String(d.title ?? ''), url: String(((d._links as { webui?: string })?.webui) ?? '') } };
@@ -224,7 +283,7 @@ export async function jiraCreateIssue(
     summary: input.summary,
   };
   if (input.description) fields.description = textToAdf(input.description);
-  const r = await atlSend(conn, 'POST', '/rest/api/3/issue', { fields });
+  const r = await atlWrite(conn, 'POST', '/rest/api/3/issue', { fields });
   if (!r.ok) return r;
   const d = r.data as Record<string, unknown>;
   const key = String(d.key ?? '');
@@ -235,7 +294,7 @@ export async function jiraCreateIssue(
 export async function jiraAddComment(conn: AtlassianConn, key: string, body: string): Promise<AtlassianResult<{ id: string }>> {
   if (!key.trim()) return { ok: false, reason: 'jira_add_comment needs an issue key' };
   if (!body.trim()) return { ok: false, reason: 'jira_add_comment needs a body' };
-  const r = await atlSend(conn, 'POST', `/rest/api/3/issue/${encodeURIComponent(key)}/comment`, { body: textToAdf(body) });
+  const r = await atlWrite(conn, 'POST', `/rest/api/3/issue/${encodeURIComponent(key)}/comment`, { body: textToAdf(body) });
   if (!r.ok) return r;
   return { ok: true, data: { id: String((r.data as Record<string, unknown>).id ?? '') } };
 }
@@ -243,7 +302,7 @@ export async function jiraAddComment(conn: AtlassianConn, key: string, body: str
 /** POST /rest/api/3/issue/{key}/transitions — move an issue's status. Write. */
 export async function jiraTransitionIssue(conn: AtlassianConn, key: string, transitionId: string): Promise<AtlassianResult<{ transitioned: true }>> {
   if (!key.trim() || !transitionId.trim()) return { ok: false, reason: 'jira_transition_issue needs an issue key and a transitionId' };
-  const r = await atlSend(conn, 'POST', `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`, { transition: { id: transitionId } });
+  const r = await atlWrite(conn, 'POST', `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`, { transition: { id: transitionId } });
   if (!r.ok) return r;
   return { ok: true, data: { transitioned: true } };
 }
@@ -257,7 +316,7 @@ export async function confluenceCreatePage(
   input: { spaceKey: string; title: string; body: string },
 ): Promise<AtlassianResult<ConfluencePage>> {
   if (!input.spaceKey.trim() || !input.title.trim()) return { ok: false, reason: 'confluence_create_page needs a spaceKey and a title' };
-  const r = await atlSend(conn, 'POST', '/wiki/rest/api/content', {
+  const r = await atlWrite(conn, 'POST', '/wiki/rest/api/content', {
     type: 'page',
     title: input.title,
     space: { key: input.spaceKey },

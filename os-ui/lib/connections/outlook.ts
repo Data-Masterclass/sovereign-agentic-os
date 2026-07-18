@@ -4,6 +4,7 @@
 import 'server-only';
 import type { Connection } from '@/lib/connections/schema';
 import { getSecretServerSide } from '@/lib/infra/secrets';
+import { fetchWithBackoff } from '@/lib/connections/retry';
 
 /**
  * Outlook mail client over Microsoft Graph (`https://graph.microsoft.com/v1.0`) —
@@ -24,6 +25,8 @@ export type GraphFetch = typeof fetch;
 
 export const GRAPH_API = 'https://graph.microsoft.com/v1.0';
 export const GRAPH_PAGE = 25;
+/** Max pages to follow on @odata.nextLink before flagging `truncated`. */
+export const GRAPH_MAX_PAGES = 4;
 
 export type GraphConn = {
   baseUrl: string;
@@ -56,7 +59,26 @@ async function withTimeout(conn: GraphConn, url: string, init: RequestInit): Pro
   }
 }
 
-/** One Microsoft Graph call. Never throws. Maps 401/403/404/429 to honest reasons. */
+function mapGraphResponse(res: Response): GraphResult<Record<string, unknown>> | null {
+  if (res.status === 429) return { ok: false, reason: `rate-limited; retry after ${res.headers.get('retry-after') ?? '30'}s` };
+  if (res.status === 401) return { ok: false, reason: 'unauthorized (access token expired or invalid — refresh it)' };
+  if (res.status === 403) return { ok: false, reason: 'forbidden (missing Graph scope)' };
+  if (res.status === 404) return { ok: false, reason: 'not_found' };
+  if (!res.ok) return { ok: false, reason: `Graph ${res.status}` };
+  return null;
+}
+
+async function readBody(res: Response): Promise<Record<string, unknown>> {
+  if (res.status === 202 || res.status === 204) return {};
+  return (await res.json().catch(() => ({}))) as Record<string, unknown>;
+}
+
+/**
+ * One Microsoft Graph call. Never throws. Maps 401/403/404/429 to honest reasons.
+ * GET requests surface 429 immediately (no retry). POST/PATCH uses capped exponential
+ * backoff with jitter on 429/503 via the shared retry helper.
+ * `path` may be a full nextLink URL (starts with https) or a relative API path.
+ */
 export async function graphSend(
   conn: GraphConn,
   method: 'GET' | 'POST' | 'PATCH',
@@ -64,17 +86,18 @@ export async function graphSend(
   body?: Record<string, unknown>,
 ): Promise<GraphResult<Record<string, unknown>>> {
   try {
+    const url = path.startsWith('https') ? path : `${base(conn)}${path}`;
     const init: RequestInit = { method, headers: { ...graphAuthHeaders(conn.token), ...(body ? { 'content-type': 'application/json' } : {}) } };
     if (body) init.body = JSON.stringify(body);
-    const res = await withTimeout(conn, `${base(conn)}${path}`, init);
-    if (res.status === 429) return { ok: false, reason: `rate-limited; retry after ${res.headers.get('retry-after') ?? '30'}s` };
-    if (res.status === 401) return { ok: false, reason: 'unauthorized (access token expired or invalid — refresh it)' };
-    if (res.status === 403) return { ok: false, reason: 'forbidden (missing Graph scope)' };
-    if (res.status === 404) return { ok: false, reason: 'not_found' };
-    if (!res.ok) return { ok: false, reason: `Graph ${res.status}` };
-    // 202 Accepted (sendMail) has no body.
-    if (res.status === 202 || res.status === 204) return { ok: true, data: {} };
-    return { ok: true, data: (await res.json().catch(() => ({}))) as Record<string, unknown> };
+    let res: Response;
+    if (method === 'GET') {
+      res = await withTimeout(conn, url, init);
+    } else {
+      res = await fetchWithBackoff(url, init, (u, i) => withTimeout(conn, u, i!), { maxAttempts: 2 });
+    }
+    const err = mapGraphResponse(res);
+    if (err) return err;
+    return { ok: true, data: await readBody(res) };
   } catch {
     return { ok: false, reason: 'unreachable' };
   }
@@ -116,15 +139,32 @@ function shapeMessage(d: Record<string, unknown>): OutlookMessage {
   };
 }
 
-/** GET /me/messages — list mail (optionally $search). Read. Bounded. */
+/** GET /me/messages — list mail (optionally $search). Read.
+ *  Follows `@odata.nextLink` up to `GRAPH_MAX_PAGES` pages. */
 export async function outlookListMessages(conn: GraphConn, opts?: { search?: string }): Promise<GraphResult<OutlookMessage[]>> {
-  const params: Record<string, string> = { $top: String(GRAPH_PAGE), $select: 'id,subject,from,receivedDateTime,bodyPreview' };
-  if (opts?.search) params.$search = `"${opts.search}"`;
-  const qs = new URLSearchParams(params).toString();
-  const r = await graphSend(conn, 'GET', `/me/messages?${qs}`);
-  if (!r.ok) return r;
-  const rows = Array.isArray(r.data.value) ? (r.data.value as Record<string, unknown>[]) : [];
-  return { ok: true, data: rows.map(shapeMessage), truncated: Boolean(r.data['@odata.nextLink']) };
+  const messages: OutlookMessage[] = [];
+  let nextLink: string | undefined;
+  let pages = 0;
+  let truncated = false;
+  while (pages < GRAPH_MAX_PAGES) {
+    let r: GraphResult<Record<string, unknown>>;
+    if (nextLink) {
+      // nextLink is a full URL — pass it as the path (graphSend handles full URLs)
+      r = await graphSend(conn, 'GET', nextLink);
+    } else {
+      const params: Record<string, string> = { $top: String(GRAPH_PAGE), $select: 'id,subject,from,receivedDateTime,bodyPreview' };
+      if (opts?.search) params.$search = `"${opts.search}"`;
+      r = await graphSend(conn, 'GET', `/me/messages?${new URLSearchParams(params).toString()}`);
+    }
+    if (!r.ok) return r;
+    const page = Array.isArray(r.data.value) ? (r.data.value as Record<string, unknown>[]) : [];
+    for (const d of page) messages.push(shapeMessage(d));
+    pages += 1;
+    nextLink = r.data['@odata.nextLink'] ? String(r.data['@odata.nextLink']) : undefined;
+    if (!nextLink) break;
+    if (pages >= GRAPH_MAX_PAGES) { truncated = true; break; }
+  }
+  return { ok: true, data: messages, truncated };
 }
 
 /** GET /me/messages/{id} — read one message. Read. */

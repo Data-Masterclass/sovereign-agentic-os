@@ -4,6 +4,7 @@
 import 'server-only';
 import type { Connection } from '@/lib/connections/schema';
 import { getSecretServerSide } from '@/lib/infra/secrets';
+import { fetchWithBackoff } from '@/lib/connections/retry';
 
 /**
  * Google Calendar API client (`https://www.googleapis.com/calendar/v3`) — the
@@ -24,6 +25,8 @@ export type GcalFetch = typeof fetch;
 
 export const GCAL_API = 'https://www.googleapis.com/calendar/v3';
 export const GCAL_PAGE = 25;
+/** Max pages to follow on nextPageToken before flagging `truncated`. */
+export const GCAL_MAX_PAGES = 4;
 
 export type GcalConn = {
   baseUrl: string;
@@ -56,21 +59,39 @@ async function withTimeout(conn: GcalConn, url: string, init: RequestInit): Prom
   }
 }
 
-async function cSend(
+function mapGcalResponse(res: Response): GcalResult<Record<string, unknown>> | null {
+  if (res.status === 429) return { ok: false, reason: `rate-limited; retry after ${res.headers.get('retry-after') ?? '30'}s` };
+  if (res.status === 401) return { ok: false, reason: 'unauthorized (access token expired or invalid — refresh it)' };
+  if (res.status === 403) return { ok: false, reason: 'forbidden (missing Calendar scope)' };
+  if (res.status === 404) return { ok: false, reason: 'not_found' };
+  if (!res.ok) return { ok: false, reason: `Calendar ${res.status}` };
+  return null;
+}
+
+/** GET — no retry (429 surfaces immediately as honest reason). */
+async function cGet(conn: GcalConn, path: string): Promise<GcalResult<Record<string, unknown>>> {
+  try {
+    const res = await withTimeout(conn, `${base(conn)}${path}`, { method: 'GET', headers: gcalAuthHeaders(conn.token) });
+    const err = mapGcalResponse(res);
+    if (err) return err;
+    return { ok: true, data: (await res.json().catch(() => ({}))) as Record<string, unknown> };
+  } catch {
+    return { ok: false, reason: 'unreachable' };
+  }
+}
+
+/** POST/PATCH — capped exponential backoff with jitter on 429/503 (one retry). */
+async function cWrite(
   conn: GcalConn,
-  method: 'GET' | 'POST' | 'PATCH',
+  method: 'POST' | 'PATCH',
   path: string,
-  body?: Record<string, unknown>,
+  body: Record<string, unknown>,
 ): Promise<GcalResult<Record<string, unknown>>> {
   try {
-    const init: RequestInit = { method, headers: { ...gcalAuthHeaders(conn.token), ...(body ? { 'content-type': 'application/json' } : {}) } };
-    if (body) init.body = JSON.stringify(body);
-    const res = await withTimeout(conn, `${base(conn)}${path}`, init);
-    if (res.status === 429) return { ok: false, reason: `rate-limited; retry after ${res.headers.get('retry-after') ?? '30'}s` };
-    if (res.status === 401) return { ok: false, reason: 'unauthorized (access token expired or invalid — refresh it)' };
-    if (res.status === 403) return { ok: false, reason: 'forbidden (missing Calendar scope)' };
-    if (res.status === 404) return { ok: false, reason: 'not_found' };
-    if (!res.ok) return { ok: false, reason: `Calendar ${res.status}` };
+    const init: RequestInit = { method, headers: { ...gcalAuthHeaders(conn.token), 'content-type': 'application/json' }, body: JSON.stringify(body) };
+    const res = await fetchWithBackoff(`${base(conn)}${path}`, init, (u, i) => withTimeout(conn, u, i!), { maxAttempts: 2 });
+    const err = mapGcalResponse(res);
+    if (err) return err;
     return { ok: true, data: (await res.json().catch(() => ({}))) as Record<string, unknown> };
   } catch {
     return { ok: false, reason: 'unreachable' };
@@ -81,7 +102,7 @@ async function cSend(
 
 /** Liveness: GET /users/me/calendarList. 2xx ⇒ live; 401 ⇒ honest ✗. */
 export async function gcalHealth(conn: GcalConn): Promise<{ connected: boolean; detail?: string; reason?: string }> {
-  const r = await cSend(conn, 'GET', '/users/me/calendarList?maxResults=1');
+  const r = await cGet(conn, '/users/me/calendarList?maxResults=1');
   if (r.ok) {
     const items = Array.isArray(r.data.items) ? (r.data.items as unknown[]) : [];
     return { connected: true, detail: `${items.length ? 'calendars visible' : 'authenticated'}` };
@@ -102,29 +123,56 @@ function shapeEvent(d: Record<string, unknown>): GcalEvent {
   return { id: String(d.id ?? ''), summary: String(d.summary ?? ''), start: eventTime(d.start), end: eventTime(d.end), status: String(d.status ?? '') };
 }
 
-/** GET /users/me/calendarList — list calendars. Read. */
+/** GET /users/me/calendarList — list calendars. Read.
+ *  Follows `nextPageToken` up to `GCAL_MAX_PAGES` pages. */
 export async function gcalListCalendars(conn: GcalConn): Promise<GcalResult<GcalCalendar[]>> {
-  const r = await cSend(conn, 'GET', `/users/me/calendarList?maxResults=${GCAL_PAGE}`);
-  if (!r.ok) return r;
-  const rows = Array.isArray(r.data.items) ? (r.data.items as Record<string, unknown>[]) : [];
-  return { ok: true, data: rows.map((d) => ({ id: String(d.id ?? ''), summary: String(d.summary ?? ''), primary: Boolean(d.primary) })), truncated: Boolean(r.data.nextPageToken) };
+  const items: GcalCalendar[] = [];
+  let pageToken: string | undefined;
+  let pages = 0;
+  let truncated = false;
+  while (pages < GCAL_MAX_PAGES) {
+    const path = `/users/me/calendarList?maxResults=${GCAL_PAGE}${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`;
+    const r = await cGet(conn, path);
+    if (!r.ok) return r;
+    const page = Array.isArray(r.data.items) ? (r.data.items as Record<string, unknown>[]) : [];
+    for (const d of page) items.push({ id: String(d.id ?? ''), summary: String(d.summary ?? ''), primary: Boolean(d.primary) });
+    pages += 1;
+    pageToken = r.data.nextPageToken ? String(r.data.nextPageToken) : undefined;
+    if (!pageToken) break;
+    if (pages >= GCAL_MAX_PAGES) { truncated = true; break; }
+  }
+  return { ok: true, data: items, truncated };
 }
 
-/** GET /calendars/{calendarId}/events — list events. Read. Bounded. */
+/** GET /calendars/{calendarId}/events — list events. Read.
+ *  Follows `nextPageToken` up to `GCAL_MAX_PAGES` pages. */
 export async function gcalListEvents(conn: GcalConn, calendarId: string, opts?: { timeMin?: string }): Promise<GcalResult<GcalEvent[]>> {
   const cal = (calendarId || 'primary').trim();
-  const qs = new URLSearchParams({ maxResults: String(GCAL_PAGE), singleEvents: 'true', orderBy: 'startTime', ...(opts?.timeMin ? { timeMin: opts.timeMin } : {}) }).toString();
-  const r = await cSend(conn, 'GET', `/calendars/${encodeURIComponent(cal)}/events?${qs}`);
-  if (!r.ok) return r;
-  const rows = Array.isArray(r.data.items) ? (r.data.items as Record<string, unknown>[]) : [];
-  return { ok: true, data: rows.map(shapeEvent), truncated: Boolean(r.data.nextPageToken) };
+  const events: GcalEvent[] = [];
+  let pageToken: string | undefined;
+  let pages = 0;
+  let truncated = false;
+  while (pages < GCAL_MAX_PAGES) {
+    const params: Record<string, string> = { maxResults: String(GCAL_PAGE), singleEvents: 'true', orderBy: 'startTime', ...(opts?.timeMin ? { timeMin: opts.timeMin } : {}) };
+    if (pageToken) params.pageToken = pageToken;
+    const qs = new URLSearchParams(params).toString();
+    const r = await cGet(conn, `/calendars/${encodeURIComponent(cal)}/events?${qs}`);
+    if (!r.ok) return r;
+    const page = Array.isArray(r.data.items) ? (r.data.items as Record<string, unknown>[]) : [];
+    for (const d of page) events.push(shapeEvent(d));
+    pages += 1;
+    pageToken = r.data.nextPageToken ? String(r.data.nextPageToken) : undefined;
+    if (!pageToken) break;
+    if (pages >= GCAL_MAX_PAGES) { truncated = true; break; }
+  }
+  return { ok: true, data: events, truncated };
 }
 
 /** GET /calendars/{calendarId}/events/{eventId} — read one event. Read. */
 export async function gcalGetEvent(conn: GcalConn, calendarId: string, eventId: string): Promise<GcalResult<GcalEvent>> {
   if (!eventId.trim()) return { ok: false, reason: 'get_event needs an event id' };
   const cal = (calendarId || 'primary').trim();
-  const r = await cSend(conn, 'GET', `/calendars/${encodeURIComponent(cal)}/events/${encodeURIComponent(eventId)}`);
+  const r = await cGet(conn, `/calendars/${encodeURIComponent(cal)}/events/${encodeURIComponent(eventId)}`);
   if (!r.ok) return r;
   return { ok: true, data: shapeEvent(r.data) };
 }
@@ -142,7 +190,7 @@ export async function gcalCreateEvent(
   const cal = (calendarId || 'primary').trim();
   const body: Record<string, unknown> = { summary: input.summary, start: { dateTime: input.start }, end: { dateTime: input.end } };
   if (input.description) body.description = input.description;
-  const r = await cSend(conn, 'POST', `/calendars/${encodeURIComponent(cal)}/events`, body);
+  const r = await cWrite(conn, 'POST', `/calendars/${encodeURIComponent(cal)}/events`, body);
   if (!r.ok) return r;
   return { ok: true, data: shapeEvent(r.data) };
 }
@@ -162,7 +210,7 @@ export async function gcalUpdateEvent(
   if (patch.start !== undefined) body.start = { dateTime: patch.start };
   if (patch.end !== undefined) body.end = { dateTime: patch.end };
   if (Object.keys(body).length === 0) return { ok: false, reason: 'update_event needs at least one field to change' };
-  const r = await cSend(conn, 'PATCH', `/calendars/${encodeURIComponent(cal)}/events/${encodeURIComponent(eventId)}`, body);
+  const r = await cWrite(conn, 'PATCH', `/calendars/${encodeURIComponent(cal)}/events/${encodeURIComponent(eventId)}`, body);
   if (!r.ok) return r;
   return { ok: true, data: shapeEvent(r.data) };
 }

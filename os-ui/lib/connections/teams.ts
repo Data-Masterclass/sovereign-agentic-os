@@ -4,7 +4,7 @@
 import 'server-only';
 import type { Connection } from '@/lib/connections/schema';
 import { getSecretServerSide } from '@/lib/infra/secrets';
-import { type GraphConn, GRAPH_API, GRAPH_PAGE, graphSend, type GraphResult } from '@/lib/connections/outlook';
+import { type GraphConn, GRAPH_API, GRAPH_PAGE, GRAPH_MAX_PAGES, graphSend, type GraphResult } from '@/lib/connections/outlook';
 
 /**
  * Microsoft Teams client over Microsoft Graph (`https://graph.microsoft.com/v1.0`) —
@@ -44,12 +44,24 @@ export type TeamRef = { id: string; displayName: string };
 export type ChannelRef = { id: string; displayName: string };
 export type ChannelMessage = { id: string; from: string; text: string; created: string };
 
-/** GET /me/joinedTeams — list the teams the user is a member of. Read. */
+/** GET /me/joinedTeams — list the teams the user is a member of. Read.
+ *  Follows `@odata.nextLink` up to `GRAPH_MAX_PAGES` pages. */
 export async function teamsListTeams(conn: GraphConn): Promise<TeamsResult<TeamRef[]>> {
-  const r = await graphSend(conn, 'GET', `/me/joinedTeams?$top=${GRAPH_PAGE}`);
-  if (!r.ok) return r;
-  const rows = Array.isArray(r.data.value) ? (r.data.value as Record<string, unknown>[]) : [];
-  return { ok: true, data: rows.map((d) => ({ id: String(d.id ?? ''), displayName: String(d.displayName ?? '') })), truncated: Boolean(r.data['@odata.nextLink']) };
+  const teams: TeamRef[] = [];
+  let nextLink: string | undefined;
+  let pages = 0;
+  let truncated = false;
+  while (pages < GRAPH_MAX_PAGES) {
+    const r = await graphSend(conn, 'GET', nextLink ?? `/me/joinedTeams?$top=${GRAPH_PAGE}`);
+    if (!r.ok) return r;
+    const page = Array.isArray(r.data.value) ? (r.data.value as Record<string, unknown>[]) : [];
+    for (const d of page) teams.push({ id: String(d.id ?? ''), displayName: String(d.displayName ?? '') });
+    pages += 1;
+    nextLink = r.data['@odata.nextLink'] ? String(r.data['@odata.nextLink']) : undefined;
+    if (!nextLink) break;
+    if (pages >= GRAPH_MAX_PAGES) { truncated = true; break; }
+  }
+  return { ok: true, data: teams, truncated };
 }
 
 /** GET /teams/{teamId}/channels — list channels in a team. Read. */
@@ -61,21 +73,30 @@ export async function teamsListChannels(conn: GraphConn, teamId: string): Promis
   return { ok: true, data: rows.map((d) => ({ id: String(d.id ?? ''), displayName: String(d.displayName ?? '') })) };
 }
 
-/** GET /teams/{teamId}/channels/{channelId}/messages — read recent channel messages. Read. */
+/** GET /teams/{teamId}/channels/{channelId}/messages — read recent channel messages. Read.
+ *  Follows `@odata.nextLink` up to `GRAPH_MAX_PAGES` pages. */
 export async function teamsListChannelMessages(conn: GraphConn, teamId: string, channelId: string): Promise<TeamsResult<ChannelMessage[]>> {
   if (!teamId.trim() || !channelId.trim()) return { ok: false, reason: 'list_channel_messages needs a teamId and a channelId' };
-  const r = await graphSend(conn, 'GET', `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages?$top=${GRAPH_PAGE}`);
-  if (!r.ok) return r;
-  const rows = Array.isArray(r.data.value) ? (r.data.value as Record<string, unknown>[]) : [];
-  return {
-    ok: true,
-    data: rows.map((d) => {
+  const msgs: ChannelMessage[] = [];
+  let nextLink: string | undefined;
+  let pages = 0;
+  let truncated = false;
+  while (pages < GRAPH_MAX_PAGES) {
+    const path = nextLink ?? `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages?$top=${GRAPH_PAGE}`;
+    const r = await graphSend(conn, 'GET', path);
+    if (!r.ok) return r;
+    const page = Array.isArray(r.data.value) ? (r.data.value as Record<string, unknown>[]) : [];
+    for (const d of page) {
       const fromUser = ((d.from ?? {}) as { user?: { displayName?: string } }).user;
       const body = (d.body ?? {}) as { content?: string };
-      return { id: String(d.id ?? ''), from: String(fromUser?.displayName ?? ''), text: String(body.content ?? ''), created: String(d.createdDateTime ?? '') };
-    }),
-    truncated: Boolean(r.data['@odata.nextLink']),
-  };
+      msgs.push({ id: String(d.id ?? ''), from: String(fromUser?.displayName ?? ''), text: String(body.content ?? ''), created: String(d.createdDateTime ?? '') });
+    }
+    pages += 1;
+    nextLink = r.data['@odata.nextLink'] ? String(r.data['@odata.nextLink']) : undefined;
+    if (!nextLink) break;
+    if (pages >= GRAPH_MAX_PAGES) { truncated = true; break; }
+  }
+  return { ok: true, data: msgs, truncated };
 }
 
 // ---------------------------------------------- writes (Write-approval) ---------

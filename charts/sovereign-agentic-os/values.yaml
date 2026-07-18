@@ -1569,8 +1569,12 @@ openmetadata:
         manifestPath: "/opt/dbt/project/target/manifest.json"
         catalogPath: "/opt/dbt/project/target/catalog.json"
     # Table→table lineage mined from Trino's query log (a second ingest pass).
+    # DISABLED: the openmetadata/ingestion 1.13.0 DatabaseServiceQueryLineagePipeline
+    # is missing the `includeTags`/`overrideMetadata` attributes the workflow expects
+    # (framework bug) → the pass errors. Metadata + dbt ingestion are unaffected. Re-enable
+    # once the ingestion image is upgraded past that bug.
     lineage:
-      enabled: true
+      enabled: false
       queryLogDays: "1"
   replicaCount: 1
   openmetadata:
@@ -2195,6 +2199,16 @@ softwareDelivery:
   # Software golden path (per-app builds in the Software tab): the live-subdomain
   # suffix surfaced on each app page (set OS_APPS_DOMAIN on the OS UI to match).
   appsDomain: apps.local
+
+# -----------------------------------------------------------------------------
+# Analytics monorepo (epic #146 Phase 1).
+# Seeds the tenant-level `analytics` Forgejo repo with the dbt project,
+# static Cube seed models, Dagster definitions and a validate-only CI workflow.
+# Nothing reads the repo at runtime yet — this is purely additive.
+# Default false: opt in per-overlay when Forgejo is enabled.
+# -----------------------------------------------------------------------------
+analyticsRepo:
+  enabled: false
 
 # -----------------------------------------------------------------------------
 # Harbor — production image registry for the Software golden path (per-app

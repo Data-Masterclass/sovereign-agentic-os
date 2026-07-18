@@ -12,6 +12,7 @@ import {
   gcalGetEvent,
   gcalCreateEvent,
   gcalUpdateEvent,
+  GCAL_MAX_PAGES,
 } from './gcal.ts';
 
 function fakeFetch(
@@ -119,4 +120,39 @@ test('no token ⇒ no Authorization header sent (honest auth failure)', async ()
   const f = fakeFetch(() => ({ status: 200, body: { items: [] } }));
   await gcalListCalendars({ baseUrl: 'https://www.googleapis.com/calendar/v3', fetchImpl: f.impl });
   assert.equal((f.calls[0].init.headers as Record<string, string>).authorization, undefined);
+});
+
+// --- bounded pagination ---
+
+test('listCalendars follows nextPageToken across two pages and concatenates', async () => {
+  let call = 0;
+  const f = fakeFetch(() => {
+    call += 1;
+    if (call === 1) return { status: 200, body: { items: [{ id: 'c1', summary: 'Work' }], nextPageToken: 'tok2' } };
+    return { status: 200, body: { items: [{ id: 'c2', summary: 'Personal' }] } };
+  });
+  const r = await gcalListCalendars(conn(f.impl));
+  assert.ok(r.ok && r.data.length === 2 && r.data[0].id === 'c1' && r.data[1].id === 'c2');
+  assert.equal(r.truncated, false);
+  assert.equal(f.calls.length, 2);
+});
+
+test('listCalendars caps at GCAL_MAX_PAGES and sets truncated=true', async () => {
+  const f = fakeFetch(() => ({ status: 200, body: { items: [{ id: 'c1' }], nextPageToken: 'keep' } }));
+  const r = await gcalListCalendars(conn(f.impl));
+  assert.ok(r.ok && r.truncated === true);
+  assert.equal(f.calls.length, GCAL_MAX_PAGES);
+});
+
+test('listEvents follows nextPageToken across two pages', async () => {
+  let call = 0;
+  const f = fakeFetch(() => {
+    call += 1;
+    const ev = { id: `e${call}`, summary: `E${call}`, start: { dateTime: 's' }, end: { dateTime: 'e' }, status: 'confirmed' };
+    const tok = call === 1 ? 'tok2' : undefined;
+    return { status: 200, body: { items: [ev], ...(tok ? { nextPageToken: tok } : {}) } };
+  });
+  const r = await gcalListEvents(conn(f.impl), 'primary');
+  assert.ok(r.ok && r.data.length === 2 && r.data[0].id === 'e1' && r.data[1].id === 'e2');
+  assert.equal(r.truncated, false);
 });

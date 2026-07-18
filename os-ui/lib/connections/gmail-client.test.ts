@@ -14,6 +14,7 @@ import {
   gmailListLabels,
   gmailSendMessage,
   gmailCreateDraft,
+  GMAIL_MAX_PAGES,
 } from './gmail.ts';
 
 function fakeFetch(
@@ -132,4 +133,29 @@ test('no token ⇒ no Authorization header sent (honest auth failure)', async ()
   const f = fakeFetch(() => ({ status: 200, body: { labels: [] } }));
   await gmailListLabels({ baseUrl: 'https://gmail.googleapis.com', fetchImpl: f.impl });
   assert.equal((f.calls[0].init.headers as Record<string, string>).authorization, undefined);
+});
+
+// --- bounded pagination ---
+
+test('listMessages follows nextPageToken across two pages and concatenates results', async () => {
+  let call = 0;
+  const f = fakeFetch(() => {
+    call += 1;
+    if (call === 1) return { status: 200, body: { messages: [{ id: 'p1m1', threadId: 't1' }], nextPageToken: 'tok2' } };
+    return { status: 200, body: { messages: [{ id: 'p2m1', threadId: 't2' }] } }; // no token → done
+  });
+  const r = await gmailListMessages(conn(f.impl));
+  assert.ok(r.ok && r.data.length === 2 && r.data[0].id === 'p1m1' && r.data[1].id === 'p2m1');
+  assert.equal(r.truncated, false);
+  assert.equal(f.calls.length, 2, 'two pages fetched');
+  // second call carries the pageToken
+  assert.ok(f.calls[1].url.includes('pageToken=tok2'));
+});
+
+test('listMessages caps at GMAIL_MAX_PAGES and sets truncated=true when more pages exist', async () => {
+  // always returns a nextPageToken to simulate an unbounded source
+  const f = fakeFetch(() => ({ status: 200, body: { messages: [{ id: 'x', threadId: 't' }], nextPageToken: 'keepgoing' } }));
+  const r = await gmailListMessages(conn(f.impl));
+  assert.ok(r.ok && r.truncated === true);
+  assert.equal(f.calls.length, GMAIL_MAX_PAGES, `stops at ${GMAIL_MAX_PAGES} pages`);
 });

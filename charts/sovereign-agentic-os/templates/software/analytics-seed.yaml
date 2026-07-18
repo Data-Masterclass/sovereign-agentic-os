@@ -1,0 +1,422 @@
+{{- if and (.Values.forgejo).enabled ((.Values.analyticsRepo | default dict).enabled) }}
+{{- /*
+  Analytics monorepo seed (epic #146 Phase 1). Creates the tenant-level `analytics`
+  repo in Forgejo if it does not already exist, then idempotently writes the
+  OS-managed path skeleton:
+
+    analytics/
+    ├── README.md                          (OS-managed-paths notice)
+    ├── dbt/                               (copy of images/dbt/project/)
+    ├── cube/models/seed/                  (the 3 static demo cube YAMLs)
+    ├── dagster/definitions.py             (images/dagster/repo.py)
+    └── .forgejo/workflows/ci.yml          (validate-only: dbt parse + cube YAML lint)
+
+  Phase 1 is ZERO-BEHAVIORAL-CHANGE: nothing reads the repo at runtime yet. The
+  seed is additive — it never deletes existing files, and the `cube-model` ConfigMap
+  demo cubes + the baked dbt/dagster images are LEFT UNTOUCHED.
+
+  Gate: `analyticsRepo.enabled` (default false — see values.yaml). Nil-safe on the
+  outer `.Values.analyticsRepo` because the key may be absent in older overlays.
+
+  Hook weight 26 (one higher than forgejo-seed/25) so the demo-app repo lands first
+  and this idempotent seed always finds Forgejo healthy.
+*/}}
+{{- $owner := .Values.forgejo.gitea.admin.username }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: analytics-seed-manifest
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "analytics-seed") | nindent 4 }}
+data:
+  README.md: |
+    # analytics
+
+    OS-managed paths (cube/models/metrics, dbt/models/governed) — edit via the OS.
+
+    Human edits to other paths are welcome and are preserved in git history.
+    The OS uses sha-based writes so it only commits when content actually changes.
+
+  # ── dbt project ──────────────────────────────────────────────────────────────
+  dbt_project.yml: |
+    name: sovereign
+    version: "1.0.0"
+    config-version: 2
+    profile: sovereign
+
+    model-paths: ["models"]
+    seed-paths: ["seeds"]
+
+    models:
+      sovereign:
+        staging:
+          +materialized: table
+        marts:
+          +materialized: incremental
+          +incremental_strategy: merge
+          +on_schema_change: append_new_columns
+
+  profiles.yml: |
+    sovereign:
+      target: dev
+      outputs:
+        dev:
+          type: trino
+          method: none
+          host: "{{ "{{" }} env_var('TRINO_HOST', 'trino') {{ "}}" }}"
+          port: "{{ "{{" }} env_var('TRINO_PORT', '8080') | as_number {{ "}}" }}"
+          user: "{{ "{{" }} env_var('TRINO_USER', 'dbt-sales') {{ "}}" }}"
+          http_scheme: "{{ "{{" }} env_var('TRINO_HTTP_SCHEME', 'http') {{ "}}" }}"
+          catalog: "{{ "{{" }} env_var('TRINO_CATALOG', 'iceberg') {{ "}}" }}"
+          schema: "{{ "{{" }} env_var('TRINO_SCHEMA', 'sales') {{ "}}" }}"
+          threads: 4
+
+  raw_orders.csv: |
+    order_id,customer,amount,order_date
+    1,acme,100.00,2026-01-01
+    2,acme,50.00,2026-01-01
+    3,globex,200.00,2026-01-02
+    4,initech,75.50,2026-01-02
+
+  schema.yml: |
+    version: 2
+
+    models:
+      - name: stg_orders
+        description: "Typed, cleaned orders from the raw seed (Iceberg staging)."
+        columns:
+          - name: order_id
+            description: "Primary key of an order."
+            tests:
+              - not_null
+              - unique
+          - name: customer
+            description: "Customer name."
+            tests:
+              - not_null
+          - name: amount
+            description: "Order amount (net)."
+            tests:
+              - not_null
+          - name: order_date
+            description: "Date the order was placed."
+            tests:
+              - not_null
+
+      - name: daily_revenue
+        description: "Revenue + order count per day. The Sales mart Cube reads."
+        columns:
+          - name: order_date
+            description: "Calendar day (mart grain + merge unique key)."
+            tests:
+              - not_null
+              - unique
+          - name: revenue
+            description: "Sum of order amounts for the day."
+            tests:
+              - not_null
+          - name: orders
+            description: "Number of orders for the day."
+            tests:
+              - not_null
+
+  stg_orders.sql: |
+    -- Staging: typed, cleaned orders from the raw seed.
+    -- Trino/Iceberg dialect: CAST(x AS <trino type>) — NOT Postgres x::type.
+    select
+        cast(order_id as integer)      as order_id,
+        cast(customer as varchar)      as customer,
+        cast(amount as decimal(10, 2)) as amount,
+        cast(order_date as date)       as order_date
+    from {{ "{{" }} ref('raw_orders') {{ "}}" }}
+
+  daily_revenue.sql: |
+    -- Mart: revenue + order count per day. Consumed by the Cube semantic layer.
+    {{ "{{" }} config(materialized='incremental', incremental_strategy='merge', unique_key='order_date') {{ "}}" }}
+    select
+        order_date,
+        sum(amount)  as revenue,
+        count(*)     as orders,
+        max(order_date) as updated_at
+    from {{ "{{" }} ref('stg_orders') {{ "}}" }}
+    group by order_date
+    order by order_date
+
+  # ── Cube seed models (the 3 static demo cubes from the cube-model ConfigMap) ─
+  northpeakcommerce.yml: |
+    cubes:
+      - name: northpeakcommerce
+        sql_table: sales.gold_northpeak_commerce
+        measures:
+          - name: revenue
+            title: Revenue
+            type: sum
+            sql: net_amount
+          - name: conversion
+            title: Conversion
+            type: avg
+            sql: converted
+          - name: orders
+            type: sum
+            sql: converted
+            public: false
+          - name: gross
+            type: sum
+            sql: order_total
+            public: false
+          - name: customers
+            type: count_distinct
+            sql: customer_id
+            public: false
+          - name: churned_customers
+            type: count_distinct
+            sql: "CASE WHEN {CUBE}.is_churned = 1 THEN {CUBE}.customer_id END"
+            public: false
+          - name: aov
+            title: AOV
+            type: number
+            sql: "{gross} / NULLIF({orders}, 0)"
+          - name: churnrate
+            title: Churn Rate
+            type: number
+            sql: "{churned_customers} * 1.0 / NULLIF({customers}, 0)"
+        dimensions:
+          - name: order_id
+            sql: order_id
+            type: string
+            primary_key: true
+          - name: region
+            sql: region
+            type: string
+          - name: product
+            sql: product
+            type: string
+          - name: order_date
+            sql: order_date
+            type: time
+
+  daily_revenue_cube.yml: |
+    cubes:
+      - name: daily_revenue
+        sql_table: sales.gold_northpeak_commerce
+        measures:
+          - name: total_revenue
+            type: sum
+            sql: net_amount
+          - name: total_orders
+            type: sum
+            sql: converted
+          - name: count
+            type: count
+        dimensions:
+          - name: order_date
+            type: time
+            sql: order_date
+
+  mart_sales.yml: |
+    cubes:
+      - name: mart_sales
+        sql_table: sales.gold_northpeak_commerce
+        measures:
+          - name: revenue
+            title: Revenue
+            type: sum
+            sql: net_amount
+          - name: orders
+            type: count
+        dimensions:
+          - name: order_date
+            type: time
+            sql: order_date
+          - name: region
+            type: string
+            sql: region
+          - name: product
+            type: string
+            sql: product
+
+  # ── Dagster definitions ───────────────────────────────────────────────────────
+  definitions.py: |
+    # SPDX-License-Identifier: Apache-2.0
+    # Copyright 2026 Borek Data Ventures UG
+    """Dagster definitions — the orchestrator's user code.
+
+    Loads the dbt project as Dagster assets (dagster-dbt) so Dagster orchestrates
+    the warehouse build, plus a tiny proof-of-life asset.
+    """
+    from pathlib import Path
+
+    from dagster import Definitions, asset
+    from dagster_dbt import DbtCliResource, dbt_assets
+
+    DBT_DIR = Path("/opt/dbt/project")
+    MANIFEST = DBT_DIR / "target" / "manifest.json"
+
+
+    @asset(group_name="sovereign_os", description="Proof-of-life asset for the orchestrator.")
+    def hello_sovereign() -> str:
+        return "hello from the Sovereign Agentic OS orchestrator"
+
+
+    @dbt_assets(manifest=MANIFEST)
+    def sovereign_dbt(context, dbt: DbtCliResource):
+        yield from dbt.cli(["build"], context=context).stream()
+
+
+    defs = Definitions(
+        assets=[hello_sovereign, sovereign_dbt],
+        resources={
+            "dbt": DbtCliResource(project_dir=str(DBT_DIR), profiles_dir=str(DBT_DIR)),
+        },
+    )
+
+  # ── CI workflow (validate-only — NO uploads, that's Phase 5) ─────────────────
+  ci.yml: |
+    # Forgejo Actions CI for the analytics monorepo.
+    # VALIDATE ONLY (Phase 1): dbt parse + cube YAML lint.
+    # No uploads to Cube/Trino — those are Phase 5.
+    on:
+      push:
+        branches: [main]
+      pull_request:
+        branches: [main]
+    jobs:
+      validate:
+        runs-on: docker
+        steps:
+          - name: Checkout (sovereign — no external actions)
+            env:
+              FORGEJO_PASS: "{{ "${{ secrets.FORGEJO_PASS }}" }}"
+              FORGEJO_URL: "{{ "${{ vars.FORGEJO_URL }}" }}"
+              FORGEJO_USER: "{{ "${{ vars.FORGEJO_USER }}" }}"
+            run: |
+              set -eu
+              git clone --depth 1 \
+                "http://${FORGEJO_USER}:${FORGEJO_PASS}@${FORGEJO_URL}/${FORGEJO_USER}/analytics.git" \
+                /workspace
+          - name: dbt parse (syntax check, no DB needed)
+            run: |
+              set -eu
+              cd /workspace
+              pip install dbt-core --quiet
+              dbt parse --project-dir dbt --profiles-dir dbt --no-version-check 2>&1 | tail -5
+          - name: cube YAML lint (valid YAML, required keys present)
+            run: |
+              set -eu
+              python3 - <<'EOF'
+              import os, yaml, sys
+              errors = []
+              for root, _, files in os.walk("/workspace/cube"):
+                  for f in files:
+                      if not f.endswith(".yml"):
+                          continue
+                      path = os.path.join(root, f)
+                      try:
+                          doc = yaml.safe_load(open(path))
+                          if not isinstance(doc, dict) or "cubes" not in doc:
+                              errors.append(f"{path}: missing 'cubes' key")
+                      except Exception as e:
+                          errors.append(f"{path}: {e}")
+              if errors:
+                  print("\n".join(errors)); sys.exit(1)
+              print(f"cube YAML lint OK ({len([f for r,_,fs in os.walk('/workspace/cube') for f in fs if f.endswith('.yml')])} files)")
+              EOF
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: analytics-seed
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "analytics-seed") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "26"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 8
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "analytics-seed") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: seed
+          image: curlimages/curl:8.11.1
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          env:
+            - name: FORGEJO
+              value: "http://forgejo-http:3000"
+            - name: USER
+              value: {{ $owner | quote }}
+            - name: PASS
+              value: {{ .Values.forgejo.gitea.admin.password | quote }}
+            - name: REPO
+              value: "analytics"
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              echo "waiting for Forgejo..."
+              for i in $(seq 1 80); do
+                curl -sf "$FORGEJO/api/v1/version" >/dev/null 2>&1 && break || sleep 3
+              done
+              AUTH="-u $USER:$PASS"
+              # create repo if missing (ignore 409 = already exists)
+              curl -s $AUTH -X POST "$FORGEJO/api/v1/user/repos" \
+                -H "Content-Type: application/json" \
+                -d "{\"name\":\"$REPO\",\"private\":true,\"auto_init\":true,\"default_branch\":\"main\",\"description\":\"OS-managed analytics monorepo (dbt/cube/dagster)\"}" \
+                -o /dev/null -w "create repo -> %{http_code}\n" || true
+              # put_file <local> <repo-path> — create or update (sha-based, idempotent)
+              put_file() {
+                local f="$1" path="$2"
+                B64=$(base64 -w0 "$f" 2>/dev/null || base64 "$f" | tr -d '\n')
+                SHA=$(curl -s $AUTH "$FORGEJO/api/v1/repos/$USER/$REPO/contents/$path?ref=main" | sed -n 's/.*"sha":"\([0-9a-f]*\)".*/\1/p' | head -1)
+                if [ -n "$SHA" ]; then
+                  curl -s $AUTH -X PUT "$FORGEJO/api/v1/repos/$USER/$REPO/contents/$path" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"branch\":\"main\",\"content\":\"$B64\",\"message\":\"seed: $path\",\"sha\":\"$SHA\"}" \
+                    -o /dev/null -w "update $path -> %{http_code}\n"
+                else
+                  curl -s $AUTH -X POST "$FORGEJO/api/v1/repos/$USER/$REPO/contents/$path" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"branch\":\"main\",\"content\":\"$B64\",\"message\":\"seed: $path\"}" \
+                    -o /dev/null -w "add    $path -> %{http_code}\n"
+                fi
+              }
+              # README
+              put_file /seed/README.md README.md
+              # dbt project
+              put_file /seed/dbt_project.yml dbt/dbt_project.yml
+              put_file /seed/profiles.yml dbt/profiles.yml
+              put_file /seed/raw_orders.csv dbt/seeds/raw_orders.csv
+              put_file /seed/schema.yml dbt/models/schema.yml
+              put_file /seed/stg_orders.sql dbt/models/staging/stg_orders.sql
+              put_file /seed/daily_revenue.sql dbt/models/marts/daily_revenue.sql
+              # Cube seed models (demo cubes — static, not OS-managed runtime path)
+              put_file /seed/northpeakcommerce.yml cube/models/seed/northpeakcommerce.yml
+              put_file /seed/daily_revenue_cube.yml cube/models/seed/daily_revenue.yml
+              put_file /seed/mart_sales.yml cube/models/seed/mart_sales.yml
+              # Dagster definitions
+              put_file /seed/definitions.py dagster/definitions.py
+              # CI workflow LAST (triggers validation run)
+              put_file /seed/ci.yml .forgejo/workflows/ci.yml
+              echo "analytics repo seed done"
+          volumeMounts:
+            - { name: manifest, mountPath: /seed, readOnly: true }
+      volumes:
+        - name: manifest
+          configMap:
+            name: analytics-seed-manifest
+{{- end }}

@@ -170,6 +170,13 @@ spec:
           {{- end }}
           securityContext:
             {{- include "soa.podSecurityContext" . | nindent 12 }}
+            # The openmetadata/ingestion image runs as the NON-NUMERIC `airflow` user
+            # (UID 50000, GID 0). kubelet's runAsNonRoot check needs a NUMERIC uid to
+            # verify non-root, else the pod fails to start with CreateContainerConfigError.
+            # Pin it explicitly so the crawl actually runs.
+            runAsUser: 50000
+            runAsGroup: 0
+            fsGroup: 0
           volumes:
             - name: workflow
               configMap:

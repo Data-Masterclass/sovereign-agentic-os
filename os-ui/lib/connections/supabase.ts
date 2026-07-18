@@ -6,6 +6,7 @@ import type { CurrentUser } from '@/lib/core/auth';
 import type { Connection } from '@/lib/connections/schema';
 import { getSecretServerSide } from '@/lib/infra/secrets';
 import { getConnectionForUser } from '@/lib/connections/store';
+import { fetchWithBackoff } from '@/lib/connections/retry';
 
 /**
  * Supabase MANAGEMENT-API client — the per-connection bridge to a customer's
@@ -116,11 +117,12 @@ async function sbGet(conn: SupabaseConn, path: string): Promise<SupabaseResult<u
 
 async function sbPost(conn: SupabaseConn, path: string, body: Record<string, unknown>): Promise<SupabaseResult<unknown>> {
   try {
-    const res = await withTimeout(conn, `${base(conn)}${path}`, {
-      method: 'POST',
-      headers: { ...supabaseAuthHeaders(conn.token), 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    const url = `${base(conn)}${path}`;
+    const res = await fetchWithBackoff(
+      url,
+      { method: 'POST', headers: { ...supabaseAuthHeaders(conn.token), 'content-type': 'application/json' }, body: JSON.stringify(body) },
+      (u, init) => withTimeout(conn, u, init!),
+    );
     const rl = rateReason(res);
     if (rl) return { ok: false, reason: rl };
     if (res.status === 401) return { ok: false, reason: 'unauthorized (bad or missing token)' };
