@@ -70,6 +70,10 @@ export type PillarCard = {
   canPromote: boolean;
   /** The tier it would promote INTO (null at the top / when not promotable). */
   promoteTo: PillarScope | null;
+  /** Whether the caller may demote (revoke sharing on) this pillar one tier down. */
+  canDemote: boolean;
+  /** The tier it would demote INTO (null at My / when not demotable). */
+  demoteTo: PillarScope | null;
 };
 
 export type ListResp = {

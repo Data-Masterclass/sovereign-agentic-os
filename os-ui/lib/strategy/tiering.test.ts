@@ -17,7 +17,9 @@ import {
   canEditPillar,
   canCreatePillar,
   canPromotePillar,
+  canDemotePillar,
   nextPillarScope,
+  prevPillarScope,
   betTier,
   groupBetsByTier,
   type Pillar,
@@ -107,6 +109,40 @@ test('promote Domain→Company needs an Admin', () => {
 
 test('a Company (tenant) pillar cannot be promoted further', () => {
   assert.equal(canPromotePillar(admin, pillar('tenant', { domain: 'tenant' })), false);
+});
+
+// -------------------------------------------------------------- demote ----
+
+test('prevPillarScope walks tenant → domain → personal → (none)', () => {
+  assert.equal(prevPillarScope('tenant'), 'domain');
+  assert.equal(prevPillarScope('domain'), 'personal');
+  assert.equal(prevPillarScope('personal'), null);
+});
+
+test('a My (personal) pillar cannot be demoted — already at the bottom', () => {
+  const p = pillar('personal');
+  assert.equal(canDemotePillar(owner, p), false, 'nothing to revoke at My');
+  assert.equal(canDemotePillar(admin, p), false, 'not even an Admin — there is no lower tier');
+});
+
+test('demote Domain→My: the owner, an in-domain Builder+, or an Admin (mirrors demoteArtifact)', () => {
+  const p = pillar('domain');
+  // Owner (a Builder+) unshares their own Domain pillar.
+  assert.equal(canDemotePillar({ ...salesBuilder, id: 'u-owner' }, p), true, 'owning in-domain Builder unshares');
+  // A non-owner in-domain Builder+ may also unshare (the shared-edit rule).
+  assert.equal(canDemotePillar(salesBuilder, p), true, 'an in-domain Builder unshares a shared pillar');
+  // A plain creator (even the owner) cannot — revoking from Domain needs Builder+.
+  assert.equal(canDemotePillar(owner, p), false, 'a creator cannot unshare from Domain');
+  // An out-of-domain Builder cannot.
+  assert.equal(canDemotePillar(otherBuilder, p), false, 'an out-of-domain Builder cannot unshare');
+  // A tenant-wide Admin always can.
+  assert.equal(canDemotePillar(admin, p), true, 'an Admin unshares any Domain pillar');
+});
+
+test('demote Company→Domain needs an Admin', () => {
+  const p = pillar('tenant', { domain: 'tenant' });
+  assert.equal(canDemotePillar({ ...salesBuilder, id: 'u-owner' }, p), false, 'a Builder cannot revoke from Company');
+  assert.equal(canDemotePillar(admin, p), true, 'only an Admin revokes from Company');
 });
 
 // ------------------------------------------------ bet tier by containment --

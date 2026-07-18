@@ -14,7 +14,7 @@ import {
 import { rollupForPillar } from '@/lib/strategy/value-rollup';
 import { targetsVsActuals } from '@/lib/strategy/snapshots';
 import { recentStrategyAudit } from '@/lib/strategy/audit';
-import { canEditPillar, canPromotePillar, nextPillarScope } from '@/lib/strategy';
+import { canEditPillar, canPromotePillar, canDemotePillar, nextPillarScope, prevPillarScope } from '@/lib/strategy';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,6 +46,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       canEdit: canEditPillar(user, pillar),
       canPromote: canPromotePillar(user, pillar),
       promoteTo: nextPillarScope(pillar.scope),
+      canDemote: canDemotePillar(user, pillar),
+      demoteTo: prevPillarScope(pillar.scope),
     });
   } catch (e) {
     return fail(e);

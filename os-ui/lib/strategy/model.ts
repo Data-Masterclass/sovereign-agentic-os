@@ -460,6 +460,38 @@ export function canPromotePillar(
   return user.role === 'admin';
 }
 
+/** The tier ONE step DOWN (tenant→domain→personal), or null at the bottom (My). */
+export function prevPillarScope(scope: PillarScope): PillarScope | null {
+  const i = PILLAR_SCOPES.indexOf(scope);
+  return i > 0 ? PILLAR_SCOPES[i - 1] : null;
+}
+
+/**
+ * Whether a user may DEMOTE (revoke sharing on) a pillar ONE tier DOWN
+ * (Company→Domain→My) — the mirror of {@link canPromotePillar}, with the SAME role
+ * gates the OS artifact ladder uses (`lib/core/artifacts.ts#demoteArtifact`):
+ *   • Company (tenant) → Domain : ADMIN only (the certify rung is admin-owned).
+ *   • Domain → My (personal)    : the OWNER, or an in-domain Builder+ / Admin
+ *                                 (the shared-edit rule — who could have shared it).
+ * Fail-closed: a My pillar is already at the bottom (nothing to revoke → false); a
+ * non-owner non-admin outside the domain can never demote.
+ */
+export function canDemotePillar(
+  user: { id?: string; domains: string[]; role: Role },
+  pillar: Pick<Pillar, 'scope' | 'domain' | 'owner'>,
+): boolean {
+  const prev = prevPillarScope(pillar.scope);
+  if (!prev) return false; // already My — nothing to revoke
+  if (pillar.scope === 'tenant') {
+    // Revoke Company → Domain: Admin only.
+    return user.role === 'admin';
+  }
+  // Revoke Domain → My: the owner, or an in-domain Builder+ (or a tenant-wide Admin).
+  if (user.role === 'admin') return true;
+  const isOwner = !!user.id && pillar.owner === user.id;
+  return roleAtLeast(user.role, 'builder') && (isOwner || user.domains.includes(pillar.domain));
+}
+
 // ------------------------------------------------------- Trend / pacing --------
 
 export type Trend = 'on-track' | 'behind' | 'no-target';

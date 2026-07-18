@@ -7,7 +7,7 @@ import { listPillars, createPillar } from '@/lib/strategy/pillars';
 import { rollupForPillar, valueHistory } from '@/lib/strategy/value-rollup';
 import { snapshotHistory, ensureHydrated } from '@/lib/strategy/snapshots';
 import { recentStrategyAudit } from '@/lib/strategy/audit';
-import { canCreatePillar, canEditPillar, canPromotePillar, nextPillarScope, type PillarScope } from '@/lib/strategy';
+import { canCreatePillar, canEditPillar, canPromotePillar, canDemotePillar, nextPillarScope, prevPillarScope, type PillarScope } from '@/lib/strategy';
 import { getSettings } from '@/lib/platform-admin/settings';
 
 export const dynamic = 'force-dynamic';
@@ -41,6 +41,8 @@ export async function GET(req: Request) {
           canEdit: canEditPillar(user, pillar),
           canPromote: canPromotePillar(user, pillar),
           promoteTo: nextPillarScope(pillar.scope),
+          canDemote: canDemotePillar(user, pillar),
+          demoteTo: prevPillarScope(pillar.scope),
         };
       }),
     );

@@ -20,6 +20,7 @@ export type StrategyAuditAction =
   | 'pillar.archive'
   | 'pillar.unarchive'
   | 'pillar.promote'
+  | 'pillar.demote'
   | 'pillar.restore'
   | 'pillar.link-bet'
   | 'pillar.unlink-bet'

@@ -21,6 +21,8 @@ import {
   listPillarVersions,
   restorePillarVersion,
   updatePillar,
+  promotePillar,
+  demotePillar,
   __resetForTests,
 } from './pillars.ts';
 import type { CurrentUser } from '../core/auth.ts';
@@ -83,6 +85,58 @@ test('restorePillarVersion reverts content + is itself reversible (snapshots cur
   // Restore snapshots the current (V2) state first → the V2 state is recoverable.
   const after = await listPillarVersions(admin, p.id);
   assert.ok(after.some((v) => (v.state as { name?: string }).name === 'V2'), 'V2 kept as a version, restore is reversible');
+});
+
+test('promote My→Domain→Company then demote back down, each tier round-trips + is version-logged', async () => {
+  __resetForTests();
+  // A builder OWNS a My pillar in their domain.
+  const p = await createPillar(builder, { name: 'Retention', scope: 'personal' });
+  assert.equal(p.scope, 'personal');
+
+  // My → Domain (owning in-domain builder promotes).
+  const dom = await promotePillar(builder, p.id);
+  assert.equal(dom.scope, 'domain');
+  assert.equal(dom.domain, 'sales', 'keeps its owning domain');
+
+  // Domain → Company (Admin only).
+  const co = await promotePillar(admin, p.id);
+  assert.equal(co.scope, 'tenant');
+  assert.equal(co.domain, 'tenant', 'a Company pillar carries the literal tenant domain');
+
+  // Company → Domain (Admin revoke) restores a real owning domain (the admin's).
+  const backDom = await demotePillar(admin, p.id);
+  assert.equal(backDom.scope, 'domain');
+  assert.equal(backDom.domain, 'platform', 'revoke from Company lands in the acting admin\'s domain');
+
+  // Domain → My (owning builder unshares). Owner is the builder, so re-home first
+  // is irrelevant — but the admin re-homed it to 'platform', so demote as admin.
+  const backMy = await demotePillar(admin, p.id);
+  assert.equal(backMy.scope, 'personal', 'unshared back down to My');
+
+  // The pillar is now a My pillar owned by the builder → the OWNER views its history.
+  const log = await listPillarVersions(builder, p.id);
+  assert.ok(log.some((v) => /revoke to Domain/i.test(v.summary ?? '')), 'demote to Domain is version-logged');
+  assert.ok(log.some((v) => /revoke to My/i.test(v.summary ?? '')), 'demote to My is version-logged');
+});
+
+test('demotePillar is fail-closed: My has nothing to revoke; a creator cannot unshare from Domain', async () => {
+  __resetForTests();
+  // A My pillar cannot be demoted (already at the bottom).
+  const my = await createPillar(builder, { name: 'Focus', scope: 'personal' });
+  await assert.rejects(
+    () => demotePillar(builder, my.id),
+    (e: Error & { status?: number }) => e.status === 400 && /already at the My tier/i.test(e.message),
+    'My pillar → 400 nothing to revoke',
+  );
+
+  // A Domain pillar cannot be unshared by a non-owner creator peer.
+  const dom = await createPillar(builder, { name: 'Shared', scope: 'domain' });
+  const creatorPeer: CurrentUser = { id: 'u-peer', name: 'Pi', role: 'creator', domains: ['sales'] };
+  await assert.rejects(
+    () => demotePillar(creatorPeer, dom.id),
+    (e: Error & { status?: number }) => e.status === 403,
+    'a creator peer cannot unshare a Domain pillar',
+  );
 });
 
 test('deleting a pillar with linked bets is BLOCKED (409, non-destructive)', async () => {

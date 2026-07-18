@@ -20,6 +20,7 @@ import {
   unarchivePillar,
   deletePillar,
   promotePillar,
+  demotePillar,
   restorePillarVersion,
 } from '@/lib/strategy/pillars';
 import { rollupForPillar, valueHistory } from '@/lib/strategy/value-rollup';
@@ -112,7 +113,7 @@ export const strategyWriteTools: McpTool[] = [
       properties: {
         name: { type: 'string', description: 'Pillar name.' },
         description: { type: 'string', description: 'One-line what this pillar is about.' },
-        scope: { type: 'string', enum: ['personal', 'domain', 'tenant'], description: 'personal (My — any user) · domain (Builder+) · tenant (Admin). Default: domain.' },
+        scope: { type: 'string', enum: ['personal', 'domain', 'tenant'], description: 'personal (My — any user) · domain (Builder+) · tenant (Admin). Default: personal (My) — always start in My, then promote_pillar up the ladder.' },
         domain: { type: 'string', description: 'For a domain/personal pillar: one of YOUR domains (defaults to your first). A personal pillar keeps it as its home for a later My→Domain promote.' },
         valueMetric: {
           type: 'object',
@@ -131,7 +132,8 @@ export const strategyWriteTools: McpTool[] = [
       const name = str(args.name).trim();
       if (!name) fail('create_pillar needs a `name`', 400);
       const rawScope = str(args.scope);
-      const scope = (rawScope === 'tenant' ? 'tenant' : rawScope === 'personal' ? 'personal' : 'domain') as PillarScope;
+      // Default to My (personal) — always start in My, then promote up the ladder.
+      const scope = (rawScope === 'tenant' ? 'tenant' : rawScope === 'domain' ? 'domain' : 'personal') as PillarScope;
       const vm = args.valueMetric as { name?: unknown; description?: unknown } | undefined;
       return createPillar(user, {
         name,
@@ -367,6 +369,24 @@ export const strategyWriteTools: McpTool[] = [
       const id = str(args.pillarId).trim();
       if (!id) fail('promote_pillar needs a `pillarId`', 400);
       return promotePillar(user, id);
+    },
+  },
+  {
+    name: 'demote_pillar',
+    tab: 'strategy',
+    minRole: 'builder',
+    description:
+      'Demote (revoke sharing on) a pillar ONE tier DOWN the ladder Company (tenant) → Domain → My (personal) — the mirror of promote_pillar. Purpose: narrow a pillar’s reach (unshare) without deleting it. Before: get_pillar. After: get_pillar to read the new scope. Governance: canDemotePillar re-gates in-lib (the SAME gates as the OS artifact demote ladder) — revoking FROM Company needs an Admin; unsharing FROM Domain needs the owner, an in-domain Builder+, or an Admin. Already at My → bad_request. Revoking from Company re-homes it into the acting Admin’s first domain.',
+    inputSchema: {
+      type: 'object',
+      properties: { pillarId: { type: 'string', description: 'Pillar id from list_pillars.' } },
+      required: ['pillarId'],
+      examples: [{ pillarId: 'pillar_ab12cd3' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.pillarId).trim();
+      if (!id) fail('demote_pillar needs a `pillarId`', 400);
+      return demotePillar(user, id);
     },
   },
   {

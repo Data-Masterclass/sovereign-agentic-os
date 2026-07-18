@@ -15,6 +15,18 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.40] — 2026-07-18
+
+### Changed
+- **Strategic Pillars now use the OS's core promotion/demotion mechanic.** Pillars are **created in My**
+  by default and promote **My → Domain → Company** via the same shared `PromoteButton` used by Metrics,
+  Dashboards, and Science — with **unshare/demote** back down. This engrains demotion as a **core
+  mechanic**: a new shared `components/lifecycle/DemoteButton` + `demoteVerb()` in `lib/core/scopes.ts`
+  (Strategy is the first adopter; other tabs can converge on it). Server-side `demotePillar` mirrors the
+  core artifact ladder (fail-closed; can't demote below My; Company→Domain is admin-only). MCP gains a
+  `demote_pillar` tool and defaults `create_pillar` to My. Big Bets are unchanged — a bet inherits its
+  parent pillar's tier by containment, so promoting/demoting the pillar moves its bets.
+
 ## [os-ui 0.5.39] — 2026-07-18
 
 ### Added

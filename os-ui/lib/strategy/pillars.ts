@@ -21,7 +21,9 @@ import {
   canEditPillar,
   canViewPillar,
   canPromotePillar,
+  canDemotePillar,
   nextPillarScope,
+  prevPillarScope,
   PILLAR_SCOPE_LABEL,
 } from '@/lib/strategy/model';
 import { auditStrategy } from '@/lib/strategy/audit';
@@ -401,6 +403,54 @@ export async function promotePillar(user: CurrentUser, pid: string): Promise<Pil
     pillarId: pid,
     pillarName: p.name,
     detail: { to: next },
+  });
+  return p;
+}
+
+/**
+ * Demote (revoke sharing on) a pillar ONE tier down: Company (tenant) → Domain →
+ * My (personal). The mirror of {@link promotePillar}, with the SAME role gates the
+ * OS artifact ladder uses (`lib/core/artifacts.ts#demoteArtifact`, enforced by
+ * `canDemotePillar`): Admin to revoke from Company, owner/in-domain Builder+ (or
+ * Admin) to unshare from Domain. Never deletes the pillar — only lowers its tier.
+ *
+ * When a Company pillar (whose `domain` is the literal 'tenant') is demoted to
+ * Domain it needs a real owning domain: the acting Admin's first domain becomes
+ * the new home (they are choosing to bring it into a domain they belong to).
+ * Version-logged, exactly like promote.
+ */
+export async function demotePillar(user: CurrentUser, pid: string): Promise<Pillar> {
+  const map = await getCache();
+  const p = map.get(pid);
+  if (!p) throw withStatus(new Error('Pillar not found'), 404);
+  const prev = prevPillarScope(p.scope);
+  if (!prev) throw withStatus(new Error('This pillar is already at the My tier — nothing to revoke'), 400);
+  if (!canDemotePillar(user, p)) {
+    throw withStatus(
+      new Error(
+        p.scope === 'tenant'
+          ? 'Revoking from Company requires an Administrator'
+          : 'Unsharing from Domain requires the owner, an in-domain Builder, or an Admin',
+      ),
+      403,
+    );
+  }
+  versions.record(pid, user.id, snapshotState(p), `revoke to ${PILLAR_SCOPE_LABEL[prev]}`);
+  // Company → Domain: give it a real owning domain (the acting Admin's first).
+  if (p.scope === 'tenant' && prev === 'domain') {
+    p.domain = user.domains[0] || p.domain;
+  }
+  p.scope = prev;
+  p.updatedAt = now();
+  map.set(p.id, p);
+  writeThrough(p);
+  await auditStrategy({
+    action: 'pillar.demote',
+    actor: user.id,
+    domain: p.domain,
+    pillarId: pid,
+    pillarName: p.name,
+    detail: { to: prev },
   });
   return p;
 }

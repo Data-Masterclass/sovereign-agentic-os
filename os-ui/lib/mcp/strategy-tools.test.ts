@@ -48,6 +48,7 @@ const BUILDER_WRITE = [
   'unarchive_pillar',
   'delete_pillar',
   'promote_pillar',
+  'demote_pillar',
   'restore_pillar_version',
 ];
 const READ = ['list_pillars', 'get_pillar'];

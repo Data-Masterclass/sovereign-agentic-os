@@ -33,6 +33,8 @@ import {
 import { useTileOrder } from '@/lib/prefs/useTileOrder';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
+import PromoteButton, { type PromoteTier } from '@/components/lifecycle/PromoteButton';
+import DemoteButton, { type DemoteTier } from '@/components/lifecycle/DemoteButton';
 import BetDetail from './BetDetail';
 import ValueChart from './ValueChart';
 import {
@@ -73,6 +75,14 @@ type Scorecard = {
 // Stable references for useTileOrder (memoization holds across renders).
 const NO_CARDS: PillarCard[] = [];
 const pillarIdOf = (card: PillarCard) => card.pillar.id;
+
+/**
+ * A pillar's My/Domain/Company tier → the shared ladder tier the Promote/Demote
+ * buttons speak (Personal/Shared/Marketplace), so Strategy reuses the SAME control
+ * every other tab uses instead of a bespoke button.
+ */
+const ladderTier = (scope: PillarScope): PromoteTier & DemoteTier =>
+  scope === 'domain' ? 'Shared' : scope === 'tenant' ? 'Marketplace' : 'Personal';
 
 /** The three strategy tiers, shown as a segment switcher (+ "All"). */
 type TierKey = 'all' | PillarScope;
@@ -293,22 +303,13 @@ function PillarColumn({
   dragProps?: ItemDragProps;
   dragHandleProps?: DragHandleProps;
 }) {
-  const { pillar, rollup, canEdit, canPromote, promoteTo } = card;
+  const { pillar, rollup, canEdit, canPromote, promoteTo, canDemote } = card;
   const [editing, setEditing] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState('');
 
   // Tier badge — My · Domain (its domain) · Company.
   const scopeLabel =
     pillar.scope === 'tenant' ? 'Company' : pillar.scope === 'personal' ? 'My' : pillar.domain;
   const archived = !!pillar.archived;
-
-  const promote = async () => {
-    if (!promoteTo) return;
-    setBusy(true); setErr('');
-    try { await api(`/api/strategy/pillars/${pillar.id}`, 'POST', { action: 'promote' }); onChanged(); }
-    catch (e) { setErr((e as Error).message); setBusy(false); }
-  };
 
   return (
     <section className="strat-pillar" style={{ opacity: archived ? 0.62 : 1 }} {...(dragProps ?? {})}>
@@ -380,13 +381,32 @@ function PillarColumn({
             </p>
           ) : null}
 
-          {/* Promote one tier up (My→Domain→Company), role-gated server-side. */}
-          {canPromote && promoteTo && !archived ? (
-            <button className="btn ghost sm" style={{ marginTop: 8 }} disabled={busy} onClick={promote}>
-              {busy ? <span className="spin" /> : `Promote to ${PILLAR_SCOPE_LABEL[promoteTo]} →`}
-            </button>
+          {/* Move up/down the My→Domain→Company ladder via the SAME shared
+              Promote/Demote controls every OS tab uses (role-gated server-side).
+              Promote steps up; Demote (revoke sharing) steps back down. */}
+          {!archived && (canPromote || canDemote) ? (
+            <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+              {canPromote && promoteTo ? (
+                <PromoteButton
+                  id={pillar.id}
+                  kind="pillar"
+                  tier={ladderTier(pillar.scope)}
+                  promoteUrl={`/api/strategy/pillars/${pillar.id}/promote`}
+                  canApprove
+                  onDone={onChanged}
+                  label={`Promote to ${PILLAR_SCOPE_LABEL[promoteTo]} →`}
+                />
+              ) : null}
+              {canDemote ? (
+                <DemoteButton
+                  kind="pillar"
+                  tier={ladderTier(pillar.scope)}
+                  demoteUrl={`/api/strategy/pillars/${pillar.id}/demote`}
+                  onDone={onChanged}
+                />
+              ) : null}
+            </div>
           ) : null}
-          {err ? <div className="error" style={{ fontSize: 11.5, marginTop: 6 }}>{err}</div> : null}
 
           {/* Lifecycle: archive → restore / delete + version history, via the
               SAME shared cluster every OS tab uses. Only for editors. */}
@@ -723,7 +743,8 @@ function NewPillarColumn({ resp, initialTier, onCreated }: { resp: ListResp; ini
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   // Default the new-pillar scope to the currently-viewed tier when the caller may
-  // create it there, else the highest tier they can create.
+  // create it there; otherwise ALWAYS start at My (personal) and let them promote up
+  // — the OS-wide "create in My first, then promote" convention.
   const defaultScope: PillarScope =
     initialTier !== 'all' && (
       (initialTier === 'tenant' && resp.canCreateTenant) ||
@@ -731,7 +752,7 @@ function NewPillarColumn({ resp, initialTier, onCreated }: { resp: ListResp; ini
       (initialTier === 'personal' && resp.canCreatePersonal)
     )
       ? initialTier
-      : resp.canCreateTenant ? 'tenant' : resp.canCreateDomain ? 'domain' : 'personal';
+      : resp.canCreatePersonal ? 'personal' : resp.canCreateDomain ? 'domain' : 'tenant';
   const [scope, setScope] = useState<PillarScope>(defaultScope);
   const [domain, setDomain] = useState(resp.user.domains[0] ?? '');
   const [vmName, setVmName] = useState('');

@@ -90,6 +90,19 @@ export function promoteVerb(fromVisibility: Visibility, opts: { propose?: boolea
   return opts.propose ? 'Propose to Domain' : 'Promote to Domain';
 }
 
+/**
+ * The DEMOTION (revoke-sharing) VERBS — the mirror of {@link promoteVerb}, one
+ * place so every tab's "step down the ladder" control reads the same words.
+ *   fromVisibility 'Certified'/'Marketplace' → "Revoke from Company"  (→ Domain)
+ *   fromVisibility 'Shared'                   → "Unshare"             (→ My)
+ * A Personal item is already at the bottom → '' (nothing to revoke).
+ */
+export function demoteVerb(fromVisibility: Visibility): string {
+  if (fromVisibility === 'Certified' || fromVisibility === 'Marketplace') return 'Revoke from Company';
+  if (fromVisibility === 'Shared') return 'Unshare';
+  return '';
+}
+
 /** The `{ mine, domain, marketplace }` payload every OS store returns. */
 export type ScopeGroups<T> = { mine: T[]; domain: T[]; marketplace: T[] };
 
