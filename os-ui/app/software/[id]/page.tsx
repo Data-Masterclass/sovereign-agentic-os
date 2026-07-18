@@ -344,6 +344,27 @@ export default function AppPage() {
               <button className={mode === 'monitor' ? 'active' : ''} onClick={() => setMode('monitor')}>Monitor</button>
               <button className={mode === 'edit' ? 'active' : ''} onClick={() => setMode('edit')}>Edit</button>
             </div>
+            {/* Discoverable lifecycle: Archive (or Restore + Delete when archived) right
+                in the header — not buried under Manage. Owner or domain-admin+ (the server
+                re-checks via canManageArtifact). Full cluster incl. version history stays
+                under Manage. */}
+            {(app.owner === data.user.id || roleAtLeast(data.user.role, 'domain_admin')) ? (
+              <LifecycleActions
+                id={app.id}
+                name={app.name}
+                kind="app"
+                visibility={app.visibility === 'Shared' ? 'shared' : app.visibility === 'Certified' ? 'certified' : 'personal'}
+                archived={app.status === 'archived'}
+                handlers={{
+                  onArchive: () => lifecycle('archive'),
+                  onRestore: () => lifecycle('unarchive'),
+                  onDelete: () => lifecycle('delete'),
+                }}
+                onChanged={() => reload()}
+                showVersions={false}
+                compact
+              />
+            ) : null}
             <Link className="sw-quiet-link" href="/software">All software</Link>
           </div>
         </div>

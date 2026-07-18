@@ -93,7 +93,12 @@ export default function NewDashboard({
     setBuilding(true);
     try {
       const res = await postJson<BuildResponse>('/api/dashboards/build', {
-        id: slug(trimmed) || 'dashboard',
+        // A UNIQUE id per new dashboard — never the bare name slug, or two dashboards
+        // sharing a name (across users) collide on one id and "creating" the second is
+        // treated as EDITING the first's (often another owner's) record → a misleading
+        // "only the owner … can edit this dashboard" 403. The slug stays as a readable
+        // prefix; a short random suffix guarantees uniqueness.
+        id: `${slug(trimmed) || 'dashboard'}-${Math.random().toString(36).slice(2, 8)}`,
         name: trimmed,
         view,
         mode,

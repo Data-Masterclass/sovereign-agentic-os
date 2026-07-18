@@ -15,6 +15,24 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.36] — 2026-07-17
+
+### Fixed
+- **Software apps now have a visible Archive button.** The archive/restore/delete control was
+  rendered with `surface="tile"` (which shows nothing) on the cards and was otherwise buried inside
+  the detail "Manage" accordion — so there was no discoverable archive button. Archive (or Restore +
+  Delete when archived) now sits in the app detail **header**, matching the other tabs; owner or
+  domain-admin+ (server-enforced).
+
+## [os-ui 0.5.35] — 2026-07-17
+
+### Fixed
+- **Creating a dashboard no longer fails with "only the owner … can edit this dashboard."** New
+  dashboards took their id from the name slug, so two dashboards sharing a name (across users)
+  collided on one id — "creating" the second was treated as editing the first's (often another
+  owner's) record, tripping the fail-closed edit-scope check even for an admin. Each new dashboard
+  now gets a unique id.
+
 ## [os-ui 0.5.34] — 2026-07-17
 
 ### Changed
