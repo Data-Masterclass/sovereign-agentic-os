@@ -1,4 +1,6 @@
-{{- if and .Values.openmetadata.enabled .Values.openmetadata.ingestion.enabled }}
+{{- /* nil-safe: a --reuse-values upgrade won't carry the new openmetadata.ingestion
+       block, so traverse with `dig` (default false) rather than a nil-pointer deref. */ -}}
+{{- if and (.Values.openmetadata | default dict).enabled (.Values.openmetadata.ingestion | default dict).enabled }}
 {{- /*
   NATIVE OpenMetadata metadata ingestion for the OS's OWN data plane (the bundled
   in-cluster Trino/Iceberg lakehouse) — the fix for a HOLLOW catalog (#147).
