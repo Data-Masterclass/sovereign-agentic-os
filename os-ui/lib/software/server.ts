@@ -11,7 +11,7 @@ import {
   type App,
 } from '@/lib/software/apps';
 import { generateAndCompile } from './auto-mcp.ts';
-import { parseAppManifest, parseOpenApi, detectSurface, reconcileKnowledgeConsumes } from './metadata.ts';
+import { parseAppManifest, parseOpenApi, resolveSurface, reconcileKnowledgeConsumes } from './metadata.ts';
 import type { PipelineBackend, AuthorInput, AuthorResult, FrontDoorKey } from './adapters.ts';
 import type { AdapterStep, RunMode, ScaffoldFile } from './model.ts';
 
@@ -181,6 +181,9 @@ export async function commitToApp(
   // Metadata fidelity: parse the convention over the WHOLE tree on every commit.
   const manifest = parseAppManifest(tree, { name: app.name, owner: app.owner, description: app.description });
   app.manifest = manifest;
+  // A committed `surface:` in app.yaml is a fresh declaration; keep the app's
+  // declaration in sync with it (intent recorded on the record too).
+  if (manifest.declaredSurface) app.declaredSurface = manifest.declaredSurface;
   // Consumes fidelity: `declares.knowledge` is AUTHORITATIVE for the app's KNOWLEDGE
   // consumes/lineage edges. Reconcile them to exactly match the committed declares —
   // ADD newly-declared refs AND PRUNE refs no longer declared — so a re-commit that
@@ -188,9 +191,10 @@ export async function commitToApp(
   // now-unreferenced knowledge, since the delete is lineage-aware). Data/connection
   // consumes are recorded through other governed paths and are left untouched here.
   app.consumes = reconcileKnowledgeConsumes(app.consumes, manifest.knowledge);
-  // Surface fidelity: re-detect the UI/API surface from the whole committed tree
-  // so the monitor view adapts to what the agent actually built.
-  app.surface = detectSurface(tree);
+  // Surface fidelity: re-resolve the UI/API surface from the whole committed tree
+  // so the monitor view adapts to what the agent actually built — but a declaration
+  // (committed `surface:` or the app's recorded intent) WINS over the heuristic.
+  app.surface = resolveSurface(tree, app.declaredSurface);
   // Recompile the auto-MCP from the committed OpenAPI when present.
   const openapi = parseOpenApi(tree);
   if (openapi) {

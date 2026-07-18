@@ -19,7 +19,7 @@ import {
   ensureHydrated as ensureApprovalsHydrated,
 } from '@/lib/governance/approvals';
 import { securityScan } from './scan.ts';
-import { detectSurface } from './metadata.ts';
+import { resolveSurface } from './metadata.ts';
 import { getSnapshot } from './server.ts';
 import { deployApp, runnerStatus, type RunnerApp, type RunnerOutcome, type RunnerStatus } from './runner.ts';
 import { roleAtLeast } from '@/lib/core/session';
@@ -240,10 +240,11 @@ export async function requestDeploy(
   }
   if (app.status === 'archived') throw withStatus(new Error('Archived apps cannot deploy'), 409);
 
-  // Detect the app's UI/API surface at deploy from the code + manifest the agent
+  // Resolve the app's UI/API surface at deploy from the code + manifest the agent
   // wrote (the deploy manifest reveals whether it binds a web server vs only an
-  // API), so the monitor view is honest to what actually ships.
-  app.surface = detectSurface(appFiles(app));
+  // API), so the monitor view is honest to what actually ships — but a declaration
+  // (the creator's recorded intent) WINS over the heuristic.
+  app.surface = resolveSurface(appFiles(app), app.declaredSurface);
 
   const requested = requestedEnvelope(app);
   const broadened = scopeBroadened(app.deploy.approved, requested);

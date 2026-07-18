@@ -244,6 +244,25 @@ export const config = {
   // degrades gracefully. Admin-overridable via LITELLM_TOOLS_MODEL / the `tools`
   // role to pin tool-calling back to the reasoning model if desired.
   litellmToolsModel: env('LITELLM_TOOLS_MODEL', env('LITELLM_EXEC_MODEL', 'sovereign-default')),
+  // ---- "Talk to <tab>" copilots (lib/talk) — cost tier + escalation. The five
+  // Context-tab copilots (Talk-to-Data/Knowledge/Files/Connections/Metrics) are the
+  // OS's highest-traffic reasoning surface. They now answer on the CHEAP `standard`
+  // tier by DEFAULT and escalate to the `reasoning` tier only when the standard
+  // answer comes back weak (empty / too short / low-confidence / errored). This cuts
+  // the reasoning-token share dramatically without hurting hard-answer quality.
+  //   • TALK_COPILOT_TIER — the model ROLE the copilots use first ('standard' |
+  //     'reasoning' | 'tools'). Never a bare model name: it resolves through
+  //     `roleModel(role)` so an admin's role override / env alias still applies.
+  //     Set to 'reasoning' to pin the old always-235B behaviour.
+  //   • TALK_ESCALATE_TO_REASONING — when true (default), a weak first answer is
+  //     retried ONCE on the reasoning tier. Set 'false' to disable escalation (pure
+  //     single-tier copilots). No-op when the primary tier already IS reasoning.
+  talkCopilotTier: (() => {
+    const v = env('TALK_COPILOT_TIER', 'standard').trim();
+    return v === 'reasoning' || v === 'standard' || v === 'tools' ? v : 'standard';
+  })() as 'reasoning' | 'standard' | 'tools',
+  talkEscalateToReasoning: env('TALK_ESCALATE_TO_REASONING', 'true').toLowerCase() !== 'false',
+
   // Ask-the-OS assistant: max PLAN→ACT tool-call rounds per turn. Raised from the
   // original 8 so multi-step builds (ingest → silver → gold → metric → publish) can
   // complete in one conversation. Tunable via env without a rebuild.

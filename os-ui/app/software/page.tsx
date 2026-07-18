@@ -8,7 +8,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
 import { useApi } from '@/lib/useApi';
-import { SCOPE_GROUPS, groupByScope, groupsFromVisibility, scopeCounts, type ScopeKey } from '@/lib/core/scopes';
+import { SCOPE_GROUPS, groupsFromVisibility, tilesForScope, activeScopeCounts, type ScopeKey } from '@/lib/core/scopes';
 import TeamPanel from './TeamPanel';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
@@ -82,6 +82,7 @@ export default function SoftwarePage() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   const [scope, setScope] = useState<ScopeKey>('all');
+  const [showArchived, setShowArchived] = useState(false);
 
   async function create() {
     if (!name.trim() || creating) return;
@@ -108,17 +109,65 @@ export default function SoftwarePage() {
     }
   }
 
-  const allApps = data?.apps ?? [];
   const uid = data?.user.id ?? '';
+  // Carry an `archived` boolean the OS-wide archive-aware scope helpers key on
+  // (apps model it as `status: 'active' | 'archived'`).
+  const allApps = (data?.apps ?? []).map((a) => ({ ...a, archived: a.status === 'archived' }));
   const appGroups = groupsFromVisibility(allApps);
-  const scopedApps = groupByScope(appGroups, uid);
-  const appCounts = scopeCounts(appGroups, uid);
-  const apps = scopedApps[scope];
+  // Working counts EXCLUDE archived (they get their own section); the scope
+  // switcher counts what you actually work with.
+  const appCounts = activeScopeCounts(appGroups, uid);
+  const { active: apps, archived: archivedApps } = tilesForScope(appGroups, scope, uid);
 
   // An app is the caller's to manage when they own it or are an in-domain Admin
   // (the lifecycle route re-checks either way — this only decides whether to show it).
   const role = data?.user.role ?? '';
   const canManage = (a: AppItem) => uid !== '' && (a.owner === uid || role === 'admin');
+
+  // ONE tile renderer used by both the active grid and the archived section.
+  const appTile = (a: AppItem & { archived: boolean }) => {
+    const s = statusBadge(a.deploy.state);
+    return (
+      <div className="sw-app-cell" key={a.id}>
+        <Link className="sw-app" href={`/software/${a.id}`}>
+          <div className="sw-app-top">
+            <h3 className="sw-app-name">{a.name}</h3>
+            <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+              {(scope === 'shared' || scope === 'marketplace') ? <DomainTag domain={a.domain} /> : null}
+              {a.archived ? <span className="badge muted">archived</span> : null}
+              <span className={s.cls}>{s.label}</span>
+            </div>
+          </div>
+          <div className="sw-app-desc">{a.description || 'No description yet.'}</div>
+          <div className="sw-app-foot">
+            <span className="sw-app-ver">{versionLabel(a.deploy.releases)}</span>
+            {a.mode === 'offline' ? <span className="badge muted">git not ready</span> : null}
+            <span className="sw-app-open">Open →</span>
+          </div>
+        </Link>
+        {canManage(a) ? (
+          <div className="sw-app-actions">
+            <LifecycleActions
+              id={a.id}
+              name={a.name}
+              kind="app"
+              visibility={lcVis(a.visibility)}
+              archived={a.archived}
+              api={`/api/apps/${a.id}`}
+              handlers={{
+                onArchive: () => appLifecycle(a.id, 'archive'),
+                onRestore: () => appLifecycle(a.id, 'unarchive'),
+                onDelete: () => appLifecycle(a.id, 'delete'),
+              }}
+              onChanged={reload}
+              compact
+              surface="tile"
+            />
+          </div>
+        ) : null}
+      </div>
+    );
+  };
 
   return (
     <ConfirmProvider>
@@ -187,7 +236,13 @@ export default function SoftwarePage() {
         {/* Software apps — the OS-wide four groups: All · My · Shared · Marketplace. */}
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', marginTop: 30 }}>
           <h2 className="sw-sec-title">Software apps</h2>
-          <Link className="sw-quiet-link" href="/software/reviews">Deploy reviews →</Link>
+          <div className="row" style={{ gap: 14, alignItems: 'center' }}>
+            <label className="row" style={{ gap: 6, alignItems: 'center', fontSize: 13, cursor: 'pointer' }}>
+              <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+              Show archived
+            </label>
+            <Link className="sw-quiet-link" href="/software/reviews">Deploy reviews →</Link>
+          </div>
         </div>
 
         {data ? (
@@ -214,53 +269,26 @@ export default function SoftwarePage() {
             </div>
           </div>
         ) : (
-          <div className="sw-apps">
-            {apps.map((a) => {
-              const s = statusBadge(a.deploy.state);
-              const archived = a.status === 'archived';
-              return (
-                <div className="sw-app-cell" key={a.id}>
-                  <Link className="sw-app" href={`/software/${a.id}`}>
-                    <div className="sw-app-top">
-                      <h3 className="sw-app-name">{a.name}</h3>
-                      <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-                        {(scope === 'shared' || scope === 'marketplace') ? <DomainTag domain={a.domain} /> : null}
-                        {archived ? <span className="badge muted">archived</span> : null}
-                        <span className={s.cls}>{s.label}</span>
-                      </div>
-                    </div>
-                    <div className="sw-app-desc">{a.description || 'No description yet.'}</div>
-                    <div className="sw-app-foot">
-                      <span className="sw-app-ver">{versionLabel(a.deploy.releases)}</span>
-                      {a.mode === 'offline' ? <span className="badge muted">git not ready</span> : null}
-                      <span className="sw-app-open">Open →</span>
-                    </div>
-                  </Link>
-                  {canManage(a) ? (
-                    <div className="sw-app-actions">
-                      <LifecycleActions
-                        id={a.id}
-                        name={a.name}
-                        kind="app"
-                        visibility={lcVis(a.visibility)}
-                        archived={archived}
-                        api={`/api/apps/${a.id}`}
-                        handlers={{
-                          onArchive: () => appLifecycle(a.id, 'archive'),
-                          onRestore: () => appLifecycle(a.id, 'unarchive'),
-                          onDelete: () => appLifecycle(a.id, 'delete'),
-                        }}
-                        onChanged={reload}
-                        compact
-                        surface="tile"
-                      />
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
+          <div className="sw-apps">{apps.map(appTile)}</div>
         )}
+
+        {/* Archived — hidden from the working grid; openable so the detail exposes
+            Restore + Delete (the OS-wide archive rule). */}
+        {data && showArchived ? (
+          archivedApps.length > 0 ? (
+            <>
+              <div className="section-title" style={{ marginTop: 24 }}>
+                Archived<span className="count-pill">{archivedApps.length}</span>
+              </div>
+              <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
+                Archived apps are hidden from the working lists (retained). Open one to Restore or Delete it.
+              </p>
+              <div className="sw-apps">{archivedApps.map(appTile)}</div>
+            </>
+          ) : (
+            <div className="hint" style={{ marginTop: 16 }}>No archived apps in this scope.</div>
+          )
+        ) : null}
       </div>
     </ConfirmProvider>
   );

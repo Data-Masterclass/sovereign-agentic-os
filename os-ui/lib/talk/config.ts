@@ -21,6 +21,7 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
+import { config } from '@/lib/core/config';
 import { roleModel } from '@/lib/models/roles';
 import { runAsk, type AskMessage, type AskOutcome } from '@/lib/data/ask';
 import { listAskable, type AskableDataset } from '@/lib/data';
@@ -81,7 +82,11 @@ const dataRetrieval: TalkRetrieval = async (question, user) => {
     question,
     datasets,
     llm: async (messages: AskMessage[], model: string) => (await call({ model, messages, temperature: 0 })).content,
-    models: { generate: roleModel('reasoning'), summarize: roleModel('standard') },
+    // NL→SQL generation runs on the SAME admin-configurable copilot tier as the
+    // answer (default `standard`), not a hard-pinned reasoning call — the top-level
+    // copilot escalates to reasoning if the resulting answer is weak. Summaries stay
+    // on standard. Pin TALK_COPILOT_TIER=reasoning to restore always-235B generation.
+    models: { generate: roleModel(config.talkCopilotTier), summarize: roleModel('standard') },
     query: (sql) => queryRun(sql, readPrincipalFor(sql, user)),
   });
   return dataResult(outcome, datasets);
@@ -90,7 +95,11 @@ const dataRetrieval: TalkRetrieval = async (question, user) => {
 // --------------------------------------------------- knowledge grounding (hybrid) --
 
 const knowledgeRetrieval: TalkRetrieval = async (question, user) => {
-  const r = await retrieveKnowledge(question, principal(user), { k: 6 });
+  // k=4: a tighter top-k keeps the grounded evidence (and so the reasoning INPUT — the
+  // real cost multiplier at ~14k tokens/call) small without dropping answer quality on
+  // these focused copilot questions. Admin-tunable via TALK_KNOWLEDGE_TOPK.
+  const k = Number(process.env.TALK_KNOWLEDGE_TOPK ?? '') || 4;
+  const r = await retrieveKnowledge(question, principal(user), { k });
   if (r.decision === 'deny' || r.hits.length === 0) {
     return { kind: 'retrieval', query: question, citations: [] };
   }

@@ -28,9 +28,10 @@ import type {
   AppManifest,
   AppSurface,
   ConsumedResource,
+  SurfaceDeclaration,
 } from '@/lib/software/model';
 import { generateAndCompile } from '@/lib/software/auto-mcp';
-import { parseAppManifest, renderAppYaml, defaultOpenApi, detectSurface } from '@/lib/software/metadata';
+import { parseAppManifest, renderAppYaml, defaultOpenApi, resolveSurface } from '@/lib/software/metadata';
 import { osMirror } from '@/lib/infra/os-mirror';
 import { type ArtifactVersion, versionLog } from '@/lib/core/versioning';
 import { listGitVersions, restoreGitVersion, shaForVersion, type GitVersion } from '@/lib/core/git-versioning';
@@ -121,8 +122,14 @@ export type App = {
   };
   /** Parsed app.yaml / OpenAPI convention (metadata fidelity). */
   manifest: AppManifest;
-  /** Detected UI/API surface (inferred from what was built; drives the monitor). */
+  /** Resolved UI/API surface — a declaration wins, else inferred from what was built. */
   surface: AppSurface;
+  /**
+   * The creator's EXPLICIT surface declaration (`create_software` arg or `app.yaml`
+   * `surface:`), when given. Intent: it wins over the heuristic on every re-detect,
+   * so a UI app declared up front never regresses to "API" as the code changes.
+   */
+  declaredSurface?: SurfaceDeclaration;
   /** Governed resources the app actually consumes at run time (no raw creds). */
   consumes: ConsumedResource[];
   /** Whether "Use as Data" has snapshotted app data into a Bronze dataset. */
@@ -464,7 +471,13 @@ async function getCache(): Promise<Map<string, App>> {
   for (const app of docs as App[]) {
     // Back-compat: apps persisted before surface-detection get one inferred
     // from their scaffold so the monitor drives off surface, never `template`.
-    if (!app.surface) app.surface = detectSurface(templateFiles(app.template, app.name, app.slug));
+    // A persisted declaration (intent) still wins over the heuristic.
+    if (!app.surface) {
+      app.surface = resolveSurface(
+        templateFiles(app.template, app.name, app.slug),
+        app.declaredSurface,
+      );
+    }
     map.set(app.id, app);
     // Re-hydrate the in-process MCP grant so agents can call it after a restart.
     if (app.connectionId) rehydrateConnection(app);
@@ -823,10 +836,13 @@ export async function getAppForUser(appId: string, user: CurrentUser): Promise<A
 
 export async function createApp(
   user: CurrentUser,
-  input: { name: string; description?: string; template?: AppTemplateKey; domain?: string },
+  input: { name: string; description?: string; template?: AppTemplateKey; domain?: string; surface?: SurfaceDeclaration },
 ): Promise<App> {
   const map = await getCache();
   const tpl = TEMPLATES[input.template ?? 'nextjs-supabase'] ?? TEMPLATES['nextjs-supabase'];
+  // An explicit surface declaration (intent) wins over the scaffold's heuristic.
+  const declaredSurface: SurfaceDeclaration | undefined =
+    input.surface === 'ui' || input.surface === 'api' || input.surface === 'both' ? input.surface : undefined;
   const name = (input.name ?? '').trim() || 'Untitled app';
   const slug = slugify(name);
   const domain = input.domain && user.domains.includes(input.domain) ? input.domain : user.domains[0];
@@ -916,9 +932,11 @@ export async function createApp(
       owner: user.id,
       description,
     }),
-    // The scaffold's surface, detected from the seed files. Re-detected on every
-    // commit + at deploy as the agent builds, so it stays honest to the code.
-    surface: detectSurface(tpl.files(name, slug)),
+    // The scaffold's surface: a declaration (intent) wins, else detected from the
+    // seed files. Re-resolved on every commit + at deploy — the declaration stays
+    // authoritative, so a declared UI app never regresses to "API" as code changes.
+    surface: resolveSurface(tpl.files(name, slug), declaredSurface),
+    declaredSurface,
     consumes: [],
     usedAsData: dataArtifactId !== null,
     createdAt: t,

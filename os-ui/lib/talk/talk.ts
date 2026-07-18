@@ -40,6 +40,43 @@ const LLM_TIMEOUT_MS = 60_000;
 /** The copilot answers concisely; the assembler already caps the (much larger) INPUT. */
 const ANSWER_MAX_TOKENS = 1024;
 
+/** Below this many characters an answer is treated as too short to be a real answer. */
+const MIN_ANSWER_CHARS = 24;
+
+/**
+ * Low-confidence / "I don't know" markers a cheap model tends to emit when it can't
+ * ground an answer. Matched case-insensitively as substrings. When the STANDARD tier
+ * comes back empty, too short, or hedged like this, we escalate ONCE to reasoning —
+ * so the hard questions still get the strong model, but the everyday ones don't.
+ */
+const WEAK_ANSWER_MARKERS = [
+  "i don't know",
+  'i do not know',
+  "i'm not sure",
+  'i am not sure',
+  'i cannot answer',
+  "i can't answer",
+  'not enough information',
+  'insufficient information',
+  'unable to determine',
+  'cannot determine',
+  'no information',
+] as const;
+
+/**
+ * Is a first-pass (cheap-tier) answer WEAK enough to warrant escalating to reasoning?
+ * Weak = empty, too short, or hedged with a low-confidence marker. Pure + exported so
+ * the escalation gate is unit-testable offline. An HONEST "nothing in your scope
+ * answers this" is a legitimate outcome — but the reasoning tier reaches it far less
+ * often, so escalating on the marker is the conservative, quality-preserving choice.
+ */
+export function isWeakAnswer(content: string): boolean {
+  const a = content.trim();
+  if (a.length < MIN_ANSWER_CHARS) return true;
+  const lower = a.toLowerCase();
+  return WEAK_ANSWER_MARKERS.some((m) => lower.includes(m));
+}
+
 /** A minimal LiteLLM chat message. */
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
@@ -167,9 +204,14 @@ export async function talkTo(
   // Real citations: metadata pool + retrieval hits, de-duplicated by id.
   const citations = dedupeCitations([...grounding.citations, ...meta.citations]);
 
-  // (3) Assemble within the reasoning model's INPUT BUDGET — a HARD ceiling.
-  const model = roleModel('reasoning');
-  const budget = inputBudget(model);
+  // (3) Assemble within the SMALLER of {primary tier, reasoning tier} input budgets —
+  // a HARD ceiling that fits BOTH, so the SAME assembled context can be replayed on
+  // an escalation without re-assembling. The primary tier is admin-configurable
+  // (`config.talkCopilotTier`, default `standard`); escalation retries once on
+  // `reasoning` when the cheap answer is weak.
+  const primaryModel = roleModel(config.talkCopilotTier);
+  const reasoningModel = roleModel('reasoning');
+  const budget = Math.min(inputBudget(primaryModel), inputBudget(reasoningModel));
   const candidates: Candidate[] = [
     { kind: 'pinned', id: 'system', text: systemPrompt(tabId) },
     { kind: 'pinned', id: 'scope', text: `SCOPE — what you can access:\n${meta.text}` },
@@ -195,25 +237,40 @@ export async function talkTo(
     embed,
   });
 
-  // (4) Reason — answer + reasoning_content captured SEPARATELY.
+  // (4) Answer — STANDARD-FIRST, escalate to reasoning ONLY on a weak first answer.
+  // The cheap tier handles the everyday questions; the reasoning tier is reserved
+  // for the ones the cheap tier can't ground (empty / too short / hedged). Both calls
+  // reuse the SAME assembled messages, so escalation costs one extra call, no re-work.
   const messages: ChatMessage[] = [
     { role: 'system', content: assembled.texts[0] ?? systemPrompt(tabId) },
     { role: 'user', content: assembled.texts.slice(1).join('\n\n') },
   ];
+  const canEscalate =
+    config.talkEscalateToReasoning && primaryModel !== reasoningModel;
   let completion: ReasonedCompletion;
   try {
-    completion = await llm(messages, model, ANSWER_MAX_TOKENS);
+    completion = await llm(messages, primaryModel, ANSWER_MAX_TOKENS);
+    // Weak cheap answer → one retry on the reasoning tier. A retry FAILURE keeps the
+    // (weak-but-real) primary answer rather than 502-ing the whole turn.
+    if (canEscalate && isWeakAnswer(completion.content)) {
+      try {
+        completion = await llm(messages, reasoningModel, ANSWER_MAX_TOKENS);
+      } catch {
+        /* keep the primary answer — an escalation hiccup must not lose a real answer. */
+      }
+    }
   } catch (e) {
-    const result: TalkResult = {
-      ok: false,
-      kind: 'model_failed',
-      answer: `The reasoning model was unreachable: ${(e as Error).message}`,
-      reasoning: '',
-      citations,
-      grounding: { kind: grounding.kind, query: grounding.query, evidence: grounding.evidence, citations: grounding.citations },
-    };
-    await audit(tabId, user, q, result);
-    return result;
+    // The primary tier itself was unreachable. If we can escalate, try reasoning once
+    // as a fallback before giving up — otherwise report the honest model failure.
+    if (canEscalate) {
+      try {
+        completion = await llm(messages, reasoningModel, ANSWER_MAX_TOKENS);
+      } catch {
+        return await failModel(tabId, user, q, e as Error, citations, grounding);
+      }
+    } else {
+      return await failModel(tabId, user, q, e as Error, citations, grounding);
+    }
   }
 
   const result: TalkResult = {
@@ -233,6 +290,30 @@ export async function talkTo(
 }
 
 // ---------------------------------------------------------------------- helpers --
+
+/** The tab's grounding shape (the return of a `TalkRetrieval`). */
+type Grounding = { kind: 'sql' | 'retrieval' | 'none'; query?: string; evidence?: string; citations: TalkCitation[] };
+
+/** Build + audit the honest "model unreachable" result (both tiers failed). */
+async function failModel(
+  tabId: TalkTabId,
+  user: CurrentUser,
+  question: string,
+  err: Error,
+  citations: TalkCitation[],
+  grounding: Grounding,
+): Promise<TalkResult> {
+  const result: TalkResult = {
+    ok: false,
+    kind: 'model_failed',
+    answer: `The model was unreachable: ${err.message}`,
+    reasoning: '',
+    citations,
+    grounding: { kind: grounding.kind, query: grounding.query, evidence: grounding.evidence, citations: grounding.citations },
+  };
+  await audit(tabId, user, question, result);
+  return result;
+}
 
 function dedupeCitations(cs: TalkCitation[]): TalkCitation[] {
   const seen = new Set<string>();

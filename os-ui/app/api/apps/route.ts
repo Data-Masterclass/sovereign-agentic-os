@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { createApp, listAppsForUser, APP_TEMPLATES, type AppTemplateKey } from '@/lib/software/apps';
+import type { SurfaceDeclaration } from '@/lib/software/model';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,11 +36,15 @@ export async function POST(req: Request) {
     const name = String(body?.name ?? '').trim();
     if (!name) return NextResponse.json({ error: 'An app name is required' }, { status: 400 });
     const template = String(body?.template ?? 'nextjs-supabase') as AppTemplateKey;
+    const surfaceRaw = String(body?.surface ?? '').trim().toLowerCase();
+    const surface: SurfaceDeclaration | undefined =
+      surfaceRaw === 'ui' || surfaceRaw === 'api' || surfaceRaw === 'both' ? surfaceRaw : undefined;
     const app = await createApp(user, {
       name,
       description: body?.description ? String(body.description) : '',
       template,
       domain: body?.domain ? String(body.domain) : undefined,
+      surface,
     });
     return NextResponse.json({ app }, { status: 201 });
   } catch (e) {

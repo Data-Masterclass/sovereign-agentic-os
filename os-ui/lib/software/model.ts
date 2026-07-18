@@ -30,6 +30,16 @@ export type RunMode = 'live' | 'offline-mock';
  */
 export type AppSurface = { ui: boolean; api: boolean };
 
+/**
+ * An EXPLICIT surface declaration (intent). A creator can DECLARE what an app is —
+ * `ui` (serves a frontend), `api` (headless / tool surface), or `both` — via the
+ * `surface` key in the app manifest (`app.yaml`) or the `create_software` MCP arg.
+ * When declared, the declaration WINS over the `detectSurface` heuristic (a real
+ * Streamlit / Gradio / static-HTML app is never mislabelled "API"); when absent
+ * the surface is inferred from the committed code. `resolveSurface` applies this.
+ */
+export type SurfaceDeclaration = 'ui' | 'api' | 'both';
+
 // ----------------------------------------------------------- Deploy lifecycle --
 
 /**
@@ -147,6 +157,11 @@ export type AppManifest = {
   knowledge: string[];
   /** Whether an OpenAPI spec was found (drives the auto-MCP). */
   hasOpenApi: boolean;
+  /**
+   * The app's EXPLICIT surface declaration from `app.yaml` (`surface: ui|api|both`),
+   * when present. Intent wins over the heuristic: `resolveSurface` prefers this.
+   */
+  declaredSurface?: SurfaceDeclaration;
   /** Fields the parser could not derive (imported/legacy repos) — prompt to fill. */
   missing: string[];
 };

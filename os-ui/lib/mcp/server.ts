@@ -156,6 +156,12 @@ const PLATFORM_SCHEMAS: Record<string, JsonSchema> = {
       description: { type: 'string' },
       template: { type: 'string', description: "Template key (e.g. 'nextjs-supabase')." },
       domain: { type: 'string', description: 'Domain to create in (must be one of yours).' },
+      surface: {
+        type: 'string',
+        enum: ['ui', 'api', 'both'],
+        description:
+          "Declare the app's surface — 'ui' (serves a frontend), 'api' (headless / tool surface), or 'both'. Declaring it wins over auto-detection, so a UI app is never mislabelled as API. Omit to let the OS infer it from the code.",
+      },
     },
     required: ['name'],
   },

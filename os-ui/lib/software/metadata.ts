@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import yaml from 'js-yaml';
-import type { AppManifest, AppSurface, ConsumedResource, OpenApiSpec, ScaffoldFile } from './model.ts';
+import type { AppManifest, AppSurface, ConsumedResource, OpenApiSpec, ScaffoldFile, SurfaceDeclaration } from './model.ts';
 
 /**
  * Metadata fidelity (Software golden path — "commits always show up in the app").
@@ -26,6 +26,8 @@ export function renderAppYaml(m: {
   connections?: string[];
   data?: string[];
   knowledge?: string[];
+  /** Explicit surface declaration; emitted only when set (intent wins over detect). */
+  surface?: SurfaceDeclaration;
 }): string {
   return yaml.dump(
     {
@@ -34,6 +36,9 @@ export function renderAppYaml(m: {
       name: m.name,
       owner: m.owner,
       description: m.description,
+      // Only write `surface` when the creator DECLARED one — an absent key keeps
+      // the app on the heuristic (and the seed file byte-stable when undeclared).
+      ...(m.surface ? { surface: m.surface } : {}),
       declares: {
         connections: m.connections ?? [],
         data: m.data ?? [],
@@ -95,6 +100,7 @@ export function parseAppManifest(
   let connections: string[] = [];
   let data: string[] = [];
   let knowledge: string[] = [];
+  let declaredSurface: SurfaceDeclaration | undefined;
 
   if (appYaml) {
     try {
@@ -102,6 +108,7 @@ export function parseAppManifest(
       if (typeof doc.name === 'string' && doc.name.trim()) name = doc.name.trim();
       if (typeof doc.owner === 'string' && doc.owner.trim()) owner = doc.owner.trim();
       if (typeof doc.description === 'string') description = doc.description.trim();
+      declaredSurface = asSurfaceDeclaration(doc.surface);
       const declares = (doc.declares as Record<string, unknown>) ?? {};
       connections = asStringArray(declares.connections);
       data = asStringArray(declares.data);
@@ -124,7 +131,47 @@ export function parseAppManifest(
   if (!hasOpenApi) missing.push('openapi spec (auto-MCP will expose no tools until added)');
   if (!findFile(files, '.app/decisions.md')) missing.push('.app/decisions.md');
 
-  return { name, owner, description, connections, data, knowledge, hasOpenApi, missing };
+  return { name, owner, description, connections, data, knowledge, hasOpenApi, declaredSurface, missing };
+}
+
+/** Coerce an arbitrary `surface` value into a valid declaration, or undefined. */
+function asSurfaceDeclaration(v: unknown): SurfaceDeclaration | undefined {
+  const s = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  return s === 'ui' || s === 'api' || s === 'both' ? s : undefined;
+}
+
+/**
+ * Read the app's EXPLICIT surface declaration from its `app.yaml` (`surface: ui|
+ * api|both`), if present + valid. Returns undefined when no valid declaration is
+ * committed, so the caller falls back to the `detectSurface` heuristic. Pure.
+ */
+export function parseSurfaceDeclaration(files: ScaffoldFile[]): SurfaceDeclaration | undefined {
+  const appYaml = findFile(files, 'app.yaml') || findFile(files, 'app.yml');
+  if (!appYaml) return undefined;
+  try {
+    const doc = (yaml.load(appYaml.content) as Record<string, unknown>) ?? {};
+    return asSurfaceDeclaration(doc.surface);
+  } catch {
+    return undefined;
+  }
+}
+
+/** A declaration → the concrete {ui,api} surface it commits the app to. */
+export function surfaceFromDeclaration(decl: SurfaceDeclaration): AppSurface {
+  if (decl === 'ui') return { ui: true, api: false };
+  if (decl === 'api') return { ui: false, api: true };
+  return { ui: true, api: true }; // 'both'
+}
+
+/**
+ * Resolve the app's surface: INTENT WINS. When an explicit declaration is present
+ * (from the manifest or an override — e.g. the `create_software` `surface` arg),
+ * it is authoritative; otherwise the surface is inferred from the committed code
+ * via `detectSurface`. This is the single source of truth for "what is this app".
+ */
+export function resolveSurface(files: ScaffoldFile[], override?: SurfaceDeclaration): AppSurface {
+  const decl = override ?? parseSurfaceDeclaration(files);
+  return decl ? surfaceFromDeclaration(decl) : detectSurface(files);
 }
 
 /**
@@ -177,7 +224,11 @@ export function reconcileKnowledgeConsumes(
  */
 export function detectSurface(files: ScaffoldFile[]): AppSurface {
   const hasPath = (re: RegExp) => files.some((f) => re.test(f.path));
+  /** Match `content` of files whose path matches `where` (for code/config sniffing). */
+  const contentMatches = (where: RegExp, re: RegExp) =>
+    files.some((f) => where.test(f.path) && re.test(f.content));
 
+  // 1. JS/TS web frameworks declared in package.json.
   let webDep = false;
   const pkg = findFile(files, 'package.json');
   if (pkg) {
@@ -193,17 +244,41 @@ export function detectSurface(files: ScaffoldFile[]): AppSurface {
       /* unparseable package.json — fall back to path signals below */
     }
   }
+
+  // 2. Python (and other) UI frameworks declared in requirements.txt or any *.py.
+  //    Streamlit / Gradio / Dash render a UI; Flask/FastAPI with server-side HTML
+  //    templating (jinja2, `templates/`, `render_template`, mounted StaticFiles)
+  //    also serve a frontend, so they read as UI too.
+  const pyUiFramework =
+    contentMatches(/(^|\/)requirements\.txt$/i, /\b(streamlit|gradio|dash|jinja2|flask)\b/i) ||
+    contentMatches(/\.py$/i, /\b(streamlit|gradio|import\s+dash|from\s+dash|render_template|Jinja2Templates|StaticFiles)\b/);
+  // 3. Server-rendered HTML / static asset trees (any language).
+  const templatesOrStatic = hasPath(/(^|\/)(templates|static)\//i);
+  // 4. A frontend file: an .html anywhere, a `public/` tree, or a page component.
   const frontendFile =
     hasPath(/\.html?$/i) ||
     hasPath(/(^|\/)public\//) ||
     hasPath(/(^|\/)(app|pages|src)\/.*(page|index|app)\.(t|j)sx?$/i);
-  const ui = webDep || frontendFile;
+  // 5. A container / compose that EXPOSEs a web port AND runs a UI serve command
+  //    (streamlit run / gradio / uvicorn --host / next|vite|serve …). The `[\s",]+`
+  //    between tokens matches BOTH shell form (`streamlit run`) and Docker exec
+  //    form (`["streamlit", "run", …]`).
+  const serveCmd = /\b(streamlit[\s",]+run|gradio|uvicorn\b[^\n]*--host|next[\s",]+start|vite[\s",]+preview|serve\b|http-server)\b/i;
+  const dockerServesWeb =
+    contentMatches(/(^|\/)(Dockerfile|docker-compose\.ya?ml|compose\.ya?ml)$/i, /\bEXPOSE\b\s*\d|ports?:/i) &&
+    contentMatches(/(^|\/)(Dockerfile|docker-compose\.ya?ml|compose\.ya?ml)$/i, serveCmd);
+  // 6. A UI start command in a Procfile / package scripts / shell entrypoint.
+  const startCmd = contentMatches(/(^|\/)(Procfile|start\.sh|run\.sh|Makefile)$/i, serveCmd);
+
+  const ui =
+    webDep || pyUiFramework || templatesOrStatic || frontendFile || dockerServesWeb || startCmd;
 
   const api =
     parseOpenApi(files) !== null ||
     hasPath(/(^|\/)api\//) ||
     hasPath(/(^|\/)routes?\//) ||
-    hasPath(/(^|\/)(main|server|app)\.py$/);
+    hasPath(/(^|\/)(main|server|app)\.py$/) ||
+    contentMatches(/\.py$/i, /\b(FastAPI|APIRouter|@app\.(get|post|put|delete)|flask\.Flask|Flask\()/);
 
   // Nothing detected → headless API (the auto-MCP tool surface always exists).
   if (!ui && !api) return { ui: false, api: true };

@@ -175,3 +175,27 @@ test('scaffold: nextjs-supabase seeds a runnable App Router app + a correct Dock
   const parsed = JSON.parse(pkg!.content) as { devDependencies?: Record<string, string> };
   assert.ok(parsed.devDependencies?.typescript, 'typescript devDependency seeded');
 });
+
+// ------------------------------------------------------- surface declaration --
+
+test('createApp: a declared surface (ui) wins + is recorded on the app record', async () => {
+  __resetAppsCache();
+  // The 'service' scaffold would otherwise infer api-heavy; declaring ui wins.
+  const app = await createApp(user, { name: 'Declared UI', template: 'service', surface: 'ui' });
+  assert.equal(app.declaredSurface, 'ui', 'declaration recorded on the record');
+  assert.deepEqual(app.surface, { ui: true, api: false }, 'declaration wins → ui-only');
+});
+
+test('createApp: NO declaration → surface is inferred from the scaffold (back-compat)', async () => {
+  __resetAppsCache();
+  const app = await createApp(user, { name: 'Inferred', template: 'nextjs-supabase' });
+  assert.equal(app.declaredSurface, undefined, 'no declaration recorded');
+  // The nextjs scaffold has a web dep + page → ui true.
+  assert.equal(app.surface.ui, true, 'inferred ui from the scaffold');
+});
+
+test('createApp: an invalid surface arg is ignored → falls back to inference', async () => {
+  __resetAppsCache();
+  const app = await createApp(user, { name: 'Bad Surface', template: 'service', surface: 'nope' as never });
+  assert.equal(app.declaredSurface, undefined, 'invalid declaration dropped');
+});

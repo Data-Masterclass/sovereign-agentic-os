@@ -14,7 +14,7 @@ import { trace } from '@/lib/infra/agent-governed';
 import { startPreview, requestDeploy, decideDeploy } from './review.ts';
 import { archiveApp, deleteApp, useAsData, consumeResource } from './lifecycle.ts';
 import { authorThroughFrontDoor, commitToApp } from './server.ts';
-import type { ConsumedResource } from './model.ts';
+import type { ConsumedResource, SurfaceDeclaration } from './model.ts';
 
 /**
  * THE PLATFORM MCP — front door #2, and the GOVERNANCE INVARIANT this build's
@@ -43,7 +43,7 @@ export const PLATFORM_MCP_PRINCIPAL = 'platform-mcp';
 
 /** The MCP tool surface — parity with the UI's create→build→preview→deploy flow. */
 export const PLATFORM_MCP_TOOLS: { name: string; description: string; write: boolean }[] = [
-  { name: 'create_software', description: 'Create a new governed app from a template.', write: true },
+  { name: 'create_software', description: "Create a new governed app from a template. Optionally DECLARE its surface (surface: 'ui' | 'api' | 'both') — declaring wins over auto-detection, so a UI app is never mislabelled as API.", write: true },
   { name: 'commit', description: 'Commit files + metadata to an app (re-parsed on every commit).', write: true },
   { name: 'start_preview', description: 'Start the private sandbox preview (no review).', write: true },
   { name: 'request_deploy', description: 'Request a domain deploy → opens the Builder review gate.', write: true },
@@ -61,6 +61,12 @@ export type PlatformMcpArgs = Record<string, unknown>;
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
+}
+
+/** Coerce a `surface` arg into a valid declaration, or undefined (→ auto-detect). */
+function asSurface(v: unknown): SurfaceDeclaration | undefined {
+  const s = str(v).trim().toLowerCase();
+  return s === 'ui' || s === 'api' || s === 'both' ? s : undefined;
 }
 
 /**
@@ -83,6 +89,8 @@ export async function callPlatformMcp(
         description: str(args.description),
         template: (str(args.template) || 'nextjs-supabase') as AppTemplateKey,
         domain: str(args.domain) || undefined,
+        // Intent wins over auto-detect: a declared surface never regresses to API.
+        surface: asSurface(args.surface),
       });
       break;
 

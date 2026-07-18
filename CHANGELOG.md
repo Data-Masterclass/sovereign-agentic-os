@@ -15,6 +15,23 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.33] — 2026-07-17
+
+### Added
+- **Software apps get a "Show archived" toggle** and full archive → restore/delete lifecycle on the
+  list, matching every other tab (the backend was already there; the list affordance was missing).
+- **Apps can declare their surface.** An app can set `surface: ui | api | both` in `app.yaml` (or via
+  `create_software`), and that declaration wins over auto-detection.
+
+### Changed
+- **A UI app is no longer mislabelled "API."** Surface auto-detection now recognizes many more UI
+  shapes — Streamlit/Gradio/Dash/Flask+templates/FastAPI static mounts, `templates/`/`static/` dirs,
+  a top-level `index.html`, and Dockerfiles that expose a web port and run a serve command.
+- **Lower LLM cost on the "Talk to…" copilots.** They now run on the standard model first and only
+  escalate to the reasoning model when an answer looks weak — cutting the reasoning tier's share of
+  token spend substantially while keeping answer quality. Admin-configurable (`TALK_COPILOT_TIER`,
+  `TALK_ESCALATE_TO_REASONING`, `TALK_KNOWLEDGE_TOPK`).
+
 ## [os-ui 0.5.32] — 2026-07-17
 
 ### Fixed
