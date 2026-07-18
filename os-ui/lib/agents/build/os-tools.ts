@@ -327,9 +327,111 @@ const WRITE_APPROVAL_NAMES = new Set(ALL_WRITE_TOOLS.map((t) => t.name));
  * dispatch, exactly like a read tool: an agent can still never exceed what its
  * runner could do by hand in the UI (creating a Personal-lane artifact needs no
  * approval), and promotion (Personal→Shared) keeps its own separate approval gate.
+ *
+ * SUPERSEDED by the SCOPE-AWARE {@link holdDecision}: the old blanket rule held EVERY
+ * agent write under read-only/read-propose regardless of the write's TARGET scope, so
+ * an agent creating a PERSONAL (My) artifact — a My-lane write its builder has full
+ * rights to by hand — was wrongly queued for admin review. Kept only for `read-only`,
+ * which still blocks all writes. New writes route through `holdDecision`.
  */
 export function writesAreHeld(preset: SafetyPreset): boolean {
-  return preset === 'read-only' || preset === 'read-propose';
+  return preset === 'read-only';
+}
+
+/**
+ * The TARGET SCOPE of a write — the lane the artifact lands in. This is what makes
+ * the hold SCOPE-AWARE: a `personal` (My) write is exactly what the runner could do
+ * by hand with NO approval, so it is never held; a `domain` / `company` write is a
+ * governance ESCALATION (My→Domain / Domain→Company) and IS held to the right admin.
+ */
+export type WriteScope = 'personal' | 'domain' | 'company';
+
+/**
+ * The ESCALATING write tools — the promotion / publish / certify / approve family
+ * whose EFFECT crosses a governance boundary (My→Domain or Domain→Company). These
+ * are the ONLY writes an agent (or its builder by hand) may not perform directly:
+ * they are HELD to the correct admin. Everything else in {@link WRITE_APPROVAL_NAMES}
+ * is a create/author/upload/build/document/update on a PERSONAL (My) artifact — the
+ * runner's own work — and is NOT held.
+ *
+ *   - `publish_knowledge`  — flips a workflow My→Domain (domain_admin gate).
+ *   - `request_promotion`  — files a My→Domain promotion request (domain_admin).
+ *   - `approve_promotion`  — APPLIES a Domain promotion (domain_admin).
+ *   - `promote_pillar`     — raises a pillar one tier (Domain needs Builder+, Company
+ *                            Admin; conservatively routed to domain_admin — the
+ *                            in-lib canPromotePillar re-checks the Company->Admin gate).
+ *
+ * `create_pillar` / `update_pillar` are scope-parametric (a `scope` arg can select
+ * Domain/Company); their target is resolved per-call in {@link writeTargetScope}.
+ */
+const ESCALATING_DOMAIN_TOOLS = new Set(['publish_knowledge', 'request_promotion', 'approve_promotion', 'promote_pillar']);
+
+/**
+ * The scope a scope-parametric write tool selects via its `scope` arg (e.g.
+ * `create_pillar {scope:'domain'|'tenant'}`). `tenant`/`company` -> Company; `domain`
+ * -> Domain; `personal` -> Personal; absent/unknown -> undefined (caller defaults to My).
+ */
+function scopeFromArgs(args: unknown): WriteScope | undefined {
+  if (!args || typeof args !== 'object') return undefined;
+  const raw = (args as Record<string, unknown>).scope;
+  if (raw === 'tenant' || raw === 'company') return 'company';
+  if (raw === 'domain') return 'domain';
+  if (raw === 'personal') return 'personal';
+  return undefined;
+}
+
+/**
+ * The TARGET SCOPE of a granted write tool call. Conservative + fail-closed:
+ *   - a scope-parametric tool (create_pillar/update_pillar) reads its `scope` arg —
+ *     `domain` -> Domain, `tenant` -> Company, else Personal (the create default);
+ *   - the escalation family (promote/publish/approve) -> Domain (the My->Domain gate);
+ *   - everything else (create_/ingest_/author_/upload_/build_/transform_/document_/
+ *     define_/attach_/wire_/update_/archive_ ... on a My artifact) -> Personal.
+ * A write only crosses a governance boundary when THIS says Domain/Company, so a
+ * personal create is never held.
+ */
+export function writeTargetScope(mcpName: string, args?: unknown): WriteScope {
+  // Scope-parametric create/update: the arg picks the lane (My-default).
+  if (mcpName === 'create_pillar' || mcpName === 'update_pillar') {
+    return scopeFromArgs(args) ?? 'personal';
+  }
+  if (ESCALATING_DOMAIN_TOOLS.has(mcpName)) return 'domain';
+  return 'personal';
+}
+
+/**
+ * SCOPE-AWARE hold: does a granted WRITE tool call cross a governance boundary that
+ * must be HELD for admin approval? The scope-aware replacement for the old blanket
+ * preset hold — the personal-create path is NEVER held.
+ *
+ *   - `read-only`                -> ALL writes blocked + queued (held to admin).
+ *   - any other preset, PERSONAL -> NOT held. Falls through to the run-as-user
+ *                                   governed dispatch (gate 2 = the acting user's
+ *                                   OPA/DLS/role/ownership is the real authority; a
+ *                                   builder has FULL rights to their own My artifact,
+ *                                   so their agent does too — never more).
+ *   - any other preset, DOMAIN   -> held -> routed to `domain_admin` approval.
+ *   - any other preset, COMPANY  -> held -> routed to `admin` (tenant) approval.
+ *
+ * The security invariant: an agent NEVER exceeds what its runner could do by hand.
+ * A personal write needs no approval by hand, so it is not held; a Domain/Company
+ * write is an escalation the runner could NOT do by hand (it needs an admin), so it
+ * is held to that admin. Fail-closed: an unknown scope resolves to `personal` only
+ * for non-escalating create tools (the runner's own work); the escalation family and
+ * any Domain/Company target are always held.
+ */
+export function holdDecision(
+  preset: SafetyPreset,
+  mcpName: string,
+  args?: unknown,
+): { held: false } | { held: true; approverRole: 'domain_admin' | 'admin' } {
+  // read-only blocks every write, regardless of target.
+  if (preset === 'read-only') return { held: true, approverRole: 'admin' };
+  const scope = writeTargetScope(mcpName, args);
+  if (scope === 'company') return { held: true, approverRole: 'admin' };
+  if (scope === 'domain') return { held: true, approverRole: 'domain_admin' };
+  // personal -> never held (the create default): gate 2 is the authority.
+  return { held: false };
 }
 
 /**
@@ -470,26 +572,37 @@ export function grantedToolExecutor(
       if (layer && a.layer === undefined) args = { ...a, layer };
     }
 
-    // Gate 1b — the Write-approval HOLD, derived IN-PROCESS from the granted set +
-    // the write-tool catalog (no live `os-<systemId>` OPA doc, which only a Build
-    // writes). A granted WRITE tool is HELD **only when the system's safety preset
-    // holds writes** (read-only / read-propose); under read-bounded / full-in-scope
-    // the write runs directly and falls through to gate 2 (governed as the acting
-    // user). A granted READ tool always falls through to the run-as-user dispatch,
-    // where the owner DLS clause + role floor decide.
-    if (WRITE_APPROVAL_NAMES.has(mcpName) && writesAreHeld(sys.safetyPreset)) {
-      // A held write is NEVER executed — record the human-in-the-loop request.
-      deps.enqueue({
-        kind: 'connection_write',
-        title: `Approval needed: ${mcpName}`,
-        detail: `System '${systemId}' agent attempted a write tool '${mcpName}' during a run — writes are held for human approval.`,
-        agent: sysPrincipal,
-        domain: sys.system.domain,
-        requestedBy: user.id,
-        tool: mcpName,
-      });
-      await safeTrace(deps, sysPrincipal, mcpName, args, 'requires_approval');
-      return errorResult('held', `${mcpName} requires approval — enqueued to Governance (agent writes are held)`);
+    // Gate 1b — the SCOPE-AWARE Write-approval HOLD, derived IN-PROCESS from the
+    // granted set + the write-tool catalog + the write's TARGET scope (no live
+    // `os-<systemId>` OPA doc, which only a Build writes). A granted WRITE tool is
+    // HELD only when its target crosses a governance boundary:
+    //   • PERSONAL (My) write → NOT held (unless read-only): the runner has full
+    //     rights to their own My artifact by hand, so their agent does too — it falls
+    //     through to gate 2 (the acting user's OPA/DLS/role/ownership is the real
+    //     authority), exactly like a read tool.
+    //   • DOMAIN write  → held → routed to `domain_admin` approval.
+    //   • COMPANY write → held → routed to `admin` (tenant) approval.
+    //   • `read-only`   → every write blocked (held), regardless of target.
+    // Ownership stays intact: a personal write dispatched at gate 2 runs under
+    // `canManageArtifact` (personal → owner-only), so a non-owner is still refused.
+    if (WRITE_APPROVAL_NAMES.has(mcpName)) {
+      const decision = holdDecision(sys.safetyPreset, mcpName, args);
+      if (decision.held) {
+        // A held write is NEVER executed — record the human-in-the-loop request,
+        // routed to the correct admin for the escalation (domain_admin / admin).
+        deps.enqueue({
+          kind: 'connection_write',
+          title: `Approval needed: ${mcpName}`,
+          detail: `System '${systemId}' agent attempted a ${writeTargetScope(mcpName, args)}-scope write '${mcpName}' during a run — Domain/Company writes are held for admin approval.`,
+          agent: sysPrincipal,
+          domain: sys.system.domain,
+          requestedBy: user.id,
+          tool: mcpName,
+          approverRole: decision.approverRole,
+        });
+        await safeTrace(deps, sysPrincipal, mcpName, args, 'requires_approval');
+        return errorResult('held', `${mcpName} requires ${decision.approverRole} approval — enqueued to Governance (Domain/Company writes are held)`);
+      }
     }
 
     // Gate 2 — dispatch as the ACTING USER through the ONE governed MCP door. The

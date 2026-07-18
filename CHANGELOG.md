@@ -15,6 +15,24 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.32] — 2026-07-17
+
+### Fixed
+- **Agents (and builders) have full rights over their own "My" artifacts — no admin approval.** The
+  agent write-gate held EVERY write for review at the common `read-propose` preset, ignoring scope,
+  so an agent creating a personal dataset/file/knowledge/metric/connection was wrongly queued. The
+  hold is now scope-aware: **My → direct** (run as the builder, whose rights + ownership are the
+  authority), **Domain → domain-admin approval**, **Company → tenant-admin approval**. Human create
+  paths across all nine types were verified already ungated for builders.
+- **Software apps no longer get stuck on "Awaiting review" after approval.** Apps approved before the
+  0.5.30 write-back were orphaned (approval decided, app never transitioned). They now self-heal on
+  load — an app in review whose approval is already decided flips to live (or preview if rejected),
+  durably — which also prevents any future orphan.
+
+### Deploy
+- Live Superset now runs with `ENABLE_PROXY_FIX` so embedded dashboards render inside the OS
+  same-origin proxy instead of a blank frame (applied to the running cluster).
+
 ## [os-ui 0.5.31] — 2026-07-17
 
 ### Added

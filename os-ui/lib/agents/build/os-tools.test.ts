@@ -15,6 +15,9 @@ import {
   grantedToolExecutor,
   grantedLayerFor,
   resolveFolderGrants,
+  writesAreHeld,
+  writeTargetScope,
+  holdDecision,
   type ScopedItemsLoader,
   type OsToolDeps,
 } from './os-tools.ts';
@@ -177,14 +180,15 @@ test('executor: an ungranted tool never executes (no OPA, no dispatch)', async (
   assert.equal(deps.calls.handleRpc.length, 0); // never executed
 });
 
-test('executor: a requires_approval tool enqueues and never executes', async () => {
-  // `create_dataset` is a WRITE tool → Gate 1b HOLDS it in-process (write-tool
-  // catalog), enqueues to Governance and never dispatches — no OPA doc needed.
+test('executor: a requires_approval tool under read-only enqueues and never executes', async () => {
+  // Default preset is read-only, which blocks EVERY write → Gate 1b HOLDS create_dataset
+  // in-process (write-tool catalog), enqueues to Governance and never dispatches. (Under
+  // a non-read-only preset a PERSONAL create is NOT held — see the scope-aware tests.)
   const deps = spyDeps();
   const exec = grantedToolExecutor(CREATOR, sysWith(['create_dataset']), 'sys1', deps);
   const res = await exec('create_dataset', { name: 'x' });
   assert.equal(res.isError, true);
-  assert.match(res.text, /requires approval/);
+  assert.match(res.text, /requires .* approval/);
   assert.equal(deps.calls.enqueue.length, 1); // enqueued to Governance
   assert.equal(deps.calls.handleRpc.length, 0); // NEVER executed
   const item = deps.calls.enqueue[0] as { tool: string; requestedBy: string; agent: string };
@@ -214,13 +218,109 @@ test('executor: read-bounded runs upload_file directly (no hold)', async () => {
   assert.equal(deps.calls.handleRpc.length, 1);
 });
 
-test('executor: read-propose still HOLDS a write for approval', async () => {
+test('executor: read-propose does NOT hold a PERSONAL create (scope-aware) — runs run-as-user', async () => {
+  // SCOPE-AWARE FIX: a My-lane create (create_dataset) is what the runner could do by
+  // hand with no approval, so under read-propose it is NOT held — it dispatches as the
+  // acting user (gate 2 = OPA/DLS/ownership is the authority). Only read-only blocks it.
   const deps = spyDeps();
   const exec = grantedToolExecutor(CREATOR, sysWithPreset(['create_dataset'], 'read-propose'), 'sys1', deps);
   const res = await exec('create_dataset', { name: 'x' });
-  assert.match(res.text, /requires approval/);
+  assert.equal(deps.calls.enqueue.length, 0); // NOT held
+  assert.equal(deps.calls.handleRpc.length, 1); // ran as the acting user
+  assert.equal((deps.calls.handleRpc[0] as { user: CurrentUser }).user, CREATOR);
+  assert.equal(res.text, 'ran create_dataset');
+});
+
+test('executor: read-only STILL blocks every write (personal create included)', async () => {
+  // read-only is the one preset that blocks all writes regardless of target scope.
+  const deps = spyDeps();
+  const exec = grantedToolExecutor(CREATOR, sysWithPreset(['create_dataset'], 'read-only'), 'sys1', deps);
+  const res = await exec('create_dataset', { name: 'x' });
+  assert.match(res.text, /requires .* approval/);
   assert.equal(deps.calls.enqueue.length, 1);
   assert.equal(deps.calls.handleRpc.length, 0);
+});
+
+// --- SCOPE-AWARE hold: personal creates run, Domain/Company escalations held -----
+
+test('writeTargetScope: create/author/upload/build/define = personal; escalation = domain/company', () => {
+  // Personal (My) create/author/upload/build path — the runner's own work.
+  for (const t of ['create_dataset', 'ingest_dataset', 'upload_file', 'author_knowledge', 'define_metric', 'create_connection', 'create_software', 'create_dashboard', 'create_agent_system', 'transform_silver', 'build_gold_join', 'document_dataset']) {
+    assert.equal(writeTargetScope(t), 'personal', `${t} targets personal`);
+  }
+  // Escalation family → Domain.
+  for (const t of ['publish_knowledge', 'request_promotion', 'approve_promotion', 'promote_pillar']) {
+    assert.equal(writeTargetScope(t), 'domain', `${t} escalates to domain`);
+  }
+  // Scope-parametric create_pillar reads its `scope` arg (My-default).
+  assert.equal(writeTargetScope('create_pillar', {}), 'personal');
+  assert.equal(writeTargetScope('create_pillar', { scope: 'personal' }), 'personal');
+  assert.equal(writeTargetScope('create_pillar', { scope: 'domain' }), 'domain');
+  assert.equal(writeTargetScope('create_pillar', { scope: 'tenant' }), 'company');
+  assert.equal(writeTargetScope('update_pillar', { scope: 'tenant' }), 'company');
+});
+
+test('holdDecision: read-only holds all; personal never held; domain→domain_admin; company→admin', () => {
+  // read-only blocks every write (any target).
+  assert.deepEqual(holdDecision('read-only', 'create_dataset'), { held: true, approverRole: 'admin' });
+  // personal create is NEVER held under any non-read-only preset.
+  for (const p of ['read-propose', 'read-bounded', 'full-in-scope'] as const) {
+    assert.deepEqual(holdDecision(p, 'create_dataset'), { held: false }, `${p} personal not held`);
+    assert.deepEqual(holdDecision(p, 'upload_file'), { held: false });
+    assert.deepEqual(holdDecision(p, 'create_pillar', { scope: 'personal' }), { held: false });
+  }
+  // Domain escalation → held to domain_admin; Company → held to admin.
+  assert.deepEqual(holdDecision('read-propose', 'publish_knowledge'), { held: true, approverRole: 'domain_admin' });
+  assert.deepEqual(holdDecision('full-in-scope', 'request_promotion'), { held: true, approverRole: 'domain_admin' });
+  assert.deepEqual(holdDecision('read-propose', 'create_pillar', { scope: 'domain' }), { held: true, approverRole: 'domain_admin' });
+  assert.deepEqual(holdDecision('read-propose', 'create_pillar', { scope: 'tenant' }), { held: true, approverRole: 'admin' });
+});
+
+test('writesAreHeld: only read-only holds unconditionally (scope-aware supersedes)', () => {
+  assert.equal(writesAreHeld('read-only'), true);
+  assert.equal(writesAreHeld('read-propose'), false);
+  assert.equal(writesAreHeld('read-bounded'), false);
+  assert.equal(writesAreHeld('full-in-scope'), false);
+});
+
+test('executor: read-propose does NOT hold personal create/upload/author/define/connection', async () => {
+  for (const tool of ['create_dataset', 'upload_file', 'author_knowledge', 'define_metric', 'create_connection']) {
+    const deps = spyDeps();
+    const exec = grantedToolExecutor(CREATOR, sysWithPreset([tool], 'read-propose'), 'sys1', deps);
+    const res = await exec(tool, { name: 'x', title: 'x', datasetId: 'ds1', aggregation: 'count' });
+    assert.equal(deps.calls.enqueue.length, 0, `${tool} NOT held`);
+    assert.equal(deps.calls.handleRpc.length, 1, `${tool} ran run-as-user`);
+    assert.equal((deps.calls.handleRpc[0] as { user: CurrentUser }).user, CREATOR);
+    assert.equal(res.text, `ran ${tool}`);
+  }
+});
+
+test('executor: promoting to Domain is HELD and enqueued to domain_admin', async () => {
+  const deps = spyDeps();
+  // read-propose (or any non-read-only): a Domain escalation is still held.
+  const exec = grantedToolExecutor(BUILDER, sysWithPreset(['publish_knowledge'], 'full-in-scope'), 'sys1', deps);
+  const res = await exec('publish_knowledge', { workflowId: 'wf1' });
+  assert.equal(res.isError, true);
+  assert.match(res.text, /requires domain_admin approval/);
+  assert.equal(deps.calls.handleRpc.length, 0, 'NEVER executed');
+  assert.equal(deps.calls.enqueue.length, 1);
+  const item = deps.calls.enqueue[0] as { tool: string; approverRole: string; requestedBy: string; agent: string };
+  assert.equal(item.tool, 'publish_knowledge');
+  assert.equal(item.approverRole, 'domain_admin');
+  assert.equal(item.requestedBy, 'u2');
+  assert.equal(item.agent, 'os-sys1');
+});
+
+test('executor: certifying to Company is HELD and enqueued to admin', async () => {
+  const deps = spyDeps();
+  const exec = grantedToolExecutor(BUILDER, sysWithPreset(['create_pillar'], 'full-in-scope'), 'sys1', deps);
+  const res = await exec('create_pillar', { name: 'ARR', scope: 'tenant' });
+  assert.equal(res.isError, true);
+  assert.match(res.text, /requires admin approval/);
+  assert.equal(deps.calls.handleRpc.length, 0, 'NEVER executed');
+  assert.equal(deps.calls.enqueue.length, 1);
+  const item = deps.calls.enqueue[0] as { approverRole: string };
+  assert.equal(item.approverRole, 'admin');
 });
 
 test('executor: an allowed tool dispatches as the ACTING USER (not the service principal)', async () => {

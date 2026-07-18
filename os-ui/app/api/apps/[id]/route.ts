@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { getAppForUser, updateAppDocs } from '@/lib/software/apps';
+import { reconcileDeployApproval } from '@/lib/software/review';
 import { getConnectionByApp } from '@/lib/infra/app-registry';
 
 export const dynamic = 'force-dynamic';
@@ -19,6 +20,11 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     const user = await requireUser();
     const { id } = await ctx.params;
     const app = await getAppForUser(id, user);
+    // SELF-HEAL: if this app is stuck in `review` but its deploy approval was
+    // already decided (an orphan from before the approve→decideDeploy write-back),
+    // reconcile it to its true state on load. Idempotent + fail-soft (never blocks
+    // the load); mutates the same in-cache app object, so the response is healed.
+    await reconcileDeployApproval(app);
     const connection = getConnectionByApp(app.id);
     return NextResponse.json({ user, app, connection });
   } catch (e) {
