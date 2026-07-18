@@ -157,6 +157,23 @@ import {
   sagemakerListTrainingJobs,
   sagemakerDescribeEndpoint,
 } from '@/lib/connections/sagemaker';
+import {
+  gcpIdentityConnFrom,
+  gcpIdentityHealth,
+  gcpListProjects,
+  gcpGetIamPolicy,
+  gcpListServiceAccounts,
+} from '@/lib/connections/gcp-identity';
+import {
+  snowflakeGovConnFrom,
+  snowflakeGovHealth,
+  snowflakeGovListUsers,
+  snowflakeGovListRoles,
+  snowflakeGovGrantsToUsers,
+  snowflakeGovGrantsToRoles,
+  snowflakeGovLoginHistory,
+  snowflakeGovAccessHistory,
+} from '@/lib/connections/snowflake-governance';
 import type { WarehousePlatform } from '@/lib/connections/warehouse/types';
 import { splitWarehouseFields, toWarehouseSource } from '@/lib/connections/warehouse/connection';
 import { providerFor } from '@/lib/connections/warehouse/registry';
@@ -655,6 +672,12 @@ type HealthFn = (c: Connection) => Promise<{ ok: boolean; mode: 'live' | 'offlin
 // AI FOUNDRY: real GET of the model registry over the workspace/region base.
 //
 // SAGEMAKER: real signed ListModels round-trip (SigV4) with the vaulted AWS keys.
+//
+// GCP IDENTITY: real JWT-bearer token exchange + a projects list (pageSize 1) with
+// the vaulted service-account JSON key. 2xx ⇒ live; a rejected key is an honest ✗.
+//
+// SNOWFLAKE GOVERNANCE: real key-pair-JWT `SELECT CURRENT_ACCOUNT()` over the SQL
+// REST API with the vaulted RSA key. 2xx ⇒ live; a rejected key is an honest ✗.
 const CONNECTION_HEALTH: Partial<Record<ConnectionTemplateKey, HealthFn>> = {
   airflow: async (c) => {
     const h = await airflowHealth(airflowConnFor(c));
@@ -759,6 +782,22 @@ const CONNECTION_HEALTH: Partial<Record<ConnectionTemplateKey, HealthFn>> = {
     return h.connected
       ? { ok: true, mode: 'live', detail: `AWS SageMaker is reachable${h.detail ? ` (${h.detail})` : ''}. The AWS keys never leave the server.` }
       : { ok: false, mode: 'offline', detail: `SageMaker is unreachable (${h.reason ?? 'network error'}) — check the region endpoint + IAM keys, then re-test.` };
+  },
+  'gcp-identity': async (c) => {
+    const h = await gcpIdentityHealth(gcpIdentityConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Google Cloud (Resource Manager + IAM) is reachable${h.detail ? ` (${h.detail})` : ''}. The service-account key never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Google Cloud is unreachable (${h.reason ?? 'network error'}) — check the service-account key + egress, then re-test.` };
+  },
+  'snowflake-governance': async (c) => {
+    const h = await snowflakeGovHealth(snowflakeGovConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Snowflake ACCOUNT_USAGE is reachable${h.detail ? ` (${h.detail})` : ''}. The RSA private key never leaves the server. Note: ACCOUNT_USAGE has ~2h latency and queries consume credits.` }
+      : { ok: false, mode: 'offline', detail: `Snowflake is unreachable (${h.reason ?? 'network error'}) — check the account/user + registered public key, then re-test.` };
   },
 };
 
@@ -1356,6 +1395,8 @@ const CONNECTION_EXECUTORS: Partial<Record<ConnectionTemplateKey, Executor>> = {
   purview: (c, tool, args) => executePurview(c, tool, args),
   'ai-foundry': (c, tool, args) => executeAiFoundry(c, tool, args),
   sagemaker: (c, tool, args) => executeSageMaker(c, tool, args),
+  'gcp-identity': (c, tool, args) => executeGcpIdentity(c, tool, args),
+  'snowflake-governance': (c, tool, args) => executeSnowflakeGov(c, tool, args),
 };
 
 /** Execute an allowed call: inject the secret SERVER-SIDE (never logged), trace + log egress. */
@@ -1979,6 +2020,58 @@ async function executeSageMaker(c: Connection, tool: string, args: Record<string
       return done(await sagemakerDescribeEndpoint(conn, String(args.name ?? args.endpointName ?? '')), 'endpoint');
     default:
       return fail(`Unknown SageMaker tool: ${tool}`);
+  }
+}
+
+/**
+ * Execute an ALLOWED Google Cloud identity/IAM governance tool over Cloud Resource
+ * Manager + IAM. READ-ONLY connector — every tool is a read. Never throws. The
+ * service-account key is dereferenced server-side, signs a JWT exchanged for a
+ * read-only OAuth2 bearer, and never leaves the process.
+ */
+async function executeGcpIdentity(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
+  const conn = gcpIdentityConnFrom(c);
+  const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
+  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
+    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  switch (tool) {
+    case 'list_projects':
+      return done(await gcpListProjects(conn), 'projects');
+    case 'get_iam_policy':
+      return done(await gcpGetIamPolicy(conn, String(args.projectId ?? args.project ?? args.id ?? '')), 'bindings');
+    case 'list_service_accounts':
+      return done(await gcpListServiceAccounts(conn, String(args.projectId ?? args.project ?? args.id ?? '')), 'serviceAccounts');
+    default:
+      return fail(`Unknown Google Cloud tool: ${tool}`);
+  }
+}
+
+/**
+ * Execute an ALLOWED Snowflake ACCOUNT_USAGE governance tool over the SQL REST API.
+ * READ-ONLY connector — every tool is a bounded SELECT built server-side (no user
+ * SQL). Never throws. The RSA private key signs a key-pair JWT server-side and never
+ * leaves the process. Note: ACCOUNT_USAGE has ~2h latency + consumes warehouse credits.
+ */
+async function executeSnowflakeGov(c: Connection, tool: string, _args: Record<string, unknown>): Promise<unknown> {
+  const conn = snowflakeGovConnFrom(c);
+  const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
+  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
+    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  switch (tool) {
+    case 'list_users':
+      return done(await snowflakeGovListUsers(conn), 'users');
+    case 'list_roles':
+      return done(await snowflakeGovListRoles(conn), 'roles');
+    case 'grants_to_users':
+      return done(await snowflakeGovGrantsToUsers(conn), 'grants');
+    case 'grants_to_roles':
+      return done(await snowflakeGovGrantsToRoles(conn), 'grants');
+    case 'login_history':
+      return done(await snowflakeGovLoginHistory(conn), 'logins');
+    case 'access_history':
+      return done(await snowflakeGovAccessHistory(conn), 'accesses');
+    default:
+      return fail(`Unknown Snowflake governance tool: ${tool}`);
   }
 }
 

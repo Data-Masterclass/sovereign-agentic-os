@@ -273,7 +273,17 @@ export type ConnectionTemplateKey =
   // AWS SageMaker over api.sagemaker.<region>.amazonaws.com — AWS SigV4 (access key
   // id + secret access key vaulted; region a non-secret config). Read-only (list
   // models/endpoints/training jobs, describe endpoint). No writes.
-  | 'sagemaker';
+  | 'sagemaker'
+  // Google Cloud identity/resource governance over Cloud Resource Manager + IAM — a
+  // service-account JSON key signs a JWT assertion exchanged for an OAuth2 bearer
+  // (scope cloud-platform.read-only). Read-only (list projects, get IAM policy, list
+  // service accounts). The Google peer of entra (identity). No writes.
+  | 'gcp-identity'
+  // Snowflake SNOWFLAKE.ACCOUNT_USAGE governance over the SQL REST API — RSA key-pair
+  // JWT (account + user non-secret; PEM vaulted). Read-only (users, roles, grants,
+  // login/access history). The Snowflake peer of entra/purview; distinct from the
+  // data-warehouse snowflake connector. No writes.
+  | 'snowflake-governance';
 
 export type ConnectionTemplate = {
   key: ConnectionTemplateKey;
@@ -884,6 +894,48 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
       { name: 'describe_endpoint', description: 'Describe one SageMaker endpoint by name (read).', write: false, mode: 'Read' },
     ],
   },
+  {
+    // Google Cloud identity/resource governance over Cloud Resource Manager + IAM.
+    // The credential is a GCP service-account JSON key: it signs a JWT assertion the
+    // OS exchanges at oauth2.googleapis.com for a short-lived read-only OAuth2 bearer
+    // (scope cloud-platform.read-only). READ-ONLY governance — no write tool. The SA
+    // JSON (with its private key) is vaulted; the record holds only a secretRef.
+    key: 'gcp-identity',
+    label: 'Google Cloud (identity · IAM governance)',
+    type: 'SaaS',
+    connector: 'saas',
+    auth: 'service',
+    endpointHint: 'https://cloudresourcemanager.googleapis.com/v1',
+    secretKey: 'gcp-service-account-json',
+    tools: [
+      // Reads (side-effect-free, auto-allowed). No writes on this connector.
+      { name: 'list_projects', description: 'List GCP projects the service account can see (read).', write: false, mode: 'Read' },
+      { name: 'get_iam_policy', description: 'Read a project’s IAM policy — who holds which role (read).', write: false, mode: 'Read' },
+      { name: 'list_service_accounts', description: 'List a project’s service accounts (read).', write: false, mode: 'Read' },
+    ],
+  },
+  {
+    // Snowflake SNOWFLAKE.ACCOUNT_USAGE governance over the SQL REST API. RSA key-pair
+    // JWT auth (account + user are non-secret routing; the PEM is the vaulted secret).
+    // READ-ONLY security governance — users/roles/grants/history. No write tool. NOTE:
+    // ACCOUNT_USAGE views have up to ~2h latency and querying consumes warehouse credits.
+    key: 'snowflake-governance',
+    label: 'Snowflake (ACCOUNT_USAGE governance)',
+    type: 'SaaS',
+    connector: 'saas',
+    auth: 'service',
+    endpointHint: 'https://<account>.snowflakecomputing.com',
+    secretKey: 'snowflake-gov-keypair',
+    tools: [
+      // Reads (side-effect-free, auto-allowed). No writes on this connector.
+      { name: 'list_users', description: 'List ACCOUNT_USAGE.USERS — the account’s users (read).', write: false, mode: 'Read' },
+      { name: 'list_roles', description: 'List ACCOUNT_USAGE.ROLES — the account’s roles (read).', write: false, mode: 'Read' },
+      { name: 'grants_to_users', description: 'Read ACCOUNT_USAGE.GRANTS_TO_USERS — roles granted to users (read).', write: false, mode: 'Read' },
+      { name: 'grants_to_roles', description: 'Read ACCOUNT_USAGE.GRANTS_TO_ROLES — the privilege/role graph (read).', write: false, mode: 'Read' },
+      { name: 'login_history', description: 'Read ACCOUNT_USAGE.LOGIN_HISTORY — recent logins (read; ~2h latency).', write: false, mode: 'Read' },
+      { name: 'access_history', description: 'Read ACCOUNT_USAGE.ACCESS_HISTORY — recent object access (read; ~2h latency).', write: false, mode: 'Read' },
+    ],
+  },
 ];
 
 /**
@@ -894,7 +946,7 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
  * import, the connections gate, adapter tests) and is deliberately NOT offered in
  * the create picker — a user can never stand up a non-working mock connection.
  */
-export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp', 'airflow', 'github', 'supabase', 'atlassian', 'slack', 'gmail', 'gcal', 'outlook', 'teams', 'entra', 'purview', 'ai-foundry', 'sagemaker'];
+export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp', 'airflow', 'github', 'supabase', 'atlassian', 'slack', 'gmail', 'gcal', 'outlook', 'teams', 'entra', 'purview', 'ai-foundry', 'sagemaker', 'gcp-identity', 'snowflake-governance'];
 
 export function isUserFacingTemplate(key: string): boolean {
   return (USER_FACING_TEMPLATE_KEYS as string[]).includes(key);

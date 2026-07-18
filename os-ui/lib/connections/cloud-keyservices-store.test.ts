@@ -47,16 +47,18 @@ function scriptFetch(handler: (url: string, init: RequestInit) => { status: numb
 }
 function offline() { globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch; }
 
-test('templates: entra / purview / ai-foundry / sagemaker registered, user-facing, guided', () => {
-  for (const key of ['entra', 'purview', 'ai-foundry', 'sagemaker'] as const) {
+const KEY_SERVICE_KEYS = ['entra', 'purview', 'ai-foundry', 'sagemaker', 'gcp-identity', 'snowflake-governance'] as const;
+
+test('templates: all key-service connectors registered, user-facing, guided', () => {
+  for (const key of KEY_SERVICE_KEYS) {
     assert.ok(CONNECTION_TEMPLATES.some((t) => t.key === key), `${key} template row exists`);
     assert.ok((USER_FACING_TEMPLATE_KEYS as string[]).includes(key), `${key} is user-facing`);
     assert.ok(installGuideFor(key), `${key} has an install guide`);
   }
 });
 
-test('all four are READ-ONLY: the preset ships no write tool at all', () => {
-  for (const key of ['entra', 'purview', 'ai-foundry', 'sagemaker'] as const) {
+test('all key-service connectors are READ-ONLY: the preset ships no write tool at all', () => {
+  for (const key of KEY_SERVICE_KEYS) {
     const tpl = CONNECTION_TEMPLATES.find((t) => t.key === key)!;
     assert.ok(tpl.tools.length > 0, `${key} has tools`);
     assert.ok(tpl.tools.every((t) => t.write === false && t.mode === 'Read'), `${key} exposes only reads`);
@@ -146,6 +148,48 @@ test('an unknown tool on a read-only connector degrades honestly (never throws)'
   const bogus = await callConnectionTool(c.id, builder, { tool: 'delete_everything' });
   assert.notEqual(bogus.decision, 'allow');
   assert.ok(r);
+  offline();
+});
+
+test('Google Cloud: a READ auto-allows, exchanges a JWT for a bearer, reaches Resource Manager', async () => {
+  __resetConnections();
+  // A throwaway SA JSON with a real (test-generated) RSA key so the JWT can be signed.
+  const { generateKeyPairSync } = await import('node:crypto');
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const saJson = JSON.stringify({ client_email: 'svc@proj.iam.gserviceaccount.com', private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() });
+  const c = await createConnection(builder, { name: 'gcp', template: 'gcp-identity', endpoint: 'https://cloudresourcemanager.googleapis.com/v1', credential: saJson });
+  const calls = scriptFetch((url) => {
+    if (url.includes('oauth2.googleapis.com/token')) return { status: 200, body: { access_token: 'ya29.fake' } };
+    return { status: 200, body: { projects: [{ projectId: 'p1', name: 'One', projectNumber: '9', lifecycleState: 'ACTIVE' }] } };
+  });
+  const r = await callConnectionTool(c.id, builder, { tool: 'list_projects' });
+  assert.equal(r.decision, 'allow');
+  const result = r.result as { projects?: { projectId: string }[] };
+  assert.ok(result.projects && result.projects[0].projectId === 'p1', 'real client shape, not the mock');
+  assert.ok(calls.some((x) => x.url.includes('oauth2.googleapis.com/token')), 'did a token exchange');
+  assert.ok(calls.some((x) => x.url.includes('cloudresourcemanager.googleapis.com')), 'hit Resource Manager');
+  assert.ok(!JSON.stringify(r).includes('PRIVATE KEY'), 'SA private key never in the tool result');
+  offline();
+});
+
+test('Snowflake governance: a READ auto-allows, key-pair-JWTs, reaches the SQL REST API', async () => {
+  __resetConnections();
+  const { generateKeyPairSync } = await import('node:crypto');
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  const c = await createConnection(builder, { name: 'sfgov', template: 'snowflake-governance', endpoint: 'https://org-acct.snowflakecomputing.com', credential: `ORG-ACCT:gov_reader:${pem}` });
+  const calls = scriptFetch((url, init) => {
+    assert.ok(url.includes('org-acct.snowflakecomputing.com/api/v2/statements'));
+    const h = init.headers as Record<string, string>;
+    assert.equal(h['x-snowflake-authorization-token-type'], 'KEYPAIR_JWT');
+    return { status: 200, body: { resultSetMetaData: { rowType: [{ name: 'NAME' }] }, data: [['ADA']] } };
+  });
+  const r = await callConnectionTool(c.id, builder, { tool: 'list_users' });
+  assert.equal(r.decision, 'allow');
+  const result = r.result as { users?: Record<string, unknown>[] };
+  assert.ok(result.users && result.users[0].NAME === 'ADA');
+  assert.ok(calls.length > 0);
+  assert.ok(!JSON.stringify(r).includes('PRIVATE KEY'), 'RSA key never in the tool result');
   offline();
 });
 

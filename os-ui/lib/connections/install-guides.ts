@@ -554,6 +554,48 @@ const SAGEMAKER: InstallGuide = {
   caveat: 'The SigV4 signer is verified against the AWS `get-vanilla` test vector; live reachability, the IAM read-only policy, and the exact region endpoint are only confirmed against your real AWS account at Test time. Temporary credentials with an `X-Amz-Security-Token` (STS/role assumption) are a documented follow-up — this connector uses long-lived IAM keys.',
 };
 
+const GCP_IDENTITY: InstallGuide = {
+  key: 'gcp-identity',
+  title: 'Google Cloud (identity · IAM governance)',
+  summary: 'Connect Google Cloud read-only via a service-account JSON key for identity/resource governance over Cloud Resource Manager + IAM. Every tool is a read — there is no write tool.',
+  prerequisites: [
+    'A **GCP service account** you create (console.cloud.google.com → IAM & Admin → Service Accounts — this is YOUR step) granted a **read-only** role: the predefined **`roles/viewer`** (or the narrower `roles/resourcemanager.projectViewer` + `roles/iam.securityReviewer`). Least privilege — no editor/owner.',
+    'A **JSON key** for that service account (Keys → Add key → JSON). Paste the **entire JSON** (it contains the private key); it goes to Secrets Manager and is **never** on the record, in a response, or in a log/trace.',
+    'The hosts `oauth2.googleapis.com`, `cloudresourcemanager.googleapis.com`, and `iam.googleapis.com` on the **egress allowlist**.',
+    'Builder/Admin rights (service-credential connector).',
+  ],
+  steps: [
+    'On the Google Cloud card, click **Connect**.',
+    'Enter the connection **name**; the base is `https://cloudresourcemanager.googleapis.com/v1`.',
+    'Paste the **service-account JSON key** — stored once in Secrets Manager.',
+    'Create the connection, then **Test** on its card (a real JWT-bearer token exchange + a projects read). List projects, read a project’s IAM policy, and list its service accounts.',
+  ],
+  whatTheOsDoes:
+    'Registers a governed, **read-only** Google Cloud connection. The service-account JSON signs a JWT assertion (RS256, implemented in-repo dependency-free) which the OS exchanges at `oauth2.googleapis.com` for a short-lived **`cloud-platform.read-only`** access token; that bearer calls Cloud Resource Manager + IAM. `list_projects`, `get_iam_policy`, and `list_service_accounts` auto-allow; there is **no** write tool. All calls are OPA-checked and audit-traced; the key never leaves the server.',
+  caveat: 'The service-account key is a long-lived credential — grant it the **narrowest read-only** role and rotate it. Live reachability, the exact read-only role, and the API routes are only confirmed against your real GCP org at Test time. Workload-Identity-Federation (keyless) is a documented follow-up — this connector uses a JSON key.',
+};
+
+const SNOWFLAKE_GOVERNANCE: InstallGuide = {
+  key: 'snowflake-governance',
+  title: 'Snowflake (ACCOUNT_USAGE governance)',
+  summary: 'Connect Snowflake read-only via an RSA key-pair JWT over the SQL REST API to read SNOWFLAKE.ACCOUNT_USAGE (users, roles, grants, login/access history). Every tool is a read — there is no write tool. This is the GOVERNANCE peer of the data-warehouse Snowflake connector.',
+  prerequisites: [
+    'A Snowflake **account identifier** (`ORG-ACCOUNT`) and a **login name** for a user whose **default role is read-only** and has been granted **`IMPORTED PRIVILEGES` on the `SNOWFLAKE` database** (so it can read `ACCOUNT_USAGE`). Least privilege — no ACCOUNTADMIN.',
+    'An **RSA key-pair**: register the **public** key on the Snowflake user (`ALTER USER … SET RSA_PUBLIC_KEY=…`); paste the **unencrypted PKCS#8 private key (PEM)**. It goes to Secrets Manager and is **never** on the record, in a response, or in a log/trace.',
+    'The host `<account>.snowflakecomputing.com` on the **egress allowlist** (`snowflakecomputing.com` covers it via the subdomain rule).',
+    'Builder/Admin rights (service-credential connector).',
+  ],
+  steps: [
+    'On the Snowflake (ACCOUNT_USAGE governance) card, click **Connect**.',
+    'Enter the connection **name** and the account **endpoint** `https://<account>.snowflakecomputing.com`.',
+    'Provide the credential as `account:user:<PEM>` (account + user route the JWT; the PEM is the secret) — stored once in Secrets Manager.',
+    'Create the connection, then **Test** on its card (a real key-pair-JWT `SELECT CURRENT_ACCOUNT()`). List users / roles / grants and read login/access history.',
+  ],
+  whatTheOsDoes:
+    'Registers a governed, **read-only** Snowflake governance connection over the SQL REST API. The RSA private key signs a **key-pair JWT** (RS256, implemented in-repo dependency-free; `iss` = `<ACCOUNT>.<USER>.SHA256:<fp>`) used as the Bearer — the key is used **only** to sign and is never returned or logged. `list_users`, `list_roles`, `grants_to_users`, `grants_to_roles`, `login_history`, and `access_history` auto-allow (each is a bounded SELECT built server-side; no user SQL); there is **no** write tool. All calls are OPA-checked and audit-traced.',
+  caveat: '`SNOWFLAKE.ACCOUNT_USAGE` views have up to **~2 hours of latency** — they are for governance/audit, not real-time state. Every query runs on a **virtual warehouse and consumes credits** (prefer an XS auto-suspend warehouse). The JWT signer is verified against a deterministic vector; live reachability, the `IMPORTED PRIVILEGES` grant, and the registered public key are only confirmed against your real account at Test time.',
+};
+
 const OM_CATALOG: InstallGuide = {
   key: 'om-catalog',
   title: 'OpenMetadata catalog (external · read-only)',
@@ -582,6 +624,7 @@ const GUIDES: InstallGuide[] = [
   GITHUB, SUPABASE, ATLASSIAN,
   SLACK, GMAIL, GCAL, OUTLOOK, TEAMS,
   ENTRA, PURVIEW, AI_FOUNDRY, SAGEMAKER,
+  GCP_IDENTITY, SNOWFLAKE_GOVERNANCE,
 ];
 
 const GUIDE_BY_KEY: Record<string, InstallGuide> = Object.fromEntries(GUIDES.map((g) => [g.key, g]));

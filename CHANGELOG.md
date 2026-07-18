@@ -15,6 +15,22 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.41] — 2026-07-18
+
+### Added
+- **Two read-only cloud key-service connectors (#174 Wave 2).**
+  - **GCP identity/IAM governance** — lists projects, IAM policy, and service accounts (the Google peer
+    of the Microsoft Entra connector). Auth is a GCP service-account JSON key signed into an RS256 JWT
+    (dependency-free, Node `crypto`) and exchanged for a short-lived read-only OAuth2 bearer.
+  - **Snowflake governance** — reads `SNOWFLAKE.ACCOUNT_USAGE` (users, roles, grants, login/access
+    history) via a key-pair JWT to the SQL REST API; distinct from the existing Snowflake *data*
+    connector. Honest caveats surfaced: ACCOUNT_USAGE views lag up to ~2h and queries consume warehouse
+    credits.
+  - Both keep secrets fully server-side (the private key only ever signs — never on the wire), wire into
+    the shared `CONNECTION_HEALTH` registry + executors, and ship install guides. **Going live needs the
+    cluster egress allowlist mirrored** (`cloudresourcemanager`/`iam`/`admin.googleapis.com`,
+    `<account>.snowflakecomputing.com`) — an operator step; connectors fail-closed until then.
+
 ## [os-ui 0.5.40] — 2026-07-18
 
 ### Changed

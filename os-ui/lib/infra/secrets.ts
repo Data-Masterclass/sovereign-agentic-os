@@ -116,6 +116,14 @@ const DEFAULT_ALLOWLIST = [
   'api.azureml.ms', // Azure AI Foundry / Azure ML data plane (<region>.api.azureml.ms)
   'ml.azure.com', // Azure ML control-plane / OAuth audience host
   'amazonaws.com', // AWS SageMaker (api.sagemaker.<region>.amazonaws.com via subdomain rule)
+  // Cloud key-services wave 2 — GCP identity/IAM governance + Snowflake ACCOUNT_USAGE
+  // governance (each host also added to the chart egressProxy.allowlist + Cilium FQDN
+  // policy on a real deploy — the operator's step, #176).
+  'cloudresourcemanager.googleapis.com', // GCP Cloud Resource Manager (list projects, getIamPolicy)
+  'iam.googleapis.com', // GCP IAM (service accounts)
+  'admin.googleapis.com', // GCP Admin SDK (optional org/directory reads — reserved)
+  // oauth2.googleapis.com (above) already covers the GCP JWT-bearer token exchange
+  'snowflakecomputing.com', // Snowflake SQL REST API (<account>.snowflakecomputing.com via subdomain rule)
 ];
 
 function allowlist(): string[] {
