@@ -2,7 +2,7 @@
 title: "Sovereign Agentic OS"
 subtitle: "The governed, EU-sovereign operating system for data, knowledge, agents and software — where AI gets real, safe hands on your work."
 author: "Orchestrated by Data Masterclass · datamasterclass.com · www.sovereign-agentic.com"
-date: "Chart 0.2.12 (app 0.2.0-alpha.12 · os-ui 0.1.71) · generated {{DATE}} from commit {{GIT_COMMIT}}"
+date: "Chart 0.2.11 (app 0.2.0-alpha.11 · os-ui 0.5.33) · generated {{DATE}} from commit {{GIT_COMMIT}}"
 titlepage: true
 titlepage-rule-color: "c8a24a"
 toc: true
@@ -120,16 +120,32 @@ core, `lib/core/scopes.ts`). "My" is your private draft space; "Domain" is your 
 is the whole tenant. Promote reads **"Promote to Domain"** and certify **"…to Company"** — the
 same two verbs on every tab.
 
+**Your "My" work is yours — no approval, ever.** A builder — *and the agents they build* —
+create and write their own **personal** artifacts of every type (data, files, knowledge,
+metrics, connections, software, dashboards, agents, science) **directly**, with no admin
+review. The person's own rights and ownership are the authority. Approval only appears the
+moment you widen the audience:
+
 | Scope | Meaning | Who triggers | Who approves |
 |---|---|---|---|
-| **My** | the creator only — the default for drafts | — | — |
-| **Domain** | usable across the owning domain | the **owner** files a promotion request | a **Builder+ of that domain** |
-| **Company** *(certified)* | discoverable and importable by *other* domains, listed in the Marketplace storefront | a **Builder / Domain admin** — the domain vouches for it | the **platform Administrator** — the platform accepts it |
+| **My** | you only — the default; **full rights, no approval** | — | — |
+| **Domain** | usable across the owning domain | the **owner** files a promotion request | a **domain admin** of that domain |
+| **Company** *(certified)* | discoverable and importable by *other* domains, listed in the Marketplace storefront | a **Builder / Domain admin** — the domain vouches for it | the **tenant Administrator** — the platform accepts it |
 
-**Approving *is* the action.** On approve, the platform executes the governed effect — for a
-dataset, a physical publish; the tier flips only once it verifies — and writes the audit.
-Nothing enters the governed store without **documentation + passing checks**: a transparency
-gate that turns green only when an artifact is documented and in the lineage graph.
+**You can only change what you originally built.** Edit rights follow ownership, not tier —
+even a shared artifact is editable only by its original owner (and, for Domain/Company
+artifacts, an in-scope admin); a personal "My" artifact is strictly owner-only, invisible to
+admins.
+
+**Approving *is* the action.** High-stakes actions never fail silently: when you promote,
+certify or request a deploy you get one calm confirmation — *"Request filed — awaiting approval
+to Domain/Company"* — with a **Go to Policies & Approvals →** button that deep-links to and
+highlights the exact request. An admin who *can* approve it sees an **Approve now** button that
+approves inline (fail-closed — non-approvers never see it, and the server re-checks). On
+approve, the platform executes the governed effect — for a dataset, a physical publish; the
+tier flips only once it verifies — and writes the audit. Nothing enters the governed store
+without **documentation + passing checks**: a transparency gate that turns green only when an
+artifact is documented and in the lineage graph.
 
 ## Four roles, assigned per domain
 
@@ -257,33 +273,46 @@ honestly rather than inventing an answer when retrieval comes back empty.
 
 ## Build
 
-- **Agents — compose, govern, run.** One page where a domain's **agent systems** (instructions
-  + tools + memory) are composed three equivalent ways — a React-Flow graph builder, Monaco
-  YAML editing, or a chat assistant — then granted resources, built (*Build = execute +
-  verify*), and run. Every call routes through **LiteLLM → OPA → Langfuse**. **"What your team
-  can use"** is an interactive grants surface: per item you choose **read-only · read + propose ·
-  read + write** (a clear labelled selector), capped by the system's overall access setting.
-  Grants split into two groups — **Plan Items** (Strategy · Big Bets · Operating Model ·
-  Workflows) and **Context** (Knowledge · Files · Data · Connections · Metrics) — and **all four
-  Plan Items are grantable**: granting a pillar or bet provisions its governed read tools
-  (`get_pillar` / `get_big_bet`), DLS-scoped to what the caller may view. Context items grant via
-  a **folder-tree with tri-state checkboxes** — tick a folder to grant everything in it (and
-  future contents, resolved at run time, budget-capped, every resolved item still per-item
-  DLS/OPA-checked so a folder grant is provably a *subset*), or tick individual items. Each
-  **data grant** can target the **medallion layer** the team reads — Bronze, Silver, or Gold —
-  and the picker only offers layers that are actually built, defaulting to the highest (Gold, the
-  curated default). The chosen layer is enforced when the team discovers and profiles that dataset.
+- **Agents — compose, govern, run.** A domain's **agent systems** (instructions + tools +
+  memory) move through **five phases — Define · Design · Build · Run · Evaluate**. In
+  **Define**, **"What your team can use"** is the interactive grants surface, and a grant here is
+  a **default-on capability**: **every agent in the system inherits the full set of the system's
+  Define grants by default** — you *narrow* an agent to give it less, never scramble to add. Per
+  item you choose **read-only · read + propose · read + write** (a clear labelled selector),
+  capped by the system's overall access setting; a **read + write** grant provisions that agent's
+  matching **write tools** (e.g. `upload_file`, `create_dataset`), and a hard invariant guarantees
+  an agent can never exceed the team's grants. Grants split into two groups — **Plan Items**
+  (Strategy · Big Bets · Operating Model · Workflows) and **Context** (Knowledge · Files · Data ·
+  Connections · Metrics) — and **all four Plan Items are grantable**: granting a pillar or bet
+  provisions its governed read tools (`get_pillar` / `get_big_bet`), DLS-scoped to what the caller
+  may view. Context items grant via a **folder-tree with tri-state checkboxes** — tick a folder to
+  grant everything in it (and future contents, resolved at run time, budget-capped, every resolved
+  item still per-item DLS/OPA-checked so a folder grant is provably a *subset*), or tick individual
+  items. Each **data grant** can target the **medallion layer** the team reads — Bronze, Silver,
+  or Gold — and the picker only offers layers that are actually built, defaulting to the highest
+  (Gold, the curated default). **Design** composes the agents three equivalent ways — a React-Flow
+  graph builder, Monaco YAML editing, or a chat assistant. **Build** (*Build = execute + verify*)
+  provisions and checks the team behind a live progress stepper; **Run** executes it as you and
+  offers a **"Download PDF Results Report"**; **Evaluate** attributes context per agent and offers
+  a **"Download PDF Evaluation Report"** — both fully brand-styled (gold-lotus cover, embedded
+  datamasterclass fonts). Every call routes through **LiteLLM → OPA → Langfuse**.
 - **Software — build governed apps, sovereign.** Describe an app in a Claude-style build chat;
   the agent writes and commits code to an in-cluster **Forgejo** repo (no GitHub, no tokens,
-  your code never leaves). *Request deploy* assembles a review card — security scan, resource
-  envelope, diff — that a human Builder decides. The in-cluster runner provisions a real
-  Deployment + Service + Ingress with a live per-app URL.
+  your code never leaves), behind a live progress stepper (Scaffold → Build image → Publish →
+  Deploy → Live). An app can **declare its surface** — `surface: ui | api | both` in `app.yaml`
+  (or via `create_software`), which wins over auto-detection, so a Streamlit/Gradio/Flask UI is
+  never mislabelled "API." *Request deploy* assembles a review card — security scan, resource
+  envelope, diff — that a human Builder decides; on approve the in-cluster runner provisions a
+  real Deployment + Service + Ingress with a live per-app URL. Apps carry the same lifecycle as
+  every other tab — a **Show-archived** toggle and **Archive → Restore / Delete**.
 - **Science — classic ML** *(opt-in, Layer 4)*. Take traditional ML (regression, forecasting,
   clustering — *not* LLMs) from a governed data product to a deployed model-as-service, exposed
   as both a REST `predict` API and a `predict` MCP tool. Off by default; GPU is cost-gated.
 - **Dashboards — governed BI.** Apache Superset dashboards built read-only on governed Cube
-  metrics, so BI and agents can never disagree. A server-minted guest token carries the
-  viewer's RLS, so a shared dashboard still shows only your rows.
+  metrics, so BI and agents can never disagree. They **embed live inside the OS** — rendered
+  through the **same-origin tool proxy**, with a **server-minted, short-lived guest token that
+  carries the viewer's own row-level security**, so a shared dashboard still shows only your
+  rows.
 
 ## Monitor & Admin
 
@@ -291,10 +320,16 @@ honestly rather than inventing an answer when retrieval comes back empty.
   action, the consolidated policy view, the hash-chained audit, cost caps, and Users & access.
 - **Monitoring** *(Builder+)* — artifact observability: trace runs (Langfuse), watch spend vs.
   caps, and surface pipeline + model drift — scoped to your identity, strictly read-only.
+- **Console** *(Builder+)* — the governed **Query** surface: Lakehouse SQL runs through Trino
+  under the caller's own OPA row/document-level security, so a builder can explore data safely.
+  The **raw Shell** and the unscoped Cube query mode stay **admin-only** (in the UI *and* the
+  API).
 - **Components** *(Admin)* — the one operator surface: every platform service with live health
   and version, and one-click same-origin consoles (Superset, Forgejo, Dagster, …) via SSO.
-- **Admin / Terminal / Query / About** *(Admin)* — the tenant control room (domains, users,
-  models, egress, cost), a developer terminal and SQL/Cube console, and the license inventory.
+- **Admin** *(Builder+, filtered)* — the tenant control room (domains, users, models, egress,
+  cost, backups). A builder sees the tab too, filtered to a single **My Settings** self-service
+  tile; every tenant-admin tile stays admin-only and hidden, and deeper admin sub-pages redirect
+  non-admins back (fail-closed, default-deny). **About** carries the license inventory.
 
 \newpage
 
@@ -844,8 +879,8 @@ place; **Science (Layer 4)** is an integrated model-as-a-service tab (list → d
 promote → lifecycle) wrapping a live KServe `predict` model, with the raw MLflow/Featureform/
 JupyterHub/KServe consoles as a Developer escape hatch. **Software** apps build a real container
 image in-cluster (Forgejo CI) and deploy to a live per-app URL — end-to-end, no external registry.
-**Dashboards** embed governed Superset with a viewer-scoped guest token. The OS UI is v1.0: every
-sidebar tab is a real, brand-themed surface with light/dark theming.
+**Dashboards** embed governed Superset **live and same-origin** with a viewer-scoped guest token.
+The OS UI is v1.0: every sidebar tab is a real, brand-themed surface with light/dark theming.
 
 **Connections** federate the outside world through one governed door: the tab lists connections
 (All/My/Domain/Company, with app-generated MCP connections folded in), a **grouped, searchable

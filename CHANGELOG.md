@@ -15,6 +15,19 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.34] — 2026-07-17
+
+### Changed
+- **MCP surface + in-product guides brought fully up to date.** The MCP server instructions, tool
+  descriptions, and every in-product guide now reflect the current model: **"My" artifacts are yours
+  — full rights, no approval** (for builders and their agents); Domain needs domain-admin approval,
+  Company needs tenant-admin; the agent write-gate is scope-aware; agents inherit the full Define
+  grant set by default; dashboards embed live; `create_software` takes a `surface` (ui/api/both);
+  Console + Admin are builder-visible. Corrected the `create_dashboard` schema and role/approver
+  wording throughout.
+- **Official end-user guide refreshed + PDF regenerated** to match — governance model, agents
+  capability model, live dashboards, Console/Admin, software surface + archive.
+
 ## [os-ui 0.5.33] — 2026-07-17
 
 ### Added

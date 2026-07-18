@@ -7,7 +7,7 @@ The Data tab is the foundation of the OS. It stores versioned, governed datasets
 ## How to build it
 
 1. **Reuse check.** Call `list_datasets` filtered to your domain. If the dataset already exists, call `get_dataset` and add a version rather than creating a duplicate. Call `query_data` to inspect existing rows before any write.
-2. **Create.** Call `create_dataset` with `name`, `domain`, and `tier: "bronze"`. This creates a Personal asset in your domain.
+2. **Create.** Call `create_dataset` with `name`, `domain`, and `tier: "bronze"`. This creates a My-scope asset in your domain (yours, no approval needed).
 3. **Add a Bronze version.** Two ways:
    - **Physical (preferred):** call `ingest_dataset` with inline CSV/JSON `content` (≤ ~2 MB in-band; bigger files via the UI upload — same pipeline). Your bytes land in object storage under your own prefix, the data-runner writes the real Iceberg table, and Bronze is registered **only when apply + a governed verify both pass** — no dot without a queryable landing.
    - **Registry-only:** call `add_dataset_version` with the raw source data. Bronze is append-only; no transformations required.
@@ -20,11 +20,11 @@ The Data tab is the foundation of the OS. It stores versioned, governed datasets
    - **Authored:** call `add_dataset_version` with `tier: "gold"`. Gold locks the schema — downstream metric definitions depend on it.
 7. **Add data-quality rules (optional, recommended).** Call `define_quality_rules` with dropdown-style rules — `not_null`, `not_blank`, `unique`, `accepted_values` (with a values list), `range` (with min/max) on a column — then `run_quality_checks` to compile each to a governed COUNT-of-violations SQL and run it AS the owner for a REAL pass/fail per rule + an aggregate badge. A rule that can't run (no built table) is reported not-run, never a fake pass.
 8. **Document.** Call `document_dataset` with a `description`, `owner`, and at least one `tag`. Documentation is the gate to promotion; this step is required before filing.
-9. **File a promotion request.** Creator calls `request_promotion` to move the dataset from Personal to Shared. The dataset stays Personal until a Builder acts.
-10. ⛔ **Builder approves.** A Builder or Admin calls `approve_promotion`. The dataset becomes visible to domain members — and if it has a built Gold, it is **auto-registered as a queryable Cube model** (view + dimensions from the gold columns + a `count` measure) with no `define_metric` step. Confirm via `get_dataset` → `cube.ready`.
+9. **File a promotion request.** Owner calls `request_promotion` to promote the dataset from My to Domain. The dataset stays My-scope until a domain admin acts.
+10. ⛔ **Domain admin approves.** A domain admin (or tenant admin) calls `approve_promotion`. The dataset becomes visible to domain members — and if it has a built Gold, it is **auto-registered as a queryable Cube model** (view + dimensions from the gold columns + a `count` measure) with no `define_metric` step. Confirm via `get_dataset` → `cube.ready`.
 11. **Add measures (optional).** Call `define_metric` only to ADD named measures to the already-queryable Cube model.
 
-**Note:** `query_data` is read-only at any point in the flow. Re-promoting an already-Shared dataset returns `conflict` — treat it as idempotent.
+**Note:** `query_data` is read-only at any point in the flow. Re-promoting an already-Domain dataset returns `conflict` — treat it as idempotent.
 
 ## What to consider
 
@@ -43,10 +43,10 @@ The Data tab is the foundation of the OS. It stores versioned, governed datasets
 | `list_datasets`, `get_dataset`, `query_data`, `profile_dataset` | Creator |
 | `create_dataset`, `add_dataset_version`, `document_dataset` | Creator (own work) |
 | `ingest_dataset`, `transform_silver`, `build_gold_join` | Creator (own schema, runs as you) |
-| `request_promotion` | Creator |
-| ⛔ `approve_promotion` | Builder or Admin |
+| `request_promotion` | Creator (owner) |
+| ⛔ `approve_promotion` | Domain admin (or tenant admin) |
 
-OPA enforces domain scope on every read. DLS filters rows at query time regardless of tier. A creator cannot approve their own promotion — the `forbidden` error is final; ask a Builder.
+OPA enforces domain scope on every read. DLS filters rows at query time regardless of tier. A creator cannot approve their own promotion — the `forbidden` error is final; ask a domain admin.
 
 **Worked example:**
 
@@ -55,7 +55,7 @@ list_datasets({ domain: "analytics", tier: "gold" })
 → [] — no existing gold dataset for this concept
 
 create_dataset({ name: "orders_v1", domain: "analytics", tier: "bronze" })
-→ { id: "ds_01J...", tier: "bronze", state: "personal" }
+→ { id: "ds_01J...", tier: "bronze", state: "my" }
 
 ingest_dataset({ datasetId: "ds_01J...", fileName: "orders.csv",
   content: "order_id,net_amount\n1001,250.00\n1002,90.50" })
@@ -78,4 +78,4 @@ request_promotion({ id: "ds_01J..." })
 → { state: "pending_approval", requestId: "pr_99..." }
 ```
 
-A Builder then calls `approve_promotion({ requestId: "pr_99..." })` to make it Shared.
+A domain admin then calls `approve_promotion({ requestId: "pr_99..." })` to make it Domain-scoped.

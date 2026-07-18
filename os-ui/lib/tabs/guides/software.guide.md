@@ -7,7 +7,7 @@ The Software tab is where apps and services are built, deployed, and governed. S
 ## How to build it
 
 1. **Reuse check.** Call `list_software` to see what exists in your domain. Call `get_software` to inspect a specific app before forking or duplicating it.
-2. **Create.** Call `create_software` with `name`, `domain`, and `type` (e.g. `app`, `service`, `pipeline`). This creates a Personal draft AND seeds the app's Forgejo repo with a **real build→push CI workflow** (plus the `REGISTRY_PASS` Actions secret). From here on, every push to `main` **auto-builds the app image** on the in-cluster Forgejo Actions runner and pushes the tag the app runner pulls — no manual build step. Use `get_software_status` to watch the build pipeline.
+2. **Create.** Call `create_software` with `name`, an optional `domain` and `template` (e.g. `nextjs-supabase`), and an optional `surface` — **declare the app's surface** as `ui` (serves a frontend), `api` (headless / tool surface), or `both`. A declared surface wins over auto-detection, so a UI app is never mislabelled as API; omit it to let the OS infer the surface from the code (an app can also declare `surface:` in its `app.yaml`). This creates a My-scope draft AND seeds the app's Forgejo repo with a **real build→push CI workflow** (plus the `REGISTRY_PASS` Actions secret). From here on, every push to `main` **auto-builds the app image** on the in-cluster Forgejo Actions runner and pushes the tag the app runner pulls — no manual build step. Use `get_software_status` to watch the build pipeline.
 3. **Commit code.** Call `commit` with your code payload. A commit is a push to `main`, so it triggers the auto-build. Declare consumed dependencies in a `.app/` manifest file within the commit — list the dataset IDs, knowledge IDs, and connection IDs your app will use. Read your work back with `read_app_files` — the app's committed file tree, or one file's content when you pass a `path`. What you committed is what you read; iterate on the real code, never a guess.
 4. **Wire dependencies by reference.** Call `use_data({ datasetId })`, `use_knowledge({ knowledgeId })`, and `use_connection({ connectionId })` to formally bind each dependency. The OS enforces that you can only wire assets you have read access to. Credentials are never copied into the app.
 5. **Preview.** Call `start_preview` to run the app privately. The preview is sandboxed and visible only to you.
@@ -16,14 +16,14 @@ The Software tab is where apps and services are built, deployed, and governed. S
    At any point, `get_software_status` returns the ONE honest status card — preview/deploy state, the review decision + reviewer, release count and the build pipeline. URLs appear only when a runner actually serves them; a pending runner is stated, never papered over.
 8. **Optional: close the loop.** Call `use_as_data` to register the app's output as a Bronze dataset, feeding the data tier.
 
-Additional lifecycle tools: `promote` (tier promotion), `archive` (soft-delete, preserves lineage), `delete` (hard delete — blocked if another asset depends on this one).
+Additional lifecycle tools: `promote` (scope promotion), `archive` (reversible soft-hide that retains data + lineage — an archived app can be **restored**, or hard-`delete`d), `delete` (hard delete — blocked if another asset depends on this one).
 
 ## What to consider
 
 - **Wire deps before preview.** An app that references a connection ID not formally wired will fail at preview start with `bad_request`.
 - **Dependency by reference only.** Never embed credentials or dataset row copies in committed code. The OS detects raw credential patterns and returns `bad_request`.
 - **delete is lineage-blocked.** If another dataset, software, or metric depends on this app's output, `delete` returns `conflict`. Use `archive` instead.
-- **Tier of deps constrains deploy tier.** An app wired to a Personal connection cannot be deployed to Shared. Promote dependencies first.
+- **Scope of deps constrains deploy scope.** An app wired to a My-scope connection cannot be deployed to Domain. Promote dependencies first.
 - **`use_as_data` closes the spine.** The Bronze dataset created by `use_as_data` inherits the app's lineage, making the data-to-software-to-data chain fully traceable.
 
 ## Governance
@@ -44,8 +44,8 @@ list_software({ domain: "data-eng" })
 → [{ id: "sw_22A...", name: "invoice-loader", state: "deployed" }]
 — a loader exists; create a separate transform app
 
-create_software({ name: "invoice-transformer", domain: "data-eng", type: "pipeline" })
-→ { id: "sw_33B...", state: "draft" }
+create_software({ name: "invoice-transformer", domain: "data-eng", template: "nextjs-supabase", surface: "api" })
+→ { id: "sw_33B...", surface: "api", state: "draft" }
 
 commit({ id: "sw_33B...", files: { "main.py": "...", ".app/deps.yaml": "datasets: [ds_01J...]" } })
 → { committed: true }

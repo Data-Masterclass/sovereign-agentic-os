@@ -26,7 +26,7 @@ The Metrics tab is the OS's single source of truth for business numbers. A metri
 4. **Read the definition back.** Call `get_metric` with the metric `id` (`<datasetId>.<measure>`) to read back exactly what was registered — the aggregation + column, the backing dataset, the canonical Cube member and the generated Cube YAML — before iterating or charting it.
 5. **Read the number.** Call `query_metric` with the metric `id` from `list_metrics` (`<datasetId>.<measure>`), optionally sliced by `dimensions` / `timeDimension` + `granularity`. This is how "what is revenue this month" resolves — through the SEMANTIC LAYER, never raw SQL: the tool accepts no SQL by construction, and Cube applies YOUR per-viewer row-level security (the securityContext is derived from your session identity), so the number you read is identical to the charts.
 
-That is the complete flow. Metrics do not have a separate promotion step — they inherit the governance of their backing Gold dataset. A metric defined on a Personal Gold dataset is Personal; a metric on a Shared Gold dataset is Shared.
+That is the complete flow. Metrics do not have a separate promotion step — they inherit the governance of their backing Gold dataset. A metric defined on a My-scope Gold dataset is My; a metric on a Domain Gold dataset is Domain.
 
 ## What to consider
 

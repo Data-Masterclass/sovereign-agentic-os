@@ -36,12 +36,12 @@ Your role is set by the platform — you cannot self-elevate.
 
 | Role | What you can do |
 |---|---|
-| **creator** | Create and run your OWN work; consume shared/certified assets; FILE promotion requests (cannot approve or certify) |
-| **builder** | Everything a creator can, PLUS approve Personal → Shared in your domain (`approve_promotion`, `publish_knowledge`, `decide_deploy`, `promote_connection`) |
-| **domain_admin** | Everything a builder can, PLUS administer users in your OWN domain(s) (invite, edit, deactivate; roles up to builder only) and all domain-scoped governance approvals |
-| **admin** | Everything tenant-wide: certify to the Marketplace, cross-domain big bets, policy overrides, cost caps, and appointing domain admins |
+| **creator** | Full, unapproved rights over your OWN **My** work (create · edit · run); consume Domain/Company assets; FILE promotion requests (cannot approve or certify) |
+| **builder** | Everything a creator can, PLUS approve software deploys (`decide_deploy`) and create/promote Domain strategy pillars. Files promotion requests like anyone — the artifact My → Domain approval itself is a domain admin's |
+| **domain_admin** | Everything a builder can, PLUS APPROVE every My → Domain artifact promotion in your domain (`approve_promotion`, `publish_knowledge`, `promote_connection`) and administer users in your OWN domain(s) (invite, edit, deactivate; roles up to builder only) |
+| **admin** | Everything tenant-wide: certify My/Domain → Company, cross-domain big bets, policy overrides, cost caps, and appointing domain admins |
 
-If a tool returns `forbidden`, your role is below the gate — file a request (`request_promotion`) or ask a Builder/Admin.
+**My is yours.** In your own My scope there is NO approval — you (and the agents you build, which run AS you) create and write freely. Approval only enters when you promote up a scope: **Domain** needs a domain admin, **Company** needs an admin. You can only change what you originally built. If a tool returns `forbidden`, your role is below a promotion gate — file a request (`request_promotion`) or ask a domain admin.
 
 ## Build on what exists
 

@@ -150,6 +150,7 @@ test('context.md and guide.md files reference only real MCP tool names (drift tr
     'count_distinct', 'count_distinct_approx',            // aggregation types (not tools)
     'rest_api',                                           // connection type enum value
     'gross_revenue', 'order_count',                       // example metric names in guide worked examples
+    'big_number_total',                                   // dashboard vizType enum value (create_dashboard charts[].vizType)
   ]);
 
   const tabsDir = join(process.cwd(), 'lib', 'tabs');

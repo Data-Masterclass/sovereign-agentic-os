@@ -2,13 +2,13 @@
 
 ## What this is
 
-The Science tab is the OS's governed door into machine learning predictions. Models are served as governed services: `list_models` shows what YOU can score (the same Personal → Domain → Marketplace tier ladder as every artifact), `get_model` reads one model's card, and `science_predict` runs a prediction as the signed-in user, under OPA policy, with a Langfuse audit trace on every call. There is no raw model endpoint, no bypass, and no way to invoke ML outside of this governed path. In the cross-tab spine, Science is a lateral surface: prediction outputs can be consumed by software pipelines or written back to the Bronze data tier, feeding the analytics column.
+The Science tab is the OS's governed door into machine learning predictions. Models are served as governed services: `list_models` shows what YOU can score (the same My → Domain → Company tier ladder as every artifact), `get_model` reads one model's card, and `science_predict` runs a prediction as the signed-in user, under OPA policy, with a Langfuse audit trace on every call. There is no raw model endpoint, no bypass, and no way to invoke ML outside of this governed path. In the cross-tab spine, Science is a lateral surface: prediction outputs can be consumed by software pipelines or written back to the Bronze data tier, feeding the analytics column.
 
 ## How to build it
 
 The slash command `score_and_wire_prediction` walks this exact sequence.
 
-1. **Discover.** Call `list_models` (or read `sovereign-os://my/science`) — the models you can score, RLS-scoped: your own Personal models, your domain's, and Marketplace-certified ones. The response states honestly whether serving is on (`mlEnabled`); when it is off, predictions 404 until an Admin enables `ml.enabled` — report that, do not work around it. An empty tenant returns an empty list; never invent a model.
+1. **Discover.** Call `list_models` (or read `sovereign-os://my/science`) — the models you can score, RLS-scoped: your own My-scope models, your domain's, and Company-certified ones. The response states honestly whether serving is on (`mlEnabled`); when it is off, predictions 404 until an Admin enables `ml.enabled` — report that, do not work around it. An empty tenant returns an empty list; never invent a model.
 2. **Read the card.** Call `get_model` with the registry name — feature names, the default feature vector, score bands/threshold, registry versions with their metrics (AUC), tier (who may call it) and serving status (stage + front doors).
 3. **Score.** Call `science_predict` with:
    - `account` — the account or entity to predict for (required when the model is account-scoped)
@@ -16,7 +16,7 @@ The slash command `score_and_wire_prediction` walks this exact sequence.
    The call returns a prediction result scoped to your tier and constrained by your OPA `predict` grant. The Langfuse trace is recorded automatically.
 4. **Wire it.** Consume the score through the governed door: grant an agent system the predict tool in its `system.yaml` (`commit_agent_files`), or have an app consume the REST predict door by reference — never an embedded model endpoint or secret.
 
-There is no create, commit, or approve sequence here. The ML model and feature pipeline are managed by the tenant Admin; widening who may CALL a model is the promote ladder (⛔ Builder → Domain, Admin → Marketplace), always a human — an agent can never promote a model.
+There is no create, commit, or approve sequence here. The ML model and feature pipeline are managed by the tenant Admin; widening who may CALL a model is the promote ladder (⛔ Domain admin → Domain, Admin → Company), always a human — an agent can never promote a model.
 
 ## What to consider
 
@@ -32,8 +32,8 @@ There is no create, commit, or approve sequence here. The ML model and feature p
 |---|---|
 | `list_models`, `get_model` | Creator (RLS-scoped — you only see models in your tier scope) |
 | `science_predict` | Creator (with OPA `predict` grant) |
-| ⛔ Promote model to Domain | Builder (human only) |
-| ⛔ Certify model to Marketplace | Admin (human only) |
+| ⛔ Promote model to Domain | Domain admin (human only) |
+| ⛔ Certify model to Company | Admin (human only) |
 | Enable ML subsystem | Admin |
 | Assign `predict` grant | Admin |
 

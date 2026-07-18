@@ -7,7 +7,7 @@ here, governed identically.
 
 ## What a pillar is
 A pillar has a **scope** — **personal** (My — your private spine), **domain**
-(Shared with a domain), or **tenant** (Company-wide) — an optional **value metric**
+(Domain scope), or **tenant** (Company-wide) — an optional **value metric**
 and a way its number is kept: `describe` (named only), `governed` (a Cube metric set
 up in Metrics, RLS-scoped), or `manual` (monthly entries). Contributing Big Bets are
 linked to it; the pillar's value is distributed down to those bets (and their

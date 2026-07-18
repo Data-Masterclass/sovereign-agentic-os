@@ -14,17 +14,17 @@ The Sovereign Agentic OS is a single governed operating system for your data, kn
 | **Agents** | Agent systems grounded in knowledge, built and run here |
 | **Software** | Apps and services wired to governed deps |
 | **Metrics** | Canonical metric definitions backed by gold data |
-| **Dashboards** | Per-viewer charts bound to governed metrics |
+| **Dashboards** | Per-viewer charts bound to governed metrics, embedded live |
 | **Big Bets** | Strategic initiatives referencing real OS components |
 | **Files** | Binary and document assets, promotable to shared |
 | **Science** | Governed predict door into ML models |
 
-## The tier ladder
+## The scope ladder
 
-Every asset starts **Personal** (visible only to you). A Builder can gate it to **Shared** (visible to domain members). An Admin can certify it to the **Marketplace** (tenant-wide). Promotion always requires documentation first. Moving an asset to a higher tier never widens row-level access — DLS is enforced independently.
+Every asset starts in **My** (personal) — and **in My scope you have full rights with no approval**: you and the agents you build (which run AS you) create, write and edit your own work directly. Approval only enters when you push work up a scope: a **domain admin** gates the flip to **Domain** (visible to domain members), an **admin** certifies it to **Company** (tenant-wide). Promotion always requires documentation first, and never widens row-level access — DLS is enforced independently.
 
 ```
-Personal  →[Builder gate]→  Shared  →[Admin gate]→  Certified / Marketplace
+My  →[Promote to Domain: domain-admin gate]→  Domain  →[Promote to Company: admin gate]→  Company
 ```
 
 ## The cross-tab spine
@@ -41,13 +41,13 @@ Build data first to Gold, then define metrics on it, compose dashboards from met
 
 ## Tools, resources, and prompts
 
-- **Tools** — imperative calls that create or read state (e.g. `create_dataset`, `define_metric`). Most writes require a role gate.
+- **Tools** — imperative calls that create or read state (e.g. `create_dataset`, `define_metric`). Writes into your own **My** scope need no approval; only promoting up a scope (Domain/Company) hits a role gate.
 - **Resources** — read-only `sovereign-os://` URIs that return structured documents (e.g. `sovereign-os://my/datasets`, `sovereign-os://tenant/connections`). Use these to discover what already exists.
 - **Prompts** — slash commands that trigger pre-built guided flows on the server side (e.g. `/new-dataset`, `/promote`).
 
 ## How to start a session
 
-Always call `whoami` and `list_capabilities` first. `whoami` tells you your role (creator / builder / admin), tenant, and active domain. `list_capabilities` tells you which tools are enabled for this tenant. Then read the relevant pathway guide before issuing any write calls.
+Always call `whoami` and `list_capabilities` first. `whoami` tells you your role (creator / builder / domain_admin / admin), tenant, and active domain. `list_capabilities` tells you which tools you can call now vs. which are gated to a higher role. Then read the relevant pathway guide before issuing any write calls.
 
 ## Discovery before create
 

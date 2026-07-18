@@ -16,13 +16,13 @@ Big Bets is the strategic capstone of the OS. A Big Bet is a named initiative th
 3. **Attach the real components.** Call `attach_component` with the bet id, a `kind` (`dataset` | `dashboard` | `agent-system`) and the component id — every id is re-resolved through its own visibility gate, so you can only attach components you can actually see. The bet records a reference, never a copy.
 4. **Operate.** Call `get_big_bet` to read the full bet back — progress is DERIVED live from the attached components' real lifecycle, and the realized value resolves RLS-scoped to the viewer. Call `update_big_bet` to record the solution, status (draft | active | shipped | archived), value basis or the owner-declared realized value.
 
-A creator files the bet as a **DRAFT**. Moving a bet to **Active** requires a Builder or Admin owner. Cross-domain bets require Admin approval.
+A creator files the bet as a **DRAFT**. Moving a bet to **Active** requires a Builder+ owner. Cross-domain bets require Admin approval.
 
 ## What to consider
 
 - **Reference real components.** A big bet referencing non-existent dataset or dashboard IDs returns `not_found`. Build and verify all components before filing. `list_big_bets` first to avoid duplicate bets on the same problem.
 - **One north-star metric.** A bet with multiple north-star metrics has no clear definition of winning. Pick one governed metric; use dashboards to track supporting indicators.
-- **Draft → Active is a Builder gate.** A creator filing a bet does not activate it. The bet must be claimed by a Builder or Admin who owns the outcome commitment.
+- **Draft → Active is a Builder+ gate.** A creator filing a bet does not activate it. The bet must be claimed by a Builder+ who owns the outcome commitment.
 - **Cross-domain bets are Admin-only.** If the bet spans more than one domain (e.g. references datasets from `analytics` and `ops`), only an Admin can activate it.
 - **Component dependencies are live.** If a referenced dashboard is archived, the bet surfaces a warning. Keep components operational — the bet's credibility depends on it.
 
@@ -32,7 +32,7 @@ A creator files the bet as a **DRAFT**. Moving a bet to **Active** requires a Bu
 |---|---|
 | `list_datasets`, `list_dashboards`, `list_agent_systems`, `list_big_bets`, `get_big_bet` | Creator |
 | `create_big_bet` (DRAFT), `attach_component`, `update_big_bet` (own bet) | Creator |
-| ⛔ Activate a bet | Builder or Admin |
+| ⛔ Activate a bet | Builder+ |
 | ⛔ Cross-domain bet | Admin |
 
 OPA enforces that all referenced components are within the caller's read scope. A creator cannot activate a bet or approve cross-domain scope. Langfuse traces all bet state transitions.
@@ -68,4 +68,4 @@ get_big_bet({ betId: "bet_99h..." })
     components: [{ artifactId: "ds_01J...", status: { derived: "in-progress" } }, ...] }
 ```
 
-A Builder or Admin owner then activates the bet — `update_big_bet({ betId, status: "active" })` — and records value as it realizes.
+A Builder+ owner then activates the bet — `update_big_bet({ betId, status: "active" })` — and records value as it realizes.
