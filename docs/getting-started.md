@@ -31,19 +31,16 @@ services (Mode B) and multi-node HA are **known-blocked** on STACKIT today (cros
 networking on SKE-in-an-SNA is broken — see the guide's Cautions); single node is the only
 verified path.
 
-## Two front doors
-**OS UI** — the product front door. **v1.0: every sidebar tab is a real surface** (Home, Agents,
-Structured Data with talk-to-your-data, Knowledge, Software, Science, Metrics, Governance,
+## The front door
+**OS UI** — the single product front door. **v1.0: every sidebar tab is a real surface** (Home,
+Agents, Structured Data with talk-to-your-data, Knowledge, Software, Science, Metrics, Governance,
 Gateway, Orchestration, Dashboards, and more), styled to the **Sovereign Agentic** brand. **Light
-mode is the default** (toggle to dark in Settings → Appearance). The Admin Console is also embedded
-here under **Platform → Components**.
+mode is the default** (toggle to dark in Settings → Appearance). Operating the stack (component
+status, on/off, addresses, logins + these docs) is a **native OS UI surface** at **Platform →
+Components** — it reads the Kubernetes API directly, server-side, so the browser never holds the
+token.
 ```bash
 kubectl -n agentic-os port-forward svc/os-ui 8080:3000        # http://localhost:8080
-```
-**Admin Console** — operate the stack (status, on/off, addresses, logins + these docs); also
-embedded in the OS UI at Platform → Components:
-```bash
-kubectl -n agentic-os port-forward svc/admin-console 8081:8080   # http://localhost:8081
 ```
 
 ## The demo data that ships
@@ -59,7 +56,7 @@ kubectl -n agentic-os port-forward svc/admin-console 8081:8080   # http://localh
 `langfuse-local-dev-admin`. It's the default Administrator-style console (traces, evals).
 
 **Q: Is there one unified UI?** Yes — the Next.js **OS UI** is the unified front door, and as of
-v1.0 every sidebar tab is a real surface (the Admin Console itself is embedded under Platform →
+v1.0 every sidebar tab is a real surface (operating the stack lives natively under Platform →
 Components). Each tool's own console is still reachable directly (all linked from the Consoles tab).
 
 **Q: How do I turn off something to save memory?** Use the on/off toggle on its card

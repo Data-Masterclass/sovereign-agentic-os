@@ -3,9 +3,10 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compilePolicy, governanceFor, tableFqn, cubeFor, type Roster } from './compiler.ts';
+import { compilePolicy, compileCube, governanceFor, tableFqn, cubeFor, type Roster } from './compiler.ts';
 import { runConformance, evaluateOpa, evaluateCube } from './conformance.ts';
 import { emptyVersions, type Dataset, type Grant } from '../dataset-schema.ts';
+import { cubeName } from '../metrics.ts';
 
 function product(over: Partial<Dataset> = {}): Dataset {
   const v = emptyVersions();
@@ -109,6 +110,21 @@ test('CONFORMANCE FAILS when a column is masked in Trino but visible in Cube', (
 
 test('private datasets are not governed in Trino (no table entry)', () => {
   assert.equal(governanceFor(product({ tier: 'dataset', visibility: 'private' })), null);
+});
+
+test('#155 cubeFor === cubeName (the access-policy key IS the model name buildCubeModels joins on)', () => {
+  assert.equal(cubeFor(product()), cubeName(product())); // legacy
+  const ns = product({ cubeNamespaced: true });
+  assert.equal(cubeFor(ns), cubeName(ns)); // namespaced — join key follows the identity
+  assert.equal(cubeFor(ns), 'sales__orders');
+});
+
+test('#155 two domains, SAME product name → DISTINCT cube policy keys (no shared access policy)', () => {
+  const sales = product({ domain: 'sales', name: 'Sales', cubeNamespaced: true, grants: [maskGrant('net_amount')] });
+  const finance = product({ id: 'ds_fin', owner: 'kenji', domain: 'finance', name: 'Sales', cubeNamespaced: true });
+  const cube = compileCube([sales, finance]);
+  const keys = cube.map((c) => c.cube).sort();
+  assert.deepEqual(keys, ['finance__sales', 'sales__sales']); // one policy each, no collision
 });
 
 test('domain-visibility with a stray cross-domain domain grant stays conformant (both deny)', () => {

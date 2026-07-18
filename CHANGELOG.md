@@ -15,6 +15,28 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.38] — 2026-07-18
+
+### Added
+- **Domain-namespaced Cube identity (back-compatible, zero migration).** Two domains can now each
+  name a dataset "Sales" without their Cube models, views, or access policies colliding. A new
+  opt-in per-dataset marker (`cubeNamespaced`) selects the identity scheme: **new** datasets get a
+  domain-prefixed identity (`<domain>__<slug>` cube name, `<domain>__<View>` view, matching model
+  file), while **existing** datasets (no marker) keep their legacy bare-slug identity **byte-for-byte**.
+  All identity flows through one central place (`lib/data/metrics.ts`), the access-policy compiler key
+  is derived the same way (so a cube never ships without its policy), and legacy resolvers keep any
+  stored/hand-written reference working. Cross-domain same-name is now allowed; within-domain
+  same-name is still rejected. Verified live against the deployed Cube — the existing Northpeak model
+  is untouched.
+
+### Removed
+- **Dead component pruned: `admin-console`.** It was chart-only, default-off, already absent from the
+  Components registry (superseded by the native Components tab that reads the live Kubernetes API), and
+  nothing depended on it. Its Helm template and `values` blocks are gone. A normal apply prunes nothing
+  new (it never rendered). Audited alongside it and **kept** (all verified live/used): the STACKIT
+  external-secret, Argo CD (software deploy stage), Harbor (image pipeline), and Haystack (RAG
+  retrieval) — the registry is now fully honest.
+
 ## [os-ui 0.5.37] — 2026-07-17
 
 ### Fixed

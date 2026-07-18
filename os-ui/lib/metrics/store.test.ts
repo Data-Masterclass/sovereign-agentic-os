@@ -43,7 +43,8 @@ test('a defined Revenue metric is listed with its canonical member', () => {
   const all = [...groups.mine, ...groups.domain, ...groups.marketplace];
   const rev = all.find((m) => m.name === 'revenue');
   assert.ok(rev, 'revenue metric is listed');
-  assert.equal(rev!.member, 'Orders.revenue');
+  // #155: a NEW dataset's member carries the domain-namespaced view (`sales__Orders`).
+  assert.equal(rev!.member, 'sales__Orders.revenue');
   assert.equal(rev!.tier, 'domain'); // asset → domain
 });
 
@@ -51,7 +52,7 @@ test('getMetric resolves datasetId.measure into a record', () => {
   const id = seedRevenueMetric();
   const rec = getMetric(`${id}.revenue`, amir);
   assert.equal(rec.measure.name, 'revenue');
-  assert.equal(rec.member, 'Orders.revenue');
+  assert.equal(rec.member, 'sales__Orders.revenue'); // #155: namespaced view member
 });
 
 test('#91 FAIL-SOFT: a broken model yields an inline-error summary, never a throw', () => {

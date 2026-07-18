@@ -175,6 +175,15 @@ export type Dataset = {
   upstreams?: DatasetUpstream[];
   /** Manually-authored data-quality check intentions (not auto-executed). */
   checks?: DataCheck[];
+  /** Cube identity scheme marker (#155). When true, this dataset's cube name / view /
+   *  model file are DOMAIN-NAMESPACED (`<domain>__<slug>`), so two domains can each name
+   *  a dataset "Sales" without colliding on one shared cube/view/model file. ABSENT ⇒
+   *  legacy un-namespaced identity (`slug(name)`) — every dataset created before #155 (and
+   *  the LIVE Cube models, dashboards, metric members and Power BI queries that reference
+   *  them) keeps its exact old identity, so there is ZERO migration. Set once at create,
+   *  immutable for the life of the dataset (so every derived name stays stable). Omitted
+   *  from the yaml when false (byte-stable — old records don't churn). */
+  cubeNamespaced?: boolean;
 };
 
 export class DatasetError extends Error {
@@ -418,6 +427,8 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
   const imports = Array.isArray(doc.imports) ? doc.imports.map((x) => String(x)) : undefined;
   const upstreams = Array.isArray(doc.upstreams) ? doc.upstreams.map(parseUpstream) : undefined;
   const checks = checksRaw.length > 0 ? checksRaw.map(parseCheck) : undefined;
+  // #155: absent/false ⇒ legacy un-namespaced cube identity (every pre-#155 record).
+  const cubeNamespaced = doc.cubeNamespaced === true ? true : undefined;
 
   return {
     version: doc.version !== undefined ? String(doc.version) : '1',
@@ -439,6 +450,7 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
     ...(imports ? { imports } : {}),
     ...(upstreams ? { upstreams } : {}),
     ...(checks ? { checks } : {}),
+    ...(cubeNamespaced ? { cubeNamespaced } : {}),
   };
 }
 
@@ -464,6 +476,9 @@ export function serializeDataset(d: Dataset): string {
   if (d.imports && d.imports.length > 0) doc.imports = d.imports;
   if (d.upstreams && d.upstreams.length > 0) doc.upstreams = d.upstreams;
   if (d.checks && d.checks.length > 0) doc.checks = d.checks;
+  // Omit-when-false (byte-stable): a legacy (un-namespaced) dataset serializes exactly
+  // as before #155, so no old record churns in the durable mirror.
+  if (d.cubeNamespaced) doc.cubeNamespaced = true;
   return yaml.dump(doc, { lineWidth: 100, noRefs: true });
 }
 

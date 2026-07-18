@@ -31,7 +31,7 @@ kubectl -n agentic-os port-forward svc/os-ui 8080:3000
 | **Monitoring** | `/api/traces` → Langfuse public API → recent agent traces |
 | **Governance** | `/api/policy` → OPA → the grants matrix (principal × tool, default-deny), each cell re-verified live |
 | **Settings** | deployment identity + enabled components, and **Appearance** (the light/dark theme toggle, persisted per device) |
-| **Components** (Platform) | the **Admin Console embedded in-app** — see below |
+| **Components** (Platform) | **native stack operator** — reads the Kubernetes API directly, server-side — see below |
 | **Gateway** (Platform) | `/api/gateway` → LiteLLM → available models + registered MCP tools |
 | **Orchestration** (Platform) | `/api/orchestration` → Dagster GraphQL → assets + runs |
 | **Consoles** (Platform) | launchpad cards for the full external tool UIs (port-forward cmd + URL + dev login) |
@@ -43,13 +43,13 @@ Marketplace, Strategy and Big Bets are **seeded v1** workspaces. The agent-build
 connections and software-builder chats produce **draft specs for review**, not live deploys. All
 backend calls are **server-side** — no secrets reach the browser.
 
-## Platform → Components — the embedded Admin Console
-The **Components** tab embeds the Admin Console **inside the OS UI**. It proxies the in-cluster
-`admin-console` service **server-side** (`/api/platform/components`, `/api/platform/toggle`,
-`/api/platform/doc`), so the browser never holds the Kubernetes token. It shows **live status for
-all ~32 components grouped by layer**, **on/off toggles** (scale 0↔1; "core" items aren't
-toggleable), and each component's **address + login + docs** (rendered in a drawer). The standalone
-Admin Console (`svc/admin-console`, port-forward 8081) still exists for the same job.
+## Platform → Components — native stack operator
+The **Components** tab operates the whole stack from **inside the OS UI**. It reads the Kubernetes
+API **directly, server-side** (`/api/platform/components`, `/api/platform/toggle`,
+`/api/platform/doc`) via a scoped ServiceAccount, so the browser never holds the Kubernetes token.
+It shows **live status for all components grouped by layer**, **on/off toggles** (scale 0↔1; "core"
+items aren't toggleable), and each component's **address + login + docs** (rendered in a drawer).
+No separate console service is deployed — this tab is the single operator surface.
 
 ## Theming (brand · light/dark)
 The UI is styled to **www.sovereign-agentic.com**: the gold accent **`#c8a24a`** (→ `#e7cd86`)
@@ -67,4 +67,4 @@ Per-domain spaces and identity (Ory) are the next build (`build-ui.md`).
 (for Components) are read from existing Secrets and never shipped to the browser.
 **Q: How do I point a surface at a different backend?** Every backend URL is an env value (the
 `osUI.*` chart values: `forgejoUrl`, `opaUrl`, `litellmUrl`, `dagsterUrl`, `cubeUrl`,
-`adminConsoleUrl`, the console URLs, …) — override per environment (e.g. Ingress hosts) in values.
+the console URLs, …) — override per environment (e.g. Ingress hosts) in values.

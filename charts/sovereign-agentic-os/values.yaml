@@ -2235,27 +2235,12 @@ ciRunner:
   dindImage: docker:27-dind
   builderTag: "0.1.0"          # tag for the ci-builder job image (docker CLI + buildx)
 
-# -----------------------------------------------------------------------------
-# Admin Console — DEPRECATED / OFF BY DEFAULT.
-#
-# The Admin Console's functionality (live status, on/off toggling, addresses,
-# logins, per-component docs) is now built NATIVELY into the OS UI's
+# Admin Console — REMOVED. Its functionality (live status, on/off toggling,
+# addresses, logins, per-component docs) is now built NATIVELY into the OS UI's
 # Platform -> Components tab: the OS UI server reads the in-cluster Kubernetes
 # API + the baked-in docs/components/*.md directly, so there is no separate
-# service and no cross-pod fetch (the old fragile "fetch failed" path).
-#
-# This block + templates/admin-console/* remain only so an operator can still
-# stand up the legacy standalone service for debugging by setting enabled=true.
-# Nothing in the stack depends on it. Leave it off.
-# -----------------------------------------------------------------------------
-adminConsole:
-  enabled: false
-  image:
-    repository: sovereign-os/admin-console   # built locally, loaded into kind
-    tag: "0.1.0"
-  resources:
-    requests: { cpu: 25m, memory: 48Mi }
-    limits: { cpu: 250m, memory: 128Mi }
+# service and no cross-pod fetch (the old fragile "fetch failed" path). Nothing
+# in the stack depended on it, so the standalone service + values block are gone.
 
 # -----------------------------------------------------------------------------
 # OS UI — the Next.js front door. App shell + live surfaces:

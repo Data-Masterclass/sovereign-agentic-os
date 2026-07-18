@@ -518,10 +518,12 @@ export function createDataset(user: Principal, input: { name: string; domain?: s
   const domain = input.domain && user.domains.includes(input.domain) ? input.domain : user.domains[0] ?? 'platform';
   const wanted = (input.name.trim() || 'Untitled dataset').toLowerCase();
   // Name uniqueness WITHIN a domain: a dataset name maps to ONE domain gold table
-  // (`gold_<slug>`) and ONE Cube model file (`metrics/<slug>.cube.yml`), so two
-  // same-named datasets in a domain collide — the model-sync sidecar overwrites one
-  // with the other and a defined measure silently vanishes ("metric did not resolve").
-  // Refuse the duplicate at the source with a clear message.
+  // (`gold_<slug>`) and ONE Cube model file, so two same-named datasets in a domain
+  // collide — the model-sync sidecar overwrites one with the other and a defined measure
+  // silently vanishes ("metric did not resolve"). Refuse the duplicate at the source with
+  // a clear message. Cross-domain the SAME name is now SAFE (#155): new datasets carry a
+  // domain-namespaced cube identity (`<domain>__<slug>`), so two domains' "Sales" no longer
+  // share one cube/view/model file — hence this guard stays deliberately within-domain.
   for (const rec of ds().store.values()) {
     if (rec.domain !== domain) continue;
     if (parseDataset(rec.yaml).name.trim().toLowerCase() === wanted) {
@@ -542,6 +544,9 @@ export function createDataset(user: Principal, input: { name: string; domain?: s
     grants: [],
     measures: [],
     columns: [],
+    // #155: every NEW dataset gets the domain-namespaced cube identity. Existing datasets
+    // (no marker) keep their legacy un-namespaced name — so live Cube models are untouched.
+    cubeNamespaced: true,
   };
   const rec: DatasetRecord = { id: d.id, owner: d.owner, domain: d.domain, yaml: serializeDataset(d), updatedAt: now() };
   ds().store.set(rec.id, rec);

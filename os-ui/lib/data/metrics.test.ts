@@ -8,7 +8,13 @@ import {
   scaffoldExposureYaml,
   scaffoldDashboardBundle,
   inferDimType,
+  cubeName,
   cubeViewName,
+  legacyCubeName,
+  legacyCubeViewName,
+  cubeNameMatches,
+  cubeViewNameMatches,
+  CUBE_ARTIFACT,
   goldMartFqn,
   metricGoldReady,
   viewMembers,
@@ -154,4 +160,59 @@ test('viewMembers matches a PK named like the dataset (e.g. campaign_id) — the
   assert.equal(members.has('campaign_id'), false); // PK excluded → picker/explorer drop it
   assert.equal(members.has('clicks'), true);
   assert.equal(members.has('total_clicks'), true);
+});
+
+// ------------------------------------------------------ #155 domain-namespaced cube ---
+
+test('#155 legacy dataset (no marker) keeps its EXACT un-namespaced identity (byte-stable)', () => {
+  const d = gold(); // no cubeNamespaced → the pre-#155 / live-tenant shape
+  assert.equal(cubeName(d), 'orders');
+  assert.equal(cubeViewName(d), 'Orders');
+  assert.equal(CUBE_ARTIFACT(d), 'metrics/orders.cube.yml');
+  // The whole model YAML is unchanged from before #155 — the live Cube model is untouched.
+  assert.match(scaffoldCubeYaml(d), /- name: orders\n/);
+  assert.match(scaffoldCubeYaml(d), /- name: Orders\n/);
+  assert.match(scaffoldExposureYaml(d), /name: orders_metrics/);
+});
+
+test('#155 new dataset (marker) gets a DOMAIN-NAMESPACED cube name / view / file', () => {
+  const d = gold({ cubeNamespaced: true });
+  assert.equal(cubeName(d), 'sales__orders');
+  assert.equal(cubeViewName(d), 'sales__Orders');
+  assert.equal(CUBE_ARTIFACT(d), 'metrics/sales__orders.cube.yml');
+  assert.match(scaffoldCubeYaml(d), /- name: sales__orders\n/);
+  assert.match(scaffoldCubeYaml(d), /- name: sales__Orders\n/);
+  assert.match(scaffoldExposureYaml(d), /name: sales__orders_metrics/);
+});
+
+test('#155 two domains, SAME dataset name → DISTINCT cube/view/file identities (no collision)', () => {
+  const sales = gold({ domain: 'sales', name: 'Sales', cubeNamespaced: true });
+  const finance = gold({ domain: 'finance', name: 'Sales', cubeNamespaced: true });
+  // cube name, view name and the emitted model file are all distinct per domain…
+  assert.notEqual(cubeName(sales), cubeName(finance));
+  assert.notEqual(cubeViewName(sales), cubeViewName(finance));
+  assert.notEqual(CUBE_ARTIFACT(sales), CUBE_ARTIFACT(finance));
+  assert.equal(cubeName(sales), 'sales__sales');
+  assert.equal(cubeName(finance), 'finance__sales');
+  assert.equal(CUBE_ARTIFACT(sales), 'metrics/sales__sales.cube.yml');
+  assert.equal(CUBE_ARTIFACT(finance), 'metrics/finance__sales.cube.yml');
+});
+
+test('#155 back-compat resolver: a namespaced dataset still answers to its LEGACY bare name', () => {
+  const d = gold({ domain: 'sales', name: 'Sales', cubeNamespaced: true });
+  // The legacy names an existing dashboard / Power BI query / metric member would use…
+  assert.equal(legacyCubeName(d), 'sales');
+  assert.equal(legacyCubeViewName(d), 'Sales');
+  // …still resolve to this dataset, alongside the new namespaced name.
+  assert.ok(cubeNameMatches(d, 'sales'));          // legacy reference resolves
+  assert.ok(cubeNameMatches(d, 'sales__sales'));   // new namespaced name resolves
+  assert.ok(!cubeNameMatches(d, 'finance__sales')); // another domain's cube does NOT
+  assert.ok(cubeViewNameMatches(d, 'Sales'));         // legacy view reference resolves
+  assert.ok(cubeViewNameMatches(d, 'sales__Sales'));  // new namespaced view resolves
+});
+
+test('#155 legacy dataset resolves under its bare name (matcher is a superset of legacy)', () => {
+  const d = gold(); // no marker
+  assert.ok(cubeNameMatches(d, 'orders'));
+  assert.ok(cubeViewNameMatches(d, 'Orders'));
 });

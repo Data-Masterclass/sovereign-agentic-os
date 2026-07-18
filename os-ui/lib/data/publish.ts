@@ -13,8 +13,8 @@ import {
   type PromotionRequest,
 } from './store.ts';
 import { publishPlan } from './transform.ts';
-import { slug } from './store-fqn.ts';
 import { buildCubeModels } from './cube-models.ts';
+import { cubeName } from './metrics.ts';
 import type { DataBuildReport } from './build/orchestrate.ts';
 
 /**
@@ -135,7 +135,7 @@ export async function publishApprovedPromotion(
   // 8. The Cube leg (T7): governed datasets with a built Gold now appear in the
   //    `/api/cube/models` payload the sync sidecar delivers (≤60s on the cluster).
   const view = buildCubeModels(listGovernedDatasets()).models.find(
-    (m) => m.name === slug(dataset.name),
+    (m) => m.name === cubeName(dataset), // #155: the dataset's (possibly namespaced) cube name
   );
 
   return { ok: true, fqn: plan.target, mode: report.mode, report, cubeView: view?.view ?? null, dataset };

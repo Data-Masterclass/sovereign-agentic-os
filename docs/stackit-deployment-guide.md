@@ -190,7 +190,7 @@ docker buildx build --platform linux/amd64 \
   -t "$REG/mock-model:0.1.0"  images/mock-model  --push
 docker buildx build --platform linux/amd64 \
   -t "$REG/sample-agent:0.1.0" images/sample-agent --push
-# …repeat for the other bespoke images under images/ (os-ui, admin-console, web-fetch, …).
+# …repeat for the other bespoke images under images/ (os-ui, web-fetch, …).
 ```
 
 > The repo also ships `deploy/scripts/publish-images.sh` (digest-pinned, dry-run by default;

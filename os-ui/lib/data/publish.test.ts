@@ -157,7 +157,8 @@ test('Gold publish auto-registers a COMPLETE, queryable Cube model — no define
   assert.equal(out.ok, true);
 
   // The Cube model the sync sidecar reads is emitted from the SAME governed source.
-  const model = buildCubeModels(listGovernedDatasets()).models.find((m) => m.name === 'orders');
+  // #155: a NEW dataset gets the domain-namespaced cube identity (`sales__orders`).
+  const model = buildCubeModels(listGovernedDatasets()).models.find((m) => m.name === 'sales__orders');
   assert.ok(model, 'the Gold dataset is auto-registered as a Cube model');
   // Measures auto-fall back to `count` (queryable without any user-defined metric).
   assert.deepEqual(model!.measures, ['count']);

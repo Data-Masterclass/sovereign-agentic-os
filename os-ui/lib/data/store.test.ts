@@ -28,6 +28,7 @@ import {
   type Principal,
 } from './store.ts';
 import { DatasetError } from './dataset-schema.ts';
+import { cubeName, cubeViewName, CUBE_ARTIFACT } from './metrics.ts';
 import { listFolders as folderList, __resetStore as resetFolders } from '../folders/index.ts';
 
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' }; // Creator
@@ -471,4 +472,28 @@ test('VERSIONS: a missing version number is refused (404)', () => {
   const d = createDataset(amir, { name: 'Orders' });
   setDocs(d.id, amir, { description: 'x' });
   assert.throws(() => restoreDatasetVersion(d.id, amir, 99), (e: DatasetError) => e.status === 404);
+});
+
+// ------------------------------------------------------ #155 domain-namespaced cube ---
+
+test('#155 same dataset name is still BLOCKED within a domain (409)', () => {
+  createDataset(amir, { name: 'Sales' }); // sales domain
+  assert.throws(
+    () => createDataset(bea, { name: 'Sales' }), // also sales — collides
+    (e: DatasetError) => e.status === 409,
+  );
+});
+
+test('#155 the SAME name is now ALLOWED across domains, with DISTINCT cube identities', () => {
+  const salesDs = createDataset(amir, { name: 'Sales' }); // sales
+  const finDs = createDataset(kenji, { name: 'Sales' }); // finance — no longer collides
+  // Both created (no throw), and each carries the namespaced cube identity marker.
+  assert.equal(salesDs.cubeNamespaced, true);
+  assert.equal(finDs.cubeNamespaced, true);
+  // Their cube name / view / model file are all distinct — no shared cube/view/file.
+  assert.notEqual(cubeName(salesDs), cubeName(finDs));
+  assert.notEqual(cubeViewName(salesDs), cubeViewName(finDs));
+  assert.notEqual(CUBE_ARTIFACT(salesDs), CUBE_ARTIFACT(finDs));
+  assert.equal(cubeName(salesDs), 'sales__sales');
+  assert.equal(cubeName(finDs), 'finance__sales');
 });

@@ -3,6 +3,7 @@
  */
 import type { Dataset, DataVisibility } from '../dataset-schema.ts';
 import { assetTarget, productTarget } from '../store-fqn.ts';
+import { cubeName } from '../metrics.ts';
 
 /**
  * The policy compiler (data-policy-compiler.md): ONE source — a governed dataset's
@@ -109,9 +110,13 @@ export type CubeAccessPolicy = {
   excludes: string[];
 };
 
-/** The cube name a dataset's view binds to (one cube per gold mart). */
+/** The cube name a dataset's view binds to (one cube per gold mart). Delegates to
+ *  `cubeName` (the single identity source) so the compiled access-policy key is
+ *  BYTE-FOR-BYTE the model name `buildCubeModels` joins on — #155 namespacing included.
+ *  If these two ever diverged, `policies.get(cubeName(d))` would miss and the cube would
+ *  ship with NO access policy. */
 export function cubeFor(d: Dataset): string {
-  return d.name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'dataset';
+  return cubeName(d);
 }
 
 export function compileCube(datasets: Dataset[]): CubeAccessPolicy[] {

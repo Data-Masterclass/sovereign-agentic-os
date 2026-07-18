@@ -1,32 +1,23 @@
-# Admin Console
+<!--
+SPDX-License-Identifier: Apache-2.0
+Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+-->
+# Admin Console — removed (superseded by Platform → Components)
 
-**What it is:** This dashboard — a single pane over the whole stack. It reads live status from
-the Kubernetes API (via a scoped ServiceAccount), lets you **turn components on/off** (scales
-the workload 0↔1), and shows each component's **address, login, summary** and **docs**
-(rendered in-app). Stdlib Python; no external dependencies.
+> **This standalone service no longer ships.** As of os-ui 0.5.38 the separate `admin-console`
+> workload has been removed from the chart. Everything it did is now a **native OS UI surface**.
 
-> **Also available in-app.** The same capabilities are embedded in the OS UI at
-> **Platform → Components** (route `/components`). The OS UI proxies this service **server-side**
-> (`/api/platform/*`), so the browser never holds the Kubernetes token. Use whichever front door
-> you prefer — this standalone console (port-forward `svc/admin-console`) or the OS UI tab.
+Operating the stack — **live component status**, **on/off toggles** (scale a workload 0↔1),
+each component's **address · login · summary · docs** — lives in the OS UI at **Platform →
+Components** (`/components`).
 
-## Access (UI)
+**How it works now:** the OS UI reads the Kubernetes API **directly, server-side** (via a scoped
+ServiceAccount) through `/api/platform/components`, `/api/platform/toggle`, and `/api/platform/doc`.
+There is no cross-pod fetch to a separate console service, and the browser never holds the
+Kubernetes token. This is the single operator front door.
+
 ```bash
-kubectl -n agentic-os port-forward svc/admin-console 8080:8080
-# http://localhost:8080
+kubectl -n agentic-os port-forward svc/os-ui 8080:3000   # http://localhost:8080 → Platform → Components
 ```
 
-## How to use it
-- **Status:** every component shows running / off / disabled / starting, refreshed periodically.
-- **On/Off:** the toggle scales a Deployment/StatefulSet to 0 (off) or 1 (on). "core" items
-  (Postgres, Argo CD, the console itself) aren't toggleable — manage those via chart values.
-- **Docs:** the 📖 button opens the component's guide (these files). The header links to
-  Cloud config + Getting started.
-
-## FAQ
-**Q: Off vs disabled?** *Off* = installed but scaled to 0 (toggle back on anytime). *Disabled*
-= not deployed (set `<component>.enabled: true` in values + `helm upgrade` to install).
-**Q: Permanent disable?** Use chart values; the toggle is a runtime on/off (helm upgrade may
-restore scaled components).
-**Q: What can it change?** Only workload scale + read status (least-privilege RBAC). It can't
-edit configs or secrets.
+See [os-ui.md](./os-ui.md#platform--components--native-stack-operator) for details.

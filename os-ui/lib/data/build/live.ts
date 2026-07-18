@@ -8,6 +8,7 @@ import {
   CUBE_ARTIFACT,
   DASHBOARD_ARTIFACT,
   EXPOSURE_ARTIFACT,
+  cubeName,
   cubeViewName,
   goldMartFqn,
   slug,
@@ -158,7 +159,7 @@ export function makeLiveAdapters(deps: DataLiveDeps): Record<string, DataAdapter
   const cube: DataAdapter = {
     tool: 'cube',
     async apply(ctx) {
-      const name = slug(ctx.dataset.name);
+      const name = cubeName(ctx.dataset); // #155: the (possibly namespaced) cube identity
       const schema = ctx.artifacts[CUBE_ARTIFACT(ctx.dataset)];
       if (!schema) return fail('no Cube model generated');
       await deps.cube.reload(name, schema);
@@ -199,12 +200,12 @@ export function makeLiveAdapters(deps: DataLiveDeps): Record<string, DataAdapter
       const exposure = ctx.artifacts[EXPOSURE_ARTIFACT];
       if (ctx.stage === 'metric' || ctx.stage === 'dashboard') {
         if (!exposure) return fail('no dbt exposure generated');
-        await deps.om.pushExposure(`${slug(ctx.dataset.name)}_metrics`, exposure);
+        await deps.om.pushExposure(`${cubeName(ctx.dataset)}_metrics`, exposure);
         return ok('pushed dbt exposure (mart→metric edge)');
       }
       // Refinement/promotion: the dbt/dlt artifacts ingestion owns the catalog entry;
       // pushing the exposure also seeds the upstream edge the gated stages verify.
-      if (exposure) await deps.om.pushExposure(`${slug(ctx.dataset.name)}_lineage`, exposure);
+      if (exposure) await deps.om.pushExposure(`${cubeName(ctx.dataset)}_lineage`, exposure);
       return ok(`catalogued ${ctx.stage ?? 'artifact'} in OpenMetadata`);
     },
     async verify(ctx) {
