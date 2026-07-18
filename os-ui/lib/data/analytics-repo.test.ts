@@ -7,7 +7,7 @@ import type { ForgejoClient } from '../infra/forgejo.ts';
 import { emptyVersions, type Dataset } from './dataset-schema.ts';
 import { buildCubeModels } from './cube-models.ts';
 import { CUBE_ARTIFACT, scaffoldCubeYaml, scaffoldExposureYaml } from './metrics.ts';
-import { writeAnalyticsFiles, syncAnalyticsRepo } from './analytics-repo.ts';
+import { writeAnalyticsFiles, syncAnalyticsRepo, dbtModelPath, dbtSchemaPath, buildDbtModelSql, buildDbtSchemaYaml } from './analytics-repo.ts';
 
 /**
  * Unit tests for the analytics monorepo writer against a fake ForgejoClient.
@@ -174,6 +174,134 @@ test('no exposure file when there are no governed datasets', async () => {
 
   assert.ok(!writes.includes('dbt/models/exposures.yml'), 'no exposure file for un-promoted datasets');
   assert.equal(writes.length, 0, 'no writes at all for un-deliverable dataset');
+});
+
+// ─── Phase 6: git-backed dbt model tests ─────────────────────────────────────
+
+test('git-backed dataset emits dbt .sql with byte-stable naming', async () => {
+  // A promoted (asset), gold-built, gitBacked=true dataset.
+  const d = ds({ tier: 'asset', gitBacked: true });
+  const store: FakeStore = new Map();
+  const { client, writes } = fakeForgejoFor(store);
+
+  await writeAnalyticsFiles(client, [d], 'approver');
+
+  // Expected path: dbt/models/governed/sales/gold_orders.sql
+  const expectedPath = 'dbt/models/governed/sales/gold_orders.sql';
+  assert.ok(writes.includes(expectedPath), `dbt sql file written at ${expectedPath}`);
+
+  const sql = store.get(expectedPath) ?? '';
+  // Must contain the dbt config header with the domain schema.
+  assert.match(sql, /\{\{ config\(materialized='table', schema='sales'\) \}\}/, 'config header present');
+  // Must contain the SELECT body matching publishPlan's source pattern.
+  assert.match(sql, /select \* from iceberg\.personal_amir\.gold_orders/, 'SELECT body matches publishPlan source');
+});
+
+test('git-backed dataset emits dbt .sql byte-identical to buildDbtModelSql', async () => {
+  const d = ds({ tier: 'asset', gitBacked: true });
+  const store: FakeStore = new Map();
+  const { client } = fakeForgejoFor(store);
+
+  await writeAnalyticsFiles(client, [d], 'approver');
+
+  const expectedPath = dbtModelPath(d);
+  assert.ok(expectedPath !== null, 'dbtModelPath returns a non-null path for gold-built dataset');
+  const written = store.get(expectedPath!);
+  const expected = buildDbtModelSql(d);
+  assert.equal(written, expected, 'written sql is byte-identical to buildDbtModelSql output');
+});
+
+test('git-backed dataset emits schema.yml with column descriptions', async () => {
+  const d = ds({ tier: 'asset', gitBacked: true });
+  const store: FakeStore = new Map();
+  const { client, writes } = fakeForgejoFor(store);
+
+  await writeAnalyticsFiles(client, [d], 'approver');
+
+  const schemaPath = 'dbt/models/governed/sales/schema.yml';
+  assert.ok(writes.includes(schemaPath), 'schema.yml written for domain');
+
+  const content = store.get(schemaPath) ?? '';
+  assert.match(content, /^version: 2/, 'schema.yml starts with version: 2');
+  assert.match(content, /name: gold_orders/, 'model name is layer_slug');
+  assert.match(content, /name: order_id/, 'column order_id present');
+  assert.match(content, /description: "Key\."/, 'column description present');
+});
+
+test('schema.yml content is byte-identical to buildDbtSchemaYaml output', async () => {
+  const d = ds({ tier: 'asset', gitBacked: true });
+  const store: FakeStore = new Map();
+  const { client } = fakeForgejoFor(store);
+
+  await writeAnalyticsFiles(client, [d], 'approver');
+
+  const schemaPath = dbtSchemaPath(d);
+  const written = store.get(schemaPath);
+  const expected = buildDbtSchemaYaml([d]);
+  assert.equal(written, expected, 'schema.yml content byte-identical to buildDbtSchemaYaml');
+});
+
+test('legacy dataset (gitBacked absent) emits NO dbt model or schema.yml', async () => {
+  // A promoted asset WITHOUT gitBacked=true — pre-existing datasets must not emit new files.
+  const d = ds({ tier: 'asset' }); // gitBacked is absent
+  assert.ok(!d.gitBacked, 'test dataset has no gitBacked marker');
+
+  const store: FakeStore = new Map();
+  const { client, writes } = fakeForgejoFor(store);
+
+  await writeAnalyticsFiles(client, [d], 'approver');
+
+  assert.ok(!writes.some((p) => p.startsWith('dbt/models/governed/')),
+    'no dbt governed model emitted for legacy dataset');
+});
+
+test('dataset with gitBacked=false emits NO dbt model', async () => {
+  const d = ds({ tier: 'asset', gitBacked: false });
+  const store: FakeStore = new Map();
+  const { client, writes } = fakeForgejoFor(store);
+
+  await writeAnalyticsFiles(client, [d], 'approver');
+
+  assert.ok(!writes.some((p) => p.startsWith('dbt/models/governed/')),
+    'no dbt governed model emitted when gitBacked is false');
+});
+
+test('dbtModelPath returns null when neither gold nor silver is built', () => {
+  const versions = emptyVersions(); // nothing built
+  const d = ds({ versions, gitBacked: true });
+  assert.equal(dbtModelPath(d), null, 'null when no layer is built');
+});
+
+test('dbtModelPath prefers gold over silver', () => {
+  const d = ds({ gitBacked: true }); // fixture has both gold and silver built
+  const path = dbtModelPath(d);
+  assert.ok(path?.includes('gold_'), 'gold preferred over silver');
+});
+
+test('dbtModelPath uses silver when only silver is built', () => {
+  const versions = emptyVersions();
+  versions.silver.built = true;
+  const d = ds({ versions, gitBacked: true });
+  const path = dbtModelPath(d);
+  assert.ok(path?.includes('silver_'), 'silver used when gold not built');
+});
+
+test('multiple git-backed datasets in same domain share one schema.yml', async () => {
+  const d1 = ds({ id: 'ds_orders', name: 'Orders', tier: 'asset', gitBacked: true });
+  const d2 = ds({ id: 'ds_customers', name: 'Customers', tier: 'asset', gitBacked: true,
+    columns: [{ name: 'customer_id', description: 'PK.' }] });
+  const store: FakeStore = new Map();
+  const { client, writes } = fakeForgejoFor(store);
+
+  await writeAnalyticsFiles(client, [d1, d2], 'approver');
+
+  const schemaWrites = writes.filter((p) => p === 'dbt/models/governed/sales/schema.yml');
+  // Last write wins (diff-write merges via buildDbtSchemaYaml over both datasets).
+  assert.ok(schemaWrites.length > 0, 'schema.yml written');
+  // The schema.yml for the FINAL write covers all domain datasets.
+  const content = store.get('dbt/models/governed/sales/schema.yml') ?? '';
+  assert.match(content, /gold_orders/, 'orders model present');
+  assert.match(content, /gold_customers/, 'customers model present');
 });
 
 test('syncAnalyticsRepo is fire-and-forget: swallows write errors without throwing', async () => {

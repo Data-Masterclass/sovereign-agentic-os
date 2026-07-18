@@ -3,7 +3,7 @@
  */
 
 /**
- * Analytics monorepo writer (epic #146 Phase 2).
+ * Analytics monorepo writer (epic #146 Phase 2 + Phase 6).
  *
  * A PURE module: given a ForgejoClient and a governed dataset list it computes
  * the desired file set for the `analytics` repo and writes ONLY diffs (sha-based
@@ -18,6 +18,15 @@
  * Hook points wired:
  *   - promote success (publish.ts `publishApprovedPromotion`)
  *
+ * Phase 6 (#146): git-backed dbt models. For each governed dataset with
+ * `gitBacked: true`, two additional files are emitted into the analytics repo:
+ *   - `dbt/models/governed/<domainslug>/<layer>_<slug>.sql`  — the publishPlan
+ *     SELECT body, wrapped in a dbt config header (lineage/reproducibility grade).
+ *   - `dbt/models/governed/<domainslug>/schema.yml`          — column docs.
+ * The RUNTIME governed CTAS in publish-server.ts is NOT changed — these files
+ * are observability artefacts only. Legacy datasets (gitBacked absent/false) emit
+ * nothing new (byte-stable, zero migration).
+ *
  * TODO (Phase 2 follow-up):
  *   - metric define: hook after a metric is added to a dataset
  *   - dataset archive: delete the cube artifact from the repo on archive
@@ -26,9 +35,97 @@
 import type { ForgejoClient } from '../infra/forgejo.ts';
 import type { Dataset } from './dataset-schema.ts';
 import { buildCubeModels, cubeDeliverable } from './cube-models.ts';
-import { CUBE_ARTIFACT, EXPOSURE_ARTIFACT, scaffoldExposureYaml } from './metrics.ts';
+import { CUBE_ARTIFACT, EXPOSURE_ARTIFACT, scaffoldExposureYaml, slug } from './metrics.ts';
+import { domainSchema } from './store-fqn.ts';
 
 const ANALYTICS_REPO = 'analytics';
+
+// ─── Phase 6: dbt model emitters ─────────────────────────────────────────────
+
+/**
+ * The promoted layer (gold preferred, then silver) for a dataset. Mirrors the
+ * layer-selection logic in `publishPlan` (transform.ts) without importing the
+ * server-only module or executing anything.
+ */
+function promotedLayer(d: Dataset): 'gold' | 'silver' | null {
+  if (d.versions.gold.built) return 'gold';
+  if (d.versions.silver.built) return 'silver';
+  return null;
+}
+
+/**
+ * The repo-relative path for a dataset's git-backed dbt model SQL file.
+ * `dbt/models/governed/<domainslug>/<layer>_<slug>.sql`
+ */
+export function dbtModelPath(d: Dataset): string | null {
+  const layer = promotedLayer(d);
+  if (!layer) return null;
+  return `dbt/models/governed/${domainSchema(d.domain)}/${layer}_${slug(d.name)}.sql`;
+}
+
+/**
+ * The repo-relative path for a domain's governed schema.yml (column docs).
+ * `dbt/models/governed/<domainslug>/schema.yml`
+ */
+export function dbtSchemaPath(d: Dataset): string {
+  return `dbt/models/governed/${domainSchema(d.domain)}/schema.yml`;
+}
+
+/**
+ * The dbt model SQL content: a `{{ config(...) }}` header + the publishPlan
+ * SELECT body (byte-identical to what the runtime CTAS executes, minus the
+ * `create or replace table <target> as` prefix — the SELECT is the dbt contract).
+ *
+ * This is PURELY a recording of what the governed promotion materializes — the
+ * actual runtime path (publish-server.ts → publishPlan) is NOT changed.
+ *
+ * Returns null when neither gold nor silver is built (nothing to record).
+ */
+export function buildDbtModelSql(d: Dataset): string | null {
+  const layer = promotedLayer(d);
+  if (!layer) return null;
+  const s = slug(d.name);
+  const schema = domainSchema(d.domain);
+  // The SELECT body mirrors publishPlan's CTAS source (personal lane of the owner).
+  // We record only the SELECT — dbt materialises this; the RUNTIME CTAS in
+  // publish-server.ts stays the actual execution path (unchanged).
+  const selectBody = `select * from iceberg.personal_${slug(d.owner)}.${layer}_${s}`;
+  return [
+    `{{ config(materialized='table', schema='${schema}') }}`,
+    '',
+    selectBody,
+    '',
+  ].join('\n');
+}
+
+/**
+ * The dbt schema.yml for one domain's governed datasets (column descriptions).
+ * Appends (or creates) one `models:` entry per dataset; multiple datasets in the
+ * same domain share ONE schema.yml, so this function merges the new entry into
+ * whatever existing YAML is already in the repo (plain text append — dbt allows
+ * multiple `models:` blocks per schema.yml, and the diff-write ensures idempotency).
+ *
+ * Returns a complete schema.yml string for the given datasets.
+ */
+export function buildDbtSchemaYaml(datasets: Dataset[]): string {
+  const entries = datasets.map((d) => {
+    const layer = promotedLayer(d);
+    const modelName = layer ? `${layer}_${slug(d.name)}` : slug(d.name);
+    const colLines = d.columns
+      .filter((c) => c.description.trim().length > 0)
+      .map((c) => [
+        `      - name: ${c.name}`,
+        `        description: "${c.description.replace(/"/g, '\\"')}"`,
+      ].join('\n'))
+      .join('\n');
+    return [
+      `  - name: ${modelName}`,
+      `    description: "${d.description.replace(/"/g, '\\"')}"`,
+      ...(colLines ? ['    columns:', colLines] : []),
+    ].join('\n');
+  });
+  return ['version: 2', '', 'models:', ...entries, ''].join('\n');
+}
 
 /** Write `content` to `path` in the analytics repo; skip when unchanged (sha-based diff). */
 async function diffWrite(
@@ -85,6 +182,31 @@ export async function writeAnalyticsFiles(
         .map((d) => scaffoldExposureYaml(d).replace(/^exposures:\n/, ''))
         .join('');
     await diffWrite(forgejo, `dbt/${EXPOSURE_ARTIFACT}`, `exposures:\n${exposureYaml}`, principal);
+  }
+
+  // 3. Phase 6 (#146): git-backed dbt models — one SQL file + per-domain schema.yml.
+  //    Gated on `d.gitBacked === true`. Legacy datasets (marker absent) are NOT emitted
+  //    (byte-stable — existing repos see no new files until a dataset is re-promoted).
+  const gitBackedDeliverable = deliverable.filter((d) => d.gitBacked === true);
+  for (const d of gitBackedDeliverable) {
+    const sqlPath = dbtModelPath(d);
+    const sqlContent = buildDbtModelSql(d);
+    if (sqlPath && sqlContent) {
+      await diffWrite(forgejo, sqlPath, sqlContent, principal);
+    }
+  }
+  // Per-domain schema.yml: group git-backed datasets by domain, write one file per domain.
+  const byDomain = new Map<string, Dataset[]>();
+  for (const d of gitBackedDeliverable) {
+    const key = domainSchema(d.domain);
+    const list = byDomain.get(key) ?? [];
+    list.push(d);
+    byDomain.set(key, list);
+  }
+  for (const [, domainDatasets] of byDomain) {
+    const schemaPath = dbtSchemaPath(domainDatasets[0]!);
+    const schemaContent = buildDbtSchemaYaml(domainDatasets);
+    await diffWrite(forgejo, schemaPath, schemaContent, principal);
   }
 }
 

@@ -1363,6 +1363,45 @@ dagster:
         resources:
           requests: { cpu: 50m, memory: 384Mi }
           limits: { cpu: "1", memory: 1Gi }   # headroom for dbt materializations
+        # ── dbt.projectSource: git (epic #146 Phase 4) ────────────────────────────
+        # The dagster user-code is a SUBCHART: its values are static YAML and cannot
+        # be Helm-conditionalized, so the git-source path is OFF by default (this block
+        # is commented → default render is byte-identical). To ACTIVATE it, set
+        # `dbt.projectSource: git` AND uncomment the initContainers/volumes/volumeMounts
+        # below (they use per-deployment keys the dagster-user-deployments subchart
+        # supports). The init-container shallow-clones the analytics repo's dbt/ subdir
+        # into the shared /opt/dbt/project volume (falling back to the baked image on a
+        # clone failure) and runs `dbt parse` so target/manifest.json exists before the
+        # grpc server (and @dbt_assets) loads. FORGEJO_PASS should come from the forgejo
+        # admin secret — inline shown for parity with dbt-build; prefer valueFrom in prod.
+        # volumeMounts:
+        #   - { name: dbt-project, mountPath: /opt/dbt/project }
+        # volumes:
+        #   - name: dbt-project
+        #     emptyDir: {}
+        # initContainers:
+        #   - name: clone-analytics-dbt
+        #     image: "sovereign-os/dagster:0.2.0"
+        #     imagePullPolicy: IfNotPresent
+        #     command: ["/bin/sh", "-c"]
+        #     args:
+        #       - |
+        #         set -e
+        #         cp -a /opt/dbt/project/. /work/ 2>/dev/null || true
+        #         URL="http://${FORGEJO_USER}:${FORGEJO_PASS}@forgejo-http:3000/${FORGEJO_USER}/analytics.git"
+        #         if git clone --depth 1 "$URL" /tmp/analytics 2>/dev/null && [ -d /tmp/analytics/dbt ]; then
+        #           cp -a /tmp/analytics/dbt/. /work/
+        #           echo "cloned analytics/dbt -> /opt/dbt/project"
+        #         else
+        #           echo "WARNING: analytics clone failed; keeping baked dbt project."
+        #         fi
+        #         dbt parse --project-dir /work --profiles-dir /work --no-version-check \
+        #           || echo "WARNING: dbt parse failed (manifest may be stale)."
+        #     env:
+        #       - { name: FORGEJO_USER, value: gitadmin }   # = forgejo.gitea.admin.username
+        #       - { name: FORGEJO_PASS, value: "<forgejo admin password>" }
+        #     volumeMounts:
+        #       - { name: dbt-project, mountPath: /work }
   # App tier — wave 2. NOTE: the dagster subchart exposes NO priorityClassName for
   # webserver/daemon/user-code, so these run at the cluster-default priority (0),
   # already below the infra tier (DB protected). Documented gap.
@@ -1411,6 +1450,21 @@ dbt:
     # `analytics` literal drifted from marts.schema (`sales`) and was killed by the
     # warehouse re-provision, which is what broke the Catalog + default query.
     schema: sales
+  # Where the dbt project comes from (epic #146 Phase 4):
+  #   image (DEFAULT) — the project baked into sovereign-os/dbt at /opt/dbt/project
+  #                     (today's behavior, byte-identical).
+  #   git             — an init-container shallow-clones the `analytics` Forgejo repo's
+  #                     dbt/ subdir over /opt/dbt/project before the build runs; on a
+  #                     clone failure it falls back to the baked image path.
+  # Flip to `git` to build from the analytics monorepo (requires analyticsRepo.enabled).
+  projectSource: image
+  # Forgejo source (used ONLY when projectSource=git). Reuses the forgejo admin
+  # credentials (forgejo.gitea.admin.username/password).
+  git:
+    forgejoUrl: http://forgejo-http:3000
+    repo: analytics
+    # Subdir inside the repo that holds the dbt project (dbt_project.yml lives here).
+    subdir: dbt
 
 # -----------------------------------------------------------------------------
 # Cube — semantic/metrics layer reading the marts THROUGH central Trino
@@ -1439,10 +1493,25 @@ cube:
   # new image. Static demo seed models are preserved (separate .yml files).
   modelSync:
     enabled: true
+    # Where the sidecar reads governed Cube models from (epic #146 Phase 3):
+    #   os-ui  (DEFAULT) — poll os-ui GET /api/cube/models (today's behavior, unchanged).
+    #   git             — list+fetch cube/models/metrics/* and cube/models/seed/* from
+    #                     the `analytics` Forgejo repo via the contents API (basic auth
+    #                     from the forgejo admin secret). Same safeName guard + atomic
+    #                     write; on a Forgejo outage it KEEPS the last-written models.
+    # DEFAULT os-ui keeps the sidecar byte-identical — flip to `git` to source from the
+    # analytics monorepo (requires analyticsRepo.enabled so the repo is seeded first).
+    source: os-ui
     # In-cluster os-ui Service. The endpoint is cluster-internal (unauthenticated by
     # design — it emits only governed model definitions, never row data).
     osUiUrl: http://os-ui:3000
     pollSeconds: 30
+    # Forgejo source (used ONLY when source=git). Basic auth reuses the forgejo admin
+    # credentials (forgejo.gitea.admin.username/password) — the same principal the
+    # analytics-seed Job authenticates as.
+    git:
+      forgejoUrl: http://forgejo-http:3000
+      repo: analytics
     resources:
       requests: { cpu: 20m, memory: 32Mi }
       limits: { cpu: 100m, memory: 96Mi }

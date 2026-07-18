@@ -1,0 +1,57 @@
+# =============================================================================
+# deploy/egress-connectors-overlay.yaml — #176 connector egress go-live
+# =============================================================================
+# Self-contained egressProxy.allowlist overlay for the connector wave.
+# Apply WITHOUT touching litellm or values.private.yaml:
+#
+#   helm upgrade --reuse-values \
+#     -f deploy/egress-connectors-overlay.yaml \
+#     -n agentic-os agentic-os charts/sovereign-agentic-os
+#
+# This list MUST stay in sync with DEFAULT_ALLOWLIST in
+# os-ui/lib/infra/secrets.ts (the app-side source of truth).
+# The same list is now also reflected in values.stackit-managed.yaml
+# (egressProxy.allowlist) so both paths agree.
+#
+# Architecture note: The Cilium NetworkPolicy in
+# charts/sovereign-agentic-os/templates/network/egress-policies.yaml
+# uses plain networking.k8s.io/v1 (NOT Cilium toFQDNs CRDs). Policy #5
+# gives the egress-proxy pod a blanket 0.0.0.0/0 (non-RFC1918) allow on
+# TCP 80/443. FQDN filtering is done exclusively by tinyproxy's allowlist —
+# one change here covers the full enforcement chain. No template edit needed.
+# =============================================================================
+
+egressProxy:
+  allowlist:
+    # Base set (present in chart values.yaml since initial connector slice).
+    - example.com
+    - github.com
+    - salesforce.com               # Salesforce API endpoints
+    - my.salesforce.com
+    - login.salesforce.com
+    - notion.com                   # Notion workspace
+    - mcp.notion.com
+    - api.notion.com
+    - googleapis.com               # Google Drive (www.googleapis.com) + token
+    - accounts.google.com          # Google OAuth consent/authorize
+    - graph.microsoft.com          # OneDrive + Outlook + Teams via Microsoft Graph
+    - login.microsoftonline.com    # Microsoft OAuth authorize + token endpoints
+    # Connector wave additions (#176).
+    - api.github.com               # GitHub REST + GraphQL (subdomain of github.com; explicit)
+    - uploads.github.com           # GitHub release/asset uploads
+    - api.supabase.com             # Supabase Management API
+    - atlassian.net                # Jira + Confluence Cloud (*.atlassian.net)
+    - api.atlassian.com            # Atlassian OAuth 3LO gateway
+    - auth.atlassian.com           # Atlassian OAuth token endpoint
+    - slack.com                    # Slack Web API (slack.com/api) + www.slack.com
+    - gmail.googleapis.com         # Gmail API (subdomain of googleapis.com; explicit)
+    - oauth2.googleapis.com        # Google OAuth token endpoint (subdomain; explicit)
+    - purview.azure.com            # Microsoft Purview (*.purview.azure.com)
+    - api.azureml.ms               # Azure AI Foundry / Azure ML data plane
+    - ml.azure.com                 # Azure ML control-plane / OAuth audience
+    - amazonaws.com                # AWS SageMaker (api.sagemaker.<region>.amazonaws.com)
+    # GCP governance + Snowflake (#176 step 2).
+    - cloudresourcemanager.googleapis.com  # GCP Cloud Resource Manager
+    - iam.googleapis.com                   # GCP IAM (service accounts)
+    - admin.googleapis.com                 # GCP Admin SDK (org/directory — reserved)
+    - snowflakecomputing.com               # Snowflake SQL REST API (*.snowflakecomputing.com)

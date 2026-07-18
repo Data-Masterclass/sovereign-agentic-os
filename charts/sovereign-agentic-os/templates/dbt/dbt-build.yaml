@@ -40,6 +40,52 @@ spec:
       securityContext:
         {{- include "soa.podSecurityContext" . | nindent 8 }}
         runAsUser: 1000
+      {{- if eq $d.projectSource "git" }}
+      {{- /*
+        git projectSource (#146 Phase 4): shallow-clone the analytics repo's dbt/
+        subdir over /opt/dbt/project before the build. The baked image project is
+        copied into the shared volume FIRST so a clone failure falls back to it
+        byte-for-byte (the emptyDir would otherwise shadow the baked path).
+      */}}
+      initContainers:
+        - name: clone-analytics-dbt
+          image: "{{ $d.image.repository }}:{{ $d.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: FORGEJO_URL
+              value: {{ (($d.git).forgejoUrl | default "http://forgejo-http:3000") | quote }}
+            - name: FORGEJO_REPO
+              value: {{ (($d.git).repo | default "analytics") | quote }}
+            - name: FORGEJO_SUBDIR
+              value: {{ (($d.git).subdir | default "dbt") | quote }}
+            - name: FORGEJO_USER
+              value: {{ .Values.forgejo.gitea.admin.username | quote }}
+            - name: FORGEJO_PASS
+              value: {{ .Values.forgejo.gitea.admin.password | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              # Seed the shared project dir from the baked image so a clone failure
+              # falls back to today's byte-for-byte behavior.
+              cp -a /opt/dbt/project/. /work/ 2>/dev/null || true
+              BASE="$(echo "$FORGEJO_URL" | sed 's#^http://##; s#^https://##; s#/*$##')"
+              URL="http://${FORGEJO_USER}:${FORGEJO_PASS}@${BASE}/${FORGEJO_USER}/${FORGEJO_REPO}.git"
+              if git clone --depth 1 "$URL" /tmp/analytics 2>/dev/null; then
+                if [ -d "/tmp/analytics/${FORGEJO_SUBDIR}" ]; then
+                  cp -a "/tmp/analytics/${FORGEJO_SUBDIR}/." /work/
+                  echo "cloned ${FORGEJO_REPO}/${FORGEJO_SUBDIR} -> /opt/dbt/project"
+                else
+                  echo "WARNING: ${FORGEJO_SUBDIR}/ absent in repo; keeping baked project."
+                fi
+              else
+                echo "WARNING: analytics clone failed; keeping baked dbt project."
+              fi
+          volumeMounts:
+            - { name: dbt-project, mountPath: /work }
+      {{- end }}
       containers:
         - name: dbt
           image: "{{ $d.image.repository }}:{{ $d.image.tag }}"
@@ -90,4 +136,15 @@ spec:
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits: { cpu: "1", memory: 512Mi }
+          {{- if eq $d.projectSource "git" }}
+          # git projectSource (#146 Phase 4): the init-container's cloned project
+          # (or the baked fallback it copied in) is served from the shared volume.
+          volumeMounts:
+            - { name: dbt-project, mountPath: /opt/dbt/project }
+          {{- end }}
+      {{- if eq $d.projectSource "git" }}
+      volumes:
+        - name: dbt-project
+          emptyDir: {}
+      {{- end }}
 {{- end }}

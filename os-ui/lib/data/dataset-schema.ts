@@ -184,6 +184,12 @@ export type Dataset = {
    *  immutable for the life of the dataset (so every derived name stays stable). Omitted
    *  from the yaml when false (byte-stable — old records don't churn). */
   cubeNamespaced?: boolean;
+  /** Analytics-as-code gate (#146 Phase 6). When true, a promoted dataset also emits a
+   *  git-backed dbt model (`dbt/models/governed/<domain>/<layer>_<slug>.sql`) + column
+   *  docs (`schema.yml`) into the analytics repo. ABSENT/false ⇒ no dbt model is emitted —
+   *  pre-existing datasets stay un-emitted until they are re-promoted (zero migration,
+   *  byte-stable). Set at promote time. Omitted from yaml when false. */
+  gitBacked?: boolean;
 };
 
 export class DatasetError extends Error {
@@ -429,6 +435,8 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
   const checks = checksRaw.length > 0 ? checksRaw.map(parseCheck) : undefined;
   // #155: absent/false ⇒ legacy un-namespaced cube identity (every pre-#155 record).
   const cubeNamespaced = doc.cubeNamespaced === true ? true : undefined;
+  // #146 Phase 6: absent/false ⇒ no dbt model emitted (pre-existing datasets stay un-emitted).
+  const gitBacked = doc.gitBacked === true ? true : undefined;
 
   return {
     version: doc.version !== undefined ? String(doc.version) : '1',
@@ -451,6 +459,7 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
     ...(upstreams ? { upstreams } : {}),
     ...(checks ? { checks } : {}),
     ...(cubeNamespaced ? { cubeNamespaced } : {}),
+    ...(gitBacked ? { gitBacked } : {}),
   };
 }
 
@@ -479,6 +488,9 @@ export function serializeDataset(d: Dataset): string {
   // Omit-when-false (byte-stable): a legacy (un-namespaced) dataset serializes exactly
   // as before #155, so no old record churns in the durable mirror.
   if (d.cubeNamespaced) doc.cubeNamespaced = true;
+  // Omit-when-false (#146 Phase 6): pre-existing datasets serialize exactly as before,
+  // un-emitted until re-promoted with gitBacked=true.
+  if (d.gitBacked) doc.gitBacked = true;
   return yaml.dump(doc, { lineWidth: 100, noRefs: true });
 }
 

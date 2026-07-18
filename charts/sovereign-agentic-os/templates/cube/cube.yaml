@@ -191,6 +191,103 @@ data:
         if (changed) log('wrote ' + changed + ' model(s) to ' + MODEL_DIR);
       });
     }
+{{- if eq $c.modelSync.source "git" }}
+
+    // ── git source (epic #146 Phase 3) ──────────────────────────────────────────
+    // Read governed Cube models from the `analytics` Forgejo repo via the contents
+    // API (basic auth). Same safeName intent + atomic write as the os-ui path. On any
+    // Forgejo error the last-written models are KEPT (syncOnceGit rejects → loop logs
+    // and retries; nothing is deleted).
+    var FORGEJO_URL = (process.env.FORGEJO_URL || 'http://forgejo-http:3000').replace(/\/+$/, '');
+    var FORGEJO_REPO = process.env.FORGEJO_REPO || 'analytics';
+    var FORGEJO_USER = process.env.FORGEJO_USER || '';
+    var FORGEJO_PASS = process.env.FORGEJO_PASS || '';
+    // Repo dirs holding the governed Cube models (metrics = OS-managed, seed = demo).
+    var GIT_DIRS = ['cube/models/metrics', 'cube/models/seed'];
+
+    function authHeaders() {
+      var h = { 'Accept': 'application/json' };
+      if (FORGEJO_USER) {
+        h['Authorization'] = 'Basic ' + Buffer.from(FORGEJO_USER + ':' + FORGEJO_PASS).toString('base64');
+      }
+      return h;
+    }
+
+    // Atomic write with the same de-dupe (`written` map) as the os-ui path.
+    function writeModel(name, content) {
+      if (!name || typeof content !== 'string') return 0;
+      if (written.get(name) === content) return 0;
+      var dest = path.join(MODEL_DIR, name);
+      var tmp = dest + '.tmp';
+      fs.writeFileSync(tmp, content);
+      fs.renameSync(tmp, dest);
+      written.set(name, content);
+      return 1;
+    }
+
+    // Map a git `<slug>.yml` to the sidecar's `<slug>.cube.yml` convention (never a
+    // traversal path); returns null for anything that isn't a plain slug .yml file.
+    function gitSafeName(file) {
+      var b = path.basename(String(file || ''));
+      var mm = /^([a-z0-9_]+)\.yml$/.exec(b);
+      return mm ? mm[1] + '.cube.yml' : null;
+    }
+
+    function gitGet(apiPath) {
+      var u = FORGEJO_URL + '/api/v1/repos/' + FORGEJO_USER + '/' + FORGEJO_REPO + apiPath;
+      return new Promise(function (resolve, reject) {
+        var req = http.get(u, { timeout: 8000, headers: authHeaders() }, function (res) {
+          if (res.statusCode !== 200) { res.resume(); reject(new Error('HTTP ' + res.statusCode + ' ' + apiPath)); return; }
+          var body = '';
+          res.setEncoding('utf8');
+          res.on('data', function (c) { body += c; });
+          res.on('end', function () { try { resolve(JSON.parse(body)); } catch (e) { reject(e); } });
+        });
+        req.on('timeout', function () { req.destroy(new Error('timeout')); });
+        req.on('error', reject);
+      });
+    }
+
+    function syncOnceGit() {
+      // Fetch every dir listing; a missing dir (404) is tolerated (empty list).
+      var listings = GIT_DIRS.map(function (dir) {
+        return gitGet('/contents/' + dir + '?ref=main').catch(function () { return []; });
+      });
+      return Promise.all(listings).then(function (all) {
+        var files = [];
+        all.forEach(function (entries) {
+          (Array.isArray(entries) ? entries : []).forEach(function (e) {
+            var name = gitSafeName(e && e.name);
+            if (e && e.type === 'file' && name) files.push({ name: name, path: e.path });
+          });
+        });
+        // Serialize the per-file content fetches (small N; keeps memory flat).
+        var changed = 0;
+        return files.reduce(function (p, f) {
+          return p.then(function () {
+            return gitGet('/contents/' + f.path + '?ref=main').then(function (meta) {
+              var content = (meta && typeof meta.content === 'string')
+                ? Buffer.from(meta.content, meta.encoding === 'base64' ? 'base64' : 'utf8').toString('utf8')
+                : null;
+              changed += writeModel(f.name, content);
+            });
+          });
+        }, Promise.resolve()).then(function () {
+          if (changed) log('wrote ' + changed + ' model(s) from git to ' + MODEL_DIR);
+        });
+      });
+    }
+
+    function loop() {
+      syncOnceGit().catch(function (e) { log('git sync error (keeping last models): ' + (e && e.message)); }).then(function () {
+        setTimeout(loop, POLL_MS);
+      });
+    }
+
+    try { fs.mkdirSync(MODEL_DIR, { recursive: true }); } catch (e) { /* seeded by init */ }
+    log('polling git ' + FORGEJO_URL + '/' + FORGEJO_REPO + ' every ' + (POLL_MS / 1000) + 's -> ' + MODEL_DIR);
+    loop();
+{{- else }}
 
     function loop() {
       syncOnce().catch(function (e) { log('sync error: ' + (e && e.message)); }).then(function () {
@@ -201,6 +298,7 @@ data:
     try { fs.mkdirSync(MODEL_DIR, { recursive: true }); } catch (e) { /* seeded by init */ }
     log('polling ' + URL_STR + ' every ' + (POLL_MS / 1000) + 's -> ' + MODEL_DIR);
     loop();
+{{- end }}
 {{- end }}
 ---
 {{- if eq .Values.global.profile "local" }}
@@ -327,8 +425,10 @@ spec:
       annotations:
         checksum/model: {{ .Files.Get "templates/cube/cube.yaml" | default "" | sha256sum }}
         {{- if $c.modelSync.enabled }}
+        {{- $syncId := printf "%s|%s|%v" $c.modelSync.osUiUrl (toString $c.modelSync.pollSeconds) $c.modelSync.enabled }}
+        {{- if eq $c.modelSync.source "git" }}{{ $syncId = printf "%s|git|%s|%s" $syncId (($c.modelSync.git).forgejoUrl | default "") (($c.modelSync.git).repo | default "") }}{{- end }}
         # Roll the pod when the sync template (script/config) changes.
-        checksum/model-sync: {{ printf "%s|%s|%v" $c.modelSync.osUiUrl (toString $c.modelSync.pollSeconds) $c.modelSync.enabled | sha256sum }}
+        checksum/model-sync: {{ $syncId | sha256sum }}
         {{- end }}
       labels:
         {{- include "soa.labels" . | nindent 8 }}
@@ -432,6 +532,17 @@ spec:
               value: /cube/conf/model
             - name: POLL_SECONDS
               value: {{ $c.modelSync.pollSeconds | quote }}
+            {{- if eq $c.modelSync.source "git" }}
+            # git source (#146 Phase 3): read models from the analytics Forgejo repo.
+            - name: FORGEJO_URL
+              value: {{ (($c.modelSync.git).forgejoUrl | default "http://forgejo-http:3000") | quote }}
+            - name: FORGEJO_REPO
+              value: {{ (($c.modelSync.git).repo | default "analytics") | quote }}
+            - name: FORGEJO_USER
+              value: {{ .Values.forgejo.gitea.admin.username | quote }}
+            - name: FORGEJO_PASS
+              value: {{ .Values.forgejo.gitea.admin.password | quote }}
+            {{- end }}
           resources:
             {{- toYaml $c.modelSync.resources | nindent 12 }}
           volumeMounts:

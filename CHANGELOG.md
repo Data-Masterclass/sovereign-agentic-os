@@ -15,6 +15,34 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.42] — 2026-07-18
+
+### Added
+- **#146 analytics-as-code, Phases 3–6 (all flagged, defaults = today's behavior).**
+  - *Phase 3:* the Cube model-sync sidecar can read models **from the `analytics` git repo**
+    (`cube.modelSync.source: git`; default `os-ui`). Fail-soft: Forgejo unreachable → keeps
+    last-written models.
+  - *Phase 4:* the dbt build Job (and, documented, the Dagster user-code deployment) can
+    **clone the repo** instead of using the baked project (`dbt.projectSource: git`; default
+    `image`, byte-for-byte fallback on clone failure).
+  - *Phase 5:* the seeded CI workflow now **publishes dbt artifacts** (`manifest.json` +
+    `catalog.json`) to S3 on push-to-main — exactly where the OpenMetadata dbt ingestion
+    expects them (its flip stays off until artifacts flow).
+  - *Phase 6:* a promoted dataset **also becomes a git-backed dbt model** — `.sql` (the
+    governed CTAS SELECT) + `schema.yml` (column docs) — behind an additive `gitBacked`
+    marker (byte-stable for existing datasets; fire-and-forget; the runtime CTAS remains
+    the materialization path).
+- **#176 connector egress go-live (config).** The cluster egress allowlist
+  (`egressProxy.allowlist`) now mirrors the app-side authoritative list — 29 hosts covering
+  every built connector (GitHub, Supabase, Atlassian, Slack, Google, Microsoft Graph/Purview/
+  AI-Foundry, SageMaker, GCP identity, Snowflake) — mirrored into `values.stackit-managed.yaml`
+  plus a self-contained apply overlay (`deploy/egress-connectors-overlay.yaml`). FQDN
+  enforcement is tinyproxy-allowlist-based on this cluster, so one values change covers the chain.
+
+### Fixed
+- Removed a stray untracked copy of the deleted `admin-console` template that broke
+  `helm template` on fresh checkouts.
+
 ## [os-ui 0.5.41] — 2026-07-18
 
 ### Added

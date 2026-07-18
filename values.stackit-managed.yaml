@@ -212,6 +212,44 @@ egressProxy:
   image:
     repository: ghcr.io/aborek/sovereign-os/egress-proxy
     tag: "0.1.0@sha256:8426ee9d0cfe297e6fe961bab6a3a9854e1b97cb6ae713158e826f84f456f9ee"
+  # Full connector allowlist (#176 go-live). Mirrors DEFAULT_ALLOWLIST in
+  # os-ui/lib/infra/secrets.ts — the app-side source of truth. Subdomains are
+  # included automatically by tinyproxy Allow rules (e.g. *.atlassian.net).
+  # Chart values.yaml base covers only the first 12 (through login.microsoftonline.com);
+  # these 29 entries are the complete live set after the connector wave + GCP/Snowflake.
+  allowlist:
+    # Base set (mirrors chart values.yaml — repeated here for a self-contained override).
+    - example.com
+    - github.com
+    - salesforce.com               # Salesforce API endpoints
+    - my.salesforce.com
+    - login.salesforce.com
+    - notion.com                   # Notion workspace
+    - mcp.notion.com
+    - api.notion.com
+    - googleapis.com               # Google Drive (www.googleapis.com) + token
+    - accounts.google.com          # Google OAuth consent/authorize
+    - graph.microsoft.com          # OneDrive + Outlook + Teams via Microsoft Graph
+    - login.microsoftonline.com    # Microsoft OAuth authorize + token endpoints
+    # Connector wave additions (#176).
+    - api.github.com               # GitHub REST + GraphQL (subdomain of github.com; explicit)
+    - uploads.github.com           # GitHub release/asset uploads
+    - api.supabase.com             # Supabase Management API
+    - atlassian.net                # Jira + Confluence Cloud (*.atlassian.net)
+    - api.atlassian.com            # Atlassian OAuth 3LO gateway
+    - auth.atlassian.com           # Atlassian OAuth token endpoint
+    - slack.com                    # Slack Web API (slack.com/api) + www.slack.com
+    - gmail.googleapis.com         # Gmail API (subdomain of googleapis.com; explicit)
+    - oauth2.googleapis.com        # Google OAuth token endpoint (subdomain; explicit)
+    - purview.azure.com            # Microsoft Purview (*.purview.azure.com)
+    - api.azureml.ms               # Azure AI Foundry / Azure ML data plane
+    - ml.azure.com                 # Azure ML control-plane / OAuth audience
+    - amazonaws.com                # AWS SageMaker (api.sagemaker.<region>.amazonaws.com)
+    # GCP governance + Snowflake (#176 step 2).
+    - cloudresourcemanager.googleapis.com  # GCP Cloud Resource Manager
+    - iam.googleapis.com                   # GCP IAM (service accounts)
+    - admin.googleapis.com                 # GCP Admin SDK (org/directory — reserved)
+    - snowflakecomputing.com               # Snowflake SQL REST API (*.snowflakecomputing.com)
 
 webFetch:
   image:

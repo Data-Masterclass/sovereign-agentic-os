@@ -272,11 +272,16 @@ data:
         },
     )
 
-  # ── CI workflow (validate-only — NO uploads, that's Phase 5) ─────────────────
+  # ── CI workflow (validate on every push/PR; publish dbt artifacts on push to main) ─
   ci.yml: |
     # Forgejo Actions CI for the analytics monorepo.
-    # VALIDATE ONLY (Phase 1): dbt parse + cube YAML lint.
-    # No uploads to Cube/Trino — those are Phase 5.
+    #   validate (Phase 1)  — dbt parse + cube YAML lint (every push + PR).
+    #   publish  (Phase 5)  — on push to main: dbt compile + docs generate, then upload
+    #                         target/manifest.json + catalog.json to the S3 location the
+    #                         OpenMetadata dbt ingestion already reads
+    #                         (bucket `dbt`, prefix `artifacts/`, endpoint seaweedfs-s3).
+    # OM's ingestion CronJob needs NO change; flipping openmetadata.ingestion.dbt.enabled
+    # to true is the operator's separate step once artifacts start flowing.
     on:
       push:
         branches: [main]
@@ -323,6 +328,57 @@ data:
                   print("\n".join(errors)); sys.exit(1)
               print(f"cube YAML lint OK ({len([f for r,_,fs in os.walk('/workspace/cube') for f in fs if f.endswith('.yml')])} files)")
               EOF
+      # ── Phase 5: publish dbt artifacts to S3 for the OpenMetadata dbt ingestion ──
+      publish-dbt-artifacts:
+        runs-on: docker
+        needs: validate
+        if: "{{ "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}" }}"
+        steps:
+          - name: Checkout (sovereign — no external actions)
+            env:
+              FORGEJO_PASS: "{{ "${{ secrets.FORGEJO_PASS }}" }}"
+              FORGEJO_URL: "{{ "${{ vars.FORGEJO_URL }}" }}"
+              FORGEJO_USER: "{{ "${{ vars.FORGEJO_USER }}" }}"
+            run: |
+              set -eu
+              git clone --depth 1 \
+                "http://${FORGEJO_USER}:${FORGEJO_PASS}@${FORGEJO_URL}/${FORGEJO_USER}/analytics.git" \
+                /workspace
+          - name: dbt compile + docs generate (produce manifest.json + catalog.json)
+            run: |
+              set -eu
+              cd /workspace
+              pip install dbt-core dbt-trino --quiet
+              # compile is enough for manifest.json; docs generate adds catalog.json.
+              # Non-blocking: a warehouse-less runner may not fully introspect — upload
+              # whatever artifacts get produced (OM tolerates a manifest-only source).
+              dbt compile --project-dir dbt --profiles-dir dbt --no-version-check 2>&1 | tail -5 \
+                || echo "WARNING: dbt compile reported errors; uploading whatever artifacts exist."
+              dbt docs generate --project-dir dbt --profiles-dir dbt --no-version-check 2>&1 | tail -5 \
+                || echo "WARNING: dbt docs generate failed; catalog.json may be absent."
+          - name: Upload manifest.json + catalog.json to S3
+            env:
+              AWS_ACCESS_KEY_ID: "{{ "${{ secrets.DBT_S3_ACCESS_KEY_ID }}" }}"
+              AWS_SECRET_ACCESS_KEY: "{{ "${{ secrets.DBT_S3_SECRET_ACCESS_KEY }}" }}"
+              # Defaults mirror openmetadata.ingestion.dbt.s3 (the OM CronJob reads the
+              # same bucket/prefix/endpoint). Override via repo vars if OM config changes.
+              S3_ENDPOINT: "{{ "${{ vars.DBT_S3_ENDPOINT || 'http://seaweedfs-s3:8333' }}" }}"
+              S3_BUCKET: "{{ "${{ vars.DBT_S3_BUCKET || 'dbt' }}" }}"
+              S3_PREFIX: "{{ "${{ vars.DBT_S3_PREFIX || 'artifacts/' }}" }}"
+              AWS_DEFAULT_REGION: "{{ "${{ vars.DBT_S3_REGION || 'us-east-1' }}" }}"
+            run: |
+              set -eu
+              cd /workspace/dbt/target
+              pip install awscli --quiet
+              PREFIX="${S3_PREFIX%/}"
+              for f in manifest.json catalog.json; do
+                if [ -f "$f" ]; then
+                  aws --endpoint-url "$S3_ENDPOINT" s3 cp "$f" "s3://${S3_BUCKET}/${PREFIX}/$f"
+                  echo "uploaded $f -> s3://${S3_BUCKET}/${PREFIX}/$f"
+                else
+                  echo "WARNING: $f absent; skipping upload."
+                fi
+              done
 ---
 apiVersion: batch/v1
 kind: Job
