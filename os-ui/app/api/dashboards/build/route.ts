@@ -36,7 +36,10 @@ export async function POST(req: Request) {
     const charts = body.charts ?? [];
     if (charts.length === 0) return NextResponse.json({ error: 'a dashboard needs at least one chart on a governed metric' }, { status: 400 });
 
-    const spec = body.mode === 'agent' ? fromAgent({ name, view, charts }) : fromTiles(name, view, charts);
+    // The domain scopes the dashboard's Cube SQL connection (`bi_<domain>`) — the endpoint
+    // that actually serves the view's rows. Use the caller's first domain.
+    const domain = user.domains[0];
+    const spec = body.mode === 'agent' ? fromAgent({ name, view, charts, domain }) : fromTiles(name, view, charts, domain);
     saveDashboard(user, id, spec);
 
     const { token } = await delegatedToken('domain');

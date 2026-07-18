@@ -2,8 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { buildImportZip } from './import-bundle.ts';
+import { buildImportZip, parseManifest, passwordsFor } from './import-bundle.ts';
 import { csrf, serviceHeaders, serviceUser, withTimeout } from './auth.ts';
+import { config } from '../core/config.ts';
 
 /**
  * The server-only wire call that actually LANDS a dashboard in Superset: build the
@@ -28,13 +29,19 @@ export async function importDashboardBundle(
   bundle: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<void> {
-  const zip = buildImportZip(bundle); // throws on a malformed manifest ⇒ ✗
+  const manifest = parseManifest(bundle); // throws on a malformed manifest ⇒ ✗
+  const zip = buildImportZip(bundle);
   const auth = await csrf(fetchImpl, base);
+
+  // The Cube SQL connection's URI carries only a placeholder; Superset needs the real
+  // password out-of-band via the `passwords` map (never in a stored asset). Injected here
+  // (server-only) from the mounted secret; empty ⇒ '{}' (legacy Trino path needs none).
+  const passwords = passwordsFor(manifest, config.cubeSqlPassword);
 
   const form = new FormData();
   form.append('formData', new Blob([zip], { type: 'application/zip' }), 'dashboard_export.zip');
   form.append('overwrite', 'true');
-  form.append('passwords', '{}');
+  form.append('passwords', JSON.stringify(passwords));
 
   const headers = serviceHeaders(base, auth);
 

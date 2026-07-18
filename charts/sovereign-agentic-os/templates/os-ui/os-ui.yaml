@@ -378,6 +378,14 @@ spec:
               value: {{ .Values.cube.sqlApi.host | default "cube-sql" | quote }}
             - name: CUBE_SQL_PORT
               value: {{ .Values.cube.sqlApi.port | default 15432 | quote }}
+            # The domain-scoped Cube SQL password the dashboard-import client injects into
+            # Superset's import `passwords` map so an embedded chart can query the Cube SQL
+            # API as bi_<domain>. From the existing cube-sql-secrets Secret (never inlined).
+            - name: CUBE_SQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cube-sql-secrets
+                  key: CUBEJS_SQL_PASSWORD
             {{- end }}
             - name: FEATUREFORM_URL
               # Port 80 = Featureform's HTTP dashboard (what the tool-proxy iframes

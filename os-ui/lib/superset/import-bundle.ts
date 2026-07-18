@@ -22,9 +22,15 @@ import { zipBundle } from './zip.ts';
  */
 
 export type ManifestChart = { name: string; viz_type?: string; metric?: string; groupby?: string[] };
+/** An explicit database connection for the bundle. When present (the Cube SQL path), the
+ *  bundle's database uses this exact SQLAlchemy URI instead of the default direct-Trino URI.
+ *  `cube_sql` marks a Cube SQL API connection whose password placeholder the server-only
+ *  import client substitutes at POST time via the import `passwords` map (never inline). */
+export type ManifestDatabase = { service_name: string; sqlalchemy_uri: string; cube_sql?: boolean };
 export type SupersetManifest = {
   dashboard: string;
   database_service_name?: string;
+  database?: ManifestDatabase;
   dataset: { name: string; schema?: string; sql?: string };
   charts: ManifestChart[];
 };
@@ -53,10 +59,16 @@ export function parseManifest(bundle: string): SupersetManifest {
   if (!d || typeof d.dashboard !== 'string' || !d.dashboard.trim()) throw new Error('manifest: missing dashboard title');
   if (!d.dataset || typeof d.dataset.name !== 'string' || !d.dataset.name.trim()) throw new Error('manifest: missing dataset');
   if (!Array.isArray(d.charts) || d.charts.length === 0) throw new Error('manifest: dashboard needs at least one chart');
+  const db = d.database;
+  // A Cube SQL view is a TOP-LEVEL table (no schema). Only the legacy direct-Trino path
+  // defaults schema to 'cube'; when an explicit `database` is given we honour its dataset
+  // schema exactly (undefined ⇒ no schema in the emitted YAML).
+  const defaultSchema = db ? undefined : 'cube';
   return {
     dashboard: d.dashboard,
-    database_service_name: d.database_service_name ?? 'trino',
-    dataset: { name: d.dataset.name, schema: d.dataset.schema ?? 'cube', sql: d.dataset.sql ?? `SELECT * FROM "${d.dataset.name}"` },
+    database_service_name: d.database_service_name ?? db?.service_name ?? 'trino',
+    ...(db ? { database: db } : {}),
+    dataset: { name: d.dataset.name, schema: d.dataset.schema ?? defaultSchema, sql: d.dataset.sql ?? `SELECT * FROM "${d.dataset.name}"` },
     charts: d.charts.map((c) => ({ name: c.name, viz_type: c.viz_type ?? 'table', metric: c.metric, groupby: c.groupby ?? [] })),
   };
 }
@@ -65,7 +77,10 @@ const ROOT = 'dashboard_export';
 
 /** Build the { path → YAML } file map of a Superset import_assets bundle for the manifest. */
 export function importFiles(manifest: SupersetManifest): Record<string, string> {
-  const dbName = manifest.database_service_name || 'trino';
+  const dbName = manifest.database_service_name || manifest.database?.service_name || 'trino';
+  // Cube SQL path → the exact Postgres-wire URI to the domain's `bi_<domain>` principal;
+  // legacy path → the direct-Trino iceberg URI (unchanged).
+  const sqlalchemyUri = manifest.database?.sqlalchemy_uri ?? `${dbName}://${dbName}@${dbName}:8080/iceberg`;
   const dbUuid = uuid5(`database:${dbName}`);
   const dsUuid = uuid5(`dataset:${dbName}:${manifest.dataset.name}`);
   const dashUuid = uuid5(`dashboard:${manifest.dashboard}`);
@@ -86,7 +101,7 @@ export function importFiles(manifest: SupersetManifest): Record<string, string> 
 
   files[`${ROOT}/databases/${slug(dbName)}.yaml`] = yaml.dump({
     database_name: dbName,
-    sqlalchemy_uri: `${dbName}://${dbName}@${dbName}:8080/iceberg`,
+    sqlalchemy_uri: sqlalchemyUri,
     cache_timeout: null,
     expose_in_sqllab: true,
     allow_ctas: false,
@@ -108,7 +123,8 @@ export function importFiles(manifest: SupersetManifest): Record<string, string> 
     default_endpoint: null,
     offset: 0,
     cache_timeout: null,
-    schema: manifest.dataset.schema ?? 'cube',
+    // Cube SQL views are top-level tables (no schema) ⇒ null; legacy Trino path keeps 'cube'.
+    schema: manifest.dataset.schema ?? (manifest.database ? null : 'cube'),
     sql: manifest.dataset.sql,
     params: null,
     template_params: null,
@@ -181,6 +197,26 @@ export function importFiles(manifest: SupersetManifest): Record<string, string> 
   });
 
   return files;
+}
+
+/** The ZIP-relative path of a manifest's database YAML — the key Superset's importer uses
+ *  to match a supplied password to that connection. */
+export function databaseFilePath(manifest: SupersetManifest): string {
+  const dbName = manifest.database_service_name || manifest.database?.service_name || 'trino';
+  return `${ROOT}/databases/${slug(dbName)}.yaml`;
+}
+
+/**
+ * The Superset import `passwords` map for a manifest: `{ "<db yaml path>": "<password>" }`.
+ * Superset needs the password OUT-OF-BAND (the URI in the YAML carries only a placeholder)
+ * so the secret never lands in a stored asset. Only the Cube SQL connection needs one; the
+ * legacy Trino URI has no password. Returns `{}` when there's nothing to supply.
+ * `password` is injected by the server-only caller (superset/client.ts) from config — this
+ * function stays pure so it's unit-testable without a live secret.
+ */
+export function passwordsFor(manifest: SupersetManifest, password: string): Record<string, string> {
+  if (!manifest.database?.cube_sql || !password) return {};
+  return { [databaseFilePath(manifest)]: password };
 }
 
 /** Full pipeline: JSON manifest string → Superset import_assets ZIP bytes. */

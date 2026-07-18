@@ -28,16 +28,57 @@ ADMIN_JWT=$(curl -s -X POST "$OM/api/v1/users/login" -H 'Content-Type: applicati
 # 2. ingestion-bot's bot user id
 BOT_ID=$(curl -s -H "Authorization: Bearer $ADMIN_JWT" "$OM/api/v1/bots/name/ingestion-bot" \
   | python3 -c 'import sys,json;print(json.load(sys.stdin)["botUser"]["id"])')
-# 3. the bot's long-lived JWT (regenerate with PUT /api/v1/users/generateToken/{id}
-#    body {"JWTTokenExpiry":"Unlimited"} if absent/expired)
-BOT_JWT=$(curl -s -H "Authorization: Bearer $ADMIN_JWT" "$OM/api/v1/users/auth-mechanism/$BOT_ID" \
-  | python3 -c 'import sys,json;print(json.load(sys.stdin)["config"]["JWTToken"])')
+# 3. REGENERATE the bot's long-lived JWT. IMPORTANT: the JWT seeded into the OM
+#    database can be signed by a keypair that no longer matches the running server's
+#    signing keys — reusing it 401s "Invalid token". Always regenerate so the token
+#    is signed by the LIVE keys:
+BOT_JWT=$(curl -s -X PUT -H "Authorization: Bearer $ADMIN_JWT" -H 'Content-Type: application/json' \
+  "$OM/api/v1/users/generateToken/$BOT_ID" -d '{"JWTTokenExpiry":"Unlimited"}' \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["JWTToken"])')
 # 4. hand it to the OS UI (Secret only — never commit it)
 kubectl -n agentic-os create secret generic os-ui-openmetadata \
   --from-literal=OPENMETADATA_JWT="$BOT_JWT" --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n agentic-os rollout restart deploy/os-ui
 ```
 
+## Populate the catalog — native ingestion (Trino/Iceberg + dbt + lineage)
+OM ships **empty**: nothing crawls the OS data plane until you turn on ingestion, so the
+Catalog shows "connected · 0 tables". We run OM's **own** ingestion framework (the
+`openmetadata/ingestion` image executing `metadata ingest`) as a **K8s CronJob** — the same
+workflow Airflow would run, just K8s-scheduled (there is no Airflow: `pipelineServiceClientConfig`
+is disabled). One run ingests every `iceberg` schema/table/column into the OM Database Service
+named `trino` (matching `OPENMETADATA_SERVICE`, so Catalog deep links resolve), plus optional
+dbt models and query-log lineage.
+
+Enable it (needs a **valid** bot JWT in `os-ui-openmetadata` — mint a FRESH one per the
+recipe above; a stale DB-seeded token 401s):
+```yaml
+openmetadata:
+  ingestion:
+    enabled: true            # renders the CronJob (schedule "17 * * * *", hourly)
+    dbt:
+      enabled: true          # optional: needs dbt artifacts in S3 (below)
+    lineage:
+      enabled: true          # query-log table→table lineage (a second pass)
+```
+`helm upgrade …`, then trigger the first run immediately instead of waiting for the cron:
+```bash
+kubectl -n agentic-os create job --from=cronjob/openmetadata-trino-ingestion om-ingest-now
+kubectl -n agentic-os logs -f job/om-ingest-now
+# verify: OM /api/v1/tables now lists the iceberg gold marts
+```
+
+**dbt ingestion** reads `target/manifest.json` + `target/catalog.json`. The `dbt-build` Job
+already runs `dbt docs generate` but writes to ephemeral storage — publish the two artifacts to
+S3 (bucket `dbt`, prefix `artifacts/`) at the end of that Job so the OM `dbtConfigSource` can
+read them, e.g. append to the dbt-build args:
+```bash
+aws --endpoint-url "$S3_ENDPOINT" s3 cp /opt/dbt/project/target/manifest.json s3://dbt/artifacts/manifest.json
+aws --endpoint-url "$S3_ENDPOINT" s3 cp /opt/dbt/project/target/catalog.json  s3://dbt/artifacts/catalog.json
+```
+(Or set `openmetadata.ingestion.dbt.configType: local` and share the target dir via a PVC.)
+
 ## FAQ
 **Q: Why off locally?** It's the heaviest single component (JVM ~2–3 GB). Build-and-toggle.
-**Q: Airflow ingestion?** Disabled locally; metadata crawls run as K8s Jobs in production.
+**Q: Airflow ingestion?** Disabled locally; metadata crawls run as K8s Jobs (the ingestion
+CronJob above) in production.

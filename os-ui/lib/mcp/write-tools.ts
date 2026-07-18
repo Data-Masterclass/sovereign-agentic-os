@@ -1195,7 +1195,9 @@ export const dashboardWriteTools: McpTool[] = [
       const charts = (Array.isArray(args.charts) ? args.charts : []) as ChartSpec[];
       if (!charts.length) fail('a dashboard needs at least one chart on a governed metric', 400);
       const id = str(args.id).trim() || `dash_${slug(name)}_${rand()}`;
-      const spec = fromTiles(name, view, charts);
+      // Scope the dashboard's Cube SQL connection (`bi_<domain>`) to the caller's domain —
+      // the endpoint that serves the Cube view's rows.
+      const spec = fromTiles(name, view, charts, user.domains[0]);
       const rec = saveDashboard(P(user), id, spec);
       // Import to Superset (mirrors /api/dashboards/build): run the superset/embed/report/
       // alert Build as the caller so the dashboard actually exists to embed. Best-effort —

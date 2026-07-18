@@ -3,6 +3,7 @@
  */
 import type { Dataset } from '../data/dataset-schema.ts';
 import { cubeViewName } from '../data/metrics.ts';
+import { cubeSqlDatabase } from '../superset/cube-database.ts';
 
 /**
  * The Dashboards tab CONSUMES governed metrics (it never defines them — that's the
@@ -36,6 +37,11 @@ export type DashboardSpec = {
   /** The Cube view (one dataset's view) the dataset binds to. */
   view: string;
   charts: ChartSpec[];
+  /** The OS domain the dashboard's data belongs to. When set, the Superset dataset is
+   *  built on the Cube SQL API (Postgres-wire) as the domain's `bi_<domain>` principal —
+   *  the ONLY endpoint that actually serves the Cube view's rows (Trino has no such view).
+   *  When absent (legacy), the bundle falls back to the direct-Trino shape (no rows). */
+  domain?: string;
 };
 
 /** The Cube view a dashboard is built on (one per gold dataset). */
@@ -43,7 +49,7 @@ export function viewFor(dataset: Dataset): string {
   return cubeViewName(dataset);
 }
 
-function normalize(name: string, view: string, charts: ChartSpec[]): DashboardSpec {
+function normalize(name: string, view: string, charts: ChartSpec[], domain?: string): DashboardSpec {
   // Dedupe charts by (vizType, metric) so the two build modes can't double-add a tile.
   const seen = new Set<string>();
   const deduped: ChartSpec[] = [];
@@ -53,22 +59,23 @@ function normalize(name: string, view: string, charts: ChartSpec[]): DashboardSp
     seen.add(key);
     deduped.push(c);
   }
-  return { name: name.trim(), view, charts: deduped };
+  const d = (domain ?? '').trim();
+  return { name: name.trim(), view, charts: deduped, ...(d ? { domain: d } : {}) };
 }
 
 /** DRAG-AND-DROP → the spec (the user dropped these chart tiles). */
-export function fromTiles(name: string, view: string, charts: ChartSpec[]): DashboardSpec {
-  return normalize(name, view, charts);
+export function fromTiles(name: string, view: string, charts: ChartSpec[], domain?: string): DashboardSpec {
+  return normalize(name, view, charts, domain);
 }
 
 /**
  * AGENT → the spec. The dashboard agent proposes the SAME chart list (a structured
  * plan), routed through the same normalizer, so agent + drag-drop converge on one spec.
  */
-export type AgentDashboardPlan = { name: string; view: string; charts: ChartSpec[] };
+export type AgentDashboardPlan = { name: string; view: string; charts: ChartSpec[]; domain?: string };
 
 export function fromAgent(plan: AgentDashboardPlan): DashboardSpec {
-  return normalize(plan.name, plan.view, plan.charts);
+  return normalize(plan.name, plan.view, plan.charts, plan.domain);
 }
 
 /** Two specs are the same dashboard iff name+view+chart-set match (order-independent). */
@@ -86,12 +93,33 @@ export function sameDashboard(a: DashboardSpec, b: DashboardSpec): boolean {
  * connector; `database_service_name` names the query service.
  */
 export function supersetBundle(spec: DashboardSpec): string {
+  const charts = spec.charts.map((c) => ({ name: c.name, viz_type: c.vizType, metric: c.metric, groupby: c.dimensions ?? [] }));
+  // Domain-scoped → query the LIVE Cube SQL API (the only endpoint that serves the view's
+  // rows). The `database` block names the Cube SQL connection (`bi_<domain>` principal);
+  // the dataset carries NO schema (Cube SQL exposes the view as a top-level table).
+  if (spec.domain) {
+    const db = cubeSqlDatabase(spec.domain);
+    return JSON.stringify(
+      {
+        dashboard: spec.name,
+        database_service_name: db.service_name,
+        database: db,
+        dataset: { name: spec.view, sql: `SELECT * FROM "${spec.view}"` },
+        charts,
+      },
+      null,
+      2,
+    );
+  }
+  // Legacy (no domain): the old direct-Trino shape. Kept byte-for-byte so existing
+  // callers/tests are unchanged; note this shape does NOT return rows (Trino has no
+  // `cube` schema) — the domain path above is the one that renders real data.
   return JSON.stringify(
     {
       dashboard: spec.name,
       database_service_name: 'trino',
       dataset: { name: spec.view, schema: 'cube', sql: `SELECT * FROM "${spec.view}"` },
-      charts: spec.charts.map((c) => ({ name: c.name, viz_type: c.vizType, metric: c.metric, groupby: c.dimensions ?? [] })),
+      charts,
     },
     null,
     2,

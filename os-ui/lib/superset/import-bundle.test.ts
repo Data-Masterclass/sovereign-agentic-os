@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import yaml from 'js-yaml';
-import { buildImportZip, importFiles, parseManifest, uuid5 } from './import-bundle.ts';
+import { buildImportZip, databaseFilePath, importFiles, parseManifest, passwordsFor, uuid5 } from './import-bundle.ts';
 import { zipEntryNames, zipBundle } from './zip.ts';
 
 /** The JSON manifest both Data build (scaffoldDashboardBundle) and Dashboards build
@@ -86,6 +86,37 @@ test('buildImportZip produces a real ZIP whose entries are the import files', ()
 test('zipBundle round-trips entry names and stores exact bytes', () => {
   const zip = zipBundle({ 'a/one.txt': 'hello', 'b/two.txt': 'world' });
   assert.deepEqual(zipEntryNames(zip), ['a/one.txt', 'b/two.txt']);
+});
+
+/** The Cube SQL manifest a domain-scoped dashboard produces (lib/dashboards/model.ts). */
+const CUBE_MANIFEST = JSON.stringify({
+  dashboard: 'Sales Overview',
+  database_service_name: 'cube_sales',
+  database: { service_name: 'cube_sales', sqlalchemy_uri: 'postgresql://bi_sales:__CUBE_SQL_PASSWORD__@cube-sql:15432/bi_sales', cube_sql: true },
+  dataset: { name: 'Sales', sql: 'SELECT * FROM "Sales"' },
+  charts: [{ name: 'Revenue', viz_type: 'big_number_total', metric: 'revenue' }],
+});
+
+test('Cube SQL manifest emits the postgres URI to bi_<domain> and a schemaless dataset', () => {
+  const files = importFiles(parseManifest(CUBE_MANIFEST));
+  const db = yaml.load(files['dashboard_export/databases/cube_sales.yaml']) as Record<string, unknown>;
+  assert.equal(db.sqlalchemy_uri, 'postgresql://bi_sales:__CUBE_SQL_PASSWORD__@cube-sql:15432/bi_sales');
+  const ds = yaml.load(files['dashboard_export/datasets/cube_sales/sales.yaml']) as Record<string, unknown>;
+  // Cube view is a top-level table on the SQL API — no schema (NOT the wrong 'cube' schema).
+  assert.equal(ds.schema, null);
+  assert.equal(ds.sql, 'SELECT * FROM "Sales"');
+  assert.equal(ds.database_uuid, db.uuid);
+});
+
+test('passwordsFor injects the Cube SQL password keyed by the db yaml path (server-side only)', () => {
+  const m = parseManifest(CUBE_MANIFEST);
+  const pw = passwordsFor(m, 's3cret');
+  assert.deepEqual(pw, { [databaseFilePath(m)]: 's3cret' });
+  assert.equal(databaseFilePath(m), 'dashboard_export/databases/cube_sales.yaml');
+  // No password supplied ⇒ empty map (honest degradation, no false secret).
+  assert.deepEqual(passwordsFor(m, ''), {});
+  // Legacy Trino manifest never needs a password.
+  assert.deepEqual(passwordsFor(parseManifest(MANIFEST), 's3cret'), {});
 });
 
 test('parseManifest rejects a malformed bundle (⇒ adapter reports ✗, never a false ✓)', () => {

@@ -15,6 +15,21 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.37] — 2026-07-17
+
+### Fixed
+- **Embedded dashboard charts now render real data.** A chart's dataset was built against Trino's
+  iceberg catalog with a `cube` schema, but the Cube semantic views live behind the **Cube SQL API**
+  and require a **domain-scoped `bi_<domain>` principal**. Dashboard imports now point the Superset
+  dataset at the Cube SQL API as that principal (same one Power BI uses), so an embedded chart
+  returns real rows — verified end-to-end against live Cube/Trino. Per-viewer RLS in the guest token
+  still applies on top. (Requires the `CUBE_SQL_PASSWORD` env, now wired from the existing
+  `cube-sql-secrets` Secret.)
+- **OpenMetadata native ingestion is now available (off by default).** A CronJob runs OpenMetadata's
+  own `metadata ingest` over the Trino `iceberg` catalog (schemas/tables/columns) plus optional dbt
+  models + lineage, so the catalog stops being hollow. Enable via `openmetadata.ingestion.enabled`
+  after minting a fresh ingestion-bot token (see `docs/components/openmetadata.md`).
+
 ## [os-ui 0.5.36] — 2026-07-17
 
 ### Fixed

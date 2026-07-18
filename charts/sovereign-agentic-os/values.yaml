@@ -1525,6 +1525,53 @@ openmetadata:
     # namespace + writer bot Role/Policy. Absent → the Job dry-emits (no writes).
     adminSecretName: "sovereign-os-writer-admin"
     nodeSelector: {}
+  # NATIVE metadata ingestion for the OS's OWN Trino/Iceberg lakehouse (#147 — a
+  # HOLLOW catalog fix). A K8s CronJob runs OM's own `metadata ingest` framework
+  # (the openmetadata/ingestion image) — the same workflow Airflow would run, just
+  # K8s-scheduled (pipelineServiceClientConfig is disabled, so there is no Airflow).
+  # One run ingests every iceberg schema/table/column into OM (+ optional dbt models
+  # & lineage). GATED OFF by default: needs a VALID ingestion-bot JWT (mint a FRESH
+  # one from the running OM — a DB-seeded token 401s "Invalid token" against the live
+  # signing keys) in the jwtSecretName Secret, then flip `enabled: true`.
+  ingestion:
+    enabled: false
+    image:
+      repository: docker.getcollate.io/openmetadata/ingestion
+      tag: "1.13.0"                  # MUST track the openmetadata subchart version
+    # Cron. Default: hourly, so the catalog stays current (not a one-shot).
+    schedule: "17 * * * *"
+    # OM Database Service name the Iceberg lakehouse lands under. MUST match os-ui
+    # OPENMETADATA_SERVICE (default `trino`) so Catalog deep links resolve.
+    service: "trino"
+    omApi: "http://openmetadata:8585/api"
+    # The Secret + key holding the bot JWT — the SAME secret the os-ui Catalog reads.
+    jwtSecretName: "os-ui-openmetadata"
+    nodeSelector: {}
+    trino:
+      hostPort: "trino:8080"
+      username: "openmetadata-ingest"   # identifies the read principal to Trino/OPA
+      catalog: "iceberg"
+    # dbt models + descriptions + column lineage. Requires the dbt-build Job to
+    # publish target/manifest.json + catalog.json to the source below (S3 default —
+    # see docs/components/openmetadata.md for the one-line upload step).
+    dbt:
+      enabled: false
+      configType: "s3"                  # s3 | local
+      s3:
+        bucket: "dbt"
+        prefix: "artifacts/"
+        endpoint: "http://seaweedfs-s3:8333"
+        region: "us-east-1"
+        secretName: "object-storage-credentials"
+        accessKeyIdKey: "AWS_ACCESS_KEY_ID"
+        secretAccessKeyKey: "AWS_SECRET_ACCESS_KEY"
+      local:
+        manifestPath: "/opt/dbt/project/target/manifest.json"
+        catalogPath: "/opt/dbt/project/target/catalog.json"
+    # Table→table lineage mined from Trino's query log (a second ingest pass).
+    lineage:
+      enabled: true
+      queryLogDays: "1"
   replicaCount: 1
   openmetadata:
     config:

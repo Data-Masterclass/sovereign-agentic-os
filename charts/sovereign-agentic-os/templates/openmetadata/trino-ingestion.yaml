@@ -1,0 +1,236 @@
+{{- if and .Values.openmetadata.enabled .Values.openmetadata.ingestion.enabled }}
+{{- /*
+  NATIVE OpenMetadata metadata ingestion for the OS's OWN data plane (the bundled
+  in-cluster Trino/Iceberg lakehouse) — the fix for a HOLLOW catalog (#147).
+
+  WHY A CRONJOB (not the OM Airflow pipeline runtime): this deployment runs OM with
+  `pipelineServiceClientConfig.enabled: false` — there is no Airflow to host OM's
+  ingestion DAGs (values.yaml: "no Airflow ingestion locally — metadata crawls run
+  as K8s Jobs in production"). So we run OM's OWN native ingestion framework — the
+  `openmetadata/ingestion` image executing `metadata ingest -c workflow.yaml` — as a
+  K8s CronJob. This is the SAME workflow the Airflow pods would run, just scheduled
+  by Kubernetes. We do NOT hand-roll REST pushes; we drive OM's ingestion CLI.
+
+  WHAT IT INGESTS, in one workflow run:
+    1. Trino/Iceberg METADATA — every schema + table + column in catalog `iceberg`
+       (the real `agentic_leader_q3_2026.gold_northpeak_*` marts, `sales.*`, …),
+       landed under the OM Database Service named `openmetadata.ingestion.service`
+       (default `trino`, matching os-ui OPENMETADATA_SERVICE so the Catalog deep
+       links resolve).
+    2. dbt — when `openmetadata.ingestion.dbt.enabled`, the SAME Trino source reads
+       the dbt `manifest.json` + `catalog.json` (models, descriptions, column
+       lineage) from the configured source (S3 by default — the dbt-build Job
+       uploads them; see values + docs/components/openmetadata.md).
+    3. LINEAGE — a second `metadata ingest` pass with `type: DatabaseLineage` mines
+       Trino's query log so table→table lineage lands in OM (best-effort; skipped
+       when `openmetadata.ingestion.lineage.enabled` is false).
+
+  AUTH: OM requires a bot JWT on every write. The token is read from the
+  `openmetadata.ingestion.jwtSecretName` Secret (key `OPENMETADATA_JWT`) — the SAME
+  secret the os-ui Catalog reads (`os-ui-openmetadata`). It is NEVER inlined here.
+
+  IMPORTANT (discovered live): the bot JWT SEEDED into the OM database is signed
+  with keys that may not match the running server's signing keypair — a stale
+  seed token 401s ("Invalid token"). Mint a FRESH ingestion-bot JWT from the
+  running OM (admin → Settings → Bots → ingestion-bot → revoke+generate, or the
+  API) and store THAT under `OPENMETADATA_JWT`. See docs/components/openmetadata.md.
+
+  GATED OFF by default (`ingestion.enabled: false`) so nothing renders until an
+  operator supplies a valid JWT and turns it on — helm lint/template stay clean.
+*/}}
+{{- $om := .Values.openmetadata }}
+{{- $i := $om.ingestion }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openmetadata-trino-ingestion
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "openmetadata") | nindent 4 }}
+data:
+  # The OM metadata workflow for the bundled Trino/Iceberg lakehouse. `$JWT` is
+  # substituted from the mounted Secret at run time (envsubst) so no token is ever
+  # written into this ConfigMap.
+  metadata.yaml: |
+    source:
+      type: trino
+      serviceName: {{ $i.service | quote }}
+      serviceConnection:
+        config:
+          type: Trino
+          hostPort: {{ $i.trino.hostPort | quote }}
+          username: {{ $i.trino.username | quote }}
+          catalog: {{ $i.trino.catalog | quote }}
+      sourceConfig:
+        config:
+          type: DatabaseMetadata
+          markDeletedTables: false
+          includeViews: true
+          schemaFilterPattern:
+            excludes:
+              - "information_schema"
+              - "system"
+          {{- if $i.dbt.enabled }}
+          # dbt models + descriptions + column lineage, read from the dbt artifacts
+          # the dbt-build Job publishes (default S3). markDeletedTables stays false —
+          # the OS never removes a human-or-OS table via a crawl.
+          dbtConfigSource:
+            dbtConfigType: {{ $i.dbt.configType | quote }}
+            {{- if eq $i.dbt.configType "s3" }}
+            dbtSecurityConfig:
+              awsRegion: {{ $i.dbt.s3.region | quote }}
+              endPointURL: {{ $i.dbt.s3.endpoint | quote }}
+              awsAccessKeyId: "${DBT_S3_ACCESS_KEY_ID}"
+              awsSecretAccessKey: "${DBT_S3_SECRET_ACCESS_KEY}"
+            dbtPrefixConfig:
+              dbtBucketName: {{ $i.dbt.s3.bucket | quote }}
+              dbtObjectPrefix: {{ $i.dbt.s3.prefix | quote }}
+            {{- else if eq $i.dbt.configType "local" }}
+            dbtCatalogFilePath: {{ $i.dbt.local.catalogPath | quote }}
+            dbtManifestFilePath: {{ $i.dbt.local.manifestPath | quote }}
+            {{- end }}
+          {{- end }}
+    sink:
+      type: metadata-rest
+      config: {}
+    workflowConfig:
+      loggerLevel: INFO
+      openMetadataServerConfig:
+        hostPort: {{ $i.omApi | quote }}
+        authProvider: openmetadata
+        securityConfig:
+          jwtToken: "${OPENMETADATA_JWT}"
+  {{- if $i.lineage.enabled }}
+  # Query-log lineage pass — table→table edges mined from Trino's query history.
+  lineage.yaml: |
+    source:
+      type: trino
+      serviceName: {{ $i.service | quote }}
+      serviceConnection:
+        config:
+          type: Trino
+          hostPort: {{ $i.trino.hostPort | quote }}
+          username: {{ $i.trino.username | quote }}
+          catalog: {{ $i.trino.catalog | quote }}
+      sourceConfig:
+        config:
+          type: DatabaseLineage
+          queryLogDuration: {{ $i.lineage.queryLogDays | quote }}
+          schemaFilterPattern:
+            excludes:
+              - "information_schema"
+              - "system"
+    sink:
+      type: metadata-rest
+      config: {}
+    workflowConfig:
+      loggerLevel: INFO
+      openMetadataServerConfig:
+        hostPort: {{ $i.omApi | quote }}
+        authProvider: openmetadata
+        securityConfig:
+          jwtToken: "${OPENMETADATA_JWT}"
+  {{- end }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openmetadata-trino-ingestion
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "apps") | nindent 4 }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "openmetadata") | nindent 4 }}
+spec:
+  schedule: {{ $i.schedule | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 1800
+      template:
+        metadata:
+          labels:
+            {{- include "soa.selectorLabels" (dict "ctx" . "component" "openmetadata") | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          {{- with .Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $i.nodeSelector }}
+          nodeSelector: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "soa.podSecurityContext" . | nindent 12 }}
+          volumes:
+            - name: workflow
+              configMap:
+                name: openmetadata-trino-ingestion
+            - name: work
+              emptyDir: {}
+          containers:
+            - name: ingest
+              image: {{ printf "%s:%s" $i.image.repository $i.image.tag | quote }}
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "soa.containerSecurityContext" . | nindent 16 }}
+              env:
+                # Bot JWT — SAME secret the os-ui Catalog reads. Never inlined.
+                - name: OPENMETADATA_JWT
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $i.jwtSecretName | quote }}
+                      key: OPENMETADATA_JWT
+                {{- if and $i.dbt.enabled (eq $i.dbt.configType "s3") }}
+                # dbt-artifact bucket credentials (read-only) for the dbtConfigSource.
+                - name: DBT_S3_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $i.dbt.s3.secretName | quote }}
+                      key: {{ $i.dbt.s3.accessKeyIdKey | quote }}
+                - name: DBT_S3_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $i.dbt.s3.secretName | quote }}
+                      key: {{ $i.dbt.s3.secretAccessKeyKey | quote }}
+                {{- end }}
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  if [ -z "${OPENMETADATA_JWT:-}" ]; then
+                    echo "OPENMETADATA_JWT is empty — no valid bot token supplied."
+                    echo "Mint a FRESH ingestion-bot JWT from the running OM (admin ->"
+                    echo "Settings -> Bots -> ingestion-bot -> revoke+generate) and store"
+                    echo "it in the {{ $i.jwtSecretName }} secret. Skipping (no fabricated writes)."
+                    exit 0
+                  fi
+                  # Substitute the JWT (+ optional dbt S3 creds) into the workflow files,
+                  # keeping tokens out of the ConfigMap. envsubst only expands the named vars.
+                  export OPENMETADATA_JWT DBT_S3_ACCESS_KEY_ID="${DBT_S3_ACCESS_KEY_ID:-}" DBT_S3_SECRET_ACCESS_KEY="${DBT_S3_SECRET_ACCESS_KEY:-}"
+                  envsubst '${OPENMETADATA_JWT} ${DBT_S3_ACCESS_KEY_ID} ${DBT_S3_SECRET_ACCESS_KEY}' \
+                    < /etc/om-workflow/metadata.yaml > /work/metadata.yaml
+                  echo "Running OM metadata ingestion (Trino/Iceberg{{ if $i.dbt.enabled }} + dbt{{ end }})..."
+                  metadata ingest -c /work/metadata.yaml
+                  {{- if $i.lineage.enabled }}
+                  envsubst '${OPENMETADATA_JWT}' < /etc/om-workflow/lineage.yaml > /work/lineage.yaml
+                  echo "Running OM lineage ingestion (Trino query log)..."
+                  metadata ingest -c /work/lineage.yaml || echo "WARNING: lineage pass reported errors (non-blocking; metadata already ingested)."
+                  {{- end }}
+                  echo "OpenMetadata ingestion complete."
+              volumeMounts:
+                - name: workflow
+                  mountPath: /etc/om-workflow
+                  readOnly: true
+                - name: work
+                  mountPath: /work
+              resources:
+                requests: { cpu: 200m, memory: 512Mi }
+                limits: { cpu: "1", memory: 1Gi }
+{{- end }}

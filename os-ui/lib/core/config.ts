@@ -360,6 +360,13 @@ export const config = {
   // The k8s Secret holding CUBEJS_SQL_PASSWORD — surfaced to builders as a reference
   // (vault path), never dereferenced into any browser-visible JSON.
   cubeSqlPasswordSecret: env('CUBE_SQL_PASSWORD_SECRET', 'cube-sql-secrets'),
+  // The Cube SQL API password itself — SERVER-ONLY. Mounted into os-ui from the
+  // `cube-sql-secrets` Secret. Used ONLY to fill the Superset import `passwords` map when
+  // a dashboard's dataset is built on the Cube SQL API (so the domain's `bi_<domain>`
+  // connection can actually read the view's rows). EMPTY by default ⇒ the Cube SQL
+  // dashboard path degrades honestly (no password ⇒ Superset connection can't read) until
+  // the operator mounts the secret. NEVER sent to the browser.
+  cubeSqlPassword: env('CUBE_SQL_PASSWORD', ''),
 
   // OpenMetadata (catalog & lineage): server-side REST API base. OFF by default
   // locally (~2.5 GB JVM) — the Data/Unstructured surfaces probe it and degrade

@@ -24,10 +24,33 @@ test('charts are deduped so the two modes cannot double-add a tile', () => {
   assert.equal(spec.charts.length, 2);
 });
 
-test('the Superset bundle binds the dataset to the Cube view and keeps governed members', () => {
+test('the legacy (no-domain) Superset bundle keeps the direct-Trino shape', () => {
   const view = viewFor(goldSales());
   const bundle = JSON.parse(supersetBundle(fromTiles('Sales Overview', view, charts)));
+  assert.equal(bundle.database_service_name, 'trino');
   assert.equal(bundle.dataset.schema, 'cube');
   assert.match(bundle.dataset.sql, /FROM "Sales"/);
   assert.equal(bundle.charts[0].metric, 'Sales.revenue');
+});
+
+test('a domain-scoped bundle targets the Cube SQL API as the bi_<domain> principal (real rows)', () => {
+  const view = viewFor(goldSales());
+  const bundle = JSON.parse(supersetBundle(fromTiles('Sales Overview', view, charts, 'sales')));
+  // The database is a postgres connection to Cube SQL as bi_sales — the endpoint that
+  // actually serves the view's rows (Trino iceberg has no such view).
+  assert.ok(bundle.database, 'domain path carries an explicit database block');
+  assert.equal(bundle.database.cube_sql, true);
+  assert.match(bundle.database.sqlalchemy_uri, /^postgresql:\/\/bi_sales:.*@cube-sql:15432\/bi_sales$/);
+  // The Cube view is a top-level table on that connection → no `cube` schema.
+  assert.equal(bundle.dataset.schema, undefined);
+  assert.match(bundle.dataset.sql, /FROM "Sales"/);
+  assert.equal(bundle.database_service_name, bundle.database.service_name);
+});
+
+test('domain does not change dashboard identity (view belongs to one domain)', () => {
+  const view = viewFor(goldSales());
+  const withDomain = fromTiles('Sales Overview', view, charts, 'sales');
+  const without = fromTiles('Sales Overview', view, charts);
+  assert.ok(sameDashboard(withDomain, without));
+  assert.equal(withDomain.domain, 'sales');
 });
