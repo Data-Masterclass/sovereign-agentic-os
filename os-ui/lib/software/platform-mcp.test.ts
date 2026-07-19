@@ -24,8 +24,9 @@ test('INVARIANT: Platform MCP has UI parity — create→preview→request_deplo
     template: 'nextjs-supabase',
   })) as App;
   assert.ok(app.id);
-  const previewed = (await callPlatformMcp(creator, 'start_preview', { appId: app.id })) as App;
-  assert.equal(previewed.deploy.state, 'preview');
+  // startPreview now returns { app, runnerNote } so the MCP result is that shape.
+  const previewResult = (await callPlatformMcp(creator, 'start_preview', { appId: app.id })) as { app: App; runnerNote: string | null };
+  assert.equal(previewResult.app.deploy.state, 'preview');
 
   const res = (await callPlatformMcp(creator, 'request_deploy', { appId: app.id })) as DeployRequestResult;
   // The MCP opens the SAME review gate — it does NOT self-deploy live.

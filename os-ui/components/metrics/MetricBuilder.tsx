@@ -268,20 +268,22 @@ export default function MetricBuilder({
     if (existing) return existing;
     if (result) {
       // Build a minimal MetricSummary from the define result so Monitor can open.
+      // id MUST be "${datasetId}.${measureName}" — the same format getMetric() and
+      // summariesFor() use — so the explore/govern routes can split it correctly.
       return {
-        id: result.measure.name,
+        id: `${datasetId}.${result.measure.name}`,
         name: form.name.trim(),
         datasetId,
         datasetName: '',
         member: result.member,
         tier: 'personal',
-        owner: user?.name ?? '',
+        owner: user?.id ?? '',
         type: result.measure.type ?? form.aggregation,
         folder: '/',
       } satisfies MetricSummary;
     }
     return null;
-  }, [existing, result, form.name, datasetId, user?.name]);
+  }, [existing, result, form.name, datasetId, user?.id]);
 
   /* ── preview ── */
   const runPreview = useCallback(async () => {

@@ -313,13 +313,16 @@ function GovernedConnectionsInner() {
         );
       })()}
 
-      {/* ── 2. Supported Connectors (grouped by category + search) ── */}
+      {/* ── 2. Custom Connector (Builder/Admin only) ── above the predefined gallery ── */}
+      {canCreate ? <CustomConnectorSection onDone={load} /> : null}
+
+      {/* ── 3. Supported Connectors (grouped by category + search) ── */}
       <div className="section-title" style={{ marginTop: 28 }}>Supported connectors</div>
       <p className="hint" style={{ marginTop: 0, marginBottom: 14 }}>
         The connector types you can connect, straight from the template registry — inbound
         sources (warehouse, Google Drive, OneDrive, Notion) and any new template the platform
         adds appear here automatically. <strong>Connect</strong> opens the wizard pre-set to that
-        type. For an arbitrary outbound API or MCP, use <strong>＋ New connector</strong> above.
+        type.
       </p>
       {(() => {
         if (!data) return null;
@@ -382,7 +385,7 @@ function GovernedConnectionsInner() {
 
         return (
           <>
-            {/* Search bar */}
+            {/* Search bar + stack jump-links */}
             <div style={{ marginBottom: 18 }}>
               <input
                 type="search"
@@ -391,6 +394,69 @@ function GovernedConnectionsInner() {
                 placeholder="Search connectors by name or vendor…"
                 style={{ width: '100%', maxWidth: 400 }}
               />
+              {/* Chip bar — only rendered when there are visible stacks */}
+              {visibleStacks.length > 0 && (
+                <div
+                  role="navigation"
+                  aria-label="Jump to connector stack"
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: '6px 8px',
+                    marginTop: 10,
+                  }}
+                >
+                  {visibleStacks.map((stack) => (
+                    <button
+                      key={stack.id}
+                      type="button"
+                      aria-label={`Jump to ${stack.label} connectors`}
+                      onClick={() => {
+                        const el = document.getElementById(`stack-${stack.id}`);
+                        el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                      }}
+                      style={{
+                        all: 'unset',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        padding: '3px 9px 3px 7px',
+                        borderRadius: 20,
+                        border: '1px solid var(--border)',
+                        fontSize: 11,
+                        fontFamily: 'var(--font-mono, monospace)',
+                        color: 'var(--text-faint)',
+                        background: 'var(--surface)',
+                        letterSpacing: '0.04em',
+                        transition: 'border-color 0.15s, color 0.15s',
+                        lineHeight: 1.4,
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLButtonElement).style.borderColor = stack.accent;
+                        (e.currentTarget as HTMLButtonElement).style.color = 'var(--text)';
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)';
+                        (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-faint)';
+                      }}
+                    >
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: '50%',
+                          background: stack.accent,
+                          flexShrink: 0,
+                          opacity: 0.85,
+                        }}
+                      />
+                      {stack.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {filtered.length === 0 ? (
@@ -400,7 +466,7 @@ function GovernedConnectionsInner() {
                 const group = grouped.get(stack.id)!;
                 const isOpen = !collapsedCategories.has(stack.id);
                 return (
-                  <div key={stack.id} style={{ marginBottom: 24 }}>
+                  <div key={stack.id} id={`stack-${stack.id}`} style={{ marginBottom: 24 }}>
                     {/* Stack header — accent dot + label + count + rule */}
                     <button
                       type="button"
@@ -486,9 +552,6 @@ function GovernedConnectionsInner() {
         );
       })()}
 
-      {/* ── 3. Outbound access (Builder/Admin only) ── */}
-      {canCreate ? <EgressSection /> : null}
-
       {/* Installation Guide side panel — opened from any Supported Connector card. */}
       {guide ? <InstallationGuide guide={guide} onClose={() => setGuide(null)} /> : null}
 
@@ -496,81 +559,186 @@ function GovernedConnectionsInner() {
   );
 }
 
-// ---- Egress section --------------------------------------------------------
+// ---- Custom Connector section -----------------------------------------------
 
-function EgressSection() {
-  const [requests, setRequests] = useState<EgressRequest[]>([]);
-  const [loadErr, setLoadErr] = useState('');
-  const [host, setHost] = useState('');
-  const [reason, setReason] = useState('');
+/**
+ * CustomConnectorSection — add an arbitrary API or MCP server as a governed
+ * connection, with egress automatically requested in the same action.
+ *
+ * Flow:
+ *   1. User picks API or MCP.
+ *   2. Fills name + base URL/endpoint + credential (write-only, to Secrets Manager).
+ *   3. On Add: POST /api/connections (generic-api or generic-mcp template, same
+ *      governed path as the wizard) + POST /api/egress for the extracted host — one
+ *      atomic action, one governed step. No separate egress dance.
+ *   4. States: created (with honest egress note if admin approval is pending),
+ *      or error.
+ *   5. Egress request list below shows status for previously submitted requests.
+ */
+function CustomConnectorSection({ onDone }: { onDone: () => void }) {
+  const [kind, setKind] = useState<'api' | 'mcp'>('api');
+  const [name, setName] = useState('');
+  const [endpoint, setEndpoint] = useState('');
+  const [credential, setCredential] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const [msgOk, setMsgOk] = useState(false);
+
+  const [egressRequests, setEgressRequests] = useState<EgressRequest[]>([]);
+  const [egressErr, setEgressErr] = useState('');
 
   const loadEgress = useCallback(async () => {
     try {
       const res = await fetch('/api/egress', { cache: 'no-store' });
       const body = await res.json() as { requests?: EgressRequest[]; error?: string };
-      if (res.ok) setRequests(body.requests ?? []);
-      else setLoadErr(body.error ?? 'Failed to load egress requests');
-    } catch (e) { setLoadErr((e as Error).message); }
+      if (res.ok) setEgressRequests(body.requests ?? []);
+      else setEgressErr(body.error ?? 'Failed to load egress requests');
+    } catch (e) { setEgressErr((e as Error).message); }
   }, []);
 
   useEffect(() => { loadEgress(); }, [loadEgress]);
 
-  async function requestEgress() {
-    if (!host.trim() || busy) return;
+  const endpointHint = kind === 'api'
+    ? 'https://api.example.com'
+    : 'https://mcp.example.com/sse';
+
+  async function handleAdd() {
+    if (!name.trim() || !endpoint.trim() || busy) return;
     setBusy(true);
     setMsg('');
+    setMsgOk(false);
     try {
-      const r = await postJSON('/api/egress', { host: host.trim(), reason: reason.trim() });
-      if (r.ok) {
-        setMsg(`✓ Egress request submitted for "${host.trim()}" — pending Admin approval in the Governance tab.`);
-        setHost('');
-        setReason('');
-        loadEgress();
-      } else {
-        setMsg(`✗ ${(r.data.error as string) ?? 'Could not submit request'}`);
+      // Step 1: create the governed connection (generic-api or generic-mcp template).
+      const connRes = await postJSON('/api/connections', {
+        name: name.trim(),
+        template: kind === 'api' ? 'generic-api' : 'generic-mcp',
+        endpoint: endpoint.trim(),
+        credential: credential,
+      });
+      if (!connRes.ok) {
+        setMsg(`✗ ${(connRes.data.error as string) ?? 'Could not create connection'}`);
+        return;
       }
+      // Step 2: auto-request egress for the host derived from the endpoint — one step,
+      // no separate egress dance. The server extracts the normalised host.
+      const egressRes = await postJSON('/api/egress', {
+        endpoint: endpoint.trim(),
+        reason: `Custom ${kind === 'api' ? 'API' : 'MCP'} connector: ${name.trim()}`,
+      });
+      const egressNote = egressRes.ok
+        ? ' Egress request submitted — pending Admin approval in the Governance tab.'
+        : '';
+      const connName = (connRes.data.connection as { name?: string })?.name ?? name.trim();
+      setMsg(`✓ "${connName}" created.${egressNote}`);
+      setMsgOk(true);
+      setName('');
+      setEndpoint('');
+      setCredential('');
+      onDone();
+      await loadEgress();
     } catch (e) { setMsg(`✗ ${(e as Error).message}`); }
     finally { setBusy(false); }
   }
 
   return (
     <>
-      <div className="section-title" style={{ marginTop: 28 }}>Outbound access</div>
-      <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-        External endpoints must be on the egress allowlist before a connection can reach them.
-        Request access below — an Administrator approves in the Governance tab.
-      </p>
-      <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-        <input
-          type="text"
-          value={host}
-          onChange={(e) => setHost(e.target.value)}
-          placeholder="Host (e.g. api.salesforce.com)"
-          style={{ flex: '2 1 160px' }}
-        />
-        <input
-          type="text"
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          placeholder="Reason for access"
-          style={{ flex: '3 1 200px' }}
-        />
-        <button className="btn ghost" onClick={requestEgress} disabled={busy || !host.trim()}>
-          {busy ? <span className="spin" /> : 'Request egress'}
-        </button>
+      <div className="section-title" style={{ marginTop: 28 }}>Custom connector</div>
+      <div className="card" style={{ marginBottom: 0 }}>
+        {/* API / MCP choice */}
+        <div
+          style={{
+            display: 'inline-flex',
+            borderRadius: 8,
+            border: '1px solid var(--border)',
+            overflow: 'hidden',
+            marginBottom: 16,
+          }}
+        >
+          {(['api', 'mcp'] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setKind(k)}
+              style={{
+                all: 'unset',
+                cursor: 'pointer',
+                padding: '5px 18px',
+                fontSize: 12,
+                fontFamily: 'var(--font-mono, monospace)',
+                letterSpacing: '0.04em',
+                background: kind === k ? 'var(--text)' : 'transparent',
+                color: kind === k ? 'var(--bg, #fff)' : 'var(--text-faint)',
+                transition: 'background 0.12s, color 0.12s',
+                userSelect: 'none',
+              }}
+            >
+              {k === 'api' ? 'REST / GraphQL API' : 'MCP server'}
+            </button>
+          ))}
+        </div>
+
+        {/* Fields */}
+        <div style={{ display: 'grid', gap: 10 }}>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={kind === 'api' ? 'Name (e.g. Stripe API)' : 'Name (e.g. Ops MCP)'}
+            autoComplete="off"
+          />
+          <input
+            type="text"
+            value={endpoint}
+            onChange={(e) => setEndpoint(e.target.value)}
+            placeholder={`Base URL (e.g. ${endpointHint})`}
+            autoComplete="off"
+          />
+          <input
+            type="password"
+            value={credential}
+            onChange={(e) => setCredential(e.target.value)}
+            placeholder={kind === 'api'
+              ? 'API key or bearer token — goes to Secrets Manager, never echoed'
+              : 'MCP auth token — goes to Secrets Manager, never echoed'}
+            autoComplete="off"
+          />
+        </div>
+
+        <p className="hint" style={{ marginTop: 10, marginBottom: 0, fontSize: 11.5 }}>
+          {kind === 'api'
+            ? 'Creates a governed REST/GraphQL connection using the generic API template. Reads auto-allow; writes default to Off — tune the capability profile on the card after creation.'
+            : 'Creates a governed MCP connection (SSE transport). Reads auto-allow; writes default to Off — tune the capability profile on the card after creation.'}
+          {' '}The credential is stored in <strong>Secrets Manager</strong> — only a reference is kept on the record.
+          Egress to the host is requested automatically and requires Administrator approval.
+        </p>
+
+        <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
+          <button
+            className="btn"
+            onClick={handleAdd}
+            disabled={busy || !name.trim() || !endpoint.trim()}
+          >
+            {busy ? <span className="spin" /> : `Add ${kind === 'api' ? 'API' : 'MCP'} connector`}
+          </button>
+        </div>
+
+        {msg ? (
+          <div className={msgOk ? 'answer' : 'error'} style={{ marginTop: 10 }}>
+            {msg}
+          </div>
+        ) : null}
       </div>
-      {msg ? <div className={msg.startsWith('✓') ? 'answer' : 'error'} style={{ marginTop: 8 }}>{msg}</div> : null}
-      {loadErr ? <div className="error" style={{ marginTop: 8 }}>{loadErr}</div> : null}
-      {requests.length > 0 ? (
-        <div className="table-wrap" style={{ marginTop: 12 }}>
+
+      {/* Egress request status — shows pending/approved/rejected for this domain */}
+      {egressErr ? <div className="error" style={{ marginTop: 8 }}>{egressErr}</div> : null}
+      {egressRequests.length > 0 ? (
+        <div className="table-wrap" style={{ marginTop: 10 }}>
           <table>
             <thead>
               <tr><th>Host</th><th>Reason</th><th>Status</th></tr>
             </thead>
             <tbody>
-              {requests.map((r) => (
+              {egressRequests.map((r) => (
                 <tr key={r.id}>
                   <td className="mono">{r.host}</td>
                   <td className="muted">{r.reason}</td>

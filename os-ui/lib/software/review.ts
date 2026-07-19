@@ -237,7 +237,19 @@ function previewPendingNote(outcome: RunnerOutcome): string {
  * in-cluster runner (Deployment+Service+Ingress); the served URL surfaces once
  * the pod is ready. Offline (no cluster) it stays honestly pending (no URL).
  */
-export async function startPreview(appId: string, user: CurrentUser): Promise<App> {
+export type PreviewResult = {
+  app: App;
+  /**
+   * The human-readable runner outcome detail surfaced to the client.
+   * Set when the runner provisioned the pod (or is trying to); null when the
+   * preview URL is already live (nothing extra to say). The deploy route
+   * includes this so the UI can distinguish "provisioning — URL coming" from
+   * "runner failed: <reason>" instead of showing the same "pending" blurb for both.
+   */
+  runnerNote: string | null;
+};
+
+export async function startPreview(appId: string, user: CurrentUser): Promise<PreviewResult> {
   const app = await getAppByIdInternal(appId);
   if (!app) throw withStatus(new Error('App not found'), 404);
   const ownerOrBuilder = app.owner === user.id || (isBuilder(user) && user.domains.includes(app.domain));
@@ -249,6 +261,17 @@ export async function startPreview(appId: string, user: CurrentUser): Promise<Ap
   const runner = await deployApp(runnerAppFor(app));
   applyRunnerOutcome(app, runner);
   await persistApp(app);
+
+  // Surface the actionable outcome: null when the pod is already running (URL is
+  // live, nothing to explain); the pending note when provisioning is in progress;
+  // or the specific runner failure detail so the UI never silently hangs on "pending".
+  const runnerNote: string | null =
+    runner.live && runner.phase === 'running'
+      ? null
+      : runner.live && !runner.ok
+        ? runner.detail   // e.g. "Kubernetes rejected part of the deploy (deployment 403, …)"
+        : previewPendingNote(runner);
+
   void trace({
     principal: app.mcpPrincipal,
     tool: 'generate',
@@ -256,10 +279,10 @@ export async function startPreview(appId: string, user: CurrentUser): Promise<Ap
     output:
       runner.live && runner.phase === 'running'
         ? { preview: runner.phase, url: app.deploy.previewUrl, host: runner.host }
-        : { preview: runner.live ? runner.phase : 'pending-runner', note: previewPendingNote(runner) },
+        : { preview: runner.live ? runner.phase : 'pending-runner', note: runnerNote },
     decision: 'allow',
   });
-  return app;
+  return { app, runnerNote };
 }
 
 // ---------------------------------------------------------- Request deploy -----

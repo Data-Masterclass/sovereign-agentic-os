@@ -46,8 +46,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const body = (await req.json().catch(() => ({}))) as { target?: { epicId?: string; storyId?: string } };
     void body.target;
     if (action === 'preview') {
-      const app = await startPreview(id, user);
-      return NextResponse.json({ app });
+      const { app, runnerNote } = await startPreview(id, user);
+      return NextResponse.json({ app, runnerNote });
     }
     const result = await requestDeploy(id, user);
     return NextResponse.json(result);

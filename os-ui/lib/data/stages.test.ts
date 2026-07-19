@@ -9,23 +9,27 @@ import {
 import { DATA_STAGES, type DataCtx } from './stages.ts';
 
 /**
- * The Data guided path (Ingest · Define · Harmonize · Validate · Use · Publish) run through
- * the shared stage model — asserting the GATES reflect REAL dataset state (the layer dots +
- * tier): later stages stay unreachable until the earlier layer exists, and no stage shows a ✓
- * on first open even when the dataset is already fully materialized.
+ * The Data guided path (Ingest · Define · Harmonize · Validate · Publish — 5 stages) run
+ * through the shared stage model — asserting the GATES reflect REAL dataset state (the
+ * layer dots + tier): later stages stay unreachable until the earlier layer exists, and no
+ * stage shows a ✓ on first open even when the dataset is already fully materialized.
  */
 const ctx = (over: Partial<DataCtx> = {}): DataCtx => ({
   named: false, bronzeBuilt: false, silverBuilt: false, goldBuilt: false,
   refined: false, materialized: false, ...over,
 });
 
+test('5 stages total, in medallion order', () => {
+  const ids = DATA_STAGES.map((s) => s.id);
+  assert.deepEqual(ids, ['ingest', 'define', 'harmonize', 'validate', 'publish']);
+});
+
 test('gates reflect real dataset state — nothing past Ingest is reachable when empty', () => {
   const c = ctx();
-  assert.equal(canEnter(DATA_STAGES, 'ingest', c), true);   // always reachable
-  assert.equal(canEnter(DATA_STAGES, 'define', c), false);  // needs bronzeBuilt
+  assert.equal(canEnter(DATA_STAGES, 'ingest', c), true);    // always reachable
+  assert.equal(canEnter(DATA_STAGES, 'define', c), false);   // needs bronzeBuilt
   assert.equal(canEnter(DATA_STAGES, 'harmonize', c), false);
   assert.equal(canEnter(DATA_STAGES, 'validate', c), false);
-  assert.equal(canEnter(DATA_STAGES, 'use', c), false);
   assert.equal(canEnter(DATA_STAGES, 'publish', c), false);
 });
 
@@ -35,18 +39,16 @@ test('Define unlocks on Bronze; Harmonize only once Silver is built', () => {
   assert.equal(canEnter(DATA_STAGES, 'harmonize', ctx({ bronzeBuilt: true, silverBuilt: true })), true);
 });
 
-test('Validate and Use gate on materialized; Publish gates on refined (Silver or Gold)', () => {
+test('Validate gates on materialized; Publish gates on refined (Silver or Gold)', () => {
   const bronzeOnly = ctx({ bronzeBuilt: true, materialized: true });
-  assert.equal(canEnter(DATA_STAGES, 'validate', bronzeOnly), true);  // materialized
-  assert.equal(canEnter(DATA_STAGES, 'use', bronzeOnly), true);       // materialized
-  assert.equal(canEnter(DATA_STAGES, 'publish', bronzeOnly), false);  // not refined
+  assert.equal(canEnter(DATA_STAGES, 'validate', bronzeOnly), true);   // materialized
+  assert.equal(canEnter(DATA_STAGES, 'publish', bronzeOnly), false);   // not refined
 
   const refined = ctx({ bronzeBuilt: true, silverBuilt: true, refined: true, materialized: true });
   assert.equal(canEnter(DATA_STAGES, 'publish', refined), true);
 
-  // Nothing materialized → Validate and Use lock.
+  // Nothing materialized → Validate locks.
   assert.equal(canEnter(DATA_STAGES, 'validate', ctx({ bronzeBuilt: true })), false);
-  assert.equal(canEnter(DATA_STAGES, 'use', ctx({ bronzeBuilt: true })), false);
 });
 
 test('completed() is the LIVE condition per stage', () => {
@@ -54,7 +56,6 @@ test('completed() is the LIVE condition per stage', () => {
   assert.equal(isSatisfied(DATA_STAGES, 'define', ctx({ silverBuilt: true })), true);
   assert.equal(isSatisfied(DATA_STAGES, 'harmonize', ctx({ goldBuilt: true })), true);
   assert.equal(isSatisfied(DATA_STAGES, 'validate', ctx({ materialized: true })), true);
-  assert.equal(isSatisfied(DATA_STAGES, 'use', ctx({ materialized: true })), true);
   assert.equal(isSatisfied(DATA_STAGES, 'publish', ctx({ refined: true })), true);
   // Negative — conditions not met.
   assert.equal(isSatisfied(DATA_STAGES, 'ingest', ctx()), false);
@@ -96,9 +97,17 @@ test('markDone records an in-stage settle (Ingest after a Bronze build)', () => 
   assert.equal(isDone(DATA_STAGES, s, 'ingest', ctx({ named: true })), false);
 });
 
-test('Publish is the last stage — only reachable when Silver or Gold exists', () => {
+test('Publish is the last stage (index 4) — only reachable when Silver or Gold exists', () => {
   const lastIndex = DATA_STAGES.findIndex((s) => s.id === 'publish');
-  assert.equal(lastIndex, DATA_STAGES.length - 1, 'publish must be the final stage');
+  assert.equal(lastIndex, 4, 'publish must be the final stage (index 4 of 5)');
+  assert.equal(DATA_STAGES.length, 5, 'exactly 5 stages');
   assert.equal(canEnter(DATA_STAGES, 'publish', ctx({ refined: false })), false);
   assert.equal(canEnter(DATA_STAGES, 'publish', ctx({ refined: true })), true);
+});
+
+test('Validate is the Lineage home — stage id "validate" exists and gates on materialized', () => {
+  const validateDef = DATA_STAGES.find((s) => s.id === 'validate');
+  assert.ok(validateDef, 'validate stage must exist');
+  assert.equal(canEnter(DATA_STAGES, 'validate', ctx({ materialized: true })), true);
+  assert.equal(canEnter(DATA_STAGES, 'validate', ctx({ materialized: false })), false);
 });

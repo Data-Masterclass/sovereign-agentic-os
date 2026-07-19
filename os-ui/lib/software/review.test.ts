@@ -23,10 +23,13 @@ async function expectStatus(p: Promise<unknown>, status: number, re?: RegExp) {
 
 test('GATE: preview is free; first deploy opens a Builder review card', async () => {
   const app = await createApp(creator, { name: 'Renewals Tracker R1', template: 'nextjs-supabase' });
-  const previewed = await startPreview(app.id, creator);
+  const { app: previewed, runnerNote } = await startPreview(app.id, creator);
   assert.equal(previewed.deploy.state, 'preview');
   // HONEST (Phase 1): no in-cluster runner yet → no fabricated URL claimed live.
   assert.equal(previewed.deploy.previewUrl, null);
+  // runnerNote surfaces the honest runner outcome (offline / pending note) so the
+  // UI can show why there's no preview URL instead of hanging on "provisioning…".
+  assert.ok(runnerNote !== undefined, 'startPreview returns a runnerNote alongside the app');
 
   const res = await requestDeploy(app.id, creator);
   assert.equal(res.kind, 'review');

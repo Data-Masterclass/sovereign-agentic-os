@@ -371,6 +371,9 @@ metadata:
 data:
   cube.js: |
     // SPDX-License-Identifier: Apache-2.0
+    const fs = require('fs');
+    const path = require('path');
+    const crypto = require('crypto');
     const BI_PREFIX = 'bi_';
     function normDomain(s) {
       return String(s || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
@@ -381,7 +384,31 @@ data:
       const d = normDomain(u.slice(BI_PREFIX.length));
       return d || null;
     }
+    // #142 close-out: a DETERMINISTIC schema version so Cube recompiles when the
+    // model-sync sidecar rewrites a .cube.yml — the SUPPORTED replacement for relying
+    // on dev-mode's file-watcher (which never saw the sidecar's cross-container writes).
+    // Cube calls schemaVersion() and recompiles whenever the returned string changes;
+    // we hash every model file's name+bytes, so any add/edit/remove flips the hash and
+    // triggers a lazy, per-context recompile on the next query. Lets us run dev-mode OFF.
+    var MODEL_DIR = process.env.CUBEJS_SCHEMA_PATH
+      ? path.resolve('/cube/conf', process.env.CUBEJS_SCHEMA_PATH)
+      : '/cube/conf/model';
+    function modelHash() {
+      try {
+        var files = fs.readdirSync(MODEL_DIR).filter(function (f) { return /\.(yml|yaml|js)$/.test(f); }).sort();
+        var h = crypto.createHash('sha1');
+        for (var i = 0; i < files.length; i++) {
+          h.update(files[i]);
+          h.update(fs.readFileSync(path.join(MODEL_DIR, files[i])));
+        }
+        return h.digest('hex');
+      } catch (e) {
+        return 'model-hash-error';
+      }
+    }
     module.exports = {
+      // Deterministic recompile trigger (see note above) — no dev-mode watcher needed.
+      schemaVersion: function () { return modelHash(); },
       // Verify the shared SQL password, then map the SQL username -> domain securityContext.
       checkSqlAuth: (query, user, password) => {
         const expected = process.env.CUBEJS_SQL_PASSWORD;
@@ -470,8 +497,22 @@ spec:
           env:
             - name: HOME
               value: /tmp
+            # #142 close-out (interim): schema hot-reload is driven by the DETERMINISTIC
+            # `schemaVersion()` in cube.js (hashes the model dir) — Cube recompiles
+            # per-context whenever the sidecar rewrites a .cube.yml, no watcher needed.
+            # Dev-mode stays ON for now because dev-mode-OFF makes Cube require an
+            # external Cube Store (CUBEJS_CUBESTORE_HOST) we don't yet deploy; CHOKIDAR
+            # polling is kept as a belt-and-suspenders watcher. Deploying Cube Store to
+            # flip dev-mode off (closing the playground, dropping poll overhead) is a
+            # scoped follow-up.
             - name: CUBEJS_DEV_MODE
               value: "true"
+            - name: CUBEJS_SCHEMA_PATH
+              value: model
+            - name: CHOKIDAR_USEPOLLING
+              value: "true"
+            - name: CHOKIDAR_INTERVAL
+              value: "2000"
             # Read the marts THROUGH central Trino (governed engine), not Postgres.
             - name: CUBEJS_DB_TYPE
               value: trino

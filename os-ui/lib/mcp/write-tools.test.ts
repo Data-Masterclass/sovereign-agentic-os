@@ -9,6 +9,7 @@ import { handleRpc, type JsonRpcResponse, type ToolError } from './server.ts';
 import { __resetStore as resetData } from '@/lib/data/store';
 import { __resetStore as resetKnowledge } from '@/lib/knowledge/store';
 import { __resetStore as resetFiles } from '@/lib/files/store';
+import { __resetBlobs, getBlob } from '@/lib/files/object-store';
 import { __resetDashboards } from '@/lib/dashboards/store';
 import { __resetBets } from '@/lib/bigbets/store';
 import { __resetStore as resetAgents } from '@/lib/agents/store';
@@ -31,6 +32,7 @@ function resetAll(): void {
   resetData();
   resetKnowledge();
   resetFiles();
+  __resetBlobs();
   __resetDashboards();
   __resetBets();
   resetAgents();
@@ -492,4 +494,71 @@ test('METRICS: promote_metric — creator owner files a request; bad id returns 
   // promote_metric with a non-existent metricId → not_found
   const missing = errorOf(await call(builder, 'promote_metric', { metricId: 'ds_missing.revenue' }));
   assert.ok(missing.code === 'not_found' || missing.code === 'bad_request', `unknown metric refused (got ${missing.code})`);
+});
+
+// ---- FILES binary round-trip: upload_file with base64Content stores REAL bytes ---
+test('FILES binary: upload_file with base64Content stores the real object in the blob store (not a text-only record)', async () => {
+  resetAll();
+
+  // A minimal valid PDF header — enough to prove bytes are stored faithfully.
+  const pdfContent = '%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n';
+  const b64 = Buffer.from(pdfContent, 'utf8').toString('base64');
+
+  const file = payload<{ id: string; owner: string; name: string }>(
+    await call(builder, 'upload_file', {
+      name: 'invoice-2026-01.pdf',
+      base64Content: b64,
+      mimeType: 'application/pdf',
+      folder: 'invoices',
+      tags: ['invoice', 'finance'],
+      description: 'January 2026 supplier invoice',
+      sensitivity: 'confidential',
+    }),
+  );
+  assert.ok(file.id, 'upload_file returns an asset id');
+  assert.equal(file.owner, 'ben', 'runs as the caller identity');
+  assert.equal(file.name, 'invoice-2026-01.pdf');
+
+  // The blob must be present in the object store — NOT a text/metadata-only record.
+  // We verify by calling the store's getFile (via get_file) and checking the object field,
+  // then by directly reading the blob to confirm the bytes are faithful.
+  const view = payload<{ asset: { id: string; name: string }; object: { contentType: string; bytes: number } | null }>(
+    await call(builder, 'get_file', { fileId: file.id }),
+  );
+  assert.ok(view.object !== null, 'upload_file with base64Content must store a real object (object field is not null)');
+  assert.equal(view.object!.contentType, 'application/pdf', 'stored with the correct MIME type');
+  assert.ok(view.object!.bytes > 0, 'stored byte count is non-zero');
+
+  // Read the blob directly from the in-memory backend and verify the content is faithful.
+  const blob = await getBlob(view.object!.key ?? '');
+  assert.ok(blob !== null, 'getBlob returns the stored object');
+  assert.equal(blob!.contentType, 'application/pdf');
+  const roundTripped = blob!.body.toString('utf8');
+  assert.equal(roundTripped, pdfContent, 'round-tripped bytes are byte-for-byte identical to the original');
+});
+
+test('FILES binary: upload_file without base64Content (text-only) has no object in the blob store', async () => {
+  resetAll();
+  const file = payload<{ id: string }>(
+    await call(builder, 'upload_file', {
+      name: 'refund-policy.md',
+      text: 'Refunds are processed within 5 days.',
+      tags: ['policy'],
+      description: 'Customer refund policy',
+    }),
+  );
+  assert.ok(file.id);
+  const view = payload<{ object: null }>(await call(builder, 'get_file', { fileId: file.id }));
+  // A text-only upload has no stored object (the original shape).
+  assert.equal(view.object, null, 'text-only upload has no stored binary object');
+});
+
+test('FILES binary: upload_file with base64Content but missing mimeType is a typed bad_request', async () => {
+  resetAll();
+  const e = errorOf(await call(builder, 'upload_file', {
+    name: 'mystery.bin',
+    base64Content: Buffer.from('hello').toString('base64'),
+    // mimeType omitted — must be a typed bad_request
+  }));
+  assert.equal(e.code, 'bad_request', 'missing mimeType with base64Content must be a typed bad_request');
 });

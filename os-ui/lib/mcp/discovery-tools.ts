@@ -688,6 +688,9 @@ const waveBReadTools: McpTool[] = [
         history: v.history,
         text: body.text,
         textNote: body.note,
+        /** Present when the original bytes were stored (UI or MCP binary upload);
+         *  null for text-only (MCP `upload_file` without `base64Content`) records. */
+        object: v.object ? { key: v.object.key, contentType: v.object.contentType, bytes: v.object.bytes } : null,
       };
     },
   },

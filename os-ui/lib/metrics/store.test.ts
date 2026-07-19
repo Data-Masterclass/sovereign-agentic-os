@@ -75,3 +75,23 @@ test('#91 FAIL-SOFT: listMetrics renders the good metrics even alongside a bad m
   const all = [...groups!.mine, ...groups!.domain, ...groups!.marketplace];
   assert.ok(all.find((m) => m.name === 'revenue' && !m.error), 'the healthy metric still renders');
 });
+
+test('MetricSummary.id is always "${datasetId}.${measureName}" so Monitor/explore can split it', () => {
+  // Regression for the Monitor "Dataset not found" bug: the MetricBuilder used to set
+  // `id = result.measure.name` (just "revenue") on a freshly-defined metric; getMetric
+  // then split on the last dot → datasetId = "revenu" → getDataset threw 404. The id
+  // MUST carry the full "${datasetId}.${measureName}" format.
+  const id = seedRevenueMetric();
+  const groups = listMetrics(amir);
+  const all = [...groups.mine, ...groups.domain, ...groups.marketplace];
+  const rev = all.find((m) => m.name === 'revenue');
+  assert.ok(rev, 'revenue metric is listed');
+  // id must be "$datasetId.$measureName" — NOT bare "revenue".
+  assert.equal(rev!.id, `${id}.revenue`, 'metric id is datasetId.measureName');
+  // Splitting on the last dot must recover the correct dataset id.
+  const lastDot = rev!.id.lastIndexOf('.');
+  assert.equal(rev!.id.slice(0, lastDot), id, 'slice(0, lastDot) yields the dataset id');
+  // getMetric must round-trip cleanly (no "Dataset not found").
+  const rec = getMetric(rev!.id, amir);
+  assert.equal(rec.measure.name, 'revenue');
+});

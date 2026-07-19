@@ -200,3 +200,8 @@ export function clampAllGrants(grants: ContextGrants, cap: ContextAccessCap): Co
 export function grantCount(grants: ContextGrants): number {
   return CONTEXT_KINDS.reduce((n, k) => n + grants[k].length, 0);
 }
+
+/** Grant count for ONE kind — drives a per-kind "N granted" badge on collapsed rows. */
+export function grantCountForKind(grants: ContextGrants, kind: ContextKind): number {
+  return grants[kind]?.length ?? 0;
+}

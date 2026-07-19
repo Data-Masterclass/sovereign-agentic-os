@@ -3,7 +3,7 @@
  */
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import CodePanel from '@/components/CodePanel';
 import AgentChat from '@/components/AgentChat';
@@ -17,15 +17,25 @@ import type { FiledApproval } from '@/lib/governance/approval-notice';
 import { roleAtLeast, type Role as SessionRole } from '@/lib/core/session';
 import StageShell from '@/components/core/StageShell';
 import BuilderModeToggle from '@/components/core/BuilderModeToggle';
-import ContextGrants, { type AvailableItem } from '@/components/core/ContextGrants';
+import StageAssistantChat from '@/components/core/StageAssistantChat';
+import SoftwareContextGrants from './SoftwareContextGrants';
+import DesignBoard from './DesignBoard';
 import type { ViewMode } from '@/lib/core/view-mode';
 import {
   contextAccessCap,
-  emptyContextGrants,
   normalizeContextGrants,
   type ContextGrants as ContextGrantsValue,
   type ContextKind,
 } from '@/lib/core/context-grants';
+import {
+  applyPurposeSuggestion,
+  applyGrantsSuggestion,
+  applyEpicsSuggestion,
+  applyStoriesSuggestion,
+  type SuggestedGrant,
+  type SuggestedEpic,
+  type SuggestedStoriesForEpic,
+} from '@/lib/software/assistant-suggestions';
 import { initialStageState, canEnter, isSatisfied, markDone, type StageState } from '@/lib/core/stages';
 import TeamPanel from '@/app/software/TeamPanel';
 import StageAssistant from './StageAssistant';
@@ -129,7 +139,6 @@ function promoteLabel(v: Visibility): string | null {
   return null;
 }
 
-const rid = (p: string) => `${p}_${Math.random().toString(36).slice(2, 9)}`;
 
 /**
  * The Software guided builder — Define · Design · Build · Preview · Operate on the OS-wide
@@ -247,12 +256,19 @@ export default function SoftwareBuilder({
       });
       const body = await res.json();
       if (!res.ok) setDeployMsg(`✗ ${body.error}`);
-      else if (action === 'preview')
-        setDeployMsg(
-          body.app?.deploy?.previewUrl
-            ? '✓ Preview running — open the app UI above.'
-            : '✓ Preview requested — the in-cluster runner is provisioning; the URL appears once the pod is ready (or stays pending if no cluster is reachable).',
-        );
+      else if (action === 'preview') {
+        if (body.app?.deploy?.previewUrl) {
+          setDeployMsg('✓ Preview running — open the app UI above.');
+        } else if (body.runnerNote) {
+          // Surface the specific runner outcome so the operator knows whether the
+          // pod is provisioning (image build in progress) or failed (RBAC missing,
+          // cluster unreachable, etc.) rather than a generic "pending" blurb.
+          const isFailure = /rejected|forbidden|403|failed|unreachable/i.test(body.runnerNote as string);
+          setDeployMsg(isFailure ? `⚠ Preview provisioning issue: ${body.runnerNote}` : `✓ Preview provisioned — ${body.runnerNote}`);
+        } else {
+          setDeployMsg('✓ Preview requested — the in-cluster runner is provisioning; the URL appears once the pod is ready (or stays pending if no cluster is reachable).');
+        }
+      }
       else if (body.kind === 'review') {
         setDeployMsg('✓ Deploy review filed — approve it in Policies & Approvals.');
         const approval = body.approval as FiledApproval | undefined;
@@ -398,17 +414,16 @@ export default function SoftwareBuilder({
           onState={setStage}
           ariaLabel="Software stages"
           assistant={(st) =>
-            st.id === 'define' ? (
-              <StageAssistant appId={app.id} stage="define" label="Draft the app's purpose and first capabilities." cta="Suggest a purpose" />
-            ) : st.id === 'design' ? (
-              <StageAssistant appId={app.id} stage="design" label="Propose EPICs and user stories from the purpose." cta="Suggest EPICs" />
-            ) : st.id === 'build' ? (
+            // Define + Design own their own StageAssistantChat inside the stage body (so
+            // Apply can wire straight into purpose/grants/epics/stories). The other stages
+            // keep the one-shot explainer here.
+            st.id === 'build' ? (
               <StageAssistant appId={app.id} stage="build" label="Explain a file or what to ask the build chat next." cta="Explain" />
             ) : st.id === 'preview' ? (
               <StageAssistant appId={app.id} stage="preview" label="Read the runner conditions — why isn't the pod ready?" cta="Explain the wait" />
-            ) : (
+            ) : st.id === 'operate' ? (
               <StageAssistant appId={app.id} stage="operate" label="Explain scan findings, justify go-live, or triage the live app." cta="Help" />
-            )
+            ) : null
           }
         >
           {stage.current === 'define' ? (
@@ -422,7 +437,7 @@ export default function SoftwareBuilder({
           ) : null}
 
           {stage.current === 'design' ? (
-            <DesignStage epics={epics} canEdit={canEdit} onSave={(next) => saveDesign({ epics: next })} />
+            <DesignStage appId={app.id} epics={epics} canEdit={canEdit} onSave={(next) => saveDesign({ epics: next })} />
           ) : null}
 
           {stage.current === 'build' ? (
@@ -533,27 +548,26 @@ function DefineStage({
   onSaveGrants: (grants: ContextGrantsValue) => void;
 }) {
   const [purpose, setPurpose] = useState(app.purpose ?? '');
-  useEffect(() => { setPurpose(app.purpose ?? ''); }, [app.purpose]);
+  // When the assistant proposes a purpose, we stage it as a confirmable draft (never a
+  // blind write-through): the box adopts the text, marks itself as a pending suggestion,
+  // and the user still presses "Save purpose".
+  const [suggested, setSuggested] = useState(false);
+  useEffect(() => { setPurpose(app.purpose ?? ''); setSuggested(false); }, [app.purpose]);
   const surfaceLabel = [app.surface?.ui ? 'UI' : '', app.surface?.api ? 'API' : ''].filter(Boolean).join(' + ') || 'inferred on build';
 
   // The context-grant safety ceiling for an app: builders may grant direct writes,
   // everyone else caps at read+propose (writes held for approval).
   const cap = contextAccessCap(canEdit ? 'read-write' : 'read-propose');
 
-  // Lazily load the browsable artifacts per kind for the ContextGrants picker.
-  const [available, setAvailable] = useState<Partial<Record<ContextKind, AvailableItem[]>>>({});
-  const loadKind = useCallback((kind: ContextKind) => {
-    if (available[kind]) return;
-    fetch(`/api/context/available?kind=${kind}`, { cache: 'no-store' })
-      .then(async (res) => {
-        const body = await res.json();
-        if (res.ok) setAvailable((a) => ({ ...a, [kind]: body.items as AvailableItem[] }));
-      })
-      .catch(() => { /* best-effort — the picker shows "none" */ });
-  }, [available]);
-  useEffect(() => { SW_GRANT_KINDS.forEach(loadKind); }, [loadKind]);
-
   const dirty = purpose !== (app.purpose ?? '');
+
+  // Apply an assistant purpose suggestion → editable draft the user confirms.
+  const applyPurpose = (p: string) => {
+    setPurpose(applyPurposeSuggestion(p));
+    setSuggested(true);
+  };
+  // Apply assistant grant suggestions → fold into the current grants (clamped to cap) + persist.
+  const applyGrants = (sg: SuggestedGrant[]) => onSaveGrants(applyGrantsSuggestion(grants, sg, cap));
 
   return (
     <div className="agent-editor" style={{ marginTop: 4 }}>
@@ -570,31 +584,42 @@ function DefineStage({
       </p>
       <textarea
         value={purpose}
-        onChange={(e) => setPurpose(e.target.value)}
+        onChange={(e) => { setPurpose(e.target.value); setSuggested(false); }}
         readOnly={!canEdit}
         rows={3}
         placeholder="e.g. Give the sales team a live view of overdue invoices with one-click reminders."
         style={{ width: '100%' }}
       />
       {canEdit ? (
-        <div className="row" style={{ gap: 8, marginTop: 8 }}>
-          <button className="btn" disabled={!dirty} onClick={() => onSavePurpose(purpose.trim())}>Save purpose</button>
-          {dirty ? <span className="muted" style={{ fontSize: 12 }}>Unsaved changes</span> : null}
+        <div className="row" style={{ gap: 8, marginTop: 8, alignItems: 'center' }}>
+          <button className="btn" disabled={!dirty} onClick={() => { onSavePurpose(purpose.trim()); setSuggested(false); }}>Save purpose</button>
+          {suggested ? <span className="badge">Assistant suggestion — review, then save</span>
+            : dirty ? <span className="muted" style={{ fontSize: 12 }}>Unsaved changes</span> : null}
         </div>
       ) : null}
 
       <div className="section-title">Granted context (no raw credentials)</div>
       <p className="hint" style={{ marginTop: 0 }}>
         Apps consume governed resources — OPA-scoped and run AS you, never raw secrets. Grant the
-        Connections, Data, Knowledge, Files and Metrics this app may use, at Read / Read+propose / Read+write.
+        Connections, Data, Knowledge, Files and Metrics this app may use. Expand a kind to grant at
+        folder or item level, at Read / Read+propose / Read+write.
       </p>
-      <ContextGrants
+      <SoftwareContextGrants
         value={grants}
         onChange={onSaveGrants}
         kinds={SW_GRANT_KINDS}
-        available={available}
         cap={cap}
         canEdit={canEdit}
+      />
+
+      {/* The real, governed Define assistant — chat + apply-able suggestions. */}
+      <StageAssistantChat
+        appId={app.id}
+        stage="define"
+        intro="Improve the purpose and suggest which governed context to grant."
+        starters={['Sharpen my purpose', 'What context should this app be granted?']}
+        onApplyPurpose={canEdit ? applyPurpose : undefined}
+        onApplyGrants={canEdit ? applyGrants : undefined}
       />
     </div>
   );
@@ -602,133 +627,39 @@ function DefineStage({
 
 /* ─────────────────────────── Design ─────────────────────────── */
 
-function emptyEpic(): Epic {
-  return { id: rid('epic'), title: '', description: '', requirements: { technical: '', ux: '', governance: '' }, stories: [] };
-}
-function emptyStory(): Story {
-  return { id: rid('story'), title: '', asA: '', iWant: '', soThat: '', acceptance: '' };
-}
-
 /**
- * The Design stage — an EPIC + user-story editor persisted on the app record. Add /
- * edit / remove EPICs and their stories; the stage completes at ≥1 epic with ≥1 story.
- * Git/Jira push is DEFERRED (a disabled affordance marks where it will hook in).
+ * The Design stage — the JIRA-like-but-simpler EPIC + user-story board
+ * (components/software/DesignBoard.tsx), plus the governed Design assistant chat whose
+ * suggestions Apply straight into the epics: `suggestedEpics` CREATE epics,
+ * `suggestedStories` ADD stories under existing epics — both persisted through the SAME
+ * governed `onSave` (→ patchAppDesign). The board persists the whole array on Save.
+ * The assistant only suggests; Apply is the user-confirmed, governed write.
  */
 function DesignStage({
-  epics, canEdit, onSave,
+  appId, epics, canEdit, onSave,
 }: {
+  appId: string;
   epics: Epic[];
   canEdit: boolean;
   onSave: (epics: Epic[]) => void;
 }) {
-  const [draft, setDraft] = useState<Epic[]>(epics);
-  useEffect(() => { setDraft(epics); }, [epics]);
-
-  const dirty = JSON.stringify(draft) !== JSON.stringify(epics);
-
-  const patchEpic = (id: string, fn: (e: Epic) => Epic) =>
-    setDraft((d) => d.map((e) => (e.id === id ? fn(e) : e)));
+  // Apply suggested epics → create them + persist immediately (governed path).
+  const applyEpics = (sug: SuggestedEpic[]) => onSave(applyEpicsSuggestion(epics, sug));
+  // Apply suggested stories → add under the referenced existing epics + persist.
+  const applyStories = (groups: SuggestedStoriesForEpic[]) => onSave(applyStoriesSuggestion(epics, groups));
 
   return (
     <div style={{ marginTop: 4 }}>
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-        <p className="hint" style={{ margin: 0 }}>
-          Shape the work as EPICs and user stories. Each EPIC carries technical, UX and governance
-          requirements; each story is “As a … I want … so that …” with an acceptance criterion.
-        </p>
-        {canEdit ? <button className="btn ghost sm" onClick={() => setDraft((d) => [...d, emptyEpic()])}>+ Add EPIC</button> : null}
-      </div>
+      <DesignBoard epics={epics} canEdit={canEdit} onSave={onSave} />
 
-      {draft.length === 0 ? (
-        <div className="muted" style={{ fontSize: 13, marginTop: 12 }}>No EPICs yet. Add one to start designing.</div>
-      ) : (
-        <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {draft.map((epic) => (
-            <div key={epic.id} className="grant-block">
-              <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-                <input
-                  type="text" value={epic.title} readOnly={!canEdit}
-                  placeholder="EPIC title" style={{ flex: 1, fontWeight: 600 }}
-                  onChange={(e) => patchEpic(epic.id, (x) => ({ ...x, title: e.target.value }))}
-                />
-                {canEdit ? (
-                  <button className="icon-btn danger" title="Remove EPIC" onClick={() => setDraft((d) => d.filter((x) => x.id !== epic.id))}>✕</button>
-                ) : null}
-              </div>
-              <textarea
-                value={epic.description} readOnly={!canEdit} rows={2}
-                placeholder="What this EPIC delivers"
-                style={{ width: '100%', marginTop: 8 }}
-                onChange={(e) => patchEpic(epic.id, (x) => ({ ...x, description: e.target.value }))}
-              />
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8, marginTop: 8 }}>
-                {(['technical', 'ux', 'governance'] as const).map((k) => (
-                  <div key={k}>
-                    <label className="comp-label" style={{ textTransform: 'capitalize' }}>{k} requirements</label>
-                    <textarea
-                      value={epic.requirements[k]} readOnly={!canEdit} rows={2}
-                      style={{ width: '100%' }}
-                      onChange={(e) => patchEpic(epic.id, (x) => ({ ...x, requirements: { ...x.requirements, [k]: e.target.value } }))}
-                    />
-                  </div>
-                ))}
-              </div>
-
-              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
-                <div className="comp-label" style={{ margin: 0 }}>User stories</div>
-                {canEdit ? (
-                  <button className="btn ghost sm" onClick={() => patchEpic(epic.id, (x) => ({ ...x, stories: [...x.stories, emptyStory()] }))}>+ Add story</button>
-                ) : null}
-              </div>
-              {epic.stories.length === 0 ? (
-                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>No stories yet.</div>
-              ) : (
-                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {epic.stories.map((story) => (
-                    <div key={story.id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 12px' }}>
-                      <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-                        <input
-                          type="text" value={story.title} readOnly={!canEdit}
-                          placeholder="Story title" style={{ flex: 1 }}
-                          onChange={(e) => patchEpic(epic.id, (x) => ({ ...x, stories: x.stories.map((s) => s.id === story.id ? { ...s, title: e.target.value } : s) }))}
-                        />
-                        {canEdit ? (
-                          <button className="icon-btn danger" title="Remove story" onClick={() => patchEpic(epic.id, (x) => ({ ...x, stories: x.stories.filter((s) => s.id !== story.id) }))}>✕</button>
-                        ) : null}
-                      </div>
-                      <div className="row" style={{ gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
-                        <span className="muted" style={{ fontSize: 12 }}>As a</span>
-                        <input type="text" value={story.asA} readOnly={!canEdit} placeholder="role" style={{ flex: 1, minWidth: 100 }}
-                          onChange={(e) => patchEpic(epic.id, (x) => ({ ...x, stories: x.stories.map((s) => s.id === story.id ? { ...s, asA: e.target.value } : s) }))} />
-                        <span className="muted" style={{ fontSize: 12 }}>I want</span>
-                        <input type="text" value={story.iWant} readOnly={!canEdit} placeholder="capability" style={{ flex: 1, minWidth: 120 }}
-                          onChange={(e) => patchEpic(epic.id, (x) => ({ ...x, stories: x.stories.map((s) => s.id === story.id ? { ...s, iWant: e.target.value } : s) }))} />
-                        <span className="muted" style={{ fontSize: 12 }}>so that</span>
-                        <input type="text" value={story.soThat} readOnly={!canEdit} placeholder="benefit" style={{ flex: 1, minWidth: 120 }}
-                          onChange={(e) => patchEpic(epic.id, (x) => ({ ...x, stories: x.stories.map((s) => s.id === story.id ? { ...s, soThat: e.target.value } : s) }))} />
-                      </div>
-                      <input
-                        type="text" value={story.acceptance} readOnly={!canEdit}
-                        placeholder="Acceptance criterion" style={{ width: '100%', marginTop: 8 }}
-                        onChange={(e) => patchEpic(epic.id, (x) => ({ ...x, stories: x.stories.map((s) => s.id === story.id ? { ...s, acceptance: e.target.value } : s) }))}
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="row" style={{ gap: 8, marginTop: 14, alignItems: 'center' }}>
-        {canEdit ? (
-          <button className="btn" disabled={!dirty} onClick={() => onSave(draft)}>Save design</button>
-        ) : null}
-        {dirty ? <span className="muted" style={{ fontSize: 12 }}>Unsaved changes</span> : null}
-        {/* DEFERRED (Wave 2): push these EPICs/stories to Git/Jira. */}
-        <button className="btn ghost sm" disabled title="Git/Jira push is coming in a later wave">Push to Git/Jira (soon)</button>
-      </div>
+      <StageAssistantChat
+        appId={appId}
+        stage="design"
+        intro="Propose EPICs and user stories from the purpose — Apply creates them."
+        starters={['Suggest EPICs for this app', 'Add user stories to my EPICs']}
+        onApplyEpics={canEdit ? applyEpics : undefined}
+        onApplyStories={canEdit ? applyStories : undefined}
+      />
     </div>
   );
 }

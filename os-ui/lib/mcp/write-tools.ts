@@ -80,11 +80,14 @@ import { indexWorkflow, indexDomain, purgeKnowledgeUnits } from '@/lib/knowledge
 import {
   createFile,
   setDocs as setFileDocs,
+  attachObject,
+  objectKeyForAsset,
   requestPromotion as requestFilePromotion,
   applyApprovedFilePromotion,
   type FilePromotionRequest,
 } from '@/lib/files/store';
 import { reindexFile } from '@/lib/files/pipeline-server';
+import { putBlob } from '@/lib/files/object-store';
 import type { Sensitivity } from '@/lib/files/asset-schema';
 
 import { saveDashboard } from '@/lib/dashboards/store';
@@ -906,38 +909,117 @@ export const fileWriteTools: McpTool[] = [
     tab: 'files',
     minRole: 'creator',
     description:
-      'Upload a governed file (private object-store file at v1) with optional extracted `text` (indexed for search), folder, tags, description and sensitivity. Same path as the Files tab upload. `restricted` sensitivity is stored-but-not-indexed. A `description` + ≥1 tag make it eligible for `promote_file`.',
+      'Upload a governed file (private object-store file at v1) into the Files tab — the SAME governed path as the UI upload. ' +
+      'For BINARY files (PDFs, images, Office docs, etc.) provide the raw bytes as `base64Content` (standard base64) and set `mimeType` (e.g. "application/pdf"). ' +
+      'The decoded bytes are stored in the governed object store so Download returns the REAL file byte-for-byte. ' +
+      'For plain-text files (Markdown, CSV, JSON, TXT) you may omit `base64Content` and pass the content as `text` instead; it is indexed for search. ' +
+      'Do NOT pass a markdown description of a binary file as `text` and omit the bytes — that produces a misleading text-only record. ' +
+      'MCP in-band limit: ~4 MB of base64 (≈3 MB decoded). Larger files must be uploaded through the Files tab UI. ' +
+      '`restricted` sensitivity is stored-but-not-indexed. A `description` + ≥1 tag make the file eligible for `promote_file`.',
     inputSchema: {
       type: 'object',
       properties: {
-        name: { type: 'string', description: 'File name, e.g. "refund-policy.md".' },
+        name: { type: 'string', description: 'File name including extension, e.g. "invoice-2026-01.pdf".' },
+        base64Content: {
+          type: 'string',
+          description:
+            'The file\'s raw bytes encoded as standard base64. Required for binary files (PDF, PNG, DOCX, XLSX, …). ' +
+            'Must be paired with `mimeType`. Omit for plain-text files where `text` carries the content.',
+        },
+        mimeType: {
+          type: 'string',
+          description:
+            'MIME type of the file, e.g. "application/pdf", "image/png", "application/vnd.openxmlformats-officedocument.wordprocessingml.document". ' +
+            'Required when `base64Content` is provided.',
+        },
         folder: { type: 'string', description: 'Optional folder path.' },
-        text: { type: 'string', description: 'Extracted/preview text (chunked + embedded for search).' },
+        text: {
+          type: 'string',
+          description:
+            'Extracted/preview text for search indexing. For plain-text files pass the full content here. ' +
+            'For binary files this is OPTIONAL supplemental text (e.g. a pre-extracted transcript or summary) — do NOT use it as a substitute for the real bytes.',
+        },
         tags: { type: 'array', items: { type: 'string' }, description: 'Optional tags (≥1 needed to promote).' },
         description: { type: 'string', description: 'What this file is (needed to promote it).' },
         sensitivity: { type: 'string', enum: ['public', 'internal', 'confidential', 'restricted'], description: 'Governs indexing (restricted ⇒ not indexed).' },
         domain: { type: 'string', description: 'One of YOUR domains; defaults to your first.' },
       },
       required: ['name'],
-      examples: [{ name: 'refund-policy.md', folder: 'policies', text: 'Refunds are processed within 5 days.', tags: ['policy'], description: 'Customer refund policy', sensitivity: 'internal' }],
+      examples: [
+        {
+          name: 'invoice-2026-01.pdf',
+          base64Content: 'JVBERi0xLjQK…',
+          mimeType: 'application/pdf',
+          folder: 'invoices',
+          tags: ['invoice', 'finance'],
+          description: 'January 2026 supplier invoice',
+          sensitivity: 'confidential',
+        },
+        {
+          name: 'refund-policy.md',
+          text: 'Refunds are processed within 5 days.',
+          folder: 'policies',
+          tags: ['policy'],
+          description: 'Customer refund policy',
+          sensitivity: 'internal',
+        },
+      ],
     },
     call: async (user, args) => {
       const name = str(args.name).trim();
       if (!name) fail('upload_file needs a `name`', 400);
+
+      // Validate + decode binary content when provided.
+      const b64 = typeof args.base64Content === 'string' ? args.base64Content : '';
+      const mimeType = typeof args.mimeType === 'string' ? args.mimeType.trim() : '';
+      if (b64 && !mimeType) fail('upload_file: `mimeType` is required when `base64Content` is provided', 400);
+
+      let binaryBytes: Buffer | null = null;
+      if (b64) {
+        // Decode base64 → raw bytes; fail clearly on corrupt input (never silently store garbage).
+        try {
+          binaryBytes = Buffer.from(b64, 'base64');
+        } catch {
+          fail('upload_file: `base64Content` is not valid base64', 400);
+        }
+        // ~4 MB base64 ≈ 3 MB decoded; match the ingest cap.
+        if (binaryBytes.length > INGEST_MAX_BYTES) {
+          fail(
+            `upload_file: decoded content is ${(binaryBytes.length / 1048576).toFixed(1)} MB — the MCP in-band limit is ${INGEST_MAX_BYTES / 1048576} MB. ` +
+              'Upload larger files through the Files tab UI.',
+            400,
+          );
+        }
+      }
+
       const p = P(user);
       const tags = strArr(args.tags);
+      const textArg = typeof args.text === 'string' ? args.text : undefined;
+
       const asset = createFile(p, {
         name,
         folder: str(args.folder) || undefined,
-        text: typeof args.text === 'string' ? args.text : undefined,
+        text: textArg,
+        bytes: binaryBytes ? binaryBytes.length : undefined,
         tags,
         sensitivity: (str(args.sensitivity) as Sensitivity) || undefined,
         domain: str(args.domain) || undefined,
       });
+
+      // Store the original bytes in the governed object store so Download returns the
+      // REAL file (identical path to the UI multipart upload: putBlob + attachObject).
+      if (binaryBytes) {
+        const key = objectKeyForAsset(asset);
+        if (key) {
+          await putBlob(key, binaryBytes, mimeType);
+          attachObject(asset.id, p, { contentType: mimeType, bytes: binaryBytes.length });
+        }
+      }
+
       const description = str(args.description);
       const documented = description ? setFileDocs(asset.id, p, { description, tags }) : asset;
       try {
-        await reindexFile(documented, str(args.text));
+        await reindexFile(documented, textArg ?? '');
       } catch {
         /* indexing is best-effort; the upload already succeeded */
       }

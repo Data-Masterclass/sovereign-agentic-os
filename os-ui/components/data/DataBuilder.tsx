@@ -191,15 +191,16 @@ function CodeDrawer({ datasetId }: { datasetId: string }) {
 }
 
 /**
- * The Data guided builder — Ingest · Define · Harmonize · Validate · Use · Publish on the
- * OS-wide staged primitive (lib/core/stages.ts + components/core/StageShell.tsx; the Agents
- * SimpleBuilder is the reference adoption, Dashboards the closest sibling). This REPLACES the
- * old 1114-line single-scroll DatasetDetail: every one of its bodies (row preview, docs +
- * quality editor, BronzePanel, RefinePanel, GoldJoinPanel, ExplorePanel, MetricsPanel, the
- * sharing/promote block, LineagePanel) is re-hosted UNCHANGED under the stage it belongs to —
- * nothing is rewritten, only re-arranged behind the stepper in medallion order. Opening a
- * dataset lands it at the right stage on REAL state: a raw dataset opens at Ingest, a Bronze
- * one at Define, a Silver one at Harmonize, a materialized one at Use.
+ * The Data guided builder — Ingest · Define · Harmonize · Validate · Publish (5 stages) on
+ * the OS-wide staged primitive (lib/core/stages.ts + components/core/StageShell.tsx; the
+ * Agents SimpleBuilder is the reference adoption, Dashboards the closest sibling). This
+ * REPLACES the old 1114-line single-scroll DatasetDetail: every one of its bodies (row
+ * preview, docs + quality editor, BronzePanel, RefinePanel, GoldJoinPanel, ExplorePanel,
+ * MetricsPanel, the sharing/promote block, LineagePanel) is re-hosted UNCHANGED under the
+ * stage it belongs to — nothing is rewritten, only re-arranged behind the stepper in
+ * medallion order. Opening a dataset lands it at the right stage on REAL state: a raw
+ * dataset opens at Ingest, a Bronze one at Define, a Silver one at Harmonize, a materialized
+ * one at Validate (the natural "check quality then query" entry).
  */
 export default function DataBuilder({
   datasetId,
@@ -475,13 +476,13 @@ export default function DataBuilder({
 
   // Open on the first REACHABLE stage from real state, nothing pre-marked: a fresh dataset
   // opens at Ingest; a Bronze-only one at Define; a Silver-only one at Harmonize; a
-  // materialized one at Use (the natural "I want to query it" entry).
+  // materialized one at Validate (the natural "check quality then query" entry).
   const [stage, setStage] = useState<StageState<DataStageId>>(() => initialStageState(DATA_STAGES));
   const [landed, setLanded] = useState(false);
   useEffect(() => {
     if (landed || !dataset) return;
     const start: DataStageId =
-      ctx.materialized ? 'use'
+      ctx.materialized ? 'validate'
       : ctx.silverBuilt ? 'harmonize'
       : ctx.bronzeBuilt ? 'define'
       : 'ingest';
@@ -600,7 +601,7 @@ export default function DataBuilder({
               label="Suggest governed measures to define before you promote." cta="Suggest measures"
               payload={() => ({ name: dataset.name, columns: colNames, measures: dataset.measures.map((m) => m.name) })}
             />
-          ) : null /* Use: Talk to Data is its own governed NL→SQL surface, not the assistant slot */
+          ) : null /* Talk to Data (in Publish) is its own governed NL→SQL surface, not the assistant slot */
         }
       >
         {/* ─────────────── Ingest ─────────────── */}
@@ -825,20 +826,20 @@ export default function DataBuilder({
                 {checksErr ? <div className="error" style={{ marginTop: 8 }}>{checksErr}</div> : null}
               </div>
             ) : null}
+
+            {/* Lineage — refinement + consumption chain, moved here from the old Use stage. */}
+            <div className="section-title" style={{ marginTop: 24 }}>Lineage</div>
+            <LineagePanel datasetId={dataset.id} />
           </div>
         ) : null}
 
-        {/* ─────────────── Use ─────────────── */}
-        {stage.current === 'use' ? (
+        {/* ─────────────── Publish (Metrics & Usage) ─────────────── */}
+        {stage.current === 'publish' ? (
           <div>
-            {/* Talk to Data — governed NL→SQL over what the viewer can see. */}
+            {/* Talk to Data — governed NL→SQL over what the viewer can see (usage before promote). */}
             <div {...anchorAttr(ANCHORS.data.query)}>
               <TalkTo tab="data" title={talk.title} blurb={talk.blurb} examples={talk.examples} />
             </div>
-
-            {/* Lineage — refinement + consumption chain, from the single source. */}
-            <div className="section-title" style={{ marginTop: 24 }}>Lineage</div>
-            <LineagePanel datasetId={dataset.id} />
 
             {/* Doorway — jump to Metrics or Dashboards pre-scoped to this dataset. */}
             {/* TODO: pass ?dataset=<id> once Metrics/Dashboards pages read that param to pre-scope. */}
@@ -854,12 +855,7 @@ export default function DataBuilder({
                 Build a dashboard →
               </a>
             </div>
-          </div>
-        ) : null}
 
-        {/* ─────────────── Publish ─────────────── */}
-        {stage.current === 'publish' ? (
-          <div>
             {/* Metrics — defined on the governed Gold asset (Cube handover). */}
             {dataset.measures.length > 0 || (dataset.tier !== 'dataset' && dataset.versions.gold.built) ? (
               <>
