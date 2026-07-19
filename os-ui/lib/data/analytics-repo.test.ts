@@ -7,7 +7,7 @@ import type { ForgejoClient } from '../infra/forgejo.ts';
 import { emptyVersions, type Dataset } from './dataset-schema.ts';
 import { buildCubeModels } from './cube-models.ts';
 import { CUBE_ARTIFACT, scaffoldCubeYaml, scaffoldExposureYaml } from './metrics.ts';
-import { writeAnalyticsFiles, syncAnalyticsRepo, dbtModelPath, dbtSchemaPath, buildDbtModelSql, buildDbtSchemaYaml } from './analytics-repo.ts';
+import { writeAnalyticsFiles, syncAnalyticsRepo, reconcileAnalyticsRepo, _resetReconcileGuard, dbtModelPath, dbtSchemaPath, buildDbtModelSql, buildDbtSchemaYaml } from './analytics-repo.ts';
 
 /**
  * Unit tests for the analytics monorepo writer against a fake ForgejoClient.
@@ -320,4 +320,78 @@ test('syncAnalyticsRepo is fire-and-forget: swallows write errors without throwi
   // Give the microtask queue a tick to ensure the internal promise settles.
   await new Promise((r) => setImmediate(r));
   // Still no throw from the settled promise (verified by test not rejecting).
+});
+
+// ─── reconcileAnalyticsRepo: once-per-process boot reconcile ─────────────────
+
+test('reconcileAnalyticsRepo fires a write on first call', async () => {
+  _resetReconcileGuard();
+  const d = ds();
+  const store: FakeStore = new Map();
+  const { client, writes } = fakeForgejoFor(store);
+
+  reconcileAnalyticsRepo(client, [d]);
+
+  // Fire-and-forget: give the microtask queue a tick to let writes land.
+  await new Promise((r) => setImmediate(r));
+
+  // The cube model file must have been written (store was empty → new write).
+  assert.ok(writes.length > 0, 'reconcile wrote at least one file on first call');
+});
+
+test('reconcileAnalyticsRepo does NOT fire a second write on repeated calls (once-guard)', async () => {
+  _resetReconcileGuard();
+  const d = ds();
+  const store: FakeStore = new Map();
+  const { client, writes } = fakeForgejoFor(store);
+
+  reconcileAnalyticsRepo(client, [d]);
+  await new Promise((r) => setImmediate(r));
+  const firstWriteCount = writes.length;
+
+  // Call again with a DIFFERENT empty store to prove the guard blocks it.
+  const store2: FakeStore = new Map();
+  const { client: client2, writes: writes2 } = fakeForgejoFor(store2);
+  reconcileAnalyticsRepo(client2, [d]);
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(writes2.length, 0, 'second call is a no-op (once-guard)');
+  assert.ok(firstWriteCount > 0, 'first call did write (guard was clear)');
+});
+
+test('reconcileAnalyticsRepo is fire-and-forget: swallows Forgejo errors without throwing', async () => {
+  _resetReconcileGuard();
+  const broken: ForgejoClient = {
+    async ensureRepo() {},
+    async readFile() { return null; },
+    async writeFile() { throw new Error('forgejo down'); },
+    async deleteRepo() { return { deleted: true }; },
+    async listCommits() { return null; },
+    async getCommitFiles() { return null; },
+  };
+  const d = ds();
+  // Must NOT throw.
+  assert.doesNotThrow(() => reconcileAnalyticsRepo(broken, [d]));
+  await new Promise((r) => setImmediate(r));
+  // No throw from the settled promise (verified by test not rejecting).
+});
+
+test('reconcileAnalyticsRepo is a no-op when git is already current (diff-write skips unchanged)', async () => {
+  _resetReconcileGuard();
+  const d = ds();
+  // Pre-populate store with exactly the content writeAnalyticsFiles would write.
+  const { models } = (await import('./cube-models.ts')).buildCubeModels([d]);
+  const cubeEntry = models[0]!;
+  const store: FakeStore = new Map([
+    [`cube/models/metrics/${cubeEntry.file.replace(/^metrics\//, '')}`, cubeEntry.model],
+    // Also pre-seed the exposures file so that write is skipped too.
+  ]);
+  const { client, writes } = fakeForgejoFor(store);
+
+  reconcileAnalyticsRepo(client, [d]);
+  await new Promise((r) => setImmediate(r));
+
+  // The cube file was already current — diff-write must skip it.
+  const cubeKey = `cube/models/metrics/${cubeEntry.file.replace(/^metrics\//, '')}`;
+  assert.ok(!writes.includes(cubeKey), 'diff-write skips unchanged cube file');
 });

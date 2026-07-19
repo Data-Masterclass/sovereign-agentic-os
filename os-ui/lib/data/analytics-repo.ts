@@ -223,3 +223,39 @@ export function syncAnalyticsRepo(
     console.error('[analytics-repo] sync error:', err instanceof Error ? err.message : String(err));
   });
 }
+
+// ─── Boot-time reconcile (once per process) ───────────────────────────────────
+
+/**
+ * Module-level guard: the reconcile runs AT MOST ONCE per os-ui process.
+ * The guard is NOT reset on hot-reload in dev (module identity is stable
+ * across HMR in the Node.js runtime). Call `_resetReconcileGuard()` in tests.
+ */
+let _reconciled = false;
+
+/**
+ * One-shot boot reconcile. Call this at process start (via `instrumentation.ts`
+ * `register()`) to backfill any governed datasets that are missing from the
+ * analytics git repo. No-op when:
+ *   - already called this process (`_reconciled` guard)
+ *   - Forgejo is down (errors swallowed, mirrors syncAnalyticsRepo discipline)
+ *   - git is current (writeAnalyticsFiles is diff-only, no write when unchanged)
+ *
+ * The config-gate (FORGEJO_URL set?) lives in the instrumentation.ts caller so
+ * this function stays pure and injectable in tests. An operator who wants an
+ * IMMEDIATE reconcile without waiting for a restart can POST
+ * /api/admin/analytics/backfill — that endpoint awaits the result and reports it.
+ */
+export function reconcileAnalyticsRepo(
+  forgejo: ForgejoClient,
+  datasets: Dataset[],
+): void {
+  if (_reconciled) return;
+  _reconciled = true;
+  syncAnalyticsRepo(forgejo, datasets, 'system-boot');
+}
+
+/** Reset the once-per-process guard. Test-only — never call in production. */
+export function _resetReconcileGuard(): void {
+  _reconciled = false;
+}
