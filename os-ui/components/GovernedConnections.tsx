@@ -21,6 +21,7 @@ import { WarehouseBrowser } from '@/components/data/WarehouseImportPanel';
 import ConnectorWizard, { type WizardStart } from '@/components/connections/ConnectorWizard';
 import InstallationGuide from '@/components/connections/InstallationGuide';
 import { installGuideFor, type InstallGuide } from '@/lib/connections/install-guides';
+import { STACKS, vendorStack, warehousePlatformStack, type StackId } from '@/lib/connections/connector-stacks';
 
 /**
  * Governed Connections surface — ONE scroll, no sub-tabs.
@@ -325,31 +326,7 @@ function GovernedConnectionsInner() {
         // A gallery card. `guideKey` resolves its Installation Guide (a warehouse card
         // uses its provider platform; a template card uses its template key). `start`
         // is how Connect opens the shared wizard (a warehouse card pins the platform).
-        type Card = { key: string; guideKey: string; label: string; meta: string; blurb?: string; category: string; start: WizardStart };
-
-        // Category taxonomy — maps template keys and warehouse platforms to display categories.
-        // Warehouse platforms → Data warehouses; operational databases → Operational databases.
-        // New connectors (e.g. postgres/mysql/sqlserver/mongodb from the DB agent) are derived
-        // by provider name below so they group correctly without touching warehouse-provider files.
-        const TEMPLATE_CATEGORY: Record<string, string> = {
-          'gdrive':        'Docs & Knowledge',
-          'onedrive':      'Docs & Knowledge',
-          'notion-mcp':    'Docs & Knowledge',
-          'airflow':       'Orchestration',
-          'om-catalog':    'Catalog',
-          'salesforce-api':'Enterprise apps',
-          'generic-mcp':   'LLM providers',
-          'generic-api':   'Enterprise apps',
-          'database':      'Operational databases',
-          'warehouse':     'Data warehouses',
-        };
-        const WAREHOUSE_PLATFORM_CATEGORY: Record<string, string> = {
-          'glue':             'Data warehouses',
-          'snowflake':        'Data warehouses',
-          'bigquery':         'Data warehouses',
-          'databricks-delta': 'Data warehouses',
-          'fabric':           'Data warehouses',
-        };
+        type Card = { key: string; guideKey: string; label: string; meta: string; blurb?: string; stackId: StackId; start: WizardStart };
 
         // Dynamic: one card per user-facing template the API returned…
         const cards: Card[] = data.templates.map((t) => ({
@@ -357,7 +334,7 @@ function GovernedConnectionsInner() {
           guideKey: t.key,
           label: t.label,
           meta: `${t.type} · ${t.auth === 'oauth' ? 'personal OAuth' : 'service credentials'}`,
-          category: TEMPLATE_CATEGORY[t.key] ?? t.type,
+          stackId: vendorStack(t.key),
           start: { mode: 'type', template: t.key },
         }));
 
@@ -368,16 +345,13 @@ function GovernedConnectionsInner() {
           for (const p of warehouseMeta.providers) {
             const caps = [p.capabilities.federate ? 'federate' : null, p.capabilities.import ? 'import' : null]
               .filter(Boolean).join(' · ');
-            // Derive category: known platforms → Data warehouses; anything db-like → Operational databases.
-            const cat = WAREHOUSE_PLATFORM_CATEGORY[p.platform]
-              ?? (/postgres|mysql|sqlserver|mongodb|mongo/i.test(p.platform) ? 'Operational databases' : 'Data warehouses');
             cards.push({
               key: `warehouse:${p.platform}`,
               guideKey: p.platform,
               label: p.label,
               meta: `Warehouse · federated Trino catalog${caps ? ` · ${caps}` : ''}`,
               blurb: 'Federate this lakehouse as one governed catalog — query live under OPA, then import tables as owned products.',
-              category: cat,
+              stackId: warehousePlatformStack(p.platform),
               start: { mode: 'type', template: 'warehouse', presetPlatform: p.platform },
             });
           }
@@ -386,42 +360,25 @@ function GovernedConnectionsInner() {
         if (cards.length === 0) return <div className="stub-page">No connector types available on this deployment.</div>;
         const canOpen = canCreate || canCreatePersonal;
 
-        // Filter by search query (name or category, case-insensitive).
+        // Filter by search query (name or stack label, case-insensitive).
         const q = connSearch.trim().toLowerCase();
         const filtered = q
-          ? cards.filter((c) => c.label.toLowerCase().includes(q) || c.category.toLowerCase().includes(q))
+          ? cards.filter((c) => {
+              const stackLabel = STACKS.find((s) => s.id === c.stackId)?.label ?? '';
+              return c.label.toLowerCase().includes(q) || stackLabel.toLowerCase().includes(q);
+            })
           : cards;
 
-        // Group filtered cards by category, preserving a consistent category order.
-        const CATEGORY_ORDER = [
-          'Docs & Knowledge',
-          'Messaging',
-          'Calendar',
-          'Code & DevOps',
-          'Operational databases',
-          'Data warehouses',
-          'Data ingest',
-          'Enterprise apps',
-          'Orchestration',
-          'Catalog',
-          'Observability',
-          'LLM providers',
-        ];
-        const grouped = new Map<string, Card[]>();
+        // Group filtered cards by vendor stack, preserving STACKS order.
+        // Empty stacks are omitted — search can shrink the visible set.
+        const grouped = new Map<StackId, Card[]>();
         for (const c of filtered) {
-          const list = grouped.get(c.category) ?? [];
+          const list = grouped.get(c.stackId) ?? [];
           list.push(c);
-          grouped.set(c.category, list);
+          grouped.set(c.stackId, list);
         }
-        // Sort categories: known order first, unknowns appended alphabetically.
-        const sortedCategories = [...grouped.keys()].sort((a, b) => {
-          const ia = CATEGORY_ORDER.indexOf(a);
-          const ib = CATEGORY_ORDER.indexOf(b);
-          if (ia !== -1 && ib !== -1) return ia - ib;
-          if (ia !== -1) return -1;
-          if (ib !== -1) return 1;
-          return a.localeCompare(b);
-        });
+        // Iterate in the canonical STACKS order; skip any that are empty after filtering.
+        const visibleStacks = STACKS.filter((s) => (grouped.get(s.id)?.length ?? 0) > 0);
 
         return (
           <>
@@ -431,7 +388,7 @@ function GovernedConnectionsInner() {
                 type="search"
                 value={connSearch}
                 onChange={(e) => setConnSearch(e.target.value)}
-                placeholder="Search connectors by name or category…"
+                placeholder="Search connectors by name or vendor…"
                 style={{ width: '100%', maxWidth: 400 }}
               />
             </div>
@@ -439,17 +396,17 @@ function GovernedConnectionsInner() {
             {filtered.length === 0 ? (
               <div className="stub-page">No connectors match &ldquo;{connSearch}&rdquo;.</div>
             ) : (
-              sortedCategories.map((cat) => {
-                const group = grouped.get(cat)!;
-                const isOpen = !collapsedCategories.has(cat);
+              visibleStacks.map((stack) => {
+                const group = grouped.get(stack.id)!;
+                const isOpen = !collapsedCategories.has(stack.id);
                 return (
-                  <div key={cat} style={{ marginBottom: 20 }}>
-                    {/* Group header */}
+                  <div key={stack.id} style={{ marginBottom: 24 }}>
+                    {/* Stack header — accent dot + label + count + rule */}
                     <button
                       type="button"
                       onClick={() => setCollapsedCategories((prev) => {
                         const next = new Set(prev);
-                        if (next.has(cat)) next.delete(cat); else next.add(cat);
+                        if (next.has(stack.id)) next.delete(stack.id); else next.add(stack.id);
                         return next;
                       })}
                       style={{
@@ -458,10 +415,22 @@ function GovernedConnectionsInner() {
                         display: 'flex',
                         alignItems: 'center',
                         gap: 8,
-                        marginBottom: isOpen ? 10 : 0,
+                        marginBottom: isOpen ? 12 : 0,
                         width: '100%',
                       }}
                     >
+                      {/* Brand accent dot — the only place colour appears */}
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          background: stack.accent,
+                          flexShrink: 0,
+                          opacity: 0.85,
+                        }}
+                      />
                       <span style={{
                         fontFamily: 'var(--font-mono, monospace)',
                         fontSize: 10,
@@ -470,19 +439,26 @@ function GovernedConnectionsInner() {
                         color: 'var(--text-faint)',
                         userSelect: 'none',
                       }}>
-                        {isOpen ? '▾' : '▸'} {cat}
+                        {isOpen ? '▾' : '▸'} {stack.label}
                       </span>
                       <span className="badge muted" style={{ fontSize: 10 }}>{group.length}</span>
                       <span style={{ flex: 1, height: 1, background: 'var(--border)', marginLeft: 4 }} />
                     </button>
 
-                    {/* Cards grid — hidden when collapsed */}
+                    {/* Cards grid — each card gets a subtle accent left-border */}
                     {isOpen ? (
                       <div className="grid">
                         {group.map((c) => {
                           const g = installGuideFor(c.guideKey);
                           return (
-                            <div className="card" key={c.key}>
+                            <div
+                              className="card"
+                              key={c.key}
+                              style={{
+                                borderLeft: `3px solid ${stack.accent}`,
+                                paddingLeft: 14,
+                              }}
+                            >
                               <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
                                 <h3 style={{ margin: 0 }}>{c.label}</h3>
                                 <span className="badge ok">available</span>

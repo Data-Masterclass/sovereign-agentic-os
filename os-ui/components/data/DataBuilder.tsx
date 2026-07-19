@@ -191,15 +191,15 @@ function CodeDrawer({ datasetId }: { datasetId: string }) {
 }
 
 /**
- * The Data guided builder — Define · Ingest · Refine · Publish · Use on the OS-wide staged
- * primitive (lib/core/stages.ts + components/core/StageShell.tsx; the Agents SimpleBuilder is
- * the reference adoption, Dashboards the closest sibling). This REPLACES the old 1114-line
- * single-scroll DatasetDetail: every one of its bodies (row preview, docs + quality editor,
- * BronzePanel, RefinePanel, GoldJoinPanel, ExplorePanel, MetricsPanel, the sharing/promote
- * block, LineagePanel) is re-hosted UNCHANGED under the stage it belongs to — nothing is
- * rewritten, only re-arranged behind the stepper. Opening a dataset lands it at the right
- * stage on REAL state: a raw dataset opens near Ingest/Refine, a materialized one at Use, so
- * creating and working a dataset is ONE flow, not a scroll.
+ * The Data guided builder — Ingest · Define · Harmonize · Validate · Use · Publish on the
+ * OS-wide staged primitive (lib/core/stages.ts + components/core/StageShell.tsx; the Agents
+ * SimpleBuilder is the reference adoption, Dashboards the closest sibling). This REPLACES the
+ * old 1114-line single-scroll DatasetDetail: every one of its bodies (row preview, docs +
+ * quality editor, BronzePanel, RefinePanel, GoldJoinPanel, ExplorePanel, MetricsPanel, the
+ * sharing/promote block, LineagePanel) is re-hosted UNCHANGED under the stage it belongs to —
+ * nothing is rewritten, only re-arranged behind the stepper in medallion order. Opening a
+ * dataset lands it at the right stage on REAL state: a raw dataset opens at Ingest, a Bronze
+ * one at Define, a Silver one at Harmonize, a materialized one at Use.
  */
 export default function DataBuilder({
   datasetId,
@@ -461,24 +461,30 @@ export default function DataBuilder({
 
   // ── Live ctx off REAL dataset state — the stage gates/✓ read this, never faked ──
   const ctx: DataCtx = useMemo(() => {
-    if (!dataset) return { named: false, bronzeBuilt: false, refined: false, materialized: false };
+    if (!dataset) return { named: false, bronzeBuilt: false, silverBuilt: false, goldBuilt: false, refined: false, materialized: false };
     const v = dataset.versions;
     return {
       named: !!dataset.name.trim(),
       bronzeBuilt: v.bronze.built,
+      silverBuilt: v.silver.built,
+      goldBuilt: v.gold.built,
       refined: v.silver.built || v.gold.built,
       materialized: v.bronze.built || v.silver.built || v.gold.built,
     };
   }, [dataset]);
 
-  // Open on the first REACHABLE stage from real state, nothing pre-marked: a raw dataset
-  // opens near Refine (Bronze in), a fresh one at Define, a materialized one at Use.
+  // Open on the first REACHABLE stage from real state, nothing pre-marked: a fresh dataset
+  // opens at Ingest; a Bronze-only one at Define; a Silver-only one at Harmonize; a
+  // materialized one at Use (the natural "I want to query it" entry).
   const [stage, setStage] = useState<StageState<DataStageId>>(() => initialStageState(DATA_STAGES));
   const [landed, setLanded] = useState(false);
   useEffect(() => {
     if (landed || !dataset) return;
     const start: DataStageId =
-      ctx.refined ? 'refine' : ctx.bronzeBuilt ? 'refine' : ctx.materialized ? 'use' : ctx.named ? 'ingest' : 'define';
+      ctx.materialized ? 'use'
+      : ctx.silverBuilt ? 'harmonize'
+      : ctx.bronzeBuilt ? 'define'
+      : 'ingest';
     setStage((s) => ({ ...s, current: start }));
     setLanded(true);
   }, [dataset, ctx, landed]);
@@ -562,24 +568,30 @@ export default function DataBuilder({
         onState={setStage}
         ariaLabel="Dataset stages"
         assistant={(st) =>
-          st.id === 'define' ? (
-            <StageAssistant
-              datasetId={dataset.id} stage="define"
-              label="Draft a description, column notes and quality rules from the schema." cta="Draft docs & rules"
-              disabled={!canEdit}
-              payload={() => ({ name: dataset.name, prompt: desc, columns: colNames.length ? colNames : cols.map((c) => c.name).filter(Boolean) })}
-              onDraft={applyDraft}
-            />
-          ) : st.id === 'ingest' ? (
+          st.id === 'ingest' ? (
             <StageAssistant
               datasetId={dataset.id} stage="ingest"
               label="Explain an ingest error in plain language." cta="Explain the error"
               payload={() => ({ name: dataset.name, reason: previewErr || (preview && !preview.available ? preview.reason : '') })}
             />
-          ) : st.id === 'refine' ? (
+          ) : st.id === 'define' ? (
             <StageAssistant
-              datasetId={dataset.id} stage="refine"
-              label="“Clean/join for me” — a proposal, plus a CTAS-error explainer." cta="Propose a clean/join"
+              datasetId={dataset.id} stage="define"
+              label="Draft a description and column notes from the schema." cta="Draft docs"
+              disabled={!canEdit}
+              payload={() => ({ name: dataset.name, prompt: desc, columns: colNames.length ? colNames : cols.map((c) => c.name).filter(Boolean) })}
+              onDraft={applyDraft}
+            />
+          ) : st.id === 'harmonize' ? (
+            <StageAssistant
+              datasetId={dataset.id} stage="harmonize"
+              label={`"Clean/join for me" — a proposal, plus a CTAS-error explainer.`} cta="Propose a clean/join"
+              payload={() => ({ name: dataset.name, columns: colNames })}
+            />
+          ) : st.id === 'validate' ? (
+            <StageAssistant
+              datasetId={dataset.id} stage="validate"
+              label="Suggest quality rules for the documented columns." cta="Suggest rules"
               payload={() => ({ name: dataset.name, columns: colNames })}
             />
           ) : st.id === 'publish' ? (
@@ -591,112 +603,6 @@ export default function DataBuilder({
           ) : null /* Use: Talk to Data is its own governed NL→SQL surface, not the assistant slot */
         }
       >
-        {/* ─────────────── Define ─────────────── */}
-        {stage.current === 'define' ? (
-          <div {...anchorAttr(ANCHORS.data.document)}>
-            {canEdit ? (
-              <div className="guided-panel" style={{ marginBottom: 16 }}>
-                <label className="muted" style={{ fontSize: 12.5 }}>What is this dataset?</label>
-                <textarea rows={2} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="One line a teammate in another domain would understand." />
-                <div className="muted" style={{ fontSize: 12.5, margin: '10px 0 4px' }}>Column meanings</div>
-                {cols.map((c, i) => (
-                  <div className="row" key={i} style={{ gap: 8, marginBottom: 6 }}>
-                    <input style={{ maxWidth: 180 }} placeholder="column" value={c.name}
-                      onChange={(e) => setCols((cs) => cs.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
-                    <input style={{ flex: 1 }} placeholder="what it means" value={c.description}
-                      onChange={(e) => setCols((cs) => cs.map((x, j) => j === i ? { ...x, description: e.target.value } : x))} />
-                    <button type="button" className="btn ghost sm" onClick={() => setCols((cs) => cs.filter((_, j) => j !== i))} aria-label="Remove column">×</button>
-                  </div>
-                ))}
-                <button className="btn ghost sm" onClick={() => setCols((cs) => [...cs, { name: '', description: '' }])}>+ Column</button>
-                {docsErr ? <div className="error" style={{ marginTop: 8 }}>{docsErr}</div> : null}
-                <div className="row" style={{ marginTop: 10, gap: 8, alignItems: 'center' }}>
-                  <button className="btn" onClick={() => { void saveDocs().then(() => settle('define')); }} disabled={docsBusy}>
-                    {docsBusy ? <span className="spin" /> : 'Save documentation'}
-                  </button>
-                  {docsOk ? <span className="ok-note" style={{ fontSize: 12.5 }}>{docsOk}</span> : null}
-                </div>
-              </div>
-            ) : (
-              <>
-                <p style={{ margin: '0 0 10px', color: dataset.description ? 'var(--text)' : 'var(--text-faint)', fontSize: 14 }}>
-                  {dataset.description || 'No description yet.'}
-                </p>
-                {dataset.columns.length > 0 ? (
-                  <div className="table-wrap" style={{ marginBottom: 16 }}>
-                    <table>
-                      <thead><tr><th>Column</th><th>Description</th></tr></thead>
-                      <tbody>
-                        {dataset.columns.map((c) => (
-                          <tr key={c.name}><td className="mono" style={{ whiteSpace: 'nowrap' }}>{c.name}</td><td className="muted" style={{ whiteSpace: 'normal' }}>{c.description || '—'}</td></tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>No column docs yet.</p>}
-              </>
-            )}
-
-            {/* Data-quality rule authoring — the rule list + inline editor, unchanged. */}
-            <div className="section-title" style={{ marginTop: 4 }}>
-              Data quality
-              <span className="count-pill">{checks.length}</span>
-              {badge ? (
-                <span className={`badge ${badge === 'passing' ? 'vis-shared' : badge === 'failing' ? 'vis-personal' : ''}`} style={{ marginLeft: 10 }} title={ranAt ? `Last run ${formatDate(ranAt)}` : undefined}>
-                  {badge === 'passing' ? '✓ passing' : badge === 'failing' ? '✗ failing' : 'not run'}
-                </span>
-              ) : null}
-            </div>
-            <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-              Author the rules the dataset must meet — they run for real in Publish, against the built table, as a true pass/fail. Nothing runs until a layer is materialized.
-            </p>
-            {checks.length > 0 ? (
-              <div className="table-wrap" style={{ marginBottom: 14 }}>
-                <table>
-                  <thead><tr><th>Rule</th><th>Added by</th>{canEdit ? <th /> : null}</tr></thead>
-                  <tbody>
-                    {checks.map((chk) => (
-                      <tr key={chk.id}>
-                        <td className="mono" style={{ whiteSpace: 'nowrap', fontWeight: 600 }}>{ruleText(chk)}</td>
-                        <td className="muted">{chk.createdBy}</td>
-                        {canEdit ? <td><button className="btn ghost sm" onClick={() => deleteRule(chk.id)} aria-label="Remove rule">×</button></td> : null}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>No quality rules yet.</p>}
-
-            {canEdit ? (
-              <div className="guided-panel" style={{ padding: '12px 16px' }}>
-                <div className="muted" style={{ fontSize: 12.5, marginBottom: 8 }}>Add a rule</div>
-                <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <select value={ruleKind} onChange={(e) => setRuleKind(e.target.value as DataCheckRule)} style={{ maxWidth: 170 }}>
-                    {(Object.keys(RULE_LABELS) as DataCheckRule[]).map((k) => <option key={k} value={k}>{RULE_LABELS[k]}</option>)}
-                  </select>
-                  {dataset.columns.length > 0 ? (
-                    <select value={ruleColumn} onChange={(e) => setRuleColumn(e.target.value)} style={{ maxWidth: 200 }}>
-                      <option value="">column…</option>
-                      {dataset.columns.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
-                    </select>
-                  ) : <input style={{ maxWidth: 200 }} placeholder="column" value={ruleColumn} onChange={(e) => setRuleColumn(e.target.value)} />}
-                  {ruleKind === 'accepted_values' ? <input style={{ flex: 1, minWidth: 160 }} placeholder="allowed values, comma-separated" value={ruleValues} onChange={(e) => setRuleValues(e.target.value)} /> : null}
-                  {ruleKind === 'range' ? (
-                    <>
-                      <input style={{ maxWidth: 90 }} placeholder="min" value={ruleMin} onChange={(e) => setRuleMin(e.target.value)} inputMode="decimal" />
-                      <input style={{ maxWidth: 90 }} placeholder="max" value={ruleMax} onChange={(e) => setRuleMax(e.target.value)} inputMode="decimal" />
-                    </>
-                  ) : null}
-                  <button className="btn" onClick={addRule} disabled={checksBusy || !ruleColumn.trim()}>
-                    {checksBusy ? <span className="spin" /> : 'Add rule'}
-                  </button>
-                </div>
-                {checksErr ? <div className="error" style={{ marginTop: 8 }}>{checksErr}</div> : null}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
         {/* ─────────────── Ingest ─────────────── */}
         {stage.current === 'ingest' ? (
           <div>
@@ -741,12 +647,59 @@ export default function DataBuilder({
           </div>
         ) : null}
 
-        {/* ─────────────── Refine ─────────────── */}
-        {stage.current === 'refine' ? (
-          <div>
+        {/* ─────────────── Define ─────────────── */}
+        {stage.current === 'define' ? (
+          <div {...anchorAttr(ANCHORS.data.document)}>
+            <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
+              Bronze is in — now the columns are real. Describe what each column means, then clean and conform the data into the Silver layer.
+            </p>
+            {canEdit ? (
+              <div className="guided-panel" style={{ marginBottom: 16 }}>
+                <label className="muted" style={{ fontSize: 12.5 }}>What is this dataset?</label>
+                <textarea rows={2} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="One line a teammate in another domain would understand." />
+                <div className="muted" style={{ fontSize: 12.5, margin: '10px 0 4px' }}>Column meanings</div>
+                {cols.map((c, i) => (
+                  <div className="row" key={i} style={{ gap: 8, marginBottom: 6 }}>
+                    <input style={{ maxWidth: 180 }} placeholder="column" value={c.name}
+                      onChange={(e) => setCols((cs) => cs.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
+                    <input style={{ flex: 1 }} placeholder="what it means" value={c.description}
+                      onChange={(e) => setCols((cs) => cs.map((x, j) => j === i ? { ...x, description: e.target.value } : x))} />
+                    <button type="button" className="btn ghost sm" onClick={() => setCols((cs) => cs.filter((_, j) => j !== i))} aria-label="Remove column">×</button>
+                  </div>
+                ))}
+                <button className="btn ghost sm" onClick={() => setCols((cs) => [...cs, { name: '', description: '' }])}>+ Column</button>
+                {docsErr ? <div className="error" style={{ marginTop: 8 }}>{docsErr}</div> : null}
+                <div className="row" style={{ marginTop: 10, gap: 8, alignItems: 'center' }}>
+                  <button className="btn" onClick={() => { void saveDocs().then(() => settle('define')); }} disabled={docsBusy}>
+                    {docsBusy ? <span className="spin" /> : 'Save documentation'}
+                  </button>
+                  {docsOk ? <span className="ok-note" style={{ fontSize: 12.5 }}>{docsOk}</span> : null}
+                </div>
+              </div>
+            ) : (
+              <>
+                <p style={{ margin: '0 0 10px', color: dataset.description ? 'var(--text)' : 'var(--text-faint)', fontSize: 14 }}>
+                  {dataset.description || 'No description yet.'}
+                </p>
+                {dataset.columns.length > 0 ? (
+                  <div className="table-wrap" style={{ marginBottom: 16 }}>
+                    <table>
+                      <thead><tr><th>Column</th><th>Description</th></tr></thead>
+                      <tbody>
+                        {dataset.columns.map((c) => (
+                          <tr key={c.name}><td className="mono" style={{ whiteSpace: 'nowrap' }}>{c.name}</td><td className="muted" style={{ whiteSpace: 'normal' }}>{c.description || '—'}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>No column docs yet.</p>}
+              </>
+            )}
+
+            {/* Silver build — clean and conform Bronze into Silver. */}
             {canEdit ? (
               <>
-                <div className="section-title" style={{ marginTop: 0 }}>
+                <div className="section-title" style={{ marginTop: 4 }}>
                   Clean it up — Silver
                   <span className="hint" style={{ margin: '0 0 0 10px' }}>dbt transformations on your Bronze data</span>
                 </div>
@@ -756,11 +709,23 @@ export default function DataBuilder({
                     owner={dataset.owner} domain={dataset.domain} tier={dataset.tier}
                     columns={colNames}
                     stage={{ layer: 'silver', copy: { title: 'Clean it up', subtitle: '', tool: '' } }}
-                    onCommitted={() => { onBuilt(); settle('refine'); }}
+                    onCommitted={() => { onBuilt(); settle('define'); }}
                   />
                 ) : <p className="muted" style={{ fontSize: 13 }}>Bring in a Bronze layer first (in Ingest).</p>}
+              </>
+            ) : null}
+          </div>
+        ) : null}
 
-                <div className="section-title" style={{ marginTop: 22 }}>
+        {/* ─────────────── Harmonize ─────────────── */}
+        {stage.current === 'harmonize' ? (
+          <div>
+            <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
+              Silver is clean — join and aggregate it into the Gold business mart, then explore the result.
+            </p>
+            {canEdit ? (
+              <>
+                <div className="section-title" style={{ marginTop: 0 }}>
                   Harmonize — Gold
                   <span className="hint" style={{ margin: '0 0 0 10px' }}>join trusted datasets into one governed Gold table</span>
                 </div>
@@ -769,11 +734,11 @@ export default function DataBuilder({
                     datasetId={dataset.id} datasetName={dataset.name}
                     owner={dataset.owner} domain={dataset.domain} tier={dataset.tier}
                     columns={colNames}
-                    onCommitted={() => { onBuilt(); settle('refine'); }}
+                    onCommitted={() => { onBuilt(); settle('harmonize'); }}
                   />
-                ) : <p className="muted" style={{ fontSize: 13 }}>Clean it to Silver first, then you can harmonize into Gold.</p>}
+                ) : <p className="muted" style={{ fontSize: 13 }}>Clean it to Silver first (in Define), then you can harmonize into Gold.</p>}
               </>
-            ) : <p className="muted" style={{ fontSize: 13 }}>Only the owner and domain admins can refine this dataset.</p>}
+            ) : <p className="muted" style={{ fontSize: 13 }}>Only the owner and domain admins can harmonize this dataset.</p>}
 
             {builtLayers.length > 0 ? (
               <>
@@ -784,10 +749,10 @@ export default function DataBuilder({
           </div>
         ) : null}
 
-        {/* ─────────────── Publish ─────────────── */}
-        {stage.current === 'publish' ? (
+        {/* ─────────────── Validate ─────────────── */}
+        {stage.current === 'validate' ? (
           <div>
-            {/* Quality checks — run them for real against the built table. */}
+            {/* Quality checks — author rules + run them for real against the built table. */}
             <div className="section-title" style={{ marginTop: 0 }}>
               Quality checks
               <span className="count-pill">{checks.length}</span>
@@ -803,19 +768,20 @@ export default function DataBuilder({
               ) : null}
             </div>
             <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-              The rules you authored in Define run through the governed query path against this dataset&apos;s built table — a real pass/fail per rule.
+              Author the rules this dataset must meet, then run them against the built table — a real pass/fail per rule through the governed query path. Nothing runs until a layer is materialized.
             </p>
             {runErr ? <div className="error" style={{ marginBottom: 10 }}>{runErr}</div> : null}
             {checks.length > 0 ? (
               <div className="table-wrap" style={{ marginBottom: 14 }}>
                 <table>
-                  <thead><tr><th>Rule</th><th>Result</th></tr></thead>
+                  <thead><tr><th>Rule</th><th>Added by</th><th>Result</th>{canEdit ? <th /> : null}</tr></thead>
                   <tbody>
                     {checks.map((chk) => {
                       const r = results[chk.id];
                       return (
                         <tr key={chk.id}>
                           <td className="mono" style={{ whiteSpace: 'nowrap', fontWeight: 600 }}>{ruleText(chk)}</td>
+                          <td className="muted">{chk.createdBy}</td>
                           <td>
                             {r ? (
                               r.status === 'pass' ? <span className="status-chip s-searchable" style={{ cursor: 'default' }}>✓ pass</span>
@@ -823,18 +789,81 @@ export default function DataBuilder({
                                   : <span className="muted" title={r.reason}>not run</span>
                             ) : <span className="muted">—</span>}
                           </td>
+                          {canEdit ? <td><button className="btn ghost sm" onClick={() => deleteRule(chk.id)} aria-label="Remove rule">×</button></td> : null}
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
               </div>
-            ) : <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>No quality rules yet — author them back in Define.</p>}
+            ) : <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>No quality rules yet — add one below.</p>}
 
+            {canEdit ? (
+              <div className="guided-panel" style={{ padding: '12px 16px' }}>
+                <div className="muted" style={{ fontSize: 12.5, marginBottom: 8 }}>Add a rule</div>
+                <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <select value={ruleKind} onChange={(e) => setRuleKind(e.target.value as DataCheckRule)} style={{ maxWidth: 170 }}>
+                    {(Object.keys(RULE_LABELS) as DataCheckRule[]).map((k) => <option key={k} value={k}>{RULE_LABELS[k]}</option>)}
+                  </select>
+                  {dataset.columns.length > 0 ? (
+                    <select value={ruleColumn} onChange={(e) => setRuleColumn(e.target.value)} style={{ maxWidth: 200 }}>
+                      <option value="">column…</option>
+                      {dataset.columns.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+                    </select>
+                  ) : <input style={{ maxWidth: 200 }} placeholder="column" value={ruleColumn} onChange={(e) => setRuleColumn(e.target.value)} />}
+                  {ruleKind === 'accepted_values' ? <input style={{ flex: 1, minWidth: 160 }} placeholder="allowed values, comma-separated" value={ruleValues} onChange={(e) => setRuleValues(e.target.value)} /> : null}
+                  {ruleKind === 'range' ? (
+                    <>
+                      <input style={{ maxWidth: 90 }} placeholder="min" value={ruleMin} onChange={(e) => setRuleMin(e.target.value)} inputMode="decimal" />
+                      <input style={{ maxWidth: 90 }} placeholder="max" value={ruleMax} onChange={(e) => setRuleMax(e.target.value)} inputMode="decimal" />
+                    </>
+                  ) : null}
+                  <button className="btn" onClick={addRule} disabled={checksBusy || !ruleColumn.trim()}>
+                    {checksBusy ? <span className="spin" /> : 'Add rule'}
+                  </button>
+                </div>
+                {checksErr ? <div className="error" style={{ marginTop: 8 }}>{checksErr}</div> : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* ─────────────── Use ─────────────── */}
+        {stage.current === 'use' ? (
+          <div>
+            {/* Talk to Data — governed NL→SQL over what the viewer can see. */}
+            <div {...anchorAttr(ANCHORS.data.query)}>
+              <TalkTo tab="data" title={talk.title} blurb={talk.blurb} examples={talk.examples} />
+            </div>
+
+            {/* Lineage — refinement + consumption chain, from the single source. */}
+            <div className="section-title" style={{ marginTop: 24 }}>Lineage</div>
+            <LineagePanel datasetId={dataset.id} />
+
+            {/* Doorway — jump to Metrics or Dashboards pre-scoped to this dataset. */}
+            {/* TODO: pass ?dataset=<id> once Metrics/Dashboards pages read that param to pre-scope. */}
+            <div className="section-title" style={{ marginTop: 24 }}>Build on this data</div>
+            <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
+              Take the next step — define a metric or build a dashboard on top of this dataset.
+            </p>
+            <div className="row" style={{ gap: 10 }}>
+              <a className="btn ghost" href="/metrics" title="Define a metric on this dataset in the Metrics tab">
+                Build a metric →
+              </a>
+              <a className="btn ghost" href="/dashboards" title="Build a dashboard using this dataset in the Dashboards tab">
+                Build a dashboard →
+              </a>
+            </div>
+          </div>
+        ) : null}
+
+        {/* ─────────────── Publish ─────────────── */}
+        {stage.current === 'publish' ? (
+          <div>
             {/* Metrics — defined on the governed Gold asset (Cube handover). */}
             {dataset.measures.length > 0 || (dataset.tier !== 'dataset' && dataset.versions.gold.built) ? (
               <>
-                <div className="section-title" style={{ marginTop: 20 }}>
+                <div className="section-title" style={{ marginTop: 0 }}>
                   Metrics
                   {dataset.measures.length > 0 ? <span className="count-pill">{dataset.measures.length}</span> : null}
                 </div>
@@ -873,7 +902,7 @@ export default function DataBuilder({
               </>
             ) : null}
 
-            {/* Sharing / promotion — the exact governed block, re-hosted here. */}
+            {/* Sharing / promotion — the governed promote/certify block. */}
             <div className="section-title" style={{ marginTop: 20 }}>Sharing</div>
             {dataset.tier === 'dataset' ? (
               canHarmonizeGold ? (
@@ -901,7 +930,7 @@ export default function DataBuilder({
                   <span className="badge vis-personal">Personal</span>{' '}
                   <span className="muted" style={{ fontSize: 13 }}>
                     This raw <strong>Bronze</strong> dataset can&apos;t be shared yet — <strong>promote after refining to Silver/Gold</strong>.
-                    {canEdit ? <> Refine it in the <strong>Refine</strong> stage first.</> : null}
+                    {canEdit ? <> Refine it in the <strong>Define</strong> or <strong>Harmonize</strong> stage first.</> : null}
                   </span>
                 </div>
               )
@@ -949,20 +978,6 @@ export default function DataBuilder({
                 />
               </div>
             ) : null}
-          </div>
-        ) : null}
-
-        {/* ─────────────── Use ─────────────── */}
-        {stage.current === 'use' ? (
-          <div>
-            {/* Talk to Data — governed NL→SQL over what the viewer can see. */}
-            <div {...anchorAttr(ANCHORS.data.query)}>
-              <TalkTo tab="data" title={talk.title} blurb={talk.blurb} examples={talk.examples} />
-            </div>
-
-            {/* Lineage — refinement + consumption chain, from the single source. */}
-            <div className="section-title" style={{ marginTop: 24 }}>Lineage</div>
-            <LineagePanel datasetId={dataset.id} />
           </div>
         ) : null}
       </StageShell>

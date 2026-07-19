@@ -20,8 +20,8 @@ export const dynamic = 'force-dynamic';
  * (Use has no assistant — Talk to Data is its own governed NL→SQL surface.)
  */
 
-type Stage = 'define' | 'ingest' | 'refine' | 'publish';
-const STAGES = new Set<Stage>(['define', 'ingest', 'refine', 'publish']);
+type Stage = 'define' | 'ingest' | 'harmonize' | 'validate' | 'publish';
+const STAGES = new Set<Stage>(['define', 'ingest', 'harmonize', 'validate', 'publish']);
 
 /** Build the stage-scoped system + user prompt pair from the request body. */
 function promptFor(stage: Stage, body: Record<string, unknown>): { system: string; user: string; json: boolean } {
@@ -47,12 +47,19 @@ function promptFor(stage: Stage, body: Record<string, unknown>): { system: strin
           'You explain a data-ingest failure to a non-technical user in plain language: what likely went wrong bringing the raw file/extract into the Bronze layer, and the single most useful next step. Two or three sentences. No jargon dumps.',
         user: `The Bronze ingest reported this failure: "${reason || '(no reason given)'}". Explain it plainly and suggest what to try.`,
       };
-    case 'refine':
+    case 'harmonize':
       return {
         json: false,
         system:
           'You advise a user on how to clean and join this dataset into a trustworthy Silver/Gold table. Given its columns, propose in plain language: which columns likely need cleaning (types, nulls, casing), and one sensible join if the columns hint at a key. If a CTAS/transform error is provided, explain it plainly instead. Keep it to a short paragraph plus a few bullets.',
         user: `Dataset: ${name || '(unnamed)'}\nColumns: ${columns.join(', ') || '(none)'}\nTransform error (optional): "${reason}"\nAdvise how to clean/join it${reason ? ', and explain the error' : ''}.`,
+      };
+    case 'validate':
+      return {
+        json: false,
+        system:
+          'You advise a user on which data-quality rules to author for their dataset before promoting it. Given the column names, suggest 3-5 useful rules (not_null on identifiers, unique on a primary key, range on numeric bounds, accepted_values on categoricals). Keep it to a short paragraph plus a bullet list. Use only the provided columns.',
+        user: `Dataset: ${name || '(unnamed)'}\nColumns: ${columns.join(', ') || '(none)'}\nSuggest quality rules to author.`,
       };
     case 'publish':
       return {
@@ -77,7 +84,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const stage = body.stage as Stage;
     if (!STAGES.has(stage)) {
-      return NextResponse.json({ error: 'A valid stage is required (define|ingest|refine|publish).' }, { status: 400 });
+      return NextResponse.json({ error: 'A valid stage is required (define|ingest|harmonize|validate|publish).' }, { status: 400 });
     }
 
     return await runStageAssistant({

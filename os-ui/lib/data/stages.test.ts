@@ -9,68 +9,82 @@ import {
 import { DATA_STAGES, type DataCtx } from './stages.ts';
 
 /**
- * The Data guided path (Define · Ingest · Refine · Publish · Use) run through the shared
- * stage model — asserting the GATES reflect REAL dataset state (the layer dots + tier):
- * later stages stay unreachable until the earlier layer exists, and no stage shows a ✓ on
- * first open even when the dataset is already fully materialized.
+ * The Data guided path (Ingest · Define · Harmonize · Validate · Use · Publish) run through
+ * the shared stage model — asserting the GATES reflect REAL dataset state (the layer dots +
+ * tier): later stages stay unreachable until the earlier layer exists, and no stage shows a ✓
+ * on first open even when the dataset is already fully materialized.
  */
 const ctx = (over: Partial<DataCtx> = {}): DataCtx => ({
-  named: false, bronzeBuilt: false, refined: false, materialized: false, ...over,
+  named: false, bronzeBuilt: false, silverBuilt: false, goldBuilt: false,
+  refined: false, materialized: false, ...over,
 });
 
-test('gates reflect real dataset state — nothing past Define is reachable when empty', () => {
+test('gates reflect real dataset state — nothing past Ingest is reachable when empty', () => {
   const c = ctx();
-  assert.equal(canEnter(DATA_STAGES, 'define', c), true);
-  assert.equal(canEnter(DATA_STAGES, 'ingest', c), false); // needs a name
-  assert.equal(canEnter(DATA_STAGES, 'refine', c), false);
-  assert.equal(canEnter(DATA_STAGES, 'publish', c), false);
+  assert.equal(canEnter(DATA_STAGES, 'ingest', c), true);   // always reachable
+  assert.equal(canEnter(DATA_STAGES, 'define', c), false);  // needs bronzeBuilt
+  assert.equal(canEnter(DATA_STAGES, 'harmonize', c), false);
+  assert.equal(canEnter(DATA_STAGES, 'validate', c), false);
   assert.equal(canEnter(DATA_STAGES, 'use', c), false);
+  assert.equal(canEnter(DATA_STAGES, 'publish', c), false);
 });
 
-test('Ingest unlocks on a name; Refine only once Bronze is built', () => {
-  assert.equal(canEnter(DATA_STAGES, 'ingest', ctx({ named: true })), true);
-  assert.equal(canEnter(DATA_STAGES, 'refine', ctx({ named: true })), false);
-  assert.equal(canEnter(DATA_STAGES, 'refine', ctx({ named: true, bronzeBuilt: true })), true);
+test('Define unlocks on Bronze; Harmonize only once Silver is built', () => {
+  assert.equal(canEnter(DATA_STAGES, 'define', ctx({ bronzeBuilt: true })), true);
+  assert.equal(canEnter(DATA_STAGES, 'harmonize', ctx({ bronzeBuilt: true })), false);
+  assert.equal(canEnter(DATA_STAGES, 'harmonize', ctx({ bronzeBuilt: true, silverBuilt: true })), true);
 });
 
-test('Publish gates on a refined layer; Use gates on a materialized layer', () => {
-  const bronzeOnly = ctx({ named: true, bronzeBuilt: true, materialized: true });
-  assert.equal(canEnter(DATA_STAGES, 'publish', bronzeOnly), false); // Bronze isn't refined
-  assert.equal(canEnter(DATA_STAGES, 'use', bronzeOnly), true);      // but it is materialized
-  const refined = ctx({ named: true, bronzeBuilt: true, refined: true, materialized: true });
+test('Validate and Use gate on materialized; Publish gates on refined (Silver or Gold)', () => {
+  const bronzeOnly = ctx({ bronzeBuilt: true, materialized: true });
+  assert.equal(canEnter(DATA_STAGES, 'validate', bronzeOnly), true);  // materialized
+  assert.equal(canEnter(DATA_STAGES, 'use', bronzeOnly), true);       // materialized
+  assert.equal(canEnter(DATA_STAGES, 'publish', bronzeOnly), false);  // not refined
+
+  const refined = ctx({ bronzeBuilt: true, silverBuilt: true, refined: true, materialized: true });
   assert.equal(canEnter(DATA_STAGES, 'publish', refined), true);
-  // Nothing materialized → Use locks (a check clears on later invalidation).
-  assert.equal(canEnter(DATA_STAGES, 'use', ctx({ named: true, bronzeBuilt: true, materialized: false })), false);
+
+  // Nothing materialized → Validate and Use lock.
+  assert.equal(canEnter(DATA_STAGES, 'validate', ctx({ bronzeBuilt: true })), false);
+  assert.equal(canEnter(DATA_STAGES, 'use', ctx({ bronzeBuilt: true })), false);
 });
 
 test('completed() is the LIVE condition per stage', () => {
-  assert.equal(isSatisfied(DATA_STAGES, 'define', ctx({ named: true })), true);
   assert.equal(isSatisfied(DATA_STAGES, 'ingest', ctx({ bronzeBuilt: true })), true);
-  assert.equal(isSatisfied(DATA_STAGES, 'refine', ctx({ refined: true })), true);
-  assert.equal(isSatisfied(DATA_STAGES, 'publish', ctx({ refined: true })), true);
+  assert.equal(isSatisfied(DATA_STAGES, 'define', ctx({ silverBuilt: true })), true);
+  assert.equal(isSatisfied(DATA_STAGES, 'harmonize', ctx({ goldBuilt: true })), true);
+  assert.equal(isSatisfied(DATA_STAGES, 'validate', ctx({ materialized: true })), true);
   assert.equal(isSatisfied(DATA_STAGES, 'use', ctx({ materialized: true })), true);
+  assert.equal(isSatisfied(DATA_STAGES, 'publish', ctx({ refined: true })), true);
+  // Negative — conditions not met.
+  assert.equal(isSatisfied(DATA_STAGES, 'ingest', ctx()), false);
+  assert.equal(isSatisfied(DATA_STAGES, 'define', ctx({ bronzeBuilt: true })), false); // silver not built
+  assert.equal(isSatisfied(DATA_STAGES, 'harmonize', ctx({ silverBuilt: true })), false); // gold not built
 });
 
-test('opens on Define with NO pre-marked checks even when the dataset already satisfies stages', () => {
-  const fully = ctx({ named: true, bronzeBuilt: true, refined: true, materialized: true });
+test('opens on Ingest with NO pre-marked checks even when the dataset already satisfies stages', () => {
+  const fully = ctx({ named: true, bronzeBuilt: true, silverBuilt: true, goldBuilt: true, refined: true, materialized: true });
   const s = initialStageState(DATA_STAGES);
-  assert.equal(s.current, 'define');
+  assert.equal(s.current, 'ingest');
   for (const st of stageStatuses(DATA_STAGES, s, fully)) assert.equal(st.done, false);
 });
 
 test('a ✓ shows only after the user worked the stage this session AND it still holds', () => {
-  const refined = ctx({ named: true, bronzeBuilt: true, refined: true, materialized: true });
-  let s = initialStageState(DATA_STAGES);           // define
-  s = advance(DATA_STAGES, s, refined);             // → ingest, define recorded
-  s = advance(DATA_STAGES, s, refined);             // → refine, ingest recorded
-  assert.equal(isDone(DATA_STAGES, s, 'define', refined), true);
-  assert.equal(isDone(DATA_STAGES, s, 'ingest', refined), true);
-  assert.equal(isDone(DATA_STAGES, s, 'refine', refined), false); // worked, but not recorded yet
-  s = advance(DATA_STAGES, s, refined);             // → publish, refine recorded
-  assert.equal(isDone(DATA_STAGES, s, 'refine', refined), true);
-  // Drop the refined layer → refine's recorded ✓ clears because its condition no longer holds.
-  const bronzeOnly = ctx({ named: true, bronzeBuilt: true });
-  assert.equal(isDone(DATA_STAGES, s, 'refine', bronzeOnly), false);
+  const full = ctx({ named: true, bronzeBuilt: true, silverBuilt: true, goldBuilt: true, refined: true, materialized: true });
+  let s = initialStageState(DATA_STAGES);   // ingest
+  s = advance(DATA_STAGES, s, full);        // → define, ingest recorded (bronzeBuilt ✓)
+  assert.equal(isDone(DATA_STAGES, s, 'ingest', full), true);
+  assert.equal(isDone(DATA_STAGES, s, 'define', full), false); // not yet
+
+  s = advance(DATA_STAGES, s, full);        // → harmonize, define recorded (silverBuilt ✓)
+  assert.equal(isDone(DATA_STAGES, s, 'define', full), true);
+
+  s = advance(DATA_STAGES, s, full);        // → validate, harmonize recorded (goldBuilt ✓)
+  assert.equal(isDone(DATA_STAGES, s, 'harmonize', full), true);
+
+  // Drop gold → harmonize's recorded ✓ clears because its condition no longer holds.
+  const noGold = ctx({ bronzeBuilt: true, silverBuilt: true, refined: true, materialized: true });
+  assert.equal(isDone(DATA_STAGES, s, 'harmonize', noGold), false);
 });
 
 test('markDone records an in-stage settle (Ingest after a Bronze build)', () => {
@@ -80,4 +94,11 @@ test('markDone records an in-stage settle (Ingest after a Bronze build)', () => 
   assert.equal(isDone(DATA_STAGES, s, 'ingest', bronze), true);
   // Bronze rebuilt away → the ✓ clears.
   assert.equal(isDone(DATA_STAGES, s, 'ingest', ctx({ named: true })), false);
+});
+
+test('Publish is the last stage — only reachable when Silver or Gold exists', () => {
+  const lastIndex = DATA_STAGES.findIndex((s) => s.id === 'publish');
+  assert.equal(lastIndex, DATA_STAGES.length - 1, 'publish must be the final stage');
+  assert.equal(canEnter(DATA_STAGES, 'publish', ctx({ refined: false })), false);
+  assert.equal(canEnter(DATA_STAGES, 'publish', ctx({ refined: true })), true);
 });

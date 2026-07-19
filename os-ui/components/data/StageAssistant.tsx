@@ -37,7 +37,7 @@ export default function StageAssistant({
   label: string;
   /** The action button text, e.g. "Draft docs & rules". */
   cta: string;
-  stage: 'define' | 'ingest' | 'refine' | 'publish';
+  stage: 'define' | 'ingest' | 'harmonize' | 'validate' | 'publish';
   /** Extra fields merged into the request body (name/prompt/columns/reason/measures). */
   payload: () => Record<string, unknown>;
   /** Define only — receive the drafted docs + quality rules. */
