@@ -366,6 +366,22 @@ export default function MetricBuilder({
           <span className={`badge ${TIER_BADGE[saved.tier]}`}>{TIER_WORD[saved.tier]}</span>
           {(saved.tier === 'domain' || saved.tier === 'marketplace') ? <DomainTag domain={saved.domain} /> : null}
           <span className="muted mono" style={{ fontSize: 12 }}>{saved.member}</span>
+          {/* Lifecycle (Archive/Restore/Delete) lives in the persistent detail header so it is
+              reachable from ANY stage — not buried in Publish. Governance unchanged (canManage). */}
+          {canManage ? (
+            <div style={{ marginLeft: 'auto' }}>
+              <LifecycleActions
+                id={saved.id}
+                name={saved.name}
+                kind="metric"
+                visibility={lcVis(saved.tier)}
+                archived={!!saved.archived}
+                api={`/api/metrics/${saved.id}`}
+                onChanged={onLifecycle}
+                compact
+              />
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -724,16 +740,8 @@ export default function MetricBuilder({
                         canApprove={canApprove}
                         onDone={onChanged}
                       />
-                      <LifecycleActions
-                        id={saved.id}
-                        name={saved.name}
-                        kind="metric"
-                        visibility={lcVis(saved.tier)}
-                        archived={!!saved.archived}
-                        api={`/api/metrics/${saved.id}`}
-                        onChanged={onLifecycle}
-                        compact
-                      />
+                      {/* Archive/Restore/Delete now live in the persistent detail header (reachable
+                          from any stage); Publish keeps only Promote. */}
                     </div>
                   ) : (
                     <p className="hint" style={{ marginTop: 10 }}>
