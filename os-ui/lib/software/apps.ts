@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { config } from '@/lib/core/config';
+import { emptyContextGrants, normalizeContextGrants, type ContextGrants } from '@/lib/core/context-grants';
 import type { CurrentUser } from '@/lib/core/auth';
 import { canPromote, roleAtLeast } from '@/lib/core/session';
 import { canManageArtifact, type ArtifactScope } from '@/lib/governance/edit-scope';
@@ -74,11 +75,55 @@ export type AppFile = {
 
 export type AppChatMessage = { role: 'user' | 'assistant'; content: string; at: string };
 
+/**
+ * A DESIGN user story under an EPIC (Software golden path — Design stage). Plain
+ * agile shape: the classic "As a … I want … so that …" plus acceptance criteria.
+ */
+export type AppStory = {
+  id: string;
+  title: string;
+  asA: string;
+  iWant: string;
+  soThat: string;
+  acceptance: string;
+};
+
+/**
+ * A DESIGN epic (Software golden path — Design stage). Groups user stories and
+ * carries the technical / UX / governance requirements that shape them. Git/Jira
+ * push is a labelled follow-up — the design lives on the app record for now.
+ */
+export type AppEpic = {
+  id: string;
+  title: string;
+  description: string;
+  requirements: { technical: string; ux: string; governance: string };
+  stories: AppStory[];
+};
+
 export type App = {
   id: string;
   slug: string;
   name: string;
   description: string;
+  /**
+   * The app's stated PURPOSE — what it's for, in the builder's own words (Define
+   * stage). Optional + defaults to '' so pre-Define apps still load; the Define
+   * gate reads it (completed when non-empty).
+   */
+  purpose: string;
+  /**
+   * The DESIGN epics + user stories (Design stage). Optional + defaults to `[]` so
+   * pre-Design apps still load; the Design gate completes at ≥1 epic with ≥1 story.
+   */
+  epics: AppEpic[];
+  /**
+   * Governed CONTEXT GRANTS the app may use — Connections · Data · Knowledge ·
+   * Files · Metrics at Read / Read+propose / Read+write (the core ContextGrants
+   * model). Replaces the bespoke single-connection consume UI on the Define stage.
+   * Optional + defaults to an empty grants object so pre-grants apps still load.
+   */
+  grants: ContextGrants;
   template: AppTemplateKey;
   owner: string;
   domain: string;
@@ -484,6 +529,11 @@ async function getCache(): Promise<Map<string, App>> {
         app.declaredSurface,
       );
     }
+    // Back-compat: apps persisted before the Define/Design/grants fields existed
+    // must still load — default purpose/epics to empty and normalise grants.
+    if (typeof app.purpose !== 'string') app.purpose = '';
+    if (!Array.isArray(app.epics)) app.epics = [];
+    app.grants = normalizeContextGrants(app.grants);
     map.set(app.id, app);
     // Re-hydrate the in-process MCP grant so agents can call it after a restart.
     if (app.connectionId) rehydrateConnection(app);
@@ -943,6 +993,9 @@ export async function createApp(
     slug,
     name,
     description,
+    purpose: '',
+    epics: [],
+    grants: emptyContextGrants(),
     template: tpl.key,
     owner: user.id,
     domain,
@@ -1061,6 +1114,31 @@ export async function updateAppDocs(
   if (patch.designDecisions !== undefined) a.designDecisions = patch.designDecisions;
   if (patch.dataDescriptions !== undefined) a.dataDescriptions = patch.dataDescriptions;
   if (patch.docs !== undefined) a.docs = patch.docs;
+  a.updatedAt = now();
+  map.set(a.id, a);
+  writeThrough(a);
+  return a;
+}
+
+/**
+ * Persist the Define + Design surfaces — the app's PURPOSE, its DESIGN epics/stories,
+ * and its governed CONTEXT GRANTS. Same fail-closed edit-scope as `updateAppDocs`
+ * (owner, owning-domain admin, or admin). Any field left undefined is untouched, so
+ * the caller patches just what changed. Grants are normalised so a malformed/legacy
+ * payload can never widen the persisted shape.
+ */
+export async function patchAppDesign(
+  appId: string,
+  user: CurrentUser,
+  patch: { purpose?: string; epics?: AppEpic[]; grants?: ContextGrants },
+): Promise<App> {
+  const map = await getCache();
+  const a = map.get(appId);
+  if (!a) throw withStatus(new Error('App not found'), 404);
+  if (!isOwnerOrAdminApp(a, user)) throw withStatus(new Error('Not permitted to edit this app'), 403);
+  if (patch.purpose !== undefined) a.purpose = patch.purpose.slice(0, 2000);
+  if (patch.epics !== undefined) a.epics = patch.epics;
+  if (patch.grants !== undefined) a.grants = normalizeContextGrants(patch.grants);
   a.updatedAt = now();
   map.set(a.id, a);
   writeThrough(a);

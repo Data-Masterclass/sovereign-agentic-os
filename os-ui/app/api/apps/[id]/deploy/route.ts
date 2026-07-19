@@ -40,6 +40,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const { id } = await ctx.params;
     const url = new URL(req.url);
     const action = url.searchParams.get('action');
+    // The Build stage carries the selected EPIC/story the build targets (Wave 1a).
+    // Threaded through but not yet consumed — the backend build/deploy is unchanged.
+    // TODO(Wave 2): scope the scaffold/deploy to `target` (FE+BE generation is deferred).
+    const body = (await req.json().catch(() => ({}))) as { target?: { epicId?: string; storyId?: string } };
+    void body.target;
     if (action === 'preview') {
       const app = await startPreview(id, user);
       return NextResponse.json({ app });

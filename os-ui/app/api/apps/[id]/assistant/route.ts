@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 
 /**
  * The per-STAGE Software assistant — one governed helper, scoped to the guided stage the
- * user is on (Describe · Build · Preview · Publish · Operate). It runs the SAME ONE
+ * user is on (Define · Design · Build · Preview · Operate). It runs the SAME ONE
  * assistant model every other built-in helper uses (`assistantComplete`: Langfuse-audited,
  * cost-cap enforced), so it inherits the honest 503 (no model configured) and 402 (cost
  * cap) errors — there is NO fake-AI fallback. The model only SUGGESTS text; it never
@@ -22,8 +22,8 @@ export const dynamic = 'force-dynamic';
  * state, the running preview URL — into the prompt so triage is grounded, never invented.
  */
 
-type Stage = 'describe' | 'build' | 'preview' | 'publish' | 'operate';
-const STAGES = new Set<Stage>(['describe', 'build', 'preview', 'publish', 'operate']);
+type Stage = 'define' | 'design' | 'build' | 'preview' | 'operate';
+const STAGES = new Set<Stage>(['define', 'design', 'build', 'preview', 'operate']);
 
 /** Build the stage-scoped system + user prompt pair from the app + request body. */
 function promptFor(
@@ -45,11 +45,17 @@ function promptFor(
   const pipeline = Object.entries(app.pipeline).map(([k, v]) => `${k}=${v}`).join(', ') || '(no pipeline yet)';
 
   switch (stage) {
-    case 'describe':
+    case 'define':
       return {
         system:
-          'You help a business user brief a new software app they are about to build with a governed delivery team. Given their name and rough brief, suggest whether it likely needs a UI, an API, or both, and 3-4 concrete capabilities to ask the team to build first. Be concise: one short paragraph, then a short bullet list. Do not promise infrastructure — the team scaffolds a sovereign repo and ships through review.',
-        user: `App name: ${app.name || '(unnamed)'}\nBrief: ${app.description || detail || '(none given)'}\nSuggest the surface and the first capabilities.`,
+          'You help a business user state the PURPOSE of a new software app they are about to build with a governed delivery team. Given their name and rough brief, write a crisp one-sentence purpose, then suggest whether it likely needs a UI, an API, or both, and 3-4 concrete capabilities to build first. Be concise: the purpose sentence, then a short bullet list. Do not promise infrastructure — the team scaffolds a sovereign repo and ships through review.',
+        user: `App name: ${app.name || '(unnamed)'}\nBrief: ${app.description || detail || '(none given)'}\nWrite the purpose and suggest the first capabilities.`,
+      };
+    case 'design':
+      return {
+        system:
+          'You help a business user shape an app as agile EPICs and user stories. Given the app purpose, propose one or two EPICs, each with a one-line description and 2-3 user stories in "As a … I want … so that …" form plus a short acceptance criterion. Be concise and concrete — no framework lecture. The user edits these into the Design editor.',
+        user: `App "${app.name}" (${surface}). Purpose/notes: ${app.description || detail || '(none given)'}. Propose EPICs and user stories.`,
       };
     case 'build':
       return {
@@ -63,17 +69,11 @@ function promptFor(
           'You explain why a preview pod might not be ready yet, reading the real pipeline stages, and the single most useful next step. Two or three sentences. Common honest causes: CI still building the image, no cluster reachable (URL stays pending), or a failed stage. Never claim it is ready if the state says otherwise.',
         user: `App "${app.name}". Deploy state: ${app.deploy.state}. Preview URL: ${app.deploy.previewUrl ? 'served' : 'not yet'}. Pipeline: ${pipeline}. Explain why the preview isn't ready and what to try.`,
       };
-    case 'publish':
-      return {
-        system:
-          'You explain a deploy security-scan finding or a missing-metadata blocker to a non-technical user, and propose the fix to hand to the build chat or delivery team. Two or three sentences. If asked to justify a go-live, write an honest 2-3 sentence request: what the app does, who it serves, why it is ready. No hype.',
-        user: `App "${app.name}" (${surface}). Missing metadata: ${app.manifest.missing.join(', ') || 'none'}. The reviewer/user notes: ${detail || '(explain the scan findings and propose fixes)'}.`,
-      };
     case 'operate':
       return {
         system:
-          'You triage a live app problem for a non-technical operator: a denial, an error, or an unexpected tool result. Explain the likely cause in plain language and the single next step. Two or three sentences. Governed apps run as the user under OPA + row/document security, so denials are usually a missing grant, not a bug.',
-        user: `App "${app.name}" is ${app.deploy.state} (v${app.deploy.releases}). Governed tools: ${app.mcpTools.map((t) => `${t.name}${t.write ? '(write)' : ''}`).join(', ') || 'none'}. The operator reports: ${detail || '(triage the current state)'}.`,
+          'You help a non-technical operator with the Operate stage — which covers requesting go-live (explaining a deploy security-scan finding or missing-metadata blocker and proposing the fix, or writing an honest 2-3 sentence go-live justification) AND triaging a live app problem (a denial, an error, an unexpected tool result). Explain the likely cause in plain language and the single next step. Two or three sentences. Governed apps run as the user under OPA + row/document security, so denials are usually a missing grant, not a bug.',
+        user: `App "${app.name}" (${surface}) is ${app.deploy.state} (v${app.deploy.releases}). Missing metadata: ${app.manifest.missing.join(', ') || 'none'}. Governed tools: ${app.mcpTools.map((t) => `${t.name}${t.write ? '(write)' : ''}`).join(', ') || 'none'}. The operator notes: ${detail || '(triage the current state)'}.`,
       };
   }
 }
@@ -89,7 +89,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const stage = body.stage as Stage;
     if (!STAGES.has(stage)) {
-      return NextResponse.json({ error: 'A valid stage is required (describe|build|preview|publish|operate).' }, { status: 400 });
+      return NextResponse.json({ error: 'A valid stage is required (define|design|build|preview|operate).' }, { status: 400 });
     }
 
     const app = await getAppForUser(id, user);

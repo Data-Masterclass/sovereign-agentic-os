@@ -3,7 +3,7 @@
  */
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import CodePanel from '@/components/CodePanel';
 import AgentChat from '@/components/AgentChat';
@@ -16,7 +16,17 @@ import { useApprovalNotifier } from '@/components/lifecycle/useApprovalNotifier'
 import type { FiledApproval } from '@/lib/governance/approval-notice';
 import { roleAtLeast, type Role as SessionRole } from '@/lib/core/session';
 import StageShell from '@/components/core/StageShell';
-import { initialStageState, markDone, type StageState } from '@/lib/core/stages';
+import BuilderModeToggle from '@/components/core/BuilderModeToggle';
+import ContextGrants, { type AvailableItem } from '@/components/core/ContextGrants';
+import type { ViewMode } from '@/lib/core/view-mode';
+import {
+  contextAccessCap,
+  emptyContextGrants,
+  normalizeContextGrants,
+  type ContextGrants as ContextGrantsValue,
+  type ContextKind,
+} from '@/lib/core/context-grants';
+import { initialStageState, canEnter, isSatisfied, markDone, type StageState } from '@/lib/core/stages';
 import TeamPanel from '@/app/software/TeamPanel';
 import StageAssistant from './StageAssistant';
 import { SW_STAGES, type SwStageId, type SwCtx } from './stages';
@@ -24,12 +34,26 @@ import { SW_STAGES, type SwStageId, type SwCtx } from './stages';
 type Visibility = 'Personal' | 'Shared' | 'Certified';
 type Tool = { name: string; description: string; write: boolean };
 type ChatMsg = { role: 'user' | 'assistant'; content: string; at: string };
-type Consumed = { kind: string; ref: string; label: string; scope: string };
+
+/** A Design user story (mirrors lib/software/apps.ts AppStory). */
+type Story = { id: string; title: string; asA: string; iWant: string; soThat: string; acceptance: string };
+/** A Design epic (mirrors lib/software/apps.ts AppEpic). */
+type Epic = {
+  id: string;
+  title: string;
+  description: string;
+  requirements: { technical: string; ux: string; governance: string };
+  stories: Story[];
+};
+
 export type SoftwareApp = {
   id: string;
   slug: string;
   name: string;
   description: string;
+  purpose: string;
+  epics: Epic[];
+  grants: ContextGrantsValue;
   owner: string;
   domain: string;
   visibility: Visibility;
@@ -49,7 +73,6 @@ export type SoftwareApp = {
   };
   manifest: { connections: string[]; data: string[]; knowledge: string[]; hasOpenApi: boolean; missing: string[] };
   surface: { ui: boolean; api: boolean };
-  consumes: Consumed[];
   usedAsData: boolean;
 };
 type Connection = { id: string; name: string; principal: string; visibility: Visibility; tools: Tool[] } | null;
@@ -63,12 +86,10 @@ const STAGE_STEP_LABEL: Record<(typeof STAGES)[number], string> = {
   live: 'Live / health',
 };
 
-/**
- * Map the pipeline's per-stage status (`ok | pending | offline | disabled`) onto the shared
- * <ProgressStepper> states, driven by ACTUAL status — not a timer (the P0-fixed honest
- * mapping, moved verbatim from the old detail page): ok/disabled → done, offline → fail,
- * the first pending → active, the rest pending.
- */
+const MODE_KEY = 'software.viewMode';
+/** The context kinds the Software Define stage offers. */
+const SW_GRANT_KINDS: ContextKind[] = ['connections', 'data', 'knowledge', 'files', 'metrics'];
+
 function pipelineSteps(pipeline: Record<string, string>): { steps: Step[]; active: boolean; done: boolean; ok: boolean } {
   let firstPendingSeen = false;
   const steps: Step[] = STAGES.map((s) => {
@@ -108,16 +129,16 @@ function promoteLabel(v: Visibility): string | null {
   return null;
 }
 
+const rid = (p: string) => `${p}_${Math.random().toString(36).slice(2, 9)}`;
+
 /**
- * The Software guided builder — Describe · Build · Preview · Publish · Operate on the OS-wide
- * staged primitive (lib/core/stages.ts + components/core/StageShell.tsx; the Agents
- * SimpleBuilder and Dashboards DashboardBuilder are the reference adoptions). It re-hosts the
- * tab's EXISTING (P0-fixed) bodies — the delivery-team chat, the build chat, the code editor,
- * the honest pipeline stepper, the real security-scan review card, the live tool-call surface
- * and lifecycle — as stage bodies; nothing is rewritten, only re-hosted. Every gate reads the
- * REAL app state handed in (`app.pipeline`, `deploy.state`, `deploy.previewUrl`,
- * `deploy.releases`), so a fresh app walks forward as its real state settles and an existing
- * live app opens straight on Operate.
+ * The Software guided builder — Define · Design · Build · Preview · Operate on the OS-wide
+ * staged primitive (lib/core/stages.ts + components/core/StageShell.tsx), with a Simple ⇄
+ * Developer toggle (components/core/BuilderModeToggle). Simple is the five-stage flow;
+ * Developer surfaces the REAL raw app files (the in-browser code panel that commits) beside
+ * the build/deploy console. Every gate reads the REAL app state handed in (`app.purpose`,
+ * `app.epics`, `app.pipeline`, `deploy.state`, `deploy.previewUrl`, `deploy.releases`), so a
+ * fresh app opens on Define (never Preview) and walks forward as its real state settles.
  */
 export default function SoftwareBuilder({
   app,
@@ -129,9 +150,7 @@ export default function SoftwareBuilder({
   app: SoftwareApp;
   connection: Connection;
   user: { id: string; role: SessionRole };
-  /** The open deploy-review card for this app (Publish stage), fetched by the page. */
   reviewCard: ReviewCardData | null;
-  /** Refetch the app after any mutation (deploy/promote/lifecycle/tool). */
   onReload: () => void;
 }) {
   const { openTool } = useToolWindow();
@@ -145,15 +164,27 @@ export default function SoftwareBuilder({
   const [toolNote, setToolNote] = useState('');
   const [confirmDemote, setConfirmDemote] = useState(false);
 
-  // Granted-resources picker (moved out of the old buried Manage panel).
-  const [connRef, setConnRef] = useState('');
-  const [connLabel, setConnLabel] = useState('');
-  const [connScope, setConnScope] = useState<'read' | 'write-bounded'>('read');
+  // Simple ⇄ Developer view mode (persisted per user, defaults to Simple).
+  const [viewMode, setViewMode] = useState<ViewMode>('simple');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const saved = window.localStorage.getItem(MODE_KEY);
+    if (saved === 'simple' || saved === 'developer') setViewMode(saved);
+  }, []);
+  const setModePersisted = (m: ViewMode) => {
+    setViewMode(m);
+    if (typeof window !== 'undefined') window.localStorage.setItem(MODE_KEY, m);
+  };
+
+  // The build target the Build stage points at (an epic/story from Design).
+  const [target, setTarget] = useState<{ epicId: string; storyId: string } | null>(null);
+
+  const canEditCode = roleAtLeast(user.role, 'builder');
+  const canEdit = app.owner === user.id || roleAtLeast(user.role, 'domain_admin');
 
   const surface = app.surface ?? { ui: true, api: true };
   const dep = deployBadge(app.deploy.state);
   const version = app.deploy.releases > 0 ? `v${app.deploy.releases}` : 'Unpublished';
-  const canEditCode = roleAtLeast(user.role, 'builder');
   const canPromoteUI = promoteLabel(app.visibility);
   const canDemoteUI =
     (app.visibility === 'Certified' && user.role === 'admin') ||
@@ -164,38 +195,56 @@ export default function SoftwareBuilder({
   const publishDisabled = busy || inReview;
   const publishLabel = inReview ? 'Awaiting review' : app.deploy.releases > 0 ? 'Publish next release' : 'Publish release';
 
+  // Real app state, defaulted for backward-compat (pre-Define/Design apps).
+  const epics = app.epics ?? [];
+  const grants = useMemo(() => normalizeContextGrants(app.grants), [app.grants]);
+
   // The live ctx the stage gates/✓ read — REAL app state, never faked.
   const committed = app.pipeline.forgejo === 'ok' || app.repo.seeded.length > 0;
   const ctx: SwCtx = {
     named: !!app.name.trim(),
+    hasPurpose: !!(app.purpose ?? '').trim(),
+    hasDesign: epics.some((e) => (e.stories?.length ?? 0) > 0),
     committed,
     previewed: !!app.deploy.previewUrl || previewAck,
     deployed: app.deploy.releases > 0,
     live: app.deploy.state === 'live',
   };
 
-  // Open on the stage matching REAL app state: a live app on Operate, a shipped one on
-  // Publish, a built (committed) one on Preview, and a fresh/uncommitted app straight on
-  // Build — that's where the delivery team + build chat live, so creation continues
-  // seamlessly (Build is reachable the moment the app is named). Describe stays a click back.
+  // Open on the FIRST INCOMPLETE stage that is reachable — a fresh app lands on
+  // Define (purpose not set), never Preview. Falls back to the first stage.
   const [stage, setStage] = useState<StageState<SwStageId>>(() => {
     const base = initialStageState(SW_STAGES);
-    const start: SwStageId = ctx.live
-      ? 'operate'
-      : ctx.deployed
-        ? 'publish'
-        : ctx.committed
-          ? 'preview'
-          : 'build';
-    return { ...base, current: start };
+    const firstIncomplete = SW_STAGES.find((s) => canEnter(SW_STAGES, s.id, ctx) && !isSatisfied(SW_STAGES, s.id, ctx));
+    return firstIncomplete ? { ...base, current: firstIncomplete.id } : base;
   });
+
+  async function saveDesign(patch: { purpose?: string; epics?: Epic[]; grants?: ContextGrantsValue }): Promise<void> {
+    setMsg('');
+    try {
+      const res = await fetch(`/api/apps/${app.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      const body = await res.json();
+      if (!res.ok) setMsg(`✗ ${body.error}`);
+      onReload();
+    } catch (e) {
+      setMsg((e as Error).message);
+    }
+  }
 
   async function deployAction(action?: 'preview') {
     if (busy) return;
     setBusy(true);
     setDeployMsg('');
     try {
-      const res = await fetch(`/api/apps/${app.id}/deploy${action ? `?action=${action}` : ''}`, { method: 'POST' });
+      const res = await fetch(`/api/apps/${app.id}/deploy${action ? `?action=${action}` : ''}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ target }),
+      });
       const body = await res.json();
       if (!res.ok) setDeployMsg(`✗ ${body.error}`);
       else if (action === 'preview')
@@ -260,7 +309,6 @@ export default function SoftwareBuilder({
       });
       const body = await res.json();
       setToolOut(JSON.stringify(body, null, 2));
-      // HONESTY (P0): flag demo-seed results — this did NOT come from the deployed app.
       const result = body?.result as { source?: string; note?: string } | undefined;
       if (result?.source === 'demo-seed') setToolNote(result.note ?? 'Demo seed data — not from the deployed app.');
     } catch (e) {
@@ -268,7 +316,7 @@ export default function SoftwareBuilder({
     }
   }
 
-  async function lifecycle(action: string, resource?: unknown) {
+  async function lifecycle(action: string) {
     if (busy) return;
     setBusy(true);
     setMsg('');
@@ -276,7 +324,7 @@ export default function SoftwareBuilder({
       const res = await fetch(`/api/apps/${app.id}/lifecycle`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action, resource }),
+        body: JSON.stringify({ action }),
       });
       const body = await res.json();
       if (!res.ok) setMsg(`✗ ${body.error}`);
@@ -284,10 +332,6 @@ export default function SoftwareBuilder({
         window.location.href = '/software';
         return;
       } else setMsg(`✓ ${action} done.`);
-      if (action === 'consume') {
-        setConnRef('');
-        setConnLabel('');
-      }
       onReload();
     } catch (e) {
       setMsg((e as Error).message);
@@ -300,7 +344,7 @@ export default function SoftwareBuilder({
 
   return (
     <>
-      {/* Persistent header — badges + prominent promote/demote, above the guided path. */}
+      {/* Persistent header — badges + prominent promote/demote + the view toggle. */}
       <div className="sw-app-head">
         <div className="sw-app-head-meta">
           <span className={visBadge(app.visibility)}>{visDisplayLabel(app.visibility)}</span>
@@ -317,7 +361,12 @@ export default function SoftwareBuilder({
           {app.mode === 'offline' ? <span className="badge muted">git not ready</span> : null}
         </div>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-          {(app.owner === user.id || roleAtLeast(user.role, 'domain_admin')) ? (
+          <BuilderModeToggle
+            mode={viewMode}
+            onChange={setModePersisted}
+            developerHint="The raw app files + build/deploy console"
+          />
+          {canEdit ? (
             <LifecycleActions
               id={app.id}
               name={app.name}
@@ -339,119 +388,173 @@ export default function SoftwareBuilder({
       </div>
       {app.description ? <p className="sw-app-lead">{app.description}</p> : null}
 
-      <StageShell
-        stages={SW_STAGES}
-        state={stage}
-        ctx={ctx}
-        onState={setStage}
-        ariaLabel="Software stages"
-        assistant={(st) =>
-          st.id === 'describe' ? (
-            <StageAssistant
-              appId={app.id} stage="describe"
-              label="Suggest the app's surface and the first capabilities to build."
-              cta="Suggest a plan"
+      {viewMode === 'developer' ? (
+        <DeveloperSurface app={app} canEditCode={canEditCode} deployMsg={deployMsg} toolOut={toolOut} msg={msg} />
+      ) : (
+        <StageShell
+          stages={SW_STAGES}
+          state={stage}
+          ctx={ctx}
+          onState={setStage}
+          ariaLabel="Software stages"
+          assistant={(st) =>
+            st.id === 'define' ? (
+              <StageAssistant appId={app.id} stage="define" label="Draft the app's purpose and first capabilities." cta="Suggest a purpose" />
+            ) : st.id === 'design' ? (
+              <StageAssistant appId={app.id} stage="design" label="Propose EPICs and user stories from the purpose." cta="Suggest EPICs" />
+            ) : st.id === 'build' ? (
+              <StageAssistant appId={app.id} stage="build" label="Explain a file or what to ask the build chat next." cta="Explain" />
+            ) : st.id === 'preview' ? (
+              <StageAssistant appId={app.id} stage="preview" label="Read the runner conditions — why isn't the pod ready?" cta="Explain the wait" />
+            ) : (
+              <StageAssistant appId={app.id} stage="operate" label="Explain scan findings, justify go-live, or triage the live app." cta="Help" />
+            )
+          }
+        >
+          {stage.current === 'define' ? (
+            <DefineStage
+              app={app}
+              grants={grants}
+              canEdit={canEdit}
+              onSavePurpose={(purpose) => saveDesign({ purpose })}
+              onSaveGrants={(g) => saveDesign({ grants: g })}
             />
-          ) : st.id === 'build' ? (
-            <StageAssistant
-              appId={app.id} stage="build"
-              label="Explain a file or what to ask the build chat next."
-              cta="Explain"
-            />
-          ) : st.id === 'preview' ? (
-            <StageAssistant
-              appId={app.id} stage="preview"
-              label="Read the runner conditions — why isn't the pod ready?"
-              cta="Explain the wait"
-            />
-          ) : st.id === 'publish' ? (
-            <StageAssistant
-              appId={app.id} stage="publish"
-              label="Explain scan findings and propose fixes to hand to the team."
-              cta="Explain findings"
-            />
-          ) : (
-            <StageAssistant
-              appId={app.id} stage="operate"
-              label="Triage a denial, error or unexpected tool result on the live app."
-              cta="Triage"
-            />
-          )
-        }
-      >
-        {/* ─────────── Describe ─────────── */}
-        {stage.current === 'describe' ? (
-          <DescribeStage
-            app={app}
-            connection={connection}
-            consumes={app.consumes}
-            connRef={connRef} setConnRef={setConnRef}
-            connLabel={connLabel} setConnLabel={setConnLabel}
-            connScope={connScope} setConnScope={setConnScope}
-            onGrant={() => lifecycle('consume', { kind: 'connection', ref: connRef.trim(), label: connLabel.trim() || connRef.trim(), scope: connScope })}
-            busy={busy}
-          />
-        ) : null}
+          ) : null}
 
-        {/* ─────────── Build ─────────── */}
-        {stage.current === 'build' ? (
-          <BuildStage app={app} canEditCode={canEditCode} onBuilt={onReload} />
-        ) : null}
+          {stage.current === 'design' ? (
+            <DesignStage epics={epics} canEdit={canEdit} onSave={(next) => saveDesign({ epics: next })} />
+          ) : null}
 
-        {/* ─────────── Preview ─────────── */}
-        {stage.current === 'preview' ? (
-          <PreviewStage
-            app={app} surface={surface} pipe={pipe}
-            busy={busy} onPreview={() => deployAction('preview')}
-            deployMsg={deployMsg}
-            offlineAck={previewAck} onOfflineAck={() => { setPreviewAck(true); setStage((s) => markDone(s, 'preview')); }}
-            connTools={connection?.tools ?? app.mcpTools}
-          />
-        ) : null}
+          {stage.current === 'build' ? (
+            <BuildStage
+              app={app} epics={epics} canEditCode={canEditCode} onBuilt={onReload}
+              target={target} setTarget={setTarget}
+            />
+          ) : null}
 
-        {/* ─────────── Publish ─────────── */}
-        {stage.current === 'publish' ? (
-          <PublishStage
-            app={app} reviewCard={reviewCard}
-            publishLabel={publishLabel} publishDisabled={publishDisabled} inReview={inReview}
-            onPublish={() => deployAction()} deployMsg={deployMsg}
-          />
-        ) : null}
+          {stage.current === 'preview' ? (
+            <PreviewStage
+              app={app} surface={surface} pipe={pipe}
+              busy={busy} onPreview={() => deployAction('preview')}
+              deployMsg={deployMsg}
+              offlineAck={previewAck} onOfflineAck={() => { setPreviewAck(true); setStage((s) => markDone(s, 'preview')); }}
+              connTools={connection?.tools ?? app.mcpTools}
+            />
+          ) : null}
 
-        {/* ─────────── Operate ─────────── */}
-        {stage.current === 'operate' ? (
-          <OperateStage
-            app={app} surface={surface} user={user}
-            connTools={connection?.tools ?? app.mcpTools}
-            toolOut={toolOut} toolNote={toolNote} onCallTool={callTool}
-            onOpenRepo={() => app.repo.fullName && openTool('forgejo', `${app.name} · repo`, app.repo.fullName)}
-            canPromoteUI={canPromoteUI} onPromote={promote}
-            canDemoteUI={canDemoteUI} demoteLabel={demoteLabel} confirmDemoteLabel={confirmDemoteLabel}
-            confirmDemote={confirmDemote} setConfirmDemote={setConfirmDemote} onDemote={demote}
-            busy={busy} onLifecycle={lifecycle} onReload={onReload} msg={msg}
-          />
-        ) : null}
-      </StageShell>
+          {stage.current === 'operate' ? (
+            <OperateStage
+              app={app} surface={surface} user={user}
+              connTools={connection?.tools ?? app.mcpTools}
+              reviewCard={reviewCard}
+              publishLabel={publishLabel} publishDisabled={publishDisabled} inReview={inReview}
+              onPublish={() => deployAction()} deployMsg={deployMsg}
+              toolOut={toolOut} toolNote={toolNote} onCallTool={callTool}
+              onOpenRepo={() => app.repo.fullName && openTool('forgejo', `${app.name} · repo`, app.repo.fullName)}
+              canPromoteUI={canPromoteUI} onPromote={promote}
+              canDemoteUI={canDemoteUI} demoteLabel={demoteLabel} confirmDemoteLabel={confirmDemoteLabel}
+              confirmDemote={confirmDemote} setConfirmDemote={setConfirmDemote} onDemote={demote}
+              busy={busy} onLifecycle={lifecycle} onReload={onReload} msg={msg}
+            />
+          ) : null}
+        </StageShell>
+      )}
     </>
   );
 }
 
-/* ─────────────────────────── Describe ─────────────────────────── */
+/* ─────────────────────────── Developer surface ─────────────────────────── */
 
-function DescribeStage({
-  app, connection, consumes,
-  connRef, setConnRef, connLabel, setConnLabel, connScope, setConnScope, onGrant, busy,
+/**
+ * The Developer view — the RAW technical surface. Left: the real in-browser code
+ * panel (the app's committed file tree; edits commit to the sovereign repo). Right:
+ * the honest build/deploy console (the actual last deploy/tool output + status
+ * message). Nothing fabricated — a non-Builder sees the files read-only note from
+ * CodePanel and the console; only Builders get the editor.
+ */
+function DeveloperSurface({
+  app, canEditCode, deployMsg, toolOut, msg,
 }: {
   app: SoftwareApp;
-  connection: Connection;
-  consumes: Consumed[];
-  connRef: string; setConnRef: (v: string) => void;
-  connLabel: string; setConnLabel: (v: string) => void;
-  connScope: 'read' | 'write-bounded'; setConnScope: (v: 'read' | 'write-bounded') => void;
-  onGrant: () => void;
-  busy: boolean;
+  canEditCode: boolean;
+  deployMsg: string;
+  toolOut: string;
+  msg: string;
 }) {
+  const consoleLines = [msg, deployMsg, toolOut].filter(Boolean).join('\n\n');
+  return (
+    <div style={{ marginTop: 4 }}>
+      <p className="hint" style={{ marginTop: 0 }}>
+        The raw surface: the app’s committed files (edit + commit in-browser) and the live
+        build/deploy console. Everything here is real app state — nothing is simulated.
+      </p>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))',
+          gap: 16,
+          alignItems: 'start',
+          marginTop: 12,
+        }}
+      >
+        {canEditCode ? (
+          <CodePanel appId={app.id} repoFullName={app.repo.fullName} />
+        ) : (
+          <div className="grant-block">
+            <div className="comp-label">App files</div>
+            <p className="hint" style={{ marginTop: 4 }}>Editing the code is builder-only. Repo: <span className="mono">{app.repo.fullName || '(not scaffolded)'}</span>.</p>
+          </div>
+        )}
+        <div className="grant-block">
+          <div className="comp-label">Build / deploy console</div>
+          {consoleLines ? (
+            <pre className="answer mono" style={{ marginTop: 8, fontSize: 12, whiteSpace: 'pre-wrap' }}>{consoleLines}</pre>
+          ) : (
+            <p className="hint" style={{ marginTop: 4 }}>
+              No console output yet — run a preview, publish, or call a tool from the Simple flow and the real output appears here.
+              Pipeline: <span className="mono">{Object.entries(app.pipeline).map(([k, v]) => `${k}=${v}`).join(', ')}</span>.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────── Define ─────────────────────────── */
+
+function DefineStage({
+  app, grants, canEdit, onSavePurpose, onSaveGrants,
+}: {
+  app: SoftwareApp;
+  grants: ContextGrantsValue;
+  canEdit: boolean;
+  onSavePurpose: (purpose: string) => void;
+  onSaveGrants: (grants: ContextGrantsValue) => void;
+}) {
+  const [purpose, setPurpose] = useState(app.purpose ?? '');
+  useEffect(() => { setPurpose(app.purpose ?? ''); }, [app.purpose]);
   const surfaceLabel = [app.surface?.ui ? 'UI' : '', app.surface?.api ? 'API' : ''].filter(Boolean).join(' + ') || 'inferred on build';
+
+  // The context-grant safety ceiling for an app: builders may grant direct writes,
+  // everyone else caps at read+propose (writes held for approval).
+  const cap = contextAccessCap(canEdit ? 'read-write' : 'read-propose');
+
+  // Lazily load the browsable artifacts per kind for the ContextGrants picker.
+  const [available, setAvailable] = useState<Partial<Record<ContextKind, AvailableItem[]>>>({});
+  const loadKind = useCallback((kind: ContextKind) => {
+    if (available[kind]) return;
+    fetch(`/api/context/available?kind=${kind}`, { cache: 'no-store' })
+      .then(async (res) => {
+        const body = await res.json();
+        if (res.ok) setAvailable((a) => ({ ...a, [kind]: body.items as AvailableItem[] }));
+      })
+      .catch(() => { /* best-effort — the picker shows "none" */ });
+  }, [available]);
+  useEffect(() => { SW_GRANT_KINDS.forEach(loadKind); }, [loadKind]);
+
+  const dirty = purpose !== (app.purpose ?? '');
+
   return (
     <div className="agent-editor" style={{ marginTop: 4 }}>
       <label className="comp-label">App name</label>
@@ -461,49 +564,190 @@ function DescribeStage({
         the build agent infers UI/API from what it actually builds — no upfront type to pick.
       </div>
 
-      <label className="comp-label" style={{ marginTop: 16 }}>Brief</label>
+      <label className="comp-label" style={{ marginTop: 16 }}>Purpose</label>
       <p className="hint" style={{ marginTop: 0 }}>
-        {app.description || 'No brief captured yet — describe the app in the delivery-team chat or build chat on the Build stage; design decisions are captured under the app as it builds.'}
+        What is this app for? One or two sentences in your own words — the Define stage is complete once a purpose is set.
       </p>
-
-      <div className="section-title">Granted resources (no raw credentials)</div>
-      <p className="hint" style={{ marginTop: 0 }}>
-        Apps consume governed resources, OPA-scoped and run AS you — never raw secrets. Grant a
-        connection the app may use; it is enforced server-side.
-      </p>
-      {consumes.length > 0 ? (
-        <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
-          {consumes.map((c) => (
-            <span key={`${c.kind}:${c.ref}`} className="badge muted mono" style={{ fontSize: 11 }}>
-              {c.kind}:{c.label} ({c.scope})
-            </span>
-          ))}
+      <textarea
+        value={purpose}
+        onChange={(e) => setPurpose(e.target.value)}
+        readOnly={!canEdit}
+        rows={3}
+        placeholder="e.g. Give the sales team a live view of overdue invoices with one-click reminders."
+        style={{ width: '100%' }}
+      />
+      {canEdit ? (
+        <div className="row" style={{ gap: 8, marginTop: 8 }}>
+          <button className="btn" disabled={!dirty} onClick={() => onSavePurpose(purpose.trim())}>Save purpose</button>
+          {dirty ? <span className="muted" style={{ fontSize: 12 }}>Unsaved changes</span> : null}
         </div>
-      ) : (
-        <div className="muted" style={{ fontSize: 12, marginBottom: 10 }}>None yet.</div>
-      )}
-      <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <input type="text" value={connRef} onChange={(e) => setConnRef(e.target.value)} placeholder="Connection ref (e.g. salesforce)" style={{ flex: 1, minWidth: 160 }} />
-        <input type="text" value={connLabel} onChange={(e) => setConnLabel(e.target.value)} placeholder="Label" style={{ flex: 1, minWidth: 120 }} />
-        <select value={connScope} onChange={(e) => setConnScope(e.target.value as 'read' | 'write-bounded')}>
-          <option value="read">read</option>
-          <option value="write-bounded">write-bounded</option>
-        </select>
-        <button className="btn ghost" disabled={busy || !connRef.trim()} onClick={onGrant}>Grant</button>
+      ) : null}
+
+      <div className="section-title">Granted context (no raw credentials)</div>
+      <p className="hint" style={{ marginTop: 0 }}>
+        Apps consume governed resources — OPA-scoped and run AS you, never raw secrets. Grant the
+        Connections, Data, Knowledge, Files and Metrics this app may use, at Read / Read+propose / Read+write.
+      </p>
+      <ContextGrants
+        value={grants}
+        onChange={onSaveGrants}
+        kinds={SW_GRANT_KINDS}
+        available={available}
+        cap={cap}
+        canEdit={canEdit}
+      />
+    </div>
+  );
+}
+
+/* ─────────────────────────── Design ─────────────────────────── */
+
+function emptyEpic(): Epic {
+  return { id: rid('epic'), title: '', description: '', requirements: { technical: '', ux: '', governance: '' }, stories: [] };
+}
+function emptyStory(): Story {
+  return { id: rid('story'), title: '', asA: '', iWant: '', soThat: '', acceptance: '' };
+}
+
+/**
+ * The Design stage — an EPIC + user-story editor persisted on the app record. Add /
+ * edit / remove EPICs and their stories; the stage completes at ≥1 epic with ≥1 story.
+ * Git/Jira push is DEFERRED (a disabled affordance marks where it will hook in).
+ */
+function DesignStage({
+  epics, canEdit, onSave,
+}: {
+  epics: Epic[];
+  canEdit: boolean;
+  onSave: (epics: Epic[]) => void;
+}) {
+  const [draft, setDraft] = useState<Epic[]>(epics);
+  useEffect(() => { setDraft(epics); }, [epics]);
+
+  const dirty = JSON.stringify(draft) !== JSON.stringify(epics);
+
+  const patchEpic = (id: string, fn: (e: Epic) => Epic) =>
+    setDraft((d) => d.map((e) => (e.id === id ? fn(e) : e)));
+
+  return (
+    <div style={{ marginTop: 4 }}>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <p className="hint" style={{ margin: 0 }}>
+          Shape the work as EPICs and user stories. Each EPIC carries technical, UX and governance
+          requirements; each story is “As a … I want … so that …” with an acceptance criterion.
+        </p>
+        {canEdit ? <button className="btn ghost sm" onClick={() => setDraft((d) => [...d, emptyEpic()])}>+ Add EPIC</button> : null}
       </div>
 
-      {connection ? (
-        <p className="hint" style={{ marginTop: 12 }}>
-          This app already exposes a governed MCP connection (<span className="mono">{connection.principal}</span>) with {connection.tools.length} tool{connection.tools.length === 1 ? '' : 's'}.
-        </p>
-      ) : null}
+      {draft.length === 0 ? (
+        <div className="muted" style={{ fontSize: 13, marginTop: 12 }}>No EPICs yet. Add one to start designing.</div>
+      ) : (
+        <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {draft.map((epic) => (
+            <div key={epic.id} className="grant-block">
+              <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+                <input
+                  type="text" value={epic.title} readOnly={!canEdit}
+                  placeholder="EPIC title" style={{ flex: 1, fontWeight: 600 }}
+                  onChange={(e) => patchEpic(epic.id, (x) => ({ ...x, title: e.target.value }))}
+                />
+                {canEdit ? (
+                  <button className="icon-btn danger" title="Remove EPIC" onClick={() => setDraft((d) => d.filter((x) => x.id !== epic.id))}>✕</button>
+                ) : null}
+              </div>
+              <textarea
+                value={epic.description} readOnly={!canEdit} rows={2}
+                placeholder="What this EPIC delivers"
+                style={{ width: '100%', marginTop: 8 }}
+                onChange={(e) => patchEpic(epic.id, (x) => ({ ...x, description: e.target.value }))}
+              />
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8, marginTop: 8 }}>
+                {(['technical', 'ux', 'governance'] as const).map((k) => (
+                  <div key={k}>
+                    <label className="comp-label" style={{ textTransform: 'capitalize' }}>{k} requirements</label>
+                    <textarea
+                      value={epic.requirements[k]} readOnly={!canEdit} rows={2}
+                      style={{ width: '100%' }}
+                      onChange={(e) => patchEpic(epic.id, (x) => ({ ...x, requirements: { ...x.requirements, [k]: e.target.value } }))}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+                <div className="comp-label" style={{ margin: 0 }}>User stories</div>
+                {canEdit ? (
+                  <button className="btn ghost sm" onClick={() => patchEpic(epic.id, (x) => ({ ...x, stories: [...x.stories, emptyStory()] }))}>+ Add story</button>
+                ) : null}
+              </div>
+              {epic.stories.length === 0 ? (
+                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>No stories yet.</div>
+              ) : (
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {epic.stories.map((story) => (
+                    <div key={story.id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 12px' }}>
+                      <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+                        <input
+                          type="text" value={story.title} readOnly={!canEdit}
+                          placeholder="Story title" style={{ flex: 1 }}
+                          onChange={(e) => patchEpic(epic.id, (x) => ({ ...x, stories: x.stories.map((s) => s.id === story.id ? { ...s, title: e.target.value } : s) }))}
+                        />
+                        {canEdit ? (
+                          <button className="icon-btn danger" title="Remove story" onClick={() => patchEpic(epic.id, (x) => ({ ...x, stories: x.stories.filter((s) => s.id !== story.id) }))}>✕</button>
+                        ) : null}
+                      </div>
+                      <div className="row" style={{ gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+                        <span className="muted" style={{ fontSize: 12 }}>As a</span>
+                        <input type="text" value={story.asA} readOnly={!canEdit} placeholder="role" style={{ flex: 1, minWidth: 100 }}
+                          onChange={(e) => patchEpic(epic.id, (x) => ({ ...x, stories: x.stories.map((s) => s.id === story.id ? { ...s, asA: e.target.value } : s) }))} />
+                        <span className="muted" style={{ fontSize: 12 }}>I want</span>
+                        <input type="text" value={story.iWant} readOnly={!canEdit} placeholder="capability" style={{ flex: 1, minWidth: 120 }}
+                          onChange={(e) => patchEpic(epic.id, (x) => ({ ...x, stories: x.stories.map((s) => s.id === story.id ? { ...s, iWant: e.target.value } : s) }))} />
+                        <span className="muted" style={{ fontSize: 12 }}>so that</span>
+                        <input type="text" value={story.soThat} readOnly={!canEdit} placeholder="benefit" style={{ flex: 1, minWidth: 120 }}
+                          onChange={(e) => patchEpic(epic.id, (x) => ({ ...x, stories: x.stories.map((s) => s.id === story.id ? { ...s, soThat: e.target.value } : s) }))} />
+                      </div>
+                      <input
+                        type="text" value={story.acceptance} readOnly={!canEdit}
+                        placeholder="Acceptance criterion" style={{ width: '100%', marginTop: 8 }}
+                        onChange={(e) => patchEpic(epic.id, (x) => ({ ...x, stories: x.stories.map((s) => s.id === story.id ? { ...s, acceptance: e.target.value } : s) }))}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="row" style={{ gap: 8, marginTop: 14, alignItems: 'center' }}>
+        {canEdit ? (
+          <button className="btn" disabled={!dirty} onClick={() => onSave(draft)}>Save design</button>
+        ) : null}
+        {dirty ? <span className="muted" style={{ fontSize: 12 }}>Unsaved changes</span> : null}
+        {/* DEFERRED (Wave 2): push these EPICs/stories to Git/Jira. */}
+        <button className="btn ghost sm" disabled title="Git/Jira push is coming in a later wave">Push to Git/Jira (soon)</button>
+      </div>
     </div>
   );
 }
 
 /* ─────────────────────────── Build ─────────────────────────── */
 
-function BuildStage({ app, canEditCode, onBuilt }: { app: SoftwareApp; canEditCode: boolean; onBuilt: () => void }) {
+function BuildStage({
+  app, epics, canEditCode, onBuilt, target, setTarget,
+}: {
+  app: SoftwareApp;
+  epics: Epic[];
+  canEditCode: boolean;
+  onBuilt: () => void;
+  target: { epicId: string; storyId: string } | null;
+  setTarget: (t: { epicId: string; storyId: string } | null) => void;
+}) {
+  const storyOptions = epics.flatMap((e) => e.stories.map((s) => ({ epicId: e.id, storyId: s.id, label: `${e.title || 'Untitled EPIC'} › ${s.title || 'Untitled story'}` })));
+  const selectedLabel = target ? storyOptions.find((o) => o.epicId === target.epicId && o.storyId === target.storyId)?.label : null;
+
   return (
     <div style={{ marginTop: 4 }}>
       <p className="hint" style={{ marginTop: 0 }}>
@@ -511,7 +755,32 @@ function BuildStage({ app, canEditCode, onBuilt }: { app: SoftwareApp; canEditCo
         code), or with the per-app build chat. {canEditCode ? 'Edit the code directly beside it.' : 'A Builder can also edit code directly.'} Every commit lands in this app’s sovereign in-cluster repo.
       </p>
 
-      {/* The delivery-team launcher — now IN the detail build flow, seeded per-app. */}
+      {/* EPIC/story selector — the build targets a chosen story (threaded into the deploy payload). */}
+      <div className="grant-block" style={{ marginTop: 10 }}>
+        <div className="comp-label">Build target</div>
+        {storyOptions.length === 0 ? (
+          <p className="hint" style={{ marginTop: 4 }}>No stories yet — add EPICs and stories on the <strong>Design</strong> stage to target the build.</p>
+        ) : (
+          <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: 4 }}>
+            <select
+              value={target ? `${target.epicId}::${target.storyId}` : ''}
+              onChange={(e) => {
+                if (!e.target.value) { setTarget(null); return; }
+                const [epicId, storyId] = e.target.value.split('::');
+                setTarget({ epicId, storyId });
+              }}
+              style={{ minWidth: 320 }}
+            >
+              <option value="">— no specific story —</option>
+              {storyOptions.map((o) => (
+                <option key={`${o.epicId}::${o.storyId}`} value={`${o.epicId}::${o.storyId}`}>{o.label}</option>
+              ))}
+            </select>
+            {selectedLabel ? <span className="badge">{selectedLabel}</span> : null}
+          </div>
+        )}
+      </div>
+
       <div style={{ marginTop: 10 }}>
         <TeamPanel onBuilt={onBuilt} />
       </div>
@@ -586,7 +855,6 @@ function PreviewStage({
           </div>
         </div>
 
-        {/* The honest, status-driven pipeline stepper (P0-preserved). */}
         <div className="sw-health">
           <ProgressStepper
             steps={pipe.steps}
@@ -642,21 +910,48 @@ function PreviewStage({
   );
 }
 
-/* ─────────────────────────── Publish ─────────────────────────── */
+/* ─────────────────────────── Operate (merged Publish + Operate) ─────────────────────────── */
 
-function PublishStage({
-  app, reviewCard, publishLabel, publishDisabled, inReview, onPublish, deployMsg,
+function OperateStage({
+  app, surface, user, connTools, reviewCard,
+  publishLabel, publishDisabled, inReview, onPublish, deployMsg,
+  toolOut, toolNote, onCallTool, onOpenRepo,
+  canPromoteUI, onPromote, canDemoteUI, demoteLabel, confirmDemoteLabel,
+  confirmDemote, setConfirmDemote, onDemote, busy, onLifecycle, onReload, msg,
 }: {
   app: SoftwareApp;
+  surface: { ui: boolean; api: boolean };
+  user: { id: string; role: SessionRole };
+  connTools: Tool[];
   reviewCard: ReviewCardData | null;
   publishLabel: string;
   publishDisabled: boolean;
   inReview: boolean;
   onPublish: () => void;
   deployMsg: string;
+  toolOut: string;
+  toolNote: string;
+  onCallTool: (tool: string) => void;
+  onOpenRepo: () => void;
+  canPromoteUI: string | null;
+  onPromote: () => void;
+  canDemoteUI: boolean;
+  demoteLabel: string;
+  confirmDemoteLabel: string;
+  confirmDemote: boolean;
+  setConfirmDemote: (v: boolean) => void;
+  onDemote: () => void;
+  busy: boolean;
+  onLifecycle: (action: string) => void;
+  onReload: () => void;
+  msg: string;
 }) {
+  const version = app.deploy.releases > 0 ? `v${app.deploy.releases}` : 'Unpublished';
+  const dep = deployBadge(app.deploy.state);
+  const canManage = app.owner === user.id || roleAtLeast(user.role, 'domain_admin');
   return (
     <div style={{ marginTop: 4 }}>
+      {/* ── Publish a release (merged from the old Publish stage) ── */}
       <div className="sw-publish">
         <div className="sw-publish-row">
           <div>
@@ -685,8 +980,6 @@ function PublishStage({
         </div>
       </div>
 
-      {/* The REAL deploy-review card for this app (the P0-fixed security scan + envelope +
-          diff), shown read-only here so the requester sees exactly what a Builder reviews. */}
       {inReview && reviewCard ? (
         <div style={{ marginTop: 16 }}>
           <div className="section-title">In review — what a Builder sees</div>
@@ -697,44 +990,9 @@ function PublishStage({
           This deploy is awaiting a Builder in <Link className="sw-quiet-link" href="/software/reviews">Deploy reviews</Link>.
         </div>
       ) : null}
-    </div>
-  );
-}
 
-/* ─────────────────────────── Operate ─────────────────────────── */
-
-function OperateStage({
-  app, surface, user, connTools, toolOut, toolNote, onCallTool, onOpenRepo,
-  canPromoteUI, onPromote, canDemoteUI, demoteLabel, confirmDemoteLabel,
-  confirmDemote, setConfirmDemote, onDemote, busy, onLifecycle, onReload, msg,
-}: {
-  app: SoftwareApp;
-  surface: { ui: boolean; api: boolean };
-  user: { id: string; role: SessionRole };
-  connTools: Tool[];
-  toolOut: string;
-  toolNote: string;
-  onCallTool: (tool: string) => void;
-  onOpenRepo: () => void;
-  canPromoteUI: string | null;
-  onPromote: () => void;
-  canDemoteUI: boolean;
-  demoteLabel: string;
-  confirmDemoteLabel: string;
-  confirmDemote: boolean;
-  setConfirmDemote: (v: boolean) => void;
-  onDemote: () => void;
-  busy: boolean;
-  onLifecycle: (action: string) => void;
-  onReload: () => void;
-  msg: string;
-}) {
-  const version = app.deploy.releases > 0 ? `v${app.deploy.releases}` : 'Unpublished';
-  const dep = deployBadge(app.deploy.state);
-  return (
-    <div style={{ marginTop: 4 }}>
-      {/* Live pod state. */}
-      <div className="sw-monitor">
+      {/* ── Live pod state ── */}
+      <div className="sw-monitor" style={{ marginTop: 16 }}>
         <div className="sw-monitor-main">
           <div className="sw-monitor-status">
             <span className={`sw-dot ${app.deploy.state === 'live' ? 'on' : 'off'}`} aria-hidden="true" />
@@ -752,7 +1010,7 @@ function OperateStage({
         </div>
       </div>
 
-      {/* Governed tool-call surface — the REAL per-app tools; results flag demo-seed data. */}
+      {/* ── Governed tool-call surface ── */}
       {surface.api ? (
         <div className="sw-api" style={{ marginTop: 12 }}>
           <div className="hint" style={{ marginTop: 0, marginBottom: 8 }}>
@@ -778,7 +1036,7 @@ function OperateStage({
         </div>
       ) : null}
 
-      {/* Promotion + lifecycle. */}
+      {/* ── Promotion + lifecycle ── */}
       <div className="section-title">Promotion ladder</div>
       <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
         My → Domain (Builder/Admin) → Company (Admin only). Cascades to the app&apos;s data, files and MCP connection.
@@ -826,7 +1084,7 @@ function OperateStage({
           showVersions
         />
         <span className={`badge ${app.status === 'active' ? 'ok' : 'muted'}`}>{app.status}</span>
-        {(app.owner === user.id || roleAtLeast(user.role, 'domain_admin')) ? null : (
+        {canManage ? null : (
           <span className="muted" style={{ fontSize: 12 }}>Lifecycle is limited to the owner and domain admins.</span>
         )}
       </div>
