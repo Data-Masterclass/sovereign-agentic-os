@@ -36,12 +36,61 @@ directly. The files below are the stable surface:
   cross-tab discovery.
 - **`tabs.ts`** / **`tab-nav.ts`** — tab-id constants and navigation utilities
   used by the shell and individual tab routes.
+- **`stages.ts`** — the OS-wide staged-builder model (pure, no React): ordered
+  `StageDef`s with `enabled`/`completed` gates plus the `StageState` transitions
+  (`advance`, `goTo`, `markDone`, …). Rendered by
+  `components/core/StageShell.tsx`. See "Staged builders" below.
 - **`url-params.ts`** — typed search-param helpers.
 - **`markdown.ts`** — server-side markdown → HTML renderer (no client bundle).
 - **`password.ts`** — bcrypt helpers for local credential hashing.
 - **`ratelimit.ts`** — sliding-window rate-limit primitive (Redis-backed).
 - **`componentDocs.ts`** — component metadata registry used by the design system.
 - **`licenses.ts`** — SPDX license list and validation helpers.
+
+## Staged builders (`stages.ts` + `components/core/StageShell.tsx`)
+
+Every tab's guided path wears the SAME staged UX: a numbered stepper rail with
+✓ marks, per-stage entry gates, and honest session-tracked progress. The model
+lives here (`stages.ts`, unit-tested, framework-free); the visual shell is
+`components/core/StageShell.tsx`, which renders the shared `.sb-step*` rail
+classes ("guided step rail" in `app/globals.css`). The Agents builder
+(`components/agents/SimpleBuilder.tsx`, Define · Design · Build · Run ·
+Evaluate) is the reference adoption.
+
+The contract the model guarantees:
+
+- **Opens on the first stage, nothing pre-marked.** A freshly opened artifact
+  shows no ✓s even when its persisted state satisfies a stage's condition.
+- **`enabled(ctx)` gates entry** — later stages stay unreachable until earlier
+  work exists (omit for always-reachable stages).
+- **`completed(ctx)` is the live condition.** A ✓ shows only when the user has
+  ALSO worked the stage this session (`advance` past it with the condition met,
+  or `markDone` when in-stage work settles) — and it clears if later invalidated.
+- **`advance` never fakes progress**: it moves only when the next stage is
+  enterable and records the current stage only if genuinely satisfied.
+
+### Adoption recipe (per tab)
+
+1. **Declare the path** as a module-level `StageDef<Id, Ctx>[]`, where `Ctx` is
+   a small plain object of the live booleans the gates read. Planned stage sets:
+   - Data — Define · Ingest · Refine · Publish · Use
+   - Metrics — Define · Refine · Preview · Publish · Monitor
+   - Dashboards — Define · Design · Build · View · Govern
+   - Science — Define · Train · Deploy · Predict · Monitor
+   - Software — Describe · Build · Preview · Publish · Operate
+2. **Own one `useState`**: `useState(() => initialStageState(STAGES))`, and
+   derive `ctx` fresh each render from the tab's stores/props.
+3. **Mount `StageShell`** with `stages/state/ctx/onState`. Defaults give you the
+   standard stage header (title + one-line `hint`) and gated back/next footer;
+   give each stage a `hint` ("what you do here" in one line). Pass an
+   `assistant` render prop to mount a stage-scoped helper, `aside` for rail-row
+   badges. Tabs with bespoke per-stage headers/footers (Agents) pass
+   `showHeader={false} showNav={false}` and drive nav via the `StageApi`
+   render-prop (`back`/`next`/`goTo`/`markDone`/`canNext`) or their own
+   `goTo`/`advance` calls.
+4. **Record in-stage settles** (a build finishing, a run landing) with a
+   `markDone(state, stageId)` effect gated on `isSatisfied` and the current
+   stage — exactly like the Agents Build/Run/Evaluate effect.
 
 ## Invariants
 

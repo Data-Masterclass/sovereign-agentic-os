@@ -63,6 +63,13 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list", "create"]
+  # Science deploy runtime (Science tab): the deploy route creates/reconciles a
+  # per-model KServe InferenceService (lib/science/deploy.ts) serving the trained
+  # artifact, and polls its Ready condition. Least-privilege: namespaced ISVCs
+  # get/list/create/update only — no delete — gated on the same ml flag.
+  - apiGroups: ["serving.kserve.io"]
+    resources: ["inferenceservices"]
+    verbs: ["get", "list", "create", "update"]
   {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -326,6 +333,10 @@ spec:
               # there is NO `kserve` Service. Point at the predictor directly so
               # the Science-tab probe + `/v2/models/*/infer` calls resolve.
               value: {{ $u.kserveUrl | default (printf "http://%s-predictor:80" .Values.kserve.sampleModel.name) | quote }}
+            # The KServe predictor ServiceAccount (carries the S3 read creds) — the
+            # Science deploy route stamps it into each per-model InferenceService.
+            - name: KSERVE_SERVICE_ACCOUNT
+              value: {{ .Values.kserve.serviceAccountName | default "kserve-sa" | quote }}
             - name: OPENMETADATA_API_URL
               value: {{ $u.openmetadataApiUrl | default "http://openmetadata:8585" | quote }}
             # The OpenMetadata SERVICE the Trino/Iceberg lakehouse is ingested under.

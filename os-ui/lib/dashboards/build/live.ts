@@ -6,6 +6,10 @@ import { type DashboardSpec, supersetBundle } from '../model.ts';
 import { type GuestTokenRequest } from '../embed.ts';
 import { type AlertRule } from '../../metrics/alerts.ts';
 
+/** Host/port for the Cube SQL API — threaded from config at the server boundary so the
+ *  bundle carries the operator's actual endpoint, not the hardcoded in-cluster default. */
+export type CubeSqlEndpoint = { host?: string; port?: number };
+
 /**
  * The LIVE Dashboard build adapters — real apply→verify against Superset (REST/MCP) +
  * the embed guest-token endpoint, behind the SAME {@link BuildAdapter} interface (reused
@@ -46,6 +50,9 @@ export type DashboardBuildContext = {
   alert?: AlertRule;
   /** Filled by the adapters as they create artifacts (so verify can read ids back). */
   state: { reportId?: string; alertId?: string };
+  /** Cube SQL endpoint (host/port) threaded from config — used by the superset adapter to
+   *  build a bundle that points at the operator's actual Cube SQL address. */
+  cubeSql?: CubeSqlEndpoint;
 };
 
 export type DashboardLiveDeps = { superset: SupersetClient; embed: EmbedClient };
@@ -54,7 +61,7 @@ export function makeDashboardAdapters(deps: DashboardLiveDeps): Record<string, B
   const superset: BuildAdapter<DashboardBuildContext> = {
     tool: 'superset',
     async apply(ctx) {
-      await deps.superset.importBundle(ctx.spec.name, supersetBundle(ctx.spec));
+      await deps.superset.importBundle(ctx.spec.name, supersetBundle(ctx.spec, ctx.cubeSql));
       return ok(`imported Superset dashboard '${ctx.spec.name}' (${ctx.spec.charts.length} chart(s))`);
     },
     async verify(ctx) {

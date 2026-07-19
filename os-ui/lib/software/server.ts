@@ -131,17 +131,11 @@ export async function pickBackend(): Promise<PipelineBackend> {
 
 // ------------------------------------------------ Committed-file snapshot ------
 //
-// The latest committed files per app, so the security scan + diff see what was
-// actually committed (offline) — not just the original template. Authoritative
-// in-process; a live deploy reads the same from Forgejo.
-const REPO_SNAPSHOT = new Map<string, ScaffoldFile[]>();
-
-export function snapshotFiles(appId: string, files: ScaffoldFile[]): void {
-  REPO_SNAPSHOT.set(appId, files);
-}
-export function getSnapshot(appId: string): ScaffoldFile[] | null {
-  return REPO_SNAPSHOT.get(appId) ?? null;
-}
+// The latest committed files per app (moved to ./snapshot.ts so the editor save
+// path in apps.ts can update it too, without an import cycle). Re-exported here
+// for existing importers.
+import { snapshotFiles, getSnapshot } from './snapshot.ts';
+export { snapshotFiles, getSnapshot };
 
 /**
  * A commit is a CHANGESET, not the whole tree. Merge the changed files over the

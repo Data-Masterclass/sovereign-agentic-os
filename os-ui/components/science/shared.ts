@@ -22,6 +22,7 @@ export type ModelBuildState =
   | 'draft'
   | 'training'
   | 'trained'
+  | 'deploying'
   | 'deploy_failed'
   | 'deployed'
   | 'monitored'
@@ -79,6 +80,7 @@ export type ModelSummary = {
   metrics?: ModelMetrics;
   mlflowRunId?: string;
   kserveService?: string;
+  lastDeployError?: string;
   createdAt?: string;
   updatedAt?: string;
   consumptionMode?: 'read-in-place' | 'fork-allowed';
@@ -137,6 +139,7 @@ export const BUILD_STATE: Record<ModelBuildState, { label: string; dot: string }
   draft: { label: 'Draft', dot: 'muted' },
   training: { label: 'Training', dot: 'warn' },
   trained: { label: 'Trained', dot: 'ok' },
+  deploying: { label: 'Deploying', dot: 'warn' },
   deploy_failed: { label: 'Deploy failed', dot: 'down' },
   deployed: { label: 'Deployed', dot: 'up' },
   monitored: { label: 'Monitored', dot: 'up' },

@@ -575,6 +575,28 @@ const GCP_IDENTITY: InstallGuide = {
   caveat: 'The service-account key is a long-lived credential — grant it the **narrowest read-only** role and rotate it. Live reachability, the exact read-only role, and the API routes are only confirmed against your real GCP org at Test time. Workload-Identity-Federation (keyless) is a documented follow-up — this connector uses a JSON key.',
 };
 
+const GCP_DIRECTORY: InstallGuide = {
+  key: 'gcp-directory',
+  title: 'Google Workspace (directory governance · Admin SDK)',
+  summary: 'Connect Google Workspace read-only via the Admin SDK Directory API for directory governance (users, groups, org units, admin roles, domains). Uses a service account with **domain-wide delegation**. Every tool is a read — there is no write tool. This is the Workspace-directory peer of the Google Cloud (IAM) connector.',
+  prerequisites: [
+    'A **GCP service account** you create (console.cloud.google.com → IAM & Admin → Service Accounts — YOUR step) with **domain-wide delegation ENABLED** on it. The SA needs no project role for this — its power comes only from the delegation you authorize below.',
+    'A **JSON key** for that service account (Keys → Add key → JSON). You will paste the **entire JSON PLUS two extra fields** you add by hand: `"subject"` — the email of a **Workspace admin** the SA impersonates (it reads THAT admin\'s directory) — and optionally `"customer"` (defaults to `my_customer`). The whole blob goes to Secrets Manager and is **never** on the record, in a response, or in a log/trace (the `subject`/`customer` are non-secret routing that ride in the same blob only because this connector needs them server-side).',
+    'In the **Workspace Admin console** (admin.google.com → Security → API controls → Domain-wide delegation), authorize the SA\'s **client ID** for exactly the scope **`https://www.googleapis.com/auth/admin.directory.readonly`** — least privilege, read-only. Without this authorization the token exchange is rejected.',
+    'The hosts `oauth2.googleapis.com` and `admin.googleapis.com` on the **egress allowlist**.',
+    'Builder/Admin rights (service-credential connector).',
+  ],
+  steps: [
+    'On the Google Workspace card, click **Connect**.',
+    'Enter the connection **name**; the base is `https://admin.googleapis.com/admin/directory/v1`.',
+    'Paste the **extended service-account JSON** — the SA key JSON with your added `"subject"` (impersonated admin email) and optional `"customer"` — stored once in Secrets Manager.',
+    'Create the connection, then **Test** on its card (a real domain-wide-delegation JWT-bearer exchange + a users read). List users / groups / org units / admin roles / verified domains.',
+  ],
+  whatTheOsDoes:
+    'Registers a governed, **read-only** Google Workspace directory connection. The service-account JSON signs a JWT assertion (RS256, implemented in-repo dependency-free) whose **`sub` claim is the impersonated Workspace admin** (domain-wide delegation) and whose scope is **`admin.directory.readonly`**; the OS exchanges it at `oauth2.googleapis.com` for a short-lived bearer that calls the Admin SDK Directory API. `list_users`, `list_groups`, `list_org_units`, `list_roles`, and `list_domains` auto-allow; there is **no** write tool. All calls are OPA-checked and audit-traced; the key never leaves the server.',
+  caveat: 'Domain-wide delegation lets the SA impersonate the `subject` admin across the readonly scope — grant it **only** the `admin.directory.readonly` scope and rotate the key. Live reachability, the delegation authorization, and the admin `subject` are only confirmed against your real Workspace at Test time. Workload-Identity-Federation (keyless) is a documented follow-up — this connector uses a JSON key.',
+};
+
 const SNOWFLAKE_GOVERNANCE: InstallGuide = {
   key: 'snowflake-governance',
   title: 'Snowflake (ACCOUNT_USAGE governance)',
@@ -624,7 +646,7 @@ const GUIDES: InstallGuide[] = [
   GITHUB, SUPABASE, ATLASSIAN,
   SLACK, GMAIL, GCAL, OUTLOOK, TEAMS,
   ENTRA, PURVIEW, AI_FOUNDRY, SAGEMAKER,
-  GCP_IDENTITY, SNOWFLAKE_GOVERNANCE,
+  GCP_IDENTITY, GCP_DIRECTORY, SNOWFLAKE_GOVERNANCE,
 ];
 
 const GUIDE_BY_KEY: Record<string, InstallGuide> = Object.fromEntries(GUIDES.map((g) => [g.key, g]));

@@ -93,6 +93,17 @@ test('archive / delete / restore obey edit-scope (a non-owner without manage rig
   assert.throws(() => restoreDashboardVersion('dash_o', intruder, 1), (e: { status?: number }) => e.status === 403);
 });
 
+test('P1-1: getDashboard resolves spec.name before deleteDashboard removes the record (live-cleanup prerequisite)', () => {
+  // The DELETE route must resolve the dashboard name BEFORE deleting the OS record so the
+  // live Superset cleanup can find it by title. This test verifies the ordering contract:
+  // getDashboard succeeds while the record exists, and throws 404 after deleteDashboard.
+  saveDashboard(builder, 'dash_del', { name: 'Deletion Target', view: 'v', charts: [] });
+  const before = getDashboard('dash_del', builder);
+  assert.equal(before.spec.name, 'Deletion Target', 'name resolvable before delete');
+  deleteDashboard('dash_del', builder);
+  assert.throws(() => getDashboard('dash_del', builder), (e: { status?: number }) => e.status === 404, 'record gone after delete');
+});
+
 test('archive: a PERSONAL dashboard is owner-only; a SHARED one admits domain_admin + admin', () => {
   const ownerBuilder: Principal = { id: 'ivy', domains: ['sales'], role: 'builder' };
   saveDashboard(ownerBuilder, 'dash_da', spec('Owned')); // Personal tier, owned by ivy

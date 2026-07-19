@@ -279,6 +279,12 @@ export type ConnectionTemplateKey =
   // (scope cloud-platform.read-only). Read-only (list projects, get IAM policy, list
   // service accounts). The Google peer of entra (identity). No writes.
   | 'gcp-identity'
+  // Google Workspace directory governance over the Admin SDK Directory API — the
+  // read-only Workspace-directory peer of gcp-identity. A service-account JSON key
+  // with DOMAIN-WIDE DELEGATION signs a JWT (sub = an impersonated Workspace admin,
+  // scope admin.directory.readonly) exchanged for an OAuth2 bearer. Read-only (list
+  // users, groups, org units, admin roles, verified domains). No writes.
+  | 'gcp-directory'
   // Snowflake SNOWFLAKE.ACCOUNT_USAGE governance over the SQL REST API — RSA key-pair
   // JWT (account + user non-secret; PEM vaulted). Read-only (users, roles, grants,
   // login/access history). The Snowflake peer of entra/purview; distinct from the
@@ -915,6 +921,31 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
     ],
   },
   {
+    // Google Workspace directory governance over the Admin SDK Directory API. The
+    // credential is a GCP service-account JSON key WITH DOMAIN-WIDE DELEGATION: it
+    // signs a JWT whose `sub` is an impersonated Workspace admin (scope
+    // admin.directory.readonly), exchanged at oauth2.googleapis.com for a short-lived
+    // bearer. The impersonated `subject` + the `customer` (usually `my_customer`) ride
+    // as non-secret fields in the SAME pasted JSON (routing, not secrets). READ-ONLY
+    // governance — no write tool. The SA JSON (with its private key) is vaulted; the
+    // record holds only a secretRef. The Workspace-directory peer of gcp-identity.
+    key: 'gcp-directory',
+    label: 'Google Workspace (directory governance · Admin SDK)',
+    type: 'SaaS',
+    connector: 'saas',
+    auth: 'service',
+    endpointHint: 'https://admin.googleapis.com/admin/directory/v1',
+    secretKey: 'gcp-directory-service-account-json',
+    tools: [
+      // Reads (side-effect-free, auto-allowed). No writes on this connector.
+      { name: 'list_users', description: 'List Workspace directory users (read).', write: false, mode: 'Read' },
+      { name: 'list_groups', description: 'List Workspace groups (read).', write: false, mode: 'Read' },
+      { name: 'list_org_units', description: 'List the organization-unit tree (read).', write: false, mode: 'Read' },
+      { name: 'list_roles', description: 'List admin roles defined in the directory (read).', write: false, mode: 'Read' },
+      { name: 'list_domains', description: 'List the account’s verified domains (read).', write: false, mode: 'Read' },
+    ],
+  },
+  {
     // Snowflake SNOWFLAKE.ACCOUNT_USAGE governance over the SQL REST API. RSA key-pair
     // JWT auth (account + user are non-secret routing; the PEM is the vaulted secret).
     // READ-ONLY security governance — users/roles/grants/history. No write tool. NOTE:
@@ -946,7 +977,7 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
  * import, the connections gate, adapter tests) and is deliberately NOT offered in
  * the create picker — a user can never stand up a non-working mock connection.
  */
-export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp', 'airflow', 'github', 'supabase', 'atlassian', 'slack', 'gmail', 'gcal', 'outlook', 'teams', 'entra', 'purview', 'ai-foundry', 'sagemaker', 'gcp-identity', 'snowflake-governance'];
+export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp', 'airflow', 'github', 'supabase', 'atlassian', 'slack', 'gmail', 'gcal', 'outlook', 'teams', 'entra', 'purview', 'ai-foundry', 'sagemaker', 'gcp-identity', 'gcp-directory', 'snowflake-governance'];
 
 export function isUserFacingTemplate(key: string): boolean {
   return (USER_FACING_TEMPLATE_KEYS as string[]).includes(key);

@@ -8,10 +8,11 @@ import { importWarehouseTable } from '@/lib/connections';
 export const dynamic = 'force-dynamic';
 
 /**
- * IMPORT a federated warehouse table as a governed data product — CTAS into
- * `iceberg.<domain>.<name>`, run through the governed query path as the caller.
- * Builder/Admin with edit rights on the connection (re-gated in the lib). The federated
- * table becomes a normal governed dataset in the Data tab.
+ * IMPORT a federated warehouse table as a governed data product — a registry
+ * Dataset row is created and the copy lands at its canonical personal-lane Bronze
+ * (`iceberg.personal_<uid>.bronze_<slug>`) through the governed write path as the
+ * caller (re-gated in the lib). The response carries `datasetId` so the UI opens
+ * the new dataset; it then refines Bronze → Silver → Gold like any other.
  */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {

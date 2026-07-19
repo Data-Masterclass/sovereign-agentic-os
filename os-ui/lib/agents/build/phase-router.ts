@@ -128,8 +128,9 @@ export function stripControlTags(text: string): string {
 export function phaseGuidance(phase: Phase, appId: string | null): string {
   const app = appId ?? '(the current app)';
   const honesty =
-    'Preview and live deploy are NOT yet available — the in-cluster runner ships in the next release. ' +
-    'Never claim a working preview or live URL; the build + commit loop is real, preview/deploy are pending.';
+    'Preview and deploy are REAL: start_preview (and an approved deploy) provision the in-cluster runner ' +
+    '(Deployment + Service + Ingress) and the served URL appears once the pod is actually ready. ' +
+    'Never fabricate a URL — report the runner state the tools return (an unreachable cluster stays honestly pending with no URL).';
   switch (phase) {
     case 'intake':
       return [
@@ -161,7 +162,7 @@ export function phaseGuidance(phase: Phase, appId: string | null): string {
       return [
         `PHASE: DEPLOY. Call request_deploy for app ${app} to open the Builder review card, report the card`,
         'id, and stop. You cannot approve it — that is a human Builder decision. Approval records the governed',
-        'go-live decision; the live in-cluster runner itself ships in the next release.',
+        'go-live decision and rolls the app onto the in-cluster runner; the served URL appears once the pod is ready.',
       ].join(' ');
     default:
       return 'PHASE: DONE. Summarise the status honestly and say what happens next.';

@@ -54,3 +54,16 @@ test('domain does not change dashboard identity (view belongs to one domain)', (
   assert.ok(sameDashboard(withDomain, without));
   assert.equal(withDomain.domain, 'sales');
 });
+
+test('P0-1: supersetBundle threads operator-configured host/port into the Cube SQL URI', () => {
+  const view = viewFor(goldSales());
+  const spec = fromTiles('Sales Overview', view, charts, 'sales');
+  // Default (no opts): falls back to the in-cluster default cube-sql:15432.
+  const defaultBundle = JSON.parse(supersetBundle(spec));
+  assert.match(defaultBundle.database.sqlalchemy_uri, /cube-sql:15432/);
+  // Operator override: the configured host/port must appear in the URI.
+  const customBundle = JSON.parse(supersetBundle(spec, { host: 'my-cube.example.com', port: 5432 }));
+  assert.match(customBundle.database.sqlalchemy_uri, /my-cube\.example\.com:5432/);
+  // The service name is stable regardless of host/port.
+  assert.equal(customBundle.database.service_name, defaultBundle.database.service_name);
+});

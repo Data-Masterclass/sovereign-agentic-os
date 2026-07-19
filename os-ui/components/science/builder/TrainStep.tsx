@@ -86,7 +86,8 @@ export default function TrainStep({
 
   const bs = state ? BUILD_STATE[state] : null;
   const training = state === 'training';
-  const trained = state === 'trained' || state === 'deployed' || state === 'monitored';
+  const deploying = state === 'deploying';
+  const trained = state === 'trained' || state === 'deploying' || state === 'deploy_failed' || state === 'deployed' || state === 'monitored';
 
   return (
     <div className="card">
@@ -106,7 +107,7 @@ export default function TrainStep({
               <span className="muted">{bs.label}{phase && training ? ` · ${phase}` : ''}</span>
             </span>
           ) : null}
-          <button className="btn" onClick={train} disabled={!canManage || busy || training}>
+          <button className="btn" onClick={train} disabled={!canManage || busy || training || deploying}>
             {busy || training ? <span className="spin" /> : trained ? '↻ Retrain' : '▶ Train'}
           </button>
         </div>

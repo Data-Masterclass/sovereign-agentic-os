@@ -5,12 +5,14 @@ import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
 import {
   getAppByIdInternal,
+  liveRepoFiles,
   persistApp,
   templateFiles,
   newId,
   withStatus,
   type App,
 } from '@/lib/software/apps';
+import { osMirror } from '@/lib/infra/os-mirror';
 import { trace } from '@/lib/infra/agent-governed';
 import {
   enqueue,
@@ -20,7 +22,7 @@ import {
 } from '@/lib/governance/approvals';
 import { securityScan } from './scan.ts';
 import { resolveSurface } from './metadata.ts';
-import { getSnapshot } from './server.ts';
+import { getSnapshot, snapshotFiles } from './snapshot.ts';
 import { deployApp, runnerStatus, type RunnerApp, type RunnerOutcome, type RunnerStatus } from './runner.ts';
 import { roleAtLeast } from '@/lib/core/session';
 import { config } from '@/lib/core/config';
@@ -55,8 +57,11 @@ import type {
  *   • A failing security scan (secret leak / high/critical) BLOCKS approval.
  *
  * This holds regardless of which front door requested the deploy (chat, Platform
- * MCP, git push, git import) — they all converge here. Cards live in-process
- * (authoritative locally) and also land in the Governance approval inbox.
+ * MCP, git push, git import) — they all converge here. Cards are in-process
+ * authoritative with a best-effort DURABLE mirror (`os-software-reviews`, the
+ * same osMirror pattern as approvals) so a pod restart no longer empties the
+ * `/software/reviews` inbox and loses the scan/diff; they also land in the
+ * Governance approval inbox.
  */
 
 const CARDS_KEY = Symbol.for('soa.software.review');
@@ -64,6 +69,40 @@ function cards(): Map<string, ReviewCard> {
   const g = globalThis as unknown as Record<symbol, Map<string, ReviewCard> | undefined>;
   if (!g[CARDS_KEY]) g[CARDS_KEY] = new Map();
   return g[CARDS_KEY]!;
+}
+
+// Durable mirror + one-shot hydration (rebuild the in-process map on first read
+// after a pod roll). Best-effort: an unreachable mirror leaves cards in-memory.
+const cardsMirror = osMirror({ index: 'os-software-reviews' });
+const CARDS_HYDRATION_KEY = Symbol.for('soa.software.review.hydration');
+function cardsHydration(): { p: Promise<void> | null } {
+  const g = globalThis as unknown as Record<symbol, { p: Promise<void> | null } | undefined>;
+  if (!g[CARDS_HYDRATION_KEY]) g[CARDS_HYDRATION_KEY] = { p: null };
+  return g[CARDS_HYDRATION_KEY]!;
+}
+async function ensureCardsHydrated(): Promise<void> {
+  const ref = cardsHydration();
+  if (!ref.p) {
+    ref.p = (async () => {
+      const docs = (await cardsMirror.hydrate(2000)) ?? [];
+      for (const c of docs as ReviewCard[]) {
+        // Never clobber a card created in-process before hydration completed.
+        if (c && c.id && !cards().has(c.id)) cards().set(c.id, c);
+      }
+    })();
+  }
+  return ref.p;
+}
+function saveCard(card: ReviewCard): void {
+  cards().set(card.id, card);
+  cardsMirror.writeThrough(card.id, card);
+}
+
+/** Test-only: drop the in-process cards + hydration state (fresh-pod simulation). */
+export function __resetReviewCards(): void {
+  cards().clear();
+  cardsHydration().p = null;
+  cardsMirror.__reset();
 }
 
 // Per-runtime cost/resource footprint surfaced on the card (rough monthly USD).
@@ -147,10 +186,20 @@ function diffFromFiles(files: ScaffoldFile[], changed?: DiffSummary['files']): D
   };
 }
 
-/** Gather the app's repo files for the scan/diff: the latest committed snapshot
- *  if there is one (so the scan sees what was committed), else the template seed. */
-function appFiles(app: App): ScaffoldFile[] {
-  return getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
+/**
+ * Gather the app's repo files for the scan/diff — the code that will ACTUALLY
+ * ship. When Forgejo is reachable this is the LIVE repo tree (so editor saves
+ * and direct git pushes are scanned, not just agent commits); the fetched tree
+ * also refreshes the snapshot. Offline it falls back to the latest committed
+ * snapshot (else the template seed), honestly labelled `offline-mock`.
+ */
+async function appFilesForScan(app: App): Promise<{ files: ScaffoldFile[]; source: 'live-repo' | 'snapshot' }> {
+  const live = await liveRepoFiles(app);
+  if (live) {
+    snapshotFiles(app.id, live); // keep the offline fallback in step with reality
+    return { files: live, source: 'live-repo' };
+  }
+  return { files: getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug), source: 'snapshot' };
 }
 
 // --------------------------------------------------------------- Preview -------
@@ -240,17 +289,22 @@ export async function requestDeploy(
   }
   if (app.status === 'archived') throw withStatus(new Error('Archived apps cannot deploy'), 409);
 
+  // The files under review: the LIVE repo tree when Forgejo is reachable (what
+  // will actually ship — editor saves + git pushes included), else the snapshot.
+  const { files, source } = await appFilesForScan(app);
+
   // Resolve the app's UI/API surface at deploy from the code + manifest the agent
   // wrote (the deploy manifest reveals whether it binds a web server vs only an
   // API), so the monitor view is honest to what actually ships — but a declaration
   // (the creator's recorded intent) WINS over the heuristic.
-  app.surface = resolveSurface(appFiles(app), app.declaredSurface);
+  app.surface = resolveSurface(files, app.declaredSurface);
 
   const requested = requestedEnvelope(app);
   const broadened = scopeBroadened(app.deploy.approved, requested);
-  // The security scan runs on EVERY deploy request (CI scans every push). A
-  // routine update can only auto-deploy when it is BOTH in-envelope AND clean.
-  const scan = securityScan(appFiles(app), opts.scanMode ?? 'offline-mock');
+  // The security scan runs on EVERY deploy request (CI scans every push), over
+  // the files resolved above — labelled `live` only when they came from the real
+  // repo. A routine update can only auto-deploy when BOTH in-envelope AND clean.
+  const scan = securityScan(files, opts.scanMode ?? (source === 'live-repo' ? 'live' : 'offline-mock'));
 
   // Routine update within the approved envelope + a clean scan → auto-deploy.
   if (app.deploy.state === 'live' && !broadened && scan.passed) {
@@ -280,16 +334,19 @@ export async function requestDeploy(
     reason: app.deploy.approved ? 'scope-broadened' : 'first-deploy',
     scan,
     requested,
-    diff: diffFromFiles(appFiles(app), opts.changedFiles),
+    diff: diffFromFiles(files, opts.changedFiles),
     decision: 'pending',
   };
-  cards().set(card.id, card);
+  saveCard(card);
 
   app.deploy.state = 'review';
   app.deploy.reviewCardId = card.id;
   await persistApp(app);
 
-  // Surface in the Governance inbox so a Domain admin sees it alongside other holds.
+  // Surface in the Governance inbox too. ONE gate: software deploys are
+  // BUILDER-reviewed — the same floor `decideDeploy` enforces and the UI copy
+  // promises (previously this filed at domain_admin, so the two inboxes gated
+  // the SAME decision at different ranks).
   const approval = enqueue({
     kind: 'app_deploy',
     title: `Deploy review: ${app.name}`,
@@ -303,7 +360,7 @@ export async function requestDeploy(
     requestedBy: user.id,
     tool: 'request_deploy',
     payload: { appId: app.id, cardId: card.id },
-    approverRole: 'domain_admin',
+    approverRole: 'builder',
   });
 
   void trace({
@@ -362,6 +419,7 @@ export async function decideDeploy(
   decision: 'approve' | 'deny',
   note?: string,
 ): Promise<{ app: App; card: ReviewCard }> {
+  await ensureCardsHydrated(); // a fresh pod rebuilds the cards from the mirror
   const card = cards().get(cardId);
   if (!card) throw withStatus(new Error('Review card not found'), 404);
   if (card.decision !== 'pending') throw withStatus(new Error('This review is already decided'), 409);
@@ -390,7 +448,7 @@ export async function decideDeploy(
   card.decidedBy = user.id;
   card.decidedAt = new Date().toISOString();
   card.note = note;
-  cards().set(card.id, card);
+  saveCard(card);
   await persistApp(app);
 
   // Reflect the decision into the Governance inbox record.
@@ -434,6 +492,9 @@ export async function reconcileDeployApproval(app: App): Promise<boolean> {
   try {
     if (app.deploy.state !== 'review' || !app.deploy.reviewCardId) return false;
     const cardId = app.deploy.reviewCardId;
+    // Rebuild durable review cards first (mirror), so a surviving card supplies
+    // the exact approved envelope instead of falling back to the requested one.
+    await ensureCardsHydrated();
     // Ensure durable approvals are hydrated (memoized) so a fresh pod sees the
     // already-decided app_deploy record persisted in the os-approvals index.
     await ensureApprovalsHydrated();
@@ -500,11 +561,13 @@ export async function reconcileDeployStatus(
 
 // ------------------------------------------------------------- Readers ---------
 
-export function getReviewCard(cardId: string): ReviewCard | null {
+export async function getReviewCard(cardId: string): Promise<ReviewCard | null> {
+  await ensureCardsHydrated();
   return cards().get(cardId) ?? null;
 }
 
-export function listReviewCards(opts: { domain?: string; pendingOnly?: boolean } = {}): ReviewCard[] {
+export async function listReviewCards(opts: { domain?: string; pendingOnly?: boolean } = {}): Promise<ReviewCard[]> {
+  await ensureCardsHydrated();
   return [...cards().values()]
     .filter((c) => (opts.domain ? c.domain === opts.domain : true))
     .filter((c) => (opts.pendingOnly ? c.decision === 'pending' : true))

@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const user = await requireUser();
-    const cards = user.domains.flatMap((d) => listReviewCards({ domain: d }));
+    const cards = (await Promise.all(user.domains.map((d) => listReviewCards({ domain: d })))).flat();
     const canReview = roleAtLeast(user.role, 'builder');
     return NextResponse.json({ user, cards, canReview });
   } catch (e) {

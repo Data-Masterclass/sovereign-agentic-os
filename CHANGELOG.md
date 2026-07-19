@@ -15,6 +15,33 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.43] — 2026-07-19
+
+### Added
+- **Staged-builder core primitive.** The Agent tab's 5-stage pattern is now a reusable OS primitive
+  (`lib/core/stages.ts` + `components/core/StageShell.tsx`): numbered stepper, entry-gated navigation,
+  ✓ on genuine completion (never faked, clears if invalidated), and a per-stage AI-assist slot. The
+  Agent tab consumes it with byte-identical behavior; every other tab adopts it next.
+- **Dashboards staged UX** — Define · Design · Build · View · Govern, with a per-stage assistant
+  (NL→view/charts, embed-failure explainer). Create→view is now one continuous flow.
+- **GCP Admin SDK (Workspace directory) connector** — read-only users/groups/org-units/roles/domains
+  via domain-wide delegation (companion to the GCP identity connector).
+
+### Fixed (audit-driven P0 wave — verified against the code, not assumed)
+- **Software (security):** the deploy security scan now scans the **live repo tree** — editor commits
+  and direct git pushes were previously invisible to it, so a pasted secret could ship behind a clean
+  "scan passed" card. Also: app tool calls proxy the live app (or are honestly labeled demo data), the
+  promised per-app build chat is now mounted, and review cards survive a pod restart (one builder gate).
+- **Data:** phantom Bronze (dot lit with no physical table) now lands through the real verify pipeline;
+  warehouse import creates a real dataset (its CTAS never actually worked live before); MCP
+  `list_datasets` name collision fixed; transform liveness no longer mislabels a Cube outage.
+- **Metrics:** alerts are a real monitor (durable rules + live-value resolution + evaluator) instead of
+  a hand-typed demo; explore slices derive from the real dataset; honest sync copy + auto-poll; MCP
+  gains `preview_metric` + `promote_metric` and `define_metric` surfaces the sync-pending state.
+- **Dashboards:** Cube SQL host/port threaded into the bundle (was hardcoded → empty charts); embed
+  guest token now refreshes (embeds no longer blank after 5 min); build report is visible; delete
+  cleans up the Superset side.
+
 ## [os-ui 0.5.42] — 2026-07-18
 
 ### Added

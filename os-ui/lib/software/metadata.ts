@@ -285,21 +285,24 @@ export function detectSurface(files: ScaffoldFile[]): AppSurface {
   return { ui, api };
 }
 
-/** Default OpenAPI spec seeded for a fresh app so the auto-MCP has tools day one. */
+/** Default OpenAPI spec seeded for a fresh app so the auto-MCP has tools day one.
+ *  GENERIC on purpose (a neutral `records` resource named after the app) — a new
+ *  app has no domain model yet, so it must not claim one (the old seed put
+ *  renewals endpoints into EVERY app). The build chat / commits replace it. */
 export function defaultOpenApi(slug: string): string {
   const spec = {
     openapi: '3.0.0',
     info: { title: slug, version: '1.0.0' },
     paths: {
-      '/renewals': {
-        get: { operationId: 'list_renewals', summary: 'List contract renewals (read).' },
-        post: { operationId: 'add_renewal', summary: 'Add a contract renewal (write).' },
+      '/records': {
+        get: { operationId: 'list_records', summary: `List ${slug} records (read).` },
+        post: { operationId: 'add_record', summary: `Add a ${slug} record (write).` },
       },
-      '/renewals/{id}': {
-        get: { operationId: 'get_renewal', summary: 'Get one renewal by id (read).' },
+      '/records/{id}': {
+        get: { operationId: 'get_record', summary: 'Get one record by id (read).' },
       },
       '/export': {
-        post: { operationId: 'export_renewals', summary: 'Export renewals to a file (write).' },
+        post: { operationId: 'export_records', summary: 'Export records to a file (write).' },
       },
     },
   };

@@ -231,7 +231,7 @@ test('P0.4 the ladder is the ONLY promotion path: no direct promote/certify/tier
     // refuse a dataset→asset flip and send it to the physical-publish path). The
     // shared <PromoteButton>'s `[id]/promote` front door replicates the SAME guard
     // (identical consistency gate + dataset-tier refusal) — same seam, second entry.
-    transitionDataset: ['app/api/metrics/govern/route.ts', 'app/api/metrics/[id]/promote/route.ts'],
+    transitionDataset: ['app/api/metrics/govern/route.ts', 'app/api/metrics/[id]/promote/route.ts', 'lib/mcp/write-tools.ts'],
   };
   for (const [fn, allow] of Object.entries(ALLOW)) {
     const callers = grep(fn);

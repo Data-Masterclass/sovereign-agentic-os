@@ -13,6 +13,7 @@ import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import PromoteButton, { type PromoteTier } from '@/components/lifecycle/PromoteButton';
 import TrainStep from './builder/TrainStep';
+import DeployStep from './builder/DeployStep';
 import {
   TIER_BADGE,
   TIER_LABEL,
@@ -122,18 +123,20 @@ export default function ModelDetail({
       <div className="section-title">Predict</div>
       <PredictPanel model={model} />
 
-      {/* 3 — Train (real runtime) · Evaluate / Monitor (honest Phase-4 placeholders) */}
-      <div className="section-title">Train · Evaluate · Monitor</div>
+      {/* 3 — Train + Deploy (real runtimes) · Evaluate / Monitor (honest Phase-4 placeholders) */}
+      <div className="section-title">Train · Deploy · Monitor</div>
       {spec ? (
-        <TrainStep model={model} canManage={canManage} onChanged={onChanged} />
+        <>
+          <TrainStep model={model} canManage={canManage} onChanged={onChanged} />
+          <DeployStep model={model} canManage={canManage} onChanged={onChanged} />
+        </>
       ) : (
         <div className="card"><div className="muted">Define a build spec before training this model.</div></div>
       )}
       <div className="card" style={{ borderLeft: '3px solid var(--gold)', marginTop: 12 }}>
         <p style={{ marginTop: 0 }} className="muted">
           Inline <strong>evaluation</strong> and drift <strong>monitoring</strong> charts land in the next
-          phase. Training runs for real above; a one-click deploy of the trained artifact to a per-model
-          KServe endpoint follows the same governed path.
+          phase. Training and the one-click deploy to a per-model KServe endpoint run for real above.
         </p>
         <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
           <span className="badge muted">Evaluate — Phase 4 (inline)</span>
@@ -210,24 +213,32 @@ const DECISION_CLS: Record<PredictResult['decision'], string> = {
 };
 
 /**
- * The "Try it" front door — reuses the governed `predict` endpoint. Phase 1 wires the
- * live churn/KServe slice (the one real backend), so predict works for real on the
- * churn model and honestly reports "no live endpoint yet" for a freshly-defined model.
+ * The "Try it" front door — the governed `predict` endpoint, generic over ANY
+ * DEPLOYED model. Renders spec-driven feature inputs (the model's own feature
+ * names) and scores through /api/science/predict AS THE SIGNED-IN USER. A model
+ * that is not deployed yet gets an honest pointer to the Deploy step.
  */
 function PredictPanel({ model }: { model: ModelSummary }) {
   const [result, setResult] = useState<PredictResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const isChurn = model.model === 'churn_model';
+  const [features, setFeatures] = useState<Record<string, string>>({});
+  const featureNames = model.spec?.features ?? [];
+  const deployed = model.buildState === 'deployed' || model.buildState === 'monitored';
 
   const call = useCallback(async () => {
     setBusy(true);
     setErr('');
     try {
+      const vector: Record<string, number> = {};
+      for (const name of featureNames) {
+        const v = Number(features[name]);
+        vector[name] = Number.isFinite(v) ? v : 0;
+      }
       const res = await fetch('/api/science/predict', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ account: 'sample-account' }),
+        body: JSON.stringify({ model: model.model, account: 'sample-account', features: vector }),
       });
       const j = await res.json();
       if (!res.ok && res.status !== 202 && res.status !== 403) {
@@ -240,14 +251,14 @@ function PredictPanel({ model }: { model: ModelSummary }) {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [featureNames, features, model.model]);
 
-  if (!isChurn) {
+  if (!deployed) {
     return (
       <div className="card">
         <div className="muted">
-          No live serving endpoint for this model yet — deploy it (Phase 2/3) to enable the governed{' '}
-          <code>predict</code> front door. The churn model wraps the live KServe slice and can be tried today.
+          No live serving endpoint for this model yet — train it, then use <strong>Deploy</strong> below to
+          create its KServe endpoint and enable the governed <code>predict</code> front door.
         </div>
       </div>
     );
@@ -256,9 +267,27 @@ function PredictPanel({ model }: { model: ModelSummary }) {
   return (
     <div className="card">
       <div className="muted" style={{ marginBottom: 10 }}>
-        Call the governed <code>predict</code> service as an agent (MCP front door). It runs the compiled
-        policy ({model.policy.tier} tier) + the OPA <code>predict</code> grant, then a Langfuse trace.
+        Call the governed <code>predict</code> service as yourself. It runs the compiled policy
+        ({model.policy.tier} tier) + the OPA <code>predict</code> grant (the owner always may), then a
+        Langfuse trace.
       </div>
+      {featureNames.length ? (
+        <div className="row" style={{ gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+          {featureNames.map((name) => (
+            <label key={name} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <span className="comp-label mono" style={{ fontSize: 11 }}>{name}</span>
+              <input
+                className="input sm mono"
+                style={{ width: 130 }}
+                type="number"
+                placeholder="0"
+                value={features[name] ?? ''}
+                onChange={(e) => setFeatures((f) => ({ ...f, [name]: e.target.value }))}
+              />
+            </label>
+          ))}
+        </div>
+      ) : null}
       <div className="row" style={{ gap: 10, alignItems: 'center' }}>
         <button className="btn sm" onClick={call} disabled={busy}>
           {busy ? <span className="spin" /> : 'Try it — predict'}
@@ -273,7 +302,7 @@ function PredictPanel({ model }: { model: ModelSummary }) {
             `  frontDoor: "${result.frontDoor}",`,
             `  tier:      "${result.tier}",`,
             typeof result.score === 'number'
-              ? `  score:     ${result.score.toFixed(3)},  band: "${result.band}",`
+              ? `  score:     ${result.score.toFixed(3)},${result.band ? `  band: "${result.band}",` : ''}`
               : `  reason:    "${result.reason ?? ''}",`,
             `  source:    "${result.source ?? ''}",`,
             `  traceId:   "${result.traceId ?? ''}"`,

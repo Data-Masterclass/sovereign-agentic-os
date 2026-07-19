@@ -19,7 +19,7 @@ import { decide, listApprovals, __resetApprovals } from '@/lib/governance/approv
  */
 
 const creator: CurrentUser = { id: 'alice', name: 'Alice', domains: ['sales'], role: 'creator' };
-// domain_admin satisfies both the governance approverRole (app_deploy → domain_admin)
+// domain_admin satisfies both the governance approverRole (app_deploy → builder+)
 // and the software `decideDeploy` seam (Builder+ in the card's domain).
 const approver: CurrentUser = { id: 'dana', name: 'Dana', domains: ['sales'], role: 'domain_admin' };
 
@@ -39,7 +39,7 @@ test('APPROVAL-SYNC: approving the app_deploy governance item flips the software
   assert.equal(res.kind, 'review');
   if (res.kind !== 'review') return;
   assert.equal(res.app.deploy.state, 'review');
-  assert.equal(getReviewCard(res.card.id)?.decision, 'pending');
+  assert.equal((await getReviewCard(res.card.id))?.decision, 'pending');
 
   // The item is queued in the Governance inbox (Policies & Approvals).
   const item = govItemForCard(res.card.id);
@@ -56,7 +56,7 @@ test('APPROVAL-SYNC: approving the app_deploy governance item flips the software
   assert.equal(effect.ok, true);
 
   // THE FIX: the software release record flipped — no more "awaiting review".
-  assert.equal(getReviewCard(res.card.id)?.decision, 'approved');
+  assert.equal((await getReviewCard(res.card.id))?.decision, 'approved');
   const { getAppForUser } = await import('@/lib/software/apps');
   const after = await getAppForUser(app.id, creator);
   assert.equal(after.deploy.state, 'live', 'app deploy state flips review → live');
@@ -84,7 +84,7 @@ test('APPROVAL-SYNC: rejecting the app_deploy governance item flips the software
     'deny',
   );
 
-  assert.equal(getReviewCard(res.card.id)?.decision, 'denied');
+  assert.equal((await getReviewCard(res.card.id))?.decision, 'denied');
   const { getAppForUser } = await import('@/lib/software/apps');
   const after = await getAppForUser(app.id, creator);
   assert.equal(after.deploy.state, 'preview', 'a rejected deploy returns to the free preview loop');

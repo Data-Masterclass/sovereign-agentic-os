@@ -30,6 +30,11 @@ import {
 } from '@/lib/agents/capability-tools';
 import { setEntrypoint } from '@/lib/agents/canvas-edit';
 import { AGENT_TEMPLATES, agentTemplate, type AgentTemplateKey } from '@/lib/agents/agent-templates';
+import StageShell from '@/components/core/StageShell';
+import {
+  advance, goTo, initialStageState, isSatisfied, markDone,
+  type StageDef, type StageState,
+} from '@/lib/core/stages';
 import { runChecks, allChecksPass } from '@/lib/agents/build/run-checks';
 import type { DiagRun } from '@/lib/agents/build/run-diagnostics';
 import { dimensionLabel, type JudgeResult } from '@/lib/agents/evaluate-judge';
@@ -50,15 +55,39 @@ import { useUser } from '@/lib/useUser';
  *  3. Build     — compile + verify the team (no run).
  *  4. Run       — one-click ▶ Run + live progress + the final result.
  *  5. Evaluate  — per-agent breakdown + deterministic checks + LLM-judge + diagnostics/PDF/trace.
+ *
+ * The stepper rail + phase gating ride the OS-wide staged-builder primitive
+ * (lib/core/stages.ts + components/core/StageShell.tsx) — this builder is its
+ * reference adoption; the phase CONTENT below stays Agents-specific.
  */
 
 type Phase = 'define' | 'design' | 'build' | 'run' | 'evaluate';
-const PHASES: { key: Phase; label: string }[] = [
-  { key: 'define', label: 'Define' },
-  { key: 'design', label: 'Design' },
-  { key: 'build', label: 'Build' },
-  { key: 'run', label: 'Run' },
-  { key: 'evaluate', label: 'Evaluate' },
+
+/** The live state the phase gates/✓-conditions read — derived fresh each render. */
+type PhaseCtx = {
+  named: boolean;
+  ready: boolean;
+  builtOk: boolean;
+  hasRun: boolean;
+  checksPass: boolean;
+};
+
+/**
+ * The five phases as a shared-core staged path (lib/core/stages.ts + the StageShell
+ * rail). `enabled` gates which phases are reachable — you can't Build/Run/Evaluate
+ * without a team, and you can't Evaluate without a run. `completed` is each phase's
+ * underlying condition; a phase shows a ✓ only when the user has ALSO completed it
+ * this session (tracked in the StageState below), so a step never shows done on
+ * first open, and a check clears if the user later invalidates it (e.g. deletes
+ * every agent). Build/Run/Evaluate reflect their live server state.
+ */
+const PHASES: StageDef<Phase, PhaseCtx>[] = [
+  { id: 'define', title: 'Define', completed: (c) => c.named },
+  { id: 'design', title: 'Design', completed: (c) => c.ready },
+  { id: 'build', title: 'Build', enabled: (c) => c.ready, completed: (c) => c.builtOk }, // a green ✓ once the team is built
+  { id: 'run', title: 'Run', enabled: (c) => c.ready, completed: (c) => c.hasRun },
+  // Evaluate is ✓ once a run's deterministic checks all pass (the "✓ all passed" state).
+  { id: 'evaluate', title: 'Evaluate', enabled: (c) => c.ready && c.hasRun, completed: (c) => c.checksPass },
 ];
 
 type BuildRunProps = {
@@ -91,19 +120,13 @@ export default function SimpleBuilder({
 }) {
   // Always OPEN on Define — creating a new system OR opening an existing one lands
   // here, never jumping ahead. Phase checkmarks reflect what the user has actually
-  // completed THIS session (see `completed` below), so a freshly opened system shows
-  // NO green checks even if its persisted state happens to satisfy a phase's condition.
-  const [phase, setPhase] = useState<Phase>('define');
+  // completed THIS session (`stage.done`), so a freshly opened system shows NO green
+  // checks even if its persisted state happens to satisfy a phase's condition. Both
+  // rules are guaranteed by the shared stage model (lib/core/stages.ts).
+  const [stage, setStage] = useState<StageState<Phase>>(() => initialStageState(PHASES));
+  const phase = stage.current;
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-
-  // Phases the user has actually completed in this session — starts EMPTY so nothing
-  // is pre-marked. A phase is recorded here only when the user advances past it (with
-  // its real completion condition met), so checkmarks track genuine progress.
-  const [completed, setCompleted] = useState<Set<Phase>>(() => new Set());
-  const markDone = useCallback((p: Phase) => {
-    setCompleted((prev) => (prev.has(p) ? prev : new Set(prev).add(p)));
-  }, []);
 
   const editable = canEdit && !busy;
   const hasAgents = system.agents.length > 0;
@@ -124,61 +147,55 @@ export default function SimpleBuilder({
 
   const commit = useCallback((next: System) => guard(() => onCommit(next)), [guard, onCommit]);
 
-  // Which phases are reachable — you can't Build/Run/Evaluate without a team, and you
-  // can't Evaluate without a run.
-  const enabled: Record<Phase, boolean> = {
-    define: true,
-    design: true,
-    build: ready,
-    run: ready,
-    evaluate: ready && hasRun,
+  // The live context the PHASES gates/conditions read. `checksPass` inspects the run
+  // only when one exists (&& short-circuit), matching the old lazy evaluate condition.
+  const ctx: PhaseCtx = {
+    named: !!system.system.name && system.system.name !== 'Untitled system',
+    ready,
+    builtOk: !!buildRun.lastBuild?.ok,
+    hasRun,
+    checksPass: hasRun && allChecksPass(runChecks(lastRunToDiag(buildRun.lastRun!))),
   };
-  // A phase shows a ✓ only when the user has COMPLETED it this session (recorded in
-  // `completed`) AND its underlying condition still holds — so a step never shows done
-  // on first open, and a check clears if the user later invalidates it (e.g. deletes
-  // every agent). Build/Run/Evaluate additionally reflect their live server state.
-  const condOf = (p: Phase): boolean => {
-    if (p === 'define') return !!system.system.name && system.system.name !== 'Untitled system';
-    if (p === 'design') return ready;
-    if (p === 'build') return !!buildRun.lastBuild?.ok; // a green ✓ once the team is built
-    if (p === 'run') return hasRun;
-    // Evaluate is ✓ once a run's deterministic checks all pass (the "✓ all passed" state).
-    if (p === 'evaluate') return hasRun && allChecksPass(runChecks(lastRunToDiag(buildRun.lastRun!)));
-    return false;
-  };
-  const doneOf = (p: Phase): boolean => completed.has(p) && condOf(p);
+
+  // Every transition goes through the shared stage model: `go` jumps (entry-gated),
+  // `next` advances and records the current phase's ✓ only when its condition is met
+  // — the same "mark if done, then move" behavior the builder always had.
+  const go = (id: Phase) => setStage((s) => goTo(PHASES, s, id, ctx));
+  const next = () => setStage((s) => advance(PHASES, s, ctx));
 
   // Build · Run · Evaluate complete inside their own panels (no explicit "Next"), so
   // once the user is ON one of those phases and its live condition is met, record it
   // as completed. Gated on the current phase so nothing is pre-marked before the user
   // has actually worked that step.
   useEffect(() => {
-    if ((phase === 'build' || phase === 'run' || phase === 'evaluate') && condOf(phase)) {
-      markDone(phase);
+    if ((phase === 'build' || phase === 'run' || phase === 'evaluate') && isSatisfied(PHASES, phase, ctx)) {
+      setStage((s) => markDone(s, phase));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, buildRun.lastBuild?.ok, hasRun, buildRun.lastRun]);
 
   return (
     <div className="simple-builder">
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-        <ol className="sb-steps" aria-label="Build phases" style={{ marginBottom: 0 }}>
-          {PHASES.map((ph, i) => (
-            <li key={ph.key} className={`sb-step${phase === ph.key ? ' active' : ''}${doneOf(ph.key) ? ' done' : ''}`}>
-              <button type="button" onClick={() => setPhase(ph.key)} disabled={!enabled[ph.key]}>
-                <span className="sb-step-n">{doneOf(ph.key) ? '✓' : i + 1}</span>
-                <span className="sb-step-label">{ph.label}</span>
-              </button>
-            </li>
-          ))}
-        </ol>
-        {/* Runtime badge — read-only, tells the author which engine runs their team. */}
-        {hasAgents ? (
-          <span className="badge" title={`This team runs on the ${system.runtime} runtime`}>
-            {system.runtime === 'hermes' ? 'Autonomous (Hermes)' : 'Graph (LangGraph)'}
-          </span>
-        ) : null}
-      </div>
+      {/* The shared staged-builder chrome: the numbered `.sb-step*` rail with gated
+          jumps + session ✓s. Headers/footers stay bespoke per phase (below), so the
+          shell renders rail-only. */}
+      <StageShell
+        stages={PHASES}
+        state={stage}
+        ctx={ctx}
+        onState={setStage}
+        ariaLabel="Build phases"
+        showHeader={false}
+        showNav={false}
+        aside={
+          // Runtime badge — read-only, tells the author which engine runs their team.
+          hasAgents ? (
+            <span className="badge" title={`This team runs on the ${system.runtime} runtime`}>
+              {system.runtime === 'hermes' ? 'Autonomous (Hermes)' : 'Graph (LangGraph)'}
+            </span>
+          ) : null
+        }
+      >
 
       {err ? <div className="error" style={{ marginBottom: 12 }}>{err}</div> : null}
 
@@ -187,10 +204,10 @@ export default function SimpleBuilder({
           systemId={systemId}
           system={system}
           canEdit={editable}
-          onScaffolded={async () => { await onReload(); markDone('define'); setPhase('design'); }}
+          onScaffolded={async () => { await onReload(); setStage((s) => goTo(PHASES, markDone(s, 'define'), 'design', ctx)); }}
           onReload={onReload}
           onCommit={(next) => commit(next)}
-          onNext={() => { if (condOf('define')) markDone('define'); setPhase('design'); }}
+          onNext={next}
         />
       ) : null}
 
@@ -201,8 +218,8 @@ export default function SimpleBuilder({
           canEdit={editable}
           catalog={catalog}
           onCommit={commit}
-          onBack={() => setPhase('define')}
-          onNext={() => { if (ready) { markDone('design'); setPhase('build'); } }}
+          onBack={() => go('define')}
+          onNext={next}
           ready={ready}
         />
       ) : null}
@@ -227,8 +244,8 @@ export default function SimpleBuilder({
             phase="build"
           />
           <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}>
-            <button className="btn ghost sm" onClick={() => setPhase('design')}>← Design</button>
-            <button className="btn" onClick={() => { if (condOf('build')) markDone('build'); setPhase('run'); }}>Run →</button>
+            <button className="btn ghost sm" onClick={() => go('design')}>← Design</button>
+            <button className="btn" onClick={next}>Run →</button>
           </div>
         </div>
       ) : null}
@@ -253,8 +270,8 @@ export default function SimpleBuilder({
             phase="run"
           />
           <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}>
-            <button className="btn ghost sm" onClick={() => setPhase('build')}>← Build</button>
-            <button className="btn" onClick={() => { if (condOf('run')) markDone('run'); setPhase('evaluate'); }} disabled={!hasRun} title={hasRun ? 'Evaluate the run' : 'Run the team first'}>Evaluate →</button>
+            <button className="btn ghost sm" onClick={() => go('build')}>← Build</button>
+            <button className="btn" onClick={next} disabled={!hasRun} title={hasRun ? 'Evaluate the run' : 'Run the team first'}>Evaluate →</button>
           </div>
         </div>
       ) : null}
@@ -279,9 +296,10 @@ export default function SimpleBuilder({
             onStateChange={onReload}
             phase="evaluate"
           />
-          <button className="btn ghost sm" style={{ marginTop: 14 }} onClick={() => setPhase('run')}>← Back to Run</button>
+          <button className="btn ghost sm" style={{ marginTop: 14 }} onClick={() => go('run')}>← Back to Run</button>
         </div>
       ) : null}
+      </StageShell>
     </div>
   );
 }

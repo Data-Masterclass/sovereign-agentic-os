@@ -11,6 +11,12 @@ import {
   type TrainingRuntime,
   type TrainingStatus,
 } from '@/lib/science/training';
+import {
+  submitDeploy,
+  readDeploy,
+  type DeployRuntime,
+  type DeployStatus,
+} from '@/lib/science/deploy';
 import type { FeatureRow, ModelSpec, ModelVersion } from '@/lib/science/types';
 
 /**
@@ -130,6 +136,18 @@ export const registryAdapter = {
 
 // --------------------------------------------------------------- 4. deploy ----
 
+/**
+ * The cluster wiring a per-model deploy needs. The KServe predictor
+ * ServiceAccount comes from env (chart `kserve.serviceAccountName`, wired as
+ * KSERVE_SERVICE_ACCOUNT on the os-ui pod) with the chart's default as fallback.
+ */
+export function deployRuntime(): DeployRuntime {
+  return {
+    namespace: config.platformNamespace,
+    serviceAccountName: process.env.KSERVE_SERVICE_ACCOUNT || 'kserve-sa',
+  };
+}
+
 export const deployAdapter = {
   name: 'KServe',
   async probe(): Promise<boolean> {
@@ -142,6 +160,14 @@ export const deployAdapter = {
       endpoint: `${config.kserveUrl}/v2/models/${CHURN.model}/infer`,
       frontDoors: ['rest', 'mcp'],
     };
+  },
+  /** Create/reconcile the model's InferenceService (trained artifact → live endpoint). */
+  async submit(model: string): Promise<{ isvc: string; storageUri: string }> {
+    return submitDeploy(model, deployRuntime());
+  },
+  /** Poll the InferenceService's Ready state (deploying → deployed/deploy_failed). */
+  async poll(model: string): Promise<DeployStatus> {
+    return readDeploy(model, deployRuntime());
   },
 };
 

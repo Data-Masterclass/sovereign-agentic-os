@@ -701,8 +701,8 @@ const waveBReadTools: McpTool[] = [
       const appId = str(args.appId).trim();
       if (!appId) fail('get_software_status needs an `appId` (from list_software)', 400);
       const app = await getAppForUser(appId, user); // visibility guard (404)
-      const openCard = app.deploy.reviewCardId ? getReviewCard(app.deploy.reviewCardId) : null;
-      const latest = openCard ?? listReviewCards({ domain: app.domain }).find((c) => c.appId === app.id) ?? null;
+      const openCard = app.deploy.reviewCardId ? await getReviewCard(app.deploy.reviewCardId) : null;
+      const latest = openCard ?? (await listReviewCards({ domain: app.domain })).find((c) => c.appId === app.id) ?? null;
       const isLive = app.deploy.state === 'live';
       // NEVER claim a working URL that is not actually served: live state alone is
       // not enough — the pipeline must be ok AND the app created against a live stack.
@@ -1403,7 +1403,11 @@ const airflowTools: McpTool[] = [
     },
   },
   {
-    name: 'list_datasets',
+    // NOTE the MCP-facing name is list_airflow_assets — the Data tab already owns
+    // `list_datasets`, and dispatch takes the first name match, so a same-named
+    // Airflow tool would be unreachable (and duplicated in tools/list). The
+    // CONNECTION-level tool key stays `list_datasets` (the adapter contract).
+    name: 'list_airflow_assets',
     tab: 'connections',
     minRole: 'creator',
     description:
@@ -1419,7 +1423,7 @@ const airflowTools: McpTool[] = [
     },
     call: async (user, args) => {
       const id = str(args.connId).trim();
-      if (!id) fail('list_datasets needs a `connId`', 400);
+      if (!id) fail('list_airflow_assets needs a `connId`', 400);
       const toolArgs: Record<string, unknown> = {};
       if (args.limit !== undefined) toolArgs.limit = Number(args.limit);
       return callConnectionTool(id, user, { tool: 'list_datasets', args: toolArgs });
@@ -1430,7 +1434,7 @@ const airflowTools: McpTool[] = [
     tab: 'connections',
     minRole: 'creator',
     description:
-      'List asset/dataset update events in a customer Apache Airflow (airflow connection) — which producing task updated which asset, and when. Read-only monitoring. Before: list_datasets. Governance: read-only, auto-allowed; unseeable connId → not_found; unreachable Airflow → { ok:false, reason }.',
+      'List asset/dataset update events in a customer Apache Airflow (airflow connection) — which producing task updated which asset, and when. Read-only monitoring. Before: list_airflow_assets. Governance: read-only, auto-allowed; unseeable connId → not_found; unreachable Airflow → { ok:false, reason }.',
     inputSchema: {
       type: 'object',
       properties: {

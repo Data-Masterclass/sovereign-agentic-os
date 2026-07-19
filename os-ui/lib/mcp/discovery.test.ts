@@ -80,6 +80,27 @@ test('science_predict: runs AS THE CALLER (principal user:<id>), never the hardc
   }
 });
 
+test('science_predict: takes a `model` param (generic); default stays churn_model (back-compat)', async () => {
+  const prev = config.mlEnabled;
+  (config as { mlEnabled: boolean }).mlEnabled = true;
+  const tool = ALL_MCP_TOOLS.find((t) => t.name === 'science_predict');
+  assert.ok(tool, 'science_predict registered');
+  const props = (tool!.inputSchema as { properties: Record<string, unknown> }).properties;
+  assert.ok(props.model, 'the schema exposes the model param');
+  try {
+    // Default (no model) targets the churn slice.
+    const churn = await callTool(cara, 'science_predict', { account: 'acme' });
+    assert.match(churn.text, /churn_model/);
+    // An explicit unknown model is a governed deny that NAMES the model — proof
+    // the param reaches the policy gate (no silent churn fallback).
+    const other = await callTool(cara, 'science_predict', { model: 'lead_scoring', account: 'acme' });
+    assert.match(other.text, /lead_scoring/);
+    assert.ok(!other.text.includes('churn_model'), 'an explicit model is never silently swapped for churn');
+  } finally {
+    (config as { mlEnabled: boolean }).mlEnabled = prev;
+  }
+});
+
 test('science_predict: 404 (not_found) when ml.enabled is false', async () => {
   const prev = config.mlEnabled;
   (config as { mlEnabled: boolean }).mlEnabled = false;
@@ -106,7 +127,7 @@ const PATH_PRIMARY: Partial<Record<GuidePath, string[]>> = {
   connections: ['create_connection', 'promote_connection', 'list_connection_templates'],
   agents: ['create_agent_system', 'build_agent_system', 'run_agent_system'],
   software: ['create_software', 'decide_deploy', 'read_app_files', 'get_software_status'],
-  metrics: ['define_metric', 'query_metric', 'get_metric'],
+  metrics: ['define_metric', 'query_metric', 'get_metric', 'preview_metric', 'promote_metric'],
   dashboards: ['create_dashboard', 'get_dashboard'],
   bigbets: ['create_big_bet', 'get_big_bet', 'attach_component', 'update_big_bet'],
   files: ['upload_file', 'request_promotion', 'get_file'],
@@ -131,4 +152,15 @@ test('every guide invokes ONLY tools that exist, and each pathway guide names it
       assert.ok(md.includes(primary), `guide "${path}" is missing its core tool "${primary}"`);
     }
   }
+});
+
+// Dispatch resolves a tool by its FIRST name match, so two tools sharing a name make
+// the second unreachable (the old Airflow `list_datasets` shadowed by the Data one —
+// now `list_airflow_assets`). Guard: every registered MCP tool name is unique.
+test('MCP tool names are unique (no shadowed/unreachable tools)', () => {
+  const seen = new Map<string, number>();
+  for (const t of ALL_MCP_TOOLS) seen.set(t.name, (seen.get(t.name) ?? 0) + 1);
+  const dupes = [...seen.entries()].filter(([, n]) => n > 1).map(([name]) => name);
+  assert.deepEqual(dupes, [], `duplicate MCP tool names: ${dupes.join(', ')}`);
+  assert.ok(seen.has('list_airflow_assets'), 'the Airflow asset-list tool is registered under its own name');
 });

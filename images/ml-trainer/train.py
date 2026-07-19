@@ -154,8 +154,10 @@ def main():
 
             mlflow.set_tracking_uri(tracking_uri)
             mlflow.set_experiment(model_name)
-            # run_name = the k8s Job name so os-ui can look the run up on poll.
-            with mlflow.start_run(run_name=env("HOSTNAME", model_name)) as run:
+            # run_name = the k8s JOB name (passed as JOB_NAME by the Job spec) so
+            # os-ui can look the run up on poll. HOSTNAME is the POD name (random
+            # suffix) and would never match the Job-name lookup — fallback only.
+            with mlflow.start_run(run_name=env("JOB_NAME") or env("HOSTNAME", model_name)) as run:
                 mlflow.log_params({
                     "task": task, "algorithm": algorithm, "source": source_fqn,
                     "features": ",".join(features), "target": target or "",

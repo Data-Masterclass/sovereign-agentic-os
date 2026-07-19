@@ -34,7 +34,7 @@ export async function POST(req: Request) {
   // Only the prediction inputs come from the body. Identity (principal + domain)
   // is NEVER client-supplied — it is bound to the fixed front-door service
   // principal and the caller's SESSION domains, so a user cannot forge either.
-  let body: { account?: string; features?: Partial<ChurnFeatures> } = {};
+  let body: { model?: string; account?: string; features?: Partial<ChurnFeatures> | Record<string, number> } = {};
   try {
     body = await req.json();
   } catch {
@@ -43,7 +43,9 @@ export async function POST(req: Request) {
 
   // The REST door's caller is the Churn Risk software app (granted predict); the
   // callable-scope check uses the human caller's own domains from the session.
+  // `model` selects any registered model (default: the churn slice).
   const result = await servePredict({
+    model: typeof body.model === 'string' ? body.model : undefined,
     account: body.account,
     features: body.features,
     principal: 'churn-risk-app',

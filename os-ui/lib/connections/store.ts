@@ -165,6 +165,15 @@ import {
   gcpListServiceAccounts,
 } from '@/lib/connections/gcp-identity';
 import {
+  gcpDirectoryConnFrom,
+  gcpDirectoryHealth,
+  gcpDirListUsers,
+  gcpDirListGroups,
+  gcpDirListOrgUnits,
+  gcpDirListRoles,
+  gcpDirListDomains,
+} from '@/lib/connections/gcp-directory';
+import {
   snowflakeGovConnFrom,
   snowflakeGovHealth,
   snowflakeGovListUsers,
@@ -181,6 +190,11 @@ import { buildImportCtas } from '@/lib/connections/warehouse/import';
 import { catalogRegistration, type CatalogRegistration } from '@/lib/connections/warehouse/registration';
 import { applyLiveRegistration, type RegK8s, type RegisterK8sOutcome, type SecretValues } from '@/lib/connections/warehouse/k8s-registration';
 import { executeRun, queryRun, type ExecuteIdentity } from '@/lib/infra/governed';
+// Data-tab registry seam for the warehouse IMPORT (P0 A2): an import must create a
+// real governed Dataset row pointing at the materialized table, not just a table.
+import { createDataset, buildVersion, deleteDataset } from '@/lib/data';
+import { personalSchema, slug } from '@/lib/data/store-fqn';
+import { stageArtifact } from '@/lib/data/panels';
 import { putSecret, secretFingerprint, getSecretServerSide, isEgressAllowed, deleteSecret, hasSecret } from '@/lib/infra/secrets';
 import { type ArtifactVersion, versionLog } from '@/lib/core/versioning';
 import {
@@ -791,6 +805,14 @@ const CONNECTION_HEALTH: Partial<Record<ConnectionTemplateKey, HealthFn>> = {
       ? { ok: true, mode: 'live', detail: `Google Cloud (Resource Manager + IAM) is reachable${h.detail ? ` (${h.detail})` : ''}. The service-account key never leaves the server.` }
       : { ok: false, mode: 'offline', detail: `Google Cloud is unreachable (${h.reason ?? 'network error'}) — check the service-account key + egress, then re-test.` };
   },
+  'gcp-directory': async (c) => {
+    const h = await gcpDirectoryHealth(gcpDirectoryConnFrom(c));
+    c.mode = h.connected ? 'live' : 'offline';
+    c.health = h.connected ? 'healthy' : 'needs-reconnect';
+    return h.connected
+      ? { ok: true, mode: 'live', detail: `Google Workspace directory (Admin SDK) is reachable${h.detail ? ` (${h.detail})` : ''}. The service-account key never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Google Workspace directory is unreachable (${h.reason ?? 'network error'}) — check the service-account key, the domain-wide-delegation authorization + admin subject, then re-test.` };
+  },
   'snowflake-governance': async (c) => {
     const h = await snowflakeGovHealth(snowflakeGovConnFrom(c));
     c.mode = h.connected ? 'live' : 'offline';
@@ -1104,16 +1126,27 @@ export async function registerWarehouseCatalog(
 }
 
 /**
- * IMPORT a federated external table into the OS Iceberg lakehouse as an owned data
- * product — a governed CTAS run through the SAME `executeRun` promote/materialize
- * path (Trino→OPA as the caller). Requires the provider to support import and the
- * caller to be able to edit the connection. Returns the target FQN + the SQL run.
+ * IMPORT a federated external table into the OS Iceberg lakehouse as an owned,
+ * GOVERNED DATASET (P0 A2 — the import used to run a bare CTAS and create no
+ * registry row, so the promised "governed dataset" never existed and the UI's
+ * open-it navigation dead-ended). Now the import:
+ *   1. registers the Dataset row first (name-unique per domain — an honest 409
+ *      beats an orphaned table);
+ *   2. lands the copy at that row's CANONICAL personal-lane Bronze target
+ *      (`iceberg.personal_<uid>.bronze_<slug>`) via the SAME governed `executeRun`
+ *      write path — as `CREATE OR REPLACE TABLE … AS SELECT`, the only CTAS shape
+ *      the query-tool write allowlist admits (plain CREATE TABLE is rejected), run
+ *      AS the uid (personal-lane owner rule, same as the transform route);
+ *   3. lights the Bronze dot ONLY after the CTAS succeeded (executeRun throws on
+ *      any rejection/Trino error; a failed landing removes the fresh row again).
+ * The dataset then refines Bronze → Silver → Gold and promotes like any other.
+ * Returns the target FQN, the SQL run and the new `datasetId` for the UI to open.
  */
 export async function importWarehouseTable(
   connId: string,
   user: CurrentUser,
   input: { schema: string; table: string; name?: string; targetDomain?: string },
-): Promise<{ ok: true; target: string; sql: string; rowsAffected: number | null }> {
+): Promise<{ ok: true; target: string; sql: string; rowsAffected: number | null; datasetId: string }> {
   const map = await getCache();
   const c = map.get(connId);
   if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
@@ -1127,25 +1160,58 @@ export async function importWarehouseTable(
   }
   const targetDomain = input.targetDomain && user.domains.includes(input.targetDomain) ? input.targetDomain : c.domain;
   const name = (input.name ?? input.table).trim();
+  // Compile the CTAS BEFORE creating the registry row, so a malformed source is a
+  // clean 400 with no cleanup. Target identifiers are slugged (personal_<uid> /
+  // bronze_<slug>) so they always satisfy the builder's identifier rule.
+  const targetSchema = personalSchema(user.id);
+  const targetTable = `bronze_${slug(name)}`;
   let sql: string;
   try {
     sql = buildImportCtas(
-      { domain: targetDomain, name },
+      { domain: targetSchema, name: targetTable },
       { catalog: c.warehouse.catalog, schema: input.schema, table: input.table },
     );
   } catch (e) {
     throw withStatus(e as Error, (e as Error & { status?: number }).status ?? 400);
   }
-  const res = await executeRun(sql, executeIdentity(user), targetDomain);
-  const target = `iceberg.${targetDomain}.${name}`;
+  // The query-tool write allowlist admits only CREATE OR REPLACE / IF NOT EXISTS
+  // CTAS shapes; the pure builder emits plain CREATE TABLE, so lift it here (the
+  // prefix is fixed — see buildImportCtas). OR REPLACE keeps a re-import honest
+  // (fresh rows, never a silent no-op).
+  sql = sql.replace(/^CREATE TABLE /, 'CREATE OR REPLACE TABLE ');
+
+  // 1. Registry row first (throws a tagged 409 on a duplicate name in the domain).
+  const dataset = createDataset(user, { name, domain: targetDomain });
+  const target = `iceberg.${targetSchema}.${targetTable}`;
+
+  // 2. Land the physical copy AS the uid (personal-lane owner rule — Trino→OPA
+  //    denies the personal schema under the domain principal).
+  const identity = executeIdentity(user);
+  identity.principal = user.id;
+  let res: { rowsAffected: number | null };
+  try {
+    res = await executeRun(sql, identity);
+  } catch (e) {
+    // The landing failed → do not leave a phantom, empty dataset behind.
+    try { deleteDataset(dataset.id, user); } catch { /* best-effort cleanup */ }
+    throw withStatus(e as Error, (e as Error & { status?: number }).status ?? 502);
+  }
+
+  // 3. CTAS succeeded → NOW light the Bronze dot on the registry row (the same
+  //    register-after-landing contract as the ingest pipeline).
+  buildVersion(dataset.id, user, 'bronze', {
+    quality: 'unknown', // raw copy: no dbt tests have run — honestly unknown.
+    artifact: stageArtifact(dataset.name, 'bronze'),
+  });
+
   void trace({
     principal: c.principal,
     tool: 'generate',
     input: { action: 'import_warehouse_table', by: user.id, source: `${c.warehouse.catalog}.${input.schema}.${input.table}` },
-    output: { target, rowsAffected: res.rowsAffected },
+    output: { target, datasetId: dataset.id, rowsAffected: res.rowsAffected },
     decision: 'allow',
   });
-  return { ok: true, target, sql, rowsAffected: res.rowsAffected };
+  return { ok: true, target, sql, rowsAffected: res.rowsAffected, datasetId: dataset.id };
 }
 
 // ------------------------------------------------------------------- Promote ---
@@ -1396,6 +1462,7 @@ const CONNECTION_EXECUTORS: Partial<Record<ConnectionTemplateKey, Executor>> = {
   'ai-foundry': (c, tool, args) => executeAiFoundry(c, tool, args),
   sagemaker: (c, tool, args) => executeSageMaker(c, tool, args),
   'gcp-identity': (c, tool, args) => executeGcpIdentity(c, tool, args),
+  'gcp-directory': (c, tool, args) => executeGcpDirectory(c, tool, args),
   'snowflake-governance': (c, tool, args) => executeSnowflakeGov(c, tool, args),
 };
 
@@ -2043,6 +2110,34 @@ async function executeGcpIdentity(c: Connection, tool: string, args: Record<stri
       return done(await gcpListServiceAccounts(conn, String(args.projectId ?? args.project ?? args.id ?? '')), 'serviceAccounts');
     default:
       return fail(`Unknown Google Cloud tool: ${tool}`);
+  }
+}
+
+/**
+ * Execute an ALLOWED Google Workspace directory governance tool over the Admin SDK
+ * Directory API. READ-ONLY connector — every tool is a read. Never throws. The
+ * service-account key is dereferenced server-side, signs a domain-wide-delegation JWT
+ * (sub = the impersonated Workspace admin) exchanged for a read-only OAuth2 bearer,
+ * and never leaves the process.
+ */
+async function executeGcpDirectory(c: Connection, tool: string, _args: Record<string, unknown>): Promise<unknown> {
+  const conn = gcpDirectoryConnFrom(c);
+  const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
+  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
+    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  switch (tool) {
+    case 'list_users':
+      return done(await gcpDirListUsers(conn), 'users');
+    case 'list_groups':
+      return done(await gcpDirListGroups(conn), 'groups');
+    case 'list_org_units':
+      return done(await gcpDirListOrgUnits(conn), 'orgUnits');
+    case 'list_roles':
+      return done(await gcpDirListRoles(conn), 'roles');
+    case 'list_domains':
+      return done(await gcpDirListDomains(conn), 'domains');
+    default:
+      return fail(`Unknown Google Workspace directory tool: ${tool}`);
   }
 }
 

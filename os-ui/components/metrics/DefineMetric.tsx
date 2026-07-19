@@ -295,6 +295,20 @@ export default function DefineMetric({ onDefined }: { onDefined: () => void }) {
 
   const previewCols = preview && preview.rows.length ? Object.keys(preview.rows[0]) : [];
 
+  // Auto-poll when a preview resolves pending: true — re-run up to 6 times (30 s total,
+  // 5 s interval) so the user sees the live number as soon as Cube syncs the measure.
+  useEffect(() => {
+    if (!preview?.pending) return;
+    let tries = 0;
+    const MAX = 6;
+    const id = setInterval(async () => {
+      tries++;
+      await runPreview();
+      if (tries >= MAX) clearInterval(id);
+    }, 5000);
+    return () => clearInterval(id);
+  }, [preview?.pending, runPreview]);
+
   return (
     <>
       <p className="lead" style={{ marginTop: 4 }}>
@@ -473,7 +487,7 @@ export default function DefineMetric({ onDefined }: { onDefined: () => void }) {
         {preview ? (
           preview.pending ? (
             <div className="stub-page" style={{ marginTop: 10 }}>
-              Syncing — the live value appears within a few seconds as the query engine picks
+              Syncing — the live value appears within ~30 s as the query engine picks
               up this metric. Preview again shortly.
             </div>
           ) : preview.rows.length === 0 ? (
@@ -549,8 +563,8 @@ export default function DefineMetric({ onDefined }: { onDefined: () => void }) {
         <>
           {result.pending ? (
             <div className="stub-page" style={{ marginTop: 14 }}>
-              ✓ Metric saved — its live value appears within a few seconds as the query engine
-              syncs. Nothing to fix; refresh the metric shortly to see the number.
+              ✓ Metric saved — its live value appears within ~30 s as the query engine
+              syncs. Nothing to fix; the Preview button below will update automatically.
             </div>
           ) : null}
           <div className="section-title">Convergence · form and agent resolve to one measure</div>

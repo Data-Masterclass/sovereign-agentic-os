@@ -86,6 +86,7 @@ export type ModelBuildState =
   | 'draft'
   | 'training'
   | 'trained'
+  | 'deploying'
   | 'deploy_failed'
   | 'deployed'
   | 'monitored'
@@ -145,6 +146,8 @@ export type ServiceModel = {
   trainingNamespace?: string;
   /** The last training failure reason (set on failTraining; shown in the builder). */
   lastTrainingError?: string;
+  /** The last deploy failure reason (set on failDeploy; shown in the builder). */
+  lastDeployError?: string;
   /** ISO timestamps (creation / last mutation). */
   createdAt?: string;
   updatedAt?: string;

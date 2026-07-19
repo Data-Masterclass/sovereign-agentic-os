@@ -10,6 +10,7 @@ import {
   getModel,
   createModel,
   ensureChurnSeed,
+  ensureModelsHydrated,
   compilePredictPolicy,
   goLive,
   importModel,
@@ -63,9 +64,11 @@ export async function GET(request: Request) {
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
   }
-  // Phase 1: wrap the live churn/KServe slice as the FIRST model so the tab is never
-  // empty. Seeded into the viewer's own domain so it's theirs to open/predict/promote.
-  ensureChurnSeed(user.id, user.domains[0] ?? 'sales');
+  // Durable registry: hydrate persisted models BEFORE seeding, so the churn seed
+  // (FIXED system/sales identity — never the first viewer) only lands on a truly
+  // empty fresh tenant and a deleted model stays deleted across pod rolls.
+  await ensureModelsHydrated();
+  ensureChurnSeed();
 
   const [features, train, registry, deploy, mon, drift] = await Promise.all([
     featuresAdapter.probe(),
@@ -138,6 +141,7 @@ export async function POST(req: Request) {
   const actor = actorFrom(user);
 
   try {
+    await ensureModelsHydrated(); // durable registry: act on the persisted state
     switch (body.op) {
       case 'create': {
         if (!body.name || !body.spec) {

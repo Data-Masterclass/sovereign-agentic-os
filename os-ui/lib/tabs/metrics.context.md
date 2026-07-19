@@ -3,7 +3,9 @@
 **Purpose:** One definition of every number. A metric is a governed Cube member defined on a dataset’s built GOLD version — define-here / explore / chart / ask-the-agent all read the identical number.
 
 **Tools (MCP `metrics`):**
-- `define_metric(datasetId, name, aggregation, column?, dimensions?, …)` — persist a measure on a Gold, GOVERNED (asset/product) dataset. Returns the canonical member + generated Cube YAML.
+- `preview_metric(datasetId, name, aggregation, column?, dimensions?, timeDimension?, granularity?, limit?)` — transient preview: same governed Cube query, same RLS, no persist. Returns rows + SQL + mode. Returns `pending: true` if the measure hasn't synced yet (~30 s).
+- `define_metric(datasetId, name, aggregation, column?, dimensions?, …)` — persist a measure on a Gold, GOVERNED (asset/product) dataset. Returns the canonical member + generated Cube YAML. Returns `pending: true` if the query engine hasn't synced yet.
+- `promote_metric(metricId)` — promote one rung (Personal→Domain or Domain→Company). Creator owner files a request; builder+ runs the consistency-gated transition directly.
 
 **The full measure model** (all optional beyond aggregation — the same guided controls as the tab form; omit them all for a plain `{name,type,sql}` measure):
 - `aggregation` ∈ `count` · `count_distinct` · `count_distinct_approx` (fast approximate distinct) · `sum` · `avg` · `min` · `max` · `number` (derived/ratio).

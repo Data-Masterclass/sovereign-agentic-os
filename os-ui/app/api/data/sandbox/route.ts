@@ -10,7 +10,8 @@ import {
   promotePlan,
   type PersonalDataset,
 } from '@/lib/data/personal-lane';
-import { listPersonalTables } from '@/lib/data/ingest';
+import { listPersonalTables, landGridAsBronze } from '@/lib/data/ingest';
+import { stepperStages } from '@/lib/data/panels';
 
 export const dynamic = 'force-dynamic';
 
@@ -51,7 +52,7 @@ export async function POST(req: Request) {
   const principal = user.domains[0] ?? user.id;
   const prefix = privatePrefix(uid);
 
-  let body: { action?: string; name?: string; sql?: string; id?: string;
+  let body: { action?: string; name?: string; sql?: string; id?: string; datasetId?: string;
     columns?: string[]; rows?: string[][]; domain?: string; visibility?: string };
   try {
     body = await req.json();
@@ -97,6 +98,30 @@ export async function POST(req: Request) {
         ok: true, prefix, masked: true, policy: authz.policy, traced, dataset: meta(d),
         columns: d.columns, rows: d.rows,
       });
+    }
+
+    if (action === 'land-bronze') {
+      // "Confirm — this is my Bronze" for a pulled extract: LAND the in-session
+      // extract as the dataset's REAL personal Bronze table through the SAME
+      // ingest pipeline as a file upload (verify-then-dot — P0 A1). The extract
+      // must exist in this session; the Bronze dot lights ONLY on apply+verify ✓.
+      const datasetId = (body.datasetId ?? '').trim();
+      if (!datasetId) return NextResponse.json({ error: 'land-bronze needs a datasetId' }, { status: 400 });
+      const extract = listFor(uid).find((d) => d.id === body.id && d.origin === 'extract');
+      if (!extract) {
+        return NextResponse.json(
+          { error: 'unknown extract — pull it again before confirming (extracts are per-session)' },
+          { status: 404 },
+        );
+      }
+      const r = await landGridAsBronze(user, datasetId, { columns: extract.columns, rows: extract.rows });
+      if (!r.ok || !r.dataset) {
+        return NextResponse.json(
+          { ok: false, error: r.report.error ?? 'ingest verify failed — Bronze was not registered', report: r.report },
+          { status: 502 },
+        );
+      }
+      return NextResponse.json({ ok: true, report: r.report, stages: stepperStages(r.dataset) });
     }
 
     if (action === 'promote') {

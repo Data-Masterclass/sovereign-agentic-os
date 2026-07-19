@@ -25,6 +25,10 @@ import {
   startTraining,
   completeTraining,
   failTraining,
+  assertCanDeploy,
+  startDeploy,
+  completeDeploy,
+  failDeploy,
 } from './model-service.ts';
 import {
   proposePlan,
@@ -405,11 +409,20 @@ test('ensureChurnSeed wraps the live churn/KServe slice as the first trained+dep
   assert.ok(listModelsForUser({ id: 'sara', domains: ['sales'] }).some((x) => x.model === 'churn_model'));
 });
 
-test('churnSeedModel is a self-consistent Personal-tier template (walkable ladder)', () => {
-  const m = churnSeedModel('sara', 'sales');
-  assert.equal(m.tier, 'Personal'); // owner-only start → the whole ladder is walkable
-  assert.equal(nextTier(m.tier), 'Domain');
-  assert.equal(compilePredictPolicy(m).allowedDomains.length, 0); // Personal = owner only
+test('churnSeedModel has a FIXED identity (system/sales, Domain tier) — never the first viewer', () => {
+  const m = churnSeedModel();
+  assert.equal(m.owner, 'system'); // stable across pods/users — not whoever opened the tab
+  assert.equal(m.domain, 'sales');
+  assert.equal(m.tier, 'Domain'); // the owning domain can see + call it out of the box
+  assert.equal(nextTier(m.tier), 'Marketplace'); // certify rung still walkable
+  assert.deepEqual(compilePredictPolicy(m).allowedDomains, ['sales']);
+});
+
+test('ensureChurnSeed only seeds an EMPTY registry — a deleted model stays deleted', () => {
+  _resetModels();
+  upsertModel(personalModel()); // a user model already exists (e.g. hydrated back)
+  assert.equal(ensureChurnSeed(), null, 'non-empty registry: churn is NOT resurrected');
+  assert.equal(getModel('churn_model'), null);
 });
 
 // ------------------------------------------------------------ train transitions ---
@@ -470,4 +483,73 @@ test('failTraining resets training→draft and records the reason', () => {
   assert.equal(m.buildState, 'draft');
   assert.equal(m.lastTrainingError, 'BackoffLimitExceeded');
   assert.equal(m.trainingJob, undefined);
+});
+
+// ------------------------------------------------------------ deploy transitions ---
+
+function trainedModel(): void {
+  _resetModels();
+  createModel({ name: 'Lead scoring', spec: spec() }, owner());
+  startTraining('lead_scoring', owner(), { jobName: 'j', namespace: 'ns' });
+  completeTraining('lead_scoring', owner(), { runId: 'r1', metric: 0.83, metricName: 'auc' });
+}
+
+test('startDeploy flips trained→deploying and stamps the InferenceService name', () => {
+  trainedModel();
+  const m = startDeploy('lead_scoring', owner(), 'lead-scoring');
+  assert.equal(m.buildState, 'deploying');
+  assert.equal(m.kserveService, 'lead-scoring');
+});
+
+test('completeDeploy lands deployed; failDeploy lands deploy_failed with the reason', () => {
+  trainedModel();
+  startDeploy('lead_scoring', owner(), 'lead-scoring');
+  const done = completeDeploy('lead_scoring', owner());
+  assert.equal(done.buildState, 'deployed');
+  assert.equal(done.lastDeployError, undefined);
+  // Re-deploy then fail.
+  startDeploy('lead_scoring', owner(), 'lead-scoring');
+  const failed = failDeploy('lead_scoring', owner(), 'model load failed (BlockedByFailedLoad)');
+  assert.equal(failed.buildState, 'deploy_failed');
+  assert.match(failed.lastDeployError ?? '', /BlockedByFailedLoad/);
+  // A deploy_failed model may be re-deployed (retry path).
+  assert.equal(startDeploy('lead_scoring', owner(), 'lead-scoring').buildState, 'deploying');
+});
+
+test('assertCanDeploy is FAIL-CLOSED: untrained 400, in-flight 409, agents + non-owners rejected', () => {
+  _resetModels();
+  createModel({ name: 'Lead scoring', spec: spec() }, owner());
+  // draft (never trained) → typed 400: there is no artifact to serve.
+  assert.throws(() => assertCanDeploy('lead_scoring', owner()), (e: any) => e.status === 400);
+  // training in flight → typed 409.
+  startTraining('lead_scoring', owner(), { jobName: 'j', namespace: 'ns' });
+  assert.throws(() => assertCanDeploy('lead_scoring', owner()), (e: any) => e.status === 409);
+  completeTraining('lead_scoring', owner(), { runId: 'r1', metric: 0.8 });
+  // an agent can never drive a deploy.
+  assert.throws(() => assertCanDeploy('lead_scoring', agentActor('sales')), /agent cannot/i);
+  // a same-domain non-owner (no admin rank) is edit-scoped out.
+  assert.throws(
+    () => assertCanDeploy('lead_scoring', { id: 'other', role: 'user', domains: ['sales'], isAgent: false }),
+    /Only the owner/i,
+  );
+  // deploying in flight → second submit is a typed 409.
+  startDeploy('lead_scoring', owner(), 'lead-scoring');
+  assert.throws(() => startDeploy('lead_scoring', owner(), 'lead-scoring'), (e: any) => e.status === 409);
+  // unknown model → typed 404.
+  assert.throws(() => assertCanDeploy('nope', owner()), (e: any) => e.status === 404);
+});
+
+// ------------------------------------------------- owner self-consumption (predict)
+
+test('the OWNER may predict their own model without a third-party OPA grant (both principal forms)', async () => {
+  trainedModel(); // owner sara, Personal tier
+  const bare = await authorizePredict('lead_scoring', { principal: 'sara', domains: ['sales'], isAgent: false }, denyPredict);
+  assert.equal(bare.decision, 'allow');
+  assert.equal(bare.toolPolicy, 'owner-self');
+  const sessionForm = await authorizePredict('lead_scoring', { principal: 'user:sara', domains: ['sales'], isAgent: false }, denyPredict);
+  assert.equal(sessionForm.decision, 'allow');
+  // A NON-owner in scope still needs the OPA grant (deny stays deny).
+  promoteModel('lead_scoring', builder('sales'));
+  const other = await authorizePredict('lead_scoring', { principal: 'user:bob', domains: ['sales'], isAgent: false }, denyPredict);
+  assert.equal(other.decision, 'deny');
 });

@@ -74,8 +74,10 @@ export type TrainingStatus = {
   phase: TrainingPhase;
   /** True while the cluster is reachable and the job exists. */
   active: boolean;
-  /** A short human reason (last condition message) for the UI. */
+  /** A short human reason (last condition message / pod waiting reason) for the UI. */
   reason: string;
+  /** The Job's creationTimestamp (ISO) — lets the route enforce a pending deadline. */
+  createdAt?: string;
 };
 
 // --------------------------------------------------------- honest algorithm set ---
@@ -164,6 +166,10 @@ export function buildTrainingJob(
               image: rt.trainerImage,
               command: ['python', '/app/train.py'],
               env: [
+                // The Job name — train.py uses it as the MLflow run_name so the
+                // route's poll can find the run (HOSTNAME is the POD name, which
+                // carries a random suffix and never matches the Job-name lookup).
+                { name: 'JOB_NAME', value: jobName },
                 { name: 'MODEL_NAME', value: model },
                 { name: 'TASK_TYPE', value: spec.taskType },
                 { name: 'ALGORITHM', value: algorithm },
@@ -267,6 +273,38 @@ export function jobPhase(status: Record<string, unknown> | undefined): TrainingS
   return 'pending';
 }
 
+/**
+ * Surface WHY a pending Job's pod is not running (ImagePullBackOff, unschedulable,
+ * …) from the pod's own container statuses — no Events RBAC needed. Best-effort:
+ * any API hiccup returns ''.
+ */
+export async function podPendingReason(
+  jobName: string,
+  namespace: string,
+  client: K8sClient,
+): Promise<string> {
+  const res = await client('GET', `/api/v1/namespaces/${namespace}/pods?labelSelector=job-name%3D${jobName}`);
+  if (res.status !== 200) return '';
+  const pods = (res.body?.items as Record<string, unknown>[] | undefined) ?? [];
+  for (const pod of pods) {
+    const st = (pod.status ?? {}) as Record<string, unknown>;
+    const statuses = [
+      ...((st.initContainerStatuses as { state?: { waiting?: { reason?: string; message?: string } } }[] | undefined) ?? []),
+      ...((st.containerStatuses as { state?: { waiting?: { reason?: string; message?: string } } }[] | undefined) ?? []),
+    ];
+    for (const c of statuses) {
+      const w = c.state?.waiting;
+      if (w?.reason && w.reason !== 'PodInitializing' && w.reason !== 'ContainerCreating') {
+        return w.message ? `${w.reason}: ${w.message}` : w.reason;
+      }
+    }
+    const conds = (st.conditions as { type?: string; status?: string; message?: string }[] | undefined) ?? [];
+    const unsched = conds.find((c) => c.type === 'PodScheduled' && c.status === 'False');
+    if (unsched?.message) return unsched.message;
+  }
+  return '';
+}
+
 /** Read a training Job's status (poll). Never throws — an unreachable API is `unknown`. */
 export async function readTrainingJob(
   jobName: string,
@@ -279,8 +317,15 @@ export async function readTrainingJob(
     return { jobName, phase: 'unknown', active: false, reason: res.status === 404 ? 'job not found' : 'cluster unreachable' };
   }
   const status = res.body?.status as Record<string, unknown> | undefined;
+  const meta = res.body?.metadata as { creationTimestamp?: string } | undefined;
   const phase = jobPhase(status);
   const conditions = (status?.conditions as { message?: string }[] | undefined) ?? [];
-  const reason = conditions[conditions.length - 1]?.message ?? phase;
-  return { jobName, phase, active: phase === 'running' || phase === 'pending', reason };
+  let reason = conditions[conditions.length - 1]?.message ?? phase;
+  // A pending Job (no active pod yet) is usually stuck on its pod — surface the
+  // pod's own waiting reason (ImagePullBackOff, unschedulable, …) honestly.
+  if (phase === 'pending') {
+    const podReason = await podPendingReason(jobName, namespace, k);
+    if (podReason) reason = podReason;
+  }
+  return { jobName, phase, active: phase === 'running' || phase === 'pending', reason, createdAt: meta?.creationTimestamp };
 }

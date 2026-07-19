@@ -8,63 +8,49 @@ import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
 import { useApi } from '@/lib/useApi';
 import { useTabNavReset } from '@/lib/core/tab-nav';
-import type { DashboardGroups, MetricGroups, DashboardSummary, DashTier } from './shared';
+import type { DashboardGroups, MetricGroups, DashboardSummary } from './shared';
 import Tiles from './Tiles';
-import NewDashboard from './NewDashboard';
-import DashboardDetail from './DashboardDetail';
+import DashboardBuilder from './DashboardBuilder';
 
 type View =
   | { kind: 'list' }
-  | { kind: 'detail'; dashboard: DashboardSummary }
-  | { kind: 'new' };
+  // ONE guided flow for both creating and viewing: `existing` = null → a new dashboard
+  // starting on Define; a summary → an already-built dashboard opening at View.
+  | { kind: 'builder'; existing: DashboardSummary | null };
 
 /**
- * The Dashboards experience — the OS's ONE-view pattern, mirroring Data + Metrics:
- *   list   — the grouped dashboard grid (All · My · Shared · Marketplace), with a
- *            prominent ＋ New dashboard button.
- *   detail — one dashboard, where its embedded VIEWER (per-viewer guest token + RLS),
- *            Reports (scheduled deliveries) and Govern (tier promotion) fold in as facets.
- *   new    — the dual-mode builder, opened from the list, returning to it on build.
+ * The Dashboards experience — the OS's ONE-view pattern, mirroring Data + Metrics but now
+ * on the shared STAGED builder (Define · Design · Build · View · Govern):
+ *   list    — the grouped dashboard grid (All · My · Domain · Company), with a prominent
+ *             ＋ New dashboard button.
+ *   builder — the guided flow. ＋ New opens it on Define; opening a tile opens it at View,
+ *             where the embed, Reports and Govern controls fold in as later stages. Creating
+ *             and viewing are no longer disjoint screens — it is one path.
  *
- * This component owns the ONE dashboards fetch (list + detail) and the ONE metrics fetch
- * (the builder's palette). Metrics are DEFINED in the Metrics tab — here we only consume
- * them. Conversational Q&A lives in the global Ask-the-OS assistant, not here.
+ * This component owns the ONE dashboards fetch (list) and the ONE metrics fetch (the
+ * builder's palette). Metrics are DEFINED in the Metrics tab — here we only consume them.
  */
-export default function DashboardsTab({ supersetUrl }: { supersetUrl: string }) {
+export default function DashboardsTab() {
   const [view, setView] = useState<View>({ kind: 'list' });
   // ?archived=1 additionally returns soft-archived dashboards (their own section), so an
-  // archived dashboard stays openable → its detail exposes Restore + Delete (OS-wide rule).
+  // archived dashboard stays openable → its Govern stage exposes Restore + Delete.
   const [showArchived, setShowArchived] = useState(false);
   const dashboards = useApi<DashboardGroups>(`/api/dashboards${showArchived ? '?archived=1' : ''}`);
   const metrics = useApi<MetricGroups>('/api/metrics');
 
-  // Clicking the Dashboards sidebar link returns to the list from any detail/new view.
+  // Clicking the Dashboards sidebar link returns to the list from the builder.
   useTabNavReset(() => setView({ kind: 'list' }));
-
-  const onGoverned = (tier: DashTier) => {
-    setView((v) => (v.kind === 'detail' ? { kind: 'detail', dashboard: { ...v.dashboard, tier } } : v));
-    dashboards.reload();
-  };
 
   return (
     <>
-      <PageHeader title="Dashboards" crumb="open · build · report · govern — on governed metrics" tutorial="dashboards" />
+      <PageHeader title="Dashboards" crumb="define · design · build · view · govern — on governed metrics" tutorial="dashboards" />
       <div className="content">
-        {view.kind === 'new' ? (
-          <>
-            <button className="btn ghost sm" onClick={() => setView({ kind: 'list' })} style={{ marginBottom: 14 }}>← All dashboards</button>
-            <NewDashboard
-              metrics={metrics.data}
-              loading={metrics.loading}
-              onBuilt={() => { dashboards.reload(); setView({ kind: 'list' }); }}
-            />
-          </>
-        ) : view.kind === 'detail' ? (
-          <DashboardDetail
-            dashboard={view.dashboard}
-            supersetUrl={supersetUrl}
+        {view.kind === 'builder' ? (
+          <DashboardBuilder
+            existing={view.existing}
+            metrics={metrics.data}
+            metricsLoading={metrics.loading}
             onBack={() => setView({ kind: 'list' })}
-            onGoverned={onGoverned}
             onChanged={() => dashboards.reload()}
           />
         ) : (
@@ -72,8 +58,9 @@ export default function DashboardsTab({ supersetUrl }: { supersetUrl: string }) 
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
               <div style={{ flex: 1, minWidth: 280 }}>
                 <p className="lead" style={{ marginTop: 4 }}>
-                  Compose dashboards over your <strong>governed metrics</strong>. Open one — it embeds
-                  with your own row-level security — then schedule reports and promote it, right in its detail.
+                  Compose dashboards over your <strong>governed metrics</strong> in five calm steps —
+                  Define · Design · Build · View · Govern. Open one — it embeds with your own row-level
+                  security — then schedule reports and promote it, all in the same flow.
                 </p>
                 <p className="hint" style={{ marginTop: 0 }}>
                   Metrics are <strong>defined in the Metrics tab</strong> —{' '}
@@ -90,7 +77,7 @@ export default function DashboardsTab({ supersetUrl }: { supersetUrl: string }) 
                 >
                   {showArchived ? 'Hide archived' : 'Show archived'}
                 </button>
-                <button className="btn" onClick={() => setView({ kind: 'new' })}>＋ New dashboard</button>
+                <button className="btn" onClick={() => setView({ kind: 'builder', existing: null })}>＋ New dashboard</button>
               </div>
             </div>
 
@@ -98,7 +85,7 @@ export default function DashboardsTab({ supersetUrl }: { supersetUrl: string }) 
               data={dashboards.data}
               loading={dashboards.loading}
               error={dashboards.error}
-              onOpen={(d) => setView({ kind: 'detail', dashboard: d })}
+              onOpen={(d) => setView({ kind: 'builder', existing: d })}
               showArchived={showArchived}
             />
           </>

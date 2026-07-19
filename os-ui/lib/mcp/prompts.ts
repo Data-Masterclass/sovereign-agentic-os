@@ -259,7 +259,7 @@ export const PROMPTS: McpPrompt[] = [
       '1. whoami — your identity + domains (tier scope decides which models you can call).',
       '2. list_models — the models YOU can score (read sovereign-os://my/science). HONEST CHECK: if the response says ml.enabled=false, predictions will 404 — report that and stop; an Admin must enable ML. If the list is empty, there is no model to score — never invent one.',
       `3. get_model(model${a.model ? `: "${a.model}"` : ''}) — read the card: feature names, default features, score bands, versions + AUC, tier and serving status.`,
-      `4. science_predict(${a.account ? `account: "${a.account}"` : 'account'}, features?) — score through the GOVERNED predict door (never a raw model endpoint). Use only feature names from the card. Read score / band / traceId back.`,
+      `4. science_predict(model${a.model ? `: "${a.model}"` : ': "<registry name>"'}, ${a.account ? `account: "${a.account}"` : 'account'}, features?) — score through the GOVERNED predict door (never a raw model endpoint). Omitting \`model\` scores the seeded churn_model; the model must be DEPLOYED (buildState deployed). Use only feature names from the card. Read score / band / traceId back.`,
       '5. Wire the score into a consumer through the same governed door:',
       '   • an AGENT: grant the system the predict tool in system.yaml (commit_agent_files) — its calls run grant-scoped, as the runner;',
       '   • an APP: consume by reference (use_data / the REST predict door) — never embed a model endpoint or secret.',

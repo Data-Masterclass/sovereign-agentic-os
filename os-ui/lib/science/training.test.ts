@@ -80,6 +80,9 @@ test('buildTrainingJob renders a batch/v1 Job with spec-derived env and no inlin
   const train = job.spec.template.spec.initContainers[0];
   assert.equal(train.image, 'sovereign-os/ml-trainer:0.1.0');
   const env = Object.fromEntries(train.env.map((e: any) => [e.name, e.value]));
+  // The JOB name reaches the trainer — it is the MLflow run_name the route's
+  // metric lookup searches by (HOSTNAME = pod name would never match).
+  assert.equal(env.JOB_NAME, 'train-lead-scoring-abc');
   // Spec-derived params flow into the trainer as plain env.
   assert.equal(env.MODEL_NAME, 'lead_scoring');
   assert.equal(env.SOURCE_FQN, 'sales.customer_360');
@@ -162,4 +165,39 @@ test('readTrainingJob degrades to unknown when the cluster is unreachable', asyn
   const fake: K8sClient = async () => ({ status: 0, body: {} });
   const s = await readTrainingJob('j', 'ns', fake);
   assert.equal(s.phase, 'unknown');
+});
+
+test('readTrainingJob distinguishes a vanished job (not found) from an unreachable cluster', async () => {
+  const gone: K8sClient = async () => ({ status: 404, body: {} });
+  const s = await readTrainingJob('j', 'ns', gone);
+  assert.equal(s.phase, 'unknown');
+  assert.equal(s.reason, 'job not found'); // the route fails the run honestly on this
+});
+
+test('readTrainingJob reports the Job creationTimestamp and surfaces the pod waiting reason while pending', async () => {
+  const fake: K8sClient = async (_method, path) => {
+    if (path.includes('/jobs/')) {
+      return { status: 200, body: { metadata: { creationTimestamp: '2026-07-18T09:00:00Z' }, status: {} } };
+    }
+    // The pod list for the pending Job — stuck on an unpullable trainer image.
+    assert.match(path, /\/pods\?labelSelector=job-name%3Dj$/);
+    return {
+      status: 200,
+      body: {
+        items: [
+          {
+            status: {
+              initContainerStatuses: [
+                { state: { waiting: { reason: 'ImagePullBackOff', message: 'Back-off pulling image "sovereign-os/ml-trainer:0.1.0"' } } },
+              ],
+            },
+          },
+        ],
+      },
+    };
+  };
+  const s = await readTrainingJob('j', 'ns', fake);
+  assert.equal(s.phase, 'pending');
+  assert.equal(s.createdAt, '2026-07-18T09:00:00Z'); // lets the route enforce the pending deadline
+  assert.match(s.reason, /ImagePullBackOff/); // "pending forever" becomes an actionable error
 });

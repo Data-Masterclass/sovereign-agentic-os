@@ -52,10 +52,11 @@ test('imported/legacy repo (no app.yaml) derives what it can + flags the rest', 
   assert.equal(m.missing.some((x) => x.startsWith('openapi')), true);
 });
 
-test('parseOpenApi reads a committed spec', () => {
+test('parseOpenApi reads a committed spec (generic records seed, not renewals)', () => {
   const spec = parseOpenApi([{ path: 'openapi.yaml', content: defaultOpenApi('x') }]);
   assert.ok(spec);
-  assert.ok(spec!.paths['/renewals']);
+  assert.ok(spec!.paths['/records']);
+  assert.equal('/renewals' in spec!.paths, false, 'the seed no longer claims a renewals domain');
 });
 
 test('detectSurface: a Next.js app with an OpenAPI spec exposes BOTH ui + api', () => {

@@ -4,6 +4,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useToast } from '@/components/core/Toast';
 import {
   compileSilver,
   personalSchema,
@@ -84,6 +85,7 @@ function SilverBuilder({
   const [err, setErr] = useState('');
   const [report, setReport] = useState<BuildReport | null>(null);
   const [busy, setBusy] = useState(false);
+  const toast = useToast();
 
   const set = (c: string, patch: Partial<ColUI>) => setUi((m) => ({ ...m, [c]: { ...FRESH, ...m[c], ...patch } }));
 
@@ -122,6 +124,13 @@ function SilverBuilder({
       const data = await res.json();
       if (!res.ok) { setErr(data.error ?? 'Could not build the Silver version'); return; }
       if (data.build && !data.build.ok) { setReport(data.build); setErr(data.error ?? 'The transform did not pass'); return; }
+      // ALWAYS surface the build mode on success — a ✓ that silently ran as the
+      // offline mock (no live table) must say so, not just the failure path.
+      if (data.build?.mode === 'offline-mock') {
+        toast.info('Silver recorded as an offline preview — no live table was written (cluster unreachable).');
+      } else {
+        toast.success(`Silver written live — ${data.target ?? target} is queryable.`);
+      }
       onCommitted(data.stages ?? []);
     } catch (e) {
       setErr((e as Error).message);

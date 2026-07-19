@@ -11,11 +11,15 @@ import {
   startTraining,
   completeTraining,
   failTraining,
+  ensureModelsHydrated,
   trainTrackAdapter,
   type Actor,
 } from '@/lib/science';
 
 export const dynamic = 'force-dynamic';
+
+/** A Job whose POD has not started after this long is failed honestly (ImagePullBackOff etc). */
+const PENDING_DEADLINE_MS = 10 * 60_000;
 
 /** A human (never an agent) Actor from the session, preserving domain_admin. */
 function actorFrom(user: { id: string; role: string; domains: string[] }): Actor {
@@ -48,6 +52,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ model: string
   const { model } = await ctx.params;
   const actor = actorFrom(user);
   try {
+    await ensureModelsHydrated(); // durable registry: act on the persisted state
     // Edit-scope + spec check BEFORE touching the cluster (fail fast, no side effects).
     const m = assertCanTrain(model, actor);
     const run = await trainTrackAdapter.submit(m.model, m.spec!);
@@ -85,11 +90,28 @@ export async function GET(_req: Request, ctx: { params: Promise<{ model: string 
   const { model } = await ctx.params;
   const actor = actorFrom(user);
   try {
+    await ensureModelsHydrated(); // durable registry: act on the persisted state
     const m = assertCanTrain(model, actor);
     if (m.buildState !== 'training' || !m.trainingJob || !m.trainingNamespace) {
       return NextResponse.json({ ok: true, phase: m.buildState ?? 'draft', model: m });
     }
     const status = await trainTrackAdapter.poll(m.trainingJob, m.trainingNamespace);
+    // HONEST endings for "pending forever": a Job that vanished (TTL/manual delete)
+    // or whose pod never started within the deadline is a real failure — surface
+    // it (with the pod's waiting reason, e.g. ImagePullBackOff) instead of
+    // spinning. `cluster unreachable` keeps polling (no false failure).
+    if (status.phase === 'unknown' && status.reason === 'job not found') {
+      const updated = failTraining(model, actor, 'training job not found on the cluster (deleted or expired) — re-run Train');
+      return NextResponse.json({ ok: true, phase: 'failed', status, model: updated });
+    }
+    if (status.phase === 'pending' && status.createdAt) {
+      const age = Date.now() - Date.parse(status.createdAt);
+      if (Number.isFinite(age) && age > PENDING_DEADLINE_MS) {
+        const why = status.reason && status.reason !== 'pending' ? ` — ${status.reason}` : '';
+        const updated = failTraining(model, actor, `training pod did not start within ${Math.round(PENDING_DEADLINE_MS / 60000)} minutes${why}`);
+        return NextResponse.json({ ok: true, phase: 'failed', status, model: updated });
+      }
+    }
     if (status.phase === 'succeeded') {
       const metric = await readMlflowMetric(m.trainingJob, m.spec?.optimizeMetric);
       const updated = completeTraining(model, actor, {

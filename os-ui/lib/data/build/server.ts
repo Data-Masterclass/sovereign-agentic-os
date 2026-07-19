@@ -7,7 +7,7 @@ import { type DataStage } from './adapter.ts';
 import type { ExecuteIdentity } from '@/lib/infra/governed';
 import { orchestrateStage, type DataBuildReport } from './orchestrate.ts';
 import { makeMockAdapters, newMockBackends } from './mocks.ts';
-import { makeRealClients, liveDataReachable } from './live-clients.ts';
+import { makeRealClients, liveDataReachable, queryToolReachable } from './live-clients.ts';
 import { makeLiveAdapters } from './live.ts';
 import { buildVersion, type Principal } from '../store.ts';
 import { stageArtifact } from '../panels.ts';
@@ -58,7 +58,14 @@ export async function buildStage(
     releaseSchema: write?.releaseSchema,
     targetFqn: write?.targetFqn,
   };
-  if (await liveDataReachable()) {
+  // The live/offline switch probes the service the stage ACTUALLY depends on:
+  // Silver/Gold are a governed CTAS through the query-tool (Cube is irrelevant —
+  // probing Cube here silently offline-mocked transforms whenever Cube was down);
+  // the metric/dashboard/publish stages keep Cube as the irreplaceable dependency.
+  const reachable = stage === 'silver' || stage === 'gold'
+    ? await queryToolReachable()
+    : await liveDataReachable();
+  if (reachable) {
     const report = await orchestrateStage(stage, ctx, makeLiveAdapters(await makeRealClients()));
     return { ...report, mode: 'live' };
   }

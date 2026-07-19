@@ -3,7 +3,7 @@
  */
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   type ExploreResult,
   type MetricSummary,
@@ -22,9 +22,46 @@ function columnsOf(rows: Record<string, unknown>[]): string[] {
   return cols;
 }
 
+type DatasetColumn = { name: string };
+
+/** Fetch the dataset's real columns for dynamic dimension/time pickers. */
+function useDatasetColumns(datasetId: string | undefined): { sliceMembers: string[]; timeColumns: string[] } {
+  const [columns, setColumns] = useState<string[]>([]);
+  useEffect(() => {
+    if (!datasetId) { setColumns([]); return; }
+    let live = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/data/datasets/${datasetId}`, { cache: 'no-store' });
+        if (res.ok && live) {
+          const data = await res.json();
+          const cols = ((data?.dataset?.columns ?? []) as DatasetColumn[]).map((c) => c.name).filter(Boolean);
+          setColumns(cols);
+        }
+      } catch { if (live) setColumns([]); }
+    })();
+    return () => { live = false; };
+  }, [datasetId]);
+
+  const sliceMembers = useMemo(() => {
+    const pk = columns.find((c) => /(^|_)id$/.test(c.toLowerCase())) ?? columns[0];
+    return columns.filter((c) => c !== pk);
+  }, [columns]);
+
+  const timeColumns = useMemo(
+    () => columns.filter((c) => /(_at|_date|_ts|_time|date|timestamp)$/i.test(c) || c.toLowerCase() === 'date'),
+    [columns],
+  );
+
+  return { sliceMembers, timeColumns };
+}
+
 export default function ExploreMetric({ metric }: { metric: MetricSummary | null }) {
-  const [byRegion, setByRegion] = useState(true);
-  const [byTime, setByTime] = useState(false);
+  const { sliceMembers, timeColumns } = useDatasetColumns(metric?.datasetId);
+
+  // Selected dimensions (toggled checkboxes from the dataset's real columns)
+  const [selectedDims, setSelectedDims] = useState<string[]>([]);
+  const [selectedTime, setSelectedTime] = useState('');
   const [granularity, setGranularity] = useState<Granularity>('month');
   const [viewer, setViewer] = useState<Viewer>('me');
   const [showSql, setShowSql] = useState(false);
@@ -33,21 +70,29 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
   const [err, setErr] = useState('');
   const [result, setResult] = useState<ExploreResult | null>(null);
 
+  // When sliceMembers load, seed a sensible default (first non-time column)
+  useEffect(() => {
+    setSelectedDims([]);
+    setSelectedTime('');
+  }, [metric?.id]);
+
   const metricId = metric?.id ?? null;
+
+  const toggleDim = (col: string) =>
+    setSelectedDims((ds) => ds.includes(col) ? ds.filter((d) => d !== col) : [...ds, col]);
 
   const run = useCallback(async () => {
     if (!metricId) return;
     setErr(''); setBusy(true);
-    const dimensions = byRegion ? ['region'] : [];
     try {
       const res = await fetch('/api/metrics/explore', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           metricId,
-          dimensions,
-          timeDimension: byTime ? 'order_date' : undefined,
-          granularity: byTime ? granularity : undefined,
+          dimensions: selectedDims,
+          timeDimension: selectedTime || undefined,
+          granularity: selectedTime ? granularity : undefined,
           viewerRegion: viewer === 'me' ? undefined : viewer,
         }),
       });
@@ -55,7 +100,7 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
       if (!res.ok) { setErr(data.error ?? 'Explore failed'); setResult(null); return; }
       setResult(data);
     } catch (e) { setErr((e as Error).message); setResult(null); } finally { setBusy(false); }
-  }, [metricId, byRegion, byTime, granularity, viewer]);
+  }, [metricId, selectedDims, selectedTime, granularity, viewer]);
 
   // Re-run whenever the slice or the viewer changes — switching viewer is the RLS demo.
   useEffect(() => { run(); }, [run]);
@@ -81,15 +126,27 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
 
       <div className="guided-panel">
         <div className="row" style={{ gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-          <label className="chk" style={{ cursor: 'pointer' }}>
-            <input type="checkbox" checked={byRegion} onChange={(e) => setByRegion(e.target.checked)} />
-            by region
-          </label>
-          <label className="chk" style={{ cursor: 'pointer' }}>
-            <input type="checkbox" checked={byTime} onChange={(e) => setByTime(e.target.checked)} />
-            by order_date
-          </label>
-          {byTime ? (
+          {sliceMembers.length > 0 ? (
+            sliceMembers.map((col) => (
+              <label key={col} className="chk" style={{ cursor: 'pointer' }}>
+                <input type="checkbox" checked={selectedDims.includes(col)} onChange={() => toggleDim(col)} />
+                by {col}
+              </label>
+            ))
+          ) : (
+            <span className="hint">no dimensions available</span>
+          )}
+          {timeColumns.length > 0 ? (
+            <select
+              value={selectedTime}
+              onChange={(e) => setSelectedTime(e.target.value)}
+              style={{ minWidth: 120 }}
+            >
+              <option value="">no time slice</option>
+              {timeColumns.map((c) => <option key={c} value={c}>by {c}</option>)}
+            </select>
+          ) : null}
+          {selectedTime ? (
             <select value={granularity} onChange={(e) => setGranularity(e.target.value as Granularity)}>
               <option value="day">day</option>
               <option value="week">week</option>
@@ -126,7 +183,7 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
           <div className="section-title">
             Result · {result.rows.length} row{result.rows.length === 1 ? '' : 's'}
           </div>
-          {byTime && result.mode === 'offline-mock' ? (
+          {selectedTime && result.mode === 'offline-mock' ? (
             <p className="hint" style={{ marginTop: 0 }}>
               Offline mock returns totals only — the time-series slice resolves against live Cube.
             </p>

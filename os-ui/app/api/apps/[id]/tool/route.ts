@@ -3,8 +3,11 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
-import { getAppForUser } from '@/lib/software/apps';
-import { getConnectionByApp } from '@/lib/infra/app-registry';
+import { getAppForUser, templateFiles } from '@/lib/software/apps';
+import { getSnapshot } from '@/lib/software/snapshot';
+import { runnerStatus, runnerName } from '@/lib/software/runner';
+import { resolveToolOperation, fillPathParams, seedToolResult } from '@/lib/software/tool-exec';
+import { config } from '@/lib/core/config';
 import { authorizeAppTool, authorizeConnectionCall, trace } from '@/lib/infra/agent-governed';
 import { enqueue } from '@/lib/governance/approvals';
 
@@ -17,13 +20,48 @@ export const dynamic = 'force-dynamic';
  * dynamic grant in the app-registry) + Langfuse trace. A tool the app's MCP did
  * not expose is denied — honest default-deny.
  *
- * Offline the tools return deterministic seed data (the renewals slice) so the
- * end-to-end "agent calls the app" flow is demonstrable with no live Supabase.
+ * EXECUTION honesty: when the app's runner pod is actually RUNNING, the call is
+ * proxied to the app's real in-cluster Service per its committed OpenAPI and
+ * labelled `source:'live-app'`. Otherwise deterministic seed data keeps the flow
+ * demonstrable — ALWAYS labelled `source:'demo-seed'` with a visible note.
  */
-const SEED_RENEWALS = [
-  { id: 'r1', account: 'Northwind', product: 'Platform — Enterprise', amount: 48000, renews_on: '2026-09-30', status: 'upcoming' },
-  { id: 'r2', account: 'Globex', product: 'Platform — Team', amount: 12000, renews_on: '2026-07-15', status: 'upcoming' },
-];
+
+/** Proxy the tool call to the app's real in-cluster Service (`http://app-<slug>.<ns>`). */
+async function callLiveApp(
+  slug: string,
+  op: { method: string; path: string },
+  args: Record<string, unknown>,
+): Promise<Record<string, unknown> | null> {
+  const path = fillPathParams(op.path, args);
+  const base = `http://${runnerName(slug)}.${config.softwareRunnerNamespace}`;
+  const isGet = op.method === 'GET' || op.method === 'HEAD';
+  const query = isGet && Object.keys(args).length > 0
+    ? '?' + new URLSearchParams(Object.entries(args).map(([k, v]) => [k, String(v)])).toString()
+    : '';
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    const res = await fetch(`${base}${path}${query}`, {
+      method: op.method,
+      headers: { accept: 'application/json', ...(isGet ? {} : { 'content-type': 'application/json' }) },
+      body: isGet ? undefined : JSON.stringify(args),
+      cache: 'no-store',
+      signal: ctrl.signal,
+    });
+    const raw = await res.text();
+    let body: unknown;
+    try {
+      body = raw ? JSON.parse(raw) : null;
+    } catch {
+      body = raw.slice(0, 2000);
+    }
+    return { source: 'live-app', endpoint: `${op.method} ${path}`, status: res.status, body };
+  } catch {
+    return null; // service unreachable despite a running pod → honest demo fallback
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   let user;
@@ -48,11 +86,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 404 });
   }
 
-  const conn = getConnectionByApp(app.id);
   const tool = String(body?.tool ?? '');
   const principal = app.mcpPrincipal;
-  const toolDef = (conn?.tools ?? app.mcpTools).find((t) => t.name === tool);
-  const known = Boolean(toolDef);
 
   // Honor the auto-MCP capability profile (reads-on / writes-off preset compiled
   // to OPA). A read tool is allowed; a write tool is HELD for human approval and
@@ -89,13 +124,16 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     );
   }
 
-  // Execute the (seed-backed) tool.
-  let result: unknown;
-  if (tool === 'list_renewals') result = { renewals: SEED_RENEWALS };
-  else if (tool === 'get_renewal') result = { renewal: SEED_RENEWALS.find((r) => r.id === String(body.args?.id)) ?? null };
-  else if (tool === 'add_renewal') result = { added: { id: `r${Date.now().toString(36)}`, ...(body.args ?? {}) } };
-  else if (tool === 'export_renewals') result = { file: `${app.slug}-export.csv`, rows: SEED_RENEWALS.length };
-  else result = { ok: true, note: known ? 'executed' : 'generic tool' };
+  // Execute: proxy to the REAL app when its runner pod is running, else demo seed.
+  const args = (body.args ?? {}) as Record<string, unknown>;
+  let result: Record<string, unknown> | null = null;
+  const status = await runnerStatus({ slug: app.slug });
+  if (status.live && status.phase === 'running') {
+    const files = getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
+    const op = resolveToolOperation(files, tool);
+    if (op) result = await callLiveApp(app.slug, op, args);
+  }
+  if (!result) result = seedToolResult(tool, args);
 
   const tr = await trace({ principal, tool, input: body.args ?? {}, output: result, decision: 'allow', costUsd: 0.0004 });
   return NextResponse.json({ tool, principal, decision: 'allow', policy: authz.policy, traceId: tr.id, result });

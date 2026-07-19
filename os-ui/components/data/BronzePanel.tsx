@@ -56,8 +56,9 @@ export default function BronzePanel({
 
   // pull extract through Trino (masked)
   const [sql, setSql] = useState('select order_date, region, net_amount from daily_revenue order by 1');
+  const [extractId, setExtractId] = useState('');
   const pull = useCallback(async () => {
-    setErr(''); setBusy(true); setPreview(null);
+    setErr(''); setBusy(true); setPreview(null); setExtractId('');
     try {
       const res = await fetch('/api/data/sandbox', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -66,26 +67,27 @@ export default function BronzePanel({
       const data = await res.json();
       if (!res.ok) { setErr(data.error ?? 'Pull failed'); return; }
       setPreview({ columns: data.columns ?? [], rows: (data.rows ?? []).slice(0, 20) });
+      setExtractId(data.dataset?.id ?? '');
       setPreviewNote(`Masked extract pulled through Trino${data.policy ? ` (${data.policy}${data.traced ? ', traced' : ''})` : ''}.`);
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   }, [sql, datasetName]);
 
-  // commit -> Bronze version
+  // commit -> LAND the pulled extract as the REAL personal Bronze table (the same
+  // ingest pipeline + verify-then-dot contract as the file upload). The old path
+  // posted a bare {layer:'bronze'} registry write — a lit dot with no table.
   const [committing, setCommitting] = useState(false);
   const commit = useCallback(async () => {
     setErr(''); setCommitting(true);
     try {
-      const res = await fetch(`/api/data/datasets/${datasetId}/version`, {
+      const res = await fetch('/api/data/sandbox', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        // Raw, just-loaded data: no dbt tests have run, so quality is honestly unknown
-        // (not a green "healthy"). Silver/Gold carry the same discipline — no faked ✓.
-        body: JSON.stringify({ layer: 'bronze', quality: 'unknown' }),
+        body: JSON.stringify({ action: 'land-bronze', id: extractId, datasetId }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Could not save Bronze'); return; }
+      if (!res.ok || !data.ok) { setErr(data.error ?? 'Could not land Bronze — nothing was registered'); return; }
       onCommitted(data.stages ?? []);
     } catch (e) { setErr((e as Error).message); } finally { setCommitting(false); }
-  }, [datasetId, onCommitted]);
+  }, [datasetId, extractId, onCommitted]);
 
   return (
     <div className="guided-panel">
@@ -135,8 +137,8 @@ export default function BronzePanel({
               <button className="btn" onClick={() => onCommitted(landed)}>Continue</button>
             ) : (
               <>
-                <button className="btn ghost" onClick={() => setPreview(null)}>Discard</button>
-                <button className="btn" onClick={commit} disabled={committing}>
+                <button className="btn ghost" onClick={() => { setPreview(null); setExtractId(''); }}>Discard</button>
+                <button className="btn" onClick={commit} disabled={committing || !extractId}>
                   {committing ? <span className="spin" /> : 'Confirm — this is my Bronze'}
                 </button>
               </>

@@ -22,7 +22,15 @@ const REGIONS = [
  * guest-token demo. Live mode renders the Superset embed affordance; offline-mock renders
  * the honest token/RLS summary panel.
  */
-export default function EmbedPanel({ dashboard, supersetUrl }: { dashboard: DashboardSummary; supersetUrl: string }) {
+export default function EmbedPanel({
+  dashboard,
+  onEmbed,
+}: {
+  dashboard: DashboardSummary;
+  /** Fired when a token mints — lets a host (the staged builder) mark View reached, and
+   *  expose the RLS clause to the stage assistant. Optional; the standalone detail omits it. */
+  onEmbed?: (info: { mode: EmbedResponse['mode']; rls: string }) => void;
+}) {
   const [region, setRegion] = useState<string>('me');
   const [embed, setEmbed] = useState<EmbedResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -37,15 +45,22 @@ export default function EmbedPanel({ dashboard, supersetUrl }: { dashboard: Dash
       dashboardId: dashboard.id,
       viewerRegion: region === 'me' ? undefined : region,
     })
-      .then((d) => { if (live) setEmbed(d); })
+      .then((d) => {
+        if (!live) return;
+        setEmbed(d);
+        onEmbed?.({ mode: d.mode, rls: d.request.rls.map((r) => r.clause).join(' ; ') });
+      })
       .catch((e: Error) => { if (live) setError(e.message); })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
+    // onEmbed is a stable callback from the host; excluded to avoid re-minting on identity churn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dashboard.id, region]);
 
-  // Live: mount the real Superset Embedded SDK, handing it the already-minted per-viewer
-  // guest token (RLS baked in, R3). Re-runs when the token re-mints (region switch); the
-  // cleanup unmounts the previous iframe so we never stack embeds.
+  // Live: mount the real Superset Embedded SDK, handing it a fetchGuestToken callback
+  // that re-POSTs /api/dashboards/embed near the ~5-min TTL so the iframe never goes
+  // blank after the initial token expires. Re-runs when embed changes (region switch);
+  // the cleanup unmounts the previous iframe so we never stack embeds.
   //
   // supersetDomain is the SAME-ORIGIN reverse proxy (`<os-origin>/tools/superset`), NOT the
   // cross-origin public console. Superset ships `X-Frame-Options: SAMEORIGIN` + a Talisman
@@ -59,18 +74,37 @@ export default function EmbedPanel({ dashboard, supersetUrl }: { dashboard: Dash
     const node = mountRef.current;
     if (!embed || embed.mode !== 'live' || !embed.embeddedId || !node) return;
     const supersetDomain = `${window.location.origin}/tools/superset`;
+    const dashboardId = embed.dashboardId;
+    const viewerRegion = region === 'me' ? undefined : region;
     let unmount: (() => void) | undefined;
     embedDashboard({
       id: embed.embeddedId,
       supersetDomain,
       mountPoint: node,
-      fetchGuestToken: () => Promise.resolve(embed.token),
+      // Re-mint the guest token by calling back to the server — the SDK calls this near
+      // the 300s TTL, preventing the embed from going blank after ~5 minutes. If the
+      // refresh fails we return the last known token so the iframe degrades gracefully
+      // rather than crashing the embed entirely.
+      fetchGuestToken: async () => {
+        try {
+          const res = await fetch('/api/dashboards/embed', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ dashboardId, viewerRegion }),
+          });
+          if (!res.ok) return embed.token; // best-effort: keep old token on failure
+          const data = (await res.json()) as EmbedResponse;
+          return data.token;
+        } catch {
+          return embed.token; // network error — keep old token, let the SDK retry later
+        }
+      },
       dashboardUiConfig: { hideTitle: true },
     })
       .then((instance) => { unmount = instance.unmount; })
       .catch(() => { /* live mount failed — the token/RLS summary above still stands */ });
     return () => { unmount?.(); };
-  }, [embed]);
+  }, [embed, region]);
 
   return (
     <div className="agent-editor" style={{ marginTop: 16 }}>

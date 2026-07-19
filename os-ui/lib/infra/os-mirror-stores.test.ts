@@ -745,3 +745,51 @@ test('marketplace (os-marketplace-*): first grant/audit on a fresh cluster boots
     os.restore();
   }
 });
+
+// -------------------------------------------------------------- science models --
+
+test('science models (os-science-models): fresh-boot bootstrap + round-trip hydration + delete-through', async () => {
+  const os = fakeCluster();
+  const svc = await import('../science/model-service.ts');
+  const sara = { id: 'sara', role: 'user' as const, domains: ['sales'], isAgent: false };
+  const spec = {
+    sourceDataProductFqn: 'sales.customer_360',
+    targetColumn: 'churned',
+    taskType: 'binary_classification' as const,
+    algorithm: 'logistic',
+    features: ['recency_days', 'tenure_months'],
+    trainTestSplit: 0.8,
+    optimizeMetric: 'auc',
+  };
+  try {
+    svc._resetModels();
+    await svc.ensureModelsHydrated();
+    const m = svc.createModel({ name: 'Lead scoring', spec }, sara);
+    await settle();
+    assertBootstrapSequence(os.log, 'os-science-models');
+    assert.equal((os.docsOf('os-science-models').get(m.model) as { model: string }).model, 'lead_scoring');
+
+    // Pod roll: in-process registry gone, cluster kept → the model hydrates back
+    // unchanged (THE P0: user models used to vanish on every pod restart).
+    svc._resetModels();
+    await svc.ensureModelsHydrated();
+    const back = svc.getModel('lead_scoring');
+    assert.ok(back, 'model survives the pod roll');
+    assert.equal(back!.name, 'Lead scoring');
+    assert.equal(back!.owner, 'sara');
+    assert.equal(back!.spec?.targetColumn, 'churned');
+    // And the churn seed does NOT fire on a non-empty (hydrated) registry.
+    assert.equal(svc.ensureChurnSeed(), null);
+
+    // Delete writes through — after another roll the model stays deleted.
+    svc.setModelArchived('lead_scoring', sara, true);
+    svc.deleteModel('lead_scoring', sara);
+    await settle();
+    svc._resetModels();
+    await svc.ensureModelsHydrated();
+    assert.equal(svc.getModel('lead_scoring'), null, 'deleted model stays deleted across pod rolls');
+  } finally {
+    os.restore();
+    svc._resetModels();
+  }
+});

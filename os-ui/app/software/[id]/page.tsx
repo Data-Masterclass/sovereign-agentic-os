@@ -8,6 +8,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
 import CodePanel from '@/components/CodePanel';
+import AgentChat from '@/components/AgentChat';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import { useToolWindow } from '@/components/ToolWindowProvider';
@@ -155,6 +156,7 @@ export default function AppPage() {
 
   const [msg, setMsg] = useState('');
   const [toolOut, setToolOut] = useState('');
+  const [toolNote, setToolNote] = useState('');
   const [connRef, setConnRef] = useState('');
   const [connLabel, setConnLabel] = useState('');
   const [connScope, setConnScope] = useState<'read' | 'write-bounded'>('read');
@@ -222,13 +224,19 @@ export default function AppPage() {
   async function callTool(tool: string) {
     if (!id) return;
     setToolOut('');
+    setToolNote('');
     try {
       const res = await fetch(`/api/apps/${id}/tool`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ tool, args: tool === 'add_renewal' ? { account: 'NewCo', amount: 9000 } : {} }),
+        body: JSON.stringify({ tool, args: tool.startsWith('add_') ? { name: 'NewCo', amount: 9000 } : {} }),
       });
-      setToolOut(JSON.stringify(await res.json(), null, 2));
+      const body = await res.json();
+      setToolOut(JSON.stringify(body, null, 2));
+      // HONESTY: surface the demo-seed label prominently — this result did NOT
+      // come from the deployed app.
+      const result = body?.result as { source?: string; note?: string } | undefined;
+      if (result?.source === 'demo-seed') setToolNote(result.note ?? 'Demo seed data — not from the deployed app.');
     } catch (e) {
       setToolOut((e as Error).message);
     }
@@ -450,6 +458,7 @@ export default function AppPage() {
                       </tbody>
                     </table>
                   </div>
+                  {toolNote ? <div className="hint" style={{ marginTop: 10 }}>⚠ {toolNote}</div> : null}
                   {toolOut ? <pre className="answer mono" style={{ marginTop: 10, fontSize: 12, whiteSpace: 'pre-wrap' }}>{toolOut}</pre> : null}
                 </div>
               ) : null}
@@ -580,27 +589,44 @@ export default function AppPage() {
             ) : null}
           </>
         ) : (
-          /* ---- Edit mode: edit the code directly; use the global “Ask the OS”
-                 assistant (top-right) for conversational, agent-driven changes. ---- */
+          /* ---- Edit mode: the per-app BUILD CHAT (context-injected, persisted
+                 under the app) beside the code editor. The chat runs the governed
+                 PLAN→ACT harness against /api/apps/{id}/chat — the build chat the
+                 create flow promises. ---- */
           <div className="sw-edit">
             <div className="sw-edit-bar">
               <span className="sw-edit-hint">
                 {canEditCode
-                  ? 'Edit the code directly below, or ask the “Ask the OS” assistant (top-right) to build changes for you.'
-                  : 'Ask the “Ask the OS” assistant (top-right) to describe the changes you want — it writes code, commits to Forgejo, and prepares a release.'}
+                  ? 'Describe changes in the build chat — it writes code and commits to Forgejo — or edit the code directly.'
+                  : 'Describe the changes you want in the build chat — it writes code, commits to Forgejo, and prepares a release.'}
               </span>
               <button className="btn lg" onClick={() => deployAction()} disabled={publishDisabled} title={inReview ? 'A deploy is awaiting a Builder in Deploy reviews' : undefined}>
                 {publishLabel}
               </button>
             </div>
 
-            {canEditCode ? (
-              <CodePanel appId={app.id} repoFullName={app.repo.fullName} />
-            ) : (
-              <div className="stub-page">
-                Use the “Ask the OS” assistant (top-right) to describe what you want changed.
-              </div>
-            )}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: canEditCode ? 'repeat(auto-fit, minmax(360px, 1fr))' : '1fr',
+                gap: 16,
+                alignItems: 'start',
+                marginTop: 12,
+              }}
+            >
+              <AgentChat
+                agent="software"
+                label="build assistant"
+                variant="claude"
+                endpoint={`/api/apps/${app.id}/chat`}
+                initialMessages={app.chat
+                  .filter((m) => m.role === 'user' || m.role === 'assistant')
+                  .map((m) => ({ role: m.role, content: m.content }))}
+                placeholder={`Describe what to build or change in ${app.name}…`}
+                minHeight={360}
+              />
+              {canEditCode ? <CodePanel appId={app.id} repoFullName={app.repo.fullName} /> : null}
+            </div>
             {deployMsg ? <div className={deployMsg.startsWith('✓') ? 'answer' : 'error'} style={{ marginTop: 12 }}>{deployMsg}</div> : null}
           </div>
         )}

@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { config } from '@/lib/core/config';
 import { trace } from '@/lib/infra/agent-governed';
-import { setModelArchived, deleteModel, type Actor } from '@/lib/science';
+import { setModelArchived, deleteModel, ensureModelsHydrated, type Actor } from '@/lib/science';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,6 +44,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ model: 
   try { body = await req.json(); } catch { return NextResponse.json({ error: 'invalid body' }, { status: 400 }); }
   const actor = actorFrom(a.user!);
   try {
+    await ensureModelsHydrated(); // durable registry: act on the persisted state
     if (body.action === 'archive' || body.action === 'unarchive') {
       const m = setModelArchived(model, actor, body.action === 'archive');
       await trace({ principal: a.user!.id, tool: 'model_archive', input: { model, action: body.action }, output: { archived: !!m.archived }, decision: 'allow' });
@@ -60,6 +61,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ mode
   if (a.error) return a.error;
   const { model } = await params;
   try {
+    await ensureModelsHydrated(); // durable registry: act on the persisted state
     const m = deleteModel(model, actorFrom(a.user!));
     // Honest teardown report: the registry record is removed here; the live
     // serving endpoint (KServe) + MLflow registry entry are reconciled off the

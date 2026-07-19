@@ -17,7 +17,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ cardId: string
   try {
     await requireUser();
     const { cardId } = await ctx.params;
-    const card = getReviewCard(cardId);
+    const card = await getReviewCard(cardId);
     if (!card) return NextResponse.json({ error: 'Review card not found' }, { status: 404 });
     return NextResponse.json({ card });
   } catch (e) {

@@ -47,7 +47,7 @@ function scriptFetch(handler: (url: string, init: RequestInit) => { status: numb
 }
 function offline() { globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch; }
 
-const KEY_SERVICE_KEYS = ['entra', 'purview', 'ai-foundry', 'sagemaker', 'gcp-identity', 'snowflake-governance'] as const;
+const KEY_SERVICE_KEYS = ['entra', 'purview', 'ai-foundry', 'sagemaker', 'gcp-identity', 'gcp-directory', 'snowflake-governance'] as const;
 
 test('templates: all key-service connectors registered, user-facing, guided', () => {
   for (const key of KEY_SERVICE_KEYS) {
@@ -168,6 +168,39 @@ test('Google Cloud: a READ auto-allows, exchanges a JWT for a bearer, reaches Re
   assert.ok(result.projects && result.projects[0].projectId === 'p1', 'real client shape, not the mock');
   assert.ok(calls.some((x) => x.url.includes('oauth2.googleapis.com/token')), 'did a token exchange');
   assert.ok(calls.some((x) => x.url.includes('cloudresourcemanager.googleapis.com')), 'hit Resource Manager');
+  assert.ok(!JSON.stringify(r).includes('PRIVATE KEY'), 'SA private key never in the tool result');
+  offline();
+});
+
+test('Google Workspace directory: a READ auto-allows, delegates via a `sub`-claim JWT, reaches the Admin SDK', async () => {
+  __resetConnections();
+  const { generateKeyPairSync } = await import('node:crypto');
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  // Extended SA JSON: the key plus the non-secret delegation routing (subject + customer).
+  const saJson = JSON.stringify({
+    client_email: 'svc@proj.iam.gserviceaccount.com',
+    private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+    subject: 'admin@acme.example',
+    customer: 'my_customer',
+  });
+  const c = await createConnection(builder, { name: 'gws', template: 'gcp-directory', endpoint: 'https://admin.googleapis.com/admin/directory/v1', credential: saJson });
+  const calls = scriptFetch((url, init) => {
+    if (url.includes('oauth2.googleapis.com/token')) {
+      // Prove the assertion carries the domain-wide-delegation `sub` claim.
+      const assertion = String(init.body ?? '').split('assertion=')[1] ?? '';
+      const claims = JSON.parse(Buffer.from(assertion.split('.')[1] ?? '', 'base64url').toString());
+      assert.equal(claims.sub, 'admin@acme.example', 'JWT sub = impersonated admin');
+      assert.equal(claims.scope, 'https://www.googleapis.com/auth/admin.directory.readonly');
+      return { status: 200, body: { access_token: 'ya29.fake' } };
+    }
+    return { status: 200, body: { users: [{ id: 'u1', primaryEmail: 'ada@acme.example', name: { fullName: 'Ada' }, isAdmin: false, suspended: false, orgUnitPath: '/' }] } };
+  });
+  const r = await callConnectionTool(c.id, builder, { tool: 'list_users' });
+  assert.equal(r.decision, 'allow');
+  const result = r.result as { users?: { primaryEmail: string }[] };
+  assert.ok(result.users && result.users[0].primaryEmail === 'ada@acme.example', 'real client shape, not the mock');
+  assert.ok(calls.some((x) => x.url.includes('oauth2.googleapis.com/token')), 'did a token exchange');
+  assert.ok(calls.some((x) => x.url.includes('admin.googleapis.com/admin/directory/v1/users')), 'hit the Admin SDK');
   assert.ok(!JSON.stringify(r).includes('PRIVATE KEY'), 'SA private key never in the tool result');
   offline();
 });

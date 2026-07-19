@@ -4,6 +4,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useToast } from '@/components/core/Toast';
 import {
   compileGoldJoin,
   personalSchema,
@@ -81,6 +82,17 @@ export default function GoldJoinPanel({
   const [err, setErr] = useState('');
   const [report, setReport] = useState<BuildReport | null>(null);
   const [busy, setBusy] = useState<'' | 'build' | 'pass'>('');
+  const toast = useToast();
+
+  // ALWAYS surface the build mode on success — a ✓ that silently ran as the
+  // offline mock (no live table) must say so, not just the failure path.
+  function announceMode(build: { mode?: string } | undefined, what: string) {
+    if (build?.mode === 'offline-mock') {
+      toast.info(`${what} recorded as an offline preview — no live table was written (cluster unreachable).`);
+    } else {
+      toast.success(`${what} written live to Trino — the table is queryable.`);
+    }
+  }
 
   useEffect(() => {
     (async () => {
@@ -223,6 +235,7 @@ export default function GoldJoinPanel({
       const data = await res.json();
       if (!res.ok) { setErr(data.error ?? 'Could not build the Gold join'); return; }
       if (data.build && !data.build.ok) { setReport(data.build); setErr(data.error ?? 'The join did not pass'); return; }
+      announceMode(data.build, 'Gold');
       onCommitted(data.stages ?? []);
     } catch (e) {
       setErr((e as Error).message);
@@ -242,6 +255,7 @@ export default function GoldJoinPanel({
       if (!res.ok) { setErr(data.error ?? 'Could not pass through'); return; }
       // A pass-through is a REAL CTAS copy now — an honest ✗ registers nothing.
       if (data.error || (data.build && !data.build.ok)) { setReport(data.build ?? null); setErr(data.error ?? 'The pass-through did not materialize'); return; }
+      announceMode(data.build, 'Gold (pass-through)');
       onCommitted(data.stages ?? []);
     } catch (e) { setErr((e as Error).message); } finally { setBusy(''); }
   }

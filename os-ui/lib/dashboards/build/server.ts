@@ -36,6 +36,9 @@ export async function buildDashboard(
     report: opts.report,
     alert: opts.alert,
     state: {},
+    // Thread the operator-configured Cube SQL endpoint so the bundle targets the real host/port
+    // (not the hardcoded in-cluster default). Mirrors powerbi/connection-info which reads the same keys.
+    cubeSql: { host: config.cubeSqlHost, port: config.cubeSqlPort },
   };
   const adapters = (await liveDashboardsReachable())
     ? { set: makeDashboardAdapters(makeRealDashboardClients()), mode: 'live' as const }

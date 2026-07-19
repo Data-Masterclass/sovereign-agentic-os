@@ -46,6 +46,12 @@ import type { ExecuteIdentity } from '@/lib/infra/governed';
 import type { Layer, Quality, DataVisibility, Grant, ColumnDoc, DatasetUpstream } from '@/lib/data';
 import { measureFromForm, measureMember, type MetricForm, type GuidedFilter, type GuidedWindow } from '@/lib/metrics/model';
 import type { MeasureType } from '@/lib/data/metrics';
+import { buildMetric } from '@/lib/metrics/build/server';
+import { exploreMetric } from '@/lib/metrics/build/explore-server';
+import type { Granularity } from '@/lib/metrics/explorer';
+import { getMetric } from '@/lib/metrics/store';
+import { governMetric, canPromote as canPromoteMetric } from '@/lib/metrics/governance';
+import { transition as transitionDataset } from '@/lib/data/store';
 
 import {
   createWorkflow,
@@ -130,6 +136,14 @@ import { buildSystem } from '@/lib/agents/build/server';
 
 type Principal = { id: string; domains: string[]; role: Role };
 const P = (u: CurrentUser): Principal => ({ id: u.id, domains: u.domains, role: u.role });
+
+/** Mint a delegated token directly from the MCP user (already authenticated via MCP session).
+ *  Unlike `delegatedToken` in `lib/infra/identity-server`, this does NOT call requireUser()
+ *  (which reads from the HTTP session via next/headers) — the MCP user IS the authenticated
+ *  identity, so we delegate directly. R2 is preserved: the token carries the caller's sub. */
+function mcpToken(user: CurrentUser, scope: 'personal' | 'domain' | 'marketplace' = 'domain') {
+  return delegate(claimsFromUser({ id: user.id, domains: user.domains, role: user.role }), scope);
+}
 
 function fail(message: string, status: number): never {
   const e = new Error(message) as Error & { status?: number };
@@ -1148,7 +1162,113 @@ export const metricWriteTools: McpTool[] = [
 
       const measure = measureFromForm(form); // MetricError → typed bad_request with the real reason
       const dataset = defineMeasure(datasetId, P(user), measure);
-      return { datasetId, measure, member: measureMember(dataset, measure), cube: scaffoldCubeYaml(dataset) };
+      const token = mcpToken(user);
+      const build = await buildMetric(dataset, measure, token);
+      return {
+        datasetId,
+        measure,
+        member: build.member,
+        cube: scaffoldCubeYaml(dataset),
+        ...(build.pending ? { pending: true, note: 'Metric saved — live value appears within ~30 s as the query engine syncs.' } : {}),
+      };
+    },
+  },
+  {
+    name: 'preview_metric',
+    tab: 'metrics',
+    minRole: 'creator',
+    description:
+      'Preview the number a metric definition will produce — same governed Cube query, same per-viewer RLS, without persisting anything. Use this BEFORE define_metric to validate the number. Returns rows + mode (live/offline-mock) + the SQL. If the measure has not synced yet, returns pending: true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        datasetId: { type: 'string', description: 'Gold, governed dataset id.' },
+        name: { type: 'string', description: 'Proposed metric name.' },
+        aggregation: { type: 'string', enum: ['count', 'count_distinct', 'count_distinct_approx', 'sum', 'avg', 'min', 'max', 'number'] },
+        column: { type: 'string' },
+        dimensions: { type: 'array', items: { type: 'string' } },
+        timeDimension: { type: 'string', description: 'Time column to slice by.' },
+        granularity: { type: 'string', enum: ['day', 'week', 'month', 'quarter', 'year'] },
+        limit: { type: 'number', description: 'Max rows (default 20, max 100).' },
+      },
+      required: ['datasetId', 'name', 'aggregation'],
+      examples: [{ datasetId: 'ds_ab12cd', name: 'Revenue', aggregation: 'sum', column: 'net_amount', dimensions: ['region'] }],
+    },
+    call: async (user, args) => {
+      const datasetId = str(args.datasetId).trim();
+      if (!datasetId) fail('preview_metric needs a datasetId', 400);
+      const name = str(args.name).trim() || 'preview';
+      const form: MetricForm = {
+        name,
+        aggregation: str(args.aggregation) as MeasureType,
+        column: str(args.column),
+        dimensions: strArr(args.dimensions),
+      };
+      const measure = measureFromForm(form);
+      const dataset = getDataset(datasetId, P(user));
+      const draft = { ...dataset, measures: [...dataset.measures.filter((m) => m.name !== measure.name), measure] };
+      const token = mcpToken(user);
+      const result = await exploreMetric(draft, measure, token, {
+        dimensions: strArr(args.dimensions),
+        timeDimension: str(args.timeDimension) || undefined,
+        granularity: (str(args.granularity) as Granularity) || undefined,
+        limit: typeof args.limit === 'number' ? Math.min(args.limit, 100) : 20,
+      });
+      return { datasetId, measure, ...result };
+    },
+  },
+  {
+    name: 'promote_metric',
+    tab: 'metrics',
+    minRole: 'creator',
+    description:
+      'Promote a metric one rung on the governance ladder (Personal→Domain or Domain→Company). A creator OWNER files a request (returned as { requested: true, approval }); a builder+ runs the consistency-gated govern flow directly. Mirrors the Metrics tab promote button.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        metricId: { type: 'string', description: 'Metric id: <datasetId>.<measureName>, e.g. "ds_ab12cd.revenue".' },
+      },
+      required: ['metricId'],
+      examples: [{ metricId: 'ds_ab12cd.revenue' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.metricId).trim();
+      if (!id) fail('promote_metric needs a metricId', 400);
+      const record = getMetric(id, P(user));
+      if (record.tier === 'marketplace') fail('This metric is already certified', 409);
+      const transition: 'promote' | 'certify' = record.tier === 'personal' ? 'promote' : 'certify';
+      // Creator owner at Personal → file a governed request
+      if (transition === 'promote' && record.owner === user.id && !canPromoteMetric(user.role)) {
+        const dup = listApprovals({ status: 'pending' }).find(
+          (a) => a.kind === 'artifact_promote' && a.payload?.artifactKind === 'metric' && a.payload?.id === id,
+        );
+        if (dup) return { requested: true, approval: dup };
+        const approval = enqueue({
+          kind: 'artifact_promote',
+          title: `Promote "${record.measure.name}" to a ${record.dataset.domain} domain metric`,
+          detail: `${user.id} requests promoting the metric "${record.measure.name}" to a shared domain asset. A domain admin must approve.`,
+          agent: user.id,
+          domain: record.dataset.domain,
+          requestedBy: user.id,
+          tool: 'metric_promote',
+          payload: { artifactKind: 'metric', id, name: record.measure.name },
+          approverRole: 'domain_admin',
+          scope: 'domain',
+        });
+        return { requested: true, approval };
+      }
+      // Approver path — consistency-gated govern flow
+      const token = mcpToken(user);
+      const resolve = async (): Promise<number | null> => {
+        const r = await exploreMetric(record.dataset, record.measure, token, {});
+        const total = r.rows.reduce((sum, row) => sum + Number(row[r.member] ?? 0), 0);
+        return r.rows.length ? total : null;
+      };
+      const result = await governMetric(record, transition, { id: user.id, role: user.role }, resolve);
+      if (!result.ok) fail(`${result.reason ?? 'governance gate failed'} (consistency: ${result.consistency.rows.filter((r) => !r.ok).map((r) => r.detail).join('; ')})`, 403);
+      if (record.dataset.tier === 'dataset') fail('Promote the underlying dataset to a governed asset in the Data tab first', 409);
+      transitionDataset(record.dataset.id, P(user), transition);
+      return { item: { id, tier: result.record.tier } };
     },
   },
 ];

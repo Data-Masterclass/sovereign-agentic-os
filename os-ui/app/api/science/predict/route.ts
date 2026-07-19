@@ -10,14 +10,16 @@ import type { ChurnFeatures } from '@/lib/science';
 export const dynamic = 'force-dynamic';
 
 /**
- * The deployed churn model as a governed `predict` MCP tool — the AGENT front
- * door (Science golden path §6–7). One of two doors onto the SAME KServe
- * endpoint; the OTHER is the REST API at `./rest`. Both run identical governance
- * via `servePredict`: tier scope (Personal→Domain→Marketplace) AND the OPA
- * `predict` grant, then a Langfuse trace. Promoting/certifying the model widens
- * who can call — no separate publish step.
+ * The governed `predict` door the Science TAB calls (the in-app "Try it" panel).
+ * GENERIC: `model` selects any registered model (default: the churn slice). It
+ * runs AS THE SIGNED-IN USER — principal `user:<id>` + SESSION domains, never a
+ * demo service principal — through the SAME `servePredict` governance both front
+ * doors share: tier scope (Personal→Domain→Marketplace) AND the OPA `predict`
+ * grant (the model OWNER self-consumes without a third-party grant), then a
+ * Langfuse trace. Promoting/certifying the model widens who can call — no
+ * separate publish step.
  *
- *   POST { account?, features?, principal? }  ->  { decision, score, band, traceId, ... }
+ *   POST { model?, account?, features? }  ->  { decision, score, band, traceId, ... }
  */
 export async function POST(req: Request) {
   if (!config.mlEnabled) {
@@ -30,24 +32,23 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
   }
 
-  // Only the prediction inputs come from the body. Identity (principal + domain)
-  // is NEVER client-supplied — it is bound to the fixed front-door service
-  // principal and the caller's SESSION domains, so a user cannot forge either.
-  let body: { account?: string; features?: Partial<ChurnFeatures> } = {};
+  // Only the prediction inputs (+ which model) come from the body. Identity
+  // (principal + domains) is NEVER client-supplied — it is bound to the SESSION,
+  // so a user cannot forge either.
+  let body: { model?: string; account?: string; features?: Partial<ChurnFeatures> | Record<string, number> } = {};
   try {
     body = await req.json();
   } catch {
-    /* empty body => score with the default (neutral) feature vector */
+    /* empty body => score the churn model with the default (neutral) features */
   }
 
-  // The MCP door's caller is the governed agent principal (granted predict); the
-  // callable-scope check uses the human caller's own domains from the session.
   const result = await servePredict({
+    model: typeof body.model === 'string' ? body.model : undefined,
     account: body.account,
     features: body.features,
-    principal: 'sales-assistant',
+    principal: `user:${user.id}`,
     domains: user.domains,
-    isAgent: true,
+    isAgent: false,
     requestedBy: user.id,
   });
   return NextResponse.json(result.body, { status: result.status });

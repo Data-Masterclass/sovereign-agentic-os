@@ -28,8 +28,10 @@ import type {
   AppManifest,
   AppSurface,
   ConsumedResource,
+  ScaffoldFile,
   SurfaceDeclaration,
 } from '@/lib/software/model';
+import { snapshotFiles, getSnapshot } from '@/lib/software/snapshot';
 import { generateAndCompile } from '@/lib/software/auto-mcp';
 import { parseAppManifest, renderAppYaml, defaultOpenApi, resolveSurface } from '@/lib/software/metadata';
 import { osMirror } from '@/lib/infra/os-mirror';
@@ -211,18 +213,21 @@ function nextjsSupabaseTemplate(): Template {
   return {
     key: 'nextjs-supabase',
     label: 'Next.js + Supabase app',
+    // GENERIC on purpose: a fresh app knows nothing about its domain yet, so it
+    // seeds a neutral `records` starter (matching openapi.yaml/defaultOpenApi);
+    // the build chat / first commits replace it with the app's real capabilities.
     tools: () => [
-      { name: 'list_renewals', description: 'List contract renewals (read).', write: false },
-      { name: 'get_renewal', description: 'Get one renewal by id (read).', write: false },
-      { name: 'add_renewal', description: 'Add a contract renewal (write).', write: true },
-      { name: 'export_renewals', description: 'Export renewals to a file (write).', write: true },
+      { name: 'list_records', description: 'List records (read).', write: false },
+      { name: 'get_record', description: 'Get one record by id (read).', write: false },
+      { name: 'add_record', description: 'Add a record (write).', write: true },
+      { name: 'export_records', description: 'Export records to a file (write).', write: true },
     ],
     designDecisions: (name) =>
       [
         `# ${name} — design decisions`,
         '',
         '- **Stack:** Next.js (App Router) frontend + Supabase (Postgres, Auth, Storage) backend.',
-        '- **Data model:** a single `renewals` table (id, account, product, amount, renews_on, status).',
+        '- **Data model:** a single `records` starter table (id, name, category, amount, due_on, status) — replace with the app\'s real model.',
         '- **Access:** Supabase Row-Level Security scopes every row to the signed-in owner.',
         '- **Operational vs analytical:** live app rows stay in Supabase; analytical copies follow',
         '  the Data golden path as a Personal data product.',
@@ -232,15 +237,15 @@ function nextjsSupabaseTemplate(): Template {
       [
         `# ${name} — data descriptions`,
         '',
-        '## Table: `renewals`',
+        '## Table: `records` (generic starter — replace with the real model)',
         '| field | type | meaning |',
         '|---|---|---|',
         '| `id` | uuid | primary key |',
-        '| `account` | text | customer / counterparty name |',
-        '| `product` | text | the contracted product or plan |',
-        '| `amount` | numeric | annual contract value |',
-        '| `renews_on` | date | next renewal date |',
-        '| `status` | text | `upcoming` \\| `renewed` \\| `churned` |',
+        '| `name` | text | the record\'s display name |',
+        '| `category` | text | free-form grouping |',
+        '| `amount` | numeric | a numeric value, if relevant |',
+        '| `due_on` | date | a relevant date, if any |',
+        '| `status` | text | `active` \\| `done` \\| `archived` |',
       ].join('\n'),
     docs: (name, sub) =>
       [
@@ -250,8 +255,8 @@ function nextjsSupabaseTemplate(): Template {
         '',
         '## Use',
         '1. Sign in (Supabase Auth).',
-        '2. Add upcoming renewals; the list view sorts by `renews_on`.',
-        '3. Your agents can call the app MCP tools (`list_renewals`, `add_renewal`, …).',
+        '2. Add records; the list view sorts by `due_on`.',
+        '3. Your agents can call the app MCP tools (`list_records`, `add_record`, …).',
       ].join('\n'),
     files: (name, slug) => [
       {
@@ -278,17 +283,18 @@ function nextjsSupabaseTemplate(): Template {
       {
         path: 'supabase/migrations/0001_init.sql',
         content:
-          'create table if not exists renewals (\n' +
+          '-- Generic starter table; replace with the app\'s real data model.\n' +
+          'create table if not exists records (\n' +
           '  id uuid primary key default gen_random_uuid(),\n' +
           '  owner uuid not null default auth.uid(),\n' +
-          '  account text not null,\n' +
-          '  product text,\n' +
+          '  name text not null,\n' +
+          '  category text,\n' +
           '  amount numeric,\n' +
-          '  renews_on date,\n' +
-          "  status text not null default 'upcoming'\n" +
+          '  due_on date,\n' +
+          "  status text not null default 'active'\n" +
           ');\n' +
-          'alter table renewals enable row level security;\n' +
-          'create policy "owner_rw" on renewals\n' +
+          'alter table records enable row level security;\n' +
+          'create policy "owner_rw" on records\n' +
           '  using (owner = auth.uid()) with check (owner = auth.uid());\n',
       },
       {
@@ -696,6 +702,34 @@ async function repoTree(app: App): Promise<RepoFileMeta> {
   return { mode: app.mode, branch, files };
 }
 
+/**
+ * The app's LIVE repo tree (path + content) straight from Forgejo — the code that
+ * will actually ship. The deploy security scan reads THIS when Forgejo is
+ * reachable, so editor saves and direct `git push`es are scanned too (the
+ * in-process snapshot only sees what flowed through `commitToApp`). Returns null
+ * when Forgejo is unreachable or the repo is empty/unreadable — the caller falls
+ * back to the snapshot, honestly labelled offline. Bounded (`maxFiles`), and an
+ * unreadable blob (binary/oversized) is skipped so the rest still gets scanned.
+ */
+export async function liveRepoFiles(app: App, maxFiles = 300): Promise<ScaffoldFile[] | null> {
+  try {
+    const tree = await repoTree(app);
+    if (tree.files.length === 0) return null; // empty/uninitialised repo → snapshot
+    const out: ScaffoldFile[] = [];
+    for (const path of tree.files.slice(0, maxFiles)) {
+      try {
+        const f = await repoRead(app, path);
+        out.push({ path: f.path, content: f.content });
+      } catch {
+        /* non-file / binary blob — skip it, scan the rest */
+      }
+    }
+    return out.length > 0 ? out : null;
+  } catch {
+    return null; // Forgejo unreachable / API error → snapshot fallback
+  }
+}
+
 /** Read one file's decoded UTF-8 content + its current blob SHA (for commit). */
 export async function readAppFile(appId: string, user: CurrentUser, path: string): Promise<RepoFile> {
   ensureBuilder(user);
@@ -755,6 +789,10 @@ export async function saveAppFile(
   }
   if (!res.ok) throw withStatus(new Error(`Forgejo error saving file (${res.status}).`), 502);
   const d = res.data as { content?: { sha?: string }; commit?: { html_url?: string } };
+  // Keep the scan/diff snapshot in step with the editor save — without this, a
+  // secret pasted here was INVISIBLE to the deploy security scan when offline.
+  const prior = getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
+  snapshotFiles(app.id, [...prior.filter((f) => f.path !== clean), { path: clean, content: input.content }]);
   app.updatedAt = now();
   writeThrough(app);
   void trace({
@@ -872,7 +910,7 @@ export async function createApp(
       name: `${name} data`,
       description: `Operational data product auto-created by the ${name} app (Personal to ${user.id}).`,
       tags: ['app-data', 'personal', slug],
-      spec: { app: slug, table: 'renewals', backend: 'supabase' },
+      spec: { app: slug, table: 'records', backend: 'supabase' },
       domain,
     });
     dataArtifactId = dataArt.id;

@@ -91,14 +91,18 @@ export function sameDashboard(a: DashboardSpec, b: DashboardSpec): boolean {
  * The Superset import bundle for the spec (dataset on the Cube view + charts). Same
  * shape as the Data scaffold so OM captures dashboard→mart lineage via the Superset
  * connector; `database_service_name` names the query service.
+ *
+ * `opts.host/port` override the default in-cluster Cube SQL address — callers at the
+ * server boundary thread these in from `config.cubeSqlHost/Port` so the bundle reflects
+ * the operator's actual Cube SQL endpoint instead of always emitting `cube-sql:15432`.
  */
-export function supersetBundle(spec: DashboardSpec): string {
+export function supersetBundle(spec: DashboardSpec, opts: { host?: string; port?: number } = {}): string {
   const charts = spec.charts.map((c) => ({ name: c.name, viz_type: c.vizType, metric: c.metric, groupby: c.dimensions ?? [] }));
   // Domain-scoped → query the LIVE Cube SQL API (the only endpoint that serves the view's
   // rows). The `database` block names the Cube SQL connection (`bi_<domain>` principal);
   // the dataset carries NO schema (Cube SQL exposes the view as a top-level table).
   if (spec.domain) {
-    const db = cubeSqlDatabase(spec.domain);
+    const db = cubeSqlDatabase(spec.domain, opts);
     return JSON.stringify(
       {
         dashboard: spec.name,

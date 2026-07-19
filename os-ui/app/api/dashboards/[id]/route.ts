@@ -3,7 +3,10 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
-import { ensureHydrated, setDashboardArchived, deleteDashboard } from '@/lib/dashboards/store';
+import { ensureHydrated, setDashboardArchived, deleteDashboard, getDashboard } from '@/lib/dashboards/store';
+import { deleteDashboardByName } from '@/lib/superset/client';
+import { liveDashboardsReachable } from '@/lib/dashboards/build/live-clients';
+import { config } from '@/lib/core/config';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,6 +35,22 @@ export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string 
     await ensureHydrated();
     const user = await requirePrincipal();
     const { id } = await ctx.params;
+    // Resolve the dashboard name BEFORE removing it from the OS store (we need spec.name
+    // to look up the Superset dashboard by title). getDashboard throws 403/404 if the
+    // user can't see/delete it — the OS-level auth gate runs before any live call.
+    const dash = getDashboard(id, user);
+    const dashboardName = dash.spec.name;
+    // Best-effort live delete — mode-guarded, reachability-checked, never blocks the OS
+    // delete. A Superset failure is logged but doesn't abort the OS deletion (the record
+    // is the source of truth; Superset is a delivery artifact).
+    try {
+      if (await liveDashboardsReachable()) {
+        await deleteDashboardByName(config.supersetInternalUrl, dashboardName);
+      }
+    } catch {
+      // Intentionally swallowed: Superset unavailability / title-not-found are non-fatal.
+      // The OS store delete proceeds regardless.
+    }
     deleteDashboard(id, user);
     return NextResponse.json({ ok: true });
   } catch (e) {

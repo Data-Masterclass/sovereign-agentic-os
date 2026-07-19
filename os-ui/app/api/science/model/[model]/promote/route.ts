@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { config } from '@/lib/core/config';
-import { getModel, compilePredictPolicy } from '@/lib/science';
+import { getModel, compilePredictPolicy, ensureModelsHydrated } from '@/lib/science';
 import { promoteOrRequest } from '@/lib/governance/ladder';
 import { listApprovals } from '@/lib/governance/approvals';
 
@@ -23,6 +23,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ model: string
   try {
     const user = await requireUser();
     const { model } = await ctx.params;
+    await ensureModelsHydrated(); // durable registry: act on the persisted state
     const r = await promoteOrRequest('model', model, user);
     if (r.requested) return NextResponse.json({ requested: true, approval: r.approval });
     const m = getModel(model)!;

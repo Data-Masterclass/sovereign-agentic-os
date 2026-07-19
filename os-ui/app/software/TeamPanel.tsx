@@ -151,7 +151,7 @@ export default function TeamPanel({ onBuilt }: { onBuilt?: () => void }) {
                 Describe what to build (e.g. “a renewals tracker with a table and a status filter”).
                 The team asks anything unclear first, proposes a plan for you to approve, then builds it.
                 <br />
-                <em>Preview and live deploy are pending the in-cluster runner (next release); build + commit are real.</em>
+                <em>Build + commit are real; preview and go-live provision the in-cluster runner — the served URL appears once the pod is ready (or stays pending without a reachable cluster).</em>
               </div>
             ) : (
               messages.map((m, i) => (

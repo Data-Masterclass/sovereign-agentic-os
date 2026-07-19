@@ -153,6 +153,34 @@ export async function ingestAndRegisterBronze(
   return { ok: true, report, dataset: updated };
 }
 
+/** Serialize a preview grid to CSV bytes (RFC-4180 quoting) so an in-session extract
+ *  can ride the SAME physical ingest pipeline as a file upload. */
+export function gridToCsv(grid: Grid): Buffer {
+  const esc = (v: string) => (/[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  const lines = [grid.columns.map(esc).join(','), ...grid.rows.map((r) => r.map(esc).join(','))];
+  return Buffer.from(lines.join('\n'), 'utf8');
+}
+
+/**
+ * LAND an in-session masked extract as a dataset's REAL Bronze — the fix for the
+ * phantom-Bronze confirm (P0 A1): "Confirm — this is my Bronze" used to post a bare
+ * `{layer:'bronze'}` registry write, lighting the dot with NO physical table. Instead,
+ * the extract grid is serialized to CSV and pushed through the EXACT SAME
+ * `ingestAndRegisterBronze` pipeline as a file upload (MinIO → data-runner →
+ * `iceberg.personal_<uid>.bronze_<slug>`, register ONLY on apply+verify ✓) — one
+ * verify-then-dot contract for every Bronze entry point.
+ */
+export async function landGridAsBronze(
+  user: { id: string; domains: string[]; role: Role },
+  datasetId: string,
+  grid: Grid,
+): Promise<{ ok: boolean; report: IngestReport; dataset: Dataset | null }> {
+  if (grid.columns.length === 0) {
+    throw Object.assign(new Error('the extract has no columns — pull it again before confirming'), { status: 400 });
+  }
+  return ingestAndRegisterBronze(user, datasetId, 'extract.csv', gridToCsv(grid));
+}
+
 /** List the caller's PHYSICAL personal Bronze tables (durable; survives restarts) —
  *  the Personal-lane "Your private data". Reads `information_schema` through the
  *  governed query path as the principal; degrades to [] when Trino is unreachable. */

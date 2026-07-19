@@ -19,6 +19,8 @@ import type {
 } from '@/lib/science/types';
 // Pure edit-scope helper (type-only dep chain — safe under `node --test`).
 import { canManageArtifact, type ArtifactScope } from '../governance/edit-scope.ts';
+// Durable best-effort mirror (relative import — node-test-safe, no `@/` value chain).
+import { osMirror } from '../infra/os-mirror.ts';
 
 /**
  * Model-as-service governance — the Opus spine of the Science golden path.
@@ -42,10 +44,14 @@ import { canManageArtifact, type ArtifactScope } from '../governance/edit-scope.
  *   3. The owner picks the Marketplace consumption mode (read-in-place vs
  *      fork-allowed) AT certify time, per artifact.
  *
- * Persistence mirrors `lib/artifacts.ts`: an authoritative in-process registry so
- * the whole flow is demonstrable on a laptop with `ml.enabled=false` and no
- * cluster. No secrets here; the live OPA grant is the source of truth in prod and
- * `authorizePredict()` consults it first, falling back to this compiled mirror.
+ * Persistence mirrors `lib/dashboards/store.ts`: an authoritative in-process
+ * registry (the cache) with a best-effort DURABLE write-through to the shared
+ * OpenSearch mirror (`os-science-models`), hydrated lazily — so user-created
+ * models survive a pod roll instead of vanishing with the process. Offline
+ * (laptop, `ml.enabled=false`) the mirror is simply unreachable and the flow
+ * stays fully demonstrable in-memory. No secrets here; the live OPA grant is the
+ * source of truth in prod and `authorizePredict()` consults it first, falling
+ * back to this compiled mirror.
  */
 
 function withStatus(err: Error, status: number): Error {
@@ -71,12 +77,14 @@ function seedModels(): ServiceModel[] {
 /**
  * The churn/KServe slice as a FULL model artifact — the one live backend, wrapped
  * as the first `trained`+`deployed` model so the Science tab is never empty and has
- * a real thing to open/predict/promote. Personal tier (owner-only) so the whole
- * ladder is walkable; Production stage + a certified v2 version mirror the live
- * MLflow registry. This is the Phase-1 template the route seeds when the registry
- * has no churn model yet; tests seed it explicitly via `upsertModel`.
+ * a real thing to open/predict/promote. Seeded with a FIXED identity (the platform
+ * `system` owner, `sales` domain) — never the first viewer, so ownership is stable
+ * across pods and users. Domain tier so the owning domain can see + call it out of
+ * the box (and the Domain→Marketplace certify rung stays walkable); Production
+ * stage + a certified v2 version mirror the live MLflow registry. Tests seed their
+ * own churn variants explicitly via `upsertModel`.
  */
-export function churnSeedModel(owner = 'sara', domain = 'sales'): ServiceModel {
+export function churnSeedModel(owner = 'system', domain = 'sales'): ServiceModel {
   const now = new Date().toISOString();
   return {
     id: 'svc_churn_model',
@@ -84,7 +92,7 @@ export function churnSeedModel(owner = 'sara', domain = 'sales'): ServiceModel {
     name: 'Churn model',
     owner,
     domain,
-    tier: 'Personal',
+    tier: 'Domain',
     stage: 'Production',
     frontDoors: ['rest', 'mcp'],
     versions: [{ version: 'v2', stage: 'Production', auc: 0.871, certified: true, runId: 'mlf-run-2a9c' }],
@@ -110,22 +118,86 @@ export function churnSeedModel(owner = 'sara', domain = 'sales'): ServiceModel {
 /**
  * Ensure the wrapped churn model exists (idempotent) — the route calls this so a
  * fresh tenant's Science tab opens on the live model rather than an empty grid.
- * Returns the model that is now in the registry (seeded or pre-existing).
+ * Seeds ONLY into an EMPTY registry (call it AFTER `ensureModelsHydrated()`): once
+ * any model exists — including a durably deleted churn model with other survivors —
+ * the seed never resurrects. Returns the churn model now in the registry, or null
+ * when it is absent and the registry is non-empty.
  */
-export function ensureChurnSeed(owner?: string, domain?: string): ServiceModel {
+export function ensureChurnSeed(owner?: string, domain?: string): ServiceModel | null {
   const existing = getModel('churn_model');
   if (existing) return existing;
+  if (store().size > 0) return null;
   return upsertModel(churnSeedModel(owner, domain));
 }
 
-let registry: Map<string, ServiceModel> | null = null;
+// The registry state is pinned to globalThis so all separately-bundled Next.js
+// route handlers share ONE Map (and it survives dev HMR) — same pattern as every
+// other durable store (dashboards, data, …).
+type ModelState = { models: Map<string, ServiceModel>; hydration: Promise<void> | null };
+const MODELS_KEY = Symbol.for('soa.science.models');
+function modelState(): ModelState {
+  const g = globalThis as unknown as Record<symbol, ModelState | undefined>;
+  if (!g[MODELS_KEY]) {
+    const models = new Map<string, ServiceModel>();
+    for (const m of seedModels()) models.set(m.model, m);
+    g[MODELS_KEY] = { models, hydration: null };
+  }
+  return g[MODELS_KEY]!;
+}
+
+// Durable best-effort mirror: the in-process Map stays authoritative; every
+// mutation writes through, and hydration merges persisted models back after a
+// pod roll. An unreachable OpenSearch never throws into a request.
+const mirror = osMirror({
+  index: 'os-science-models',
+  createBody: {
+    mappings: {
+      properties: {
+        id: { type: 'keyword' },
+        model: { type: 'keyword' },
+        owner: { type: 'keyword' },
+        domain: { type: 'keyword' },
+        tier: { type: 'keyword' },
+        buildState: { type: 'keyword' },
+        archived: { type: 'boolean' },
+        updatedAt: { type: 'date' },
+        spec: { type: 'object', enabled: false },
+        versions: { type: 'object', enabled: false },
+        metrics: { type: 'object', enabled: false },
+      },
+    },
+  },
+});
+
+/**
+ * Await the one-shot hydration of persisted models into the in-process registry.
+ * Routes call this before reading/mutating; `store()` also kicks it off in the
+ * background so sync consumers (lineage, big bets, MCP discovery) converge.
+ */
+export function ensureModelsHydrated(): Promise<void> {
+  const s = modelState();
+  if (!s.hydration) {
+    s.hydration = (async () => {
+      const docs = (await mirror.hydrate(1000)) ?? [];
+      for (const doc of docs as ServiceModel[]) {
+        if (doc && doc.model && !s.models.has(doc.model)) s.models.set(doc.model, doc);
+      }
+    })();
+  }
+  return s.hydration;
+}
 
 function store(): Map<string, ServiceModel> {
-  if (!registry) {
-    registry = new Map();
-    for (const m of seedModels()) registry.set(m.model, m);
-  }
-  return registry;
+  const s = modelState();
+  if (!s.hydration) void ensureModelsHydrated(); // lazy background hydration
+  return s.models;
+}
+
+/** Write a model into the registry AND through to the durable mirror. */
+function persist(m: ServiceModel): ServiceModel {
+  store().set(m.model, m);
+  mirror.writeThrough(m.model, m);
+  return m;
 }
 
 /**
@@ -171,13 +243,17 @@ export function getModel(model: string): ServiceModel | null {
 
 /** Test/seed hook: register or replace a model in the in-process registry. */
 export function upsertModel(m: ServiceModel): ServiceModel {
-  store().set(m.model, m);
+  persist(m);
   return m;
 }
 
 /** Reset the registry to seed — used by tests so each case starts clean. */
 export function _resetModels(): void {
-  registry = null;
+  const s = modelState();
+  s.models = new Map();
+  for (const m of seedModels()) s.models.set(m.model, m);
+  s.hydration = null;
+  mirror.__reset();
 }
 
 // --------------------------------------------------------------- create a model ---
@@ -265,7 +341,7 @@ export function startTraining(model: string, actor: Actor, run: { jobName: strin
   m.trainingJob = run.jobName;
   m.trainingNamespace = run.namespace;
   m.updatedAt = new Date().toISOString();
-  store().set(m.model, m);
+  persist(m);
   return m;
 }
 
@@ -293,7 +369,7 @@ export function completeTraining(
   m.trainingJob = undefined;
   m.trainingNamespace = undefined;
   m.updatedAt = new Date().toISOString();
-  store().set(m.model, m);
+  persist(m);
   return m;
 }
 
@@ -308,7 +384,75 @@ export function failTraining(model: string, actor: Actor, reason: string): Servi
   m.trainingNamespace = undefined;
   m.lastTrainingError = reason;
   m.updatedAt = new Date().toISOString();
-  store().set(m.model, m);
+  persist(m);
+  return m;
+}
+
+// ----------------------------------------------------------- deploy transitions ---
+
+/**
+ * The deploy EDIT-SCOPE gate (owner / in-domain admin, human only) without state
+ * checks — the poll path uses it so a `deploying` model can be read. 404 unknown.
+ */
+export function assertDeployScope(model: string, actor: Actor): ServiceModel {
+  const m = getModel(model);
+  if (!m) throw withStatus(new Error(`unknown model ${model}`), 404);
+  assertHuman(actor, 'deploy a model');
+  requireEditScope(actor, m, 'deploy');
+  return m;
+}
+
+/**
+ * A model can only be DEPLOYED by its owner (or an in-domain admin) — the same
+ * edit-scope gate train uses — and only once TRAINED (there must be an uploaded
+ * artifact at the model's storageUri). Re-deploy of a `deployed`/`deploy_failed`
+ * model is allowed (idempotent reconcile); a `deploying`/`training` model is a
+ * typed 409. The deploy route calls this BEFORE touching the cluster.
+ */
+export function assertCanDeploy(model: string, actor: Actor): ServiceModel {
+  const m = assertDeployScope(model, actor);
+  if (m.buildState === 'deploying') throw withStatus(new Error('A deploy is already in flight for this model'), 409);
+  if (m.buildState === 'training') throw withStatus(new Error('Wait for the training run to finish before deploying'), 409);
+  if (m.buildState !== 'trained' && m.buildState !== 'deployed' && m.buildState !== 'deploy_failed') {
+    throw withStatus(new Error('Train the model first — deploy serves the trained artifact'), 400);
+  }
+  return m;
+}
+
+/** Flip trained/deploy_failed/deployed → deploying and stamp the InferenceService name. */
+export function startDeploy(model: string, actor: Actor, isvc: string): ServiceModel {
+  const m = assertCanDeploy(model, actor);
+  m.buildState = 'deploying';
+  m.kserveService = isvc;
+  m.lastDeployError = undefined;
+  m.updatedAt = new Date().toISOString();
+  persist(m);
+  return m;
+}
+
+/** Complete a deploy: deploying → deployed (the InferenceService reports Ready). */
+export function completeDeploy(model: string, actor: Actor): ServiceModel {
+  const m = getModel(model);
+  if (!m) throw withStatus(new Error(`unknown model ${model}`), 404);
+  assertHuman(actor, 'complete a deploy');
+  requireEditScope(actor, m, 'deploy');
+  m.buildState = 'deployed';
+  m.lastDeployError = undefined;
+  m.updatedAt = new Date().toISOString();
+  persist(m);
+  return m;
+}
+
+/** Mark a deploy failed (deploying → deploy_failed) with the honest cluster reason. */
+export function failDeploy(model: string, actor: Actor, reason: string): ServiceModel {
+  const m = getModel(model);
+  if (!m) throw withStatus(new Error(`unknown model ${model}`), 404);
+  assertHuman(actor, 'fail a deploy');
+  requireEditScope(actor, m, 'deploy');
+  m.buildState = 'deploy_failed';
+  m.lastDeployError = reason;
+  m.updatedAt = new Date().toISOString();
+  persist(m);
   return m;
 }
 
@@ -320,8 +464,10 @@ export function failTraining(model: string, actor: Actor, reason: string): Servi
  * the ONLY thing that changes callable scope — exactly the data/metrics ladder.
  */
 export function compilePredictPolicy(m: ServiceModel): CompiledPredictPolicy {
-  // The owner's model principal can always call its own service.
-  const allowedPrincipals = [`${m.model.replace(/_/g, '-')}`, `${m.owner}`];
+  // The owner's model principal can always call its own service. The owner is
+  // listed in BOTH principal forms (bare uid + the session `user:<id>` form the
+  // MCP/UI doors authorize under) — same dual-form rule the OPA rego applies.
+  const allowedPrincipals = [`${m.model.replace(/_/g, '-')}`, `${m.owner}`, `user:${m.owner}`];
   // Personal: owner only (no domain reach). Domain+: the owning domain may call.
   const allowedDomains = m.tier === 'Personal' ? [] : [m.domain];
   const crossDomain = m.tier === 'Marketplace';
@@ -393,6 +539,7 @@ export async function authorizePredict(
   caller: Caller,
   authorizeTool: ToolAuthorizer = defaultToolAuthorizer,
 ): Promise<PredictAuthz> {
+  await ensureModelsHydrated(); // durable registry: never deny on a cold cache
   const m = getModel(model);
   const frontDoor: 'rest' | 'mcp' = caller.isAgent ? 'mcp' : 'rest';
   if (!m) {
@@ -421,6 +568,12 @@ export async function authorizePredict(
   }
 
   // 2. Tool grant — the same OPA `predict` authorization every governed tool uses.
+  // EXCEPTION (self-consumption): the OWNER calling their OWN model needs no
+  // third-party tool grant — the compiled policy already names them. The grant
+  // check governs OTHER principals (agents, apps, in-domain users).
+  if (caller.principal === m.owner || caller.principal === `user:${m.owner}`) {
+    return { decision: 'allow', frontDoor, reason: 'owner self-consumption of their own model', policy, toolPolicy: 'owner-self' };
+  }
   const authz = await authorizeTool(caller.principal);
   if (authz.effect === 'deny') {
     return { decision: 'deny', frontDoor, reason: authz.reason, policy, toolPolicy: authz.policy };
@@ -465,7 +618,7 @@ export function promoteModel(model: string, actor: Actor): ServiceModel {
     throw withStatus(new Error('Promoting to Domain requires a Builder, Domain admin, or Admin'), 403);
   }
   m.tier = 'Domain';
-  store().set(m.model, m);
+  persist(m);
   return m;
 }
 
@@ -489,7 +642,7 @@ export function goLive(model: string, actor: Actor): ServiceModel {
     staging.certified = true;
   }
   m.stage = 'Production';
-  store().set(m.model, m);
+  persist(m);
   return m;
 }
 
@@ -511,7 +664,7 @@ export function certifyModel(model: string, actor: Actor, mode: ConsumptionMode)
   }
   m.tier = 'Marketplace';
   m.consumptionMode = mode;
-  store().set(m.model, m);
+  persist(m);
   return m;
 }
 
@@ -547,7 +700,7 @@ export function setModelArchived(model: string, actor: Actor, archived: boolean)
   assertHuman(actor, archived ? 'archive a model' : 'restore a model');
   requireEditScope(actor, m, archived ? 'archive' : 'restore');
   m.archived = archived;
-  store().set(m.model, m);
+  persist(m);
   return m;
 }
 
@@ -564,5 +717,6 @@ export function deleteModel(model: string, actor: Actor): ServiceModel {
   requireEditScope(actor, m, 'delete');
   if (!m.archived) throw withStatus(new Error('Archive the model before deleting it'), 400);
   store().delete(m.model);
+  mirror.deleteThrough(m.model);
   return m;
 }
