@@ -34,6 +34,50 @@ const PLAN_MODE_TOOLS = [
 ];
 
 /**
+ * A concise, ACCURATE description of the OS-client SDK surface + the `vite-os`
+ * scaffold conventions, injected into the build brief for governed frontend apps
+ * (template `vite-os`). It is grounded in the REAL SDK (`lib/app-sdk/client.ts`):
+ * every method below exists — do NOT let the model invent others. Data and auth
+ * come from the OS over its governed routes, never a custom backend the app ships.
+ */
+const OS_SDK_BRIEF = [
+  '## This app is a GOVERNED FRONTEND over the OS API (vite-os)',
+  'This is a Vite + React + TypeScript + Tailwind + shadcn/ui SPA. It has NO custom',
+  'backend and NO database of its own: all data and identity come from the Sovereign',
+  'OS over its governed, OPA-checked, RLS/DLS-filtered routes. The app reaches them',
+  'ONLY through the OS-client SDK, imported as `@sovereign-os/app-sdk`.',
+  '',
+  'Create the client once and reuse it:',
+  "  import { createOsClient } from '@sovereign-os/app-sdk';",
+  '  const os = createOsClient(); // same-origin ambient session (the preview case)',
+  '',
+  'The COMPLETE SDK method surface (use ONLY these — do not invent methods):',
+  '  os.whoami()                     -> the signed-in principal { user: {...} | null }',
+  '  os.context()                    -> granted context: { connections, data, knowledge, files, metrics }',
+  '                                     (each an array of { id, name, scope?, folder? })',
+  '  os.datasets.list()              -> datasets the user may see',
+  '  os.datasets.get(id)             -> one dataset',
+  '  os.datasets.query(id, q?)       -> q = { nl } (natural-language question, governed NL->SQL)',
+  '                                     or omit for a governed row preview ({ limit }).',
+  '                                     RAW SQL IS REFUSED (throws UnsupportedQuery).',
+  '  os.metrics.list()               -> metrics the user may see',
+  '  os.metrics.query(id, q?)        -> slice a metric: q = { dimensions?, timeDimension?, granularity?, filters? }',
+  '  os.knowledge.search(q)          -> KnowledgeHit[] from the DLS-scoped knowledge index',
+  '  os.files.list()                 -> files the user may see',
+  '  os.files.get(id)                -> one file',
+  '',
+  'Honesty + errors (from the SDK): a failed governed call throws a typed error —',
+  'NotAuthenticated (401), Forbidden (403, carries the server reason), UnsupportedQuery,',
+  'or OsError. NEVER catch these and substitute mock/placeholder data: surface the real',
+  'state (loading / empty / the error message). Real data or a real error, never a fake.',
+  '',
+  'Scaffold conventions: entry `src/main.tsx` -> `src/App.tsx`; the client factory lives',
+  'in `src/os.ts`; shadcn primitives under `src/components/ui/`; `cn()` in `src/lib/utils.ts`;',
+  'Tailwind via `src/index.css`. Build output is `dist/`, served by nginx on port 8080.',
+  'Keep imports pointing at `@sovereign-os/app-sdk` and follow the existing file layout.',
+].join('\n');
+
+/**
  * The per-app BUILD CHAT (Software golden path §2) — now genuinely AGENTIC. It
  * runs the shared PLAN → ACT → deploy(gated) harness scoped to the `software` MCP
  * tools: it plans with the reasoning tier, then acts with the exec tier, calling
@@ -59,12 +103,23 @@ function appContext(
   mode: BuildMode,
   story: BuildStory | null,
 ): string {
+  const isViteOs = app.template === 'vite-os';
+  const stackLine = isViteOs
+    ? 'It is a Vite + React governed OS-frontend app that lives in its own Forgejo repo'
+    : 'It is a Next.js + Supabase app that lives in its own Forgejo repo';
   const lines = [
     `You are the build assistant for the "${app.name}" application (appId: ${app.id}).`,
-    'It is a Next.js + Supabase app that lives in its own Forgejo repo',
+    stackLine,
     `(${app.repo.fullName}) and ships via Forgejo Actions → Harbor → Argo CD to`,
     `${app.subdomain}.`,
   ];
+
+  // Governed-frontend apps talk to the OS only through the OS-client SDK — teach
+  // the harness the real SDK surface + scaffold conventions so generated code is
+  // grounded (never invents methods, never fabricates data).
+  if (isViteOs) {
+    lines.push('', OS_SDK_BRIEF);
+  }
 
   if (mode === 'plan') {
     lines.push(

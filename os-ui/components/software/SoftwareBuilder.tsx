@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import CodePanel from '@/components/CodePanel';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import ReviewCard, { type ReviewCardData } from '@/components/ReviewCard';
@@ -40,6 +41,16 @@ import { initialStageState, canEnter, isSatisfied, markDone, type StageState } f
 import TeamPanel from '@/app/software/TeamPanel';
 import StageAssistant from './StageAssistant';
 import { SW_STAGES, type SwStageId, type SwCtx } from './stages';
+
+/**
+ * The in-browser "Instant preview" (Sandpack) is CLIENT-ONLY — it needs the DOM and
+ * must never run at SSR/prerender. Load it lazily with ssr:false so the Software
+ * pages still statically render.
+ */
+const InstantPreview = dynamic(() => import('./InstantPreview'), {
+  ssr: false,
+  loading: () => <p className="hint" style={{ marginTop: 0 }}>Loading instant preview…</p>,
+});
 
 type Visibility = 'Personal' | 'Shared' | 'Certified';
 type Tool = { name: string; description: string; write: boolean };
@@ -695,6 +706,8 @@ function BuildStage({
 }) {
   // Plan ⇄ Build: Plan discusses/plans with ZERO code changes; Build executes end-to-end.
   const [buildMode, setBuildMode] = useState<'plan' | 'build'>('build');
+  // Bumped after each Build commit so the instant preview re-fetches the new files.
+  const [previewKey, setPreviewKey] = useState(0);
 
   const storyOptions = epics.flatMap((e) =>
     e.stories.map((s) => ({
@@ -712,6 +725,8 @@ function BuildStage({
     if (buildMode === 'build' && target && onSaveEpics && changes.length > 0) {
       onSaveEpics(withStoryStatus(epics, target.epicId, target.storyId, 'done'));
     }
+    // A commit changed the files — refresh the instant preview.
+    if (changes.length > 0) setPreviewKey((k) => k + 1);
     onBuilt();
   };
 
@@ -809,6 +824,18 @@ function BuildStage({
         />
         {canEditCode ? <CodePanel appId={app.id} repoFullName={app.repo.fullName} /> : null}
       </div>
+
+      {/* ── Live-data preview — the real deployed build served by the runner, calling
+           the governed OS API as you; reloads after each Build commit + redeploy. ── */}
+      {app.surface?.ui ? (
+        <div className="grant-block" style={{ marginTop: 16 }}>
+          <div className="comp-label">Preview · live data</div>
+          <p className="hint" style={{ marginTop: 4, marginBottom: 10 }}>
+            The deployed build served by the runner, calling the governed OS API as you — real granted data or a real error.
+          </p>
+          <InstantPreview key={previewKey} appId={app.id} previewUrl={app.deploy.previewUrl} />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -831,6 +858,20 @@ function PreviewStage({
   const [showApi, setShowApi] = useState(false);
   return (
     <div style={{ marginTop: 4 }}>
+      {/* ── Live-data preview: the real deployed build embedded over the governed OS API ── */}
+      {surface.ui ? (
+        <div className="grant-block" style={{ marginBottom: 16 }}>
+          <div className="comp-label">Preview · live data</div>
+          <p className="hint" style={{ marginTop: 4, marginBottom: 10 }}>
+            The deployed build served by the runner, calling the governed OS API as you —
+            real granted data, or a real error.
+          </p>
+          <InstantPreview appId={app.id} previewUrl={app.deploy.previewUrl} />
+        </div>
+      ) : null}
+
+      {/* ── Deployed build: the exact image the runner serves (secondary, slower) ── */}
+      {surface.ui ? <div className="comp-label" style={{ marginBottom: 6 }}>Deployed build · exactly what ships</div> : null}
       <div className="sw-monitor">
         <div className="sw-monitor-main">
           <div className="sw-monitor-status">

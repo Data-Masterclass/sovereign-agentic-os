@@ -1,0 +1,637 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * @sovereign-os/ui — portable theme.
+ *
+ * The Sovereign Agentic OS design language in ONE framework-free stylesheet.
+ * Import this once and an app inherits the OS look: dark-luxury palette, gold as
+ * the primary accent, teal secondary, the Oswald/Marcellus/Rubik type system,
+ * and the core .sb-* component classes (card, button, badge, section, table,
+ * input, shell). Distilled from the OS globals — same tokens, same class shapes.
+ *
+ * Fonts load from Google Fonts with system fallbacks, so the sheet still renders
+ * cleanly offline (it just falls back to the system stack). Everything is driven
+ * by CSS custom properties, so an app can override any token in its own :root.
+ *
+ * Light is the default. Dark is opt-in via [data-theme='dark'] on any ancestor.
+ * The OS keeps its nav chrome dark in BOTH themes; the .sb-shell mirrors that.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Marcellus&family=Rubik:wght@300;400;500;600;700&display=swap');
+
+/* ====================================================================== *
+ * Tokens — light (default)
+ * ====================================================================== */
+:root {
+  --sb-bg: #ffffff;
+  --sb-bg-elevated: #f7f3ea;
+  --sb-bg-input: #ffffff;
+  --sb-panel: #fbfaf5;
+  --sb-panel-2: #f1ece1;
+  --sb-border: #e6dfce;
+  --sb-border-strong: #d3c9b3;
+
+  --sb-text: #1a1813;
+  --sb-text-muted: #5a5447;
+  --sb-text-faint: #8a8270;
+
+  /* Gold — brand constant; --sb-gold-text adapts per theme for legibility */
+  --sb-gold: #c8a24a;
+  --sb-gold-light: #e7cd86;
+  --sb-gold-deep: #a07a2c;
+  --sb-gold-text: #8a6516;
+  --sb-gold-soft: rgba(200, 162, 74, 0.12);
+  --sb-gold-line: rgba(200, 162, 74, 0.32);
+
+  /* Teal — secondary brand accent */
+  --sb-teal: #1f8f88;
+  --sb-teal-dim: #0f6e6e;
+  --sb-teal-soft: rgba(31, 143, 136, 0.12);
+
+  --sb-danger: #c0392b;
+
+  --sb-radius: 10px;
+  --sb-radius-lg: 14px;
+  --sb-sidebar-w: 256px;
+
+  /* Type system — Google-hosted with graceful system fallbacks */
+  --sb-font-body: 'Rubik', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+    Roboto, Helvetica, Arial, sans-serif;
+  --sb-font-head: 'Oswald', ui-sans-serif, system-ui, sans-serif;
+  --sb-font-sub: 'Marcellus', Georgia, serif;
+  --sb-font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* ====================================================================== *
+ * Tokens — dark (opt-in via [data-theme='dark'])
+ * ====================================================================== */
+[data-theme='dark'] {
+  --sb-bg: #0c0b0d;
+  --sb-bg-elevated: #15131a;
+  --sb-bg-input: #100e15;
+  --sb-panel: #16131d;
+  --sb-panel-2: #1b1724;
+  --sb-border: #272231;
+  --sb-border-strong: #38313f;
+
+  --sb-text: #f4f0e7;
+  --sb-text-muted: #b0a99c;
+  --sb-text-faint: #7c766b;
+
+  --sb-gold-text: #e7cd86;
+  --sb-teal: #2aa39b;
+}
+
+/* The OS nav chrome is ALWAYS dark — it carries a fixed dark token context
+   regardless of page theme, so only the content area switches light/dark. */
+.sb-sidebar,
+.sb-topbar {
+  --sb-bg: #0c0b0d;
+  --sb-bg-elevated: #15131a;
+  --sb-panel: #1b1724;
+  --sb-border: #272231;
+  --sb-text: #f4f0e7;
+  --sb-text-muted: #b0a99c;
+  --sb-text-faint: #7c766b;
+  --sb-gold-text: #e7cd86;
+  --sb-teal: #2aa39b;
+}
+
+/* ====================================================================== *
+ * Base reset + typography (scoped to .sb-root so we never fight a host app's
+ * own globals; the AppShell puts .sb-root on its outermost element).
+ * ====================================================================== */
+.sb-root {
+  background: var(--sb-bg);
+  color: var(--sb-text);
+  font-family: var(--sb-font-body);
+  font-size: 14px;
+  line-height: 1.55;
+  font-weight: 300;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.sb-root *,
+.sb-root *::before,
+.sb-root *::after {
+  box-sizing: border-box;
+}
+
+.sb-root h1,
+.sb-root h2,
+.sb-root h3 {
+  font-family: var(--sb-font-head);
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}
+
+.sb-root a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.sb-root code,
+.sb-root pre,
+.sb-mono {
+  font-family: var(--sb-font-mono);
+}
+
+/* ====================================================================== *
+ * App shell — sidebar + topbar chrome
+ * ====================================================================== */
+.sb-shell {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--sb-sidebar-w) 1fr;
+  min-height: 100vh;
+}
+
+.sb-sidebar {
+  background: linear-gradient(180deg, #16131c 0%, #110f16 100%);
+  border-right: 1px solid var(--sb-border);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.sb-brand {
+  padding: 20px 18px 16px;
+  border-bottom: 1px solid var(--sb-border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sb-brand-mark {
+  font-family: var(--sb-font-head);
+  font-weight: 600;
+  font-size: 16px;
+  line-height: 1.05;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--sb-text);
+}
+
+.sb-brand-mark .sb-accent {
+  color: var(--sb-gold-text);
+}
+
+.sb-brand-sub {
+  font-family: var(--sb-font-sub);
+  color: var(--sb-text-faint);
+  font-size: 10.5px;
+  margin-top: 3px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+.sb-nav {
+  padding: 12px 8px;
+  flex: 1;
+}
+
+.sb-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  color: var(--sb-text-muted);
+  font-size: 13.5px;
+  transition: background 0.14s, color 0.14s, box-shadow 0.14s;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+}
+
+.sb-nav-item:hover {
+  background: var(--sb-panel);
+  color: var(--sb-text);
+}
+
+.sb-nav-item.sb-active {
+  background: var(--sb-gold-soft);
+  color: var(--sb-text);
+  box-shadow: inset 2px 0 0 var(--sb-gold);
+}
+
+.sb-nav-item.sb-active .sb-ico {
+  color: var(--sb-gold-text);
+  opacity: 1;
+}
+
+.sb-nav-item .sb-ico {
+  width: 18px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--sb-gold);
+  opacity: 0.8;
+}
+
+.sb-sidebar-foot {
+  padding: 14px 18px;
+  border-top: 1px solid var(--sb-border);
+  font-size: 11px;
+  color: var(--sb-text-faint);
+  line-height: 1.7;
+}
+
+.sb-sidebar-foot strong {
+  color: var(--sb-text-muted);
+  font-weight: 600;
+}
+
+.sb-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sb-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 28px;
+  border-bottom: 1px solid var(--sb-border);
+  background: #0c0b0d; /* solid black — opaque in both modes */
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.sb-topbar h1 {
+  font-family: var(--sb-font-head);
+  font-size: 21px;
+  margin: 0;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--sb-text);
+}
+
+.sb-crumb {
+  color: var(--sb-text-faint);
+  font-size: 12px;
+  margin-top: 3px;
+  letter-spacing: 0.2px;
+}
+
+.sb-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sb-content {
+  padding: 28px;
+  max-width: 1120px;
+  width: 100%;
+}
+
+/* Live pill — the OS's "Live cluster" status chip */
+.sb-pill {
+  font-size: 11px;
+  color: var(--sb-text-muted);
+  border: 1px solid var(--sb-gold-line);
+  border-radius: 999px;
+  padding: 4px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--sb-gold-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.sb-pill .sb-live {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--sb-teal);
+  box-shadow: 0 0 8px var(--sb-teal);
+}
+
+/* ====================================================================== *
+ * Grid + cards
+ * ====================================================================== */
+.sb-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+
+.sb-card {
+  position: relative;
+  background: var(--sb-panel);
+  border: 1px solid var(--sb-border);
+  border-radius: var(--sb-radius);
+  padding: 18px;
+  transition: border-color 0.14s, transform 0.14s, box-shadow 0.14s;
+  overflow: hidden;
+}
+
+.sb-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--sb-gold-deep), var(--sb-gold-light), var(--sb-gold-deep));
+  opacity: 0;
+  transition: opacity 0.16s;
+}
+
+.sb-card:hover {
+  border-color: var(--sb-gold-line);
+  box-shadow: 0 10px 30px -18px rgba(0, 0, 0, 0.8);
+}
+
+.sb-card:hover::before {
+  opacity: 0.9;
+}
+
+.sb-card h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--sb-text-muted);
+}
+
+.sb-card .sb-big {
+  font-family: var(--sb-font-head);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--sb-text);
+}
+
+.sb-card .sb-muted {
+  color: var(--sb-text-muted);
+  font-size: 12.5px;
+}
+
+/* ====================================================================== *
+ * Section title — gold eyebrow with a trailing hairline
+ * ====================================================================== */
+.sb-section-title {
+  font-family: var(--sb-font-head);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 1.6px;
+  font-weight: 600;
+  color: var(--sb-gold-text);
+  margin: 30px 0 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sb-section-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--sb-gold-line), transparent);
+}
+
+/* A bordered panel — the calm container used across the OS */
+.sb-panel-box {
+  background: var(--sb-panel);
+  border: 1px solid var(--sb-border);
+  border-radius: var(--sb-radius);
+  padding: 18px;
+}
+
+/* ====================================================================== *
+ * Forms — inputs, textareas, selects
+ * ====================================================================== */
+.sb-input,
+.sb-select,
+.sb-root textarea.sb-input {
+  width: 100%;
+  background: var(--sb-bg-input);
+  border: 1px solid var(--sb-border-strong);
+  border-radius: 8px;
+  color: var(--sb-text);
+  padding: 12px 14px;
+  font-size: 13.5px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.14s, box-shadow 0.14s;
+}
+
+.sb-root textarea.sb-input {
+  resize: vertical;
+}
+
+.sb-select {
+  width: auto;
+  min-width: 130px;
+  cursor: pointer;
+}
+
+.sb-input:focus,
+.sb-select:focus {
+  border-color: var(--sb-gold);
+  box-shadow: 0 0 0 3px var(--sb-gold-soft);
+}
+
+/* ====================================================================== *
+ * Buttons — brand gold gradient primary + ghost secondary
+ * ====================================================================== */
+.sb-btn {
+  background: linear-gradient(180deg, var(--sb-gold-light), var(--sb-gold) 55%, var(--sb-gold-deep));
+  color: #20160a;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-size: 13px;
+  line-height: 1.2;
+  font-weight: 600;
+  font-family: var(--sb-font-head);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  cursor: pointer;
+  transition: filter 0.14s, opacity 0.14s, box-shadow 0.14s;
+  box-shadow: 0 6px 18px -10px rgba(200, 162, 74, 0.7);
+}
+
+.sb-btn:hover {
+  filter: brightness(1.06);
+  box-shadow: 0 8px 22px -10px rgba(200, 162, 74, 0.8);
+}
+
+.sb-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.sb-btn.sb-sm {
+  padding: 6px 13px;
+  font-size: 11px;
+}
+
+/* Ghost — on a LIGHT surface: near-black button, gold text. */
+.sb-btn.sb-ghost {
+  background: #1a1813;
+  color: var(--sb-gold-light);
+  border: 1px solid var(--sb-gold-line);
+  box-shadow: none;
+}
+
+.sb-btn.sb-ghost:hover {
+  background: #25211a;
+  border-color: var(--sb-gold);
+  color: var(--sb-gold-light);
+  filter: none;
+}
+
+.sb-btn.sb-ghost:focus-visible {
+  outline: 2px solid var(--sb-gold);
+  outline-offset: 2px;
+}
+
+/* On DARK surfaces (nav chrome, dark theme) → invert: off-white button, near-black text. */
+[data-theme='dark'] .sb-btn.sb-ghost,
+.sb-sidebar .sb-btn.sb-ghost,
+.sb-topbar .sb-btn.sb-ghost {
+  background: #f4f0e7;
+  color: #1a1813;
+  border: 1px solid var(--sb-border-strong);
+}
+
+[data-theme='dark'] .sb-btn.sb-ghost:hover,
+.sb-sidebar .sb-btn.sb-ghost:hover,
+.sb-topbar .sb-btn.sb-ghost:hover {
+  background: #ffffff;
+  border-color: var(--sb-gold);
+  color: #1a1813;
+}
+
+/* ====================================================================== *
+ * Badges
+ * ====================================================================== */
+.sb-badge {
+  display: inline-block;
+  font-family: var(--sb-font-head);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  border-radius: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--sb-border-strong);
+  color: var(--sb-text-muted);
+}
+
+.sb-badge.sb-ok {
+  color: var(--sb-teal);
+  background: var(--sb-teal-soft);
+  border-color: var(--sb-teal-dim);
+}
+
+.sb-badge.sb-warn {
+  color: var(--sb-gold-text);
+  background: var(--sb-gold-soft);
+  border-color: var(--sb-gold-line);
+}
+
+.sb-badge.sb-err {
+  color: var(--sb-danger);
+  background: rgba(229, 104, 95, 0.1);
+  border-color: rgba(229, 104, 95, 0.35);
+}
+
+.sb-badge.sb-muted {
+  color: var(--sb-text-faint);
+}
+
+/* ====================================================================== *
+ * Tables
+ * ====================================================================== */
+.sb-table-wrap {
+  border: 1px solid var(--sb-border);
+  border-radius: var(--sb-radius);
+  overflow: auto;
+  background: var(--sb-panel);
+}
+
+.sb-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.sb-table th,
+.sb-table td {
+  text-align: left;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--sb-border);
+  white-space: nowrap;
+}
+
+.sb-table th {
+  background: var(--sb-bg-elevated);
+  color: var(--sb-gold-text);
+  font-family: var(--sb-font-head);
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.9px;
+  position: sticky;
+  top: 0;
+}
+
+.sb-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.sb-table tbody tr:hover {
+  background: var(--sb-bg-elevated);
+}
+
+/* ====================================================================== *
+ * Small utilities used across the OS
+ * ====================================================================== */
+.sb-lead {
+  color: var(--sb-text-muted);
+  font-size: 15px;
+  line-height: 1.6;
+  max-width: 660px;
+  margin: 0 0 8px;
+}
+
+.sb-hint {
+  color: var(--sb-text-faint);
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.sb-error {
+  background: rgba(229, 104, 95, 0.08);
+  border: 1px solid rgba(229, 104, 95, 0.35);
+  color: var(--sb-danger);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 13px;
+}
+
+@media (max-width: 720px) {
+  .sb-shell {
+    grid-template-columns: 1fr;
+  }
+  .sb-sidebar {
+    position: static;
+    height: auto;
+  }
+}

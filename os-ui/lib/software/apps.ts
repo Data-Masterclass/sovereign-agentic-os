@@ -33,6 +33,7 @@ import type {
   SurfaceDeclaration,
 } from '@/lib/software/model';
 import { viteOsFiles } from '@/lib/software/scaffolds/vite-os';
+import { vendorSdkForRepo, applySdkFileDep } from '@/lib/software/app-sdk-vendor';
 import { snapshotFiles, getSnapshot } from '@/lib/software/snapshot';
 import { generateAndCompile } from '@/lib/software/auto-mcp';
 import { parseAppManifest, renderAppYaml, defaultOpenApi, resolveSurface } from '@/lib/software/metadata';
@@ -530,9 +531,11 @@ const TEMPLATES: Record<AppTemplateKey, Template> = {
   dashboard: dashboardTemplate(),
 };
 
+// `vite-os` is listed first: it is the default for a new app (a governed
+// frontend over the OS API). The other templates stay selectable.
 export const APP_TEMPLATES: { key: AppTemplateKey; label: string }[] = [
-  { key: 'nextjs-supabase', label: 'Web app (Next.js + Supabase)' },
   { key: 'vite-os', label: 'Vite + React OS app (SPA, governed)' },
+  { key: 'nextjs-supabase', label: 'Web app (Next.js + Supabase)' },
   { key: 'service', label: 'Service / API' },
   { key: 'script', label: 'Script / scheduled job' },
   { key: 'dashboard', label: 'Dashboard-as-app' },
@@ -669,6 +672,19 @@ function b64(s: string): string {
 }
 
 /**
+ * For a `vite-os` app, append the vendored OS-client SDK source and rewrite its
+ * package.json to a local `file:` dependency. For every other template the file
+ * set is returned unchanged. Keeps the deployed image buildable offline.
+ */
+function withVendoredSdk(tpl: Template, files: ScaffoldFile[]): ScaffoldFile[] {
+  if (tpl.key !== 'vite-os') return files;
+  const withDep = files.map((f) =>
+    f.path === 'package.json' ? { ...f, content: applySdkFileDep(f.content) } : f,
+  );
+  return [...withDep, ...vendorSdkForRepo()];
+}
+
+/**
  * Best-effort: create the per-app Forgejo repo + seed the template files. Returns
  * a live result when Forgejo is reachable, or an offline shell otherwise — the
  * golden path still works for teaching, honestly labelled.
@@ -707,9 +723,13 @@ async function scaffoldRepo(
   // trigger fires against a tree with no build context and the run cannot build an
   // image — so the workflow must be the final file committed.
   const isWorkflow = (p: string) => p.startsWith('.forgejo/workflows/');
+  // Governed-frontend apps (vite-os) import `@sovereign-os/app-sdk`. VENDOR the SDK
+  // source into the repo + rewrite package.json to a local `file:` dep so the built
+  // Docker image resolves it with no external registry — fully sovereign / offline.
+  const baseFiles = withVendoredSdk(tpl, tpl.files(name, slug));
   const ordered = [
-    ...tpl.files(name, slug).filter((f) => !isWorkflow(f.path)),
-    ...tpl.files(name, slug).filter((f) => isWorkflow(f.path)),
+    ...baseFiles.filter((f) => !isWorkflow(f.path)),
+    ...baseFiles.filter((f) => isWorkflow(f.path)),
   ];
   for (const f of ordered) {
     const r = await forgejoWrite(`/repos/${owner}/${slug}/contents/${f.path}`, {
@@ -861,6 +881,25 @@ export async function liveRepoFiles(app: App, maxFiles = 300): Promise<ScaffoldF
   }
 }
 
+/**
+ * The app's CURRENT frontend files for the in-browser instant preview, resolved on
+ * the same honest ladder the rest of the tab uses: LIVE Forgejo tree → in-process
+ * snapshot → fresh template. VIEW-gated only (getAppForUser), so any user who can
+ * see the app can preview it; the preview itself calls the OS as the signed-in user
+ * so governance still decides what data renders. `mode` tells the UI which source
+ * it got (live vs the committed snapshot/template) so it can label honestly.
+ */
+export async function previewFilesForApp(
+  appId: string,
+  user: CurrentUser,
+): Promise<{ files: ScaffoldFile[]; template: AppTemplateKey; mode: 'live' | 'snapshot' }> {
+  const app = await getAppForUser(appId, user);
+  const live = await liveRepoFiles(app);
+  if (live && live.length > 0) return { files: live, template: app.template, mode: 'live' };
+  const snap = getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
+  return { files: snap, template: app.template, mode: 'snapshot' };
+}
+
 /** Read one file's decoded UTF-8 content + its current blob SHA (for commit). */
 export async function readAppFile(appId: string, user: CurrentUser, path: string): Promise<RepoFile> {
   ensureBuilder(user);
@@ -1008,7 +1047,10 @@ export async function createApp(
   input: { name: string; description?: string; template?: AppTemplateKey; domain?: string; surface?: SurfaceDeclaration; purpose?: string },
 ): Promise<App> {
   const map = await getCache();
-  const tpl = TEMPLATES[input.template ?? 'nextjs-supabase'] ?? TEMPLATES['nextjs-supabase'];
+  // Default a fresh app to the governed frontend-over-the-OS-API scaffold
+  // (`vite-os`): it wires itself to the OS SDK and renders real granted data on
+  // boot. The other templates remain selectable via `input.template`.
+  const tpl = TEMPLATES[input.template ?? 'vite-os'] ?? TEMPLATES['vite-os'];
   // An explicit surface declaration (intent) wins over the scaffold's heuristic.
   const declaredSurface: SurfaceDeclaration | undefined =
     input.surface === 'ui' || input.surface === 'api' || input.surface === 'both' ? input.surface : undefined;
