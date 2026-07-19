@@ -734,6 +734,27 @@ export function removeCheck(id: string, user: Principal, checkId: string): Datas
   return d;
 }
 
+/**
+ * Toggle a heuristic monitor (freshness/volume/schema) on a dataset (Creator+ on a
+ * dataset you can edit). Default-ON: only an explicit `false` is retained; flipping one
+ * back on drops it from the config so an all-on dataset stays byte-stable in the yaml.
+ */
+export function setMonitor(
+  id: string,
+  user: Principal,
+  kind: 'freshness' | 'volume' | 'schema',
+  enabled: boolean,
+): Dataset {
+  const rec = get(id);
+  const d = editOf(rec, user);
+  const next = { ...(d.monitors ?? {}) };
+  if (enabled) delete next[kind];
+  else next[kind] = false;
+  d.monitors = Object.keys(next).length > 0 ? next : undefined;
+  persist(rec, d, { author: user.id, summary: `${enabled ? 'enable' : 'disable'} ${kind} monitor` });
+  return d;
+}
+
 /** Pass-through carries the prior layer's quality forward unchanged. */
 function carryQuality(d: Dataset, layer: Layer): Quality {
   if (layer === 'silver') return d.versions.bronze.quality;

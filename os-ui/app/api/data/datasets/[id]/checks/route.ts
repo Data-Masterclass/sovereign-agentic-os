@@ -5,9 +5,7 @@ import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { getDataset, addCheck, removeCheck, builtLayerFqn } from '@/lib/data/store';
 import { queryRun } from '@/lib/infra/governed';
-import { runQualityChecks } from '@/lib/data/dq-run';
-import { healthScore } from '@/lib/data/dq';
-import { ensureHydrated, recordRun } from '@/lib/data/dq-results';
+import { runAndRecord } from '@/lib/data/dq-run-server';
 import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/data';
 
 export const dynamic = 'force-dynamic';
@@ -54,34 +52,26 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       max?: number;
     };
 
-    // ── Run the checks: compile → governed SELECT AS the owner → pass/fail + badge ──
+    // ── Run the checks + monitors: compile → governed SELECT AS the owner → pass/fail ──
     if (body.action === 'run') {
       const dataset = getDataset(id, user); // canView gate (403/404)
       const resolved = builtLayerFqn(dataset, user); // { fqn, principal } | null
-      const report = await runQualityChecks(dataset.checks ?? [], {
+      // Runs the dataset's rules AND its heuristic monitors, then persists ONE run to the
+      // durable time-series. Run AS the owner for a personal dataset (personal_<uid>), else
+      // the caller's domain principal — NEVER trusted from the body; the same resolver
+      // preview/profile use, so OPA governs exactly what the owner may read.
+      const outcome = await runAndRecord(dataset, {
         fqn: resolved?.fqn ?? null,
-        // Run AS the owner for a personal dataset (personal_<uid> ownership), else the
-        // caller's domain principal — NEVER trusted from the body. Same resolver the
-        // preview/profile surfaces use, so OPA governs exactly what the owner may read.
         queryFn: (sql) => queryRun(sql, resolved?.principal),
+        ownerId: user.id,
       });
-      // Honest 0–100 health from the per-rule verdicts (null when nothing ran).
-      const health = healthScore(report.results);
-      // Persist this run to the durable time-series (health score + trend + history).
-      // Best-effort: a mirror hiccup must never fail the run the user just did.
-      try {
-        await ensureHydrated();
-        recordRun({
-          datasetId: id,
-          ranAt: report.ranAt,
-          badge: report.badge,
-          healthScore: health.score,
-          results: report.results,
-          ranBy: user.id,
-          domain: dataset.domain,
-        });
-      } catch { /* durability is additive — the live report is still returned */ }
-      return NextResponse.json({ ...report, health });
+      return NextResponse.json({
+        fqn: outcome.fqn,
+        ranAt: outcome.ranAt,
+        badge: outcome.badge,
+        results: outcome.results,
+        health: outcome.health,
+      });
     }
 
     // ── Add a check (structured rule or legacy free-text) ──

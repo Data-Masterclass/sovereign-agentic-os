@@ -11,6 +11,7 @@ import type { HealthItem, Overview } from '@/lib/monitoring';
 import AttentionStrip from '@/components/monitoring/AttentionStrip';
 import LensCard from '@/components/monitoring/LensCard';
 import AlertsRow from '@/components/monitoring/AlertsRow';
+import DataQualityRollup from '@/components/monitoring/DataQualityRollup';
 import TraceDrawer from '@/components/monitoring/TraceDrawer';
 import { scopeLabel } from '@/components/monitoring/health';
 import '../monitoring.css';
@@ -76,6 +77,9 @@ export default function MonitoringPage() {
 
             <div className="section-title">Operational alerts</div>
             <AlertsRow alerts={data.alerts} />
+
+            <div className="section-title">Data quality</div>
+            <DataQualityRollup />
           </>
         )}
       </div>

@@ -77,5 +77,24 @@ export async function deliverAlert(
   return results;
 }
 
+/**
+ * Deliver a DATA-QUALITY failure notice to its recipient (the dataset owner). Reuses the
+ * exact real delivery boundary the metric alerts use (email if configured, else a durable
+ * in-app notification — never a silent drop). The scheduled DQ cron calls this ONLY on a
+ * new failure (see `isNewFailure`), so a dataset doesn't re-notify while it stays broken.
+ */
+export async function deliverDqAlert(
+  input: { datasetName: string; healthScore: number | null; failingLabels: string[] },
+  recipient: { userId: string; email?: string },
+): Promise<DeliveryResult> {
+  const title = `Data quality alert: ${input.datasetName}`;
+  const bodyLines = [
+    `Quality checks failed for "${input.datasetName}".`,
+    input.healthScore !== null ? `Health score: ${input.healthScore}/100.` : 'Health score: unknown.',
+    input.failingLabels.length ? `Failing: ${input.failingLabels.join(', ')}.` : '',
+  ].filter(Boolean);
+  return deliver(recipient, 'alert', title, bodyLines);
+}
+
 // Re-exported so the route/tests don't need to reach across modules for the types.
 export type { Cadence, Channel };

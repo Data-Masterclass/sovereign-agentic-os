@@ -2299,6 +2299,28 @@ metrics:
       osUiUrl: "http://os-ui:3000"
 
 # -----------------------------------------------------------------------------
+# Data — the Data tab's scheduled surfaces. quality.cron is the Data-Quality
+# sweep: a CronJob (charts/.../metrics/dq-cronjob.yaml) that hits the run-all
+# route (os-ui app/api/data/dq/run-all) on a schedule, running every governed
+# dataset's checks + heuristic monitors, persisting results, and alerting on a
+# NEW failure. DEFAULT-OFF: nothing renders until an operator opts in AND
+# provisions the service-principal Secret. The Job authenticates the ONLY
+# governed way — it LOGS IN as a builder+ principal (credentials from
+# `principalSecret`, keys username/password) to obtain a session cookie, then
+# calls the route (which enforces builder+). No auth bypass. Mirrors metrics.alerts.cron.
+# -----------------------------------------------------------------------------
+data:
+  quality:
+    cron:
+      enabled: false             # operator turns it on
+      schedule: "*/15 * * * *"   # every 15 minutes
+      # Secret holding the builder+ service principal's credentials (keys:
+      # username, password). Provision it before enabling. Default name below.
+      principalSecret: dq-run-principal
+      # os-ui service DNS (in-cluster). Override only for non-default topologies.
+      osUiUrl: "http://os-ui:3000"
+
+# -----------------------------------------------------------------------------
 # Harbor — production image registry for the Software golden path (per-app
 # builds: Forgejo Actions -> Harbor -> Argo CD -> subdomain). DEFAULT-OFF heavy
 # workload: locally CI uses Forgejo's built-in OCI registry, so the bundle is

@@ -1,0 +1,100 @@
+{{- if ((((.Values.data).quality).cron).enabled) }}
+{{- /*
+  Data-Quality sweep CronJob (Data Quality Phase 1).
+
+  The run-all route (os-ui app/api/data/dq/run-all) runs every GOVERNED dataset's checks
+  + heuristic monitors, persists a result to the durable time-series, and on a NEW failure
+  fires a notification. It is builder+ only and cron-callable — but nothing scheduled it.
+  This CronJob does. It MIRRORS metrics-alert-cronjob.yaml exactly.
+
+  AUTH — no bypass, no new route auth. The route authenticates via the SAME signed session
+  cookie a human uses (`requirePrincipal`). So this Job authenticates the ONLY governed way
+  available: it LOGS IN as a builder+ service principal (POST /api/auth/login with
+  credentials from a Secret), captures the session cookie, then POSTs the run-all route
+  with it. The route itself enforces builder+ — a non-privileged principal is rejected 403
+  by the app, not by us. The principal's credentials live in a Secret the operator
+  provisions (default name `dq-run-principal`, keys `username`/`password`); nothing is
+  baked in.
+
+  GATED OFF by default (`data.quality.cron.enabled=false`): nothing renders until an
+  operator turns it on AND provisions the principal Secret. `helm template` at defaults
+  emits nothing.
+*/}}
+{{- $c := .Values.data.quality.cron }}
+{{- $secretName := $c.principalSecret | default "dq-run-principal" }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: dq-sweep
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "dq-sweep") | nindent 4 }}
+spec:
+  schedule: {{ $c.schedule | default "*/15 * * * *" | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            {{- include "soa.selectorLabels" (dict "ctx" . "component" "dq-sweep") | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          {{- with .Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "soa.podSecurityContext" . | nindent 12 }}
+            runAsUser: 1000
+          containers:
+            - name: sweep
+              image: curlimages/curl:8.11.1
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "soa.containerSecurityContext" . | nindent 16 }}
+                readOnlyRootFilesystem: true
+              env:
+                - name: OS_UI
+                  value: {{ $c.osUiUrl | default "http://os-ui:3000" | quote }}
+                - name: PRINCIPAL_USER
+                  valueFrom: { secretKeyRef: { name: {{ $secretName | quote }}, key: username } }
+                - name: PRINCIPAL_PASS
+                  valueFrom: { secretKeyRef: { name: {{ $secretName | quote }}, key: password } }
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  JAR=/tmp/cookies.txt
+                  # 1. Log in as the builder+ service principal -> signed session cookie.
+                  CODE=$(curl -s -o /tmp/login.json -w "%{http_code}" -c "$JAR" \
+                    -X POST "$OS_UI/api/auth/login" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"username\":\"$PRINCIPAL_USER\",\"password\":\"$PRINCIPAL_PASS\"}")
+                  if [ "$CODE" != "200" ]; then
+                    echo "FATAL: login returned $CODE" >&2
+                    exit 1
+                  fi
+                  # 2. Sweep all governed datasets with that session (route enforces builder+).
+                  CODE=$(curl -s -o /tmp/run.json -w "%{http_code}" -b "$JAR" \
+                    -X POST "$OS_UI/api/data/dq/run-all")
+                  echo "dq/run-all -> $CODE"
+                  cat /tmp/run.json 2>/dev/null || true
+                  echo
+                  if [ "$CODE" != "200" ]; then
+                    echo "FATAL: dq/run-all returned $CODE" >&2
+                    exit 1
+                  fi
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+              resources:
+                requests: { cpu: 25m, memory: 32Mi }
+                limits: { cpu: 200m, memory: 64Mi }
+          volumes:
+            - name: tmp
+              emptyDir: {}
+{{- end }}

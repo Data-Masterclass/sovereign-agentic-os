@@ -47,6 +47,14 @@ type HealthScore = { score: number | null; status: QualityBadge; passing: number
 type TrendPoint = { ranAt: string; score: number | null; badge: QualityBadge };
 /** A deterministic profile→rule proposal — mirrors SuggestedCheck from lib/data/dq-suggest. */
 type SuggestedCheck = { rule: DataCheckRule; column: string; values?: string[]; min?: number; max?: number; evidence: string };
+/** A heuristic-monitor toggle — mirrors MonitorKind from lib/data/dq-monitors. */
+type MonitorKind = 'freshness' | 'volume' | 'schema';
+type MonitorToggle = { kind: MonitorKind; enabled: boolean };
+const MONITOR_LABELS: Record<MonitorKind, { label: string; hint: string }> = {
+  freshness: { label: 'Freshness', hint: 'Data arrives on its expected cadence' },
+  volume: { label: 'Row volume', hint: 'Row count stays within its normal band' },
+  schema: { label: 'Schema stable', hint: 'Columns are not added, dropped or retyped' },
+};
 type Certification = { level: string; by: string; at: string };
 /** Promotion gate + in-flight request — mirrors the promote route's GET payload. */
 type Gate = { ok: boolean; missing: string[] };
@@ -310,6 +318,9 @@ export default function DataBuilder({
   const [suggestions, setSuggestions] = useState<SuggestedCheck[]>([]);
   const [suggestBusy, setSuggestBusy] = useState(false);
   const [acceptingAll, setAcceptingAll] = useState(false);
+  // ---- heuristic monitors (freshness/volume/schema), on by default (Validate) ----
+  const [monitors, setMonitors] = useState<MonitorToggle[]>([]);
+  const [monitorBusy, setMonitorBusy] = useState('');
 
   // ---- row preview (governed SELECT * LIMIT 50) ----
   const [preview, setPreview] = useState<RowPreview | null>(null);
@@ -485,6 +496,7 @@ export default function DataBuilder({
       const data = await res.json();
       setSuggestions((data.suggestions ?? []) as SuggestedCheck[]);
       setTrend((data.trend ?? []) as TrendPoint[]);
+      setMonitors((data.monitors ?? []) as MonitorToggle[]);
       const latest = data.latest as { badge?: QualityBadge; healthScore?: number | null; ranAt?: string } | null;
       // Seed the header from the last persisted run so re-opening shows the real state,
       // not a blank — without claiming a fresh run happened.
@@ -527,6 +539,25 @@ export default function DataBuilder({
       setAcceptingAll(false);
     }
   }, [suggestions, addRuleWith]);
+
+  // Toggle a heuristic monitor (freshness/volume/schema). Governed by the canEdit gate on
+  // the route; the server returns the authoritative config, so the UI mirrors stored state.
+  const toggleMonitor = useCallback(async (kind: MonitorKind, enabled: boolean) => {
+    setMonitorBusy(kind);
+    try {
+      const res = await fetch(`/api/data/datasets/${datasetId}/dq`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind, enabled }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMonitors((data.monitors ?? []) as MonitorToggle[]);
+      }
+    } finally {
+      setMonitorBusy('');
+    }
+  }, [datasetId]);
 
   const runChecks = useCallback(async () => {
     setRunErr(''); setRunning(true);
@@ -1035,6 +1066,41 @@ export default function DataBuilder({
                 </div>
                 {checksErr ? <div className="error" style={{ marginTop: 8 }}>{checksErr}</div> : null}
               </div>
+            ) : null}
+
+            {/* Auto-monitors — heuristic freshness/volume/schema, on by default. Monte-Carlo's
+                lesson: coverage without writing rules. Each is explainable (mean±kσ / cadence /
+                column-set), contributes to the health score, and honours the honesty contract
+                (too little history ⇒ "not run", never a fake pass). */}
+            {monitors.length > 0 ? (
+              <>
+                <div className="section-title" style={{ marginTop: 20 }}>
+                  Auto-monitors
+                  <span className="muted" style={{ fontSize: 12, marginLeft: 8, fontWeight: 400 }}>on by default</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {monitors.map((m) => (
+                    <div key={m.kind} className="guided-panel" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13.5 }}>{MONITOR_LABELS[m.kind].label}</div>
+                        <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{MONITOR_LABELS[m.kind].hint}</div>
+                      </div>
+                      {canEdit ? (
+                        <button
+                          className={`btn ghost sm ${m.enabled ? '' : 'off'}`}
+                          onClick={() => toggleMonitor(m.kind, !m.enabled)}
+                          disabled={monitorBusy === m.kind}
+                          aria-pressed={m.enabled}
+                        >
+                          {monitorBusy === m.kind ? <span className="spin" /> : m.enabled ? 'On' : 'Off'}
+                        </button>
+                      ) : (
+                        <span className="muted" style={{ fontSize: 12.5 }}>{m.enabled ? 'On' : 'Off'}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
             ) : null}
 
             {/* Lineage — refinement + consumption chain, moved here from the old Use stage. */}

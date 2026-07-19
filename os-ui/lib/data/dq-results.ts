@@ -38,6 +38,10 @@ export type DqRunRecord = {
   /** Who ran it (audit) and the domain the dataset belongs to (scope). */
   ranBy: string;
   domain: string;
+  /** Row count observed at this run — the volume monitor's series. Null when unknown. */
+  rowCount?: number | null;
+  /** Sorted "name:type" column set at this run — the schema monitor's baseline. */
+  schemaFingerprint?: string | null;
 };
 
 /** How many recent runs per dataset we keep hydrated for the trend sparkline. */
@@ -65,6 +69,8 @@ const mirror = osMirror({
         healthScore: { type: 'integer' },
         ranBy: { type: 'keyword' },
         domain: { type: 'keyword' },
+        rowCount: { type: 'long' },
+        schemaFingerprint: { type: 'keyword' },
       },
     },
   },
@@ -117,6 +123,8 @@ export function recordRun(input: {
   results: CheckResult[];
   ranBy: string;
   domain?: string;
+  rowCount?: number | null;
+  schemaFingerprint?: string | null;
 }): DqRunRecord {
   const s = dqStoreState();
   let id = `${input.datasetId}:${input.ranAt}`;
@@ -132,6 +140,8 @@ export function recordRun(input: {
     results: input.results,
     ranBy: input.ranBy,
     domain: input.domain ?? 'default',
+    rowCount: input.rowCount ?? null,
+    schemaFingerprint: input.schemaFingerprint ?? null,
   };
   s.runs.set(id, rec);
   trimDataset(s, input.datasetId);
@@ -156,6 +166,22 @@ export function latestRun(datasetId: string): DqRunRecord | null {
  */
 export function healthTrend(datasetId: string): { ranAt: string; score: number | null; badge: QualityBadge }[] {
   return listRuns(datasetId).map((r) => ({ ranAt: r.ranAt, score: r.healthScore, badge: r.badge }));
+}
+
+/**
+ * The monitor history (oldest→newest) for a dataset — the row-count + schema-fingerprint
+ * series the heuristic monitors (`dq-monitors.ts`) learn their bands/baselines from. A
+ * projection of the persisted runs, so freshness/volume/schema reuse the SAME durable
+ * time-series the health trend does — no second store.
+ */
+export function monitorHistory(
+  datasetId: string,
+): { ranAt: string; rowCount: number | null; schemaFingerprint: string | null }[] {
+  return listRuns(datasetId).map((r) => ({
+    ranAt: r.ranAt,
+    rowCount: r.rowCount ?? null,
+    schemaFingerprint: r.schemaFingerprint ?? null,
+  }));
 }
 
 /** For tests only — reset in-process state without touching the mirror. */

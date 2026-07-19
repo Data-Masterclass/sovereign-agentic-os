@@ -3,10 +3,11 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
-import { getDataset, builtLayerFqn } from '@/lib/data/store';
+import { getDataset, builtLayerFqn, setMonitor } from '@/lib/data/store';
 import { queryRun } from '@/lib/infra/governed';
 import { ensureHydrated, healthTrend, latestRun } from '@/lib/data/dq-results';
 import { suggestChecks } from '@/lib/data/dq-suggest';
+import { MONITOR_KINDS, monitorEnabled, type MonitorConfig, type MonitorKind } from '@/lib/data/dq-monitors';
 import {
   assembleProfile,
   parseDescribe,
@@ -55,10 +56,16 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       latest = latestRun(id);
     } catch { /* durable history is additive — suggestions still return */ }
 
+    // The default-ON monitor toggles (freshness/volume/schema), reflecting stored config.
+    const monitors = MONITOR_KINDS.map((kind) => ({
+      kind,
+      enabled: monitorEnabled(dataset.monitors as MonitorConfig | undefined, kind),
+    }));
+
     // Suggestions need a materialised layer to profile. No layer ⇒ honest empty.
     const resolved = builtLayerFqn(dataset, user);
     if (!resolved) {
-      return NextResponse.json({ suggestions: [], trend, latest, profiled: false });
+      return NextResponse.json({ suggestions: [], trend, latest, monitors, profiled: false });
     }
 
     let profile: Profile | null = null;
@@ -77,11 +84,36 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       profile = assembleProfile({ fqn: resolved.fqn, layer: resolved.layer, columns, statsRes, topRes, previewRes });
     } catch {
       // The layer isn't queryable yet — answer calmly with no suggestions, not a 5xx.
-      return NextResponse.json({ suggestions: [], trend, latest, profiled: false });
+      return NextResponse.json({ suggestions: [], trend, latest, monitors, profiled: false });
     }
 
     const suggestions = suggestChecks(profile, dataset.checks ?? []);
-    return NextResponse.json({ suggestions, trend, latest, profiled: true });
+    return NextResponse.json({ suggestions, trend, latest, monitors, profiled: true });
+  } catch (e) {
+    return errorResponse(e);
+  }
+}
+
+/**
+ * POST → toggle a heuristic monitor (freshness/volume/schema) for this dataset. Governed
+ * by the canEdit gate (`setMonitor` → `editOf`): a viewer is refused. Default-ON — turning
+ * one back on drops it from the stored config so an all-on dataset stays byte-stable.
+ */
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    const user = await requirePrincipal(); // 401 for anon
+    const { id } = await ctx.params;
+    const body = (await req.json().catch(() => ({}))) as { kind?: string; enabled?: boolean };
+    const kind = body.kind as MonitorKind;
+    if (!MONITOR_KINDS.includes(kind)) {
+      return NextResponse.json({ error: 'unknown monitor' }, { status: 400 });
+    }
+    const dataset = setMonitor(id, user, kind, body.enabled !== false); // canEdit gate (403)
+    const monitors = MONITOR_KINDS.map((k) => ({
+      kind: k,
+      enabled: monitorEnabled(dataset.monitors as MonitorConfig | undefined, k),
+    }));
+    return NextResponse.json({ monitors });
   } catch (e) {
     return errorResponse(e);
   }

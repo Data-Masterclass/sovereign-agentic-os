@@ -175,6 +175,10 @@ export type Dataset = {
   upstreams?: DatasetUpstream[];
   /** Manually-authored data-quality check intentions (not auto-executed). */
   checks?: DataCheck[];
+  /** Heuristic monitor toggles (freshness/volume/schema). ABSENT ⇒ all ON (default-ON);
+   *  a member is stored ONLY when the owner turns it off, so a dataset that never touched
+   *  the toggles serializes exactly as before (byte-stable, zero migration). */
+  monitors?: { freshness?: boolean; volume?: boolean; schema?: boolean };
   /** Cube identity scheme marker (#155). When true, this dataset's cube name / view /
    *  model file are DOMAIN-NAMESPACED (`<domain>__<slug>`), so two domains can each name
    *  a dataset "Sales" without colliding on one shared cube/view/model file. ABSENT ⇒
@@ -433,6 +437,16 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
   const imports = Array.isArray(doc.imports) ? doc.imports.map((x) => String(x)) : undefined;
   const upstreams = Array.isArray(doc.upstreams) ? doc.upstreams.map(parseUpstream) : undefined;
   const checks = checksRaw.length > 0 ? checksRaw.map(parseCheck) : undefined;
+  // Monitor toggles: only an explicit `false` is stored (default-ON). Any member absent
+  // ⇒ that monitor is on. An empty/all-true object collapses to undefined (byte-stable).
+  let monitors: Dataset['monitors'];
+  if (isRecord(doc.monitors)) {
+    const m: NonNullable<Dataset['monitors']> = {};
+    for (const k of ['freshness', 'volume', 'schema'] as const) {
+      if (doc.monitors[k] === false) m[k] = false;
+    }
+    if (Object.keys(m).length > 0) monitors = m;
+  }
   // #155: absent/false ⇒ legacy un-namespaced cube identity (every pre-#155 record).
   const cubeNamespaced = doc.cubeNamespaced === true ? true : undefined;
   // #146 Phase 6: absent/false ⇒ no dbt model emitted (pre-existing datasets stay un-emitted).
@@ -458,6 +472,7 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
     ...(imports ? { imports } : {}),
     ...(upstreams ? { upstreams } : {}),
     ...(checks ? { checks } : {}),
+    ...(monitors ? { monitors } : {}),
     ...(cubeNamespaced ? { cubeNamespaced } : {}),
     ...(gitBacked ? { gitBacked } : {}),
   };
@@ -485,6 +500,15 @@ export function serializeDataset(d: Dataset): string {
   if (d.imports && d.imports.length > 0) doc.imports = d.imports;
   if (d.upstreams && d.upstreams.length > 0) doc.upstreams = d.upstreams;
   if (d.checks && d.checks.length > 0) doc.checks = d.checks;
+  // Only persist explicitly-disabled monitors (default-ON); an all-on dataset omits the
+  // key entirely, so nothing that never touched the toggles churns in the mirror.
+  if (d.monitors) {
+    const m: Record<string, boolean> = {};
+    for (const k of ['freshness', 'volume', 'schema'] as const) {
+      if (d.monitors[k] === false) m[k] = false;
+    }
+    if (Object.keys(m).length > 0) doc.monitors = m;
+  }
   // Omit-when-false (byte-stable): a legacy (un-namespaced) dataset serializes exactly
   // as before #155, so no old record churns in the durable mirror.
   if (d.cubeNamespaced) doc.cubeNamespaced = true;
