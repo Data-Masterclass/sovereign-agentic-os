@@ -462,6 +462,72 @@ export async function putOmLineage(
 }
 
 /**
+ * Soft-delete one OM entity by id. NEVER hard-deletes (hardDelete=false always).
+ * Scoped to entities the caller has already verified are OS-managed (Guard 3 is
+ * enforced by the sync engine before calling this verb). REFUSES outside the tested
+ * OM version range. Never throws.
+ */
+export async function softDeleteOmEntity(conn: OmConn, entityType: string, id: string): Promise<OmWrite> {
+  if (!omVersionWritable(conn.omVersion)) {
+    return { ok: false, reason: `OM version ${conn.omVersion ?? 'unknown'} outside tested write range ${TESTED_OM_MIN}–${TESTED_OM_MAX}` };
+  }
+  // OM soft-delete: DELETE /api/v1/{entityType}/{id}?hardDelete=false&recursive=true
+  // `recursive=true` soft-deletes children (columns, test cases) together with the entity.
+  const base = conn.baseUrl.replace(/\/$/, '');
+  try {
+    const res = await withTimeout(
+      conn.fetchImpl,
+      `${base}/api/v1/${entityType}/${encodeURIComponent(id)}?hardDelete=false&recursive=true`,
+      { method: 'DELETE', headers: authHeaders(conn.token) },
+      conn.timeoutMs ?? 5000,
+    );
+    if (!res.ok) return { ok: false, reason: `OpenMetadata ${res.status}` };
+    try { return { ok: true, data: await res.json() }; } catch { return { ok: true, data: null }; }
+  } catch {
+    return { ok: false, reason: 'unreachable' };
+  }
+}
+
+/**
+ * Restore a soft-deleted OM entity by id. Uses PUT /api/v1/{entityType}/{id}/restore.
+ * REFUSES outside the tested OM version range. Never throws.
+ */
+export async function restoreOmEntity(conn: OmConn, entityType: string, id: string): Promise<OmWrite> {
+  if (!omVersionWritable(conn.omVersion)) {
+    return { ok: false, reason: `OM version ${conn.omVersion ?? 'unknown'} outside tested write range ${TESTED_OM_MIN}–${TESTED_OM_MAX}` };
+  }
+  const base = conn.baseUrl.replace(/\/$/, '');
+  try {
+    const res = await withTimeout(
+      conn.fetchImpl,
+      `${base}/api/v1/${entityType}/${encodeURIComponent(id)}/restore`,
+      { method: 'PUT', headers: { ...authHeaders(conn.token), 'content-type': 'application/json' }, body: '{}' },
+      conn.timeoutMs ?? 5000,
+    );
+    if (!res.ok) return { ok: false, reason: `OpenMetadata ${res.status}` };
+    try { return { ok: true, data: await res.json() }; } catch { return { ok: true, data: null }; }
+  } catch {
+    return { ok: false, reason: 'unreachable' };
+  }
+}
+
+/**
+ * GET one OM entity by FQN. `include=all` lets OM return soft-deleted entities
+ * (needed on the reactivate path). Never throws — honest reason on failure.
+ */
+export async function getOmEntityByFqn(
+  conn: OmConn,
+  entityType: string,
+  fqn: string,
+  includeDeleted = false,
+): Promise<OmRead<Record<string, unknown>>> {
+  const qs = includeDeleted ? '?include=all' : '';
+  const r = await omGet(conn, `/api/v1/${entityType}/name/${encodeURIComponent(fqn)}${qs}`);
+  if (!r.ok) return r;
+  return { ok: true, data: r.data as Record<string, unknown> };
+}
+
+/**
  * APPEND one test-case RESULT to an OS-authored test case (additive time series —
  * never mutates a definition). REFUSES outside the tested OM version range.
  */

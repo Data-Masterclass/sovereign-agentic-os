@@ -8,6 +8,7 @@ import {
   type OmConn,
   type OmPatchOp,
   type OmWrite,
+  type OmRead,
   buildAdditivePatch,
   omVersionWritable,
 } from '@/lib/data';
@@ -122,11 +123,17 @@ function managedProps(d: Dataset, runId: string): Record<string, string> {
  */
 export function buildOmSyncPlan(
   d: Dataset,
-  opts: { runId: string; humanServiceFqn?: string },
+  opts: { runId: string; humanServiceFqn?: string; archived?: boolean },
 ): OmSyncPlan {
   const runId = opts.runId;
   const base: OmSyncPlan = { osDatasetId: d.id, osDomain: d.domain, osRunId: runId, puts: [], patches: [], edges: [] };
 
+  // Guard — archived datasets MUST NOT be synced into OM. Callers set this from the
+  // record-level flag (not part of the yaml-derived Dataset). This filters the sync
+  // plan so an archived dataset can never re-appear in the OM catalog.
+  if (opts.archived) {
+    return { ...base, rejected: 'Archived datasets are not synced into OpenMetadata — restore it first.' };
+  }
   if (!d.versions.gold.built) {
     return { ...base, rejected: 'The Gold layer is not built — nothing to publish into OpenMetadata.' };
   }
@@ -397,4 +404,142 @@ export function syncClientFrom(
   },
 ): OmSyncClient {
   return { ...verbs, omVersion: conn.omVersion };
+}
+
+// --- Soft-delete / reactivate (archive lifecycle, best-effort) -----------------
+
+/**
+ * The minimal shape needed to compute OS-namespace FQNs. We accept this rather than
+ * a full {@link Dataset} so the archive hook can work from the compact
+ * {@link DatasetSummary} returned by the store, without re-parsing the yaml.
+ */
+export type OmDatasetRef = { id: string; name: string; domain: string; tier: string };
+
+/** The OM FQNs this dataset occupies in the OS namespace — table always, data
+ *  product only when tier=product. Guard 1: these are the ONLY FQNs we ever touch
+ *  during archive/restore. */
+export function osEntityFqns(ref: OmDatasetRef): { table: string; dataProduct?: string } {
+  return {
+    table: `${OS_SERVICE}.${ref.domain}.gold_${slug(ref.name)}`,
+    dataProduct: ref.tier === 'product' ? `${OS_DOMAIN}.${slug(ref.name)}` : undefined,
+  };
+}
+
+/** The minimal client surface needed for archive/restore operations. Injected so the
+ *  engine is unit-tested with a fake OM. */
+export type OmArchiveClient = {
+  /** GET one entity by FQN. `include=all` lets OM return soft-deleted entities too
+   *  (needed for the reactivate path to find the entity after a soft-delete). */
+  readEntityByFqn: (entityType: string, fqn: string, includeDeleted?: boolean) => Promise<OmRead<{ id?: string; extension?: Record<string, unknown>; deleted?: boolean }>>;
+  /** Soft-delete one entity by id. NEVER hard-delete. */
+  softDeleteEntity: (entityType: string, id: string) => Promise<OmWrite>;
+  /** Restore a soft-deleted entity by id. */
+  restoreEntity: (entityType: string, id: string) => Promise<OmWrite>;
+  /** The OM version this connection speaks (for the write-range refusal). */
+  omVersion?: string;
+};
+
+export type OmArchiveResult = {
+  ok: boolean;
+  /** Which entities we acted on (fqn → 'deleted' | 'restored' | 'skipped' | 'not-found'). */
+  entities: Record<string, 'deleted' | 'restored' | 'skipped' | 'not-found' | 'error'>;
+  /** Why we were refused wholesale (version range / not OS-owned). */
+  refused?: string;
+};
+
+/**
+ * Soft-delete the OS-namespace OM entities for an archived dataset.
+ *
+ * Guards enforced:
+ *  - Guard 1: only touches FQNs under {@link OS_SERVICE} / {@link OS_DOMAIN}.
+ *  - Guard 3: only acts on entities stamped `managedBy=SovereignOS`; skips silently
+ *    when the entity is absent or is not OS-managed (NEVER touches human entities).
+ *  - omVersionWritable: refuses on an untested OM version (Guard 7 / version range).
+ *  - Never hard-deletes; never throws — an OM error is recorded but never propagated
+ *    (the archive of the OS artifact itself always succeeds regardless).
+ */
+export async function softDeleteOmDataset(
+  client: OmArchiveClient,
+  ref: OmDatasetRef,
+): Promise<OmArchiveResult> {
+  const entities: OmArchiveResult['entities'] = {};
+
+  if (!omVersionWritable(client.omVersion)) {
+    return { ok: false, entities, refused: `OM version ${client.omVersion ?? 'unknown'} is outside the tested write range — skipping OM soft-delete.` };
+  }
+
+  const fqns = osEntityFqns(ref);
+  const targets: { type: string; fqn: string }[] = [
+    { type: 'tables', fqn: fqns.table },
+    ...(fqns.dataProduct ? [{ type: 'dataProducts', fqn: fqns.dataProduct }] : []),
+  ];
+
+  let ok = true;
+  for (const { type, fqn } of targets) {
+    // Guard 1 — hard-assert every FQN stays in the OS namespace before touching it.
+    if (!fqn.startsWith(`${OS_SERVICE}.`) && !fqn.startsWith(`${OS_DOMAIN}.`)) {
+      entities[fqn] = 'skipped';
+      continue;
+    }
+    const meta = await client.readEntityByFqn(type, fqn);
+    if (!meta.ok) { entities[fqn] = 'not-found'; continue; }
+    // Guard 3 — only act on entities we manage.
+    const managedBy = meta.data.extension?.managedBy;
+    if (managedBy !== MANAGED_BY) { entities[fqn] = 'skipped'; continue; }
+    // Already soft-deleted (idempotent — Guard 4).
+    if (meta.data.deleted) { entities[fqn] = 'skipped'; continue; }
+    const id = meta.data.id;
+    if (!id) { entities[fqn] = 'not-found'; continue; }
+    const w = await client.softDeleteEntity(type, id);
+    if (w.ok) { entities[fqn] = 'deleted'; }
+    else { entities[fqn] = 'error'; ok = false; }
+  }
+
+  return { ok, entities };
+}
+
+/**
+ * Restore (re-activate) the OS-namespace OM entities for an unarchived dataset.
+ * Same guards as {@link softDeleteOmDataset}; reads with `include=all` so it can
+ * find and restore soft-deleted entities. Never throws; never touches non-OS entities.
+ */
+export async function reactivateOmDataset(
+  client: OmArchiveClient,
+  ref: OmDatasetRef,
+): Promise<OmArchiveResult> {
+  const entities: OmArchiveResult['entities'] = {};
+
+  if (!omVersionWritable(client.omVersion)) {
+    return { ok: false, entities, refused: `OM version ${client.omVersion ?? 'unknown'} is outside the tested write range — skipping OM reactivation.` };
+  }
+
+  const fqns = osEntityFqns(ref);
+  const targets: { type: string; fqn: string }[] = [
+    { type: 'tables', fqn: fqns.table },
+    ...(fqns.dataProduct ? [{ type: 'dataProducts', fqn: fqns.dataProduct }] : []),
+  ];
+
+  let ok = true;
+  for (const { type, fqn } of targets) {
+    // Guard 1 — hard-assert every FQN stays in the OS namespace.
+    if (!fqn.startsWith(`${OS_SERVICE}.`) && !fqn.startsWith(`${OS_DOMAIN}.`)) {
+      entities[fqn] = 'skipped';
+      continue;
+    }
+    // `include=all` so we can find soft-deleted entities.
+    const meta = await client.readEntityByFqn(type, fqn, true);
+    if (!meta.ok) { entities[fqn] = 'not-found'; continue; }
+    // Guard 3 — only act on entities we manage.
+    const managedBy = meta.data.extension?.managedBy;
+    if (managedBy !== MANAGED_BY) { entities[fqn] = 'skipped'; continue; }
+    // Already active — nothing to do (idempotent — Guard 4).
+    if (!meta.data.deleted) { entities[fqn] = 'skipped'; continue; }
+    const id = meta.data.id;
+    if (!id) { entities[fqn] = 'not-found'; continue; }
+    const w = await client.restoreEntity(type, id);
+    if (w.ok) { entities[fqn] = 'restored'; }
+    else { entities[fqn] = 'error'; ok = false; }
+  }
+
+  return { ok, entities };
 }

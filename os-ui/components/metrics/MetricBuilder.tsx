@@ -21,6 +21,7 @@ import type { ViewMode } from '@/lib/core/view-mode';
 import MetricStageAssistant from './MetricStageAssistant';
 import ExploreMetric from './ExploreMetric';
 import Alerts from './Alerts';
+import ConnectPowerBI from '@/components/powerbi/ConnectPowerBI';
 import {
   type DatasetGroups,
   type DefineResult,
@@ -796,6 +797,14 @@ export default function MetricBuilder({
                 trigger a governed agent to respond.
               </p>
               <Alerts metrics={metrics} loading={metricsLoading} presetMember={saved.member} />
+
+              {/* Power BI — one-click connect via Cube SQL API + domain-level RLS */}
+              {saved.domain ? (
+                <>
+                  <div className="section-title" style={{ marginTop: 28 }}>Connect Power BI</div>
+                  <ConnectPowerBI domain={saved.domain} />
+                </>
+              ) : null}
             </div>
           ) : (
             <div className="chat-empty">Save the metric first — there is nothing to monitor yet.</div>

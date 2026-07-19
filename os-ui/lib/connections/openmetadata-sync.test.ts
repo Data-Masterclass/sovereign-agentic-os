@@ -11,6 +11,7 @@ import {
   TESTED_OM_MAX,
   type OmPatchOp,
   type OmWrite,
+  type OmRead,
 } from '@/lib/data';
 import {
   buildOmSyncPlan,
@@ -18,10 +19,15 @@ import {
   applyOmSync,
   provisionOmNamespace,
   omProvisionPlan,
+  softDeleteOmDataset,
+  reactivateOmDataset,
+  osEntityFqns,
   OS_SERVICE,
   OS_DOMAIN,
   MANAGED_BY,
   type OmSyncClient,
+  type OmArchiveClient,
+  type OmDatasetRef,
 } from '@/lib/connections/openmetadata-sync';
 
 // --- A promoted product Dataset factory (Gold built) ---------------------------
@@ -209,4 +215,129 @@ test('provisioning is idempotent shells + refuses on a bad version', async () =>
   const bad = await provisionOmNamespace(put, '9.9.9');
   assert.equal(bad.ok, false);
   assert.match(bad.refused ?? '', /outside tested write range/);
+});
+
+// ============================ ARCHIVE / RESTORE =================================
+
+/** A dataset ref shape we can pass to the archive/restore engine. */
+const productRef: OmDatasetRef = { id: 'ds_orders', name: 'Orders', domain: 'sales', tier: 'product' };
+const assetRef: OmDatasetRef = { id: 'ds_cust', name: 'Customers', domain: 'sales', tier: 'asset' };
+
+type ArchiveCall = { kind: 'read' | 'delete' | 'restore'; entityType: string; arg: string };
+
+function fakeArchiveClient(over: Partial<OmArchiveClient> = {}): { client: OmArchiveClient; calls: ArchiveCall[] } {
+  const calls: ArchiveCall[] = [];
+  const ent = { id: 'ent-id-1', extension: { managedBy: MANAGED_BY }, deleted: false };
+  const ok: OmWrite = { ok: true, data: {} };
+  const client: OmArchiveClient = {
+    omVersion: '1.5.0',
+    readEntityByFqn: async (entityType, fqn, _inc) => {
+      calls.push({ kind: 'read', entityType, arg: fqn });
+      return { ok: true, data: ent } as OmRead<{ id?: string; extension?: Record<string, unknown>; deleted?: boolean }>;
+    },
+    softDeleteEntity: async (entityType, id) => { calls.push({ kind: 'delete', entityType, arg: id }); return ok; },
+    restoreEntity: async (entityType, id) => { calls.push({ kind: 'restore', entityType, arg: id }); return ok; },
+    ...over,
+  };
+  return { client, calls };
+}
+
+test('archive→soft-delete: a product ref sends soft-delete for table AND dataProduct', async () => {
+  const { client, calls } = fakeArchiveClient();
+  const res = await softDeleteOmDataset(client, productRef);
+  assert.equal(res.ok, true);
+  const deletes = calls.filter((c) => c.kind === 'delete');
+  assert.equal(deletes.length, 2, 'one soft-delete per entity type (table + dataProduct)');
+  assert.ok(deletes.some((c) => c.entityType === 'tables'), 'tables soft-deleted');
+  assert.ok(deletes.some((c) => c.entityType === 'dataProducts'), 'dataProducts soft-deleted');
+});
+
+test('archive→soft-delete: an asset ref sends soft-delete for table ONLY (no dataProduct)', async () => {
+  const { client, calls } = fakeArchiveClient();
+  await softDeleteOmDataset(client, assetRef);
+  const deletes = calls.filter((c) => c.kind === 'delete');
+  assert.equal(deletes.length, 1, 'only the table entity for a non-product tier');
+  assert.equal(deletes[0].entityType, 'tables');
+});
+
+test('restore→re-activate: both entities are restored for a product ref', async () => {
+  const deleted = { id: 'ent-id-1', extension: { managedBy: MANAGED_BY }, deleted: true };
+  const { client, calls } = fakeArchiveClient({
+    readEntityByFqn: async (entityType, fqn) => {
+      calls.push({ kind: 'read', entityType, arg: fqn });
+      return { ok: true, data: deleted };
+    },
+  });
+  const res = await reactivateOmDataset(client, productRef);
+  assert.equal(res.ok, true);
+  const restores = calls.filter((c) => c.kind === 'restore');
+  assert.equal(restores.length, 2, 'both table + dataProduct are restored');
+});
+
+test('archive: non-OS entity (missing managedBy) is skipped — never touched', async () => {
+  const humanEnt = { id: 'human-id', extension: { managedBy: 'SomeOtherSystem' }, deleted: false };
+  const { client, calls } = fakeArchiveClient({
+    readEntityByFqn: async (entityType, fqn) => {
+      calls.push({ kind: 'read', entityType, arg: fqn });
+      return { ok: true, data: humanEnt };
+    },
+  });
+  const res = await softDeleteOmDataset(client, productRef);
+  assert.equal(res.ok, true);
+  const deletes = calls.filter((c) => c.kind === 'delete');
+  assert.equal(deletes.length, 0, 'non-OS entity NEVER soft-deleted (Guard 3)');
+  // Check result map shows 'skipped'
+  for (const status of Object.values(res.entities)) {
+    assert.equal(status, 'skipped');
+  }
+});
+
+test('archive: OM unreachable (readEntityByFqn returns not-ok) is a no-op', async () => {
+  const { client, calls } = fakeArchiveClient({
+    readEntityByFqn: async (entityType, fqn) => {
+      calls.push({ kind: 'read', entityType, arg: fqn });
+      return { ok: false, reason: 'unreachable' };
+    },
+  });
+  const res = await softDeleteOmDataset(client, productRef);
+  // Should still return ok:true (entity was 'not-found', not an error)
+  assert.equal(res.ok, true);
+  const deletes = calls.filter((c) => c.kind === 'delete');
+  assert.equal(deletes.length, 0, 'nothing deleted when OM is unreachable');
+});
+
+test('archive: OM-down (version outside range) refuses but does not throw — best-effort', async () => {
+  const { client, calls } = fakeArchiveClient({ omVersion: '9.9.9' });
+  const res = await softDeleteOmDataset(client, productRef);
+  assert.equal(res.ok, false);
+  assert.match(res.refused ?? '', /outside the tested write range/);
+  assert.equal(calls.length, 0, 'nothing called when version refused');
+});
+
+test('restore: already-active entity (deleted=false) is skipped — idempotent (Guard 4)', async () => {
+  const active = { id: 'ent-id-1', extension: { managedBy: MANAGED_BY }, deleted: false };
+  const { client, calls } = fakeArchiveClient({
+    readEntityByFqn: async (entityType, fqn) => {
+      calls.push({ kind: 'read', entityType, arg: fqn });
+      return { ok: true, data: active };
+    },
+  });
+  const res = await reactivateOmDataset(client, productRef);
+  assert.equal(res.ok, true);
+  assert.equal(calls.filter((c) => c.kind === 'restore').length, 0, 'no restore call for an already-active entity');
+});
+
+test('sync plan: archived dataset is rejected — never synced into OM', () => {
+  const plan = buildOmSyncPlan(product(), { runId: 'run1', archived: true });
+  assert.ok(plan.rejected, 'archived dataset is rejected from the sync plan');
+  assert.match(plan.rejected!, /[Aa]rchived/);
+  assert.equal(previewOmSync(plan).ok, false);
+});
+
+test('osEntityFqns: always stays in the OS namespace (Guard 1 structural)', () => {
+  const fqns = osEntityFqns(productRef);
+  assert.ok(fqns.table.startsWith(`${OS_SERVICE}.`), 'table FQN is under OS_SERVICE');
+  assert.ok(fqns.dataProduct?.startsWith(`${OS_DOMAIN}.`), 'dataProduct FQN is under OS_DOMAIN');
+  const assetFqns = osEntityFqns(assetRef);
+  assert.equal(assetFqns.dataProduct, undefined, 'non-product tier has no dataProduct FQN');
 });

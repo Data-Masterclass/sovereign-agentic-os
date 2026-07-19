@@ -23,15 +23,22 @@ import {
   putOmEntity,
   patchOmEntity,
   putOmLineage,
+  softDeleteOmEntity,
+  restoreOmEntity,
+  getOmEntityByFqn,
 } from '@/lib/data';
 import {
   type OmSyncPlan,
   type OmSyncPreview,
   type OmSyncResult,
+  type OmDatasetRef,
+  type OmArchiveResult,
   buildOmSyncPlan,
   previewOmSync,
   applyOmSync,
   provisionOmNamespace,
+  softDeleteOmDataset,
+  reactivateOmDataset,
 } from '@/lib/connections/openmetadata-sync';
 import type { Dataset } from '@/lib/data';
 import type { CatalogAsset, SourceSeverity } from '@/lib/data/catalog';
@@ -274,3 +281,70 @@ export async function applyOmSyncForConnection(
 }
 
 export type { OmSyncPlan, OmSyncPreview, OmSyncResult };
+
+// =============================================================================
+// Archive / restore hooks — OM soft-delete / reactivation (best-effort)
+// =============================================================================
+//
+// Called AFTER the OS archive/unarchive has already succeeded. These are
+// fire-and-forget from the API routes' perspective: if OM is unreachable or
+// outside the tested version range, the error is silently swallowed — the
+// OS-side archive always wins. Errors are returned for logging/tracing but
+// NEVER re-thrown.
+
+/** Build the {@link OmArchiveClient} surface bound to the WRITER connection. */
+function archiveClientFrom(c: Connection): Parameters<typeof softDeleteOmDataset>[0] {
+  const write = omWriteConnFrom(c);
+  const read = omConnFrom(c);
+  return {
+    omVersion: c.om?.version,
+    readEntityByFqn: async (entityType, fqn, includeDeleted = false) => {
+      const r = await getOmEntityByFqn(read, entityType, fqn, includeDeleted);
+      if (!r.ok) return r;
+      const d = r.data;
+      return {
+        ok: true,
+        data: {
+          id: typeof d.id === 'string' ? d.id : undefined,
+          extension: d.extension as Record<string, unknown> | undefined,
+          deleted: d.deleted === true,
+        },
+      };
+    },
+    softDeleteEntity: (entityType, id) => softDeleteOmEntity(write, entityType, id),
+    restoreEntity: (entityType, id) => restoreOmEntity(write, entityType, id),
+  };
+}
+
+/**
+ * Soft-delete the OS-namespace OM entities for an archived dataset. Best-effort:
+ * never throws, never blocks the OS archive. Call AFTER the archive succeeds.
+ * Skips silently when OM is unreachable or outside the tested version range.
+ */
+export async function omSoftDeleteForConnection(
+  c: Connection,
+  ref: OmDatasetRef,
+): Promise<OmArchiveResult> {
+  try {
+    return await softDeleteOmDataset(archiveClientFrom(c), ref);
+  } catch {
+    return { ok: false, entities: {}, refused: 'unexpected error during OM soft-delete (best-effort, ignored)' };
+  }
+}
+
+/**
+ * Reactivate the OS-namespace OM entities for a restored (unarchived) dataset.
+ * Best-effort: never throws, never blocks the OS unarchive.
+ */
+export async function omReactivateForConnection(
+  c: Connection,
+  ref: OmDatasetRef,
+): Promise<OmArchiveResult> {
+  try {
+    return await reactivateOmDataset(archiveClientFrom(c), ref);
+  } catch {
+    return { ok: false, entities: {}, refused: 'unexpected error during OM reactivation (best-effort, ignored)' };
+  }
+}
+
+export type { OmDatasetRef, OmArchiveResult };

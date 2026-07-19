@@ -25,6 +25,10 @@ import type { Visibility } from '@/lib/core/lifecycle';
 import StageShell from '@/components/core/StageShell';
 import { initialStageState, markDone, type StageState } from '@/lib/core/stages';
 import { DATA_STAGES, type DataStageId, type DataCtx } from '@/lib/data/stages';
+import BuilderModeToggle from '@/components/core/BuilderModeToggle';
+import type { ViewMode } from '@/lib/core/view-mode';
+
+const DATA_MODE_KEY = 'data.viewMode';
 
 type Layer = 'bronze' | 'silver' | 'gold';
 type VersionState = { built: boolean; updatedAt: string | null; artifact: string | null };
@@ -260,6 +264,19 @@ export default function DataBuilder({
 }) {
   const { user } = useUser();
   const { notifyApprovalFiled } = useApprovalNotifier();
+
+  /* ── Simple ⇄ Developer view mode ── */
+  const [viewMode, setViewMode] = useState<ViewMode>('simple');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const saved = window.localStorage.getItem(DATA_MODE_KEY);
+    if (saved === 'simple' || saved === 'developer') setViewMode(saved);
+  }, []);
+  const setModePersisted = (m: ViewMode) => {
+    setViewMode(m);
+    if (typeof window !== 'undefined') window.localStorage.setItem(DATA_MODE_KEY, m);
+  };
+
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [checks, setChecks] = useState<DataCheck[]>([]);
   const [loadErr, setLoadErr] = useState('');
@@ -629,7 +646,14 @@ export default function DataBuilder({
 
   return (
     <ConfirmProvider>
-      <button className="btn ghost" onClick={onBack} style={{ marginBottom: 14 }}>← Datasets</button>
+      <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+        <button className="btn ghost" onClick={onBack}>← Datasets</button>
+        <BuilderModeToggle
+          mode={viewMode}
+          onChange={setModePersisted}
+          developerHint="The raw technical surface — dbt/Cube artifacts, FQNs, RLS summary"
+        />
+      </div>
 
       {/* ── Header + status chips (always visible, above the stepper) ── */}
       <div className="stepper-head">
@@ -688,6 +712,7 @@ export default function DataBuilder({
         )}
       </div>
 
+      {viewMode === 'simple' ? (
       <StageShell
         stages={DATA_STAGES}
         state={stage}
@@ -1145,6 +1170,203 @@ export default function DataBuilder({
           </div>
         ) : null}
       </StageShell>
+      ) : (
+        <DataDeveloperView dataset={dataset} datasetId={datasetId} />
+      )}
     </ConfirmProvider>
+  );
+}
+
+/* ─────────────────────────── Developer surface ─────────────────────────── */
+
+/**
+ * The Data Developer view — the raw technical surface of this dataset. Shows:
+ *   1. Medallion layer FQNs (bronze/silver/gold physical tables) — from the live
+ *      dataset state, same derivation as physicalFqn() above.
+ *   2. The dbt SQL artifact(s) — fetched from the existing files endpoint (the SAME
+ *      source CodeDrawer uses in Publish; no new endpoint).
+ *   3. The Cube model YAML — fetched from the cluster-internal /api/cube/models
+ *      endpoint which builds it from the SAME registry the builder holds.
+ *   4. Governance/RLS summary — tier, visibility, domain, certification status.
+ *
+ * Read-only with a clear label. If a piece isn't available yet, an honest
+ * placeholder is shown rather than fabricated content.
+ */
+function DataDeveloperView({ dataset, datasetId }: { dataset: Dataset; datasetId: string }) {
+  /* ── dbt SQL artifacts (silver + gold) from the files endpoint ── */
+  const [sqlFiles, setSqlFiles] = useState<{ path: string; content: string }[]>([]);
+  const [sqlErr, setSqlErr] = useState('');
+  useEffect(() => {
+    (async () => {
+      setSqlErr('');
+      try {
+        const listRes = await fetch(`/api/data/datasets/${datasetId}/files`, { cache: 'no-store' });
+        if (!listRes.ok) return;
+        const { files } = (await listRes.json()) as { files: string[] };
+        const sqlPaths = (files ?? []).filter((f: string) => f.endsWith('.sql'));
+        const loaded = await Promise.all(
+          sqlPaths.map(async (p: string) => {
+            const r = await fetch(`/api/data/datasets/${datasetId}/files?path=${encodeURIComponent(p)}`, { cache: 'no-store' });
+            if (!r.ok) return null;
+            const d = (await r.json()) as { content?: string };
+            return { path: p, content: d.content ?? '' };
+          })
+        );
+        setSqlFiles(loaded.filter((x): x is { path: string; content: string } => x !== null));
+      } catch (e) {
+        setSqlErr((e as Error).message);
+      }
+    })();
+  }, [datasetId]);
+
+  /* ── Cube model YAML — from /api/cube/models, filtered to this dataset ── */
+  const [cubeYaml, setCubeYaml] = useState<string | null>(null);
+  const [cubeErr, setCubeErr] = useState('');
+  useEffect(() => {
+    if (!isCubeReady(dataset)) return; // only worth fetching if Gold + governed
+    (async () => {
+      setCubeErr('');
+      try {
+        const res = await fetch('/api/cube/models', { cache: 'no-store' });
+        if (!res.ok) { setCubeErr('Cube model endpoint unavailable'); return; }
+        type CubeEntry = { name: string; file: string; model: string };
+        const data = (await res.json()) as { models: CubeEntry[] };
+        const dsSlug = dataset.name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'dataset';
+        const hit = (data.models ?? []).find(
+          (m: CubeEntry) => m.name === dsSlug || m.name.endsWith(`__${dsSlug}`) ||
+            m.file.includes(dsSlug)
+        );
+        setCubeYaml(hit?.model ?? null);
+      } catch (e) {
+        setCubeErr((e as Error).message);
+      }
+    })();
+  }, [dataset]);
+
+  const builtLayers = (['bronze', 'silver', 'gold'] as Layer[]).filter((l) => dataset.versions[l].built);
+  const cubeReady = isCubeReady(dataset);
+
+  return (
+    <div style={{ marginTop: 4 }}>
+      {/* 1 ── Medallion FQNs */}
+      <div className="grant-block" style={{ marginBottom: 16 }}>
+        <div className="comp-label">Medallion layer FQNs</div>
+        <p className="hint" style={{ marginTop: 4 }}>
+          Read-only — the physical Iceberg tables this dataset materialises in Trino.
+          Each FQN is the single address the query engine, Cube and OPA all use.
+        </p>
+        {builtLayers.length > 0 ? (
+          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {builtLayers.map((l) => {
+              const fqn = physicalFqn(dataset, l);
+              const art = dataset.versions[l].artifact;
+              return (
+                <div key={l} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <span className="chip" style={{ textTransform: 'capitalize', minWidth: 56 }}>{l}</span>
+                  <code className="mono" style={{ fontSize: 11, flex: 1, wordBreak: 'break-all' }}>{fqn}</code>
+                  {art ? <span className="muted" style={{ fontSize: 11 }}>→ {art}</span> : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="hint" style={{ marginTop: 8 }}>
+            No layer built yet — Ingest a file in the Simple flow to materialise Bronze.
+          </p>
+        )}
+      </div>
+
+      {/* 2 ── dbt SQL artifacts */}
+      <div className="grant-block" style={{ marginBottom: 16 }}>
+        <div className="comp-label">dbt SQL artifacts</div>
+        <p className="hint" style={{ marginTop: 4 }}>
+          Read-only — the generated dbt model SQL files. These are the same files
+          the &ldquo;Show the code&rdquo; drawer in Publish exposes; authored here for
+          inspection without switching mode.
+        </p>
+        {sqlErr ? <div className="error" style={{ marginTop: 8 }}>{sqlErr}</div> : null}
+        {sqlFiles.length > 0 ? (
+          sqlFiles.map(({ path, content }) => (
+            <div key={path} style={{ marginTop: 10 }}>
+              <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>{path}</div>
+              <pre className="codeblock" style={{ fontSize: 11, whiteSpace: 'pre-wrap', overflowX: 'auto', margin: 0 }}>
+                {content || '(empty)'}
+              </pre>
+            </div>
+          ))
+        ) : (
+          <p className="hint" style={{ marginTop: 8 }}>
+            {sqlErr ? null : 'No dbt SQL files yet — refine to Silver or harmonize to Gold in the Simple flow to generate them.'}
+          </p>
+        )}
+      </div>
+
+      {/* 3 ── Cube model YAML */}
+      <div className="grant-block" style={{ marginBottom: 16 }}>
+        <div className="comp-label">Cube model YAML</div>
+        <p className="hint" style={{ marginTop: 4 }}>
+          Read-only — the generated Cube.js model delivered to the semantic layer.
+          Available only when Gold is built and the dataset is a governed asset or product.
+        </p>
+        {cubeErr ? <div className="error" style={{ marginTop: 8 }}>{cubeErr}</div> : null}
+        {cubeReady && cubeYaml ? (
+          <pre className="codeblock" style={{ marginTop: 8, fontSize: 11, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+            {cubeYaml}
+          </pre>
+        ) : cubeReady && !cubeErr ? (
+          <p className="hint" style={{ marginTop: 8 }}>
+            Cube model pending — the sidecar will sync it once the Gold build is picked up.
+            Reload to check.
+          </p>
+        ) : !cubeReady ? (
+          <p className="hint" style={{ marginTop: 8 }}>
+            Not available: {dataset.tier === 'dataset' ? 'promote this dataset to a governed asset first, then build Gold.' : 'build the Gold layer first (in Harmonize).'}
+          </p>
+        ) : null}
+      </div>
+
+      {/* 4 ── Governance / RLS summary */}
+      <div className="grant-block">
+        <div className="comp-label">Governance &amp; RLS summary</div>
+        <p className="hint" style={{ marginTop: 4 }}>
+          Read-only — the tier, visibility, ownership and certification that OPA enforces
+          on every query through Trino and Cube.
+        </p>
+        <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 16px', fontSize: 13 }}>
+          <span className="muted">Tier</span>
+          <span><span className={`badge ${TIER_BADGE[dataset.tier]}`}>{TIER_WORD[dataset.tier]}</span></span>
+          <span className="muted">Visibility</span>
+          <span>{VIS_WORD[dataset.visibility] ?? dataset.visibility}</span>
+          <span className="muted">Owner</span>
+          <span className="mono" style={{ fontSize: 12 }}>{dataset.owner}</span>
+          <span className="muted">Domain</span>
+          <span>{dataset.domain}</span>
+          <span className="muted">Cube-ready</span>
+          <span>{cubeReady ? <span className="status-chip s-searchable" style={{ cursor: 'default' }}>✓ yes</span> : <span className="status-chip s-stored" style={{ cursor: 'default' }}>no</span>}</span>
+          {dataset.certification ? (
+            <>
+              <span className="muted">Certified</span>
+              <span><span className={`badge cert-${dataset.certification.level}`}>{dataset.certification.level}</span>{' by '}{dataset.certification.by}{' on '}{formatDate(dataset.certification.at)}</span>
+            </>
+          ) : null}
+          {dataset.columns.length > 0 ? (
+            <>
+              <span className="muted">Columns</span>
+              <span className="mono" style={{ fontSize: 11, wordBreak: 'break-word' }}>
+                {dataset.columns.map((c) => c.name).filter(Boolean).join(' · ') || '—'}
+              </span>
+            </>
+          ) : null}
+          {dataset.measures.length > 0 ? (
+            <>
+              <span className="muted">Measures</span>
+              <span className="mono" style={{ fontSize: 11, wordBreak: 'break-word' }}>
+                {dataset.measures.map((m) => m.name).join(' · ')}
+              </span>
+            </>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }

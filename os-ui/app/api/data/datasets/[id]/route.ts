@@ -3,10 +3,12 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
+import { requireUser } from '@/lib/core/auth';
 import { getDataset, isDatasetArchived, archiveDataset, unarchiveDataset, deleteDataset } from '@/lib/data/store';
 import { dropPhysicalTables } from '@/lib/data/physical-delete';
 import { executeRun } from '@/lib/infra/governed';
 import { stepperStages } from '@/lib/data/panels';
+import { firstOmCatalogFor, omSoftDeleteForConnection, omReactivateForConnection } from '@/lib/connections/openmetadata';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,17 +31,35 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
  * POST → dataset lifecycle: `archive` (reversible soft-hide) or `unarchive`.
  * Edit-scoped in the store (owner or in-domain Admin), so a mere viewer is
  * rejected 403 — restoring/archiving obeys the same authz as editing.
+ *
+ * Best-effort OM soft-delete / reactivation fires AFTER the OS archive succeeds.
+ * An unreachable OM or an untested OM version is silently swallowed — the OS
+ * archive/restore is authoritative and NEVER blocked by an OM error.
  */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requirePrincipal();
+    // requireUser for OM connection lookup (needs CurrentUser); requirePrincipal for
+    // the store (needs Principal). Both share the same session; the cost is negligible.
+    const [user, principal] = await Promise.all([requireUser(), requirePrincipal()]);
     const { id } = await ctx.params;
     const body = (await req.json().catch(() => ({}))) as { action?: string };
     switch (body.action) {
-      case 'archive':
-        return NextResponse.json({ dataset: archiveDataset(id, user) });
-      case 'unarchive':
-        return NextResponse.json({ dataset: unarchiveDataset(id, user) });
+      case 'archive': {
+        const summary = archiveDataset(id, principal);
+        // Best-effort OM soft-delete — fire-and-forget; the archive already succeeded.
+        void firstOmCatalogFor(user).then((c) => {
+          if (c) void omSoftDeleteForConnection(c, summary);
+        });
+        return NextResponse.json({ dataset: summary });
+      }
+      case 'unarchive': {
+        const summary = unarchiveDataset(id, principal);
+        // Best-effort OM reactivation.
+        void firstOmCatalogFor(user).then((c) => {
+          if (c) void omReactivateForConnection(c, summary);
+        });
+        return NextResponse.json({ dataset: summary });
+      }
       default:
         return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
     }
