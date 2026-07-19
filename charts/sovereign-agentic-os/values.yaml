@@ -343,6 +343,61 @@ postgres:
       secretName: postgres-featureform-credentials
       createdb: false
       localPassword: featureform-local-dev
+  # ---------------------------------------------------------------------------
+  # CLOUD-DURABLE CNPG extras (engine:cnpg ONLY). Every field here is OFF/empty by
+  # default, so STACKIT + local render EXACTLY as before — the cloud overlays
+  # (values.{gke,eks,aks}.yaml) flip these on. Nothing here touches engine:plain.
+  #
+  # WHY a sub-block and not more top-level keys: keeps the STACKIT/local blast
+  # radius at zero (an unset `cnpg` map = the base behaviour) while giving the
+  # cloud overlays one place to switch on 3-instance HA + WAL-to-bucket.
+  # ---------------------------------------------------------------------------
+  cnpg:
+    # Durable zonal CSI storage class for the Postgres data volume (a zonal disk
+    # can't cross-AZ-attach, so HA comes from replicas in OTHER zones, not shared
+    # storage). Empty => the cluster's default class (STACKIT/local behaviour).
+    #   GKE: premium-rwo   EKS: gp3   AKS: managed-csi-premium
+    storageClass: ""
+    highAvailability:
+      # Spread the 3 instances across zones (a soft topology-spread constraint) and
+      # protect them with a PodDisruptionBudget so a node drain never takes the
+      # primary + all replicas at once. Rendered only when enabled.
+      enabled: false
+      # topology.kubernetes.io/zone spread across the node pool's AZs.
+      topologyKey: topology.kubernetes.io/zone
+      # PDB: keep at least this many instances available during voluntary disruption.
+      minAvailable: 2
+    backup:
+      # WAL archiving + base backups to the overlay's object store via the Barman
+      # Cloud PLUGIN (CNPG >= 1.26; the in-tree `spec.backup.barmanObjectStore`
+      # field is DEPRECATED 1.26 / REMOVED 1.30 — do NOT use it). Renders a
+      # `plugins:` entry on the Cluster + a Barman `ObjectStore` CR + a daily
+      # `ScheduledBackup`. Requires the barman-cloud plugin operator installed in
+      # the cluster (deploy/cloud bootstrap) — its CRDs need not exist for
+      # `helm template`, only for a live apply.
+      enabled: false
+      # Barman plugin identifier (fixed by the plugin project).
+      pluginName: barman-cloud.cloudnative-pg.io
+      # Name of the ObjectStore CR this template creates and the Cluster references.
+      objectStoreName: pg-barman-store
+      # Bucket URL for WAL/base backups. Point at the SAME object store the
+      # lakehouse uses (one bucket, one identity).
+      #   GKE: gs://<bucket>/pg   EKS: s3://<bucket>/pg   AKS: https://<acct>.blob.core.windows.net/<container>/pg
+      destinationPath: ""
+      # S3-compatible endpoint (EKS/S3-API only; leave empty for native GCS/Azure).
+      endpointURL: ""
+      # Retention policy (Barman `retentionPolicy`).
+      retention: "30d"
+      # Cron for the base backup (ScheduledBackup). CNPG uses a 6-field cron
+      # (seconds first). Default: 03:00 UTC daily.
+      schedule: "0 0 3 * * *"
+    serviceAccount:
+      # Bind the CNPG instance pods to a cloud identity so Barman's WAL push is
+      # KEYLESS (Workload Identity / Pod Identity / Entra WI). CNPG's
+      # `.spec.serviceAccountTemplate` lets the operator stamp these annotations
+      # onto the ServiceAccount it manages for the cluster. Off => operator default.
+      enabled: false
+      annotations: {}
 
 # -----------------------------------------------------------------------------
 # Valkey (BSD-3) — Langfuse queue/cache. NOT Redis (SSPL) — stack-decisions.md.
@@ -1645,6 +1700,20 @@ openmetadata:
     lineage:
       enabled: false
       queryLogDays: "1"
+  # APP-SIDE governed catalog REFRESH (#147). A CronJob that drives the OS orchestrator
+  # route (POST /api/connections/openmetadata/refresh), folding the additive metadata +
+  # DQ write-back over every governed mart so OM reflects the live governed lakehouse
+  # under the dedicated `sovereign_os` namespace. Complementary to `ingestion` above (the
+  # OM-native crawl of the raw Iceberg tables). GATED OFF by default: needs an admin
+  # service-principal Secret (default `catalog-refresh-principal`, keys username/password)
+  # AND os-ui OPENMETADATA_INGEST_ENABLED=true. No OM JWT is ever inlined in the Job (the
+  # writer bot token is read server-side by os-ui from its own Secret).
+  catalogRefresh:
+    enabled: false
+    schedule: "37 * * * *"            # hourly, offset from the native crawl (17 * * * *)
+    osUiUrl: "http://os-ui:3000"
+    principalSecret: "catalog-refresh-principal"
+    nodeSelector: {}
   replicaCount: 1
   openmetadata:
     config:
@@ -1984,6 +2053,16 @@ trino:
   #           secretName: trino-snowflake
   #           key: private-key
   externalCatalogs: []
+  # PER-CLOUD MANAGED catalog (opt-in; DEFAULT off → provider empty, nothing renders,
+  # so STACKIT/local are unchanged and Apache Polaris stays the sole/default catalog).
+  # The cloud overlays (values.{gke,eks,aks}.yaml) flip this on to add ONE keyless
+  # provider-native Iceberg catalog next to Polaris. Props come from
+  # `soa.cloudCatalogProps` (the Helm mirror of lib/connections/warehouse/providers).
+  #   provider: biglake (GKE) | glue | s3tables (EKS) | adls (AKS)
+  #   name:     catalog name in Trino (default lakehouse_managed)
+  #   restUri/warehouse/region/glueCatalogId/clientId: per-provider (see helper)
+  cloudCatalog:
+    provider: ""
   # Optional ServiceAccount for the Trino pod — the IRSA (AWS) / Workload-Identity
   # (GCP) carrier for KEYLESS Glue / BigQuery federation. Default off (no SA) so the
   # base deployment is unchanged. Set create: true and add the cloud annotation, e.g.

@@ -66,6 +66,48 @@ test('runAndRecord: a failing rule ⇒ failing badge; row-count + schema capture
   assert.ok(monitors.every((m) => m.status === 'not_run'), 'monitors not_run with no history');
 });
 
+test('runAndRecord: omAppend receives each rule verdict after the run', async () => {
+  const appended: { count: number; ranAt: string; statuses: string[] } = { count: 0, ranAt: '', statuses: [] };
+  const out = await runAndRecord(dataset(), {
+    fqn: 'iceberg.sales.gold_orders',
+    queryFn: async (sql) => {
+      if (/^describe/i.test(sql)) return { rows: [['id', 'bigint']] };
+      if (/count\(\*\) as v from iceberg\.sales\.gold_orders$/.test(sql)) return { rows: [['100']] };
+      return { rows: [['0']] }; // not_null passes
+    },
+    ownerId: 'amir',
+    now: () => '2026-07-19T00:00:00.000Z',
+    history: [],
+    omAppend: async (results, ranAt) => {
+      appended.count += 1;
+      appended.ranAt = ranAt;
+      appended.statuses = results.map((r) => r.status);
+    },
+  });
+  assert.equal(out.badge, 'passing');
+  assert.equal(appended.count, 1, 'omAppend was invoked exactly once, after the run');
+  assert.equal(appended.ranAt, '2026-07-19T00:00:00.000Z', 'appender got the run timestamp');
+  assert.ok(appended.statuses.includes('pass'), 'appender saw the rule verdict');
+});
+
+test('runAndRecord: a throwing omAppend never fails the governed DQ run (OM-down is a no-op)', async () => {
+  const out = await runAndRecord(dataset(), {
+    fqn: 'iceberg.sales.gold_orders',
+    queryFn: async (sql) => {
+      if (/^describe/i.test(sql)) return { rows: [['id', 'bigint']] };
+      if (/count\(\*\) as v from iceberg\.sales\.gold_orders$/.test(sql)) return { rows: [['100']] };
+      return { rows: [['0']] };
+    },
+    ownerId: 'amir',
+    now: () => '2026-07-19T00:00:00.000Z',
+    history: [],
+    omAppend: async () => { throw new Error('OM unreachable'); },
+  });
+  // The run still succeeds and is persisted — OM enrichment is additive, never blocking.
+  assert.equal(out.badge, 'passing');
+  assert.equal(latestRun('ds1')?.badge, 'passing', 'the run was still persisted despite the OM failure');
+});
+
 test('runAndRecord: schema-drift monitor fails against prior history', async () => {
   const out = await runAndRecord(dataset({ checks: [] }), {
     fqn: 'iceberg.sales.gold_orders',

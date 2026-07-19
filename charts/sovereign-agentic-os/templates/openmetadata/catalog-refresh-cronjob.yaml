@@ -1,0 +1,113 @@
+{{- /* nil-safe under --reuse-values: traverse with `dig`-style defaults so an upgrade
+       that never carried the new openmetadata.catalogRefresh block won't nil-deref. */ -}}
+{{- if and (.Values.openmetadata | default dict).enabled ((.Values.openmetadata.catalogRefresh | default dict).enabled) }}
+{{- /*
+  #147 — APP-SIDE catalog REFRESH CronJob (the governed orchestrator leg).
+
+  Distinct from the OM-NATIVE crawl (`openmetadata-trino-ingestion`, which runs OM's own
+  `metadata ingest` over the raw Iceberg tables / dbt / query-log lineage). THIS CronJob
+  drives the OS's GOVERNED orchestrator route (`POST /api/connections/openmetadata/refresh`),
+  which folds the additive, integrity-safe metadata + DQ write-back over every GOVERNED
+  mart so OM reflects the live governed lakehouse under the dedicated `sovereign_os`
+  namespace (managedBy=SovereignOS, additive-only, version-fail-closed). The two are
+  complementary: the native crawl catalogues the customer's own tables + upstream lineage;
+  this refresh publishes the OS-authored marts/products/DQ additively.
+
+  AUTH — no bypass, no new route auth (MIRRORS dq-cronjob.yaml exactly). The route is
+  admin-gated (`requireAdmin`). This Job authenticates the ONLY governed way: it LOGS IN
+  as an admin service principal (POST /api/auth/login with credentials from a Secret the
+  operator provisions), captures the signed session cookie, then POSTs the refresh route
+  with it. The app enforces admin — a non-privileged principal is rejected 403 by the app,
+  not by us. NOTHING is baked in; no OM JWT is inlined here (the OM writer bot token is
+  read server-side by os-ui from its own Secret — never by this Job).
+
+  GATED OFF by default (`openmetadata.catalogRefresh.enabled=false`): nothing renders
+  until an operator turns it on AND provisions the principal Secret AND sets
+  OPENMETADATA_INGEST_ENABLED on os-ui. `helm template` at defaults emits nothing.
+*/}}
+{{- $r := .Values.openmetadata.catalogRefresh }}
+{{- $secretName := $r.principalSecret | default "catalog-refresh-principal" }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openmetadata-catalog-refresh
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "openmetadata") | nindent 4 }}
+spec:
+  schedule: {{ $r.schedule | default "37 * * * *" | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 1800
+      template:
+        metadata:
+          labels:
+            {{- include "soa.selectorLabels" (dict "ctx" . "component" "openmetadata") | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          {{- with .Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $r.nodeSelector }}
+          nodeSelector: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "soa.podSecurityContext" . | nindent 12 }}
+            runAsUser: 1000
+          containers:
+            - name: refresh
+              image: curlimages/curl:8.11.1
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "soa.containerSecurityContext" . | nindent 16 }}
+                readOnlyRootFilesystem: true
+              env:
+                - name: OS_UI
+                  value: {{ $r.osUiUrl | default "http://os-ui:3000" | quote }}
+                - name: PRINCIPAL_USER
+                  valueFrom: { secretKeyRef: { name: {{ $secretName | quote }}, key: username } }
+                - name: PRINCIPAL_PASS
+                  valueFrom: { secretKeyRef: { name: {{ $secretName | quote }}, key: password } }
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  JAR=/tmp/cookies.txt
+                  # 1. Log in as the admin service principal -> signed session cookie.
+                  CODE=$(curl -s -o /tmp/login.json -w "%{http_code}" -c "$JAR" \
+                    -X POST "$OS_UI/api/auth/login" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"username\":\"$PRINCIPAL_USER\",\"password\":\"$PRINCIPAL_PASS\"}")
+                  if [ "$CODE" != "200" ]; then
+                    echo "FATAL: login returned $CODE" >&2
+                    exit 1
+                  fi
+                  # 2. Refresh the catalog with that session (route enforces admin + the flag;
+                  #    an OM that is down / out of range is an honest no-op, never a failure).
+                  CODE=$(curl -s -o /tmp/refresh.json -w "%{http_code}" -b "$JAR" \
+                    -X POST "$OS_UI/api/connections/openmetadata/refresh")
+                  echo "openmetadata/refresh -> $CODE"
+                  cat /tmp/refresh.json 2>/dev/null || true
+                  echo
+                  # 200 = full success, 207 = partial (some mart errored) — both are runs
+                  # that completed; only a transport/auth failure (non-2xx) is fatal.
+                  case "$CODE" in
+                    2??) : ;;
+                    *) echo "FATAL: openmetadata/refresh returned $CODE" >&2; exit 1 ;;
+                  esac
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+              resources:
+                requests: { cpu: 25m, memory: 32Mi }
+                limits: { cpu: 200m, memory: 64Mi }
+          volumes:
+            - name: tmp
+              emptyDir: {}
+{{- end }}

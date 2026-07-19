@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# Homebrew formula TEMPLATE for the `sos` CLI.
+#
+# You normally do NOT hand-edit this: GoReleaser (see /.goreleaser.yaml, `brews:`)
+# renders and commits the real formula to your tap on every `git tag`. This
+# template exists so you can (a) understand the shape of the published formula and
+# (b) bootstrap a tap by hand for a locked-down/air-gapped instance.
+#
+# Placeholders to fill for a manual formula:
+#   {{VERSION}}          e.g. 0.2.0            (no leading v)
+#   {{DOWNLOAD_ROOT}}    e.g. https://os.example.eu/releases/sos/v0.2.0
+#   {{SHA256_*}}         from checksums.txt produced by `goreleaser release`
+#
+# Install once published:  brew install <owner>/tap/sos
+class Sos < Formula
+  desc "Governed developer CLI for the Sovereign Agentic OS"
+  homepage "https://github.com/sovereign-os/sos"
+  version "{{VERSION}}"
+  license "Apache-2.0"
+
+  on_macos do
+    on_arm do
+      url "{{DOWNLOAD_ROOT}}/sos_{{VERSION}}_darwin_arm64.tar.gz"
+      sha256 "{{SHA256_DARWIN_ARM64}}"
+    end
+    on_intel do
+      url "{{DOWNLOAD_ROOT}}/sos_{{VERSION}}_darwin_amd64.tar.gz"
+      sha256 "{{SHA256_DARWIN_AMD64}}"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "{{DOWNLOAD_ROOT}}/sos_{{VERSION}}_linux_arm64.tar.gz"
+      sha256 "{{SHA256_LINUX_ARM64}}"
+    end
+    on_intel do
+      url "{{DOWNLOAD_ROOT}}/sos_{{VERSION}}_linux_amd64.tar.gz"
+      sha256 "{{SHA256_LINUX_AMD64}}"
+    end
+  end
+
+  def install
+    bin.install "sos"
+  end
+
+  test do
+    assert_match "sos version", shell_output("#{bin}/sos --version")
+  end
+end

@@ -436,6 +436,23 @@ export const config = {
   // above), which is unchanged. See docs/openmetadata-connectors.md (Phase 1).
   openmetadataConnectEnabled: env('OPENMETADATA_CONNECT_ENABLED', '').toLowerCase() === 'true',
 
+  // ---- OpenMetadata DQ write-back (Phase 2 DQ). GATED OFF by default: pushing
+  // OS-authored data-quality rules + results into OM as first-class TestSuites /
+  // TestCases / testCaseResults (the DQ leg of the integrity-safe write-back). When
+  // OFF, the per-run result-append is a NO-OP and the governed `sync_quality_to_catalog`
+  // trigger reports it honestly — the OS-side DQ run ALWAYS succeeds regardless. Writes
+  // additionally fail closed outside the tested OM version range and require the
+  // least-privilege writer bot. See docs/research/data-quality-plan.md (D4).
+  openmetadataDqWritebackEnabled: env('OPENMETADATA_DQ_WRITEBACK_ENABLED', '').toLowerCase() === 'true',
+
+  // ---- OpenMetadata catalog ingestion (#147). GATED OFF by default: the governed
+  // "refresh catalog" orchestrator folds the additive metadata + DQ write-back over
+  // EVERY governed gold/silver mart so OM reflects the live lakehouse in one pass.
+  // When OFF, the `refresh_catalog` trigger reports it honestly and writes nothing;
+  // when ON it still requires an om-catalog connection + the least-privilege writer bot
+  // and fails closed outside the tested OM version range. Read paths are unaffected.
+  openmetadataIngestEnabled: env('OPENMETADATA_INGEST_ENABLED', '').toLowerCase() === 'true',
+
   // ---- Folder grants (Wave 3 agent-grant kernel). The MAX number of folder
   // grants one agent may carry — a folder grant resolves at run time to every
   // item under it (lib/core/folders → resolveFolderGrant), so this bounds the

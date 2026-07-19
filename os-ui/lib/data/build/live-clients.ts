@@ -136,7 +136,7 @@ export async function queryToolReachable(): Promise<boolean> {
 // ----------------------------------------------- dlt / dbt / dbt-trino / trino ---
 
 /** A probe SELECT through the governed query-tool (Trino + OPA). True ⇒ live. */
-async function probeQueryable(fqn: string, principal?: string): Promise<boolean> {
+export async function probeQueryable(fqn: string, principal?: string): Promise<boolean> {
   try {
     const r = await queryRun(`SELECT 1 FROM ${fqn} LIMIT 1`, principal);
     return Array.isArray(r.rows);

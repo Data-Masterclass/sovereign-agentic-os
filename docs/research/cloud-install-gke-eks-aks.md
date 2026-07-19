@@ -43,7 +43,15 @@ Recommended default: **bundled CNPG + self-hosted lakehouse (Polaris); only the 
 3. **Bootstrap + preflight** — `deploy/cloud/bootstrap-<platform>.sh` (idempotent) + `helm test` doing one embed+chat per tier.
 4. **Wizard (`sos install`) + step-by-step guide** — extend `install.sh` into `sos install` (per the CLI ROADMAP): asks cloud/project/region/bucket/LLM-tier/postgres-mode/domain (3–5 real inputs, defaulted + validated), runs bootstrap → helm install → preflight; write `docs/cloud-install-<platform>.md`; regen the guide PDF.
 
-## 6. Decisions needed (5)
+## Decisions — CONFIRMED (2026-07-20)
+1. **Postgres = bundled CloudNativePG** (Apache-2.0, in-cluster, 3-instance HA + Barman WAL to object store) as the cloud default; managed DB opt-in. ✅
+2. **Lakehouse catalog = Apache Polaris everywhere by default** (portable/sovereign); **BigLake / S3 Tables / ADLS-native offered as opt-in toggles**. The Data tab is unaffected either way (it sits above Trino; the catalog swap is transparent). ✅
+3. **LLM tier model pins per cloud** = the §2 table (Vertex/Bedrock/Azure OpenAI). ✅
+4. **Installer = `sos install`** — the unified single-binary wizard (max user-friendliness / min friction), built on the `sos` CLI. Bootstrap scripts are the mechanism it wraps. ✅
+5. **Per-cloud embedding dimension** default (e.g. 3072 GKE/AKS, 1024 EKS/Titan). ✅
+> Build note: chart overlays + `sos install` can be authored now, but **live-verification requires an actual GKE/EKS/AKS cluster** — treat as an epic to verify against a target cluster before "done".
+
+## 6. (original) Decisions needed (5)
 1. **Postgres default = bundled CNPG** (3-instance HA + Barman WAL) on cloud, managed as opt-in? (rec: yes)
 2. **Lakehouse catalog default: Polaris everywhere (portable) vs managed BigLake/S3 Tables per cloud?** (rec: Polaris default, managed as a toggle)
 3. **Confirm the LLM tier model pins** per cloud (§2 table) — drives cost + the pinned embedding dimension.

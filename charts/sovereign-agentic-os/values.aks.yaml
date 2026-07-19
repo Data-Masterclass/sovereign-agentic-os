@@ -1,0 +1,208 @@
+# =============================================================================
+# values.aks.yaml — Cloud overlay: Azure Kubernetes Service (AKS).
+# =============================================================================
+# Clones the shape of values.stackit-managed.yaml, but for AKS:
+#   • Object storage  -> ADLS Gen2 / Blob (bundled MinIO OFF).
+#   • Postgres        -> BUNDLED CloudNativePG (engine:cnpg) cloud-durable (3 inst,
+#                        zone spread, PDB, WAL->Azure Blob via the Barman Cloud
+#                        PLUGIN + ObjectStore CR, durable zonal managed-csi-premium).
+#   • Lakehouse       -> Apache Polaris REST is the DEFAULT catalog; ADLS-native
+#                        Iceberg is an opt-in toggle (trino.cloudCatalog).
+#   • LLM             -> Azure OpenAI via LiteLLM, KEYLESS (Entra token refresh).
+#   • Identity        -> Microsoft Entra Workload ID (AAD Pod Identity is DEPRECATED —
+#                        NOT used). KSA annotation `azure.workload.identity/client-id`
+#                        + the MANDATORY pod label `azure.workload.identity/use:"true"`
+#                        (fail-close: without the label the pod gets NO token).
+#
+# STATIC-VALIDATION ONLY: renders cleanly but is NOT live-verified — a real AKS
+# cluster (OIDC issuer + federated credentials + HNS-on ADLS) is required to confirm
+# Entra Workload ID, Azure OpenAI routing, ADLS, and the Barman plugin. Fill the
+# REPLACE-* tokens from your bootstrap (tenant/MI-client-id/account/DNS).
+# =============================================================================
+
+global:
+  profile: aks
+  storageClass: managed-csi-premium     # durable zonal managed disk
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets:
+    - name: registry-pull-secret
+
+networkPolicies:
+  defaultDeny: true
+
+# --- Object storage -> ADLS Gen2 / Blob (S3-API via consumers) ---------------
+objectStorage:
+  enabled: false
+  mode: external
+  external:
+    endpoint: "https://REPLACE-STORAGE-ACCOUNT.blob.core.windows.net"
+  secretName: object-storage-credentials
+  region: "REPLACE-AZURE-REGION"
+
+# --- Postgres -> BUNDLED CloudNativePG, cloud-durable ------------------------
+postgres:
+  enabled: true
+  engine: cnpg
+  instances: 3
+  storageSize: 20Gi
+  cnpg:
+    storageClass: managed-csi-premium
+    highAvailability:
+      enabled: true
+      topologyKey: topology.kubernetes.io/zone
+      minAvailable: 2
+    backup:
+      enabled: true
+      objectStoreName: pg-barman-store
+      destinationPath: "https://REPLACE-STORAGE-ACCOUNT.blob.core.windows.net/REPLACE-CONTAINER/pg"
+      retention: "30d"
+      schedule: "0 0 3 * * *"
+    serviceAccount:
+      # Entra Workload ID annotation on the CNPG instance SA. NOTE: the CNPG instance
+      # pods ALSO need the `azure.workload.identity/use:"true"` LABEL to receive a
+      # token; set it via the operator's inheritedMetadata / a namespace-level
+      # mutating policy during bootstrap (chart cannot label operator-managed pods).
+      enabled: true
+      annotations:
+        azure.workload.identity/client-id: "REPLACE-CNPG-MI-CLIENT-ID"
+
+# --- OpenSearch stays bundled ------------------------------------------------
+# Azure text-embedding-3-large = 3072-dim -> knnDimension 3072.
+retrieval:
+  knnDimension: 3072
+osUI:
+  embedDim: 3072
+  image:
+    repository: ghcr.io/aborek/sovereign-os/os-ui
+    tag: "0.1.0@sha256:5719957f3a78e1f54f28b0a90eaa686a1a244c4b9beab1f903cf1d231996bd36"
+
+# --- LLM -> Azure OpenAI via LiteLLM (keyless, Entra token refresh) -----------
+llm:
+  mode: external
+  provider: azure
+litellm:
+  db:
+    endpoint: pg-rw
+  # KEYLESS: Entra Workload ID. `enable_azure_ad_token_refresh` (below) makes LiteLLM
+  # use DefaultAzureCredential -> the federated MI token, no api_key.
+  serviceAccount:
+    create: true
+    name: litellm-sa
+    annotations:
+      azure.workload.identity/client-id: "REPLACE-LITELLM-MI-CLIENT-ID"
+  # MANDATORY pod label (report §2 footgun): the litellm-helm subchart's
+  # podLabels land on the proxy pod; without `use:"true"` Entra Workload ID
+  # injects NO token and every Azure OpenAI call fails closed.
+  podLabels:
+    azure.workload.identity/use: "true"
+  environmentSecrets:
+    - litellm-credentials               # master key only (keyless)
+  proxy_config:
+    model_list:
+      # `api_base` = your Azure OpenAI resource endpoint; `model` = azure/<deployment>.
+      # `enable_azure_ad_token_refresh:true` => DefaultAzureCredential (no api_key).
+      # Reasoning tier -> GPT-5.4.
+      - model_name: sovereign-reasoning
+        litellm_params:
+          model: azure/REPLACE-GPT54-DEPLOYMENT
+          api_base: "https://REPLACE-AOAI-RESOURCE.openai.azure.com"
+          api_version: "2024-10-21"
+          enable_azure_ad_token_refresh: true
+      - model_name: sovereign-reasoning-fast
+        litellm_params:
+          model: azure/REPLACE-GPT54MINI-DEPLOYMENT
+          api_base: "https://REPLACE-AOAI-RESOURCE.openai.azure.com"
+          api_version: "2024-10-21"
+          enable_azure_ad_token_refresh: true
+      # Default / worker tier -> GPT-5.4-mini.
+      - model_name: sovereign-default
+        litellm_params:
+          model: azure/REPLACE-GPT54MINI-DEPLOYMENT
+          api_base: "https://REPLACE-AOAI-RESOURCE.openai.azure.com"
+          api_version: "2024-10-21"
+          enable_azure_ad_token_refresh: true
+      - model_name: sovereign-mock       # back-compat alias -> worker tier
+        litellm_params:
+          model: azure/REPLACE-GPT54MINI-DEPLOYMENT
+          api_base: "https://REPLACE-AOAI-RESOURCE.openai.azure.com"
+          api_version: "2024-10-21"
+          enable_azure_ad_token_refresh: true
+      # Embeddings -> text-embedding-3-large (3072-dim; MUST match knnDimension).
+      - model_name: sovereign-embed
+        litellm_params:
+          model: azure/REPLACE-EMBED-DEPLOYMENT
+          api_base: "https://REPLACE-AOAI-RESOURCE.openai.azure.com"
+          api_version: "2024-10-21"
+          enable_azure_ad_token_refresh: true
+      # Premium escalation -> GPT-5.4.
+      - model_name: sovereign-premium
+        litellm_params:
+          model: azure/REPLACE-GPT54-DEPLOYMENT
+          api_base: "https://REPLACE-AOAI-RESOURCE.openai.azure.com"
+          api_version: "2024-10-21"
+          enable_azure_ad_token_refresh: true
+    router_settings:
+      routing_strategy: simple-shuffle
+      num_retries: 3
+      timeout: 120
+      allowed_fails: 3
+      cooldown_time: 60
+      fallbacks:
+        - sovereign-default: ["sovereign-premium"]
+        - sovereign-mock: ["sovereign-premium"]
+        - sovereign-reasoning: ["sovereign-reasoning-fast"]
+    litellm_settings:
+      success_callback: ["langfuse"]
+      drop_params: true
+    general_settings:
+      master_key: os.environ/PROXY_MASTER_KEY
+
+mockModel:
+  enabled: false
+stackitPremium:
+  enabled: false
+
+# --- Trino: Polaris REST default + KEYLESS ADLS-native toggle ----------------
+trino:
+  serviceAccount:
+    create: true
+    name: trino-sa
+    annotations:
+      azure.workload.identity/client-id: "REPLACE-TRINO-MI-CLIENT-ID"
+  # MANDATORY Entra Workload ID pod label on the Trino pod (fail-close, report §2).
+  # The base trino template renders `soa.labels` + `soa.selectorLabels`; the extra
+  # workload-identity label is added here so the Trino pod actually receives a token.
+  podLabels:
+    azure.workload.identity/use: "true"
+  s3:
+    region: "REPLACE-AZURE-REGION"
+    pathStyleAccess: false
+  catalog:
+    iceberg:
+      oauth2SecretName: polaris-trino-oauth
+      vendedCredentials: true
+  # OPT-IN managed catalog. Leave provider:"" for Polaris-only; set to adls to mount
+  # a keyless ADLS-native Iceberg catalog (azure.auth-type=DEFAULT -> the MI above).
+  cloudCatalog:
+    provider: ""                         # set to "adls" to enable
+    name: adls
+    warehouse: "abfss://REPLACE-CONTAINER@REPLACE-STORAGE-ACCOUNT.dfs.core.windows.net/wh"
+    clientId: "REPLACE-TRINO-MI-CLIENT-ID"   # pin DEFAULT to the intended MI
+
+agentRuntime:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/agent-runtime
+    tag: "0.1.0@sha256:85cb9c3109beebf447422a0dbbbf05435f31cf38a73d705cc1dd185d1cae0eab"
+
+ingress:
+  enabled: true
+  className: nginx
+  tlsIssuer: letsencrypt-prod
+  hosts:
+    osUI: "os.REPLACE-DNS-NAME"
+    litellm: "litellm.REPLACE-DNS-NAME"
+    langfuse: "langfuse.REPLACE-DNS-NAME"
+    openmetadata: "openmetadata.REPLACE-DNS-NAME"
+    superset: "superset.REPLACE-DNS-NAME"
+    forgejo: "forgejo.REPLACE-DNS-NAME"
+    argocd: "argocd.REPLACE-DNS-NAME"

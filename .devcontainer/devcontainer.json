@@ -1,0 +1,35 @@
+{
+  "//": "SPDX-License-Identifier: Apache-2.0. Devcontainer for Sovereign Agentic OS builders: Go 1.22 + the prebuilt `sos` CLI, Node 20 for os-ui, and git/jq/helm/kubectl. One-command spin-up documented in docs/developer-mode.md.",
+  "name": "Sovereign Agentic OS — developer mode",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "..",
+    "args": {
+      "NODE_MAJOR": "20"
+    }
+  },
+  "workspaceFolder": "/workspaces/sovereign-os-stack",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/sovereign-os-stack,type=bind",
+  "remoteUser": "builder",
+  "containerEnv": {
+    "GOFLAGS": "-trimpath"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "redhat.vscode-yaml"
+      ],
+      "settings": {
+        "go.toolsManagement.checkForUpdates": "off",
+        "go.useLanguageServer": true
+      }
+    }
+  },
+  "postCreateCommand": "sos --version && go version && node --version",
+  "remoteEnv": {
+    "PATH": "/usr/local/bin:${containerEnv:PATH}"
+  }
+}

@@ -52,6 +52,16 @@ export type DqRunServerDeps = {
   now?: () => string;
   /** For tests: override the persisted history the monitors learn from. */
   history?: ReturnType<typeof monitorHistory>;
+  /**
+   * OPTIONAL best-effort OpenMetadata result-appender (Phase 2 DQ write-back). When the
+   * caller injects it (OM connected + `openmetadata.dqWriteback.enabled`), each governed
+   * run's per-rule verdict is appended to the matching OM TestCase time-series so OM's DQ
+   * dashboard trend fills for free. It is CALLED after the OS-side result is persisted and
+   * is NON-BLOCKING by contract: it must never throw and never fake success — an
+   * unreachable / out-of-range OM appends nothing and the DQ run still succeeds. Absent ⇒
+   * zero OM coupling.
+   */
+  omAppend?: (results: CheckResult[], ranAt: string) => Promise<void>;
 };
 
 /** Read the current row count via the same governed executor. Throws-safe ⇒ null. */
@@ -128,6 +138,17 @@ export async function runAndRecord(dataset: Dataset, deps: DqRunServerDeps): Pro
     });
   } catch {
     /* durability is additive — the live outcome is still returned */
+  }
+
+  // Best-effort OpenMetadata write-back (Phase 2 DQ) — additive, non-blocking, never
+  // fakes success. Absent ⇒ no OM coupling; present ⇒ appends each rule's verdict to its
+  // OM TestCase trend. Wrapped so a thrown/rejected appender never fails the DQ run.
+  if (deps.omAppend) {
+    try {
+      await deps.omAppend(results, report.ranAt);
+    } catch {
+      /* OM enrichment is additive — an append failure never fails the governed DQ run */
+    }
   }
 
   return { fqn: deps.fqn, ranAt: report.ranAt, badge, results, health, rowCount, schemaFingerprint: fingerprint };

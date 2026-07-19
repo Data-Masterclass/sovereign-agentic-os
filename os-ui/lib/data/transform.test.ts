@@ -14,6 +14,7 @@ import {
   goldMeasureToCube,
   layerTarget,
   passThroughPlan,
+  resolvePassThroughSource,
   TransformError,
   type SilverSpec,
   type TransformOp,
@@ -486,4 +487,38 @@ test('passThroughPlan compiles a REAL guard-shaped CTAS copy of the prior layer 
   const gold = passThroughPlan({ name: 'Web Orders', domain: 'sales', tier: 'dataset' }, me, 'gold');
   assert.equal(gold.source, 'iceberg.personal_alex.silver_web_orders'); // gold copies SILVER forward
   assert.equal(gold.target, 'iceberg.personal_alex.gold_web_orders');
+});
+
+// ---------------------------------------------------- resolvePassThroughSource ---
+
+const DS = { name: 'Northpeak Campaign Performance', domain: 'agentic-leader-q3-2026', tier: 'domain' };
+const BUILDER = { uid: 'aborek', domains: ['agentic-leader-q3-2026'] };
+const G = 'iceberg.agentic_leader_q3_2026';
+
+test('pass-through copies the newest lower layer that physically exists (silver over bronze)', async () => {
+  const present = new Set([`${G}.silver_northpeak_campaign_performance`, `${G}.bronze_northpeak_campaign_performance`]);
+  const res = await resolvePassThroughSource(DS, BUILDER, 'gold', async (fqn) => present.has(fqn));
+  assert.equal(res.kind, 'copy');
+  assert.equal(res.kind === 'copy' && res.source, `${G}.silver_northpeak_campaign_performance`);
+  assert.equal(res.kind === 'copy' && res.sql,
+    `create or replace table ${G}.gold_northpeak_campaign_performance as select * from ${G}.silver_northpeak_campaign_performance`);
+});
+
+test('pass-through falls back to bronze when silver is absent', async () => {
+  const present = new Set([`${G}.bronze_northpeak_campaign_performance`]);
+  const res = await resolvePassThroughSource(DS, BUILDER, 'gold', async (fqn) => present.has(fqn));
+  assert.equal(res.kind === 'copy' && res.source, `${G}.bronze_northpeak_campaign_performance`);
+});
+
+test('pass-through ADOPTS an already-materialized target when no lower layer exists (the seeded-gold case)', async () => {
+  const present = new Set([`${G}.gold_northpeak_campaign_performance`]); // only gold — no bronze/silver
+  const res = await resolvePassThroughSource(DS, BUILDER, 'gold', async (fqn) => present.has(fqn));
+  assert.equal(res.kind, 'adopt');
+  assert.equal(res.target, `${G}.gold_northpeak_campaign_performance`);
+});
+
+test('pass-through reports NONE (never a raw Trino error) when nothing exists to carry or adopt', async () => {
+  const res = await resolvePassThroughSource(DS, BUILDER, 'gold', async () => false);
+  assert.equal(res.kind, 'none');
+  assert.equal(res.kind === 'none' && res.tried.length, 2); // probed silver then bronze
 });

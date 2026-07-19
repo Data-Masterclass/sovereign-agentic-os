@@ -7,11 +7,11 @@ import { type DataStage } from './adapter.ts';
 import type { ExecuteIdentity } from '@/lib/infra/governed';
 import { orchestrateStage, type DataBuildReport } from './orchestrate.ts';
 import { makeMockAdapters, newMockBackends } from './mocks.ts';
-import { makeRealClients, liveDataReachable, queryToolReachable } from './live-clients.ts';
+import { makeRealClients, liveDataReachable, queryToolReachable, probeQueryable } from './live-clients.ts';
 import { makeLiveAdapters } from './live.ts';
 import { buildVersion, type Principal } from '../store.ts';
 import { stageArtifact } from '../panels.ts';
-import { layerTarget, passThroughPlan } from '../transform.ts';
+import { layerTarget, passThroughPlan, resolvePassThroughSource } from '../transform.ts';
 import {
   CUBE_ARTIFACT,
   DASHBOARD_ARTIFACT,
@@ -123,12 +123,34 @@ export async function commitLayerVersion(
   // the uid, not the domain principal (same rule as the transform route).
   if (target.includes('.personal_')) identity.principal = user.id;
 
-  const plan = passThrough ? passThroughPlan(dataset, identity, layer) : null;
-  const build = await buildStage(dataset, layer, identity.principal, {
-    transformSql: plan?.sql,
-    identity: plan ? identity : undefined,
-    targetFqn: target,
-  });
+  // Resolve the physical write. A pass-through copies the prior layer forward — but the
+  // prior layer must ACTUALLY exist: the original seed / an out-of-band authored table
+  // can leave a layer "built" in the registry with no queryable table (the cause of a
+  // raw TABLE_NOT_FOUND when Gold blindly read a phantom silver_). We probe reality and
+  // carry the newest lower layer that exists, adopt an already-materialized target, or
+  // fail with a clear message — never a raw Trino error. (Offline keeps the honest mock.)
+  let write: { transformSql?: string; identity?: ExecuteIdentity; targetFqn?: string };
+  if (passThrough && (await queryToolReachable())) {
+    const res = await resolvePassThroughSource(dataset, identity, layer as 'silver' | 'gold', (fqn) =>
+      probeQueryable(fqn, identity.principal),
+    );
+    if (res.kind === 'none') {
+      const lower = layer === 'gold' ? 'Bronze or Silver' : 'Bronze';
+      return {
+        ok: false,
+        error: `Nothing to pass through into ${layer} for “${dataset.name}”: no ${lower} table exists yet, and no ${layer} table is present to adopt. Build a lower layer first, or author the ${layer} SQL.`,
+      };
+    }
+    // `copy` runs a governed CTAS of the resolved source; `adopt` registers the
+    // already-materialized target verify-only (honest — it is queryable).
+    write = res.kind === 'copy' ? { transformSql: res.sql, identity, targetFqn: target } : { targetFqn: target };
+  } else if (passThrough) {
+    write = { transformSql: passThroughPlan(dataset, identity, layer).sql, identity, targetFqn: target };
+  } else {
+    // Authored body: verify-only probe of the out-of-band target (unchanged).
+    write = { targetFqn: target };
+  }
+  const build = await buildStage(dataset, layer, identity.principal, write);
   if (!build.ok) {
     const failed = build.rows.find((r) => r.status === 'fail');
     return { ok: false, build, error: failed?.error ?? `${layer} was not materialized — nothing registered` };

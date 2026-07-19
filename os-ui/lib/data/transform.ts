@@ -503,6 +503,55 @@ export function passThroughPlan(
   return { source, target, schema, sql };
 }
 
+/** What a pass-through should physically do, resolved by PROBING (not the registry
+ *  flag): copy the newest lower layer that truly exists, adopt an already-materialized
+ *  target, or report there is genuinely nothing to carry forward. */
+export type PassThroughResolution =
+  | { kind: 'copy'; source: string; target: string; sql: string }
+  | { kind: 'adopt'; target: string }
+  | { kind: 'none'; target: string; tried: string[] };
+
+/** Newest-first lower layers a pass-through may carry into each layer (gold prefers a
+ *  clean silver over raw bronze). */
+const PASS_THROUGH_PRIORS: Record<'silver' | 'gold', ('bronze' | 'silver')[]> = {
+  silver: ['bronze'],
+  gold: ['silver', 'bronze'],
+};
+
+/**
+ * Resolve WHAT a pass-through carries forward from PHYSICAL reality, not the
+ * (possibly stale) `built` flags: the original seed / an out-of-band authored table
+ * can leave a layer marked built with no queryable table behind it (the exact cause
+ * of a raw `TABLE_NOT_FOUND` when Gold blindly read a phantom `silver_`). We probe
+ * newest→oldest and:
+ *   • `copy`  — the newest lower layer that actually exists → a CTAS copy into target,
+ *   • `adopt` — no lower layer, but the TARGET itself is already materialized (a
+ *               directly-seeded mart) → register it verify-only (honest: it's queryable),
+ *   • `none`  — nothing lower and no target → there is genuinely nothing to pass through.
+ * `probe` is injected so this stays pure + unit-testable; the server passes the
+ * governed queryable-probe run AS the caller.
+ */
+export async function resolvePassThroughSource(
+  dataset: { name: string; domain: string; tier: string },
+  identity: { uid: string; domains: string[] },
+  layer: 'silver' | 'gold',
+  probe: (fqn: string) => Promise<boolean>,
+): Promise<PassThroughResolution> {
+  const target = layerTarget(dataset, identity, layer);
+  const tried: string[] = [];
+  for (const prior of PASS_THROUGH_PRIORS[layer]) {
+    const source = layerTarget(dataset, identity, prior);
+    tried.push(source);
+    if (await probe(source)) {
+      const sql = `create or replace table ${target} as select * from ${source}`;
+      assertNoSqlMeta(sql, 'compiled SQL');
+      return { kind: 'copy', source, target, sql };
+    }
+  }
+  if (await probe(target)) return { kind: 'adopt', target };
+  return { kind: 'none', target, tried };
+}
+
 // ================================================================ Publish =======
 
 export type PublishPlan = {

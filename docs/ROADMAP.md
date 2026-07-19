@@ -1,6 +1,23 @@
 # Sovereign Agentic OS — Master Plan
 
-Live: **os-ui 0.5.60** (all releases live + public + strictly-permissive-gated).
+Live: **os-ui 0.5.62** (rev 176); **0.5.63 building** (Wave 2). All releases live + public + strictly-permissive-gated.
+
+## Shipped tonight (0.5.62 → 0.5.63)
+- **Data pass-through fix** (0.5.62, live-verified): medallion pass-through PROBES physical
+  reality instead of trusting stale registry flags — copies the newest existing lower layer,
+  ADOPTS an already-materialized target (the directly-seeded gold-only mart), or returns a
+  clear message. No more raw `TABLE_NOT_FOUND` on a phantom `silver_`. Verified on Northpeak.
+- **DQ Phase 2** (0.5.62): OpenMetadata TestSuite/TestCase/result write-back (default OFF, 7 guards).
+- **Cloud install foundation**: `values.{gke,eks,aks}.yaml` + CNPG cloud-durable (Barman/HA) +
+  keyless catalogs + `sos install` wizard + per-cloud bootstrap. Static-validated; **pending live
+  cloud runs** (user will test each cloud over the coming days).
+- **Power BI DAX/TMDL bridge** (#143, 0.5.63): one-way generated semantic model from Cube meta.
+- **OpenMetadata full ingestion** (#147, 0.5.63): governed orchestrator + scheduled refresh
+  (default OFF); catalog population pending live OM verify.
+- **Full developer mode**: `sos push` (commit-through-policy) + devcontainer + Homebrew tap.
+- **chart**: trino cloudCatalog + OM catalog-refresh made nil-safe under `helm --reuse-values`.
+
+Prior baseline (0.5.60):
 Cadence: each **wave** = several agents on **disjoint file lanes** in parallel → gate (tsc + tests + 46/46 build + `check:licenses`) → **release** (image, STACKIT deploy, public sync) → next wave.
 **Parallelism rule:** at most ONE agent per builder file (`DataBuilder`/`SoftwareBuilder`/`MetricBuilder`/…) per wave; infra/chart, new-file packages, docs, and *different* builders run together freely.
 
@@ -25,11 +42,12 @@ Self-completing git mirror · Data medallion flow + labels · Connections vendor
 - **Software polish** — FE+BE scaffold options; per-story build refinements. — software lane.
 
 ## Epics — multi-session (each its own mini-plan when picked)
-- **OpenMetadata full ingestion** (#147) — dbt + Trino + DQ + lineage into the catalog.
-- **Analytics-as-code monorepo** (#146) — dbt+Cube+Dagster co-located in Forgejo; OM ingests from it.
-- **Full developer mode** — devcontainer + GoReleaser/self-hosted brew tap + typed `/api/v1` + `sos push` git-through-policy. (Builds on the shipped `sos` CLI Ph0.)
+- ✅ **OpenMetadata full ingestion** (#147) — shipped 0.5.63 (orchestrator + scheduled refresh; live-verify pending).
+- ✅ **Full developer mode** — shipped 0.5.63 (`sos push` + devcontainer + brew tap; typed `/api/v1` still open).
+- ✅ **Power BI DAX/XMLA adapter** (#143) — shipped 0.5.63 (one-way TMDL from Cube meta).
+- **Analytics-as-code monorepo** (#146) — dbt+Cube+Dagster co-located in Forgejo; OM ingests from it. (Next epic; `sos push` Phase-2 push-through-policy pipeline lands here.)
 - **External-OM interplay** (#163) — implement the read/write-with-a-customer's-OM design.
-- **Power BI DAX/XMLA adapter** (#143) — beyond `.pbids`, a semantic-model bridge.
+- **Cloud install live-verify** — bring `sos install` up on a real GKE/EKS/AKS cluster (user-run over the coming days).
 
 ## Decisions pending (bring up when their wave arrives)
 1. **Retire the shared Forgejo service account** → per-user tokens (unblocks *full* Git/Jira + `sos push`).

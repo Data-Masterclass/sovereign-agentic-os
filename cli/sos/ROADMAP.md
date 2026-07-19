@@ -48,6 +48,67 @@ refresh rotation. Below is the path forward, drawn from
 - A Databricks-style **VS Code extension** (browse governed datasets/metrics, run
   governed queries, view runs, one-click deploy) over the same CLI/REST/MCP surface.
 
+## Shipped — Developer mode (`sos push` + devcontainer + distribution)
+
+The developer-experience layer on top of Phase 0, documented in
+`docs/developer-mode.md`.
+
+- **`sos push`** (`internal/cli/push.go` + pure `internal/push/`) — takes a local
+  working dir of app/analytics source, diffs it against the app's current governed
+  tree, and submits the changed files **through the governed `commit` MCP tool** as
+  the authenticated user (the SAME `commit` the Software tab UI calls — not a raw
+  git push). `--dry-run` previews the diff and submits nothing; `--promote` files a
+  governed `request_promotion` after the push (a creator files, a builder approves —
+  the CLI can't self-approve). It reads the current tree via `read_app_files`
+  (tree list + per-file content). **Never deletes**: a changeset merges over the
+  prior tree, so a locally-absent file is left untouched. A policy DENY surfaces via
+  the existing `ToolError`/`mapCallError` path — no fake success. Pure diff/validate
+  logic (`Diff`, `BuildCommit`, `WalkDir`, `NormalizePath`) is split from I/O and
+  unit-tested.
+- **Devcontainer** (`.devcontainer/devcontainer.json` + `Dockerfile`) — Go 1.22 with
+  `sos` prebuilt on PATH, Node 20 for os-ui, git/jq/helm/kubectl; one-command
+  spin-up (`devcontainer up`).
+- **Distribution** (`/.goreleaser.yaml` + `packaging/homebrew/sos.rb.template`) — one
+  `git tag` → static darwin/linux amd64/arm64 binaries + `checksums.txt` + a
+  **self-hosted Homebrew tap** formula. Tap owner/repo/token and the download root
+  are env-driven so an EU-sovereign instance points them at its own Forgejo — no
+  github.com in the trust path.
+- **Not live-verified** — static gates pass (`go build`/`vet`/`test`,
+  `goreleaser check`); the first push against a real OS endpoint is the acceptance
+  test. `sos push` matches the shipped `commit` / `read_app_files` / `request_promotion`
+  tool contracts as of this change.
+
+This realises Phase 3's app-code push-through-policy for the **Software tab** (which
+already applies a governed `commit`). The **analytics-monorepo** push-through-policy
+(Forgejo Actions → OPA/Conftest → registry apply → Cube regen, per Phase 3 below) is
+still future work: today analytics models are authored via guided-op MCP tools
+(`transform_silver`/`build_gold_join`), not raw-SQL file pushes.
+
+## Shipped — `sos install` (cloud install wizard)
+
+`sos install` (in `internal/cli/install.go` + `internal/install/`) is the
+frictionless installer for GKE/EKS/AKS (and `kind`/`stackit`), realising phase 5
+step 4 of `docs/research/cloud-install-gke-eks-aks.md`. It is a **thin
+orchestrator** — it shells out to the bootstrap scripts, `kubectl` and `helm`; it
+does not reimplement them.
+
+- **Asks 3–5 real inputs**, defaults + validates the rest per cloud: `cloud`
+  (gke|eks|aks|stackit|kind), account scope (project/account/subscription),
+  `region`, warehouse `bucket` (generated default), `postgres` mode (default
+  `cnpg` on cloud), the three LLM tier model ids (defaulted per cloud from the
+  report, overridable), and an optional `domain`/`tls`.
+- **Flow:** collect → render `install.yaml` (admin answers only, **no secrets**)
+  → preflight (`kubectl` reachable, `helm` + cloud CLI present) →
+  `deploy/cloud/bootstrap-<cloud>.sh` → `helm upgrade --install -f
+  values.<cloud>.yaml -f install.yaml` → health verify (`kubectl wait` pods
+  Ready). The per-tier embed+chat smoke test is a `helm test` (needs in-cluster
+  network) — flagged as a TODO the offline CLI cannot run.
+- `--defaults` (non-interactive/CI), `--dry-run` (emit values + planned commands
+  only), `--yes` (skip confirm). Honest, prerequisite-naming errors; fail-fast.
+- **Not live-verified** — static gates (`go build`/`vet`/`test`, `shellcheck`)
+  pass; the first run on a real cluster is the acceptance test.
+- See `deploy/cloud/README.md` for the per-cloud flow + footguns.
+
 ## Invariants across all phases
 - **Front door, not back door.** Every verb hits the same governed lib function the UI
   calls — OPA + row/doc security + audit unchanged.

@@ -32,6 +32,8 @@ Use --profile to target multiple OS instances (like aws profiles).`,
 		newWhoamiCmd(),
 		newDatasetsCmd(),
 		newQueryCmd(),
+		newPushCmd(),
+		newInstallCmd(),
 	)
 	return root
 }

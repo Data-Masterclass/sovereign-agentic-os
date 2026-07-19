@@ -79,7 +79,15 @@ export type EffectDeps = {
    *  and writes through the least-privilege writer bot. Injected by the route so
    *  this module (and its tests) stay free of the server-only OM bridge. */
   applyOmSync?: (
-    payload: { connId: string; datasetId: string; humanServiceFqn?: string | null },
+    payload: { connId: string; datasetId: string; humanServiceFqn?: string | null; syncDq?: boolean },
+    approver: { id: string; role: Principal['role']; domains: string[] },
+  ) => Promise<{ ok: boolean; summary: string; live: boolean }>;
+  /** Execute an APPROVED catalog REFRESH (#147 `refresh_catalog`): folds the additive
+   *  metadata + DQ write-back over EVERY governed mart the approver may see (DLS), so
+   *  OM reflects the live lakehouse in one pass. Injected by the route (server-only OM
+   *  orchestrator) so this module + its tests stay free of the OM bridge. */
+  refreshCatalog?: (
+    payload: { humanServiceFqn?: string | null },
     approver: { id: string; role: Principal['role']; domains: string[] },
   ) => Promise<{ ok: boolean; summary: string; live: boolean }>;
   /** Decide a Software deploy-review card AS the approver — flips the software
@@ -333,19 +341,42 @@ export async function applyEffect(a: Approval, approver: EffectApprover, deps: E
       // The plan is recomputed server-side from the datasetId (the held payload can
       // never smuggle a wider write). The injected bridge resolves conn + dataset AS
       // the approver (DLS) and writes through the least-privilege writer bot.
-      if (a.tool === 'apply_om_sync' && deps.applyOmSync) {
+      // `apply_om_sync` = metadata leg (tables/lineage/tags); `sync_quality_to_catalog`
+      // = the DQ leg (TestSuites/TestCases) — the SAME effect + guards, `syncDq` flag set.
+      // #147 — a bulk catalog REFRESH over every governed mart (no single datasetId).
+      if (a.tool === 'refresh_catalog' && deps.refreshCatalog) {
+        const approverP = approverPrincipal(approver, 'builder', a.domain);
+        const out = await deps.refreshCatalog(
+          { humanServiceFqn: p.humanServiceFqn as string | null | undefined },
+          approverP,
+        );
+        return {
+          ok: out.ok,
+          applied: out.ok ? `Catalog refresh applied: ${out.summary}` : `Catalog refresh did not complete: ${out.summary}`,
+          live: out.live,
+          audit: {
+            action: 'approve',
+            subject: a.tool,
+            reason: `OpenMetadata catalog refresh approved by ${who}`,
+            detail: { kind: a.kind, agent: a.agent },
+          },
+        };
+      }
+      if ((a.tool === 'apply_om_sync' || a.tool === 'sync_quality_to_catalog') && deps.applyOmSync) {
         const connId = s(p.connId);
         const datasetId = s(p.datasetId);
+        const syncDq = a.tool === 'sync_quality_to_catalog';
+        const label = syncDq ? 'OpenMetadata DQ write-back' : 'OpenMetadata write-back';
         const approverP = approverPrincipal(approver, 'builder', a.domain);
         const out = await deps.applyOmSync(
-          { connId, datasetId, humanServiceFqn: p.humanServiceFqn as string | null | undefined },
+          { connId, datasetId, humanServiceFqn: p.humanServiceFqn as string | null | undefined, syncDq },
           approverP,
         );
         return {
           ok: out.ok,
           applied: out.ok
-            ? `OpenMetadata write-back applied: ${out.summary}`
-            : `OpenMetadata write-back did not complete: ${out.summary}`,
+            ? `${label} applied: ${out.summary}`
+            : `${label} did not complete: ${out.summary}`,
           live: out.live,
           audit: {
             action: 'approve',

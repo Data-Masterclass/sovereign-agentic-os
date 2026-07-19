@@ -249,3 +249,80 @@ imagePullSecrets:
 {{ toYaml $pullSecrets }}
 {{- end }}
 {{- end -}}
+
+{{/*
+=============================================================================
+soa.cloudCatalogProps — KEYLESS managed Iceberg catalog `.properties` per cloud.
+=============================================================================
+Emits the body of ONE managed lakehouse catalog for the DEFAULT-off opt-in
+toggle `trino.cloudCatalog` (set only by the cloud overlays; empty on
+STACKIT/local, so nothing renders there). This is the Helm mirror of the keyless
+prop-generation in os-ui/lib/connections/warehouse/providers/{bigquery,glue,fabric}.ts
+— NO static keys: the Trino pod authenticates via its ServiceAccount identity
+(Workload Identity / Pod Identity / Entra WI). Apache Polaris (REST) is the
+DEFAULT catalog on all three clouds (rendered by trino.yaml's `iceberg.properties`);
+this adds the provider-native catalog only when a customer toggles it on.
+
+`trino.cloudCatalog`:
+  provider: biglake | glue | s3tables | adls   (which native catalog)
+  region:   cloud region (glue/s3tables)
+  <provider-specific>: see per-provider block below
+Args: the ROOT context ($). Reads $.Values.trino.cloudCatalog.
+*/}}
+{{- define "soa.cloudCatalogProps" -}}
+{{- $cc := $.Values.trino.cloudCatalog | default dict -}}
+{{- $p := $cc.provider | default "" -}}
+{{- if eq $p "biglake" -}}
+{{- /* GKE — BigLake managed Iceberg REST catalog. Keyless: security=GOOGLE means
+       Trino uses Application Default Credentials from Workload Identity (no OAuth2
+       client secret). GCS filesystem also uses ADC. */ -}}
+connector.name=iceberg
+iceberg.catalog.type=rest
+iceberg.rest-catalog.uri={{ required "trino.cloudCatalog.restUri required for biglake" $cc.restUri }}
+iceberg.rest-catalog.warehouse={{ required "trino.cloudCatalog.warehouse required for biglake" $cc.warehouse }}
+iceberg.rest-catalog.security=GOOGLE
+fs.native-gcs.enabled=true
+{{- else if eq $p "glue" -}}
+{{- /* EKS — AWS Glue Data Catalog. Keyless via the pod's IAM role (Pod Identity /
+       IRSA); region only, no access/secret key. Mirrors glue.ts (iceberg format). */ -}}
+connector.name=iceberg
+iceberg.catalog.type=glue
+hive.metastore.glue.region={{ required "trino.cloudCatalog.region required for glue" $cc.region }}
+{{- if $cc.glueCatalogId }}
+hive.metastore.glue.catalogid={{ $cc.glueCatalogId }}
+{{- end }}
+fs.native-s3.enabled=true
+s3.region={{ $cc.region }}
+{{- else if eq $p "s3tables" -}}
+{{- /* EKS — Amazon S3 Tables managed Iceberg REST catalog. Keyless via SIGV4 signed
+       with the pod IAM role (no OAuth2 credential). Warehouse = the S3 Tables bucket
+       ARN. */ -}}
+connector.name=iceberg
+iceberg.catalog.type=rest
+iceberg.rest-catalog.uri={{ required "trino.cloudCatalog.restUri required for s3tables" $cc.restUri }}
+iceberg.rest-catalog.warehouse={{ required "trino.cloudCatalog.warehouse (S3 Tables bucket ARN) required" $cc.warehouse }}
+iceberg.rest-catalog.security=SIGV4
+iceberg.rest-catalog.signing-name=s3tables
+iceberg.rest-catalog.sigv4-enabled=true
+fs.native-s3.enabled=true
+s3.region={{ required "trino.cloudCatalog.region required for s3tables" $cc.region }}
+{{- else if eq $p "adls" -}}
+{{- /* AKS — ADLS Gen2 native, keyless. azure.auth-type=DEFAULT => DefaultAzureCredential
+       resolves the pod's user-assigned managed identity (Entra Workload ID). Uses a
+       Hadoop-catalog-style Iceberg over the ADLS filesystem root (no external REST
+       metastore); differs from fabric.ts's OAuth-secret path — here the identity is
+       ambient. */ -}}
+connector.name=iceberg
+iceberg.catalog.type=hadoop
+iceberg.catalog.warehouse={{ required "trino.cloudCatalog.warehouse (abfss:// root) required for adls" $cc.warehouse }}
+fs.native-azure.enabled=true
+azure.auth-type=DEFAULT
+{{- if $cc.clientId }}
+{{- /* AKS footgun (report §2): with more than one identity on the node, DEFAULT
+       must be pinned to the intended MI client-id or it picks the wrong one. */ -}}
+azure.user-assigned-managed-identity-client-id={{ $cc.clientId }}
+{{- end }}
+{{- else -}}
+{{- fail (printf "trino.cloudCatalog.provider must be one of biglake|glue|s3tables|adls, got %q" $p) -}}
+{{- end -}}
+{{- end -}}

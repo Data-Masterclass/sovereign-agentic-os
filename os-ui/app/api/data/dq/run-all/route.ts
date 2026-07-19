@@ -3,11 +3,13 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
+import { requireUser } from '@/lib/core/auth';
 import { roleAtLeast } from '@/lib/core/session';
 import { listGovernedDatasets, builtLayerFqn } from '@/lib/data/store';
 import { queryRun } from '@/lib/infra/governed';
 import { ensureHydrated, latestRun } from '@/lib/data/dq-results';
 import { runAndRecord, isNewFailure } from '@/lib/data/dq-run-server';
+import { omDqAppenderFor } from '@/lib/connections/openmetadata';
 import { deliverDqAlert } from '@/lib/dashboards/delivery';
 import { getPublicUser } from '@/lib/platform-admin/users';
 
@@ -39,6 +41,8 @@ export async function POST(_req: Request) {
       return NextResponse.json({ error: 'not permitted to run the data-quality sweep' }, { status: 403 });
     }
 
+    // CurrentUser for the (best-effort) OM DQ appender lookup — same session as above.
+    const currentUser = await requireUser();
     const datasets = listGovernedDatasets();
     let ran = 0;
     let failing = 0;
@@ -53,10 +57,14 @@ export async function POST(_req: Request) {
         // governed ⇒ domain principal). The cron principal is builder+, so it reads the
         // governed domain copy — exactly what OPA permits for that identity.
         const resolved = builtLayerFqn(dataset, user);
+        // Best-effort OM DQ result-appender (null unless the flag is on AND an OM is
+        // connected). Non-blocking — never throws, never fakes success.
+        const omAppend = await omDqAppenderFor(currentUser, dataset).catch(() => null);
         const outcome = await runAndRecord(dataset, {
           fqn: resolved?.fqn ?? null,
           queryFn: (sql) => queryRun(sql, resolved?.principal),
           ownerId: user.id,
+          omAppend: omAppend ?? undefined,
         });
         ran++;
         if (outcome.badge === 'failing') failing++;

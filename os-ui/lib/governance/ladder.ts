@@ -12,7 +12,8 @@ import { getWorkflow } from '@/lib/knowledge';
 import { getPersonalKnowledge, decertifyPersonalKnowledge, unsharePersonalKnowledge } from '@/lib/knowledge/personal-store';
 import { getDashboard } from '@/lib/dashboards';
 import { getConnectionForUser, promoteConnection, demoteConnection } from '@/lib/connections';
-import { resolveOmCatalog, applyOmSyncForConnection } from '@/lib/connections/openmetadata';
+import { resolveOmCatalog, applyOmSyncForConnection, applyDqSyncForConnection } from '@/lib/connections/openmetadata';
+import { applyCatalogIngest } from '@/lib/connections/openmetadata-ingest';
 import { getDataset } from '@/lib/data';
 import { getModel } from '@/lib/science';
 import { getArtifact, promoteArtifact, demoteArtifact } from '@/lib/core/artifacts';
@@ -211,8 +212,21 @@ export function buildEffectDeps(): EffectDeps {
       const user = asCurrentUser(approver);
       const c = await resolveOmCatalog(payload.connId, user); // DLS guard (404)
       const dataset = getDataset(payload.datasetId, { id: user.id, role: user.role, domains: user.domains });
+      const runId = `approval-${Date.now()}`;
+
+      // DQ-only trigger (`sync_quality_to_catalog`) ⇒ provision TestSuites/TestCases; the
+      // metadata leg (`apply_om_sync`) syncs the tables/lineage/tags as before.
+      if (payload.syncDq) {
+        const dq = await applyDqSyncForConnection(c, dataset, { runId });
+        const summary = dq.refused
+          ? `refused (${dq.refused})`
+          : `${dq.applied.suites} TestSuite, ${dq.applied.testCases} TestCase(s)` +
+            (dq.errors.length ? `; ${dq.errors.length} error(s)` : '');
+        return { ok: dq.ok, summary, live: true };
+      }
+
       const result = await applyOmSyncForConnection(c, dataset, {
-        runId: `approval-${Date.now()}`,
+        runId,
         humanServiceFqn: payload.humanServiceFqn ?? undefined,
       });
       const summary = result.refused
@@ -221,6 +235,14 @@ export function buildEffectDeps(): EffectDeps {
           (result.conflicts.length ? `; ${result.conflicts.length} conflict(s) yielded` : '') +
           (result.errors.length ? `; ${result.errors.length} error(s)` : '');
       return { ok: result.ok, summary, live: true };
+    },
+    refreshCatalog: async (payload, approver) => {
+      // #147 — the APPROVED bulk refresh: fold the additive metadata + DQ write-back
+      // over every governed mart the approver may see (DLS), recomputed server-side.
+      const out = await applyCatalogIngest(asCurrentUser(approver), {
+        humanServiceFqn: payload.humanServiceFqn ?? undefined,
+      });
+      return { ok: out.ok, summary: out.summary, live: out.connectionName !== null };
     },
   };
 }

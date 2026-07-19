@@ -1,0 +1,99 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# GoReleaser config for the `sos` developer CLI (cli/sos).
+#
+#   One `git tag` (e.g. `sos/v0.2.0`) -> cross-compiled static binaries for
+#   darwin/linux (amd64/arm64) + SHA-256 checksums + a self-hosted Homebrew tap
+#   formula. Sovereignty-first: the tap and the release host default to your OWN
+#   instance / Forgejo, so no github.com need sit in the trust path.
+#
+# Validate locally:      goreleaser check
+# Dry-run a snapshot:     goreleaser release --snapshot --clean --skip=publish
+# Cut a real release:     git tag sos/v0.2.0 && goreleaser release --clean
+#
+# The `sos` module lives in ./cli/sos, so `main` and `dir` point there.
+version: 2
+
+project_name: sos
+
+# `sos` is a subdirectory module — run go tooling from cli/sos.
+dist: cli/sos/dist
+
+before:
+  hooks:
+    - sh -c "cd cli/sos && go mod tidy"
+
+builds:
+  - id: sos
+    dir: cli/sos
+    main: .
+    binary: sos
+    env:
+      - CGO_ENABLED=0
+    # Identity-only CLI; a static binary means no runtime dep on any platform.
+    flags:
+      - -trimpath
+    ldflags:
+      # main.version is read by NewRootCmd for `sos --version`.
+      - -s -w -X main.version={{ .Version }}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: sos
+    builds:
+      - sos
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - cli/sos/README.md
+      - LICENSE
+      - NOTICE
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  # The repo keeps a curated CHANGELOG.md; don't autogenerate a competing one.
+  disable: true
+
+# --- Self-hosted Homebrew tap ------------------------------------------------
+# Publishes a formula to a tap repo you control. Defaults to a github.com tap
+# for the common case, but every field is overridable by env so an EU-sovereign
+# instance can point `url_template` + the tap `token`/`git` at its OWN Forgejo
+# and keep github.com out of the trust path. See docs/developer-mode.md.
+brews:
+  - name: sos
+    ids:
+      - sos
+    repository:
+      owner: "{{ .Env.SOS_TAP_OWNER }}"
+      name: "{{ .Env.SOS_TAP_REPO }}"
+      # For a Forgejo/Gitea tap, set token_type: gitea and TAP_TOKEN below.
+      token: "{{ .Env.SOS_TAP_TOKEN }}"
+    # Where the release archives are served from. For a self-hosted instance,
+    # export SOS_DOWNLOAD_ROOT=https://<instance>/releases (Forgejo release page)
+    # so `brew install` never touches github.com.
+    url_template: "{{ .Env.SOS_DOWNLOAD_ROOT }}/{{ .Tag }}/{{ .ArtifactName }}"
+    homepage: "https://github.com/sovereign-os/sos"
+    description: "Governed developer CLI for the Sovereign Agentic OS"
+    license: "Apache-2.0"
+    # Never auto-publish over an existing formula on a dirty state.
+    skip_upload: auto
+    commit_author:
+      name: sos-release-bot
+      email: release@sovereign-os.invalid
+    test: |
+      system "#{bin}/sos", "--version"
+    install: |
+      bin.install "sos"

@@ -10,8 +10,10 @@ the web UI uses. The CLI holds only a short-lived OAuth token; **role, domains, 
 policy and row/document-level security are re-resolved live on the server for every
 call.** There is no privileged side-channel and no way to bypass governance.
 
-This is Phase 0: `login`, `whoami`, `datasets list`/`datasets get`, and `query`.
-See [`ROADMAP.md`](./ROADMAP.md) for Phase 1+.
+Commands: `login`, `whoami`, `datasets list`/`datasets get`, `query`, `push`, and
+`install`. `push` is the developer-mode commit-through-policy verb (see
+[`docs/developer-mode.md`](../../docs/developer-mode.md)). See
+[`ROADMAP.md`](./ROADMAP.md) for what's shipped vs planned.
 
 ## Install
 
@@ -36,6 +38,24 @@ sos datasets list           List datasets you can see (MCP list_datasets)
 sos datasets get <id>       Show one dataset (MCP get_dataset)
 sos query "<nl or sql>"     Run a governed query (MCP query_data)
 sos query --metric <id>     Query a metric (MCP query_metric)
+sos push --app <id> --dir . Push local app/analytics code through governed commit
+```
+
+### `sos push` — commit through policy
+
+`sos push` diffs a local working dir of app/analytics source against the app's
+current governed tree and submits the changed files through the governed `commit`
+MCP tool — **as you**, the same governed change the Software tab UI makes (not a raw
+git push). `--dry-run` previews the diff and submits nothing; `--promote` files a
+`request_promotion` after the push (a creator files, a builder approves). It reads
+the current tree via `read_app_files` and **never deletes** governed files (a
+changeset merges over the prior tree). A policy DENY surfaces via the normal typed
+error path. Full guide: [`docs/developer-mode.md`](../../docs/developer-mode.md).
+
+```sh
+sos push --app app_123 --dir ./my-app --dry-run          # preview only
+sos push --app app_123 --dir ./my-app -m "add model"     # submit
+sos push --app app_123 --dir ./my-app -m "ship" --promote# submit + request promotion
 ```
 
 Global flags: `--profile <name>` (target a specific instance), `--help`, `--version`.
@@ -129,8 +149,8 @@ the keychain, so instances never share credentials.
 | Governed tool calls | `POST /api/mcp` (JSON-RPC 2.0, `tools/call`, Bearer)     |
 
 MCP tools invoked: `whoami`, `list_datasets`, `get_dataset`, `query_data`,
-`query_metric`. Each maps 1:1 to an existing governed MCP tool — the CLI adds **zero
-new server governance**.
+`query_metric`, `read_app_files`, `commit`, `request_promotion`. Each maps 1:1 to an
+existing governed MCP tool — the CLI adds **zero new server governance**.
 
 ## Errors (honest, never a fake success)
 

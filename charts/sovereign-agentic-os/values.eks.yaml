@@ -1,0 +1,196 @@
+# =============================================================================
+# values.eks.yaml — Cloud overlay: Amazon Elastic Kubernetes Service (EKS).
+# =============================================================================
+# Clones the shape of values.stackit-managed.yaml, but for EKS:
+#   • Object storage  -> S3 (bundled MinIO OFF; consumers use the S3 endpoint).
+#   • Postgres        -> BUNDLED CloudNativePG (engine:cnpg) cloud-durable (3 inst,
+#                        zone spread, PDB, WAL->S3 via the Barman Cloud PLUGIN +
+#                        ObjectStore CR, durable zonal gp3 class).
+#   • Lakehouse       -> Apache Polaris REST is the DEFAULT catalog; AWS Glue (or
+#                        S3 Tables) is an opt-in toggle (trino.cloudCatalog).
+#   • LLM             -> Amazon Bedrock via LiteLLM, KEYLESS (boto3 -> pod role).
+#   • Identity        -> EKS Pod Identity (add-on + PodIdentityAssociation). Pod
+#                        Identity has NO pod annotation (the association is created
+#                        out of band by ARN), so the SA here just needs the RIGHT
+#                        NAME to match the association. IRSA fallback annotation is
+#                        shown commented for cross-region Bedrock.
+#
+# STATIC-VALIDATION ONLY: renders cleanly but is NOT live-verified — a real EKS
+# cluster is required to confirm Pod Identity, Bedrock routing, S3/Glue, and the
+# Barman plugin. Fill REPLACE-* from your bootstrap (region/bucket/role-ARN/DNS).
+# =============================================================================
+
+global:
+  profile: eks
+  storageClass: gp3                     # durable zonal EBS
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets:
+    - name: registry-pull-secret
+
+networkPolicies:
+  defaultDeny: true
+
+# --- Object storage -> S3 -----------------------------------------------------
+# Native S3 (no custom endpoint needed). Keyless via the Trino pod role (Pod Identity).
+objectStorage:
+  enabled: false
+  mode: external
+  external:
+    endpoint: "https://s3.REPLACE-AWS-REGION.amazonaws.com"
+  secretName: object-storage-credentials
+  region: "REPLACE-AWS-REGION"          # e.g. eu-central-1
+
+# --- Postgres -> BUNDLED CloudNativePG, cloud-durable ------------------------
+postgres:
+  enabled: true
+  engine: cnpg
+  instances: 3
+  storageSize: 20Gi
+  cnpg:
+    storageClass: gp3
+    highAvailability:
+      enabled: true
+      topologyKey: topology.kubernetes.io/zone
+      minAvailable: 2
+    backup:
+      enabled: true
+      objectStoreName: pg-barman-store
+      destinationPath: "s3://REPLACE-S3-BUCKET/pg"
+      endpointURL: "https://s3.REPLACE-AWS-REGION.amazonaws.com"   # S3 API endpoint
+      retention: "30d"
+      schedule: "0 0 3 * * *"
+    serviceAccount:
+      # Pod Identity has no annotation; the association is bound to this SA NAME by
+      # ARN out of band (deploy/cloud bootstrap). Rendered so the operator uses this
+      # SA for the instance pods. (For IRSA instead, add the role-arn annotation.)
+      enabled: true
+      annotations: {}
+      # IRSA fallback:
+      #   eks.amazonaws.com/role-arn: "arn:aws:iam::REPLACE-ACCT:role/REPLACE-CNPG-ROLE"
+
+# --- OpenSearch stays bundled ------------------------------------------------
+# Titan Embeddings v2 = 1024-dim -> knnDimension 1024 (per report §2 embed table).
+retrieval:
+  knnDimension: 1024
+osUI:
+  embedDim: 1024
+  image:
+    repository: ghcr.io/aborek/sovereign-os/os-ui
+    tag: "0.1.0@sha256:5719957f3a78e1f54f28b0a90eaa686a1a244c4b9beab1f903cf1d231996bd36"
+
+# --- LLM -> Amazon Bedrock via LiteLLM (keyless, boto3 -> pod role) -----------
+llm:
+  mode: external
+  provider: bedrock
+litellm:
+  db:
+    endpoint: pg-rw
+  serviceAccount:
+    # Match this NAME to the PodIdentityAssociation created for Bedrock access.
+    create: true
+    name: litellm-sa
+    annotations: {}
+    # IRSA fallback (needed for cross-region Bedrock, report §2):
+    #   eks.amazonaws.com/role-arn: "arn:aws:iam::REPLACE-ACCT:role/REPLACE-BEDROCK-ROLE"
+  environmentSecrets:
+    - litellm-credentials               # master key only (keyless -> no provider key)
+  proxy_config:
+    model_list:
+      # FOOTGUN (report §2): newer Bedrock models require CROSS-REGION INFERENCE
+      # PROFILES — the `us.`/`eu.` prefixes below ARE those profile ids, not a typo.
+      # SECOND FOOTGUN: Bedrock model access must be ENABLED per-model per-region in
+      # the console/API, or every call returns AccessDenied.
+      # Reasoning tier -> Claude Sonnet 4.5 (cross-region profile).
+      - model_name: sovereign-reasoning
+        litellm_params:
+          model: bedrock/us.anthropic.claude-sonnet-4-5
+          aws_region_name: "REPLACE-AWS-REGION"
+      - model_name: sovereign-reasoning-fast
+        litellm_params:
+          model: bedrock/us.amazon.nova-pro
+          aws_region_name: "REPLACE-AWS-REGION"
+      # Default / worker tier -> Amazon Nova Pro.
+      - model_name: sovereign-default
+        litellm_params:
+          model: bedrock/us.amazon.nova-pro
+          aws_region_name: "REPLACE-AWS-REGION"
+      - model_name: sovereign-mock       # back-compat alias -> worker tier
+        litellm_params:
+          model: bedrock/us.amazon.nova-pro
+          aws_region_name: "REPLACE-AWS-REGION"
+      # Embeddings -> Titan Text Embeddings v2 (1024-dim; MUST match knnDimension).
+      - model_name: sovereign-embed
+        litellm_params:
+          model: bedrock/amazon.titan-embed-text-v2:0
+          aws_region_name: "REPLACE-AWS-REGION"
+      # Premium escalation -> Claude Sonnet 4.5.
+      - model_name: sovereign-premium
+        litellm_params:
+          model: bedrock/us.anthropic.claude-sonnet-4-5
+          aws_region_name: "REPLACE-AWS-REGION"
+    router_settings:
+      routing_strategy: simple-shuffle
+      num_retries: 3
+      timeout: 120
+      allowed_fails: 3
+      cooldown_time: 60
+      fallbacks:
+        - sovereign-default: ["sovereign-premium"]
+        - sovereign-mock: ["sovereign-premium"]
+        - sovereign-reasoning: ["sovereign-reasoning-fast"]
+    litellm_settings:
+      success_callback: ["langfuse"]
+      drop_params: true
+    general_settings:
+      master_key: os.environ/PROXY_MASTER_KEY
+
+mockModel:
+  enabled: false
+stackitPremium:
+  enabled: false
+
+# --- Trino: Polaris REST default + KEYLESS Glue / S3 Tables toggle -----------
+trino:
+  serviceAccount:
+    # Match this NAME to the S3+Glue PodIdentityAssociation. (IRSA fallback: add the
+    # eks.amazonaws.com/role-arn annotation instead.)
+    create: true
+    name: trino-sa
+    annotations: {}
+    #   eks.amazonaws.com/role-arn: "arn:aws:iam::REPLACE-ACCT:role/REPLACE-TRINO-GLUE-ROLE"
+  s3:
+    region: "REPLACE-AWS-REGION"
+    pathStyleAccess: false               # native S3 = virtual-host addressing
+  catalog:
+    iceberg:
+      oauth2SecretName: polaris-trino-oauth
+      vendedCredentials: true
+  # OPT-IN managed catalog. Leave provider:"" for Polaris-only; set to:
+  #   glue     -> AWS Glue Data Catalog (keyless via pod role; region only)
+  #   s3tables -> Amazon S3 Tables managed Iceberg REST (keyless SigV4; warehouse=bucket ARN)
+  cloudCatalog:
+    provider: ""                         # "glue" or "s3tables"
+    name: glue
+    region: "REPLACE-AWS-REGION"
+    # glueCatalogId: "REPLACE-ACCT"      # cross-account Glue only
+    # For s3tables set instead:
+    #   restUri: "https://s3tables.REPLACE-AWS-REGION.amazonaws.com/iceberg"
+    #   warehouse: "arn:aws:s3tables:REPLACE-AWS-REGION:REPLACE-ACCT:bucket/REPLACE-TABLE-BUCKET"
+
+agentRuntime:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/agent-runtime
+    tag: "0.1.0@sha256:85cb9c3109beebf447422a0dbbbf05435f31cf38a73d705cc1dd185d1cae0eab"
+
+ingress:
+  enabled: true
+  className: nginx
+  tlsIssuer: letsencrypt-prod
+  hosts:
+    osUI: "os.REPLACE-DNS-NAME"
+    litellm: "litellm.REPLACE-DNS-NAME"
+    langfuse: "langfuse.REPLACE-DNS-NAME"
+    openmetadata: "openmetadata.REPLACE-DNS-NAME"
+    superset: "superset.REPLACE-DNS-NAME"
+    forgejo: "forgejo.REPLACE-DNS-NAME"
+    argocd: "argocd.REPLACE-DNS-NAME"

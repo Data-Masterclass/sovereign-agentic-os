@@ -11,6 +11,11 @@
   Credential Secrets are shared and live in templates/postgres/credentials.yaml.
 */}}
 {{- $pg := .Values.postgres }}
+{{- /* Cloud-durable extras (all OFF by default → STACKIT/local unchanged). */}}
+{{- $cnpg := $pg.cnpg | default dict }}
+{{- $ha := $cnpg.highAvailability | default dict }}
+{{- $bk := $cnpg.backup | default dict }}
+{{- $csa := $cnpg.serviceAccount | default dict }}
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -31,6 +36,15 @@ spec:
   imageName: "{{ $pg.image.repository }}:{{ $pg.image.tag }}@{{ $pg.image.digest }}"
   # Langfuse owns its schema; superuser access stays off (least privilege).
   enableSuperuserAccess: false
+  {{- /* Keyless WAL push: stamp the cloud-identity annotations (Workload Identity /
+         Pod Identity / Entra WI) onto the ServiceAccount the operator manages for
+         this cluster's pods. Off by default → operator's own default SA. */}}
+  {{- if $csa.enabled }}
+  serviceAccountTemplate:
+    metadata:
+      annotations:
+        {{- toYaml ($csa.annotations | default dict) | nindent 8 }}
+  {{- end }}
   bootstrap:
     initdb:
       database: {{ $pg.database | quote }}
@@ -39,11 +53,36 @@ spec:
         name: {{ $pg.secretName }}
   storage:
     size: {{ $pg.storageSize | quote }}
-    {{- if .Values.global.storageClass }}
-    storageClass: {{ .Values.global.storageClass | quote }}
+    {{- /* Precedence: the CNPG cloud overlay's durable zonal class wins; else the
+           global class; else the cluster default (STACKIT/local behaviour). */}}
+    {{- $sc := $cnpg.storageClass | default .Values.global.storageClass }}
+    {{- if $sc }}
+    storageClass: {{ $sc | quote }}
     {{- end }}
   resources:
     {{- toYaml $pg.resources | nindent 4 }}
+  {{- if $ha.enabled }}
+  {{- /* HA topology spread: keep the 3 instances in DIFFERENT zones (a zonal disk
+         can't cross-AZ-attach, so replicas-in-other-AZs ARE the HA). Soft
+         (ScheduleAnyway) so a single-zone dev pool still schedules. */}}
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: {{ $ha.topologyKey | default "topology.kubernetes.io/zone" | quote }}
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          cnpg.io/cluster: {{ $pg.clusterName }}
+  {{- end }}
+  {{- if $bk.enabled }}
+  {{- /* WAL/base backups via the Barman Cloud PLUGIN (NOT the deprecated in-tree
+         barmanObjectStore field). The Cluster only NAMES the ObjectStore CR that is
+         emitted below; all bucket wiring lives there. */}}
+  plugins:
+    - name: {{ $bk.pluginName | default "barman-cloud.cloudnative-pg.io" | quote }}
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: {{ $bk.objectStoreName | default "pg-barman-store" | quote }}
+  {{- end }}
 {{- if $pg.extraDatabases }}
   # Managed roles for the extra service databases (each owns its own DB).
   managed:
@@ -73,6 +112,71 @@ spec:
   owner: {{ .username | quote }}
   cluster:
     name: {{ $pg.clusterName }}
+{{- end }}
+{{- if $ha.enabled }}
+---
+{{- /* PodDisruptionBudget so a node drain / rolling upgrade never evicts the
+       primary AND all replicas at once. Cloud overlays only (gated by cnpg.ha). */}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $pg.clusterName }}-pdb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 4 }}
+spec:
+  minAvailable: {{ $ha.minAvailable | default 2 }}
+  selector:
+    matchLabels:
+      cnpg.io/cluster: {{ $pg.clusterName }}
+{{- end }}
+{{- if $bk.enabled }}
+---
+{{- /* Barman Cloud ObjectStore CR — the bucket target the Cluster's plugin entry
+       references. `destinationPath` scheme selects the backend: gs:// (GCS), s3://
+       (S3/S3-Tables), or an https://<acct>.blob.core.windows.net/... (Azure Blob).
+       KEYLESS: no credentials block — the WAL push authenticates via the cluster
+       pods' cloud identity (cnpg.serviceAccount annotations above). Provided by the
+       barman-cloud plugin operator; its CRD need not exist for `helm template`. */}}
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: {{ $bk.objectStoreName | default "pg-barman-store" | quote }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 4 }}
+spec:
+  retentionPolicy: {{ $bk.retention | default "30d" | quote }}
+  configuration:
+    destinationPath: {{ required "postgres.cnpg.backup.destinationPath is required when cnpg.backup.enabled" $bk.destinationPath | quote }}
+    {{- if $bk.endpointURL }}
+    endpointURL: {{ $bk.endpointURL | quote }}
+    {{- end }}
+    wal:
+      compression: gzip
+    data:
+      compression: gzip
+---
+{{- /* Daily base backup (CNPG uses a 6-field cron: seconds first). WAL archiving is
+       continuous via the plugin above; this is the periodic full snapshot. */}}
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {{ $pg.clusterName }}-daily
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 4 }}
+spec:
+  schedule: {{ $bk.schedule | default "0 0 3 * * *" | quote }}
+  backupOwnerReference: self
+  cluster:
+    name: {{ $pg.clusterName }}
+  method: plugin
+  pluginConfiguration:
+    name: {{ $bk.pluginName | default "barman-cloud.cloudnative-pg.io" | quote }}
 {{- end }}
 {{- end }}
 {{- end }}
