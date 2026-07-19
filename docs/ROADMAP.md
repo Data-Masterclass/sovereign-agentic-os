@@ -1,47 +1,41 @@
-# Sovereign Agentic OS — Parallel Build Roadmap
+# Sovereign Agentic OS — Master Plan
 
-Live: **os-ui 0.5.53**. Cadence: each **wave** = several agents on **disjoint file lanes**, run in parallel → gate (tsc + tests + 46/46 build) → **release** (build image, deploy STACKIT, public sync) → next wave. Full designs in `docs/research/`.
+Live: **os-ui 0.5.60** (all releases live + public + strictly-permissive-gated).
+Cadence: each **wave** = several agents on **disjoint file lanes** in parallel → gate (tsc + tests + 46/46 build + `check:licenses`) → **release** (image, STACKIT deploy, public sync) → next wave.
+**Parallelism rule:** at most ONE agent per builder file (`DataBuilder`/`SoftwareBuilder`/`MetricBuilder`/…) per wave; infra/chart, new-file packages, docs, and *different* builders run together freely.
 
-**Parallelism rule:** at most ONE agent per builder file (`DataBuilder`/`SoftwareBuilder`/`MetricBuilder`/Dashboards/`ScienceBuilder`) per wave. Infra/chart, new-file workstreams, docs, and *different* builders are conflict-free and run together.
+## Shipped this run (0.5.47 → 0.5.60)
+Self-completing git mirror · Data medallion flow + labels · Connections vendor-stacks + jump-links + Custom Connector · Cube #142 root-caused + `schemaVersion` hardening · lifecycle-in-header (all builders) · Simple/Developer views (Data/Metrics/Dashboards/Science/Software) · Software MCP parity · **Builder Framework core** (ContextGrants + BuilderModeToggle) · **Software re-architected** to *governed-frontend-over-OS-API* (OS-client SDK + `vite-os` scaffold + `@sovereign-os/ui` design system + AI build Plan/Build+diffs+story-target + preview) · Data Quality Ph0+Ph1 (checks + health + suggest + monitors + cron + Monitoring rollup) · Power BI `.pbids` connect + RLS · OpenMetadata active-only · **`sos` CLI** Ph0 · **strictly-permissive licensing + `check:licenses` gate** (evicted proprietary nodebox) · Superset dashboard-auth fix · 5 research reports persisted (`docs/research/`).
 
----
+## In flight NOW (parallel)
+- **Docs**: regenerate the OS guide + PDF for all the above.
+- **esbuild-wasm instant preview** (permissive) — restores instant, real-data preview.
+- **Software Design stage**: push EPICs/stories→Jira + code→Git (governed, user's own connection) + **Import a Claude Design** to seed the frontend.
 
-## Wave A — RUNNING NOW → ships as **0.5.54**
-| Lane | Files | What |
-|---|---|---|
-| Lifecycle-in-header | all builder headers | Archive/Restore/Delete in the persistent detail header (Data/Software/Science/Dashboards) — Metrics already shipped 0.5.53 |
-| W1 Software Build Ph0 | SoftwareBuilder `BuildStage` | Plan⇄Build toggle + inline diffs + story-targeted build (+ plan file for Sandpack/scaffold/HMR) |
-| W2 Data Quality Ph0 | DataBuilder Validate + lib/data/dq* | Persist DQ results (time-series) + health score + suggest-rules-from-profile + Data Assistant |
-| W3 Simple/Dev Wave 2 | Metrics + Dashboards + Science builders | Simple⇄Developer toggle + raw-artifact Developer view |
-Merge order: lifecycle first, then W1/W2/W3 (headers vs stage-bodies = disjoint).
+## Wave — Cohort-readiness (GATE 5, #47) → target next
+- [in flight] Docs + PDF regenerated.
+- **Activate scheduled jobs** — YOU create the `dq-run-principal` + `metrics-alert-principal` secrets, then flip `data.quality.cron.enabled` / `metrics.alerts.cron.enabled`. (Built; needs a credential I won't handle.)
+- **Onboarding + security pass** — confirm cohort accounts, roles (creators→builder), egress allowlist, secrets hygiene.
+- **Public release checkpoint** — tag + verify the public mirror.
 
-## Wave B → **0.5.55** (all disjoint, parallel)
-- **Data Developer view** (DataBuilder) — the piece W3 excluded to avoid the DQ collision.
-- **Software: Git/Jira push** from the Design stage (Design lane) — needs *retire shared Forgejo service account* decision.
-- **Power BI Phase 0** (connections/powerbi + Cube RLS) — `.pbids` connect button + per-user RLS. New/isolated files.
-- **OpenMetadata: active-only datasets** (lib/data + OM sync) — hide archived; soft-delete on archive; re-ingest on restore. (You flagged this.)
-- **Metrics alert CronJob** (chart + lib/metrics/alerts) — scheduled alert evaluation.
+## Wave — finish the feature depth (parallel, disjoint)
+- **Migrate Agents onto the shared Builder-Framework primitives** (Wave-2 leftover; agents kept their own until last). — agents builder lane.
+- **DQ Phase 2**: OpenMetadata TestSuite/TestCase/result write-back (reuse the 7-guard sync). — lib/connections/openmetadata + Validate. *Decision: turn OM DQ write-back on now?*
+- **Science live-verify E2E** — create→train→deploy→predict on STACKIT, fix any gaps. — science lane + live.
+- **Software polish** — FE+BE scaffold options; per-story build refinements. — software lane.
 
-## Wave C → **0.5.56 + infra** (parallel)
-- **Data Quality Phase 1** (DataBuilder + chart) — freshness/volume/schema monitors-on-by-default + DQ CronJob + Monitoring-tab rollup. *Decision: monitors default-on? anomaly stance?*
-- **Software Build Phase 1** — Sandpack instant preview + Vite/shadcn/Supabase scaffold. *Decision: Vite scaffold default? Kata/KVM available on STACKIT?*
-- **Developer mode Phase 0** — `sos` CLI scaffold (Go, thin-over-MCP) + devcontainer + self-hosted brew. New repo/files. *Decision: commit to /api/v1 contract?*
-- **Cube Store deploy** (chart) — enables dev-mode OFF (closes playground, drops polling). Optional hardening; metrics already work.
-
-## Wave D — bigger bets (each mostly standalone)
-- **Software hot-reload preview** (Kata-isolated Vite HMR pod) — infra-heavy; gated on KVM availability.
+## Epics — multi-session (each its own mini-plan when picked)
 - **OpenMetadata full ingestion** (#147) — dbt + Trino + DQ + lineage into the catalog.
-- **Analytics-as-code monorepo** (#146) — dbt+Cube+Dagster co-located in Forgejo (git mirror is the seed).
-- **Claude Design import** (Software Design) — seed the FE scaffold from a pasted design.
-- **Power BI DAX/XMLA adapter** (#143); **external-OM interplay** (#163, research in progress).
-- **Docs/guide + PDF regen** — after the redesign waves settle.
+- **Analytics-as-code monorepo** (#146) — dbt+Cube+Dagster co-located in Forgejo; OM ingests from it.
+- **Full developer mode** — devcontainer + GoReleaser/self-hosted brew tap + typed `/api/v1` + `sos push` git-through-policy. (Builds on the shipped `sos` CLI Ph0.)
+- **External-OM interplay** (#163) — implement the read/write-with-a-customer's-OM design.
+- **Power BI DAX/XMLA adapter** (#143) — beyond `.pbids`, a semantic-model bridge.
 
-## Always-interleaved
-Your tab-by-tab testing → targeted bug-fixes, folded into whatever release is in flight.
+## Decisions pending (bring up when their wave arrives)
+1. **Retire the shared Forgejo service account** → per-user tokens (unblocks *full* Git/Jira + `sos push`).
+2. **DQ anomaly-detection stance** — in-cluster statistical vs OM-native (gates DQ Ph2 ML).
+3. **OM DQ write-back on now?** (Ph2).
+4. Kata/KVM — now largely moot: the governed-frontend model removed the need for a full-stack HMR sandbox.
 
-## Decisions that gate later waves (bring to you per report)
-1. Kata/KVM nodes on STACKIT (gates Software hot-reload, DQ heavy ML).
-2. Retire shared Forgejo service account for per-user tokens (gates dev-mode git-push + Git/Jira).
-3. Anomaly-detection stance: in-cluster statistical vs OM-native (gates DQ Phase 2).
-4. Commit to a versioned `/api/v1` + MCP contract (gates the `sos` CLI).
-5. Vite scaffold as the new-app default (gates Software Build Phase 1).
+## Standing guards (never regress)
+Every release must pass **`check:licenses`** (strictly permissive) + gitleaks + the 3 code gates + live-verify before "done". Cube/Superset/OM live-diagnosis playbooks recorded in memory.

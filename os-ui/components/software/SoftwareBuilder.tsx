@@ -43,8 +43,8 @@ import StageAssistant from './StageAssistant';
 import { SW_STAGES, type SwStageId, type SwCtx } from './stages';
 
 /**
- * The in-browser "Instant preview" (Sandpack) is CLIENT-ONLY — it needs the DOM and
- * must never run at SSR/prerender. Load it lazily with ssr:false so the Software
+ * The in-browser "Instant preview" (esbuild-wasm) is CLIENT-ONLY — it needs the DOM
+ * and must never run at SSR/prerender. Load it lazily with ssr:false so the Software
  * pages still statically render.
  */
 const InstantPreview = dynamic(() => import('./InstantPreview'), {
@@ -448,7 +448,7 @@ export default function SoftwareBuilder({
           ) : null}
 
           {stage.current === 'design' ? (
-            <DesignStage appId={app.id} epics={epics} canEdit={canEdit} onSave={(next) => saveDesign({ epics: next })} />
+            <DesignStage app={app} epics={epics} canEdit={canEdit} onSave={(next) => saveDesign({ epics: next })} onReload={onReload} />
           ) : null}
 
           {stage.current === 'build' ? (
@@ -648,30 +648,182 @@ function DefineStage({
  * The assistant only suggests; Apply is the user-confirmed, governed write.
  */
 function DesignStage({
-  appId, epics, canEdit, onSave,
+  app, epics, canEdit, onSave, onReload,
 }: {
-  appId: string;
+  app: SoftwareApp;
   epics: Epic[];
   canEdit: boolean;
   onSave: (epics: Epic[]) => void;
+  onReload: () => void;
 }) {
   // Apply suggested epics → create them + persist immediately (governed path).
   const applyEpics = (sug: SuggestedEpic[]) => onSave(applyEpicsSuggestion(epics, sug));
   // Apply suggested stories → add under the referenced existing epics + persist.
   const applyStories = (groups: SuggestedStoriesForEpic[]) => onSave(applyStoriesSuggestion(epics, groups));
 
+  const hasStories = epics.some((e) => (e.stories?.length ?? 0) > 0);
+
   return (
     <div style={{ marginTop: 4 }}>
       <DesignBoard epics={epics} canEdit={canEdit} onSave={onSave} />
 
+      {canEdit ? <ShipDesignPanel app={app} hasStories={hasStories} onReload={onReload} /> : null}
+
       <StageAssistantChat
-        appId={appId}
+        appId={app.id}
         stage="design"
         intro="Propose EPICs and user stories from the purpose — Apply creates them."
         starters={['Suggest EPICs for this app', 'Add user stories to my EPICs']}
         onApplyEpics={canEdit ? applyEpics : undefined}
         onApplyStories={canEdit ? applyStories : undefined}
       />
+    </div>
+  );
+}
+
+/**
+ * Ship the design outward — the three governed Design actions:
+ *   • Push to Jira — each EPIC → a Jira Epic issue, each story → a Story issue, via the
+ *     user's OWN governed Atlassian connection (jira_create_issue, Write-approval).
+ *   • Hand off to GitHub — file a governed code-handoff issue on a target repo via the
+ *     user's OWN GitHub connection (create_issue, Write-approval).
+ *   • Import Claude Design — paste a Claude-generated frontend (code or URL); it seeds
+ *     the app's src/ through the governed commit path as the AI build's starting point.
+ * Every message is HONEST: "connect X first", a queued approval, or a real key/URL —
+ * never a fake success. Governance is enforced server-side; we only surface its state.
+ */
+function ShipDesignPanel({ app, hasStories, onReload }: { app: SoftwareApp; hasStories: boolean; onReload: () => void }) {
+  const [jiraKey, setJiraKey] = useState('');
+  const [ghRepo, setGhRepo] = useState('');
+  const [design, setDesign] = useState('');
+  const [designUrl, setDesignUrl] = useState('');
+  const [busy, setBusy] = useState<'jira' | 'git' | 'import' | null>(null);
+  const [note, setNote] = useState<{ tone: 'ok' | 'warn' | 'err'; text: string } | null>(null);
+
+  async function post(kind: 'jira' | 'git' | 'import', path: string, body: Record<string, unknown>) {
+    setBusy(kind);
+    setNote(null);
+    try {
+      const res = await fetch(`/api/apps/${app.id}/${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok && res.status !== 202) {
+        const connectMsg = data.connectHref ? `${data.error} ` : data.error;
+        setNote({ tone: 'err', text: connectMsg || 'Request failed.' });
+        return;
+      }
+      if (kind === 'jira') {
+        const created = (data.created ?? []).length;
+        const queued = (data.queued ?? []).length;
+        const failed = (data.failed ?? []).length;
+        const parts = [
+          created ? `${created} created` : '',
+          queued ? `${queued} awaiting approval` : '',
+          failed ? `${failed} failed` : '',
+        ].filter(Boolean).join(' · ');
+        setNote({ tone: failed ? 'warn' : 'ok', text: `Jira push (${data.total}): ${parts || 'nothing to do'}.` });
+      } else if (kind === 'git') {
+        if (data.queued) setNote({ tone: 'warn', text: 'Code hand-off filed for approval — approve it in Policies & Approvals.' });
+        else setNote({ tone: 'ok', text: `Code hand-off issue opened on ${data.repo} (${data.filesListed} files listed).` });
+      } else {
+        setNote({ tone: 'ok', text: `Seeded frontend: ${(data.seeded ?? []).join(', ')} (${data.mode}).` });
+        setDesign('');
+        setDesignUrl('');
+        onReload();
+      }
+    } catch (e) {
+      setNote({ tone: 'err', text: (e as Error).message });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="grant-block" style={{ marginTop: 16 }}>
+      <div className="comp-label">Ship this design</div>
+      <p className="hint" style={{ marginTop: 4 }}>
+        Push the backlog to Jira, hand the code to GitHub, or seed the frontend from a Claude
+        design — all through your OWN governed connections. Writes respect approval; nothing is faked.
+      </p>
+
+      {/* Push to Jira */}
+      <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
+        <input
+          type="text"
+          value={jiraKey}
+          onChange={(e) => setJiraKey(e.target.value)}
+          placeholder="Jira project key (e.g. OPS)"
+          style={{ width: 220 }}
+        />
+        <button
+          className="btn"
+          disabled={busy !== null || !jiraKey.trim() || !hasStories}
+          onClick={() => post('jira', 'jira-push', { projectKey: jiraKey.trim() })}
+          title={hasStories ? 'Create Jira Epic + Story issues' : 'Add EPICs and stories first'}
+        >
+          {busy === 'jira' ? <span className="spin" /> : 'Push to Jira'}
+        </button>
+      </div>
+
+      {/* Hand off to GitHub */}
+      <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>
+        <input
+          type="text"
+          value={ghRepo}
+          onChange={(e) => setGhRepo(e.target.value)}
+          placeholder="GitHub repo (owner/repo)"
+          style={{ width: 220 }}
+        />
+        <button
+          className="btn ghost"
+          disabled={busy !== null || !ghRepo.trim()}
+          onClick={() => post('git', 'git-push', { repo: ghRepo.trim() })}
+          title="File a governed code hand-off issue on the target repo"
+        >
+          {busy === 'git' ? <span className="spin" /> : 'Push code to Git'}
+        </button>
+      </div>
+
+      {/* Import Claude Design */}
+      <div style={{ marginTop: 14 }}>
+        <label className="comp-label" style={{ fontSize: 12 }}>Import a Claude design → seed the frontend</label>
+        <textarea
+          value={design}
+          onChange={(e) => setDesign(e.target.value)}
+          rows={4}
+          placeholder="Paste Claude-generated frontend code (HTML / React)…"
+          style={{ width: '100%', marginTop: 4, fontFamily: 'var(--mono, monospace)', fontSize: 12 }}
+        />
+        <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
+          <span className="hint" style={{ margin: 0 }}>or a URL:</span>
+          <input
+            type="text"
+            value={designUrl}
+            onChange={(e) => setDesignUrl(e.target.value)}
+            placeholder="https://…"
+            style={{ width: 240 }}
+          />
+          <button
+            className="btn"
+            disabled={busy !== null || (!design.trim() && !designUrl.trim())}
+            onClick={() => post('import', 'import-design', design.trim() ? { code: design } : { url: designUrl.trim() })}
+          >
+            {busy === 'import' ? <span className="spin" /> : 'Seed frontend from this'}
+          </button>
+        </div>
+      </div>
+
+      {note ? (
+        <div className={note.tone === 'err' ? 'error' : 'answer'} style={{ marginTop: 12 }}>
+          {note.tone === 'warn' ? '⚠ ' : note.tone === 'ok' ? '✓ ' : '✗ '}{note.text}
+          {note.tone === 'err' && /connect/i.test(note.text) ? (
+            <> <Link className="sw-quiet-link" href="/connections">Open Connections →</Link></>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

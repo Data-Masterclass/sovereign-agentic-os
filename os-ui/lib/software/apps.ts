@@ -1059,6 +1059,17 @@ export async function getAppForUser(appId: string, user: CurrentUser): Promise<A
   return a;
 }
 
+/**
+ * Fetch an app AND assert the caller may EDIT it (owner or in-domain domain_admin+ —
+ * the same edit-scope `patchAppDesign` uses). Used by the Design-stage seed route so
+ * a mere viewer cannot write files into the app repo. Throws 404 (unseeable) / 403.
+ */
+export async function getEditableAppForUser(appId: string, user: CurrentUser): Promise<App> {
+  const a = await getAppForUser(appId, user);
+  if (!isOwnerOrAdminApp(a, user)) throw withStatus(new Error('Not permitted to edit this app'), 403);
+  return a;
+}
+
 // -------------------------------------------------------------------- Create ---
 
 export async function createApp(

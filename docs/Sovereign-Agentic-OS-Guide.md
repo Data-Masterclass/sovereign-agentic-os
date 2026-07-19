@@ -2,7 +2,7 @@
 title: "Sovereign Agentic OS"
 subtitle: "The governed, EU-sovereign operating system for data, knowledge, agents and software — where AI gets real, safe hands on your work."
 author: "Orchestrated by Data Masterclass · datamasterclass.com · www.sovereign-agentic.com"
-date: "Chart 0.2.11 (app 0.2.0-alpha.11 · os-ui 0.5.33) · generated {{DATE}} from commit {{GIT_COMMIT}}"
+date: "Chart 0.2.11 (app 0.2.0-alpha.11 · os-ui 0.5.61) · generated {{DATE}} from commit {{GIT_COMMIT}}"
 titlepage: true
 titlepage-rule-color: "c8a24a"
 toc: true
@@ -69,8 +69,12 @@ The Sovereign Agentic OS answers them structurally, with three ideas doing all t
    boundary. Default-deny egress means an agent has *no* raw internet unless you grant it.
 
 3. **Permissive open source, end to end.** Every bundled component is Apache-2.0 / MIT / BSD /
-   PostgreSQL licensed — full auditability, no proprietary lock-in, the right to host and
-   modify it forever. The core is **Apache-2.0**.
+   ISC-class licensed — full auditability, no proprietary lock-in, the right to host and modify
+   it forever. The core is **Apache-2.0**, and the permissive posture is *enforced*, not merely
+   promised: an automated **`check:licenses`** gate (`license-checker --onlyAllow`) rejects any
+   dependency outside a strictly permissive allowlist (MIT, Apache-2.0, ISC, BSD-2/3-Clause,
+   0BSD, and a few equivalents) — so no copyleft can slip in — with a CycloneDX SBOM
+   (`sbom.cdx.json`) and a full attribution manifest (`THIRD-PARTY-LICENSES.md`) alongside.
 
 ## Who it's for
 
@@ -109,6 +113,33 @@ metric, a connection, a dashboard — is an **artifact** with the same four attr
 > **Create → Document → Use → Promote** — authored in the UI (which scaffolds the *real* tool
 > underneath: a dbt model, a Cube metric, a Forgejo repo, a KServe service), preview-first,
 > cataloged and audited.
+
+## One Builder Framework — every build tab reads the same
+
+Creating any non-trivial artifact happens in a **staged builder**, and every builder is the
+*same* shape (one core primitive — `lib/core/stages.ts` + `components/core/StageShell.tsx`).
+Learn the Agents builder and you can drive the Data, Metrics, Dashboards, Software and Science
+builders, because they all share four traits:
+
+- **A numbered five-stage flow** with a stepper rail. Each tab names its own five stages, but
+  the machinery is identical: **Agents** — Define · Design · Build · Run · Evaluate; **Data** —
+  Ingest · Define · Harmonize · Validate · Publish; **Metrics** — Define · Refine · Preview ·
+  Publish · Monitor; **Dashboards** — Define · Design · Build · View · Govern; **Software** —
+  Define · Design · Build · Preview · Operate; **Science** — Define · Train · Deploy · Predict ·
+  Monitor.
+- **Honest, gated navigation.** A stage is reachable only when its precondition is met (you
+  can't Harmonize to Gold before Silver exists), and a stage shows a ✓ only when you completed
+  it *this session* **and** its live condition still holds — a ✓ clears the moment you invalidate
+  it. A fresh artifact opens on its first incomplete stage with **no** pre-marked checks. No
+  faked green.
+- **A per-stage assistant.** The Sovereign-OS AI helper on the right of the rail is scoped to
+  the *current* stage — it knows you're defining a metric, or harmonizing a Gold join — and, like
+  every assistant, it acts through the same governed tools.
+- **Simple ⇄ Developer, and lifecycle-in-header.** A **Simple** view keeps the guided flow calm
+  and NL-first; a **Developer** view exposes the raw technical surface (the dbt SQL, the Cube
+  YAML, the repo tree). The artifact's name, visibility badge and lifecycle controls (Archive ·
+  Restore · Delete · Promote) live in a **persistent header** above the stages, always reachable
+  mid-flow.
 
 ## The sharing ladder
 
@@ -228,27 +259,50 @@ there.
 - **Files — a calm governed drive.** Any unstructured file — documents, images, audio, video —
   uploaded and auto-indexed (parse → embed → hybrid OpenSearch) so agents can search and cite
   it. Governed exactly like Data; *"Use as"* distils a file into Knowledge or Data.
-- **Data — datasets, refined and governed.** Turn a plain-language flow — refine a dataset
-  **Bronze → Silver → Gold**, then share it — into real governed artifacts (a dlt pipeline,
-  dbt models, a Cube cube), with no YAML. Then **Talk to your data**: governed NL→SQL, one
-  validated read-only `SELECT`, executed under your row filters.
+- **Data — datasets, refined and governed.** A five-stage medallion builder turns a
+  plain-language flow into real governed artifacts (a dlt pipeline, dbt models, a Cube cube),
+  with no YAML: **Ingest** (land a file as a Bronze Iceberg table) · **Define** (document the
+  columns, clean and conform to Silver) · **Harmonize** (join into a Gold business mart) ·
+  **Validate** (quality checks + lineage) · **Publish** (metrics, Talk-to-Data, and sharing).
+  The **Validate** stage is a real data-quality gate: author dropdown-driven rule checks
+  (`not_null`, `not_blank`, `unique`, `accepted_values`, `range`) that compile to SQL and run
+  *for real* against the built table, get a 0–100 **health score** and a passing/failing badge
+  (honestly `unknown`, never a fake pass, when nothing ran), let the OS **suggest rules from the
+  column profile**, and watch three heuristic **monitors** — freshness, row-volume and schema
+  stability — that learn each dataset's normal band from its own run history. Then **Talk to your
+  data**: governed NL→SQL, one validated read-only `SELECT`, executed under your row filters. A
+  **Developer** view exposes the raw dbt SQL and the physical table behind the guided flow.
 - **Connections — governed bridges to outside systems.** A Connection is `credentials +
   endpoint + a set of governed tools`, never a raw pipe — used to bring data in and to expose
   external APIs/MCPs as tools. You grant **use**, never the token; **reads are automatic, writes
   are approval-gated** (destructive ops blocked), and secrets are write-only. The Supported
-  Connectors gallery is **grouped by type and searchable**, and the real catalogue now spans:
+  Connectors gallery is **grouped by vendor stack** (Microsoft · Google · AWS · Databricks ·
+  Snowflake · Salesforce · Atlassian · Open source · Other) and searchable. When nothing in the
+  gallery fits, a **Custom Connector** lets you add your own **REST/GraphQL API** or **MCP
+  server** in one governed action: you name it, give the base URL and a write-only credential,
+  and the OS **atomically files the egress-allowlist request** for that host — reads auto-allow,
+  writes stay off until you enable them per-tool, and the far-side host cannot be reached until an
+  Administrator approves the egress. The real catalogue now spans:
   **operational databases** (PostgreSQL · MySQL · SQL Server · MongoDB, federated through central
   Trino); **code & DevOps** (GitHub); **docs & knowledge** (Notion, Atlassian); a Supabase
   connector; **messaging & calendar** (Slack · Gmail · Google Calendar · Outlook · Teams —
   sending a message or email is always approval-gated, never automatic); **cloud governance /
   ML** (Microsoft Entra · Purview · Azure AI Foundry · AWS SageMaker, read-only); plus the
   established data-ingest (Google Drive / OneDrive), orchestration (Airflow) and catalog
-  (OpenMetadata) connectors. Setting up the OAuth app / tokens on the far side is the
-  **operator's step** (each connector ships an install guide). For teams already running a
-  lakehouse elsewhere, an admin-enabled **external-warehouse** connector federates it through
-  central Trino as a governed catalog — AWS Glue/Athena, Snowflake, BigQuery, Databricks/Delta,
-  and (experimental) Microsoft Fabric/OneLake — so you can query it in place under the same OPA
-  path, or import a core table as a governed data product into the sovereign lakehouse.
+  (**OpenMetadata**, read/discover of a customer's existing catalog, DLS-clamped to the tables
+  the caller may already see — and now **active-only**: when you archive an OS dataset the
+  integration best-effort **soft-deletes** its OpenMetadata entity, and unarchiving restores it,
+  so the catalog reflects what's live rather than accumulating ghosts) connectors. Setting up
+  the OAuth app / tokens on the far side is the **operator's step** (each connector ships an
+  install guide). For teams already running a lakehouse elsewhere, an admin-enabled
+  **external-warehouse** connector federates it through central Trino as a governed catalog —
+  AWS Glue/Athena, Snowflake, BigQuery, Databricks/Delta, and (experimental) Microsoft
+  Fabric/OneLake — so you can query it in place under the same OPA path, or import a core table
+  as a governed data product into the sovereign lakehouse. And for BI on your own desktop, a
+  **one-click Power BI** button downloads a `.pbids` file that drops Power BI Desktop straight
+  into the pre-filled PostgreSQL connector for the **Cube SQL API** — connecting as the
+  `bi_<domain>` principal in **DirectQuery** mode, so per-domain row security re-runs on every
+  query and no password is ever written into the file.
 - **Metrics — one number, everywhere.** The KPI semantic layer. Define "Revenue" once and it
   resolves to the *same* number in the explorer, in dashboards, and in an agent's `metrics`
   tool — each under the viewer's own row-level security.
@@ -296,15 +350,26 @@ honestly rather than inventing an answer when retrieval comes back empty.
   offers a **"Download PDF Results Report"**; **Evaluate** attributes context per agent and offers
   a **"Download PDF Evaluation Report"** — both fully brand-styled (gold-lotus cover, embedded
   datamasterclass fonts). Every call routes through **LiteLLM → OPA → Langfuse**.
-- **Software — build governed apps, sovereign.** Describe an app in a Claude-style build chat;
-  the agent writes and commits code to an in-cluster **Forgejo** repo (no GitHub, no tokens,
-  your code never leaves), behind a live progress stepper (Scaffold → Build image → Publish →
-  Deploy → Live). An app can **declare its surface** — `surface: ui | api | both` in `app.yaml`
-  (or via `create_software`), which wins over auto-detection, so a Streamlit/Gradio/Flask UI is
-  never mislabelled "API." *Request deploy* assembles a review card — security scan, resource
-  envelope, diff — that a human Builder decides; on approve the in-cluster runner provisions a
-  real Deployment + Service + Ingress with a live per-app URL. Apps carry the same lifecycle as
-  every other tab — a **Show-archived** toggle and **Archive → Restore / Delete**.
+- **Software — a governed frontend over the OS API.** An app here isn't a black box you bolt on
+  — it's a first-class client of the OS itself. It moves through the shared five-stage builder —
+  **Define** (state the purpose and grant the app its context) · **Design** (epics + user
+  stories) · **Build** (the AI plans, then writes and commits code, showing you a real
+  before/after **file diff** per run — and each Build run can **target a specific story**) ·
+  **Preview** (a live in-cluster pod) · **Operate** (the deployed app plus its live tool
+  surface). New apps scaffold from **`vite-os`** — a Vite + React + TypeScript SPA that boots
+  *in the OS design*: it vendors **`@sovereign-os/ui`** (the gold-on-black AppShell and `.sb-*`
+  primitives, no build step, no registry) and calls back into the platform through the
+  **OS-client SDK** (`@sovereign-os/app-sdk` — `createOsClient().whoami()`, `.datasets.list()`,
+  `.metrics`, `.knowledge`), so a brand-new app already renders *real governed data* under the
+  signed-in user's own row security, with login handled by the OS session. Code commits to an
+  in-cluster **Forgejo** repo (no GitHub, no tokens, your code never leaves). An app can still
+  **declare its surface** — `surface: ui | api | both` in `app.yaml`, which wins over
+  auto-detection so a Streamlit/Gradio/Flask UI is never mislabelled "API." *Request deploy*
+  assembles a review card — a security scan of the **live repo tree**, resource envelope, diff —
+  that a human Builder decides; on approve the in-cluster runner provisions a real
+  Deployment + Service + Ingress with a live per-app URL (a `vite-os` app publishes as **static**
+  files served by nginx). Apps carry the same lifecycle as every other tab — **Archive →
+  Restore / Delete**.
 - **Science — classic ML** *(opt-in, Layer 4)*. Take traditional ML (regression, forecasting,
   clustering — *not* LLMs) from a governed data product to a deployed model-as-service, exposed
   as both a REST `predict` API and a `predict` MCP tool. Off by default; GPU is cost-gated.
@@ -319,11 +384,19 @@ honestly rather than inventing an answer when retrieval comes back empty.
 - **Governance** *(Builder+)* — the control plane: one Approvals inbox for every side-effectful
   action, the consolidated policy view, the hash-chained audit, cost caps, and Users & access.
 - **Monitoring** *(Builder+)* — artifact observability: trace runs (Langfuse), watch spend vs.
-  caps, and surface pipeline + model drift — scoped to your identity, strictly read-only.
+  caps, and surface pipeline + model drift — scoped to your identity, strictly read-only. It also
+  rolls up **data quality** across your datasets: a risk-ranked board (riskiest first) built from
+  the same quality-run history, a domain health average, and an honest count of datasets that have
+  **never been checked** — surfaced as a gap, not painted green.
 - **Console** *(Builder+)* — the governed **Query** surface: Lakehouse SQL runs through Trino
   under the caller's own OPA row/document-level security, so a builder can explore data safely.
   The **raw Shell** and the unscoped Cube query mode stay **admin-only** (in the UI *and* the
-  API).
+  API). For developers who'd rather stay in their own terminal, the same governed door is a CLI:
+  **`sos`** (`cli/sos/`, Phase 0) is a thin Go client that signs in with OAuth 2.1 PKCE and then
+  runs `whoami`, `datasets list` / `get`, and `query "<NL or SQL>"` (or `--metric`) — **every
+  call over the OS MCP front door, as you**, with role, domains, OPA and row/document security
+  re-resolved live on the server. It holds only a short-lived token in your OS keychain; there is
+  no privileged side-channel.
 - **Components** *(Admin)* — the one operator surface: every platform service with live health
   and version, and one-click same-origin consoles (Superset, Forgejo, Dagster, …) via SSO.
 - **Admin** *(Builder+, filtered)* — the tenant control room (domains, users, models, egress,
@@ -352,18 +425,26 @@ Meet **Mara**, a Creator in the `sales` domain. She has a `campaign_master.csv`.
 2. **Clean it (Silver).** She presses *Turn into Silver* with guided ops (cast types, drop
    dupes, set the key). The OS compiles **one** allowlisted CTAS into her schema and runs it
    as her — OPA masks every read.
-3. **Make it ready (Gold).** *Turn into Gold* joins the campaign, margin and CAC datasets on a
+3. **Harmonize (Gold).** *Turn into Gold* joins the campaign, margin and CAC datasets on a
    reconciled key. On success the Gold **auto-registers as a Cube model**.
-4. **Document & promote.** Documentation is the gate: Mara adds a description and a tag, then
+4. **Validate — quality & lineage.** In the **Validate** stage Mara authors a few checks
+   (`not_null` on the key, `unique` on the campaign id, an `accepted_values` list for `channel`,
+   a `range` on `spend`) — or lets the OS **suggest them from the column profile** — and runs
+   them for real against the Gold table. She gets a **health score** and a passing badge, plus
+   freshness/volume/schema **monitors** that will flag the table if its next load arrives late,
+   comes in thin, or changes shape. The lineage graph shows exactly where the Gold came from.
+5. **Document & promote.** Documentation is the gate: Mara adds a description and a tag, then
    files a promotion request. She's a Creator — she *cannot* approve her own work.
-5. **A Builder approves — and the publish runs.** **Ben**, a Builder in `sales`, approves.
+6. **A Builder approves — and the publish runs.** **Ben**, a Builder in `sales`, approves.
    The approval independently verifies the physical gold materialized in the domain schema
    (`iceberg.sales.gold_campaign`), then flips the tier and writes the audit.
-6. **One number, everywhere.** In **Metrics**, `revenue`, `aov`, `conversion_rate` and
+7. **One number, everywhere.** In **Metrics**, `revenue`, `aov`, `conversion_rate` and
    `churn_rate` now resolve on the Gold cube, sliceable by `region`, `product` and `date` — no
    SQL. Anyone who asks "what's revenue?" — a dashboard, an agent, the explorer — gets the same
-   answer, under their own row filters.
-7. **Talk to it.** Mara opens **Talk to your data** and asks a plain-English question. The
+   answer, under their own row filters. (These metrics resolve *reliably* now: Cube recompiles
+   deterministically whenever a model is written, so a freshly-promoted cube is queryable
+   without a restart — see *The lakehouse & semantic layer*.)
+8. **Talk to it.** Mara opens **Talk to your data** and asks a plain-English question. The
    model is shown only datasets she can see, generates one validated read-only `SELECT`,
    executes it through governed Trino under her masks, and answers grounded only in the
    returned rows.
@@ -572,7 +653,11 @@ durable relational-JDBC metastore (so the warehouse registration survives restar
 **MinIO** keeps the data files on a PVC. Above the lakehouse, **Cube** is the semantic layer:
 a promoted Gold dataset auto-registers as a queryable Cube model, and a `define_metric` call
 adds named measures — so "revenue" has one definition that BI, agents and the explorer all
-resolve identically.
+resolve identically. Cube picks up new and changed models **deterministically**: its
+`schemaVersion()` hashes every model file's name and bytes, so any add/edit/remove flips the
+hash and triggers a lazy, per-context recompile on the next query — replacing dev-mode's
+file-watcher, which never saw the model-sync sidecar's cross-container writes. A freshly promoted
+metric therefore resolves reliably, without a Cube restart.
 
 ## Models & the gateway
 
@@ -873,35 +958,51 @@ by living inside it.
 ## Status — what's live, what's next
 
 The governance spine — OPA, approvals, RLS, promote ladders, roles, audit, MCP (live end-to-end
-at `/api/mcp`), auth, Knowledge, and the physical Data pipeline (upload → Bronze → Silver →
-Gold → publish-on-approval → Cube → Talk to your data) — is **fully live**. Layers 1–3 are in
-place; **Science (Layer 4)** is an integrated model-as-a-service tab (list → detail → **predict** →
-promote → lifecycle) wrapping a live KServe `predict` model, with the raw MLflow/Featureform/
-JupyterHub/KServe consoles as a Developer escape hatch. **Software** apps build a real container
-image in-cluster (Forgejo CI) and deploy to a live per-app URL — end-to-end, no external registry.
-**Dashboards** embed governed Superset **live and same-origin** with a viewer-scoped guest token.
-The OS UI is v1.0: every sidebar tab is a real, brand-themed surface with light/dark theming.
+at `/api/mcp`), auth, Knowledge, and the physical Data pipeline (Ingest → Define → Harmonize →
+Validate → Publish, i.e. upload → Bronze → Silver → Gold, with real data-quality checks +
+freshness/volume/schema monitors at Validate, then publish-on-approval → Cube → Talk to your
+data) — is **fully live**. Every build tab now shares **one staged Builder Framework** (five
+numbered stages, honest gating, a per-stage assistant, Simple/Developer views, lifecycle in the
+header). Layers 1–3 are in place; **Science (Layer 4)** is an integrated model-as-a-service tab
+(Define → Train → Deploy → Predict → Monitor) wrapping a live KServe `predict` model, with the
+raw MLflow/Featureform/JupyterHub/KServe consoles as a Developer escape hatch. **Software** is now
+a *governed frontend over the OS API*: new apps scaffold from `vite-os` — a Vite/React SPA that
+boots in the OS design (`@sovereign-os/ui`) and calls back through the OS-client SDK
+(`@sovereign-os/app-sdk`) under the signed-in user's own security — with AI Plan/Build showing
+real per-run file diffs, story-targeted builds, live preview, and a Builder-reviewed deploy that
+scans the live repo tree; they build a real image in-cluster (Forgejo CI) or publish static, and
+deploy to a live per-app URL. **Dashboards** embed governed Superset **live and same-origin** with
+a viewer-scoped guest token. A developer **`sos` CLI** (Phase 0) brings the same governed door to
+your own terminal. The OS UI is v1.0: every sidebar tab is a real, brand-themed surface with
+light/dark theming.
 
 **Connections** federate the outside world through one governed door: the tab lists connections
-(All/My/Domain/Company, with app-generated MCP connections folded in), a **grouped, searchable
-Supported Connectors** gallery, and **Talk to Connectors**. The catalogue spans **operational
-databases** (PostgreSQL · MySQL · SQL Server · MongoDB via Trino), **code & DevOps** (GitHub),
-**docs & knowledge** (Notion · Atlassian), **Supabase**, **messaging & calendar** (Slack · Gmail ·
-Google Calendar · Outlook · Teams — reads auto, sending approval-gated and never automatic),
-**cloud governance / ML** (Microsoft Entra · Purview · Azure AI Foundry · AWS SageMaker,
-read-only), data-ingest (Google Drive / OneDrive), the medallion **layer choice** on agent data
-grants, an admin-enabled **external-warehouse connector** (federate AWS Glue/Athena · Snowflake ·
-BigQuery · Databricks/Delta, plus experimental Fabric/OneLake, through Trino — discover → register
-→ import, no YAML), **Power BI** consumption via Cube's SQL API with a per-domain BI principal, an
-**Apache Airflow** connector (governed `trigger_dag`/monitor), and **OpenMetadata** (read/discover
-of a customer's existing catalog as a Connection). Secrets are write-only; setting up each
+(All/My/Domain/Company, with app-generated MCP connections folded in), a **vendor-stack-grouped,
+searchable Supported Connectors** gallery (Microsoft · Google · AWS · Databricks · Snowflake ·
+Salesforce · Atlassian · Open source · Other), a **Custom Connector** for your own REST/GraphQL
+API or MCP server (one action creates the connection *and* files the egress request), and **Talk
+to Connectors**. The catalogue spans **operational databases** (PostgreSQL · MySQL · SQL Server ·
+MongoDB via Trino), **code & DevOps** (GitHub), **docs & knowledge** (Notion · Atlassian),
+**Supabase**, **messaging & calendar** (Slack · Gmail · Google Calendar · Outlook · Teams — reads
+auto, sending approval-gated and never automatic), **cloud governance / ML** (Microsoft Entra ·
+Purview · Azure AI Foundry · AWS SageMaker, read-only), data-ingest (Google Drive / OneDrive), the
+medallion **layer choice** on agent data grants, an admin-enabled **external-warehouse connector**
+(federate AWS Glue/Athena · Snowflake · BigQuery · Databricks/Delta, plus experimental
+Fabric/OneLake, through Trino — discover → register → import, no YAML), **one-click Power BI**
+(a `.pbids` file into Cube's Postgres-wire SQL API, DirectQuery, as the per-domain `bi_<domain>`
+principal so per-domain RLS re-runs on every query — no embedded password), an **Apache Airflow**
+connector (governed `trigger_dag`/monitor), and **OpenMetadata** (read/discover of a customer's
+existing catalog as a Connection, DLS-clamped and **active-only** — archiving an OS dataset
+soft-deletes its catalog entity, unarchiving restores it). Secrets are write-only; setting up each
 connector's OAuth app / tokens is the operator's step (every connector ships an install guide).
 External connectors are off by default and validated against a live source with your own credentials.
 
 Shipped as explicitly-labeled Phase-1 slices (their next phases need new infra or your cloud
-credentials): Science's guided-train + real training runtime, OpenMetadata scoped write-back, a
-generic custom-API/MCP connector, and true per-viewer Power-BI RLS. The full, versioned history is in
-`CHANGELOG.md`.
+credentials): Science's guided-train + real training runtime, OpenMetadata scoped write-back, and
+true per-viewer Power-BI RLS (today's Power BI path enforces per-*domain* RLS via the `bi_<domain>`
+principal). The developer **`sos` CLI** is Phase 0 (login · whoami · datasets · query); its
+roadmap (typed REST, device-code auth, signed-binary distribution, git-through-policy) is in
+`cli/sos/ROADMAP.md`. The full, versioned history is in `CHANGELOG.md`.
 
 ---
 
