@@ -6,6 +6,8 @@ import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { getDataset, addCheck, removeCheck, builtLayerFqn } from '@/lib/data/store';
 import { queryRun } from '@/lib/infra/governed';
 import { runQualityChecks } from '@/lib/data/dq-run';
+import { healthScore } from '@/lib/data/dq';
+import { ensureHydrated, recordRun } from '@/lib/data/dq-results';
 import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/data';
 
 export const dynamic = 'force-dynamic';
@@ -63,7 +65,23 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         // preview/profile surfaces use, so OPA governs exactly what the owner may read.
         queryFn: (sql) => queryRun(sql, resolved?.principal),
       });
-      return NextResponse.json(report);
+      // Honest 0–100 health from the per-rule verdicts (null when nothing ran).
+      const health = healthScore(report.results);
+      // Persist this run to the durable time-series (health score + trend + history).
+      // Best-effort: a mirror hiccup must never fail the run the user just did.
+      try {
+        await ensureHydrated();
+        recordRun({
+          datasetId: id,
+          ranAt: report.ranAt,
+          badge: report.badge,
+          healthScore: health.score,
+          results: report.results,
+          ranBy: user.id,
+          domain: dataset.domain,
+        });
+      } catch { /* durability is additive — the live report is still returned */ }
+      return NextResponse.json({ ...report, health });
     }
 
     // ── Add a check (structured rule or legacy free-text) ──

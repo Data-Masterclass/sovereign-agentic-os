@@ -152,3 +152,55 @@ export function aggregateBadge(results: CheckResult[]): QualityBadge {
   if (results.some((r) => r.status === 'pass')) return 'passing';
   return 'unknown';
 }
+
+// ---------------------------------------------------------------- health score --
+
+export type HealthScore = {
+  /** 0–100 pass-rate over the rules that actually ran; null when nothing ran. */
+  score: number | null;
+  /** Honest status — 'unknown' when no rule produced a verdict (never a fake 100). */
+  status: QualityBadge;
+  /** The counts that produced the score, for the summary line. */
+  passing: number;
+  failing: number;
+  notRun: number;
+};
+
+/**
+ * A single glanceable 0–100 health score from a run's per-rule results.
+ *
+ * Honesty first: it is computed ONLY over rules that produced a verdict (pass/fail).
+ * `not_run` rules never inflate or deflate the number — they are surfaced separately.
+ * When NOTHING ran (all not_run, or no rules) the score is `null` and status is
+ * `unknown` — never a fabricated 100.
+ *
+ * A failing rule is weighted by *how much* it fails: its per-rule contribution is the
+ * fraction of clean rows (1 − violations/rows) when `rows` is known, so one violating
+ * row in a million doesn't collapse the score the way a hard 0 would — but a rule that
+ * fails and whose row-count is unknown still contributes 0 (fail is never a pass). The
+ * score is the mean per-rule contribution × 100, floored so a real failure can never
+ * read as a perfect 100.
+ */
+export function healthScore(results: CheckResult[], rowCount?: number | null): HealthScore {
+  const passing = results.filter((r) => r.status === 'pass').length;
+  const failing = results.filter((r) => r.status === 'fail').length;
+  const notRun = results.filter((r) => r.status === 'not_run').length;
+  const ran = passing + failing;
+  if (ran === 0) return { score: null, status: 'unknown', passing, failing, notRun };
+
+  const rows = typeof rowCount === 'number' && rowCount > 0 ? rowCount : null;
+  let sum = 0;
+  for (const r of results) {
+    if (r.status === 'pass') { sum += 1; continue; }
+    if (r.status === 'fail') {
+      // Clean-row fraction when we know the table size; else a bare 0 (fail ≠ pass).
+      const v = typeof r.violations === 'number' ? r.violations : null;
+      sum += rows && v !== null ? Math.max(0, 1 - v / rows) : 0;
+    }
+    // not_run contributes nothing to the numerator AND is excluded from `ran`.
+  }
+  const raw = (sum / ran) * 100;
+  // A real failure must never round up to a perfect 100.
+  const score = failing > 0 ? Math.min(99, Math.floor(raw)) : Math.round(raw);
+  return { score, status: aggregateBadge(results), passing, failing, notRun };
+}

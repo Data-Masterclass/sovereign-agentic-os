@@ -37,6 +37,12 @@ type DataCheck = {
 type CheckStatus = 'pass' | 'fail' | 'not_run';
 type CheckResult = { id: string; label: string; status: CheckStatus; violations: number | null; reason?: string };
 type QualityBadge = 'passing' | 'failing' | 'unknown';
+/** Health score payload — mirrors HealthScore from lib/data/dq. */
+type HealthScore = { score: number | null; status: QualityBadge; passing: number; failing: number; notRun: number };
+/** One persisted run's health point — mirrors healthTrend from lib/data/dq-results. */
+type TrendPoint = { ranAt: string; score: number | null; badge: QualityBadge };
+/** A deterministic profile→rule proposal — mirrors SuggestedCheck from lib/data/dq-suggest. */
+type SuggestedCheck = { rule: DataCheckRule; column: string; values?: string[]; min?: number; max?: number; evidence: string };
 type Certification = { level: string; by: string; at: string };
 /** Promotion gate + in-flight request — mirrors the promote route's GET payload. */
 type Gate = { ok: boolean; missing: string[] };
@@ -54,6 +60,49 @@ const RULE_LABELS: Record<DataCheckRule, string> = {
   range: 'In range',
 };
 const RULE_KINDS = new Set<DataCheckRule>(['not_null', 'not_blank', 'unique', 'accepted_values', 'range']);
+
+/** A human, exception-first label for a suggested check (Apple-simple, no jargon). */
+function suggestionText(s: SuggestedCheck): string {
+  switch (s.rule) {
+    case 'not_null': return `${s.column} is never empty`;
+    case 'not_blank': return `${s.column} is never blank`;
+    case 'unique': return `${s.column} is unique`;
+    case 'accepted_values': return `${s.column} is one of {${(s.values ?? []).join(', ')}}`;
+    case 'range': return `${s.column} is in range ${s.min ?? '−∞'}–${s.max ?? '∞'}`;
+    default: return s.column;
+  }
+}
+
+/**
+ * A tiny inline health-trend sparkline over the persisted runs. Pure SVG, no deps. A run
+ * that measured nothing (score null) is drawn as a gap, never a fake 0 — the honesty
+ * contract, visualised. Colour tracks the latest badge.
+ */
+function Sparkline({ points }: { points: TrendPoint[] }) {
+  const scored = points.filter((p) => typeof p.score === 'number') as { ranAt: string; score: number; badge: QualityBadge }[];
+  if (scored.length < 2) return null;
+  const w = 120, h = 28, pad = 3;
+  const n = points.length;
+  const x = (i: number) => pad + (n === 1 ? 0 : (i / (n - 1)) * (w - 2 * pad));
+  const y = (v: number) => pad + (1 - v / 100) * (h - 2 * pad);
+  // One polyline segment per contiguous run of scored points (a null breaks the line).
+  const segments: string[] = [];
+  let cur: string[] = [];
+  points.forEach((p, i) => {
+    if (typeof p.score === 'number') cur.push(`${x(i).toFixed(1)},${y(p.score).toFixed(1)}`);
+    else { if (cur.length) segments.push(cur.join(' ')); cur = []; }
+  });
+  if (cur.length) segments.push(cur.join(' '));
+  const last = points[points.length - 1]?.badge ?? scored[scored.length - 1].badge;
+  const stroke = last === 'failing' ? 'var(--danger, #d64545)' : last === 'passing' ? 'var(--ok, #2e9e6b)' : 'var(--muted, #999)';
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label="Health trend" style={{ display: 'block' }}>
+      {segments.map((pts, i) => (
+        <polyline key={i} points={pts} fill="none" stroke={stroke} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+      ))}
+    </svg>
+  );
+}
 
 /** The dbt-style label the editor shows for a stored rule. */
 function ruleText(c: DataCheck): string {
@@ -238,6 +287,12 @@ export default function DataBuilder({
   const [ranAt, setRanAt] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [runErr, setRunErr] = useState('');
+  // ---- health score + persisted trend + profile-driven suggestions (Validate) ----
+  const [health, setHealth] = useState<HealthScore | null>(null);
+  const [trend, setTrend] = useState<TrendPoint[]>([]);
+  const [suggestions, setSuggestions] = useState<SuggestedCheck[]>([]);
+  const [suggestBusy, setSuggestBusy] = useState(false);
+  const [acceptingAll, setAcceptingAll] = useState(false);
 
   // ---- row preview (governed SELECT * LIMIT 50) ----
   const [preview, setPreview] = useState<RowPreview | null>(null);
@@ -404,6 +459,58 @@ export default function DataBuilder({
     } catch { /* leave the row — a failed delete never fabricates state */ }
   }, [datasetId]);
 
+  // Load the Validate DQ surface: persisted health trend + latest run + the deterministic
+  // profile→rule suggestions. Governed + read-only; a miss degrades to empty, never faked.
+  const loadDq = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/data/datasets/${datasetId}/dq`, { cache: 'no-store' });
+      if (!res.ok) return; // no DQ surface (not materialised / not a viewer) — stay quiet
+      const data = await res.json();
+      setSuggestions((data.suggestions ?? []) as SuggestedCheck[]);
+      setTrend((data.trend ?? []) as TrendPoint[]);
+      const latest = data.latest as { badge?: QualityBadge; healthScore?: number | null; ranAt?: string } | null;
+      // Seed the header from the last persisted run so re-opening shows the real state,
+      // not a blank — without claiming a fresh run happened.
+      if (latest && !ranAt) {
+        if (typeof latest.healthScore !== 'undefined') setHealth((h) => h ?? { score: latest.healthScore ?? null, status: latest.badge ?? 'unknown', passing: 0, failing: 0, notRun: 0 });
+        if (latest.badge && !badge) setBadge(latest.badge);
+        if (latest.ranAt) setRanAt((r) => r ?? latest.ranAt!);
+      }
+    } catch { /* the surface is additive — the editor + Run still work */ }
+  }, [datasetId, ranAt, badge]);
+  useEffect(() => { void loadDq(); }, [loadDq]);
+
+  // Accept ONE suggested check through the governed POST /checks path (same gate the
+  // manual editor uses), then drop it from the list.
+  const acceptSuggestion = useCallback(async (s: SuggestedCheck) => {
+    setSuggestBusy(true);
+    try {
+      const extra: { values?: string[]; min?: number; max?: number } = {};
+      if (s.rule === 'accepted_values' && s.values) extra.values = s.values;
+      if (s.rule === 'range') { if (typeof s.min === 'number') extra.min = s.min; if (typeof s.max === 'number') extra.max = s.max; }
+      await addRuleWith(s.rule, s.column, extra);
+      setSuggestions((prev) => prev.filter((x) => !(x.rule === s.rule && x.column === s.column)));
+    } finally {
+      setSuggestBusy(false);
+    }
+  }, [addRuleWith]);
+
+  // Accept every suggestion (idempotent — the route dedupes; the list clears as each lands).
+  const acceptAllSuggestions = useCallback(async () => {
+    setAcceptingAll(true);
+    try {
+      for (const s of suggestions) {
+        const extra: { values?: string[]; min?: number; max?: number } = {};
+        if (s.rule === 'accepted_values' && s.values) extra.values = s.values;
+        if (s.rule === 'range') { if (typeof s.min === 'number') extra.min = s.min; if (typeof s.max === 'number') extra.max = s.max; }
+        await addRuleWith(s.rule, s.column, extra);
+      }
+      setSuggestions([]);
+    } finally {
+      setAcceptingAll(false);
+    }
+  }, [suggestions, addRuleWith]);
+
   const runChecks = useCallback(async () => {
     setRunErr(''); setRunning(true);
     try {
@@ -417,12 +524,14 @@ export default function DataBuilder({
       setResults(byId);
       setBadge(data.badge ?? 'unknown');
       setRanAt(data.ranAt ?? null);
+      if (data.health) setHealth(data.health as HealthScore);
+      void loadDq(); // refresh the persisted trend + re-derived suggestions after a run
     } catch (e) {
       setRunErr((e as Error).message);
     } finally {
       setRunning(false);
     }
-  }, [datasetId]);
+  }, [datasetId, loadDq]);
 
   // Governed 50-row preview — the SAME OPA-checked read path.
   const loadPreview = useCallback(async () => {
@@ -530,6 +639,23 @@ export default function DataBuilder({
         <span className={`badge ${TIER_BADGE[dataset.tier]}`}>{TIER_WORD[dataset.tier]}</span>
         <span className="muted" style={{ fontSize: 13 }}>{dataset.owner} · {dataset.domain}</span>
         {dataset.tier !== 'dataset' ? <DomainTag domain={dataset.domain} /> : null}
+        {/* Lifecycle (Archive/Restore/Delete/Versions) lives in the persistent detail header so
+            it is reachable from ANY stage — not buried in Publish. Governance unchanged (canEdit). */}
+        {canEdit ? (
+          <div style={{ marginLeft: 'auto' }}>
+            <LifecycleActions
+              id={dataset.id}
+              name={dataset.name}
+              kind="dataset"
+              visibility={lcVis(dataset.tier)}
+              archived={!!dataset.archived}
+              api={`/api/data/datasets/${dataset.id}`}
+              onChanged={() => { if (dataset.archived) onBack(); else void load(); }}
+              showVersions
+              compact
+            />
+          </div>
+        ) : null}
       </div>
 
       <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 18 }}>
@@ -592,8 +718,15 @@ export default function DataBuilder({
           ) : st.id === 'validate' ? (
             <StageAssistant
               datasetId={dataset.id} stage="validate"
-              label="Suggest quality rules for the documented columns." cta="Suggest rules"
-              payload={() => ({ name: dataset.name, columns: colNames })}
+              label={suggestions.length ? 'Explain the checks suggested from the profile.' : 'Suggest quality rules for the documented columns.'}
+              cta={suggestions.length ? 'Explain suggestions' : 'Suggest rules'}
+              payload={() => ({
+                name: dataset.name,
+                columns: colNames,
+                // When we have deterministic profile→rule suggestions, hand them to the
+                // model as rendered lines so it explains WHY each matters (rationale layer).
+                ...(suggestions.length ? { suggestions: suggestions.map((s) => `${suggestionText(s)} — ${s.evidence}`) } : {}),
+              })}
             />
           ) : st.id === 'publish' ? (
             <StageAssistant
@@ -753,9 +886,61 @@ export default function DataBuilder({
         {/* ─────────────── Validate ─────────────── */}
         {stage.current === 'validate' ? (
           <div>
+            {/* Health — one glanceable 0–100 + trend, computed from real runs (honest 'unknown'
+                when nothing ran, never a fake 100). The exception (failing) is what shouts. */}
+            <div className="guided-panel" style={{ padding: '14px 18px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+                <span style={{ fontSize: 34, fontWeight: 700, lineHeight: 1, color: health && health.score !== null ? (health.status === 'failing' ? 'var(--danger, #d64545)' : health.status === 'passing' ? 'var(--ok, #2e9e6b)' : 'inherit') : 'var(--muted, #999)' }}>
+                  {health && health.score !== null ? health.score : '—'}
+                </span>
+                <span className="muted" style={{ fontSize: 13 }}>Health</span>
+              </div>
+              {trend.length >= 2 ? <Sparkline points={trend} /> : null}
+              <div className="muted" style={{ fontSize: 13, display: 'flex', gap: 14, flexWrap: 'wrap', marginLeft: 'auto', alignItems: 'center' }}>
+                {health ? (
+                  <>
+                    <span>✔ {health.passing} passing</span>
+                    <span style={{ color: health.failing > 0 ? 'var(--danger, #d64545)' : undefined }}>✖ {health.failing} failing</span>
+                    <span>• {health.notRun} not run</span>
+                  </>
+                ) : <span>Not run yet</span>}
+                {ranAt ? <span title={`Last run ${formatDate(ranAt)}`}>⟳ {formatDate(ranAt)}</span> : null}
+              </div>
+            </div>
+
+            {/* Suggested checks — deterministic from the profile, each citing its evidence.
+                One-click Add, or Accept all. This is where "powerful" hides behind "simple". */}
+            {suggestions.length > 0 ? (
+              <div style={{ marginBottom: 16 }}>
+                <div className="section-title" style={{ marginTop: 0 }}>
+                  Suggested checks
+                  <span className="count-pill">{suggestions.length}</span>
+                  <span className="muted" style={{ fontSize: 12, marginLeft: 8, fontWeight: 400 }}>from the profile</span>
+                  {canEdit ? (
+                    <button className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={acceptAllSuggestions} disabled={acceptingAll || suggestBusy}>
+                      {acceptingAll ? <span className="spin" /> : 'Accept all'}
+                    </button>
+                  ) : null}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {suggestions.map((s) => (
+                    <div key={`${s.rule}:${s.column}`} className="guided-panel" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13.5 }}>{suggestionText(s)}</div>
+                        <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{s.evidence}</div>
+                      </div>
+                      {canEdit ? (
+                        <button className="btn sm" onClick={() => acceptSuggestion(s)} disabled={suggestBusy || acceptingAll}>Add</button>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             {/* Quality checks — author rules + run them for real against the built table. */}
             <div className="section-title" style={{ marginTop: 0 }}>
-              Quality checks
+              Your checks
               <span className="count-pill">{checks.length}</span>
               {badge ? (
                 <span className={`badge ${badge === 'passing' ? 'vis-shared' : badge === 'failing' ? 'vis-personal' : ''}`} style={{ marginLeft: 10 }} title={ranAt ? `Last run ${formatDate(ranAt)}` : undefined}>
@@ -957,23 +1142,6 @@ export default function DataBuilder({
               </div>
             ) : null}
             {shareErr ? <div className="error" style={{ marginTop: 8 }}>{shareErr}</div> : null}
-
-            {/* Lifecycle — Archive / Restore / Delete / Versions. */}
-            {canEdit ? (
-              <div style={{ marginTop: 24, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
-                <LifecycleActions
-                  id={dataset.id}
-                  name={dataset.name}
-                  kind="dataset"
-                  visibility={lcVis(dataset.tier)}
-                  archived={!!dataset.archived}
-                  api={`/api/data/datasets/${dataset.id}`}
-                  onChanged={() => { if (dataset.archived) onBack(); else void load(); }}
-                  showVersions
-                  compact
-                />
-              </div>
-            ) : null}
           </div>
         ) : null}
       </StageShell>

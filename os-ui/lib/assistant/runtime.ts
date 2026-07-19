@@ -243,6 +243,13 @@ export type RunTabAgentInput = {
   /** App/product-specific context appended below the tab CONTEXT.md. */
   extraContext?: string;
   maxIterations?: number;
+  /**
+   * Optional ALLOWLIST of tool names. When given, the model is only shown these
+   * tools AND the executor hard-rejects any other call — a real guarantee (not a
+   * prompt hint) used by the Software Build stage's Plan mode to run read-only
+   * (no `commit` / `request_deploy` / `start_preview` write path).
+   */
+  toolNames?: string[];
   /** Injected in tests; defaults to the live LiteLLM caller. */
   llm?: LlmCall;
 };
@@ -257,11 +264,22 @@ export async function runTabAgent(input: RunTabAgentInput): Promise<AgenticResul
   const injected = input.llm;
   const assistantId = injected ? config.litellmExecModel : resolveAssistantModelId();
   const ctx = modelContext(assistantId);
+  const allow = input.toolNames ? new Set(input.toolNames) : null;
+  const specs = allow
+    ? tabToolSpecs(input.user, input.tab).filter((t) => allow.has(t.name))
+    : tabToolSpecs(input.user, input.tab);
+  const baseExec = tabToolExecutor(input.user, input.tab);
+  const callTool = allow
+    ? async (name: string, args: Record<string, unknown>) =>
+        allow.has(name)
+          ? baseExec(name, args)
+          : { text: `Error: tool "${name}" is not available in this mode.`, isError: true }
+    : baseExec;
   return runAgentic({
     system: osSystem(input.tab, input.extraContext),
     userMessages: input.messages,
-    tools: tabToolSpecs(input.user, input.tab),
-    callTool: tabToolExecutor(input.user, input.tab),
+    tools: specs,
+    callTool,
     llm: injected ?? liteLlmCaller(),
     planModel: injected ? config.litellmReasoningModel : assistantId,
     actModel: assistantId,

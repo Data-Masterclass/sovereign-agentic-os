@@ -86,6 +86,12 @@ export type AppStory = {
   iWant: string;
   soThat: string;
   acceptance: string;
+  /**
+   * Lightweight per-story BUILD status (Software Build stage — story-targeted
+   * build). Optional + defaults to undefined (treated as 'todo') so pre-status
+   * apps load unchanged; set to 'done' when a Build run for this story completes.
+   */
+  status?: 'todo' | 'building' | 'done';
 };
 
 /**

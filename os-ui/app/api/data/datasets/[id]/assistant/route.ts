@@ -31,6 +31,11 @@ function promptFor(stage: Stage, body: Record<string, unknown>): { system: strin
   const columns = Array.isArray(body.columns) ? body.columns.filter((c): c is string => typeof c === 'string') : [];
   const reason = s(body.reason);
   const measures = Array.isArray(body.measures) ? body.measures.filter((m): m is string => typeof m === 'string') : [];
+  // Validate stage: the deterministic profile→rule suggestions the client already has,
+  // rendered as human-readable lines so the model explains WHY each is worth adding.
+  const suggestions = Array.isArray(body.suggestions)
+    ? body.suggestions.filter((x): x is string => typeof x === 'string')
+    : [];
 
   switch (stage) {
     case 'define':
@@ -57,9 +62,16 @@ function promptFor(stage: Stage, body: Record<string, unknown>): { system: strin
     case 'validate':
       return {
         json: false,
-        system:
-          'You advise a user on which data-quality rules to author for their dataset before promoting it. Given the column names, suggest 3-5 useful rules (not_null on identifiers, unique on a primary key, range on numeric bounds, accepted_values on categoricals). Keep it to a short paragraph plus a bullet list. Use only the provided columns.',
-        user: `Dataset: ${name || '(unnamed)'}\nColumns: ${columns.join(', ') || '(none)'}\nSuggest quality rules to author.`,
+        // When the client passes the deterministic profile→rule suggestions, the model's
+        // job is to EXPLAIN each in one plain sentence (the "rationale" layer over the
+        // rules-first suggestions) — it never invents new rules from thin air. With no
+        // suggestions it falls back to advising which rules to author from the columns.
+        system: suggestions.length
+          ? 'You help a business user understand data-quality checks suggested from their dataset\'s profile. For EACH suggested check given, write ONE short plain-language sentence explaining what it guards against and why the profile evidence justifies it. Do not invent checks beyond the ones provided. Return a short bulleted list, one bullet per suggested check, no preamble.'
+          : 'You advise a user on which data-quality rules to author for their dataset before promoting it. Given the column names, suggest 3-5 useful rules (not_null on identifiers, unique on a primary key, range on numeric bounds, accepted_values on categoricals). Keep it to a short paragraph plus a bullet list. Use only the provided columns.',
+        user: suggestions.length
+          ? `Dataset: ${name || '(unnamed)'}\nSuggested checks (from the profile):\n${suggestions.map((x) => `- ${x}`).join('\n')}\nExplain each in one plain sentence.`
+          : `Dataset: ${name || '(unnamed)'}\nColumns: ${columns.join(', ') || '(none)'}\nSuggest quality rules to author.`,
       };
     case 'publish':
       return {

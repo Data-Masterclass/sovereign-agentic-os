@@ -6,7 +6,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import CodePanel from '@/components/CodePanel';
-import AgentChat from '@/components/AgentChat';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import ReviewCard, { type ReviewCardData } from '@/components/ReviewCard';
 import ProgressStepper, { type Step, type StepState } from '@/components/core/ProgressStepper';
@@ -20,6 +19,7 @@ import BuilderModeToggle from '@/components/core/BuilderModeToggle';
 import StageAssistantChat from '@/components/core/StageAssistantChat';
 import SoftwareContextGrants from './SoftwareContextGrants';
 import DesignBoard from './DesignBoard';
+import BuildChat, { type FileChange } from './BuildChat';
 import type { ViewMode } from '@/lib/core/view-mode';
 import {
   contextAccessCap,
@@ -46,7 +46,7 @@ type Tool = { name: string; description: string; write: boolean };
 type ChatMsg = { role: 'user' | 'assistant'; content: string; at: string };
 
 /** A Design user story (mirrors lib/software/apps.ts AppStory). */
-type Story = { id: string; title: string; asA: string; iWant: string; soThat: string; acceptance: string };
+type Story = { id: string; title: string; asA: string; iWant: string; soThat: string; acceptance: string; status?: 'todo' | 'building' | 'done' };
 /** A Design epic (mirrors lib/software/apps.ts AppEpic). */
 type Epic = {
   id: string;
@@ -444,6 +444,7 @@ export default function SoftwareBuilder({
             <BuildStage
               app={app} epics={epics} canEditCode={canEditCode} onBuilt={onReload}
               target={target} setTarget={setTarget}
+              onSaveEpics={canEdit ? (next) => saveDesign({ epics: next }) : undefined}
             />
           ) : null}
 
@@ -469,7 +470,7 @@ export default function SoftwareBuilder({
               canPromoteUI={canPromoteUI} onPromote={promote}
               canDemoteUI={canDemoteUI} demoteLabel={demoteLabel} confirmDemoteLabel={confirmDemoteLabel}
               confirmDemote={confirmDemote} setConfirmDemote={setConfirmDemote} onDemote={demote}
-              busy={busy} onLifecycle={lifecycle} onReload={onReload} msg={msg}
+              busy={busy} onLifecycle={lifecycle} msg={msg}
             />
           ) : null}
         </StageShell>
@@ -666,8 +667,22 @@ function DesignStage({
 
 /* ─────────────────────────── Build ─────────────────────────── */
 
+/** Small status pip for a targeted story (todo · building · done). */
+function storyStatusBadge(status?: 'todo' | 'building' | 'done') {
+  if (status === 'done') return <span className="badge ok">done ✓</span>;
+  if (status === 'building') return <span className="badge warn">building</span>;
+  return <span className="badge muted">to do</span>;
+}
+
+/** Set one story's status inside the epics tree, returning a new array (immutable). */
+function withStoryStatus(epics: Epic[], epicId: string, storyId: string, status: 'todo' | 'building' | 'done'): Epic[] {
+  return epics.map((e) =>
+    e.id !== epicId ? e : { ...e, stories: e.stories.map((s) => (s.id === storyId ? { ...s, status } : s)) },
+  );
+}
+
 function BuildStage({
-  app, epics, canEditCode, onBuilt, target, setTarget,
+  app, epics, canEditCode, onBuilt, target, setTarget, onSaveEpics,
 }: {
   app: SoftwareApp;
   epics: Epic[];
@@ -675,40 +690,97 @@ function BuildStage({
   onBuilt: () => void;
   target: { epicId: string; storyId: string } | null;
   setTarget: (t: { epicId: string; storyId: string } | null) => void;
+  /** Persist an updated epics array (per-story status). Undefined when the viewer can't edit. */
+  onSaveEpics?: (epics: Epic[]) => void;
 }) {
-  const storyOptions = epics.flatMap((e) => e.stories.map((s) => ({ epicId: e.id, storyId: s.id, label: `${e.title || 'Untitled EPIC'} › ${s.title || 'Untitled story'}` })));
-  const selectedLabel = target ? storyOptions.find((o) => o.epicId === target.epicId && o.storyId === target.storyId)?.label : null;
+  // Plan ⇄ Build: Plan discusses/plans with ZERO code changes; Build executes end-to-end.
+  const [buildMode, setBuildMode] = useState<'plan' | 'build'>('build');
+
+  const storyOptions = epics.flatMap((e) =>
+    e.stories.map((s) => ({
+      epicId: e.id,
+      storyId: s.id,
+      status: s.status,
+      label: `${e.title || 'Untitled EPIC'} › ${s.title || 'Untitled story'}`,
+    })),
+  );
+  const selected = target ? storyOptions.find((o) => o.epicId === target.epicId && o.storyId === target.storyId) : null;
+
+  // On a successful BUILD run against a targeted story, mark it done (backward-compatible
+  // status write through the same governed epics patch). No-op when nothing was targeted.
+  const handleBuilt = (changes: FileChange[]) => {
+    if (buildMode === 'build' && target && onSaveEpics && changes.length > 0) {
+      onSaveEpics(withStoryStatus(epics, target.epicId, target.storyId, 'done'));
+    }
+    onBuilt();
+  };
+
+  const buildStory = target ? { epicId: target.epicId, storyId: target.storyId, label: selected?.label } : null;
 
   return (
     <div style={{ marginTop: 4 }}>
-      <p className="hint" style={{ marginTop: 0 }}>
-        Build with the governed delivery team (it asks questions, plans, then commits real
-        code), or with the per-app build chat. {canEditCode ? 'Edit the code directly beside it.' : 'A Builder can also edit code directly.'} Every commit lands in this app’s sovereign in-cluster repo.
-      </p>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+        <p className="hint" style={{ marginTop: 0, flex: 1 }}>
+          {buildMode === 'plan'
+            ? 'Plan mode — the assistant discusses the change and drafts an implementation plan. It writes no code; switch to Build to execute.'
+            : <>Build mode — the assistant commits real code and shows you the diff. {canEditCode ? 'Edit the code directly beside it.' : 'A Builder can also edit code directly.'} Every commit lands in this app’s sovereign in-cluster repo.</>}
+        </p>
+        {/* Plan ⇄ Build segmented control — reuses the OS `.mode-toggle` language. */}
+        <div className="mode-toggle" role="group" aria-label="Build mode" style={{ flexShrink: 0 }}>
+          <button
+            type="button"
+            className={buildMode === 'plan' ? 'active' : ''}
+            aria-pressed={buildMode === 'plan'}
+            title="Discuss & plan — no code changes"
+            onClick={() => setBuildMode('plan')}
+          >
+            Plan
+          </button>
+          <button
+            type="button"
+            className={buildMode === 'build' ? 'active' : ''}
+            aria-pressed={buildMode === 'build'}
+            title="Execute end-to-end — commits real code"
+            onClick={() => setBuildMode('build')}
+          >
+            Build
+          </button>
+        </div>
+      </div>
 
-      {/* EPIC/story selector — the build targets a chosen story (threaded into the deploy payload). */}
+      {/* EPIC/story selector — first-class: shows the targeted story + its per-story status. */}
       <div className="grant-block" style={{ marginTop: 10 }}>
         <div className="comp-label">Build target</div>
         {storyOptions.length === 0 ? (
           <p className="hint" style={{ marginTop: 4 }}>No stories yet — add EPICs and stories on the <strong>Design</strong> stage to target the build.</p>
         ) : (
-          <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: 4 }}>
-            <select
-              value={target ? `${target.epicId}::${target.storyId}` : ''}
-              onChange={(e) => {
-                if (!e.target.value) { setTarget(null); return; }
-                const [epicId, storyId] = e.target.value.split('::');
-                setTarget({ epicId, storyId });
-              }}
-              style={{ minWidth: 320 }}
-            >
-              <option value="">— no specific story —</option>
-              {storyOptions.map((o) => (
-                <option key={`${o.epicId}::${o.storyId}`} value={`${o.epicId}::${o.storyId}`}>{o.label}</option>
-              ))}
-            </select>
-            {selectedLabel ? <span className="badge">{selectedLabel}</span> : null}
-          </div>
+          <>
+            <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: 4 }}>
+              <select
+                value={target ? `${target.epicId}::${target.storyId}` : ''}
+                onChange={(e) => {
+                  if (!e.target.value) { setTarget(null); return; }
+                  const [epicId, storyId] = e.target.value.split('::');
+                  setTarget({ epicId, storyId });
+                }}
+                style={{ minWidth: 320 }}
+              >
+                <option value="">— whole app (no specific story) —</option>
+                {storyOptions.map((o) => (
+                  <option key={`${o.epicId}::${o.storyId}`} value={`${o.epicId}::${o.storyId}`}>
+                    {o.status === 'done' ? '✓ ' : ''}{o.label}
+                  </option>
+                ))}
+              </select>
+              {selected ? storyStatusBadge(selected.status) : null}
+            </div>
+            {selected ? (
+              <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>
+                {buildMode === 'build' ? 'Building' : 'Planning'} <strong>{selected.label}</strong>
+                {selected.status === 'done' ? ' — already marked done; a new run re-implements it.' : '. It is marked done automatically when a Build run commits changes.'}
+              </p>
+            ) : null}
+          </>
         )}
       </div>
 
@@ -725,16 +797,15 @@ function BuildStage({
           marginTop: 16,
         }}
       >
-        <AgentChat
-          agent="software"
-          label="build assistant"
-          variant="claude"
-          endpoint={`/api/apps/${app.id}/chat`}
+        <BuildChat
+          appId={app.id}
+          appName={app.name}
+          mode={buildMode}
+          story={buildStory}
           initialMessages={app.chat
             .filter((m) => m.role === 'user' || m.role === 'assistant')
             .map((m) => ({ role: m.role, content: m.content }))}
-          placeholder={`Describe what to build or change in ${app.name}…`}
-          minHeight={360}
+          onBuilt={handleBuilt}
         />
         {canEditCode ? <CodePanel appId={app.id} repoFullName={app.repo.fullName} /> : null}
       </div>
@@ -848,7 +919,7 @@ function OperateStage({
   publishLabel, publishDisabled, inReview, onPublish, deployMsg,
   toolOut, toolNote, onCallTool, onOpenRepo,
   canPromoteUI, onPromote, canDemoteUI, demoteLabel, confirmDemoteLabel,
-  confirmDemote, setConfirmDemote, onDemote, busy, onLifecycle, onReload, msg,
+  confirmDemote, setConfirmDemote, onDemote, busy, onLifecycle, msg,
 }: {
   app: SoftwareApp;
   surface: { ui: boolean; api: boolean };
@@ -874,12 +945,10 @@ function OperateStage({
   onDemote: () => void;
   busy: boolean;
   onLifecycle: (action: string) => void;
-  onReload: () => void;
   msg: string;
 }) {
   const version = app.deploy.releases > 0 ? `v${app.deploy.releases}` : 'Unpublished';
   const dep = deployBadge(app.deploy.state);
-  const canManage = app.owner === user.id || roleAtLeast(user.role, 'domain_admin');
   return (
     <div style={{ marginTop: 4 }}>
       {/* ── Publish a release (merged from the old Publish stage) ── */}
@@ -994,30 +1063,14 @@ function OperateStage({
         ) : null}
       </div>
 
-      <div className="section-title">Lifecycle</div>
+      {/* Archive / Restore / Delete live in the persistent app header (reachable from any stage).
+          Only the "Use as Data" action is stage-specific to Operate. */}
+      <div className="section-title">Data integration</div>
       <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <button className="btn ghost" onClick={() => onLifecycle('use-as-data')} disabled={busy || app.usedAsData}>
           {app.usedAsData ? 'Used as Data ✓' : 'Use as Data'}
         </button>
-        <LifecycleActions
-          id={app.id}
-          name={app.name}
-          kind="app"
-          visibility={app.visibility === 'Shared' ? 'shared' : app.visibility === 'Certified' ? 'certified' : 'personal'}
-          archived={app.status === 'archived'}
-          handlers={{
-            onArchive: () => onLifecycle('archive'),
-            onRestore: () => onLifecycle('unarchive'),
-            onDelete: () => onLifecycle('delete'),
-          }}
-          api={`/api/apps/${app.id}`}
-          onChanged={onReload}
-          showVersions
-        />
         <span className={`badge ${app.status === 'active' ? 'ok' : 'muted'}`}>{app.status}</span>
-        {canManage ? null : (
-          <span className="muted" style={{ fontSize: 12 }}>Lifecycle is limited to the owner and domain admins.</span>
-        )}
       </div>
       {msg ? <div className={msg.startsWith('✓') ? 'answer' : 'error'} style={{ marginTop: 12 }}>{msg}</div> : null}
     </div>

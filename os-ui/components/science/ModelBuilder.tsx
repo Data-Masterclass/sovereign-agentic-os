@@ -14,6 +14,8 @@ import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import PromoteButton, { type PromoteTier } from '@/components/lifecycle/PromoteButton';
 import StageShell from '@/components/core/StageShell';
 import { initialStageState, markDone, goTo, type StageState } from '@/lib/core/stages';
+import BuilderModeToggle from '@/components/core/BuilderModeToggle';
+import type { ViewMode } from '@/lib/core/view-mode';
 import { SCI_STAGES, atLeast, type SciStageId, type SciCtx } from './stages';
 import NewModel from './NewModel';
 import TrainStep from './builder/TrainStep';
@@ -24,6 +26,8 @@ import {
   TIER_BADGE, TIER_LABEL, TASK_LABEL, BUILD_STATE,
   type ModelSummary, type ModelGroups, type ModelBuildState, type PredictResult,
 } from './shared';
+
+const SCI_MODE_KEY = 'science.viewMode';
 
 /** Model tier → the OS-wide lifecycle visibility (drives the delete gate). */
 const lcVis = (tier: ModelSummary['tier']): Visibility =>
@@ -65,6 +69,18 @@ export default function ModelBuilder({
   onOpenConsole: () => void;
 }) {
   const { user } = useUser();
+
+  // Simple ⇄ Developer view mode (persisted per user, defaults to Simple).
+  const [viewMode, setViewMode] = useState<ViewMode>('simple');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const saved = window.localStorage.getItem(SCI_MODE_KEY);
+    if (saved === 'simple' || saved === 'developer') setViewMode(saved as ViewMode);
+  }, []);
+  const setModePersisted = (m: ViewMode) => {
+    setViewMode(m);
+    if (typeof window !== 'undefined') window.localStorage.setItem(SCI_MODE_KEY, m);
+  };
 
   // The model we operate on: the one opened, or the draft just created. Refreshed from the
   // governed list after train/deploy/lifecycle so buildState (the gate source) stays live.
@@ -123,7 +139,14 @@ export default function ModelBuilder({
 
   return (
     <ConfirmProvider>
-      <button className="btn ghost sm" onClick={onBack} style={{ marginBottom: 14 }}>← All models</button>
+      <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+        <button className="btn ghost sm" onClick={onBack}>← All models</button>
+        <BuilderModeToggle
+          mode={viewMode}
+          onChange={setModePersisted}
+          developerHint="The raw model training/serving spec for this model"
+        />
+      </div>
 
       {model ? (
         <>
@@ -137,6 +160,29 @@ export default function ModelBuilder({
                 <span className="muted">{badge.label}</span>
               </span>
             ) : null}
+            {/* Lifecycle (Archive/Restore/Delete) lives in the persistent detail header so it is
+                reachable from ANY stage — not buried in Monitor. Governance unchanged (canManage).
+                PromoteButton stays in the Monitor stage (stage-specific action). */}
+            {canManage ? (
+              <div style={{ marginLeft: 'auto' }}>
+                <LifecycleActions
+                  id={model.model}
+                  name={model.name}
+                  kind="model"
+                  visibility={lcVis(model.tier)}
+                  archived={model.archived ?? false}
+                  api={`/api/science/model/${encodeURIComponent(model.model)}`}
+                  handlers={{ onDelete: async () => {
+                    const res = await fetch(`/api/science/model/${encodeURIComponent(model.model)}`, { method: 'DELETE' });
+                    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Delete failed');
+                    refresh(); onBack();
+                  } }}
+                  onChanged={refresh}
+                  showVersions={false}
+                  compact
+                />
+              </div>
+            ) : null}
           </div>
           <div className="tile-meta" style={{ marginTop: 6 }}>
             <span className="muted mono" style={{ fontSize: 12 }}>{model.model}</span>
@@ -149,6 +195,9 @@ export default function ModelBuilder({
         <h2 style={{ marginTop: 0 }}>New model</h2>
       )}
 
+      {viewMode === 'developer' ? (
+        <ScienceDeveloperView model={model} />
+      ) : (
       <StageShell
         stages={SCI_STAGES}
         state={stage}
@@ -261,13 +310,64 @@ export default function ModelBuilder({
             canApprove={canApprove}
             onChanged={refresh}
             onOpenConsole={onOpenConsole}
-            onDeleted={onBack}
           />
         ) : stage.current === 'monitor' ? (
           <div className="chat-empty">Deploy the model first — there is nothing to monitor yet.</div>
         ) : null}
       </StageShell>
+      )}
     </ConfirmProvider>
+  );
+}
+
+/* ─────────────────────────── Developer surface ─────────────────────────── */
+
+/**
+ * The Science Developer view — shows the real model training/serving spec (`model.spec`)
+ * as JSON, plus the compiled predict policy, build state, metrics and runtime references.
+ * Everything shown is real data from ModelSummary — nothing is fabricated. Read-only.
+ * When no model exists yet (new, un-saved draft), a note explains what will appear here.
+ */
+function ScienceDeveloperView({ model }: { model: ModelSummary | null }) {
+  if (!model) {
+    return (
+      <div className="grant-block" style={{ marginTop: 4 }}>
+        <div className="comp-label">Model spec (JSON)</div>
+        <p className="hint" style={{ marginTop: 4 }}>
+          Define and save a model in the Simple flow — the training spec appears here once
+          it&apos;s registered.
+        </p>
+      </div>
+    );
+  }
+
+  const raw = {
+    model: model.model,
+    buildState: model.buildState ?? 'draft',
+    spec: model.spec ?? null,
+    metrics: model.metrics ?? null,
+    kserveService: model.kserveService ?? null,
+    mlflowRunId: model.mlflowRunId ?? null,
+    versions: model.versions,
+    policy: model.policy,
+    lastTrainingError: model.lastTrainingError ?? null,
+    lastDeployError: model.lastDeployError ?? null,
+  };
+
+  return (
+    <div className="grant-block" style={{ marginTop: 4 }}>
+      <div className="comp-label">Model spec &amp; policy (JSON)</div>
+      <p className="hint" style={{ marginTop: 4 }}>
+        Read-only — the training/serving spec registered in the science registry, plus the
+        compiled OPA predict policy. Build state:{' '}
+        <span className="mono">{model.buildState ?? 'draft'}</span>
+        {model.kserveService ? <> · serving: <span className="mono">{model.kserveService}</span></> : null}
+        {model.mlflowRunId ? <> · MLflow run: <span className="mono">{model.mlflowRunId}</span></> : null}
+      </p>
+      <pre className="codeblock" style={{ marginTop: 8, fontSize: 12, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+        {JSON.stringify(raw, null, 2)}
+      </pre>
+    </div>
   );
 }
 
@@ -277,10 +377,10 @@ export default function ModelBuilder({
  * The Monitor stage — the model's live health + its governance controls, all on a DEPLOYED
  * model. Metrics are the real registered headline number; drift telemetry is not wired to a
  * real monitor yet, so it is an HONEST placeholder (no fabricated drift charts). Lifecycle
- * reuses the shared PromoteButton + LifecycleActions exactly as ModelDetail did.
+ * reuses the shared PromoteButton — Archive/Restore/Delete moved to the persistent detail header.
  */
 function MonitorStage({
-  model, lastMetric, canManage, canApprove, onChanged, onOpenConsole, onDeleted,
+  model, lastMetric, canManage, canApprove, onChanged, onOpenConsole,
 }: {
   model: ModelSummary;
   lastMetric: string;
@@ -288,7 +388,6 @@ function MonitorStage({
   canApprove: boolean;
   onChanged: () => void;
   onOpenConsole: () => void;
-  onDeleted: () => void;
 }) {
   return (
     <div>
@@ -348,23 +447,8 @@ function MonitorStage({
                 onDone={onChanged}
               />
             </div>
-            <div className="row" style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)', justifyContent: 'flex-end' }}>
-              <LifecycleActions
-                id={model.model}
-                name={model.name}
-                kind="model"
-                visibility={lcVis(model.tier)}
-                archived={model.archived ?? false}
-                api={`/api/science/model/${encodeURIComponent(model.model)}`}
-                handlers={{ onDelete: async () => {
-                  const res = await fetch(`/api/science/model/${encodeURIComponent(model.model)}`, { method: 'DELETE' });
-                  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Delete failed');
-                  onChanged(); onDeleted();
-                } }}
-                onChanged={onChanged}
-                showVersions={false}
-              />
-            </div>
+            {/* Archive / Restore / Delete now live in the persistent detail header (reachable
+                from any stage). Only Promote remains here as a stage-specific action. */}
           </div>
         </>
       ) : null}

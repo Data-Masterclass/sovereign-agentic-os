@@ -16,6 +16,8 @@ import StageShell from '@/components/core/StageShell';
 import { initialStageState, markDone, type StageState } from '@/lib/core/stages';
 import { METRIC_STAGES, type MetricCtx, type MetricStageId } from '@/lib/metrics/stages';
 import { useToast } from '@/components/core/Toast';
+import BuilderModeToggle from '@/components/core/BuilderModeToggle';
+import type { ViewMode } from '@/lib/core/view-mode';
 import MetricStageAssistant from './MetricStageAssistant';
 import ExploreMetric from './ExploreMetric';
 import Alerts from './Alerts';
@@ -30,6 +32,8 @@ import {
   TIER_WORD,
   leaf,
 } from './shared';
+
+const METRIC_MODE_KEY = 'metrics.viewMode';
 
 /* ─────────────────────────────── constants ─────────────────────────────── */
 
@@ -203,6 +207,18 @@ export default function MetricBuilder({
   const { user } = useUser();
   const toast = useToast();
 
+  /* ── Simple ⇄ Developer view mode ── */
+  const [viewMode, setViewMode] = useState<ViewMode>('simple');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const saved = window.localStorage.getItem(METRIC_MODE_KEY);
+    if (saved === 'simple' || saved === 'developer') setViewMode(saved);
+  }, []);
+  const setModePersisted = (m: ViewMode) => {
+    setViewMode(m);
+    if (typeof window !== 'undefined') window.localStorage.setItem(METRIC_MODE_KEY, m);
+  };
+
   /* ── form state ── */
   const [datasetId, setDatasetId] = useState('');
   const [form, setForm] = useState<Form>(EMPTY_FORM);
@@ -358,7 +374,14 @@ export default function MetricBuilder({
   /* ── render ── */
   return (
     <ConfirmProvider>
-      <button className="btn ghost sm" onClick={onBack} style={{ marginBottom: 14 }}>← All metrics</button>
+      <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+        <button className="btn ghost sm" onClick={onBack}>← All metrics</button>
+        <BuilderModeToggle
+          mode={viewMode}
+          onChange={setModePersisted}
+          developerHint="The raw Cube measure YAML this metric generates"
+        />
+      </div>
 
       {saved ? (
         <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
@@ -385,6 +408,9 @@ export default function MetricBuilder({
         </div>
       ) : null}
 
+      {viewMode === 'developer' ? (
+        <MetricDeveloperView result={result} form={form} datasetId={datasetId} />
+      ) : (
       <StageShell
         stages={METRIC_STAGES}
         state={stage}
@@ -776,6 +802,74 @@ export default function MetricBuilder({
           )
         ) : null}
       </StageShell>
+      )}
     </ConfirmProvider>
+  );
+}
+
+/* ─────────────────────────── Developer surface ─────────────────────────── */
+
+/**
+ * The Metrics Developer view — shows the real Cube measure YAML that the OS generates
+ * for this metric. If a metric has been saved (`result.cube` from the define API), the
+ * YAML is surfaced read-only; if not yet saved, the form payload is shown as JSON so
+ * the developer can see what will be submitted. Nothing is fabricated — both surfaces
+ * come from real data the builder already holds.
+ */
+function MetricDeveloperView({
+  result,
+  form,
+  datasetId,
+}: {
+  result: DefineResult | null;
+  form: Form;
+  datasetId: string;
+}) {
+  if (result?.cube) {
+    return (
+      <div className="grant-block" style={{ marginTop: 4 }}>
+        <div className="comp-label">Cube model YAML</div>
+        <p className="hint" style={{ marginTop: 4 }}>
+          Read-only — the generated Cube.js measure block persisted to the data
+          layer. This is the single artifact the query engine, explorer and
+          dashboards all resolve.
+        </p>
+        <pre className="codeblock" style={{ marginTop: 8, fontSize: 12, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+          {result.cube}
+        </pre>
+        {result.member ? (
+          <p className="hint" style={{ marginTop: 8 }}>
+            Canonical member: <code>{result.member}</code>
+            {result.build?.mode ? <> · mode: <span className={`badge ${result.build.mode === 'live' ? 'ok' : 'muted'}`}>{result.build.mode}</span></> : null}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+
+  // No saved result yet — show the current form payload so the developer can see
+  // what will be submitted when they reach the Publish stage.
+  const preview = datasetId
+    ? { datasetId, ...toPayload(form) }
+    : null;
+
+  return (
+    <div className="grant-block" style={{ marginTop: 4 }}>
+      <div className="comp-label">Cube measure payload (preview)</div>
+      <p className="hint" style={{ marginTop: 4 }}>
+        The metric hasn&apos;t been saved yet — complete the Simple flow through
+        Publish to generate the Cube YAML. This is the measure config that will
+        be submitted:
+      </p>
+      {preview ? (
+        <pre className="codeblock" style={{ marginTop: 8, fontSize: 12, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+          {JSON.stringify(preview, null, 2)}
+        </pre>
+      ) : (
+        <p className="hint" style={{ marginTop: 8 }}>
+          Pick a dataset and fill the form to see the payload preview.
+        </p>
+      )}
+    </div>
   );
 }

@@ -8,6 +8,7 @@ import {
   aggregateBadge,
   verdictFromViolations,
   ruleLabel,
+  healthScore,
   DqError,
   type CheckResult,
 } from './dq.ts';
@@ -88,4 +89,47 @@ test('ruleLabel renders the dbt-style label', () => {
   assert.equal(ruleLabel(chk({ rule: 'not_null', column: 'id' })), 'not_null(id)');
   assert.equal(ruleLabel(chk({ rule: 'accepted_values', column: 's', values: ['a', 'b'] })), 'accepted_values(s, [a, b])');
   assert.equal(ruleLabel(chk({ rule: 'range', column: 'amt', min: 0, max: 9 })), 'range(amt, 0, 9)');
+});
+
+// ---------------------------------------------------------------- health score --
+
+const pass = (id: string): CheckResult => ({ id, label: '', status: 'pass', violations: 0 });
+const fail = (id: string, v: number): CheckResult => ({ id, label: '', status: 'fail', violations: v });
+const notRun = (id: string): CheckResult => ({ id, label: '', status: 'not_run', violations: null, reason: 'x' });
+
+test('healthScore is 100 when every ran rule passes', () => {
+  const h = healthScore([pass('a'), pass('b'), pass('c')]);
+  assert.equal(h.score, 100);
+  assert.equal(h.status, 'passing');
+  assert.deepEqual([h.passing, h.failing, h.notRun], [3, 0, 0]);
+});
+
+test('healthScore is null/unknown when NOTHING ran — never a fake 100', () => {
+  assert.deepEqual(healthScore([notRun('a'), notRun('b')]), { score: null, status: 'unknown', passing: 0, failing: 1 - 1, notRun: 2 });
+  assert.equal(healthScore([]).score, null);
+  assert.equal(healthScore([]).status, 'unknown');
+});
+
+test('healthScore excludes not_run from the score (pass among not_runs is still 100)', () => {
+  const h = healthScore([pass('a'), notRun('b'), notRun('c')]);
+  assert.equal(h.score, 100); // only the one ran rule counts
+  assert.equal(h.notRun, 2);
+});
+
+test('a failing rule can never round up to a perfect 100', () => {
+  // 3 pass + 1 fail, no row count known ⇒ fail contributes 0 ⇒ 3/4 = 75.
+  const h = healthScore([pass('a'), pass('b'), pass('c'), fail('d', 1)]);
+  assert.equal(h.score, 75);
+  assert.equal(h.status, 'failing');
+  // Even a tiny failure fraction is capped below 100.
+  const near = healthScore([...Array(999).keys()].map((i) => pass(`p${i}`)).concat([fail('d', 1)]), 1_000_000);
+  assert.ok(near.score! < 100, 'a real failure is capped under 100');
+  assert.ok(near.score! >= 99, 'but a near-perfect run still scores high');
+});
+
+test('healthScore weights a fail by clean-row fraction when the row count is known', () => {
+  // 1 rule, 100 violations out of 1000 rows ⇒ 90% clean ⇒ 90 (but capped <100 since it fails)
+  const h = healthScore([fail('a', 100)], 1000);
+  assert.equal(h.score, 90);
+  assert.equal(h.status, 'failing');
 });

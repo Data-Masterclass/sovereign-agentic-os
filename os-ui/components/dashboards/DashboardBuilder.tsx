@@ -3,7 +3,7 @@
  */
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { roleAtLeast } from '@/lib/core/session';
 import { canManageArtifact } from '@/lib/governance/edit-scope';
@@ -15,9 +15,13 @@ import DomainTag from '@/components/DomainTag';
 import StageShell from '@/components/core/StageShell';
 import { initialStageState, isSatisfied, markDone, goTo, advance, type StageState } from '@/lib/core/stages';
 import { DASH_STAGES, type DashStageId, type DashCtx } from '@/lib/dashboards/stages';
+import BuilderModeToggle from '@/components/core/BuilderModeToggle';
+import type { ViewMode } from '@/lib/core/view-mode';
 import EmbedPanel from './EmbedPanel';
 import Reports from './Reports';
 import StageAssistant from './StageAssistant';
+
+const DASH_MODE_KEY = 'dashboards.viewMode';
 import {
   flatMetrics, postJson, slug, VIZ_TYPES,
   type BuildResponse, type ChartSpec, type DashboardSummary, type DashTier,
@@ -61,6 +65,18 @@ export default function DashboardBuilder({
 }) {
   const { user } = useUser();
   const palette = useMemo(() => flatMetrics(metrics), [metrics]);
+
+  // Simple ⇄ Developer view mode (persisted per user, defaults to Simple).
+  const [viewMode, setViewMode] = useState<ViewMode>('simple');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const saved = window.localStorage.getItem(DASH_MODE_KEY);
+    if (saved === 'simple' || saved === 'developer') setViewMode(saved as ViewMode);
+  }, []);
+  const setModePersisted = (m: ViewMode) => {
+    setViewMode(m);
+    if (typeof window !== 'undefined') window.localStorage.setItem(DASH_MODE_KEY, m);
+  };
 
   // Draft-in-progress state (new dashboards). An existing dashboard seeds name/view but
   // has no client-side chart specs (the list returns a count only) — it's already built.
@@ -152,7 +168,14 @@ export default function DashboardBuilder({
 
   return (
     <ConfirmProvider>
-      <button className="btn ghost sm" onClick={onBack} style={{ marginBottom: 14 }}>← All dashboards</button>
+      <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+        <button className="btn ghost sm" onClick={onBack}>← All dashboards</button>
+        <BuilderModeToggle
+          mode={viewMode}
+          onChange={setModePersisted}
+          developerHint="The raw Superset dashboard spec and embed config"
+        />
+      </div>
 
       {built ? (
         <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
@@ -160,9 +183,34 @@ export default function DashboardBuilder({
           {(built.tier === 'domain' || built.tier === 'marketplace') ? <DomainTag domain={built.domain} /> : null}
           <span className={`badge ${TIER_BADGE[built.tier]}`}>{TIER_LABEL[built.tier]}</span>
           <span className="muted mono" style={{ fontSize: 12 }}>{built.view}</span>
+          {/* Lifecycle (Archive/Restore/Delete) lives in the persistent detail header so it is
+              reachable from ANY stage — not buried in Govern. Governance unchanged (canManage).
+              PromoteButton stays in the Govern stage (stage-specific action). */}
+          {canManage ? (
+            <div style={{ marginLeft: 'auto' }}>
+              <LifecycleActions
+                id={built.id}
+                name={built.name}
+                kind="dashboard"
+                visibility={lcVis(built.tier)}
+                archived={!!built.archived}
+                api={`/api/dashboards/${built.id}`}
+                handlers={{ onDelete: async () => {
+                  const res = await fetch(`/api/dashboards/${built.id}`, { method: 'DELETE' });
+                  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Delete failed');
+                  onChanged(); onBack();
+                } }}
+                onChanged={onChanged}
+                compact
+              />
+            </div>
+          ) : null}
         </div>
       ) : null}
 
+      {viewMode === 'developer' ? (
+        <DashboardDeveloperView built={built} build={build} charts={charts} name={name} view={view} liveRls={liveRls} />
+      ) : (
       <StageShell
         stages={DASH_STAGES}
         state={stage}
@@ -250,6 +298,8 @@ export default function DashboardBuilder({
             {canManage ? (
               <>
                 <div className="section-title">Lifecycle</div>
+                {/* Archive / Restore / Delete now live in the persistent detail header (reachable
+                    from any stage). Only Promote remains here as a stage-specific action. */}
                 <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
                   <PromoteButton
                     id={built.id}
@@ -258,21 +308,6 @@ export default function DashboardBuilder({
                     promoteUrl={`/api/dashboards/${built.id}/promote`}
                     canApprove={canApprove}
                     onDone={onChanged}
-                  />
-                  <LifecycleActions
-                    id={built.id}
-                    name={built.name}
-                    kind="dashboard"
-                    visibility={lcVis(built.tier)}
-                    archived={!!built.archived}
-                    api={`/api/dashboards/${built.id}`}
-                    handlers={{ onDelete: async () => {
-                      const res = await fetch(`/api/dashboards/${built.id}`, { method: 'DELETE' });
-                      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Delete failed');
-                      onChanged(); onBack();
-                    } }}
-                    onChanged={onChanged}
-                    compact
                   />
                 </div>
               </>
@@ -284,6 +319,7 @@ export default function DashboardBuilder({
           <div className="chat-empty">Build the dashboard first — there is nothing to govern yet.</div>
         ) : null}
       </StageShell>
+      )}
     </ConfirmProvider>
   );
 }
@@ -437,6 +473,96 @@ function BuildStage({
           ) : null}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/* ─────────────────────────── Developer surface ─────────────────────────── */
+
+/**
+ * The Dashboards Developer view — shows the raw Superset dashboard spec (chart JSON
+ * + view binding) and the live embed config (guest token request + RLS clauses). Both
+ * surfaces are real data the builder already holds — nothing fabricated. If the
+ * dashboard hasn't been built yet, the in-progress chart spec is shown. Read-only.
+ */
+function DashboardDeveloperView({
+  built,
+  build,
+  charts,
+  name,
+  view,
+  liveRls,
+}: {
+  built: DashboardSummary | null;
+  build: BuildResponse | null;
+  charts: ChartSpec[];
+  name: string;
+  view: string;
+  liveRls: string;
+}) {
+  const spec = build
+    ? build.spec
+    : charts.length > 0
+      ? { name: name || '(unnamed)', view: view || '(no view bound)', charts }
+      : null;
+
+  return (
+    <div style={{ display: 'grid', gap: 16, marginTop: 4 }}>
+      <div className="grant-block">
+        <div className="comp-label">Dashboard spec (JSON)</div>
+        <p className="hint" style={{ marginTop: 4 }}>
+          Read-only — the chart/view config submitted to the build adapter (Superset
+          + embed). Build the dashboard in the Simple flow to produce the full spec.
+          {build?.build.mode ? <> · mode: <span className={`badge ${build.build.mode === 'live' ? 'ok' : 'muted'}`}>{build.build.mode}</span></> : null}
+        </p>
+        {spec ? (
+          <pre className="codeblock" style={{ marginTop: 8, fontSize: 12, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+            {JSON.stringify(spec, null, 2)}
+          </pre>
+        ) : (
+          <p className="hint" style={{ marginTop: 8 }}>
+            No spec yet — add charts in the Simple flow to see the config here.
+          </p>
+        )}
+        {build?.build.rows && build.build.rows.length > 0 ? (
+          <div style={{ marginTop: 12 }}>
+            <div className="comp-label" style={{ marginBottom: 6 }}>Build adapter trace</div>
+            {build.build.rows.map((r) => (
+              <div key={r.tool} className={`build-row ${r.status === 'ok' ? 'ok' : 'fail'}`}>
+                <span className="build-tool">{r.status === 'ok' ? '✓' : '✗'} {r.tool}</span>
+                <span>{r.detail || r.error}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="grant-block">
+        <div className="comp-label">Embed config (RLS + guest token request)</div>
+        <p className="hint" style={{ marginTop: 4 }}>
+          The row-level security clause baked into the Superset guest token — comes
+          from the View stage embed call. View the dashboard in the Simple flow to
+          populate this.
+        </p>
+        {built ? (
+          <pre className="codeblock" style={{ marginTop: 8, fontSize: 12, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+            {JSON.stringify(
+              {
+                dashboardId: built.id,
+                view: built.view,
+                tier: built.tier,
+                liveRlsClause: liveRls || '(not yet viewed — open View stage to mint a token)',
+              },
+              null,
+              2,
+            )}
+          </pre>
+        ) : (
+          <p className="hint" style={{ marginTop: 8 }}>
+            Build and view the dashboard in the Simple flow to see the embed config here.
+          </p>
+        )}
+      </div>
     </div>
   );
 }
