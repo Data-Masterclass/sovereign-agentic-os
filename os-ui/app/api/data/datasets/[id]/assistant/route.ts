@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
-import { assistantComplete } from '@/lib/assistant/complete';
+import { failResponse, runStageAssistant } from '@/lib/assistant/stage-route';
 
 export const dynamic = 'force-dynamic';
 
@@ -64,11 +64,6 @@ function promptFor(stage: Stage, body: Record<string, unknown>): { system: strin
   }
 }
 
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
 /**
  * POST { stage, ... } → a stage-scoped suggestion. Define returns `{ description, columns,
  * checks }` (parsed from the model's JSON); every other stage returns `{ text }`. The route
@@ -85,26 +80,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       return NextResponse.json({ error: 'A valid stage is required (define|ingest|refine|publish).' }, { status: 400 });
     }
 
-    const { system, user: userMsg, json } = promptFor(stage, body);
-    const { content } = await assistantComplete(
-      [
-        { role: 'system', content: system },
-        { role: 'user', content: userMsg },
-      ],
-      { user: { id: user.id, domains: user.domains } },
-    );
-
-    if (!json) return NextResponse.json({ text: content });
-
-    // Define: parse the model's JSON draft defensively (strip stray fences).
-    const cleaned = content.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
-    let draft: unknown;
-    try { draft = JSON.parse(cleaned); } catch { draft = null; }
-    if (!draft || typeof draft !== 'object' || Array.isArray(draft)) {
-      return NextResponse.json({ error: 'The assistant did not return a usable draft — try rephrasing.' }, { status: 502 });
-    }
-    return NextResponse.json({ draft });
+    return await runStageAssistant({
+      prompt: promptFor(stage, body),
+      user,
+      jsonKey: 'draft',
+      jsonError: 'The assistant did not return a usable draft — try rephrasing.',
+    });
   } catch (e) {
-    return fail(e);
+    return failResponse(e);
   }
 }

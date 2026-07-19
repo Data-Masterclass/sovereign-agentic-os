@@ -43,10 +43,47 @@ A tab assistant call follows this sequence:
   model name.
 - **`agent-loop.ts`** — SSE streaming wrapper. Translates `runAgentic` async
   generator output to a `ReadableStream` for `Response` objects.
+- **`stage-route.ts`** — shared scaffolding for the per-STAGE tab assistants
+  (see "Per-stage tab assistants" below). `runStageAssistant(opts)` runs one
+  `assistantComplete` turn and shapes the response (prose `{ text }` or parsed
+  JSON under a caller-chosen key); `failResponse(e)` is the shared error → status
+  tail. Owns no prompts — each tab keeps its own stage table.
 
 Test suite: `agentic.test.ts` (loop logic), `runtime.test.ts` (context assembly
 and executor binding), `budget-messages.test.ts` (context-window budgeting and
 truncation behaviour).
+
+## Per-stage tab assistants (`stage-route.ts`)
+
+Five build tabs (Data · Metrics · Dashboards · Science · Software) each ship a
+per-STAGE helper: `app/api/<tab>/…/assistant/route.ts` on the server plus a
+`StageAssistant` slot component mounted in `StageShell`'s `assistant` render
+prop. They are NOT the agentic PLAN→ACT loop — they run ONE `assistantComplete`
+turn that only SUGGESTS (never mutates); the client applies suggestions through
+the normal governed paths.
+
+Every route once copied the same mechanical tail — a `fail(e)` status mapper, the
+`assistantComplete([system,user])` call, and a defensive JSON-fence strip/parse.
+`stage-route.ts` lifts exactly that:
+
+- Each route keeps its **stage set, prompt table (`promptFor`), and JSON key**
+  local (they genuinely differ), then calls `runStageAssistant({ prompt, user,
+  jsonKey?, expectArray?, jsonError? })` and hands thrown errors to
+  `failResponse`.
+- A prose stage (`prompt.json === false`) returns `{ text }`; a JSON stage
+  fence-strips + `JSON.parse`s the reply, guards the shape (`expectArray` for an
+  array, else a plain object), and returns `{ [jsonKey]: parsed }` — or a 502
+  with `jsonError` on an unusable shape.
+- Honest failures pass straight through: `assistantComplete` throws
+  `AssistantNotConfiguredError` (503) and `CostCapExceededError` (402), which
+  `failResponse` maps to their own status. There is NO fake-AI fallback.
+
+The **client `StageAssistant` slots are deliberately NOT shared.** They wear an
+identical `passthrough-note` card and busy/error/text state, but each binds a
+bespoke response-key callback (`onDraft` / `onForm` / `onCharts` / `onDefinition`)
+with its own applied-suggestion confirmation copy. Lifting a generic shell would
+force a common callback contract onto five call sites for little gain — the
+duplication is cosmetic, so it stays local by design.
 
 ## Invariants
 

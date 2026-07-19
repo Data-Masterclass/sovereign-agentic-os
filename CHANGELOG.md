@@ -15,6 +15,15 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.45] — 2026-07-19
+
+### Changed
+- **Refactor (#171, behavior-preserving):** the five per-stage tab assistant routes now share a
+  `lib/assistant/stage-route.ts` helper (the cost-capped `assistantComplete` wrapper + honest
+  503/402 + defensive JSON parse), removing ~90 lines of duplication while keeping each tab's stage
+  set and prompts local. Response shapes, status codes, and errors are unchanged. Also swept two
+  grep-proven-dead components superseded by the staged-UX rebuild.
+
 ## [os-ui 0.5.44] — 2026-07-19
 
 ### Changed

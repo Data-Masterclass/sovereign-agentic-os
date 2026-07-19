@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { getAppForUser } from '@/lib/software/apps';
-import { assistantComplete } from '@/lib/assistant/complete';
+import { failResponse, runStageAssistant } from '@/lib/assistant/stage-route';
 
 export const dynamic = 'force-dynamic';
 
@@ -78,11 +78,6 @@ function promptFor(
   }
 }
 
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
 /**
  * POST { stage, detail? } → a stage-scoped `{ text }` suggestion, grounded in the real app
  * loaded under the caller's governance.
@@ -98,16 +93,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     }
 
     const app = await getAppForUser(id, user);
-    const { system, user: userMsg } = promptFor(stage, app, body);
-    const { content } = await assistantComplete(
-      [
-        { role: 'system', content: system },
-        { role: 'user', content: userMsg },
-      ],
-      { user: { id: user.id, domains: user.domains } },
-    );
-    return NextResponse.json({ text: content });
+    // Software only SUGGESTS prose — every stage returns { text }.
+    return await runStageAssistant({ prompt: { ...promptFor(stage, app, body), json: false }, user });
   } catch (e) {
-    return fail(e);
+    return failResponse(e);
   }
 }

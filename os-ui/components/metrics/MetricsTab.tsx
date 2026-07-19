@@ -23,8 +23,8 @@ type View =
  *             used for both creating a new metric (metric=null) and viewing/editing an
  *             existing one (existing metric opens at Monitor).
  *
- * MetricBuilder replaces the old separate DefineMetric + MetricDetail surfaces:
- * define → publish is one continuous flow, not two disconnected screens.
+ * MetricBuilder unifies define → publish into one continuous staged flow, not two
+ * disconnected screens.
  */
 function MetricsTabInner() {
   const searchParams = useSearchParams();
