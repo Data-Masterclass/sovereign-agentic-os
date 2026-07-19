@@ -1,0 +1,9 @@
+# Built binary
+/sos
+/dist/
+
+# Never commit CLI secrets/config. These live under the user's ~/.config/sos,
+# but guard against accidental copies in-tree.
+config.toml
+tokens/
+*.token
