@@ -1,0 +1,101 @@
+{{- if (((.Values.metrics).alerts).cron).enabled }}
+{{- /*
+  Metrics alert-evaluator CronJob (Metrics P0 follow-up).
+
+  The alert-run route (os-ui app/api/metrics/alerts/run) evaluates ALL persisted
+  alert rules against live Cube values and delivers on breach. It is builder+ only
+  and cron-callable — but nothing scheduled it. This CronJob does.
+
+  AUTH — no bypass, no new route auth. The route authenticates via the SAME signed
+  session cookie a human uses (`requirePrincipal` → `requireUser`). So this Job
+  authenticates the ONLY governed way available: it LOGS IN as a builder+ service
+  principal (POST /api/auth/login with credentials from a Secret), captures the
+  session cookie, then calls the alert-run route with it. The route itself enforces
+  builder+ — a non-privileged principal is rejected 403 by the app, not by us.
+  The principal's credentials live in a Secret the operator provisions (default
+  name `metrics-alert-principal`, keys `username`/`password`); nothing is baked in.
+
+  GATED OFF by default (`metrics.alerts.cron.enabled=false`): nothing renders until
+  an operator turns it on AND provisions the principal Secret. `helm template` at
+  defaults emits nothing.
+
+  Note: the route is a GET (evaluate-and-report); we call it with GET after login.
+*/}}
+{{- $c := .Values.metrics.alerts.cron }}
+{{- $secretName := $c.principalSecret | default "metrics-alert-principal" }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: metrics-alert-evaluator
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "metrics-alert") | nindent 4 }}
+spec:
+  schedule: {{ $c.schedule | default "*/5 * * * *" | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            {{- include "soa.selectorLabels" (dict "ctx" . "component" "metrics-alert") | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          {{- with .Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "soa.podSecurityContext" . | nindent 12 }}
+            runAsUser: 1000
+          containers:
+            - name: evaluate
+              image: curlimages/curl:8.11.1
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "soa.containerSecurityContext" . | nindent 16 }}
+                readOnlyRootFilesystem: true
+              env:
+                - name: OS_UI
+                  value: {{ $c.osUiUrl | default "http://os-ui:3000" | quote }}
+                - name: PRINCIPAL_USER
+                  valueFrom: { secretKeyRef: { name: {{ $secretName | quote }}, key: username } }
+                - name: PRINCIPAL_PASS
+                  valueFrom: { secretKeyRef: { name: {{ $secretName | quote }}, key: password } }
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  JAR=/tmp/cookies.txt
+                  # 1. Log in as the builder+ service principal -> signed session cookie.
+                  CODE=$(curl -s -o /tmp/login.json -w "%{http_code}" -c "$JAR" \
+                    -X POST "$OS_UI/api/auth/login" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"username\":\"$PRINCIPAL_USER\",\"password\":\"$PRINCIPAL_PASS\"}")
+                  if [ "$CODE" != "200" ]; then
+                    echo "FATAL: login returned $CODE" >&2
+                    exit 1
+                  fi
+                  # 2. Evaluate all alert rules with that session (route enforces builder+).
+                  CODE=$(curl -s -o /tmp/run.json -w "%{http_code}" -b "$JAR" \
+                    "$OS_UI/api/metrics/alerts/run")
+                  echo "alert-run -> $CODE"
+                  cat /tmp/run.json 2>/dev/null || true
+                  echo
+                  if [ "$CODE" != "200" ]; then
+                    echo "FATAL: alert-run returned $CODE" >&2
+                    exit 1
+                  fi
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+              resources:
+                requests: { cpu: 25m, memory: 32Mi }
+                limits: { cpu: 200m, memory: 64Mi }
+          volumes:
+            - name: tmp
+              emptyDir: {}
+{{- end }}

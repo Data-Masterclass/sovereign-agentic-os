@@ -2280,6 +2280,25 @@ analyticsRepo:
   enabled: false
 
 # -----------------------------------------------------------------------------
+# Metrics — the alert-evaluator CronJob that drives the builder+ alert-run route
+# (os-ui app/api/metrics/alerts/run) on a schedule. DEFAULT-OFF: nothing renders
+# until an operator opts in AND provisions the service-principal Secret. The Job
+# authenticates the ONLY governed way — it LOGS IN as a builder+ principal
+# (credentials from `principalSecret`, keys username/password) to obtain a session
+# cookie, then calls the route (which enforces builder+). No auth bypass.
+# -----------------------------------------------------------------------------
+metrics:
+  alerts:
+    cron:
+      enabled: false            # operator turns it on
+      schedule: "*/5 * * * *"   # every 5 minutes
+      # Secret holding the builder+ service principal's credentials (keys:
+      # username, password). Provision it before enabling. Default name below.
+      principalSecret: metrics-alert-principal
+      # os-ui service DNS (in-cluster). Override only for non-default topologies.
+      osUiUrl: "http://os-ui:3000"
+
+# -----------------------------------------------------------------------------
 # Harbor — production image registry for the Software golden path (per-app
 # builds: Forgejo Actions -> Harbor -> Argo CD -> subdomain). DEFAULT-OFF heavy
 # workload: locally CI uses Forgejo's built-in OCI registry, so the bundle is

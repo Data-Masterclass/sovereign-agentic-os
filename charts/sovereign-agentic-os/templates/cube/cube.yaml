@@ -225,11 +225,15 @@ data:
       return 1;
     }
 
-    // Map a git `<slug>.yml` to the sidecar's `<slug>.cube.yml` convention (never a
-    // traversal path); returns null for anything that isn't a plain slug .yml file.
+    // Map a git model file to the sidecar's `<slug>.cube.yml` convention (never a
+    // traversal path); returns null for anything that isn't a plain slug model file.
+    // Accepts BOTH `<slug>.yml` (seed convention) AND `<slug>.cube.yml` (the os-ui
+    // dual-write/backfill convention, CUBE_ARTIFACT = metrics/<slug>.cube.yml) — the two
+    // paths were written by different authors with divergent suffixes; normalise here so
+    // the runtime `metrics/` cubes are actually loaded (not silently skipped).
     function gitSafeName(file) {
       var b = path.basename(String(file || ''));
-      var mm = /^([a-z0-9_]+)\.yml$/.exec(b);
+      var mm = /^([a-z0-9_]+)\.(?:cube\.)?yml$/.exec(b);
       return mm ? mm[1] + '.cube.yml' : null;
     }
 

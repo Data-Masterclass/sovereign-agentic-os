@@ -15,6 +15,23 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.46] — 2026-07-19
+
+### Added
+- **Analytics backfill** (`POST /api/admin/analytics/backfill`, admin-gated) — writes every live
+  governed-dataset Cube model + dbt model into the `analytics` git repo and returns exactly what
+  landed. This is the prerequisite that makes the #146 "Cube-serves-from-git" cutover safe: git can
+  now be verified to hold *all* live cube models (including runtime ones) before the source is flipped.
+- **Metrics alert CronJob** (chart, gated `metrics.alerts.cron.enabled`, default off) — schedules the
+  builder+ alert-evaluator via a governed service-principal login (no auth bypass), so metric alerts
+  actually fire on a cadence.
+
+### Fixed
+- **Analytics repo seed reliability** — the seed hook was `post-install` only, so `--set`-only helm
+  upgrades never re-fired it, and its `put_file` calls swallowed non-2xx responses (`curl -o /dev/null`
+  without `-f`) — the repo silently stayed empty. Now `post-install,post-upgrade`, fail-loud on any
+  non-2xx, and idempotent (201/409-tolerant) repo-create.
+
 ## [os-ui 0.5.45] — 2026-07-19
 
 ### Changed

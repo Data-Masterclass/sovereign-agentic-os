@@ -20,6 +20,17 @@
 
   Hook weight 26 (one higher than forgejo-seed/25) so the demo-app repo lands first
   and this idempotent seed always finds Forgejo healthy.
+
+  Runs on install AND upgrade (post-install,post-upgrade): the #146 enabler needs
+  git to hold ALL cube models, and this seed is idempotent (create-or-update,
+  409-tolerant on repo-exists), so re-running on every upgrade only ever converges
+  the OS-managed skeleton — it never deletes or duplicates. This is WHY the live
+  cluster's `--set`-only upgrade previously left the repo unseeded: the Job was
+  post-install ONLY and never re-fired on upgrade.
+
+  The manifest ConfigMap carries the SAME hook annotations (weight 25, one lower)
+  so it is applied in the hook phase and is guaranteed present when the Job mounts
+  it — a plain (non-hook) ConfigMap can be absent/stale during a hook Job.
 */}}
 {{- $owner := .Values.forgejo.gitea.admin.username }}
 apiVersion: v1
@@ -30,6 +41,10 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "analytics-seed") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "25"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 data:
   README.md: |
     # analytics
@@ -389,7 +404,8 @@ metadata:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "analytics-seed") | nindent 4 }}
   annotations:
-    "helm.sh/hook": post-install
+    # Install AND upgrade: idempotent convergence of the OS-managed skeleton.
+    "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "26"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
@@ -423,33 +439,59 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              set -e
+              set -eu
               echo "waiting for Forgejo..."
+              ready=""
               for i in $(seq 1 80); do
-                curl -sf "$FORGEJO/api/v1/version" >/dev/null 2>&1 && break || sleep 3
+                curl -sf "$FORGEJO/api/v1/version" >/dev/null 2>&1 && { ready=1; break; } || sleep 3
               done
+              if [ -z "$ready" ]; then
+                echo "FATAL: Forgejo not reachable after wait window" >&2
+                exit 1
+              fi
               AUTH="-u $USER:$PASS"
-              # create repo if missing (ignore 409 = already exists)
-              curl -s $AUTH -X POST "$FORGEJO/api/v1/user/repos" \
-                -H "Content-Type: application/json" \
-                -d "{\"name\":\"$REPO\",\"private\":true,\"auto_init\":true,\"default_branch\":\"main\",\"description\":\"OS-managed analytics monorepo (dbt/cube/dagster)\"}" \
-                -o /dev/null -w "create repo -> %{http_code}\n" || true
-              # put_file <local> <repo-path> — create or update (sha-based, idempotent)
+
+              # http_code <method> <url> [json-body] — echo ONLY the HTTP status, discard body.
+              http_code() {
+                _m="$1"; _u="$2"; _b="${3:-}"
+                if [ -n "$_b" ]; then
+                  curl -s -o /dev/null -w "%{http_code}" $AUTH -X "$_m" "$_u" \
+                    -H "Content-Type: application/json" -d "$_b"
+                else
+                  curl -s -o /dev/null -w "%{http_code}" $AUTH -X "$_m" "$_u"
+                fi
+              }
+
+              # create repo if missing. 201=created, 409=already exists (both fine).
+              # Any OTHER status aborts the Job (fail loudly — no `|| true` swallow).
+              CODE=$(http_code POST "$FORGEJO/api/v1/user/repos" \
+                "{\"name\":\"$REPO\",\"private\":true,\"auto_init\":true,\"default_branch\":\"main\",\"description\":\"OS-managed analytics monorepo (dbt/cube/dagster)\"}")
+              echo "create repo -> $CODE"
+              case "$CODE" in
+                201|409) : ;;
+                *) echo "FATAL: repo-create returned $CODE" >&2; exit 1 ;;
+              esac
+
+              # put_file <local> <repo-path> — create or update (sha-based, idempotent).
+              # A non-2xx write ABORTS the Job so a real failure marks the hook failed
+              # (backoffLimit retries; persistent failure surfaces to the operator).
               put_file() {
-                local f="$1" path="$2"
+                f="$1"; path="$2"
                 B64=$(base64 -w0 "$f" 2>/dev/null || base64 "$f" | tr -d '\n')
                 SHA=$(curl -s $AUTH "$FORGEJO/api/v1/repos/$USER/$REPO/contents/$path?ref=main" | sed -n 's/.*"sha":"\([0-9a-f]*\)".*/\1/p' | head -1)
                 if [ -n "$SHA" ]; then
-                  curl -s $AUTH -X PUT "$FORGEJO/api/v1/repos/$USER/$REPO/contents/$path" \
-                    -H "Content-Type: application/json" \
-                    -d "{\"branch\":\"main\",\"content\":\"$B64\",\"message\":\"seed: $path\",\"sha\":\"$SHA\"}" \
-                    -o /dev/null -w "update $path -> %{http_code}\n"
+                  CODE=$(http_code PUT "$FORGEJO/api/v1/repos/$USER/$REPO/contents/$path" \
+                    "{\"branch\":\"main\",\"content\":\"$B64\",\"message\":\"seed: $path\",\"sha\":\"$SHA\"}")
+                  echo "update $path -> $CODE"
                 else
-                  curl -s $AUTH -X POST "$FORGEJO/api/v1/repos/$USER/$REPO/contents/$path" \
-                    -H "Content-Type: application/json" \
-                    -d "{\"branch\":\"main\",\"content\":\"$B64\",\"message\":\"seed: $path\"}" \
-                    -o /dev/null -w "add    $path -> %{http_code}\n"
+                  CODE=$(http_code POST "$FORGEJO/api/v1/repos/$USER/$REPO/contents/$path" \
+                    "{\"branch\":\"main\",\"content\":\"$B64\",\"message\":\"seed: $path\"}")
+                  echo "add    $path -> $CODE"
                 fi
+                case "$CODE" in
+                  200|201) : ;;
+                  *) echo "FATAL: put_file $path returned $CODE" >&2; exit 1 ;;
+                esac
               }
               # README
               put_file /seed/README.md README.md
