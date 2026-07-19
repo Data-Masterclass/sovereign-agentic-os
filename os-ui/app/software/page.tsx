@@ -9,7 +9,6 @@ import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
 import { useApi } from '@/lib/useApi';
 import { SCOPE_GROUPS, groupsFromVisibility, tilesForScope, activeScopeCounts, type ScopeKey } from '@/lib/core/scopes';
-import TeamPanel from './TeamPanel';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
@@ -228,10 +227,8 @@ export default function SoftwarePage() {
           ) : null}
         </div>
 
-        {/* The governed 6-agent Software Delivery Team launcher. */}
-        <div style={{ marginTop: 18 }}>
-          <TeamPanel onBuilt={reload} />
-        </div>
+        {/* The governed Software Delivery Team now lives IN each app's Build stage
+            (create an app, then build with the team or the build chat there). */}
 
         {/* Software apps — the OS-wide four groups: All · My · Shared · Marketplace. */}
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', marginTop: 30 }}>

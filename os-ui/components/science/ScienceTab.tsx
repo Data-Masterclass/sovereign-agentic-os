@@ -8,8 +8,7 @@ import PageHeader from '@/components/PageHeader';
 import { useApi } from '@/lib/useApi';
 import { useTabNavReset } from '@/lib/core/tab-nav';
 import ModelTiles from './ModelTiles';
-import ModelDetail from './ModelDetail';
-import NewModel from './NewModel';
+import ModelBuilder from './ModelBuilder';
 import DevConsole from './DevConsole';
 import type { ModelGroups, ModelSummary } from './shared';
 
@@ -47,13 +46,15 @@ export default function ScienceTab() {
         {view.kind === 'console' ? (
           <DevConsole onBack={() => setView({ kind: 'list' })} />
         ) : view.kind === 'new' ? (
-          <>
-            <button className="btn ghost sm" onClick={() => setView({ kind: 'list' })} style={{ marginBottom: 14 }}>← All models</button>
-            <NewModel onCreated={(m) => { models.reload(); setView({ kind: 'detail', model: m }); }} />
-          </>
+          <ModelBuilder
+            existing={null}
+            onBack={() => { models.reload(); setView({ kind: 'list' }); }}
+            onChanged={() => models.reload()}
+            onOpenConsole={() => setView({ kind: 'console' })}
+          />
         ) : view.kind === 'detail' ? (
-          <ModelDetail
-            model={view.model}
+          <ModelBuilder
+            existing={view.model}
             onBack={() => setView({ kind: 'list' })}
             onChanged={() => models.reload()}
             onOpenConsole={() => setView({ kind: 'console' })}

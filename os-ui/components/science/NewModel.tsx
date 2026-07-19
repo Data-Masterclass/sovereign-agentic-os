@@ -4,7 +4,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { postJson, TASK_TYPES, TASK_LABEL, type ModelSpec, type ModelSummary, type TaskType } from './shared';
+import { postJson, TASK_TYPES, TASK_LABEL, isTrainableTask, type ModelSpec, type ModelSummary, type TaskType } from './shared';
+import type { ModelDefinition } from './StageAssistant';
 import FolderTree, { type FolderTreeItem } from '@/components/core/FolderTree';
 import { type FolderPathNode } from '@/lib/core/folders';
 import { slug } from '@/lib/data/store-fqn';
@@ -29,7 +30,7 @@ function DatasetExplorer({
   onSelect,
 }: {
   selected: string; // current FQN value
-  onSelect: (fqn: string, name: string) => void;
+  onSelect: (fqn: string, name: string, id: string) => void;
 }) {
   const [groups, setGroups] = useState<DatasetGroups | null>(null);
   const [personalNodes, setPersonalNodes] = useState<FolderPathNode[]>([]);
@@ -127,7 +128,7 @@ function DatasetExplorer({
         return (
           <button
             type="button"
-            onClick={() => onSelect(fqn, item.name ?? item.id)}
+            onClick={() => onSelect(fqn, item.name ?? item.id, item.id)}
             style={{
               background: 'none',
               border: 'none',
@@ -165,7 +166,17 @@ function DatasetExplorer({
  * `op:'create'`, then returns to its detail. The guided TRAIN / DEPLOY steps that
  * follow Define are Phase 2/3 — here we only register the spec, honestly.
  */
-export default function NewModel({ onCreated }: { onCreated: (m: ModelSummary) => void }) {
+export default function NewModel({
+  onCreated,
+  prefill,
+  onColumns,
+}: {
+  onCreated: (m: ModelSummary) => void;
+  /** Define-assistant suggestion to pre-fill the form (task/target/features). */
+  prefill?: ModelDefinition | null;
+  /** Report the picked dataset's real column names up (feeds the Define assistant). */
+  onColumns?: (cols: string[]) => void;
+}) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [taskType, setTaskType] = useState<TaskType>('binary_classification');
@@ -180,11 +191,21 @@ export default function NewModel({ onCreated }: { onCreated: (m: ModelSummary) =
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
+  const untrainable = !isTrainableTask(taskType);
   const unsupervised = taskType === 'clustering';
+
+  // Apply an assistant suggestion when one arrives (only trainable tasks are honoured).
+  useEffect(() => {
+    if (!prefill) return;
+    if (prefill.taskType && isTrainableTask(prefill.taskType)) setTaskType(prefill.taskType);
+    if (typeof prefill.targetColumn === 'string') setTarget(prefill.targetColumn);
+    if (Array.isArray(prefill.features)) setFeatures(prefill.features.join(', '));
+  }, [prefill]);
 
   async function create() {
     setErr('');
     if (!name.trim()) { setErr('Give the model a name.'); return; }
+    if (untrainable) { setErr(`${TASK_LABEL[taskType]} is not trainable in this runtime yet — pick a trainable task type.`); return; }
     if (!sourceDataProductFqn.trim()) { setErr('Point at a source data product.'); return; }
     const splitNum = Number(split);
     if (!(splitNum > 0 && splitNum < 1)) { setErr('Train/test split must be between 0 and 1.'); return; }
@@ -213,10 +234,23 @@ export default function NewModel({ onCreated }: { onCreated: (m: ModelSummary) =
     }
   }
 
-  function handleDatasetSelect(fqn: string, dsName: string) {
+  function handleDatasetSelect(fqn: string, dsName: string, id: string) {
     setSource(fqn);
     setSelectedDatasetName(dsName);
     setExplorerOpen(false);
+    // Best-effort: pull the dataset's REAL columns so the Define assistant can suggest a
+    // target + features from them. A failure is silent — the form still works by hand.
+    if (onColumns && id) {
+      fetch(`/api/data/datasets/${encodeURIComponent(id)}/profile`, { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((p) => {
+          const cols = Array.isArray(p?.columns)
+            ? p.columns.map((c: { name?: string }) => c?.name).filter((n: unknown): n is string => typeof n === 'string')
+            : [];
+          onColumns(cols);
+        })
+        .catch(() => { /* honest no-op — assistant just won't have column hints */ });
+    }
   }
 
   const labelStyle = { display: 'block', marginBottom: 4 } as const;
@@ -242,12 +276,28 @@ export default function NewModel({ onCreated }: { onCreated: (m: ModelSummary) =
         <div>
           <label className="comp-label" style={labelStyle}>Task type</label>
           <div className="rt-seg" role="group" aria-label="Task type" style={{ flexWrap: 'wrap' }}>
-            {TASK_TYPES.map((t) => (
-              <button key={t} type="button" className={`rt-seg-opt${taskType === t ? ' active' : ''}`} onClick={() => setTaskType(t)}>
-                {TASK_LABEL[t]}
-              </button>
-            ))}
+            {TASK_TYPES.map((t) => {
+              const ok = isTrainableTask(t);
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  className={`rt-seg-opt${taskType === t ? ' active' : ''}`}
+                  onClick={() => setTaskType(t)}
+                  title={ok ? undefined : 'Not yet trainable in this CPU runtime'}
+                  style={ok ? undefined : { opacity: 0.55 }}
+                >
+                  {TASK_LABEL[t]}{ok ? '' : ' · not yet trainable'}
+                </button>
+              );
+            })}
           </div>
+          {untrainable ? (
+            <div className="hint" style={{ marginTop: 6, color: 'var(--warn-text, inherit)' }}>
+              This runtime trains classification and regression only — {TASK_LABEL[taskType].toLowerCase()} isn’t
+              built yet. Pick a trainable task to continue.
+            </div>
+          ) : null}
         </div>
 
         {/* Source dataset — file-explorer picker using the shared FolderTree primitive. */}
@@ -352,7 +402,7 @@ export default function NewModel({ onCreated }: { onCreated: (m: ModelSummary) =
       {err ? <div className="error" style={{ marginTop: 14 }}>{err}</div> : null}
 
       <div className="row" style={{ marginTop: 18, gap: 10 }}>
-        <button className="btn" onClick={create} disabled={busy}>
+        <button className="btn" onClick={create} disabled={busy || untrainable}>
           {busy ? <span className="spin" /> : 'Create draft model'}
         </button>
       </div>

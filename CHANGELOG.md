@@ -15,6 +15,25 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 _Nothing yet._
 
+## [os-ui 0.5.44] — 2026-07-19
+
+### Changed
+- **Every build tab now shares the staged UX** (the Agent-tab 5-stage pattern, via the
+  `lib/core/stages` + `StageShell` core primitive) — a consistent numbered-stage flow with
+  per-stage guidance, gated navigation, ✓ on genuine completion, and a **per-stage Sovereign-OS
+  AI assistant** focused on that stage:
+  - **Data** — Define · Ingest · Refine · Publish · Use (the 1114-line single scroll is gone;
+    4 dead files retired).
+  - **Metrics** — Define · Refine · Preview · Publish · Monitor (NL-first define, promote folded in).
+  - **Dashboards** — Define · Design · Build · View · Govern (shipped in 0.5.43).
+  - **Science** — Define · Train · Deploy · Predict · Monitor (gated on real `buildState`;
+    trainable-task guard; honest drift placeholder).
+  - **Software** — Describe · Build · Preview · Publish · Operate (delivery-team chat + build chat +
+    editor unified into Build; real scan/review at Publish; live tool surface at Operate).
+  Each tab's create→manage screens are now one continuous flow that opens at the stage matching an
+  artifact's real state. Existing behavior and the audited P0 fixes are preserved; this is a
+  consistent re-skin over correct engines, not a rewrite.
+
 ## [os-ui 0.5.43] — 2026-07-19
 
 ### Added

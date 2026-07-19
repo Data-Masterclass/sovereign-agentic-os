@@ -35,24 +35,30 @@ function DataPageInner() {
   const searchParams = useSearchParams();
   const focusId = searchParams.get('focus') ? decodeURIComponent(searchParams.get('focus')!) : null;
   const [opened, setOpened] = useState(false);
+  // Whether a dataset is open in the staged builder — its Use stage carries Talk itself,
+  // so the tab-level copilot only shows on the tiles home (no double Talk).
+  const [detailOpen, setDetailOpen] = useState(false);
   const talk = TALK_PRESENTATION.data;
   return (
     <>
       <PageHeader title="Data" crumb="datasets · ask" tutorial="data" />
       <div className="content">
-        {/* Top: the datasets home (tiles → detail → build flow). */}
+        {/* Top: the datasets home (tiles → staged builder). */}
         <div {...anchorAttr(ANCHORS.data.sandbox)}>
           <DataTab
             openDatasetId={opened ? null : focusId}
             onDatasetOpened={() => setOpened(true)}
+            onDetailChange={setDetailOpen}
           />
         </div>
 
-        {/* Bottom: the shared "Talk to <Tab>" copilot — governed NL→SQL, same OPA/Trino
-            path, with the model's reasoning shown apart from the grounded answer. */}
-        <div className="query-section" style={{ marginTop: 40 }} {...anchorAttr(ANCHORS.data.query)}>
-          <TalkTo tab="data" title={talk.title} blurb={talk.blurb} examples={talk.examples} />
-        </div>
+        {/* Bottom: the shared "Talk to <Tab>" copilot on the tiles home — governed NL→SQL,
+            same OPA/Trino path. Hidden inside the builder, where the Use stage carries it. */}
+        {!detailOpen ? (
+          <div className="query-section" style={{ marginTop: 40 }} {...anchorAttr(ANCHORS.data.query)}>
+            <TalkTo tab="data" title={talk.title} blurb={talk.blurb} examples={talk.examples} />
+          </div>
+        ) : null}
       </div>
     </>
   );
