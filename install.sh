@@ -103,6 +103,16 @@ if [ "$TARGET" = "kind" ]; then
 fi
 
 # --- 5. install ------------------------------------------------------------
+c "Adding upstream Helm repos…"
+helm repo add langfuse https://langfuse.github.io/langfuse-k8s >/dev/null 2>&1 || true
+helm repo add opensearch https://opensearch-project.github.io/helm-charts >/dev/null 2>&1 || true
+helm repo add dagster https://dagster-io.github.io/helm >/dev/null 2>&1 || true
+helm repo add open-metadata https://helm.open-metadata.org >/dev/null 2>&1 || true
+helm repo add superset https://apache.github.io/superset >/dev/null 2>&1 || true
+helm repo add argo https://argoproj.github.io/argo-helm >/dev/null 2>&1 || true
+helm repo add jupyterhub https://hub.jupyter.org/helm-chart/ >/dev/null 2>&1 || true
+helm repo update >/dev/null 2>&1 || true
+
 c "Fetching chart dependencies…"; helm dependency build "$CHART" >/dev/null
 c "Installing the Sovereign Agentic OS (this takes a few minutes)…"
 helm upgrade --install "$RELEASE" "$CHART" -n "$NS" --create-namespace \
