@@ -162,6 +162,10 @@ const PLATFORM_SCHEMAS: Record<string, JsonSchema> = {
         description:
           "Declare the app's surface — 'ui' (serves a frontend), 'api' (headless / tool surface), or 'both'. Declaring it wins over auto-detection, so a UI app is never mislabelled as API. Omit to let the OS infer it from the code.",
       },
+      purpose: {
+        type: 'string',
+        description: "The app's stated purpose (Define stage), ≤2000 chars. Optional at creation; update later with set_app_design.",
+      },
     },
     required: ['name'],
   },

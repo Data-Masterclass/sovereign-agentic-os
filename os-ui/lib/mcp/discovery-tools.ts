@@ -415,21 +415,71 @@ const readTools: McpTool[] = [
     tab: 'software',
     minRole: 'creator',
     description:
-      'List the apps you can see (My · Domain · Company). Path: DISCOVERY for the Software golden path (guide: sovereign-os://guide/path/software). Before: whoami. After: get_software, or create_software only if nothing fits. Governance: read-only, same visibility rule as the Software tab.',
+      'List the apps you can see (My · Domain · Company). Each app includes `purpose` (Define stage intent), `epics` (Design epics + stories), and `grants` (capability metadata — kind/level only, never raw credentials). Path: DISCOVERY for the Software golden path (guide: sovereign-os://guide/path/software). Before: whoami. After: get_software, or create_software only if nothing fits. Governance: read-only, same visibility rule as the Software tab.',
     inputSchema: NO_ARGS,
-    call: async (user) => listAppsForUser(user),
+    call: async (user) => {
+      const apps = await listAppsForUser(user);
+      return apps.map((a) => ({
+        id: a.id,
+        slug: a.slug,
+        name: a.name,
+        description: a.description,
+        purpose: a.purpose,
+        epics: a.epics,
+        grants: a.grants,
+        template: a.template,
+        surface: a.surface,
+        owner: a.owner,
+        domain: a.domain,
+        visibility: a.visibility,
+        status: a.status,
+        deploy: a.deploy,
+        updatedAt: a.updatedAt,
+        createdAt: a.createdAt,
+      }));
+    },
   },
   {
     name: 'get_software',
     tab: 'software',
     minRole: 'creator',
     description:
-      'Read one app you can see (template, consumed resources, lifecycle state). Path: DISCOVERY for the Software golden path. Before: list_software. After: commit / start_preview / request_deploy. Governance: read-only; unseeable id → not_found.',
+      'Read one app you can see (template, consumed resources, lifecycle state, plus `purpose` / `epics` / `grants`). `grants` is capability metadata (kind + access level) — never raw credentials. Path: DISCOVERY for the Software golden path. Before: list_software. After: commit / start_preview / request_deploy / set_app_design. Governance: read-only; unseeable id → not_found.',
     inputSchema: idArg('appId', 'App id from list_software.'),
     call: async (user, args) => {
       const id = str(args.appId).trim();
       if (!id) fail('get_software needs an `appId`', 400);
-      return getAppForUser(id, user);
+      const a = await getAppForUser(id, user);
+      return {
+        id: a.id,
+        slug: a.slug,
+        name: a.name,
+        description: a.description,
+        purpose: a.purpose,
+        epics: a.epics,
+        grants: a.grants,
+        template: a.template,
+        surface: a.surface,
+        declaredSurface: a.declaredSurface,
+        owner: a.owner,
+        domain: a.domain,
+        visibility: a.visibility,
+        mode: a.mode,
+        repo: a.repo,
+        subdomain: a.subdomain,
+        pipeline: a.pipeline,
+        designDecisions: a.designDecisions,
+        dataDescriptions: a.dataDescriptions,
+        docs: a.docs,
+        manifest: a.manifest,
+        mcpTools: a.mcpTools,
+        consumes: a.consumes,
+        status: a.status,
+        deploy: a.deploy,
+        usedAsData: a.usedAsData,
+        createdAt: a.createdAt,
+        updatedAt: a.updatedAt,
+      };
     },
   },
 ];

@@ -924,7 +924,7 @@ export async function getAppForUser(appId: string, user: CurrentUser): Promise<A
 
 export async function createApp(
   user: CurrentUser,
-  input: { name: string; description?: string; template?: AppTemplateKey; domain?: string; surface?: SurfaceDeclaration },
+  input: { name: string; description?: string; template?: AppTemplateKey; domain?: string; surface?: SurfaceDeclaration; purpose?: string },
 ): Promise<App> {
   const map = await getCache();
   const tpl = TEMPLATES[input.template ?? 'nextjs-supabase'] ?? TEMPLATES['nextjs-supabase'];
@@ -993,7 +993,7 @@ export async function createApp(
     slug,
     name,
     description,
-    purpose: '',
+    purpose: (input.purpose ?? '').slice(0, 2000),
     epics: [],
     grants: emptyContextGrants(),
     template: tpl.key,

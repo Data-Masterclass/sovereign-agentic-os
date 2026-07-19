@@ -437,3 +437,81 @@ test('list_connection_templates: the catalog from the SAME registry create_conne
   assert.ok(notion.requiredFields.includes('name') && notion.requiredFields.includes('template'));
   assert.ok(notion.tools.some((t) => t.mode === 'Blocked'), 'the safe preset profile is stated (deletes blocked)');
 });
+
+// ---- SET_APP_DESIGN + create_software(purpose) + get_software/list_software shape -------
+
+test('create_software: optional purpose is persisted; get_software and list_software expose purpose/epics/grants', async () => {
+  resetAll();
+  // create_software now accepts an optional purpose at creation time.
+  const app = payload<{ id: string; purpose: string; epics: unknown[]; grants: Record<string, unknown> }>(
+    await call(builder, 'create_software', { name: 'Support Tracker', purpose: 'Track and resolve customer tickets.' }),
+  );
+  assert.equal(app.purpose, 'Track and resolve customer tickets.', 'purpose is persisted at creation');
+  assert.deepEqual(app.epics, [], 'epics default to empty array');
+  assert.ok(app.grants && typeof app.grants === 'object', 'grants is present');
+
+  // get_software: includes purpose/epics/grants (safe, no secret material).
+  const got = payload<{ id: string; purpose: string; epics: unknown[]; grants: Record<string, unknown[]> }>(
+    await call(builder, 'get_software', { appId: app.id }),
+  );
+  assert.equal(got.purpose, 'Track and resolve customer tickets.');
+  assert.deepEqual(got.epics, []);
+  assert.ok('connections' in got.grants && 'data' in got.grants, 'grants has all five kinds');
+  assert.deepEqual(got.grants.connections, [], 'grants are empty by default');
+
+  // list_software: shaped response includes purpose/epics/grants.
+  const list = payload<Array<{ id: string; purpose: string; epics: unknown[]; grants: Record<string, unknown[]> }>>(
+    await call(builder, 'list_software'),
+  );
+  const found = list.find((a) => a.id === app.id);
+  assert.ok(found, 'the new app appears in list_software');
+  assert.equal(found!.purpose, 'Track and resolve customer tickets.');
+  assert.deepEqual(found!.epics, []);
+  assert.ok('data' in found!.grants, 'list_software grants has all five kinds');
+});
+
+test('set_app_design: purpose, epics, grants — governed via patchAppDesign (owner only)', async () => {
+  resetAll();
+  const app = payload<{ id: string; purpose: string; epics: unknown[]; grants: Record<string, unknown[]> }>(
+    await call(builder, 'create_software', { name: 'Design Test App' }),
+  );
+
+  // Set purpose only — epics/grants untouched.
+  const afterPurpose = payload<{ purpose: string; epics: unknown[]; grants: Record<string, unknown[]> }>(
+    await call(builder, 'set_app_design', { appId: app.id, purpose: 'Help agents triage tickets.' }),
+  );
+  assert.equal(afterPurpose.purpose, 'Help agents triage tickets.');
+  assert.deepEqual(afterPurpose.epics, [], 'epics untouched');
+
+  // Set epics + a story.
+  const epic = {
+    id: 'epic_1',
+    title: 'Ticket triage',
+    description: 'Auto-prioritise tickets',
+    requirements: { technical: 'ML', ux: 'Inbox view', governance: 'No PII in logs' },
+    stories: [{ id: 'story_1', title: 'Auto-label', asA: 'Agent', iWant: 'labelling', soThat: 'faster triage', acceptance: 'Label within 5 s' }],
+  };
+  const afterEpics = payload<{ epics: typeof epic[] }>(
+    await call(builder, 'set_app_design', { appId: app.id, epics: [epic] }),
+  );
+  assert.equal(afterEpics.epics.length, 1, 'epic was persisted');
+  assert.equal(afterEpics.epics[0].title, 'Ticket triage');
+  assert.equal(afterEpics.epics[0].stories[0].id, 'story_1');
+
+  // Set grants (capability metadata only — no raw credentials).
+  const afterGrants = payload<{ grants: Record<string, Array<{ id: string; access: string }>> }>(
+    await call(builder, 'set_app_design', {
+      appId: app.id,
+      grants: { connections: [{ id: 'conn_abc', access: 'read-only' }], data: [], knowledge: [], files: [], metrics: [] },
+    }),
+  );
+  assert.equal(afterGrants.grants.connections.length, 1, 'connection grant was recorded');
+  assert.equal(afterGrants.grants.connections[0].id, 'conn_abc');
+  assert.equal(afterGrants.grants.connections[0].access, 'read-only');
+  assert.deepEqual(afterGrants.grants.data, [], 'other kinds unchanged');
+
+  // Governance: outsider cannot edit another user's personal app (invisible → not_found,
+  // consistent with get_software behaviour — no existence leak).
+  const e = errorOf(await call(outsider, 'set_app_design', { appId: app.id, purpose: 'hacked' }));
+  assert.equal(e.code, 'not_found', 'governance gate holds — personal app is invisible to outsider (no existence leak)');
+});
