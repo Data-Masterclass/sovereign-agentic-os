@@ -69,6 +69,7 @@ test('vite-os scaffold: package.json deps are all permissive-licensed', () => {
   // All expected key deps present.
   assert.ok(pkg.dependencies?.['react'], 'react in dependencies');
   assert.ok(pkg.dependencies?.['@sovereign-os/app-sdk'], '@sovereign-os/app-sdk in dependencies');
+  assert.ok(pkg.dependencies?.['@sovereign-os/ui'], '@sovereign-os/ui (OS design system) in dependencies');
   assert.ok(pkg.devDependencies?.['vite'], 'vite in devDependencies');
   assert.ok(pkg.devDependencies?.['tailwindcss'], 'tailwindcss in devDependencies');
   assert.ok(pkg.devDependencies?.['typescript'], 'typescript in devDependencies');
@@ -115,6 +116,46 @@ test('vite-os scaffold: src/App.tsx uses os.whoami() + os.context()', () => {
   assert.ok(f, 'src/App.tsx is present');
   assert.match(f!.content, /os\.whoami\(\)/, 'calls os.whoami()');
   assert.match(f!.content, /os\.context\(\)/, 'calls os.context()');
+  // Real-SDK metric call preserved — NOT the old queryMetric/string shape.
+  assert.match(f!.content, /os\.metrics\.query\(/, 'calls os.metrics.query()');
+  assert.doesNotMatch(f!.content, /queryMetric/, 'does not reintroduce the old queryMetric shape');
+});
+
+// ------------------------------------------------ OS design-system wiring --------
+
+test('vite-os scaffold: src/index.css imports the OS theme once, keeps Tailwind', () => {
+  const f = byPath('src/index.css');
+  assert.ok(f, 'src/index.css is present');
+  assert.match(f!.content, /@import\s+['"]@sovereign-os\/ui\/theme\.css['"]/, 'imports @sovereign-os/ui/theme.css');
+  assert.match(f!.content, /@tailwind base/, 'still pulls Tailwind base');
+});
+
+test('vite-os scaffold: src/App.tsx wraps the app in the OS AppShell + primitives', () => {
+  const f = byPath('src/App.tsx');
+  assert.match(f!.content, /from '@sovereign-os\/ui'/, 'imports from the OS UI package');
+  assert.match(f!.content, /AppShell/, 'uses AppShell');
+  assert.match(f!.content, /<AppShell/, 'renders the AppShell chrome');
+  // Uses the OS primitives instead of raw Tailwind cards.
+  assert.match(f!.content, /\bSection\b/, 'uses Section');
+  assert.match(f!.content, /\bBadge\b/, 'uses Badge');
+  assert.match(f!.content, /\bTable\b/, 'uses Table');
+  // No leftover shadcn card import.
+  assert.doesNotMatch(f!.content, /components\/ui\/card/, 'drops the old shadcn card import');
+});
+
+test('vite-os scaffold: src/App.tsx surfaces the logged-in user in the chrome', () => {
+  const f = byPath('src/App.tsx');
+  // The topbar shows the live whoami user (username) — wired to AppShell.topbarRight.
+  assert.match(f!.content, /whoami/, 'reads whoami');
+  assert.match(f!.content, /user\.username/, 'shows the username');
+  assert.match(f!.content, /topbarRight=/, 'passes the user into the topbar slot');
+  assert.match(f!.content, /sidebarFooter=/, 'shows the signed-in user in the sidebar footer');
+});
+
+test('vite-os scaffold: src/main.tsx imports index.css (theme entry)', () => {
+  const f = byPath('src/main.tsx');
+  assert.ok(f, 'src/main.tsx is present');
+  assert.match(f!.content, /import '\.\/index\.css'/, 'imports the css entry that pulls the OS theme');
 });
 
 // -------------------------------------------------------------------- app.yaml --

@@ -72,9 +72,12 @@ const OS_SDK_BRIEF = [
   'state (loading / empty / the error message). Real data or a real error, never a fake.',
   '',
   'Scaffold conventions: entry `src/main.tsx` -> `src/App.tsx`; the client factory lives',
-  'in `src/os.ts`; shadcn primitives under `src/components/ui/`; `cn()` in `src/lib/utils.ts`;',
-  'Tailwind via `src/index.css`. Build output is `dist/`, served by nginx on port 8080.',
-  'Keep imports pointing at `@sovereign-os/app-sdk` and follow the existing file layout.',
+  'in `src/os.ts`. The OS design system is vendored as `@sovereign-os/ui` — its theme is',
+  'imported once in `src/index.css` (`@import \'@sovereign-os/ui/theme.css\'`) and the app is',
+  'wrapped in its `AppShell` with the OS primitives (Section, Card, Table, Badge). Tailwind is',
+  'still available in `src/index.css` for custom work. Build output is `dist/`, served by nginx',
+  'on port 8080. Keep imports pointing at `@sovereign-os/app-sdk` + `@sovereign-os/ui` and',
+  'follow the existing file layout.',
 ].join('\n');
 
 /**

@@ -86,9 +86,14 @@ export async function resolveDashboardIdByTitle(
   fetchImpl: typeof fetch = fetch,
 ): Promise<number | null> {
   const q = encodeURIComponent(JSON.stringify({ filters: [{ col: 'dashboard_title', opr: 'ct', value: name }] }));
+  // Superset rejects a bare X-Forwarded-User GET with 401 (the _sso_login handshake needs the
+  // CSRF token + session cookie) — the SAME authenticated handshake import/delete/embedded use.
+  // Without it, dashboardExists 401'd → a FALSE "not found after import" + a downstream guest-
+  // token 400 (the lookup never returned the id the token must target).
+  const auth = await csrf(fetchImpl, base);
   const listRes = await withTimeout(fetchImpl, `${base}/api/v1/dashboard/?q=${q}`, {
     method: 'GET',
-    headers: { 'X-Forwarded-User': serviceUser(), accept: 'application/json' },
+    headers: serviceHeaders(base, auth, { accept: 'application/json' }),
   });
   if (!listRes || !listRes.ok) throw new Error(`Superset dashboard lookup failed (${listRes?.status ?? 'unreachable'})`);
   const data = (await listRes.json().catch(() => ({}))) as { result?: { id: number; dashboard_title?: string }[] };

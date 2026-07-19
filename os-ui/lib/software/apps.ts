@@ -34,6 +34,7 @@ import type {
 } from '@/lib/software/model';
 import { viteOsFiles } from '@/lib/software/scaffolds/vite-os';
 import { vendorSdkForRepo, applySdkFileDep } from '@/lib/software/app-sdk-vendor';
+import { vendorUiForRepo, applyUiFileDep } from '@/lib/software/app-ui-vendor';
 import { snapshotFiles, getSnapshot } from '@/lib/software/snapshot';
 import { generateAndCompile } from '@/lib/software/auto-mcp';
 import { parseAppManifest, renderAppYaml, defaultOpenApi, resolveSurface } from '@/lib/software/metadata';
@@ -685,6 +686,22 @@ function withVendoredSdk(tpl: Template, files: ScaffoldFile[]): ScaffoldFile[] {
 }
 
 /**
+ * For a `vite-os` app, append the vendored OS design-system source
+ * (`@sovereign-os/ui` — theme + AppShell + primitives) and rewrite its package.json
+ * to a local `file:` dependency, exactly mirroring `withVendoredSdk`. So the built
+ * Docker image resolves `import { AppShell } from '@sovereign-os/ui'` and
+ * `@import '@sovereign-os/ui/theme.css'` offline/sovereignly. Other templates pass
+ * through unchanged.
+ */
+function withVendoredUi(tpl: Template, files: ScaffoldFile[]): ScaffoldFile[] {
+  if (tpl.key !== 'vite-os') return files;
+  const withDep = files.map((f) =>
+    f.path === 'package.json' ? { ...f, content: applyUiFileDep(f.content) } : f,
+  );
+  return [...withDep, ...vendorUiForRepo()];
+}
+
+/**
  * Best-effort: create the per-app Forgejo repo + seed the template files. Returns
  * a live result when Forgejo is reachable, or an offline shell otherwise — the
  * golden path still works for teaching, honestly labelled.
@@ -723,10 +740,12 @@ async function scaffoldRepo(
   // trigger fires against a tree with no build context and the run cannot build an
   // image — so the workflow must be the final file committed.
   const isWorkflow = (p: string) => p.startsWith('.forgejo/workflows/');
-  // Governed-frontend apps (vite-os) import `@sovereign-os/app-sdk`. VENDOR the SDK
-  // source into the repo + rewrite package.json to a local `file:` dep so the built
-  // Docker image resolves it with no external registry — fully sovereign / offline.
-  const baseFiles = withVendoredSdk(tpl, tpl.files(name, slug));
+  // Governed-frontend apps (vite-os) import `@sovereign-os/app-sdk` AND wear the OS
+  // design system `@sovereign-os/ui`. VENDOR both sources into the repo + rewrite
+  // package.json to local `file:` deps so the built Docker image resolves them with
+  // no external registry — fully sovereign / offline. (Order: SDK first, then UI —
+  // each rewrites the package.json dep it owns and appends its own vendor/ files.)
+  const baseFiles = withVendoredUi(tpl, withVendoredSdk(tpl, tpl.files(name, slug)));
   const ordered = [
     ...baseFiles.filter((f) => !isWorkflow(f.path)),
     ...baseFiles.filter((f) => isWorkflow(f.path)),
