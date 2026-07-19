@@ -32,6 +32,7 @@ import type {
   ScaffoldFile,
   SurfaceDeclaration,
 } from '@/lib/software/model';
+import { viteOsFiles } from '@/lib/software/scaffolds/vite-os';
 import { snapshotFiles, getSnapshot } from '@/lib/software/snapshot';
 import { generateAndCompile } from '@/lib/software/auto-mcp';
 import { parseAppManifest, renderAppYaml, defaultOpenApi, resolveSurface } from '@/lib/software/metadata';
@@ -193,11 +194,12 @@ export type App = {
 
 // ----------------------------------------------------------------- Templates --
 
-export type AppTemplateKey = 'nextjs-supabase' | 'service' | 'script' | 'dashboard';
+export type AppTemplateKey = 'nextjs-supabase' | 'service' | 'script' | 'dashboard' | 'vite-os';
 
 /** Runtime kind per template (drives the per-template/per-runtime adapter). */
 export const TEMPLATE_RUNTIME: Record<AppTemplateKey, 'web' | 'service' | 'script' | 'dashboard'> = {
   'nextjs-supabase': 'web',
+  'vite-os': 'web',
   service: 'service',
   script: 'script',
   dashboard: 'dashboard',
@@ -449,8 +451,80 @@ function dashboardTemplate(): Template {
   };
 }
 
+/**
+ * Vite + React + TypeScript + Tailwind + shadcn/ui SPA wired to the OS client SDK.
+ * The generated app calls os.whoami() + os.context() on boot and renders the
+ * app's granted context (datasets / metrics / knowledge) plus one live metric
+ * sample — so a brand-new app already shows real governed data.
+ *
+ * Served as static files from nginx on port 8080 (multi-stage Dockerfile).
+ * Uses permissive-licensed dependencies only (MIT / Apache-2.0 / BSD).
+ */
+function viteOsTemplate(): Template {
+  return {
+    key: 'vite-os',
+    label: 'Vite + React OS app (SPA, nginx)',
+    tools: (slug) => [
+      { name: 'list_records', description: 'List records (read).', write: false },
+      { name: 'get_record', description: 'Get one record by id (read).', write: false },
+      { name: `${slug.replace(/-/g, '_')}_refresh`, description: 'Refresh the app data (write).', write: true },
+    ],
+    designDecisions: (name) =>
+      [
+        `# ${name} — design decisions`,
+        '',
+        '- **Stack:** Vite + React + TypeScript + Tailwind CSS + shadcn/ui primitives.',
+        '- **OS integration:** `@sovereign-os/app-sdk` — `os.whoami()`, `os.context()`, `os.queryMetric()`.',
+        '- **Data access:** governed grants (datasets / metrics / knowledge) — no raw credentials.',
+        '- **Served by:** nginx on port 8080 via a multi-stage Docker build.',
+        '- **MCP:** capabilities auto-exposed as governed tools (read: list/get; write: refresh).',
+      ].join('\n'),
+    dataDescriptions: (name) =>
+      [
+        `# ${name} — data descriptions`,
+        '',
+        '## Governed context',
+        'The app consumes governed context from the OS SDK — datasets, metrics, and knowledge',
+        'that a domain admin has explicitly granted. No raw data is embedded in the app.',
+        '',
+        '## Starter data model',
+        '| field | type | meaning |',
+        '|---|---|---|',
+        '| `id` | string | record identifier |',
+        '| `value` | number \\| string | primary value |',
+        '| `unit` | string | unit of measure (optional) |',
+      ].join('\n'),
+    docs: (name, sub) =>
+      [
+        `# ${name}`,
+        '',
+        `Live at **https://${sub}** (once CI → Harbor → Argo CD have synced).`,
+        '',
+        '## Use',
+        '1. Open the app — it calls `os.whoami()` and `os.context()` on boot.',
+        '2. The starter page renders your granted datasets, metrics, and knowledge.',
+        '3. Replace `src/App.tsx` with your real UI.',
+        '4. Your agents can call the app MCP tools (`list_records`, `refresh`, …).',
+      ].join('\n'),
+    files: (name, slug) => [
+      // The vite-os scaffold files (package.json, Dockerfile, src/*, nginx.conf, …)
+      // come from the standalone template data module so they stay pure-data and
+      // never get compiled by os-ui's own Next.js / tsc build.
+      ...viteOsFiles(name, slug),
+      // Append the CI workflow last — same ordering convention as nextjsSupabaseTemplate:
+      // source files first, CI workflow last so the first push triggers the build
+      // with the Dockerfile already committed.
+      //
+      // NOTE: viteOsFiles already includes .forgejo/workflows/ci.yml because it
+      // follows the same "workflow is just another template file" shape.  The
+      // scaffoldRepo() seeder re-orders: source first, workflows last.
+    ],
+  };
+}
+
 const TEMPLATES: Record<AppTemplateKey, Template> = {
   'nextjs-supabase': nextjsSupabaseTemplate(),
+  'vite-os': viteOsTemplate(),
   service: genericTemplate('service', 'Service / API'),
   script: genericTemplate('script', 'Script / scheduled job'),
   dashboard: dashboardTemplate(),
@@ -458,6 +532,7 @@ const TEMPLATES: Record<AppTemplateKey, Template> = {
 
 export const APP_TEMPLATES: { key: AppTemplateKey; label: string }[] = [
   { key: 'nextjs-supabase', label: 'Web app (Next.js + Supabase)' },
+  { key: 'vite-os', label: 'Vite + React OS app (SPA, governed)' },
   { key: 'service', label: 'Service / API' },
   { key: 'script', label: 'Script / scheduled job' },
   { key: 'dashboard', label: 'Dashboard-as-app' },

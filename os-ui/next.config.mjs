@@ -21,6 +21,11 @@ const nextConfig = {
     '/api/**/*': ['./lib/tabs/*.context.md'],
   },
   reactStrictMode: true,
+  // Disable Next's server-side image optimizer. It optionally pulls `sharp`
+  // (→ libvips, LGPL-3.0) — the ONLY non-permissive dependency in the tree.
+  // The OS is a sovereign, strictly-permissive (MIT/Apache-2.0/BSD/ISC) codebase,
+  // so we opt out and keep every dependency permissive. Images are served as-is.
+  images: { unoptimized: true },
   // Do NOT auto-redirect `/path/` → `/path`. The same-origin tool proxy serves
   // embedded apps at `/tools/<key>/` (trailing slash). Some tools (MLflow) emit
   // RELATIVE asset URLs like `static-files/static/js/main.js`; those only resolve

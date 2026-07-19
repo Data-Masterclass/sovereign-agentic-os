@@ -108,6 +108,7 @@ export function __resetReviewCards(): void {
 // Per-runtime cost/resource footprint surfaced on the card (rough monthly USD).
 const FOOTPRINT: Record<App['template'], ResourceFootprint> = {
   'nextjs-supabase': { cpu: '250m', memory: '256Mi', estMonthlyUsd: 12 },
+  'vite-os': { cpu: '50m', memory: '64Mi', estMonthlyUsd: 3 },
   service: { cpu: '100m', memory: '128Mi', estMonthlyUsd: 6 },
   script: { cpu: '50m', memory: '64Mi', estMonthlyUsd: 2 },
   dashboard: { cpu: '200m', memory: '256Mi', estMonthlyUsd: 10 },
