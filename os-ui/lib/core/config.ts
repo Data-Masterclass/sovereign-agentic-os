@@ -445,6 +445,16 @@ export const config = {
   // least-privilege writer bot. See docs/research/data-quality-plan.md (D4).
   openmetadataDqWritebackEnabled: env('OPENMETADATA_DQ_WRITEBACK_ENABLED', '').toLowerCase() === 'true',
 
+  // ---- Analytics-monorepo APPLY (#146 Phase 1). GATED OFF by default: the
+  // registry-apply enforcement point — THE only door from git into compute
+  // (plan §3 step 6). When OFF, `POST/GET /api/analytics/apply` reports it
+  // honestly and writes nothing; when ON it still requires admin / an admin
+  // service-principal session and re-runs OPA/tier/promotion checks as the mapped
+  // principal, REJECTING any pushed OS-managed file the emitters can't round-trip
+  // (single-writer invariant — the registry stays authoritative). The end-to-end
+  // path is live-verify-pending (needs Forgejo + analyticsRepo.enabled + Actions).
+  analyticsApplyEnabled: env('ANALYTICS_APPLY_ENABLED', '').toLowerCase() === 'true',
+
   // ---- OpenMetadata catalog ingestion (#147). GATED OFF by default: the governed
   // "refresh catalog" orchestrator folds the additive metadata + DQ write-back over
   // EVERY governed gold/silver mart so OM reflects the live lakehouse in one pass.

@@ -287,6 +287,365 @@ data:
         },
     )
 
+  # ── Conftest/OPA policy pack (epic #146 Phase 0) ─────────────────────────────
+  # PRE-MERGE advisory gate. NOT the security boundary — the server re-enforces on
+  # POST /api/analytics/apply. See policy/README.md. Conftest is Apache-2.0 (pinned).
+  dbt.rego: |
+    # SPDX-License-Identifier: Apache-2.0
+    # Copyright 2026 Borek Data Ventures UG (haftungsbeschraenkt)
+    #
+    # PRE-MERGE ADVISORY GATE — analytics monorepo, OS-managed dbt models.
+    # See policy/README.md: this Conftest gate gives fast feedback in Forgejo Actions.
+    # It is NOT the security boundary. The server re-enforces every rule below on
+    # POST /api/analytics/apply, as a real DLS-scoped principal, and REJECTS anything
+    # the emitters could not round-trip. A green CI run is a courtesy, not a grant.
+    #
+    # What this asserts: the OS-managed governed dbt model files under
+    # `dbt/models/governed/**` hold ONLY the exact shape that
+    # `os-ui/lib/data/analytics-repo.ts:buildDbtModelSql` emits — no more, no less.
+    # A hand edit into any other shape fails here (and again, hard, at apply).
+    #
+    # INPUT CONTRACT (--parser json). The CI job collects the CHANGED governed dbt
+    # files into a JSON manifest so a text file becomes policy-inspectable:
+    #
+    #   { "files": [ { "path": "dbt/models/governed/sales/gold_orders.sql",
+    #                  "content": "<config header>\n\nselect * from iceberg...\n" } ] }
+    #
+    # Only files under dbt/models/governed/ are judged; everything else is human
+    # space and ignored here (the mirror never touches it — see plan §2).
+
+    package dbt
+
+    import rego.v1
+
+    # ── helpers ──────────────────────────────────────────────────────────────────
+
+    # The governed, OS-managed dbt models (the only files this policy owns).
+    governed_sql contains f if {
+    	some f in input.files
+    	startswith(f.path, "dbt/models/governed/")
+    	endswith(f.path, ".sql")
+    }
+
+    # The emitter's layer vocabulary (analytics-repo.ts promotedLayer()).
+    layers := {"gold", "silver"}
+
+    # path = dbt/models/governed/<domain>/<layer>_<slug>.sql
+    path_parts(f) := parts if {
+    	some f2 in governed_sql
+    	f2 == f
+    	parts := split(trim_prefix(f.path, "dbt/models/governed/"), "/")
+    }
+
+    filename(f) := parts[count(parts) - 1] if parts := path_parts(f)
+
+    # ── RULES ────────────────────────────────────────────────────────────────────
+
+    # 1. Path shape: exactly <domain>/<layer>_<slug>.sql (one domain dir, one file).
+    deny contains msg if {
+    	some f in governed_sql
+    	count(path_parts(f)) != 2
+    	msg := sprintf("governed dbt model %q must live at dbt/models/governed/<domain>/<layer>_<slug>.sql", [f.path])
+    }
+
+    # 2. Filename must start with a known medallion layer (gold_/silver_).
+    deny contains msg if {
+    	some f in governed_sql
+    	count(path_parts(f)) == 2
+    	name := filename(f)
+    	not layer_prefixed(name)
+    	msg := sprintf("governed dbt model %q must be named <layer>_<slug>.sql with layer in %v", [f.path, layers])
+    }
+
+    layer_prefixed(name) if {
+    	some l in layers
+    	startswith(name, sprintf("%s_", [l]))
+    }
+
+    # 3. Must carry a dbt config header materializing a table into a domain schema —
+    #    exactly the emitter's only header (a config() call with materialized='table'
+    #    and a schema='<domain>'). No view/incremental drift, no missing schema.
+    #    The regex uses \x7b/\x7d for the Jinja braces so this file embeds cleanly in
+    #    the seed ConfigMap (Helm-template-safe: no literal double braces).
+    deny contains msg if {
+    	some f in governed_sql
+    	not regex.match(`\x7b\x7b\s*config\(materialized='table',\s*schema='[a-z0-9_]+'\)\s*\x7d\x7d`, f.content)
+    	msg := sprintf("governed dbt model %q must carry the config(materialized='table', schema='<domain>') header the emitter writes", [f.path])
+    }
+
+    # 4. Every FROM/JOIN must target the iceberg catalog only — no raw catalogs, no
+    #    other catalog. The emitter always selects `from iceberg.<schema>.<table>`.
+    deny contains msg if {
+    	some f in governed_sql
+    	some ref in table_refs(f.content)
+    	not startswith(ref, "iceberg.")
+    	msg := sprintf("governed dbt model %q references %q — OS-managed models read only from the iceberg catalog", [f.path, ref])
+    }
+
+    # 4b. No cross-domain / cross-schema fan-in: the emitter selects from a SINGLE
+    #     source lane (the owner's personal lane). A governed model may not read more
+    #     than one distinct iceberg schema.
+    deny contains msg if {
+    	some f in governed_sql
+    	schemas := {s | some ref in table_refs(f.content); startswith(ref, "iceberg."); s := split(ref, ".")[1]}
+    	count(schemas) > 1
+    	msg := sprintf("governed dbt model %q reads from multiple schemas %v — one source lane only (no cross-domain fan-in)", [f.path, schemas])
+    }
+
+    # Extract `iceberg.<schema>.<table>` references after from/join (lower-cased text).
+    table_refs(content) := refs if {
+    	lc := lower(content)
+    	matches := regex.find_n(`(?:from|join)\s+([a-z0-9_]+\.[a-z0-9_]+\.[a-z0-9_]+)`, lc, -1)
+    	refs := {trim_space(trim_prefix(trim_prefix(m, "from"), "join")) | some m in matches}
+    }
+
+    # 5. SQL-shape violations the emitter NEVER produces: statement terminators (`;`)
+    #    and SQL line comments (`--`) in the governed body.
+    deny contains msg if {
+    	some f in governed_sql
+    	contains(f.content, ";")
+    	msg := sprintf("governed dbt model %q contains ';' — the emitter never terminates statements", [f.path])
+    }
+
+    deny contains msg if {
+    	some f in governed_sql
+    	contains(f.content, "--")
+    	msg := sprintf("governed dbt model %q contains a SQL line comment '--' — not an emitter-produced shape", [f.path])
+    }
+  cube.rego: |
+    # SPDX-License-Identifier: Apache-2.0
+    # Copyright 2026 Borek Data Ventures UG (haftungsbeschraenkt)
+    #
+    # PRE-MERGE ADVISORY GATE — analytics monorepo, OS-managed Cube models.
+    # See policy/README.md: fast feedback only. NOT the security boundary. The server
+    # re-enforces on POST /api/analytics/apply and rejects anything the emitters
+    # (os-ui/lib/data/cube-models.ts:buildCubeModels + metrics.ts:scaffoldCubeYaml)
+    # could not produce.
+    #
+    # Scope: the CI job runs this ONLY over changed governed metric files
+    # (`cube/models/metrics/**/*.cube.yml`) with `--parser yaml`, so `input` is one
+    # parsed Cube doc: { cubes: [...], views: [...] }. The static demo cubes under
+    # `cube/models/seed/**` are human-space and are NOT linted here.
+    #
+    # What this asserts (the #155 namespacing + emitter contract):
+    #   - cube name is `<domain>__<slug>` (double-underscore namespace, metrics.ts:cubeName)
+    #   - sql_table binds to `iceberg.<domain>.gold_<slug>` — no sql_table escape out of
+    #     the iceberg catalog (goldMartFqn)
+    #   - measures carry name + a valid Cube aggregation type (MEASURE_TYPES)
+    #   - dimensions carry name/sql/type (scaffoldCubeYaml shape)
+
+    package cube
+
+    import rego.v1
+
+    # metrics.ts MEASURE_TYPES — the only aggregations the emitter writes.
+    measure_types := {"count", "count_distinct", "count_distinct_approx", "sum", "avg", "min", "max", "number"}
+    dim_types := {"string", "number", "time", "boolean"}
+
+    cubes contains c if some c in input.cubes
+
+    # 1. A governed metrics cube must exist (guards an empty/garbled file that would
+    #    silently deliver nothing to Cube).
+    deny contains msg if {
+    	not input.cubes
+    	msg := "cube model has no 'cubes' block — governed metric files must define a cube"
+    }
+
+    # 2. #155 namespacing: the cube name is `<domain>__<slug>` (exactly one double
+    #    underscore separating a non-empty domain from a non-empty slug).
+    deny contains msg if {
+    	some c in cubes
+    	not regex.match(`^[a-z0-9]+(_[a-z0-9]+)*__[a-z0-9]+(_[a-z0-9]+)*$`, c.name)
+    	msg := sprintf("cube %q is not #155-namespaced as <domain>__<slug>", [c.name])
+    }
+
+    # 3. No sql_table escape: the binding must be `iceberg.<domain>.gold_<slug>`.
+    #    (goldMartFqn — iceberg catalog, a gold_ mart in the domain schema.)
+    deny contains msg if {
+    	some c in cubes
+    	c.sql_table
+    	not regex.match(`^iceberg\.[a-z0-9_]+\.gold_[a-z0-9_]+$`, c.sql_table)
+    	msg := sprintf("cube %q sql_table %q must be iceberg.<domain>.gold_<slug> (no escape outside the iceberg catalog)", [c.name, c.sql_table])
+    }
+
+    # 3b. The sql_table's domain segment must match the cube name's domain prefix
+    #     (a cube may not bind to another domain's mart).
+    deny contains msg if {
+    	some c in cubes
+    	c.sql_table
+    	regex.match(`^iceberg\.[a-z0-9_]+\.gold_[a-z0-9_]+$`, c.sql_table)
+    	cube_domain := split(c.name, "__")[0]
+    	table_domain := split(c.sql_table, ".")[1]
+    	cube_domain != table_domain
+    	msg := sprintf("cube %q binds to schema %q of another domain (name domain is %q)", [c.name, table_domain, cube_domain])
+    }
+
+    # 4. Every measure has a name and a valid aggregation type.
+    deny contains msg if {
+    	some c in cubes
+    	some m in c.measures
+    	not m.name
+    	msg := sprintf("cube %q has a measure with no name", [c.name])
+    }
+
+    deny contains msg if {
+    	some c in cubes
+    	some m in c.measures
+    	m.name
+    	not measure_types[m.type]
+    	msg := sprintf("cube %q measure %q has type %q not in the emitter's set %v", [c.name, m.name, m.type, measure_types])
+    }
+
+    # 5. Every dimension has a name, sql, and a valid Cube dimension type.
+    deny contains msg if {
+    	some c in cubes
+    	some d in c.dimensions
+    	not d.name
+    	msg := sprintf("cube %q has a dimension with no name", [c.name])
+    }
+
+    deny contains msg if {
+    	some c in cubes
+    	some d in c.dimensions
+    	d.name
+    	not dim_types[d.type]
+    	msg := sprintf("cube %q dimension %q has type %q not in %v", [c.name, d.name, d.type, dim_types])
+    }
+  policy_README.md: |
+    <!--
+    SPDX-License-Identifier: Apache-2.0
+    Copyright 2026 Borek Data Ventures UG (haftungsbeschraenkt)
+    -->
+    # analytics/policy — the pre-merge policy pack (Conftest/OPA)
+
+    These Rego policies are the **PRE-MERGE advisory gate** for the analytics
+    monorepo. They run in Forgejo Actions (the `conftest` job in
+    `.forgejo/workflows/ci.yml`) over the files a PR changed, and they block merge
+    when an OS-managed file drifts from the shape the OS emitters produce.
+
+    ## They are NOT the security boundary
+
+    Read this twice. **CI is not the boundary.** A workflow file can be edited in the
+    same PR it is meant to guard; a runner can be swapped; a check can be skipped.
+    The **real** enforcement point is the server:
+
+    > Every rule below is re-enforced on **`POST /api/analytics/apply`**, run as a
+    > real DLS-scoped principal, which **rejects** anything the emitters could not
+    > round-trip. A merged PR that fails policy there does **not** reach compute.
+
+    So treat a green conftest run as **fast, honest feedback** — a courtesy that
+    catches mistakes before review — never as a grant of access. The apply route is
+    the door into compute; this pack just keeps the hallway tidy.
+
+    ## What each policy asserts
+
+    The OS owns two file families in the repo (plan §2). Human-authored paths
+    (`dbt/models/staging`, `dbt/models/marts`, `dbt/tests`, `cube/models/seed`, …)
+    are **not** judged here — the mirror never touches them.
+
+    - **`dbt.rego`** (`package dbt`) — governs `dbt/models/governed/**/*.sql`, the
+      files `analytics-repo.ts:buildDbtModelSql` emits. Asserts: path shape
+      `governed/<domain>/<layer>_<slug>.sql` (layer ∈ gold/silver); the exact
+      `{{ "{{" }} config(materialized='table', schema='<domain>') {{ "}}" }}` header; every FROM/JOIN
+      targets the **iceberg** catalog only (no raw catalogs); a single source schema
+      (no cross-domain fan-in); and none of the SQL-shape violations the emitter
+      never produces (`;`, `--` comments).
+    - **`cube.rego`** (`package cube`) — governs `cube/models/metrics/**/*.cube.yml`,
+      the files `buildCubeModels` / `scaffoldCubeYaml` emit. Asserts: the cube name is
+      **#155-namespaced** `<domain>__<slug>`; `sql_table` is
+      `iceberg.<domain>.gold_<slug>` (no escape out of the iceberg catalog, and the
+      domain segment matches the cube's namespace); measures carry a valid aggregation
+      type and dimensions a valid dimension type.
+
+    ## How the CI job runs them (input contract)
+
+    The two families use different Conftest parsers, so the job invokes conftest
+    **twice**, each scoped to its namespace:
+
+    ```sh
+    # Cube YAML is parsed natively.
+    conftest test --parser yaml --namespace cube -p policy <changed cube/models/metrics/*.cube.yml>
+
+    # dbt SQL is raw text, so the job first collects the changed governed .sql files
+    # into a JSON manifest { "files": [ { "path", "content" } ] } and lints that.
+    conftest test --parser json --namespace dbt -p policy governed-dbt.manifest.json
+    ```
+
+    ## Verifying the pack locally
+
+    Fixtures live under `policy/tests/` (good + bad for each policy). Good fixtures
+    pass, bad fixtures fail:
+
+    ```sh
+    conftest test --parser json  --namespace dbt  -p policy policy/tests/dbt/good_dbt_manifest.json   # PASS
+    conftest test --parser json  --namespace dbt  -p policy policy/tests/dbt/bad_dbt_manifest.json    # FAIL
+    conftest test --parser yaml  --namespace cube -p policy policy/tests/cube/good_orders.cube.yml    # PASS
+    conftest test --parser yaml  --namespace cube -p policy policy/tests/cube/bad_orders.cube.yml     # FAIL
+    ```
+
+    Conftest is Apache-2.0; the CI binary is version-pinned (see
+    `THIRD-PARTY-LICENSES.md`).
+  # ── policy test fixtures (conftest-verifiable: good pass, bad fail) ─────────
+  good_dbt_manifest.json: |
+    {
+      "files": [
+        {
+          "path": "dbt/models/governed/sales/gold_orders.sql",
+          "content": "{{ "{{" }} config(materialized='table', schema='sales') {{ "}}" }}\n\nselect * from iceberg.personal_alex.gold_orders\n"
+        },
+        {
+          "path": "dbt/models/governed/marketing/silver_leads.sql",
+          "content": "{{ "{{" }} config(materialized='table', schema='marketing') {{ "}}" }}\n\nselect * from iceberg.personal_dana.silver_leads\n"
+        }
+      ]
+    }
+  bad_dbt_manifest.json: |
+    {
+      "files": [
+        {
+          "path": "dbt/models/governed/sales/gold_orders.sql",
+          "content": "{{ "{{" }} config(materialized='view', schema='sales') {{ "}}" }}\n\nselect * from hive.raw.orders;  -- raw catalog, ';' and comment\n"
+        },
+        {
+          "path": "dbt/models/governed/sales/orders.sql",
+          "content": "{{ "{{" }} config(materialized='table', schema='sales') {{ "}}" }}\n\nselect * from iceberg.personal_alex.gold_orders\n"
+        },
+        {
+          "path": "dbt/models/governed/sales/gold_join.sql",
+          "content": "{{ "{{" }} config(materialized='table', schema='sales') {{ "}}" }}\n\nselect * from iceberg.sales.gold_a join iceberg.finance.gold_b on a.id = b.id\n"
+        }
+      ]
+    }
+  good_orders.cube.yml: |
+    cubes:
+      - name: sales__orders
+        sql_table: iceberg.sales.gold_orders
+        measures:
+          - name: revenue
+            type: sum
+            sql: net_amount
+          - name: orders
+            type: count
+        dimensions:
+          - name: order_id
+            sql: order_id
+            type: number
+            primary_key: true
+          - name: order_date
+            sql: order_date
+            type: time
+  bad_orders.cube.yml: |
+    cubes:
+      - name: orders
+        sql_table: hive.raw.orders_raw
+        measures:
+          - name: revenue
+            type: median
+            sql: net_amount
+        dimensions:
+          - name: order_date
+            type: bogustype
+            sql: order_date
   # ── CI workflow (validate on every push/PR; publish dbt artifacts on push to main) ─
   ci.yml: |
     # Forgejo Actions CI for the analytics monorepo.
@@ -343,6 +702,74 @@ data:
                   print("\n".join(errors)); sys.exit(1)
               print(f"cube YAML lint OK ({len([f for r,_,fs in os.walk('/workspace/cube') for f in fs if f.endswith('.yml')])} files)")
               EOF
+      # ── Phase 0 (#146): conftest policy gate over the CHANGED OS-managed files ──
+      #   ADVISORY GATE. It blocks merge, but it is NOT the security boundary: the
+      #   server re-enforces the same rules on POST /api/analytics/apply (see
+      #   policy/README.md). Pinned conftest binary, no external marketplace actions
+      #   (same sovereign-checkout pattern as `validate`). Runs after validate.
+      conftest:
+        runs-on: docker
+        needs: validate
+        env:
+          CONFTEST_VERSION: "0.56.0"
+        steps:
+          - name: Checkout (sovereign — no external actions, full history for the diff)
+            env:
+              FORGEJO_PASS: "{{ "${{ secrets.FORGEJO_PASS }}" }}"
+              FORGEJO_URL: "{{ "${{ vars.FORGEJO_URL }}" }}"
+              FORGEJO_USER: "{{ "${{ vars.FORGEJO_USER }}" }}"
+            run: |
+              set -eu
+              # Full clone (not --depth 1): the gate diffs the PR/push against main.
+              git clone \
+                "http://${FORGEJO_USER}:${FORGEJO_PASS}@${FORGEJO_URL}/${FORGEJO_USER}/analytics.git" \
+                /workspace
+          - name: Install conftest (pinned, checksum-free mirror of the Apache-2.0 release)
+            run: |
+              set -eu
+              cd /tmp
+              ARCH="$(uname -m)"; case "$ARCH" in x86_64) ARCH=x86_64 ;; aarch64|arm64) ARCH=arm64 ;; esac
+              URL="https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_${ARCH}.tar.gz"
+              curl -sSfL "$URL" -o conftest.tgz
+              tar -xzf conftest.tgz conftest
+              install -m 0755 conftest /usr/local/bin/conftest
+              conftest --version
+          - name: Compute changed OS-managed files (governed dbt + cube metrics)
+            run: |
+              set -eu
+              cd /workspace
+              # Determine the merge base: PR → base branch; push → previous commit.
+              BASE="{{ "${{ github.event.pull_request.base.sha || github.event.before }}" }}"
+              if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+                BASE="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+              fi
+              git diff --name-only --diff-filter=ACMR "$BASE" HEAD > /tmp/changed.txt || git ls-files > /tmp/changed.txt
+              grep -E '^dbt/models/governed/.*\.sql$'        /tmp/changed.txt > /tmp/changed-dbt.txt  || true
+              grep -E '^cube/models/metrics/.*\.cube\.yml$'  /tmp/changed.txt > /tmp/changed-cube.txt || true
+              echo "changed governed dbt models:";  cat /tmp/changed-dbt.txt  || true
+              echo "changed governed cube models:"; cat /tmp/changed-cube.txt || true
+          - name: conftest — governed dbt models (advisory; server re-enforces on apply)
+            run: |
+              set -eu
+              cd /workspace
+              if [ ! -s /tmp/changed-dbt.txt ]; then echo "no governed dbt models changed — skipping"; exit 0; fi
+              # dbt SQL is raw text; collect the changed files into a JSON manifest so
+              # the policy can inspect path+content (the dbt.rego input contract).
+              python3 - <<'PY'
+              import json
+              files=[]
+              for p in open("/tmp/changed-dbt.txt").read().split():
+                  files.append({"path": p, "content": open(p).read()})
+              json.dump({"files": files}, open("/tmp/governed-dbt.manifest.json","w"))
+              PY
+              conftest test --parser json --namespace dbt -p policy /tmp/governed-dbt.manifest.json
+          - name: conftest — governed cube models (advisory; server re-enforces on apply)
+            run: |
+              set -eu
+              cd /workspace
+              if [ ! -s /tmp/changed-cube.txt ]; then echo "no governed cube models changed — skipping"; exit 0; fi
+              # shellcheck disable=SC2046
+              conftest test --parser yaml --namespace cube -p policy $(cat /tmp/changed-cube.txt)
       # ── Phase 5: publish dbt artifacts to S3 for the OpenMetadata dbt ingestion ──
       publish-dbt-artifacts:
         runs-on: docker
@@ -508,6 +935,15 @@ spec:
               put_file /seed/mart_sales.yml cube/models/seed/mart_sales.yml
               # Dagster definitions
               put_file /seed/definitions.py dagster/definitions.py
+              # Conftest/OPA policy pack (#146 Phase 0) — PRE-MERGE advisory gate.
+              put_file /seed/dbt.rego policy/dbt.rego
+              put_file /seed/cube.rego policy/cube.rego
+              put_file /seed/policy_README.md policy/README.md
+              # Policy test fixtures (conftest-verifiable: good pass, bad fail).
+              put_file /seed/good_dbt_manifest.json policy/tests/dbt/good_dbt_manifest.json
+              put_file /seed/bad_dbt_manifest.json policy/tests/dbt/bad_dbt_manifest.json
+              put_file /seed/good_orders.cube.yml policy/tests/cube/good_orders.cube.yml
+              put_file /seed/bad_orders.cube.yml policy/tests/cube/bad_orders.cube.yml
               # CI workflow LAST (triggers validation run)
               put_file /seed/ci.yml .forgejo/workflows/ci.yml
               echo "analytics repo seed done"

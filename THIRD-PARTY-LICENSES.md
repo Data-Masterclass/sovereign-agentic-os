@@ -88,6 +88,7 @@ Licenses in use and their bundled full text:
 |---|---|---|---|---|
 | **Forgejo** | **v11.0.15** (chart 17.1.1) | **GPL-3.0-or-later** | `licenses/GPL-3.0.txt` | **Ships as a SEPARATE SERVICE (mere aggregation)** — own pod, not linked into our code. Source repo + commit + written offer: `licenses/source-offer.md` |
 | Forgejo Runner | 6 | MIT | `licenses/MIT.txt` | CI runner (act_runner) |
+| Conftest | 0.56.0 | Apache-2.0 | `licenses/Apache-2.0.txt` | CI-only binary. Pre-merge OPA/Rego policy gate for the `analytics` monorepo (#146). Pinned in the seeded `.forgejo/workflows/ci.yml`; **not** bundled in a runtime image (downloaded by the CI job). |
 | Argo CD | chart 10.0.0 | Apache-2.0 | `licenses/Apache-2.0.txt` | GitOps deploy |
 | Harbor | platform | Apache-2.0 | `licenses/Apache-2.0.txt` | Production registry |
 | Velero | platform | Apache-2.0 | `licenses/Apache-2.0.txt` | Backup/restore |
