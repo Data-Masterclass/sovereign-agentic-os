@@ -455,6 +455,22 @@ export const config = {
   // path is live-verify-pending (needs Forgejo + analyticsRepo.enabled + Actions).
   analyticsApplyEnabled: env('ANALYTICS_APPLY_ENABLED', '').toLowerCase() === 'true',
 
+  // ---- Per-user git token mint (#146 Phase 2, Option B — ADR 0006). GATED OFF by
+  // default: mints a SHORT-TTL, repo-scoped Forgejo access token for the caller's
+  // OS-mirrored Forgejo user so `sos git` can clone/push AS the real user (real git
+  // attribution + Forgejo branch protection mapped to the OS ladder). When OFF,
+  // `POST /api/git/token` reports it honestly and mints nothing. The Forgejo ADMIN
+  // credential used to provision users + mint tokens is the EXISTING `forgejo*`
+  // secret above (referenced, never inlined/logged); the minted token is returned
+  // ONCE over the governed channel and NEVER logged, stored, or echoed. Live-verify
+  // pending: real Forgejo user-create + scoped-token mint + a raw `git push`.
+  gitTokenMintEnabled: env('GIT_TOKEN_MINT_ENABLED', '').toLowerCase() === 'true',
+  // The minted token's lifetime, in seconds (default 1h). Forgejo access tokens have
+  // no server-enforced TTL, so the OS treats this as the token's REVOKE-BY horizon:
+  // it names each token with its mint epoch, returns `expiresAt`, and the central
+  // revoke path (`sos login` refresh / deactivation hook) deletes expired/old tokens.
+  gitTokenTtlSeconds: Number(env('GIT_TOKEN_TTL_SECONDS', '')) || 3600,
+
   // ---- OpenMetadata catalog ingestion (#147). GATED OFF by default: the governed
   // "refresh catalog" orchestrator folds the additive metadata + DQ write-back over
   // EVERY governed gold/silver mart so OM reflects the live lakehouse in one pass.

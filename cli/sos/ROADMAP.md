@@ -48,6 +48,36 @@ refresh rotation. Below is the path forward, drawn from
 - A Databricks-style **VS Code extension** (browse governed datasets/metrics, run
   governed queries, view runs, one-click deploy) over the same CLI/REST/MCP surface.
 
+## Shipped — `sos git` credential helper (analytics-monorepo #146, Phase 2 / Option B)
+
+Per-user, server-minted, short-lived, domain-scoped Forgejo tokens for raw git,
+realising Phase 2 (Option B) of `docs/research/analytics-monorepo-plan.md` under
+`docs/decisions/0006-git-identity-model.md`.
+
+- **`sos git credential <get|store|erase>`** (`internal/cli/git.go` + pure
+  `internal/git/`) — a git credential-helper backend. On `get`, it reads git's
+  `protocol/host/path` stdin block and, for the Forgejo host, returns
+  `username=<forgejo-user>` + `password=<minted-token>` from a **cache-or-mint**
+  path: `POST {os-ui}/api/git/token` (authenticated with the same refreshed OS
+  session as every other verb) returns a short-TTL token, cached **in memory + a
+  0600 on-disk file keyed by host, only while within TTL**, and transparently
+  re-minted once expired. `store` is a no-op (a git-supplied token is never
+  trusted/cached); `erase` clears the host's cache. An **unknown host is a
+  passthrough** — no token is minted for a host we don't own.
+- **`sos git setup`** mints once to learn the Forgejo host (from the contract's
+  `forgejoBaseUrl`), pins it, and writes `git config --global credential.<host>.helper`
+  pointing at this `sos` binary — so raw `git clone/pull/push` against the analytics
+  repo "just work" as the real user. **`sos clone <repo>`** runs setup implicitly.
+- **Token hygiene:** the minted token is NEVER logged and NEVER printed except in the
+  exact credential-helper `password=` line git requires; mint errors surface status
+  only, never the response body; the on-disk cache is 0600, TTL-bounded, and
+  **`sos logout` purges it** so no minted token outlives the session. Pure core
+  (protocol parse, mint→credential mapping, TTL/refresh, cache expiry) is unit-tested
+  against a fake mint endpoint incl. a "token never appears in error output" test.
+- **Not live-verified** — static gates (`go build`/`vet`/`test`) pass; the real
+  `git push` round-trip against live Forgejo with a minted token needs the B1 mint
+  route live + Forgejo (flagged live-verify-pending).
+
 ## Shipped — Developer mode (`sos push` + devcontainer + distribution)
 
 The developer-experience layer on top of Phase 0, documented in

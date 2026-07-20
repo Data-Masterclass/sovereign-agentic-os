@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/sovereign-os/sos/internal/config"
+	"github.com/sovereign-os/sos/internal/git"
 	"github.com/sovereign-os/sos/internal/mcp"
 	"github.com/sovereign-os/sos/internal/output"
 	"github.com/sovereign-os/sos/internal/tokenstore"
@@ -55,6 +56,10 @@ func newLogoutCmd() *cobra.Command {
 			}
 			if err := tokenstore.New(dir).Delete(name); err != nil {
 				return err
+			}
+			// Also purge any short-lived minted git tokens so none outlives the session.
+			if gdir, err := gitCacheDir(name); err == nil {
+				git.NewCache(gdir).Clear()
 			}
 			fmt.Printf("Signed out of profile %q.\n", name)
 			return nil

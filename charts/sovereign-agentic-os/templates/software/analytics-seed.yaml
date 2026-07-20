@@ -21,6 +21,15 @@
   Hook weight 26 (one higher than forgejo-seed/25) so the demo-app repo lands first
   and this idempotent seed always finds Forgejo healthy.
 
+  Phase 2 (ADR 0006 Option B) appends — at the SAME gate, hook weight 27 — a scoped
+  NON-admin `analytics-bot` machine account (values: analyticsRepo.bot.user), its
+  repo-scoped token minted at run time into the write-only k8s Secret
+  `analyticsRepo.bot.secretName` (default forgejo-analytics-bot, key `token`), and
+  Forgejo branch protection on `analytics` main mapped to the OS builder+ approvers
+  (values: analyticsRepo.branchProtection.*). It only CREATES that account/secret/
+  protection so a later live-verified phase can migrate the existing machine
+  consumers (mirror/modelSync/Dagster-clone/CI) off the admin credential onto it.
+
   Runs on install AND upgrade (post-install,post-upgrade): the #146 enabler needs
   git to hold ALL cube models, and this seed is idempotent (create-or-update,
   409-tolerant on repo-exists), so re-running on every upgrade only ever converges
@@ -953,4 +962,238 @@ spec:
         - name: manifest
           configMap:
             name: analytics-seed-manifest
+{{- /*
+  ---------------------------------------------------------------------------
+  Phase 2 (epic #146, ADR 0006 Option B): scoped machine account + branch
+  protection. Gated by the SAME analyticsRepo.enabled outer `if`, so nothing
+  below renders on installs that leave the gate off (baseline stays byte-exact).
+
+  This block ONLY creates the scoped, non-admin `analytics-bot` account, mints
+  its repo-scoped token into a write-only k8s Secret, and applies Forgejo branch
+  protection on `analytics` main mapped to the OS builder+ approvers. It does NOT
+  rewire the existing live machine consumers (mirror/modelSync/Dagster-clone/CI)
+  off the admin credential — that live cutover is a later, live-verified phase.
+
+  Secret handling mirrors ci-runner.yaml: a dedicated SA + Role + RoleBinding
+  (secrets create/get/update/patch) let the Job write the minted token straight
+  into the Secret via the in-cluster kube API. The token VALUE is generated at
+  run time by Forgejo and is never templated, echoed, or committed.
+
+  Hook weight 27 (one above analytics-seed/26) so the `analytics` repo exists
+  before we add the collaborator + protect its branch. Idempotent throughout.
+*/}}
+{{- $b := .Values.analyticsRepo.bot }}
+{{- $bp := .Values.analyticsRepo.branchProtection }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: analytics-bot
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "27"
+    "helm.sh/hook-delete-policy": before-hook-creation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: analytics-bot
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "27"
+    "helm.sh/hook-delete-policy": before-hook-creation
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: analytics-bot
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "27"
+    "helm.sh/hook-delete-policy": before-hook-creation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: analytics-bot
+subjects:
+  - kind: ServiceAccount
+    name: analytics-bot
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: analytics-bot
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "analytics-bot") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "27"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 8
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "analytics-bot") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: analytics-bot
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: bot
+          image: curlimages/curl:8.11.1
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          env:
+            - name: FORGEJO
+              value: "http://forgejo-http:3000"
+            - name: ADMIN_USER
+              value: {{ .Values.forgejo.gitea.admin.username | quote }}
+            - name: ADMIN_PASS
+              value: {{ .Values.forgejo.gitea.admin.password | quote }}
+            - name: OWNER
+              value: {{ .Values.forgejo.gitea.admin.username | quote }}
+            - name: BOT_USER
+              value: {{ $b.user | quote }}
+            - name: SECRET_NAME
+              value: {{ $b.secretName | quote }}
+            - name: NS
+              value: {{ .Release.Namespace | quote }}
+            - name: REPOS
+              value: {{ (join " " $b.repos) | quote }}
+            - name: PROT_BRANCH
+              value: {{ $bp.branch | quote }}
+            - name: APPROVERS
+              value: {{ (join "," $bp.approvers) | quote }}
+            - name: REQ_APPROVALS
+              value: {{ $bp.requiredApprovals | quote }}
+            - name: PROT_PATHS
+              value: {{ (join ";" $bp.protectedFilePaths) | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              echo "waiting for Forgejo..."
+              ready=""
+              for i in $(seq 1 80); do
+                curl -sf "$FORGEJO/api/v1/version" >/dev/null 2>&1 && { ready=1; break; } || sleep 3
+              done
+              [ -n "$ready" ] || { echo "FATAL: Forgejo not reachable" >&2; exit 1; }
+              AUTH="-u $ADMIN_USER:$ADMIN_PASS"
+
+              # http_code <method> <url> [json] — status only, body discarded.
+              http_code() {
+                _m="$1"; _u="$2"; _b="${3:-}"
+                if [ -n "$_b" ]; then
+                  curl -s -o /dev/null -w "%{http_code}" $AUTH -X "$_m" "$_u" \
+                    -H "Content-Type: application/json" -d "$_b"
+                else
+                  curl -s -o /dev/null -w "%{http_code}" $AUTH -X "$_m" "$_u"
+                fi
+              }
+
+              # 1) Create the NON-admin machine account (idempotent). A random
+              #    password is generated in-container and never persisted (the bot
+              #    authenticates by token, minted below). 201=created, 422=exists.
+              BOT_PW=$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)
+              CODE=$(http_code POST "$FORGEJO/api/v1/admin/users" \
+                "{\"username\":\"$BOT_USER\",\"email\":\"$BOT_USER@sovereign.local\",\"password\":\"$BOT_PW\",\"must_change_password\":false,\"admin\":false,\"restricted\":false,\"visibility\":\"private\"}")
+              echo "create bot user -> $CODE"
+              case "$CODE" in
+                201|422) : ;;
+                *) echo "FATAL: bot-user create returned $CODE" >&2; exit 1 ;;
+              esac
+              BOT_PW=""   # drop the throwaway password from the environment
+
+              # 2) Grant the bot WRITE-collaborator on each served repo (repo-level
+              #    least privilege — the token itself is not per-repo). 204=added.
+              for R in $REPOS; do
+                CODE=$(http_code PUT "$FORGEJO/api/v1/repos/$OWNER/$R/collaborators/$BOT_USER" \
+                  "{\"permission\":\"write\"}")
+                echo "collaborator $BOT_USER on $R -> $CODE"
+                case "$CODE" in
+                  204|201|200) : ;;
+                  404) echo "note: repo $R absent yet; skipping" ;;
+                  *) echo "FATAL: add collaborator on $R returned $CODE" >&2; exit 1 ;;
+                esac
+              done
+
+              # 3) Mint a repository-scoped token for the bot (admin route) and
+              #    write it STRAIGHT into the k8s Secret. The value is never echoed.
+              #    A fresh, uniquely-named token each run keeps this idempotent
+              #    without needing to read back a prior secret value.
+              TNAME="analytics-bot-$(date +%s)"
+              TOK=$(curl -s $AUTH -X POST "$FORGEJO/api/v1/admin/users/$BOT_USER/tokens" \
+                -H "Content-Type: application/json" \
+                -d "{\"name\":\"$TNAME\",\"scopes\":[\"write:repository\"]}" \
+                | sed 's/.*"sha1":"\([^"]*\)".*/\1/')
+              [ -n "$TOK" ] || { echo "FATAL: empty bot token minted" >&2; exit 1; }
+              echo "minted bot token (len ${#TOK})"
+              # create-or-update the Secret via the in-cluster kube API (write-only).
+              KTOK="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
+              cat <<EOF | curl -s -k -X POST "https://kubernetes.default.svc/api/v1/namespaces/$NS/secrets" \
+                -H "Authorization: Bearer $KTOK" -H "Content-Type: application/json" \
+                -d @- -o /dev/null -w "create secret -> %{http_code}\n" || true
+              {"apiVersion":"v1","kind":"Secret","metadata":{"name":"$SECRET_NAME"},"stringData":{"token":"$TOK"}}
+              EOF
+              cat <<EOF | curl -s -k -X PUT "https://kubernetes.default.svc/api/v1/namespaces/$NS/secrets/$SECRET_NAME" \
+                -H "Authorization: Bearer $KTOK" -H "Content-Type: application/json" \
+                -d @- -o /dev/null -w "update secret -> %{http_code}\n" || true
+              {"apiVersion":"v1","kind":"Secret","metadata":{"name":"$SECRET_NAME"},"stringData":{"token":"$TOK"}}
+              EOF
+              TOK=""   # drop the token from the environment
+
+              # 4) Branch protection on analytics `main` mapped to builder+ (Option
+              #    B): require PR review approvals; whitelist the OS approvers as
+              #    approvers/mergers/pushers; block direct push for everyone else;
+              #    protect the OS-managed paths. Build the username JSON array from
+              #    the comma-list; empty => admin-only (still requires approval).
+              WL="[]"
+              if [ -n "$APPROVERS" ]; then
+                WL="[$(echo "$APPROVERS" | sed 's/[^,]*/"&"/g')]"
+              fi
+              # the automated converge account must ALSO push directly, so it joins
+              # the push whitelist (approvers + bot); approvals/merge stay builder+.
+              PUSH_WL="[\"$BOT_USER\"]"
+              if [ -n "$APPROVERS" ]; then
+                PUSH_WL="[\"$BOT_USER\",$(echo "$APPROVERS" | sed 's/[^,]*/"&"/g')]"
+              fi
+              BODY="{\"rule_name\":\"$PROT_BRANCH\",\"enable_push\":true,\"enable_push_whitelist\":true,\"push_whitelist_usernames\":$PUSH_WL,\"enable_merge_whitelist\":true,\"merge_whitelist_usernames\":$WL,\"required_approvals\":$REQ_APPROVALS,\"enable_approvals_whitelist\":true,\"approvals_whitelist_usernames\":$WL,\"block_on_rejected_reviews\":true,\"block_on_official_review_requests\":true,\"dismiss_stale_approvals\":true,\"require_signed_commits\":false,\"protected_file_patterns\":\"$PROT_PATHS\"}"
+              # POST creates the rule; if it already exists (422/409), PATCH updates.
+              CODE=$(http_code POST "$FORGEJO/api/v1/repos/$OWNER/analytics/branch_protections" "$BODY")
+              echo "create branch protection -> $CODE"
+              case "$CODE" in
+                201) : ;;
+                409|422)
+                  CODE=$(http_code PATCH "$FORGEJO/api/v1/repos/$OWNER/analytics/branch_protections/$PROT_BRANCH" "$BODY")
+                  echo "update branch protection -> $CODE"
+                  case "$CODE" in 200|201) : ;; *) echo "FATAL: bp update returned $CODE" >&2; exit 1 ;; esac
+                  ;;
+                *) echo "FATAL: branch-protection create returned $CODE" >&2; exit 1 ;;
+              esac
+              echo "analytics-bot + branch protection done"
+          resources:
+            requests: { cpu: 25m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 64Mi }
 {{- end }}

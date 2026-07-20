@@ -2358,6 +2358,49 @@ softwareDelivery:
 analyticsRepo:
   enabled: false
 
+  # --- Phase 2 (epic #146, Option B / ADR 0006): scoped machine account + branch
+  # protection. ALL of the below renders ONLY when analyticsRepo.enabled=true, so
+  # installs that leave the gate off are byte-identical to baseline. This phase
+  # only CREATES the scoped account, its secret, and branch protection; it does
+  # NOT migrate the existing live machine consumers (mirror/modelSync/Dagster-clone/
+  # CI) off the admin credential — that live-verified cutover is a later phase.
+  bot:
+    # Non-admin, repo-scoped Forgejo machine account for automated analytics
+    # commits (converge loop). NEVER site-admin. Its token is minted at run time
+    # by the seed Job into the k8s Secret below (write-only) and is scoped to
+    # repository writes; repo-level least privilege comes from being added as a
+    # write COLLABORATOR only on `repos` (Forgejo tokens are not per-repo).
+    user: "analytics-bot"
+    # k8s Secret the seed Job mints the bot token into (key: token). The token
+    # VALUE is generated on the live cluster and written straight to this Secret —
+    # it is never placed in values, logs, or git. Consumers (a later phase) read
+    # it via secretKeyRef, exactly like ci-runner-token.
+    secretName: "forgejo-analytics-bot"
+    # Repos the bot is granted write-collaborator on (the analytics monorepo plus
+    # any OS mirror repos it must serve). Least privilege: keep this list minimal.
+    repos:
+      - "analytics"
+  # Branch protection on the `analytics` repo `main` (Option B: Forgejo-native
+  # review mirrors the OS promotion ladder). builder+ OS approvers are the allowed
+  # approvers/mergers; direct push is restricted to the bot (automated converge)
+  # plus those approvers — everyone else lands changes via PR + review approval.
+  branchProtection:
+    branch: "main"
+    # builder+ Forgejo usernames allowed to approve, merge, and push directly.
+    # Mirror the workbench domain builders; extend as domains are added. Empty =>
+    # protection still requires 1 approval but whitelists no one (admin-only).
+    approvers:
+      - "sales-builder"
+      - "finance-builder"
+    requiredApprovals: 1
+    # Glob(s) that MUST go through PR + review (the OS-managed skeleton). Direct
+    # pushes touching these are blocked for non-whitelisted actors.
+    protectedFilePaths:
+      - "dbt/**"
+      - "cube/**"
+      - "dagster/**"
+      - "policy/**"
+
 # -----------------------------------------------------------------------------
 # Metrics — the alert-evaluator CronJob that drives the builder+ alert-run route
 # (os-ui app/api/metrics/alerts/run) on a schedule. DEFAULT-OFF: nothing renders

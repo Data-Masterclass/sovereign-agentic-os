@@ -39,6 +39,8 @@ sos datasets get <id>       Show one dataset (MCP get_dataset)
 sos query "<nl or sql>"     Run a governed query (MCP query_data)
 sos query --metric <id>     Query a metric (MCP query_metric)
 sos push --app <id> --dir . Push local app/analytics code through governed commit
+sos git setup               Configure git to use sos as the Forgejo credential helper
+sos clone <repo>            Clone a governed Forgejo repo (configures the helper)
 ```
 
 ### `sos push` — commit through policy
@@ -56,6 +58,26 @@ error path. Full guide: [`docs/developer-mode.md`](../../docs/developer-mode.md)
 sos push --app app_123 --dir ./my-app --dry-run          # preview only
 sos push --app app_123 --dir ./my-app -m "add model"     # submit
 sos push --app app_123 --dir ./my-app -m "ship" --promote# submit + request promotion
+```
+
+### `sos git` — governed git via a credential helper
+
+`sos git setup` writes a `git config --global credential.<forgejo-host>.helper` entry
+pointing at this `sos` binary, so raw `git clone/pull/push` against the governed
+Forgejo host authenticate **as you**. When git needs a password, it invokes
+`sos git credential get`, which mints a **short-lived, domain-scoped Forgejo token**
+server-side (`POST /api/git/token`, authenticated with your existing OS session),
+caches it **in memory + a 0600 file keyed by host only while within its TTL**, and
+re-mints transparently once expired. `store` is a no-op (a git-supplied token is
+never trusted); `erase` clears the host's cache; an unknown host is passed through
+untouched. The minted token is never logged and never printed except in the exact
+`password=` line git requires; `sos logout` purges the cache. `sos clone <repo>` runs
+`setup` implicitly. Model: [`docs/decisions/0006-git-identity-model.md`](../../docs/decisions/0006-git-identity-model.md).
+
+```sh
+sos git setup                    # once per machine/profile
+sos clone analytics              # clone owner-less shorthand against your Forgejo host
+git -C analytics push            # raw git just works — sos supplies the credential
 ```
 
 Global flags: `--profile <name>` (target a specific instance), `--help`, `--version`.
