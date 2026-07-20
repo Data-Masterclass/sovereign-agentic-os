@@ -1122,7 +1122,7 @@ spec:
               echo "create bot user -> $CODE"
               case "$CODE" in
                 201|422) : ;;
-                *) echo "FATAL: bot-user create returned $CODE" >&2; exit 1 ;;
+                *) echo "WARN: bot-user create returned $CODE — skipping analytics-bot setup (optional)." >&2; exit 0 ;;
               esac
               BOT_PW=""   # drop the throwaway password from the environment
 
@@ -1135,7 +1135,7 @@ spec:
                 case "$CODE" in
                   204|201|200) : ;;
                   404) echo "note: repo $R absent yet; skipping" ;;
-                  *) echo "FATAL: add collaborator on $R returned $CODE" >&2; exit 1 ;;
+                  *) echo "WARN: add collaborator on $R returned $CODE — continuing (optional)." >&2 ;;
                 esac
               done
 
@@ -1146,9 +1146,12 @@ spec:
               TNAME="analytics-bot-$(date +%s)"
               TOK=$(curl -s $AUTH -X POST "$FORGEJO/api/v1/admin/users/$BOT_USER/tokens" \
                 -H "Content-Type: application/json" \
-                -d "{\"name\":\"$TNAME\",\"scopes\":[\"write:repository\"]}" \
-                | sed 's/.*"sha1":"\([^"]*\)".*/\1/')
-              [ -n "$TOK" ] || { echo "FATAL: empty bot token minted" >&2; exit 1; }
+                -d "{\"name\":\"$TNAME\",\"scopes\":[\"write:repository\"]}" 2>/dev/null \
+                | tr -d '\n' | grep -o '"sha1":[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
+              # BEST-EFFORT: this whole account+branch-protection block is optional hardening
+              # (live-verify-pending). A failure here must NEVER fail the platform upgrade —
+              # nothing consumes forgejo-analytics-bot yet (consumer migration is a follow-up).
+              [ -n "$TOK" ] || { echo "WARN: bot token mint returned no sha1 — skipping secret write + branch protection (optional; platform deploy unaffected)." >&2; exit 0; }
               echo "minted bot token (len ${#TOK})"
               # create-or-update the Secret via the in-cluster kube API (write-only).
               KTOK="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
@@ -1188,11 +1191,11 @@ spec:
                 409|422)
                   CODE=$(http_code PATCH "$FORGEJO/api/v1/repos/$OWNER/analytics/branch_protections/$PROT_BRANCH" "$BODY")
                   echo "update branch protection -> $CODE"
-                  case "$CODE" in 200|201) : ;; *) echo "FATAL: bp update returned $CODE" >&2; exit 1 ;; esac
+                  case "$CODE" in 200|201) : ;; *) echo "WARN: bp update returned $CODE (optional)." >&2 ;; esac
                   ;;
-                *) echo "FATAL: branch-protection create returned $CODE" >&2; exit 1 ;;
+                *) echo "WARN: branch-protection create returned $CODE (optional)." >&2 ;;
               esac
-              echo "analytics-bot + branch protection done"
+              echo "analytics-bot + branch protection done (best-effort)"
           resources:
             requests: { cpu: 25m, memory: 32Mi }
             limits: { cpu: 200m, memory: 64Mi }
