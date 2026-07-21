@@ -15,6 +15,8 @@ import {
   setDocs as setDatasetDocs,
   requestPromotion as requestDatasetPromotion,
   getDataset,
+  archiveDataset,
+  deleteDataset,
   defineMeasure,
   buildGoldJoin as commitGoldJoin,
   addCheck,
@@ -665,6 +667,45 @@ export const dataWriteTools: McpTool[] = [
         queryFn: (sql) => queryRun(sql, resolved?.principal),
       });
       return { datasetId, name: dataset.name, ...report };
+    },
+  },
+  {
+    name: 'retire_dataset',
+    tab: 'data',
+    minRole: 'creator',
+    description:
+      'RETIRE a dataset you can edit — the Data tab’s lifecycle, the counterpart to `retire_knowledge`: `archive` (the default: reversible soft-hide, retains the record + medallion versions + history; it just stops showing in the default list) or `delete` (PHYSICAL, irreversible removal of the registry record). Same governed store the Data tab + `/api/data/datasets/[id]` call. LINEAGE-AWARE on delete: blocked with a typed 409 if any domain still imports the data product (mirrors deleteDataset — remove subscribers first). Role gate (edit scope, re-checked in-lib): the OWNER may retire their own Personal/unshared dataset; a SHARED/domain dataset needs a same-domain Builder+ (or Admin). Idempotency: retiring a missing dataset is a typed not_found (no existence leak). Use to clean up stray/duplicate datasets (e.g. leftovers from a runaway agent loop).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        datasetId: { type: 'string', description: 'The dataset id to retire (from list_datasets).' },
+        action: {
+          type: 'string',
+          enum: ['archive', 'delete'],
+          description: 'archive = reversible soft-hide (default); delete = physical, irreversible removal.',
+        },
+      },
+      required: ['datasetId'],
+      examples: [{ datasetId: 'ds_ab12cd' }, { datasetId: 'ds_ab12cd', action: 'delete' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.datasetId).trim();
+      if (!id) fail('retire_dataset needs a `datasetId`', 400);
+      const action = str(args.action).trim() || 'archive';
+      if (action !== 'archive' && action !== 'delete') {
+        fail("retire_dataset `action` must be 'archive' or 'delete'", 400);
+      }
+      const p = P(user);
+      // View-scope + existence guard first (typed 403/404) so a role/lineage message
+      // never leaks a dataset the caller can't even see.
+      const d = getDataset(id, p);
+      if (action === 'archive') {
+        const rec = archiveDataset(id, p); // edit-gated in-lib (owner or same-domain Builder+)
+        return { id, name: rec.name, action: 'archive', archived: true, reversible: true };
+      }
+      // PHYSICAL delete: edit-gated + lineage-aware (409 if imported) in-lib.
+      deleteDataset(id, p);
+      return { id, name: d.name, action: 'delete', deleted: true, reversible: false };
     },
   },
 ];

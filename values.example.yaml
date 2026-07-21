@@ -39,3 +39,35 @@ global:
 # Central Trino is the GOVERNED query engine (default on). On a tiny node flip Trino off:
 # trino: { enabled: false }
 # spark: { enabled: true }   # optional distributed batch/ETL
+
+# =============================================================================
+# Analytics-as-code — git-serving toggles + Dagster (epic #146 Phase 3/4).
+# ALL default to their CURRENT SAFE value, so the default render is byte-identical
+# to baseline; each is a single, independently-reversible flip. Requires the repo
+# seed first:  analyticsRepo: { enabled: true }   (default false).
+# =============================================================================
+#
+# 1) CUBE models FROM GIT (Phase 3). Sidecar reads governed Cube models from the
+#    `analytics` Forgejo repo instead of os-ui. On any Forgejo outage it KEEPS the
+#    last-written models (no empty-model flap). Rollback: set back to os-ui.
+# cube:
+#   modelSync:
+#     source: git            # DEFAULT os-ui (unchanged, byte-identical)
+#
+# 2) dbt PROJECT FROM GIT + Dagster user-code FROM GIT + dagster-analytics principal
+#    (Phase 3/4). These travel together in the ready-made overlay values.dbt-git.yaml
+#    (the Dagster user-code is a subchart with static per-deployment values, so the
+#    activation is an overlay, not an inline flag — see that file's header). Apply it
+#    ON TOP of your base values to turn git-serving ON:
+#
+#      helm upgrade ... -f values.<env>.yaml -f values.dbt-git.yaml
+#
+#    It sets:  dbt.projectSource: git  (DEFAULT image),
+#              dagsterAnalytics.warehousePrincipal.enabled: true  (DEFAULT false),
+#              and re-declares the dagster user-code deployment with a BEST-EFFORT
+#              git-clone init container (never exit 1 — a clone/parse failure falls
+#              back to the baked project, so a git blip can't brick the upgrade).
+#    Rollback: drop the overlay (back to baked image + dbt-sales principal).
+#    LIVE-VERIFY-PENDING: Cube-from-git hot-reload latency + outage fallback;
+#    Dagster git `dbt parse`/manifest freshness on pod restart; and the
+#    dagster-analytics OPA read (row-filter) + write (write-target floor) grants.

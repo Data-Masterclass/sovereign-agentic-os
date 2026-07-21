@@ -21,6 +21,7 @@
 
 import { useCallback, useState } from 'react';
 import { useConfirm } from './ConfirmDialog';
+import { useToast } from '@/components/core/Toast';
 import VersionHistory from './VersionHistory';
 import { archiveCopy, deleteCopy, type ArtifactKind, type Visibility } from '@/lib/core/lifecycle';
 
@@ -65,7 +66,9 @@ export default function LifecycleActions({
   surface?: 'tile' | 'detail';
 }) {
   const confirm = useConfirm();
+  const toast = useToast();
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
   const [showHistory, setShowHistory] = useState(false);
   const sm = compact ? ' sm' : '';
 
@@ -73,6 +76,7 @@ export default function LifecycleActions({
   const run = useCallback(
     async (kindOf: 'archive' | 'unarchive' | 'delete', override?: () => Promise<void> | void) => {
       setBusy(true);
+      setErr('');
       try {
         if (override) {
           await override();
@@ -91,11 +95,18 @@ export default function LifecycleActions({
           }
         }
         onChanged?.();
+      } catch (e) {
+        // Surface the server's reason (e.g. "This pillar still has 1 linked big
+        // bet — unlink them first") instead of swallowing it: the try/finally had
+        // no catch, so a blocked delete/archive looked like a silent no-op.
+        const msg = (e as Error).message || 'Action failed';
+        setErr(msg);
+        toast.error(msg);
       } finally {
         setBusy(false);
       }
     },
-    [api, onChanged],
+    [api, onChanged, toast],
   );
 
   const doArchive = useCallback(async () => {
@@ -159,6 +170,9 @@ export default function LifecycleActions({
           </button>
         ) : null}
       </div>
+      {err ? (
+        <span className="error" style={{ display: 'block', marginTop: 6 }}>{err}</span>
+      ) : null}
       {showHistory && api ? (
         <div className="lc-history-panel">
           <VersionHistory basePath={api} name={name} onRestored={onChanged} />

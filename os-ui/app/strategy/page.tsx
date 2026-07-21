@@ -303,7 +303,7 @@ function PillarColumn({
   dragProps?: ItemDragProps;
   dragHandleProps?: DragHandleProps;
 }) {
-  const { pillar, rollup, canEdit, canPromote, promoteTo, canDemote } = card;
+  const { pillar, rollup, canEdit, canPromote, promoteTo, canDemote, demoteTo } = card;
   const [editing, setEditing] = useState(false);
 
   // Tier badge — My · Domain (its domain) · Company.
@@ -397,12 +397,16 @@ function PillarColumn({
                   label={`Promote to ${PILLAR_SCOPE_LABEL[promoteTo]} →`}
                 />
               ) : null}
-              {canDemote ? (
+              {canDemote && demoteTo ? (
                 <DemoteButton
                   kind="pillar"
                   tier={ladderTier(pillar.scope)}
                   demoteUrl={`/api/strategy/pillars/${pillar.id}/demote`}
                   onDone={onChanged}
+                  // Show the TARGET tier explicitly, mirroring the Promote button
+                  // ("Promote to Company →"). Without this the demote read only "Revoke
+                  // from Company", so it wasn't obvious THIS is how you move Company→Domain.
+                  label={`${pillar.scope === 'tenant' ? 'Revoke to' : 'Unshare to'} ${PILLAR_SCOPE_LABEL[demoteTo]} →`}
                 />
               ) : null}
             </div>

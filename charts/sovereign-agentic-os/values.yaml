@@ -1418,45 +1418,21 @@ dagster:
         resources:
           requests: { cpu: 50m, memory: 384Mi }
           limits: { cpu: "1", memory: 1Gi }   # headroom for dbt materializations
-        # ── dbt.projectSource: git (epic #146 Phase 4) ────────────────────────────
-        # The dagster user-code is a SUBCHART: its values are static YAML and cannot
-        # be Helm-conditionalized, so the git-source path is OFF by default (this block
-        # is commented → default render is byte-identical). To ACTIVATE it, set
-        # `dbt.projectSource: git` AND uncomment the initContainers/volumes/volumeMounts
-        # below (they use per-deployment keys the dagster-user-deployments subchart
-        # supports). The init-container shallow-clones the analytics repo's dbt/ subdir
-        # into the shared /opt/dbt/project volume (falling back to the baked image on a
-        # clone failure) and runs `dbt parse` so target/manifest.json exists before the
-        # grpc server (and @dbt_assets) loads. FORGEJO_PASS should come from the forgejo
-        # admin secret — inline shown for parity with dbt-build; prefer valueFrom in prod.
-        # volumeMounts:
-        #   - { name: dbt-project, mountPath: /opt/dbt/project }
-        # volumes:
-        #   - name: dbt-project
-        #     emptyDir: {}
-        # initContainers:
-        #   - name: clone-analytics-dbt
-        #     image: "sovereign-os/dagster:0.2.0"
-        #     imagePullPolicy: IfNotPresent
-        #     command: ["/bin/sh", "-c"]
-        #     args:
-        #       - |
-        #         set -e
-        #         cp -a /opt/dbt/project/. /work/ 2>/dev/null || true
-        #         URL="http://${FORGEJO_USER}:${FORGEJO_PASS}@forgejo-http:3000/${FORGEJO_USER}/analytics.git"
-        #         if git clone --depth 1 "$URL" /tmp/analytics 2>/dev/null && [ -d /tmp/analytics/dbt ]; then
-        #           cp -a /tmp/analytics/dbt/. /work/
-        #           echo "cloned analytics/dbt -> /opt/dbt/project"
-        #         else
-        #           echo "WARNING: analytics clone failed; keeping baked dbt project."
-        #         fi
-        #         dbt parse --project-dir /work --profiles-dir /work --no-version-check \
-        #           || echo "WARNING: dbt parse failed (manifest may be stale)."
-        #     env:
-        #       - { name: FORGEJO_USER, value: gitadmin }   # = forgejo.gitea.admin.username
-        #       - { name: FORGEJO_PASS, value: "<forgejo admin password>" }
-        #     volumeMounts:
-        #       - { name: dbt-project, mountPath: /work }
+        # ── dbt.projectSource: git — Dagster user-code from the repo (epic #146 Ph 4) ──
+        # The dagster user-code is a SUBCHART: its per-deployment values are static
+        # YAML that Helm CANNOT conditionalize, and the deployment JSON also seeds the
+        # pod's `checksum/dagster-user-deployment` + gRPC `--fixed-server-id` hashes —
+        # so adding an initContainer inline here would change the DEFAULT render (never
+        # byte-identical). It is therefore kept OFF by default (no init block above =
+        # baseline render). The subchart natively supports per-deployment
+        # `initContainers` / `volumes` / `volumeMounts`, so ACTIVATION is a single
+        # operator action: apply the ready-made overlay `values.dbt-git.yaml`, which
+        # sets `dbt.projectSource: git` AND carries the full deployment block below
+        # (an init-container shallow-clones analytics/dbt over /opt/dbt/project, falls
+        # back to the baked image on any failure, and runs `dbt parse` so
+        # target/manifest.json exists before @dbt_assets loads — all BEST-EFFORT, the
+        # init container never `exit 1`s). Rollback: drop the overlay (back to `image`).
+        # See values.dbt-git.yaml (this repo root) + values.example.yaml.
   # App tier — wave 2. NOTE: the dagster subchart exposes NO priorityClassName for
   # webserver/daemon/user-code, so these run at the cluster-default priority (0),
   # already below the infra tier (DB protected). Documented gap.
@@ -1520,6 +1496,38 @@ dbt:
     repo: analytics
     # Subdir inside the repo that holds the dbt project (dbt_project.yml lives here).
     subdir: dbt
+
+# -----------------------------------------------------------------------------
+# dagster-analytics — dedicated Trino/OPA warehouse principal for Dagster runs
+# (epic #146 Phase 4). Parent-owned toggle (NOT under `dagster:` so it is never
+# passed to the dagster subchart). Same OPA-governed identity mechanism as
+# dbt-sales/cube-sales/northpeak-marts: a principal is "defined" purely by
+# declaring it under opa.grants.governance.principals — Trino has no separate user
+# store; the session `user` string IS the identity, and the trino.rego write-target
+# floor entitles writes ONLY to a schema matching one of its declared domains (or a
+# personal_* sandbox), while row-filters gate reads by domain membership. So
+# `dagster-analytics` with domains:[sales] = read sources in sales + write ONLY the
+# sales governed target schema.
+#
+# DEFAULT OFF (byte-identical baseline): when disabled, NO principal is added to the
+# OPA governance data and the dagster user-code keeps TRINO_USER=dbt-sales (current
+# live behavior). Flip `enabled: true` to:
+#   1. inject the `dagster-analytics` principal into opa.grants.governance.principals
+#      (templates/opa/opa.yaml merges it in — see that file), and
+#   2. point the dagster user-code + the values.dbt-git.yaml overlay at it
+#      (set TRINO_USER=dagster-analytics in the overlay's deployment env).
+# Rollback: set enabled:false (principal drops out; runs fall back to dbt-sales).
+# LIVE-VERIFY-PENDING: confirm on a live cluster that the row-filter (read) + the
+# write-target floor (write) resolve for `dagster-analytics` exactly as for dbt-sales
+# before making it the default TRINO_USER.
+dagsterAnalytics:
+  warehousePrincipal:
+    enabled: false
+    # The principal name (Trino session user) + the domains it is entitled to. Keep
+    # in lock-step with the TRINO_USER you set in values.dbt-git.yaml when enabling.
+    name: dagster-analytics
+    domains: [sales]
+    clearances: []
 
 # -----------------------------------------------------------------------------
 # Cube — semantic/metrics layer reading the marts THROUGH central Trino
@@ -1700,6 +1708,34 @@ openmetadata:
     lineage:
       enabled: false
       queryLogDays: "1"
+    # ---------------------------------------------------------------------------
+    # #146 Phase 5 leg 3 — OPTIONAL OM Dagster pipeline connector (default OFF).
+    #
+    # When enabled, a THIRD ingest pass drives OM's native `dagster` source over the
+    # in-cluster Dagster GraphQL API, landing Dagster runs/ops as OM Pipeline entities
+    # (+ pipeline→table lineage). Mirrors the dbt gate exactly: a separate `metadata
+    # ingest -c dagster.yaml` step in the SAME CronJob, best-effort (a failure is
+    # logged, never fatal — the metadata + dbt passes are unaffected).
+    #
+    # HONEST CAVEAT (unverified, droppable): the OM `dagster` connector version is NOT
+    # confirmed against our OM 1.13.0 ingestion image + Dagster 1.13.11 pairing. Treat
+    # this as a LIVE-VERIFY item — ship default-off and drop it without regret if the
+    # connector/version don't line up (the dbt-artifacts leg already covers the model
+    # graph). See docs/research/analytics-monorepo-plan.md §5.3.
+    #
+    # §5 NAMESPACE RULE (composition with #147): this pass ingests PIPELINE entities,
+    # not tables, and MUST NOT be pointed at the `sovereign_os` service. The dbt leg
+    # (leg 1) decorates the customer's Trino-service table entities; the #147 registry
+    # orchestrator (leg 2) owns the `sovereign_os` service entities. The three legs
+    # never double-write because each targets a distinct namespace — enforced by the
+    # os-ui conformance test (openmetadata-composition.test.ts).
+    dagster:
+      enabled: false
+      # OM Pipeline Service name the Dagster runs land under. MUST NOT be `sovereign_os`
+      # (that namespace belongs to the #147 orchestrator — §5 rule).
+      service: "dagster"
+      # In-cluster Dagster GraphQL endpoint (release-name-prefixed webserver Service).
+      host: "http://agentic-os-dagster-webserver:80"
   # APP-SIDE governed catalog REFRESH (#147). A CronJob that drives the OS orchestrator
   # route (POST /api/connections/openmetadata/refresh), folding the additive metadata +
   # DQ write-back over every governed mart so OM reflects the live governed lakehouse

@@ -8,6 +8,21 @@
   its wiring arrive with the egress baseline step.
 */}}
 {{- $opa := .Values.opa }}
+{{- /*
+  epic #146 Phase 4 — dagster-analytics warehouse principal. Default OFF, so `$gov`
+  is byte-identical to `$opa.governance` unless the operator flips the toggle. When
+  enabled, we deep-copy the governance object and add ONE principal (Trino has no
+  user store — declaring it here IS defining it; the trino.rego write-target floor +
+  row-filter do the rest). deepCopy avoids mutating the shared .Values map.
+*/}}
+{{- $wp := (.Values.dagsterAnalytics | default dict).warehousePrincipal | default dict }}
+{{- $gov := ($opa.governance | default dict) }}
+{{- if $wp.enabled }}
+{{-   $gov = deepCopy $gov }}
+{{-   $princ := (dig "principals" dict $gov) }}
+{{-   $princ = merge (dict) $princ (dict $wp.name (dict "domains" ($wp.domains | default (list "sales")) "clearances" ($wp.clearances | default list))) }}
+{{-   $_ := set $gov "principals" $princ }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -107,7 +122,7 @@ data:
   # populated from the artifact-registry / OpenMetadata visibility model; locally
   # we seed the Sales worked example so the governance proof runs on kind.
   governance.json: |
-    {{ dict "governance" ($opa.governance | default dict) | toJson }}
+    {{ dict "governance" $gov | toJson }}
   # FOURTH policy doc — internal cross-domain Marketplace import authorization
   # (package `marketplace`). The default-deny gate for "import = a governed grant":
   # open products auto-grant, approval-required imports are held for Governance.
@@ -132,7 +147,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/policy: {{ printf "%s-%s-%s-%s-%s" ($opa.grants | toJson) (($opa.requiresApproval | default list) | toJson) (($opa.governance | default dict) | toJson) (.Files.Get "policies/trino.rego") (.Files.Get "policies/marketplace.rego") | sha256sum }}
+        checksum/policy: {{ printf "%s-%s-%s-%s-%s" ($opa.grants | toJson) (($opa.requiresApproval | default list) | toJson) ($gov | toJson) (.Files.Get "policies/trino.rego") (.Files.Get "policies/marketplace.rego") | sha256sum }}
       labels:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa") | nindent 8 }}

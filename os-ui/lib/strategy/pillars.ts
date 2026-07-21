@@ -32,6 +32,7 @@ import {
   linkBetStub,
   unlinkBetStub,
   betCatalogue,
+  defaultBetShareSource,
   type BetShare,
 } from '@/lib/strategy/bets-bridge';
 import { _setPillarId } from '@/lib/bigbets/store';
@@ -353,10 +354,15 @@ export async function unarchivePillar(user: CurrentUser, pid: string): Promise<P
  */
 export async function deletePillar(user: CurrentUser, pid: string): Promise<void> {
   const { map, p } = await requireEditable(user, pid);
-  if (p.betIds.length > 0) {
+  // The authoritative "does this pillar still own bets" is the LIVE set (bets whose
+  // bet.pillarId points here), NOT the denormalised p.betIds cache: deleting a big
+  // bet never pruned p.betIds, so a stale id — a bet the user already deleted — used
+  // to block the pillar delete forever. Count only bets that still exist.
+  const liveBets = await defaultBetShareSource.forPillar(p.id);
+  if (liveBets.length > 0) {
     throw withStatus(
       new Error(
-        `This pillar still has ${p.betIds.length} linked big bet${p.betIds.length === 1 ? '' : 's'}. Unlink them first — they stay in the Big Bets tab.`,
+        `This pillar still has ${liveBets.length} linked big bet${liveBets.length === 1 ? '' : 's'}. Unlink or delete them in the Big Bets tab first.`,
       ),
       409,
     );

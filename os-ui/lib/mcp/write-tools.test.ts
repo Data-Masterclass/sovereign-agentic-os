@@ -562,3 +562,20 @@ test('FILES binary: upload_file with base64Content but missing mimeType is a typ
   }));
   assert.equal(e.code, 'bad_request', 'missing mimeType with base64Content must be a typed bad_request');
 });
+
+test('DATA: retire_dataset archives (reversible) as the owner + typed not_found on a bogus id', async () => {
+  resetAll();
+  const ds = payload<{ id: string }>(await call(builder, 'create_dataset', {
+    name: 'Scratch dataset',
+    columns: [{ name: 'x', description: 'v' }],
+  }));
+  const out = payload<{ action: string; archived: boolean; reversible: boolean }>(
+    await call(builder, 'retire_dataset', { datasetId: ds.id }),
+  );
+  assert.equal(out.action, 'archive', 'defaults to reversible archive');
+  assert.equal(out.archived, true);
+  assert.equal(out.reversible, true);
+
+  const missing = errorOf(await call(builder, 'retire_dataset', { datasetId: 'ds_does_not_exist' }));
+  assert.equal(missing.code, 'not_found', 'retiring a missing dataset is a typed not_found (no leak)');
+});

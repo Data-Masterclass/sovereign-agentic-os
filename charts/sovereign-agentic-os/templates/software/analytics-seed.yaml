@@ -261,22 +261,49 @@ data:
             type: string
             sql: product
 
-  # ── Dagster definitions ───────────────────────────────────────────────────────
+  # ── Dagster definitions (epic #146 Phase 4 — OBSERVE-FIRST) ───────────────────
+  # Dagster ORCHESTRATES + OBSERVES the warehouse-side loop; it is NOT (yet) the
+  # executor for governed marts. publish-server.ts stays the SINGLE Gold writer
+  # (single-writer invariant; Dagster-as-executor is a deferred, separate go/no-go —
+  # plan §4 Tier A1). So the scheduled work here is dbt TESTS-as-asset-checks over
+  # the governed selection + a DQ-artifact asset — it validates, it does not rebuild.
+  #
+  # Schedules are DECLARATIVE CODE: they are read from dagster/schedules.yml (a
+  # reviewable, policy-checkable file that flows through the §3 pipeline), never
+  # hard-coded here. Everything is BEST-EFFORT: a missing manifest / schedules file
+  # must NEVER crash the gRPC code-server load (that would brick the user-code pod).
   definitions.py: |
     # SPDX-License-Identifier: Apache-2.0
     # Copyright 2026 Borek Data Ventures UG
-    """Dagster definitions — the orchestrator's user code.
+    """Dagster definitions — the orchestrator's user code (observe-first, #146 Ph4).
 
-    Loads the dbt project as Dagster assets (dagster-dbt) so Dagster orchestrates
-    the warehouse build, plus a tiny proof-of-life asset.
+    Loads the dbt project as Dagster assets (dagster-dbt) and adds OBSERVE-FIRST
+    schedules read from dagster/schedules.yml: dbt tests-as-asset-checks over the
+    governed selection + a data-quality artifact. Dagster does NOT materialize the
+    governed marts (publish-server.ts is the single Gold writer). Defensive by
+    design: any missing/broken input degrades to the proof-of-life asset rather than
+    failing the code-server load.
     """
     from pathlib import Path
 
-    from dagster import Definitions, asset
+    from dagster import (
+        AssetSelection,
+        Definitions,
+        ScheduleDefinition,
+        asset,
+        define_asset_job,
+        get_dagster_logger,
+    )
     from dagster_dbt import DbtCliResource, dbt_assets
 
     DBT_DIR = Path("/opt/dbt/project")
     MANIFEST = DBT_DIR / "target" / "manifest.json"
+    SCHEDULES_YML = Path("/opt/dagster/app/schedules.yml")
+    # The governed, OS-managed model tree (plan §2). Observe-first scope: we run dbt
+    # TESTS over this selection; we never rebuild it here.
+    GOVERNED_SELECT = "models/governed"
+
+    _log = get_dagster_logger()
 
 
     @asset(group_name="sovereign_os", description="Proof-of-life asset for the orchestrator.")
@@ -284,17 +311,128 @@ data:
         return "hello from the Sovereign Agentic OS orchestrator"
 
 
-    @dbt_assets(manifest=MANIFEST)
-    def sovereign_dbt(context, dbt: DbtCliResource):
-        yield from dbt.cli(["build"], context=context).stream()
+    # dbt assets — dagster-dbt maps each dbt test to a native ASSET CHECK on its
+    # model, so scheduling `dbt test` below surfaces test outcomes as checks (the
+    # observe-first DQ signal) without re-materializing anything.
+    if MANIFEST.exists():
+        @dbt_assets(manifest=MANIFEST)
+        def sovereign_dbt(context, dbt: DbtCliResource):
+            # `build` is used for a manual full run; the OBSERVE-FIRST schedule below
+            # invokes `dbt test` only (see governed_dq_job) — no mart re-materialize.
+            yield from dbt.cli(["build"], context=context).stream()
 
+        _dbt_assets = [sovereign_dbt]
+    else:
+        # Manifest absent (e.g. image built without a parsed project, or a failed
+        # git clone). Degrade gracefully — no dbt assets, code-server still loads.
+        _log.warning("dbt manifest %s absent — dbt assets disabled (observe-first).", MANIFEST)
+        _dbt_assets = []
+
+
+    @asset(
+        group_name="sovereign_os",
+        description="Observe-first data-quality artifact: a JSON summary of the last "
+        "governed dbt test run (written under target/, picked up by CI/OM).",
+    )
+    def governed_dq_artifact(context) -> dict:
+        """Best-effort DQ artifact. Reads dbt's run_results.json if present and emits
+        a compact pass/fail summary; never raises on a missing/garbled file."""
+        import json
+
+        summary = {"selection": GOVERNED_SELECT, "status": "unknown", "tests": 0, "failures": 0}
+        rr = DBT_DIR / "target" / "run_results.json"
+        try:
+            if rr.exists():
+                data = json.loads(rr.read_text())
+                results = data.get("results", [])
+                fails = [r for r in results if r.get("status") in ("fail", "error")]
+                summary.update(
+                    status=("fail" if fails else "pass"),
+                    tests=len(results),
+                    failures=len(fails),
+                )
+        except Exception as exc:  # noqa: BLE001 — DQ artifact must never break the run
+            _log.warning("governed_dq_artifact: could not read run_results.json: %s", exc)
+            summary["status"] = "unreadable"
+        (DBT_DIR / "target" / "governed_dq.json").write_text(json.dumps(summary))
+        return summary
+
+
+    def _load_schedules() -> list:
+        """Read dagster/schedules.yml → ScheduleDefinitions. Observe-first: each entry
+        schedules dbt TESTS over its dbt selection (asset checks) + the DQ artifact.
+        BEST-EFFORT: a missing/broken file yields ZERO schedules (never crashes)."""
+        try:
+            import yaml  # PyYAML ships in the dagster image
+
+            if not SCHEDULES_YML.exists():
+                _log.warning("schedules.yml absent (%s) — no schedules loaded.", SCHEDULES_YML)
+                return []
+            spec = yaml.safe_load(SCHEDULES_YML.read_text()) or {}
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("schedules.yml unreadable — no schedules loaded: %s", exc)
+            return []
+
+        out = []
+        for entry in (spec.get("schedules") or []):
+            try:
+                name = entry["name"]
+                cron = entry["cron"]
+                # The dbt selection this schedule OBSERVES (defaults to governed tree).
+                select = entry.get("dbt_select", GOVERNED_SELECT)
+                # Observe-first: a job that runs dbt TESTS over the selection + the DQ
+                # artifact. It never targets the mart materialization.
+                job = define_asset_job(
+                    name=f"{name}_job",
+                    selection=AssetSelection.assets(governed_dq_artifact),
+                    tags={"dagster-dbt/select": select, "sovereign_os/observe": "true"},
+                )
+                out.append(
+                    ScheduleDefinition(
+                        name=name,
+                        cron_schedule=cron,
+                        job=job,
+                        default_status=(
+                            "RUNNING" if entry.get("start_running") else "STOPPED"
+                        ),
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 — one bad entry can't drop them all
+                _log.warning("skipping malformed schedule entry %r: %s", entry, exc)
+        return out
+
+
+    _schedules = _load_schedules()
 
     defs = Definitions(
-        assets=[hello_sovereign, sovereign_dbt],
+        assets=[hello_sovereign, governed_dq_artifact, *_dbt_assets],
+        schedules=_schedules,
         resources={
             "dbt": DbtCliResource(project_dir=str(DBT_DIR), profiles_dir=str(DBT_DIR)),
         },
     )
+
+  # ── Dagster schedules (epic #146 Phase 4 — declarative, reviewable, observe-first) ─
+  # Read by definitions.py:_load_schedules(). Each entry OBSERVES a dbt selection
+  # (runs tests-as-asset-checks + the DQ artifact on a cron) — it does NOT rebuild
+  # marts. Changing a schedule = editing this file → PR → §3 policy gate → apply.
+  # DEFAULT: start_running:false so seeding the repo NEVER auto-starts a warehouse
+  # job (an operator turns each on from the Dagster UI or by flipping start_running).
+  schedules.yml: |
+    # SPDX-License-Identifier: Apache-2.0
+    # Copyright 2026 Borek Data Ventures UG
+    #
+    # Observe-first schedules for the governed analytics loop (#146 Phase 4).
+    # Fields per entry:
+    #   name           unique schedule id (also names the <name>_job)
+    #   cron           standard 5-field cron
+    #   dbt_select     dbt selection this schedule observes (dbt tests → asset checks)
+    #   start_running  false (default) = seeded STOPPED; an operator starts it live
+    schedules:
+      - name: governed_dq_nightly
+        cron: "0 3 * * *"          # 03:00 daily — off-peak DQ pass over governed models
+        dbt_select: "models/governed"
+        start_running: false
 
   # ── Conftest/OPA policy pack (epic #146 Phase 0) ─────────────────────────────
   # PRE-MERGE advisory gate. NOT the security boundary — the server re-enforces on
@@ -942,8 +1080,9 @@ spec:
               put_file /seed/northpeakcommerce.yml cube/models/seed/northpeakcommerce.yml
               put_file /seed/daily_revenue_cube.yml cube/models/seed/daily_revenue.yml
               put_file /seed/mart_sales.yml cube/models/seed/mart_sales.yml
-              # Dagster definitions
+              # Dagster definitions + declarative observe-first schedules (#146 Ph4)
               put_file /seed/definitions.py dagster/definitions.py
+              put_file /seed/schedules.yml dagster/schedules.yml
               # Conftest/OPA policy pack (#146 Phase 0) — PRE-MERGE advisory gate.
               put_file /seed/dbt.rego policy/dbt.rego
               put_file /seed/cube.rego policy/cube.rego

@@ -1,0 +1,112 @@
+# =============================================================================
+# values.dbt-git.yaml — epic #146 Phase 3/4 activation overlay: dbt project + the
+# Dagster user-code load the dbt project FROM the analytics git repo (not the baked
+# image). Apply ON TOP of your base values:
+#
+#   helm upgrade ... -f values.<env>.yaml -f values.dbt-git.yaml
+#
+# This is a SINGLE-FLIP toggle set: applying the file turns git-serving ON; dropping
+# it rolls back to the byte-identical baked-image behavior. It is SAFE to apply only
+# once `analyticsRepo.enabled: true` (so the `analytics` repo is seeded first).
+#
+# WHY AN OVERLAY (not an inline values toggle): the dagster user-code is a SUBCHART
+# whose per-deployment values are static YAML — Helm cannot conditionalize them, and
+# that same deployment JSON seeds the pod's checksum + gRPC --fixed-server-id hashes,
+# so an inline gate would perturb the DEFAULT render. Carrying the full deployment
+# block in an overlay keeps the base render byte-identical while making activation a
+# single operator action. The subchart natively supports per-deployment
+# initContainers/volumes/volumeMounts, so NO template hacks are needed.
+#
+# EVERYTHING here is BEST-EFFORT: the clone init container never `exit 1`s — a clone
+# or `dbt parse` failure logs a warning and falls back to the baked project, so a
+# transient Forgejo blip can never hang or brick the helm upgrade.
+# =============================================================================
+
+# 1) dbt-build Job reads the project from git (templates/dbt/dbt-build.yaml already
+#    gates its clone init container on this exact value — see that file).
+dbt:
+  projectSource: git
+
+# 2) The dedicated warehouse principal for Dagster runs (see values.yaml
+#    dagsterAnalytics). Turning it on injects `dagster-analytics` into the OPA
+#    governance principals; the deployment env below then runs Dagster AS it.
+#    LIVE-VERIFY-PENDING: confirm OPA row-filter (read) + write-target floor (write)
+#    resolve for dagster-analytics before relying on it in production.
+dagsterAnalytics:
+  warehousePrincipal:
+    enabled: true
+
+# 3) The Dagster user-code deployment, re-declared IN FULL (Helm replaces list values
+#    wholesale) with the git-clone init container + shared project volume added. Keep
+#    every non-git field byte-identical to values.yaml's default deployment so only
+#    the git wiring changes.
+dagster:
+  dagster-user-deployments:
+    enabled: true
+    deployments:
+      - name: example-user-code
+        annotations:
+          argocd.argoproj.io/sync-wave: "2"
+        image:
+          repository: sovereign-os/dagster
+          tag: "0.2.0"
+          pullPolicy: IfNotPresent
+        dagsterApiGrpcArgs:
+          - "--python-file"
+          - "/opt/dagster/app/repo.py"
+        port: 3030
+        env:
+          - { name: TRINO_HOST, value: trino }
+          - { name: TRINO_PORT, value: "8080" }
+          # Runs AS the dedicated governed principal (matches dagsterAnalytics above).
+          # Roll back to dbt-sales by editing this one value + disabling the principal.
+          - { name: TRINO_USER, value: dagster-analytics }
+          - { name: TRINO_CATALOG, value: iceberg }
+          - { name: TRINO_SCHEMA, value: sales }
+        resources:
+          requests: { cpu: 50m, memory: 384Mi }
+          limits: { cpu: "1", memory: 1Gi }
+        # Shared project dir populated by the init container, read by the code server
+        # so @dbt_assets(manifest=/opt/dbt/project/target/manifest.json) sees the REPO
+        # project (not the baked image).
+        volumeMounts:
+          - { name: dbt-project, mountPath: /opt/dbt/project }
+        volumes:
+          - name: dbt-project
+            emptyDir: {}
+        initContainers:
+          # BEST-EFFORT clone: seeds the shared dir from the baked image FIRST, then
+          # shallow-clones analytics/dbt over it, then `dbt parse`. Every step is
+          # guarded — the container ALWAYS exits 0 (a failure just keeps the baked
+          # project), so an optional git blip can never brick the helm upgrade.
+          - name: clone-analytics-dbt
+            image: "sovereign-os/dagster:0.2.0"
+            imagePullPolicy: IfNotPresent
+            command: ["/bin/sh", "-c"]
+            args:
+              - |
+                # NB: no `set -e` — this init container is OPTIONAL and must never
+                # exit non-zero (a failing optional init container hangs+bricks the
+                # whole upgrade). Each step degrades to the baked project on failure.
+                cp -a /opt/dbt/project/. /work/ 2>/dev/null || true
+                BASE="$(echo "${FORGEJO_URL:-http://forgejo-http:3000}" | sed 's#^http://##; s#^https://##; s#/*$##')"
+                URL="http://${FORGEJO_USER}:${FORGEJO_PASS}@${BASE}/${FORGEJO_USER}/${FORGEJO_REPO:-analytics}.git"
+                if git clone --depth 1 "$URL" /tmp/analytics 2>/dev/null && [ -d "/tmp/analytics/${FORGEJO_SUBDIR:-dbt}" ]; then
+                  cp -a "/tmp/analytics/${FORGEJO_SUBDIR:-dbt}/." /work/ 2>/dev/null || true
+                  echo "cloned analytics/${FORGEJO_SUBDIR:-dbt} -> /opt/dbt/project"
+                else
+                  echo "WARNING: analytics clone failed; keeping baked dbt project (best-effort)."
+                fi
+                dbt parse --project-dir /work --profiles-dir /work --no-version-check \
+                  || echo "WARNING: dbt parse failed (manifest may be stale); NOT failing (best-effort)."
+                exit 0
+            env:
+              # Reuse the forgejo admin credentials (parity with the dbt-build clone).
+              # Prefer valueFrom the forgejo admin Secret in production.
+              - { name: FORGEJO_URL, value: "http://forgejo-http:3000" }
+              - { name: FORGEJO_REPO, value: "analytics" }
+              - { name: FORGEJO_SUBDIR, value: "dbt" }
+              - { name: FORGEJO_USER, value: "gitea_admin" }
+              - { name: FORGEJO_PASS, value: "REPLACE_WITH_FORGEJO_ADMIN_PASSWORD" }
+            volumeMounts:
+              - { name: dbt-project, mountPath: /work }

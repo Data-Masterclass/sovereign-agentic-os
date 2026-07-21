@@ -25,6 +25,7 @@ import {
   demotePillar,
   __resetForTests,
 } from './pillars.ts';
+import { linkBetStub } from './bets-bridge.ts';
 import type { CurrentUser } from '../core/auth.ts';
 
 const admin: CurrentUser = { id: 'u-admin', name: 'Ada', role: 'admin', domains: ['platform'] };
@@ -139,14 +140,12 @@ test('demotePillar is fail-closed: My has nothing to revoke; a creator cannot un
   );
 });
 
-test('deleting a pillar with linked bets is BLOCKED (409, non-destructive)', async () => {
+test('deleting a pillar with a LIVE linked bet is BLOCKED (409, non-destructive)', async () => {
   __resetForTests();
   const p = await createPillar(admin, { name: 'Has bets', scope: 'tenant' });
-  // Inject a linked bet id directly on the record (bypassing the bets-bridge stub,
-  // which this unit does not exercise) to assert the delete-guard rule.
-  const listed = await listPillars(admin, { includeArchived: true });
-  const rec = listed.find((x) => x.id === p.id)!;
-  rec.betIds.push('bet_linked');
+  // A LIVE bet tagged to this pillar, via the SAME bridge the delete-guard consults
+  // (defaultBetShareSource.forPillar) — this is what a real link produces.
+  linkBetStub(p.id, { id: 'bet_linked', name: 'Growth bet', domain: 'sales', sharePct: 1, components: [] });
 
   await assert.rejects(
     () => deletePillar(admin, p.id),
@@ -154,8 +153,24 @@ test('deleting a pillar with linked bets is BLOCKED (409, non-destructive)', asy
       assert.equal(e.status, 409, 'must be a 409 conflict');
       return /linked big bet/i.test(e.message);
     },
-    'a pillar with live bets must not be deletable',
+    'a pillar with a live bet must not be deletable',
   );
   // Still present — nothing destroyed.
   assert.ok((await listPillars(admin, { includeArchived: true })).some((x) => x.id === p.id), 'pillar survives the blocked delete');
+});
+
+test('a STALE betId (the bet was already deleted) does NOT block delete — self-heals', async () => {
+  __resetForTests();
+  const p = await createPillar(admin, { name: 'Stale ref', scope: 'tenant' });
+  // Dangling reference: the pillar record still lists a bet id, but NO live bet
+  // points here (deleteBet never pruned p.betIds). The old guard blocked this
+  // forever; the guard now counts only live bets, so the delete proceeds.
+  const rec = (await listPillars(admin, { includeArchived: true })).find((x) => x.id === p.id)!;
+  rec.betIds.push('bet_ghost');
+
+  await deletePillar(admin, p.id); // must NOT throw
+  assert.ok(
+    !(await listPillars(admin, { includeArchived: true })).some((x) => x.id === p.id),
+    'the pillar is deleted despite the dangling betId',
+  );
 });

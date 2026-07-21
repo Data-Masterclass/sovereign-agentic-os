@@ -26,6 +26,18 @@
     3. LINEAGE — a second `metadata ingest` pass with `type: DatabaseLineage` mines
        Trino's query log so table→table lineage lands in OM (best-effort; skipped
        when `openmetadata.ingestion.lineage.enabled` is false).
+    4. DAGSTER (optional, #146 Ph5 leg 3) — when `openmetadata.ingestion.dagster.enabled`,
+       a third best-effort `metadata ingest` pass with OM's native `dagster` source
+       crawls the in-cluster Dagster GraphQL API for runs/ops as Pipeline entities.
+       Default OFF; connector/version pairing is UNVERIFIED (droppable — see values).
+
+  §5 COMPOSITION RULE (do not violate; conformance-tested in os-ui
+  openmetadata-composition.test.ts): the dbt (leg 1) and Dagster (leg 3) passes here
+  decorate the CUSTOMER's Trino/Dagster service entities. They MUST NEVER be pointed at
+  the `sovereign_os` service — that namespace is owned exclusively by the #147
+  registry-side orchestrator (leg 2, os-ui openmetadata-ingest.ts), which writes ONLY
+  additively inside `sovereign_os` and NEVER writes table entities under the Trino
+  service. Distinct namespaces → the legs compose without double-writes.
 
   AUTH: OM requires a bot JWT on every write. The token is read from the
   `openmetadata.ingestion.jwtSecretName` Secret (key `OPENMETADATA_JWT`) — the SAME
@@ -134,6 +146,33 @@ data:
         securityConfig:
           jwtToken: "${OPENMETADATA_JWT}"
   {{- end }}
+  {{- if (($i.dagster | default dict).enabled) }}
+  # #146 Ph5 leg 3 (OPTIONAL, unverified) — OM native `dagster` pipeline connector:
+  # ingests Dagster runs/ops as Pipeline entities (+ pipeline→table lineage) from the
+  # in-cluster Dagster GraphQL API. Best-effort: driven as a THIRD, non-blocking pass.
+  # §5 rule: serviceName MUST NOT be `sovereign_os` (leg 2's namespace).
+  dagster.yaml: |
+    source:
+      type: dagster
+      serviceName: {{ $i.dagster.service | quote }}
+      serviceConnection:
+        config:
+          type: Dagster
+          host: {{ $i.dagster.host | quote }}
+      sourceConfig:
+        config:
+          type: PipelineMetadata
+    sink:
+      type: metadata-rest
+      config: {}
+    workflowConfig:
+      loggerLevel: INFO
+      openMetadataServerConfig:
+        hostPort: {{ $i.omApi | quote }}
+        authProvider: openmetadata
+        securityConfig:
+          jwtToken: "${OPENMETADATA_JWT}"
+  {{- end }}
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -231,6 +270,11 @@ spec:
                   envsubst '${OPENMETADATA_JWT}' < /etc/om-workflow/lineage.yaml > /work/lineage.yaml
                   echo "Running OM lineage ingestion (Trino query log)..."
                   metadata ingest -c /work/lineage.yaml || echo "WARNING: lineage pass reported errors (non-blocking; metadata already ingested)."
+                  {{- end }}
+                  {{- if (($i.dagster | default dict).enabled) }}
+                  envsubst '${OPENMETADATA_JWT}' < /etc/om-workflow/dagster.yaml > /work/dagster.yaml
+                  echo "Running OM Dagster pipeline ingestion (OPTIONAL, unverified pairing)..."
+                  metadata ingest -c /work/dagster.yaml || echo "WARNING: Dagster pass reported errors (non-blocking; connector/version pairing is unverified — see values dagster caveat)."
                   {{- end }}
                   echo "OpenMetadata ingestion complete."
               volumeMounts:
