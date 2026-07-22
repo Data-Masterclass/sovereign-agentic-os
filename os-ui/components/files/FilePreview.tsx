@@ -12,6 +12,7 @@ import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import { useApprovalNotifier } from '@/components/lifecycle/useApprovalNotifier';
 import type { FiledApproval } from '@/lib/governance/approval-notice';
 import type { Visibility } from '@/lib/core/lifecycle';
+import { canManageArtifact, type ArtifactScope } from '@/lib/governance/edit-scope';
 import { FolderPickerModal } from '@/components/core/FolderTree';
 import type { FolderPathNode } from '@/lib/core/folders';
 
@@ -190,6 +191,16 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
 
   const a = view.asset;
   const isOwner = user?.id === a.owner;
+  // Client mirror of the server edit-scope (lib/files store `canEdit`): the OWNER
+  // always, plus — once PROMOTED — an in-domain domain_admin or a platform admin.
+  // A private (dataset-tier) file stays owner-only. Keeps the edit/move/lifecycle
+  // affordances in step with what the API will actually allow, so a domain_admin/
+  // admin sees the controls for a promoted file instead of a dead end.
+  const editScope: ArtifactScope =
+    a.tier === 'dataset' ? 'personal' : a.tier === 'product' ? 'certified' : 'shared';
+  const canManage = user
+    ? canManageArtifact({ id: user.id, role: user.role, domains: user.domains }, { owner: a.owner, domain: a.domain, scope: editScope })
+    : false;
   const isMedia = a.kind === 'image' || a.kind === 'video' || a.kind === 'audio';
 
   /** Truncate very long extracted text; the reader can expand on demand. */
@@ -248,9 +259,9 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         <dt>Link</dt><dd className="deep-link">{a.deepLink}</dd>
       </dl>
 
-      {/* Move to folder — edit-gated (owner / in-domain admin). The folder route
-          also upserts the destination folder into the governed registry. */}
-      {isOwner || isAdmin ? (
+      {/* Move to folder — edit-gated (owner, or a domain_admin/admin once shared).
+          The folder route also upserts the destination folder into the registry. */}
+      {canManage ? (
         <div className="preview-row">
           <button
             className="btn ghost sm"
@@ -279,30 +290,36 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         </div>
       ) : null}
 
-      {/* Editable: description, tags, sensitivity, index opt-out (owner-only; 403 otherwise). */}
-      <div>
-        <label className="rail-group-title">Description</label>
-        <textarea rows={2} value={descDraft} placeholder="What is this file? (needed to share)"
-          onChange={(e) => setDescDraft(e.target.value)}
-          onBlur={() => { if (descDraft !== a.description) patch({ description: descDraft }); }} />
-      </div>
-      <div>
-        <label className="rail-group-title">Tags</label>
-        <input value={tagDraft} placeholder="comma, separated, tags"
-          onChange={(e) => setTagDraft(e.target.value)}
-          onBlur={() => patch({ tags: tagDraft.split(',').map((t) => t.trim()).filter(Boolean) })}
-          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
-      </div>
-      <div className="preview-row">
-        <select value={a.sensitivity} onChange={(e) => patch({ sensitivity: e.target.value })} title="Sensitivity">
-          {SENSITIVITIES.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <button className="btn ghost sm" title="Stored-only files are never indexed (sensitive/huge)"
-          onClick={() => patch({ indexing: a.indexing.mode === 'indexed' ? 'stored-only' : 'indexed' })}
-          disabled={a.sensitivity === 'restricted'}>
-          {a.indexing.mode === 'indexed' ? 'Opt out of indexing' : 'Index this file'}
-        </button>
-      </div>
+      {/* Editable: description, tags, sensitivity, index opt-out. Shown to whoever
+          may manage the file (owner, or a domain_admin/admin once it is promoted);
+          hidden for a plain viewer, who would only hit a 403 on blur. */}
+      {canManage ? (
+        <>
+          <div>
+            <label className="rail-group-title">Description</label>
+            <textarea rows={2} value={descDraft} placeholder="What is this file? (needed to share)"
+              onChange={(e) => setDescDraft(e.target.value)}
+              onBlur={() => { if (descDraft !== a.description) patch({ description: descDraft }); }} />
+          </div>
+          <div>
+            <label className="rail-group-title">Tags</label>
+            <input value={tagDraft} placeholder="comma, separated, tags"
+              onChange={(e) => setTagDraft(e.target.value)}
+              onBlur={() => patch({ tags: tagDraft.split(',').map((t) => t.trim()).filter(Boolean) })}
+              onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
+          </div>
+          <div className="preview-row">
+            <select value={a.sensitivity} onChange={(e) => patch({ sensitivity: e.target.value })} title="Sensitivity">
+              {SENSITIVITIES.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <button className="btn ghost sm" title="Stored-only files are never indexed (sensitive/huge)"
+              onClick={() => patch({ indexing: a.indexing.mode === 'indexed' ? 'stored-only' : 'indexed' })}
+              disabled={a.sensitivity === 'restricted'}>
+              {a.indexing.mode === 'indexed' ? 'Opt out of indexing' : 'Index this file'}
+            </button>
+          </div>
+        </>
+      ) : null}
 
       {/* ---- Sharing lifecycle (governed exactly like Data): the OWNER (creator or
               builder) PROPOSES a promotion, a domain admin approves; an Admin certifies
@@ -365,8 +382,10 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         <input ref={reuploadRef} type="file" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) reupload(f); e.target.value = ''; }} />
       </div>
 
-      {/* One consistent archive / delete / version-history cluster (owner-only). */}
-      {isOwner ? (
+      {/* One consistent archive / delete / version-history cluster. Available to the
+          owner, and — once the file is promoted — to an in-domain domain_admin or a
+          platform admin, matching the server edit-scope. */}
+      {canManage ? (
         <div className="preview-share">
           <label className="rail-group-title">Lifecycle</label>
           <LifecycleActions

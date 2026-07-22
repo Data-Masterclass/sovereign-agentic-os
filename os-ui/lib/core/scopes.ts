@@ -11,8 +11,8 @@
  * SAME four groups and labels them with the SAME nouns and verbs.
  *
  *   All      — everything the caller can see (union of the three groups)
- *   My …     — the caller's OWN items (owner), regardless of tier — a
- *              promoted asset they authored still shows under "My"
+ *   My …     — the caller's OWN, un-promoted (Personal-tier) items. Once an
+ *              item is promoted it moves to Domain/Company and leaves "My".
  *   Domain   — shared to the caller's domain (tier `asset` / visibility Shared)
  *   Company  — certified, cross-domain (tier `product` / visibility Marketplace)
  *
@@ -31,9 +31,10 @@
  *   • the store already returns a canView-scoped `{ mine, domain, marketplace }`
  *     payload (grouped server-side by tier/visibility);
  *   • "All"    = the union of all three groups;
- *   • "My"     = OWNERSHIP — everything in the union whose `owner` is the caller,
- *                so a Domain/Company item the caller authored appears under BOTH
- *                All and My (and also under Domain/Company);
+ *   • "My"     = the caller's OWN Personal-tier items only (the store's `mine`
+ *                group). A Domain/Company item the caller authored does NOT
+ *                appear under My — once promoted it lives under Domain/Company
+ *                (and All) only, so "My" stays the private, un-promoted drawer;
  *   • "Domain" = the `domain` group as returned by the store;
  *   • "Company" = the `marketplace` group as returned by the store.
  *
@@ -139,7 +140,11 @@ export function groupByScope<T extends Owned>(
   const all = [...groups.mine, ...groups.domain, ...groups.marketplace];
   return {
     all,
-    mine: all.filter((t) => t.owner === currentUserId),
+    // "My" = the caller's OWN, un-promoted items only — the store's Personal-tier
+    // `mine` group. A promoted item the caller authored lives under Domain/Company
+    // (and All), NOT under My, so promoting genuinely moves it out of the private
+    // drawer instead of showing it in two places.
+    mine: groups.mine.filter((t) => t.owner === currentUserId),
     shared: groups.domain,
     marketplace: groups.marketplace,
   };

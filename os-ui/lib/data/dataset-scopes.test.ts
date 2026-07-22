@@ -26,9 +26,9 @@ test('All Data = the union of every group (sorted, archived split out)', () => {
   assert.deepEqual(r.archived.map((x) => x.name), ['Old Personal']);
 });
 
-test('My Data = OWNERSHIP, regardless of tier (an asset the caller authored stays under My Data)', () => {
+test('My Data = the caller\'s OWN Personal-tier datasets only (a promoted asset leaves My Data)', () => {
   const r = tilesForScope(groups, 'mine', 'amir');
-  assert.deepEqual(r.active.map((x) => x.name), ['Amir Asset', 'Zeta Personal']);
+  assert.deepEqual(r.active.map((x) => x.name), ['Zeta Personal']);
 });
 
 test('Shared Data = domain assets; Marketplace Data = certified products', () => {
@@ -41,5 +41,5 @@ test('archived tiles never appear in the working list, and counts exclude them',
   assert.ok(!r.active.some((x) => x.archived));
   assert.deepEqual(r.archived.map((x) => x.name), ['Old Personal']);
   const counts = scopeCounts(groups, 'amir');
-  assert.deepEqual(counts, { all: 4, mine: 2, shared: 2, marketplace: 1 });
+  assert.deepEqual(counts, { all: 4, mine: 1, shared: 2, marketplace: 1 });
 });

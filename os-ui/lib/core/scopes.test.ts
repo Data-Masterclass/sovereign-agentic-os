@@ -70,11 +70,12 @@ test('All = the union of every group', () => {
   ]);
 });
 
-test('My = OWNERSHIP across the whole union (a promoted asset the caller authored stays under My)', () => {
+test('My = the caller\'s OWN Personal-tier items only (a promoted asset leaves My)', () => {
   const mine = groupByScope(groups, 'amir').mine;
-  // Amir's own personal + the shared asset he authored, but NOT Bea's or Sara's.
-  assert.deepEqual(mine.map((x) => x.name).sort(), ['Amir Asset', 'Old Personal', 'Zeta Personal']);
-  assert.ok(mine.some((x) => x.tier === 'asset'), 'a Shared item the caller owns appears under My');
+  // Only Amir's own Personal-tier files — NOT the Shared asset he authored
+  // (that lives under Domain now), and NOT Bea's or Sara's.
+  assert.deepEqual(mine.map((x) => x.name).sort(), ['Old Personal', 'Zeta Personal']);
+  assert.ok(!mine.some((x) => x.tier === 'asset'), 'a promoted (Shared) item the caller owns is NOT under My');
 });
 
 test('Shared = the domain group; Marketplace = the marketplace group', () => {
@@ -83,11 +84,11 @@ test('Shared = the domain group; Marketplace = the marketplace group', () => {
   assert.deepEqual(g.marketplace.map((x) => x.name), ['Certified Orders']);
 });
 
-test('an owner-authored Shared item appears under BOTH All and Shared (and My)', () => {
+test('an owner-authored Shared item appears under All and Shared, but NOT My', () => {
   const g = groupByScope(groups, 'amir');
   assert.ok(g.all.some((x) => x.name === 'Amir Asset'));
   assert.ok(g.shared.some((x) => x.name === 'Amir Asset'));
-  assert.ok(g.mine.some((x) => x.name === 'Amir Asset'));
+  assert.ok(!g.mine.some((x) => x.name === 'Amir Asset'), 'promoted → left My');
 });
 
 test('itemsForScope returns the right bucket', () => {
@@ -95,7 +96,7 @@ test('itemsForScope returns the right bucket', () => {
 });
 
 test('scopeCounts counts every visible item (archived included in the raw counts)', () => {
-  assert.deepEqual(scopeCounts(groups, 'amir'), { all: 5, mine: 3, shared: 2, marketplace: 1 });
+  assert.deepEqual(scopeCounts(groups, 'amir'), { all: 5, mine: 2, shared: 2, marketplace: 1 });
 });
 
 test('tilesForScope splits active vs archived and sorts by name', () => {
@@ -113,7 +114,7 @@ test('tilesForScope falls back to title when there is no name', () => {
 });
 
 test('activeScopeCounts excludes archived items', () => {
-  assert.deepEqual(activeScopeCounts(groups, 'amir'), { all: 4, mine: 2, shared: 2, marketplace: 1 });
+  assert.deepEqual(activeScopeCounts(groups, 'amir'), { all: 4, mine: 1, shared: 2, marketplace: 1 });
 });
 
 test('groupsFromVisibility buckets a flat list by visibility (both tier vocabularies)', () => {
@@ -127,7 +128,8 @@ test('groupsFromVisibility buckets a flat list by visibility (both tier vocabula
   assert.deepEqual(g.mine.map((x) => x.name), ['a']);
   assert.deepEqual(g.domain.map((x) => x.name), ['b']);
   assert.deepEqual(g.marketplace.map((x) => x.name).sort(), ['c', 'd']);
-  // And the four-group slice then follows ownership for "My".
+  // And the four-group slice puts only the caller's OWN Personal-tier item under
+  // "My" — the Shared item 'b' they authored lives under Domain, not My.
   const scoped = groupByScope(g, 'amir');
-  assert.deepEqual(scoped.mine.map((x) => x.name).sort(), ['a', 'b']);
+  assert.deepEqual(scoped.mine.map((x) => x.name).sort(), ['a']);
 });
