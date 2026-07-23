@@ -1,9 +1,15 @@
-{{- if .Values.dbt.enabled }}
+{{- if and .Values.dbt.enabled .Values.trino.enabled }}
 {{- /*
   dbt build Job — builds the seed data into Iceberg marts via the central Trino
   engine (dbt-trino over the Polaris REST catalog). Runs as a post-install/upgrade
   hook once Trino is up. Cube + Superset + the agent query tool read these marts
   THROUGH Trino. dbt-trino is the single governed adapter.
+
+  Gated on trino.enabled too (not just dbt.enabled): with Trino off (the tiny-kind
+  -node override in values.selfcontained.yaml), this job's `dbt debug` polling loop
+  can take 10+ minutes to give up rather than failing fast, needlessly stalling the
+  install even though the eventual outcome is a no-op (the dbt/build commands are
+  already non-blocking failures). Skip the job outright instead.
 */}}
 {{- $d := .Values.dbt }}
 apiVersion: batch/v1

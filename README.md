@@ -122,6 +122,13 @@ docker build -t sovereign-os/sample-agent:0.1.0 images/sample-agent
 kind load docker-image sovereign-os/mock-model:0.1.0 sovereign-os/sample-agent:0.1.0 --name agentic-os
 
 # 4. render + client-validate (CRDs from step 2 must be present)
+helm repo add langfuse https://langfuse.github.io/langfuse-k8s
+helm repo add opensearch https://opensearch-project.github.io/helm-charts
+helm repo add dagster https://dagster-io.github.io/helm
+helm repo add open-metadata https://helm.open-metadata.org
+helm repo add superset https://apache.github.io/superset
+helm repo add argo https://argoproj.github.io/argo-helm
+helm repo add jupyterhub https://hub.jupyter.org/helm-chart/
 helm dependency build charts/sovereign-agentic-os
 helm template agentic-os charts/sovereign-agentic-os -f values.local.yaml \
   | kubectl apply --dry-run=client -f -
