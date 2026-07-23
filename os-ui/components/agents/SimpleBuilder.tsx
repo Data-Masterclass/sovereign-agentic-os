@@ -1334,8 +1334,9 @@ function applyFolderSelection(
     }
   }
 
-  // ── Item grants (data/knowledge only — files have no per-item list). ──
-  if (kind !== 'files') {
+  // ── Item grants (all foldered kinds, INCLUDING files — a single file can be
+  //    granted by its id, exactly like a dataset or a knowledge entry). ──
+  {
     const wantItems = new Set(sel.itemGrants.filter(inFamily));
     const haveItems = next.grants[kind].filter((g) => !g.folder && g.id && inFamily(g.id)).map((g) => g.id);
     for (const id of wantItems) {
@@ -1418,7 +1419,7 @@ function FolderResourcePicker({
   const managesFolders = idFamily !== 'workflow';
   const grantList = system.grants[kind];
   const itemGrantIds = new Set(grantList.filter((g) => !g.folder && g.id && inFamily(g.id)).map((g) => g.id));
-  const checked = new Set<string>(kind === 'files' ? [] : itemGrantIds);
+  const checked = new Set<string>(itemGrantIds);
   for (const g of grantList) {
     if (!g.folder) continue;
     for (const it of itemsUnderFolder(g.folder.path, treeItems)) checked.add(it.id);
@@ -1453,11 +1454,10 @@ function FolderResourcePicker({
           items={treeItems}
           checkedIds={[...checked]}
           onChange={onChange}
-          // Files grant by FOLDER only — a per-file tick is inert, so show file
-          // leaves display-only (no dead checkboxes). Folders stay tickable, and a
-          // checkable "All …" root row lets you grant files that sit at the root
-          // (no named subfolder) as one `/` grant.
-          leavesSelectable={kind !== 'files'}
+          // Files are grantable at ANY granularity: a single file (leaf tick), a
+          // folder, or "All" (the `/` root row). Leaves are selectable for every
+          // kind; the extra "All …" root row is a Files convenience for granting a
+          // whole scope (incl. files that sit at the root with no named subfolder).
           rootGrantable={kind === 'files'}
         />
       )}
@@ -1509,7 +1509,7 @@ function FolderResourcePicker({
 
       {kind === 'files' ? (
         <p className="hint" style={{ marginTop: 6, marginBottom: 0 }}>
-          Files are granted by <strong>folder</strong> — tick a folder to give the team every file under it (now and later).
+          Tick a <strong>single file</strong>, a whole <strong>folder</strong> (covers files added later), or <strong>All</strong>.
           Access follows the file store’s own permissions at run time.
         </p>
       ) : null}
