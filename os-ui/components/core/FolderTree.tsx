@@ -131,6 +131,13 @@ type CheckboxProps = CommonProps & {
    * tickable (folder-granting doesn't depend on leaf checkboxes existing).
    */
   leavesSelectable?: boolean;
+  /**
+   * Whether the ROOT `/` is itself a grantable folder. Default `false` (root-level
+   * items emit individually, as before). Set `true` for a folder-only kind (Files)
+   * so a tickable "All …" root row appears and ticking it emits a single `/` folder
+   * grant — the ONLY way to grant files that live at the root with no subfolder.
+   */
+  rootGrantable?: boolean;
 };
 
 type PickerProps = CommonProps & {
@@ -555,8 +562,30 @@ function Root({
     // `checkedIds`/`onChange`), so a toggle in this root never drops the OTHER root's
     // grants during the caller's reconcile. Only RENDERING (rootItems/itemsByFolder/
     // tri-state) is scoped, above.
-    props.onChange?.(computeSelection(nodes, props.items, nextChecked, scope));
+    props.onChange?.(computeSelection(nodes, props.items, nextChecked, scope, props.rootGrantable ?? false));
   }
+
+  // A checkable "All …" root row for a folder-only kind (Files): the only way to
+  // grant files that live at the root with no named subfolder. Ticks every item in
+  // this scope; `computeSelection(rootGrantable)` collapses that to one `/` grant.
+  const box = props.variant === 'checkbox' ? props : null;
+  const rootRow = box?.rootGrantable && scopedItems.length > 0 ? (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 32, paddingLeft: 8, paddingRight: 8 }}>
+      <TriBox
+        state={triState('/', checked, scopedItems.map((i) => i.id))}
+        label={`Grant all ${label}`}
+        onToggle={() => {
+          const all = scopedItems.map((i) => i.id);
+          const next = new Set(checked);
+          if (triState('/', checked, all) === 'all') { for (const id of all) next.delete(id); }
+          else { for (const id of all) next.add(id); }
+          emit(next);
+        }}
+      />
+      <span aria-hidden style={{ opacity: 0.85 }}>📂</span>
+      <span style={{ flex: 1, fontWeight: 500 }}>All {label}</span>
+    </div>
+  ) : null;
 
   const nav = props.variant === 'nav' ? props : null;
   const picker = props.variant === 'picker' ? props : null;
@@ -614,6 +643,7 @@ function Root({
           <span style={{ flex: 1 }}>/ (root)</span>
         </div>
       )}
+      {rootRow}
       <div>
         {tree.map((node) => (
           <FolderRow
@@ -654,9 +684,22 @@ function computeSelection(
   items: FolderTreeItem[],
   checked: Set<string>,
   scope: RootScope,
+  rootGrantable = false,
 ): FolderSelection {
   const folderGrants: FolderGrant[] = [];
   const covered = new Set<string>();
+
+  // rootGrantable (Files): a FULLY-checked root collapses to ONE catch-all `/` grant
+  // (covers every file, present + future) and nothing else. Handled first so it
+  // marks everything covered; a partially-checked root falls through to per-folder
+  // grants as usual. This is the only way to grant files that sit at the root.
+  if (rootGrantable) {
+    const rootIds = itemsUnderFolder('/', items).map((i) => i.id);
+    if (rootIds.length > 0 && rootIds.every((id) => checked.has(id))) {
+      folderGrants.push({ path: '/', scope });
+      for (const id of rootIds) covered.add(id);
+    }
+  }
 
   // Consider every folder path that has a row OR holds items; deepest first so a
   // fully-checked deep folder is captured before its (also-full) ancestor.

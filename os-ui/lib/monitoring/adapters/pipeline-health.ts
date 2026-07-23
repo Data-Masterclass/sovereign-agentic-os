@@ -63,6 +63,8 @@ export async function collectPipelines(): Promise<HealthItem[]> {
       /* fall through to mock */
     }
   }
-  // Offline-mock — the worked-example dbt freshness failure on mart_sales.
-  return [...MOCK_PIPELINES];
+  // Offline-mock — the worked-example dbt freshness failure on mart_sales. Shown
+  // only when demo fixtures are enabled (dev/test); a real deploy returns nothing
+  // rather than a fake red alert no one can act on.
+  return config.monitoringDemoFixtures ? [...MOCK_PIPELINES] : [];
 }

@@ -24,7 +24,9 @@ export async function collectArtifacts(): Promise<HealthItem[]> {
   // Live probe: KServe serving health for any deployed model (best-effort).
   const ml = await kserveServing();
   // Cross-tab artifact health is stubbed for kind (parallel branches not on main).
-  const crossTab = [...MOCK_ARTIFACTS];
+  // The mock data products (mart_sales, churn, mart_finance) are demo fixtures —
+  // only shown in dev/test, never as fake red artifacts on a real deploy.
+  const crossTab = config.monitoringDemoFixtures ? [...MOCK_ARTIFACTS] : [];
 
   if (ml.length === 0) return crossTab;
   // Merge: live ML serving replaces the mock churn-model row when present.

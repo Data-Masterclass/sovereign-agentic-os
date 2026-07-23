@@ -34,7 +34,11 @@ export function deriveScope(
  * THE scope predicate. A signal is visible iff:
  *   • admin                                  → always (cluster signals too)
  *   • cluster-wide signal (node/self-heal)   → admin only
- *   • builder                                → its domain ∈ the viewer's domains
+ *   • builder                                → its domain ∈ the viewer's domains,
+ *                                              OR the viewer OWNS it (a builder is a
+ *                                              superset of a user — their own runs,
+ *                                              incl. a PERSONAL agent whose run-domain
+ *                                              resolves to their principal, must show)
  *   • user                                   → it is owned by the viewer
  */
 export function canSee(
@@ -43,7 +47,8 @@ export function canSee(
 ): boolean {
   if (scope.level === 'admin') return true;
   if (it.cluster) return false; // cluster/tenant signals are admin-only
-  if (scope.level === 'builder') return scope.domains.includes(it.domain);
+  // A builder sees their domain AND anything they own — never less than a user.
+  if (scope.level === 'builder') return scope.domains.includes(it.domain) || it.owner === scope.principal;
   return it.owner === scope.principal; // user: strictly their own
 }
 

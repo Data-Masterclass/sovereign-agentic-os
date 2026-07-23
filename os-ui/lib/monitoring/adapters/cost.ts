@@ -94,8 +94,9 @@ export async function collectCost(): Promise<HealthItem[]> {
   }
 
   // 3) No caps AND LiteLLM unreachable (or reported nothing) — offline mock keeps
-  //    the tab + validation gate demonstrable, honestly marked source:'mock'.
-  return [...MOCK_COST];
+  //    the tab demonstrable in dev/test, honestly marked source:'mock'. A real
+  //    deploy shows nothing rather than fake spend for artifacts no one recognises.
+  return config.monitoringDemoFixtures ? [...MOCK_COST] : [];
 }
 
 /**

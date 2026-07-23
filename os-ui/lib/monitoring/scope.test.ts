@@ -35,6 +35,16 @@ test('BUILDER sees their DOMAIN, not other domains', () => {
   assert.equal(canSee(builderFinance, { owner: 'anyone', domain: 'finance' }), true);
 });
 
+test('BUILDER also sees their OWN runs even when the run-domain is not theirs', () => {
+  // A builder's PERSONAL agent: the run-trace's domain resolves to the principal
+  // (e.g. "b_sales"), not the builder's team domain — but they OWN it, so it must
+  // show. A builder is never LESS visible than a plain user on their own work.
+  assert.equal(canSee(builderSales, { owner: 'b_sales', domain: 'b_sales' }), true);
+  assert.equal(canSee(builderSales, { owner: 'b_sales', domain: 'finance' }), true);
+  // …but still NOT another user's out-of-domain run.
+  assert.equal(canSee(builderSales, { owner: 'someone_else', domain: 'finance' }), false);
+});
+
 test('CLUSTER/tenant signals are ADMIN-only (builder & user cannot see a node)', () => {
   const node = { owner: 'platform', domain: 'platform', cluster: true };
   assert.equal(canSee(admin, node), true);

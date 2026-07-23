@@ -50,8 +50,9 @@ export async function collectRuns(): Promise<HealthItem[]> {
   const lf = await langfuseRuns();
 
   const merged = [...lf, ...ring];
-  // 3) Offline mock — only when nothing live was found (keeps the gate runnable).
-  if (merged.length === 0) return [...MOCK_RUNS];
+  // 3) Offline mock — only when nothing live was found AND demo fixtures are on
+  // (dev/test). A real deploy with no runs yet shows an honest empty list.
+  if (merged.length === 0) return config.monitoringDemoFixtures ? [...MOCK_RUNS] : [];
   return merged;
 }
 

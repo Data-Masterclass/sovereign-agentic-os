@@ -1454,8 +1454,11 @@ function FolderResourcePicker({
           checkedIds={[...checked]}
           onChange={onChange}
           // Files grant by FOLDER only — a per-file tick is inert, so show file
-          // leaves display-only (no dead checkboxes). Folders stay tickable.
+          // leaves display-only (no dead checkboxes). Folders stay tickable, and a
+          // checkable "All …" root row lets you grant files that sit at the root
+          // (no named subfolder) as one `/` grant.
           leavesSelectable={kind !== 'files'}
+          rootGrantable={kind === 'files'}
         />
       )}
 

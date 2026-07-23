@@ -286,6 +286,18 @@ export const config = {
   litellmBudgetUsd: Number(env('LITELLM_BUDGET_USD', '5')) || 0,
   litellmBudgetWindow: env('LITELLM_BUDGET_WINDOW', 'weekly'),
 
+  // Monitoring DEMO fixtures. The Monitor lenses (pipelines/artifacts/cost/runs)
+  // fall back to offline-mock "worked example" signals (e.g. the mart_sales dbt
+  // freshness failure) when the live backend returns nothing — great on a laptop,
+  // but on a real deploy it shows fake red alerts no one can act on. Default: ON
+  // in dev/test, OFF in production (so a live tab shows real telemetry or an honest
+  // "no signals yet", never demo data). Override with MONITORING_DEMO_FIXTURES.
+  monitoringDemoFixtures: (() => {
+    const v = env('MONITORING_DEMO_FIXTURES', '');
+    if (v) return v.toLowerCase() !== 'false';
+    return process.env.NODE_ENV !== 'production';
+  })(),
+
   // OPA (Policy): POST {OPA_URL}/v1/data/agentic/authz/allow and
   // GET {OPA_URL}/v1/data/grants for the principal -> tools grant map.
   opaUrl: base(env('OPA_URL', 'http://opa:8181')),
