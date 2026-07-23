@@ -165,7 +165,14 @@ export type AgenticGraphDeps = {
    * alone. Declared here so the seam is a real, typed contract rather than a TODO.
    */
   tieBreaker?: ModelTieBreaker;
+  /** Per-node PLAN→ACT round cap (each node's own budget). */
   maxIterations?: number;
+  /**
+   * GLOBAL round budget for the whole team run, summed across nodes. Each node is
+   * clamped to `min(maxIterations, remaining)`; when the budget is spent the walk
+   * stops early and the run degrades gracefully. Unset → no team-wide ceiling.
+   */
+  maxRunSteps?: number;
   /**
    * Input token ceiling for every node's model call — the bound each node's
    * (growing) transcript is assembled to before it reaches the gateway. Fixes the
@@ -525,9 +532,22 @@ export async function runAgenticGraph(
   const runs: NodeRun[] = [];
   let transcript: HandoffEntry[] = [];
   const userTask = lastUserContent(messages);
+  // GLOBAL run budget: rounds spent so far across all nodes. Each node is clamped to
+  // what is LEFT, and the walk stops once the team-wide budget is spent — so a long
+  // team can't multiply per-node caps into a runaway (cost + run-timeout) blowup.
+  let runStepsUsed = 0;
+  let stoppedAtRunBudget = false;
   for (let orderIdx = 0; orderIdx < order.length; orderIdx += 1) {
     const id = order[orderIdx];
     const node = nodeById.get(id)!;
+    // Clamp this node's round cap to the remaining global budget. Once nothing is
+    // left, stop before running the node (graceful: the run returns what completed).
+    let nodeMaxIterations = deps.maxIterations;
+    if (deps.maxRunSteps != null) {
+      const remaining = deps.maxRunSteps - runStepsUsed;
+      if (remaining <= 0) { stoppedAtRunBudget = true; break; }
+      nodeMaxIterations = Math.min(deps.maxIterations ?? remaining, remaining);
+    }
     // AUTO per-node routing: honor a real pin, else classify (read-only gatherers →
     // fast, judgment/writers → reasoning). Zero LLM cost; surfaced in the drill-down.
     const routed = resolveNodeModel(node, deps);
@@ -558,12 +578,14 @@ export async function runAgenticGraph(
         llm: deps.llm,
         planModel: deps.reasoningModel,
         actModel,
-        maxIterations: deps.maxIterations,
+        maxIterations: nodeMaxIterations,
         budget: deps.budget,
         maxOutputTokens: deps.maxOutputTokens,
         // LIVE: forward each governed tool step out to the caller as it happens.
         onStep: deps.onStep ? (step) => { stepIdx += 1; deps.onStep!({ node: id, step, index: stepIdx }); } : undefined,
       });
+      // Charge this node's rounds against the global run budget.
+      runStepsUsed += result.iterations;
       const status = nodeStatus(result);
       runs.push({ node: id, model: actModel, tier: routed.tier, tierReason: routed.reason, status, result, input });
       deps.onNodeComplete?.({ node: id, status, finalText: result.finalText });
@@ -595,7 +617,13 @@ export async function runAgenticGraph(
     }
   }
 
-  const finalText = runs.length > 0 ? runs[runs.length - 1].result.finalText : '(no agents ran)';
+  let finalText = runs.length > 0 ? runs[runs.length - 1].result.finalText : '(no agents ran)';
+  // If the walk stopped because the team-wide tool-step budget ran out (not because
+  // the graph finished), say so — the same phrasing the Evaluate run-check detects,
+  // so the run is flagged as possibly-unfinished rather than silently truncated.
+  if (stoppedAtRunBudget) {
+    finalText += `\n\n_(The team stopped at the run's tool-step budget — it may not have finished. An admin can raise AGENT_TEAM_RUN_MAX_STEPS.)_`;
+  }
   return { path: order, runs, finalText };
 }
 

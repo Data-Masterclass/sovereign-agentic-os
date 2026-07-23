@@ -548,3 +548,30 @@ test('a node failure still emits a terminal node-completed (never a silent stall
   assert.equal(completed!.status, 'failed');
   assert.equal(res.runs.length, 1, 'the run stopped at the failing node');
 });
+
+test('global run budget clamps each node and stops the walk once spent', async () => {
+  // ACT always returns a UNIQUE tool call, so every node runs to its per-node cap
+  // (unique args dodge the repeated-call loop-breaker). With per-node 3 and a global
+  // budget of 4, node 1 spends 3, node 2 is clamped to the remaining 1, then the
+  // budget is spent and the walk stops — well before all 6 nodes run.
+  let n = 0;
+  const llm: LlmCall = async (req) => {
+    if (!req.tools) return { content: 'plan', toolCalls: [] };
+    n += 1;
+    return { content: '', toolCalls: [{ id: `c${n}`, name: 'query_metric', args: { n } }] };
+  };
+  const res = await runAgenticGraph(IR, [{ role: 'user', content: 'go' }], baseDeps({ llm, maxIterations: 3, maxRunSteps: 4 }));
+
+  assert.ok(res.runs.length < nodeOrder(IR).length, `stopped before every node ran (ran ${res.runs.length})`);
+  const totalRounds = res.runs.reduce((s, r) => s + r.result.iterations, 0);
+  assert.ok(totalRounds <= 4, `total rounds stayed within the global budget (got ${totalRounds})`);
+  assert.match(res.finalText, /tool-step budget/i, 'the reply notes the run stopped at the budget');
+});
+
+test('a generous global run budget runs the whole team with no early stop', async () => {
+  // Default script: every ACT returns "done" immediately, so each node finishes well
+  // under its per-node cap and the generous global budget is never reached.
+  const res = await runAgenticGraph(IR, [{ role: 'user', content: 'go' }], baseDeps({ maxIterations: 3, maxRunSteps: 1000 }));
+  assert.equal(res.runs.length, nodeOrder(IR).length, 'every node ran');
+  assert.doesNotMatch(res.finalText, /tool-step budget/i, 'no run-budget note when the team finishes');
+});

@@ -213,6 +213,9 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<AgenticGraphResu
     // Each TEAM node gets the higher per-node cap (an evaluator/recommender doing
     // per-campaign work needs more than the single-agent 20). Caller override wins.
     maxIterations: input.maxIterations ?? config.agentTeamNodeMaxSteps,
+    // GLOBAL ceiling for the whole team run — clamps nodes×per-node so a large team
+    // can't run away on the shared LLM pool (or time out). Each node draws from it.
+    maxRunSteps: config.agentTeamRunMaxSteps,
     // Bound every node to the smaller live window; cap each node's own output.
     budget: handoffBudget(),
     maxOutputTokens: modelContext(roleModel('tools')).reservedOutput,

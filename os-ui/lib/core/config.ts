@@ -263,15 +263,21 @@ export const config = {
   })() as 'reasoning' | 'standard' | 'tools',
   talkEscalateToReasoning: env('TALK_ESCALATE_TO_REASONING', 'true').toLowerCase() !== 'false',
 
-  // Ask-the-OS assistant: max PLAN→ACT tool-call rounds per turn. Raised from the
-  // original 8 so multi-step builds (ingest → silver → gold → metric → publish) can
-  // complete in one conversation. Tunable via env without a rebuild.
-  assistantMaxSteps: Number(env('ASSISTANT_MAX_STEPS', '')) || 30,
+  // Ask-the-OS assistant + single-agent runs: max PLAN→ACT tool-call rounds per
+  // turn. Raised over time (8 → 30 → 50) so multi-step builds (ingest → silver →
+  // gold → metric → publish) finish in one conversation. Tunable via env.
+  assistantMaxSteps: Number(env('ASSISTANT_MAX_STEPS', '')) || 50,
   // Multi-agent TEAM runs: max PLAN→ACT tool-call rounds PER NODE. Higher than the
   // single-agent cap because one analytical node (an evaluator scoring N campaigns,
   // a recommender reasoning over a full scorecard) legitimately needs more rounds
   // than a one-shot assistant turn. Single-agent runs keep `assistantMaxSteps`.
-  agentTeamNodeMaxSteps: Number(env('AGENT_TEAM_NODE_MAX_STEPS', '')) || 60,
+  agentTeamNodeMaxSteps: Number(env('AGENT_TEAM_NODE_MAX_STEPS', '')) || 100,
+  // Multi-agent TEAM runs: GLOBAL tool-call-round budget for the WHOLE run, summed
+  // across every node. Without this the per-node cap has no team-wide ceiling —
+  // nodes × per-node could explode on the shared LLM pool and time the run out.
+  // Each node is clamped to whatever is LEFT of this budget; the run stops early and
+  // degrades gracefully once it is spent. Env-overridable.
+  agentTeamRunMaxSteps: Number(env('AGENT_TEAM_RUN_MAX_STEPS', '')) || 400,
   // LLM Gateway tab — the read-only, tenant-total usage/spend panel
   // (app/api/gateway/usage). The budget envelope is surfaced for the "budget
   // used" bar; it mirrors the chart's litellmAgentKey.maxBudget / budgetDuration

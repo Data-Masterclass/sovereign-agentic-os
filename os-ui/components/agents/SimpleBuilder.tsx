@@ -1453,6 +1453,9 @@ function FolderResourcePicker({
           items={treeItems}
           checkedIds={[...checked]}
           onChange={onChange}
+          // Files grant by FOLDER only — a per-file tick is inert, so show file
+          // leaves display-only (no dead checkboxes). Folders stay tickable.
+          leavesSelectable={kind !== 'files'}
         />
       )}
 

@@ -124,6 +124,13 @@ type CheckboxProps = CommonProps & {
   /** Currently-checked item ids (controlled). */
   checkedIds: string[];
   onChange?: (next: FolderSelection) => void;
+  /**
+   * Whether LEAF items get their own checkbox. Default `true`. Set `false` for a
+   * kind that grants by FOLDER only (e.g. Files, whose per-file ticks are inert):
+   * leaves render display-only so there are no dead checkboxes, while folders stay
+   * tickable (folder-granting doesn't depend on leaf checkboxes existing).
+   */
+  leavesSelectable?: boolean;
 };
 
 type PickerProps = CommonProps & {
@@ -465,6 +472,9 @@ function LeafRow({
   emit: (next: Set<string>) => void;
 }) {
   const box = props.variant === 'checkbox' ? props : null;
+  // Leaves are checkable unless the caller opted a kind out (Files grants by folder,
+  // so its leaf ticks would be inert — render them display-only instead of dead).
+  const selectable = box ? (box.leavesSelectable ?? true) : false;
   return (
     <div
       style={{
@@ -476,7 +486,7 @@ function LeafRow({
         paddingRight: 8,
       }}
     >
-      {box && (
+      {box && selectable ? (
         <input
           type="checkbox"
           aria-label={`Select ${item.name ?? item.id}`}
@@ -489,7 +499,10 @@ function LeafRow({
           }}
           style={{ accentColor: 'var(--gold-deep)', cursor: 'pointer' }}
         />
-      )}
+      ) : box ? (
+        // Keep the row aligned with checkable siblings, but show no dead control.
+        <span aria-hidden style={{ display: 'inline-block', width: 13 }} />
+      ) : null}
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {props.renderLeaf ? props.renderLeaf(item) : (item.name ?? item.id)}
       </span>
