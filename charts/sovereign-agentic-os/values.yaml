@@ -178,7 +178,12 @@ ingress:
   enabled: false
   className: nginx            # ingress controller class (Mode B: ingress-nginx)
   tlsIssuer: letsencrypt-prod # cert-manager ClusterIssuer (cert-manager.io/cluster-issuer)
-  annotations: {}             # extra annotations merged onto every tool Ingress
+  annotations:                # extra annotations merged onto every tool Ingress
+    # File uploads (Files tab) buffer through the os-ui app; MUST be ≥ the app's
+    # UPLOAD_MAX_BYTES (200 MB) or nginx rejects the body at the edge (413) before
+    # it reaches the app — the "big file drag-drop does nothing" bug. nginx's
+    # default is 1 MB, which silently blocked every upload over 1 MB.
+    nginx.ingress.kubernetes.io/proxy-body-size: "200m"
   # Per-tool public hostnames. Empty => that tool gets NO Ingress. Filled by the
   # Mode-B overlay (render-values.sh substitutes the DNS zone). Keys map to
   # Services in templates/ingress.yaml: osUI->os-ui:3000, litellm->litellm:4000,
@@ -2672,7 +2677,9 @@ osUI:
   publicUrl: ""
   resources:
     requests: { cpu: 50m, memory: 128Mi }
-    limits:   { cpu: 500m, memory: 512Mi }
+    # 1Gi headroom for Files-tab uploads: the upload route buffers the whole file
+    # in memory (~2× the byte size at peak), so a 200 MB upload can spike ~500 MB.
+    limits:   { cpu: 500m, memory: 1Gi }
 
 # -----------------------------------------------------------------------------
 # In-cluster transactional mail (maddy MTA). OFF by default — base + kind render

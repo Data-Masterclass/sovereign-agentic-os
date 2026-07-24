@@ -3,7 +3,7 @@
  */
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useUser } from '@/lib/useUser';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { previewText } from '@/lib/files/preview';
@@ -79,6 +79,16 @@ function csvRows(text: string, maxRows = 30, maxCols = 12): string[][] {
     .map((line) => line.split(',').slice(0, maxCols).map((c) => c.trim()));
 }
 
+/** Full-screen Quick Look shell: a dimmed backdrop over the grid + a centered panel.
+ *  Clicking the backdrop (not the panel) closes. Content is the hero, big and legible. */
+function QuickLook({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  return (
+    <div className="ql-backdrop" role="dialog" aria-modal="true" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="ql-panel">{children}</div>
+    </div>
+  );
+}
+
 export default function FilePreview({ id, onMutated, onClose }: { id: string; onMutated: () => void; onClose: () => void }) {
   const { user, isAdmin } = useUser();
   const { notifyApprovalFiled } = useApprovalNotifier();
@@ -114,6 +124,16 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
     } catch (e) { setErr((e as Error).message); }
   }, [id]);
   useEffect(() => { load(); }, [load]);
+
+  // Esc closes the full-screen Quick Look; lock body scroll while it's open so the
+  // dimmed grid underneath doesn't scroll away.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prevOverflow; };
+  }, [onClose]);
 
   const loadFolders = useCallback(async () => {
     try {
@@ -212,8 +232,8 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
     onMutated(); onClose();
   }, [id, onMutated, onClose]);
 
-  if (err && !view) return <aside className="files-preview"><div className="error">{err}</div><button className="btn ghost" onClick={onClose}>Close</button></aside>;
-  if (!view) return <aside className="files-preview"><span className="spin" /></aside>;
+  if (err && !view) return <QuickLook onClose={onClose}><div className="files-preview"><div className="error">{err}</div><button className="btn ghost" onClick={onClose}>Close</button></div></QuickLook>;
+  if (!view) return <QuickLook onClose={onClose}><div className="files-preview"><span className="spin" /></div></QuickLook>;
 
   const a = view.asset;
   const isOwner = user?.id === a.owner;
@@ -246,21 +266,29 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
 
   return (
     <ConfirmProvider>
-    <aside className="files-preview">
+    <QuickLook onClose={onClose}>
+    <div className="files-preview ql-body">
       <div className="preview-head">
-        <div className="preview-row">
-          <span className={`kind-chip kind-${a.kind}`}>{KIND_LABEL[a.kind]}</span>
-          <span className="preview-title">{a.name}</span>
+        <div className="preview-head-title">
+          <div className="preview-row">
+            <span className={`kind-chip kind-${a.kind}`}>{KIND_LABEL[a.kind]}</span>
+            <span className="preview-title">{a.name}</span>
+          </div>
+          <div className="preview-row preview-submeta">
+            <span className={`status-chip ${a.indexing.mode === 'stored-only' ? 's-stored' : 's-searchable'}`}>
+              {a.indexing.mode === 'stored-only' ? 'Stored only' : 'Searchable ✓'}
+            </span>
+            <span className="badge muted">{TIER_WORD[a.tier]}</span>
+            <span className="file-sub">{a.version} · {bytesLabel(view.bytes)}</span>
+          </div>
         </div>
-        <button className="preview-close" onClick={onClose} aria-label="Close preview">×</button>
-      </div>
-
-      <div className="preview-row">
-        <span className={`status-chip ${a.indexing.mode === 'stored-only' ? 's-stored' : 's-searchable'}`}>
-          {a.indexing.mode === 'stored-only' ? 'Stored only' : 'Searchable ✓'}
-        </span>
-        <span className="badge muted">{TIER_WORD[a.tier]}</span>
-        <span className="file-sub">{a.version} · {bytesLabel(view.bytes)}</span>
+        <div className="preview-head-actions">
+          {view.object ? (
+            <a className="btn ghost sm" href={rawSrc} target="_blank" rel="noreferrer" title="Open in a new tab">Open ↗</a>
+          ) : null}
+          <a className="btn ghost sm" href={`/api/files/${id}/download`} download={a.name}>Download</a>
+          <button className="preview-close" onClick={onClose} aria-label="Close preview">×</button>
+        </div>
       </div>
 
       {/* ---- Quick Look: render the ACTUAL file inline (the content is the hero).
@@ -314,12 +342,8 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         <div className="media-stage">No preview — download to view the original file.</div>
       )}
 
-      {/* Quick actions live directly under the viewer — the two things a reader wants
-          most (get the original, replace it). Governance sits under the disclosure. */}
+      {/* Re-upload lives directly under the viewer; Download / Open live in the header. */}
       <div className="preview-row preview-actions">
-        {/* Download: UI-uploaded files stream their ORIGINAL bytes from the object
-            store; text-only (MCP) records download their extracted text as .txt. */}
-        <a className="btn ghost sm" href={`/api/files/${id}/download`} download={a.name}>Download</a>
         <button className="btn ghost sm" onClick={() => reuploadRef.current?.click()}>Re-upload (new version)</button>
         <input ref={reuploadRef} type="file" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) reupload(f); e.target.value = ''; }} />
       </div>
@@ -474,7 +498,8 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         </div>
       ) : null}
       </details>
-    </aside>
+    </div>
+    </QuickLook>
     </ConfirmProvider>
   );
 }

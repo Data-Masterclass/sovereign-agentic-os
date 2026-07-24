@@ -41,6 +41,19 @@ type ViewMode = 'grid' | 'list';
 type SortKey = 'name' | 'updated' | 'size' | 'type';
 const VIEW_KEY = 'soa.files.view';
 
+/** Fallback max upload size shown when the server gives no explicit limit (the ingress
+ *  is being raised to 200 MB; if a 413 carries a JSON limit we prefer that). */
+const DEFAULT_MAX_MB = 200;
+
+/** Per-file upload progress row shown while a batch is in flight / after it settles. */
+type UploadItem = {
+  name: string;
+  /** 0–100 while uploading; final rows carry done/error. */
+  pct: number;
+  state: 'uploading' | 'done' | 'error';
+  error?: string;
+};
+
 function bytesLabel(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1_048_576) return `${(n / 1024).toFixed(0)} KB`;
@@ -195,6 +208,9 @@ function FilesBrowserInner() {
   // upload / drag-drop
   const [drag, setDrag] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Per-file upload progress rows + whether a batch is currently in flight.
+  const [uploads, setUploads] = useState<UploadItem[]>([]);
+  const [uploading, setUploading] = useState(false);
 
   // ?focus=<fileId> deep-link: once groups load, select and preview the target file.
   // We switch to 'all' scope so the item is visible regardless of which scope owns it.
@@ -251,29 +267,83 @@ function FilesBrowserInner() {
     return () => clearTimeout(t);
   }, [query]);
 
-  const upload = useCallback(async (files: FileList | File[]) => {
-    setErr('');
-    for (const file of Array.from(files)) {
-      // Send the ORIGINAL bytes (multipart) so the file is stored and downloadable
-      // byte-for-byte — the server extracts text from text-like files for search.
+  // Upload ONE file over XMLHttpRequest so we get real progress (fetch+FormData has
+  // none). Resolves with a friendly error string (or null on success) — it never
+  // rejects, so one bad file can't abort the rest of the batch. `onPct` streams 0–100.
+  const uploadOne = useCallback((file: File, folder: string, onPct: (pct: number) => void): Promise<string | null> => {
+    return new Promise((resolve) => {
       const form = new FormData();
       form.append('file', file);
       form.append('name', file.name);
-      // Upload into the selected folder (personal-root selections only — a new
-      // upload starts private; a domain-folder selection falls back to the root).
-      form.append('folder', sel && sel.root === 'personal' ? sel.path : '/');
-      try {
-        const res = await fetch('/api/files', { method: 'POST', body: form });
-        if (!res.ok) { setErr((await res.json()).error ?? 'Upload failed'); }
-      } catch (e) { setErr((e as Error).message); }
+      form.append('folder', folder);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/files');
+      xhr.timeout = 10 * 60 * 1000; // 10 min — large files over a slow link.
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onPct(Math.min(99, Math.round((e.loaded / e.total) * 100)));
+      };
+
+      const tooLarge = (limitMb: number) => `${file.name} is too large (max ${limitMb} MB)`;
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) { onPct(100); resolve(null); return; }
+        // Try to read a JSON {error, maxMb}; a non-JSON body (e.g. an nginx 413 HTML
+        // page) or a 413 both mean "too large" → one clear friendly message.
+        let parsed: { error?: string; maxMb?: number } | null = null;
+        try { parsed = JSON.parse(xhr.responseText) as { error?: string; maxMb?: number }; } catch { parsed = null; }
+        if (xhr.status === 413 || !parsed) {
+          resolve(tooLarge(parsed?.maxMb ?? DEFAULT_MAX_MB));
+        } else {
+          resolve(parsed.error ?? `${file.name} failed to upload`);
+        }
+      };
+      // Network error / timeout / aborted (status 0) → connection-oriented message.
+      xhr.onerror = () => resolve(`${file.name} failed to upload — check your connection and try again.`);
+      xhr.ontimeout = () => resolve(`${file.name} failed to upload — check your connection and try again.`);
+
+      xhr.send(form);
+    });
+  }, []);
+
+  const upload = useCallback(async (files: FileList | File[]) => {
+    // Snapshot the selection immediately (the file input resets right after) and
+    // upload every file sequentially — no file is skipped.
+    const batch = Array.from(files);
+    if (batch.length === 0) return;
+    setErr('');
+    setUploading(true);
+    // Seed one progress row per file up front so the whole batch is visible.
+    setUploads(batch.map((f) => ({ name: f.name, pct: 0, state: 'uploading' as const })));
+    const folder = sel && sel.root === 'personal' ? sel.path : '/';
+
+    let ok = 0;
+    const failures: string[] = [];
+    for (let i = 0; i < batch.length; i++) {
+      const err = await uploadOne(batch[i], folder, (pct) =>
+        setUploads((cur) => cur.map((u, idx) => (idx === i ? { ...u, pct } : u))));
+      setUploads((cur) => cur.map((u, idx) =>
+        idx === i ? { ...u, pct: err ? u.pct : 100, state: err ? 'error' : 'done', error: err ?? undefined } : u));
+      if (err) failures.push(err); else ok += 1;
     }
+
+    setUploading(false);
+    // One clear batch summary (kept in the error strip when anything failed).
+    if (failures.length > 0) {
+      setErr(`${ok} uploaded, ${failures.length} failed: ${failures.join('; ')}`);
+    }
+    // Clear the transient progress rows shortly after a fully-clean batch; keep them
+    // visible when something failed so the user can read what went wrong.
+    if (failures.length === 0) setTimeout(() => setUploads([]), 1500);
     refresh();
-  }, [sel, refresh]);
+  }, [sel, refresh, uploadOne]);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault(); setDrag(false);
+    if (uploading) return; // a batch is in flight — ignore the drop rather than clobber it
     if (e.dataTransfer.files?.length) upload(e.dataTransfer.files);
-  }, [upload]);
+  }, [upload, uploading]);
 
   // Create a folder row in the registry, then re-load the rail. New-folder + the
   // ••• "Move folder" both live on the FolderTree; move-folder reuses create-at-path.
@@ -466,12 +536,37 @@ function FilesBrowserInner() {
         >
           {showArchived ? 'Hide archived' : 'Show archived'}
         </button>
-        <button className="btn" onClick={() => fileRef.current?.click()} {...anchorAttr(ANCHORS.files.upload)}>Upload</button>
+        <button className="btn" onClick={() => fileRef.current?.click()} disabled={uploading}
+          aria-busy={uploading} {...anchorAttr(ANCHORS.files.upload)}>
+          {uploading ? <><span className="spin" /> Uploading…</> : 'Upload'}
+        </button>
         <input ref={fileRef} type="file" multiple hidden
-          onChange={(e) => { if (e.target.files?.length) upload(e.target.files); e.target.value = ''; }} />
+          onChange={(e) => { if (!uploading && e.target.files?.length) upload(e.target.files); e.target.value = ''; }} />
       </div>
 
       {err ? <div className="error" style={{ marginBottom: 14 }}>{err}</div> : null}
+
+      {/* Upload progress — one calm row per file (name · % · bar), plus a batch header.
+          Errors stay visible; a clean batch clears itself shortly after. */}
+      {uploads.length > 0 ? (
+        <div className="upload-tray">
+          <div className="upload-tray-head">
+            {uploading
+              ? `Uploading ${uploads.length} file${uploads.length > 1 ? 's' : ''}…`
+              : `${uploads.filter((u) => u.state === 'done').length} of ${uploads.length} uploaded`}
+          </div>
+          {uploads.map((u, i) => (
+            <div key={`${u.name}-${i}`} className={`upload-row upload-${u.state}`}>
+              <span className="upload-name" title={u.name}>{u.name}</span>
+              <span className="upload-pct">
+                {u.state === 'error' ? 'Failed' : u.state === 'done' ? 'Done ✓' : `${u.pct}%`}
+              </span>
+              <div className="upload-bar"><div className="upload-bar-fill" style={{ width: `${u.state === 'error' ? 100 : u.pct}%` }} /></div>
+              {u.error ? <span className="upload-err">{u.error}</span> : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       <FolderPickerModal
         open={pickerIds !== null}
@@ -531,7 +626,7 @@ function FilesBrowserInner() {
         }}
       />
 
-      <div className={`files-layout${selected ? ' with-preview' : ''}`}>
+      <div className="files-layout">
         {/* ---- folder rail + tag cloud (the owner's drive) ---- */}
         <nav className="files-rail files-rail-tree">
           <div>
@@ -690,12 +785,13 @@ function FilesBrowserInner() {
             </>
           )}
         </section>
-
-        {/* ---- preview pane ---- */}
-        {selected ? (
-          <FilePreview id={selected} onMutated={refresh} onClose={() => setSelected(null)} />
-        ) : null}
       </div>
+
+      {/* ---- Quick Look: a full-screen overlay over the (dimmed) grid. The file content
+              is the hero; governance lives in a disclosure below. ---- */}
+      {selected ? (
+        <FilePreview id={selected} onMutated={refresh} onClose={() => setSelected(null)} />
+      ) : null}
     </>
   );
 }

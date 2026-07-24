@@ -86,9 +86,12 @@ export const config = {
   filesBucket: env('FILES_BUCKET', 'files'),
   awsAccessKeyId: env('AWS_ACCESS_KEY_ID', ''),
   awsSecretAccessKey: env('AWS_SECRET_ACCESS_KEY', ''),
-  // M1 upload cap (documented). Streams a single buffered PUT; ~100 MB keeps the
-  // os-ui pod memory bounded. Larger loads are an M2 connector (dlt source) job.
-  uploadMaxBytes: Number(env('UPLOAD_MAX_BYTES', String(100 * 1024 * 1024))) || 100 * 1024 * 1024,
+  // M1 upload cap (documented). The route buffers a single PUT in pod memory, so
+  // this MUST stay bounded to the os-ui memory limit (200 MB ⇒ ~2× buffered peak
+  // under the 1Gi limit). The ingress `proxy-body-size` (chart) must be ≥ this, or
+  // large files are rejected at the edge (413) before reaching the app. GB-scale
+  // uploads need a presigned browser→object-store path (bytes bypass the app).
+  uploadMaxBytes: Number(env('UPLOAD_MAX_BYTES', String(200 * 1024 * 1024))) || 200 * 1024 * 1024,
 
   // (Removed) sandbox-duckdb personal-query engine — the second engine. The personal
   // lane now reads through the SAME governed Trino path (owner-principal); there is
