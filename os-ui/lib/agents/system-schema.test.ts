@@ -404,6 +404,59 @@ agents:
   assert.equal(serializeSystem(parseSystem(yaml)), yaml);
 });
 
+// ── Declared outputs ─────────────────────────────────────────────────────────
+
+test('declared outputs round-trip through parse → serialize → parse', () => {
+  const yaml = `
+version: "1"
+system: { name: T, domain: sales, visibility: Personal }
+entrypoint: a
+grants:
+  files:
+    - { folder: { path: /results, scope: personal }, capability: Write-bounded }
+agents:
+  - { id: a, role: r, agent_md: "", memory_md: "" }
+outputs:
+  - { kind: files, name: Weekly report, folder: { path: /results, scope: personal } }
+`;
+  const sys = parseSystem(yaml);
+  assert.equal(sys.outputs?.length, 1);
+  assert.deepEqual(sys.outputs?.[0], {
+    kind: 'files',
+    name: 'Weekly report',
+    folder: { path: '/results', scope: 'personal' },
+  });
+  // Byte-stable across a re-serialize.
+  const round = serializeSystem(sys);
+  assert.match(round, /outputs:/);
+  assert.equal(serializeSystem(parseSystem(round)), round);
+});
+
+test('no outputs ⇒ the outputs key is omitted (byte-stable legacy files)', () => {
+  const sys = parseSystem(`
+entrypoint: a
+grants: { tools: [], connections: [] }
+agents: [{ id: a, role: r, agent_md: "", memory_md: "" }]
+`);
+  assert.equal(sys.outputs, undefined);
+  assert.ok(!/outputs:/.test(serializeSystem(sys)), 'no outputs: key emitted when empty');
+});
+
+test('malformed output rows are dropped on parse (bad kind / no name / no folder)', () => {
+  const sys = parseSystem(`
+entrypoint: a
+agents: [{ id: a, role: r, agent_md: "", memory_md: "" }]
+outputs:
+  - { kind: bogus, name: X, folder: { path: /x, scope: personal } }
+  - { kind: data, name: "", folder: { path: /x, scope: personal } }
+  - { kind: knowledge, name: OK, folder: { path: /notes, scope: domain } }
+  - { kind: files, name: NoFolder }
+`);
+  // Only the one valid row survives; scope defaults sensibly.
+  assert.equal(sys.outputs?.length, 1);
+  assert.deepEqual(sys.outputs?.[0], { kind: 'knowledge', name: 'OK', folder: { path: '/notes', scope: 'domain' } });
+});
+
 test('a Write-bounded folder grant is builder-gated like an item grant', () => {
   const sys = parseSystem(`
 entrypoint: a

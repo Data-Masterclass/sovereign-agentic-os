@@ -6131,6 +6131,52 @@ button.card.tile:hover .tile-action { opacity: 1; }
 .sb-resource { margin-top: 12px; }
 .sb-resource:first-of-type { margin-top: 6px; }
 
+/* ── Declared outputs ("Where the results go") + Save-result ──
+   Quiet, calm rows consistent with the grant chips: one output per row, a muted
+   kind badge, the name, then the destination folder. The add-row lays its labelled
+   fields out inline, wrapping gracefully. No new palette — reuses the OS tokens. */
+.sb-out-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.sb-out-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+}
+.sb-out-name { font-weight: 600; }
+.sb-out-dest { display: inline-flex; align-items: center; }
+.sb-out-add {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border-strong, var(--border));
+  border-radius: 10px;
+}
+.sb-out-add-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+.sb-out-add-fields > select,
+.sb-out-add-fields > input,
+.sb-out-folder {
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+.sb-out-addbtn { margin-top: 10px; }
+.sb-save-outputs {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  padding: 12px 14px;
+}
+
 /* ── Grant-panel heading HIERARCHY ("What your team can use") ──
    The two GROUP headings (Plan Items / Context) are the primary structure; each
    CATEGORY heading (Data, Knowledge, Operating Manual…) is the secondary structure;

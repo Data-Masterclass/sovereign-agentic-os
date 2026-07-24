@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { type AgentSpec, type System, type Capability, type DataLayer, type FolderGrantTarget, SystemError } from './system-schema.ts';
+import { type AgentSpec, type System, type Capability, type DataLayer, type FolderGrantTarget, type DeclaredOutput, SystemError } from './system-schema.ts';
 import { normaliseFolderPath } from '../core/folders.ts';
 import { setInstructions } from './agent-md.ts';
 import {
@@ -324,6 +324,71 @@ export function removeFolderGrant(input: System, kind: GrantKind, target: Folder
   );
   const stillWrites = sys.grants[kind].some((g) => capabilityWrites(g.capability));
   if (!stillWrites) for (const t of writeToolsForKind(kind)) stripTool(sys, t);
+  return sys;
+}
+
+// ─── Declared outputs (Define) ────────────────────────────────────────────────
+
+/** A stable key for an output's destination folder-grant target: `kind:scope:path`. */
+function outputFolderKey(kind: DeclaredOutput['kind'], f: FolderGrantTarget): string {
+  return `${kind}:${f.scope}:${normaliseFolderPath(f.path)}`;
+}
+
+/** True when a Write folder-grant covering `{kind, path, scope}` already exists. */
+function hasWriteFolderGrant(sys: System, kind: DeclaredOutput['kind'], f: FolderGrantTarget): boolean {
+  const path = normaliseFolderPath(f.path);
+  return sys.grants[kind].some(
+    (g) => g.folder && g.folder.scope === f.scope && g.folder.path === path && capabilityWrites(g.capability),
+  );
+}
+
+/**
+ * DECLARE AN OUTPUT — where the team's run RESULTS are stored. Appends a
+ * {@link DeclaredOutput} AND auto-adds a **Write** folder-grant on `grants.<kind>` for
+ * its `{path, scope}`, reusing the SAME `setFolderGrant(...write)` path an ordinary
+ * folder grant uses — so the write tools attach and the safety preset lifts exactly as
+ * for any Write grant. Idempotent on the GRANT (a folder already write-granted is not
+ * double-added); the output row itself is always appended (a team may store two outputs
+ * of the same kind in one folder under different names). The folder is late-bound — it
+ * materialises when the first result is written there (path-derived, no folder object).
+ */
+export function addOutput(input: System, output: DeclaredOutput): System {
+  const name = output.name.trim();
+  if (!name) throw new SystemError('Simple: an output needs a name');
+  const target: FolderGrantTarget = { path: normaliseFolderPath(output.folder.path), scope: output.folder.scope };
+  let sys = structuredClone(input);
+  sys.outputs = [...(sys.outputs ?? []), { kind: output.kind, name, folder: target }];
+  // Auto-provision the Write folder-grant (reusing the folder-grant machinery) unless an
+  // equivalent write grant already covers this folder — dedupe so we never stack grants.
+  if (!hasWriteFolderGrant(sys, output.kind, target)) {
+    sys = setFolderGrant(sys, output.kind, target, true);
+  }
+  return sys;
+}
+
+/**
+ * Remove the declared output at `index`. Its auto-added Write folder-grant is removed
+ * ONLY when no OTHER declared output still targets the same folder/kind (a second output
+ * in the same folder keeps the grant). A pre-existing explicit grant on that folder is
+ * left untouched by `removeFolderGrant` when it is a Read grant, but a shared Write folder
+ * grant is kept while any remaining output needs it. Idempotent — an out-of-range index
+ * is a no-op.
+ */
+export function removeOutput(input: System, index: number): System {
+  const sys = structuredClone(input);
+  const list = sys.outputs ?? [];
+  if (index < 0 || index >= list.length) return sys;
+  const removed = list[index];
+  sys.outputs = list.filter((_, i) => i !== index);
+  if (sys.outputs.length === 0) delete sys.outputs;
+  // Keep the Write folder-grant while ANY remaining output still writes to the same
+  // folder/kind; otherwise drop the auto-added grant (which also strips the kind's write
+  // tools once no grant of the kind writes — handled inside removeFolderGrant).
+  const key = outputFolderKey(removed.kind, removed.folder);
+  const stillNeeded = (sys.outputs ?? []).some((o) => outputFolderKey(o.kind, o.folder) === key);
+  if (!stillNeeded) {
+    return removeFolderGrant(sys, removed.kind, removed.folder);
+  }
   return sys;
 }
 

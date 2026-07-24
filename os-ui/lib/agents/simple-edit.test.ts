@@ -9,6 +9,7 @@ import {
   addSimpleAgent, moveAgent, nextAgentId, addArtifactGrant, removeArtifactGrant,
   addAgentTool, removeAgentTool, removeAgentSimple, setArtifactGrant, setDataGrantLayer,
   setFolderGrant, removeFolderGrant, setFolderGrantLevel, linearizeChain,
+  addOutput, removeOutput,
 } from './simple-edit.ts';
 import { toolsForCapabilityChipsInPool } from './capability-tools.ts';
 import { instructionsOf } from './agent-md.ts';
@@ -436,4 +437,70 @@ test('CONTRAST: addAgentTool freezes an agent so a LATER grant is missed (why we
   sys = setArtifactGrant(sys, 'data', 'ds_missed', false); // grows the pool AFTER the freeze
   const node = compile(sys).nodes.find((n) => n.id === agentId)!;
   assert.ok(!node.tools.includes('get_dataset'), 'a frozen agent MISSES the later data grant (the bug we fixed on add)');
+});
+
+// ── Declared outputs (Define) ─────────────────────────────────────────────────
+
+test('addOutput appends the output AND auto-adds a Write folder-grant + its write tools', () => {
+  const sys = parseSystem(BASE);
+  const next = addOutput(sys, { kind: 'files', name: 'Weekly report', folder: { path: '/results', scope: 'personal' } });
+  // The output row is recorded.
+  assert.deepEqual(next.outputs, [
+    { kind: 'files', name: 'Weekly report', folder: { path: '/results', scope: 'personal' } },
+  ]);
+  // A Write folder-grant on grants.files covers that folder.
+  const fg = next.grants.files.find((g) => g.folder && g.folder.path === '/results' && g.folder.scope === 'personal');
+  assert.ok(fg, 'a files folder grant was added');
+  assert.equal(fg!.capability, 'Write-bounded');
+  // The Files write tool is auto-attached (the SAME machinery a folder grant uses).
+  assert.ok(next.grants.tools.includes('upload_file'), 'upload_file provisioned by the Write grant');
+  // The write grant lifted the read-only default to read-bounded so writes actually run.
+  assert.equal(next.safetyPreset, 'read-bounded');
+});
+
+test('addOutput does NOT double-add a grant that already covers the same folder', () => {
+  let sys = parseSystem(BASE);
+  sys = setFolderGrant(sys, 'knowledge', { path: '/notes', scope: 'domain' }, true); // pre-existing write grant
+  const before = sys.grants.knowledge.filter((g) => g.folder).length;
+  const next = addOutput(sys, { kind: 'knowledge', name: 'Findings', folder: { path: '/notes', scope: 'domain' } });
+  const after = next.grants.knowledge.filter((g) => g.folder).length;
+  assert.equal(after, before, 'no duplicate folder grant added');
+  assert.equal(next.outputs?.length, 1, 'the output row is still recorded');
+});
+
+test('removeOutput removes the output and its auto-added Write grant when nothing else needs it', () => {
+  let sys = parseSystem(BASE);
+  sys = addOutput(sys, { kind: 'data', name: 'Scored campaigns', folder: { path: '/scored', scope: 'personal' } });
+  assert.ok(sys.grants.data.some((g) => g.folder?.path === '/scored'), 'grant present after add');
+  const next = removeOutput(sys, 0);
+  assert.equal(next.outputs, undefined, 'outputs key dropped when empty');
+  assert.ok(!next.grants.data.some((g) => g.folder?.path === '/scored'), 'the auto-added folder grant is removed');
+  // No data grant writes anymore → the data write tools are stripped.
+  assert.ok(!next.grants.tools.includes('create_dataset'), 'data write tools stripped once no grant writes');
+});
+
+test('removeOutput KEEPS the Write grant while another output still targets that folder/kind', () => {
+  let sys = parseSystem(BASE);
+  sys = addOutput(sys, { kind: 'files', name: 'Report A', folder: { path: '/out', scope: 'personal' } });
+  sys = addOutput(sys, { kind: 'files', name: 'Report B', folder: { path: '/out', scope: 'personal' } });
+  const next = removeOutput(sys, 0);
+  assert.equal(next.outputs?.length, 1, 'one output remains');
+  assert.ok(
+    next.grants.files.some((g) => g.folder?.path === '/out' && g.folder?.scope === 'personal'),
+    'the shared folder grant is retained for the surviving output',
+  );
+  assert.ok(next.grants.tools.includes('upload_file'), 'the Files write tool stays');
+});
+
+test('removeOutput is a no-op on an out-of-range index', () => {
+  let sys = parseSystem(BASE);
+  sys = addOutput(sys, { kind: 'files', name: 'R', folder: { path: '/o', scope: 'personal' } });
+  const next = removeOutput(sys, 5);
+  assert.equal(next.outputs?.length, 1);
+});
+
+test('a declared output survives a serialize → parse round-trip', () => {
+  const sys = addOutput(parseSystem(BASE), { kind: 'knowledge', name: 'Notes', folder: { path: '/n', scope: 'domain' } });
+  const again = parseSystem(serializeSystem(sys));
+  assert.deepEqual(again.outputs, sys.outputs);
 });

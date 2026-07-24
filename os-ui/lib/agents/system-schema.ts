@@ -71,6 +71,20 @@ export type ArtifactGrant = { id: string; capability: Capability; layer?: DataLa
 /** Back-compat alias — connections have always carried a capability profile. */
 export type ConnectionGrant = ArtifactGrant;
 
+/**
+ * A DECLARED OUTPUT — where a team's run RESULTS are stored. The builder declares, in
+ * Define, a destination artifact (a File, Dataset or Knowledge item) inside a folder
+ * (existing OR new — a "new folder" is just a path that materialises when the first
+ * result is written there). Declaring one AUTO-PROVISIONS a Write folder-grant on the
+ * matching `grants.<kind>` (see `simple-edit.addOutput`), so the destination is
+ * pre-provisioned + write-granted through the SAME grant/write-tool machinery item and
+ * folder grants use — an output is NOT a parallel system, just a labelled Write target.
+ * Additive + omitted from `system.yaml` when empty, so pre-outputs systems stay
+ * byte-stable (mirrors the plan-grants handling).
+ */
+export type OutputKind = 'files' | 'data' | 'knowledge';
+export type DeclaredOutput = { kind: OutputKind; name: string; folder: FolderGrantTarget };
+
 export type Grants = {
   data: ArtifactGrant[];
   knowledge: ArtifactGrant[];
@@ -135,6 +149,13 @@ export type System = {
   agents: AgentSpec[];
   edges: Edge[];
   schedule?: Schedule;
+  /**
+   * DECLARED OUTPUTS — where this team's run results are stored (see {@link DeclaredOutput}).
+   * Each entry has a matching Write folder-grant on `grants.<kind>` (added by
+   * `simple-edit.addOutput`). Additive + omitted from `system.yaml` when empty so
+   * pre-outputs systems stay byte-stable (mirrors `grants.plan`).
+   */
+  outputs?: DeclaredOutput[];
   /**
    * Presentation-only hints for the graph builder — IGNORED by the compiler and
    * the runtime. `ui.positions` stores each agent's saved x/y on the React Flow
@@ -384,6 +405,30 @@ function parseSchedule(v: unknown): Schedule | undefined {
   return s;
 }
 
+const OUTPUT_KINDS: OutputKind[] = ['files', 'data', 'knowledge'];
+
+/**
+ * Parse the additive `outputs` list — each a {@link DeclaredOutput} with a valid kind,
+ * a non-empty name and a `{ path, scope }` folder. A malformed entry (missing kind /
+ * name / folder) is dropped rather than throwing, so a hand-edited file never fails to
+ * open on a bad output row. Absent ⇒ empty list ⇒ omitted on serialize (byte-stable).
+ */
+function parseOutputs(v: unknown): DeclaredOutput[] {
+  if (!Array.isArray(v)) return [];
+  const out: DeclaredOutput[] = [];
+  for (const raw of v) {
+    if (!isRecord(raw)) continue;
+    const kind = raw.kind as OutputKind;
+    if (!OUTPUT_KINDS.includes(kind)) continue;
+    const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+    if (!name) continue;
+    if (!isRecord(raw.folder) || typeof raw.folder.path !== 'string') continue;
+    const scope = raw.folder.scope === 'domain' ? 'domain' : 'personal';
+    out.push({ kind, name, folder: { path: raw.folder.path, scope } });
+  }
+  return out;
+}
+
 /**
  * Parse the presentation-only `ui.positions` map, pruned to declared agents (a
  * position for an agent that no longer exists is dropped). Presentation data
@@ -438,6 +483,7 @@ export function parseSystem(input: string | Record<string, unknown>): System {
 
   const agents = parseAgents(doc.agents);
   const ui = parseUi(doc.ui, new Set(agents.map((a) => a.id)));
+  const outputs = parseOutputs(doc.outputs);
 
   return {
     version: doc.version !== undefined ? String(doc.version) : '1',
@@ -458,6 +504,7 @@ export function parseSystem(input: string | Record<string, unknown>): System {
     agents,
     edges: parseEdges(doc.edges),
     schedule: parseSchedule(doc.schedule),
+    ...(outputs.length > 0 ? { outputs } : {}),
     ...(ui ? { ui } : {}),
   };
 }
@@ -501,6 +548,8 @@ export function serializeSystem(sys: System): string {
   doc.agents = sys.agents;
   if (sys.edges.length > 0) doc.edges = sys.edges;
   if (sys.schedule) doc.schedule = sys.schedule;
+  // Declared outputs — emitted ONLY when present so pre-outputs systems stay byte-stable.
+  if (sys.outputs && sys.outputs.length > 0) doc.outputs = sys.outputs;
   // Presentation-only; emit ONLY when positions exist so existing files stay
   // byte-stable and the compiler/runtime never sees ui state.
   if (sys.ui?.positions && Object.keys(sys.ui.positions).length > 0) {
