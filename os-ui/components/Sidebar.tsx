@@ -13,7 +13,7 @@ import lotus from './lotus.svg';
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const { user, reload, domainChosen } = useUser();
+  const { user, domainChosen } = useUser();
   const multiDomain = (user?.allDomains?.length ?? user?.domains.length ?? 0) > 1;
 
   async function signOut() {
@@ -59,7 +59,7 @@ export default function Sidebar() {
   return (
     <aside className="sidebar">
       {user && multiDomain && !domainChosen ? (
-        <DomainStartPrompt allDomains={user.allDomains ?? user.domains} onDone={reload} />
+        <DomainStartPrompt allDomains={user.allDomains ?? user.domains} />
       ) : null}
       <div className="brand">
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -106,7 +106,6 @@ export default function Sidebar() {
               <DomainSwitcher
                 allDomains={user.allDomains ?? user.domains}
                 activeDomain={user.activeDomain ?? null}
-                onChanged={reload}
               />
             ) : (
               <div className="who-domain">

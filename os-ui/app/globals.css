@@ -278,36 +278,113 @@ h3 {
   font-weight: 600;
 }
 
-/* ---- Active-domain switcher (sidebar) ---- */
+/* ---- Active-domain switcher (sidebar) — custom dropdown ---- */
 .domain-switch {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-top: 6px;
+  gap: 5px;
+  margin-top: 8px;
 }
 .domain-switch-label {
   font-size: 10px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-faint);
 }
-.domain-switch-select {
+.domain-switch-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  padding: 6px 8px;
-  border-radius: 8px;
+  padding: 7px 10px;
+  border-radius: 9px;
   background: var(--bg-input);
-  color: var(--text-muted);
   border: 1px solid var(--border);
-  font-size: 12px;
+  color: var(--text-muted);
+  font-size: 12.5px;
   font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.domain-switch-btn:hover:not(:disabled) {
+  border-color: var(--accent, #6ea8fe);
+  color: var(--text);
+}
+.domain-switch-btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.domain-switch-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent, #6ea8fe);
+  flex: none;
+}
+.domain-switch-dot.all {
+  background: var(--text-faint);
+}
+.domain-switch-current {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.domain-switch-caret {
+  font-size: 10px;
+  opacity: 0.55;
+  flex: none;
+}
+.domain-switch-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 5px;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.45);
+  z-index: 50;
+  max-height: 264px;
+  overflow: auto;
+}
+.domain-switch-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  text-align: left;
   cursor: pointer;
 }
-.domain-switch-select:hover {
-  border-color: var(--accent, #6ea8fe);
+.domain-switch-opt:hover {
+  background: var(--bg-elevated);
+  color: var(--text);
 }
-.domain-switch-select:disabled {
-  opacity: 0.55;
-  cursor: progress;
+.domain-switch-opt.on {
+  color: var(--text);
+  font-weight: 650;
+}
+.domain-switch-check {
+  width: 12px;
+  flex: none;
+  color: var(--accent, #6ea8fe);
+  font-size: 11px;
+}
+.domain-switch-opt-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .who-domain {
   margin-top: 2px;

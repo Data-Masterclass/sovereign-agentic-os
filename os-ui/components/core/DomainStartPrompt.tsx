@@ -4,7 +4,6 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 
 /**
  * One-time first-login prompt shown ONLY to a multi-domain user who hasn't yet
@@ -13,8 +12,7 @@ import { useRouter } from 'next/navigation';
  * never appears again. Single-domain users never see it (the caller gates on
  * `allDomains.length > 1`).
  */
-export function DomainStartPrompt({ allDomains, onDone }: { allDomains: string[]; onDone?: () => void }) {
-  const router = useRouter();
+export function DomainStartPrompt({ allDomains }: { allDomains: string[] }) {
   const [busy, setBusy] = useState<string | null>(null);
 
   async function choose(domain: string | null) {
@@ -25,9 +23,9 @@ export function DomainStartPrompt({ allDomains, onDone }: { allDomains: string[]
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ domain }),
       });
-      onDone?.();
-      router.refresh();
-    } finally {
+      // Hard reload so every tab re-scopes to the chosen domain.
+      window.location.reload();
+    } catch {
       setBusy(null);
     }
   }
