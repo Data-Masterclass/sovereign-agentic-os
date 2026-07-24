@@ -35,16 +35,67 @@ test('superset adapter: ✓ only after a real import + the dashboard loads', asy
 });
 
 test('embed adapter: R3 — verify requires the viewer\'s RLS in the token request', async () => {
-  const adapters = makeMockDashboardAdapters(newDashboardMock());
+  const backend = newDashboardMock();
+  const adapters = makeMockDashboardAdapters(backend);
+  // The embed adapter mints against the dashboard's embedded UUID, so the dashboard must
+  // have been imported first (the build runs the superset adapter before embed).
+  await runAdapter(adapters.superset, ctx());
   const good = await runAdapter(adapters.embed, ctx());
   assert.equal(good.status, 'ok', good.error);
   assert.match(good.detail, /region = 'DE'/);
 
-  // An empty-RLS token must fail verify — RLS would collapse.
+  // An empty-RLS token must fail — RLS would collapse (the mock signer refuses to mint one).
   const c = ctx();
   const bad = await runAdapter(adapters.embed, { ...c, guestToken: { ...c.guestToken, rls: [] } });
   assert.equal(bad.status, 'fail');
   assert.match(bad.error ?? '', /RLS would collapse/);
+});
+
+test('embed adapter mints against the EMBEDDED UUID, not the OS dashboard id (guest-token 400 fix)', async () => {
+  // Regression: buildDashboard minted the guest token against ctx.guestToken.resourceId,
+  // which is the OS dashboard id (e.g. "dash-uuid") — Superset 400s ("EmbeddedDashboard not
+  // found.") on that. The embed adapter must resolve the embedded UUID and mint against it.
+  let mintedResourceId = '';
+  const superset = {
+    async importBundle() {},
+    async dashboardExists() { return true; },
+    async embeddedUuid() { return 'real-embedded-uuid'; },
+    async deleteDashboard() { return false; },
+    async createReport() { return 'r1'; },
+    async reportExists() { return true; },
+    async createAlert() { return 'a1'; },
+    async alertExists() { return true; },
+  };
+  const embed = {
+    async mint(req: { resourceId: string; ttlSeconds: number }) {
+      mintedResourceId = req.resourceId;
+      return { token: 'tok', expiresInSeconds: req.ttlSeconds };
+    },
+  };
+  const adapters = makeDashboardAdapters({ superset, embed });
+  const token = delegate(claimsFromUser({ id: 'amir', domains: ['sales'], role: 'builder', attributes: { region: 'DE' } }), 'domain');
+  const c = ctx({ guestToken: guestTokenRequest(token, 'dash-os-id') });
+  const row = await runAdapter(adapters.embed, c);
+  assert.equal(row.status, 'ok', row.error);
+  assert.equal(mintedResourceId, 'real-embedded-uuid'); // NOT 'dash-os-id'
+});
+
+test('embed adapter fails honestly when the dashboard is not embeddable (no false ✓)', async () => {
+  const superset = {
+    async importBundle() {},
+    async dashboardExists() { return false; },
+    async embeddedUuid() { return null; }, // not found in Superset
+    async deleteDashboard() { return false; },
+    async createReport() { return 'r1'; },
+    async reportExists() { return true; },
+    async createAlert() { return 'a1'; },
+    async alertExists() { return true; },
+  };
+  const embed = { async mint() { throw new Error('should not be called'); } };
+  const adapters = makeDashboardAdapters({ superset, embed });
+  const row = await runAdapter(adapters.embed, ctx());
+  assert.equal(row.status, 'fail');
+  assert.match(row.error ?? '', /not embeddable/);
 });
 
 test('report + alert adapters create and verify their artifacts', async () => {
@@ -71,6 +122,7 @@ test('P0-1: superset adapter passes cubeSql opts from context into the bundle', 
   const capturingClient = {
     async importBundle(_name: string, bundle: string) { capturedBundle = bundle; },
     async dashboardExists() { return true; },
+    async embeddedUuid() { return 'embed-uuid'; },
     async deleteDashboard() { return false; },
     async createReport() { return 'r1'; },
     async reportExists() { return true; },

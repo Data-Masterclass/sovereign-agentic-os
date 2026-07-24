@@ -15,6 +15,7 @@ import {
   type FilterOp,
   type TransformOp,
 } from '@/lib/data/transform';
+import ExplorePanel from './ExplorePanel';
 
 type Layer = 'silver' | 'gold';
 type Stage = { layer: Layer; copy: { title: string; subtitle: string; tool: string } };
@@ -66,7 +67,9 @@ function SilverBuilder({
   domain,
   tier,
   columns,
+  silverBuilt,
   onCommitted,
+  onContinue,
 }: {
   datasetId: string;
   datasetName: string;
@@ -74,7 +77,14 @@ function SilverBuilder({
   domain: string;
   tier: string;
   columns: string[];
+  /** Whether a Silver version already exists. Drives the "already built ✓ — explore /
+   *  rebuild" state so cleaning is never a one-shot black box (mirrors the Gold panel). */
+  silverBuilt: boolean;
+  /** Reload the dataset (record the ✓) WITHOUT auto-advancing — the user stays on the
+   *  Silver step to explore the result and chooses when to move on to Gold. */
   onCommitted: (stages: unknown[]) => void;
+  /** The user chose to move on — advance to the next stage (Harmonize / Gold). */
+  onContinue: () => void;
 }) {
   const [cols, setCols] = useState<string[]>(() => Array.from(new Set(columns.filter(Boolean))));
   const [ui, setUi] = useState<Record<string, ColUI>>({});
@@ -85,6 +95,9 @@ function SilverBuilder({
   const [err, setErr] = useState('');
   const [report, setReport] = useState<BuildReport | null>(null);
   const [busy, setBusy] = useState(false);
+  // `builtOk` shows the SUCCESS state (Silver built ✓ + preview + Continue) — set on a
+  // live build in this session, and true on open when a Silver version already exists.
+  const [builtOk, setBuiltOk] = useState(silverBuilt);
   const toast = useToast();
 
   const set = (c: string, patch: Partial<ColUI>) => setUi((m) => ({ ...m, [c]: { ...FRESH, ...m[c], ...patch } }));
@@ -131,6 +144,10 @@ function SilverBuilder({
       } else {
         toast.success(`Silver written live — ${data.target ?? target} is queryable.`);
       }
+      // SUCCESS — stay on the Silver step (no auto-advance): show the built state + the
+      // resulting silver table (preview + stats) so the user can explore, edit above and
+      // Rebuild, then CHOOSE to continue. `onCommitted` reloads + records the ✓ only.
+      setBuiltOk(true);
       onCommitted(data.stages ?? []);
     } catch (e) {
       setErr((e as Error).message);
@@ -265,14 +282,40 @@ function SilverBuilder({
       ) : null}
 
       <div className="row" style={{ marginTop: 14, gap: 8, justifyContent: 'flex-end', alignItems: 'center' }}>
+        {/* Clear IN-PROGRESS signal so a build never looks like "nothing happened". */}
+        {busy ? <span className="hint" style={{ margin: 0 }}>Building Silver…</span> : null}
         {report?.mode === 'offline-mock' ? <span className="hint" style={{ margin: 0 }}>offline preview — no live table written</span> : null}
         <button className="btn" onClick={apply} disabled={busy || !!compiled.error}>
-          {busy ? <span className="spin" /> : 'Build Silver version'}
+          {busy ? <span className="spin" /> : builtOk ? 'Rebuild Silver version' : 'Build Silver version'}
         </button>
       </div>
       <p className="hint" style={{ textAlign: 'right' }}>
         The Silver step lights only after this table is written into Trino and a probe reads it back — no faked check.
       </p>
+
+      {/* SUCCESS state — the Silver table exists. Stay on the step: confirm it, let the user
+          EXPLORE the result (preview + descriptive stats, governed + masked), and CHOOSE
+          when to continue. Editing above + Rebuild keeps the definition reproducible. */}
+      {builtOk ? (
+        <div style={{ marginTop: 18, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+          <div className="row" style={{ alignItems: 'center', gap: 8 }}>
+            <span className="ok-note" style={{ fontWeight: 600 }}>Silver built ✓</span>
+            <span className="hint" style={{ margin: 0 }}>
+              <code className="mono">silver_{s}</code> is live and queryable. Explore it below, or change the
+              cleaning above and Rebuild.
+            </span>
+          </div>
+
+          <div className="section-title" style={{ marginTop: 16 }}>Your Silver table</div>
+          {/* Reuse the existing governed preview + profiling machinery — first rows +
+              per-column type / completeness / distinct / range / top values, all masked. */}
+          <ExplorePanel datasetId={datasetId} builtLayers={['silver']} />
+
+          <div className="row" style={{ marginTop: 14, gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn" onClick={onContinue} disabled={busy}>Continue to Harmonize →</button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -285,7 +328,9 @@ export default function RefinePanel({
   domain,
   tier,
   columns,
+  silverBuilt,
   onCommitted,
+  onContinue,
 }: {
   datasetId: string;
   datasetName: string;
@@ -293,8 +338,10 @@ export default function RefinePanel({
   domain: string;
   tier: string;
   columns: string[];
+  silverBuilt: boolean;
   stage: Stage;
   onCommitted: (stages: unknown[]) => void;
+  onContinue: () => void;
 }) {
   return (
     <SilverBuilder
@@ -304,7 +351,9 @@ export default function RefinePanel({
       domain={domain}
       tier={tier}
       columns={columns}
+      silverBuilt={silverBuilt}
       onCommitted={onCommitted}
+      onContinue={onContinue}
     />
   );
 }

@@ -106,6 +106,53 @@ test('buildGoldJoin lights Gold + records measures and multi-upstream lineage', 
   assert.equal(reopened.upstreams?.[0].name, 'Northpeak Commerce');
 });
 
+test('buildGoldJoin persists the raw goldSpec so the panel RE-HYDRATES joins/dims/measures', () => {
+  const orders = seedOrders();
+  const goldSpec = {
+    joins: [{ datasetId: 'ds_np', type: 'inner' as const, baseCol: 'order_id', joinCol: 'order_id' }],
+    dimensions: [{ source: '1::region' }, { source: '0::order_id', as: 'oid' }],
+    measures: [{ name: 'net', agg: 'sum', col: '1::net_amount' }, { name: 'n', agg: 'count' }],
+  };
+  buildGoldJoin(orders, amir, {
+    measures: [{ name: 'net', type: 'sum', sql: 'net' }],
+    upstreams: [{ datasetId: 'ds_np', name: 'Northpeak Commerce', fqn: 'iceberg.sales.gold_northpeak_commerce', joinType: 'inner' }],
+    artifact: 'gold/mart_orders.sql',
+    body: 'create or replace table iceberg.personal_amir.gold_orders as select 1 as x',
+    goldSpec,
+  });
+  // Round-trips through serialize/parse (the durable single source) exactly.
+  const reopened = getDataset(orders, amir);
+  assert.deepEqual(reopened.goldSpec, goldSpec);
+  assert.equal(reopened.goldSpec?.joins[0].datasetId, 'ds_np');
+  assert.equal(reopened.goldSpec?.joins[0].baseCol, 'order_id');
+  assert.deepEqual(reopened.goldSpec?.dimensions.map((d) => d.source), ['1::region', '0::order_id']);
+  assert.deepEqual(reopened.goldSpec?.measures.map((m) => m.name), ['net', 'n']);
+});
+
+test('a Gold build WITHOUT a goldSpec leaves the field absent (byte-stable, no churn)', () => {
+  const orders = seedOrders();
+  buildGoldJoin(orders, amir, {
+    measures: [], upstreams: [], artifact: 'gold/mart_orders.sql',
+    body: 'create or replace table iceberg.personal_amir.gold_orders as select 1 as x',
+  });
+  assert.equal(getDataset(orders, amir).goldSpec, undefined);
+});
+
+test('buildGoldJoin lights Gold for a single-table build (no join partner, empty upstreams)', () => {
+  const orders = seedOrders();
+  const updated = buildGoldJoin(orders, amir, {
+    measures: [{ name: 'orders', type: 'sum', sql: 'orders' }],
+    upstreams: [], // single-table Gold — no dataset was joined
+    artifact: 'gold/mart_orders.sql',
+    body: 'create or replace table iceberg.personal_amir.gold_orders as select count(*) as orders from iceberg.personal_amir.silver_orders t0',
+  });
+  assert.equal(updated.versions.gold.built, true);
+  assert.equal(updated.upstreams?.length, 0);
+  assert.deepEqual(updated.measures.map((m) => m.name), ['orders']);
+  const reopened = getDataset(orders, amir);
+  assert.equal(reopened.versions.gold.built, true);
+});
+
 test('a fresh tenant has no datasets', () => {
   assert.equal(listDatasets(amir).mine.length, 0);
   assert.equal(listDatasets(amir).domain.length, 0);

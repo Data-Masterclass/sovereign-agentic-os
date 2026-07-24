@@ -22,7 +22,9 @@ import {
   type JoinInput,
   type KeyAdapt,
 } from '@/lib/data/transform';
+import type { GoldSpec } from '@/lib/data/dataset-schema';
 import GoldJoinGraph, { type JoinGraphTable, type JoinGraphEdge } from './GoldJoinGraph';
+import ExplorePanel from './ExplorePanel';
 
 /**
  * Gold JOIN builder — dataset REUSE (data-tab stage 4). Pick 1..n OTHER datasets you
@@ -45,6 +47,32 @@ type MeasureRow = { name: string; agg: MeasureAgg; col: string; op: '' | Measure
 
 const NONE = '';
 
+/** Re-hydrate the panel's editable rows from a stored {@link GoldSpec}. The stored spec
+ *  IS the panel's own vocabulary (datasetId-keyed joins, `ref::column` dim/measure refs),
+ *  so this is a defaulting map, not a translation — an absent spec yields empty rows. */
+function hydrateJoins(spec?: GoldSpec): JoinRow[] {
+  return (spec?.joins ?? []).map((j) => ({
+    datasetId: j.datasetId,
+    type: j.type === 'left' ? 'left' : 'inner',
+    baseCol: j.baseCol,
+    joinCol: j.joinCol,
+    adaptMode: j.adaptMode === 'cast' || j.adaptMode === 'text' ? j.adaptMode : 'none',
+    adaptType: (CAST_TYPES as readonly string[]).includes(j.adaptType ?? '') ? (j.adaptType as CastType) : 'varchar',
+  }));
+}
+function hydrateDims(spec?: GoldSpec): DimRow[] {
+  return (spec?.dimensions ?? []).map((d) => ({ source: d.source, as: d.as ?? '' }));
+}
+function hydrateMeasures(spec?: GoldSpec): MeasureRow[] {
+  return (spec?.measures ?? []).map((m) => ({
+    name: m.name,
+    agg: (MEASURE_AGGS as readonly string[]).includes(m.agg) ? (m.agg as MeasureAgg) : 'sum',
+    col: m.col ?? '',
+    op: (MEASURE_OPS as readonly string[]).includes(m.op ?? '') ? (m.op as MeasureOp) : '',
+    col2: m.col2 ?? '',
+  }));
+}
+
 /** Decode a "ref::column" select value into a ColRef, or null when unset. */
 function colRef(v: string): { ref: number; column: string } | null {
   if (!v) return null;
@@ -63,7 +91,11 @@ export default function GoldJoinPanel({
   domain,
   tier,
   columns,
+  silverBuilt,
+  goldBuilt,
+  initialSpec,
   onCommitted,
+  onContinue,
 }: {
   datasetId: string;
   datasetName: string;
@@ -71,17 +103,36 @@ export default function GoldJoinPanel({
   domain: string;
   tier: string;
   columns: string[];
+  /** Whether a Silver version exists yet. Gold is MATERIALIZED from Silver, so with no
+   *  Silver the build is disabled and the panel says why (a calm prerequisite, not an
+   *  error) — the same dependency `canBuildStage(versions, 'gold')` models server-side. */
+  silverBuilt: boolean;
+  /** Whether a Gold version already exists. Drives the "already built ✓ — explore /
+   *  rebuild" state so the definition is never a one-shot black box. */
+  goldBuilt: boolean;
+  /** The stored raw Gold spec — RE-HYDRATES the joins/columns/measures so an existing
+   *  Gold definition stays visible + editable + rebuildable. Absent ⇒ a fresh build. */
+  initialSpec?: GoldSpec;
+  /** Reload the dataset (record the ✓) WITHOUT auto-advancing the stepper — the user
+   *  stays on the Gold step to explore the result and chooses when to continue. */
   onCommitted: (stages: unknown[]) => void;
+  /** The user chose to move on — advance to the next stage (Data Quality). */
+  onContinue: () => void;
 }) {
   const [joinable, setJoinable] = useState<Joinable[]>([]);
   const [loadErr, setLoadErr] = useState('');
-  const [joins, setJoins] = useState<JoinRow[]>([]);
-  const [dims, setDims] = useState<DimRow[]>([]);
-  const [measures, setMeasures] = useState<MeasureRow[]>([]);
+  // Seed the editable state from the stored spec (re-hydration) so an existing Gold
+  // definition opens visible + editable, not blank. A fresh dataset opens empty.
+  const [joins, setJoins] = useState<JoinRow[]>(() => hydrateJoins(initialSpec));
+  const [dims, setDims] = useState<DimRow[]>(() => hydrateDims(initialSpec));
+  const [measures, setMeasures] = useState<MeasureRow[]>(() => hydrateMeasures(initialSpec));
   const [showCode, setShowCode] = useState(false);
   const [err, setErr] = useState('');
   const [report, setReport] = useState<BuildReport | null>(null);
   const [busy, setBusy] = useState<'' | 'build' | 'pass'>('');
+  // `builtOk` shows the SUCCESS state (Gold built ✓ + preview/stats + Continue) — set on
+  // a live build in this session, and true on open when a Gold version already exists.
+  const [builtOk, setBuiltOk] = useState(goldBuilt);
   const toast = useToast();
 
   // ALWAYS surface the build mode on success — a ✓ that silently ran as the
@@ -192,8 +243,31 @@ export default function GoldJoinPanel({
     return { source, target, joins: jin, dimensions, measures: gmeasures };
   }, [tier, owner, domain, datasetName, activeJoins, byId, dims, measures, target]);
 
+  // The RAW editable spec to PERSIST (the panel's own vocabulary) — only the active
+  // (fully-specified) joins, so re-hydration reopens exactly what was built. Dims/measures
+  // are stored verbatim (their `ref::column` strings ARE the panel's row format).
+  const rawSpec = useMemo<GoldSpec>(() => ({
+    joins: activeJoins.map((j) => ({
+      datasetId: j.datasetId,
+      type: j.type,
+      baseCol: j.baseCol,
+      joinCol: j.joinCol,
+      ...(j.adaptMode !== 'none' ? { adaptMode: j.adaptMode } : {}),
+      ...(j.adaptMode === 'cast' ? { adaptType: j.adaptType } : {}),
+    })),
+    dimensions: dims.filter((d) => colRef(d.source)).map((d) => ({ source: d.source, ...(d.as.trim() ? { as: d.as.trim() } : {}) })),
+    measures: measures.filter((m) => m.name.trim()).map((m) => ({
+      name: m.name.trim(), agg: m.agg,
+      ...(m.col ? { col: m.col } : {}),
+      ...(m.op ? { op: m.op } : {}),
+      ...(m.op && m.col2 ? { col2: m.col2 } : {}),
+    })),
+  }), [activeJoins, dims, measures]);
+
+  // A join is OPTIONAL. With zero joins this compiles a single-table Gold projection of
+  // the Silver base — the compiler still requires at least one column or measure, so an
+  // empty spec surfaces its own honest reason (no special-casing here).
   const compiled = useMemo(() => {
-    if (spec.joins.length === 0) return { sql: '', error: 'Add a dataset to join.' };
     try {
       return { sql: compileGoldJoin(spec), error: '' };
     } catch (e) {
@@ -230,12 +304,18 @@ export default function GoldJoinPanel({
           picks: spec.joins.map((j, i) => ({ datasetId: activeJoins[i].datasetId, type: j.type, on: j.on })),
           dimensions: spec.dimensions,
           measures: spec.measures,
+          // The raw editable spec, persisted verbatim so the panel re-hydrates on reopen.
+          goldSpec: rawSpec,
         }),
       });
       const data = await res.json();
       if (!res.ok) { setErr(data.error ?? 'Could not build the Gold join'); return; }
       if (data.build && !data.build.ok) { setReport(data.build); setErr(data.error ?? 'The join did not pass'); return; }
       announceMode(data.build, 'Gold');
+      // SUCCESS — stay on the Gold step (no auto-advance): show the built state + the
+      // resulting gold table (preview + stats) so the user can explore, then CHOOSE to
+      // continue. `onCommitted` reloads + records the ✓ only.
+      setBuiltOk(true);
       onCommitted(data.stages ?? []);
     } catch (e) {
       setErr((e as Error).message);
@@ -256,6 +336,7 @@ export default function GoldJoinPanel({
       // A pass-through is a REAL CTAS copy now — an honest ✗ registers nothing.
       if (data.error || (data.build && !data.build.ok)) { setReport(data.build ?? null); setErr(data.error ?? 'The pass-through did not materialize'); return; }
       announceMode(data.build, 'Gold (pass-through)');
+      setBuiltOk(true);
       onCommitted(data.stages ?? []);
     } catch (e) { setErr((e as Error).message); } finally { setBusy(''); }
   }
@@ -273,19 +354,21 @@ export default function GoldJoinPanel({
   return (
     <div className="guided-panel">
       <p className="muted" style={{ marginTop: 0 }}>
-        Make it business-ready by <strong>reusing</strong> data you already trust. Join{' '}
-        <code className="mono">silver_{slug(datasetName)}</code> to other datasets you can see, pick the
-        columns you want and name your measures. It writes one governed Gold table
+        Make it business-ready. Pick the columns you want and name your measures from{' '}
+        <code className="mono">silver_{slug(datasetName)}</code> — and, optionally, <strong>reuse</strong> data you
+        already trust by joining in other datasets you can see. It writes one governed Gold table
         (<code className="mono">gold_{slug(datasetName)}</code>) that only ever reads what you’re allowed to see.
+        A join is optional; a single-table Gold is fine.
       </p>
 
       {loadErr ? <div className="error">{loadErr}</div> : null}
 
-      {/* Join to … */}
-      <div className="section-title" style={{ marginTop: 8 }}>Join to</div>
+      {/* Join to … (optional) */}
+      <div className="section-title" style={{ marginTop: 8 }}>Join to <span className="muted" style={{ fontWeight: 400 }}>(optional)</span></div>
       {joinable.length === 0 && !loadErr ? (
         <div className="hint" style={{ marginTop: 0 }}>
-          No shared datasets you can reuse yet. Ask a colleague to share (promote) one, or promote your own.
+          No shared datasets to reuse yet — that’s fine, you can still build a single-table Gold from your
+          columns and measures below. To join later, ask a colleague to share (promote) one, or promote your own.
         </div>
       ) : null}
       {joins.map((j, i) => {
@@ -419,21 +502,55 @@ export default function GoldJoinPanel({
         </div>
       ) : null}
 
+      {/* Gold is MATERIALIZED from Silver — with no Silver version the build is a calm,
+          disabled prerequisite (not an error): say why, right where the action lives. */}
+      {!silverBuilt ? (
+        <div className="hint" style={{ marginTop: 14 }}>
+          Build the <strong>Silver</strong> version first — Gold is materialized from Silver.
+        </div>
+      ) : null}
+
       <div className="row" style={{ marginTop: 14, gap: 8, justifyContent: 'flex-end', alignItems: 'center' }}>
+        {/* Clear IN-PROGRESS signal so a build never looks like "nothing happened". */}
+        {busy === 'build' ? <span className="hint" style={{ margin: 0 }}>Building Gold…</span> : null}
         {report?.mode === 'offline-mock' ? <span className="hint" style={{ margin: 0 }}>offline preview — no live table written</span> : null}
-        <button className="btn" onClick={build} disabled={busy !== '' || !!compiled.error}>
-          {busy === 'build' ? <span className="spin" /> : 'Build Gold version'}
+        <button className="btn" onClick={build} disabled={busy !== '' || !silverBuilt || !!compiled.error}>
+          {busy === 'build' ? <span className="spin" /> : builtOk ? 'Rebuild Gold version' : 'Build Gold version'}
         </button>
       </div>
       <p className="hint" style={{ textAlign: 'right' }}>
-        The Gold step lights only after this joined table is written into Trino and a probe reads it back — no faked check.
+        The Gold step lights only after this Gold table is written into Trino and a probe reads it back — no faked check.
       </p>
+
+      {/* SUCCESS state — the Gold table exists. Stay on the step: confirm it, let the user
+          EXPLORE the result (preview + descriptive stats, governed + masked), and CHOOSE
+          when to continue. Editing above + Rebuild keeps the definition reproducible. */}
+      {builtOk ? (
+        <div style={{ marginTop: 18, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+          <div className="row" style={{ alignItems: 'center', gap: 8 }}>
+            <span className="ok-note" style={{ fontWeight: 600 }}>Gold built ✓</span>
+            <span className="hint" style={{ margin: 0 }}>
+              <code className="mono">gold_{slug(datasetName)}</code> is live and queryable. Explore it below, or change the
+              definition above and Rebuild.
+            </span>
+          </div>
+
+          <div className="section-title" style={{ marginTop: 16 }}>Your Gold table</div>
+          {/* Reuse the existing governed preview + profiling machinery — first rows +
+              per-column type / completeness / distinct / range / top values, all masked. */}
+          <ExplorePanel datasetId={datasetId} builtLayers={['gold']} />
+
+          <div className="row" style={{ marginTop: 14, gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn" onClick={onContinue} disabled={busy !== ''}>Continue to Validate →</button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="passthrough-note">
         <strong>Already business-ready?</strong>{' '}
         Pass through — your <em>Silver</em> version carries forward as Gold unchanged.
         <div className="row" style={{ marginTop: 10 }}>
-          <button className="btn ghost" onClick={passThrough} disabled={busy !== ''}>
+          <button className="btn ghost" onClick={passThrough} disabled={busy !== '' || !silverBuilt}>
             {busy === 'pass' ? <span className="spin" /> : 'Pass through Gold…'}
           </button>
         </div>

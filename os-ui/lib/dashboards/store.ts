@@ -115,6 +115,14 @@ export function listDashboards(user: Principal, opts: { includeArchived?: boolea
   return { mine, domain, marketplace };
 }
 
+/** Dashboards the user can see that are bound to a given Cube view — the reverse
+ *  lookup the Data tab's Publish stage uses to list "dashboards on this dataset".
+ *  Pure over {@link listDashboards} (so it stays RLS-filtered); no new store read. */
+export function getDashboardsForView(view: string, user: Principal): DashboardSummary[] {
+  const { mine, domain, marketplace } = listDashboards(user);
+  return [...mine, ...domain, ...marketplace].filter((d) => d.view === view);
+}
+
 export function getDashboard(id: string, user: Principal): Stored {
   const d = dashState().dashboards.find((x) => x.id === id);
   if (!d) throw status(`dashboard '${id}' not found`, 404);

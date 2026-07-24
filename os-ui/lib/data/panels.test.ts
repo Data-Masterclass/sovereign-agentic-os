@@ -49,7 +49,9 @@ test('a stage is buildable only once the prior layer exists', () => {
   assert.equal(canBuildStage(empty, 'silver'), false); // nothing brought in yet
   empty.bronze.built = true;
   assert.equal(canBuildStage(empty, 'silver'), true);
-  assert.equal(canBuildStage(empty, 'gold'), false);
+  assert.equal(canBuildStage(empty, 'gold'), false); // Gold is materialized FROM Silver
+  empty.silver.built = true;
+  assert.equal(canBuildStage(empty, 'gold'), true); // once Silver exists, Gold unlocks
 });
 
 test('pass-through is offered for silver/gold only, with a clear warning', () => {

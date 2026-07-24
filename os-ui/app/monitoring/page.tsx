@@ -4,37 +4,41 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
 import { useApi } from '@/lib/useApi';
+import DetailWindow, { type DetailTarget } from '@/components/monitoring/DetailWindow';
 import '../monitoring.css';
 
 /**
- * Monitoring — the artifact-centric read plane. Two sections, each grouped
- * My · Domain · Company: you monitor the things you actually built or use.
- *   • Agent Monitoring — every accessible agent system + its last-run health.
- *   • Data Monitoring  — every accessible dataset, with pipeline + data-quality
- *                        rolled into ONE health per dataset.
- * Read-only. Click a row to open that artifact (runs/trace live in Agents;
- * DQ tests + pipeline live in Data). RAG (Files/Knowledge) is a later section.
+ * Monitoring — the artifact-centric read plane, now with real telemetry on every
+ * tile and a big diagnosis window on open. Two sections, each My · Domain · Company:
+ *   • Agent Monitoring — each agent system with its last-7-day Cost · Tokens · Runs ·
+ *     Last run · ⚠warnings/✗errors (Langfuse + the in-process governed ring).
+ *   • Data Monitoring  — each dataset with freshness, DQ rules passing/violated, and
+ *     pipeline + quality health (the real persisted DQ run).
+ * Read-only, scoped to the caller's own governed lists. Open a tile → full diagnostics.
  */
 
 type Health = 'green' | 'amber' | 'red' | 'grey';
+type Health7 = 'ok' | 'warn' | 'error';
 type ScopeKey = 'mine' | 'domain' | 'marketplace';
 
-type AgentRow = {
+type Telemetry = { costUsd: number; tokens: number; runs: number; lastRunAt: number | null; warnings: number; errors: number; overall: Health7 };
+type AgentTile = {
   id: string; name: string; scope: ScopeKey; agentCount: number;
-  running: boolean; scheduled: boolean; lastRunAt: number | null;
-  lastRunOk: boolean | null; held: number; health: Health;
+  running: boolean; scheduled: boolean; held: number; health: Health;
+  telemetry: Telemetry; lastRunAt7d: number | null;
 };
 type DataRow = {
   id: string; name: string; scope: ScopeKey; health: Health;
   pipeline: Health; dq: Health; quality: 'unknown' | 'passing' | 'failing';
   freshness: string | null; ageDays: number | null; gold: boolean;
+  dqRules: number; dqViolations: number; dqHasRun: boolean;
 };
 type Feed = {
-  agents: { mine: AgentRow[]; domain: AgentRow[]; marketplace: AgentRow[] };
+  agents: { mine: AgentTile[]; domain: AgentTile[]; marketplace: AgentTile[] };
   data: { mine: DataRow[]; domain: DataRow[]; marketplace: DataRow[] };
+  telemetryLive: boolean;
 };
 
 const SCOPES: { key: ScopeKey; label: string }[] = [
@@ -43,23 +47,14 @@ const SCOPES: { key: ScopeKey; label: string }[] = [
   { key: 'marketplace', label: 'Company' },
 ];
 
-const DOT_COLOR: Record<Health, string> = {
-  green: '#16a34a', amber: '#d97706', red: '#dc2626', grey: 'var(--text-faint, #9ca3af)',
-};
-const HEALTH_WORD: Record<Health, string> = {
-  green: 'Healthy', amber: 'Attention', red: 'Failing', grey: 'No signal',
-};
+const DOT: Record<Health, string> = { green: 'h-green', amber: 'h-amber', red: 'h-red', grey: 'h-unknown' };
+const DOT7: Record<Health7, string> = { ok: 'h-green', warn: 'h-amber', error: 'h-red' };
+const WORD: Record<Health, string> = { green: 'Healthy', amber: 'Attention', red: 'Failing', grey: 'No signal' };
 
-function Dot({ h, title }: { h: Health; title?: string }) {
-  return (
-    <span
-      title={title ?? HEALTH_WORD[h]}
-      style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 999, background: DOT_COLOR[h], flex: '0 0 auto' }}
-    />
-  );
+function Dot({ cls, title }: { cls: string; title?: string }) {
+  return <span className={`mon-dot ${cls}`} title={title} />;
 }
 
-/** "3h ago" / "2d ago" / "just now" from an ms epoch or ISO string. */
 function ago(at: number | string | null): string {
   if (at == null) return '—';
   const t = typeof at === 'number' ? at : Date.parse(at);
@@ -71,10 +66,12 @@ function ago(at: number | string | null): string {
   const d = Math.floor(h / 24); if (d < 30) return `${d}d ago`;
   return `${Math.floor(d / 30)}mo ago`;
 }
+const money = (n: number) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : '$0');
+const compact = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
 
 function ScopeTabs({ scope, setScope, counts }: { scope: ScopeKey; setScope: (s: ScopeKey) => void; counts: Record<ScopeKey, number> }) {
   return (
-    <div className="seg" style={{ marginBottom: 10 }}>
+    <div className="seg" style={{ marginBottom: 12 }}>
       {SCOPES.map((s) => (
         <button key={s.key} className={scope === s.key ? 'on' : ''} onClick={() => setScope(s.key)} type="button">
           {s.label} <span className="muted" style={{ fontSize: 11 }}>· {counts[s.key]}</span>
@@ -84,39 +81,70 @@ function ScopeTabs({ scope, setScope, counts }: { scope: ScopeKey; setScope: (s:
   );
 }
 
-function Row({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
+function AgentTileCard({ a, onOpen }: { a: AgentTile; onOpen: () => void }) {
+  const t = a.telemetry;
+  const noTelemetry = t.runs === 0;
+  const dotCls = noTelemetry ? DOT[a.health] : DOT7[t.overall];
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onClick}
-      onKeyDown={(e) => { if (e.key === 'Enter') onClick(); }}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px',
-        borderBottom: '1px solid var(--line, #ececec)', cursor: 'pointer',
-      }}
-      className="mon-row"
-    >
-      {children}
+    <div className="mon-tile" role="button" tabIndex={0} onClick={onOpen}
+      onKeyDown={(e) => { if (e.key === 'Enter') onOpen(); }} title="Open diagnostics">
+      <div className="mon-tile-head">
+        <Dot cls={dotCls} title={noTelemetry ? WORD[a.health] : t.overall} />
+        <span className="mon-tile-name">{a.name}</span>
+        {a.running && <span className="badge ok">running</span>}
+        {a.scheduled && <span className="badge">scheduled</span>}
+      </div>
+      {noTelemetry ? (
+        <div className="mon-tile-facts muted">No telemetry yet · {a.agentCount} agent{a.agentCount === 1 ? '' : 's'}</div>
+      ) : (
+        <div className="mon-tile-facts">
+          <span className="mon-fact"><b>{money(t.costUsd)}</b> cost</span>
+          <span className="mon-fact"><b>{compact(t.tokens)}</b> tok</span>
+          <span className="mon-fact"><b>{t.runs}</b> run{t.runs === 1 ? '' : 's'}</span>
+          <span className="mon-fact">{ago(a.lastRunAt7d)}</span>
+          {t.warnings > 0 && <span className="mon-fact warn">⚠ {t.warnings}</span>}
+          {t.errors > 0 && <span className="mon-fact err">✗ {t.errors}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DataTileCard({ d, onOpen }: { d: DataRow; onOpen: () => void }) {
+  return (
+    <div className="mon-tile" role="button" tabIndex={0} onClick={onOpen}
+      onKeyDown={(e) => { if (e.key === 'Enter') onOpen(); }} title="Open diagnostics">
+      <div className="mon-tile-head">
+        <Dot cls={DOT[d.health]} title={WORD[d.health]} />
+        <span className="mon-tile-name">{d.name}</span>
+        {d.gold && <span className="badge">gold</span>}
+      </div>
+      <div className="mon-tile-facts">
+        <span className="mon-fact">{d.freshness ? `built ${ago(d.freshness)}` : 'not built'}</span>
+        {d.dqHasRun ? (
+          d.dqViolations > 0
+            ? <span className="mon-fact err">✗ {d.dqViolations} DQ rule{d.dqViolations === 1 ? '' : 's'} violated</span>
+            : <span className="mon-fact ok">✓ {d.dqRules} DQ rule{d.dqRules === 1 ? '' : 's'} passing</span>
+        ) : (
+          <span className="mon-fact muted">{d.dqRules > 0 ? `${d.dqRules} DQ rule${d.dqRules === 1 ? '' : 's'} · not run` : 'no DQ rules'}</span>
+        )}
+        <span className="mon-fact"><Dot cls={DOT[d.pipeline]} title={`Pipeline: ${WORD[d.pipeline]}`} /> pipeline</span>
+      </div>
     </div>
   );
 }
 
 export default function MonitoringPage() {
   const { data, loading, error, reload } = useApi<Feed>('/api/monitoring/artifacts');
-  const router = useRouter();
   const [agentScope, setAgentScope] = useState<ScopeKey>('mine');
   const [dataScope, setDataScope] = useState<ScopeKey>('mine');
+  const [target, setTarget] = useState<DetailTarget | null>(null);
 
   const agentCounts = useMemo(() => ({
-    mine: data?.agents.mine.length ?? 0,
-    domain: data?.agents.domain.length ?? 0,
-    marketplace: data?.agents.marketplace.length ?? 0,
+    mine: data?.agents.mine.length ?? 0, domain: data?.agents.domain.length ?? 0, marketplace: data?.agents.marketplace.length ?? 0,
   }), [data]);
   const dataCounts = useMemo(() => ({
-    mine: data?.data.mine.length ?? 0,
-    domain: data?.data.domain.length ?? 0,
-    marketplace: data?.data.marketplace.length ?? 0,
+    mine: data?.data.mine.length ?? 0, domain: data?.data.domain.length ?? 0, marketplace: data?.data.marketplace.length ?? 0,
   }), [data]);
 
   const agentRows = data?.agents[agentScope] ?? [];
@@ -128,9 +156,9 @@ export default function MonitoringPage() {
       <div className="content">
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <p className="lead" style={{ marginBottom: 0 }}>
-            Health of the agent systems and datasets you can access. Read-only —
-            click any row to open it (runs &amp; traces live in Agents; data-quality
-            and pipeline detail live in Data).
+            Real 7-day health of the agent systems and datasets you can access. Open any
+            tile for full diagnostics — run history &amp; traces, cost/token trends, data-quality
+            checks, build timeline and lineage.
           </p>
           <button className="btn ghost" onClick={reload} disabled={loading}>
             {loading ? <span className="spin" /> : 'Refresh'}
@@ -142,35 +170,28 @@ export default function MonitoringPage() {
 
         {data && (
           <>
-            {/* ───────────── Agent Monitoring ───────────── */}
             <div className="section-title" style={{ marginTop: 18 }}>Agent Monitoring</div>
+            {!data.telemetryLive && (
+              <p className="hint" style={{ marginTop: 0, marginBottom: 8, opacity: 0.75 }}>
+                Langfuse unreachable — showing in-process run telemetry only (durable history returns when it&apos;s back).
+              </p>
+            )}
             <ScopeTabs scope={agentScope} setScope={setAgentScope} counts={agentCounts} />
             {agentRows.length === 0 ? (
               <p className="hint" style={{ marginTop: 0 }}>
                 No agent systems here yet — build or run one in the <a href="/agents">Agents</a> tab.
               </p>
             ) : (
-              <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+              <div className="mon-tile-grid">
                 {agentRows.map((a) => (
-                  <Row key={a.id} onClick={() => router.push(`/agents?focus=${a.id}`)}>
-                    <Dot h={a.health} />
-                    <span style={{ flex: 1, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
-                    <span className="badge muted">{a.agentCount} agent{a.agentCount === 1 ? '' : 's'}</span>
-                    {a.running ? <span className="badge ok">running</span> : null}
-                    {a.scheduled ? <span className="badge">scheduled</span> : null}
-                    {a.held > 0 ? <span className="badge warn">{a.held} held</span> : null}
-                    <span className="muted" style={{ fontSize: 12, minWidth: 96, textAlign: 'right' }}>
-                      {a.lastRunAt == null ? 'not run yet' : `${a.lastRunOk === false ? 'failed · ' : ''}${ago(a.lastRunAt)}`}
-                    </span>
-                  </Row>
+                  <AgentTileCard key={a.id} a={a} onOpen={() => setTarget({ kind: 'agent', id: a.id, name: a.name })} />
                 ))}
               </div>
             )}
 
-            {/* ───────────── Data Monitoring ───────────── */}
-            <div className="section-title" style={{ marginTop: 22 }}>Data Monitoring</div>
+            <div className="section-title" style={{ marginTop: 26 }}>Data Monitoring</div>
             <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>
-              One health per dataset — pipeline freshness and data-quality checks combined.
+              Freshness, pipeline health and data-quality per dataset — the real last DQ run.
             </p>
             <ScopeTabs scope={dataScope} setScope={setDataScope} counts={dataCounts} />
             {dataRows.length === 0 ? (
@@ -178,32 +199,22 @@ export default function MonitoringPage() {
                 No datasets here yet — create one in the <a href="/data">Data</a> tab.
               </p>
             ) : (
-              <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+              <div className="mon-tile-grid">
                 {dataRows.map((d) => (
-                  <Row key={d.id} onClick={() => router.push(`/data?focus=${d.id}`)}>
-                    <Dot h={d.health} />
-                    <span style={{ flex: 1, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</span>
-                    <span className="badge" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                      <Dot h={d.pipeline} title={`Pipeline: ${HEALTH_WORD[d.pipeline]}`} /> pipeline
-                    </span>
-                    <span className="badge" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                      <Dot h={d.dq} title={`Data quality: ${HEALTH_WORD[d.dq]}`} /> quality
-                    </span>
-                    <span className="muted" style={{ fontSize: 12, minWidth: 96, textAlign: 'right' }}>
-                      {d.freshness == null ? 'not built' : ago(d.freshness)}
-                    </span>
-                  </Row>
+                  <DataTileCard key={d.id} d={d} onOpen={() => setTarget({ kind: 'dataset', id: d.id, name: d.name })} />
                 ))}
               </div>
             )}
 
-            <p className="hint" style={{ marginTop: 18, opacity: 0.7 }}>
+            <p className="hint" style={{ marginTop: 20, opacity: 0.7 }}>
               RAG monitoring (Knowledge &amp; Files) is coming next. Spend lives in the LLM Gateway tab;
               policy and caps live in Governance.
             </p>
           </>
         )}
       </div>
+
+      {target && <DetailWindow target={target} onClose={() => setTarget(null)} />}
     </>
   );
 }

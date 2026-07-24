@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { roleModel } from '@/lib/models/roles';
 import { requireUser } from '@/lib/core/auth';
 import { mcpTabForPath, runOsAssistant } from '@/lib/assistant/agent-loop';
+import { sanitizePageContext } from '@/lib/assistant/page-context';
 import { AssistantNotConfiguredError } from '@/lib/assistant/complete';
 
 export const dynamic = 'force-dynamic';
@@ -29,10 +30,14 @@ type Msg = { role: 'user' | 'assistant' | 'system'; content: string };
 export async function POST(req: Request) {
   let path = '';
   let messages: Msg[] = [];
+  let pageContextRaw: unknown = null;
   try {
     const body = await req.json();
     path = (body?.path ?? '').toString();
     messages = Array.isArray(body?.messages) ? body.messages : [];
+    // The current-screen snapshot the client publishes (open artifact + stage). It
+    // only ENRICHES; a missing/malformed value degrades to "no page context".
+    pageContextRaw = body?.pageContext ?? null;
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
@@ -61,10 +66,11 @@ export async function POST(req: Request) {
   }
 
   const tab = mcpTabForPath(path);
+  const page = sanitizePageContext(pageContextRaw);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), CHAT_TIMEOUT_MS);
   try {
-    const result = await runOsAssistant({ user, tab, messages: clean });
+    const result = await runOsAssistant({ user, tab, page, messages: clean });
     return NextResponse.json({
       role: 'assistant',
       content: result.finalText,

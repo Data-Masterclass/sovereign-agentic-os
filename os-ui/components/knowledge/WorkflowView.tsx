@@ -18,6 +18,7 @@ import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import { useApprovalNotifier } from '@/components/lifecycle/useApprovalNotifier';
 import type { FiledApproval } from '@/lib/governance/approval-notice';
 import DomainTag from '@/components/DomainTag';
+import { usePublishPageContext } from '@/components/core/PageContext';
 import { addStep } from '@/lib/knowledge/step-edit';
 import { buildWorkflowReport, workflowPdfFilename } from '@/lib/knowledge/workflow-pdf';
 import { renderSwimlaneSvg } from '@/lib/knowledge/swimlane-svg';
@@ -130,6 +131,16 @@ export default function WorkflowView({
     setLoading(true);
     void reload().finally(() => setLoading(false));
   }, [reload]);
+
+  // Ground "Ask the OS" on the open workflow (its id + title + which panel/view is
+  // active), so "add a step" / "fix this rule" act on THIS workflow. Clears on unmount.
+  usePublishPageContext({
+    tab: 'knowledge',
+    stage: `workflow:${panel}`,
+    artifactType: 'workflow',
+    artifactId: workflowId,
+    artifactName: data?.title,
+  });
 
   // The one-source commit: serialize the next Workflow, PATCH with the sha,
   // then reload so the swimlane / markdown / mermaid all reflect the new source.

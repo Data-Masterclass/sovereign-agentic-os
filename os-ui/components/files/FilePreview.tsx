@@ -15,6 +15,7 @@ import type { FiledApproval } from '@/lib/governance/approval-notice';
 import type { Visibility } from '@/lib/core/lifecycle';
 import { canManageArtifact, type ArtifactScope } from '@/lib/governance/edit-scope';
 import { FolderPickerModal } from '@/components/core/FolderTree';
+import { usePublishPageContext } from '@/components/core/PageContext';
 import type { FolderPathNode } from '@/lib/core/folders';
 
 /** File tier → the OS-wide lifecycle visibility (drives the delete gate). */
@@ -132,6 +133,17 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
     } catch (e) { setErr((e as Error).message); }
   }, [id]);
   useEffect(() => { load(); }, [load]);
+
+  // Ground "Ask the OS" on the file open in Quick Look (its id + name + kind), so a
+  // request like "summarize this" acts on THIS file without asking which. Clears on
+  // unmount (the preview closes) so context never leaks to the next screen.
+  usePublishPageContext({
+    tab: 'files',
+    artifactType: 'file',
+    artifactId: id,
+    artifactName: view?.asset.name,
+    ...(view ? { extra: { kind: view.asset.kind } } : {}),
+  });
 
   // Esc closes the full-screen Quick Look; lock body scroll while it's open so the
   // dimmed grid underneath doesn't scroll away.
@@ -412,28 +424,11 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         {reupErr ? <div className="error" style={{ marginTop: 6 }}>{reupErr}</div> : null}
       </div>
 
-      {err ? <div className="error">{err}</div> : null}
-
-      {/* ---- Details & sharing: everything governance lives one click away so the file
-              itself is the default focus (content is the hero). The controls are the
-              SAME as before — only reflowed under a disclosure, not rewritten. ---- */}
-      <details className="preview-details">
-        <summary>Details &amp; sharing</summary>
-
-      <dl className="preview-meta">
-        <dt>ID</dt><dd className="mono muted">{a.id}</dd>
-        <dt>Owner</dt><dd>{a.owner}</dd>
-        <dt>Folder</dt><dd>{a.folder}</dd>
-        <dt>Updated</dt><dd>{fresh(a.freshness)}</dd>
-        <dt>Sharing</dt><dd>{a.visibility === 'Shared' ? 'Domain' : a.visibility === 'Certified' ? 'Company' : a.visibility}</dd>
-        <dt>Storage</dt><dd>{a.storage}</dd>
-        <dt>Link</dt><dd className="deep-link">{a.deepLink}</dd>
-      </dl>
-
-      {/* Move to folder — edit-gated (owner, or a domain_admin/admin once shared).
-          The folder route also upserts the destination folder into the registry. */}
+      {/* Primary manage actions — ALWAYS VISIBLE (not buried in the disclosure): move
+          the file to a folder + the archive/restore/delete cluster. Edit-gated. The
+          descriptive metadata / tags stays under "Details & sharing" below. */}
       {canManage ? (
-        <div className="preview-row">
+        <div className="preview-row preview-manage">
           <button
             className="btn ghost sm"
             onClick={() => { void loadFolders(); setPickerOpen(true); }}
@@ -441,6 +436,17 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
           >
             Move to folder…
           </button>
+          <LifecycleActions
+            id={id}
+            name={a.name}
+            kind="file"
+            visibility={lcVis(a.tier)}
+            archived={!!view.archived}
+            api={`/api/files/${id}`}
+            handlers={{ onDelete: onDeleted }}
+            onChanged={onMutated}
+            compact
+          />
           <FolderPickerModal
             open={pickerOpen}
             tab="files"
@@ -460,6 +466,55 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
           />
         </div>
       ) : null}
+
+      {/* ---- Sharing lifecycle — ALSO ALWAYS VISIBLE (promote/demote must not be buried).
+              Governed exactly like Data: the OWNER (creator or builder) PROPOSES a promotion,
+              a domain admin approves; an Admin certifies to the marketplace. The propose
+              button is owner-gated, never role-gated — the approval is the governed gate.
+              Only the RENDER LOCATION moved out of the disclosure; the gate is unchanged. ---- */}
+      <div className="preview-row preview-manage preview-share-row" {...anchorAttr(ANCHORS.files.share)}>
+        <label className="rail-group-title">Sharing</label>
+        {a.tier === 'dataset' ? (
+          promote?.request ? (
+            <span className="hint" style={{ margin: 0 }}>⏳ Proposed — awaiting a domain admin’s approval…</span>
+          ) : isOwner ? (
+            <>
+              {promote && !promote.gate.ok ? (
+                <span className="hint" style={{ margin: 0 }}>To propose sharing, add {promote.gate.missing.join(', ')}.</span>
+              ) : null}
+              <button className="btn ghost sm" disabled={!promote?.gate.ok} onClick={requestPromote}
+                title="Propose sharing this file with your domain — a domain admin reviews it">
+                Propose to Domain →
+              </button>
+            </>
+          ) : <span className="hint" style={{ margin: 0 }}>Private to {a.owner}.</span>
+        ) : a.tier === 'asset' ? (
+          <>
+            <span className="hint" style={{ margin: 0 }}>Shared with your domain.</span>
+            {isAdmin ? <button className="btn ghost sm" onClick={certify}>Certify to Company →</button> : null}
+          </>
+        ) : (
+          <span className="hint" style={{ margin: 0 }}>Published in the marketplace.</span>
+        )}
+      </div>
+
+      {err ? <div className="error">{err}</div> : null}
+
+      {/* ---- Details & sharing: everything governance lives one click away so the file
+              itself is the default focus (content is the hero). The controls are the
+              SAME as before — only reflowed under a disclosure, not rewritten. ---- */}
+      <details className="preview-details">
+        <summary>Details &amp; sharing</summary>
+
+      <dl className="preview-meta">
+        <dt>ID</dt><dd className="mono muted">{a.id}</dd>
+        <dt>Owner</dt><dd>{a.owner}</dd>
+        <dt>Folder</dt><dd>{a.folder}</dd>
+        <dt>Updated</dt><dd>{fresh(a.freshness)}</dd>
+        <dt>Sharing</dt><dd>{a.visibility === 'Shared' ? 'Domain' : a.visibility === 'Certified' ? 'Company' : a.visibility}</dd>
+        <dt>Storage</dt><dd>{a.storage}</dd>
+        <dt>Link</dt><dd className="deep-link">{a.deepLink}</dd>
+      </dl>
 
       {/* Editable: description, tags, sensitivity, index opt-out. Shown to whoever
           may manage the file (owner, or a domain_admin/admin once it is promoted);
@@ -492,36 +547,6 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         </>
       ) : null}
 
-      {/* ---- Sharing lifecycle (governed exactly like Data): the OWNER (creator or
-              builder) PROPOSES a promotion, a domain admin approves; an Admin certifies
-              to the marketplace. The propose button is owner-gated, never role-gated —
-              a builder proposes their OWN file; the approval is the governed gate. ---- */}
-      <div className="preview-share" {...anchorAttr(ANCHORS.files.share)}>
-        <label className="rail-group-title">Sharing</label>
-        {a.tier === 'dataset' ? (
-          promote?.request ? (
-            <p className="hint" style={{ margin: 0 }}>⏳ Proposed — awaiting a domain admin’s approval…</p>
-          ) : isOwner ? (
-            <>
-              {promote && !promote.gate.ok ? (
-                <p className="hint" style={{ margin: '0 0 6px' }}>To propose sharing, add {promote.gate.missing.join(', ')}.</p>
-              ) : null}
-              <button className="btn ghost sm" disabled={!promote?.gate.ok} onClick={requestPromote}
-                title="Propose sharing this file with your domain — a domain admin reviews it">
-                Propose to Domain →
-              </button>
-            </>
-          ) : <p className="hint" style={{ margin: 0 }}>Private to {a.owner}.</p>
-        ) : a.tier === 'asset' ? (
-          <div className="preview-row">
-            <span className="hint" style={{ margin: 0 }}>Shared with your domain.</span>
-            {isAdmin ? <button className="btn ghost sm" onClick={certify}>Certify to Company →</button> : null}
-          </div>
-        ) : (
-          <span className="hint" style={{ margin: 0 }}>Published in the marketplace.</span>
-        )}
-      </div>
-
       {/* ---- "Use as": distil the file into Knowledge (tacit note) or Data (Bronze). ---- */}
       <div className="preview-share">
         <label className="rail-group-title">Use as</label>
@@ -543,25 +568,6 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         </div>
       ) : null}
 
-      {/* One consistent archive / delete / version-history cluster. Available to the
-          owner, and — once the file is promoted — to an in-domain domain_admin or a
-          platform admin, matching the server edit-scope. */}
-      {canManage ? (
-        <div className="preview-share">
-          <label className="rail-group-title">Lifecycle</label>
-          <LifecycleActions
-            id={id}
-            name={a.name}
-            kind="file"
-            visibility={lcVis(a.tier)}
-            archived={!!view.archived}
-            api={`/api/files/${id}`}
-            handlers={{ onDelete: onDeleted }}
-            onChanged={onMutated}
-            compact
-          />
-        </div>
-      ) : null}
       </details>
     </div>
     </QuickLook>

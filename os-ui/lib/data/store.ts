@@ -16,6 +16,7 @@ import {
   type ColumnDoc,
   type TrustLevel,
   type DatasetUpstream,
+  type GoldSpec,
   type DataCheck,
   DatasetError,
   canTransition,
@@ -620,11 +621,16 @@ export function buildVersion(
  * promotion — T7) and the multi-upstream lineage edges (the additional datasets the
  * join read). Editing is Creator+ on a dataset you can edit; called ONLY after the
  * Build report is ✓ (the honesty contract — no dot without a real materialized table).
+ *
+ * `goldSpec` (optional) is the RAW editable build spec — persisted so the panel
+ * re-hydrates the joins/columns/measures and the definition stays editable + rebuildable.
+ * A rebuild REPLACES it (the last successful spec is the current one). `upstreams` may be
+ * EMPTY for a single-table Gold (no join partner) — the version still lights.
  */
 export function buildGoldJoin(
   id: string,
   user: Principal,
-  input: { measures: Measure[]; upstreams: DatasetUpstream[]; artifact: string; body: string },
+  input: { measures: Measure[]; upstreams: DatasetUpstream[]; artifact: string; body: string; goldSpec?: GoldSpec },
 ): Dataset {
   const rec = get(id);
   const d = editOf(rec, user);
@@ -632,6 +638,7 @@ export function buildGoldJoin(
   rec.artifacts = { ...(rec.artifacts ?? {}), [input.artifact]: input.body };
   d.measures = input.measures;
   d.upstreams = input.upstreams;
+  if (input.goldSpec) d.goldSpec = input.goldSpec;
   persist(rec, d, { author: user.id, summary: 'build gold join' });
   return d;
 }

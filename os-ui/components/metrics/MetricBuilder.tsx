@@ -193,6 +193,7 @@ function toPayload(form: Form) {
  */
 export default function MetricBuilder({
   existing,
+  initialDatasetId,
   metrics,
   metricsLoading,
   onBack,
@@ -200,6 +201,8 @@ export default function MetricBuilder({
 }: {
   /** Open an existing saved metric (lands at Monitor), or null to create a new one (Define). */
   existing: MetricSummary | null;
+  /** Preselect this dataset when creating a new metric (Data tab → "＋ New metric" deep-link). */
+  initialDatasetId?: string;
   metrics: MetricGroups | null;
   metricsLoading: boolean;
   onBack: () => void;
@@ -221,7 +224,8 @@ export default function MetricBuilder({
   };
 
   /* ── form state ── */
-  const [datasetId, setDatasetId] = useState('');
+  // Seed from the deep-link (create-with-dataset) when creating; existing metrics ignore it.
+  const [datasetId, setDatasetId] = useState(existing ? '' : (initialDatasetId ?? ''));
   const [form, setForm] = useState<Form>(EMPTY_FORM);
   const [usedAgent, setUsedAgent] = useState(false);
   const { columns, measures, deliverable } = useDataset(datasetId);

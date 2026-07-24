@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
   parseDataset,
   serializeDataset,
+  parseGoldSpec,
   storageFor,
   canTransition,
   tierAfter,
@@ -147,4 +148,35 @@ test('round-trip: a decoupled (renamed) slug is written and parses back', () => 
 test('round-trip: a legacy record with no slug parses to undefined slug', () => {
   const yaml = serializeDataset(sample({ name: 'Orders' }));
   assert.equal(parseDataset(yaml).slug, undefined);
+});
+
+// ---- Gold spec (stage-4) re-hydration: the raw editable spec is a durable, byte-stable field ----
+
+test('goldSpec round-trips through serialize/parse (the Gold panel re-hydrates from it)', () => {
+  const goldSpec = {
+    joins: [{ datasetId: 'ds_np', type: 'inner' as const, baseCol: 'order_id', joinCol: 'order_ref', adaptMode: 'cast' as const, adaptType: 'varchar' }],
+    dimensions: [{ source: '1::region' }, { source: '0::order_id', as: 'oid' }],
+    measures: [{ name: 'net', agg: 'sum', col: '1::net_amount' }, { name: 'n', agg: 'count' }],
+  };
+  const round = parseDataset(serializeDataset(sample({ goldSpec })));
+  assert.deepEqual(round.goldSpec, goldSpec);
+});
+
+test('goldSpec is byte-stable: absent when empty, so no prior record churns', () => {
+  const bare = serializeDataset(sample());
+  assert.equal(serializeDataset(sample({ goldSpec: { joins: [], dimensions: [], measures: [] } })), bare);
+  assert.equal(parseDataset(bare).goldSpec, undefined);
+});
+
+test('parseGoldSpec sanitizes loose input and drops an all-empty spec', () => {
+  assert.equal(parseGoldSpec(undefined), undefined);
+  assert.equal(parseGoldSpec({ joins: [], dimensions: [], measures: [] }), undefined);
+  const s = parseGoldSpec({
+    joins: [{ datasetId: 'ds', type: 'weird', baseCol: 'a', joinCol: 'b' }],
+    dimensions: [{ source: '0::x', as: '' }],
+    measures: [{ name: 'm', agg: 'sum', col: '0::y' }],
+  });
+  assert.equal(s?.joins[0].type, 'inner'); // unknown join type coerced to inner
+  assert.equal(s?.dimensions[0].as, undefined); // blank alias dropped
+  assert.equal(s?.measures[0].col, '0::y');
 });

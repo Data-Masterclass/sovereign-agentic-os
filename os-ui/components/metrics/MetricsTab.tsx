@@ -14,7 +14,7 @@ import type { MetricGroups, MetricSummary } from './shared';
 
 type View =
   | { kind: 'list' }
-  | { kind: 'builder'; metric: MetricSummary | null };
+  | { kind: 'builder'; metric: MetricSummary | null; initialDatasetId?: string };
 
 /**
  * The Metrics surface — the unified metric home. Two levels:
@@ -47,6 +47,18 @@ function MetricsTabInner() {
     setView({ kind: 'builder', metric: target });
   }, [focusId, metrics.data]);
 
+  // ?new=1&dataset=<id> deep-link (from the Data tab's Publish stage): open the create
+  // flow with that dataset preselected. Independent of the metrics fetch, one-shot.
+  const newApplied = useRef(false);
+  const newDataset = searchParams.get('new') === '1'
+    ? (searchParams.get('dataset') ? decodeURIComponent(searchParams.get('dataset')!) : '')
+    : null;
+  useEffect(() => {
+    if (newDataset === null || newApplied.current) return;
+    newApplied.current = true;
+    setView({ kind: 'builder', metric: null, initialDatasetId: newDataset || undefined });
+  }, [newDataset]);
+
   // Clicking the Metrics sidebar link returns to the list from any builder view.
   useTabNavReset(() => setView({ kind: 'list' }));
 
@@ -54,6 +66,7 @@ function MetricsTabInner() {
     return (
       <MetricBuilder
         existing={view.metric}
+        initialDatasetId={view.initialDatasetId}
         metrics={metrics.data}
         metricsLoading={metrics.loading}
         onBack={() => setView({ kind: 'list' })}

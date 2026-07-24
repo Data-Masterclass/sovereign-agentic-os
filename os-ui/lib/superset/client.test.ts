@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { importDashboardBundle, ensureEmbedded } from './client.ts';
+import { importDashboardBundle, ensureEmbedded, resolveDashboardIdByTitle } from './client.ts';
 
 const MANIFEST = JSON.stringify({
   dashboard: 'Sales Overview',
@@ -105,6 +105,57 @@ function fakeEmbedFetch(calls: Call[], existing?: string): typeof fetch {
     return new Response('not found', { status: 404 });
   }) as unknown as typeof fetch;
 }
+
+/**
+ * Fake Superset for the dashboard list lookup. Crucially it REQUIRES the authenticated
+ * handshake: a bare GET (no CSRF token / cookie / X-Forwarded-User) is answered 401, exactly
+ * like the live cluster. This reproduces the bug where dashboardExists did a bare GET → 401 →
+ * a FALSE "dashboard not found after import" even though the import succeeded.
+ */
+function fakeListFetch(calls: Call[], results: { id: number; dashboard_title: string }[]): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = (init?.method ?? 'GET').toUpperCase();
+    calls.push({ url, method, init: init ?? {} });
+    if (url.endsWith('/api/v1/security/csrf_token/')) {
+      return new Response(JSON.stringify({ result: 'csrf-abc' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json', 'set-cookie': 'session=xyz; Path=/; HttpOnly' },
+      });
+    }
+    if (url.includes('/api/v1/dashboard/?q=')) {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      // Live behaviour: a bare GET without the authenticated handshake is rejected.
+      if (!headers['X-CSRFToken'] || !headers['Cookie']) return new Response('unauthorized', { status: 401 });
+      return new Response(JSON.stringify({ result: results, count: results.length }), { status: 200 });
+    }
+    return new Response('not found', { status: 404 });
+  }) as unknown as typeof fetch;
+}
+
+test('resolveDashboardIdByTitle uses the authenticated handshake and matches the exact title', async () => {
+  const calls: Call[] = [];
+  const id = await resolveDashboardIdByTitle(
+    'http://superset:8088',
+    'Sales',
+    fakeListFetch(calls, [{ id: 4, dashboard_title: 'Sales' }]),
+  );
+  assert.equal(id, 4);
+  // CSRF fetched BEFORE the list GET (else the list 401s) — the regression guard.
+  const csrfIdx = calls.findIndex((c) => c.url.endsWith('/api/v1/security/csrf_token/'));
+  const listIdx = calls.findIndex((c) => c.url.includes('/api/v1/dashboard/?q='));
+  assert.ok(csrfIdx >= 0 && listIdx > csrfIdx, 'CSRF handshake precedes the authenticated list GET');
+});
+
+test('resolveDashboardIdByTitle returns null on a near-match (never embeds the wrong dashboard)', async () => {
+  const calls: Call[] = [];
+  const id = await resolveDashboardIdByTitle(
+    'http://superset:8088',
+    'Sales',
+    fakeListFetch(calls, [{ id: 9, dashboard_title: 'Sales by region' }]),
+  );
+  assert.equal(id, null); // contains-filter can return near-matches; exact-title only
+});
 
 test('ensureEmbedded returns the existing embedded uuid without re-registering', async () => {
   const calls: Call[] = [];

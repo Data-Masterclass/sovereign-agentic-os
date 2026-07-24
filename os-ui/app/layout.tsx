@@ -5,6 +5,7 @@ import Sidebar from '@/components/Sidebar';
 import TutorialProvider from '@/components/tutorials/TutorialProvider';
 import { ToolWindowProvider } from '@/components/ToolWindowProvider';
 import { ToastProvider } from '@/components/core/Toast';
+import { PageContextProvider } from '@/components/core/PageContext';
 import AuthGate from '@/components/AuthGate';
 import OsAssistant from '@/components/OsAssistant';
 
@@ -43,13 +44,18 @@ export default function RootLayout({
             {/* ToastProvider wraps the whole shell so any button on any tab can
                 fire the ONE OS-wide "that did something" confirmation. */}
             <ToastProvider>
-              <div className="shell">
-                <Sidebar />
-                <div className="main">{children}</div>
-              </div>
-              {/* The ONE overarching, tab-aware OS assistant — on every tab, acts
-                  through the OS's own governed MCP. */}
-              <OsAssistant />
+              {/* PageContextProvider wraps BOTH the tab surfaces (which publish the
+                  open artifact + stage) AND the assistant (which reads it), so
+                  "Ask the OS" knows exactly where the user is. */}
+              <PageContextProvider>
+                <div className="shell">
+                  <Sidebar />
+                  <div className="main">{children}</div>
+                </div>
+                {/* The ONE overarching, tab-aware OS assistant — on every tab, acts
+                    through the OS's own governed MCP. */}
+                <OsAssistant />
+              </PageContextProvider>
             </ToastProvider>
           </ToolWindowProvider>
         </TutorialProvider>

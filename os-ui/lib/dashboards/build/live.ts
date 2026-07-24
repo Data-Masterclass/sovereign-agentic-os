@@ -28,6 +28,10 @@ export type CubeSqlEndpoint = { host?: string; port?: number };
 export interface SupersetClient {
   importBundle(name: string, bundle: string): Promise<void>;
   dashboardExists(name: string): Promise<boolean>;
+  /** Resolve the dashboard by title, ensure it is registered for embedding, and return its
+   *  EMBEDDED UUID — the id a guest token must target (NOT the OS/numeric dashboard id).
+   *  Returns null when no dashboard by that title exists (nothing to embed yet). */
+  embeddedUuid(name: string): Promise<string | null>;
   /** PHYSICALLY delete the Superset dashboard by title. Returns false if already gone. */
   deleteDashboard(name: string): Promise<boolean>;
   createReport(spec: { dashboard: string; cadence: string; channel: string }): Promise<string>;
@@ -74,7 +78,13 @@ export function makeDashboardAdapters(deps: DashboardLiveDeps): Record<string, B
   const embed: BuildAdapter<DashboardBuildContext> = {
     tool: 'embed',
     async apply(ctx) {
-      const minted = await deps.embed.mint(ctx.guestToken);
+      // A guest token must target the dashboard's Superset EMBEDDED UUID, never the
+      // OS/numeric dashboard id — Superset 400s ("EmbeddedDashboard not found.") on the
+      // OS id. Resolve the just-imported dashboard by title and ensure it is registered
+      // for embedding, then mint against that UUID.
+      const uuid = await deps.superset.embeddedUuid(ctx.spec.name);
+      if (!uuid) return fail(`dashboard '${ctx.spec.name}' not embeddable (not found in Superset)`);
+      const minted = await deps.embed.mint({ ...ctx.guestToken, resourceId: uuid });
       if (!minted.token) return fail('guest token mint returned no token');
       if (minted.expiresInSeconds <= 0) return fail('guest token already expired');
       return ok(`minted guest token for '${ctx.guestToken.user.username}' (ttl ${minted.expiresInSeconds}s)`);

@@ -255,11 +255,13 @@ export function silverSchema(o: { tier: string; domain: string; uid: string; dom
 
 // ================================================================ Gold join =====
 /**
- * The Gold JOIN COMPILER (Data tab, stage 4 — dataset REUSE). Picks 1..n ADDITIONAL
- * datasets the caller may read and joins them to the caller's own Silver base on
- * chosen keys, projecting joined dimensions + derived business measures
- * (SUM/AVG/COUNT/…/expressions) into ONE guard-passing
- * `CREATE OR REPLACE TABLE iceberg.<caller-schema>.gold_<slug> AS SELECT …`.
+ * The Gold COMPILER (Data tab, stage 4). Projects the caller's own Silver base — and,
+ * OPTIONALLY, 0..n ADDITIONAL datasets the caller may read joined on chosen keys —
+ * into dimensions + derived business measures (SUM/AVG/COUNT/…/expressions) as ONE
+ * guard-passing `CREATE OR REPLACE TABLE iceberg.<caller-schema>.gold_<slug> AS SELECT …`.
+ * A join is OPTIONAL: with zero joins this is a single-table projection of the Silver
+ * base into a real Gold mart (every ref must then be the base, ref 0); with 1..n joins
+ * it is dataset REUSE (the joined tables aliased t1..tn).
  *
  * Same discipline as {@link compileSilver}: single statement, no comments, no ';',
  * bare lowercase iceberg FQNs, target = the CALLER's own schema. The CTAS runs AS the
@@ -375,7 +377,8 @@ export function compileGoldJoin(spec: GoldJoinSpec): string {
   assertFqn(spec.source, 'source');
   assertFqn(spec.target, 'target');
   const joins = Array.isArray(spec.joins) ? spec.joins : [];
-  if (joins.length === 0) throw new TransformError('add at least one dataset to join');
+  // A join is OPTIONAL: 0 joins ⇒ a single-table Gold projection of the Silver base
+  // (every ref must be the base, ref 0); 1..n joins ⇒ dataset reuse (t1..tn).
   const maxRef = joins.length; // base = 0 … joins[n-1] = n
 
   const joinSql: string[] = [];
@@ -430,7 +433,9 @@ export function compileGoldJoin(spec: GoldJoinSpec): string {
   // Aggregating measures require a GROUP BY of the (non-aggregated) dimensions; an
   // all-measure spec (no dims) is a single grand-total row.
   const groupBy = measures.length > 0 && dimExprs.length > 0 ? ` group by ${dimExprs.join(', ')}` : '';
-  const body = `select ${selectList} from ${spec.source} ${tableAlias(0)} ${joinSql.join(' ')}${groupBy}`;
+  // With zero joins `joinSql` is empty — a single-table projection from the base alone.
+  const from = joinSql.length ? `${spec.source} ${tableAlias(0)} ${joinSql.join(' ')}` : `${spec.source} ${tableAlias(0)}`;
+  const body = `select ${selectList} from ${from}${groupBy}`;
   const sql = `create or replace table ${spec.target} as ${body}`;
   assertNoSqlMeta(sql, 'compiled SQL'); // defense in depth: never emit a guard-failing statement
   return sql;
@@ -616,10 +621,11 @@ export type ResolvedJoin = { table: string; type: JoinType; on: JoinCond[] };
 export type GoldJoinPlan = { source: string; target: string; schema: string; sql: string };
 
 /**
- * Resolve the caller's Silver base + Gold target FQNs and compile the join CTAS.
+ * Resolve the caller's Silver base + Gold target FQNs and compile the Gold CTAS.
  * Server-authoritative (the route calls this, never a client-sent SQL): the target is
  * ALWAYS the caller's own schema — never a literal cross-domain schema — exactly like
- * {@link silverPlan}. The joined tables come pre-resolved (visible to the caller).
+ * {@link silverPlan}. `joins` may be EMPTY (a single-table Gold projection of the Silver
+ * base) or 1..n pre-resolved tables visible to the caller (dataset reuse).
  */
 export function goldJoinPlan(
   dataset: { name: string; domain: string; tier: string; slug?: string },

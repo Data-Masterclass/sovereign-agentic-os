@@ -397,6 +397,25 @@ export function listSystems(user: Principal, opts: { includeArchived?: boolean }
   return { mine: mine.sort(byName), domain: domain.sort(byName), marketplace: marketplace.sort(byName) };
 }
 
+/** Agent systems visible to the user that hold a per-item (non-folder) DATA grant on
+ *  a given dataset — the reverse lookup the Data tab's Publish stage uses to list
+ *  "agent systems that use this dataset". Pure over {@link listSystems} + {@link getSystem}
+ *  (both RLS-scoped), so it never widens visibility. A system whose yaml can't be parsed
+ *  is skipped rather than throwing (fail-soft, matches the read-model discipline). */
+export function getSystemsUsingDataset(datasetId: string, user: Principal): SystemSummary[] {
+  const { mine, domain, marketplace } = listSystems(user);
+  const out: SystemSummary[] = [];
+  for (const s of [...mine, ...domain, ...marketplace]) {
+    try {
+      const view = getSystem(s.id, user);
+      if (view.system.grants.data.some((g) => g.id === datasetId && !g.folder)) out.push(s);
+    } catch {
+      // unreadable/unparseable system — skip, never fabricate a match
+    }
+  }
+  return out;
+}
+
 /** One agent-system row for Agent Monitoring: identity + last-run health + activity. */
 export type AgentHealthRow = {
   id: string;

@@ -16,6 +16,7 @@ import {
   type JoinType,
 } from '@/lib/data/transform';
 import type { DatasetUpstream } from '@/lib/data';
+import { parseGoldSpec, type GoldSpec } from '@/lib/data/dataset-schema';
 import type { ExecuteIdentity } from '@/lib/infra/governed';
 
 export const dynamic = 'force-dynamic';
@@ -23,13 +24,16 @@ export const dynamic = 'force-dynamic';
 type PickIn = { datasetId?: string; type?: string; on?: unknown[] };
 
 /**
- * Gold JOIN builder — REAL dataset REUSE via a governed CTAS. The panel sends the
- * datasetIds to join (never table names), the keys, the projected columns + measures;
- * here we (server-authoritatively):
+ * Gold builder — a governed CTAS that projects the caller's Silver base into a Gold
+ * mart, OPTIONALLY reusing other datasets by JOIN. The panel sends the datasetIds to
+ * join (never table names), the keys, the projected columns + measures; here we
+ * (server-authoritatively):
  *   1. resolve each picked datasetId through `getDataset` — the canView guard, so a
- *      caller can only join a dataset they may READ (a non-visible id → 403);
+ *      caller can only join a dataset they may READ (a non-visible id → 403). With ZERO
+ *      picks this is a single-table Gold projection of the Silver base (no join);
  *   2. compile ONE allowlisted `CREATE OR REPLACE TABLE … AS SELECT` targeting the
- *      CALLER's own schema (`goldJoinPlan`);
+ *      CALLER's own schema (`goldJoinPlan`) — the compiler requires at least one
+ *      dimension or measure, so an empty Gold spec is rejected honestly;
  *   3. run it through the Build adapter (dbt.apply = executeRun AS the caller → Trino→
  *      OPA masks the reads of every joined table) + the verify probe.
  * The Gold dot lights — and the measures + multi-upstream lineage land in dataset.yaml
@@ -44,6 +48,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       picks?: PickIn[];
       dimensions?: GoldDimension[];
       measures?: GoldMeasure[];
+      // The RAW editable panel spec (datasetId-keyed joins, ref::column dims/measures),
+      // stored verbatim so the panel re-hydrates + stays editable. NEVER a SQL source —
+      // the CTAS is compiled server-side from the resolved FQNs below (`goldJoinPlan`).
+      goldSpec?: GoldSpec;
     };
 
     const dataset = getDataset(id, user); // view-scope guard on the base
@@ -51,10 +59,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       return NextResponse.json({ error: 'Bring in the Silver version before joining it' }, { status: 400 });
     }
 
+    // A join is OPTIONAL: 0 picks builds a single-table Gold projection of the Silver
+    // base; the compiler then requires at least one dimension or measure to select.
     const rawPicks = Array.isArray(body.picks) ? body.picks : [];
-    if (rawPicks.length === 0) {
-      return NextResponse.json({ error: 'Pick at least one dataset to join' }, { status: 400 });
-    }
 
     const identity: ExecuteIdentity = {
       principal: user.domains[0] ?? user.id,
@@ -103,6 +110,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       upstreams,
       artifact: stageArtifact(dataset.name, 'gold'),
       body: plan.sql,
+      // Sanitize the raw spec server-side (never trusted; stored verbatim for re-hydration).
+      goldSpec: parseGoldSpec(body.goldSpec),
     });
 
     return NextResponse.json({ build, sql: plan.sql, target: plan.target, dataset: updated, stages: stepperStages(updated) });

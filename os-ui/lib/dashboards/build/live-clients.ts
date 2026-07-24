@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { config } from '@/lib/core/config';
-import { importDashboardBundle, deleteDashboardByName } from '@/lib/superset/client';
+import { importDashboardBundle, deleteDashboardByName, resolveDashboardIdByTitle, ensureEmbedded } from '@/lib/superset/client';
 import { csrf, serviceHeaders } from '@/lib/superset/auth';
 import { type DashboardLiveDeps, type EmbedClient, type SupersetClient } from './live.ts';
 import { type GuestTokenRequest } from '../embed.ts';
@@ -40,11 +40,20 @@ export function realSuperset(): SupersetClient {
       await importDashboardBundle(base, bundle);
     },
     async dashboardExists(name) {
-      const q = encodeURIComponent(JSON.stringify({ filters: [{ col: 'dashboard_title', opr: 'ct', value: name }] }));
-      const res = await withTimeout(`${base}/api/v1/dashboard/?q=${q}`, { method: 'GET' });
-      if (!res || !res.ok) return false;
-      const d = (await res.json().catch(() => ({}))) as { count?: number };
-      return (d.count ?? 0) > 0;
+      // Superset rejects a BARE GET on /api/v1/dashboard/ with 401 (the _sso_login
+      // handshake needs the CSRF token + session cookie + X-Forwarded-User). A plain GET
+      // here always 401'd → dashboardExists=false → a FALSE "not found after import" even
+      // though the import succeeded. Reuse the SAME authenticated, exact-title resolver the
+      // embed/delete paths use, so verify sees the dashboard the import actually landed.
+      const id = await resolveDashboardIdByTitle(base, name);
+      return id != null;
+    },
+    async embeddedUuid(name) {
+      // Resolve the Superset dashboard id by title, then register it for embedding (or read
+      // the existing registration) and return the EMBEDDED UUID a guest token must target.
+      const id = await resolveDashboardIdByTitle(base, name);
+      if (id == null) return null;
+      return ensureEmbedded(base, id);
     },
     async deleteDashboard(name) {
       // Real DELETE /api/v1/dashboard/{id} (id resolved by title); throws → ✗.

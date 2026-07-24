@@ -99,6 +99,26 @@ test('a model tool_call is dispatched through the governed MCP as the user, then
   assert.match(systems[0], /CURRENT TAB: Data/);
 });
 
+// page context: the open artifact rides into every turn's system prompt ----------
+test('runOsAssistant folds the open-artifact page context into the system prompt', async () => {
+  const { llm, systems } = actThenFinish(
+    [{ id: 'd', name: 'document_dataset', args: { datasetId: 'ds-123' } }],
+    'Documented the columns of Orders.',
+  );
+  await runOsAssistant({
+    user: creator,
+    tab: 'data',
+    // In Data/Silver with dataset ds-123 open, the assistant must know it WITHOUT asking.
+    page: { tab: 'data', stage: 'silver', artifactType: 'dataset', artifactId: 'ds-123', artifactName: 'Orders' },
+    messages: [{ role: 'user', content: 'document the columns' }],
+    llm,
+  });
+  // Both the PLAN and ACT turns saw the grounded id/name — the model needn't ask.
+  assert.ok(systems.every((s) => /ds-123/.test(s)));
+  assert.match(systems[0], /Open dataset: "Orders"/);
+  assert.match(systems[0], /DEFAULT SUBJECT/);
+});
+
 // (c) a governance-blocked tool surfaces HONESTLY (no pretend action) ----------
 test('a Builder-gated tool is refused for a creator and surfaces as an honest error step', async () => {
   // `promote` (publish a shared asset) needs Builder+. A creator naming it must be

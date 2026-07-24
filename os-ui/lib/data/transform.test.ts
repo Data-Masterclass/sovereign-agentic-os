@@ -353,8 +353,36 @@ test('a three-way join keeps the table aliases aligned to the ref indices', () =
 
 // ---- failure surfacing -----------------------------------------------------------
 
-test('no joins throws (it is a JOIN builder)', () => {
-  assert.throws(() => compileGoldJoin({ source: BASE, joins: [], dimensions: [{ col: { ref: 0, column: 'order_id' } }], measures: [], target: GOLD }), /at least one dataset/);
+test('single-table Gold (0 joins) compiles a base-only projection — a join is OPTIONAL', () => {
+  const sql = compileGoldJoin({
+    source: BASE,
+    joins: [],
+    dimensions: [{ col: { ref: 0, column: 'region' } }],
+    measures: [{ name: 'orders', agg: 'count' }, { name: 'net', agg: 'sum', col: { ref: 0, column: 'amount' } }],
+    target: GOLD,
+  });
+  assertGuardShape(sql);
+  // reads ONLY the base Silver table (no JOIN clause), aliased t0
+  assert.match(sql, /from iceberg\.personal_alex\.silver_returns t0 group by t0\."region"$/);
+  assert.doesNotMatch(sql, / join /);
+  assert.match(sql, /count\(\*\) as "orders"/);
+  assert.match(sql, /sum\(t0\."amount"\) as "net"/);
+});
+
+test('single-table Gold with dims only (no measures) is a plain base projection, no GROUP BY', () => {
+  const sql = compileGoldJoin({ source: BASE, joins: [], dimensions: [{ col: { ref: 0, column: 'order_id' } }, { col: { ref: 0, column: 'region' } }], measures: [], target: GOLD });
+  assertGuardShape(sql);
+  assert.match(sql, /from iceberg\.personal_alex\.silver_returns t0$/);
+  assert.doesNotMatch(sql, /group by/);
+  assert.doesNotMatch(sql, / join /);
+});
+
+test('an empty Gold spec (0 joins, no dims, no measures) is still rejected honestly', () => {
+  assert.throws(() => compileGoldJoin({ source: BASE, joins: [], dimensions: [], measures: [], target: GOLD }), /at least one column or measure/);
+});
+
+test('single-table Gold cannot reference a joined table that is not there', () => {
+  assert.throws(() => compileGoldJoin({ source: BASE, joins: [], dimensions: [{ col: { ref: 1, column: 'region' } }], measures: [], target: GOLD }), /not part of this join/);
 });
 
 test('a join with no key throws', () => {
@@ -415,6 +443,22 @@ test('a builder on a governed asset writes the Gold join into their own domain s
     [],
   );
   assert.equal(plan.target, 'iceberg.sales.gold_returns');
+});
+
+test('goldJoinPlan builds a single-table Gold (0 joins) from the frozen Silver base into the frozen Gold FQN', () => {
+  const plan = goldJoinPlan(
+    { name: 'Returns', domain: 'sales', tier: 'dataset', slug: 'returns' },
+    { uid: 'creator', domains: ['sales'] },
+    [], // no join partner — a single-table Gold
+    [{ col: { ref: 0, column: 'region' } }],
+    [{ name: 'orders', agg: 'count' }],
+  );
+  assert.equal(plan.source, 'iceberg.personal_creator.silver_returns');
+  assert.equal(plan.target, 'iceberg.personal_creator.gold_returns');
+  assert.match(plan.sql, /^create or replace table iceberg\.personal_creator\.gold_returns as select/);
+  // reads only the caller's own Silver base — no cross-table join
+  assert.match(plan.sql, /from iceberg\.personal_creator\.silver_returns t0/);
+  assert.doesNotMatch(plan.sql, / join /);
 });
 
 test('goldMeasureToCube maps aggregates to a re-aggregatable Cube measure over the gold column', () => {

@@ -420,3 +420,229 @@ button.mon-item:hover {
 .mon-xlink:hover {
   filter: brightness(1.1);
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Redesigned Monitor: telemetry tiles + the big diagnosis window.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* ---- Tile grid ---- */
+.mon-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+.mon-tile {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: var(--panel);
+  cursor: pointer;
+  transition: border-color 0.14s, transform 0.14s, box-shadow 0.14s;
+}
+.mon-tile:hover {
+  border-color: var(--gold-line);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 30px -22px rgba(0, 0, 0, 0.9);
+}
+.mon-tile:focus-visible {
+  outline: 2px solid var(--gold-line);
+  outline-offset: 2px;
+}
+.mon-tile-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 10px;
+}
+.mon-tile-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mon-tile-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.mon-fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.mon-fact b {
+  color: var(--text);
+  font-weight: 650;
+}
+.mon-fact.warn {
+  color: var(--gold-text);
+}
+.mon-fact.err {
+  color: var(--danger);
+}
+.mon-fact.ok {
+  color: var(--teal);
+}
+
+/* ---- Diagnosis window (wide overlay) ---- */
+.mon-detail {
+  width: min(1080px, 96vw);
+  height: 100%;
+  background: var(--bg);
+  border-left: 1px solid var(--border-strong);
+  display: flex;
+  flex-direction: column;
+  box-shadow: -20px 0 60px -30px rgba(0, 0, 0, 0.8);
+  animation: drawer-in 0.18s ease-out;
+}
+.mon-detail-body {
+  padding: 22px 30px 48px;
+  overflow-y: auto;
+}
+.mon-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.mon-detail-name {
+  font-size: 18px;
+  font-weight: 650;
+  color: var(--text);
+}
+.mon-detail-scope {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+.mon-sub-note {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-faint);
+  font-family: var(--font-body);
+  font-size: 11px;
+  margin-left: 8px;
+}
+
+/* ---- Header stat blocks ---- */
+.mon-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.mon-stat {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--panel);
+}
+.mon-stat-v {
+  font-size: 19px;
+  font-weight: 650;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.mon-stat-l {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-faint);
+  margin-top: 3px;
+}
+.mon-stat.warn .mon-stat-v {
+  color: var(--gold-text);
+}
+.mon-stat.error .mon-stat-v {
+  color: var(--danger);
+}
+
+/* ---- Trend sparklines ---- */
+.mon-trends {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.mon-trend {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--panel);
+}
+.mon-trend-l {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-faint);
+  margin-bottom: 4px;
+}
+.mon-detail-spark {
+  width: 100%;
+  height: 40px;
+  display: block;
+}
+
+/* ---- Compact tables (run history · DQ rules · versions) ---- */
+.mon-table {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.mon-tr {
+  display: grid;
+  grid-template-columns: 90px 1.6fr 90px 80px 80px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.mon-tr:last-child {
+  border-bottom: none;
+}
+a.mon-tr:hover {
+  background: var(--bg-input);
+}
+.mon-tr.mon-th {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: var(--text-faint);
+  background: #0c0b0d;
+}
+.mon-tr.err {
+  background: rgba(229, 104, 95, 0.06);
+}
+.mon-tr-dq {
+  grid-template-columns: 2fr 120px 1fr;
+}
+.mon-tr-ver {
+  grid-template-columns: 60px 100px 1fr 2fr;
+}
+.mon-tr .ellip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- DQ badge row ---- */
+.mon-dq-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}

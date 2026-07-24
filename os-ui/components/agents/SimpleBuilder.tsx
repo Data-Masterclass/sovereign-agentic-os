@@ -33,6 +33,7 @@ import { setEntrypoint } from '@/lib/agents/canvas-edit';
 import { canSaveFromResult, DATA_NON_TABULAR_NOTE } from '@/lib/agents/output-save';
 import { AGENT_TEMPLATES, agentTemplate, type AgentTemplateKey } from '@/lib/agents/agent-templates';
 import StageShell from '@/components/core/StageShell';
+import { usePublishPageContext } from '@/components/core/PageContext';
 import {
   advance, goTo, initialStageState, isSatisfied, markDone,
   type StageDef, type StageState,
@@ -127,6 +128,17 @@ export default function SimpleBuilder({
   // rules are guaranteed by the shared stage model (lib/core/stages.ts).
   const [stage, setStage] = useState<StageState<Phase>>(() => initialStageState(PHASES));
   const phase = stage.current;
+
+  // Tell "Ask the OS" exactly what's open: this agent system + the current phase, so
+  // the assistant acts on THIS agent without asking which one. Clears on unmount.
+  usePublishPageContext({
+    tab: 'agents',
+    stage: phase,
+    artifactType: 'agent',
+    artifactId: systemId,
+    artifactName: system.system.name,
+  });
+
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 

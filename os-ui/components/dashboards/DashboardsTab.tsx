@@ -3,8 +3,9 @@
  */
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
 import { useApi } from '@/lib/useApi';
 import { useTabNavReset } from '@/lib/core/tab-nav';
@@ -16,7 +17,7 @@ type View =
   | { kind: 'list' }
   // ONE guided flow for both creating and viewing: `existing` = null → a new dashboard
   // starting on Define; a summary → an already-built dashboard opening at View.
-  | { kind: 'builder'; existing: DashboardSummary | null };
+  | { kind: 'builder'; existing: DashboardSummary | null; initialDatasetId?: string };
 
 /**
  * The Dashboards experience — the OS's ONE-view pattern, mirroring Data + Metrics but now
@@ -30,13 +31,26 @@ type View =
  * This component owns the ONE dashboards fetch (list) and the ONE metrics fetch (the
  * builder's palette). Metrics are DEFINED in the Metrics tab — here we only consume them.
  */
-export default function DashboardsTab() {
+function DashboardsTabInner() {
+  const searchParams = useSearchParams();
   const [view, setView] = useState<View>({ kind: 'list' });
   // ?archived=1 additionally returns soft-archived dashboards (their own section), so an
   // archived dashboard stays openable → its Govern stage exposes Restore + Delete.
   const [showArchived, setShowArchived] = useState(false);
   const dashboards = useApi<DashboardGroups>(`/api/dashboards${showArchived ? '?archived=1' : ''}`);
   const metrics = useApi<MetricGroups>('/api/metrics');
+
+  // ?new=1&dataset=<id> deep-link (from the Data tab's Publish stage): open the create
+  // flow with the palette pre-filtered to that dataset's metrics. One-shot.
+  const newApplied = useRef(false);
+  const newDataset = searchParams.get('new') === '1'
+    ? (searchParams.get('dataset') ? decodeURIComponent(searchParams.get('dataset')!) : '')
+    : null;
+  useEffect(() => {
+    if (newDataset === null || newApplied.current) return;
+    newApplied.current = true;
+    setView({ kind: 'builder', existing: null, initialDatasetId: newDataset || undefined });
+  }, [newDataset]);
 
   // Clicking the Dashboards sidebar link returns to the list from the builder.
   useTabNavReset(() => setView({ kind: 'list' }));
@@ -48,6 +62,7 @@ export default function DashboardsTab() {
         {view.kind === 'builder' ? (
           <DashboardBuilder
             existing={view.existing}
+            initialDatasetId={view.initialDatasetId}
             metrics={metrics.data}
             metricsLoading={metrics.loading}
             onBack={() => setView({ kind: 'list' })}
@@ -92,5 +107,13 @@ export default function DashboardsTab() {
         )}
       </div>
     </>
+  );
+}
+
+export default function DashboardsTab() {
+  return (
+    <Suspense>
+      <DashboardsTabInner />
+    </Suspense>
   );
 }

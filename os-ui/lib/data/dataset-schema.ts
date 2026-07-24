@@ -114,6 +114,32 @@ export const TRUST_LEVELS: TrustLevel[] = ['bronze', 'silver', 'gold'];
  *  the registry entry (a governed asset/product the builder could see). */
 export type DatasetUpstream = { datasetId: string; name: string; fqn: string; joinType: 'inner' | 'left' };
 
+/**
+ * The RAW, editable Gold build spec (stage-4) — persisted so the Gold panel RE-HYDRATES
+ * after a build: the join partners (datasetId + keys/type), the kept dimensions and the
+ * source measures all survive, so the definition stays visible + editable + rebuildable
+ * (not a one-shot black box). This is the panel's own vocabulary (datasetId-keyed joins,
+ * `ref::column` dimension/measure refs), kept deliberately opaque to the SHAPE layer:
+ * it is stored and returned verbatim, never interpreted here. Compilation still happens
+ * server-side from the resolved FQNs (`goldJoinPlan`) — this is purely the reproducible
+ * INPUT, never a trusted SQL source. ABSENT on every dataset built before this field
+ * existed (and on single-table/pass-through Gold with no stored spec) — byte-stable. */
+export type GoldSpecJoin = {
+  datasetId: string;
+  type: 'inner' | 'left';
+  baseCol: string;
+  joinCol: string;
+  adaptMode?: 'none' | 'cast' | 'text';
+  adaptType?: string;
+};
+export type GoldSpecDimension = { source: string; as?: string };
+export type GoldSpecMeasure = { name: string; agg: string; col?: string; op?: string; col2?: string };
+export type GoldSpec = {
+  joins: GoldSpecJoin[];
+  dimensions: GoldSpecDimension[];
+  measures: GoldSpecMeasure[];
+};
+
 /** The dropdown-driven data-quality rule kinds the DQ editor offers. Each compiles
  *  to a COUNT-of-violations SQL check run through the governed query path (see
  *  `lib/data/dq.ts`). `range` uses `min`/`max`; `accepted_values` uses `values`. */
@@ -182,6 +208,10 @@ export type Dataset = {
   imports?: string[];
   /** Additional datasets joined into the Gold version (multi-upstream lineage). */
   upstreams?: DatasetUpstream[];
+  /** The RAW editable Gold build spec (joins + kept columns + measures) — re-hydrates
+   *  the Gold panel so the definition stays visible/editable/rebuildable. ABSENT until a
+   *  Gold JOIN/single-table build stores one (byte-stable for every prior record). */
+  goldSpec?: GoldSpec;
   /** Manually-authored data-quality check intentions (not auto-executed). */
   checks?: DataCheck[];
   /** Heuristic monitor toggles (freshness/volume/schema). ABSENT ⇒ all ON (default-ON);
@@ -393,6 +423,40 @@ function parseUpstream(raw: unknown, i: number): DatasetUpstream {
   };
 }
 
+/** Re-hydrate the raw Gold spec, tolerating any absent/loose field (it is stored
+ *  verbatim, never trusted — the server re-compiles from resolved FQNs). Missing arrays
+ *  collapse to empty so a partial record still opens. */
+export function parseGoldSpec(raw: unknown): GoldSpec | undefined {
+  if (!isRecord(raw)) return undefined;
+  const joins = (Array.isArray(raw.joins) ? raw.joins : [])
+    .filter(isRecord)
+    .map((j): GoldSpecJoin => ({
+      datasetId: typeof j.datasetId === 'string' ? j.datasetId : '',
+      type: j.type === 'left' ? 'left' : 'inner',
+      baseCol: typeof j.baseCol === 'string' ? j.baseCol : '',
+      joinCol: typeof j.joinCol === 'string' ? j.joinCol : '',
+      ...(j.adaptMode === 'cast' || j.adaptMode === 'text' || j.adaptMode === 'none' ? { adaptMode: j.adaptMode } : {}),
+      ...(typeof j.adaptType === 'string' ? { adaptType: j.adaptType } : {}),
+    }));
+  const dimensions = (Array.isArray(raw.dimensions) ? raw.dimensions : [])
+    .filter(isRecord)
+    .map((d): GoldSpecDimension => ({
+      source: typeof d.source === 'string' ? d.source : '',
+      ...(typeof d.as === 'string' && d.as ? { as: d.as } : {}),
+    }));
+  const measures = (Array.isArray(raw.measures) ? raw.measures : [])
+    .filter(isRecord)
+    .map((m): GoldSpecMeasure => ({
+      name: typeof m.name === 'string' ? m.name : '',
+      agg: typeof m.agg === 'string' ? m.agg : 'sum',
+      ...(typeof m.col === 'string' && m.col ? { col: m.col } : {}),
+      ...(typeof m.op === 'string' && m.op ? { op: m.op } : {}),
+      ...(typeof m.col2 === 'string' && m.col2 ? { col2: m.col2 } : {}),
+    }));
+  if (joins.length === 0 && dimensions.length === 0 && measures.length === 0) return undefined;
+  return { joins, dimensions, measures };
+}
+
 function parseCheck(raw: unknown, i: number): DataCheck {
   if (!isRecord(raw)) throw new DatasetError(`dataset.yaml: checks[${i}] must be a mapping`);
   const base: DataCheck = {
@@ -445,6 +509,7 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
   }
   const imports = Array.isArray(doc.imports) ? doc.imports.map((x) => String(x)) : undefined;
   const upstreams = Array.isArray(doc.upstreams) ? doc.upstreams.map(parseUpstream) : undefined;
+  const goldSpec = parseGoldSpec(doc.goldSpec);
   const checks = checksRaw.length > 0 ? checksRaw.map(parseCheck) : undefined;
   // Monitor toggles: only an explicit `false` is stored (default-ON). Any member absent
   // ⇒ that monitor is on. An empty/all-true object collapses to undefined (byte-stable).
@@ -485,6 +550,7 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
     ...(certification ? { certification } : {}),
     ...(imports ? { imports } : {}),
     ...(upstreams ? { upstreams } : {}),
+    ...(goldSpec ? { goldSpec } : {}),
     ...(checks ? { checks } : {}),
     ...(monitors ? { monitors } : {}),
     ...(cubeNamespaced ? { cubeNamespaced } : {}),
@@ -525,6 +591,11 @@ export function serializeDataset(d: Dataset): string {
   if (d.certification) doc.certification = d.certification;
   if (d.imports && d.imports.length > 0) doc.imports = d.imports;
   if (d.upstreams && d.upstreams.length > 0) doc.upstreams = d.upstreams;
+  // Omit-when-empty (byte-stable): a Gold spec is written only once a Gold build stores
+  // one; every dataset without a stored spec serializes exactly as before.
+  if (d.goldSpec && (d.goldSpec.joins.length > 0 || d.goldSpec.dimensions.length > 0 || d.goldSpec.measures.length > 0)) {
+    doc.goldSpec = d.goldSpec;
+  }
   if (d.checks && d.checks.length > 0) doc.checks = d.checks;
   // Only persist explicitly-disabled monitors (default-ON); an all-on dataset omits the
   // key entirely, so nothing that never touched the toggles churns in the mirror.

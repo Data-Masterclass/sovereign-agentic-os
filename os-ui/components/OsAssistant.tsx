@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { useUser } from '@/lib/useUser';
 import { parseAgentChatResponse } from '@/lib/agents/agent-chat-response';
+import { usePageContext } from '@/components/core/PageContext';
 import Markdown from '@/components/Markdown';
 
 /**
@@ -53,6 +54,10 @@ type Msg = { role: 'user' | 'assistant'; content: string; tools?: ToolTrace[] };
 export default function OsAssistant() {
   const pathname = usePathname() || '/';
   const { user } = useUser();
+  // What the user is looking at right now (open artifact + stage), published by the
+  // active tab surface. Sent with every message so the assistant is grounded on it
+  // — it's null when no surface published one, and the request is unchanged then.
+  const page = usePageContext();
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
@@ -89,7 +94,7 @@ export default function OsAssistant() {
         const res = await fetch('/api/assistant/chat', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ path: pathname, messages: next }),
+          body: JSON.stringify({ path: pathname, messages: next, pageContext: page }),
           signal: ctrl.signal,
         });
         const raw = await res.text();
@@ -113,7 +118,7 @@ export default function OsAssistant() {
         setLoading(false);
       }
     },
-    [loading, messages, pathname],
+    [loading, messages, pathname, page],
   );
 
   // The assistant acts AS the signed-in user; hide the surface when signed out.

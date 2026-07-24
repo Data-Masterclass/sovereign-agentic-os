@@ -18,6 +18,7 @@ import { runAgentic, type AgenticResult, type LlmCall, type ToolExecutor, type T
 import { liteLlmCaller } from './runtime.ts';
 import { resolveAssistantModelId } from './complete.ts';
 import { inputBudget, modelContext } from '@/lib/models/context-windows';
+import { renderPageContext, type PageContext } from './page-context.ts';
 
 /**
  * THE ONE OVERARCHING SOVEREIGN OS ASSISTANT (server wiring).
@@ -110,8 +111,14 @@ const OS_RULES = [
   '      heads-up, not a ceremony. Bigger or irreversible work gets the full plan.',
 ].join('\n');
 
-/** The system prompt: OS overview + current-tab context + governance note. */
-export function osAssistantSystem(tab: McpTab | null): string {
+/**
+ * The system prompt: OS overview + current-tab context + governance note, plus the
+ * optional PAGE CONTEXT (the exact screen/artifact open right now). The page-context
+ * block only appears when the surface published one — otherwise the prompt is
+ * byte-for-byte today's, so the assistant's behavior is unchanged (still asks for an
+ * id when it truly has none). Context only ENRICHES.
+ */
+export function osAssistantSystem(tab: McpTab | null, page?: PageContext | null): string {
   const parts = [OS_RULES, '', '--- OS ORIENTATION ---', buildInstructions()];
   if (tab) {
     parts.push(
@@ -128,6 +135,8 @@ export function osAssistantSystem(tab: McpTab | null): string {
       'No single tab is in focus; help across the whole OS using any governed tool.',
     );
   }
+  const pageBlock = renderPageContext(page);
+  if (pageBlock) parts.push('', pageBlock);
   return parts.join('\n');
 }
 
@@ -175,6 +184,10 @@ export type RunOsAssistantInput = {
   user: CurrentUser;
   /** The tab the user is currently on, or null (overview page / no tool surface). */
   tab: McpTab | null;
+  /** The exact screen/open-artifact snapshot the surface published, if any. Folded
+   *  into the system prompt so the open artifact is the default subject. Optional —
+   *  absent means "no page context", and the assistant behaves as before. */
+  page?: PageContext | null;
   messages: { role: 'user' | 'assistant'; content: string }[];
   maxIterations?: number;
   /** Injected in tests; defaults to the live governed LiteLLM caller. */
@@ -196,7 +209,7 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
   const assistantId = injected ? config.litellmExecModel : resolveAssistantModelId();
   const ctx = modelContext(assistantId);
   const result = await runAgentic({
-    system: osAssistantSystem(input.tab),
+    system: osAssistantSystem(input.tab, input.page),
     userMessages: input.messages,
     tools: osToolSpecs(input.user, input.tab),
     callTool: osToolExecutor(input.user),

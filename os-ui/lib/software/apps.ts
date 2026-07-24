@@ -599,29 +599,50 @@ function isOwnerOrAdminApp(a: App, user: CurrentUser): boolean {
   return canManageArtifact(user, { owner: a.owner, domain: a.domain, scope });
 }
 
+/** Apply the back-compat normalisation + in-process connection re-hydration a
+ *  persisted app doc needs on load. Shared by the bulk hydrate AND the by-id mirror
+ *  fallback so both paths yield an identical, ready-to-use App. */
+function hydrateAppDoc(app: App): App {
+  // Back-compat: apps persisted before surface-detection get one inferred from
+  // their scaffold (a persisted declaration still wins over the heuristic).
+  if (!app.surface) {
+    app.surface = resolveSurface(
+      templateFiles(app.template, app.name, app.slug),
+      app.declaredSurface,
+    );
+  }
+  // Back-compat: apps persisted before Define/Design/grants must still load.
+  if (typeof app.purpose !== 'string') app.purpose = '';
+  if (!Array.isArray(app.epics)) app.epics = [];
+  app.grants = normalizeContextGrants(app.grants);
+  // Re-hydrate the in-process MCP grant so agents can call it after a restart.
+  if (app.connectionId) rehydrateConnection(app);
+  return app;
+}
+
+/** Authoritative by-id read: on a cache MISS, consult the durable mirror — a
+ *  DIFFERENT server instance may have created the app after THIS instance
+ *  hydrated its cache (the "commit → App not found" bug), so a bare map.get is
+ *  not authoritative. Populates the cache on a mirror hit. Null ⇒ exists nowhere. */
+async function getAppByIdWithMirror(appId: string): Promise<App | null> {
+  const map = await getCache();
+  const hit = map.get(appId);
+  if (hit) return hit;
+  const doc = (await mirror.getDoc(appId)) as App | null;
+  if (!doc) return null;
+  const app = hydrateAppDoc(doc);
+  map.set(app.id, app);
+  return app;
+}
+
 async function getCache(): Promise<Map<string, App>> {
   const s = appCacheState();
   if (s.cache) return s.cache;
   const map = new Map<string, App>();
   const docs = (await mirror.hydrate(500)) ?? []; // null → mirror down → in-memory only
   for (const app of docs as App[]) {
-    // Back-compat: apps persisted before surface-detection get one inferred
-    // from their scaffold so the monitor drives off surface, never `template`.
-    // A persisted declaration (intent) still wins over the heuristic.
-    if (!app.surface) {
-      app.surface = resolveSurface(
-        templateFiles(app.template, app.name, app.slug),
-        app.declaredSurface,
-      );
-    }
-    // Back-compat: apps persisted before the Define/Design/grants fields existed
-    // must still load — default purpose/epics to empty and normalise grants.
-    if (typeof app.purpose !== 'string') app.purpose = '';
-    if (!Array.isArray(app.epics)) app.epics = [];
-    app.grants = normalizeContextGrants(app.grants);
+    hydrateAppDoc(app);
     map.set(app.id, app);
-    // Re-hydrate the in-process MCP grant so agents can call it after a restart.
-    if (app.connectionId) rehydrateConnection(app);
   }
   s.cache = map;
   return map;
@@ -1053,8 +1074,9 @@ export async function listAppsForUser(user: CurrentUser): Promise<App[]> {
 }
 
 export async function getAppForUser(appId: string, user: CurrentUser): Promise<App> {
-  const map = await getCache();
-  const a = map.get(appId);
+  // Cache miss falls back to the durable mirror — a cross-instance create must
+  // still be visible here (the same stale-cache split that 404'd `commit`).
+  const a = await getAppByIdWithMirror(appId);
   if (!a || !visibleToUser(a, user)) throw withStatus(new Error('App not found'), 404);
   return a;
 }
@@ -1520,8 +1542,7 @@ export async function restoreAppGitVersion(
 
 /** Raw app fetch by id (no visibility filter) — for governed server orchestration. */
 export async function getAppByIdInternal(appId: string): Promise<App | null> {
-  const map = await getCache();
-  return map.get(appId) ?? null;
+  return getAppByIdWithMirror(appId);
 }
 
 /** Every app in the store (no visibility filter) — for the lineage check. */

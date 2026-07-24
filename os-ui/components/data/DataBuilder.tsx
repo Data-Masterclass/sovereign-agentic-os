@@ -12,7 +12,6 @@ import RefinePanel from './RefinePanel';
 import GoldJoinPanel from './GoldJoinPanel';
 import ExplorePanel from './ExplorePanel';
 import BronzePanel from './BronzePanel';
-import MetricsPanel from './MetricsPanel';
 import StageAssistant, { type DefineDraft } from './StageAssistant';
 import TalkTo from '@/components/talk/TalkTo';
 import { TALK_PRESENTATION } from '@/lib/talk/schema';
@@ -23,10 +22,12 @@ import type { FiledApproval } from '@/lib/governance/approval-notice';
 import DomainTag from '@/components/DomainTag';
 import type { Visibility } from '@/lib/core/lifecycle';
 import StageShell from '@/components/core/StageShell';
+import { usePublishPageContext } from '@/components/core/PageContext';
 import { initialStageState, markDone, advance, type StageState } from '@/lib/core/stages';
 import { DATA_STAGES, type DataStageId, type DataCtx } from '@/lib/data/stages';
 import BuilderModeToggle from '@/components/core/BuilderModeToggle';
 import type { ViewMode } from '@/lib/core/view-mode';
+import type { GoldSpec } from '@/lib/data/dataset-schema';
 
 const DATA_MODE_KEY = 'data.viewMode';
 
@@ -142,6 +143,9 @@ type Dataset = {
   versions: { bronze: VersionState; silver: VersionState; gold: VersionState };
   columns: ColumnDoc[];
   measures: { name: string }[];
+  /** The stored raw Gold build spec — re-hydrates the Gold panel so its joins/columns/
+   *  measures stay visible + editable + rebuildable after a build. */
+  goldSpec?: GoldSpec;
   certification?: Certification;
   /** Soft-archived (retained, reversible). Absent/false = live. */
   archived?: boolean;
@@ -255,6 +259,118 @@ function CodeDrawer({ datasetId }: { datasetId: string }) {
       </div>
       {err ? <div className="error" style={{ marginTop: 10 }}>{err}</div> : null}
     </div>
+  );
+}
+
+/* ───────────────────── Publish · connected-lists (build on this data) ─────────────────────
+ * Three governed reverse-lists for the Publish stage: the metrics, dashboards and agent
+ * systems that already build on THIS dataset. Each is fetched AS the current user through a
+ * per-dataset GET route (RLS-filtered server-side), links out to the owning tab focused on
+ * the item, and offers an inline "＋ New …" that opens that tab's creator pre-scoped to this
+ * dataset. Fail-soft: a failed fetch shows a calm hint, never a crash or a fabricated row. */
+
+type MetricRow = { id: string; name: string; type: string; tier: string; error?: string };
+type DashboardRow = { id: string; name: string; charts: number };
+type SystemRow = { id: string; name: string; agentCount: number };
+
+/** Fetch a per-dataset list once (keyed on datasetId), fail-soft. Mirrors the file's other
+ *  panels: a small useState + useEffect, no external data lib. `pick` reads the array off the
+ *  JSON body so one hook serves all three lists. */
+function useConnected<T>(datasetId: string, path: string, pick: (body: unknown) => T[]) {
+  const [rows, setRows] = useState<T[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    let live = true;
+    setLoaded(false);
+    (async () => {
+      try {
+        const res = await fetch(`/api/data/datasets/${datasetId}/${path}`, { cache: 'no-store' });
+        if (!res.ok) throw new Error();
+        const body = await res.json();
+        if (live) setRows(pick(body));
+      } catch {
+        if (live) setRows([]); // fail-soft — a calm empty list, never a crash
+      } finally {
+        if (live) setLoaded(true);
+      }
+    })();
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datasetId, path]);
+  return { rows, loaded };
+}
+
+/** The "build on this data" doorways for Publish — Metrics, Dashboards and Agent systems
+ *  connected to this dataset, each with an inline create pre-scoped to it. */
+function ConnectedBuild({ datasetId }: { datasetId: string }) {
+  const metrics = useConnected<MetricRow>(datasetId, 'metrics', (b) => (b as { metrics?: MetricRow[] }).metrics ?? []);
+  const dashboards = useConnected<DashboardRow>(datasetId, 'dashboards', (b) => (b as { dashboards?: DashboardRow[] }).dashboards ?? []);
+  const systems = useConnected<SystemRow>(datasetId, 'agents', (b) => (b as { systems?: SystemRow[] }).systems ?? []);
+
+  return (
+    <>
+      {/* Metrics defined on this dataset. */}
+      <div className="section-title" style={{ marginTop: 24 }}>
+        Metrics
+        {metrics.rows.length > 0 ? <span className="count-pill">{metrics.rows.length}</span> : null}
+      </div>
+      {metrics.rows.length > 0 ? (
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+          {metrics.rows.map((m) => (m.error ? (
+            <span className="chip" key={m.id} title={m.error} style={{ opacity: 0.6 }}>{m.name} · {m.error}</span>
+          ) : (
+            <a className="chip" key={m.id} href={`/metrics?focus=${encodeURIComponent(m.id)}`} style={{ textDecoration: 'none' }}>{m.name} · {m.type}</a>
+          )))}
+        </div>
+      ) : metrics.loaded ? (
+        <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>No metrics defined on this dataset yet.</p>
+      ) : null}
+      <div className="row" style={{ marginBottom: 4 }}>
+        <a className="btn ghost sm" href={`/metrics?new=1&dataset=${encodeURIComponent(datasetId)}`} title="Define a new metric on this dataset in the Metrics tab">
+          ＋ New metric →
+        </a>
+      </div>
+
+      {/* Dashboards bound to this dataset's Cube view. */}
+      <div className="section-title" style={{ marginTop: 20 }}>
+        Dashboards
+        {dashboards.rows.length > 0 ? <span className="count-pill">{dashboards.rows.length}</span> : null}
+      </div>
+      {dashboards.rows.length > 0 ? (
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+          {dashboards.rows.map((d) => (
+            <a className="chip" key={d.id} href={`/dashboards?focus=${encodeURIComponent(d.id)}`} style={{ textDecoration: 'none' }}>{d.name} · {d.charts} chart{d.charts === 1 ? '' : 's'}</a>
+          ))}
+        </div>
+      ) : dashboards.loaded ? (
+        <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>No dashboards built on this dataset yet.</p>
+      ) : null}
+      <div className="row" style={{ marginBottom: 4 }}>
+        <a className="btn ghost sm" href={`/dashboards?new=1&dataset=${encodeURIComponent(datasetId)}`} title="Build a new dashboard on this dataset in the Dashboards tab">
+          ＋ New dashboard →
+        </a>
+      </div>
+
+      {/* Agent systems that consume this dataset. */}
+      <div className="section-title" style={{ marginTop: 20 }}>
+        Use in an agent system
+        {systems.rows.length > 0 ? <span className="count-pill">{systems.rows.length}</span> : null}
+      </div>
+      {systems.rows.length > 0 ? (
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+          {systems.rows.map((s) => (
+            <a className="chip" key={s.id} href={`/agents?system=${encodeURIComponent(s.id)}`} style={{ textDecoration: 'none' }}>{s.name} · {s.agentCount} agent{s.agentCount === 1 ? '' : 's'}</a>
+          ))}
+        </div>
+      ) : systems.loaded ? (
+        <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>No agent systems use this dataset yet.</p>
+      ) : null}
+      <div className="row" style={{ marginBottom: 4 }}>
+        <a className="btn ghost sm" href="/agents?system=new" title="Build a new agent system that uses this dataset in the Agents tab">
+          Use in an agent system →
+        </a>
+      </div>
+    </>
   );
 }
 
@@ -648,6 +764,16 @@ export default function DataBuilder({
   // opens at Ingest; a Bronze-only one at Define; a Silver-only one at Harmonize; a
   // materialized one at Validate (the natural "check quality then query" entry).
   const [stage, setStage] = useState<StageState<DataStageId>>(() => initialStageState(DATA_STAGES));
+
+  // Ground "Ask the OS" on the dataset + stage currently open here, so a request like
+  // "document the columns" acts on THIS dataset at THIS stage without asking for an id.
+  usePublishPageContext({
+    tab: 'data',
+    stage: stage.current,
+    artifactType: 'dataset',
+    artifactId: datasetId,
+    artifactName: dataset?.name,
+  });
   const [landed, setLanded] = useState(false);
   useEffect(() => {
     if (landed || !dataset) return;
@@ -703,6 +829,12 @@ export default function DataBuilder({
   // A panel committed its layer: reload the real state, record the ✓, and REQUEST
   // an advance to the next stage (the effect moves the stepper once the build lands).
   const commitStage = (id: DataStageId) => { onBuilt(); settle(id); setPendingAdvance(id); };
+  // Like commitStage but STAYS on the current step (no auto-advance): reload + record the
+  // ✓ so the built state shows, and let the user explore the result and choose to move on.
+  // The Gold step uses this so building Gold no longer throws the user into Data Quality.
+  const commitStageStay = (id: DataStageId) => { onBuilt(); settle(id); };
+  // The user explicitly chose to move on from a settled step → advance the stepper.
+  const continueFrom = (id: DataStageId) => setPendingAdvance(id);
 
   // Rename the dataset (display name only). The store freezes the physical slug before
   // the name changes, so every FQN/Cube/dbt identity stays pinned to the real table.
@@ -972,8 +1104,10 @@ export default function DataBuilder({
                     datasetId={dataset.id} datasetName={dataset.name}
                     owner={dataset.owner} domain={dataset.domain} tier={dataset.tier}
                     columns={colNames}
+                    silverBuilt={canHarmonizeGold}
                     stage={{ layer: 'silver', copy: { title: 'Clean it up', subtitle: '', tool: '' } }}
-                    onCommitted={() => commitStage('define')}
+                    onCommitted={() => commitStageStay('define')}
+                    onContinue={() => continueFrom('define')}
                   />
                 ) : <p className="muted" style={{ fontSize: 13 }}>Bring in a Bronze layer first (in Ingest).</p>}
               </>
@@ -993,14 +1127,16 @@ export default function DataBuilder({
                   Harmonize — Gold
                   <span className="hint" style={{ margin: '0 0 0 10px' }}>join trusted datasets into one governed Gold table</span>
                 </div>
-                {canHarmonizeGold ? (
-                  <GoldJoinPanel
-                    datasetId={dataset.id} datasetName={dataset.name}
-                    owner={dataset.owner} domain={dataset.domain} tier={dataset.tier}
-                    columns={colNames}
-                    onCommitted={() => commitStage('harmonize')}
-                  />
-                ) : <p className="muted" style={{ fontSize: 13 }}>Clean it to Silver first (in Define), then you can harmonize into Gold.</p>}
+                <GoldJoinPanel
+                  datasetId={dataset.id} datasetName={dataset.name}
+                  owner={dataset.owner} domain={dataset.domain} tier={dataset.tier}
+                  columns={colNames}
+                  silverBuilt={canHarmonizeGold}
+                  goldBuilt={dataset.versions.gold.built}
+                  initialSpec={dataset.goldSpec}
+                  onCommitted={() => commitStageStay('harmonize')}
+                  onContinue={() => continueFrom('harmonize')}
+                />
               </>
             ) : <p className="muted" style={{ fontSize: 13 }}>Only the owner and domain admins can harmonize this dataset.</p>}
 
@@ -1186,70 +1322,9 @@ export default function DataBuilder({
         {/* ─────────────── Publish (Metrics & Usage) ─────────────── */}
         {stage.current === 'publish' ? (
           <div>
-            {/* Talk to Data — governed NL→SQL over what the viewer can see (usage before promote). */}
-            <div {...anchorAttr(ANCHORS.data.query)}>
-              <TalkTo tab="data" title={talk.title} blurb={talk.blurb} examples={talk.examples} />
-            </div>
-
-            {/* Doorway — jump to Metrics or Dashboards pre-scoped to this dataset. */}
-            {/* TODO: pass ?dataset=<id> once Metrics/Dashboards pages read that param to pre-scope. */}
-            <div className="section-title" style={{ marginTop: 24 }}>Build on this data</div>
-            <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-              Take the next step — define a metric or build a dashboard on top of this dataset.
-            </p>
-            <div className="row" style={{ gap: 10 }}>
-              <a className="btn ghost" href="/metrics" title="Define a metric on this dataset in the Metrics tab">
-                Build a metric →
-              </a>
-              <a className="btn ghost" href="/dashboards" title="Build a dashboard using this dataset in the Dashboards tab">
-                Build a dashboard →
-              </a>
-            </div>
-
-            {/* Metrics — defined on the governed Gold asset (Cube handover). */}
-            {dataset.measures.length > 0 || (dataset.tier !== 'dataset' && dataset.versions.gold.built) ? (
-              <>
-                <div className="section-title" style={{ marginTop: 0 }}>
-                  Metrics
-                  {dataset.measures.length > 0 ? <span className="count-pill">{dataset.measures.length}</span> : null}
-                </div>
-                {dataset.measures.length > 0 ? (
-                  <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-                    {dataset.measures.map((m) => <span className="chip" key={m.name}>{m.name}</span>)}
-                  </div>
-                ) : null}
-                {dataset.tier !== 'dataset' && dataset.versions.gold.built ? (
-                  <MetricsPanel datasetId={dataset.id} />
-                ) : dataset.tier === 'dataset' && dataset.versions.gold.built ? (
-                  <div className="guided-panel" style={{ marginBottom: 12 }}>
-                    <p className="muted" style={{ marginTop: 0 }}>
-                      Metrics are defined on the <strong>governed</strong> Gold table (Cube reads the Trino mart). Promote this dataset below first — then define metrics on the asset/product.
-                    </p>
-                  </div>
-                ) : null}
-              </>
-            ) : null}
-
-            {/* Configuration drawer (dbt SQL / dataset.yaml). */}
-            {canEdit ? (
-              <>
-                <div className="section-title" style={{ marginTop: 20 }}>
-                  Configuration
-                  <button className={`btn ghost sm${showCode ? ' on' : ''}`} style={{ marginLeft: 10 }} onClick={() => setShowCode((v) => !v)}>
-                    {showCode ? 'Hide the code' : '‹ › Show the code'}
-                  </button>
-                </div>
-                {showCode ? (
-                  <div style={{ marginBottom: 14 }}>
-                    <p className="hint" style={{ marginTop: 0 }}>dataset.yaml is the single source — the panels and the data agent all read and write these files.</p>
-                    <CodeDrawer datasetId={dataset.id} />
-                  </div>
-                ) : null}
-              </>
-            ) : null}
-
-            {/* Sharing / promotion — the governed promote/certify block. */}
-            <div className="section-title" style={{ marginTop: 20 }}>Sharing</div>
+            {/* Sharing / promotion — the governed promote/certify block (moved to the top:
+                deciding who sees this dataset comes before building on it). Logic unchanged. */}
+            <div className="section-title" style={{ marginTop: 0 }}>Sharing</div>
             {dataset.tier === 'dataset' ? (
               canHarmonizeGold ? (
                 <div className="gate-check" style={{ marginTop: 4 }}>
@@ -1307,6 +1382,33 @@ export default function DataBuilder({
               </div>
             ) : null}
             {shareErr ? <div className="error" style={{ marginTop: 8 }}>{shareErr}</div> : null}
+
+            {/* Talk to Data — governed NL→SQL over what the viewer can see (usage before promote). */}
+            <div {...anchorAttr(ANCHORS.data.query)} style={{ marginTop: 24 }}>
+              <TalkTo tab="data" title={talk.title} blurb={talk.blurb} examples={talk.examples} />
+            </div>
+
+            {/* Build on this data — the metrics, dashboards and agent systems already connected
+                to this dataset, each linking out + offering an inline create pre-scoped to it. */}
+            <ConnectedBuild datasetId={dataset.id} />
+
+            {/* Configuration drawer (dbt SQL / dataset.yaml) — the technical surface, kept last. */}
+            {canEdit ? (
+              <>
+                <div className="section-title" style={{ marginTop: 24 }}>
+                  Configuration
+                  <button className={`btn ghost sm${showCode ? ' on' : ''}`} style={{ marginLeft: 10 }} onClick={() => setShowCode((v) => !v)}>
+                    {showCode ? 'Hide the code' : '‹ › Show the code'}
+                  </button>
+                </div>
+                {showCode ? (
+                  <div style={{ marginBottom: 14 }}>
+                    <p className="hint" style={{ marginTop: 0 }}>dataset.yaml is the single source — the panels and the data agent all read and write these files.</p>
+                    <CodeDrawer datasetId={dataset.id} />
+                  </div>
+                ) : null}
+              </>
+            ) : null}
           </div>
         ) : null}
       </StageShell>

@@ -20,6 +20,7 @@ import FolderLayout from '@/components/core/FolderLayout';
 import { ensureFolderId, renamedPath } from '@/lib/folders/client';
 import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
 import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
+import { canManageArtifact, type ArtifactScope } from '@/lib/governance/edit-scope';
 import { uploadRawFile } from '@/lib/files/upload-client';
 import FilePreview from './FilePreview';
 
@@ -37,7 +38,17 @@ type Facets = { folders: { path: string; count: number }[]; tags: { tag: string;
 type Groups = { mine: Summary[]; domain: Summary[]; marketplace: Summary[]; facets: Facets };
 type Hit = { id: string; name: string; folder: string; tags: string[]; kind: Summary['kind']; score: number; snippet: string };
 
-const KIND_LABEL: Record<Summary['kind'], string> = { doc: 'DOC', image: 'IMG', audio: 'AUD', video: 'VID', table: 'TAB', archive: 'ZIP', other: 'FILE' };
+/** Display kind: PDFs are stored as `kind: 'doc'`, but a PDF deserves its own badge so
+ *  it reads as distinct from a generic text doc. Detect by contentType if the summary
+ *  ever carries it, else by a `.pdf` name suffix (the only signal the list summary has
+ *  today). Everything else falls through to the stored kind. */
+type BadgeKind = Summary['kind'] | 'pdf';
+function badgeKind(f: Pick<Summary, 'kind' | 'name'> & { contentType?: string }): BadgeKind {
+  const isPdf = f.contentType === 'application/pdf' || /\.pdf$/i.test(f.name);
+  return isPdf ? 'pdf' : f.kind;
+}
+
+const KIND_LABEL: Record<BadgeKind, string> = { doc: 'DOC', pdf: 'PDF', image: 'IMG', audio: 'AUD', video: 'VID', table: 'TAB', archive: 'ZIP', other: 'FILE' };
 
 type ViewMode = 'grid' | 'list';
 type SortKey = 'name' | 'updated' | 'size' | 'type';
@@ -76,9 +87,10 @@ function FileThumb({ f }: { f: Summary }) {
       </div>
     );
   }
+  const bk = badgeKind(f);
   return (
-    <div className={`file-thumb file-badge kind-${f.kind}`}>
-      <span className="file-badge-label">{KIND_LABEL[f.kind]}</span>
+    <div className={`file-thumb file-badge kind-${bk}`}>
+      <span className="file-badge-label">{KIND_LABEL[bk]}</span>
     </div>
   );
 }
@@ -132,7 +144,7 @@ function FileRow({
           onChange={(e) => onPick(e.target.checked)}
         />
       ) : null}
-      <span className={`kind-chip kind-${f.kind}`}>{KIND_LABEL[f.kind]}</span>
+      <span className={`kind-chip kind-${badgeKind(f)}`}>{KIND_LABEL[badgeKind(f)]}</span>
       <span className="file-row-name">{f.name}</span>
       <span className="file-row-meta">{bytesLabel(f.bytes)}</span>
       <StatusChip s={f.status} />
@@ -145,6 +157,18 @@ function FileRow({
 type FolderRoot = 'personal' | 'domain';
 function rootOf(f: Summary): FolderRoot {
   return f.tier === 'dataset' ? 'personal' : 'domain';
+}
+
+/** The edit-scope tier of a file — mirrors FilePreview so bulk actions gate exactly
+ *  like the single-file detail view. */
+function scopeOf(f: Summary): ArtifactScope {
+  return f.tier === 'dataset' ? 'personal' : f.tier === 'product' ? 'certified' : 'shared';
+}
+type ManageUser = { id: string; role: Parameters<typeof canManageArtifact>[0]['role']; domains: string[] };
+/** Can this user manage (archive/move) the file? Same fail-closed rule the server + the
+ *  detail view use — never bulk-mutate something the user couldn't touch one-by-one. */
+function canManageFile(u: ManageUser | null, f: Summary): boolean {
+  return u ? canManageArtifact(u, { owner: f.owner, domain: f.domain, scope: scopeOf(f) }) : false;
 }
 
 /** Which folder roots to show in the rail + picker for each scope tab.
@@ -173,8 +197,12 @@ function FilesBrowserInner() {
   // with folders synthesised from the file facets so implicit folders keep showing.
   const [personalNodes, setPersonalNodes] = useState<FolderPathNode[]>([]);
   const [domainNodes, setDomainNodes] = useState<FolderPathNode[]>([]);
-  // Multi-select in the grid → bulk "Move to folder…".
+  // Multi-select in the grid → bulk "Move to folder…" / Promote / Archive.
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  // A bulk op is running (disable the bar + show a spinner); a concise result notice
+  // ("N requested / K failed / S skipped") shown until the next selection change.
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkNotice, setBulkNotice] = useState('');
   // ?archived=1 additionally returns soft-archived files (their own section), so an
   // archived file stays openable → its preview exposes Restore + Delete (OS-wide rule).
   const [showArchived, setShowArchived] = useState(false);
@@ -341,6 +369,64 @@ function FilesBrowserInner() {
     setPickerIds(ids);
   }, []);
 
+  // Bulk PROMOTE — files the user selected. Reuses the SAME per-file promote endpoint
+  // the detail view uses (POST /api/files/{id}/promote), so governance is identical:
+  // the server files a promotion REQUEST for each (a domain admin still approves). Only
+  // personal-tier (dataset) files the user can manage are promotable; the rest are
+  // reported as skipped. Result summary: "N requested / K failed / S skipped".
+  const bulkPromote = useCallback(async (files: Summary[]) => {
+    const mu = user ? { id: user.id, role: user.role, domains: user.domains } : null;
+    const eligible = files.filter((f) => f.tier === 'dataset' && canManageFile(mu, f));
+    const skipped = files.length - eligible.length;
+    if (eligible.length === 0) {
+      setBulkNotice(`Nothing to promote — ${skipped} not promotable.`);
+      return;
+    }
+    setBulkBusy(true); setBulkNotice(''); setErr('');
+    let requested = 0; let failed = 0;
+    for (const f of eligible) {
+      try {
+        const res = await fetch(`/api/files/${f.id}/promote`, {
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+        });
+        if (res.ok) requested += 1; else failed += 1;
+      } catch { failed += 1; }
+    }
+    setBulkBusy(false);
+    setPicked(new Set());
+    setBulkNotice(`${requested} requested${failed ? ` · ${failed} failed` : ''}${skipped ? ` · ${skipped} skipped` : ''}. A domain admin approves each.`);
+    refresh();
+  }, [user, refresh]);
+
+  // Bulk ARCHIVE — reuses the SAME archive path the single-file LifecycleActions uses
+  // (POST /api/files/{id} {action:'archive'}), per id. Confirmed once via the shared
+  // ConfirmDialog (a multi-item lifecycle action). Only files the user can manage are
+  // attempted; the rest are reported as skipped.
+  const bulkArchive = useCallback(async (files: Summary[]) => {
+    const mu = user ? { id: user.id, role: user.role, domains: user.domains } : null;
+    const eligible = files.filter((f) => canManageFile(mu, f));
+    const skipped = files.length - eligible.length;
+    if (eligible.length === 0) {
+      setBulkNotice(`Nothing to archive — ${skipped} not yours to manage.`);
+      return;
+    }
+    if (!await confirm(archiveFolderCopy(`${eligible.length} file${eligible.length > 1 ? 's' : ''}`, eligible.length))) return;
+    setBulkBusy(true); setBulkNotice(''); setErr('');
+    let archived = 0; let failed = 0;
+    for (const f of eligible) {
+      try {
+        const res = await fetch(`/api/files/${f.id}`, {
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'archive' }),
+        });
+        if (res.ok) archived += 1; else failed += 1;
+      } catch { failed += 1; }
+    }
+    setBulkBusy(false);
+    setPicked(new Set());
+    setBulkNotice(`${archived} archived${failed ? ` · ${failed} failed` : ''}${skipped ? ` · ${skipped} skipped` : ''}.`);
+    refresh();
+  }, [user, confirm, refresh]);
+
   const uid = user?.id ?? '';
   const scoped = groups ? groupByScope(groups, uid) : null;
   const counts = groups ? scopeCounts(groups, uid) : null;
@@ -405,6 +491,12 @@ function FilesBrowserInner() {
   const filtered = sortFiles(matched.filter((f) => !f.archived));
   const archivedFiles = sortFiles(matched.filter((f) => f.archived));
   const searching = query.trim().length > 0;
+
+  // Bulk selection helpers: the ticked files (resolved to their Summary from the visible
+  // set) and whether the whole current view is already selected (drives the Select-all
+  // toggle label + its checkbox state).
+  const pickedFiles = filtered.filter((f) => picked.has(f.id));
+  const allInViewPicked = filtered.length > 0 && filtered.every((f) => picked.has(f.id));
 
   // Resolve search hits to their full Summary (from any scope) so results render with
   // the SAME tile/row as browse. Hit order (relevance) is preserved; a hit not in the
@@ -720,13 +812,49 @@ function FilesBrowserInner() {
                 </div>
               ) : (
                 <>
-                  {/* Bulk actions — appear once ≥1 card is ticked. */}
+                  {/* Select-all: one click ticks (or clears) every file in the current
+                      view — the active scope + folder + tag filter (the `filtered` set). */}
+                  <div className="files-selectall">
+                    <label>
+                      <input
+                        type="checkbox" className="file-pick"
+                        checked={allInViewPicked}
+                        ref={(el) => { if (el) el.indeterminate = picked.size > 0 && !allInViewPicked; }}
+                        onChange={(e) => setPicked((cur) => {
+                          const next = new Set(cur);
+                          if (e.target.checked) for (const f of filtered) next.add(f.id);
+                          else for (const f of filtered) next.delete(f.id);
+                          return next;
+                        })}
+                        aria-label={allInViewPicked ? 'Deselect all files' : 'Select all files'}
+                      />
+                      {allInViewPicked ? 'Deselect all' : 'Select all'}
+                    </label>
+                  </div>
+                  {/* Bulk actions — appear once ≥1 card is ticked. Promote + Archive reuse
+                      the same per-file governed endpoints the detail view uses. */}
                   {picked.size > 0 ? (
-                    <div className="files-bulk">
+                    <div className="files-bulk" aria-busy={bulkBusy}>
                       <span>{picked.size} selected</span>
-                      <button className="btn ghost sm" onClick={() => promptMove([...picked])}>Move to folder…</button>
-                      <button className="btn ghost sm" onClick={() => setPicked(new Set())}>Clear</button>
+                      <button className="btn ghost sm" disabled={bulkBusy}
+                        onClick={() => promptMove([...picked])}>Move to folder…</button>
+                      <button className="btn ghost sm" disabled={bulkBusy}
+                        onClick={() => void bulkPromote(pickedFiles)}
+                        title="Propose sharing the selected files with your domain — a domain admin approves each">
+                        Promote to Domain →
+                      </button>
+                      <button className="btn ghost sm" disabled={bulkBusy}
+                        onClick={() => void bulkArchive(pickedFiles)}
+                        title="Archive the selected files (reversible)">
+                        Archive
+                      </button>
+                      <button className="btn ghost sm" disabled={bulkBusy}
+                        onClick={() => { setPicked(new Set()); setBulkNotice(''); }}>Clear</button>
+                      {bulkBusy ? <span className="file-sub"><span className="spin" /> Working…</span> : null}
+                      {bulkNotice ? <span className="file-sub">{bulkNotice}</span> : null}
                     </div>
+                  ) : bulkNotice ? (
+                    <div className="files-bulk"><span className="file-sub">{bulkNotice}</span></div>
                   ) : null}
                   {renderCollection(filtered, true)}
                 </>

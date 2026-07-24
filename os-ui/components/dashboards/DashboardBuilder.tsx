@@ -50,6 +50,7 @@ const ladderTier = (tier: DashTier): PromoteTier =>
  */
 export default function DashboardBuilder({
   existing,
+  initialDatasetId,
   metrics,
   metricsLoading,
   onBack,
@@ -57,6 +58,10 @@ export default function DashboardBuilder({
 }: {
   /** Open an already-built dashboard (lands at View), or null to create a new one (Define). */
   existing: DashboardSummary | null;
+  /** When creating, pre-filter the metric palette to this dataset's metrics (Data tab
+   *  → "＋ New dashboard" deep-link). A dashboard binds to one Cube view, so scoping the
+   *  palette to one dataset keeps every chart on that dataset's view. */
+  initialDatasetId?: string;
   metrics: MetricGroups | null;
   metricsLoading: boolean;
   onBack: () => void;
@@ -64,7 +69,10 @@ export default function DashboardBuilder({
   onChanged: () => void;
 }) {
   const { user } = useUser();
-  const palette = useMemo(() => flatMetrics(metrics), [metrics]);
+  const palette = useMemo(() => {
+    const flat = flatMetrics(metrics);
+    return !existing && initialDatasetId ? flat.filter((m) => m.datasetId === initialDatasetId) : flat;
+  }, [metrics, existing, initialDatasetId]);
 
   // Simple ⇄ Developer view mode (persisted per user, defaults to Simple).
   const [viewMode, setViewMode] = useState<ViewMode>('simple');

@@ -215,6 +215,44 @@ test('an EXACT repeated (tool,args) call executes the tool ONCE; repeats get a s
   assert.match(res.finalText, /The trend is up/);
 });
 
+test('a repeat whose prior result ERRORED re-runs — a failure is never cached as success', async () => {
+  // Reproduces the "commit → App not found → fabricated success" bug: the dedup guard
+  // must short-circuit only prior SUCCESSES. A failed call (e.g. a stale-cache 404)
+  // has to be RETRYABLE, or a transient error becomes a permanent dead end.
+  const dupCall = { id: 'c', name: 'commit', args: { appId: 'app_1' } };
+  const { llm } = scriptLlm([
+    { content: 'plan' },
+    { content: '', toolCalls: [dupCall] }, // 1st commit — errors
+    { content: '', toolCalls: [dupCall] }, // exact repeat — must RE-RUN, now succeeds
+    { content: 'Committed the files.' },
+  ]);
+  let executed = 0;
+  const res = await runAgentic({
+    system: 'sys',
+    userMessages: [{ role: 'user', content: 'build the app' }],
+    tools: TOOLS,
+    callTool: async () => {
+      executed += 1;
+      return executed === 1
+        ? { text: 'App not found', isError: true } // first attempt fails
+        : { text: 'committed 3 files', isError: false }; // retry succeeds
+    },
+    llm,
+    planModel: 'r',
+    actModel: 'e',
+    maxIterations: 8,
+  });
+  assert.equal(executed, 2, 'the failed call was retried, not blocked by the dedup guard');
+  assert.equal(res.steps.length, 2, 'both attempts are recorded');
+  assert.equal(res.steps[0].isError, true, 'the first attempt is the real error');
+  assert.equal(res.steps[1].isError, false, 'the retry executed for real and succeeded');
+  assert.doesNotMatch(
+    res.steps[1].result,
+    /already ran this exact call/i,
+    'a prior failure is never answered from the dedup note',
+  );
+});
+
 test('a node stuck re-firing the identical call breaks to a final synthesis and hands off', async () => {
   // The model ALWAYS requests the same call and never finalizes on its own. The
   // repeat budget must trip, stopping the loop and forcing a real final answer.
