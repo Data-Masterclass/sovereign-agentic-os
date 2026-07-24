@@ -10,6 +10,7 @@ import {
   principalFor,
   reloadRequest,
   runRequest,
+  runCostUsd,
 } from './runtime-contract.ts';
 
 const YAML = `
@@ -50,4 +51,36 @@ test('runRequest honours explicit guards + disabled agents', () => {
 test('principalFor scopes the OPA principal to os-<systemId>[:node]', () => {
   assert.equal(principalFor('sys_1'), 'os-sys_1');
   assert.equal(principalFor('sys_1', 'worker'), 'os-sys_1:worker');
+});
+
+test('runCostUsd prices usage only when every tier model shares one explicit price', () => {
+  const prices = {
+    'sovereign-default': { inputPerM: 0.1, outputPerM: 0.4 },
+    'sovereign-reasoning': { inputPerM: 2, outputPerM: 8 },
+    'same-as-default': { inputPerM: 0.1, outputPerM: 0.4 },
+  };
+  const usage = { input: 1_000_000, output: 500_000, total: 1_500_000 };
+
+  // Same model on both tiers → priced: 1M×0.1/1M + 0.5M×0.4/1M = 0.1 + 0.2.
+  assert.equal(runCostUsd(usage, ['sovereign-default', 'sovereign-default'], prices), 0.3);
+  // Different model names but IDENTICAL prices → still honest to price.
+  assert.equal(runCostUsd(usage, ['sovereign-default', 'same-as-default'], prices), 0.3);
+});
+
+test('runCostUsd is undefined for unpriced/mixed-price/missing usage (never 0)', () => {
+  const prices = {
+    'sovereign-default': { inputPerM: 0.1, outputPerM: 0.4 },
+    'sovereign-reasoning': { inputPerM: 2, outputPerM: 8 },
+  };
+  const usage = { input: 100, output: 100, total: 200 };
+  // No usage reported → undefined.
+  assert.equal(runCostUsd(undefined, ['sovereign-default'], prices), undefined);
+  // Unpriced model → undefined, not $0.
+  assert.equal(runCostUsd(usage, ['sovereign-mock'], prices), undefined);
+  // Two tiers with DIFFERENT prices — per-model split unknown → undefined.
+  assert.equal(runCostUsd(usage, ['sovereign-reasoning', 'sovereign-default'], prices), undefined);
+  // One tier priced, the other not → undefined.
+  assert.equal(runCostUsd(usage, ['sovereign-default', 'sovereign-mock'], prices), undefined);
+  // No models at all → undefined.
+  assert.equal(runCostUsd(usage, [], prices), undefined);
 });

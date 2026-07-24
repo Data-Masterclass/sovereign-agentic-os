@@ -33,6 +33,7 @@ import { setEntrypoint } from '@/lib/agents/canvas-edit';
 import { canSaveFromResult, DATA_NON_TABULAR_NOTE } from '@/lib/agents/output-save';
 import { AGENT_TEMPLATES, agentTemplate, type AgentTemplateKey } from '@/lib/agents/agent-templates';
 import StageShell from '@/components/core/StageShell';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 import { usePublishPageContext } from '@/components/core/PageContext';
 import {
   advance, goTo, initialStageState, isSatisfied, markDone,
@@ -226,6 +227,7 @@ export default function SimpleBuilder({
       ) : null}
 
       {phase === 'design' ? (
+        <div {...anchorAttr(ANCHORS.agents.tools)}>
         <DesignStep
           systemId={systemId}
           system={system}
@@ -236,6 +238,7 @@ export default function SimpleBuilder({
           onNext={next}
           ready={ready}
         />
+        </div>
       ) : null}
 
       {phase === 'build' ? (
@@ -265,7 +268,7 @@ export default function SimpleBuilder({
       ) : null}
 
       {phase === 'run' ? (
-        <div className="sb-run">
+        <div className="sb-run" {...anchorAttr(ANCHORS.agents.run)}>
           <h2 className="sb-section-title" style={{ marginTop: 0 }}>Run</h2>
           <p className="hint" style={{ marginTop: 0 }}>
             Run the team — it walks from the START agent and shows its progress and final result.

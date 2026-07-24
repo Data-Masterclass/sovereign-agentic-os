@@ -12,6 +12,7 @@ import { listWorkflows, getWorkflow } from '@/lib/knowledge/store';
 import { listFiles, searchFiles, getFile } from '@/lib/files/store';
 import { listMetrics } from '@/lib/metrics/store';
 import { listDashboards, getDashboard } from '@/lib/dashboards/store';
+import { normalizePanel, panelMetrics } from '@/lib/dashboards/model';
 import { listBets, getSolution } from '@/lib/bigbets/store';
 import { buildBetView } from '@/lib/bigbets/server';
 import { getSystem } from '@/lib/agents/store';
@@ -571,7 +572,12 @@ const waveBReadTools: McpTool[] = [
         tier: d.tier,
         owner: d.owner,
         domain: d.domain,
-        charts: d.spec.charts,
+        // Normalize each panel and expose a back-compat `metric` (first member) alongside
+        // the authoritative `metrics`, so existing MCP consumers keep reading `chart.metric`.
+        charts: d.spec.charts.map((c) => {
+          const p = normalizePanel(c);
+          return { ...p, metric: panelMetrics(p)[0] };
+        }),
       };
     },
   },

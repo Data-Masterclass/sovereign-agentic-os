@@ -39,40 +39,51 @@ export type MetricSummary = {
 };
 export type MetricGroups = { mine: MetricSummary[]; domain: MetricSummary[]; marketplace: MetricSummary[] };
 
-export type VizType = 'big_number_total' | 'line' | 'bar' | 'table';
-export type ChartSpec = { name: string; vizType: VizType; metric: string; dimensions?: string[] };
-
-export type RlsRule = { clause: string; dataset?: string };
-export type GuestTokenRequest = {
-  resourceId: string;
-  resourceType: 'dashboard';
-  user: { username: string };
-  rls: RlsRule[];
-  ttlSeconds: number;
+export type VizType = 'big_number_total' | 'big_number' | 'line' | 'area' | 'bar' | 'pie' | 'table';
+export type PanelFilter = { member: string; operator: string; values: string[] };
+/** A native dashboard panel (Tier 1 — ECharts on the governed Cube layer). `metric` is the
+ *  legacy single-member alias; `metrics` is authoritative. */
+export type Panel = {
+  name: string;
+  vizType: VizType;
+  metrics: string[];
+  metric?: string;
+  dimensions?: string[];
+  timeDimension?: string;
+  timeGrain?: 'day' | 'week' | 'month' | 'quarter' | 'year';
+  filters?: PanelFilter[];
 };
-export type EmbedMode = 'live' | 'offline-mock';
-export type EmbedResponse = {
-  dashboardId: string;
-  /** Superset embedded UUID the guest token targets (live path); === request.resourceId. */
-  embeddedId: string;
-  request: GuestTokenRequest;
-  token: string;
-  expiresInSeconds: number;
+/** Back-compat alias — many call-sites still say `ChartSpec`. */
+export type ChartSpec = Panel;
+
+/** The members a panel charts, folding the legacy `metric` alias into `metrics`. */
+export function panelMetrics(p: Panel): string[] {
+  if (p.metrics && p.metrics.length) return p.metrics;
+  return p.metric ? [p.metric] : [];
+}
+
+/** A view's palette from GET /api/dashboards/cube-meta (narrowed to governed views). */
+export type PanelViewMeta = { view: string; measures: string[]; dimensions: string[]; timeDimensions: string[] };
+export type CubeMetaResponse = { views: PanelViewMeta[] };
+
+/** GET /api/dashboards/[id] — the panels + binding for an existing dashboard. */
+export type DashboardDetail = { id: string; name: string; view: string; tier: DashTier; panels: Panel[] };
+
+/** POST /api/dashboards/panel-query — one panel's governed rows, resolved as the viewer. */
+export type PanelQueryResponse = {
+  rows: Record<string, unknown>[];
   mode: EmbedMode;
-  /** Why the live mint fell back to offline-mock (e.g. mint status) — present on the fallback. */
-  reason?: string;
+  pending?: boolean;
+  securityContext: Record<string, unknown>;
+  sql: string;
 };
 
-export type BuildRow = {
-  tool: string;
-  applied: boolean;
-  verified: boolean;
-  status: 'ok' | 'fail';
-  detail: string;
-  error?: string;
-};
-export type BuildReport = { rows: BuildRow[]; ok: boolean; mode: EmbedMode };
-export type BuildResponse = { id: string; spec: { name: string; view: string; charts: ChartSpec[] }; build: BuildReport };
+/** Whether a panel resolved against live Cube or the honest offline-mock. */
+export type EmbedMode = 'live' | 'offline-mock';
+
+/** POST /api/dashboards/build — persist-only (Tier-1 native dashboards render at VIEW time,
+ *  there is no Superset build/import step). Returns the saved spec. */
+export type BuildResponse = { id: string; spec: { name: string; view: string; charts: Panel[] } };
 
 export type Comparator = 'lt' | 'lte' | 'gt' | 'gte';
 export type Channel = 'email' | 'slack' | 'in_app';
@@ -125,7 +136,7 @@ export function flatMetrics(g: MetricGroups | null): MetricSummary[] {
   return [...g.mine, ...g.domain, ...g.marketplace];
 }
 
-export const VIZ_TYPES: VizType[] = ['big_number_total', 'line', 'bar', 'table'];
+export const VIZ_TYPES: VizType[] = ['big_number', 'line', 'area', 'bar', 'pie', 'table'];
 export const CHANNELS: Channel[] = ['email', 'slack', 'in_app'];
 export const TIER_LABEL: Record<DashTier, string> = { personal: 'Personal', domain: 'Domain', marketplace: 'Company' };
 export const TIER_BADGE: Record<DashTier, string> = {

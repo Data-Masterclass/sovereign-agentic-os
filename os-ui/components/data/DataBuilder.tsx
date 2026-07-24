@@ -1001,7 +1001,7 @@ export default function DataBuilder({
       >
         {/* ─────────────── Ingest ─────────────── */}
         {stage.current === 'ingest' ? (
-          <div>
+          <div {...anchorAttr(ANCHORS.data.load)}>
             {canEdit ? (
               <BronzePanel
                 datasetId={dataset.id}
@@ -1095,7 +1095,7 @@ export default function DataBuilder({
             {/* Silver build — clean and conform Bronze into Silver. */}
             {canEdit ? (
               <>
-                <div className="section-title" style={{ marginTop: 4 }}>
+                <div className="section-title" style={{ marginTop: 4 }} {...anchorAttr(ANCHORS.data.clean)}>
                   Clean it up — Silver
                   <span className="hint" style={{ margin: '0 0 0 10px' }}>dbt transformations on your Bronze data</span>
                 </div>
@@ -1123,7 +1123,7 @@ export default function DataBuilder({
             </p>
             {canEdit ? (
               <>
-                <div className="section-title" style={{ marginTop: 0 }}>
+                <div className="section-title" style={{ marginTop: 0 }} {...anchorAttr(ANCHORS.data.harmonize)}>
                   Harmonize — Gold
                   <span className="hint" style={{ margin: '0 0 0 10px' }}>join trusted datasets into one governed Gold table</span>
                 </div>
@@ -1151,7 +1151,7 @@ export default function DataBuilder({
 
         {/* ─────────────── Validate ─────────────── */}
         {stage.current === 'validate' ? (
-          <div>
+          <div {...anchorAttr(ANCHORS.data.validate)}>
             {/* Health — one glanceable 0–100 + trend, computed from real runs (honest 'unknown'
                 when nothing ran, never a fake 100). The exception (failing) is what shouts. */}
             <div className="guided-panel" style={{ padding: '14px 18px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
@@ -1324,7 +1324,7 @@ export default function DataBuilder({
           <div>
             {/* Sharing / promotion — the governed promote/certify block (moved to the top:
                 deciding who sees this dataset comes before building on it). Logic unchanged. */}
-            <div className="section-title" style={{ marginTop: 0 }}>Sharing</div>
+            <div className="section-title" style={{ marginTop: 0 }} {...anchorAttr(ANCHORS.data.publish)}>Sharing</div>
             {dataset.tier === 'dataset' ? (
               canHarmonizeGold ? (
                 <div className="gate-check" style={{ marginTop: 4 }}>

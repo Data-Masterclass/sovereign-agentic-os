@@ -164,7 +164,13 @@ export const WHITELIST_HINT = 'only system.yaml, AGENT.md and MEMORY.md are edit
  * written by one route visible to every other route — and survives dev HMR. (Same
  * reason `lib/marketplace/store.ts` and `lib/approvals.ts` pin their state.)
  */
-type AgentsState = { store: Map<string, SystemRecord>; seeded: boolean; hydration: Promise<void> | null };
+type AgentsState = {
+  store: Map<string, SystemRecord>;
+  seeded: boolean;
+  hydration: Promise<void> | null;
+  /** Set when the last hydration found the mirror DOWN — gates the throttled retry. */
+  hydrateFailedAt?: number;
+};
 const STATE_KEY = Symbol.for('soa.agents.store');
 function state(): AgentsState {
   const g = globalThis as unknown as Record<symbol, AgentsState | undefined>;
@@ -213,18 +219,37 @@ function snapshotState(rec: SystemRecord): { yaml: string } {
   return { yaml: rec.yaml };
 }
 
+/** Retry a failed hydration at most this often (a down mirror must not add a
+ *  probe round-trip to EVERY request — mirrors lib/data/store.ts). */
+const HYDRATE_RETRY_MS = 60_000;
+
 export async function ensureHydrated(): Promise<void> {
   const s = state();
-  if (!s.hydration) s.hydration = Promise.all([hydrate(), versions.ensureHydrated()]).then(() => {});
+  if (!s.hydration) {
+    // After a mirror-down hydration, retry (throttled) instead of staying pinned
+    // to an empty registry for the pod's lifetime — a transient OpenSearch blip
+    // at boot must not "lose" every mirrored system until the next deploy.
+    if (s.hydrateFailedAt && Date.now() - s.hydrateFailedAt < HYDRATE_RETRY_MS) return;
+    s.hydration = hydrate();
+  }
   return s.hydration;
 }
 
 async function hydrate(): Promise<void> {
   const s = state();
-  const docs = (await mirror.hydrate(2000)) ?? [];
+  const docs = await mirror.hydrate(2000);
+  if (docs === null) {
+    // Mirror down → stay un-hydrated and retry on a later read (never cache a
+    // FAILED hydration as done — the data store's rule).
+    s.hydrateFailedAt = Date.now();
+    s.hydration = null;
+    return;
+  }
+  s.hydrateFailedAt = undefined;
   for (const rec of docs as SystemRecord[]) {
     if (rec && rec.id && !s.store.has(rec.id)) s.store.set(rec.id, rec);
   }
+  await versions.ensureHydrated();
   s.seeded = true;
 }
 
@@ -301,6 +326,7 @@ export function __resetStore(): void {
   s.store.clear();
   s.seeded = false;
   s.hydration = null;
+  s.hydrateFailedAt = undefined;
   mirror.__reset();
   versions.__reset();
 }

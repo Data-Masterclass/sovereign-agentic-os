@@ -74,8 +74,8 @@ function DashboardsTabInner() {
               <div style={{ flex: 1, minWidth: 280 }}>
                 <p className="lead" style={{ marginTop: 4 }}>
                   Compose dashboards over your <strong>governed metrics</strong> in five calm steps —
-                  Define · Design · Build · View · Govern. Open one — it embeds with your own row-level
-                  security — then schedule reports and promote it, all in the same flow.
+                  Define · Design · Build · View · Govern. Open one — every panel renders natively with your
+                  own row-level security — then schedule reports and promote it, all in the same flow.
                 </p>
                 <p className="hint" style={{ marginTop: 0 }}>
                   Metrics are <strong>defined in the Metrics tab</strong> —{' '}

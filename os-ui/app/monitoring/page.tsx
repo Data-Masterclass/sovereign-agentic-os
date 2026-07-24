@@ -7,6 +7,7 @@ import { useMemo, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
 import { useApi } from '@/lib/useApi';
 import DetailWindow, { type DetailTarget } from '@/components/monitoring/DetailWindow';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 import '../monitoring.css';
 
 /**
@@ -66,7 +67,9 @@ function ago(at: number | string | null): string {
   const d = Math.floor(h / 24); if (d < 30) return `${d}d ago`;
   return `${Math.floor(d / 30)}mo ago`;
 }
-const money = (n: number) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : '$0');
+// Zero/absent cost renders '—' (matching the other absent facts, e.g. `ago`):
+// runs whose models carry no explicit price are UNPRICED, not free — never "$0".
+const money = (n: number) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : '—');
 const compact = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
 
 function ScopeTabs({ scope, setScope, counts }: { scope: ScopeKey; setScope: (s: ScopeKey) => void; counts: Record<ScopeKey, number> }) {
@@ -153,7 +156,7 @@ export default function MonitoringPage() {
   return (
     <>
       <PageHeader title="Monitoring" crumb="agents · data — the read plane" tutorial="monitoring" />
-      <div className="content">
+      <div className="content" {...anchorAttr(ANCHORS.monitoring.sandbox)}>
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <p className="lead" style={{ marginBottom: 0 }}>
             Real 7-day health of the agent systems and datasets you can access. Open any
@@ -170,13 +173,15 @@ export default function MonitoringPage() {
 
         {data && (
           <>
-            <div className="section-title" style={{ marginTop: 18 }}>Agent Monitoring</div>
+            <div className="section-title" style={{ marginTop: 18 }} {...anchorAttr(ANCHORS.monitoring.agents)}>Agent Monitoring</div>
             {!data.telemetryLive && (
               <p className="hint" style={{ marginTop: 0, marginBottom: 8, opacity: 0.75 }}>
                 Langfuse unreachable — showing in-process run telemetry only (durable history returns when it&apos;s back).
               </p>
             )}
-            <ScopeTabs scope={agentScope} setScope={setAgentScope} counts={agentCounts} />
+            <div {...anchorAttr(ANCHORS.monitoring.scope)}>
+              <ScopeTabs scope={agentScope} setScope={setAgentScope} counts={agentCounts} />
+            </div>
             {agentRows.length === 0 ? (
               <p className="hint" style={{ marginTop: 0 }}>
                 No agent systems here yet — build or run one in the <a href="/agents">Agents</a> tab.
@@ -189,7 +194,7 @@ export default function MonitoringPage() {
               </div>
             )}
 
-            <div className="section-title" style={{ marginTop: 26 }}>Data Monitoring</div>
+            <div className="section-title" style={{ marginTop: 26 }} {...anchorAttr(ANCHORS.monitoring.data)}>Data Monitoring</div>
             <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>
               Freshness, pipeline health and data-quality per dataset — the real last DQ run.
             </p>

@@ -94,7 +94,6 @@ import type { Sensitivity } from '@/lib/files/asset-schema';
 
 import { saveDashboard } from '@/lib/dashboards/store';
 import { fromTiles, type ChartSpec } from '@/lib/dashboards/model';
-import { buildDashboard } from '@/lib/dashboards/build/server';
 import { claimsFromUser, delegate } from '@/lib/data/identity';
 
 import {
@@ -1441,22 +1440,13 @@ export const dashboardWriteTools: McpTool[] = [
       const charts = (Array.isArray(args.charts) ? args.charts : []) as ChartSpec[];
       if (!charts.length) fail('a dashboard needs at least one chart on a governed metric', 400);
       const id = str(args.id).trim() || `dash_${slug(name)}_${rand()}`;
-      // Scope the dashboard's Cube SQL connection (`bi_<domain>`) to the caller's domain —
-      // the endpoint that serves the Cube view's rows.
+      // Scope the dashboard's governed view to the caller's domain. Tier-1 native dashboards
+      // render at VIEW time (Apache ECharts on the governed Cube layer, per-viewer RLS) —
+      // there is no Superset import step, so create_dashboard is persist-only (mirrors
+      // /api/dashboards/build).
       const spec = fromTiles(name, view, charts, user.domains[0]);
       const rec = saveDashboard(P(user), id, spec);
-      // Import to Superset (mirrors /api/dashboards/build): run the superset/embed/report/
-      // alert Build as the caller so the dashboard actually exists to embed. Best-effort —
-      // buildDashboard falls back to the honest offline-mock when Superset is unreachable,
-      // and we never fail the create on a live-path error.
-      let build: Awaited<ReturnType<typeof buildDashboard>> | undefined;
-      try {
-        const token = delegate(claimsFromUser({ id: user.id, domains: user.domains, role: user.role }), 'domain');
-        build = await buildDashboard(spec, token, rec.id);
-      } catch {
-        // dashboard is saved regardless; Superset import is a best-effort side-effect
-      }
-      return { id: rec.id, tier: rec.tier, spec: rec.spec, build };
+      return { id: rec.id, tier: rec.tier, spec: rec.spec };
     },
   },
 ];

@@ -9,6 +9,7 @@ import { getSnapshot } from '@/lib/software/snapshot';
 import { diffTrees, type FileChange } from '@/lib/software/build-changeset';
 import { runTabAgent, renderAssistantText } from '@/lib/assistant/runtime';
 import { AssistantNotConfiguredError } from '@/lib/assistant/complete';
+import { toolCallToLine, committedSummaryLine, type ActivityLine } from '@/lib/software/build-activity';
 
 export const dynamic = 'force-dynamic';
 
@@ -214,40 +215,101 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   // before/after changeset a Build turn produced (the harness commits through
   // `commitToApp`, which updates this same per-app snapshot).
   const before = getSnapshot(app.id);
-
-  let content = '';
-  let changes: FileChange[] = [];
   const model = roleModel('standard');
-  try {
-    const result = await runTabAgent({
-      user,
-      tab: 'software',
-      messages: clean,
-      extraContext: appContext(app, mode, story),
-      // PLAN mode is read-only — enforced by the harness, not just the prompt.
-      toolNames: mode === 'plan' ? PLAN_MODE_TOOLS : undefined,
-    });
-    content = renderAssistantText(result);
-    // Diff the committed tree after the run (build mode only ever writes).
-    if (mode === 'build') changes = diffTrees(before, getSnapshot(app.id));
-  } catch (e) {
-    if (e instanceof AssistantNotConfiguredError) {
-      content = `(${e.message})`;
-    } else {
-      content =
-        (e as Error).name === 'AbortError'
-          ? '(the build assistant is still warming up — the model did not respond in time. Your message is saved; send it again in a few seconds.)'
-          : '(build assistant offline — LiteLLM unreachable. Your message is saved under the app; the design decisions and data model are captured on this page.)';
-    }
-  }
 
-  // Persist the running conversation under the app (home of record).
-  const persisted: Msg[] = [...clean, { role: 'assistant', content }];
-  try {
-    await saveChat(id, user, persisted);
-  } catch {
-    /* persistence best-effort */
-  }
+  /**
+   * STREAMING Build run (SSE, text/event-stream). Each event is one JSON line
+   * prefixed `data: `. The client renders `activity` events as a live feed AS
+   * the agent works, then the terminal `final` event carries the backward-
+   * compatible payload ({ content, changes }) the old one-shot client relied on.
+   *
+   * Event shapes (all `{ type, ... }`):
+   *   { type: 'plan', text }                          — the plan, once, first
+   *   { type: 'activity', line: ActivityLine, raw }   — one per tool step, live
+   *   { type: 'final', role, content, model, mode, changes }
+   *   { type: 'error', message }                      — a run-level failure
+   */
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (obj: unknown) => {
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
+        } catch {
+          /* controller already closed (client aborted) — ignore */
+        }
+      };
 
-  return NextResponse.json({ role: 'assistant', content: content || '(no content)', model, mode, changes });
+      let content = '';
+      // The calm closing summary shown in the final bubble (the plan + per-tool
+      // actions already streamed live into the feed, so the bubble need not repeat
+      // the whole markdown wall). `content` below stays the FULL render for
+      // persistence + backward-compat.
+      let finalText = '';
+      let changes: FileChange[] = [];
+      try {
+        const result = await runTabAgent({
+          user,
+          tab: 'software',
+          messages: clean,
+          extraContext: appContext(app, mode, story),
+          // PLAN mode is read-only — enforced by the harness, not just the prompt.
+          toolNames: mode === 'plan' ? PLAN_MODE_TOOLS : undefined,
+          onPlan: (plan) => send({ type: 'plan', text: plan }),
+          onStep: (step) => {
+            const line: ActivityLine = toolCallToLine(step);
+            // `raw` carries the real tool I/O for the Builders-only "show details"
+            // affordance; the client keeps it hidden by default.
+            send({ type: 'activity', line, raw: { tool: step.tool, args: step.args, result: step.result } });
+          },
+        });
+        content = renderAssistantText(result);
+        finalText = result.finalText;
+        // Diff the committed tree after the run (build mode only ever writes).
+        if (mode === 'build') changes = diffTrees(before, getSnapshot(app.id));
+        // A closing activity line summarizing the real committed changeset.
+        const summary = mode === 'build' ? committedSummaryLine(app.name, changes) : null;
+        if (summary) send({ type: 'activity', line: { tool: 'commit', text: summary, isError: false } });
+      } catch (e) {
+        if (e instanceof AssistantNotConfiguredError) {
+          content = `(${e.message})`;
+        } else {
+          content =
+            (e as Error).name === 'AbortError'
+              ? '(the build assistant is still warming up — the model did not respond in time. Your message is saved; send it again in a few seconds.)'
+              : '(build assistant offline — LiteLLM unreachable. Your message is saved under the app; the design decisions and data model are captured on this page.)';
+        }
+      }
+
+      // Persist the running conversation under the app (home of record).
+      const persisted: Msg[] = [...clean, { role: 'assistant', content }];
+      try {
+        await saveChat(id, user, persisted);
+      } catch {
+        /* persistence best-effort */
+      }
+
+      // Terminal event — backward-compatible payload the client reads for the
+      // final assistant bubble + the committed diff. `content` is the full render
+      // (persisted); `finalText` is the calm closing line the bubble prefers.
+      send({
+        type: 'final',
+        role: 'assistant',
+        content: content || '(no content)',
+        finalText: finalText || content || '(no content)',
+        model,
+        mode,
+        changes,
+      });
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive',
+    },
+  });
 }

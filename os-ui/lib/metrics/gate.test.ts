@@ -13,14 +13,12 @@ import { exploreSpec, explore, type CubeExecutor } from './explorer.ts';
 import { metricRecord, governMetric } from './governance.ts';
 import { runAdapter, type MetricBuildContext } from './build/adapter.ts';
 import { newMetricMock, makeMockMetricAdapters, mockMetricDeps } from './build/mocks.ts';
-// dashboards
-import { fromTiles, fromAgent, sameDashboard, viewFor, type ChartSpec } from '../dashboards/model.ts';
-import { guestTokenRequest } from '../dashboards/embed.ts';
+// dashboards (Tier 1 — native ECharts panels on the governed Cube layer)
+import { fromTiles, fromAgent, sameDashboard, viewFor, buildPanelCubeQuery, type Panel } from '../dashboards/model.ts';
+import { propagate } from '../data/identity.ts';
 import { alertOn, evaluateAlert } from './alerts.ts';
 import { dueReports, sendReport, type ScheduledReport } from '../dashboards/reports.ts';
 import { governDashboard, dashboardRecord } from '../dashboards/governance.ts';
-import { makeMockDashboardAdapters, newDashboardMock } from '../dashboards/build/mocks.ts';
-import { type DashboardBuildContext } from '../dashboards/build/live.ts';
 
 /**
  * THE KIND-GATE, executable. Walks the full vertical slice end-to-end through the real
@@ -79,39 +77,37 @@ test('GATE 4 — govern: Builder promotes, Admin certifies, a non-Builder cannot
   assert.ok(certified.ok && certified.record.tier === 'marketplace');
 });
 
-test('GATE 5+6 — Sales Overview both ways → same dashboard; build superset+embed+report+alert', async () => {
+test('GATE 5+6 — Sales Overview both ways → same NATIVE dashboard; panels build governed Cube queries', () => {
   const d = goldSales();
   const view = viewFor(d);
-  const charts: ChartSpec[] = [
-    { name: 'Revenue', vizType: 'big_number_total', metric: 'Sales.revenue' },
-    { name: 'By region', vizType: 'bar', metric: 'Sales.revenue', dimensions: ['Sales.region'] },
+  const panels: Panel[] = [
+    { name: 'Revenue', vizType: 'big_number', metrics: ['Sales.revenue'] },
+    { name: 'By region', vizType: 'bar', metrics: ['Sales.revenue'], dimensions: ['Sales.region'] },
   ];
-  const dragged = fromTiles('Sales Overview', view, charts);
-  const agentBuilt = fromAgent({ name: 'Sales Overview', view, charts: [...charts].reverse() });
-  assert.ok(sameDashboard(dragged, agentBuilt));
+  const dragged = fromTiles('Sales Overview', view, panels);
+  const agentBuilt = fromAgent({ name: 'Sales Overview', view, charts: [...panels].reverse() });
+  assert.ok(sameDashboard(dragged, agentBuilt), 'drag-drop and the agent converge on one dashboard');
 
-  const adapters = makeMockDashboardAdapters(newDashboardMock());
-  const ctx: DashboardBuildContext = {
-    spec: dragged,
-    guestToken: guestTokenRequest(viewer('amir', 'DE', 'builder'), 'sales-overview'),
-    report: { cadence: 'weekly', channel: 'email' },
-    alert: alertOn(d, d.measures[0], { id: 'a1', comparator: 'lt', threshold: 50000, notify: ['email'] }),
-    state: {},
-  };
-  for (const tool of ['superset', 'embed', 'report', 'alert']) {
-    const row = await runAdapter(adapters[tool], ctx);
-    assert.equal(row.status, 'ok', `${tool}: ${row.error}`);
-  }
+  // Each panel compiles to the governed Cube `load` query the viewer resolves (Tier 1 — no
+  // Superset). The bar panel groups by its dimension; both chart the governed member.
+  const kpiQ = buildPanelCubeQuery(dragged.charts[0]);
+  assert.deepEqual(kpiQ.measures, ['Sales.revenue']);
+  const barQ = buildPanelCubeQuery(dragged.charts[1]);
+  assert.deepEqual(barQ.dimensions, ['Sales.region']);
+
   // governance for the dashboard too
   const rec = dashboardRecord('sales-overview', dragged, 'amir', 'personal');
   assert.equal(governDashboard(rec, 'promote', { id: 'bea', role: 'builder' }).record.tier, 'domain');
 });
 
-test('GATE 7 — embed: two viewers get DIFFERENT RLS clauses in the guest token (R3)', () => {
-  const de = guestTokenRequest(viewer('amir', 'DE'), 'sales-overview');
-  const fr = guestTokenRequest(viewer('bea', 'FR'), 'sales-overview');
-  assert.notDeepEqual(de.rls, fr.rls);
-  assert.deepEqual(de.rls, [{ clause: "region = 'DE'" }]);
+test('GATE 7 — native panels: two viewers resolve DIFFERENT rows under their own RLS (R3)', () => {
+  // The panel-query runs under each viewer's delegated identity (propagate → securityContext),
+  // exactly as the /api/dashboards/panel-query route does. Two viewers → two security contexts.
+  const de = propagate(viewer('amir', 'DE')).cube.securityContext;
+  const fr = propagate(viewer('bea', 'FR')).cube.securityContext;
+  assert.equal(de.region, 'DE');
+  assert.equal(fr.region, 'FR');
+  assert.notDeepEqual(de, fr, 'the RLS security context differs per viewer');
 });
 
 test('GATE 8+9 — alert notifies AND triggers a traced agent run; a scheduled report sends', () => {

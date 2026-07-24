@@ -9,9 +9,9 @@ export const dynamic = 'force-dynamic';
 
 /**
  * The Dashboards tab tiles — dashboards the user may open, grouped Mine / Domain /
- * Marketplace (OPA/tier-filtered). Double-click opens via a guest token (see
- * /api/dashboards/embed) with the viewer's RLS, so a shared tile still shows only the
- * viewer's rows.
+ * Marketplace (OPA/tier-filtered). Opening one renders it natively (Apache ECharts on the
+ * governed Cube layer); each panel resolves via /api/dashboards/panel-query under the
+ * viewer's RLS, so a shared tile still shows only the viewer's rows.
  */
 export async function GET(req: Request) {
   try {

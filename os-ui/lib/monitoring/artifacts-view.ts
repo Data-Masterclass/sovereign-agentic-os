@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
-import { agentHealthRows, type AgentHealthRow } from '@/lib/agents/store';
+import { agentHealthRows, ensureHydrated as ensureAgentsHydrated, type AgentHealthRow } from '@/lib/agents/store';
 import { listDatasets, ensureHydrated } from '@/lib/data/store';
 import { latestRun, ensureHydrated as ensureDqHydrated } from '@/lib/data/dq-results';
 import { type Health, combine, pipelineHealth, dqHealth, ageInDays } from './artifact-health-core';
@@ -65,6 +65,7 @@ export async function artifactMonitoring(user: CurrentUser, nowMs: number): Prom
 
   // Agents — already scoped + health-derived by the store. Decorate each with the
   // REAL 7-day telemetry (one Langfuse read for the whole grid + the in-process ring).
+  await ensureAgentsHydrated();
   const agentRows = agentHealthRows(principal);
   const { runsBySystem, langfuseReachable } = await agentTelemetryBatch(nowMs);
   const agents: AgentScopeGroups = { mine: [], domain: [], marketplace: [] };

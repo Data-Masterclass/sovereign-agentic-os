@@ -262,3 +262,28 @@ def test_validate_ir_bad_entrypoint():
     ir["entrypoint"] = "ghost"
     ok, err = interpreter.validate_ir(ir)
     assert ok is False and "ghost" in err
+
+
+# --- token usage capture -----------------------------------------------------
+class UsageModel(FakeModel):
+    """A fake model that publishes per-call usage on ``last_usage``, exactly like
+    the real ``make_model_call`` closure does."""
+
+    def __call__(self, n, system_prompt, user_prompt, model):
+        self.last_usage = {"input": 10, "output": 5, "total": 15}
+        return super().__call__(n, system_prompt, user_prompt, model)
+
+
+def test_usage_omitted_when_no_call_reports_it():
+    # FakeModel never sets last_usage (a backend with no usage reporting) — the
+    # result must OMIT usage entirely, never fabricate zeros.
+    res = run(supervisor_worker_ir())
+    assert "usage" not in res
+
+
+def test_usage_accumulates_across_all_model_calls():
+    model = UsageModel()
+    res = run(supervisor_worker_ir(), model_call=model)
+    calls = len(model.calls)  # two calls per visited node (plan + execute)
+    assert calls == 4
+    assert res["usage"] == {"input": 10 * calls, "output": 5 * calls, "total": 15 * calls}

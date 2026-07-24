@@ -3,19 +3,18 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
-import { delegatedToken } from '@/lib/infra/identity-server';
 import { saveDashboard } from '@/lib/dashboards/store';
-import { type ChartSpec, fromAgent, fromTiles } from '@/lib/dashboards/model';
-import { type AlertRule } from '@/lib/metrics/alerts';
-import { buildDashboard } from '@/lib/dashboards/build/server';
+import { type Panel, fromAgent, fromTiles } from '@/lib/dashboards/model';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * Build a dashboard DUAL-MODE — drag-and-drop charts OR the dashboard agent — both land
- * the SAME spec (charts reference governed metric members). We save it, then run the
- * superset/embed/report/alert Build (LIVE Superset or offline-mock). The embed adapter
- * verifies the guest-token request carries the builder's RLS (R3).
+ * Persist a dashboard — DUAL-MODE (drag-and-drop panels OR the dashboard agent) both land
+ * the SAME spec (panels reference governed metric members). Tier-1 native dashboards render
+ * with Apache ECharts on the governed Cube layer at VIEW time (per-viewer RLS via
+ * /api/dashboards/panel-query) — there is no Superset build/import step anymore, so this
+ * route is persist-only. The domain scopes the dashboard's governed view; the caller's
+ * first domain is used.
  */
 export async function POST(req: Request) {
   try {
@@ -25,26 +24,19 @@ export async function POST(req: Request) {
       name?: string;
       view?: string;
       mode?: 'drag-drop' | 'agent';
-      charts?: ChartSpec[];
-      report?: { cadence: string; channel: string };
-      alert?: AlertRule;
+      charts?: Panel[];
     };
     const id = (body.id ?? '').trim();
     const name = (body.name ?? '').trim();
     const view = (body.view ?? '').trim();
     if (!id || !name || !view) return NextResponse.json({ error: 'id, name and view are required' }, { status: 400 });
     const charts = body.charts ?? [];
-    if (charts.length === 0) return NextResponse.json({ error: 'a dashboard needs at least one chart on a governed metric' }, { status: 400 });
+    if (charts.length === 0) return NextResponse.json({ error: 'a dashboard needs at least one panel on a governed metric' }, { status: 400 });
 
-    // The domain scopes the dashboard's Cube SQL connection (`bi_<domain>`) — the endpoint
-    // that actually serves the view's rows. Use the caller's first domain.
     const domain = user.domains[0];
     const spec = body.mode === 'agent' ? fromAgent({ name, view, charts, domain }) : fromTiles(name, view, charts, domain);
-    saveDashboard(user, id, spec);
-
-    const { token } = await delegatedToken('domain');
-    const build = await buildDashboard(spec, token, id, { report: body.report, alert: body.alert });
-    return NextResponse.json({ id, spec, build });
+    const rec = saveDashboard(user, id, spec);
+    return NextResponse.json({ id, spec: { name: rec.spec.name, view: rec.spec.view, charts: rec.spec.charts } });
   } catch (e) {
     return errorResponse(e);
   }

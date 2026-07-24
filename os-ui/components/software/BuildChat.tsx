@@ -4,14 +4,19 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import { parseAgentChatResponse, stripThinking } from '@/lib/agents/agent-chat-response';
+import { stripThinking } from '@/lib/agents/agent-chat-response';
 import BuildDiff, { type FileChange } from './BuildDiff';
 import { summarizeChanges } from '@/lib/software/build-changeset';
+import type { ActivityLine } from '@/lib/software/build-activity';
+import { consumeBuildStream, type BuildStreamEvent } from '@/lib/software/build-stream';
 
 export type { FileChange };
 export type ChatMessage = { role: 'user' | 'assistant'; content: string };
 export type BuildMode = 'plan' | 'build';
 export type BuildStory = { epicId: string; storyId: string; label?: string };
+
+/** One rendered activity row: the human line + its raw tool I/O (details on demand). */
+type FeedItem = { line: ActivityLine; raw?: { tool: string; args: unknown; result: string } };
 
 /**
  * The Software BUILD-stage chat — a Build-lane-owned variant of AgentChat that
@@ -28,6 +33,7 @@ export default function BuildChat({
   story,
   initialMessages = [],
   onBuilt,
+  showDetails = false,
 }: {
   appId: string;
   appName: string;
@@ -36,6 +42,8 @@ export default function BuildChat({
   initialMessages?: ChatMessage[];
   /** Called after a BUILD run that changed files, so the parent can mark the story done + reload. */
   onBuilt?: (changes: FileChange[]) => void;
+  /** Builders may reveal the raw tool I/O behind each activity line ("show details"). */
+  showDetails?: boolean;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     initialMessages.map((m) => (m.role === 'assistant' ? { ...m, content: stripThinking(m.content) } : m)),
@@ -45,6 +53,9 @@ export default function BuildChat({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [stopped, setStopped] = useState(false);
+  // Live run state: the plan + the append-only activity feed for the CURRENT run.
+  const [planText, setPlanText] = useState('');
+  const [feed, setFeed] = useState<FeedItem[]>([]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const stop = useCallback(() => abortRef.current?.abort(), []);
@@ -55,12 +66,18 @@ export default function BuildChat({
       if (!content || loading) return;
       setError('');
       setStopped(false);
+      // Reset the live run surfaces for this new turn.
+      setPlanText('');
+      setFeed([]);
+      setLastChanges([]);
       const next: ChatMessage[] = [...messages, { role: 'user', content }];
       setMessages(next);
       setInput('');
       setLoading(true);
       const ctrl = new AbortController();
       abortRef.current = ctrl;
+      const scrollDown = () =>
+        requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }));
       try {
         const res = await fetch(`/api/apps/${appId}/chat`, {
           method: 'POST',
@@ -68,31 +85,46 @@ export default function BuildChat({
           body: JSON.stringify({ agent: 'software', messages: next, mode, story: story ?? undefined }),
           signal: ctrl.signal,
         });
-        const raw = await res.text();
-        // Pull the structured changeset out before the defensive text parse (which
-        // only knows about {content}). A malformed body just yields no changes.
-        let changes: FileChange[] = [];
-        try {
-          const j = JSON.parse(raw);
-          if (Array.isArray(j?.changes)) changes = j.changes as FileChange[];
-        } catch {
-          /* handled by parseAgentChatResponse below */
+        if (!res.ok) {
+          // A pre-stream failure (auth/404/400) returns JSON, not a stream.
+          let msg = `The assistant is unavailable right now (error ${res.status}).`;
+          try {
+            const j = await res.json();
+            if (j?.error) msg = String(j.error);
+          } catch {
+            /* keep the generic message */
+          }
+          setError(msg);
+          return;
         }
-        const parsed = parseAgentChatResponse(res.ok, res.status, raw);
-        if ('error' in parsed) {
-          setError(parsed.error);
-        } else {
-          setMessages((m) => [...m, { role: 'assistant', content: parsed.content }]);
-          setLastChanges(changes);
-          if (mode === 'build' && changes.length > 0) onBuilt?.(changes);
-        }
+
+        // Consume the SSE stream: append the plan + each activity line AS it lands,
+        // then apply the terminal payload (final assistant bubble + committed diff).
+        await consumeBuildStream(res, (e: BuildStreamEvent) => {
+          if (e.type === 'plan') {
+            setPlanText(e.text);
+          } else if (e.type === 'activity') {
+            setFeed((f) => [...f, { line: e.line, raw: e.raw }]);
+            scrollDown();
+          } else if (e.type === 'error') {
+            setError(e.message);
+          } else if (e.type === 'final') {
+            const changes = Array.isArray(e.changes) ? e.changes : [];
+            // Prefer the calm closing summary; the plan + actions already streamed
+            // into the live feed above, so the bubble need not repeat the full wall.
+            const bubble = stripThinking(e.finalText || e.content);
+            setMessages((m) => [...m, { role: 'assistant', content: bubble }]);
+            setLastChanges(changes);
+            if (mode === 'build' && changes.length > 0) onBuilt?.(changes);
+          }
+        });
       } catch (e) {
         if ((e as Error).name === 'AbortError') setStopped(true);
         else setError((e as Error).message);
       } finally {
         abortRef.current = null;
         setLoading(false);
-        requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }));
+        scrollDown();
       }
     },
     [appId, loading, messages, mode, story, onBuilt],
@@ -118,15 +150,36 @@ export default function BuildChat({
             </div>
           ))
         )}
-        {loading ? (
+        {/* LIVE ACTIVITY FEED — the plan + each governed tool step as it happens,
+            so the run is legible while it works instead of a silent spinner. */}
+        {loading || feed.length > 0 || planText ? (
           <div className="bubble assistant">
-            <div className="bubble-role">{label}</div>
-            <div className="bubble-body row" style={{ gap: 8, alignItems: 'center' }}>
-              <span className="spin" />
-              <span className="muted" style={{ fontSize: 12 }}>
-                {planning ? 'Planning…' : 'Building…'} the model can take a moment on the first message.
-              </span>
-              <button type="button" className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={stop}>Stop</button>
+            <div className="bubble-role row" style={{ gap: 8, alignItems: 'center' }}>
+              <span>{label}</span>
+              {loading ? <span className="spin" style={{ width: 12, height: 12 }} /> : null}
+              {loading ? (
+                <button type="button" className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={stop}>Stop</button>
+              ) : null}
+            </div>
+            <div className="bubble-body">
+              {planText ? (
+                <div style={{ marginBottom: feed.length ? 10 : 0 }}>
+                  <div className="section-title" style={{ fontSize: 11, marginBottom: 4 }}>Plan</div>
+                  <div className="muted" style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{planText}</div>
+                </div>
+              ) : null}
+              {feed.length > 0 ? (
+                <ul className="build-activity" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 4 }}>
+                  {feed.map((it, i) => (
+                    <ActivityRow key={i} item={it} showDetails={showDetails} />
+                  ))}
+                </ul>
+              ) : null}
+              {loading && feed.length === 0 && !planText ? (
+                <span className="muted" style={{ fontSize: 12 }}>
+                  {planning ? 'Planning…' : 'Building…'} the model can take a moment on the first message.
+                </span>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -160,5 +213,51 @@ export default function BuildChat({
         </div>
       </form>
     </div>
+  );
+}
+
+/**
+ * One activity line: a chip-style row with the plain-language text; errors read as
+ * a warning tone. Builders get a "details" toggle that reveals the raw tool I/O
+ * (args + result) so they can debug without leaving the feed.
+ */
+function ActivityRow({
+  item,
+  showDetails,
+}: {
+  item: FeedItem;
+  showDetails: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const { line, raw } = item;
+  return (
+    <li>
+      <div className="row" style={{ gap: 8, alignItems: 'baseline' }}>
+        <span
+          className={`chip ${line.isError ? 'warn' : ''}`}
+          style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums' }}
+        >
+          {line.text}
+        </span>
+        {showDetails && raw ? (
+          <button
+            type="button"
+            className="sw-quiet-link"
+            style={{ fontSize: 11, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+            onClick={() => setOpen((v) => !v)}
+          >
+            {open ? 'hide details' : 'show details'}
+          </button>
+        ) : null}
+      </div>
+      {open && raw ? (
+        <pre
+          className="card"
+          style={{ margin: '6px 0 0', padding: 8, fontSize: 11, overflowX: 'auto', whiteSpace: 'pre-wrap' }}
+        >
+          {`→ ${raw.tool}(${JSON.stringify(raw.args)})\n${raw.result}`}
+        </pre>
+      ) : null}
+    </li>
   );
 }

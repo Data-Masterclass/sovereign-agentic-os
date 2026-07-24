@@ -17,20 +17,26 @@ import { initialStageState, isSatisfied, markDone, goTo, advance, type StageStat
 import { DASH_STAGES, type DashStageId, type DashCtx } from '@/lib/dashboards/stages';
 import BuilderModeToggle from '@/components/core/BuilderModeToggle';
 import type { ViewMode } from '@/lib/core/view-mode';
-import EmbedPanel from './EmbedPanel';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials';
+import DashboardGrid from './DashboardGrid';
+import PanelBuilder from './PanelBuilder';
+import ConnectTools from './ConnectTools';
 import Reports from './Reports';
 import StageAssistant from './StageAssistant';
 
 const DASH_MODE_KEY = 'dashboards.viewMode';
 import {
-  flatMetrics, postJson, slug, VIZ_TYPES,
-  type BuildResponse, type ChartSpec, type DashboardSummary, type DashTier,
-  type MetricGroups, type MetricSummary, type VizType,
+  flatMetrics, panelMetrics, postJson, slug, VIZ_TYPES,
+  type BuildResponse, type ChartSpec, type DashboardDetail, type DashboardSummary, type DashTier,
+  type MetricGroups, type MetricSummary, type Panel, type VizType,
   TIER_BADGE, TIER_LABEL,
 } from './shared';
 
 /** The Cube view a chart's member belongs to (member = `View.measure`). */
 const viewOfMetric = (m: string) => (m.includes('.') ? m.slice(0, m.indexOf('.')) : m);
+
+/** Map a (possibly legacy) viz string from the assistant to a current VizType. */
+const normalizeViz = (v: string): VizType => (v === 'big_number_total' ? 'big_number' : (v as VizType));
 
 /** Dashboard tier → the OS-wide lifecycle visibility (drives the delete gate). */
 const lcVis = (tier: DashTier): Visibility =>
@@ -43,10 +49,11 @@ const ladderTier = (tier: DashTier): PromoteTier =>
  * The Dashboards guided builder — Define · Design · Build · View · Govern on the OS-wide
  * staged primitive (lib/core/stages.ts + components/core/StageShell.tsx; the Agents
  * SimpleBuilder is the reference adoption). Creating AND viewing are ONE flow: a fresh
- * dashboard starts on Define and walks forward as its real state settles (charts → build →
- * embed → persisted); an EXISTING dashboard is already built + persisted, so it opens at
- * View. Each stage reuses the tab's existing bodies as-is (chart adder, EmbedPanel,
- * Reports, PromoteButton, LifecycleActions) — nothing is rewritten, only re-hosted.
+ * dashboard starts on Define and walks forward as its real state settles (panels → save →
+ * viewed → persisted); an EXISTING dashboard is already saved + persisted, so it opens at
+ * View. View renders NATIVELY (DashboardGrid — Apache ECharts on the governed Cube layer,
+ * per-viewer RLS); Design uses the PanelBuilder; Govern folds in Reports, promotion and
+ * the Tier-2 ConnectTools (Power BI / Tableau / Superset console).
  */
 export default function DashboardBuilder({
   existing,
@@ -95,11 +102,26 @@ export default function DashboardBuilder({
   const [buildErr, setBuildErr] = useState('');
   const [viewed, setViewed] = useState(false);
   const [liveRls, setLiveRls] = useState('');
+  // An existing dashboard's panels are fetched (the list returns only a count); a fresh one
+  // uses the in-progress `charts`. These panels feed the native ECharts grid in View.
+  const [fetchedPanels, setFetchedPanels] = useState<Panel[] | null>(null);
+  useEffect(() => {
+    if (!existing) { setFetchedPanels(null); return; }
+    let alive = true;
+    fetch(`/api/dashboards/${existing.id}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: DashboardDetail | null) => { if (alive && d) setFetchedPanels(d.panels ?? []); })
+      .catch(() => { if (alive) setFetchedPanels([]); });
+    return () => { alive = false; };
+  }, [existing]);
+  const gridPanels: Panel[] = existing
+    ? (fetchedPanels ?? [])
+    : charts.map((c) => ({ ...c, metrics: c.metrics && c.metrics.length ? c.metrics : (c.metric ? [c.metric] : []) }));
 
-  // The persisted dashboard we govern/view: the freshly-built one, or the one we opened.
+  // The persisted dashboard we govern/view: the freshly-saved one, or the one we opened.
   const built: DashboardSummary | null = useMemo(() => {
     if (existing) return existing;
-    if (build?.build.ok) {
+    if (build) {
       return {
         id: build.id,
         name: build.spec.name,
@@ -114,7 +136,7 @@ export default function DashboardBuilder({
 
   // The single Cube view the charts bind to (a dashboard binds to exactly one).
   const views = useMemo(
-    () => Array.from(new Set(charts.map((c) => viewOfMetric(c.metric)).filter(Boolean))),
+    () => Array.from(new Set(charts.flatMap((c) => panelMetrics(c).map(viewOfMetric)).filter(Boolean))),
     [charts],
   );
   const view = existing?.view ?? views[0] ?? '';
@@ -124,7 +146,7 @@ export default function DashboardBuilder({
   const ctx: DashCtx = {
     defined: !!existing || (!!name.trim() && charts.length > 0 && !!view),
     hasCharts: !!existing || (charts.length > 0 && !multiView),
-    builtOk: !!existing || !!build?.build.ok,
+    builtOk: !!existing || !!build,
     viewed: !!existing || viewed,
     persisted: !!built,
   };
@@ -136,9 +158,8 @@ export default function DashboardBuilder({
   });
 
   const addChart = (m: MetricSummary) =>
-    setCharts((cs) => [...cs, { name: m.name, vizType: 'big_number_total', metric: m.member }]);
-  const updateChart = (i: number, patch: Partial<ChartSpec>) =>
-    setCharts((cs) => cs.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+    setCharts((cs) => [...cs, { name: m.name, vizType: 'big_number', metrics: [m.member] }]);
+  const addPanel = (p: Panel) => setCharts((cs) => [...cs, p]);
   const removeChart = (i: number) => setCharts((cs) => cs.filter((_, j) => j !== i));
 
   const runBuild = async () => {
@@ -146,8 +167,8 @@ export default function DashboardBuilder({
     setBuild(null);
     const trimmed = name.trim();
     if (!trimmed) return setBuildErr('Give the dashboard a name.');
-    if (charts.length === 0) return setBuildErr('Add at least one chart on a governed metric.');
-    if (multiView) return setBuildErr(`A dashboard binds to one Cube view — these charts span ${views.join(', ')}. Keep charts from a single view.`);
+    if (charts.length === 0) return setBuildErr('Add at least one panel on a governed metric.');
+    if (multiView) return setBuildErr(`A dashboard binds to one Cube view — these panels span ${views.join(', ')}. Keep panels from a single view.`);
     setBuilding(true);
     try {
       const res = await postJson<BuildResponse>('/api/dashboards/build', {
@@ -159,8 +180,8 @@ export default function DashboardBuilder({
       });
       setBuild(res);
       onChanged();
-      // Build settles in-stage → record its ✓ (gated on the live condition, like Agents).
-      if (res.build.ok) setStage((s) => markDone(s, 'build'));
+      // Saved → record the stage ✓ and walk forward to view it natively.
+      setStage((s) => markDone(s, 'build'));
     } catch (e) {
       setBuildErr((e as Error).message);
     } finally {
@@ -181,7 +202,7 @@ export default function DashboardBuilder({
         <BuilderModeToggle
           mode={viewMode}
           onChange={setModePersisted}
-          developerHint="The raw Superset dashboard spec and embed config"
+          developerHint="The native panel spec and the resolved row-level-security clause"
         />
       </div>
 
@@ -237,13 +258,13 @@ export default function DashboardBuilder({
               stage="design" label="Suggest chart tiles from this view’s measures." cta="Suggest charts"
               disabled={!view || palette.length === 0}
               payload={() => ({ view, prompt: name, members: palette.filter((m) => viewOfMetric(m.member) === view).map((m) => m.member) })}
-              onCharts={(cs) => setCharts(cs.filter((c) => VIZ_TYPES.includes(c.vizType as VizType) && palette.some((m) => m.member === c.metric)).map((c) => ({ name: c.name, vizType: c.vizType as VizType, metric: c.metric })))}
+              onCharts={(cs) => setCharts(cs.filter((c) => VIZ_TYPES.includes(normalizeViz(c.vizType)) && palette.some((m) => m.member === c.metric)).map((c) => ({ name: c.name, vizType: normalizeViz(c.vizType), metrics: [c.metric] })))}
             />
           ) : st.id === 'build' ? (
             <StageAssistant
-              stage="build" label="Explain a build or import failure in plain language." cta="Explain the failure"
-              disabled={!build || build.build.ok}
-              payload={() => ({ reason: build?.build.rows.find((r) => r.status === 'fail')?.error || build?.build.rows.find((r) => r.status === 'fail')?.detail || '' })}
+              stage="build" label="Explain a save error in plain language." cta="Explain the error"
+              disabled={!buildErr}
+              payload={() => ({ reason: buildErr })}
             />
           ) : st.id === 'view' ? (
             <StageAssistant
@@ -269,8 +290,8 @@ export default function DashboardBuilder({
 
         {stage.current === 'design' ? (
           <DesignStage
-            view={view} palette={palette} loading={metricsLoading}
-            charts={charts} addChart={addChart} updateChart={updateChart} removeChart={removeChart}
+            view={view} palette={palette}
+            charts={charts} addPanel={addPanel} removeChart={removeChart}
             multiView={multiView} views={views}
           />
         ) : null}
@@ -284,10 +305,11 @@ export default function DashboardBuilder({
         ) : null}
 
         {stage.current === 'view' && built ? (
-          <div>
-            <EmbedPanel
-              dashboard={built}
-              onEmbed={({ mode, rls }) => { setLiveRls(rls); setViewed(true); if (mode === 'live') setStage((s) => markDone(s, 'view')); }}
+          <div {...anchorAttr(ANCHORS.dashboards.view)}>
+            <DashboardGrid
+              view={built.view}
+              panels={gridPanels}
+              onLoaded={({ rls }) => { setLiveRls(rls); setViewed(true); setStage((s) => markDone(s, 'view')); }}
             />
             {!viewed ? null : (
               <p className="hint" style={{ marginTop: 10 }}>
@@ -300,7 +322,7 @@ export default function DashboardBuilder({
         ) : null}
 
         {stage.current === 'govern' && built ? (
-          <div>
+          <div {...anchorAttr(ANCHORS.dashboards.govern)}>
             <div className="section-title">Reports</div>
             <Reports dashboard={built} />
             {canManage ? (
@@ -322,6 +344,8 @@ export default function DashboardBuilder({
             ) : (
               <p className="hint">You can report on this dashboard. Promotion and archiving are limited to its owner and domain admins.</p>
             )}
+            <div className="section-title">Connected tools</div>
+            <ConnectTools />
           </div>
         ) : stage.current === 'govern' ? (
           <div className="chat-empty">Build the dashboard first — there is nothing to govern yet.</div>
@@ -346,7 +370,7 @@ function DefineStage({
   addChart: (m: MetricSummary) => void;
 }) {
   return (
-    <div className="agent-editor" style={{ marginTop: 4 }}>
+    <div className="agent-editor" style={{ marginTop: 4 }} {...anchorAttr(ANCHORS.dashboards.define)}>
       <label className="comp-label">Dashboard name</label>
       <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Sales overview" />
       <div className="hint" style={{ marginTop: 6 }}>
@@ -379,65 +403,54 @@ function DefineStage({
 /* ─────────────────────────── Design ─────────────────────────── */
 
 function DesignStage({
-  view, palette, loading, charts, addChart, updateChart, removeChart, multiView, views,
+  view, palette, charts, addPanel, removeChart, multiView, views,
 }: {
   view: string;
   palette: MetricSummary[];
-  loading: boolean;
   charts: ChartSpec[];
-  addChart: (m: MetricSummary) => void;
-  updateChart: (i: number, patch: Partial<ChartSpec>) => void;
+  addPanel: (p: Panel) => void;
   removeChart: (i: number) => void;
   multiView: boolean;
   views: string[];
 }) {
-  // Only offer members from the bound view (keeps the single-view guard visible up front).
-  const inView = palette.filter((m) => !view || viewOfMetric(m.member) === view);
   return (
-    <div className="agent-editor" style={{ marginTop: 4 }}>
-      <label className="comp-label">Governed metrics on <code>{view || '—'}</code> — click to add a chart tile</label>
-      {loading && palette.length === 0 ? (
-        <div className="hint">Loading metrics…</div>
-      ) : inView.length === 0 ? (
-        <div className="hint">No metrics on this view — go back to Define to pick another.</div>
-      ) : (
-        <div className="chip-row" style={{ marginTop: 4 }}>
-          {inView.map((m) => (
-            <button key={m.id} className="chip" style={{ cursor: 'pointer' }} onClick={() => addChart(m)} title={`Add ${m.member}`}>
-              {m.name} <span className="mono" style={{ opacity: 0.7 }}>{m.member}</span>
-            </button>
-          ))}
-        </div>
-      )}
+    <div style={{ display: 'grid', gap: 16, marginTop: 4 }} {...anchorAttr(ANCHORS.dashboards.design)}>
+      <PanelBuilder view={view} palette={palette} onAdd={addPanel} />
 
-      <label className="comp-label" style={{ marginTop: 16 }}>Charts ({charts.length})</label>
-      {charts.length === 0 ? (
-        <div className="chat-empty">No charts yet — click a metric above.</div>
-      ) : (
-        <div style={{ display: 'grid', gap: 8 }}>
-          {charts.map((c, i) => (
-            <div key={`${c.metric}-${i}`} className="golden" style={{ gap: 10 }}>
-              <input type="text" value={c.name} onChange={(e) => updateChart(i, { name: e.target.value })} style={{ maxWidth: 200 }} />
-              <select value={c.vizType} onChange={(e) => updateChart(i, { vizType: e.target.value as VizType })}>
-                {VIZ_TYPES.map((v) => <option key={v} value={v}>{v}</option>)}
-              </select>
-              <span className="mono muted" style={{ fontSize: 12 }}>{c.metric}</span>
-              <button className="chip-x" style={{ marginLeft: 'auto' }} onClick={() => removeChart(i)} aria-label="Remove chart">×</button>
-            </div>
-          ))}
-        </div>
-      )}
+      <div>
+        <label className="comp-label">Panels ({charts.length})</label>
+        {charts.length === 0 ? (
+          <div className="chat-empty">No panels yet — design one above and “Add panel”.</div>
+        ) : (
+          <div style={{ display: 'grid', gap: 8, marginTop: 4 }}>
+            {charts.map((c, i) => (
+              <div key={`${c.name}-${i}`} className="golden" style={{ gap: 10, alignItems: 'center' }}>
+                <span className="panel-card-title">{c.name}</span>
+                <span className={`badge ${c.vizType === 'table' ? 'muted' : 'ok'}`}>{c.vizType}</span>
+                <span className="mono muted" style={{ fontSize: 12 }}>{panelMetrics(c).join(', ')}</span>
+                <button className="chip-x" style={{ marginLeft: 'auto' }} onClick={() => removeChart(i)} aria-label="Remove panel">×</button>
+              </div>
+            ))}
+          </div>
+        )}
+        {charts.length > 0 ? (
+          <div style={{ marginTop: 12 }}>
+            <label className="comp-label">Preview</label>
+            <DashboardGrid view={view} panels={charts.map((c) => ({ ...c, metrics: panelMetrics(c) }))} />
+          </div>
+        ) : null}
+      </div>
 
       {multiView ? (
-        <div className="hint" style={{ marginTop: 12, color: 'var(--warn-text, inherit)' }}>
-          These charts span more than one Cube view (<strong>{views.join(', ')}</strong>). A dashboard binds to a single view — keep charts from one view.
+        <div className="hint" style={{ color: 'var(--warn-text, inherit)' }}>
+          These panels span more than one Cube view (<strong>{views.join(', ')}</strong>). A dashboard binds to a single view — keep panels from one view.
         </div>
       ) : null}
     </div>
   );
 }
 
-/* ─────────────────────────── Build ─────────────────────────── */
+/* ─────────────────────────── Build (save) ─────────────────────────── */
 
 function BuildStage({
   name, building, error, result, canBuild, onBuild, onContinue,
@@ -451,13 +464,14 @@ function BuildStage({
   onContinue: () => void;
 }) {
   return (
-    <div style={{ marginTop: 4 }}>
+    <div style={{ marginTop: 4 }} {...anchorAttr(ANCHORS.dashboards.build)}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <span className="hint" style={{ marginTop: 0 }}>
-          Apply the spec and verify every adapter — Superset, embed, reports and alerts. The report renders inline below.
+          Save the dashboard. It renders natively at View time — Apache ECharts on your governed
+          metrics, row-level-security scoped to each viewer. No BI-tool import step.
         </span>
         <button className="btn" onClick={onBuild} disabled={building || !canBuild}>
-          {building ? <span className="spin" /> : result ? 'Rebuild' : 'Build dashboard'}
+          {building ? <span className="spin" /> : result ? 'Re-save' : 'Save dashboard'}
         </button>
       </div>
       {error ? <div className="error" style={{ marginTop: 12 }}>{error}</div> : null}
@@ -465,20 +479,12 @@ function BuildStage({
       {result ? (
         <div className="build-report" style={{ marginTop: 14 }}>
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-            <strong>{result.build.ok ? 'Build succeeded' : 'Build had errors'} — {result.spec.name || name}</strong>
-            <span className={`badge ${result.build.mode === 'live' ? 'ok' : 'muted'}`}>{result.build.mode}</span>
+            <strong>Saved — {result.spec.name || name}</strong>
+            <span className="badge ok">{result.spec.charts.length} panel{result.spec.charts.length === 1 ? '' : 's'} on {result.spec.view}</span>
           </div>
-          {result.build.rows.map((r) => (
-            <div key={r.tool} className={`build-row ${r.status === 'ok' ? 'ok' : 'fail'}`}>
-              <span className="build-tool">{r.status === 'ok' ? '✓' : '✗'} {r.tool}</span>
-              <span>{r.detail || r.error}</span>
-            </div>
-          ))}
-          {result.build.ok ? (
-            <div className="row" style={{ marginTop: 14, justifyContent: 'flex-end' }}>
-              <button className="btn" onClick={onContinue}>View it →</button>
-            </div>
-          ) : null}
+          <div className="row" style={{ marginTop: 14, justifyContent: 'flex-end' }}>
+            <button className="btn" onClick={onContinue}>View it →</button>
+          </div>
         </div>
       ) : null}
     </div>
@@ -519,9 +525,9 @@ function DashboardDeveloperView({
       <div className="grant-block">
         <div className="comp-label">Dashboard spec (JSON)</div>
         <p className="hint" style={{ marginTop: 4 }}>
-          Read-only — the chart/view config submitted to the build adapter (Superset
-          + embed). Build the dashboard in the Simple flow to produce the full spec.
-          {build?.build.mode ? <> · mode: <span className={`badge ${build.build.mode === 'live' ? 'ok' : 'muted'}`}>{build.build.mode}</span></> : null}
+          Read-only — the native panel/view config persisted for this dashboard. Each panel
+          resolves its governed Cube query at View time (Apache ECharts), so there is no
+          Superset import step. Add panels in the Simple flow to see the full spec.
         </p>
         {spec ? (
           <pre className="codeblock" style={{ marginTop: 8, fontSize: 12, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
@@ -529,28 +535,16 @@ function DashboardDeveloperView({
           </pre>
         ) : (
           <p className="hint" style={{ marginTop: 8 }}>
-            No spec yet — add charts in the Simple flow to see the config here.
+            No spec yet — add panels in the Simple flow to see the config here.
           </p>
         )}
-        {build?.build.rows && build.build.rows.length > 0 ? (
-          <div style={{ marginTop: 12 }}>
-            <div className="comp-label" style={{ marginBottom: 6 }}>Build adapter trace</div>
-            {build.build.rows.map((r) => (
-              <div key={r.tool} className={`build-row ${r.status === 'ok' ? 'ok' : 'fail'}`}>
-                <span className="build-tool">{r.status === 'ok' ? '✓' : '✗'} {r.tool}</span>
-                <span>{r.detail || r.error}</span>
-              </div>
-            ))}
-          </div>
-        ) : null}
       </div>
 
       <div className="grant-block">
-        <div className="comp-label">Embed config (RLS + guest token request)</div>
+        <div className="comp-label">Row-level security (resolved as the viewer)</div>
         <p className="hint" style={{ marginTop: 4 }}>
-          The row-level security clause baked into the Superset guest token — comes
-          from the View stage embed call. View the dashboard in the Simple flow to
-          populate this.
+          Each panel-query runs under the viewer’s delegated identity; Cube applies this
+          clause as RLS so two viewers see different rows. Open the View stage to resolve it.
         </p>
         {built ? (
           <pre className="codeblock" style={{ marginTop: 8, fontSize: 12, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
@@ -559,7 +553,7 @@ function DashboardDeveloperView({
                 dashboardId: built.id,
                 view: built.view,
                 tier: built.tier,
-                liveRlsClause: liveRls || '(not yet viewed — open View stage to mint a token)',
+                liveRls: liveRls || '(not yet viewed — open View stage to resolve it)',
               },
               null,
               2,
@@ -567,7 +561,7 @@ function DashboardDeveloperView({
           </pre>
         ) : (
           <p className="hint" style={{ marginTop: 8 }}>
-            Build and view the dashboard in the Simple flow to see the embed config here.
+            Save and view the dashboard in the Simple flow to see the row-level security here.
           </p>
         )}
       </div>

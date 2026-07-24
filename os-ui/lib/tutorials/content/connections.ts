@@ -26,25 +26,25 @@ const connections: TutorialDef = {
     {
       illustration: 'connect',
       title: 'Add a connection',
-      body: 'Pick the type — cloud drive, database, REST API, MCP server — and authenticate. Use per-user OAuth for your own accounts; service credentials for shared domain connections.',
+      body: 'Browse the "Supported connectors" gallery — grouped by vendor, searchable by name — and "Connect →", or use "＋ New connector" for a custom REST/GraphQL API or MCP server. Credentials go straight to Secrets Manager, never echoed.',
     },
     {
       illustration: 'governance',
       title: 'Set the capability profile',
-      body: 'Every operation starts off. Turn on only what you need: reads auto-approve, writes require inline approval or bounded limits. The profile compiles to a policy — agents see only what you switch on.',
+      body: 'Open "Capabilities" and set a mode per tool — Read, Write-bounded, Write-approval, or Blocked — then "Save capability profile". The profile compiles to a policy: agents see only what you allow, and approval-mode writes wait for a human.',
     },
     {
       illustration: 'sandbox',
       title: 'Test it inline',
-      body: 'Hit Test before saving. A green tick means the credentials work and the endpoint is reachable. Nothing runs in the domain until it passes.',
+      body: 'Hit "Test" on the connection, or "Try" a single tool from the capability table. A green tick means the credentials work and the endpoint is reachable. Nothing runs in the domain until it passes.',
     },
     {
       illustration: 'publish',
-      title: 'Share or list in the Marketplace',
-      body: 'A Builder promotes a personal connection to domain-shared. An Admin can list it in the Marketplace as a template — consumers bring their own credentials; the secret stays with the owner.',
+      title: 'Share it up the ladder',
+      body: '"Promote to Domain" shares a personal connection with your domain; an Admin can "Certify to Company" as a template — consumers bring their own credentials; the secret stays with the owner.',
       byRole: {
         builder: {
-          body: 'Review the capability profile, confirm least-privilege is right, and promote to domain-shared or submit to Admin for Marketplace listing.',
+          body: 'Review the capability profile, confirm least-privilege is right, then "Promote to Domain" — or hand to an Admin to "Certify to Company". The secret never travels with the promotion.',
         },
       },
     },
@@ -54,45 +54,44 @@ const connections: TutorialDef = {
     {
       anchor: ANCHORS.connections.sandbox,
       sandboxAnchor: ANCHORS.connections.sandbox,
-      title: 'Open your personal connections lane',
-      body: 'Personal connections are private to you. Practice here without touching any shared domain connections.',
+      title: 'Open My connections',
+      body: 'The scope buttons — All, My, Domain, Company — say whose connections you see. My connections are private to you; practice here without touching anything shared.',
       route: '/connections',
     },
     {
       anchor: ANCHORS.connections.add,
       sandboxAnchor: ANCHORS.connections.sandbox,
       title: 'Add a connection',
-      body: 'Pick the type and authenticate. The credential goes straight to Secrets Manager — it never appears in the UI or logs.',
+      body: 'Search the Supported connectors by name or vendor and "Connect →" — or "＋ New connector" for a custom API or MCP server. The credential goes straight to Secrets Manager; it never appears in the UI or logs.',
       route: '/connections',
     },
     {
       anchor: ANCHORS.connections.configure,
       sandboxAnchor: ANCHORS.connections.sandbox,
       title: 'Configure the capability profile',
-      body: 'Set each operation to Off, Read, Write-approval, Write-bounded, or Blocked. Anything left Off stays invisible to agents.',
+      body: 'Open "Capabilities" and set each tool to Read, Write-bounded, Write-approval, or Blocked, then "Save capability profile". Anything blocked stays invisible to agents.',
       route: '/connections',
     },
     {
       anchor: ANCHORS.connections.test,
       sandboxAnchor: ANCHORS.connections.sandbox,
       title: 'Test the connection',
-      body: 'Run the inline test. A green tick means it is live and reachable. Fix any errors here before sharing.',
+      body: 'Run "Test" — or "Try" a single tool from the capability table. A green tick means it is live and reachable. Fix any errors here before sharing.',
       route: '/connections',
     },
     {
       anchor: ANCHORS.connections.govern,
-      title: 'Promote to shared or Marketplace',
-      body: 'A Builder promotes it to the domain. An Admin publishes it to the Marketplace as a template — consumers supply their own credentials; no secret leaves the owner.',
+      title: 'Promote it',
+      body: '"Promote to Domain" shares it with your domain once approved; an Admin can "Certify to Company" as a template — consumers supply their own credentials; no secret leaves the owner.',
       governedWrite: true,
-      roles: ['builder'],
       route: '/connections',
     },
   ],
 
   sandbox: {
-    lane: 'Personal connections',
+    lane: 'My connections',
     anchor: ANCHORS.connections.sandbox,
-    note: 'Personal connections are private to you and cannot be used by the domain until a Builder explicitly promotes them to shared.',
+    note: 'My connections are private to you and cannot be used by the domain until a promotion is approved.',
   },
 
   outro: {
@@ -113,7 +112,7 @@ const connections: TutorialDef = {
     },
     builder: {
       verb: 'Review & promote',
-      hook: 'Review connection capability profiles and promote them to domain-shared or the Marketplace.',
+      hook: 'Review connection capability profiles and promote them to Domain or Company.',
     },
   },
 };

@@ -34,6 +34,34 @@ function base(url: string): string {
   return url.replace(/\/+$/, '');
 }
 
+/** USD per 1M tokens for one LiteLLM model_name. */
+export type ModelPrice = { inputPerM: number; outputPerM: number };
+
+/**
+ * Parse MODEL_PRICES_JSON — a JSON map of LiteLLM model_name →
+ * `{ inputPerM, outputPerM }` in USD per 1M tokens. Malformed JSON or entries
+ * with non-finite/negative numbers are dropped (default `{}`): an UNPRICED model
+ * yields no cost at all in Monitoring ("—"), never a fabricated $0.
+ */
+export function parseModelPrices(raw: string): Record<string, ModelPrice> {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Record<string, ModelPrice> = {};
+    for (const [name, v] of Object.entries(parsed as Record<string, unknown>)) {
+      const p = v as { inputPerM?: unknown; outputPerM?: unknown } | null;
+      const inputPerM = Number(p?.inputPerM);
+      const outputPerM = Number(p?.outputPerM);
+      if (Number.isFinite(inputPerM) && inputPerM >= 0 && Number.isFinite(outputPerM) && outputPerM >= 0) {
+        out[name] = { inputPerM, outputPerM };
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 export const config = {
   // sample-agent (LangGraph RAG): GET {SAMPLE_AGENT_URL}/ask?q=...
   sampleAgentUrl: base(env('SAMPLE_AGENT_URL', 'http://sample-agent:8000')),
@@ -288,6 +316,11 @@ export const config = {
   // browser — the master key stays server-side in the usage route.
   litellmBudgetUsd: Number(env('LITELLM_BUDGET_USD', '5')) || 0,
   litellmBudgetWindow: env('LITELLM_BUDGET_WINDOW', 'weekly'),
+  // Explicit model pricing for Monitoring cost attribution (USD per 1M tokens per
+  // LiteLLM model_name, e.g. {"sovereign-default":{"inputPerM":0.1,"outputPerM":0.4}}).
+  // Default {} = nothing priced ⇒ run cost stays undefined and the tile shows "—"
+  // (unpriced ≠ free — we never invent a price).
+  modelPrices: parseModelPrices(env('MODEL_PRICES_JSON', '{}')),
 
   // Monitoring DEMO fixtures. The Monitor lenses (pipelines/artifacts/cost/runs)
   // fall back to offline-mock "worked example" signals (e.g. the mart_sales dbt

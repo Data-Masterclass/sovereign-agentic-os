@@ -10,6 +10,7 @@ import {
   runAgentic,
   ToolCallingUnsupportedError,
   type AgenticResult,
+  type AgenticStep,
   type LlmCall,
   type LlmCompletion,
   type ToolExecutor,
@@ -250,6 +251,15 @@ export type RunTabAgentInput = {
    * (no `commit` / `request_deploy` / `start_preview` write path).
    */
   toolNames?: string[];
+  /**
+   * Progress hook — called once per governed tool step as it executes (the SAME
+   * `AgenticStep` the result later carries). The Software Build stage plumbs this
+   * to a streaming response so each tool-call surfaces as a live activity line
+   * instead of a silent spinner. Pure UI wiring; it never changes what runs.
+   */
+  onStep?: (step: AgenticStep) => void;
+  /** Progress hook — called once with the plan text as soon as PLAN completes. */
+  onPlan?: (plan: string) => void;
   /** Injected in tests; defaults to the live LiteLLM caller. */
   llm?: LlmCall;
 };
@@ -286,6 +296,8 @@ export async function runTabAgent(input: RunTabAgentInput): Promise<AgenticResul
     maxIterations: input.maxIterations,
     budget: inputBudget(assistantId),
     maxOutputTokens: ctx.reservedOutput,
+    onStep: input.onStep,
+    onPlan: input.onPlan,
   });
 }
 

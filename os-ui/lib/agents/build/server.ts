@@ -12,7 +12,7 @@ import { runGraph, type RunResult } from './run-graph.ts';
 import { newMockBackends, makeMockAdapters, registerGrants, gatewayFor } from './mocks.ts';
 import { makeLiveAdapters } from './live.ts';
 import { makeRealClients, runtimeReachable, traceStoreReachable } from './live-clients.ts';
-import { reloadRequest, runRequest } from './runtime-contract.ts';
+import { reloadRequest, runRequest, principalFor, runCostUsd } from './runtime-contract.ts';
 import { orchestrateBuild, type BuildReport } from './orchestrate.ts';
 
 /**
@@ -111,6 +111,20 @@ export async function runSystem(
     const steps = res.steps;
     const held = enqueueHolds(systemId, sys, steps, opts.requestedBy);
     const output = res.output || `Reached ${res.path.join(' → ')} → END (${steps.length} governed tool call(s)).`;
+    // One run-summary trace so Monitoring attributes the run's tokens/cost to
+    // this system. MUST use principalFor (`os-<id>`) — the telemetry batch only
+    // groups `os-` principals, a bare systemId would be dropped. Cost is priced
+    // ONLY from explicit MODEL_PRICES_JSON (unpriced ⇒ undefined ⇒ "—", never 0).
+    // Fire-and-forget: telemetry never blocks or fails the run.
+    void gvTrace({
+      principal: `${principalFor(systemId)}:run`,
+      tool: 'generate',
+      input: { prompt: opts.prompt },
+      output: { reachedEnd: res.reachedEnd, path: res.path },
+      decision: 'allow',
+      tokens: res.usage?.total,
+      costUsd: runCostUsd(res.usage, [config.litellmReasoningModel, config.litellmExecModel], config.modelPrices),
+    });
     const traceStoreAvailable = await traceStoreReachable();
     const traceUrl =
       traceStoreAvailable && config.langfuseConsoleUrl

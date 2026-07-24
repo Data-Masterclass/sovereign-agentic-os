@@ -826,6 +826,11 @@ input[type='text']:focus {
   padding: 4px 11px;
 }
 .chip.ok { background: rgba(31, 143, 136, 0.12); border-color: rgba(31, 143, 136, 0.32); color: var(--teal-dim); }
+.chip.warn { background: var(--gold-soft); border-color: var(--gold-line); color: var(--gold-text); }
+/* Build activity feed: calm, neutral rows so a long run reads quietly; errors keep
+   the .chip.warn gold tone to stand out. */
+.build-activity .chip { background: var(--panel); border-color: var(--border); color: var(--text); font-weight: 400; }
+.build-activity .chip.warn { background: var(--gold-soft); border-color: var(--gold-line); color: var(--gold-text); }
 .join-row { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
 .refine-cta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 
@@ -6562,4 +6567,62 @@ button.card.tile:hover .tile-action { opacity: 1; }
 @keyframes ab-pop {
   from { transform: scale(0.6); opacity: 0.4; }
   to { transform: scale(1); opacity: 1; }
+}
+
+/* ─────────────── Native dashboards (Tier 1: ECharts on the Cube layer) ─────────────── */
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  margin-top: 14px;
+}
+.panel-card {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px 12px;
+  overflow: hidden;
+  transition: border-color 0.14s, box-shadow 0.14s;
+}
+.panel-card:hover {
+  border-color: var(--gold-line);
+  box-shadow: 0 10px 30px -20px rgba(0, 0, 0, 0.7);
+}
+.panel-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.panel-card-title {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--text);
+}
+.panel-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.panel-kpi {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 4px;
+}
+.panel-kpi-value {
+  font-family: var(--font-head);
+  font-size: 40px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--text);
+  line-height: 1;
+}
+.panel-kpi-label {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  text-transform: lowercase;
 }

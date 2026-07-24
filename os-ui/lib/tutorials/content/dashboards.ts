@@ -8,89 +8,126 @@ const dashboards: TutorialDef = {
   key: 'dashboards',
   route: '/dashboards',
   title: 'Dashboards',
-  tagline: 'Build governed BI that never disagrees with your agents.',
+  tagline: 'Compose native dashboards on governed metrics — every viewer sees their own rows.',
   buttonLabel: 'Dashboards Tutorial',
+
   hook: {
     illustration: 'dashboard',
-    title: 'Build a dashboard that never disagrees',
-    body: 'Assemble charts on governed metrics, by drag and drop or by asking the dashboard agent. Every chart resolves the same metric your agents use, so the BI layer and the agents never disagree.',
+    title: 'From governed metrics to a native dashboard',
+    body: 'Five stages — Define · Design · Build · View · Govern. Bind one governed Cube view, design panels with a live preview, save, and view it rendered natively — every panel row-level-security scoped to whoever is looking. No BI tool in the loop, and the numbers can never disagree with your agents.',
+    byRole: {
+      builder: {
+        body: 'Five stages — Define · Design · Build · View · Govern. Bind a governed view, design panels, save, view under per-viewer row-level security — then promote, certify, and export governed connections to the BI tools your domain already uses.',
+      },
+    },
   },
+
   steps: [
     {
       illustration: 'metric',
-      title: 'Pick your metrics',
-      body: 'Open the metric explorer and choose a metric to chart, sliced however you like. No SQL, and each viewer sees only their entitled rows.',
+      title: 'Define — name it, bind one view',
+      body: 'Metrics are defined in the Metrics tab — Dashboards only consume them. Give the dashboard a name, then click a governed metric chip to bind its Cube view: a dashboard binds to ONE governed view, and every panel stays on it. No metrics yet? Define one in Metrics first.',
     },
     {
       illustration: 'dashboard',
-      title: 'Compose the dashboard',
-      body: 'Drag charts in, or ask the dashboard agent to assemble a Sales Overview. Both edit the same dashboard.',
+      title: 'Design — panels with a live preview',
+      body: 'In the panel designer, multi-select governed metrics and pick a viz — big_number, line, area, bar, pie, or table. Charts "group by…" a dimension or trend "over time…" at a day-to-year grain, straight from the view\'s governed cube-meta. The Live preview resolves the exact query the grid will run — under your own row-level security — before you "＋ Add panel".',
+    },
+    {
+      illustration: 'build',
+      title: 'Build — save the dashboard',
+      body: '"Save dashboard" persists the spec — that is all Build does. Panels render natively at View time (Apache ECharts on the governed Cube layer), so there is no BI-tool import step and nothing to sync. "Re-save" after any change, then "View it →".',
+    },
+    {
+      illustration: 'governance',
+      title: 'View — as each viewer, live',
+      body: 'Every panel queries the governed Cube layer AS THE VIEWER: the resolved row-level-security clause is spelled out (e.g. "region = DE"), and a live / offline-mock badge says honestly whether Cube answered. Switch "View as" and every panel re-queries as that viewer — two people open the same dashboard and see different rows.',
     },
     {
       illustration: 'publish',
-      title: 'Share it safely',
-      body: 'A Builder promotes it to the domain and an Admin can list it in the Marketplace. Embed it anywhere and it stays scoped to each viewer.',
+      title: 'Govern — share it, connect your tools',
+      body: 'A dashboard is governed like any artifact: "Promote to Domain" files a request an approver confirms, and "Certify to Company" takes it company-wide. Schedule reports on a cadence, and connect your own BI — a one-click Power BI .pbids, the Tableau PostgreSQL fields, or "Open in Superset →" in its own tab when configured.',
       byRole: {
+        creator: {
+          body: 'A dashboard is governed like any artifact: "Propose to Domain" files a request an approver confirms in Governance. Schedule reports on a cadence, and connect your own BI — a one-click Power BI .pbids, the Tableau PostgreSQL fields, or "Open in Superset →" when configured.',
+        },
         builder: {
-          body: 'You review the dashboard and promote it to the domain (Admin certifies to the Marketplace). Embeds and shared links stay row-level scoped to each viewer.',
+          body: 'You approve promotions for your domain ("Promote to Domain"; an Admin can "Certify to Company"). Exported BI connections authenticate as the domain\'s read-only bi_<domain> principal — domain-scoped RLS, honestly labelled; per-viewer RLS stays native.',
         },
       },
     },
   ],
+
   walkthrough: [
     {
       anchor: ANCHORS.dashboards.sandbox,
       sandboxAnchor: ANCHORS.dashboards.sandbox,
       route: '/dashboards',
-      title: 'Open your practice lane',
-      body: 'Start in your personal dashboards lane. Anything you build here is yours alone until you share it.',
+      title: 'Open your dashboards',
+      body: 'The list shows All · My · Domain · Company Dashboards — the same scopes as everywhere else. My Dashboards is your private lane; "＋ New dashboard" opens the five-stage flow on Define, and opening a tile lands you at View.',
     },
     {
-      anchor: ANCHORS.dashboards.pick,
+      anchor: ANCHORS.dashboards.define,
       sandboxAnchor: ANCHORS.dashboards.sandbox,
       route: '/dashboards',
-      title: 'Pick a metric',
-      body: 'Open the explorer and choose a governed metric to chart, sliced how you like. No SQL needed.',
+      title: 'Define — bind the view',
+      body: 'Name the dashboard, then click a governed metric to bind it. That fixes the ONE Cube view every panel reads. If the palette is empty, define a metric in the Metrics tab first — Dashboards only consume governed metrics.',
     },
     {
-      anchor: ANCHORS.dashboards.compose,
+      anchor: ANCHORS.dashboards.design,
       sandboxAnchor: ANCHORS.dashboards.sandbox,
       route: '/dashboards',
-      title: 'Compose the dashboard',
-      body: 'Drag charts onto the canvas, or ask the dashboard agent to assemble a Sales Overview for you.',
+      title: 'Design a panel',
+      body: 'Multi-select metrics, choose the viz, then "group by…" a dimension (bar, pie) or trend it "over time…" at a grain (line, area). Watch the Live preview — it runs the exact governed query the grid will — then "＋ Add panel" and repeat.',
     },
     {
-      anchor: ANCHORS.dashboards.share,
+      anchor: ANCHORS.dashboards.build,
+      sandboxAnchor: ANCHORS.dashboards.sandbox,
+      route: '/dashboards',
+      title: 'Save it',
+      body: '"Save dashboard" persists it — nothing renders here, no import runs. The panels resolve natively at View time on the governed Cube layer. Then "View it →".',
+    },
+    {
+      anchor: ANCHORS.dashboards.view,
+      sandboxAnchor: ANCHORS.dashboards.sandbox,
+      route: '/dashboards',
+      title: 'View — under your own rows',
+      body: 'Every panel just queried as you: the Row-level security note shows the resolved clause, and the live / offline-mock badge tells you whether Cube answered. Switch "View as" — every panel re-queries as that viewer and the clause changes with it.',
+    },
+    {
+      anchor: ANCHORS.dashboards.govern,
       route: '/dashboards',
       governedWrite: true,
-      roles: ['builder'],
-      title: 'Share it',
-      body: 'Review the dashboard and promote it to the domain. It stays row-level scoped to each viewer wherever it is embedded.',
+      title: 'Govern — share and connect',
+      body: 'Promote it up the ladder — "Promote to Domain" files a request an approver confirms; an Admin can "Certify to Company". Schedule a report ("Send now" to try it), and under Connected tools export a governed connection: Power BI .pbids, Tableau fields, or "Open in Superset →".',
     },
   ],
+
   sandbox: {
-    lane: 'My dashboards - personal canvas',
+    lane: 'My Dashboards',
     anchor: ANCHORS.dashboards.sandbox,
-    note: 'Build and rearrange on sample metrics; nothing is shared, promoted, or embedded until you graduate.',
+    note: 'Dashboards stay Personal until promoted — design, save, and view privately. Every panel query still runs under your own row-level security, so practice never shows you rows you are not entitled to.',
   },
+
   outro: {
-    title: 'Your dashboard is ready',
-    body: 'It reads the same governed metrics your agents do, so numbers match everywhere. Next, define more metrics to chart, or roll it into a Big Bet.',
+    title: 'Your dashboard renders natively — and honestly',
+    body: 'You bound a governed view, designed panels with a live preview, saved, and viewed it under your own row-level security. Next: define more metrics to chart, or roll the dashboard into a Big Bet.',
     next: ['metrics', 'big-bets'],
     doc: 'dashboards-golden-path.md',
   },
+
   framing: {
     user: {
       verb: 'Use',
-      hook: 'Open governed dashboards and see your own entitled rows.',
+      hook: 'Open a governed dashboard and see your own entitled rows — same metrics, your slice.',
     },
     creator: {
       verb: 'Create',
-      hook: 'Compose charts on governed metrics, by hand or with the agent.',
+      hook: 'Design panels on governed metrics with a live preview — no SQL, no BI import.',
     },
     builder: {
       verb: 'Review & promote',
-      hook: 'Review the dashboard, then promote it to the domain to share.',
+      hook: 'Approve promotions, certify to Company, and export governed connections to Power BI or Tableau.',
     },
   },
 };

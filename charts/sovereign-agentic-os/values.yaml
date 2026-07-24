@@ -1108,7 +1108,7 @@ agentRuntime:
   enabled: true
   image:
     repository: sovereign-os/agent-runtime   # built locally, loaded into kind
-    tag: "0.1.1"   # 0.1.1 = plan(reasoning)->execute(27B) two-tier hand-off
+    tag: "0.1.2"   # 0.1.2 = capture LiteLLM token usage per run (Monitoring truth)
   chatModel: sovereign-mock
   # Two-tier model strategy (stack-decisions): EVERY agent PLANS with the reasoning
   # tier, then HANDS OFF execution to the execution tier. These are LiteLLM

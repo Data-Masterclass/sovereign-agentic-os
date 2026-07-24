@@ -6,6 +6,7 @@ import type { CurrentUser } from '@/lib/core/auth';
 import { getDataset } from '@/lib/data/store';
 import { lineageFor } from '@/lib/data/lineage';
 import { getDashboard } from '@/lib/dashboards/store';
+import { panelMetrics } from '@/lib/dashboards/model';
 import { getModel } from '@/lib/science';
 import { getBet, canViewComponentDetail } from '@/lib/bigbets/store';
 import { buildComposition } from '@/lib/bigbets/composition';
@@ -65,9 +66,10 @@ export async function getLineage(ref: string, user: CurrentUser): Promise<Unifie
       const dash = getDashboard(id, p); // throws 403/404
       out.nodes.push({ id: dash.id, kind: 'dashboard', label: dash.spec.name });
       for (const c of dash.spec.charts) {
-        const metricId = c.metric;
-        out.nodes.push({ id: metricId, kind: 'metric', label: metricId });
-        out.edges.push({ from: dash.id, to: metricId, rel: 'reads' });
+        for (const metricId of panelMetrics(c)) {
+          out.nodes.push({ id: metricId, kind: 'metric', label: metricId });
+          out.edges.push({ from: dash.id, to: metricId, rel: 'reads' });
+        }
       }
       return out;
     }

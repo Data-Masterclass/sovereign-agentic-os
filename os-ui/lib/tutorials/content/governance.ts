@@ -52,8 +52,8 @@ const governance: TutorialDef = {
       anchor: ANCHORS.governance.sandbox,
       sandboxAnchor: ANCHORS.governance.sandbox,
       route: '/governance',
-      title: 'Open the inbox',
-      body: 'Pending requests wait at the top, each with its preview. Reading the queue is always safe — nothing happens until someone clicks a decision.',
+      title: 'Open the Approval inbox',
+      body: 'The tab reads in four sections — Inbox, Policies, Audit, Cost & limits. The Approval inbox lists what is pending, each request with its full preview. Reading the queue is always safe — nothing happens until someone clicks a decision.',
     },
     {
       anchor: ANCHORS.governance.approve,
@@ -61,7 +61,7 @@ const governance: TutorialDef = {
       governedWrite: true,
       roles: ['builder'],
       title: 'Approve or deny',
-      body: 'Read the what, who, why, and impact — then decide. Approve applies the action live; Deny stops it and tells the requester. Either way it is on the record.',
+      body: 'Read the preview — what, who, why, impact, scan, est. cost — then decide. Each request states who may decide it ("Needs a Domain admin of …", "Needs an Admin"). Approve applies the action live; Deny stops it and tells the requester. Either way it is on the record.',
     },
     {
       anchor: ANCHORS.governance.remember,

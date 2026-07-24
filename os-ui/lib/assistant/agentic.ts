@@ -352,6 +352,8 @@ export async function runAgentic(opts: {
   maxOutputTokens?: number;
   /** Optional progress hook — called after each governed tool step executes. */
   onStep?: (step: AgenticStep) => void;
+  /** Optional hook — called once with the plan text as soon as PLAN completes. */
+  onPlan?: (plan: string) => void;
 }): Promise<AgenticResult> {
   const maxIterations = opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   const budget = opts.budget ?? DEFAULT_MESSAGE_BUDGET;
@@ -365,6 +367,7 @@ export async function runAgentic(opts: {
     maxTokens: opts.maxOutputTokens,
   });
   const plan = stripThinking(planCompletion.content) || '(no plan produced)';
+  opts.onPlan?.(plan);
 
   // (b) ACT — execution tier, bounded tool-calling loop.
   const steps: AgenticStep[] = [];

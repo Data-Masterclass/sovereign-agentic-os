@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/core/scopes';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { TIER_BADGE, TIER_LABEL } from './shared';
 import type { DashboardGroups, DashboardSummary } from './shared';
 import DomainTag from '@/components/DomainTag';
@@ -77,7 +78,13 @@ export default function Tiles({
            Archived toggle + ＋ New live in the tab header row above (canonical). */
         <div className="seg" style={{ marginTop: 14 }}>
           {SCOPE_GROUPS.map((g) => (
-            <button key={g.key} type="button" className={scope === g.key ? 'on' : ''} onClick={() => setScope(g.key)}>
+            <button
+              key={g.key}
+              type="button"
+              className={scope === g.key ? 'on' : ''}
+              onClick={() => setScope(g.key)}
+              {...(g.key === 'mine' ? anchorAttr(ANCHORS.dashboards.sandbox) : undefined)}
+            >
               {g.label('Dashboards')}{counts ? ` (${counts[g.key]})` : ''}
             </button>
           ))}

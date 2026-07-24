@@ -70,6 +70,7 @@ function fromRing(r: TraceRecord): AgentRunRecord {
     decision: r.decision,
     health: verdictOf(r.decision, r.output),
     costUsd: r.costUsd,
+    tokens: r.tokens,
     source: 'ring',
   };
 }
@@ -104,8 +105,10 @@ async function langfuseRunsFor(systemId: string, nowMs: number): Promise<AgentRu
         decision: typeof meta.decision === 'string' ? meta.decision : undefined,
         health: verdictOf(meta.decision as string, t.output),
         // Langfuse rolls cost/tokens onto the trace; accept the common field names.
-        costUsd: num(t.totalCost) ?? num(t.calculatedTotalCost) ?? num(meta.costUsd),
-        tokens: num(t.totalTokens) ?? num((t.usage as Record<string, unknown>)?.total),
+        // Our own metadata comes FIRST for cost — Langfuse reports totalCost 0 for
+        // traces with no priced generations, which would short-circuit `??`.
+        costUsd: num(meta.costUsd) ?? num(t.totalCost) ?? num(t.calculatedTotalCost),
+        tokens: num(t.totalTokens) ?? num((t.usage as Record<string, unknown>)?.total) ?? num(meta.tokens),
         ms: num(t.latency),
         source: 'live',
       });
@@ -175,8 +178,10 @@ export async function agentTelemetryBatch(
           model: typeof meta.model === 'string' ? meta.model : undefined,
           decision: typeof meta.decision === 'string' ? meta.decision : undefined,
           health: verdictOf(meta.decision as string, t.output),
-          costUsd: num(t.totalCost) ?? num(t.calculatedTotalCost) ?? num(meta.costUsd),
-          tokens: num(t.totalTokens) ?? num((t.usage as Record<string, unknown>)?.total),
+          // meta.costUsd first — Langfuse's totalCost is 0 (not absent) for
+          // unpriced generations and would short-circuit `??` (see above).
+          costUsd: num(meta.costUsd) ?? num(t.totalCost) ?? num(t.calculatedTotalCost),
+          tokens: num(t.totalTokens) ?? num((t.usage as Record<string, unknown>)?.total) ?? num(meta.tokens),
           ms: num(t.latency),
           source: 'live',
         });

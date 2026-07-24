@@ -58,6 +58,9 @@ export type RunResponse = {
   traces: number;
   /** The model's final text (mock-model in kind). */
   output?: string;
+  /** Aggregate token usage across every model call in the run — present only
+   *  when the model backend actually reported usage (never fabricated zeros). */
+  usage?: { input: number; output: number; total: number };
   error?: string;
 };
 
@@ -89,6 +92,32 @@ export type GovernedToolResponse = {
 /** Scope a system (and optionally a node) to its OPA principal: `os-<id>[:node]`. */
 export function principalFor(systemId: string, node?: string): string {
   return node ? `os-${systemId}:${node}` : `os-${systemId}`;
+}
+
+/** USD per 1M tokens for one LiteLLM model_name (see config.modelPrices). */
+export type ModelPrice = { inputPerM: number; outputPerM: number };
+
+/**
+ * Price a run's AGGREGATE usage. The runtime walk is two-tier (plan on the
+ * reasoning model, execute on the exec model) but reports ONE merged usage with
+ * no per-model split, so we price honestly only when EVERY tier's model resolves
+ * to the same explicit price. Anything else — an unpriced model, or tiers with
+ * different prices — returns undefined (the Monitor tile shows "—"; unpriced is
+ * never 0, never fabricated).
+ */
+export function runCostUsd(
+  usage: { input: number; output: number } | undefined,
+  models: readonly string[],
+  prices: Readonly<Record<string, ModelPrice>>,
+): number | undefined {
+  if (!usage || models.length === 0) return undefined;
+  const resolved = models.map((m) => prices[m]);
+  const first = resolved[0];
+  if (!first) return undefined;
+  for (const p of resolved) {
+    if (!p || p.inputPerM !== first.inputPerM || p.outputPerM !== first.outputPerM) return undefined;
+  }
+  return (usage.input * first.inputPerM + usage.output * first.outputPerM) / 1_000_000;
 }
 
 export function reloadRequest(systemId: string, ir: IR): ReloadRequest {

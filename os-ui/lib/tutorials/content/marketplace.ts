@@ -19,7 +19,7 @@ const marketplace: TutorialDef = {
     {
       illustration: 'marketplace',
       title: 'Browse the catalog',
-      body: 'Search and filter by type, domain, or tag. Anyone can browse the certified products across the organization.',
+      body: 'Search the products, filter by domain or tag, and switch the type strip — Data product, Metric, Dashboard, Agent, Knowledge, Connection, and more. Anyone can browse the Admin-certified products across the organization; "My imports" shows what you already brought in.',
     },
     {
       illustration: 'document',
@@ -29,10 +29,10 @@ const marketplace: TutorialDef = {
     {
       illustration: 'governance',
       title: 'Request access',
-      body: 'Import as a governed grant: you consume the shared product under your own identity and row-level security. If it needs approval, your request appears in Governance.',
+      body: 'Import as a governed grant: the owner stays the source of truth and you consume the product under your own identity and row-level security. If it needs approval, your request appears in Policies & Approvals.',
       byRole: {
         builder: {
-          body: 'You govern what your domain brings in. Imports are grants under your own row-level security, and approval-required requests surface in Governance for review.',
+          body: 'You govern what your domain brings in. Imports are grants under your own row-level security, and approval-required requests surface in Policies & Approvals for review.',
         },
       },
     },
@@ -50,7 +50,7 @@ const marketplace: TutorialDef = {
       sandboxAnchor: ANCHORS.marketplace.sandbox,
       route: '/marketplace',
       title: 'Browse and filter',
-      body: 'Search and filter by type, domain, or tag to find a certified product worth reusing.',
+      body: 'Search the products, narrow by domain or tag, and use the type strip to find a certified product worth reusing.',
     },
     {
       anchor: ANCHORS.marketplace.inspect,
@@ -64,7 +64,7 @@ const marketplace: TutorialDef = {
       route: '/marketplace',
       governedWrite: true,
       title: 'Request to import',
-      body: 'Request a governed grant. You consume the shared product under your own row-level security; if approval is needed it appears in Governance.',
+      body: 'Request a governed grant. You consume the shared product under your own row-level security; if approval is needed it appears in Policies & Approvals.',
     },
   ],
   sandbox: {

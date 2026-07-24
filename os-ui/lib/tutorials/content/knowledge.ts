@@ -8,16 +8,16 @@ const knowledge: TutorialDef = {
   key: 'knowledge',
   route: '/knowledge',
   title: 'Knowledge',
-  tagline: "Capture how your domain works — so every agent and team member starts from the same playbook.",
+  tagline: 'Capture how you and your domain work — so every agent starts from the same playbook.',
   buttonLabel: 'Knowledge Tutorial',
 
   hook: {
     illustration: 'knowledge',
-    title: "Your domain's operating manual",
-    body: 'Write down how your business actually works: the steps, the actors, the rules. Every agent in the domain reads this context automatically — no copy-paste required.',
+    title: 'The context your agents read',
+    body: 'Two surfaces, one playbook. Knowledge holds free-form notes — how you work, key contacts, domain context. Workflows (its own tab) holds your business processes with steps and decision rules. Agents read both as context automatically — no copy-paste required.',
     byRole: {
       builder: {
-        body: 'Write the playbook, mark the hard rules as guardrails, and publish it — so every agent in the domain is aligned from day one.',
+        body: 'Two surfaces, one playbook: Knowledge notes and Workflows. You approve what gets promoted to the Domain tier — so every agent in the domain is aligned on the same, reviewed context.',
       },
     },
   },
@@ -25,28 +25,28 @@ const knowledge: TutorialDef = {
   steps: [
     {
       illustration: 'knowledge',
-      title: 'Write your domain overview',
-      body: 'Add a short overview, a glossary, your goals, and key context. Type it, upload a markdown file, or let the knowledge agent draft it from your notes. This becomes the base context for every domain agent.',
+      title: 'Write it down as a note',
+      body: 'On Knowledge, "Add note" creates free-form markdown — your role, preferences, working style, key context. My knowledge is personal; Domain holds notes promoted by domain members; Company holds certified knowledge from across the org.',
     },
     {
       illustration: 'build',
-      title: 'Map out a workflow',
-      body: 'Create a tile for each business process. Lay out the steps visually — assign each one to a Human, Software, or Agent actor and link the data products, apps, and files it touches.',
-    },
-    {
-      illustration: 'document',
-      title: 'Add rules and tacit knowledge',
-      body: "Write decision rules (mark the critical ones as enforced guardrails) and capture the practitioners' know-how. Upload a recording, paste a transcript, or type notes — the knowledge agent compresses it into clean markdown.",
+      title: 'Map a process as a workflow',
+      body: 'On the Workflows tab, "+ New workflow" names a business process — Bank Submission, Customer Onboarding — and lays out its steps and decision rules. The Domain Operating Manual (overview, glossary, goals) lives at the top of Workflows.',
     },
     {
       illustration: 'publish',
-      title: 'Publish to the domain',
-      body: 'A Builder reviews and publishes the workflow. It becomes live context: agents can pull the full workflow when they need it, and it is discoverable in the Marketplace.',
+      title: 'Promote what the domain should share',
+      body: 'Both notes and workflows climb the same ladder: "Promote to Domain" (or "Request promotion") sends it for approval in Policies & Approvals; an Admin can "Certify to Company". "Unshare" and "Revoke from Company" walk it back.',
       byRole: {
         builder: {
-          body: 'Review the draft, confirm the hard rules are correct, and publish. The workflow goes live as agent context and appears in the Marketplace.',
+          body: 'Both notes and workflows climb the same ladder. Requests land in Policies & Approvals for your yes; an Admin certifies to Company. What you approve becomes live context for every domain agent.',
         },
       },
+    },
+    {
+      illustration: 'agent',
+      title: 'Agents read it automatically',
+      body: 'Published knowledge becomes agent context: an agent granted your knowledge pulls the relevant notes and workflows when it works. Archived notes are hidden from your agents — the archive is how you retire stale context without deleting it.',
     },
   ],
 
@@ -54,43 +54,42 @@ const knowledge: TutorialDef = {
     {
       anchor: ANCHORS.knowledge.sandbox,
       sandboxAnchor: ANCHORS.knowledge.sandbox,
-      title: 'Open your personal knowledge lane',
-      body: 'Drafts you write here are private until a Builder publishes them. Safe to experiment without affecting the live domain knowledge.',
+      title: 'Open My knowledge',
+      body: 'The scope buttons — All, My, Domain, Company — say whose notes you see. My knowledge is your private lane: notes here are yours alone until a promotion is approved.',
       route: '/knowledge',
     },
     {
       anchor: ANCHORS.knowledge.add,
       sandboxAnchor: ANCHORS.knowledge.sandbox,
-      title: 'Add a workflow',
-      body: 'Name a business process and lay out its steps. Assign each step an actor — Human, Software, or Agent — and link the data products, apps, and files it touches.',
+      title: 'Add a note',
+      body: 'Give it a title — "How I like reports", "Key contacts" — and "Add note". Then write free-form markdown and Save. Short, honest notes beat long perfect ones.',
       route: '/knowledge',
     },
     {
       anchor: ANCHORS.knowledge.organize,
       sandboxAnchor: ANCHORS.knowledge.sandbox,
-      title: 'Add rules and tacit knowledge',
-      body: 'Write decision rules and mark the hard ones as enforced guardrails. Capture tacit know-how by pasting notes or recording an interview — the knowledge agent tidies everything into clean markdown.',
-      route: '/knowledge',
+      title: 'Map a workflow',
+      body: 'Switch to the Workflows tab and "+ New workflow": name the business process, lay out its steps and decision rules. Workflows follow the same My / Domain / Company scopes as everything else.',
+      route: '/workflows',
     },
     {
       anchor: ANCHORS.knowledge.publish,
-      title: 'Publish to the domain',
-      body: 'Submit for Builder review. Once published, the workflow becomes live context for every domain agent and is listed in the Marketplace.',
+      title: 'Promote to Domain',
+      body: '"Promote to Domain" — or "Request promotion" — files the request; it is approved in Policies & Approvals. Once approved, the note or workflow becomes live context for every domain agent.',
       governedWrite: true,
-      roles: ['builder'],
       route: '/knowledge',
     },
   ],
 
   sandbox: {
-    lane: 'My knowledge — personal drafts',
+    lane: 'My knowledge — personal notes',
     anchor: ANCHORS.knowledge.sandbox,
-    note: 'Drafts stay private until a Builder publishes them — nothing you write here affects live domain knowledge or agent context.',
+    note: 'Notes stay private until a promotion is approved — nothing you write here affects live domain knowledge or agent context.',
   },
 
   outro: {
-    title: 'Your domain knowledge is live',
-    body: 'You captured how your domain works. Agents will use it as context automatically. Next: build agents that act on it, or add the data products it references.',
+    title: 'Your playbook is live',
+    body: 'You captured how you work and mapped a process — and you know the ladder that shares it. Agents will use it as context automatically. Next: build agents that act on it, or add the data products it references.',
     next: ['agents', 'data'],
     doc: 'knowledge-golden-path.md',
   },
@@ -98,15 +97,15 @@ const knowledge: TutorialDef = {
   framing: {
     user: {
       verb: 'Explore',
-      hook: "Read the domain's operating manual and see how your workflows connect.",
+      hook: 'Read the domain\'s notes and workflows and see how the pieces connect.',
     },
     creator: {
       verb: 'Create',
-      hook: 'Draft workflows, decision rules, and tacit know-how for your domain.',
+      hook: 'Write notes and map workflows that give your agents real context.',
     },
     builder: {
       verb: 'Review & promote',
-      hook: 'Review workflow drafts, mark enforced guardrails, and publish the live domain knowledge.',
+      hook: 'Approve the notes and workflows that become your domain\'s shared playbook.',
     },
   },
 };

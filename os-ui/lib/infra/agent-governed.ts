@@ -271,6 +271,8 @@ export type TraceEvent = {
   output: unknown;
   decision?: Effect;
   costUsd?: number;
+  /** Total tokens this event consumed (run-summary traces carry the run total). */
+  tokens?: number;
   /** Which runtime produced this step — so Monitoring can surface a Hermes run
    *  distinctly from a LangGraph run (both trace through the SAME governed door). */
   runtime?: 'langgraph' | 'hermes';
@@ -301,7 +303,7 @@ export async function trace(event: TraceEvent): Promise<TraceRecord> {
         body: {
           id,
           name: `agent.${event.tool}`,
-          metadata: { principal: event.principal, tool: event.tool, decision: event.decision, costUsd: event.costUsd, runtime: event.runtime ?? 'langgraph' },
+          metadata: { principal: event.principal, tool: event.tool, decision: event.decision, costUsd: event.costUsd, tokens: event.tokens, runtime: event.runtime ?? 'langgraph' },
           input: event.input,
           output: event.output,
           tags: ['agent-golden-path', `tool:${event.tool}`, `runtime:${event.runtime ?? 'langgraph'}`, ...(event.decision ? [`decision:${event.decision}`] : [])],

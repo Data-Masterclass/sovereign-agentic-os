@@ -8,16 +8,16 @@ const software: TutorialDef = {
   key: 'software',
   route: '/software',
   title: 'Software',
-  tagline: 'Build a governed web app by chat — it ships with a git repo, a review gate, and a free MCP connection.',
+  tagline: 'Build a governed app by chat — watch the agent work live, preview privately, ship through a review gate.',
   buttonLabel: 'Ship Software Tutorial',
 
   hook: {
     illustration: 'build',
-    title: 'Build an app by chatting',
-    body: 'Describe what you want, iterate in a private preview, then a Builder reviews and deploys it. You get a git repo, a live URL, and an auto-generated MCP tool — all governed.',
+    title: 'Build software by chatting — governed end to end',
+    body: 'Five stages — Define · Design · Build · Preview · Operate. State a purpose, shape EPICs and user stories, then watch the build agent work live: the plan first, then one honest line per action, every commit landing in a sovereign in-cluster repo. Preview is yours alone; going live is a governed Builder review.',
     byRole: {
       builder: {
-        body: 'Review the security scan, the resources requested, and the diff — then approve. The app goes live with a governed MCP connection already wired.',
+        body: 'Five stages — Define · Design · Build · Preview · Operate. Your lane adds the gates: edit code beside the chat, expand the raw tool I/O behind every activity line, and review deploy requests — security scan, granted resources, the diff — before anything goes live.',
       },
     },
   },
@@ -25,26 +25,31 @@ const software: TutorialDef = {
   steps: [
     {
       illustration: 'build',
-      title: 'Describe what to build',
-      body: 'Name your app, pick a template — web app, internal service, script, dashboard — and describe it in plain language. A Forgejo repo and app page are created instantly.',
+      title: 'Define — purpose and granted context',
+      body: '"Create new software app" needs only a name — a sovereign in-cluster Forgejo repo is provisioned, and the build agent infers UI/API from what it actually builds. State the purpose in a sentence or two and "Save purpose", then grant the governed context the app may use — Connections, Data, Knowledge, Files, Metrics — at Read / Read+propose / Read+write. No raw credentials, ever.',
+    },
+    {
+      illustration: 'document',
+      title: 'Design — EPICs and user stories',
+      body: 'Shape the work on the design board: "+ Add EPIC", each with technical, UX and governance requirements, then "+ Add story" beneath — as a role, I want a capability, so that a benefit — with an acceptance criterion. The Design assistant proposes both; Apply creates them. Ship the backlog outward too: "Push to Jira", "Push code to Git", or seed the frontend from a Claude design.',
     },
     {
       illustration: 'agent',
-      title: 'Build it by chat',
-      body: 'Talk to the build chat: "add a renewals table", "make the list sortable". The coding agent writes the code and commits it. Power users can also edit directly in the Monaco editor.',
+      title: 'Build — watch the agent work, live',
+      body: 'Pick a Build target story, flip Plan ⇄ Build, and describe the change. The run streams as it happens: the plan first, then one line per action — "Committed 3 files", "Provisioning preview…" — with failures as honest ⚠ warnings and the retry as the next line. Builders can "show details" for the raw tool I/O, and the committed diff lands under "Changes this run", beside the code panel and the live-data preview.',
     },
     {
       illustration: 'sandbox',
-      title: 'Run a private preview',
-      body: 'Spin up a private sandbox preview and try the app yourself. Iterate as much as you like — the preview is yours alone and never touches the domain.',
+      title: 'Preview — your private running app',
+      body: 'The persistent status rail answers "where is this app?" at a glance: Repo · Preview (none → provisioning → live) · Deploy (none → in-review → live) — never faking a state it can\'t see. "Provision preview" starts a private runner; "Open app UI ↗" appears once the pod is ready, and the pipeline — Scaffold repo, Build image (CI), Publish to registry, Deploy, Live / health — shows exactly where it stands.',
     },
     {
       illustration: 'publish',
-      title: 'Pass the Builder review and go live',
-      body: 'Request a deploy. A Builder sees the security scan, the resources requested, the cost estimate, and the diff — then approves. The app goes live and a free MCP connection appears in Connections.',
+      title: 'Operate — a governed go-live',
+      body: '"Publish release" files a deploy review — approve it in Policies & Approvals. A Builder sees the security scan, the governed resources requested, its footprint and the change diff before anything ships; routine in-envelope updates ship automatically. Once live: call the app\'s governed MCP tools and climb the promotion ladder — My → Domain → Company.',
       byRole: {
         builder: {
-          body: 'Open the review card: check the security scan, the connections and data products requested, the cost footprint, and the diff. Approve to deploy — the app goes live and its MCP connection is registered.',
+          body: 'Open Deploy reviews: the security scan, the governed resources requested, the footprint, and the change diff — then decide. Approval takes the release live; the app\'s capabilities become governed MCP tools that run AS the caller, OPA-checked and audit-traced.',
         },
       },
     },
@@ -54,66 +59,72 @@ const software: TutorialDef = {
     {
       anchor: ANCHORS.software.sandbox,
       sandboxAnchor: ANCHORS.software.sandbox,
-      title: 'Open your personal sandbox',
-      body: 'Your apps start here — private previews, yours alone. Nothing is live until a Builder approves the deploy.',
       route: '/software',
+      title: 'Start from your software',
+      body: 'The list shows All · My · Domain · Company Software. "Create new software app" asks only for a name — "Create & build" scaffolds a sovereign Forgejo repo and drops you into the five-stage flow. Everything starts Personal.',
     },
     {
-      anchor: ANCHORS.software.describe,
+      anchor: ANCHORS.software.define,
       sandboxAnchor: ANCHORS.software.sandbox,
-      title: 'Describe your app',
-      body: 'Name it, pick a template, and describe it in plain language. A Forgejo repo and app page open immediately.',
       route: '/software',
+      title: 'Define it',
+      body: 'Write the purpose in your own words and "Save purpose" — Define is complete once a purpose is set. Then grant governed context (Connections, Data, Knowledge, Files, Metrics) at Read / Read+propose / Read+write. The stage assistant can sharpen the purpose and suggest grants; you confirm every apply.',
+    },
+    {
+      anchor: ANCHORS.software.design,
+      sandboxAnchor: ANCHORS.software.sandbox,
+      route: '/software',
+      title: 'Design the backlog',
+      body: '"+ Add EPIC", fill its technical / ux / governance requirements, and "+ Add story" with acceptance criteria — then "Save design". Or ask the assistant to "Suggest EPICs for this app" and Apply what it proposes.',
     },
     {
       anchor: ANCHORS.software.build,
       sandboxAnchor: ANCHORS.software.sandbox,
-      title: 'Build by chat',
-      body: 'Type what you want next. The coding agent writes, commits, and updates your preview. Edit code directly in Monaco if you prefer.',
       route: '/software',
+      title: 'Build with the live feed',
+      body: 'Choose a Build target story, keep the toggle on Build (Plan discusses without touching code), and describe the change. Watch the activity feed: plan, then one line per action, warnings when something fails, the diff when it commits. The status rail above tracks Repo · Preview · Deploy the whole time.',
     },
     {
-      anchor: ANCHORS.software.run,
+      anchor: ANCHORS.software.preview,
       sandboxAnchor: ANCHORS.software.sandbox,
-      title: 'Run the preview',
-      body: 'Launch your private preview and click through the app. Iterate until it is right — the preview is yours alone and makes no governed writes.',
       route: '/software',
+      title: 'Run the private preview',
+      body: '"Provision preview" asks the in-cluster runner for a private pod; "Open app UI ↗" appears once it serves, with the live-data preview calling the governed OS API as you. No cluster reachable? "Acknowledge offline" says so honestly and lets you continue.',
     },
     {
-      anchor: ANCHORS.software.deploy,
-      title: 'Request Builder review and deploy',
-      body: 'Submit for deploy review. A Builder sees the scan, resources, cost, and diff — then approves. Your app goes live and its MCP connection appears in Connections.',
-      governedWrite: true,
-      roles: ['builder'],
+      anchor: ANCHORS.software.operate,
       route: '/software',
+      governedWrite: true,
+      title: 'Request the go-live',
+      body: '"Publish release" files the deploy review — approve it in Policies & Approvals. You can see exactly what the Builder sees while it waits: the scan, the granted resources, the diff. Approved, the app goes live; then promote it — My → Domain → Company.',
     },
   ],
 
   sandbox: {
-    lane: 'My apps — private preview',
+    lane: 'My Software — private apps and previews',
     anchor: ANCHORS.software.sandbox,
-    note: 'Private previews run only for you — no governed deploy, no shared access, and no side-effects outside your personal sandbox.',
+    note: 'Apps start Personal: build, commit, and preview privately in your own sovereign repo. Nothing reaches the domain until a deploy review is approved.',
   },
 
   outro: {
-    title: 'Your app is live — with a governed MCP connection',
-    body: 'You built, previewed, and shipped an app. It has a git repo, a live URL, and a free MCP tool ready for agents. Next: wire it to connections, or build an agent that calls it.',
-    next: ['connections', 'agents'],
+    title: 'Your app shipped through a governed gate',
+    body: 'You defined, designed, built with a live agent, previewed privately, and requested a governed go-live. Next: build an agent that calls your app\'s governed MCP tools, or open Governance to see how deploy reviews are decided.',
+    next: ['agents', 'governance'],
     doc: 'software-golden-path.md',
   },
 
   framing: {
     user: {
       verb: 'Use',
-      hook: 'Use apps your domain has built and published.',
+      hook: 'Open the apps your domain shipped — every one passed a governed review.',
     },
     creator: {
       verb: 'Create',
-      hook: 'Build web apps and services by chat — no platform expertise needed.',
+      hook: 'Describe it in chat and watch the agent build it, action by action, in your own governed repo.',
     },
     builder: {
       verb: 'Review & promote',
-      hook: 'Review deploy requests — security scan, resource grants, cost, diff — and promote apps to the domain or Marketplace.',
+      hook: 'Review deploy requests — scan, resources, diff — approve go-lives, and promote apps up the ladder.',
     },
   },
 };

@@ -24,7 +24,7 @@ const strategy: TutorialDef = {
     {
       illustration: 'document',
       title: 'What a pillar is',
-      body: 'A pillar names one strategic priority in business terms — Retention, New Markets, Operational Excellence. A company keeps only a few. Builders define domain pillars; Admins define company-wide ones; everyone reads them.',
+      body: 'A pillar names one strategic priority in business terms — Retention, New Markets, Operational Excellence. A company keeps only a few. Pillars carry the same My · Domain · Company tiers as everything else: anyone can define a My pillar; a Builder defines Domain ones; an Admin defines Company-wide ones.',
     },
     {
       illustration: 'bet',
@@ -53,7 +53,7 @@ const strategy: TutorialDef = {
       sandboxAnchor: ANCHORS.strategy.sandbox,
       route: '/strategy',
       title: 'Open the pillars board',
-      body: 'The Strategy tab reads top-down: pillars first, side by side. Browsing is always safe — nothing here changes until someone with edit rights saves.',
+      body: 'Strategic Pillars reads top-down: pillars first, side by side, filtered by the All · My · Domain · Company pills. Browsing is always safe — nothing here changes until someone with edit rights saves.',
     },
     {
       anchor: ANCHORS.strategy.rollup,
@@ -80,9 +80,8 @@ const strategy: TutorialDef = {
       anchor: ANCHORS.strategy.create,
       route: '/strategy',
       governedWrite: true,
-      roles: ['builder'],
       title: 'Create a pillar',
-      body: 'Name the priority in business terms, state its intent, and describe its value metric. Builders create domain pillars; Admins create company-wide ones. Then link the bets that deliver it.',
+      body: '"New pillar": name the priority in business terms, state its intent, and describe its value metric. Anyone can define a My pillar; a Builder defines Domain ones; an Admin defines Company-wide ones. Then "+ Link a big bet" to attach what delivers it.',
     },
   ],
   sandbox: {

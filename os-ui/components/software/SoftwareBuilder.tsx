@@ -38,6 +38,8 @@ import {
   type SuggestedStoriesForEpic,
 } from '@/lib/software/assistant-suggestions';
 import { initialStageState, canEnter, isSatisfied, markDone, type StageState } from '@/lib/core/stages';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials';
+import { buildStatusRail } from '@/lib/software/build-activity';
 import TeamPanel from '@/app/software/TeamPanel';
 import StageAssistant from './StageAssistant';
 import { SW_STAGES, type SwStageId, type SwCtx } from './stages';
@@ -582,7 +584,7 @@ function DefineStage({
   const applyGrants = (sg: SuggestedGrant[]) => onSaveGrants(applyGrantsSuggestion(grants, sg, cap));
 
   return (
-    <div className="agent-editor" style={{ marginTop: 4 }}>
+    <div className="agent-editor" style={{ marginTop: 4 }} {...anchorAttr(ANCHORS.software.define)}>
       <label className="comp-label">App name</label>
       <input type="text" value={app.name} readOnly title="Named on create — rename via the delivery team or build chat" />
       <div className="hint" style={{ marginTop: 6 }}>
@@ -664,7 +666,7 @@ function DesignStage({
   const hasStories = epics.some((e) => (e.stories?.length ?? 0) > 0);
 
   return (
-    <div style={{ marginTop: 4 }}>
+    <div style={{ marginTop: 4 }} {...anchorAttr(ANCHORS.software.design)}>
       <DesignBoard epics={epics} canEdit={canEdit} onSave={onSave} />
 
       {canEdit ? <ShipDesignPanel app={app} hasStories={hasStories} onReload={onReload} /> : null}
@@ -844,6 +846,36 @@ function withStoryStatus(epics: Epic[], epicId: string, storyId: string, status:
   );
 }
 
+/**
+ * Persistent Build ▸ Preview ▸ Deploy status rail. Read-only, wired to the SAME
+ * live state the stage already reads (`app.pipeline`, `app.deploy.*`) — it is the
+ * honest single-glance answer to "where is this app?". Never fabricates a state it
+ * can't see (Preview is live only when a URL is actually served).
+ */
+function BuildStatusRail({ app }: { app: SoftwareApp }) {
+  const segments = buildStatusRail(app);
+  const sha = app.repo.seeded.length > 0 || app.pipeline.forgejo === 'ok' ? app.repo.fullName.split('/').pop() : null;
+  return (
+    <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center', padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--panel)', marginBottom: 12 }}>
+      {segments.map((seg, i) => (
+        <div key={seg.label} className="row" style={{ gap: 8, alignItems: 'center' }}>
+          {i > 0 ? <span className="muted" aria-hidden="true" style={{ opacity: 0.4 }}>·</span> : null}
+          <span className={`sw-dot ${seg.tone === 'ok' ? 'on' : 'off'}`} aria-hidden="true" style={seg.tone === 'active' ? { background: 'var(--gold)' } : undefined} />
+          <span style={{ fontSize: 12 }}>
+            <strong>{seg.label}:</strong>{' '}
+            <span className="muted">{seg.value}</span>
+          </span>
+        </div>
+      ))}
+      {app.deploy.previewUrl ? (
+        <a href={app.deploy.previewUrl} target="_blank" rel="noreferrer" className="sw-quiet-link" style={{ fontSize: 12, marginLeft: 'auto' }}>
+          Open preview ↗
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
 function BuildStage({
   app, epics, canEditCode, onBuilt, target, setTarget, onSaveEpics,
 }: {
@@ -885,7 +917,9 @@ function BuildStage({
   const buildStory = target ? { epicId: target.epicId, storyId: target.storyId, label: selected?.label } : null;
 
   return (
-    <div style={{ marginTop: 4 }}>
+    <div style={{ marginTop: 4 }} {...anchorAttr(ANCHORS.software.build)}>
+      {/* Persistent Build ▸ Preview ▸ Deploy status rail — honest, single-glance state. */}
+      <BuildStatusRail app={app} />
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
         <p className="hint" style={{ marginTop: 0, flex: 1 }}>
           {buildMode === 'plan'
@@ -973,6 +1007,7 @@ function BuildStage({
             .filter((m) => m.role === 'user' || m.role === 'assistant')
             .map((m) => ({ role: m.role, content: m.content }))}
           onBuilt={handleBuilt}
+          showDetails={canEditCode}
         />
         {canEditCode ? <CodePanel appId={app.id} repoFullName={app.repo.fullName} /> : null}
       </div>
@@ -1009,7 +1044,7 @@ function PreviewStage({
 }) {
   const [showApi, setShowApi] = useState(false);
   return (
-    <div style={{ marginTop: 4 }}>
+    <div style={{ marginTop: 4 }} {...anchorAttr(ANCHORS.software.preview)}>
       {/* ── Live-data preview: the real deployed build embedded over the governed OS API ── */}
       {surface.ui ? (
         <div className="grant-block" style={{ marginBottom: 16 }}>
@@ -1143,7 +1178,7 @@ function OperateStage({
   const version = app.deploy.releases > 0 ? `v${app.deploy.releases}` : 'Unpublished';
   const dep = deployBadge(app.deploy.state);
   return (
-    <div style={{ marginTop: 4 }}>
+    <div style={{ marginTop: 4 }} {...anchorAttr(ANCHORS.software.operate)}>
       {/* ── Publish a release (merged from the old Publish stage) ── */}
       <div className="sw-publish">
         <div className="sw-publish-row">

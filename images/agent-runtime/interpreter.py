@@ -138,6 +138,23 @@ def run_ir(ir, prompt, recursion_limit, timeout_ms, disabled_agents,
     visits = 0
     deadline = clock() + (timeout_ms / 1000.0) if timeout_ms else None
 
+    # Aggregate token usage across ALL model calls in the run. The real
+    # ``model_call`` (make_model_call) publishes each call's usage on the
+    # ``last_usage`` function attribute; injected test callables that don't are
+    # simply counted as "no usage" (usage is then omitted from the result).
+    usage = {"input": 0, "output": 0, "total": 0}
+    usage_seen = False
+
+    def take_usage():
+        nonlocal usage_seen
+        u = getattr(model_call, "last_usage", None)
+        if not u:
+            return
+        usage_seen = True
+        usage["input"] += u.get("input", 0) or 0
+        usage["output"] += u.get("output", 0) or 0
+        usage["total"] += u.get("total", 0) or 0
+
     while queue:
         if deadline is not None and clock() >= deadline:
             break  # wall-clock bound hit; stop but still report
@@ -164,11 +181,13 @@ def run_ir(ir, prompt, recursion_limit, timeout_ms, disabled_agents,
             plan = model_call(node, build_plan_prompt(node), prompt, reasoning_model)
         except Exception as e:  # a planning failure shouldn't abort the whole walk
             plan = "[plan error: %s]" % e
+        take_usage()
         try:
             output = model_call(node, system_prompt,
                                 build_execution_prompt(prompt, plan), exec_model)
         except Exception as e:  # a model failure shouldn't abort the whole walk
             output = "[model error: %s]" % e
+        take_usage()
 
         # (2) one governed tool call per tool — no tool runs outside this path.
         for tool in node.get("tools", []):
@@ -192,7 +211,7 @@ def run_ir(ir, prompt, recursion_limit, timeout_ms, disabled_agents,
         if not node.get("supervisor") and not handoffs:
             reached_end = True  # a leaf reaches END
 
-    return {
+    result = {
         "ok": reached_end,
         "reachedEnd": reached_end,
         "path": path,
@@ -200,6 +219,11 @@ def run_ir(ir, prompt, recursion_limit, timeout_ms, disabled_agents,
         "traces": len(steps),
         "output": output,
     }
+    # Usage is reported ONLY when at least one model call actually returned it —
+    # a backend that reports nothing yields NO usage key, never fabricated zeros.
+    if usage_seen:
+        result["usage"] = usage
+    return result
 
 
 # --- real default implementations (lazy deps; never hit in pytest) ----------
@@ -214,6 +238,9 @@ def make_model_call(base_url, api_key, default_model):
     client = OpenAI(base_url=base_url, api_key=api_key, timeout=30.0, max_retries=1)
 
     def model_call(node, system_prompt, user_prompt, model=None):
+        # Cleared UP FRONT so a failed call can never re-report the previous
+        # call's usage (run_ir folds ``last_usage`` after every call).
+        model_call.last_usage = None
         resp = client.chat.completions.create(
             model=model or node.get("model") or default_model,
             messages=[
@@ -221,6 +248,19 @@ def make_model_call(base_url, api_key, default_model):
                 {"role": "user", "content": user_prompt},
             ],
         )
+        # Capture token usage instead of discarding it. Defensive: some backends
+        # return no ``usage`` object or omit fields — missing counts as 0, and a
+        # wholly absent usage leaves ``last_usage`` None (run_ir then omits it).
+        u = getattr(resp, "usage", None)
+        if u is not None:
+            tin = getattr(u, "prompt_tokens", 0) or 0
+            tout = getattr(u, "completion_tokens", 0) or 0
+            ttotal = getattr(u, "total_tokens", 0) or 0
+            model_call.last_usage = {
+                "input": tin,
+                "output": tout,
+                "total": ttotal or (tin + tout),
+            }
         return (resp.choices[0].message.content or "").strip()
 
     return model_call

@@ -20,6 +20,7 @@ import type { Schedule, System } from '@/lib/agents/system-schema';
 import type { ModelInfo } from '@/lib/agents/routing';
 import { roleAtLeast, type Role } from '@/lib/core/session';
 import { promoteVerb, visibilityLabel } from '@/lib/core/scopes';
+import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import type { Visibility } from '@/lib/core/lifecycle';
@@ -352,7 +353,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
           )}
           <ScheduleBadge schedule={data.schedule} />
           {canPromote ? (
-            <button className="btn ghost sm" onClick={() => post('promote')} disabled={acting} title={`Governed publish step — ${promoteLabel}`}>
+            <button className="btn ghost sm" onClick={() => post('promote')} disabled={acting} title={`Governed publish step — ${promoteLabel}`} {...anchorAttr(ANCHORS.agents.publish)}>
               {promoteLabel}
             </button>
           ) : null}
