@@ -4,7 +4,7 @@
 import type { Dataset, Layer } from './dataset-schema.ts';
 import type { Principal } from './store.ts';
 import type { ExecuteIdentity } from '@/lib/infra/governed';
-import { domainSchema, personalSchema, slug } from './store-fqn.ts';
+import { domainSchema, personalSchema, physicalSlug } from './store-fqn.ts';
 
 /**
  * PHYSICAL cleanup for a dataset DELETE (never for archive — archive is a
@@ -34,7 +34,7 @@ const LAYERS: Layer[] = ['bronze', 'silver', 'gold'];
  * makes an unbuilt candidate harmless, but we still only plan built layers.
  */
 export function dropPlan(d: Dataset): PhysicalDrop[] {
-  const s = slug(d.name);
+  const s = physicalSlug(d); // FROZEN — drop the ACTUAL physical tables, not the new name's
   const personal = personalSchema(d.owner);
   const out: PhysicalDrop[] = [];
   for (const layer of LAYERS) {

@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { requireUser } from '@/lib/core/auth';
-import { getDataset, isDatasetArchived, archiveDataset, unarchiveDataset, deleteDataset } from '@/lib/data/store';
+import { getDataset, isDatasetArchived, archiveDataset, unarchiveDataset, deleteDataset, renameDataset } from '@/lib/data/store';
 import { dropPhysicalTables } from '@/lib/data/physical-delete';
 import { executeRun } from '@/lib/infra/governed';
 import { stepperStages } from '@/lib/data/panels';
@@ -42,8 +42,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // the store (needs Principal). Both share the same session; the cost is negligible.
     const [user, principal] = await Promise.all([requireUser(), requirePrincipal()]);
     const { id } = await ctx.params;
-    const body = (await req.json().catch(() => ({}))) as { action?: string };
+    const body = (await req.json().catch(() => ({}))) as { action?: string; name?: string };
     switch (body.action) {
+      case 'rename': {
+        // Display-name change only — the physical slug is frozen in the store, so no
+        // Iceberg/Cube/dbt table ever moves. Edit-scoped (owner or in-domain admin).
+        const dataset = renameDataset(id, principal, body.name ?? '');
+        return NextResponse.json({ dataset: { ...dataset, archived: isDatasetArchived(id, principal) }, stages: stepperStages(dataset) });
+      }
       case 'archive': {
         const summary = archiveDataset(id, principal);
         // Best-effort OM soft-delete — fire-and-forget; the archive already succeeded.

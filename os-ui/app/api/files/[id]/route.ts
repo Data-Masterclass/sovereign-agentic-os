@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { requirePrincipal, errorResponse } from '@/lib/files/server';
 import {
   getFile, moveFile, setDocs, setSensitivity, setIndexingMode, deleteFile,
-  archiveFile, unarchiveFile,
+  archiveFile, unarchiveFile, renameFile,
 } from '@/lib/files/store';
 import { reindexById } from '@/lib/files/pipeline-server';
 import { removeFromIndex } from '@/lib/files/index-store';
@@ -28,6 +28,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 }
 
 type Patch = {
+  name?: string;
   folder?: string;
   tags?: string[];
   description?: string;
@@ -43,6 +44,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     const { id } = await ctx.params;
     const body = (await req.json().catch(() => ({}))) as Patch;
     let asset = getFile(id, user).asset;
+    if (body.name !== undefined) asset = renameFile(id, user, body.name);
     if (body.folder !== undefined) asset = moveFile(id, user, body.folder);
     if (body.sensitivity !== undefined) asset = setSensitivity(id, user, body.sensitivity);
     if (body.indexing !== undefined) asset = setIndexingMode(id, user, body.indexing);

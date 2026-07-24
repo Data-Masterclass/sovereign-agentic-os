@@ -10,6 +10,7 @@ import {
   createWorkflow,
   updateWorkflow,
   deleteWorkflow,
+  renameKnowledge,
   publishWorkflow,
   certifyWorkflow,
   getDomainKnowledge,
@@ -360,4 +361,40 @@ test('cross-instance: workflow writes are visible through globalThis symbol', ()
   const raw = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.knowledge.store')] as { workflows: Map<string, unknown> };
   assert.ok(raw && raw.workflows.has(rec.id), 'record visible in globalThis state');
   assert.equal(listWorkflows(participant).mine.length, 1);
+});
+
+// ---------------------------------------------------------------- rename (Knowledge) --
+
+test('renameKnowledge: the OWNER renames a draft; title updates in md + record', () => {
+  __resetStore();
+  const wf = createWorkflow(participant, { title: 'Bank Submission', domain: 'sales' });
+  const renamed = renameKnowledge(wf.id, participant, 'Loan Application');
+  assert.equal(renamed.title, 'Loan Application');
+  // The denormalised (indexed) title and the canonical md frontmatter both move.
+  const view = getWorkflow(wf.id, participant);
+  assert.equal(view.title, 'Loan Application');
+  assert.equal(view.workflow.title, 'Loan Application');
+});
+
+test('renameKnowledge: a Personal draft is owner-only — a domain_admin/builder cannot rename it', () => {
+  __resetStore();
+  const wf = createWorkflow(participant, { title: 'Private WF', domain: 'sales' });
+  assert.throws(() => renameKnowledge(wf.id, builder, 'Nope'), (e) => (e as { status?: number }).status === 403);
+  assert.throws(() => renameKnowledge(wf.id, dom, 'Nope'), (e) => (e as { status?: number }).status === 403);
+});
+
+test('renameKnowledge: a SHARED workflow admits an in-domain admin; an outsider is denied', () => {
+  __resetStore();
+  const wf = createWorkflow(participant, { title: 'Shared WF', domain: 'sales' });
+  publishWorkflow(wf.id, dom); // Personal → Shared (domain_admin approves)
+  // A same-domain admin may rename the shared workflow (canManageArtifact).
+  assert.equal(renameKnowledge(wf.id, admin, 'Shared WF v2').title, 'Shared WF v2');
+  // An outsider (different domain) may not.
+  assert.throws(() => renameKnowledge(wf.id, outsider, 'Hijack'), (e) => (e as { status?: number }).status === 403);
+});
+
+test('renameKnowledge: rejects an empty title', () => {
+  __resetStore();
+  const wf = createWorkflow(participant, { title: 'X', domain: 'sales' });
+  assert.throws(() => renameKnowledge(wf.id, participant, '   '), (e) => (e as { status?: number }).status === 400);
 });

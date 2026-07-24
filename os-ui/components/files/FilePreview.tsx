@@ -110,6 +110,9 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
   const [pickerOpen, setPickerOpen] = useState(false);
   const [personalNodes, setPersonalNodes] = useState<FolderPathNode[]>([]);
   const [domainNodes, setDomainNodes] = useState<FolderPathNode[]>([]);
+  // Inline rename of the filename (edit-gated, mirrors the other tabs).
+  const [renaming, setRenaming] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
 
   const load = useCallback(async () => {
     setErr('');
@@ -197,6 +200,15 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
     } catch (e) { setErr((e as Error).message); }
   }, [id, load, onMutated]);
 
+  // Rename the file (display name only — the object key/deep link are id/owner-based,
+  // so the bytes never move). Edit-gated in the store; the affordance is canManage-only.
+  const rename = useCallback(async () => {
+    const name = nameDraft.trim();
+    if (!name) { setRenaming(false); return; }
+    await patch({ name });
+    setRenaming(false);
+  }, [nameDraft, patch]);
+
   // Move this file into another folder via the edit-gated folder route. A viewer
   // (non-owner, non-admin) is rejected 403 by the store; the button is owner-only.
   const move = useCallback(async (folder: string) => {
@@ -275,7 +287,32 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         <div className="preview-head-title">
           <div className="preview-row">
             <span className={`kind-chip kind-${a.kind}`}>{KIND_LABEL[a.kind]}</span>
-            <span className="preview-title">{a.name}</span>
+            {renaming ? (
+              <span className="rename-inline">
+                <input
+                  className="rename-input"
+                  autoFocus
+                  value={nameDraft}
+                  onChange={(e) => setNameDraft(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void rename(); if (e.key === 'Escape') setRenaming(false); }}
+                  aria-label="File name"
+                />
+                <button className="btn primary sm" onClick={() => void rename()}>Save</button>
+                <button className="btn ghost sm" onClick={() => setRenaming(false)}>Cancel</button>
+              </span>
+            ) : (
+              <span className="preview-title">
+                {a.name}
+                {canManage ? (
+                  <button
+                    className="rename-pencil"
+                    onClick={() => { setNameDraft(a.name); setRenaming(true); }}
+                    title="Rename this file"
+                    aria-label="Rename this file"
+                  >✎</button>
+                ) : null}
+              </span>
+            )}
           </div>
           <div className="preview-row preview-submeta">
             <span className={`status-chip ${a.indexing.mode === 'stored-only' ? 's-stored' : 's-searchable'}`}>
@@ -384,6 +421,7 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         <summary>Details &amp; sharing</summary>
 
       <dl className="preview-meta">
+        <dt>ID</dt><dd className="mono muted">{a.id}</dd>
         <dt>Owner</dt><dd>{a.owner}</dd>
         <dt>Folder</dt><dd>{a.folder}</dd>
         <dt>Updated</dt><dd>{fresh(a.freshness)}</dd>

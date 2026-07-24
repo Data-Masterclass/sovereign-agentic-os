@@ -3,7 +3,7 @@
  */
 import type { Dataset, Layer } from './dataset-schema.ts';
 import { transparencyGate, type GateResult } from './transparency.ts';
-import { slug } from './store-fqn.ts';
+import { slug, physicalSlug } from './store-fqn.ts';
 import { cubeViewName, goldMartFqn } from './metrics.ts';
 
 /**
@@ -49,7 +49,7 @@ const ARTIFACT: Record<Layer, (s: string) => string> = {
 };
 
 export function lineageFor(d: Dataset): LineageGraph {
-  const s = slug(d.name);
+  const s = physicalSlug(d); // FROZEN — artifact-path labels stay pinned across a rename
   const columns = d.columns.map((c) => c.name);
   const nodes: LineageNode[] = [];
   const edges: LineageEdge[] = [];

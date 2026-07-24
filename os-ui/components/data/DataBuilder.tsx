@@ -132,6 +132,8 @@ function ruleText(c: DataCheck): string {
 type Dataset = {
   id: string;
   name: string;
+  /** The FROZEN physical slug (present once a rename decoupled it from the name). */
+  slug?: string;
   owner: string;
   domain: string;
   tier: 'dataset' | 'asset' | 'product';
@@ -164,9 +166,14 @@ function furthestBuilt(versions: Dataset['versions']): Layer | null {
 /** Tier-aware physical FQN — mirrors the server's builtLayerFqn: a personal dataset
  *  lives in the OWNER's `personal_<uid>` schema, a governed one in its (sanitized)
  *  domain schema. Never shows a table name that can't exist. */
+/** The FROZEN physical slug — the pinned `slug` if a rename decoupled it, else
+ *  `slug(name)`. Mirrors store-fqn.physicalSlug so the displayed FQN matches the real table. */
+function physicalSlug(d: Dataset): string {
+  return d.slug ?? slug(d.name);
+}
 function physicalFqn(d: Dataset, layer: Layer): string {
   const schema = d.tier === 'dataset' ? `personal_${slug(d.owner)}` : slug(d.domain);
-  return `iceberg.${schema}.${layer}_${slug(d.name)}`;
+  return `iceberg.${schema}.${layer}_${physicalSlug(d)}`;
 }
 
 /** Whether a dataset would be delivered to the Cube semantic layer (mirrors cubeDeliverable). */
@@ -329,6 +336,12 @@ export default function DataBuilder({
 
   // ---- configuration drawer (dbt SQL / dataset.yaml) ----
   const [showCode, setShowCode] = useState(false);
+
+  // ---- inline rename of the display name (edit-gated; the physical slug is frozen
+  //      server-side so no Iceberg/Cube/dbt table ever moves) ----
+  const [renaming, setRenaming] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [renameErr, setRenameErr] = useState('');
 
   // ---- sharing / promotion (mirrors Files: gate hint + button + request status) ----
   const [promote, setPromote] = useState<PromoteStatus | null>(null);
@@ -691,6 +704,22 @@ export default function DataBuilder({
   // an advance to the next stage (the effect moves the stepper once the build lands).
   const commitStage = (id: DataStageId) => { onBuilt(); settle(id); setPendingAdvance(id); };
 
+  // Rename the dataset (display name only). The store freezes the physical slug before
+  // the name changes, so every FQN/Cube/dbt identity stays pinned to the real table.
+  const rename = async () => {
+    const name = nameDraft.trim();
+    setRenameErr('');
+    if (!name) { setRenaming(false); return; }
+    const res = await fetch(`/api/data/datasets/${datasetId}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'rename', name }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { setRenameErr(d.error ?? 'Rename failed'); return; }
+    setRenaming(false);
+    await load();
+  };
+
   return (
     <ConfirmProvider>
       <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
@@ -704,11 +733,40 @@ export default function DataBuilder({
 
       {/* ── Header + status chips (always visible, above the stepper) ── */}
       <div className="stepper-head">
-        <h2 className="stepper-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
-          {dataset.name}
-        </h2>
+        {renaming ? (
+          <span className="rename-inline">
+            <input
+              className="rename-input"
+              autoFocus
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void rename(); if (e.key === 'Escape') setRenaming(false); }}
+              aria-label="Dataset name"
+            />
+            <button className="btn primary sm" onClick={() => void rename()}>Save</button>
+            <button className="btn ghost sm" onClick={() => setRenaming(false)}>Cancel</button>
+          </span>
+        ) : (
+          <h2 className="stepper-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+            {dataset.name}
+            {canEdit ? (
+              <button
+                className="rename-pencil"
+                onClick={() => { setNameDraft(dataset.name); setRenameErr(''); setRenaming(true); }}
+                title="Rename this dataset"
+                aria-label="Rename this dataset"
+              >✎</button>
+            ) : null}
+          </h2>
+        )}
         <span className={`badge ${TIER_BADGE[dataset.tier]}`}>{TIER_WORD[dataset.tier]}</span>
         <span className="muted" style={{ fontSize: 13 }}>{dataset.owner} · {dataset.domain}</span>
+        {/* Stable ID + physical (frozen) table slug — the display-name vs physical-name
+            distinction, so two same-named datasets are distinguishable and the physical
+            table is transparent even after a rename. */}
+        <span className="mono muted" style={{ fontSize: 11 }} title="Dataset ID">{dataset.id}</span>
+        <span className="mono muted" style={{ fontSize: 11 }} title="Physical table name (frozen — unaffected by rename)">table: {physicalSlug(dataset)}</span>
+        {renameErr && <span className="badge err" style={{ fontSize: 11 }}>{renameErr}</span>}
         {dataset.tier !== 'dataset' ? <DomainTag domain={dataset.domain} /> : null}
         {/* Lifecycle (Archive/Restore/Delete/Versions) lives in the persistent detail header so
             it is reachable from ANY stage — not buried in Publish. Governance unchanged (canEdit). */}

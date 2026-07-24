@@ -11,9 +11,8 @@ import {
   cubeName,
   cubeViewName,
   goldMartFqn,
-  slug,
 } from '../metrics.ts';
-import { assetTarget, domainSchema } from '../store-fqn.ts';
+import { assetTarget, domainSchema, physicalSlug } from '../store-fqn.ts';
 import { type CubeAccessPolicy, type OpaBundle, compilePolicy } from '../policy/compiler.ts';
 import { runConformance } from '../policy/conformance.ts';
 
@@ -227,7 +226,7 @@ export function makeLiveAdapters(deps: DataLiveDeps): Record<string, DataAdapter
   const dlt: DataAdapter = {
     tool: 'dlt',
     async apply(ctx) {
-      const table = `iceberg.${domainSchema(ctx.dataset.domain)}.bronze_${slug(ctx.dataset.name)}`;
+      const table = `iceberg.${domainSchema(ctx.dataset.domain)}.bronze_${physicalSlug(ctx.dataset)}`;
       // A file upload carries its MinIO objectKey; the real client POSTs it to the
       // data-runner /ingest (which writes the physical Bronze table as the principal).
       await deps.dlt.load(table, ctx.dataset.name, {
@@ -237,7 +236,7 @@ export function makeLiveAdapters(deps: DataLiveDeps): Record<string, DataAdapter
       return ok(`loaded raw Iceberg table ${table}`);
     },
     async verify(ctx) {
-      const table = `iceberg.${domainSchema(ctx.dataset.domain)}.bronze_${slug(ctx.dataset.name)}`;
+      const table = `iceberg.${domainSchema(ctx.dataset.domain)}.bronze_${physicalSlug(ctx.dataset)}`;
       const exists = await deps.dlt.tableExists(table, ctx.principal);
       if (!exists) return fail(`raw table ${table} (or its snapshot) is not in Polaris`);
       return ok(`raw table + snapshot present in Polaris`);
@@ -250,9 +249,9 @@ export function makeLiveAdapters(deps: DataLiveDeps): Record<string, DataAdapter
   // against `iceberg.<domain>.…` (a table that never existed → false ✗, or worse, a
   // stale domain table → false ✓). The fallback keeps the legacy domain-schema shape,
   // sanitized so a hyphenated domain can't produce an invalid Trino identifier.
-  const dbtModelFqn = (ctx: { dataset: { domain: string; name: string }; stage?: DataStage; targetFqn?: string }) => {
+  const dbtModelFqn = (ctx: { dataset: { domain: string; name: string; slug?: string }; stage?: DataStage; targetFqn?: string }) => {
     if (ctx.targetFqn) return ctx.targetFqn;
-    const s = slug(ctx.dataset.name);
+    const s = physicalSlug(ctx.dataset);
     const schema = domainSchema(ctx.dataset.domain);
     return ctx.stage === 'silver' ? `iceberg.${schema}.silver_${s}` : `iceberg.${schema}.gold_${s}`;
   };

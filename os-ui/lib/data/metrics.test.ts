@@ -216,3 +216,32 @@ test('#155 legacy dataset resolves under its bare name (matcher is a superset of
   assert.ok(cubeNameMatches(d, 'orders'));
   assert.ok(cubeViewNameMatches(d, 'Orders'));
 });
+
+// ---------------------------------- FROZEN slug — Cube/dbt identity stability on rename --
+
+// A rename FREEZES the slug; the Cube name, view, gold-mart FQN and dbt mart ref all stay
+// pinned to the original physical identity — a live dashboard/metric never breaks.
+test('rename freezes the Cube + dbt identity (legacy, un-namespaced dataset)', () => {
+  const before = gold({ name: 'Orders' });          // no slug → slug("Orders") = "orders"
+  assert.equal(cubeName(before), 'orders');
+  assert.equal(cubeViewName(before), 'Orders');
+  assert.equal(goldMartFqn(before), 'iceberg.sales.gold_orders');
+  assert.match(scaffoldExposureYaml(before), /ref\('mart_orders'\)/);
+
+  // Rename "Orders" → "Sales Orders" pins slug="orders" (what renameDataset does).
+  const after = gold({ name: 'Sales Orders', slug: 'orders' });
+  assert.equal(cubeName(after), 'orders', 'cube name must NOT move to sales_orders');
+  assert.equal(cubeViewName(after), 'orders', 'view stays anchored to the frozen slug');
+  assert.equal(goldMartFqn(after), 'iceberg.sales.gold_orders', 'gold mart FQN frozen');
+  assert.match(scaffoldExposureYaml(after), /ref\('mart_orders'\)/);
+  assert.doesNotMatch(goldMartFqn(after), /sales_orders/);
+});
+
+// The SAME freeze holds for a #155 namespaced dataset — only the domain prefix + frozen slug.
+test('rename freezes the Cube identity (namespaced #155 dataset)', () => {
+  const after = gold({ name: 'Sales Orders', slug: 'orders', cubeNamespaced: true });
+  assert.equal(cubeName(after), 'sales__orders');
+  assert.equal(cubeViewName(after), 'sales__orders');
+  // The legacy bare name still resolves to the frozen slug (back-compat unbroken).
+  assert.ok(cubeNameMatches(after, 'orders'));
+});

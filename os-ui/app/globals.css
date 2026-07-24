@@ -3007,6 +3007,16 @@ button.card.tile:hover .tile-action { opacity: 1; }
 .preview-head-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .preview-submeta { gap: 8px; }
 .preview-title { font-size: 20px; font-weight: 700; color: var(--text); word-break: break-word; }
+/* Inline rename affordance (Files preview + shared vocabulary across tabs). Calm:
+   the pencil is a hairline ghost that only warms on hover; the input matches the title. */
+.rename-pencil { border: 0; background: transparent; color: var(--text-faint); cursor: pointer; font-size: 13px; margin-left: 8px; padding: 2px 4px; border-radius: 6px; opacity: 0; transition: opacity .15s ease, color .15s ease, background .15s ease; }
+.preview-title:hover .rename-pencil,
+.stepper-name:hover .rename-pencil,
+.k-detail-title:hover .rename-pencil { opacity: 1; }
+.rename-pencil:hover { color: var(--text); background: var(--surface-2, rgba(0,0,0,.05)); }
+.rename-inline { display: inline-flex; align-items: center; gap: 8px; }
+.rename-input { font-size: 18px; font-weight: 600; color: var(--text); background: var(--surface, transparent); border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; min-width: 220px; }
+.rename-input:focus { outline: none; border-color: var(--accent, #4a6cf7); }
 .preview-close { border: 0; background: transparent; color: var(--text-faint); font-size: 22px; cursor: pointer; line-height: 1; padding: 0 4px; }
 .preview-close:hover { color: var(--text); }
 .media-stage {

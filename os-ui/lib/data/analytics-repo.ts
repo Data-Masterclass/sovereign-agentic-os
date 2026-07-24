@@ -36,7 +36,7 @@ import type { ForgejoClient } from '../infra/forgejo.ts';
 import type { Dataset } from './dataset-schema.ts';
 import { buildCubeModels, cubeDeliverable } from './cube-models.ts';
 import { CUBE_ARTIFACT, EXPOSURE_ARTIFACT, scaffoldExposureYaml, slug } from './metrics.ts';
-import { domainSchema } from './store-fqn.ts';
+import { domainSchema, physicalSlug } from './store-fqn.ts';
 
 const ANALYTICS_REPO = 'analytics';
 
@@ -60,7 +60,7 @@ function promotedLayer(d: Dataset): 'gold' | 'silver' | null {
 export function dbtModelPath(d: Dataset): string | null {
   const layer = promotedLayer(d);
   if (!layer) return null;
-  return `dbt/models/governed/${domainSchema(d.domain)}/${layer}_${slug(d.name)}.sql`;
+  return `dbt/models/governed/${domainSchema(d.domain)}/${layer}_${physicalSlug(d)}.sql`;
 }
 
 /**
@@ -84,7 +84,7 @@ export function dbtSchemaPath(d: Dataset): string {
 export function buildDbtModelSql(d: Dataset): string | null {
   const layer = promotedLayer(d);
   if (!layer) return null;
-  const s = slug(d.name);
+  const s = physicalSlug(d); // FROZEN physical slug — the dbt model name stays put on rename
   const schema = domainSchema(d.domain);
   // The SELECT body mirrors publishPlan's CTAS source (personal lane of the owner).
   // We record only the SELECT — dbt materialises this; the RUNTIME CTAS in
@@ -110,7 +110,7 @@ export function buildDbtModelSql(d: Dataset): string | null {
 export function buildDbtSchemaYaml(datasets: Dataset[]): string {
   const entries = datasets.map((d) => {
     const layer = promotedLayer(d);
-    const modelName = layer ? `${layer}_${slug(d.name)}` : slug(d.name);
+    const modelName = layer ? `${layer}_${physicalSlug(d)}` : physicalSlug(d);
     const colLines = d.columns
       .filter((c) => c.description.trim().length > 0)
       .map((c) => [

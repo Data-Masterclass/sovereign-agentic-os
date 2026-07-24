@@ -28,7 +28,7 @@ import {
 } from './dataset-schema.ts';
 import { transparencyGate, gateReason } from './transparency.ts';
 import { CUBE_ARTIFACT, EXPOSURE_ARTIFACT, scaffoldCubeYaml, scaffoldExposureYaml, metricGoldReady } from './metrics.ts';
-import { assetTarget, productTarget, personalSchema, domainSchema, slug, versionTarget } from './store-fqn.ts';
+import { assetTarget, productTarget, personalSchema, domainSchema, physicalSlug, versionTarget } from './store-fqn.ts';
 import { config } from '../core/config.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
@@ -71,6 +71,10 @@ export type DatasetRecord = {
 export type DatasetSummary = {
   id: string;
   name: string;
+  /** The FROZEN physical slug (absent ⇒ derivable from `name`). Carried on the summary
+   *  so summary-driven FQN builders (catalog) stay pinned to the physical table across a
+   *  rename — resolve it via `physicalSlug(summary)`. */
+  slug?: string;
   owner: string;
   domain: string;
   tier: Tier;
@@ -338,6 +342,7 @@ function summarise(d: Dataset, archived = false): DatasetSummary {
   return {
     id: d.id,
     name: d.name,
+    ...(d.slug ? { slug: d.slug } : {}),
     owner: d.owner,
     domain: d.domain,
     tier: d.tier,
@@ -368,9 +373,13 @@ export function listDatasets(user: Principal, opts: { includeArchived?: boolean 
     // Group by VISIBILITY (tier), not ownership: a promoted asset is domain data and
     // belongs under Domain even when the caller authored it; a certified product under
     // Marketplace; a private dataset (owner-only, via canView) under Personal.
+    // ACTIVE-DOMAIN scope: a Personal dataset shows under "My" only when its domain is
+    // in the caller's live scope — with an active domain chosen, user.domains is
+    // narrowed to [active], so "My" filters to that domain too. "All domains" shows
+    // every personal dataset. Domain/Company tiers already narrow via canView.
     if (d.tier === 'product') marketplace.push(summarise(d, rec.archived));
     else if (d.tier === 'asset') domain.push(summarise(d, rec.archived));
-    else mine.push(summarise(d, rec.archived));
+    else if (!d.domain || user.domains.includes(d.domain)) mine.push(summarise(d, rec.archived));
   }
   const byName = (a: DatasetSummary, b: DatasetSummary) => a.name.localeCompare(b.name);
   return { mine: mine.sort(byName), domain: domain.sort(byName), marketplace: marketplace.sort(byName) };
@@ -503,7 +512,7 @@ export function listAskable(user: Principal): AskableDataset[] {
       name: d.name,
       domain: d.domain,
       tier: d.tier,
-      fqn: `iceberg.${schema}.${f.layer}_${slug(d.name)}`,
+      fqn: `iceberg.${schema}.${f.layer}_${physicalSlug(d)}`,
       description: d.description,
       columns: d.columns,
     });
@@ -642,6 +651,42 @@ export function setDocs(
     d.columns = docs.columns.filter((c) => c.name.trim()).map((c) => ({ name: c.name.trim(), description: c.description ?? '' }));
   }
   persist(rec, d, { author: user.id, summary: 'edit docs' });
+  return d;
+}
+
+/**
+ * Rename a dataset — change its DISPLAY name ONLY. Edit-scoped exactly like every
+ * other mutation (owner always; an in-domain domain_admin / platform admin on a
+ * shared/certified dataset — the reused {@link canManageArtifact} gate).
+ *
+ * CRITICAL — the physical identity NEVER moves: the physical table / Cube / dbt name
+ * is derived from the FROZEN `slug`, so BEFORE we touch the name we PIN `d.slug` to the
+ * dataset's CURRENT physical slug (`physicalSlug(d)` = the existing frozen slug if it was
+ * already renamed once, else `slug(oldName)`). From then on `physicalSlug` returns that
+ * pinned value regardless of the display name, so every FQN/cube/dbt path stays put and
+ * no live Iceberg table is ever orphaned. The name is then set + persisted + versioned.
+ *
+ * Within-domain name uniqueness is re-checked (same rule as {@link createDataset}) so a
+ * rename can't collide two datasets onto one shared cube/model file.
+ */
+export function renameDataset(id: string, user: Principal, newName: string): Dataset {
+  const rec = get(id);
+  const d = editOf(rec, user);
+  const name = newName.trim();
+  if (!name) fail('a dataset needs a name', 400);
+  if (name === d.name) return d; // no-op → no version churn, no slug freeze
+  // Re-enforce within-domain uniqueness (a rename must not collide onto another's slug).
+  const wanted = name.toLowerCase();
+  for (const other of ds().store.values()) {
+    if (other.id === id || other.domain !== d.domain) continue;
+    if (parseDataset(other.yaml).name.trim().toLowerCase() === wanted) {
+      fail(`A dataset named “${name}” already exists in ${d.domain} — pick a unique name.`, 409);
+    }
+  }
+  // FREEZE the physical slug to the CURRENT table BEFORE the name changes, then rename.
+  d.slug = physicalSlug(d); // pin: existing frozen slug, else slug(oldName)
+  d.name = name;
+  persist(rec, d, { author: user.id, summary: 'rename' });
   return d;
 }
 

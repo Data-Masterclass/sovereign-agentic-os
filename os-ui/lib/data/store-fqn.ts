@@ -14,6 +14,22 @@ export function slug(name: string): string {
 }
 
 /**
+ * The FROZEN physical slug of a dataset — the ONE stable identity every physical
+ * derivation (Iceberg FQN, Cube name/view, dbt model path) must be built from.
+ *
+ * It returns the dataset's pinned `slug` when set, else falls back to `slug(name)`.
+ * This is the decoupling contract: a dataset that has NEVER been renamed carries no
+ * `slug` field and resolves to `slug(name)` unchanged (byte-stable, zero migration);
+ * a RENAMED dataset carries a `slug` pinned to its CURRENT physical table at the moment
+ * of rename, so its FQN/cube/dbt identity NEVER moves when the display name changes.
+ *
+ * Every place that used to compute `slug(d.name)` for a PHYSICAL name now calls this.
+ */
+export function physicalSlug(d: { slug?: string; name: string }): string {
+  return d.slug ?? slug(d.name);
+}
+
+/**
  * Sanitize a principal/uid to a stable identifier — the SAME normalization the
  * data-runner (`slug`) and the query-tool write guard (`personal_schema`) apply, so
  * the object-storage prefix, the Iceberg namespace and the OPA subject stay in
@@ -64,21 +80,24 @@ export function readPrincipalFor(sql: string, user: { id: string; domains: strin
   return touchesOwnLane ? user.id : (user.domains[0] ?? user.id);
 }
 
-/** The Bronze table FQN for a dataset landing in a given schema. */
-export function bronzeTarget(schema: string, name: string): string {
-  return `iceberg.${schema}.bronze_${slug(name)}`;
+/** The Bronze table FQN for a dataset landing in a given schema. `nameOrSlug` is the
+ *  dataset's PHYSICAL slug: at ingest (creation) the raw name is passed (no frozen slug
+ *  exists yet, so `slug(name)` is the physical identity); a caller with a dataset in hand
+ *  should pass `physicalSlug(d)` so a renamed dataset keeps its frozen bronze table. */
+export function bronzeTarget(schema: string, nameOrSlug: string): string {
+  return `iceberg.${schema}.bronze_${slug(nameOrSlug)}`;
 }
 
 /** The governed Iceberg target a promotion writes via dbt-trino (gold preferred). */
 export function assetTarget(d: Dataset): string {
   const layer = d.versions.gold.built ? 'gold' : 'silver';
-  return `iceberg.${domainSchema(d.domain)}.${layer}_${slug(d.name)}`;
+  return `iceberg.${domainSchema(d.domain)}.${layer}_${physicalSlug(d)}`;
 }
 
 /** The product FQN a certified asset is listed/queried under. */
 export function productTarget(d: Dataset): string {
   const layer = d.versions.gold.built ? 'gold' : 'silver';
-  return `iceberg.${domainSchema(d.domain)}.${layer}_${slug(d.name)}`;
+  return `iceberg.${domainSchema(d.domain)}.${layer}_${physicalSlug(d)}`;
 }
 
 /**
@@ -105,5 +124,5 @@ export function versionTarget(d: Dataset, layer: Layer, viewer: { id: string }):
   // the read principal must be the identity that owns the schema).
   const isOwner = viewer.id === d.owner;
   const schema = isOwner ? personalSchema(d.owner) : domainSchema(d.domain);
-  return `iceberg.${schema}.${layer}_${slug(d.name)}`;
+  return `iceberg.${schema}.${layer}_${physicalSlug(d)}`;
 }

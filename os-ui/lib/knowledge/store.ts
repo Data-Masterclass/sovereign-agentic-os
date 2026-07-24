@@ -259,7 +259,11 @@ export function listWorkflows(user: Principal, opts: { includeArchived?: boolean
       marketplace.push(summarise(rec));
     } else if (rec.visibility === 'Shared') {
       domain.push(summarise(rec));
-    } else {
+    } else if (!rec.domain || user.domains.includes(rec.domain)) {
+      // ACTIVE-DOMAIN scope: a Personal draft shows under "My" only when its domain
+      // is in the caller's live scope — with an active domain chosen, user.domains is
+      // narrowed to [active], so "My" filters to that domain too. "All domains" shows
+      // every personal draft. Shared/Marketplace already narrow via canView.
       mine.push(summarise(rec));
     }
   }
@@ -370,6 +374,30 @@ export function updateWorkflow(
     writeThrough(rec);
   }
 
+  return rec;
+}
+
+/**
+ * Rename a workflow — change its display TITLE only. Edit-scoped exactly like every
+ * other edit (`requireEdit` → the reused `canManageArtifact` gate: owner always; an
+ * in-domain domain_admin / platform admin on a Shared/Marketplace workflow). The title
+ * is the display label — it is stored in the workflow's frontmatter AND denormalised to
+ * `rec.title` (which the durable mirror indexes as a keyword), so a rename rewrites the
+ * canonical `md`, re-derives `rec.title`, and writes through. Re-versions like `updateWorkflow`.
+ */
+export function renameKnowledge(id: string, user: Principal, newTitle: string): WorkflowRecord {
+  const rec = requireEdit(id, user);
+  const title = newTitle.trim();
+  if (!title) fail('a workflow needs a title', 400);
+  if (title === rec.title) return rec; // no-op → no version churn
+  // Snapshot the PRIOR canonical source before overwriting it (auditable + reversible).
+  versions.record(id, user.id, snapshotState(rec), 'rename');
+  const w = parseWorkflow(rec.md);
+  w.title = title;
+  rec.md = serializeWorkflow(w);
+  rec.title = title; // keep the denormalised (indexed) title in lockstep
+  rec.updatedAt = now();
+  writeThrough(rec);
   return rec;
 }
 

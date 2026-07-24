@@ -117,3 +117,34 @@ test('bad shape throws a DatasetError (store never holds garbage)', () => {
   assert.throws(() => parseDataset({ tier: 'nonsense' }), DatasetError);
   assert.throws(() => parseDataset({ grants: [{ grantee: { kind: 'bogus', id: 'x' } }] }), DatasetError);
 });
+
+// ---------------------------------------- FROZEN slug: byte-stability + round-trip --
+
+// Byte-stability: a dataset that has NEVER been renamed carries no `slug` field, so its
+// serialized yaml is byte-identical to before the feature existed (no live record churns).
+test('byte-stability: a dataset with no frozen slug omits the slug key entirely', () => {
+  const yaml = serializeDataset(sample({ name: 'Orders' }));
+  assert.doesNotMatch(yaml, /(^|\n)slug:/, 'slug must be omitted while still derivable');
+});
+
+// Even a slug that EQUALS slug(name) is omitted (still derivable) — no churn.
+test('byte-stability: a slug equal to slug(name) is still omitted (derivable)', () => {
+  const yaml = serializeDataset(sample({ name: 'Orders', slug: 'orders' }));
+  assert.doesNotMatch(yaml, /(^|\n)slug:/, 'a derivable slug is never written');
+});
+
+// A DECOUPLED slug (a rename happened: slug !== slug(name)) IS written + round-trips.
+test('round-trip: a decoupled (renamed) slug is written and parses back', () => {
+  const d = sample({ name: 'Sales Orders', slug: 'orders' }); // decoupled: slug("Sales Orders")="sales_orders"
+  const yaml = serializeDataset(d);
+  assert.match(yaml, /(^|\n)slug: orders(\n|$)/, 'a decoupled slug must be persisted');
+  const parsed = parseDataset(yaml);
+  assert.equal(parsed.slug, 'orders');
+  assert.equal(parsed.name, 'Sales Orders');
+});
+
+// A legacy record with no slug parses with slug === undefined (byte-stable, zero migration).
+test('round-trip: a legacy record with no slug parses to undefined slug', () => {
+  const yaml = serializeDataset(sample({ name: 'Orders' }));
+  assert.equal(parseDataset(yaml).slug, undefined);
+});

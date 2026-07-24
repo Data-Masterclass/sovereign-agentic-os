@@ -365,13 +365,20 @@ export function listFiles(user: Principal, opts: { includeArchived?: boolean } =
     const a = parseAsset(rec.yaml);
     if (!canView(a, user)) continue;
     const s = summarise(a, rec);
-    if (a.owner === user.id) owned.push(s);
+    // ACTIVE-DOMAIN scope: a Personal file shows under "My" only when its domain is
+    // in the caller's live scope. With an active domain chosen (sidebar switcher),
+    // user.domains is narrowed to [active], so "My" filters to that domain too —
+    // the "operate as a member of only one domain" behaviour. "All domains" keeps
+    // user.domains = every membership, so every personal file still shows. Domain/
+    // Company tiers already narrow via canView's domain check, so only "My" needs it.
+    const inScope = !a.domain || user.domains.includes(a.domain);
+    if (a.owner === user.id && inScope) owned.push(s);
     // Group by VISIBILITY (tier), not ownership: a promoted asset is domain content and
     // belongs under Domain even when the caller authored it; a certified product under
     // Marketplace; a private file (owner-only, via canView) under Personal.
     if (a.tier === 'product') marketplace.push(s);
     else if (a.tier === 'asset') domain.push(s);
-    else mine.push(s);
+    else if (inScope) mine.push(s);
   }
   const byName = (x: FileSummary, y: FileSummary) => x.folder.localeCompare(y.folder) || x.name.localeCompare(y.name);
   mine.sort(byName); domain.sort(byName); marketplace.sort(byName);
@@ -545,6 +552,25 @@ export function setDocs(id: string, user: Principal, docs: { description?: strin
   versions.record(rec.id, user.id, snapshotState(rec), 'edit docs');
   if (docs.description !== undefined) a.description = docs.description;
   if (docs.tags !== undefined) a.tags = docs.tags.map((t) => t.trim()).filter(Boolean);
+  persist(rec, a);
+  return a;
+}
+
+/**
+ * Rename a file — change its DISPLAY name only. Edit-scoped exactly like every other
+ * edit (owner always; an in-domain domain_admin / platform admin on a shared/product
+ * file, via `editOf` → the reused `canManageArtifact` gate). The name is a pure display
+ * label: the object key + deep link are derived from id/owner (see `objectKeyForAsset`),
+ * NOT the name, so the stored bytes never move. Re-versions like `setDocs`.
+ */
+export function renameFile(id: string, user: Principal, newName: string): FileAsset {
+  const rec = get(id);
+  const a = editOf(rec, user);
+  const name = newName.trim();
+  if (!name) fail('a file needs a name', 400);
+  if (name === a.name) return a; // no-op → no version churn
+  versions.record(rec.id, user.id, snapshotState(rec), 'rename');
+  a.name = name;
   persist(rec, a);
   return a;
 }

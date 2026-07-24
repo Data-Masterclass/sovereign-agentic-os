@@ -11,6 +11,7 @@ import {
   moveFile,
   setTags,
   setDocs,
+  renameFile,
   addVersion,
   setIndexingMode,
   deleteFile,
@@ -432,4 +433,37 @@ test('non-editor is rejected 403 on archive, unarchive, restore', () => {
   assert.throws(() => archiveFile(a.id, kenji), /permitted|403/i);
   assert.throws(() => unarchiveFile(a.id, kenji), /permitted|403/i);
   assert.throws(() => restoreFileVersion(a.id, kenji, v[0].version), /permitted|403/i);
+});
+
+// -------------------------------------------------------------------- rename (Files) --
+
+test('renameFile: the OWNER renames a private file; the object key/deep link never move', () => {
+  const a = createFile(amir, { name: 'draft.pdf', folder: '/research', text: 'x' });
+  const linkBefore = a.deepLink;
+  const renamed = renameFile(a.id, amir, 'final.pdf');
+  assert.equal(renamed.name, 'final.pdf');
+  // The deep link (and therefore the object key) is id/owner/folder-based — a display
+  // rename must NOT move the stored bytes.
+  assert.equal(renamed.deepLink, linkBefore);
+  assert.equal(getFile(a.id, amir).asset.name, 'final.pdf'); // persisted
+});
+
+test('renameFile: a PRIVATE file is owner-only — a domain builder/admin cannot rename it', () => {
+  const a = createFile(amir, { name: 'private.pdf', text: 'x' }); // dataset tier = personal
+  assert.throws(() => renameFile(a.id, bea, 'nope.pdf'), (e) => (e as { status?: number }).status === 403);
+  assert.throws(() => renameFile(a.id, sara, 'nope.pdf'), (e) => (e as { status?: number }).status === 403);
+});
+
+test('renameFile: a SHARED file admits an in-domain admin; a non-owner outsider is denied', () => {
+  const a = documented();
+  applyApprovedFilePromotion(requestPromotion(a.id, amir, {}), bea); // → domain asset (shared)
+  // An in-domain admin may now rename the shared file (canManageArtifact).
+  assert.equal(renameFile(a.id, sara, 'Handbook v2').name, 'Handbook v2');
+  // A user outside the domain still cannot.
+  assert.throws(() => renameFile(a.id, kenji, 'hijack'), (e) => (e as { status?: number }).status === 403);
+});
+
+test('renameFile: rejects an empty name', () => {
+  const a = createFile(amir, { name: 'x.pdf', text: 'x' });
+  assert.throws(() => renameFile(a.id, amir, '   '), (e) => (e as { status?: number }).status === 400);
 });

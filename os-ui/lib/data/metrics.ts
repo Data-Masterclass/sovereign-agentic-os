@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { Dataset, Measure, ColumnDoc } from './dataset-schema.ts';
-import { domainSchema } from './store-fqn.ts';
+import { domainSchema, physicalSlug } from './store-fqn.ts';
 
 /**
  * The Metric handover to Cube (data-ui-ux.md §"Define a metric — the Cube handover",
@@ -44,7 +44,18 @@ export function cubeDomainPrefix(d: Dataset): string {
  * so a given dataset's identity is stable for its whole life.
  */
 export function cubeName(d: Dataset): string {
-  return d.cubeNamespaced ? `${cubeDomainPrefix(d)}__${slug(d.name)}` : slug(d.name);
+  const s = physicalSlug(d); // FROZEN slug — a rename never moves the cube identity
+  return d.cubeNamespaced ? `${cubeDomainPrefix(d)}__${s}` : s;
+}
+
+/** The physical VIEW base (a valid Cube identifier). It is the SAME frozen identity as
+ *  `cubeName`: while the slug is still derivable (never renamed) it keeps the historical
+ *  case-preserving transform of the name (byte-stable — live views don't churn); once a
+ *  rename has FROZEN the slug it derives from that frozen slug, so the view identifier
+ *  stays pinned to the physical table across a rename. */
+function physicalViewBase(d: Dataset): string {
+  if (d.slug) return d.slug; // decoupled: anchor the view to the frozen physical slug
+  return d.name.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'View';
 }
 
 /** The Cube VIEW name dashboards + the agent metrics tool resolve. MUST be a valid
@@ -53,7 +64,7 @@ export function cubeName(d: Dataset): string {
  *  NAMESPACED (`<domain>__<View>`) for post-#155 datasets, LEGACY (bare View) otherwise —
  *  moves in lockstep with `cubeName` so the cube + its view are always the same scheme. */
 export function cubeViewName(d: Dataset): string {
-  const view = d.name.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'View';
+  const view = physicalViewBase(d);
   return d.cubeNamespaced ? `${cubeDomainPrefix(d)}__${view}` : view;
 }
 
@@ -63,12 +74,12 @@ export function cubeViewName(d: Dataset): string {
  *  `cubeName(d)`; for a namespaced one it is the collision-prone name we deliberately
  *  moved off of, kept resolvable so nothing that referenced it breaks. */
 export function legacyCubeName(d: Dataset): string {
-  return slug(d.name);
+  return physicalSlug(d);
 }
 
 /** The un-namespaced (legacy) view name a dataset WOULD have had before #155. */
 export function legacyCubeViewName(d: Dataset): string {
-  return d.name.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'View';
+  return physicalViewBase(d);
 }
 
 /** Back-compat resolver: does `name` refer to this dataset's cube — under EITHER its
@@ -87,7 +98,7 @@ export function cubeViewNameMatches(d: Dataset, view: string): boolean {
 
 /** The Gold mart FQN the cube binds to via `sql_table` (the handover contract). */
 export function goldMartFqn(d: Dataset): string {
-  return `iceberg.${domainSchema(d.domain)}.gold_${slug(d.name)}`;
+  return `iceberg.${domainSchema(d.domain)}.gold_${physicalSlug(d)}`;
 }
 
 /** The clear, single-source message a metric guard returns when the gold isn't governed. */
@@ -217,7 +228,7 @@ export function scaffoldCubeYaml(d: Dataset): string {
 /** One dbt `exposure` per Cube view — rides in on the dbt artifacts so the
  *  mart→metric edge appears in OpenMetadata automatically (data-ui-ux.md §C). */
 export function scaffoldExposureYaml(d: Dataset): string {
-  const s = slug(d.name);
+  const s = physicalSlug(d); // FROZEN — the dbt mart model name never moves on a rename
   // The exposure NAME namespaces with the cube (so two domains' exposures don't collide);
   // the dbt `ref('mart_<slug>')` still points at the dataset's dbt mart model (unchanged —
   // the dbt project owns that name; #155 is scoped to the cube identity). Legacy datasets

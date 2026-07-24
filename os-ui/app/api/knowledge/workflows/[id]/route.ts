@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
-import { getWorkflow, updateWorkflow, deleteWorkflow, archiveWorkflow, unarchiveWorkflow, ensureHydrated } from '@/lib/knowledge/store';
+import { getWorkflow, updateWorkflow, deleteWorkflow, archiveWorkflow, unarchiveWorkflow, renameKnowledge, ensureHydrated } from '@/lib/knowledge/store';
 import { purgeKnowledgeUnits } from '@/lib/knowledge/index-pipeline';
 import { findGaps } from '@/lib/knowledge/gaps';
 import { resolveEntityIndex } from '@/lib/knowledge/mock-entities';
@@ -61,12 +61,16 @@ export async function POST(req: Request, { params }: Params) {
     await ensureHydrated();
     const user = await requireUser();
     const { id } = await params;
-    const body = (await req.json().catch(() => ({}))) as { action?: string };
+    const body = (await req.json().catch(() => ({}))) as { action?: string; title?: string };
     switch (body.action) {
       case 'archive':
         return NextResponse.json({ workflow: archiveWorkflow(id, user) });
       case 'unarchive':
         return NextResponse.json({ workflow: unarchiveWorkflow(id, user) });
+      case 'rename': {
+        const rec = renameKnowledge(id, user, body.title ?? '');
+        return NextResponse.json({ id: rec.id, title: rec.title, updatedAt: rec.updatedAt });
+      }
       default:
         return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
     }

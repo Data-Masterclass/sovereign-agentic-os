@@ -106,6 +106,10 @@ export default function WorkflowView({
   // Export PDF (client-side jsPDF — same stack as the Agents run report).
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfErr, setPdfErr] = useState('');
+  // Inline rename of the workflow title (edit-gated; server re-checks canManageArtifact).
+  const [renaming, setRenaming] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [renameErr, setRenameErr] = useState('');
 
   const reload = useCallback(async () => {
     try {
@@ -294,6 +298,21 @@ export default function WorkflowView({
     }
   }
 
+  async function rename() {
+    const title = nameDraft.trim();
+    setRenameErr('');
+    if (!title) { setRenaming(false); return; }
+    const res = await fetch(`/api/knowledge/workflows/${workflowId}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'rename', title }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { setRenameErr(d.error ?? 'Rename failed'); return; }
+    setRenaming(false);
+    await reload();
+  }
+
   async function publish(action: 'publish' | 'certify') {
     setPublishing(true);
     setPubMsg('');
@@ -353,7 +372,32 @@ export default function WorkflowView({
         {/* Header */}
         <div className="k-detail-head">
           <button className="btn ghost sm" onClick={onBack}>← Workflows</button>
-          <h2 className="k-detail-title">{data.title}</h2>
+          {renaming ? (
+            <span className="rename-inline">
+              <input
+                className="rename-input"
+                autoFocus
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void rename(); if (e.key === 'Escape') setRenaming(false); }}
+                aria-label="Workflow title"
+              />
+              <button className="btn primary sm" onClick={() => void rename()}>Save</button>
+              <button className="btn ghost sm" onClick={() => setRenaming(false)}>Cancel</button>
+            </span>
+          ) : (
+            <h2 className="k-detail-title">
+              {data.title}
+              {data.canEdit ? (
+                <button
+                  className="rename-pencil"
+                  onClick={() => { setNameDraft(data.title); setRenameErr(''); setRenaming(true); }}
+                  title="Rename this workflow"
+                  aria-label="Rename this workflow"
+                >✎</button>
+              ) : null}
+            </h2>
+          )}
           <span className={`badge ${VIS_CLASS[data.visibility] ?? 'muted'}`}>{VIS_LABEL[data.visibility] ?? data.visibility}</span>
           {/* Source-domain provenance — shown only in Shared/Marketplace tiers. */}
           {(data.visibility === 'Shared' || data.visibility === 'Marketplace') && (
@@ -367,6 +411,8 @@ export default function WorkflowView({
           )}
           {acting ? <span className="spin" title="saving…" /> : null}
           {data.publishedBy && <span className="muted" style={{ fontSize: 12 }}>published by {data.publishedBy}</span>}
+          <span className="mono muted" style={{ fontSize: 11 }} title="Workflow ID">{data.id}</span>
+          {renameErr && <span className="badge err" style={{ fontSize: 11 }}>{renameErr}</span>}
 
           {/* Export PDF — top-right of the workflow detail. Leads with the visual
               flow (swimlane) on page 1, then the full content below. */}

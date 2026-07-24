@@ -219,6 +219,13 @@ export function slug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'dataset';
 }
 
+/** The FROZEN physical slug of a dataset (mirrors store-fqn.physicalSlug): the pinned
+ *  `slug` when set, else `slug(name)`. Every build FQN uses this so a renamed dataset
+ *  keeps writing to its ORIGINAL physical table instead of a new-name table. */
+export function physicalSlug(d: { slug?: string; name: string }): string {
+  return d.slug ?? slug(d.name);
+}
+
 /** The caller's private sandbox schema. MUST match the query-tool guard's
  *  `personal_schema(uid)` exactly, so the compiled target passes its authorization. */
 export function personalSchema(uid: string): string {
@@ -448,13 +455,13 @@ export type SilverPlan = { source: string; target: string; schema: string; sql: 
  * CTAS. Server-authoritative: the route calls this (never trusts a client-sent SQL).
  */
 export function silverPlan(
-  dataset: { name: string; domain: string; tier: string },
+  dataset: { name: string; domain: string; tier: string; slug?: string },
   identity: { uid: string; domains: string[] },
   columns: string[],
   ops: TransformOp[],
 ): SilverPlan {
   const schema = silverSchema({ tier: dataset.tier, domain: dataset.domain, uid: identity.uid, domains: identity.domains });
-  const s = slug(dataset.name);
+  const s = physicalSlug(dataset);
   const source = `iceberg.${schema}.bronze_${s}`;
   const target = `iceberg.${schema}.silver_${s}`;
   const sql = compileSilver({ source, target, columns, ops });
@@ -469,12 +476,12 @@ export function silverPlan(
  * their (sanitized) domain schema.
  */
 export function layerTarget(
-  dataset: { name: string; domain: string; tier: string },
+  dataset: { name: string; domain: string; tier: string; slug?: string },
   identity: { uid: string; domains: string[] },
   layer: 'bronze' | 'silver' | 'gold',
 ): string {
   const schema = silverSchema({ tier: dataset.tier, domain: dataset.domain, uid: identity.uid, domains: identity.domains });
-  return `iceberg.${schema}.${layer}_${slug(dataset.name)}`;
+  return `iceberg.${schema}.${layer}_${physicalSlug(dataset)}`;
 }
 
 export type PassThroughPlan = { source: string; target: string; schema: string; sql: string };
@@ -487,12 +494,12 @@ export type PassThroughPlan = { source: string; target: string; schema: string; 
  * schema discipline as {@link silverPlan}; server-authoritative.
  */
 export function passThroughPlan(
-  dataset: { name: string; domain: string; tier: string },
+  dataset: { name: string; domain: string; tier: string; slug?: string },
   identity: { uid: string; domains: string[] },
   layer: 'silver' | 'gold',
 ): PassThroughPlan {
   const schema = silverSchema({ tier: dataset.tier, domain: dataset.domain, uid: identity.uid, domains: identity.domains });
-  const s = slug(dataset.name);
+  const s = physicalSlug(dataset);
   const prior = layer === 'silver' ? 'bronze' : 'silver';
   const source = `iceberg.${schema}.${prior}_${s}`;
   const target = `iceberg.${schema}.${layer}_${s}`;
@@ -582,13 +589,14 @@ export type PublishPlan = {
  */
 export function publishPlan(d: {
   name: string;
+  slug?: string;
   domain: string;
   owner: string;
   versions: { silver: { built: boolean }; gold: { built: boolean } };
 }): PublishPlan {
   const layer = d.versions.gold.built ? 'gold' : d.versions.silver.built ? 'silver' : null;
   if (!layer) throw new TransformError('nothing to publish — build a Silver or Gold version first');
-  const s = slug(d.name);
+  const s = physicalSlug(d); // FROZEN — the promotion CTAS copies the ACTUAL personal table
   const sourceSchema = personalSchema(d.owner);
   const source = `iceberg.${sourceSchema}.${layer}_${s}`;
   const target = `iceberg.${domainSchema(d.domain)}.${layer}_${s}`;
@@ -614,14 +622,14 @@ export type GoldJoinPlan = { source: string; target: string; schema: string; sql
  * {@link silverPlan}. The joined tables come pre-resolved (visible to the caller).
  */
 export function goldJoinPlan(
-  dataset: { name: string; domain: string; tier: string },
+  dataset: { name: string; domain: string; tier: string; slug?: string },
   identity: { uid: string; domains: string[] },
   joins: ResolvedJoin[],
   dimensions: GoldDimension[],
   measures: GoldMeasure[],
 ): GoldJoinPlan {
   const schema = silverSchema({ tier: dataset.tier, domain: dataset.domain, uid: identity.uid, domains: identity.domains });
-  const s = slug(dataset.name);
+  const s = physicalSlug(dataset);
   const source = `iceberg.${schema}.silver_${s}`;
   const target = `iceberg.${schema}.gold_${s}`;
   const sql = compileGoldJoin({ source, joins, dimensions, measures, target });

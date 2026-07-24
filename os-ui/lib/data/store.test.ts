@@ -23,10 +23,13 @@ import {
   deleteDataset,
   moveDataset,
   setDocs,
+  renameDataset,
   listDatasetVersions,
   restoreDatasetVersion,
+  assetTarget,
   type Principal,
 } from './store.ts';
+import { versionTarget } from './store-fqn.ts';
 import { DatasetError } from './dataset-schema.ts';
 import { cubeName, cubeViewName, CUBE_ARTIFACT } from './metrics.ts';
 import { listFolders as folderList, __resetStore as resetFolders } from '../folders/index.ts';
@@ -496,4 +499,65 @@ test('#155 the SAME name is now ALLOWED across domains, with DISTINCT cube ident
   assert.notEqual(CUBE_ARTIFACT(salesDs), CUBE_ARTIFACT(finDs));
   assert.equal(cubeName(salesDs), 'sales__sales');
   assert.equal(cubeName(finDs), 'finance__sales');
+});
+
+// ------------------------------------------------- rename: display name + FROZEN slug --
+
+test('renameDataset: FQN STABILITY — a rename never moves the physical table', () => {
+  // Create "Foo", build through gold in amir's personal lane.
+  const d = createDataset(amir, { name: 'Foo' });
+  buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'bronze/foo.dlt.yml' });
+  buildVersion(d.id, amir, 'silver', { quality: 'passing', artifact: 'silver/stg_foo.sql' });
+  buildVersion(d.id, amir, 'gold', { quality: 'passing', artifact: 'gold/mart_foo.sql' });
+
+  const before = getDataset(d.id, amir);
+  const ownerFqnBefore = versionTarget(before, 'gold', { id: amir.id });
+  assert.equal(ownerFqnBefore, 'iceberg.personal_amir.gold_foo');
+  assert.equal(cubeName(before), 'sales__foo'); // new datasets are namespaced (#155)
+
+  // Rename Foo → Bar.
+  const renamed = renameDataset(d.id, amir, 'Bar');
+  assert.equal(renamed.name, 'Bar');           // display name changed
+  assert.equal(renamed.slug, 'foo');           // slug FROZEN to the original physical table
+
+  const after = getDataset(d.id, amir);
+  // Every physical identity STILL uses slug("Foo") === "foo", NEVER slug("Bar") === "bar".
+  assert.equal(versionTarget(after, 'gold', { id: amir.id }), 'iceberg.personal_amir.gold_foo');
+  assert.equal(versionTarget(after, 'bronze', { id: amir.id }), 'iceberg.personal_amir.bronze_foo');
+  assert.equal(cubeName(after), 'sales__foo', 'cube identity is frozen across a rename');
+  assert.doesNotMatch(versionTarget(after, 'gold', { id: amir.id }), /_bar/, 'no live table orphaned');
+});
+
+test('renameDataset: an existing (never-renamed) dataset resolves to slug(name), unchanged', () => {
+  const d = createDataset(amir, { name: 'Orders' });
+  const before = getDataset(d.id, amir);
+  assert.equal(before.slug, undefined, 'no slug field until a rename decouples it');
+  assert.equal(cubeName(before), 'sales__orders'); // derived from slug("Orders")
+});
+
+test('renameDataset: owner allowed; a shared dataset admits domain_admin/admin; a non-owner non-admin denied', () => {
+  // amir owns a Personal dataset — owner may rename, but nobody else (private is owner-only).
+  const personal = createDataset(amir, { name: 'Private Foo' });
+  assert.equal(renameDataset(personal.id, amir, 'Private Bar').name, 'Private Bar');
+  // A domain builder is NOT an owner and cannot manage a PRIVATE dataset.
+  assert.throws(() => renameDataset(personal.id, bea, 'Hijack'), (e) => (e as DatasetError).status === 403);
+
+  // Promote to a shared asset so canManageArtifact admits an in-domain domain_admin.
+  buildVersion(personal.id, amir, 'bronze', { quality: 'passing', artifact: 'b.dlt.yml' });
+  buildVersion(personal.id, amir, 'silver', { quality: 'passing', artifact: 's.sql' });
+  setDocs(personal.id, amir, { description: 'docs', columns: [{ name: 'id', description: 'k' }] });
+  transition(personal.id, sara, 'promote'); // Admin promotes to a shared asset
+  const domainAdmin: Principal = { id: 'dadmin', domains: ['sales'], role: 'domain_admin' };
+  // A shared asset: an in-domain domain_admin may rename it.
+  assert.equal(renameDataset(personal.id, domainAdmin, 'Shared Renamed').name, 'Shared Renamed');
+  // A bare creator who is not the owner still may not.
+  const stranger: Principal = { id: 'nobody', domains: ['sales'], role: 'creator' };
+  assert.throws(() => renameDataset(personal.id, stranger, 'Nope'), (e) => (e as DatasetError).status === 403);
+});
+
+test('renameDataset: rejects an empty name and a within-domain duplicate', () => {
+  const a = createDataset(amir, { name: 'Alpha' });
+  createDataset(amir, { name: 'Beta' });
+  assert.throws(() => renameDataset(a.id, amir, '   '), (e) => (e as DatasetError).status === 400);
+  assert.throws(() => renameDataset(a.id, amir, 'Beta'), (e) => (e as DatasetError).status === 409);
 });

@@ -151,6 +151,15 @@ export type Dataset = {
   version: string;
   id: string;
   name: string;
+  /** The FROZEN physical slug — the stable identity every physical derivation
+   *  (Iceberg FQN, Cube name/view, dbt model path) is built from. Set ONCE and
+   *  NEVER changed: on create it is left ABSENT (so it defaults to `slug(name)`,
+   *  keeping every existing record byte-identical), and it is WRITTEN only when a
+   *  RENAME decouples the display name from the physical table — pinning the table
+   *  to its slug at the moment of rename so the physical identity never moves. Read
+   *  it through `physicalSlug(d)` (store-fqn.ts), never recompute from `name`.
+   *  OMITTED from the yaml whenever it still equals `slug(name)` (byte-stable). */
+  slug?: string;
   owner: string;
   domain: string;
   tier: Tier;
@@ -447,6 +456,10 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
     }
     if (Object.keys(m).length > 0) monitors = m;
   }
+  // The FROZEN physical slug: only stored once a rename has DECOUPLED it from the
+  // name. Absent ⇒ still derivable from the name (`physicalSlug` falls back to
+  // `slug(name)`), so every pre-rename record parses with no slug — byte-stable.
+  const slugRaw = typeof doc.slug === 'string' && doc.slug.trim() ? doc.slug.trim() : undefined;
   // #155: absent/false ⇒ legacy un-namespaced cube identity (every pre-#155 record).
   const cubeNamespaced = doc.cubeNamespaced === true ? true : undefined;
   // #146 Phase 6: absent/false ⇒ no dbt model emitted (pre-existing datasets stay un-emitted).
@@ -456,6 +469,7 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
     version: doc.version !== undefined ? String(doc.version) : '1',
     id: typeof doc.id === 'string' ? doc.id : '',
     name: typeof doc.name === 'string' ? doc.name : 'Untitled dataset',
+    ...(slugRaw ? { slug: slugRaw } : {}),
     owner: typeof doc.owner === 'string' ? doc.owner : '',
     domain: typeof doc.domain === 'string' ? doc.domain : '',
     tier,
@@ -478,6 +492,14 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
   };
 }
 
+/** The lowercase, guard-safe physical slug of a display name. Kept in lockstep with
+ *  `slug` in store-fqn.ts / metrics.ts (this base module must stay import-free of them
+ *  to avoid a cycle). Used ONLY to decide when the frozen `slug` is still derivable and
+ *  can be omitted from the yaml (byte-stability). */
+function nameSlug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'dataset';
+}
+
 export function serializeDataset(d: Dataset): string {
   const doc: Record<string, unknown> = {
     version: d.version,
@@ -488,6 +510,10 @@ export function serializeDataset(d: Dataset): string {
     tier: d.tier,
     visibility: d.visibility,
   };
+  // The FROZEN physical slug is written ONLY once a rename has decoupled it from the
+  // name (i.e. it no longer equals `slug(name)`). While still derivable it is OMITTED,
+  // so every dataset that has never been renamed serializes byte-identically to before.
+  if (d.slug && d.slug !== nameSlug(d.name)) doc.slug = d.slug;
   // Omit-when-root (byte-stable, like the `layer !== 'gold'` omit precedent): a
   // dataset at the root serializes exactly as before, so no old record churns.
   if (d.folder && normaliseFolderPath(d.folder) !== '/') doc.folder = normaliseFolderPath(d.folder);

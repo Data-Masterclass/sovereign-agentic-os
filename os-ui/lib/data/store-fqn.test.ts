@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { domainSchema, assetTarget, versionTarget, personalSchema, readPrincipalFor } from './store-fqn.ts';
+import { domainSchema, assetTarget, versionTarget, personalSchema, readPrincipalFor, physicalSlug, bronzeTarget } from './store-fqn.ts';
 import { emptyVersions, type Dataset } from './dataset-schema.ts';
 
 // A HYPHENATED domain (the live cohort `agentic-leader-q3-2026`) must never reach Trino
@@ -98,4 +98,36 @@ test('readPrincipalFor: ANOTHER user personal schema is NOT impersonated (stays 
 
 test('readPrincipalFor: with no domains, falls back to the caller id', () => {
   assert.equal(readPrincipalFor('select 1', { id: 'solo', domains: [] }), 'solo');
+});
+
+// ---------------------------------------------- FROZEN slug — physical-identity stability --
+
+// A dataset with NO frozen slug resolves to slug(name) — the byte-stable legacy behaviour.
+test('physicalSlug: absent slug falls back to slug(name) (byte-stable, zero migration)', () => {
+  assert.equal(physicalSlug({ name: 'Campaign Data' }), 'campaign_data');
+  assert.equal(physicalSlug({ name: 'Northpeak CAC/COS Weekly' }), 'northpeak_cac_cos_weekly');
+});
+
+// Once a rename FREEZES the slug, the physical identity is pinned to it — NOT the name.
+test('physicalSlug: a frozen slug pins the identity regardless of the display name', () => {
+  assert.equal(physicalSlug({ slug: 'campaign_data', name: 'Totally Renamed' }), 'campaign_data');
+});
+
+// FQN STABILITY: create "Foo" → its FQNs use slug("Foo"); a rename to "Bar" that FREEZES
+// the slug to `foo` keeps every FQN + Cube/dbt identity on `foo`, never `bar`.
+test('FQN stability: a renamed dataset keeps its ORIGINAL physical FQNs (frozen slug)', () => {
+  const foo = ds({ name: 'Foo', slug: undefined });
+  const owner = { id: 'aborek' };
+  // Before rename: derived from slug("Foo") === "foo".
+  assert.equal(versionTarget(foo, 'gold', owner), 'iceberg.personal_aborek.gold_foo');
+  assert.equal(assetTarget(foo), 'iceberg.agentic_leader_q3_2026.gold_foo');
+
+  // Rename to "Bar" pins slug=foo (what renameDataset does). The FQNs must NOT move to bar.
+  const renamed = ds({ name: 'Bar', slug: 'foo' });
+  assert.equal(versionTarget(renamed, 'gold', owner), 'iceberg.personal_aborek.gold_foo');
+  assert.equal(versionTarget(renamed, 'bronze', owner), 'iceberg.personal_aborek.bronze_foo');
+  assert.equal(assetTarget(renamed), 'iceberg.agentic_leader_q3_2026.gold_foo');
+  assert.equal(bronzeTarget(personalSchema('aborek'), physicalSlug(renamed)), 'iceberg.personal_aborek.bronze_foo');
+  // Sanity: the NEW name's slug would have been "bar" — proving the freeze prevented the move.
+  assert.doesNotMatch(assetTarget(renamed), /_bar/, 'a rename must NEVER move the physical table');
 });
