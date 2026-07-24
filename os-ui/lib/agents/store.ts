@@ -397,6 +397,61 @@ export function listSystems(user: Principal, opts: { includeArchived?: boolean }
   return { mine: mine.sort(byName), domain: domain.sort(byName), marketplace: marketplace.sort(byName) };
 }
 
+/** One agent-system row for Agent Monitoring: identity + last-run health + activity. */
+export type AgentHealthRow = {
+  id: string;
+  name: string;
+  scope: 'mine' | 'domain' | 'marketplace';
+  agentCount: number;
+  running: boolean;
+  scheduled: boolean;
+  /** ms epoch of the last run, or null if it has never run. */
+  lastRunAt: number | null;
+  /** true = last run succeeded, false = failed, null = never run. */
+  lastRunOk: boolean | null;
+  /** tool steps the last run held/blocked (governance denials) — the error count. */
+  held: number;
+  /** Rolled-up dot: green ok · amber ok-with-holds · red failed · grey never-run. */
+  health: 'green' | 'amber' | 'red' | 'grey';
+};
+
+/**
+ * Agent Monitoring feed: EVERY agent system the caller can access — their own
+ * (`mine`), shared-to-their-domain (`domain`), and marketplace (`marketplace`) —
+ * each with its last-run health. This is the artifact-centric monitor: you start
+ * from the agent systems you built or use, not from a firehose of raw traces. A
+ * never-run system shows `grey`/"not run yet" rather than being hidden.
+ */
+export function agentHealthRows(user: Principal): AgentHealthRow[] {
+  ensureSeeded();
+  const rows: AgentHealthRow[] = [];
+  for (const rec of state().store.values()) {
+    if (rec.archived) continue;
+    let scope: AgentHealthRow['scope'] | null = null;
+    if (rec.owner === user.id) scope = 'mine';
+    else if (rec.visibility === 'Shared' && user.domains.includes(rec.domain)) scope = 'domain';
+    else if (rec.visibility === 'Marketplace') scope = 'marketplace';
+    if (!scope) continue;
+    let agentCount = 0;
+    try { agentCount = parseSystem(rec.yaml).agents.length; } catch { agentCount = 0; }
+    const lr = rec.lastRun;
+    const health: AgentHealthRow['health'] = !lr ? 'grey' : !lr.ok ? 'red' : lr.held > 0 ? 'amber' : 'green';
+    rows.push({
+      id: rec.id,
+      name: rec.name,
+      scope,
+      agentCount,
+      running: rec.running,
+      scheduled: rec.schedule.kind !== 'manual',
+      lastRunAt: lr?.at ?? null,
+      lastRunOk: lr?.ok ?? null,
+      held: lr?.held ?? 0,
+      health,
+    });
+  }
+  return rows.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /**
  * Decorate the caller's groups with `pendingShare` for any Personal system that has
  * a promotion request in flight (the ids come from the approvals queue, resolved in
