@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useUser } from '@/lib/useUser';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { previewText } from '@/lib/files/preview';
+import { reuploadVersion } from '@/lib/files/upload-client';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import { useApprovalNotifier } from '@/components/lifecycle/useApprovalNotifier';
@@ -101,6 +102,10 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
   const [useAsMsg, setUseAsMsg] = useState('');
   const [showFullText, setShowFullText] = useState(false);
   const reuploadRef = useRef<HTMLInputElement>(null);
+  // Re-upload progress: pct (0–100) while a new version is in flight, and its own
+  // inline error — the same friendly vocabulary as the main uploader.
+  const [reupPct, setReupPct] = useState<number | null>(null);
+  const [reupErr, setReupErr] = useState('');
   // Folder picker modal state.
   const [pickerOpen, setPickerOpen] = useState(false);
   const [personalNodes, setPersonalNodes] = useState<FolderPathNode[]>([]);
@@ -208,20 +213,18 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
     } catch (e) { setErr((e as Error).message); }
   }, [id, load, onMutated]);
 
+  // Re-upload a NEW VERSION using the SAME robust XHR transport as the main uploader:
+  // real progress + the shared friendly error vocabulary (too large / incomplete /
+  // network). Keeps the /version endpoint + semantics — only the transport changed.
   const reupload = useCallback(async (file: File) => {
     const isText = /^text\/|json|csv|markdown/.test(file.type) || /\.(txt|md|csv|json|tsv)$/i.test(file.name);
     const text = isText ? await file.text() : undefined;
-    setErr('');
-    try {
-      const res = await fetch(`/api/files/${id}/version`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text, bytes: file.size }),
-      });
-      const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Re-upload failed'); return; }
-      await load();
-      onMutated();
-    } catch (e) { setErr((e as Error).message); }
+    setErr(''); setReupErr(''); setReupPct(0);
+    const failure = await reuploadVersion(id, file, text, setReupPct);
+    if (failure) { setReupErr(failure); setReupPct(null); return; }
+    setReupPct(null);
+    await load();
+    onMutated();
   }, [id, load, onMutated]);
 
   // Delete goes through the shared ConfirmDialog (danger, physical); on success we
@@ -302,7 +305,18 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
             /* eslint-disable-next-line @next/next/no-img-element */
             <img className="viewer-image" src={rawSrc} alt={a.name} />
           ) : mode === 'pdf' ? (
-            <iframe className="viewer-frame" src={rawSrc} title={a.name} />
+            // <object> renders the inline PDF (served as application/pdf +
+            // Content-Disposition: inline by /raw). It falls back to <embed>, and if
+            // the browser refuses to render a PDF at all, to a clear Open/Download link
+            // — the file is never a dead end.
+            <object className="viewer-frame" data={rawSrc} type="application/pdf" aria-label={a.name}>
+              <embed className="viewer-frame" src={rawSrc} type="application/pdf" />
+              <div className="media-stage">
+                Preview isn’t available in this browser —{' '}
+                <a href={rawSrc} target="_blank" rel="noreferrer">open in a new tab</a> or{' '}
+                <a href={`/api/files/${id}/download`} download={a.name}>download</a>.
+              </div>
+            </object>
           ) : mode === 'video' ? (
             <video className="viewer-media" src={rawSrc} controls />
           ) : (
@@ -342,10 +356,23 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         <div className="media-stage">No preview — download to view the original file.</div>
       )}
 
-      {/* Re-upload lives directly under the viewer; Download / Open live in the header. */}
-      <div className="preview-row preview-actions">
-        <button className="btn ghost sm" onClick={() => reuploadRef.current?.click()}>Re-upload (new version)</button>
-        <input ref={reuploadRef} type="file" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) reupload(f); e.target.value = ''; }} />
+      {/* Re-upload lives directly under the viewer; Download / Open live in the header.
+          A new version streams over the shared XHR transport with inline progress. */}
+      <div className="preview-actions">
+        <div className="preview-row">
+          <button className="btn ghost sm" disabled={reupPct !== null} aria-busy={reupPct !== null}
+            onClick={() => reuploadRef.current?.click()}>
+            {reupPct !== null ? <><span className="spin" /> Uploading… {reupPct}%</> : 'Re-upload (new version)'}
+          </button>
+          <input ref={reuploadRef} type="file" hidden
+            onChange={(e) => { const f = e.target.files?.[0]; if (f && reupPct === null) reupload(f); e.target.value = ''; }} />
+        </div>
+        {reupPct !== null ? (
+          <div className="upload-bar" style={{ marginTop: 6 }}>
+            <div className="upload-bar-fill" style={{ width: `${reupPct}%` }} />
+          </div>
+        ) : null}
+        {reupErr ? <div className="error" style={{ marginTop: 6 }}>{reupErr}</div> : null}
       </div>
 
       {err ? <div className="error">{err}</div> : null}

@@ -19,6 +19,7 @@ import FolderTree, { FolderPickerModal, type FolderRef } from '@/components/core
 import { ensureFolderId, renamedPath } from '@/lib/folders/client';
 import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
 import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
+import { uploadRawFile } from '@/lib/files/upload-client';
 import FilePreview from './FilePreview';
 
 type Summary = {
@@ -40,10 +41,6 @@ const KIND_LABEL: Record<Summary['kind'], string> = { doc: 'DOC', image: 'IMG', 
 type ViewMode = 'grid' | 'list';
 type SortKey = 'name' | 'updated' | 'size' | 'type';
 const VIEW_KEY = 'soa.files.view';
-
-/** Fallback max upload size shown when the server gives no explicit limit (the ingress
- *  is being raised to 200 MB; if a 413 carries a JSON limit we prefer that). */
-const DEFAULT_MAX_MB = 200;
 
 /** Per-file upload progress row shown while a batch is in flight / after it settles. */
 type UploadItem = {
@@ -267,48 +264,6 @@ function FilesBrowserInner() {
     return () => clearTimeout(t);
   }, [query]);
 
-  // Upload ONE file over XMLHttpRequest so we get real progress (fetch+FormData has
-  // none). Resolves with a friendly error string (or null on success) — it never
-  // rejects, so one bad file can't abort the rest of the batch. `onPct` streams 0–100.
-  const uploadOne = useCallback((file: File, folder: string, onPct: (pct: number) => void): Promise<string | null> => {
-    return new Promise((resolve) => {
-      // Send the RAW file bytes (not multipart/form-data): the server reads them
-      // via req.arrayBuffer(), which is reliable for large bodies — Next/undici's
-      // req.formData() parser chokes on big multipart uploads ("Failed to parse
-      // body as FormData"). Metadata rides the query string; the file's real MIME
-      // is the request Content-Type. Progress still works on the raw upload stream.
-      const qs = new URLSearchParams({ upload: 'raw', name: file.name, folder });
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', `/api/files?${qs.toString()}`);
-      xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
-      xhr.timeout = 10 * 60 * 1000; // 10 min — large files over a slow link.
-
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) onPct(Math.min(99, Math.round((e.loaded / e.total) * 100)));
-      };
-
-      const tooLarge = (limitMb: number) => `${file.name} is too large (max ${limitMb} MB)`;
-
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) { onPct(100); resolve(null); return; }
-        // Try to read a JSON {error, maxMb}; a non-JSON body (e.g. an nginx 413 HTML
-        // page) or a 413 both mean "too large" → one clear friendly message.
-        let parsed: { error?: string; maxMb?: number } | null = null;
-        try { parsed = JSON.parse(xhr.responseText) as { error?: string; maxMb?: number }; } catch { parsed = null; }
-        if (xhr.status === 413 || !parsed) {
-          resolve(tooLarge(parsed?.maxMb ?? DEFAULT_MAX_MB));
-        } else {
-          resolve(parsed.error ?? `${file.name} failed to upload`);
-        }
-      };
-      // Network error / timeout / aborted (status 0) → connection-oriented message.
-      xhr.onerror = () => resolve(`${file.name} failed to upload — check your connection and try again.`);
-      xhr.ontimeout = () => resolve(`${file.name} failed to upload — check your connection and try again.`);
-
-      xhr.send(file); // raw bytes — the File IS the request body
-    });
-  }, []);
-
   const upload = useCallback(async (files: FileList | File[]) => {
     // Snapshot the selection immediately (the file input resets right after) and
     // upload every file sequentially — no file is skipped.
@@ -323,7 +278,7 @@ function FilesBrowserInner() {
     let ok = 0;
     const failures: string[] = [];
     for (let i = 0; i < batch.length; i++) {
-      const err = await uploadOne(batch[i], folder, (pct) =>
+      const err = await uploadRawFile(batch[i], folder, (pct) =>
         setUploads((cur) => cur.map((u, idx) => (idx === i ? { ...u, pct } : u))));
       setUploads((cur) => cur.map((u, idx) =>
         idx === i ? { ...u, pct: err ? u.pct : 100, state: err ? 'error' : 'done', error: err ?? undefined } : u));
@@ -339,7 +294,7 @@ function FilesBrowserInner() {
     // visible when something failed so the user can read what went wrong.
     if (failures.length === 0) setTimeout(() => setUploads([]), 1500);
     refresh();
-  }, [sel, refresh, uploadOne]);
+  }, [sel, refresh]);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault(); setDrag(false);

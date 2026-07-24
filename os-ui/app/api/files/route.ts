@@ -7,6 +7,7 @@ import { listFiles, createFile, attachObject, objectKeyForAsset, type UploadInpu
 import { putBlob } from '@/lib/files/object-store';
 import '@/lib/files/object-store-server'; // registers the durable MinIO backend
 import { reindexFile } from '@/lib/files/pipeline-server';
+import { truncationError } from '@/lib/files/integrity';
 import { config } from '@/lib/core/config';
 import type { Sensitivity, Storage } from '@/lib/files/asset-schema';
 
@@ -79,6 +80,14 @@ export async function POST(req: Request) {
       const bytes = Buffer.from(await req.arrayBuffer());
       if (bytes.length === 0) {
         return NextResponse.json({ error: 'no file bytes received' }, { status: 400 });
+      }
+      // INTEGRITY GUARD: if the client declared a Content-Length, the body we read MUST
+      // match it. A short read means the upload was truncated/aborted mid-stream (e.g.
+      // an ingress 60s cut) — refuse to store corrupt bytes; surface a retryable error
+      // instead of silently persisting a broken file.
+      const incomplete = truncationError(bytes.length, req.headers.get('content-length'));
+      if (incomplete) {
+        return NextResponse.json({ error: incomplete }, { status: 400 });
       }
       const maxMb = Math.round(config.uploadMaxBytes / 1048576);
       if (bytes.length > config.uploadMaxBytes) {

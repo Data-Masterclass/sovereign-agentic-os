@@ -184,6 +184,12 @@ ingress:
     # it reaches the app — the "big file drag-drop does nothing" bug. nginx's
     # default is 1 MB, which silently blocked every upload over 1 MB.
     nginx.ingress.kubernetes.io/proxy-body-size: "200m"
+    # A large upload over a normal link takes longer than nginx's default 60s
+    # read/send timeout — nginx then CUTS the connection mid-body, so the app
+    # receives a TRUNCATED file (e.g. a 50 MB PDF stored as ~10 MB). 1h covers
+    # slow links + big files. (Terminal/workbench routes already set these.)
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
   # Per-tool public hostnames. Empty => that tool gets NO Ingress. Filled by the
   # Mode-B overlay (render-values.sh substitutes the DNS zone). Keys map to
   # Services in templates/ingress.yaml: osUI->os-ui:3000, litellm->litellm:4000,
