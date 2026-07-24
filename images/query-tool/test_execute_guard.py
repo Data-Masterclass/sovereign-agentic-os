@@ -171,6 +171,17 @@ class TargetAuthzTests(unittest.TestCase):
         )
         self.assertEqual(p.schema, "sales")
 
+    def test_domain_admin_may_write_domain(self):
+        # domain_admin ranks ABOVE builder (creator<builder<domain_admin<admin),
+        # so it must clear the builder write-floor for its own domain schema.
+        p = guard(
+            "CREATE OR REPLACE TABLE iceberg.sales.gold_o AS SELECT 1 AS a",
+            uid="jonas",
+            domains=["sales"],
+            role="domain_admin",
+        )
+        self.assertEqual(p.schema, "sales")
+
     def test_email_uid_maps_to_personal_schema(self):
         self.assertEqual(personal_schema("omar@acme.example"), "personal_omar_acme_example")
         p = guard(

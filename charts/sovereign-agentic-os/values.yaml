@@ -1960,7 +1960,11 @@ queryTool:
   enabled: true
   image:
     repository: sovereign-os/query-tool     # built locally, loaded into kind
-    tag: "0.4.0"                             # 0.4.0 = governed write path (/execute:
+    tag: "0.4.2"                             # 0.4.2 = write-floor role set includes
+                                             #         domain_admin (was {builder,admin};
+                                             #         domain_admin ranks ABOVE builder so
+                                             #         must clear the domain-schema write floor).
+                                             # 0.4.0 = governed write path (/execute:
                                              #         allowlisted DDL, per-caller target +
                                              #         role gate, runs as principal).
                                              # 0.3.1 = schema-agnostic (/query accepts

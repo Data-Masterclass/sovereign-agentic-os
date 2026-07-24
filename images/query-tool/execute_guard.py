@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 CATALOG = "iceberg"
-BUILDER_ROLES = {"builder", "admin"}  # role floor for domain-schema writes
+BUILDER_ROLES = {"builder", "domain_admin", "admin"}  # role floor for domain-schema writes (creator<builder<domain_admin<admin)
 
 # A bare, lowercase SQL identifier (no quoting allowed — keeps the surface tight).
 _IDENT = r"[a-z_][a-z0-9_]*"
