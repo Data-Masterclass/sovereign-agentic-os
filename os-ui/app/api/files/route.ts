@@ -70,6 +70,40 @@ export async function POST(req: Request) {
       return NextResponse.json({ asset }, { status: 201 });
     }
 
+    // ---- UI upload (raw bytes): the browser POSTs the file as the RAW request
+    //      body with `?upload=raw&name=&folder=` — read via arrayBuffer(), which is
+    //      reliable for large bodies (Next/undici's formData() parser chokes on big
+    //      multipart uploads). Same governed create + object-store put as above. ----
+    if (new URL(req.url).searchParams.get('upload') === 'raw') {
+      const sp = new URL(req.url).searchParams;
+      const bytes = Buffer.from(await req.arrayBuffer());
+      if (bytes.length === 0) {
+        return NextResponse.json({ error: 'no file bytes received' }, { status: 400 });
+      }
+      const maxMb = Math.round(config.uploadMaxBytes / 1048576);
+      if (bytes.length > config.uploadMaxBytes) {
+        return NextResponse.json(
+          { error: `file exceeds the ${maxMb} MB upload limit`, maxMb },
+          { status: 413 },
+        );
+      }
+      const name = (sp.get('name') || 'upload').trim();
+      const folder = sp.get('folder') || '/';
+      const tags = String(sp.get('tags') ?? '').split(',').map((t) => t.trim()).filter(Boolean);
+      const sensitivity = (sp.get('sensitivity') as Sensitivity) || undefined;
+      const fileType = contentType || 'application/octet-stream';
+      const text = isTextLike(name, fileType) ? bytes.toString('utf8') : '';
+
+      const asset = createFile(user, { name, folder, tags, sensitivity, text, bytes: bytes.length });
+      const key = objectKeyForAsset(asset);
+      if (key) {
+        await putBlob(key, bytes, fileType);
+        attachObject(asset.id, user, { contentType: fileType, bytes: bytes.length });
+      }
+      await reindexFile(asset, text);
+      return NextResponse.json({ asset }, { status: 201 });
+    }
+
     // ---- JSON upload: MCP `upload_file` / programmatic — extracted text only, no
     //      original bytes. Download serves that text (as .txt), never empty. ----
     const body = (await req.json().catch(() => ({}))) as Partial<UploadInput> & {

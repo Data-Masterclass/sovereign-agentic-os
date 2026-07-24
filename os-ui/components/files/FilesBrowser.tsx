@@ -272,13 +272,15 @@ function FilesBrowserInner() {
   // rejects, so one bad file can't abort the rest of the batch. `onPct` streams 0–100.
   const uploadOne = useCallback((file: File, folder: string, onPct: (pct: number) => void): Promise<string | null> => {
     return new Promise((resolve) => {
-      const form = new FormData();
-      form.append('file', file);
-      form.append('name', file.name);
-      form.append('folder', folder);
-
+      // Send the RAW file bytes (not multipart/form-data): the server reads them
+      // via req.arrayBuffer(), which is reliable for large bodies — Next/undici's
+      // req.formData() parser chokes on big multipart uploads ("Failed to parse
+      // body as FormData"). Metadata rides the query string; the file's real MIME
+      // is the request Content-Type. Progress still works on the raw upload stream.
+      const qs = new URLSearchParams({ upload: 'raw', name: file.name, folder });
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/api/files');
+      xhr.open('POST', `/api/files?${qs.toString()}`);
+      xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
       xhr.timeout = 10 * 60 * 1000; // 10 min — large files over a slow link.
 
       xhr.upload.onprogress = (e) => {
@@ -303,7 +305,7 @@ function FilesBrowserInner() {
       xhr.onerror = () => resolve(`${file.name} failed to upload — check your connection and try again.`);
       xhr.ontimeout = () => resolve(`${file.name} failed to upload — check your connection and try again.`);
 
-      xhr.send(form);
+      xhr.send(file); // raw bytes — the File IS the request body
     });
   }, []);
 
