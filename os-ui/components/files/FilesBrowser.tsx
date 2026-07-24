@@ -26,6 +26,8 @@ type Summary = {
   tier: 'dataset' | 'asset' | 'product'; kind: 'doc' | 'image' | 'video' | 'audio' | 'table' | 'archive' | 'other';
   folder: string; tags: string[]; sensitivity: string; freshness: string | null;
   version: string; status: 'processing' | 'searchable' | 'stored'; bytes: number;
+  /** Original bytes render inline → the tile shows a thumbnail via /raw. */
+  hasPreview?: boolean;
   /** Soft-archived (retained, reversible). Absent/false = live. */
   archived?: boolean;
 };
@@ -34,6 +36,10 @@ type Groups = { mine: Summary[]; domain: Summary[]; marketplace: Summary[]; face
 type Hit = { id: string; name: string; folder: string; tags: string[]; kind: Summary['kind']; score: number; snippet: string };
 
 const KIND_LABEL: Record<Summary['kind'], string> = { doc: 'DOC', image: 'IMG', audio: 'AUD', video: 'VID', table: 'TAB', archive: 'ZIP', other: 'FILE' };
+
+type ViewMode = 'grid' | 'list';
+type SortKey = 'name' | 'updated' | 'size' | 'type';
+const VIEW_KEY = 'soa.files.view';
 
 function bytesLabel(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -45,6 +51,25 @@ function StatusChip({ s }: { s: Summary['status'] }) {
   const cls = s === 'stored' ? 's-stored' : s === 'processing' ? 's-processing' : 's-searchable';
   const label = s === 'stored' ? 'Stored' : s === 'processing' ? 'Processing…' : 'Searchable ✓';
   return <span className={`status-chip ${cls}`}>{label}</span>;
+}
+
+/** The visual anchor of a tile: an inline thumbnail for renderable files (image via
+ *  /raw), else a big colored per-kind badge built from the existing kind-* tokens.
+ *  No icon library — the OS uses text + color only. */
+function FileThumb({ f }: { f: Summary }) {
+  if (f.hasPreview && f.kind === 'image') {
+    return (
+      <div className="file-thumb">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className="file-thumb-img" src={`/api/files/${f.id}/raw`} alt="" loading="lazy" />
+      </div>
+    );
+  }
+  return (
+    <div className={`file-thumb file-badge kind-${f.kind}`}>
+      <span className="file-badge-label">{KIND_LABEL[f.kind]}</span>
+    </div>
+  );
 }
 
 function FileCard({
@@ -66,14 +91,40 @@ function FileCard({
             onChange={(e) => onPick(e.target.checked)}
           />
         ) : null}
-        <span className={`kind-chip kind-${f.kind}`}>{KIND_LABEL[f.kind]}</span>
         <StatusChip s={f.status} />
       </div>
+      <FileThumb f={f} />
       <span className="file-name">{f.name}</span>
       <span className="file-sub">{f.owner} · {f.version} · {bytesLabel(f.bytes)}</span>
       {f.tags.length > 0 ? (
         <div className="file-tags">{f.tags.slice(0, 3).map((t) => <span className="chip" key={t}>{t}</span>)}</div>
       ) : null}
+    </button>
+  );
+}
+
+/** A dense, scannable list row — one line per file (name · type · size · status). The
+ *  list view is far easier to scan for a drive with many docs/CSVs than the tile grid. */
+function FileRow({
+  f, on, onOpen, picked, onPick,
+}: {
+  f: Summary; on: boolean; onOpen: () => void;
+  picked?: boolean; onPick?: (checked: boolean) => void;
+}) {
+  return (
+    <button type="button" className={`file-row${on ? ' on' : ''}${picked ? ' picked' : ''}`} onClick={onOpen}>
+      {onPick ? (
+        <input
+          type="checkbox" className="file-pick" aria-label={`Select ${f.name}`}
+          checked={!!picked}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => onPick(e.target.checked)}
+        />
+      ) : null}
+      <span className={`kind-chip kind-${f.kind}`}>{KIND_LABEL[f.kind]}</span>
+      <span className="file-row-name">{f.name}</span>
+      <span className="file-row-meta">{bytesLabel(f.bytes)}</span>
+      <StatusChip s={f.status} />
     </button>
   );
 }
@@ -126,6 +177,20 @@ function FilesBrowserInner() {
   // search
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<Hit[] | null>(null);
+
+  // view mode (grid|list) + sort. The view choice is remembered across sessions.
+  const [viewMode, setViewMode] = useState<ViewMode>('grid');
+  const [sortKey, setSortKey] = useState<SortKey>('updated');
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(VIEW_KEY);
+      if (v === 'grid' || v === 'list') setViewMode(v);
+    } catch { /* private mode / no storage — grid default is fine */ }
+  }, []);
+  const chooseView = useCallback((v: ViewMode) => {
+    setViewMode(v);
+    try { localStorage.setItem(VIEW_KEY, v); } catch { /* ignore */ }
+  }, []);
 
   // upload / drag-drop
   const [drag, setDrag] = useState(false);
@@ -294,9 +359,71 @@ function FilesBrowserInner() {
     ? itemsUnderFolder(sel.path, list.filter((f) => rootOf(f) === sel.root))
     : list;
   const matched = inFolder.filter((f) => (!tag || f.tags.includes(tag)));
-  const filtered = matched.filter((f) => !f.archived);
-  const archivedFiles = matched.filter((f) => f.archived);
+  // Sort the visible files by the chosen key (name/updated/size/type). `updated`
+  // uses freshness (newest first); the rest are stable ascending.
+  const sortFiles = useCallback((rows: Summary[]): Summary[] => {
+    const by = [...rows];
+    by.sort((x, y) => {
+      switch (sortKey) {
+        case 'name': return x.name.localeCompare(y.name);
+        case 'size': return y.bytes - x.bytes;
+        case 'type': return x.kind.localeCompare(y.kind) || x.name.localeCompare(y.name);
+        case 'updated':
+        default: return (y.freshness ?? '').localeCompare(x.freshness ?? '');
+      }
+    });
+    return by;
+  }, [sortKey]);
+  const filtered = sortFiles(matched.filter((f) => !f.archived));
+  const archivedFiles = sortFiles(matched.filter((f) => f.archived));
   const searching = query.trim().length > 0;
+
+  // Resolve search hits to their full Summary (from any scope) so results render with
+  // the SAME tile/row as browse. Hit order (relevance) is preserved; a hit not in the
+  // loaded list falls back to a minimal Summary so it still renders + opens.
+  const hitFiles: Summary[] = useMemo(() => {
+    if (!hits) return [];
+    const all = groups ? [...groups.mine, ...groups.domain, ...groups.marketplace] : [];
+    const byId = new Map(all.map((f) => [f.id, f]));
+    return hits.map((h) => byId.get(h.id) ?? ({
+      id: h.id, name: h.name, owner: '', domain: '', tier: 'dataset',
+      kind: h.kind, folder: h.folder, tags: h.tags, sensitivity: 'internal',
+      freshness: null, version: 'v1', status: 'searchable', bytes: 0,
+    } as Summary));
+  }, [hits, groups]);
+
+  // One collection renderer for grid AND list, reused by the main list, the archived
+  // section, and search results — so the whole tab shares one visual language.
+  // `withPick` wires the multi-select checkbox (only the live main list needs it).
+  const renderCollection = (rows: Summary[], withPick: boolean) => {
+    const pickProps = (f: Summary) =>
+      withPick
+        ? {
+            picked: picked.has(f.id),
+            onPick: (checked: boolean) => setPicked((cur) => {
+              const next = new Set(cur);
+              if (checked) next.add(f.id); else next.delete(f.id);
+              return next;
+            }),
+          }
+        : {};
+    if (viewMode === 'list') {
+      return (
+        <div className="file-list">
+          {rows.map((f) => (
+            <FileRow key={f.id} f={f} on={selected === f.id} onOpen={() => setSelected(f.id)} {...pickProps(f)} />
+          ))}
+        </div>
+      );
+    }
+    return (
+      <div className="file-grid">
+        {rows.map((f) => (
+          <FileCard key={f.id} f={f} on={selected === f.id} onOpen={() => setSelected(f.id)} {...pickProps(f)} />
+        ))}
+      </div>
+    );
+  };
 
   return (
     <>
@@ -316,6 +443,21 @@ function FilesBrowserInner() {
             onChange={(e) => setQuery(e.target.value)} aria-label="Search files" />
           {searching ? <button className="preview-close" onClick={() => setQuery('')} aria-label="Clear">×</button> : null}
         </div>
+        {!searching ? (
+          <>
+            <select className="files-sort" value={sortKey} aria-label="Sort files"
+              onChange={(e) => setSortKey(e.target.value as SortKey)} title="Sort files">
+              <option value="updated">Updated</option>
+              <option value="name">Name</option>
+              <option value="size">Size</option>
+              <option value="type">Type</option>
+            </select>
+            <div className="files-viewtoggle" role="group" aria-label="View mode">
+              <button className={viewMode === 'grid' ? 'on' : ''} onClick={() => chooseView('grid')} title="Grid view" aria-pressed={viewMode === 'grid'}>Grid</button>
+              <button className={viewMode === 'list' ? 'on' : ''} onClick={() => chooseView('list')} title="List view" aria-pressed={viewMode === 'list'}>List</button>
+            </div>
+          </>
+        ) : null}
         <button
           className="btn ghost"
           style={{ opacity: 1 }}
@@ -508,18 +650,9 @@ function FilesBrowserInner() {
             <>
               <div className="section-title">Results<span className="count-pill">{hits?.length ?? 0}</span></div>
               {hits && hits.length === 0 ? <div className="stub-page">No files match “{query}”.</div> : null}
-              <div style={{ display: 'grid', gap: 10 }}>
-                {(hits ?? []).map((h) => (
-                  <button key={h.id} className="result" style={{ textAlign: 'left', cursor: 'pointer', width: '100%' }}
-                    onClick={() => setSelected(h.id)}>
-                    <div className="result-head">
-                      <h4><span className={`kind-chip kind-${h.kind}`}>{KIND_LABEL[h.kind]}</span> {h.name}</h4>
-                      <span className="score">{h.folder}</span>
-                    </div>
-                    {h.snippet ? <p className="result-text">{h.snippet}</p> : null}
-                  </button>
-                ))}
-              </div>
+              {/* Search results reuse the SAME tile/row as browse (resolved from the
+                  loaded scope list by id) so the tab reads as one product. */}
+              {renderCollection(hitFiles, false)}
             </>
           ) : (
             <>
@@ -541,19 +674,7 @@ function FilesBrowserInner() {
                       <button className="btn ghost sm" onClick={() => setPicked(new Set())}>Clear</button>
                     </div>
                   ) : null}
-                  <div className="file-grid">
-                    {filtered.map((f) => (
-                      <FileCard
-                        key={f.id} f={f} on={selected === f.id} onOpen={() => setSelected(f.id)}
-                        picked={picked.has(f.id)}
-                        onPick={(checked) => setPicked((cur) => {
-                          const next = new Set(cur);
-                          if (checked) next.add(f.id); else next.delete(f.id);
-                          return next;
-                        })}
-                      />
-                    ))}
-                  </div>
+                  {renderCollection(filtered, true)}
                 </>
               )}
 
@@ -563,11 +684,7 @@ function FilesBrowserInner() {
                   <div className="section-title" style={{ marginTop: 24 }}>
                     Archived<span className="count-pill">{archivedFiles.length}</span>
                   </div>
-                  <div className="file-grid">
-                    {archivedFiles.map((f) => (
-                      <FileCard key={f.id} f={f} on={selected === f.id} onOpen={() => setSelected(f.id)} />
-                    ))}
-                  </div>
+                  {renderCollection(archivedFiles, false)}
                 </>
               ) : null}
             </>

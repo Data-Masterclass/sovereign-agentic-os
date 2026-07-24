@@ -30,7 +30,8 @@ type Asset = {
   indexing: { mode: 'indexed' | 'stored-only'; representations: string[] };
   description: string;
 };
-type View = { asset: Asset; text: string; bytes: number; history: { version: string; at: string }[]; archived?: boolean };
+type StoredObject = { key: string; contentType: string; bytes: number };
+type View = { asset: Asset; text: string; bytes: number; object?: StoredObject | null; history: { version: string; at: string }[]; archived?: boolean };
 type Gate = { ok: boolean; missing: string[] };
 type PromoteStatus = { tier: Asset['tier']; gate: Gate; request: { status: string } | null };
 type LineageEdge = { id: string; kind: string; target: string; by: string; at: string };
@@ -51,6 +52,31 @@ function fresh(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
+}
+
+/** How the Quick Look viewer should render the ORIGINAL bytes (served inline by
+ *  /api/files/[id]/raw). Driven by the stored content-type — the only reliable signal
+ *  for PDF-vs-text (both are kind `doc`). `null` → no inline viewer (text/other). */
+type ViewerMode = 'image' | 'pdf' | 'video' | 'audio' | 'csv';
+function viewerMode(contentType: string | undefined | null, name: string): ViewerMode | null {
+  const t = (contentType ?? '').toLowerCase();
+  if (t.startsWith('image/')) return 'image';
+  if (t.startsWith('video/')) return 'video';
+  if (t.startsWith('audio/')) return 'audio';
+  if (t === 'application/pdf' || /\.pdf$/i.test(name)) return 'pdf';
+  if (t === 'text/csv' || /\.csv$/i.test(name)) return 'csv';
+  return null;
+}
+
+/** Parse a small CSV preview into rows/cells (naive split — good enough for a calm
+ *  glance; the file is downloadable for the real thing). Capped so a huge CSV never
+ *  blows up the pane. */
+function csvRows(text: string, maxRows = 30, maxCols = 12): string[][] {
+  return text
+    .split(/\r?\n/)
+    .filter((l) => l.length > 0)
+    .slice(0, maxRows)
+    .map((line) => line.split(',').slice(0, maxCols).map((c) => c.trim()));
 }
 
 export default function FilePreview({ id, onMutated, onClose }: { id: string; onMutated: () => void; onClose: () => void }) {
@@ -208,6 +234,16 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
   const textIsTruncated = preview.truncated;
   const textToShow = preview.body;
 
+  // Quick Look: which inline viewer (if any) to render, and where the bytes live.
+  // Only render an inline byte-viewer when ORIGINAL bytes are stored (view.object);
+  // CSV renders from the already-extracted text, so it needs no stored object.
+  const rawSrc = `/api/files/${id}/raw`;
+  const rawMode = viewerMode(view.object?.contentType, a.name);
+  // A byte-viewer (image/pdf/video/audio) needs stored original bytes; CSV renders
+  // from the already-extracted text, so it does not.
+  const mode = rawMode && rawMode !== 'csv' && !view.object ? null : rawMode;
+  const csvPreview = mode === 'csv' && view.text ? csvRows(view.text) : null;
+
   return (
     <ConfirmProvider>
     <aside className="files-preview">
@@ -227,15 +263,43 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         <span className="file-sub">{a.version} · {bytesLabel(view.bytes)}</span>
       </div>
 
-      {/* The extracted text / transcript / caption — the only "preview" we surface;
-          the raw bytes are available via the Download button (a Phase-5 concern). */}
-      {isMedia ? (
-        <div className="media-stage">
-          {a.kind === 'image' ? 'Image — download to view' : a.kind === 'audio' ? 'Audio — transcript below' : 'Video — transcript below'}
+      {/* ---- Quick Look: render the ACTUAL file inline (the content is the hero).
+              Original bytes stream from /raw with Content-Disposition: inline. CSV is
+              rendered from the extracted text as a light table (no byte fetch needed).
+              Below the viewer, the extracted text / transcript / caption stays for docs
+              and media (searchable body); governance lives under the disclosure. ---- */}
+      {mode && mode !== 'csv' ? (
+        <div className="file-viewer">
+          {mode === 'image' ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img className="viewer-image" src={rawSrc} alt={a.name} />
+          ) : mode === 'pdf' ? (
+            <iframe className="viewer-frame" src={rawSrc} title={a.name} />
+          ) : mode === 'video' ? (
+            <video className="viewer-media" src={rawSrc} controls />
+          ) : (
+            <audio className="viewer-media" src={rawSrc} controls />
+          )}
         </div>
       ) : null}
+
+      {mode === 'csv' && csvPreview ? (
+        <div className="viewer-table-wrap">
+          <table className="viewer-table">
+            <tbody>
+              {csvPreview.map((row, ri) => (
+                <tr key={ri}>
+                  {row.map((cell, ci) => (ri === 0 ? <th key={ci}>{cell}</th> : <td key={ci}>{cell}</td>))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+
       {view.text ? (
         <div>
+          {mode ? <label className="rail-group-title">{isMedia ? 'Transcript' : 'Extracted text'}</label> : null}
           {/* `expanded` drops the fixed max-height so "Show all" actually reveals the
               full text (the box otherwise just scrolls inside a 240px clamp). */}
           <div className={`preview-text${showFullText ? ' expanded' : ''}`}>{textToShow}{textIsTruncated ? '…' : ''}</div>
@@ -246,9 +310,27 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
             </button>
           ) : null}
         </div>
-      ) : (
-        <div className="media-stage">Extracted text appears once the file is indexed.</div>
+      ) : mode ? null : (
+        <div className="media-stage">No preview — download to view the original file.</div>
       )}
+
+      {/* Quick actions live directly under the viewer — the two things a reader wants
+          most (get the original, replace it). Governance sits under the disclosure. */}
+      <div className="preview-row preview-actions">
+        {/* Download: UI-uploaded files stream their ORIGINAL bytes from the object
+            store; text-only (MCP) records download their extracted text as .txt. */}
+        <a className="btn ghost sm" href={`/api/files/${id}/download`} download={a.name}>Download</a>
+        <button className="btn ghost sm" onClick={() => reuploadRef.current?.click()}>Re-upload (new version)</button>
+        <input ref={reuploadRef} type="file" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) reupload(f); e.target.value = ''; }} />
+      </div>
+
+      {err ? <div className="error">{err}</div> : null}
+
+      {/* ---- Details & sharing: everything governance lives one click away so the file
+              itself is the default focus (content is the hero). The controls are the
+              SAME as before — only reflowed under a disclosure, not rewritten. ---- */}
+      <details className="preview-details">
+        <summary>Details &amp; sharing</summary>
 
       <dl className="preview-meta">
         <dt>Owner</dt><dd>{a.owner}</dd>
@@ -372,16 +454,6 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         </div>
       ) : null}
 
-      {err ? <div className="error">{err}</div> : null}
-
-      <div className="preview-row" style={{ justifyContent: 'space-between', marginTop: 'auto' }}>
-        {/* Download: UI-uploaded files stream their ORIGINAL bytes from the object
-            store; text-only (MCP) records download their extracted text as .txt. */}
-        <a className="btn ghost sm" href={`/api/files/${id}/download`} download={a.name}>Download</a>
-        <button className="btn ghost sm" onClick={() => reuploadRef.current?.click()}>Re-upload (new version)</button>
-        <input ref={reuploadRef} type="file" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) reupload(f); e.target.value = ''; }} />
-      </div>
-
       {/* One consistent archive / delete / version-history cluster. Available to the
           owner, and — once the file is promoted — to an in-domain domain_admin or a
           platform admin, matching the server edit-scope. */}
@@ -401,6 +473,7 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
           />
         </div>
       ) : null}
+      </details>
     </aside>
     </ConfirmProvider>
   );

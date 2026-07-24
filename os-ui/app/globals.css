@@ -2935,6 +2935,83 @@ button.card.tile:hover .tile-action { opacity: 1; }
 .preview-share { display: flex; flex-direction: column; gap: 4px; padding-top: 4px; border-top: 1px solid var(--border); }
 .lineage-list { margin: 4px 0 0; padding-left: 16px; font-size: 12px; color: var(--text-muted); }
 .lineage-list li { margin: 2px 0; word-break: break-word; }
+
+/* ---- tile thumbnail / colored kind badge (grid) ---- */
+/* Every tile leads with a visual: a real thumbnail for images, else a big colored
+   badge that reuses the kind-* tokens so a PDF/CSV/audio reads at a glance. */
+.file-thumb {
+  display: flex; align-items: center; justify-content: center;
+  aspect-ratio: 16 / 10; width: 100%; border-radius: var(--radius);
+  overflow: hidden; background: var(--bg-elevated); border: 1px solid var(--border);
+}
+.file-thumb-img { width: 100%; height: 100%; object-fit: cover; }
+/* The badge borrows a kind-* token's color/background (set on the element) and shows a
+   large monospace type label — no icon library, just color + text. */
+.file-badge .file-badge-label {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 20px; font-weight: 700; letter-spacing: .06em;
+}
+
+/* ---- dense list view ---- */
+.file-list { display: flex; flex-direction: column; gap: 2px; }
+.file-row {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  padding: 9px 12px; border: 1px solid transparent; border-radius: 10px;
+  background: transparent; cursor: pointer; color: var(--text);
+  transition: background .12s ease, border-color .12s ease;
+}
+.file-row:hover { background: var(--panel-2); }
+.file-row.on { background: var(--gold-soft); border-color: var(--gold-line); }
+.file-row.picked { border-color: var(--gold-line); }
+.file-row-name { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-row-meta { font-size: 11.5px; color: var(--text-faint); white-space: nowrap; }
+
+/* ---- toolbar: sort + grid/list toggle ---- */
+.files-sort {
+  font-size: 12.5px; padding: 6px 8px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+}
+.files-viewtoggle { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.files-viewtoggle button {
+  border: 0; background: var(--panel); color: var(--text-muted);
+  font-size: 12.5px; padding: 6px 12px; cursor: pointer; transition: background .12s ease, color .12s ease;
+}
+.files-viewtoggle button:hover { color: var(--text); }
+.files-viewtoggle button.on { background: var(--gold-soft); color: var(--gold-text); font-weight: 600; }
+.files-viewtoggle button + button { border-left: 1px solid var(--border); }
+
+/* ---- Quick Look viewer (the file itself is the hero) ---- */
+.file-viewer {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-elevated); overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+.viewer-image { max-width: 100%; max-height: 420px; object-fit: contain; display: block; }
+.viewer-frame { width: 100%; height: 460px; border: 0; background: #fff; }
+.viewer-media { width: 100%; display: block; }
+.viewer-table-wrap {
+  max-height: 320px; overflow: auto;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elevated);
+}
+.viewer-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.viewer-table th, .viewer-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+.viewer-table th { position: sticky; top: 0; background: var(--panel-2); color: var(--text); font-weight: 700; }
+.viewer-table td { color: var(--text-muted); }
+.preview-actions { justify-content: flex-start; gap: 8px; }
+
+/* ---- "Details & sharing" disclosure: governance sits one click away ---- */
+.preview-details { border-top: 1px solid var(--border); padding-top: 10px; }
+.preview-details > summary {
+  cursor: pointer; list-style: none; user-select: none;
+  font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-faint);
+  padding: 2px 0; display: flex; align-items: center; gap: 6px;
+}
+.preview-details > summary::-webkit-details-marker { display: none; }
+.preview-details > summary::before { content: '▸'; font-size: 10px; transition: transform .12s ease; }
+.preview-details[open] > summary::before { transform: rotate(90deg); }
+.preview-details[open] > summary { margin-bottom: 10px; }
+.preview-details > *:not(summary) { margin-top: 12px; }
+
 /* === Marketplace === */
 
 /* Trust strip inside ListingCard */

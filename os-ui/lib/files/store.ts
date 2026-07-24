@@ -97,6 +97,9 @@ export type FileSummary = {
   storage: Storage;
   status: FileStatus;
   bytes: number;
+  /** True when original bytes are stored AND render inline (image/pdf/video/audio) —
+   *  the grid shows a thumbnail / the preview shows a live viewer via /raw. */
+  hasPreview: boolean;
   /** Soft-archived (retained, reversible). Absent/false = live. */
   archived?: boolean;
 };
@@ -317,6 +320,15 @@ function statusOf(a: FileAsset): FileStatus {
   return a.indexing.mode === 'stored-only' ? 'stored' : 'searchable';
 }
 
+/** True when a stored object's content-type renders inline in a browser (the Quick
+ *  Look viewer + grid thumbnails use /raw for exactly these). Pure + exported so the
+ *  client can branch its <img>/<iframe>/<video>/<audio> the same way. */
+export function inlineRenderable(contentType: string | undefined | null): boolean {
+  if (!contentType) return false;
+  const t = contentType.toLowerCase();
+  return t.startsWith('image/') || t.startsWith('video/') || t.startsWith('audio/') || t === 'application/pdf';
+}
+
 function summarise(a: FileAsset, rec: FileRecord): FileSummary {
   return {
     id: a.id, name: a.name, owner: a.owner, domain: a.domain,
@@ -324,6 +336,7 @@ function summarise(a: FileAsset, rec: FileRecord): FileSummary {
     tags: a.tags, sensitivity: a.sensitivity, freshness: a.freshness,
     version: a.version, deepLink: a.deepLink, storage: a.storage,
     status: statusOf(a), bytes: rec.bytes,
+    hasPreview: !!rec.object && inlineRenderable(rec.object.contentType),
     archived: rec.archived ?? false,
   };
 }
