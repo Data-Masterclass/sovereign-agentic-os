@@ -2,7 +2,7 @@
 title: "Sovereign Agentic OS"
 subtitle: "The governed, EU-sovereign operating system for data, knowledge, agents and software — where AI gets real, safe hands on your work."
 author: "Orchestrated by Data Masterclass · datamasterclass.com · www.sovereign-agentic.com"
-date: "Chart 0.2.11 (app 0.2.0-alpha.11 · os-ui 0.5.61) · generated {{DATE}} from commit {{GIT_COMMIT}}"
+date: "Chart 0.2.11 (app 0.2.0-alpha.11 · os-ui 0.5.89) · generated {{DATE}} from commit {{GIT_COMMIT}}"
 titlepage: true
 titlepage-rule-color: "c8a24a"
 toc: true
@@ -246,9 +246,9 @@ there.
   know-how, each step owned by a Human / Software / Agent / external actor), retrievable and
   grantable to agents.
 - **MCP** *(Builder+)* — the setup surface for connecting external AI clients over MCP.
-- **Tutorials.** One illustrated, hands-on tutorial per golden path — reached from Home or a
-  tab header — that can spotlight the real controls and let you practice in a sandbox before
-  doing it for real.
+- **Tutorials.** An illustrated, hands-on tutorial for every tab — fourteen today, each kept
+  in step with its tab's current journey — reached from Home or a tab header, that can
+  spotlight the real controls and let you practice in a sandbox before doing it for real.
 
 ## Context
 
@@ -262,9 +262,13 @@ there.
 - **Data — datasets, refined and governed.** A five-stage medallion builder turns a
   plain-language flow into real governed artifacts (a dlt pipeline, dbt models, a Cube cube),
   with no YAML: **Ingest** (land a file as a Bronze Iceberg table) · **Define** (document the
-  columns, clean and conform to Silver) · **Harmonize** (join into a Gold business mart) ·
-  **Validate** (quality checks + lineage) · **Publish** (metrics, Talk-to-Data, and sharing).
-  The **Validate** stage is a real data-quality gate: author dropdown-driven rule checks
+  columns, clean and conform to Silver) · **Harmonize** (join into a Gold business mart — a
+  join is optional, so a single-table Gold is fine) · **Validate** (quality checks + lineage) ·
+  **Publish** (sharing first, then Talk-to-Data, then the metrics, dashboards and agent systems
+  already built on this data — each list links out and offers a create pre-scoped to the
+  dataset). Silver and Gold builds are never one-shot black boxes: after a build the definition
+  stays visible and editable, so you explore the result, tweak, and **Rebuild in place** — and
+  *you* choose when to Continue. The **Validate** stage is a real data-quality gate: author dropdown-driven rule checks
   (`not_null`, `not_blank`, `unique`, `accepted_values`, `range`) that compile to SQL and run
   *for real* against the built table, get a 0–100 **health score** and a passing/failing badge
   (honestly `unknown`, never a fake pass, when nothing ran), let the OS **suggest rules from the
@@ -353,10 +357,13 @@ honestly rather than inventing an answer when retrieval comes back empty.
 - **Software — a governed frontend over the OS API.** An app here isn't a black box you bolt on
   — it's a first-class client of the OS itself. It moves through the shared five-stage builder —
   **Define** (state the purpose and grant the app its context) · **Design** (epics + user
-  stories) · **Build** (the AI plans, then writes and commits code, showing you a real
-  before/after **file diff** per run — and each Build run can **target a specific story**) ·
-  **Preview** (a live in-cluster pod) · **Operate** (the deployed app plus its live tool
-  surface). New apps scaffold from **`vite-os`** — a Vite + React + TypeScript SPA that boots
+  stories) · **Build** (a **live streaming build**: the AI streams its plan, then one honest,
+  human-readable line per action — *"Committed 3 files"*, *"Provisioning preview…"* — with
+  errors shown as warnings with the real reason and retries visible in the feed, plus a real
+  before/after **file diff** of what was committed per run; each Build run can **target a
+  specific story**) · **Preview** (a live in-cluster pod) · **Operate** (the deployed app plus
+  its live tool surface). A persistent **Build ▸ Preview ▸ Deploy status rail** keeps the
+  honest, single-glance state in view throughout. New apps scaffold from **`vite-os`** — a Vite + React + TypeScript SPA that boots
   *in the OS design*: it vendors **`@sovereign-os/ui`** (the gold-on-black AppShell and `.sb-*`
   primitives, no build step, no registry) and calls back into the platform through the
   **OS-client SDK** (`@sovereign-os/app-sdk` — `createOsClient().whoami()`, `.datasets.list()`,
@@ -366,25 +373,38 @@ honestly rather than inventing an answer when retrieval comes back empty.
   **declare its surface** — `surface: ui | api | both` in `app.yaml`, which wins over
   auto-detection so a Streamlit/Gradio/Flask UI is never mislabelled "API." *Request deploy*
   assembles a review card — a security scan of the **live repo tree**, resource envelope, diff —
-  that a human Builder decides; on approve the in-cluster runner provisions a real
+  that a human Builder decides in **Policies & Approvals**; on approve the in-cluster runner provisions a real
   Deployment + Service + Ingress with a live per-app URL (a `vite-os` app publishes as **static**
   files served by nginx). Apps carry the same lifecycle as every other tab — **Archive →
   Restore / Delete**.
 - **Science — classic ML** *(opt-in, Layer 4)*. Take traditional ML (regression, forecasting,
   clustering — *not* LLMs) from a governed data product to a deployed model-as-service, exposed
   as both a REST `predict` API and a `predict` MCP tool. Off by default; GPU is cost-gated.
-- **Dashboards — governed BI.** Apache Superset dashboards built read-only on governed Cube
-  metrics, so BI and agents can never disagree. They **embed live inside the OS** — rendered
-  through the **same-origin tool proxy**, with a **server-minted, short-lived guest token that
-  carries the viewer's own row-level security**, so a shared dashboard still shows only your
-  rows.
+- **Dashboards — governed BI, rendered natively.** Dashboards are built and rendered *in the
+  OS* — **Apache ECharts on the governed Cube semantic layer** — so BI and agents can never
+  disagree. The staged flow: **Define** (name it and bind **one governed Cube view** via metric
+  chips) · **Design** (the panel designer — metrics, dimensions, time grain, filters, and
+  big-number / line / area / bar / pie / table viz types, with a live preview) · **Build**
+  ("Save dashboard") · **View** (every panel queries Cube **as the viewer** — per-user
+  row-level security, with a live/offline badge; switch *View as* and every panel re-queries
+  as that viewer) · **Govern** (reports, promote / certify, and **Connect tools**). Connect
+  tools are the Tier-2 BI bridge over the **Cube SQL API** as a domain-scoped read-only
+  principal: **one-click Power BI** (a pre-filled `.pbids` file), **Tableau** connection
+  fields, and — when the operator has configured it — an **"Open in Superset →"** link to
+  Superset's own console in a new tab, never embedded.
 
 ## Monitor & Admin
 
 - **Governance** *(Builder+)* — the control plane: one Approvals inbox for every side-effectful
   action, the consolidated policy view, the hash-chained audit, cost caps, and Users & access.
-- **Monitoring** *(Builder+)* — artifact observability: trace runs (Langfuse), watch spend vs.
-  caps, and surface pipeline + model drift — scoped to your identity, strictly read-only. It also
+- **Monitoring** *(Builder+)* — artifact observability, scoped to your identity and strictly
+  read-only. Two tile boards, each My / Domain / Company: **Agent Monitoring** — every agent
+  system with its real last-7-day telemetry (runs, last run, warnings/errors, and **Tokens
+  truly measured**, captured from the model gateway per run; **Cost** appears only when model
+  pricing is configured via `MODEL_PRICES_JSON`, otherwise an honest "—", never a fake 0) —
+  and **Data Monitoring** — every dataset with freshness, pipeline health and its DQ status
+  (a red *"N DQ rules violated"* is the cue). Open any tile for the full diagnosis window:
+  run history & traces, cost/token trends, and a **Data-Quality dashboard**. It also
   rolls up **data quality** across your datasets: a risk-ranked board (riskiest first) built from
   the same quality-run history, a domain health average, and an honest count of datasets that have
   **never been checked** — surfaced as a gap, not painted green.
@@ -616,7 +636,7 @@ flowchart TB
   subgraph L3["L3 — Self-service"]
     TRINO["central Trino"]
     ICE["Iceberg / Polaris / MinIO"]
-    SUP["Superset (BI)"]
+    SUP["Superset (optional BI console)"]
     FORGE["Forgejo + Argo CD"]
     TRINO --> ICE
   end
@@ -636,8 +656,9 @@ flowchart TB
   (catalog + lineage).
 - **Layer 3 — Self-service.** Query, visualize, ship: the **Iceberg** lakehouse
   (**Polaris** catalog, **MinIO** object storage) with **central Trino** as the *one* governed
-  query engine, **Superset** for dashboards, and in-cluster **Forgejo + Argo CD** for software
-  delivery (git → CI → GitOps).
+  query engine, **dashboards rendered natively in the OS** (Apache ECharts on the Cube
+  semantic layer; **Superset** remains an optional stand-alone console), and in-cluster
+  **Forgejo + Argo CD** for software delivery (git → CI → GitOps).
 - **Layer 4 — Science / ML.** Classic ML — **JupyterHub**, **MLflow**, **Featureform**,
   **KServe** — *opt-in and off by default* (heavier, GPU-oriented).
 - **Security baseline** spans every layer: default-deny egress through a single proxy
@@ -743,7 +764,8 @@ no separate admin service to run.
 
 Four end-to-end demos ship seeded, so the system proves itself the moment it's up: **ask the
 RAG agent** (retrieve → generate → trace), **query the lakehouse** (the governed `query` tool
-over central Trino), **build a dashboard** in Superset, and **ship software** (push → Forgejo CI
+over central Trino), **build a dashboard** (native ECharts panels on governed Cube metrics),
+and **ship software** (push → Forgejo CI
 builds an image → Argo CD redeploys). Each has a one-card launcher on **Home**.
 
 ## Deploy to your cloud (STACKIT)
@@ -912,7 +934,7 @@ storage.
 | **L1 — Agent core** | LiteLLM (gateway → STACKIT three-tier set) · OpenSearch (retrieval) · Langfuse (tracing) · query-tool (Trino MCP) · system agents (Domain RAG · ML pipeline · Hermes runtime) |
 | **L2 — Foundations** | OPA · Docling · Haystack · Dagster · dbt · Cube · OpenMetadata |
 | **Infra** | Postgres (CloudNativePG) · ClickHouse · Valkey · MinIO (PVC-backed) · Polaris (durable JDBC metastore) |
-| **L3 — Self-service** | central Trino · Superset · Forgejo (sovereign git) · Argo CD · CI runner · OpenSearch Dashboards · Terminal |
+| **L3 — Self-service** | central Trino · Superset (optional console) · Forgejo (sovereign git) · Argo CD · CI runner · OpenSearch Dashboards · Terminal |
 | **L4 — Science** | JupyterHub · MLflow · Featureform · KServe (opt-in) |
 | **Security & platform** | egress-proxy · web_fetch · WireGuard tunnel (optional) · OS UI (embedded Components console · same-origin tool proxy + Level-1 SSO · MCP servers) |
 
@@ -968,11 +990,14 @@ header). Layers 1–3 are in place; **Science (Layer 4)** is an integrated model
 raw MLflow/Featureform/JupyterHub/KServe consoles as a Developer escape hatch. **Software** is now
 a *governed frontend over the OS API*: new apps scaffold from `vite-os` — a Vite/React SPA that
 boots in the OS design (`@sovereign-os/ui`) and calls back through the OS-client SDK
-(`@sovereign-os/app-sdk`) under the signed-in user's own security — with AI Plan/Build showing
-real per-run file diffs, story-targeted builds, live preview, and a Builder-reviewed deploy that
+(`@sovereign-os/app-sdk`) under the signed-in user's own security — with a **live streaming
+Build** (the plan first, then one honest line per action, warnings and retries visible, behind a
+persistent Build ▸ Preview ▸ Deploy status rail) showing real per-run file diffs, story-targeted
+builds, live preview, and a Builder-reviewed deploy that
 scans the live repo tree; they build a real image in-cluster (Forgejo CI) or publish static, and
-deploy to a live per-app URL. **Dashboards** embed governed Superset **live and same-origin** with
-a viewer-scoped guest token. A developer **`sos` CLI** (Phase 0) brings the same governed door to
+deploy to a live per-app URL. **Dashboards** render **natively in the OS** — Apache ECharts on
+the governed Cube layer, every panel queried **as the viewer** under per-user row-level security —
+with Power BI / Tableau / Superset-console bridges over the Cube SQL API. A developer **`sos` CLI** (Phase 0) brings the same governed door to
 your own terminal. The OS UI is v1.0: every sidebar tab is a real, brand-themed surface with
 light/dark theming.
 
