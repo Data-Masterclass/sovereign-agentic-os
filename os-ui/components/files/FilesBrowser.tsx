@@ -16,6 +16,7 @@ import {
   type FolderPathNode,
 } from '@/lib/core/folders';
 import FolderTree, { FolderPickerModal, type FolderRef } from '@/components/core/FolderTree';
+import FolderLayout from '@/components/core/FolderLayout';
 import { ensureFolderId, renamedPath } from '@/lib/folders/client';
 import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
 import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
@@ -583,13 +584,17 @@ function FilesBrowserInner() {
         }}
       />
 
-      <div className="files-layout">
-        {/* ---- folder rail + tag cloud (the owner's drive) ---- */}
-        <nav className="files-rail files-rail-tree">
-          <div>
-            <button className={`rail-item${sel === null ? ' on' : ''}`} onClick={() => setSel(null)}>
-              <span>All files</span><span className="rail-count">{list.length}</span>
-            </button>
+      <FolderLayout
+        allLabel="All files"
+        allCount={list.length}
+        allSelected={sel === null}
+        onSelectAll={() => setSel(null)}
+        mainClassName={`file-drop${drag ? ' drag' : ''}`}
+        onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+        onDragLeave={() => setDrag(false)}
+        onDrop={onDrop}
+        rail={
+          <>
             {/* The reusable Wave-1 folder tree (rail variant): the governed folder
                 registry UNIONed with folders synthesised from the visible files'
                 paths, so implicit folders keep showing with zero migration. The two
@@ -680,25 +685,22 @@ function FilesBrowserInner() {
                 })();
               }}
             />
-          </div>
-          {facets.tags.length > 0 ? (
-            <div>
-              <p className="rail-group-title">Tags</p>
-              <div className="rail-tags">
-                {facets.tags.map((t) => (
-                  <button key={t.tag} className={`chip${tag === t.tag ? ' on' : ''}`} style={{ cursor: 'pointer' }}
-                    onClick={() => setTag(tag === t.tag ? null : t.tag)}>{t.tag} · {t.count}</button>
-                ))}
+            {facets.tags.length > 0 ? (
+              <div>
+                <p className="rail-group-title">Tags</p>
+                <div className="rail-tags">
+                  {facets.tags.map((t) => (
+                    <button key={t.tag} className={`chip${tag === t.tag ? ' on' : ''}`} style={{ cursor: 'pointer' }}
+                      onClick={() => setTag(tag === t.tag ? null : t.tag)}>{t.tag} · {t.count}</button>
+                  ))}
+                </div>
               </div>
-            </div>
-          ) : null}
-        </nav>
-
+            ) : null}
+          </>
+        }
+      >
         {/* ---- main: search results OR the file grid ---- */}
-        <section className={`files-main file-drop${drag ? ' drag' : ''}`}
-          onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
-          onDragLeave={() => setDrag(false)} onDrop={onDrop}>
-          {searching ? (
+        {searching ? (
             <>
               <div className="section-title">Results<span className="count-pill">{hits?.length ?? 0}</span></div>
               {hits && hits.length === 0 ? <div className="stub-page">No files match “{query}”.</div> : null}
@@ -741,8 +743,7 @@ function FilesBrowserInner() {
               ) : null}
             </>
           )}
-        </section>
-      </div>
+      </FolderLayout>
 
       {/* ---- Quick Look: a full-screen overlay over the (dimmed) grid. The file content
               is the hero; governance lives in a disclosure below. ---- */}

@@ -10,18 +10,19 @@ import { roleAtLeast, type Role } from '@/lib/core/session';
 import { useTabNavReset } from '@/lib/core/tab-nav';
 import { SCOPE_GROUPS, type ScopeKey } from '@/lib/core/scopes';
 import type { PersonalKnowledgeSummary } from '@/lib/knowledge/personal-store';
-import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
+import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import { useApprovalNotifier } from '@/components/lifecycle/useApprovalNotifier';
 import type { FiledApproval } from '@/lib/governance/approval-notice';
 import DomainTag from '@/components/DomainTag';
 import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
+import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
 import TalkTo from '@/components/talk/TalkTo';
 import { TALK_PRESENTATION } from '@/lib/talk/schema';
-import { FolderPickerModal } from '@/components/core/FolderTree';
+import FolderTree, { FolderPickerModal, type FolderRef } from '@/components/core/FolderTree';
 import FolderLayout from '@/components/core/FolderLayout';
-import KnowledgeFolderRail from '@/components/knowledge/KnowledgeFolderRail';
-import { isUnderFolder, type FolderPathNode } from '@/lib/core/folders';
+import { ensureFolderId, renamedPath } from '@/lib/folders/client';
+import { isUnderFolder, itemsUnderFolder, folderName, type FolderPathNode } from '@/lib/core/folders';
 
 /** Knowledge visibility (Personal/Shared/Marketplace) → OS-wide lifecycle visibility. */
 const lcVis = (v: 'Personal' | 'Shared' | 'Marketplace'): LcVisibility =>
@@ -49,7 +50,9 @@ type PersonalGroups = {
 export default function KnowledgePage() {
   return (
     <Suspense>
-      <KnowledgePageInner />
+      <ConfirmProvider>
+        <KnowledgePageInner />
+      </ConfirmProvider>
     </Suspense>
   );
 }
@@ -57,6 +60,7 @@ export default function KnowledgePage() {
 function KnowledgePageInner() {
   const searchParams = useSearchParams();
   const { notifyApprovalFiled } = useApprovalNotifier();
+  const confirm = useConfirm();
   // Clicking the Knowledge sidebar link returns to this page root.
   useTabNavReset(() => {});
 
@@ -80,6 +84,8 @@ function KnowledgePageInner() {
   const [pkFolderNodes, setPkFolderNodes] = useState<FolderPathNode[]>([]);
   // Picker modal: which entry id is being moved; null = closed.
   const [pkMoveId, setPkMoveId] = useState<string | null>(null);
+  // Folder lifecycle: folder being moved (opens a second picker); null = closed.
+  const [folderMove, setFolderMove] = useState<FolderRef | null>(null);
 
   // User info for role-based UI
   const [user, setUser] = useState<UserInfo | null>(null);
@@ -108,6 +114,39 @@ function KnowledgePageInner() {
       }
     } catch { /* leave empty */ }
   }, [showArchived]);
+
+  // ── Folder lifecycle (create / move / rename / archive / restore / delete) ──
+  // Knowledge folders ONLY its personal lane ("My knowledge"), so every handler
+  // targets scope=personal — the same one lifecycle every foldered tab shares.
+  const reloadFolders = useCallback(() => { void loadPersonal(); void loadFolders(); }, [loadPersonal, loadFolders]);
+
+  const createFolder = useCallback(async (parentPath: string) => {
+    const name = window.prompt('Folder name');
+    if (!name?.trim()) return;
+    const full = parentPath === '/' ? `/${name.trim()}` : `${parentPath}/${name.trim()}`;
+    setPkMsg('');
+    const res = await fetch('/api/folders', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tab: 'knowledge', scope: 'personal', path: full }),
+    });
+    if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? 'Could not create folder'); return; }
+    reloadFolders();
+  }, [reloadFolders]);
+
+  const moveFolder = useCallback(async (ref: FolderRef, dest: string) => {
+    setPkMsg('');
+    try {
+      // Synthetic (implicit) folder → materialise a registry row, then reparent it.
+      const id = await ensureFolderId('knowledge', ref);
+      const res = await fetch(`/api/folders/${id}`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path: dest }),
+      });
+      if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? 'Move failed'); return; }
+      if (pkFolder === ref.path) setPkFolder(dest);
+      reloadFolders();
+    } catch (e) { setPkMsg((e as Error).message); }
+  }, [pkFolder, reloadFolders]);
 
   useEffect(() => {
     fetch('/api/auth/me', { cache: 'no-store' })
@@ -335,7 +374,7 @@ function KnowledgePageInner() {
   };
 
   return (
-    <ConfirmProvider>
+    <>
       <PageHeader title="Knowledge" crumb="personal notes · domain · company" tutorial="knowledge" />
       <div className="content">
 
@@ -438,15 +477,58 @@ function KnowledgePageInner() {
                 allCount={active.length}
                 allSelected={pkFolder === '/'}
                 onSelectAll={() => setPkFolder('/')}
-                rail={
-                  <KnowledgeFolderRail
-                    nodes={pkFolderNodes}
-                    items={lane.map((e) => ({ id: e.id, folder: e.folder ?? '/', name: e.title }))}
-                    selectedPath={pkFolder}
-                    onSelect={setPkFolder}
-                    onChanged={() => { void loadPersonal(); void loadFolders(); }}
-                  />
-                }
+                rail={(() => {
+                  const treeItems = lane.map((e) => ({ id: e.id, folder: e.folder ?? '/', name: e.title }));
+                  const countUnder = (path: string) => itemsUnderFolder(path, treeItems).length;
+                  return (
+                    <FolderTree
+                      variant="nav"
+                      roots={['personal']}
+                      personalNodes={pkFolderNodes}
+                      items={treeItems}
+                      personalLabel="My folders"
+                      selectedPath={pkFolder}
+                      onSelect={(_scope, path) => setPkFolder(path)}
+                      onCreate={(_scope, parentPath) => void createFolder(parentPath)}
+                      onMove={(ref) => setFolderMove(ref)}
+                      onRename={(ref, newName) => {
+                        const path = renamedPath(ref.path, newName);
+                        if (!path || path === ref.path) return;
+                        void moveFolder(ref, path);
+                      }}
+                      onArchive={(ref) => void (async () => {
+                        if (!(await confirm(archiveFolderCopy(folderName(ref.path), countUnder(ref.path))))) return;
+                        setPkMsg('');
+                        try {
+                          const id = await ensureFolderId('knowledge', ref);
+                          const res = await fetch(`/api/folders/${id}`, {
+                            method: 'POST', headers: { 'content-type': 'application/json' },
+                            body: JSON.stringify({ action: 'archive' }),
+                          });
+                          if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? 'Archive failed'); return; }
+                          reloadFolders();
+                        } catch (e) { setPkMsg((e as Error).message); }
+                      })()}
+                      onRestore={(ref) => void (async () => {
+                        setPkMsg('');
+                        const res = await fetch(`/api/folders/${ref.id}`, {
+                          method: 'POST', headers: { 'content-type': 'application/json' },
+                          body: JSON.stringify({ action: 'restore' }),
+                        });
+                        if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? 'Restore failed'); return; }
+                        reloadFolders();
+                      })()}
+                      onDelete={(ref) => void (async () => {
+                        if (!(await confirm(deleteFolderCopy(folderName(ref.path), countUnder(ref.path))))) return;
+                        setPkMsg('');
+                        const res = await fetch(`/api/folders/${ref.id}`, { method: 'DELETE' });
+                        if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? 'Delete failed'); return; }
+                        if (pkFolder === ref.path) setPkFolder('/');
+                        reloadFolders();
+                      })()}
+                    />
+                  );
+                })()}
               >
                 {personal === null ? (
                   <div className="stub-page"><span className="spin" /> Loading…</div>
@@ -518,8 +600,31 @@ function KnowledgePageInner() {
         }}
       />
 
+      {/* Folder lifecycle: move a folder to a new parent path (the rail's ••• → Move…). */}
+      <FolderPickerModal
+        open={folderMove !== null}
+        tab="knowledge"
+        roots={['personal']}
+        personalNodes={pkFolderNodes}
+        title="Move folder"
+        onConfirm={({ path }) => {
+          const ref = folderMove;
+          setFolderMove(null);
+          if (ref) void moveFolder(ref, path);
+        }}
+        onCancel={() => setFolderMove(null)}
+        onCreate={async (_scope, path) => {
+          await fetch('/api/folders', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ tab: 'knowledge', scope: 'personal', path }),
+          });
+          await loadFolders();
+        }}
+      />
+
       <style>{KnowledgeStyles}</style>
-    </ConfirmProvider>
+    </>
   );
 }
 

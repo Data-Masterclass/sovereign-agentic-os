@@ -3,7 +3,7 @@
  */
 'use client';
 
-import type { ReactNode } from 'react';
+import type { DragEventHandler, ReactNode } from 'react';
 
 /**
  * FolderLayout — the ONE canonical folder-tab shell (Files is the reference).
@@ -25,6 +25,10 @@ export default function FolderLayout({
   onSelectAll,
   rail,
   children,
+  mainClassName,
+  onDragOver,
+  onDragLeave,
+  onDrop,
 }: {
   /** The "All …" row label, e.g. "All datasets". */
   allLabel: string;
@@ -38,6 +42,15 @@ export default function FolderLayout({
   rail: ReactNode;
   /** The main area — the tile grid + bulk actions + empty states. */
   children: ReactNode;
+  /**
+   * Extra class(es) on the `.files-main` section. Files uses this for its
+   * `file-drop`/`drag` drag-and-drop affordance; other tabs omit it.
+   */
+  mainClassName?: string;
+  /** Drag-and-drop handlers on the main section (Files' upload-by-drop). */
+  onDragOver?: DragEventHandler<HTMLElement>;
+  onDragLeave?: DragEventHandler<HTMLElement>;
+  onDrop?: DragEventHandler<HTMLElement>;
 }) {
   return (
     <div className="files-layout">
@@ -54,7 +67,14 @@ export default function FolderLayout({
           {rail}
         </div>
       </nav>
-      <section className="files-main">{children}</section>
+      <section
+        className={`files-main${mainClassName ? ` ${mainClassName}` : ''}`}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+      >
+        {children}
+      </section>
     </div>
   );
 }
