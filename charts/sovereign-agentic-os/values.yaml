@@ -214,6 +214,10 @@ objectStorage:
     - lakehouse                # Iceberg warehouse (Polaris / Layer 3)
     - mlflow                   # MLflow artifact store (Layer 4 Science; only used when mlflow.enabled)
     - sandbox                  # personal/sandbox lane — per-user private prefixes (Iceberg personal_<uid>.*)
+    - files                    # Files tab ORIGINAL uploaded bytes (config.filesBucket=FILES_BUCKET,
+                               # default "files"). Without this the durable PUT hit NoSuchBucket, so
+                               # uploads lived only in pod memory and Download returned the text stub
+                               # after a restart. MUST exist so images/PDFs download byte-for-byte.
   # MinIO is the local-kind S3 stand-in (reliable for Iceberg + Langfuse).
   # SeaweedFS is the air-gap/sovereign alternative but proved unreliable for
   # Iceberg writes on kind. MinIO is AGPL — local dev stand-in only, never bundled.

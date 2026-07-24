@@ -5,7 +5,7 @@ import 'server-only';
 import { queryRun } from '@/lib/infra/governed';
 import type { Role } from '@/lib/core/session';
 import { emptyVersions, type Dataset } from './dataset-schema.ts';
-import { getDataset, buildVersion } from './store.ts';
+import { getDataset, buildVersion, setDocs } from './store.ts';
 import { stageArtifact } from './panels.ts';
 import { personalSchema, bronzeTarget } from './store-fqn.ts';
 import { putObject, uploadObjectKey } from './object-store.ts';
@@ -150,7 +150,14 @@ export async function ingestAndRegisterBronze(
     quality: 'unknown', // raw upload: no dbt tests have run yet — honestly unknown.
     artifact: stageArtifact(dataset.name, 'bronze'),
   });
-  return { ok: true, report, dataset: updated };
+  // PRELOAD the parsed columns onto the dataset so the Define (Silver) stage shows
+  // them ready to rename/document — but only when the dataset has none yet, so a
+  // re-ingest never clobbers columns the user has already documented.
+  const final =
+    updated.columns.length === 0 && report.columns.length > 0
+      ? setDocs(datasetId, user, { columns: report.columns.map((c) => ({ name: c.name, description: '' })) })
+      : updated;
+  return { ok: true, report, dataset: final };
 }
 
 /** Serialize a preview grid to CSV bytes (RFC-4180 quoting) so an in-session extract

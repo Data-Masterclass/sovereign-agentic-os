@@ -23,7 +23,7 @@ import type { FiledApproval } from '@/lib/governance/approval-notice';
 import DomainTag from '@/components/DomainTag';
 import type { Visibility } from '@/lib/core/lifecycle';
 import StageShell from '@/components/core/StageShell';
-import { initialStageState, markDone, type StageState } from '@/lib/core/stages';
+import { initialStageState, markDone, advance, type StageState } from '@/lib/core/stages';
 import { DATA_STAGES, type DataStageId, type DataCtx } from '@/lib/data/stages';
 import BuilderModeToggle from '@/components/core/BuilderModeToggle';
 import type { ViewMode } from '@/lib/core/view-mode';
@@ -647,6 +647,19 @@ export default function DataBuilder({
     setLanded(true);
   }, [dataset, ctx, landed]);
 
+  // When a guided panel COMMITS its layer (onCommitted), it requests an advance to
+  // the next stage. The build is async (reload → fresh ctx), so we advance in an
+  // EFFECT once the committed stage's condition is met — this is what makes the
+  // panel's "Continue" actually move the stepper forward (markDone only sets the ✓).
+  const [pendingAdvance, setPendingAdvance] = useState<DataStageId | null>(null);
+  useEffect(() => {
+    if (!pendingAdvance) return;
+    const def = DATA_STAGES.find((d) => d.id === pendingAdvance);
+    if (!def?.completed || !def.completed(ctx)) return; // wait for the reload to reflect the build
+    setStage((s) => (s.current === pendingAdvance ? advance(DATA_STAGES, s, ctx) : s));
+    setPendingAdvance(null);
+  }, [ctx, pendingAdvance]);
+
   if (loadErr) {
     return (
       <>
@@ -674,6 +687,9 @@ export default function DataBuilder({
   const onBuilt = () => { void load(); };
   // Record a stage's ✓ when its work settles in-stage (gated on the live condition).
   const settle = (id: DataStageId) => setStage((s) => markDone(s, id));
+  // A panel committed its layer: reload the real state, record the ✓, and REQUEST
+  // an advance to the next stage (the effect moves the stepper once the build lands).
+  const commitStage = (id: DataStageId) => { onBuilt(); settle(id); setPendingAdvance(id); };
 
   return (
     <ConfirmProvider>
@@ -800,7 +816,7 @@ export default function DataBuilder({
               <BronzePanel
                 datasetId={dataset.id}
                 datasetName={dataset.name}
-                onCommitted={() => { onBuilt(); settle('ingest'); }}
+                onCommitted={() => commitStage('ingest')}
               />
             ) : (
               <p className="muted" style={{ fontSize: 13 }}>Only the owner and domain admins can bring in data.</p>
@@ -899,7 +915,7 @@ export default function DataBuilder({
                     owner={dataset.owner} domain={dataset.domain} tier={dataset.tier}
                     columns={colNames}
                     stage={{ layer: 'silver', copy: { title: 'Clean it up', subtitle: '', tool: '' } }}
-                    onCommitted={() => { onBuilt(); settle('define'); }}
+                    onCommitted={() => commitStage('define')}
                   />
                 ) : <p className="muted" style={{ fontSize: 13 }}>Bring in a Bronze layer first (in Ingest).</p>}
               </>
@@ -924,7 +940,7 @@ export default function DataBuilder({
                     datasetId={dataset.id} datasetName={dataset.name}
                     owner={dataset.owner} domain={dataset.domain} tier={dataset.tier}
                     columns={colNames}
-                    onCommitted={() => { onBuilt(); settle('harmonize'); }}
+                    onCommitted={() => commitStage('harmonize')}
                   />
                 ) : <p className="muted" style={{ fontSize: 13 }}>Clean it to Silver first (in Define), then you can harmonize into Gold.</p>}
               </>
