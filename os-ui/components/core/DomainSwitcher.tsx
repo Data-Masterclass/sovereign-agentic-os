@@ -68,7 +68,7 @@ export function DomainSwitcher({
 
   return (
     <div className="domain-switch" ref={ref}>
-      <span className="domain-switch-label">Operating in</span>
+      <span className="domain-switch-label">Domain:</span>
       <button
         type="button"
         className="domain-switch-btn"
