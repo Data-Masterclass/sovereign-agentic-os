@@ -381,7 +381,7 @@ async function materialize(
 }
 
 function viewerAsUser(viewer: Viewer): CurrentUser {
-  return { id: viewer.id, name: viewer.id, domains: viewer.domains, role: viewer.role };
+  return { id: viewer.id, name: viewer.id, domains: viewer.domains, allDomains: viewer.domains, activeDomain: null, role: viewer.role };
 }
 
 /** Name / tags / spec of a product, from the mock catalog or the real artifact registry. */

@@ -174,7 +174,8 @@ test('resolveOwner: returns a live principal for an active owner, null for disab
   const pending = { id: 'u3', name: 'C', domains: ['sales'], role: 'creator', mustChangeCredentials: true } as never;
 
   const ok = await resolveOwner('u1', async () => active);
-  assert.deepEqual(ok, { id: 'u1', name: 'A', domains: ['sales'], role: 'builder' });
+  // Headless principals carry the full scope (no active-domain narrowing): allDomains === domains, activeDomain null.
+  assert.deepEqual(ok, { id: 'u1', name: 'A', domains: ['sales'], allDomains: ['sales'], activeDomain: null, role: 'builder' });
 
   assert.equal(await resolveOwner('u2', async () => disabled), null, 'disabled owner → null');
   assert.equal(await resolveOwner('u3', async () => pending), null, 'setup-incomplete owner → null');

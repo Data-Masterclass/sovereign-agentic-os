@@ -107,5 +107,6 @@ export async function resolveMcpUser(token: string | undefined | null): Promise<
   if (!payload || payload.typ === 'refresh') return null; // a refresh token is not an MCP bearer
   const u = await getPublicUser(payload.id);
   if (!u || u.mustChangeCredentials) return null;
-  return { id: u.id, name: u.name, domains: u.domains, role: u.role };
+  // MCP bearer (no browser cookie) ⇒ no active-domain narrowing: all domains.
+  return { id: u.id, name: u.name, domains: u.domains, allDomains: u.domains, activeDomain: null, role: u.role };
 }

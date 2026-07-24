@@ -1247,15 +1247,19 @@ function EvaluateStep({
         ))}
       </div>
 
-      {/* LLM-judge — one click, scores against the system's task Description. */}
+      {/* LLM-judge — one click, scores against the system's task Description.
+          Marked EXPERIMENTAL: LLM-as-judge scoring is indicative, not authoritative. */}
       <div className="row" style={{ alignItems: 'center', gap: 8, marginTop: 18 }}>
         <h2 className="sb-section-title" style={{ margin: 0 }}>AI judge</h2>
+        <span className="badge warn" title="Experimental — LLM-as-judge scores are indicative, not a reliable measure of quality yet">Experimental</span>
         <button className="btn primary" onClick={runJudge} disabled={judging || !canEdit || !output.trim()} title={output.trim() ? 'Score this run with the AI judge' : 'No output to judge'}>
           {judging ? <span className="spin" /> : judge ? 'Re-judge' : 'Judge this run'}
         </button>
       </div>
       <p className="hint" style={{ marginTop: 4 }}>
         The standard model scores the final output against what this team is meant to do — Clarity, Grounding, Actionability (1–5).
+        <br />
+        <strong>Experimental:</strong> LLM-as-judge scoring is still being developed — treat scores as a rough signal, not a definitive measure. Use your own judgement alongside it.
       </p>
       {judgeErr ? <div className="error" style={{ marginTop: 6 }}>{judgeErr}</div> : null}
       {judge ? (

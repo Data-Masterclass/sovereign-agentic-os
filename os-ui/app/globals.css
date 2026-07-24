@@ -278,6 +278,116 @@ h3 {
   font-weight: 600;
 }
 
+/* ---- Active-domain switcher (sidebar) ---- */
+.domain-switch {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+.domain-switch-label {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.domain-switch-select {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.domain-switch-select:hover {
+  border-color: var(--accent, #6ea8fe);
+}
+.domain-switch-select:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+.who-domain {
+  margin-top: 2px;
+}
+
+/* ---- One-time first-login domain prompt ---- */
+.domain-prompt-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(6, 5, 10, 0.55);
+  backdrop-filter: blur(4px);
+}
+.domain-prompt {
+  width: min(420px, 94vw);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+}
+.domain-prompt h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+.domain-prompt p {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.domain-prompt-opt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.domain-prompt-opt:hover {
+  border-color: var(--accent, #6ea8fe);
+  background: var(--bg-elevated);
+}
+.domain-prompt-opt:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+.domain-prompt-opt strong {
+  display: block;
+  font-size: 14px;
+}
+.domain-prompt-opt em {
+  display: block;
+  font-size: 12px;
+  font-style: normal;
+  color: var(--text-faint);
+  margin-top: 1px;
+}
+.domain-prompt-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent, #6ea8fe);
+  flex: none;
+}
+.domain-prompt-dot.all {
+  background: var(--text-faint);
+}
+
 /* ---- Main content ---- */
 .main {
   display: flex;

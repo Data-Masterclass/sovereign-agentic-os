@@ -7,6 +7,7 @@ import { config } from '@/lib/core/config';
 import { SESSION_COOKIE, type Role, verifySession } from '@/lib/core/session';
 import { authenticate as authUser, getPublicUser } from '@/lib/platform-admin/users';
 import { activeDomainIds } from '@/lib/platform-admin/domains';
+import { ACTIVE_DOMAIN_COOKIE, resolveDomainScope } from '@/lib/core/active-domain';
 
 /**
  * Identity facade consumed by the rest of the app. Credentials + the user
@@ -22,7 +23,15 @@ import { activeDomainIds } from '@/lib/platform-admin/domains';
 export type CurrentUser = {
   id: string;
   name: string;
+  /** Effective scope: narrowed to the active operating domain when one is chosen,
+   *  else every domain the user belongs to. This is what all lists + create
+   *  defaults read, so switching the active domain re-scopes the whole OS. */
   domains: string[];
+  /** Every (non-archived) domain the user belongs to — for the switcher + admin
+   *  views that legitimately span domains, regardless of the active choice. */
+  allDomains: string[];
+  /** The chosen active operating domain, or null = all domains. */
+  activeDomain: string | null;
   role: Role;
 };
 
@@ -38,9 +47,21 @@ export async function currentUser(): Promise<CurrentUser | null> {
   const token = store.get(SESSION_COOKIE)?.value;
   const claims = await verifySession(token, config.sessionSecret);
   if (!claims) return null;
-  // Drop archived domains from the live scope so a member no longer sees them
-  // (e.g. the sidebar switcher) even though their JWT/membership still lists them.
-  return { id: claims.id, name: claims.name, domains: activeDomainIds(claims.domains), role: claims.role };
+  // Drop archived domains from the live scope (a member no longer sees them even
+  // though their JWT still lists them), THEN narrow to the chosen active domain
+  // from the sidebar switcher, if any. Narrowing is subset-only — it can never
+  // widen access beyond the signed session (see lib/core/active-domain).
+  const allDomains = activeDomainIds(claims.domains);
+  const requested = store.get(ACTIVE_DOMAIN_COOKIE)?.value ?? null;
+  const scope = resolveDomainScope(allDomains, requested);
+  return {
+    id: claims.id,
+    name: claims.name,
+    domains: scope.domains,
+    allDomains: scope.allDomains,
+    activeDomain: scope.activeDomain,
+    role: claims.role,
+  };
 }
 
 /** Guard for API routes. Throws a 401-tagged error if unauthenticated. */

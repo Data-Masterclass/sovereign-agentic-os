@@ -189,7 +189,7 @@ export async function fileArtifactCertification(
 /** The full injected effect-dep bundle (the ONE place server callers wire the
  *  physical publisher + the async ladder appliers into `applyEffect`). */
 export function buildEffectDeps(): EffectDeps {
-  const asCurrentUser = (a: { id: string; role: CurrentUser['role']; domains: string[] }): CurrentUser => ({ id: a.id, name: a.id, domains: a.domains, role: a.role });
+  const asCurrentUser = (a: { id: string; role: CurrentUser['role']; domains: string[] }): CurrentUser => ({ id: a.id, name: a.id, domains: a.domains, allDomains: a.domains, activeDomain: null, role: a.role });
   return {
     publishPromotion: publishPromotionLive,
     promoteConnection: async (id, approver) => {

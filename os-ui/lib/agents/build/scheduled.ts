@@ -39,7 +39,8 @@ export async function resolveOwner(
 ): Promise<CurrentUser | null> {
   const u = await get(ownerId);
   if (!u || u.disabled || u.mustChangeCredentials) return null;
-  return { id: u.id, name: u.name, domains: u.domains, role: u.role };
+  // Headless (no browser cookie) ⇒ no active-domain narrowing: operate across all domains.
+  return { id: u.id, name: u.name, domains: u.domains, allDomains: u.domains, activeDomain: null, role: u.role };
 }
 
 /**
