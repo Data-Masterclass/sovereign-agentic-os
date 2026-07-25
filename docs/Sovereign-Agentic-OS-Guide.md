@@ -2,7 +2,7 @@
 title: "Sovereign Agentic OS"
 subtitle: "The governed, EU-sovereign operating system for data, knowledge, agents and software — where AI gets real, safe hands on your work."
 author: "Orchestrated by Data Masterclass · datamasterclass.com · www.sovereign-agentic.com"
-date: "Chart 0.2.11 (app 0.2.0-alpha.11 · os-ui 0.5.89) · generated {{DATE}} from commit {{GIT_COMMIT}}"
+date: "Chart 0.2.11 (app 0.2.0-alpha.11 · os-ui 0.5.94) · generated {{DATE}} from commit {{GIT_COMMIT}}"
 titlepage: true
 titlepage-rule-color: "c8a24a"
 toc: true
@@ -276,6 +276,16 @@ there.
   stability — that learn each dataset's normal band from its own run history. Then **Talk to your
   data**: governed NL→SQL, one validated read-only `SELECT`, executed under your row filters. A
   **Developer** view exposes the raw dbt SQL and the physical table behind the guided flow.
+  A table imported from an external warehouse doesn't go stale either: a **"Keep this in
+  sync"** panel schedules regular refreshes — **Full refresh**, **Add new rows** (incremental
+  append over a cursor column, with a late-data lookback window), or **Update by key** (a
+  merge) — Hourly / Daily / Weekly or your own cron. Every run executes **as the dataset's
+  owner** through the same governed Trino path as the original import, with the cursor
+  predicate pushed down to the source — no data ever flows through the app — and each slice
+  lands in Iceberg carrying `_loaded_at` / `_batch_id` lineage columns. The dataset shows its
+  **sync history and watermark**; ten consecutive failures **auto-pause** the schedule (with a
+  one-click *Reset & full re-sync* recovery), and freshness in **Monitoring** reflects the
+  last sync.
 - **Connections — governed bridges to outside systems.** A Connection is `credentials +
   endpoint + a set of governed tools`, never a raw pipe — used to bring data in and to expose
   external APIs/MCPs as tools. You grant **use**, never the token; **reads are automatic, writes
@@ -302,7 +312,9 @@ there.
   **external-warehouse** connector federates it through central Trino as a governed catalog —
   AWS Glue/Athena, Snowflake, BigQuery, Databricks/Delta, and (experimental) Microsoft
   Fabric/OneLake — so you can query it in place under the same OPA path, or import a core table
-  as a governed data product into the sovereign lakehouse. And for BI on your own desktop, a
+  as a governed data product into the sovereign lakehouse — and keep the copy fresh with a
+  scheduled sync (see *Data* above), so an import is a living dataset, not a one-time snapshot.
+  And for BI on your own desktop, a
   **one-click Power BI** button downloads a `.pbids` file that drops Power BI Desktop straight
   into the pre-filled PostgreSQL connector for the **Cube SQL API** — connecting as the
   `bi_<domain>` principal in **DirectQuery** mode, so per-domain row security re-runs on every
@@ -357,18 +369,31 @@ honestly rather than inventing an answer when retrieval comes back empty.
 - **Software — a governed frontend over the OS API.** An app here isn't a black box you bolt on
   — it's a first-class client of the OS itself. It moves through the shared five-stage builder —
   **Define** (state the purpose and grant the app its context) · **Design** (epics + user
-  stories) · **Build** (a **live streaming build**: the AI streams its plan, then one honest,
+  stories) · **Build** (the Simple view puts the app's *structure* first: the **Epics &
+  stories tree** from Design, each story with an honest status chip — *to do · building ·
+  done · blocked* — and a *"N of M stories built"* count; **click a story to make it the
+  build target** for the run, click it again to build the whole app. Beside it, a **live
+  streaming build**: the AI streams its plan, then one honest,
   human-readable line per action — *"Committed 3 files"*, *"Provisioning preview…"* — with
   errors shown as warnings with the real reason and retries visible in the feed, plus a real
-  before/after **file diff** of what was committed per run; each Build run can **target a
-  specific story**) · **Preview** (a live in-cluster pod) · **Operate** (the deployed app plus
+  before/after **file diff** of what was committed per run; the raw code panel lives one
+  click away in the **Developer view**) · **Preview** (a live in-cluster pod) · **Operate** (the deployed app plus
   its live tool surface). A persistent **Build ▸ Preview ▸ Deploy status rail** keeps the
-  honest, single-glance state in view throughout. New apps scaffold from **`vite-os`** — a Vite + React + TypeScript SPA that boots
-  *in the OS design*: it vendors **`@sovereign-os/ui`** (the gold-on-black AppShell and `.sb-*`
-  primitives, no build step, no registry) and calls back into the platform through the
+  honest, single-glance state in view throughout. New apps scaffold from the **Sovereign
+  standard app template** — a Vite + React + TypeScript SPA that already *is* an OS app before
+  the first story is built. It boots *in the OS design*: it vendors **`@sovereign-os/ui`**
+  (the gold-on-black AppShell and `.sb-*` primitives, no build step, no registry) and calls
+  back into the platform through the
   **OS-client SDK** (`@sovereign-os/app-sdk` — `createOsClient().whoami()`, `.datasets.list()`,
   `.metrics`, `.knowledge`), so a brand-new app already renders *real governed data* under the
-  signed-in user's own row security, with login handled by the OS session. Code commits to an
+  signed-in user's own row security. Sign-in is **delegated to the OS session** — no local
+  accounts or passwords, ever. The app shows its **owning-domain badge** and ships **My /
+  Domain scope helpers** that filter every record by domain + user; an **Admin section** (OS
+  `domain_admin` / Administrator only) carries a **read-only directory** of the OS users who
+  can reach the app — managing users stays in the OS; and a top-bar **MCP button** links to
+  the app's own MCP connection in Connections. The scaffolded **README is the build
+  contract** — it documents how each story adds a page + section, and the Build assistant
+  reads the same text as context. Code commits to an
   in-cluster **Forgejo** repo (no GitHub, no tokens, your code never leaves). An app can still
   **declare its surface** — `surface: ui | api | both` in `app.yaml`, which wins over
   auto-detection so a Streamlit/Gradio/Flask UI is never mislabelled "API." *Request deploy*
@@ -990,12 +1015,15 @@ numbered stages, honest gating, a per-stage assistant, Simple/Developer views, l
 header). Layers 1–3 are in place; **Science (Layer 4)** is an integrated model-as-a-service tab
 (Define → Train → Deploy → Predict → Monitor) wrapping a live KServe `predict` model, with the
 raw MLflow/Featureform/JupyterHub/KServe consoles as a Developer escape hatch. **Software** is now
-a *governed frontend over the OS API*: new apps scaffold from `vite-os` — a Vite/React SPA that
-boots in the OS design (`@sovereign-os/ui`) and calls back through the OS-client SDK
+a *governed frontend over the OS API*: new apps scaffold from the **Sovereign standard app
+template** — a Vite/React SPA that
+boots in the OS design (`@sovereign-os/ui`), signs in through the OS session only (no local
+passwords), scopes records My / Domain, and calls back through the OS-client SDK
 (`@sovereign-os/app-sdk`) under the signed-in user's own security — with a **live streaming
 Build** (the plan first, then one honest line per action, warnings and retries visible, behind a
-persistent Build ▸ Preview ▸ Deploy status rail) showing real per-run file diffs, story-targeted
-builds, live preview, and a Builder-reviewed deploy that
+persistent Build ▸ Preview ▸ Deploy status rail) driven from the **Epics & stories tree**
+(per-story status chips, one-click build targets, *"N of M stories built"*), showing real
+per-run file diffs, live preview, and a Builder-reviewed deploy that
 scans the live repo tree; they build a real image in-cluster (Forgejo CI) or publish static, and
 deploy to a live per-app URL. **Dashboards** render **natively in the OS** — Apache ECharts on
 the governed Cube layer, every panel queried **as the viewer** under per-user row-level security —
@@ -1015,7 +1043,9 @@ auto, sending approval-gated and never automatic), **cloud governance / ML** (Mi
 Purview · Azure AI Foundry · AWS SageMaker, read-only), data-ingest (Google Drive / OneDrive), the
 medallion **layer choice** on agent data grants, an admin-enabled **external-warehouse connector**
 (federate AWS Glue/Athena · Snowflake · BigQuery · Databricks/Delta, plus experimental
-Fabric/OneLake, through Trino — discover → register → import, no YAML), **one-click Power BI**
+Fabric/OneLake, through Trino — discover → register → import → **scheduled incremental sync**
+(full-refresh / append / merge as the dataset's owner, cursor + lookback, auto-pause after
+repeated failures), no YAML), **one-click Power BI**
 (a `.pbids` file into Cube's Postgres-wire SQL API, DirectQuery, as the per-domain `bi_<domain>`
 principal so per-domain RLS re-runs on every query — no embedded password), an **Apache Airflow**
 connector (governed `trigger_dag`/monitor), and **OpenMetadata** (read/discover of a customer's
