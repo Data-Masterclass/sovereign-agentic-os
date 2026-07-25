@@ -2568,6 +2568,11 @@ osUI:
   image:
     repository: sovereign-os/os-ui    # built locally, loaded into kind
     tag: "0.1.0"
+  # Model pricing for Monitoring cost facts — EUR per 1M tokens per LiteLLM
+  # model_name. Source: STACKIT AI Model Serving categories (2026-07): gpt-oss-20b
+  # = LLM-Standard (0.15in/0.25out), Qwen3-VL-235B = LLM-Premium (1.50in/1.75out).
+  # Unset ⇒ cost shows "—". NB --reuse-values ignores this default: pass via --set-string once.
+  modelPricesJson: '{"sovereign-default":{"inputPerM":0.15,"outputPerM":0.25},"sovereign-mock":{"inputPerM":0.15,"outputPerM":0.25},"sovereign-reasoning":{"inputPerM":1.5,"outputPerM":1.75}}'
   # In-cluster backend Service URLs (base URLs; the app appends the paths).
   sampleAgentUrl: "http://sample-agent:8000"
   queryToolUrl:   "http://query-tool:8000"

@@ -81,7 +81,7 @@ function ago(at: number | string | null): string {
   const d = Math.floor(h / 24); if (d < 30) return `${d}d ago`;
   return `${Math.floor(d / 30)}mo ago`;
 }
-const money = (n: number) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : '$0');
+const money = (n: number) => (n >= 1 ? `€${n.toFixed(2)}` : n > 0 ? `€${n.toFixed(3)}` : '—');
 const compact = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
 const dur = (ms?: number) => (typeof ms !== 'number' ? '—' : ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`);
 const H7_DOT: Record<Health7, string> = { ok: 'h-green', warn: 'h-amber', error: 'h-red' };

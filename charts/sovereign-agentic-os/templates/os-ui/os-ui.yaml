@@ -130,6 +130,13 @@ spec:
               value: "3000"
             - name: HOSTNAME
               value: "0.0.0.0"
+            {{- /* Model pricing for Monitoring cost facts (EUR per 1M tokens per
+                 LiteLLM model_name). Nil-safe: absent under --reuse-values ⇒ env
+                 unset ⇒ cost shows an honest "—". */}}
+            {{- if .Values.osUI.modelPricesJson }}
+            - name: MODEL_PRICES_JSON
+              value: {{ .Values.osUI.modelPricesJson | quote }}
+            {{- end }}
             # Namespace the stack workloads live in — the native Components
             # surface reads their status + scales them 0<->1 here via the k8s API.
             - name: NAMESPACE

@@ -39,9 +39,10 @@ export type ModelPrice = { inputPerM: number; outputPerM: number };
 
 /**
  * Parse MODEL_PRICES_JSON — a JSON map of LiteLLM model_name →
- * `{ inputPerM, outputPerM }` in USD per 1M tokens. Malformed JSON or entries
- * with non-finite/negative numbers are dropped (default `{}`): an UNPRICED model
- * yields no cost at all in Monitoring ("—"), never a fabricated $0.
+ * `{ inputPerM, outputPerM }` in the billing currency (EUR on STACKIT) per 1M
+ * tokens. Malformed JSON or entries with non-finite/negative numbers are dropped
+ * (default `{}`): an UNPRICED model yields no cost at all in Monitoring ("—"),
+ * never a fabricated 0.
  */
 export function parseModelPrices(raw: string): Record<string, ModelPrice> {
   try {

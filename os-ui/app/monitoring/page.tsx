@@ -77,7 +77,7 @@ function ago(at: number | string | null): string {
 }
 // Zero/absent cost renders '—' (matching the other absent facts, e.g. `ago`):
 // runs whose models carry no explicit price are UNPRICED, not free — never "$0".
-const money = (n: number) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : '—');
+const money = (n: number) => (n >= 1 ? `€${n.toFixed(2)}` : n > 0 ? `€${n.toFixed(3)}` : '—');
 const compact = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
 
 function ScopeTabs({ scope, setScope, counts }: { scope: ScopeKey; setScope: (s: ScopeKey) => void; counts: Record<ScopeKey, number> }) {
