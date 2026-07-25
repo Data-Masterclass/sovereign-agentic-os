@@ -17,7 +17,7 @@ const software: TutorialDef = {
     body: 'Five stages — Define · Design · Build · Preview · Operate. State a purpose, shape EPICs and user stories, then watch the build agent work live: the plan first, then one honest line per action, every commit landing in a sovereign in-cluster repo. Preview is yours alone; going live is a governed Builder review.',
     byRole: {
       builder: {
-        body: 'Five stages — Define · Design · Build · Preview · Operate. Your lane adds the gates: edit code beside the chat, expand the raw tool I/O behind every activity line, and review deploy requests — security scan, granted resources, the diff — before anything goes live.',
+        body: 'Five stages — Define · Design · Build · Preview · Operate. Your lane adds the gates: flip to the Developer view for the raw code panel, expand the raw tool I/O behind every activity line, and review deploy requests — security scan, granted resources, the diff — before anything goes live.',
       },
     },
   },
@@ -36,7 +36,7 @@ const software: TutorialDef = {
     {
       illustration: 'agent',
       title: 'Build — watch the agent work, live',
-      body: 'Pick a Build target story, flip Plan ⇄ Build, and describe the change. The run streams as it happens: the plan first, then one line per action — "Committed 3 files", "Provisioning preview…" — with failures as honest ⚠ warnings and the retry as the next line. Builders can "show details" for the raw tool I/O, and the committed diff lands under "Changes this run", beside the code panel and the live-data preview.',
+      body: 'Click a story in the "Epics & stories" tree to target it — its chip walks to do → building → done, with an honest blocked when a run fails, and the header counts the stories built. Flip Plan ⇄ Build and describe the change, or just press "Build this story →". The run streams as it happens: the plan first, then one line per action — "Committed 3 files", "Provisioning preview…" — with failures as honest ⚠ warnings. Builders can "show details" for the raw tool I/O; the committed diff lands under "Changes this run", and the code panel is one click away in the Developer view.',
     },
     {
       illustration: 'sandbox',
@@ -82,7 +82,7 @@ const software: TutorialDef = {
       sandboxAnchor: ANCHORS.software.sandbox,
       route: '/software',
       title: 'Build with the live feed',
-      body: 'Choose a Build target story, keep the toggle on Build (Plan discusses without touching code), and describe the change. Watch the activity feed: plan, then one line per action, warnings when something fails, the diff when it commits. The status rail above tracks Repo · Preview · Deploy the whole time.',
+      body: 'Click a story in the "Epics & stories" tree beside the chat to target it, keep the toggle on Build (Plan discusses without touching code), and describe the change — or press "Build this story →". Watch the activity feed: plan, then one line per action, warnings when something fails, the diff when it commits — and the story\'s chip turn done. The status rail above tracks Repo · Preview · Deploy the whole time.',
     },
     {
       anchor: ANCHORS.software.preview,

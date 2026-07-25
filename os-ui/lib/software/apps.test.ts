@@ -199,3 +199,34 @@ test('createApp: an invalid surface arg is ignored → falls back to inference',
   const app = await createApp(user, { name: 'Bad Surface', template: 'service', surface: 'nope' as never });
   assert.equal(app.declaredSurface, undefined, 'invalid declaration dropped');
 });
+
+// ------------------------------------------------- Sovereign standard template --
+
+test('createApp: the DEFAULT template is the Sovereign standard app', async () => {
+  __resetAppsCache();
+  const app = await createApp(user, { name: 'Default Std' });
+  assert.equal(app.template, 'sovereign-app', 'no template named → sovereign-app');
+  assert.deepEqual(app.surface, { ui: true, api: false }, 'app.yaml declares surface: ui');
+  // The docs handed to the Build assistant carry the skeleton guide.
+  assert.match(app.docs, /Sovereign standard app/, 'docs identify the standard app');
+  assert.match(app.docs, /src\/sections\.tsx/, 'docs tell the agent where epics add sections');
+  assert.match(app.docs, /identity contract/i, 'docs state the identity contract');
+});
+
+test('templateFiles: sovereign-app ships the full standard-app skeleton', () => {
+  const paths = templateFiles('sovereign-app', 'Std App', 'std-app').map((f) => f.path);
+  for (const p of [
+    'src/App.tsx',
+    'src/sections.tsx',
+    'src/identity.tsx',
+    'src/scope.ts',
+    'src/pages/Admin.tsx',
+    'src/pages/Overview.tsx',
+    'app.yaml',
+    'README.md',
+    'Dockerfile',
+    '.forgejo/workflows/ci.yml',
+  ]) {
+    assert.ok(paths.includes(p), `scaffold includes ${p}`);
+  }
+});

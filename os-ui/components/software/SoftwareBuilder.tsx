@@ -21,6 +21,7 @@ import StageAssistantChat from '@/components/core/StageAssistantChat';
 import SoftwareContextGrants from './SoftwareContextGrants';
 import DesignBoard from './DesignBoard';
 import BuildChat, { type FileChange } from './BuildChat';
+import EpicStoryTree from './EpicStoryTree';
 import type { ViewMode } from '@/lib/core/view-mode';
 import {
   contextAccessCap,
@@ -458,6 +459,7 @@ export default function SoftwareBuilder({
               app={app} epics={epics} canEditCode={canEditCode} onBuilt={onReload}
               target={target} setTarget={setTarget}
               onSaveEpics={canEdit ? (next) => saveDesign({ epics: next }) : undefined}
+              onGoDesign={() => setStage((s) => ({ ...s, current: 'design' }))}
             />
           ) : null}
 
@@ -832,13 +834,6 @@ function ShipDesignPanel({ app, hasStories, onReload }: { app: SoftwareApp; hasS
 
 /* ─────────────────────────── Build ─────────────────────────── */
 
-/** Small status pip for a targeted story (todo · building · done). */
-function storyStatusBadge(status?: 'todo' | 'building' | 'done') {
-  if (status === 'done') return <span className="badge ok">done ✓</span>;
-  if (status === 'building') return <span className="badge warn">building</span>;
-  return <span className="badge muted">to do</span>;
-}
-
 /** Set one story's status inside the epics tree, returning a new array (immutable). */
 function withStoryStatus(epics: Epic[], epicId: string, storyId: string, status: 'todo' | 'building' | 'done'): Epic[] {
   return epics.map((e) =>
@@ -877,7 +872,7 @@ function BuildStatusRail({ app }: { app: SoftwareApp }) {
 }
 
 function BuildStage({
-  app, epics, canEditCode, onBuilt, target, setTarget, onSaveEpics,
+  app, epics, canEditCode, onBuilt, target, setTarget, onSaveEpics, onGoDesign,
 }: {
   app: SoftwareApp;
   epics: Epic[];
@@ -887,11 +882,17 @@ function BuildStage({
   setTarget: (t: { epicId: string; storyId: string } | null) => void;
   /** Persist an updated epics array (per-story status). Undefined when the viewer can't edit. */
   onSaveEpics?: (epics: Epic[]) => void;
+  /** Jump back to the Design stage (the tree's empty-state pointer). */
+  onGoDesign?: () => void;
 }) {
   // Plan ⇄ Build: Plan discusses/plans with ZERO code changes; Build executes end-to-end.
   const [buildMode, setBuildMode] = useState<'plan' | 'build'>('build');
   // Bumped after each Build commit so the instant preview re-fetches the new files.
   const [previewKey, setPreviewKey] = useState(0);
+  // Live run signals for the epic/story tree: is a run streaming, and which
+  // stories' LAST Build run failed (session-scoped; a later success clears it).
+  const [running, setRunning] = useState(false);
+  const [failedStoryIds, setFailedStoryIds] = useState<ReadonlySet<string>>(new Set());
 
   const storyOptions = epics.flatMap((e) =>
     e.stories.map((s) => ({
@@ -906,12 +907,27 @@ function BuildStage({
   // On a successful BUILD run against a targeted story, mark it done (backward-compatible
   // status write through the same governed epics patch). No-op when nothing was targeted.
   const handleBuilt = (changes: FileChange[]) => {
-    if (buildMode === 'build' && target && onSaveEpics && changes.length > 0) {
-      onSaveEpics(withStoryStatus(epics, target.epicId, target.storyId, 'done'));
+    if (buildMode === 'build' && target && changes.length > 0) {
+      if (onSaveEpics) onSaveEpics(withStoryStatus(epics, target.epicId, target.storyId, 'done'));
+      // Success clears a previous failure for this story.
+      setFailedStoryIds((prev) => {
+        if (!prev.has(target.storyId)) return prev;
+        const next = new Set(prev);
+        next.delete(target.storyId);
+        return next;
+      });
     }
     // A commit changed the files — refresh the instant preview.
     if (changes.length > 0) setPreviewKey((k) => k + 1);
     onBuilt();
+  };
+
+  // A failed BUILD run against a targeted story marks it blocked in the tree.
+  const handleRunEnd = (failed: boolean) => {
+    setRunning(false);
+    if (failed && buildMode === 'build' && target) {
+      setFailedStoryIds((prev) => new Set(prev).add(target.storyId));
+    }
   };
 
   const buildStory = target ? { epicId: target.epicId, storyId: target.storyId, label: selected?.label } : null;
@@ -924,7 +940,7 @@ function BuildStage({
         <p className="hint" style={{ marginTop: 0, flex: 1 }}>
           {buildMode === 'plan'
             ? 'Plan mode — the assistant discusses the change and drafts an implementation plan. It writes no code; switch to Build to execute.'
-            : <>Build mode — the assistant commits real code and shows you the diff. {canEditCode ? 'Edit the code directly beside it.' : 'A Builder can also edit code directly.'} Every commit lands in this app’s sovereign in-cluster repo.</>}
+            : <>Build mode — click a story in the tree to target it, then let the assistant commit real code and show you the diff. {canEditCode ? 'The code panel is one click away in the Developer view.' : ''} Every commit lands in this app’s sovereign in-cluster repo.</>}
         </p>
         {/* Plan ⇄ Build segmented control — reuses the OS `.mode-toggle` language. */}
         <div className="mode-toggle" role="group" aria-label="Build mode" style={{ flexShrink: 0 }}>
@@ -949,50 +965,16 @@ function BuildStage({
         </div>
       </div>
 
-      {/* EPIC/story selector — first-class: shows the targeted story + its per-story status. */}
-      <div className="grant-block" style={{ marginTop: 10 }}>
-        <div className="comp-label">Build target</div>
-        {storyOptions.length === 0 ? (
-          <p className="hint" style={{ marginTop: 4 }}>No stories yet — add EPICs and stories on the <strong>Design</strong> stage to target the build.</p>
-        ) : (
-          <>
-            <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: 4 }}>
-              <select
-                value={target ? `${target.epicId}::${target.storyId}` : ''}
-                onChange={(e) => {
-                  if (!e.target.value) { setTarget(null); return; }
-                  const [epicId, storyId] = e.target.value.split('::');
-                  setTarget({ epicId, storyId });
-                }}
-                style={{ minWidth: 320 }}
-              >
-                <option value="">— whole app (no specific story) —</option>
-                {storyOptions.map((o) => (
-                  <option key={`${o.epicId}::${o.storyId}`} value={`${o.epicId}::${o.storyId}`}>
-                    {o.status === 'done' ? '✓ ' : ''}{o.label}
-                  </option>
-                ))}
-              </select>
-              {selected ? storyStatusBadge(selected.status) : null}
-            </div>
-            {selected ? (
-              <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>
-                {buildMode === 'build' ? 'Building' : 'Planning'} <strong>{selected.label}</strong>
-                {selected.status === 'done' ? ' — already marked done; a new run re-implements it.' : '. It is marked done automatically when a Build run commits changes.'}
-              </p>
-            ) : null}
-          </>
-        )}
-      </div>
-
       <div style={{ marginTop: 10 }}>
         <TeamPanel onBuilt={onBuilt} />
       </div>
 
+      {/* Left: the streaming build chat (unchanged). Right: the EPIC & story tree —
+          the app's designed structure IS the build target selector in Simple view. */}
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: canEditCode ? 'repeat(auto-fit, minmax(360px, 1fr))' : '1fr',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))',
           gap: 16,
           alignItems: 'start',
           marginTop: 16,
@@ -1007,9 +989,17 @@ function BuildStage({
             .filter((m) => m.role === 'user' || m.role === 'assistant')
             .map((m) => ({ role: m.role, content: m.content }))}
           onBuilt={handleBuilt}
+          onRunStart={() => setRunning(true)}
+          onRunEnd={handleRunEnd}
           showDetails={canEditCode}
         />
-        {canEditCode ? <CodePanel appId={app.id} repoFullName={app.repo.fullName} /> : null}
+        <EpicStoryTree
+          epics={epics}
+          target={target}
+          onTarget={setTarget}
+          run={{ targetedStoryId: buildMode === 'build' ? target?.storyId ?? null : null, running, failedStoryIds }}
+          onGoDesign={onGoDesign}
+        />
       </div>
 
       {/* ── Live-data preview — the real deployed build served by the runner, calling

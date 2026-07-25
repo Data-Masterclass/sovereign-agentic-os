@@ -33,6 +33,8 @@ export default function BuildChat({
   story,
   initialMessages = [],
   onBuilt,
+  onRunStart,
+  onRunEnd,
   showDetails = false,
 }: {
   appId: string;
@@ -42,6 +44,10 @@ export default function BuildChat({
   initialMessages?: ChatMessage[];
   /** Called after a BUILD run that changed files, so the parent can mark the story done + reload. */
   onBuilt?: (changes: FileChange[]) => void;
+  /** A run started streaming (the parent can mark the targeted story "building"). */
+  onRunStart?: () => void;
+  /** The run ended; `failed` is true when it errored (→ the story shows "blocked"). */
+  onRunEnd?: (failed: boolean) => void;
   /** Builders may reveal the raw tool I/O behind each activity line ("show details"). */
   showDetails?: boolean;
 }) {
@@ -74,6 +80,9 @@ export default function BuildChat({
       setMessages(next);
       setInput('');
       setLoading(true);
+      onRunStart?.();
+      // The run's honest outcome for the parent: failed on any surfaced error.
+      let failed = false;
       const ctrl = new AbortController();
       abortRef.current = ctrl;
       const scrollDown = () =>
@@ -95,6 +104,7 @@ export default function BuildChat({
             /* keep the generic message */
           }
           setError(msg);
+          failed = true;
           return;
         }
 
@@ -108,6 +118,7 @@ export default function BuildChat({
             scrollDown();
           } else if (e.type === 'error') {
             setError(e.message);
+            failed = true;
           } else if (e.type === 'final') {
             const changes = Array.isArray(e.changes) ? e.changes : [];
             // Prefer the calm closing summary; the plan + actions already streamed
@@ -120,14 +131,18 @@ export default function BuildChat({
         });
       } catch (e) {
         if ((e as Error).name === 'AbortError') setStopped(true);
-        else setError((e as Error).message);
+        else {
+          setError((e as Error).message);
+          failed = true;
+        }
       } finally {
         abortRef.current = null;
         setLoading(false);
+        onRunEnd?.(failed);
         scrollDown();
       }
     },
-    [appId, loading, messages, mode, story, onBuilt],
+    [appId, loading, messages, mode, story, onBuilt, onRunStart, onRunEnd],
   );
 
   const planning = mode === 'plan';
@@ -191,6 +206,22 @@ export default function BuildChat({
       {/* The per-run changeset — before/after diffs of what this Build run committed. */}
       {!planning && lastChanges.length > 0 ? (
         <BuildDiff changes={lastChanges} summary={summarizeChanges(lastChanges)} />
+      ) : null}
+
+      {/* A story is targeted → the chat proposes building it in one click. */}
+      {!planning && !loading && story?.label ? (
+        <div className="row" style={{ marginTop: 10, gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn sm"
+            onClick={() => send(`Build this story: ${story.label}. Implement it end-to-end to its acceptance criteria.`)}
+          >
+            Build this story →
+          </button>
+          <span className="muted" style={{ fontSize: 12, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {story.label}
+          </span>
+        </div>
       ) : null}
 
       <form onSubmit={(e) => { e.preventDefault(); send(input); }} style={{ marginTop: 12 }}>

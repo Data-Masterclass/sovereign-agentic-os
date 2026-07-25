@@ -4,7 +4,7 @@
 import 'server-only';
 import { config } from '@/lib/core/config';
 import { osMirror } from '@/lib/infra/os-mirror';
-import { ROLES, type Role } from '@/lib/core/session';
+import { ROLES, roleAtLeast, type Role } from '@/lib/core/session';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { hashPassword, verifyPassword, isHashed } from '@/lib/core/password';
 import { emailVerificationEnabled, sendVerificationEmail } from '@/lib/infra/mailer';
@@ -307,6 +307,32 @@ export async function authenticate(username: string, password: string): Promise<
 export async function listUsers(): Promise<PublicUser[]> {
   const map = await getCache();
   return visible(map).map(publicOf).sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/** The minimal read-only directory row a governed app may see (no email/flags). */
+export type DirectoryUser = { id: string; name: string; role: Role; domains: string[] };
+
+/**
+ * The user DIRECTORY visible to a caller, per the role model (read-only):
+ *   • admin        — every user (they administer the tenant).
+ *   • domain_admin — users sharing at least one of the caller's domains (they
+ *     administer users in their OWN domain(s) only).
+ *   • builder/creator — nobody: the directory is a people-admin surface.
+ * Pure filter over `users` so it is unit-testable; strips to the DirectoryUser
+ * shape (id, name, role, domains) — never email or account flags.
+ */
+export function directoryVisibleTo(
+  caller: { role: Role; domains: string[] },
+  users: PublicUser[],
+): DirectoryUser[] {
+  if (!roleAtLeast(caller.role, 'domain_admin')) return [];
+  const scoped =
+    caller.role === 'admin'
+      ? users
+      : users.filter((u) => u.domains.some((d) => caller.domains.includes(d)));
+  return scoped
+    .filter((u) => !u.disabled)
+    .map((u) => ({ id: u.id, name: u.name, role: u.role, domains: u.domains }));
 }
 
 /** Account flags for the signed-in user (drives the bootstrap/onboarding gates). */

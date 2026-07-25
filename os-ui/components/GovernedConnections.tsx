@@ -197,6 +197,23 @@ function GovernedConnectionsInner() {
   // ---- App MCP connections (auto-generated from Software tab) ----
   const { data: appConns } = useApi<AppConns>('/api/connections/apps');
 
+  // ?focus= can ALSO name an APP connection — by id, by principal (`app-<slug>`) or
+  // by slug. The principal form is deterministic from the app's slug, so a governed
+  // app's own "MCP" button can deep-link here without knowing the connection id.
+  // App cards render fully expanded, so focusing scrolls to the card.
+  const appFocusApplied = useRef(false);
+  useEffect(() => {
+    if (!focusId || appFocusApplied.current || !appConns) return;
+    const target = appConns.connections.find(
+      (c) => c.id === focusId || c.principal === focusId || c.appSlug === focusId,
+    );
+    if (!target) return; // unknown — no-op (governed connections are matched above)
+    appFocusApplied.current = true;
+    requestAnimationFrame(() => {
+      document.getElementById(`app-conn-${target.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, [focusId, appConns]);
+
   // ---- Shared connector wizard (both create paths open the SAME stepper) ----
   // `null` = closed; a WizardStart = open (custom = header button, type = gallery card).
   const [wizard, setWizard] = useState<WizardStart | null>(null);
@@ -880,7 +897,7 @@ function WarehouseControls({ c, canManage, onChange }: { c: Conn; canManage: boo
 function AppConnectionCard({ c }: { c: AppConn }) {
   const toolNames = c.tools.map((t) => t.name).join(', ');
   return (
-    <div className="card" style={{ marginBottom: 14 }}>
+    <div className="card" id={`app-conn-${c.id}`} style={{ marginBottom: 14 }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <h3 style={{ margin: 0 }}>

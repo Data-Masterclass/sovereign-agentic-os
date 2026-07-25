@@ -35,7 +35,9 @@ export async function POST(req: Request) {
     const body = await req.json();
     const name = String(body?.name ?? '').trim();
     if (!name) return NextResponse.json({ error: 'An app name is required' }, { status: 400 });
-    const template = String(body?.template ?? 'nextjs-supabase') as AppTemplateKey;
+    // No template named → let createApp apply the ONE default (the Sovereign
+    // standard app), so the UI and MCP front doors can never disagree on it.
+    const template = body?.template ? (String(body.template) as AppTemplateKey) : undefined;
     const surfaceRaw = String(body?.surface ?? '').trim().toLowerCase();
     const surface: SurfaceDeclaration | undefined =
       surfaceRaw === 'ui' || surfaceRaw === 'api' || surfaceRaw === 'both' ? surfaceRaw : undefined;

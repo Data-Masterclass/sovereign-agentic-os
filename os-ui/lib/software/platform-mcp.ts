@@ -43,7 +43,7 @@ export const PLATFORM_MCP_PRINCIPAL = 'platform-mcp';
 
 /** The MCP tool surface — parity with the UI's create→build→preview→deploy flow. */
 export const PLATFORM_MCP_TOOLS: { name: string; description: string; write: boolean }[] = [
-  { name: 'create_software', description: "Create a new governed app from a template. Optionally DECLARE its surface (surface: 'ui' | 'api' | 'both') — declaring wins over auto-detection, so a UI app is never mislabelled as API. Optionally set `purpose` (the app's stated intent, ≤2000 chars) at creation time.", write: true },
+  { name: 'create_software', description: "Create a new governed app from a template (default `sovereign-app` — the Sovereign standard app: AppShell chrome, OS-delegated identity, domain-scoped data helpers, an admin section and the MCP top-bar link already wired; epics then add business features). Other templates: 'vite-os', 'nextjs-supabase', 'service', 'script', 'dashboard'. Optionally DECLARE its surface (surface: 'ui' | 'api' | 'both') — declaring wins over auto-detection, so a UI app is never mislabelled as API. Optionally set `purpose` (the app's stated intent, ≤2000 chars) at creation time.", write: true },
   { name: 'commit', description: 'Commit files + metadata to an app (re-parsed on every commit).', write: true },
   { name: 'start_preview', description: 'Start the private sandbox preview (no review).', write: true },
   { name: 'request_deploy', description: 'Request a domain deploy → opens the Builder review gate.', write: true },
@@ -87,7 +87,8 @@ export async function callPlatformMcp(
       result = await createApp(user, {
         name: str(args.name),
         description: str(args.description),
-        template: (str(args.template) || 'nextjs-supabase') as AppTemplateKey,
+        // Default to the Sovereign standard app — the same default the UI uses.
+        template: (str(args.template) || 'sovereign-app') as AppTemplateKey,
         domain: str(args.domain) || undefined,
         // Intent wins over auto-detect: a declared surface never regresses to API.
         surface: asSurface(args.surface),

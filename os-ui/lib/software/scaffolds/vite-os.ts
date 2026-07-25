@@ -672,6 +672,35 @@ export function viteOsIndexCss(): ScaffoldFile {
 }
 
 /**
+ * The template-agnostic INFRA base every governed Vite SPA template shares —
+ * build config, styling entry, Docker/nginx serving, the sovereign CI workflow
+ * and the OpenAPI stub. The Sovereign standard app template (sovereign-app.ts)
+ * reuses THIS so the two scaffolds can never drift on how an app is built,
+ * containerised and served. Deliberately excludes src/App.tsx / src/main.tsx /
+ * app.yaml / README — those are each template's own voice.
+ */
+export function viteBaseFiles(name: string, slug: string): ScaffoldFile[] {
+  return [
+    packageJson(slug),
+    viteConfig(),
+    tsConfig(),
+    indexHtml(name),
+    tailwindConfig(),
+    postcssConfig(),
+    viteOsIndexCss(),
+    dockerfile(),
+    nginxConf(),
+    dotforgejoWorkflow(slug),
+    openApiYaml(slug),
+  ];
+}
+
+/** The OS-client factory (src/os.ts) — shared by every governed SPA template. */
+export function viteOsClientFile(): ScaffoldFile {
+  return srcOsTs();
+}
+
+/**
  * ALL files for the Vite OS template. `viteOsFiles` is now the canonical, complete
  * seeder (it already includes `src/index.css`), so this is a thin alias kept for the
  * tests and any caller that wants the full, self-consistent set.

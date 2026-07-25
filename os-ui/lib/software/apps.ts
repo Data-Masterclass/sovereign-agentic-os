@@ -33,6 +33,7 @@ import type {
   SurfaceDeclaration,
 } from '@/lib/software/model';
 import { viteOsFiles } from '@/lib/software/scaffolds/vite-os';
+import { sovereignAppFiles, sovereignAppGuide } from '@/lib/software/scaffolds/sovereign-app';
 import { vendorSdkForRepo, applySdkFileDep } from '@/lib/software/app-sdk-vendor';
 import { vendorUiForRepo, applyUiFileDep } from '@/lib/software/app-ui-vendor';
 import { snapshotFiles, getSnapshot } from '@/lib/software/snapshot';
@@ -196,16 +197,20 @@ export type App = {
 
 // ----------------------------------------------------------------- Templates --
 
-export type AppTemplateKey = 'nextjs-supabase' | 'service' | 'script' | 'dashboard' | 'vite-os';
+export type AppTemplateKey = 'nextjs-supabase' | 'service' | 'script' | 'dashboard' | 'vite-os' | 'sovereign-app';
 
 /** Runtime kind per template (drives the per-template/per-runtime adapter). */
 export const TEMPLATE_RUNTIME: Record<AppTemplateKey, 'web' | 'service' | 'script' | 'dashboard'> = {
   'nextjs-supabase': 'web',
   'vite-os': 'web',
+  'sovereign-app': 'web',
   service: 'service',
   script: 'script',
   dashboard: 'dashboard',
 };
+
+/** Templates that are governed OS frontends (Vite SPA + vendored @sovereign-os/ui + app-sdk). */
+export const GOVERNED_FRONTEND_TEMPLATES: ReadonlySet<AppTemplateKey> = new Set(['vite-os', 'sovereign-app']);
 
 type Template = {
   key: AppTemplateKey;
@@ -524,17 +529,61 @@ function viteOsTemplate(): Template {
   };
 }
 
+/**
+ * The SOVEREIGN STANDARD APP — the default template for every NEW app. A rich
+ * base app that already looks and behaves like a Sovereign OS app (AppShell nav,
+ * OS-delegated identity, domain-scoped data helpers, an admin section, the MCP
+ * top-bar link), so the Build stage only fills in business features epic-by-epic.
+ * File set: lib/software/scaffolds/sovereign-app.ts. The scaffold guide (README)
+ * doubles as the app's `docs`, so the Build assistant reads the same contract.
+ */
+function sovereignAppTemplate(): Template {
+  const base = viteOsTemplate();
+  return {
+    ...base,
+    key: 'sovereign-app',
+    label: 'Sovereign standard app (OS identity, governed)',
+    designDecisions: (name) =>
+      [
+        `# ${name} — design decisions`,
+        '',
+        '- **Stack:** Vite + React + TypeScript + Tailwind CSS + `@sovereign-os/ui` (AppShell + primitives).',
+        '- **Identity:** DELEGATED to the OS — `os.whoami()` is the only user source; no local accounts.',
+        '- **Tenancy:** owning domain derived from the app host; records scoped owner + domain (My / Domain).',
+        '- **Admin:** in-app admin area for OS domain admins — settings placeholder + read-only OS user list.',
+        '- **MCP:** capabilities exposed as governed tools; setup linked from the app top bar.',
+        '- **Served by:** nginx on port 8080 via a multi-stage Docker build.',
+      ].join('\n'),
+    // The skeleton guide IS the docs: injected into the Build assistant's context.
+    docs: (name, sub) =>
+      [
+        sovereignAppGuide(name, slugFromSubdomain(sub)),
+        '',
+        `Live at **https://${sub}** (once CI → registry → runner have synced).`,
+      ].join('\n'),
+    files: (name, slug) => sovereignAppFiles(name, slug),
+  };
+}
+
+/** The slug is the first label of the app's per-app host. */
+function slugFromSubdomain(sub: string): string {
+  return sub.split('.')[0] || sub;
+}
+
 const TEMPLATES: Record<AppTemplateKey, Template> = {
   'nextjs-supabase': nextjsSupabaseTemplate(),
   'vite-os': viteOsTemplate(),
+  'sovereign-app': sovereignAppTemplate(),
   service: genericTemplate('service', 'Service / API'),
   script: genericTemplate('script', 'Script / scheduled job'),
   dashboard: dashboardTemplate(),
 };
 
-// `vite-os` is listed first: it is the default for a new app (a governed
-// frontend over the OS API). The other templates stay selectable.
+// `sovereign-app` is listed first: it is the default for a new app (the Sovereign
+// standard base app). The other templates stay selectable — and existing apps
+// keep the template they were created with.
 export const APP_TEMPLATES: { key: AppTemplateKey; label: string }[] = [
+  { key: 'sovereign-app', label: 'Sovereign standard app (OS identity, governed)' },
   { key: 'vite-os', label: 'Vite + React OS app (SPA, governed)' },
   { key: 'nextjs-supabase', label: 'Web app (Next.js + Supabase)' },
   { key: 'service', label: 'Service / API' },
@@ -699,7 +748,7 @@ function b64(s: string): string {
  * set is returned unchanged. Keeps the deployed image buildable offline.
  */
 function withVendoredSdk(tpl: Template, files: ScaffoldFile[]): ScaffoldFile[] {
-  if (tpl.key !== 'vite-os') return files;
+  if (!GOVERNED_FRONTEND_TEMPLATES.has(tpl.key)) return files;
   const withDep = files.map((f) =>
     f.path === 'package.json' ? { ...f, content: applySdkFileDep(f.content) } : f,
   );
@@ -715,7 +764,7 @@ function withVendoredSdk(tpl: Template, files: ScaffoldFile[]): ScaffoldFile[] {
  * through unchanged.
  */
 function withVendoredUi(tpl: Template, files: ScaffoldFile[]): ScaffoldFile[] {
-  if (tpl.key !== 'vite-os') return files;
+  if (!GOVERNED_FRONTEND_TEMPLATES.has(tpl.key)) return files;
   const withDep = files.map((f) =>
     f.path === 'package.json' ? { ...f, content: applyUiFileDep(f.content) } : f,
   );
@@ -1099,10 +1148,11 @@ export async function createApp(
   input: { name: string; description?: string; template?: AppTemplateKey; domain?: string; surface?: SurfaceDeclaration; purpose?: string },
 ): Promise<App> {
   const map = await getCache();
-  // Default a fresh app to the governed frontend-over-the-OS-API scaffold
-  // (`vite-os`): it wires itself to the OS SDK and renders real granted data on
-  // boot. The other templates remain selectable via `input.template`.
-  const tpl = TEMPLATES[input.template ?? 'vite-os'] ?? TEMPLATES['vite-os'];
+  // Default a fresh app to the SOVEREIGN STANDARD APP (`sovereign-app`): the rich
+  // base app with OS-delegated identity, domain scoping, an admin section and the
+  // MCP link already in place. The other templates remain selectable via
+  // `input.template`; existing apps keep the template they were created with.
+  const tpl = TEMPLATES[input.template ?? 'sovereign-app'] ?? TEMPLATES['sovereign-app'];
   // An explicit surface declaration (intent) wins over the scaffold's heuristic.
   const declaredSurface: SurfaceDeclaration | undefined =
     input.surface === 'ui' || input.surface === 'api' || input.surface === 'both' ? input.surface : undefined;

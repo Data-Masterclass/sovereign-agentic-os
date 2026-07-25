@@ -107,8 +107,10 @@ function appContext(
   mode: BuildMode,
   story: BuildStory | null,
 ): string {
-  const isViteOs = app.template === 'vite-os';
-  const stackLine = isViteOs
+  // Governed OS frontends: the vite-os SPA and the Sovereign standard app.
+  const isGovernedFrontend = app.template === 'vite-os' || app.template === 'sovereign-app';
+  const isSovereignApp = app.template === 'sovereign-app';
+  const stackLine = isGovernedFrontend
     ? 'It is a Vite + React governed OS-frontend app that lives in its own Forgejo repo'
     : 'It is a Next.js + Supabase app that lives in its own Forgejo repo';
   const lines = [
@@ -121,8 +123,22 @@ function appContext(
   // Governed-frontend apps talk to the OS only through the OS-client SDK — teach
   // the harness the real SDK surface + scaffold conventions so generated code is
   // grounded (never invents methods, never fabricates data).
-  if (isViteOs) {
+  if (isGovernedFrontend) {
     lines.push('', OS_SDK_BRIEF);
+  }
+  // The Sovereign standard app carries a skeleton contract (also in ## Docs below):
+  // keep it intact and extend it section-by-section.
+  if (isSovereignApp) {
+    lines.push(
+      '',
+      '## Sovereign standard app — skeleton contract',
+      'This app is a Sovereign standard app. NEVER remove the skeleton: OS-delegated',
+      'identity (src/identity.tsx — no local accounts/passwords, ever), the scope',
+      'helpers (src/scope.ts — every record carries owner + domain), the Admin section,',
+      'and the MCP top-bar link. To add a feature: create src/pages/<Name>.tsx and',
+      'register it in src/sections.tsx (one entry = nav + routing). See ## Docs for the',
+      'full skeleton guide.',
+    );
   }
 
   if (mode === 'plan') {
