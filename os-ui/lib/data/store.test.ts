@@ -23,6 +23,7 @@ import {
   deleteDataset,
   moveDataset,
   setDocs,
+  setDatasetSync,
   renameDataset,
   listDatasetVersions,
   restoreDatasetVersion,
@@ -607,4 +608,40 @@ test('renameDataset: rejects an empty name and a within-domain duplicate', () =>
   createDataset(amir, { name: 'Beta' });
   assert.throws(() => renameDataset(a.id, amir, '   '), (e) => (e as DatasetError).status === 400);
   assert.throws(() => renameDataset(a.id, amir, 'Beta'), (e) => (e as DatasetError).status === 409);
+});
+
+// ------------------------------------------------------- scheduled sync setter --
+
+test('setDatasetSync validates, persists, and clears; edit-gated', async () => {
+  await ensureHydrated();
+  const id = createDataset(amir, { name: 'Synced orders' }).id;
+  const sync = {
+    connectionId: 'conn_pg',
+    source: { schema: 'public', table: 'orders' },
+    mode: 'append' as const,
+    cursor: { kind: 'timestamp' as const, column: 'updated_at' },
+    schedule: { cron: '0 6 * * *' },
+    enabled: true,
+  };
+  const d = setDatasetSync(id, amir, sync);
+  assert.deepEqual(d.sync, sync);
+  assert.deepEqual(getDataset(id, amir).sync, sync);
+
+  // Invalid configs are strict 400s.
+  assert.throws(() => setDatasetSync(id, amir, { ...sync, schedule: { cron: 'bad' } }), /cron/);
+  assert.throws(() => setDatasetSync(id, amir, { ...sync, cursor: undefined }), /cursor/);
+  assert.throws(
+    () => setDatasetSync(id, amir, { ...sync, mode: 'merge' as const }),
+    /merge key/,
+  );
+  assert.throws(
+    () => setDatasetSync(id, amir, { ...sync, cursor: { kind: 'delta-version' as const, column: 'v' } }),
+    /not implemented/,
+  );
+
+  // A non-owner peer cannot touch a private dataset's sync.
+  assert.throws(() => setDatasetSync(id, kenji, null), DatasetError);
+
+  // Clearing removes the block.
+  assert.equal(setDatasetSync(id, amir, null).sync, undefined);
 });

@@ -8,12 +8,22 @@ without the service dependencies and cannot be weakened by a runtime concern.
 
 Two independent gates, both enforced here BEFORE any SQL reaches Trino:
 
-  1. STATEMENT ALLOWLIST — only four DDL shapes are permitted:
+  1. STATEMENT ALLOWLIST — only these shapes are permitted:
        * CREATE SCHEMA IF NOT EXISTS iceberg.<schema>
        * CREATE OR REPLACE TABLE  iceberg.<schema>.<table> AS SELECT ...
        * CREATE TABLE IF NOT EXISTS iceberg.<schema>.<table> AS SELECT ...
        * DROP TABLE IF EXISTS      iceberg.<schema>.<table>
-     Everything else (INSERT/UPDATE/DELETE/MERGE/GRANT/ALTER/CALL/SET/plain
+       * INSERT INTO iceberg.<schema>.<table> SELECT ...          (incremental append)
+       * MERGE INTO  iceberg.<schema>.<table> USING ... ON ... WHEN ...  (upsert)
+       * DELETE FROM iceberg.<schema>.<table> WHERE _batch_id = '<id>'
+             (append-retry idempotency: un-land ONE sync batch, nothing else)
+       * ALTER TABLE iceberg.<schema>.<table> EXECUTE expire_snapshots(
+             retention_threshold => '<n>d')                       (maintenance)
+       * ALTER TABLE iceberg.<schema>.<table> EXECUTE optimize[(file_size_threshold
+             => '<n><unit>')]                                     (compaction)
+     The sync shapes exist for SCHEDULED INCREMENTAL SYNC and pass the SAME
+     target-schema/role gate as a CTAS. Everything else (plain INSERT ... VALUES,
+     UPDATE, arbitrary DELETE, GRANT/CALL/SET, other ALTERs/EXECUTE procs, plain
      CREATE TABLE, multiple statements, SQL comments) is rejected with 400.
      Comments and extra statements are rejected outright so nothing can be
      smuggled past the shape match.
@@ -60,6 +70,44 @@ _RE_DROP = re.compile(
     rf"drop\s+table\s+if\s+exists\s+{CATALOG}\.({_IDENT})\.({_IDENT})",
     re.IGNORECASE,
 )
+# Incremental sync (append): the inserted rows MUST come from a SELECT — a plain
+# `INSERT ... VALUES` stays rejected (no arbitrary literal writes on this path).
+_RE_INSERT_SELECT = re.compile(
+    rf"insert\s+into\s+{CATALOG}\.({_IDENT})\.({_IDENT})\s+select\b.*",
+    re.IGNORECASE | re.DOTALL,
+)
+# Incremental sync (upsert): a MERGE targeting an iceberg table, optionally aliased,
+# with the mandatory USING ... ON ... WHEN clauses in order. The source reads run as
+# the caller's principal under Trino->OPA, exactly like a CTAS SELECT.
+_RE_MERGE = re.compile(
+    rf"merge\s+into\s+{CATALOG}\.({_IDENT})\.({_IDENT})(?:\s+(?:as\s+)?{_IDENT})?"
+    rf"\s+using\s+.*\bon\b.*\bwhen\b.*",
+    re.IGNORECASE | re.DOTALL,
+)
+# Append-retry idempotency: un-land exactly ONE sync batch by its lineage column.
+# The predicate is fixed to `_batch_id = '<safe-literal>'` — arbitrary DELETEs stay
+# rejected, and the literal admits no quote so nothing can widen the predicate.
+_RE_DELETE_BATCH = re.compile(
+    rf"delete\s+from\s+{CATALOG}\.({_IDENT})\.({_IDENT})\s+where\s+"
+    r"_batch_id\s*=\s*'[A-Za-z0-9_.:\-]+'",
+    re.IGNORECASE,
+)
+# Iceberg snapshot maintenance: ONLY expire_snapshots with a literal retention
+# threshold ('<n>d' / '<n>h'). Any other ALTER (ADD COLUMN, other EXECUTE procs,
+# expression thresholds) stays rejected.
+_RE_EXPIRE_SNAPSHOTS = re.compile(
+    rf"alter\s+table\s+{CATALOG}\.({_IDENT})\.({_IDENT})\s+execute\s+"
+    r"expire_snapshots\s*\(\s*retention_threshold\s*=>\s*'[0-9]+[dh]'\s*\)",
+    re.IGNORECASE,
+)
+# Iceberg compaction: bare `optimize` or with a literal file_size_threshold. The
+# scheduled sync lands many small slice files; without periodic optimize the table
+# degrades — so it is allowlisted alongside expire_snapshots.
+_RE_OPTIMIZE = re.compile(
+    rf"alter\s+table\s+{CATALOG}\.({_IDENT})\.({_IDENT})\s+execute\s+optimize"
+    r"(\s*\(\s*file_size_threshold\s*=>\s*'[0-9]+[A-Za-z]{1,3}'\s*\))?",
+    re.IGNORECASE,
+)
 
 
 class ExecuteError(Exception):
@@ -72,7 +120,8 @@ class ExecuteError(Exception):
 
 @dataclass
 class ParsedWrite:
-    kind: str            # 'create_schema' | 'ctas' | 'drop_table'
+    kind: str            # 'create_schema' | 'ctas' | 'drop_table' | 'insert_select' | 'merge'
+                         # | 'delete_batch' | 'expire_snapshots' | 'optimize'
     catalog: str         # always 'iceberg'
     schema: str          # target schema (the authorization subject)
     table: Optional[str] # None for create_schema
@@ -125,11 +174,34 @@ def parse_statement(sql: str) -> ParsedWrite:
     if m:
         return ParsedWrite("drop_table", CATALOG, m.group(1), m.group(2))
 
+    m = _RE_INSERT_SELECT.fullmatch(s)
+    if m:
+        return ParsedWrite("insert_select", CATALOG, m.group(1), m.group(2))
+
+    m = _RE_MERGE.fullmatch(s)
+    if m:
+        return ParsedWrite("merge", CATALOG, m.group(1), m.group(2))
+
+    m = _RE_DELETE_BATCH.fullmatch(s)
+    if m:
+        return ParsedWrite("delete_batch", CATALOG, m.group(1), m.group(2))
+
+    m = _RE_EXPIRE_SNAPSHOTS.fullmatch(s)
+    if m:
+        return ParsedWrite("expire_snapshots", CATALOG, m.group(1), m.group(2))
+
+    m = _RE_OPTIMIZE.fullmatch(s)
+    if m:
+        return ParsedWrite("optimize", CATALOG, m.group(1), m.group(2))
+
     raise ExecuteError(
         400,
         "statement not allowed: only CREATE SCHEMA IF NOT EXISTS, "
         "CREATE OR REPLACE TABLE ... AS SELECT, CREATE TABLE IF NOT EXISTS ... AS "
-        "SELECT, and DROP TABLE IF EXISTS against iceberg.<schema>.<table> are permitted",
+        "SELECT, DROP TABLE IF EXISTS, INSERT INTO ... SELECT, MERGE INTO ... USING "
+        "... ON ... WHEN ..., DELETE FROM ... WHERE _batch_id = '<id>', and ALTER "
+        "TABLE ... EXECUTE expire_snapshots(...)/optimize(...) "
+        "against iceberg.<schema>.<table> are permitted",
     )
 
 

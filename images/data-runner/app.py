@@ -137,12 +137,18 @@ def ingest(body: dict) -> dict:
     principal = (body.get("principal") or "").strip()
     dataset = (body.get("dataset") or "").strip()
     object_key = (body.get("objectKey") or "").strip()
+    # 'replace' (default, today's behaviour): drop + recreate the bronze table.
+    # 'append': add the new rows to the existing table (incremental file drops) —
+    # falls back to a plain create when the table doesn't exist yet.
+    mode = (body.get("mode") or "replace").strip().lower()
     if not principal:
         raise ValueError("missing principal")
     if not dataset:
         raise ValueError("missing dataset")
     if not object_key:
         raise ValueError("missing objectKey")
+    if mode not in ("replace", "append"):
+        raise ValueError("mode must be 'replace' or 'append'")
 
     uid = slug(principal)
     ds_slug = slug(dataset)
@@ -185,10 +191,16 @@ def ingest(body: dict) -> dict:
     # 2) Write the Iceberg Bronze table via Polaris REST.
     catalog = _catalog()
     catalog.create_namespace_if_not_exists((namespace,))
-    # Fresh re-ingest semantics: replace any prior version of this bronze table.
-    if catalog.table_exists((namespace, table_name)):
-        catalog.drop_table((namespace, table_name))
-    tbl = catalog.create_table((namespace, table_name), schema=arrow.schema)
+    exists = catalog.table_exists((namespace, table_name))
+    if mode == "append" and exists:
+        # Incremental drop: keep the table, append the new rows (PyIceberg validates
+        # the Arrow schema against the table schema and errors honestly on drift).
+        tbl = catalog.load_table((namespace, table_name))
+    else:
+        # Fresh (re-)ingest semantics: replace any prior version of this bronze table.
+        if exists:
+            catalog.drop_table((namespace, table_name))
+        tbl = catalog.create_table((namespace, table_name), schema=arrow.schema)
     tbl.append(arrow)
 
     columns = [{"name": f.name, "type": str(f.type)} for f in arrow.schema]
@@ -197,6 +209,7 @@ def ingest(body: dict) -> dict:
         "table": fqn_trino,
         "rowCount": arrow.num_rows,
         "columns": columns,
+        "mode": mode,
     }
 
 

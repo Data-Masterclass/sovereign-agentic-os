@@ -180,3 +180,53 @@ test('parseGoldSpec sanitizes loose input and drops an all-empty spec', () => {
   assert.equal(s?.dimensions[0].as, undefined); // blank alias dropped
   assert.equal(s?.measures[0].col, '0::y');
 });
+
+// ------------------------------------------------------- scheduled sync block --
+
+test('sync block: absent stays absent (byte-stable) and round-trips when present', () => {
+  const plain = sample();
+  assert.ok(!serializeDataset(plain).includes('sync'));
+  assert.equal(parseDataset(serializeDataset(plain)).sync, undefined);
+
+  const withSync = sample({
+    sync: {
+      connectionId: 'conn_pg',
+      source: { schema: 'public', table: 'orders' },
+      mode: 'append',
+      cursor: { kind: 'timestamp', column: 'updated_at' },
+      lookbackMinutes: 30,
+      schedule: { cron: '0 6 * * *' },
+      enabled: true,
+    },
+  });
+  const yamlText = serializeDataset(withSync);
+  const back = parseDataset(yamlText);
+  assert.deepEqual(back.sync, withSync.sync);
+  // Adding then serializing again is stable (no churn).
+  assert.equal(serializeDataset(back), yamlText);
+});
+
+test('sync block: optional members are omitted from the yaml when unset', () => {
+  const d = sample({
+    sync: {
+      connectionId: 'conn_pg',
+      source: { schema: 'public', table: 'orders' },
+      mode: 'full-refresh',
+      schedule: { cron: '0 6 * * *' },
+      enabled: false,
+    },
+  });
+  const y = serializeDataset(d);
+  assert.ok(!y.includes('cursor'));
+  assert.ok(!y.includes('mergeKeys'));
+  assert.ok(!y.includes('lookbackMinutes'));
+  assert.deepEqual(parseDataset(y).sync, d.sync);
+});
+
+test('sync block: a malformed record parses to undefined (tolerant, never bricks)', () => {
+  // Missing connectionId + bad cron -> dropped on parse, dataset still opens.
+  const d = parseDataset(
+    serializeDataset(sample()).concat('sync:\n  source: { schema: public, table: orders }\n  mode: append\n  schedule: { cron: nonsense }\n  enabled: true\n'),
+  );
+  assert.equal(d.sync, undefined);
+});

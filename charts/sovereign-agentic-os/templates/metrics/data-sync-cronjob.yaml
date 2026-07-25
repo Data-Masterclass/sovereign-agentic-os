@@ -1,0 +1,92 @@
+{{- if ((((.Values.dataSync).sweep).enabled)) }}
+{{- /*
+  Data-sync fallback sweep CronJob (Scheduled Incremental Sync).
+
+  The PRIMARY trigger for a dataset's sync is the per-dataset CronJob os-ui
+  provisions when the owner saves an enabled schedule (data-sync-<datasetId>,
+  lib/data/sync-cron.ts). This sweep is the FALLBACK for clusters where os-ui may
+  not manage CronJobs: it POSTs /api/data/sync-due on a cadence and the route runs
+  every enabled sync whose cron fired within the window — through the SAME governed
+  executor, so lease/skip/quarantine semantics are identical and double-triggering
+  merely records a 'skipped' row. Cloned from dq-cronjob.yaml.
+
+  AUTH — the shared agent-runtime bearer (the SAME Secret-mounted token the
+  agent-schedule CronJobs present; runtimeTokenOk on the route). No credentials are
+  baked into the spec. GATED OFF by default (dataSync.sweep.enabled=false) and
+  NIL-SAFE: every value lookup is default-guarded, so `helm template` without this
+  block (e.g. --reuse-values from an older release) emits nothing and errors nowhere.
+*/}}
+{{- $s := .Values.dataSync.sweep }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: data-sync-sweep
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "data-sync-sweep") | nindent 4 }}
+spec:
+  schedule: {{ $s.schedule | default "*/15 * * * *" | quote }}
+  timeZone: UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            {{- include "soa.selectorLabels" (dict "ctx" . "component" "data-sync-sweep") | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          {{- with .Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "soa.podSecurityContext" . | nindent 12 }}
+            runAsUser: 1000
+          containers:
+            - name: sweep
+              image: curlimages/curl:8.11.1
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "soa.containerSecurityContext" . | nindent 16 }}
+                readOnlyRootFilesystem: true
+              env:
+                - name: OS_UI
+                  value: {{ $s.osUiUrl | default "http://os-ui:3000" | quote }}
+                - name: WINDOW_MINUTES
+                  value: {{ $s.windowMinutes | default 15 | quote }}
+                - name: RUNTIME_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $s.tokenSecret | default "os-ui" | quote }}
+                      key: {{ $s.tokenSecretKey | default "agent-runtime-token" | quote }}
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  CODE=$(curl -s -o /tmp/run.json -w "%{http_code}" \
+                    -X POST "$OS_UI/api/data/sync-due" \
+                    -H "Authorization: Bearer $RUNTIME_TOKEN" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"windowMinutes\":$WINDOW_MINUTES}")
+                  echo "data/sync-due -> $CODE"
+                  cat /tmp/run.json 2>/dev/null || true
+                  echo
+                  if [ "$CODE" != "200" ]; then
+                    echo "FATAL: data/sync-due returned $CODE" >&2
+                    exit 1
+                  fi
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+              resources:
+                requests: { cpu: 25m, memory: 32Mi }
+                limits: { cpu: 200m, memory: 64Mi }
+          volumes:
+            - name: tmp
+              emptyDir: {}
+{{- end }}

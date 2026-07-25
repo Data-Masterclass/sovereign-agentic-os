@@ -6,6 +6,7 @@ import type { CurrentUser } from '@/lib/core/auth';
 import { config } from '@/lib/core/config';
 import { getSystem, type Principal } from '@/lib/agents/store';
 import { getDataset, listDatasetVersions, listDatasets, ensureHydrated as ensureDataHydrated } from '@/lib/data/store';
+import { latestSyncRun, ensureSyncRunsHydrated } from '@/lib/data/sync-runs';
 import { listWorkflows, ensureHydrated as ensureKnowledgeHydrated } from '@/lib/knowledge/store';
 import { listPersonalKnowledge } from '@/lib/knowledge/personal-store';
 import { listFiles, ensureHydrated as ensureFilesHydrated } from '@/lib/files/store';
@@ -207,6 +208,9 @@ export type DatasetDetail = {
     trend: { ranAt: string; score: number | null; badge: string }[];
     checks: DatasetCheckRow[];
   };
+  /** Scheduled-sync signal (additive, fail-soft): last run + outcome, or nulls when
+   *  the dataset has never synced. */
+  sync: { lastSync: string | null; syncStatus: 'ok' | 'error' | 'skipped' | null };
   /** Build/version timeline for the medallion layers (bronze→silver→gold). */
   layers: { layer: Layer; built: boolean; passThrough: boolean; quality: string; updatedAt: string | null }[];
   /** Snapshot version log (newest first): who/when/what. */
@@ -253,6 +257,16 @@ export async function datasetDetail(user: CurrentUser, datasetId: string, nowMs:
   }));
   const trend = healthTrend(datasetId);
 
+  // Scheduled-sync signal — additive + fail-soft (an unreachable mirror ⇒ nulls).
+  let lastSync: string | null = null;
+  let syncStatus: 'ok' | 'error' | 'skipped' | null = null;
+  try {
+    await ensureSyncRunsHydrated();
+    const s = latestSyncRun(datasetId);
+    lastSync = s?.startedAt ?? null;
+    syncStatus = s?.status ?? null;
+  } catch { /* fail-soft */ }
+
   const checkVerdicts = checks.map((c): CheckVerdict => c.verdict);
   const tele = rollupDatasetTelemetry(checkVerdicts, {
     stalenessWarn: ageDays !== null && ageDays > 7 && ageDays <= 30,
@@ -282,6 +296,7 @@ export async function datasetDetail(user: CurrentUser, datasetId: string, nowMs:
       trend: trend.map((t) => ({ ranAt: t.ranAt, score: t.score, badge: t.badge })),
       checks,
     },
+    sync: { lastSync, syncStatus },
     layers: LAYERS.map((l) => ({
       layer: l,
       built: d.versions[l].built,

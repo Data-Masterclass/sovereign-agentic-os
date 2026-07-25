@@ -85,6 +85,10 @@ export const config = {
   scheduleCronImage: env('SCHEDULE_CRON_IMAGE', 'curlimages/curl:8.11.1'),
   agentRuntimeTokenSecret: env('AGENT_RUNTIME_TOKEN_SECRET', 'os-ui'),
   agentRuntimeTokenSecretKey: env('AGENT_RUNTIME_TOKEN_SECRET_KEY', 'agent-runtime-token'),
+  // Data-sync CronJobs (Data tab scheduled incremental sync). Saving an enabled sync
+  // schedule provisions a CronJob that curls `<dataSyncUrlBase>/<datasetId>/sync` with
+  // the SAME shared runtime bearer (Secret-mounted) the agent schedules use.
+  dataSyncUrlBase: base(env('DATA_SYNC_URL_BASE', 'http://os-ui:3000/api/data/datasets')),
 
   // ml-agent (LangGraph Science driver): GET {ML_AGENT_URL}/health, /models;
   // POST /run. Off by default (opt-in Science component); probed gracefully.

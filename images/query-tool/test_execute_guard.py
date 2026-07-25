@@ -132,6 +132,174 @@ class RejectTests(unittest.TestCase):
         self._reject400("   ")
 
 
+class SyncWriteTests(unittest.TestCase):
+    """The scheduled-incremental-sync shapes: INSERT..SELECT, MERGE, expire_snapshots.
+    Same target-schema/role gate as a CTAS; plain literal writes stay rejected."""
+
+    def _reject(self, sql, status, ident=BUILDER):
+        self.assertEqual(status_of(lambda: guard(sql, **ident)), status, sql)
+
+    def test_insert_select_personal_ok(self):
+        p = guard(
+            "INSERT INTO iceberg.personal_lena.bronze_orders "
+            "SELECT * FROM pg_shop.public.orders WHERE updated_at > TIMESTAMP '2026-01-01 00:00:00'",
+            **CREATOR,
+        )
+        self.assertEqual(p.kind, "insert_select")
+        self.assertEqual(p.schema, "personal_lena")
+        self.assertEqual(p.table, "bronze_orders")
+
+    def test_insert_select_domain_as_builder_ok(self):
+        p = guard(
+            "INSERT INTO iceberg.sales.bronze_orders SELECT * FROM pg_shop.public.orders",
+            **BUILDER,
+        )
+        self.assertEqual(p.kind, "insert_select")
+
+    def test_insert_select_multiline_ok(self):
+        sql = (
+            "INSERT INTO iceberg.personal_lena.bronze_orders\n"
+            "SELECT id, amount\nFROM pg_shop.public.orders\n"
+            "WHERE id > 5 AND id <= 10"
+        )
+        self.assertEqual(guard(sql, **CREATOR).kind, "insert_select")
+
+    def test_insert_values_rejected(self):
+        self._reject("INSERT INTO iceberg.personal_lena.bronze_orders VALUES (1, 2)", 400, CREATOR)
+
+    def test_insert_cross_schema_rejected(self):
+        self._reject("INSERT INTO iceberg.marketing.bronze_orders SELECT 1 AS a", 403)
+
+    def test_insert_domain_requires_builder(self):
+        self._reject("INSERT INTO iceberg.sales.bronze_orders SELECT 1 AS a", 403, CREATOR)
+
+    MERGE = (
+        "MERGE INTO iceberg.personal_lena.bronze_orders AS t "
+        "USING iceberg.personal_lena.bronze_orders_stg AS s ON t.id = s.id "
+        "WHEN MATCHED THEN UPDATE SET amount = s.amount "
+        "WHEN NOT MATCHED THEN INSERT (id, amount) VALUES (s.id, s.amount)"
+    )
+
+    def test_merge_personal_ok(self):
+        p = guard(self.MERGE, **CREATOR)
+        self.assertEqual(p.kind, "merge")
+        self.assertEqual(p.schema, "personal_lena")
+        self.assertEqual(p.table, "bronze_orders")
+
+    def test_merge_without_alias_ok(self):
+        sql = (
+            "MERGE INTO iceberg.sales.bronze_orders "
+            "USING iceberg.sales.bronze_orders_stg s ON bronze_orders.id = s.id "
+            "WHEN MATCHED THEN UPDATE SET amount = s.amount"
+        )
+        self.assertEqual(guard(sql, **BUILDER).kind, "merge")
+
+    def test_merge_cross_schema_rejected(self):
+        sql = self.MERGE.replace("personal_lena", "marketing")
+        self._reject(sql, 403)
+
+    def test_merge_domain_requires_builder(self):
+        sql = self.MERGE.replace("personal_lena", "sales")
+        self._reject(sql, 403, CREATOR)
+
+    def test_merge_without_when_rejected(self):
+        self._reject(
+            "MERGE INTO iceberg.sales.bronze_orders USING x ON a = b", 400,
+        )
+
+    def test_expire_snapshots_ok(self):
+        p = guard(
+            "ALTER TABLE iceberg.personal_lena.bronze_orders EXECUTE "
+            "expire_snapshots(retention_threshold => '7d')",
+            **CREATOR,
+        )
+        self.assertEqual(p.kind, "expire_snapshots")
+        self.assertEqual(p.table, "bronze_orders")
+
+    def test_expire_snapshots_domain_as_builder_ok(self):
+        p = guard(
+            "ALTER TABLE iceberg.sales.bronze_orders EXECUTE "
+            "expire_snapshots(retention_threshold => '48h')",
+            **BUILDER,
+        )
+        self.assertEqual(p.kind, "expire_snapshots")
+
+    def test_expire_snapshots_cross_schema_rejected(self):
+        self._reject(
+            "ALTER TABLE iceberg.marketing.bronze_orders EXECUTE "
+            "expire_snapshots(retention_threshold => '7d')",
+            403,
+        )
+
+    def test_optimize_ok(self):
+        p = guard("ALTER TABLE iceberg.sales.bronze_orders EXECUTE optimize", **BUILDER)
+        self.assertEqual(p.kind, "optimize")
+        p = guard(
+            "ALTER TABLE iceberg.personal_lena.bronze_orders EXECUTE "
+            "optimize(file_size_threshold => '128MB')",
+            **CREATOR,
+        )
+        self.assertEqual(p.kind, "optimize")
+
+    def test_optimize_cross_schema_rejected(self):
+        self._reject("ALTER TABLE iceberg.marketing.bronze_orders EXECUTE optimize", 403)
+
+    def test_other_execute_proc_rejected(self):
+        self._reject(
+            "ALTER TABLE iceberg.sales.bronze_orders EXECUTE remove_orphan_files(retention_threshold => '7d')",
+            400,
+        )
+
+    def test_delete_batch_ok(self):
+        p = guard(
+            "DELETE FROM iceberg.personal_lena.bronze_orders WHERE _batch_id = 'ds_1:2026-01-01'",
+            **CREATOR,
+        )
+        self.assertEqual(p.kind, "delete_batch")
+        self.assertEqual(p.table, "bronze_orders")
+
+    def test_delete_batch_cross_schema_rejected(self):
+        self._reject(
+            "DELETE FROM iceberg.marketing.bronze_orders WHERE _batch_id = 'b1'", 403,
+        )
+
+    def test_delete_batch_domain_requires_builder(self):
+        self._reject(
+            "DELETE FROM iceberg.sales.bronze_orders WHERE _batch_id = 'b1'", 403, CREATOR,
+        )
+
+    def test_delete_arbitrary_predicate_rejected(self):
+        self._reject("DELETE FROM iceberg.sales.bronze_orders WHERE amount > 0", 400)
+        self._reject(
+            "DELETE FROM iceberg.sales.bronze_orders WHERE _batch_id = 'b1' OR true", 400,
+        )
+        # A quote can never widen the predicate — non-[safe] chars in the literal reject.
+        self._reject(
+            "DELETE FROM iceberg.sales.bronze_orders WHERE _batch_id = 'a'' OR ''1''=''1'", 400,
+        )
+
+    def test_expression_threshold_rejected(self):
+        # Only a literal '<n>d'/'<n>h' threshold is allowed — no expressions.
+        self._reject(
+            "ALTER TABLE iceberg.sales.bronze_orders EXECUTE "
+            "expire_snapshots(retention_threshold => interval '7' day)",
+            400,
+        )
+
+    def test_update_and_delete_still_rejected(self):
+        self._reject("UPDATE iceberg.sales.bronze_orders SET a = 1", 400)
+        self._reject("DELETE FROM iceberg.sales.bronze_orders WHERE a = 1", 400)
+
+    def test_insert_second_statement_rejected(self):
+        self._reject(
+            "INSERT INTO iceberg.sales.bronze_orders SELECT 1 AS a; DROP TABLE iceberg.sales.other",
+            400,
+        )
+
+    def test_merge_comment_smuggle_rejected(self):
+        self._reject(self.MERGE + " -- smuggled", 400, CREATOR)
+
+
 class TargetAuthzTests(unittest.TestCase):
     def test_cross_domain_write_forbidden(self):
         # sales builder aiming at the marketing domain schema -> 403

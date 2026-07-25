@@ -12,6 +12,7 @@ import RefinePanel from './RefinePanel';
 import GoldJoinPanel from './GoldJoinPanel';
 import ExplorePanel from './ExplorePanel';
 import BronzePanel from './BronzePanel';
+import SyncPanel from './SyncPanel';
 import StageAssistant, { type DefineDraft } from './StageAssistant';
 import TalkTo from '@/components/talk/TalkTo';
 import { TALK_PRESENTATION } from '@/lib/talk/schema';
@@ -146,6 +147,9 @@ type Dataset = {
   /** The stored raw Gold build spec — re-hydrates the Gold panel so its joins/columns/
    *  measures stay visible + editable + rebuildable after a build. */
   goldSpec?: GoldSpec;
+  /** Scheduled incremental sync (absent when none is set up). Presence gates the
+   *  SyncPanel host — the panel fetches its own full state. */
+  sync?: { schedule: { cron: string }; enabled: boolean };
   certification?: Certification;
   /** Soft-archived (retained, reversible). Absent/false = live. */
   archived?: boolean;
@@ -158,6 +162,20 @@ const lcVis = (tier: Dataset['tier']): Visibility =>
 /** Inline slug — mirrors store-fqn.ts without importing server code. */
 function slug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'dataset';
+}
+
+function fmtDate(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+/** Bronze refreshed AFTER this layer was built ⇒ the layer is stale. A scheduled
+ *  sync only rewrites Bronze (v1 surfaces staleness, never auto-rebuilds). */
+function staleVsBronze(versions: Dataset['versions'], layer: 'silver' | 'gold'): boolean {
+  const b = versions.bronze;
+  const l = versions[layer];
+  return Boolean(b.built && l.built && b.updatedAt && l.updatedAt && b.updatedAt > l.updatedAt);
 }
 
 function furthestBuilt(versions: Dataset['versions']): Layer | null {
@@ -1012,6 +1030,11 @@ export default function DataBuilder({
               <p className="muted" style={{ fontSize: 13 }}>Only the owner and domain admins can bring in data.</p>
             )}
 
+            {/* Keep this in sync — schedule + history for a warehouse-synced Bronze. */}
+            {dataset.sync ? (
+              <SyncPanel datasetId={dataset.id} canEdit={canEdit} columns={colNames} />
+            ) : null}
+
             {/* Raw preview of what landed — the governed SELECT * LIMIT 50. */}
             <div className="section-title" style={{ marginTop: 22 }}>
               Raw preview
@@ -1099,6 +1122,11 @@ export default function DataBuilder({
                   Clean it up — Silver
                   <span className="hint" style={{ margin: '0 0 0 10px' }}>dbt transformations on your Bronze data</span>
                 </div>
+                {staleVsBronze(dataset.versions, 'silver') ? (
+                  <p className="hint" style={{ margin: '0 0 10px' }}>
+                    Bronze has newer data than Silver ({fmtDate(dataset.versions.bronze.updatedAt)} vs {fmtDate(dataset.versions.silver.updatedAt)}) — rebuild below to catch it up.
+                  </p>
+                ) : null}
                 {canRefineSilver ? (
                   <RefinePanel
                     datasetId={dataset.id} datasetName={dataset.name}
@@ -1127,6 +1155,11 @@ export default function DataBuilder({
                   Harmonize — Gold
                   <span className="hint" style={{ margin: '0 0 0 10px' }}>join trusted datasets into one governed Gold table</span>
                 </div>
+                {staleVsBronze(dataset.versions, 'gold') ? (
+                  <p className="hint" style={{ margin: '0 0 10px' }}>
+                    Bronze has newer data than Gold ({fmtDate(dataset.versions.bronze.updatedAt)} vs {fmtDate(dataset.versions.gold.updatedAt)}) — rebuild below to catch it up.
+                  </p>
+                ) : null}
                 <GoldJoinPanel
                   datasetId={dataset.id} datasetName={dataset.name}
                   owner={dataset.owner} domain={dataset.domain} tier={dataset.tier}

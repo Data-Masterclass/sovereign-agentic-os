@@ -18,6 +18,8 @@ import {
   type DatasetUpstream,
   type GoldSpec,
   type DataCheck,
+  type DatasetSync,
+  DATASET_SYNC_MODES,
   DatasetError,
   canTransition,
   emptyVersions,
@@ -37,6 +39,7 @@ import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
 // explicit row so it persists even when empty. Reused, never forked (mirrors Files).
 import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '../folders/index.ts';
 import { normaliseFolderPath } from '../core/folders.ts';
+import { isValidCron } from '../agents/cron-util.ts';
 
 // Re-export the FQN helpers so existing consumers keep importing them from the store.
 export { assetTarget, productTarget } from './store-fqn.ts';
@@ -455,6 +458,32 @@ export function listGovernedDatasets(): Dataset[] {
   return out;
 }
 
+/**
+ * UNSCOPED single-dataset read for the sync scheduler (mirrors the agents store's
+ * `systemForScheduler`): a CronJob trigger carries no human session, so the executor
+ * loads the record by id, then resolves the OWNER's live identity and runs AS them.
+ * Server-side callers only — never expose through a user-facing route.
+ */
+export function datasetForScheduler(id: string): Dataset | null {
+  ensureSeeded();
+  const rec = ds().store.get(id);
+  if (!rec || rec.archived) return null;
+  return parseDataset(rec.yaml);
+}
+
+/** UNSCOPED list of live datasets with a sync configured — the fallback sweep's
+ *  worklist (`/api/data/sync-due`). Server-side callers only. */
+export function datasetsWithSync(): Dataset[] {
+  ensureSeeded();
+  const out: Dataset[] = [];
+  for (const rec of ds().store.values()) {
+    if (rec.archived) continue;
+    const d = parseDataset(rec.yaml);
+    if (d.sync) out.push(d);
+  }
+  return out;
+}
+
 /** A dataset the caller may JOIN into a Gold build (stage-4 reuse). */
 export type JoinableDataset = { id: string; name: string; domain: string; tier: Tier; fqn: string; columns: string[] };
 
@@ -804,6 +833,41 @@ export function setMonitor(
   else next[kind] = false;
   d.monitors = Object.keys(next).length > 0 ? next : undefined;
   persist(rec, d, { author: user.id, summary: `${enabled ? 'enable' : 'disable'} ${kind} monitor` });
+  return d;
+}
+
+/**
+ * Configure (or clear, with `null`) a dataset's SCHEDULED INCREMENTAL SYNC. The strict
+ * validation gate: the tolerant schema parse never rejects, so every invariant an
+ * executable sync needs is enforced HERE — valid cron, a cursor for incremental modes,
+ * merge keys for merge mode. Edit scope is the same owner/domain_admin/admin gate every
+ * structural edit uses ({@link editOf}). CronJob reconciliation is the caller's job
+ * (`sync-cron.ts`) — this only persists the definition.
+ */
+export function setDatasetSync(id: string, user: Principal, sync: DatasetSync | null): Dataset {
+  const rec = get(id);
+  const d = editOf(rec, user);
+  if (sync) {
+    if (!sync.connectionId) fail('sync: connectionId required', 400);
+    if (!sync.source?.schema || !sync.source?.table) fail('sync: source schema + table required', 400);
+    if (!DATASET_SYNC_MODES.includes(sync.mode)) fail(`sync: invalid mode '${String(sync.mode)}'`, 400);
+    if (!isValidCron(sync.schedule?.cron)) {
+      fail('sync: invalid cron expression — expected 5 fields (e.g. "0 6 * * *")', 400);
+    }
+    if (sync.mode !== 'full-refresh') {
+      if (!sync.cursor?.column) fail(`sync: ${sync.mode} mode requires a cursor column`, 400);
+      if (sync.cursor.kind !== 'timestamp' && sync.cursor.kind !== 'number') {
+        fail(`sync: cursor kind '${sync.cursor.kind}' is not implemented yet (timestamp|number)`, 400);
+      }
+    }
+    if (sync.mode === 'merge' && (!sync.mergeKeys || sync.mergeKeys.length === 0)) {
+      fail('sync: merge mode requires at least one merge key', 400);
+    }
+    d.sync = sync;
+  } else {
+    delete d.sync;
+  }
+  persist(rec, d, { author: user.id, summary: sync ? 'configure sync' : 'remove sync' });
   return d;
 }
 

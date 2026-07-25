@@ -4,6 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import SyncPanel from './SyncPanel';
 
 /**
  * Warehouse browse + import — the reusable "complexity hidden" pieces that turn a
@@ -225,7 +226,7 @@ export default function WarehouseImportPanel({
   const [domain, setDomain] = useState(conn?.domain ?? domains[0] ?? '');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
-  const [done, setDone] = useState<{ target: string; rows: number | null } | null>(null);
+  const [done, setDone] = useState<{ target: string; rows: number | null; datasetId?: string; source?: BrowseSelection } | null>(null);
 
   // Default the target name to the source table (a user can override it).
   useEffect(() => { if (sel?.table && !targetName) setTargetName(sel.table); }, [sel, targetName]);
@@ -246,8 +247,9 @@ export default function WarehouseImportPanel({
       const r = data as unknown as ImportResult & { datasetId?: string };
       if (ok && r.ok !== false) {
         const rows = typeof r.rowsAffected === 'number' ? r.rowsAffected : (typeof (data as { rowCount?: number }).rowCount === 'number' ? (data as { rowCount?: number }).rowCount! : null);
-        setDone({ target: r.target ?? `iceberg.${domain}.${targetName.trim()}`, rows });
-        onImported(r.datasetId ?? (data as { datasetId?: string }).datasetId);
+        const datasetId = r.datasetId ?? (data as { datasetId?: string }).datasetId;
+        setDone({ target: r.target ?? `iceberg.${domain}.${targetName.trim()}`, rows, datasetId, source: sel });
+        onImported(datasetId);
       } else {
         setMsg(`✗ ${r.error ?? 'Import failed'}`);
       }
@@ -287,6 +289,14 @@ export default function WarehouseImportPanel({
               Import another
             </button>
           </div>
+          {/* Keep this in sync — first-time schedule setup (we know the source we just copied). */}
+          {done.datasetId && conn && done.source ? (
+            <SyncPanel
+              datasetId={done.datasetId}
+              canEdit
+              setupSource={{ connectionId: conn.id, schema: done.source.schema, table: done.source.table }}
+            />
+          ) : null}
         </div>
       ) : (
         <>

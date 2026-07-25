@@ -5,6 +5,7 @@ import yaml from 'js-yaml';
 import { roleAtLeast } from '../core/session.ts';
 import type { Role } from '../core/session.ts';
 import { normaliseFolderPath } from '../core/folders.ts';
+import { isValidCron } from '../agents/cron-util.ts';
 
 /**
  * `dataset.yaml` — the SINGLE source of truth for one logical dataset (Data tab).
@@ -173,6 +174,37 @@ export type DataCheck = {
   max?: number;
 };
 
+/** Sync mode / cursor-kind literals — kept in LOCKSTEP with `sync-sql.ts` (this base
+ *  module stays import-light so client bundles never drag the warehouse registry in).
+ *  The reserved cursor kinds ('delta-version'|'bq-partition'|'kafka-offsets') parse but
+ *  are not executable yet (v1 implements timestamp/number). */
+export type DatasetSyncMode = 'full-refresh' | 'append' | 'merge';
+export const DATASET_SYNC_MODES: DatasetSyncMode[] = ['full-refresh', 'append', 'merge'];
+export type DatasetSyncCursorKind = 'timestamp' | 'number' | 'delta-version' | 'bq-partition' | 'kafka-offsets';
+const SYNC_CURSOR_KINDS: DatasetSyncCursorKind[] = ['timestamp', 'number', 'delta-version', 'bq-partition', 'kafka-offsets'];
+
+/** SCHEDULED INCREMENTAL SYNC config for a warehouse-imported dataset. ABSENT on every
+ *  dataset without a sync (byte-stable — exactly like `monitors?`). The WATERMARK is
+ *  deliberately NOT stored here: it lives in the durable sync-runs time-series
+ *  (`sync-runs.ts`, cursorAfter of the latest ok run) so a config edit never clobbers
+ *  sync progress and the dataset.yaml stays a pure definition. */
+export type DatasetSync = {
+  /** The warehouse connection the source table federates through. */
+  connectionId: string;
+  /** The source table inside that connection's external catalog. */
+  source: { schema: string; table: string };
+  mode: DatasetSyncMode;
+  /** Required for append/merge (the incremental window column). */
+  cursor?: { kind: DatasetSyncCursorKind; column: string };
+  /** Required for merge (the natural-key match columns). */
+  mergeKeys?: string[];
+  /** Late-data lookback for timestamp cursors (minutes; absent ⇒ the executor's
+   *  default of 15). Number cursors always sync with no lookback. */
+  lookbackMinutes?: number;
+  schedule: { cron: string };
+  enabled: boolean;
+};
+
 export type Dataset = {
   version: string;
   id: string;
@@ -218,6 +250,9 @@ export type Dataset = {
    *  a member is stored ONLY when the owner turns it off, so a dataset that never touched
    *  the toggles serializes exactly as before (byte-stable, zero migration). */
   monitors?: { freshness?: boolean; volume?: boolean; schema?: boolean };
+  /** Scheduled incremental sync config. ABSENT on every dataset without a sync
+   *  (byte-stable, zero migration — the `monitors?` pattern). */
+  sync?: DatasetSync;
   /** Cube identity scheme marker (#155). When true, this dataset's cube name / view /
    *  model file are DOMAIN-NAMESPACED (`<domain>__<slug>`), so two domains can each name
    *  a dataset "Sales" without colliding on one shared cube/view/model file. ABSENT ⇒
@@ -457,6 +492,45 @@ export function parseGoldSpec(raw: unknown): GoldSpec | undefined {
   return { joins, dimensions, measures };
 }
 
+/** Re-hydrate the sync block. Tolerant like `parseGoldSpec`: a record missing its
+ *  essentials (connection, source table, valid mode, valid cron) parses to undefined
+ *  rather than bricking the dataset — the setter is the strict gate. */
+export function parseSyncBlock(raw: unknown): DatasetSync | undefined {
+  if (!isRecord(raw)) return undefined;
+  const src = isRecord(raw.source) ? raw.source : {};
+  const sched = isRecord(raw.schedule) ? raw.schedule : {};
+  const mode = raw.mode as DatasetSyncMode;
+  if (
+    typeof raw.connectionId !== 'string' || !raw.connectionId ||
+    typeof src.schema !== 'string' || !src.schema ||
+    typeof src.table !== 'string' || !src.table ||
+    !DATASET_SYNC_MODES.includes(mode) ||
+    !isValidCron(typeof sched.cron === 'string' ? sched.cron : undefined)
+  ) {
+    return undefined;
+  }
+  const out: DatasetSync = {
+    connectionId: raw.connectionId,
+    source: { schema: src.schema, table: src.table },
+    mode,
+    schedule: { cron: String(sched.cron) },
+    enabled: raw.enabled === true,
+  };
+  const cur = raw.cursor;
+  if (isRecord(cur) && typeof cur.column === 'string' && cur.column &&
+      (SYNC_CURSOR_KINDS as string[]).includes(String(cur.kind))) {
+    out.cursor = { kind: cur.kind as DatasetSyncCursorKind, column: cur.column };
+  }
+  if (Array.isArray(raw.mergeKeys)) {
+    const keys = raw.mergeKeys.map((k) => String(k)).filter(Boolean);
+    if (keys.length > 0) out.mergeKeys = keys;
+  }
+  if (typeof raw.lookbackMinutes === 'number' && Number.isInteger(raw.lookbackMinutes) && raw.lookbackMinutes >= 0) {
+    out.lookbackMinutes = raw.lookbackMinutes;
+  }
+  return out;
+}
+
 function parseCheck(raw: unknown, i: number): DataCheck {
   if (!isRecord(raw)) throw new DatasetError(`dataset.yaml: checks[${i}] must be a mapping`);
   const base: DataCheck = {
@@ -521,6 +595,7 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
     }
     if (Object.keys(m).length > 0) monitors = m;
   }
+  const sync = parseSyncBlock(doc.sync);
   // The FROZEN physical slug: only stored once a rename has DECOUPLED it from the
   // name. Absent ⇒ still derivable from the name (`physicalSlug` falls back to
   // `slug(name)`), so every pre-rename record parses with no slug — byte-stable.
@@ -553,6 +628,7 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
     ...(goldSpec ? { goldSpec } : {}),
     ...(checks ? { checks } : {}),
     ...(monitors ? { monitors } : {}),
+    ...(sync ? { sync } : {}),
     ...(cubeNamespaced ? { cubeNamespaced } : {}),
     ...(gitBacked ? { gitBacked } : {}),
   };
@@ -605,6 +681,20 @@ export function serializeDataset(d: Dataset): string {
       if (d.monitors[k] === false) m[k] = false;
     }
     if (Object.keys(m).length > 0) doc.monitors = m;
+  }
+  // Omit-when-absent (byte-stable): only a dataset with a configured sync writes the
+  // block; optional members are omitted so the yaml stays minimal + stable.
+  if (d.sync) {
+    doc.sync = {
+      connectionId: d.sync.connectionId,
+      source: { schema: d.sync.source.schema, table: d.sync.source.table },
+      mode: d.sync.mode,
+      ...(d.sync.cursor ? { cursor: { kind: d.sync.cursor.kind, column: d.sync.cursor.column } } : {}),
+      ...(d.sync.mergeKeys && d.sync.mergeKeys.length > 0 ? { mergeKeys: d.sync.mergeKeys } : {}),
+      ...(d.sync.lookbackMinutes !== undefined ? { lookbackMinutes: d.sync.lookbackMinutes } : {}),
+      schedule: { cron: d.sync.schedule.cron },
+      enabled: d.sync.enabled,
+    };
   }
   // Omit-when-false (byte-stable): a legacy (un-namespaced) dataset serializes exactly
   // as before #155, so no old record churns in the durable mirror.

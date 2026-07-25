@@ -6,6 +6,7 @@ import type { CurrentUser } from '@/lib/core/auth';
 import { agentHealthRows, ensureHydrated as ensureAgentsHydrated, type AgentHealthRow } from '@/lib/agents/store';
 import { listDatasets, ensureHydrated } from '@/lib/data/store';
 import { latestRun, ensureHydrated as ensureDqHydrated } from '@/lib/data/dq-results';
+import { latestSyncRun, ensureSyncRunsHydrated } from '@/lib/data/sync-runs';
 import { type Health, combine, pipelineHealth, dqHealth, ageInDays } from './artifact-health-core';
 import { agentTelemetryBatch } from './adapters/agent-telemetry';
 import { rollupAgentTelemetry, summarizeDq, type AgentTelemetry } from './telemetry-core';
@@ -51,6 +52,10 @@ export type DataHealthRow = {
   dqViolations: number;
   /** True once a DQ run has ever been recorded (else the tile shows neutral). */
   dqHasRun: boolean;
+  /** Last scheduled-sync run time (ISO), or null when the dataset has never synced. */
+  lastSync: string | null;
+  /** Last sync run outcome, or null when never synced. */
+  syncStatus: 'ok' | 'error' | 'skipped' | null;
 };
 
 export type AgentScopeGroups = { mine: AgentTile[]; domain: AgentTile[]; marketplace: AgentTile[] };
@@ -79,6 +84,7 @@ export async function artifactMonitoring(user: CurrentUser, nowMs: number): Prom
   // attach the REAL DQ violation count from the last persisted DQ run per dataset.
   await ensureHydrated();
   await ensureDqHydrated().catch(() => {});
+  await ensureSyncRunsHydrated().catch(() => {}); // fail-soft: no sync signal ⇒ nulls
   const groups = listDatasets(principal);
   const toRow = (scope: DataHealthRow['scope']) => (d: (typeof groups.mine)[number]): DataHealthRow => {
     const anyBuilt = d.dots.bronze || d.dots.silver || d.dots.gold;
@@ -87,11 +93,13 @@ export async function artifactMonitoring(user: CurrentUser, nowMs: number): Prom
     const last = latestRun(d.id);
     const dqSummary = summarizeDq(last?.results ?? null);
     const dq = dqHealth(d.quality);
+    const lastSyncRun = latestSyncRun(d.id);
     return {
       id: d.id, name: d.name, scope,
       pipeline, dq, health: combine(pipeline, dq),
       quality: d.quality, freshness: d.freshness, ageDays, gold: d.dots.gold,
       dqRules: dqSummary.rules, dqViolations: dqSummary.violated, dqHasRun: dqSummary.hasRun,
+      lastSync: lastSyncRun?.startedAt ?? null, syncStatus: lastSyncRun?.status ?? null,
     };
   };
   const data: DataScopeGroups = {

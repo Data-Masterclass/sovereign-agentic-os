@@ -1980,7 +1980,10 @@ queryTool:
   enabled: true
   image:
     repository: sovereign-os/query-tool     # built locally, loaded into kind
-    tag: "0.4.2"                             # 0.4.2 = write-floor role set includes
+    tag: "0.5.0"                             # 0.5.0 = sync write shapes (INSERT-SELECT,
+                                             #         MERGE, DELETE-by-batch-id,
+                                             #         expire_snapshots, optimize).
+                                             # 0.4.2 = write-floor role set includes
                                              #         domain_admin (was {builder,admin};
                                              #         domain_admin ranks ABOVE builder so
                                              #         must clear the domain-schema write floor).
@@ -2019,7 +2022,7 @@ dataRunner:
   enabled: true
   image:
     repository: sovereign-os/data-runner     # built locally, loaded into kind
-    tag: "0.1.0"
+    tag: "0.2.0"   # 0.2.0 = /ingest mode append|replace (scheduled sync slices)
   polaris:
     # Same Polaris REST catalog + warehouse Trino reads/writes.
     uri: "http://polaris:8181/api/catalog"
@@ -2505,6 +2508,35 @@ data:
       principalSecret: dq-run-principal
       # os-ui service DNS (in-cluster). Override only for non-default topologies.
       osUiUrl: "http://os-ui:3000"
+
+# -----------------------------------------------------------------------------
+# Data sync — the SCHEDULED INCREMENTAL SYNC fallback sweep (Data tab). The
+# PRIMARY trigger is the per-dataset CronJob os-ui provisions on save
+# (data-sync-<datasetId> -> POST /api/data/datasets/<id>/sync with the shared
+# runtime bearer). This sweep (charts/.../metrics/data-sync-cronjob.yaml) is the
+# FALLBACK for clusters where os-ui may not manage CronJobs: it calls
+# POST /api/data/sync-due on a cadence, and every enabled sync whose cron fired
+# within the window runs through the SAME governed executor (lease/skip/
+# quarantine semantics identical — double-triggering just records a skip).
+# DEFAULT-OFF: nothing renders until an operator opts in. Auth is the SAME
+# shared runtime bearer the agent-schedule CronJobs present (Secret-mounted,
+# never inlined) — no extra principal Secret needed. NIL-SAFE under
+# --reuse-values: every template lookup is default-guarded, so an upgrade that
+# doesn't carry this block renders nothing and errors nowhere.
+# -----------------------------------------------------------------------------
+dataSync:
+  sweep:
+    enabled: false               # operator turns it on
+    schedule: "*/15 * * * *"     # every 15 minutes
+    # The due-window the sweep passes to the route; keep >= the schedule cadence
+    # so no cron slot can fall between two sweeps.
+    windowMinutes: 15
+    # os-ui service DNS (in-cluster). Override only for non-default topologies.
+    osUiUrl: "http://os-ui:3000"
+    # Secret + key holding the shared agent-runtime bearer (the same one the
+    # os-ui Deployment mounts as AGENT_RUNTIME_TOKEN).
+    tokenSecret: os-ui
+    tokenSecretKey: agent-runtime-token
 
 # -----------------------------------------------------------------------------
 # Harbor — production image registry for the Software golden path (per-app
