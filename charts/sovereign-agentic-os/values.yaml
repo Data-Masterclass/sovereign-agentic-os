@@ -553,7 +553,16 @@ langfuse:
     web:
       resources:
         requests: { cpu: 100m, memory: 768Mi }
-        limits: { cpu: "1", memory: 1280Mi }
+        limits: { cpu: "1", memory: 1536Mi }
+      # Node's default old-space cap (~640MB) sat far below the container limit,
+      # so langfuse-web OOM-crashed the V8 heap in a loop (291 restarts) while the
+      # pod itself never hit its cgroup limit. Size the heap to the container.
+      # NOTE: the subchart template reads web.POD.additionalEnv (concat with
+      # langfuse.additionalEnv) — web.additionalEnv is silently ignored.
+      pod:
+        additionalEnv:
+          - name: NODE_OPTIONS
+            value: "--max-old-space-size=1152"
     worker:
       resources:
         requests: { cpu: 100m, memory: 768Mi }

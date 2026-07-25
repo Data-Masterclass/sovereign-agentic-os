@@ -492,21 +492,7 @@ button.mon-item:hover {
   color: var(--teal);
 }
 
-/* ---- Diagnosis window (wide overlay) ---- */
-.mon-detail {
-  width: min(1080px, 96vw);
-  height: 100%;
-  background: var(--bg);
-  border-left: 1px solid var(--border-strong);
-  display: flex;
-  flex-direction: column;
-  box-shadow: -20px 0 60px -30px rgba(0, 0, 0, 0.8);
-  animation: drawer-in 0.18s ease-out;
-}
-.mon-detail-body {
-  padding: 22px 30px 48px;
-  overflow-y: auto;
-}
+/* ---- Diagnosis view (main window; the tile grids swap to it) ---- */
 .mon-detail-title {
   display: flex;
   align-items: center;
@@ -631,6 +617,53 @@ a.mon-tr:hover {
 }
 .mon-tr-ver {
   grid-template-columns: 60px 100px 1fr 2fr;
+}
+.mon-tr-run {
+  grid-template-columns: 90px 1.5fr 90px 70px 70px 70px 1fr;
+}
+.mon-tr-node {
+  grid-template-columns: 1fr 1.8fr 1.2fr 1fr;
+}
+.mon-tr-step {
+  grid-template-columns: 1.2fr 90px 2fr;
+}
+.mon-tr-trace {
+  grid-template-columns: 90px 1.2fr 1fr 150px 2fr;
+}
+
+/* ---- Last-run report: per-node drill-down cards ---- */
+.mon-nodes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mon-node {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.mon-node summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.mon-node summary::-webkit-details-marker {
+  display: none;
+}
+.mon-node summary .mono {
+  color: var(--text);
+  font-weight: 600;
+}
+.mon-node[open] summary {
+  border-bottom: 1px solid var(--border);
+}
+.mon-node-body {
+  padding: 10px 12px 12px;
 }
 .mon-tr .ellip {
   overflow: hidden;

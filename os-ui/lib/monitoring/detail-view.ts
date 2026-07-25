@@ -4,11 +4,26 @@
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
 import { config } from '@/lib/core/config';
-import { getSystem } from '@/lib/agents/store';
-import { getDataset, listDatasetVersions } from '@/lib/data/store';
+import { getSystem, type Principal } from '@/lib/agents/store';
+import { getDataset, listDatasetVersions, listDatasets, ensureHydrated as ensureDataHydrated } from '@/lib/data/store';
+import { listWorkflows, ensureHydrated as ensureKnowledgeHydrated } from '@/lib/knowledge/store';
+import { listPersonalKnowledge } from '@/lib/knowledge/personal-store';
+import { listFiles, ensureHydrated as ensureFilesHydrated } from '@/lib/files/store';
+import { listMetrics } from '@/lib/metrics/store';
+import { listConnectionsForUser } from '@/lib/connections';
+import { recentTraces } from '@/lib/infra/agent-governed';
 import { lineageFor } from '@/lib/data/lineage';
 import { latestRun, healthTrend, ensureHydrated as ensureDqHydrated } from '@/lib/data/dq-results';
 import { agentTelemetryFor, type AgentRunRecord } from './adapters/agent-telemetry';
+import {
+  buildProfile,
+  lastRunReport,
+  toolTraceRows,
+  type GrantKind,
+  type SystemProfile,
+  type LastRunReport,
+  type ToolTraceRow,
+} from './agent-diagnosis-core';
 import {
   rollupAgentTelemetry,
   rollupDatasetTelemetry,
@@ -46,12 +61,51 @@ export type AgentDetail = {
   runs: AgentRunRecord[];
   /** Recent error/warning log lines derived from the run history. */
   issues: { at: number; name: string; health: 'warn' | 'error'; detail: string }[];
+  /**
+   * The team's shape — nodes/roles/models, trigger mode, runtime/safety and
+   * grants (names resolved through the VIEWER's own governed lists). Null only
+   * when `system.yaml` could not be parsed.
+   */
+  profile: SystemProfile | null;
+  /** The OS run store's persisted last-run report (per-node drill-down). */
+  lastRun: LastRunReport | null;
+  /** Governed tool calls from the in-process ring — exists even with Langfuse down. */
+  toolTrace: ToolTraceRow[];
   /** Honest telemetry provenance. */
   source: string;
   langfuseReachable: boolean;
   /** Deep-links for the footer. */
   links: { agent: string; langfuse: string };
 };
+
+/**
+ * Build a viewer-scoped grant-id → name lookup from the SAME governed lists the
+ * tabs use (personal + own-domain shared + marketplace, DLS-filtered). Every
+ * source is best-effort: a store that fails to hydrate simply contributes no
+ * names and the profile falls back to raw ids — never a widened read.
+ */
+async function grantNameLookup(
+  principal: Principal,
+  user: CurrentUser,
+): Promise<(kind: GrantKind, id: string) => string | undefined> {
+  const maps: Record<GrantKind, Map<string, string>> = {
+    data: new Map(), knowledge: new Map(), files: new Map(), metrics: new Map(), connections: new Map(),
+  };
+  const put = (kind: GrantKind, items: { id: string; name: string }[]) => {
+    for (const it of items) maps[kind].set(it.id, it.name);
+  };
+  const flat = <T>(g: { mine: T[]; domain: T[]; marketplace: T[] }): T[] => [...g.mine, ...g.domain, ...g.marketplace];
+  try { await ensureDataHydrated(); put('data', flat(listDatasets(principal))); } catch { /* fail-soft */ }
+  try {
+    await ensureKnowledgeHydrated();
+    put('knowledge', flat(listWorkflows(principal)).map((w) => ({ id: w.id, name: w.title })));
+  } catch { /* fail-soft */ }
+  try { put('knowledge', flat(listPersonalKnowledge(principal)).map((k) => ({ id: k.id, name: k.title }))); } catch { /* fail-soft */ }
+  try { await ensureFilesHydrated(); put('files', flat(listFiles(principal))); } catch { /* fail-soft */ }
+  try { put('metrics', flat(listMetrics(principal))); } catch { /* fail-soft */ }
+  try { put('connections', (await listConnectionsForUser(user)).map((c) => ({ id: c.id, name: c.name }))); } catch { /* fail-soft */ }
+  return (kind, id) => maps[kind].get(id);
+}
 
 export async function agentDetail(user: CurrentUser, systemId: string, nowMs: number): Promise<AgentDetail> {
   const principal = { id: user.id, domains: user.domains, role: user.role };
@@ -61,6 +115,27 @@ export async function agentDetail(user: CurrentUser, systemId: string, nowMs: nu
     agentCount = view.system.agents.length;
   } catch {
     agentCount = 0;
+  }
+
+  // System profile — the team's shape from its own parsed yaml, grant names
+  // resolved through the viewer's OWN governed lists (unresolvable → raw id).
+  // Null only when the yaml cannot be parsed; the UI says so calmly.
+  let profile: SystemProfile | null = null;
+  try {
+    const nameOf = await grantNameLookup(principal, user);
+    profile = buildProfile(view.system, { disabledAgents: view.disabledAgents, schedule: view.schedule }, nameOf);
+  } catch {
+    profile = null;
+  }
+
+  // The OS run store's persisted last-run report + the in-process governed ring —
+  // both exist without Langfuse, so the page stays substantive when it lags.
+  const lastRun = lastRunReport(view.lastRun ?? null);
+  let toolTrace: ToolTraceRow[] = [];
+  try {
+    toolTrace = toolTraceRows(recentTraces(200), systemId);
+  } catch {
+    toolTrace = [];
   }
 
   const tele = await agentTelemetryFor(systemId, nowMs);
@@ -89,6 +164,9 @@ export async function agentDetail(user: CurrentUser, systemId: string, nowMs: nu
     tokenSeries,
     runs: tele.runs.slice(0, 100),
     issues,
+    profile,
+    lastRun,
+    toolTrace,
     source: tele.source,
     langfuseReachable: tele.langfuseReachable,
     links: {

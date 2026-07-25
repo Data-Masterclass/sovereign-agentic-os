@@ -403,8 +403,10 @@ honestly rather than inventing an answer when retrieval comes back empty.
   truly measured**, captured from the model gateway per run; **Cost** appears only when model
   pricing is configured via `MODEL_PRICES_JSON`, otherwise an honest "—", never a fake 0) —
   and **Data Monitoring** — every dataset with freshness, pipeline health and its DQ status
-  (a red *"N DQ rules violated"* is the cue). Open any tile for the full diagnosis window:
-  run history & traces, cost/token trends, and a **Data-Quality dashboard**. It also
+  (a red *"N DQ rules violated"* is the cue). Open any tile for the full diagnosis view —
+  it takes over the main window like every other tab's detail: run history with per-node
+  drill-down, the system profile (agents, models, grants), governed tool-call traces,
+  cost/token trends, and for datasets a **Data-Quality dashboard**. It also
   rolls up **data quality** across your datasets: a risk-ranked board (riskiest first) built from
   the same quality-run history, a domain health average, and an honest count of datasets that have
   **never been checked** — surfaced as a gap, not painted green.

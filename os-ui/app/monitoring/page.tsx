@@ -3,21 +3,29 @@
  */
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
 import { useApi } from '@/lib/useApi';
-import DetailWindow, { type DetailTarget } from '@/components/monitoring/DetailWindow';
+import DetailView, { type DetailTarget } from '@/components/monitoring/DetailView';
+import { getUrlParam, patchUrl } from '@/lib/core/url-params';
+import { useTabNavReset } from '@/lib/core/tab-nav';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 import '../monitoring.css';
 
 /**
- * Monitoring — the artifact-centric read plane, now with real telemetry on every
- * tile and a big diagnosis window on open. Two sections, each My · Domain · Company:
+ * Monitoring — the artifact-centric read plane, with real telemetry on every
+ * tile and a full diagnosis view on open. Two sections, each My · Domain · Company:
  *   • Agent Monitoring — each agent system with its last-7-day Cost · Tokens · Runs ·
  *     Last run · ⚠warnings/✗errors (Langfuse + the in-process governed ring).
  *   • Data Monitoring  — each dataset with freshness, DQ rules passing/violated, and
  *     pipeline + quality health (the real persisted DQ run).
- * Read-only, scoped to the caller's own governed lists. Open a tile → full diagnostics.
+ * Read-only, scoped to the caller's own governed lists.
+ *
+ * Tab-consistent detail (same pattern as Data's tiles→DataBuilder and Agents'
+ * list→SystemView): clicking a tile swaps the grids for the diagnosis view IN THE
+ * MAIN WINDOW, "← Monitoring" returns. The open artifact is persisted in the URL
+ * (`?agent=<id>` / `?dataset=<id>`) so a reload restores the view and browser
+ * Back closes it.
  */
 
 type Health = 'green' | 'amber' | 'red' | 'grey';
@@ -143,6 +151,34 @@ export default function MonitoringPage() {
   const [dataScope, setDataScope] = useState<ScopeKey>('mine');
   const [target, setTarget] = useState<DetailTarget | null>(null);
 
+  // Deep-link + back/forward: the open artifact lives in the URL (?agent= / ?dataset=),
+  // mirroring the Agents tab's ?system= convention.
+  useEffect(() => {
+    const sync = () => {
+      const agent = getUrlParam('agent');
+      const dataset = getUrlParam('dataset');
+      setTarget(agent ? { kind: 'agent', id: agent } : dataset ? { kind: 'dataset', id: dataset } : null);
+    };
+    sync();
+    window.addEventListener('popstate', sync);
+    return () => window.removeEventListener('popstate', sync);
+  }, []);
+
+  const open = useCallback((t: DetailTarget) => {
+    setTarget(t);
+    patchUrl(
+      { agent: t.kind === 'agent' ? t.id : null, dataset: t.kind === 'dataset' ? t.id : null },
+      { push: true }, // browser Back closes the detail view
+    );
+  }, []);
+  const back = useCallback(() => {
+    setTarget(null);
+    patchUrl({ agent: null, dataset: null });
+  }, []);
+  // Clicking the Monitoring sidebar link while a detail view is open returns to
+  // the tiles (same-route client nav doesn't re-mount this page).
+  useTabNavReset(back);
+
   const agentCounts = useMemo(() => ({
     mine: data?.agents.mine.length ?? 0, domain: data?.agents.domain.length ?? 0, marketplace: data?.agents.marketplace.length ?? 0,
   }), [data]);
@@ -152,6 +188,18 @@ export default function MonitoringPage() {
 
   const agentRows = data?.agents[agentScope] ?? [];
   const dataRows = data?.data[dataScope] ?? [];
+
+  // Detail open → the diagnosis view replaces the tile grids in the main window.
+  if (target) {
+    return (
+      <>
+        <PageHeader title="Monitoring" crumb="agents · data — the read plane" tutorial="monitoring" />
+        <div className="content">
+          <DetailView target={target} onBack={back} />
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -189,7 +237,7 @@ export default function MonitoringPage() {
             ) : (
               <div className="mon-tile-grid">
                 {agentRows.map((a) => (
-                  <AgentTileCard key={a.id} a={a} onOpen={() => setTarget({ kind: 'agent', id: a.id, name: a.name })} />
+                  <AgentTileCard key={a.id} a={a} onOpen={() => open({ kind: 'agent', id: a.id, name: a.name })} />
                 ))}
               </div>
             )}
@@ -206,7 +254,7 @@ export default function MonitoringPage() {
             ) : (
               <div className="mon-tile-grid">
                 {dataRows.map((d) => (
-                  <DataTileCard key={d.id} d={d} onOpen={() => setTarget({ kind: 'dataset', id: d.id, name: d.name })} />
+                  <DataTileCard key={d.id} d={d} onOpen={() => open({ kind: 'dataset', id: d.id, name: d.name })} />
                 ))}
               </div>
             )}
@@ -218,8 +266,6 @@ export default function MonitoringPage() {
           </>
         )}
       </div>
-
-      {target && <DetailWindow target={target} onClose={() => setTarget(null)} />}
     </>
   );
 }

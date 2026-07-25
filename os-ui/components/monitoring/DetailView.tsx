@@ -6,13 +6,35 @@
 import { useEffect, useState } from 'react';
 
 /**
- * The big DIAGNOSIS WINDOW — a wide overlay opened from an agent or dataset tile
- * with ALL the diagnostics in one scannable, sectioned view. Reuses the OS drawer
- * backdrop; the `.mon-detail` panel widens it to a near-full-screen inspector.
- * Read-only. Fetches its payload on open; 403/404 surface calmly.
+ * The DIAGNOSIS view — opened from an agent or dataset tile IN THE MAIN WINDOW
+ * (tab-consistent with Data's DataBuilder and Agents' SystemView: the tile grid
+ * swaps to this full view; "← Monitoring" returns). Read-only. Fetches its
+ * payload on mount; 403/404 surface calmly.
+ *
+ * Agent sections: 7-day telemetry (honest source line) · system profile (nodes,
+ * trigger, grants) · last-run report (OS run store, per-node drill-down) · run
+ * history (Langfuse + in-process ring, merged) · governed tool calls (ring —
+ * exists even with Langfuse down) · errors & warnings. Dataset sections: the DQ
+ * dashboard, medallion build, versions and lineage, unchanged.
  */
 
 type Health7 = 'ok' | 'warn' | 'error';
+
+type GrantGroup = { kind: string; count: number; rows: { id: string; name: string; capability: string }[] };
+type SystemProfile = {
+  runtime: string; safetyPreset: string; trigger: string; description?: string;
+  nodes: { id: string; role: string; model: string; supervisor: boolean; entry: boolean; disabled: boolean }[];
+  tools: string[];
+  grants: GrantGroup[];
+};
+type LastRunReport = {
+  at: number; ok: boolean; running: boolean; trigger: string; path: string[]; held: number; output?: string;
+  nodes: {
+    node: string; model?: string; tier?: string; tierReason?: string; status: string; error?: string;
+    input?: string; finalText?: string; steps: { tool: string; isError: boolean; summary?: string }[];
+  }[];
+};
+type ToolTraceRow = { at: number; tool: string; node?: string; decision: string; landed: boolean; detail?: string };
 
 type AgentDetail = {
   id: string; name: string; domain: string; agentCount: number;
@@ -22,6 +44,9 @@ type AgentDetail = {
   tokenSeries: { day: number; value: number }[];
   runs: { id: string; at: number; name: string; model?: string; decision?: string; health: Health7; costUsd?: number; tokens?: number; ms?: number; source: string }[];
   issues: { at: number; name: string; health: 'warn' | 'error'; detail: string }[];
+  profile: SystemProfile | null;
+  lastRun: LastRunReport | null;
+  toolTrace: ToolTraceRow[];
   source: string; langfuseReachable: boolean;
   links: { agent: string; langfuse: string };
 };
@@ -43,7 +68,7 @@ type DatasetDetail = {
   links: { data: string };
 };
 
-export type DetailTarget = { kind: 'agent' | 'dataset'; id: string; name: string };
+export type DetailTarget = { kind: 'agent' | 'dataset'; id: string; name?: string };
 
 function ago(at: number | string | null): string {
   if (at == null) return '—';
@@ -58,7 +83,9 @@ function ago(at: number | string | null): string {
 }
 const money = (n: number) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : '$0');
 const compact = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
+const dur = (ms?: number) => (typeof ms !== 'number' ? '—' : ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`);
 const H7_DOT: Record<Health7, string> = { ok: 'h-green', warn: 'h-amber', error: 'h-red' };
+const DECISION_DOT: Record<string, string> = { allow: 'h-green', deny: 'h-red', requires_approval: 'h-amber' };
 
 /** A tiny SVG sparkline (no library) for a per-day series. */
 function Spark({ data, color }: { data: { day: number; value: number }[]; color: string }) {
@@ -85,7 +112,7 @@ function Stat({ label, value, tone }: { label: string; value: React.ReactNode; t
   );
 }
 
-export default function DetailWindow({ target, onClose }: { target: DetailTarget; onClose: () => void }) {
+export default function DetailView({ target, onBack }: { target: DetailTarget; onBack: () => void }) {
   const [agent, setAgent] = useState<AgentDetail | null>(null);
   const [dataset, setDataset] = useState<DatasetDetail | null>(null);
   const [err, setErr] = useState('');
@@ -111,27 +138,154 @@ export default function DetailWindow({ target, onClose }: { target: DetailTarget
     return () => { live = false; };
   }, [target.id, target.kind]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   return (
-    <div className="drawer-backdrop" onClick={onClose}>
-      <section className="mon-detail" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-        <div className="drawer-head">
-          <h2>{target.kind === 'agent' ? 'Agent diagnostics' : 'Dataset diagnostics'}</h2>
-          <button className="drawer-x" onClick={onClose} aria-label="Close">×</button>
+    <>
+      <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+        <button className="btn ghost" onClick={onBack}>← Monitoring</button>
+        <span className="crumb">{target.kind === 'agent' ? 'Agent diagnostics' : 'Dataset diagnostics'}</span>
+      </div>
+      {loading && <div style={{ marginTop: 8 }}><span className="spin" /> <span className="muted">Loading…</span></div>}
+      {err && <div className="error" style={{ marginTop: 8 }}>{err}</div>}
+      {agent && <AgentBody a={agent} />}
+      {dataset && <DatasetBody d={dataset} />}
+    </>
+  );
+}
+
+// ------------------------------------------------------------------- agent --
+
+function ProfileSection({ p }: { p: SystemProfile | null }) {
+  if (!p) {
+    return (
+      <>
+        <div className="mon-sub">System profile</div>
+        <p className="hint" style={{ marginTop: 0 }}>Profile unavailable — this system&apos;s definition could not be parsed.</p>
+      </>
+    );
+  }
+  const granted = p.grants.filter((g) => g.count > 0);
+  return (
+    <>
+      <div className="mon-sub">System profile</div>
+      {p.description && <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>{p.description}</p>}
+      <div className="mon-dq-row">
+        <span className="badge muted">runtime · {p.runtime}</span>
+        <span className="badge muted">safety · {p.safetyPreset}</span>
+        <span className="badge">{p.trigger}</span>
+        {p.tools.length > 0 && <span className="badge muted">{p.tools.length} tool{p.tools.length === 1 ? '' : 's'} · {p.tools.join(', ')}</span>}
+      </div>
+      <div className="mon-table">
+        <div className="mon-tr mon-th mon-tr-node"><span>Agent</span><span>Role</span><span>Model</span><span /></div>
+        {p.nodes.map((n) => (
+          <div key={n.id} className="mon-tr mon-tr-node">
+            <span className="mono ellip">{n.id}</span>
+            <span className="ellip">{n.role}</span>
+            <span className="muted ellip">{n.model}</span>
+            <span>
+              {n.entry && <span className="badge muted">entry</span>}{' '}
+              {n.supervisor && <span className="badge muted">supervisor</span>}{' '}
+              {n.disabled && <span className="badge err">off</span>}
+            </span>
+          </div>
+        ))}
+      </div>
+      {granted.length === 0 ? (
+        <p className="hint" style={{ marginTop: 8 }}>No data/knowledge/files/connection grants — this team runs on its tools only.</p>
+      ) : (
+        granted.map((g) => (
+          <div key={g.kind} className="mon-dq-row" style={{ marginTop: 8, marginBottom: 0 }}>
+            <span className="badge muted">{g.kind} · {g.count}</span>
+            {g.rows.slice(0, 6).map((r) => (
+              <span key={r.id + r.name} className="badge" title={r.capability}>{r.name}</span>
+            ))}
+            {g.count > 6 && <span className="muted" style={{ fontSize: 12 }}>+{g.count - 6} more</span>}
+          </div>
+        ))
+      )}
+    </>
+  );
+}
+
+function LastRunSection({ r }: { r: LastRunReport | null }) {
+  return (
+    <>
+      <div className="mon-sub">
+        Last run report{r ? <span className="mon-sub-note">OS run store · {ago(r.at)}</span> : null}
+      </div>
+      {!r ? (
+        <p className="hint" style={{ marginTop: 0 }}>No interactive run recorded yet — run this team in the Agents tab.</p>
+      ) : (
+        <>
+          <div className="mon-dq-row">
+            {r.running
+              ? <span className="badge">running…</span>
+              : <span className={`badge ${r.ok ? 'ok' : 'err'}`}>{r.ok ? 'succeeded' : 'failed'}</span>}
+            <span className="badge muted">{r.trigger}</span>
+            {r.path.length > 0 && <span className="badge muted mono">{r.path.join(' → ')}</span>}
+            {r.held > 0 && <span className="badge">⚠ {r.held} held for approval</span>}
+          </div>
+          {r.nodes.length > 0 && (
+            <div className="mon-nodes">
+              {r.nodes.map((n) => (
+                <details key={n.node} className="mon-node">
+                  <summary>
+                    <span className={`mon-dot ${n.status === 'error' ? 'h-red' : n.error ? 'h-amber' : 'h-green'}`} />
+                    <span className="mono">{n.node}</span>
+                    <span className="muted ellip" style={{ flex: 1 }}>
+                      {n.model ?? ''}{n.tier ? ` · ${n.tier}` : ''}
+                    </span>
+                    <span className="muted">{n.steps.length} step{n.steps.length === 1 ? '' : 's'} · {n.status}</span>
+                  </summary>
+                  <div className="mon-node-body">
+                    {n.tierReason && <p className="hint" style={{ marginTop: 0 }}>Model routing: {n.tierReason}</p>}
+                    {n.error && <div className="error" style={{ marginBottom: 8 }}>{n.error}</div>}
+                    {n.input && <div className="mon-logs" style={{ marginBottom: 8 }}>in&nbsp;· {n.input}</div>}
+                    {n.steps.length > 0 && (
+                      <div className="mon-table">
+                        <div className="mon-tr mon-th mon-tr-step"><span>Tool</span><span>Status</span><span>Summary</span></div>
+                        {n.steps.map((s, i) => (
+                          <div key={i} className={`mon-tr mon-tr-step${s.isError ? ' err' : ''}`}>
+                            <span className="mono ellip">{s.tool}</span>
+                            <span><span className={`mon-dot ${s.isError ? 'h-red' : 'h-green'}`} /> {s.isError ? 'error' : 'ok'}</span>
+                            <span className="ellip">{s.summary ?? '—'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {n.finalText && <div className="mon-logs" style={{ marginTop: 8 }}>out · {n.finalText}</div>}
+                  </div>
+                </details>
+              ))}
+            </div>
+          )}
+          {r.output && <div className="mon-logs" style={{ marginTop: 8 }}>{r.output}</div>}
+        </>
+      )}
+    </>
+  );
+}
+
+function ToolTraceSection({ rows }: { rows: ToolTraceRow[] }) {
+  return (
+    <>
+      <div className="mon-sub">Governed tool calls <span className="mon-sub-note">in-process policy trace · independent of Langfuse</span></div>
+      {rows.length === 0 ? (
+        <p className="hint" style={{ marginTop: 0 }}>No governed tool calls recorded in this process yet.</p>
+      ) : (
+        <div className="mon-table">
+          <div className="mon-tr mon-th mon-tr-trace"><span>Time</span><span>Tool</span><span>Agent</span><span>Decision</span><span>Detail</span></div>
+          {rows.map((t, i) => (
+            <div key={i} className={`mon-tr mon-tr-trace${t.decision === 'deny' ? ' err' : ''}`}>
+              <span className="muted">{ago(t.at)}</span>
+              <span className="mono ellip">{t.tool}</span>
+              <span className="mono ellip">{t.node ?? '—'}</span>
+              <span><span className={`mon-dot ${DECISION_DOT[t.decision] ?? 'h-unknown'}`} /> {t.decision}</span>
+              <span className="ellip">{t.detail ?? (t.landed ? '' : 'ring only')}</span>
+            </div>
+          ))}
         </div>
-        <div className="mon-detail-body">
-          {loading && <div style={{ marginTop: 8 }}><span className="spin" /> <span className="muted">Loading…</span></div>}
-          {err && <div className="error" style={{ marginTop: 8 }}>{err}</div>}
-          {agent && <AgentBody a={agent} />}
-          {dataset && <DatasetBody d={dataset} />}
-        </div>
-      </section>
-    </div>
+      )}
+    </>
   );
 }
 
@@ -149,28 +303,54 @@ function AgentBody({ a }: { a: AgentDetail }) {
         <span className="mon-detail-scope">{a.domain}</span>
       </div>
 
-      <div className="mon-sub">Last 7 days</div>
+      <div className="mon-sub">Last 7 days <span className="mon-sub-note">source: {a.source}{a.langfuseReachable ? '' : ' · Langfuse unreachable'}</span></div>
       {noTelemetry ? (
         <p className="hint" style={{ marginTop: 0 }}>
           No telemetry yet{a.langfuseReachable ? '' : ' · Langfuse unreachable — showing in-process runs only'}. Run this agent in the <a href={a.links.agent}>Agents</a> tab.
         </p>
       ) : (
-        <div className="mon-stats">
-          <Stat label="Cost" value={money(t.costUsd)} />
-          <Stat label="Tokens" value={compact(t.tokens)} />
-          <Stat label="Runs" value={t.runs} />
-          <Stat label="Last run" value={ago(t.lastRunAt)} />
-          <Stat label="Warnings" value={t.warnings} tone={t.warnings > 0 ? 'warn' : undefined} />
-          <Stat label="Errors" value={t.errors} tone={t.errors > 0 ? 'error' : undefined} />
+        <>
+          <div className="mon-stats">
+            <Stat label="Cost" value={money(t.costUsd)} />
+            <Stat label="Tokens" value={compact(t.tokens)} />
+            <Stat label="Runs" value={t.runs} />
+            <Stat label="Last run" value={ago(t.lastRunAt)} />
+            <Stat label="Warnings" value={t.warnings} tone={t.warnings > 0 ? 'warn' : undefined} />
+            <Stat label="Errors" value={t.errors} tone={t.errors > 0 ? 'error' : undefined} />
+          </div>
+          <div className="mon-trends">
+            <div className="mon-trend"><div className="mon-trend-l">Cost · 7d</div><Spark data={a.costSeries} color="var(--gold, #c8a24a)" /></div>
+            <div className="mon-trend"><div className="mon-trend-l">Tokens · 7d</div><Spark data={a.tokenSeries} color="var(--teal, #4a9d9c)" /></div>
+          </div>
+        </>
+      )}
+
+      <ProfileSection p={a.profile} />
+      <LastRunSection r={a.lastRun} />
+
+      <div className="mon-sub">Run history <span className="mon-sub-note">Langfuse + in-process ring, merged</span></div>
+      {a.runs.length === 0 ? (
+        <p className="hint" style={{ marginTop: 0 }}>No runs recorded in the window.</p>
+      ) : (
+        <div className="mon-table">
+          <div className="mon-tr mon-th mon-tr-run">
+            <span>Time</span><span>Run</span><span>Status</span><span>Duration</span><span>Cost</span><span>Tokens</span><span>Model</span>
+          </div>
+          {a.runs.map((r) => (
+            <a key={r.id} className="mon-tr mon-tr-run" href={a.links.langfuse} target="_blank" rel="noreferrer" title="Open in Langfuse">
+              <span className="muted">{ago(r.at)}</span>
+              <span className="mono ellip">{r.name}</span>
+              <span><span className={`mon-dot ${H7_DOT[r.health]}`} /> {r.health}</span>
+              <span>{dur(r.ms)}</span>
+              <span>{typeof r.costUsd === 'number' ? money(r.costUsd) : '—'}</span>
+              <span>{typeof r.tokens === 'number' ? compact(r.tokens) : '—'}</span>
+              <span className="muted ellip">{r.model ?? '—'}</span>
+            </a>
+          ))}
         </div>
       )}
 
-      {!noTelemetry && (
-        <div className="mon-trends">
-          <div className="mon-trend"><div className="mon-trend-l">Cost · 7d</div><Spark data={a.costSeries} color="var(--gold, #c8a24a)" /></div>
-          <div className="mon-trend"><div className="mon-trend-l">Tokens · 7d</div><Spark data={a.tokenSeries} color="var(--teal, #4a9d9c)" /></div>
-        </div>
-      )}
+      <ToolTraceSection rows={a.toolTrace} />
 
       {a.issues.length > 0 && (
         <>
@@ -183,35 +363,15 @@ function AgentBody({ a }: { a: AgentDetail }) {
         </>
       )}
 
-      <div className="mon-sub">Run history</div>
-      {a.runs.length === 0 ? (
-        <p className="hint" style={{ marginTop: 0 }}>No runs recorded in the window.</p>
-      ) : (
-        <div className="mon-table">
-          <div className="mon-tr mon-th">
-            <span>Time</span><span>Run</span><span>Status</span><span>Cost</span><span>Tokens</span><span>Model</span>
-          </div>
-          {a.runs.map((r) => (
-            <a key={r.id} className="mon-tr" href={a.links.langfuse} target="_blank" rel="noreferrer" title="Open in Langfuse">
-              <span className="muted">{ago(r.at)}</span>
-              <span className="mono ellip">{r.name}</span>
-              <span><span className={`mon-dot ${H7_DOT[r.health]}`} /> {r.health}</span>
-              <span>{typeof r.costUsd === 'number' ? money(r.costUsd) : '—'}</span>
-              <span>{typeof r.tokens === 'number' ? compact(r.tokens) : '—'}</span>
-              <span className="muted ellip">{r.model ?? '—'}</span>
-            </a>
-          ))}
-        </div>
-      )}
-
       <div className="mon-xlinks">
         <a className="mon-xlink" href={a.links.agent}>→ Open agent in Agents</a>
         <a className="mon-xlink" href={a.links.langfuse} target="_blank" rel="noreferrer">→ Langfuse traces</a>
       </div>
-      <p className="hint" style={{ opacity: 0.6, marginTop: 12 }}>Telemetry source: {a.source}{a.langfuseReachable ? '' : ' (Langfuse unreachable)'}.</p>
     </>
   );
 }
+
+// ----------------------------------------------------------------- dataset --
 
 const BADGE_TONE: Record<string, string> = { passing: 'ok', failing: 'err', unknown: 'muted' };
 
