@@ -48,9 +48,12 @@ function toolCallingLlm(toolName: string): LlmCall {
   };
 }
 
+/** One recorded trace event (the run-summary trace the Monitoring tiles read). */
+type TraceCall = Parameters<OsToolDeps['trace']>[0];
+
 /** Spy deps: handleRpc records its (user, req, opts) and returns a real-shaped result. */
-function spyDeps(): OsToolDeps & { calls: { handleRpc: { user: CurrentUser; name: string; toolNames: string[] }[] } } {
-  const calls = { handleRpc: [] as { user: CurrentUser; name: string; toolNames: string[] }[] };
+function spyDeps(): OsToolDeps & { calls: { handleRpc: { user: CurrentUser; name: string; toolNames: string[] }[]; trace: TraceCall[] } } {
+  const calls = { handleRpc: [] as { user: CurrentUser; name: string; toolNames: string[] }[], trace: [] as TraceCall[] };
   const deps: OsToolDeps = {
     enqueue: (() => ({}) as never) as OsToolDeps['enqueue'],
     handleRpc: (async (user, req, opts) => {
@@ -59,7 +62,10 @@ function spyDeps(): OsToolDeps & { calls: { handleRpc: { user: CurrentUser; name
       calls.handleRpc.push({ user, name, toolNames });
       return { jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: '{"rows":[{"n":1}]}' }] } };
     }) as OsToolDeps['handleRpc'],
-    trace: (async () => ({}) as never) as OsToolDeps['trace'],
+    trace: (async (ev: TraceCall) => {
+      calls.trace.push(ev);
+      return {} as never;
+    }) as OsToolDeps['trace'],
   };
   return Object.assign(deps, { calls });
 }
@@ -181,4 +187,72 @@ test('runOsTeam: forwards ordered node-started / tool-step / node-completed even
   const iDone = events.findIndex((e) => e.kind === 'node-completed');
   assert.ok(iStart < iStep && iStep < iDone, 'the tool-step is bracketed by node start/complete');
   assert.deepEqual(events[iStart].extra, { index: 1, total: res.runs.length });
+});
+
+// --- run-summary trace: Monitoring token/cost attribution -------------------------
+
+/**
+ * Like {@link toolCallingLlm}, but every completion REPORTS usage — plan 110, act1
+ * 220, and the finishing act call reports none (a backend that omitted the block),
+ * so the honest run total is 330 (missing usage counts 0, the rest still sum).
+ */
+function usageReportingLlm(toolName: string): LlmCall {
+  let acts = 0;
+  return async (req) => {
+    if (!req.tools || req.tools.length === 0) {
+      return { content: 'plan: query the data', toolCalls: [], usage: { input: 100, output: 10, total: 110 } };
+    }
+    acts += 1;
+    if (acts === 1) {
+      return {
+        content: '',
+        toolCalls: [{ id: 'c1', name: toolName, args: { sql: 'select 1' } }],
+        usage: { input: 200, output: 20, total: 220 },
+      };
+    }
+    return { content: 'done: analysed 1 row', toolCalls: [] }; // no usage reported
+  };
+}
+
+test('runOsTeam emits ONE run-summary trace with the summed token usage (Monitoring attribution)', async () => {
+  const deps = spyDeps();
+  const res = await runOsTeam({
+    user: CREATOR,
+    yaml: mixedYaml(),
+    systemId: 'sys-mix',
+    messages: [{ role: 'user', content: 'How many rows?' }],
+    llm: usageReportingLlm('query_data'),
+    toolDeps: deps,
+    maxIterations: 3,
+  });
+
+  // Exactly ONE `:run` summary trace fired (no double-emit), mirroring runSystem's:
+  // principal os-<id>:run (the telemetry batch only groups os- principals),
+  // tool 'generate', decision allow, tokens = the run's summed reported usage.
+  const runTraces = deps.calls.trace.filter((t) => t.principal === 'os-sys-mix:run');
+  assert.equal(runTraces.length, 1, 'exactly one run-summary trace');
+  const t = runTraces[0];
+  assert.equal(t.tool, 'generate');
+  assert.equal(t.decision, 'allow');
+  assert.equal(t.tokens, 330, 'plan 110 + act 220; the usage-less final call adds 0');
+  assert.deepEqual(t.input, { prompt: 'How many rows?' });
+  assert.deepEqual(t.output, { path: res.path });
+  // No MODEL_PRICES_JSON in tests → cost is undefined ("—"), never a fabricated 0.
+  assert.equal(t.costUsd, undefined);
+});
+
+test('runOsTeam run-summary trace carries tokens: undefined when NO call reported usage (never fabricated)', async () => {
+  const deps = spyDeps();
+  await runOsTeam({
+    user: CREATOR,
+    yaml: mixedYaml(),
+    systemId: 'sys-mix',
+    messages: [{ role: 'user', content: 'How many rows?' }],
+    llm: toolCallingLlm('query_data'), // reports no usage at all
+    toolDeps: deps,
+    maxIterations: 3,
+  });
+  const runTraces = deps.calls.trace.filter((t) => t.principal === 'os-sys-mix:run');
+  assert.equal(runTraces.length, 1, 'the summary trace still fires');
+  assert.equal(runTraces[0].tokens, undefined, 'no reported usage → undefined, not 0');
 });

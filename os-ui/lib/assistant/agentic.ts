@@ -48,7 +48,16 @@ export type OpenAiTool = {
 };
 
 export type ToolCall = { id: string; name: string; args: Record<string, unknown> };
-export type LlmCompletion = { content: string; toolCalls: ToolCall[] };
+
+/** Token usage ONE model call reported (chat-completions `usage`, harness shape). */
+export type LlmUsage = { input: number; output: number; total: number };
+
+export type LlmCompletion = {
+  content: string;
+  toolCalls: ToolCall[];
+  /** Present only when the backend actually REPORTED usage — never fabricated. */
+  usage?: LlmUsage;
+};
 
 export type LlmRequest = {
   model: string;
@@ -59,6 +68,39 @@ export type LlmRequest = {
   maxTokens?: number;
 };
 export type LlmCall = (req: LlmRequest) => Promise<LlmCompletion>;
+
+/** A wrapped `LlmCall` plus accessors for the run's AGGREGATE usage (see {@link trackUsage}). */
+export type UsageTracker = {
+  llm: LlmCall;
+  /** Summed usage over every completion that REPORTED usage; undefined until one does. */
+  usage: () => LlmUsage | undefined;
+  /** The distinct model names requested through the wrapper (for run pricing). */
+  models: () => string[];
+};
+
+/**
+ * Wrap an `LlmCall` so a run path can read the AGGREGATE token usage across every
+ * model call it made (plan + act, every node) — the run-summary trace Monitoring
+ * attributes tokens/cost from. Additive and non-breaking: the wrapped call behaves
+ * identically. A call that reports no usage contributes 0 while the rest still sum;
+ * if NO call reported usage, `usage()` stays undefined (never a fabricated 0).
+ */
+export function trackUsage(inner: LlmCall): UsageTracker {
+  let sum: LlmUsage | undefined;
+  const models = new Set<string>();
+  const llm: LlmCall = async (req) => {
+    models.add(req.model);
+    const completion = await inner(req);
+    const u = completion.usage;
+    if (u) {
+      sum = sum
+        ? { input: sum.input + u.input, output: sum.output + u.output, total: sum.total + u.total }
+        : { input: u.input, output: u.output, total: u.total };
+    }
+    return completion;
+  };
+  return { llm, usage: () => sum, models: () => [...models] };
+}
 
 /** Execute one governed tool call; returns the model-readable result text. */
 export type ToolExecutor = (name: string, args: Record<string, unknown>) => Promise<{ text: string; isError: boolean }>;

@@ -3,6 +3,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { readUiSource, vendorUiForRepo, applyUiFileDep } from './app-ui-vendor.ts';
 
 /** The file set the UI package MUST vendor — source files + generated package.json. */
@@ -78,4 +81,36 @@ test('applyUiFileDep leaves input untouched when the dep is absent or unparseabl
   const noDep = JSON.stringify({ dependencies: { react: '19.0.0' } });
   assert.equal(applyUiFileDep(noDep), noDep);
   assert.equal(applyUiFileDep('not json'), 'not json');
+});
+
+// --- README.md is docs, not code: optional in the shipped image -------------------
+
+/** The CODE files (everything except README.md/package.json) — always required. */
+const CODE_FILES = EXPECTED_FILES.filter((n) => n !== 'README.md' && n !== 'package.json');
+
+function tempUiDir(names: string[]): string {
+  const dir = mkdtempSync(join(tmpdir(), 'app-ui-vendor-'));
+  for (const name of names) writeFileSync(join(dir, name), `/* ${name} */\n`);
+  return dir;
+}
+
+test('readUiSource succeeds WITHOUT README.md (the shipped image excludes markdown docs)', () => {
+  const dir = tempUiDir(CODE_FILES); // all code, no README — the deployed-image layout
+  try {
+    const files = readUiSource('v', dir);
+    const names = files.map((f) => f.path.replace('v/', ''));
+    assert.ok(!names.includes('README.md'), 'the missing README is skipped, not fatal');
+    assert.deepEqual(new Set(names), new Set([...CODE_FILES, 'package.json']));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('readUiSource still throws LOUDLY when a CODE file is missing (a real packaging break)', () => {
+  const dir = tempUiDir(CODE_FILES.filter((n) => n !== 'AppShell.tsx'));
+  try {
+    assert.throws(() => readUiSource('v', dir), /ENOENT/, 'a missing code file must fail the vendor');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -8,11 +8,13 @@ import { inputBudget, modelContext } from '@/lib/models/context-windows';
 import type { CurrentUser } from '@/lib/core/auth';
 import { ALL_MCP_TOOLS, isMcpTab, listToolsForRole, toolsForTab, type McpTab } from '@/lib/mcp/server';
 import { loadTabContext, tabTitle } from '@/lib/tabs/context';
+import { trace as gvTrace } from '@/lib/infra/agent-governed';
 import { tabToolExecutor, liteLlmCaller } from '@/lib/assistant/runtime';
-import type { ToolSpec, AgenticStep, LlmCall } from '@/lib/assistant/agentic';
+import { trackUsage, type ToolSpec, type AgenticStep, type LlmCall, type UsageTracker } from '@/lib/assistant/agentic';
 import { loadBuildSpec } from '@/lib/tabs/build-spec';
 import { parseSystem, type System } from '../system-schema.ts';
 import { compile } from '../langgraph-compile.ts';
+import { principalFor, runCostUsd } from './runtime-contract.ts';
 import { runAgenticGraph, runNode, type AgenticGraphResult, type AgenticGraphDeps } from './agentic-graph.ts';
 import { liveEmbedder } from '@/lib/infra/context/librarian-live.ts';
 import {
@@ -198,8 +200,11 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<AgenticGraphResu
   // kept whole by RELEVANCE to the downstream node's need. Degrades to the keepRows
   // handoff automatically when the embedder falls back to the offline hash.
   const embedder = liveEmbedder();
-  return runAgenticGraph(ir, input.messages, {
-    llm: input.llm ?? liteLlmCaller(),
+  // Aggregate token usage across EVERY model call this run makes (plan + act on
+  // every node) — the source for the Monitoring run-summary trace below.
+  const tracked = trackUsage(input.llm ?? liteLlmCaller());
+  const result = await runAgenticGraph(ir, input.messages, {
+    llm: tracked.llm,
     toolSpecsFor: (node) => grantedToolSpecs(input.user, sys, node.tools),
     callTool: grantedToolExecutor(input.user, sys, input.systemId, input.toolDeps),
     embed: embedder.embed,
@@ -224,6 +229,37 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<AgenticGraphResu
     onNodeStart: input.onNodeStart,
     onStep: input.onStep,
     onNodeComplete: input.onNodeComplete,
+  });
+  emitRunSummaryTrace(input, result, tracked);
+  return result;
+}
+
+/** Upper bound on the prompt echoed into the run-summary trace input. */
+const RUN_TRACE_PROMPT_MAX = 500;
+
+/**
+ * One run-summary trace so Monitoring attributes the run's tokens/cost to this
+ * system (mirrors `runSystem`'s summary in server.ts — the in-process agentic path
+ * was silently untraced, leaving the tiles at tokens=0). MUST use principalFor
+ * (`os-<id>`) — the telemetry batch only groups `os-` principals. Tokens are the
+ * run's AGGREGATE reported usage; when NO model call reported usage they stay
+ * undefined (never fabricated). Cost is priced ONLY from explicit MODEL_PRICES_JSON
+ * over the models this run ACTUALLY called (unpriced ⇒ undefined ⇒ "—", never 0).
+ * Fire-and-forget: telemetry never blocks or fails the run.
+ */
+function emitRunSummaryTrace(input: RunOsTeamInput, result: AgenticGraphResult, tracked: UsageTracker): void {
+  const usage = tracked.usage();
+  const prompt = lastUserText(input.messages);
+  // Tests inject their trace spy via toolDeps (the same seam the executor uses).
+  const traceFn = input.toolDeps?.trace ?? gvTrace;
+  void traceFn({
+    principal: `${principalFor(input.systemId)}:run`,
+    tool: 'generate',
+    input: { prompt: prompt.length > RUN_TRACE_PROMPT_MAX ? `${prompt.slice(0, RUN_TRACE_PROMPT_MAX)}…` : prompt },
+    output: { path: result.path },
+    decision: 'allow',
+    tokens: usage?.total,
+    costUsd: runCostUsd(usage, tracked.models(), config.modelPrices),
   });
 }
 

@@ -13,6 +13,7 @@ import {
   type AgenticStep,
   type LlmCall,
   type LlmCompletion,
+  type LlmUsage,
   type ToolExecutor,
   type ToolSpec,
 } from './agentic.ts';
@@ -153,8 +154,27 @@ export function liteLlmCaller(): LlmCall {
     }
     const choices = (data.choices ?? []) as Array<Record<string, unknown>>;
     const message = (choices[0]?.message ?? {}) as Record<string, unknown>;
-    return parseLlmMessage(message);
+    const completion = parseLlmMessage(message);
+    // Surface the gateway's reported token usage so a run path can aggregate it
+    // (the Monitoring run-summary trace). Absent/malformed usage stays undefined.
+    const usage = parseLlmUsage(data.usage);
+    return usage ? { ...completion, usage } : completion;
   };
+}
+
+/**
+ * Parse a chat-completions `usage` block ({prompt_tokens, completion_tokens,
+ * total_tokens}) into the harness shape — only when the gateway actually reported
+ * numbers. Anything absent or malformed → undefined (usage is never fabricated).
+ */
+export function parseLlmUsage(raw: unknown): LlmUsage | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const u = raw as { prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown };
+  const input = typeof u.prompt_tokens === 'number' ? u.prompt_tokens : undefined;
+  const output = typeof u.completion_tokens === 'number' ? u.completion_tokens : undefined;
+  if (input === undefined && output === undefined) return undefined;
+  const total = typeof u.total_tokens === 'number' ? u.total_tokens : (input ?? 0) + (output ?? 0);
+  return { input: input ?? 0, output: output ?? 0, total };
 }
 
 /**

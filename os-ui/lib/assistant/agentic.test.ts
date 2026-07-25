@@ -7,6 +7,7 @@ import {
   runAgentic,
   parseReactAction,
   toOpenAiTools,
+  trackUsage,
   ToolCallingUnsupportedError,
   type LlmCall,
   type ToolSpec,
@@ -467,4 +468,42 @@ test('displayed text is guarded — leaked <think> reasoning is stripped', async
   });
   assert.equal(res.plan.includes('secret plan'), false);
   assert.equal(res.finalText, 'Final answer.');
+});
+
+// --- trackUsage: the run-summary token accumulator ------------------------------
+
+test('trackUsage sums reported usage across calls and records the distinct models', async () => {
+  const inner: LlmCall = async (req) =>
+    req.model === 'reasoning'
+      ? { content: 'plan', toolCalls: [], usage: { input: 100, output: 10, total: 110 } }
+      : { content: 'act', toolCalls: [], usage: { input: 200, output: 20, total: 220 } };
+  const tracked = trackUsage(inner);
+  await tracked.llm({ model: 'reasoning', messages: [] });
+  await tracked.llm({ model: 'exec', messages: [] });
+  await tracked.llm({ model: 'exec', messages: [] });
+  assert.deepEqual(tracked.usage(), { input: 500, output: 50, total: 550 });
+  assert.deepEqual(tracked.models().sort(), ['exec', 'reasoning']);
+});
+
+test('trackUsage treats a call with MISSING usage as 0 but still sums the rest', async () => {
+  let i = 0;
+  const inner: LlmCall = async () => {
+    i += 1;
+    // The middle call reports no usage (a backend that omitted the block).
+    return i === 2
+      ? { content: 'silent', toolCalls: [] }
+      : { content: 'ok', toolCalls: [], usage: { input: 10, output: 5, total: 15 } };
+  };
+  const tracked = trackUsage(inner);
+  await tracked.llm({ model: 'm', messages: [] });
+  await tracked.llm({ model: 'm', messages: [] });
+  await tracked.llm({ model: 'm', messages: [] });
+  assert.deepEqual(tracked.usage(), { input: 20, output: 10, total: 30 });
+});
+
+test('trackUsage stays undefined when NO call reported usage (never fabricates 0)', async () => {
+  const tracked = trackUsage(async () => ({ content: 'x', toolCalls: [] }));
+  await tracked.llm({ model: 'm', messages: [] });
+  assert.equal(tracked.usage(), undefined);
+  assert.deepEqual(tracked.models(), ['m']);
 });

@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
 import { toolsForTab } from '@/lib/mcp/server';
-import { runTabAgent, parseLlmMessage, parseHarmonyToolCall, renderAssistantText } from './runtime.ts';
+import { runTabAgent, parseLlmMessage, parseLlmUsage, parseHarmonyToolCall, renderAssistantText } from './runtime.ts';
 import type { LlmCall } from './agentic.ts';
 
 const participant: CurrentUser = { id: 'u-part', name: 'Pat', domains: ['sales'], role: 'creator' };
@@ -124,3 +124,21 @@ function actThenFinish(
     return { content: finalText, toolCalls: [] };
   };
 }
+
+test('parseLlmUsage maps a chat-completions usage block into the harness shape', () => {
+  assert.deepEqual(parseLlmUsage({ prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 }), {
+    input: 120,
+    output: 30,
+    total: 150,
+  });
+  // A gateway that omits total_tokens: the total is derived from the parts.
+  assert.deepEqual(parseLlmUsage({ prompt_tokens: 10, completion_tokens: 5 }), { input: 10, output: 5, total: 15 });
+});
+
+test('parseLlmUsage never fabricates usage from an absent/malformed block', () => {
+  assert.equal(parseLlmUsage(undefined), undefined);
+  assert.equal(parseLlmUsage(null), undefined);
+  assert.equal(parseLlmUsage({}), undefined);
+  assert.equal(parseLlmUsage({ prompt_tokens: 'not-a-number' }), undefined);
+  assert.equal(parseLlmUsage('usage'), undefined);
+});
