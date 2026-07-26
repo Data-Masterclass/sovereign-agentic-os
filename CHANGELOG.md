@@ -13,7 +13,22 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+- **Kajabi connector with scheduled sync** — a new `kajabi-api` connection template (Supported
+  Connectors gallery, own vendor stack, install guide) over Kajabi's public API
+  (`api.kajabi.com/v1`, OAuth client-credentials from **Settings → Public API**; the ONE vaulted
+  credential is `client_id:client_secret`, never on the record). Mirrors the Salesforce shape:
+  hand-built never-throw typed client (`os-ui/lib/connections/kajabi.ts`), real health probe
+  (token grant + `GET /v1/sites`), resource discovery (curated documented-resource map — the API
+  has no describe endpoint), and the **api-batch sync strategy**: JSON:API pages stream to the
+  data-runner `/ingest-rows` with `_loaded_at`/`_batch_id` lineage; first load replaces (creates
+  Bronze), incrementals delete-by-batch-id + append with deterministic retry windows. HONEST
+  per-resource cursors (`os-ui/lib/connections/kajabi-resources.ts`, enforced in SyncPanel + the
+  slice runner): only `purchases` has a true update cursor (`updated_at`);
+  contacts/customers/orders/form_submissions are created-at-only (new records; edits need a full
+  refresh); transactions/offers/products/courses/forms/tags are full-refresh only; deletes never
+  detected; Kajabi publishes no rate-limit contract (429s surface honestly). `api.kajabi.com`
+  added to the egress allowlists (lib, chart, connector overlay).
 
 ## [os-ui 0.5.46] — 2026-07-19
 

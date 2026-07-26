@@ -47,6 +47,10 @@ describe('vendorStack', () => {
     assert.equal(vendorStack('salesforce-api'), 'salesforce');
   });
 
+  it('kajabi-api → kajabi', () => {
+    assert.equal(vendorStack('kajabi-api'), 'kajabi');
+  });
+
   it('atlassian → atlassian', () => {
     assert.equal(vendorStack('atlassian'), 'atlassian');
   });

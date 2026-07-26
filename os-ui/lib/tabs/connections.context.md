@@ -1,6 +1,6 @@
 # Connections tab — build context
 
-**Purpose:** Connect governed external data sources (Google Drive, Notion, Salesforce, Slack, databases, MCP/API endpoints) so apps and agents can consume them BY REFERENCE — the raw credential is stored server-side and never leaves the OS.
+**Purpose:** Connect governed external data sources (Google Drive, Notion, Salesforce, Kajabi, Slack, databases, MCP/API endpoints) so apps and agents can consume them BY REFERENCE — the raw credential is stored server-side and never leaves the OS.
 
 **Tools (MCP `connections`):**
 - `list_connections` — the connections you can see (reuse first).

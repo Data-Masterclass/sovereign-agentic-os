@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { isFrequentCron, nextCronRun } from '@/lib/data/sync-next-run';
+import { kajabiCursorField } from '@/lib/connections/kajabi-resources';
 
 /**
  * "Keep this in sync" — the calm face over SCHEDULED INCREMENTAL SYNC. One panel,
@@ -146,11 +147,26 @@ export default function SyncPanel({
   // Platform-locked panels — the engine room enforces the same rules again:
   //   kafka      → append-only, cursor = per-partition offsets (tracked automatically).
   //   salesforce → API-based pull; cursor locked to SystemModstamp; no merge.
+  //   kajabi     → API-based pull; cursor locked to the resource's documented field
+  //                (updated_at/created_at from kajabi-resources.ts); resources
+  //                without one are honestly full-refresh only; no merge.
   const platformKey = status?.platform ?? setupSource?.platform ?? null;
   const isKafka = platformKey === 'kafka';
   const isSalesforce = platformKey === 'salesforce';
-  const lockedCursor = isKafka || isSalesforce;
-  const effMode: SyncConfig['mode'] = isKafka ? 'append' : isSalesforce && mode === 'merge' ? 'append' : mode;
+  const isKajabi = platformKey === 'kajabi';
+  const kajabiCursor = isKajabi ? kajabiCursorField(source.table) : null;
+  const lockedCursor = isKafka || isSalesforce || isKajabi;
+  const effMode: SyncConfig['mode'] = isKafka
+    ? 'append'
+    : isKajabi
+      ? kajabiCursor === null
+        ? 'full-refresh'
+        : mode === 'merge'
+          ? 'append'
+          : mode
+      : isSalesforce && mode === 'merge'
+        ? 'append'
+        : mode;
   const incremental = effMode !== 'full-refresh';
   const canSave =
     canEdit && !busy && (!incremental || lockedCursor || cursorColumn.trim()) && (effMode !== 'merge' || mergeKeys.trim());
@@ -168,9 +184,11 @@ export default function SyncPanel({
           ? { cursor: { kind: 'kafka-offsets', column: '_partition_offset' } }
           : isSalesforce && incremental
             ? { cursor: { kind: 'timestamp', column: 'SystemModstamp' } }
-            : incremental
-              ? { cursor: { kind: cursorKind, column: cursorColumn.trim() } }
-              : {}),
+            : isKajabi && incremental && kajabiCursor
+              ? { cursor: { kind: 'timestamp', column: kajabiCursor } }
+              : incremental
+                ? { cursor: { kind: cursorKind, column: cursorColumn.trim() } }
+                : {}),
         ...(effMode === 'merge' ? { mergeKeys: mergeKeys.split(',').map((k) => k.trim()).filter(Boolean) } : {}),
         schedule: { cron },
         enabled,
@@ -248,7 +266,8 @@ export default function SyncPanel({
             <>
               <div className="seg">
                 {(Object.keys(MODE_LABELS) as SyncConfig['mode'][])
-                  .filter((m) => !(isSalesforce && m === 'merge'))
+                  .filter((m) => !((isSalesforce || isKajabi) && m === 'merge'))
+                  .filter((m) => !(isKajabi && kajabiCursor === null && m !== 'full-refresh'))
                   .map((m) => (
                     <button key={m} className={effMode === m ? 'on' : ''} onClick={() => setMode(m)}>{MODE_LABELS[m]}</button>
                   ))}
@@ -258,11 +277,19 @@ export default function SyncPanel({
                   ? effMode === 'full-refresh'
                     ? 'Re-pulls every record over the Salesforce API each run — API-quota heavy; best for small objects.'
                     : 'Pulls only records modified since the last sync (SystemModstamp) over the Salesforce API. Deletes are not detected (v1).'
-                  : effMode === 'full-refresh'
-                    ? 'Re-copies the whole table each run. Simple and exact — best for small tables.'
-                    : effMode === 'append'
-                      ? 'Adds only rows newer than the last sync (may re-deliver late rows — exact-once needs "Update by key").'
-                      : 'Upserts changed rows by key. Best on a daily-ish cadence.'}
+                  : isKajabi
+                    ? effMode === 'full-refresh'
+                      ? kajabiCursor === null
+                        ? 'Re-pulls every record over the Kajabi API each run — this resource documents no timestamp cursor, so full refresh is the only honest mode.'
+                        : 'Re-pulls every record over the Kajabi API each run — best for small resources.'
+                      : kajabiCursor === 'updated_at'
+                        ? 'Pulls only records updated since the last sync (updated_at) over the Kajabi API. Updated records re-append — de-duplicate by id downstream; deletes are not detected.'
+                        : 'Pulls only records CREATED since the last sync (created_at) — Kajabi documents no updated-at cursor for this resource, so edits to existing records are NOT picked up (run a full refresh to capture them). Deletes are not detected.'
+                    : effMode === 'full-refresh'
+                      ? 'Re-copies the whole table each run. Simple and exact — best for small tables.'
+                      : effMode === 'append'
+                        ? 'Adds only rows newer than the last sync (may re-deliver late rows — exact-once needs "Update by key").'
+                        : 'Upserts changed rows by key. Best on a daily-ish cadence.'}
               </p>
             </>
           )}
@@ -270,6 +297,12 @@ export default function SyncPanel({
           {isSalesforce && incremental ? (
             <p className="hint" style={{ margin: '6px 0 0' }}>
               Change tracking uses <span className="mono">SystemModstamp</span> — set automatically, nothing to pick.
+            </p>
+          ) : null}
+
+          {isKajabi && incremental && kajabiCursor ? (
+            <p className="hint" style={{ margin: '6px 0 0' }}>
+              Change tracking uses <span className="mono">{kajabiCursor}</span> — set automatically, nothing to pick.
             </p>
           ) : null}
 

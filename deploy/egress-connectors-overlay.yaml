@@ -55,3 +55,5 @@ egressProxy:
     - iam.googleapis.com                   # GCP IAM (service accounts)
     - admin.googleapis.com                 # GCP Admin SDK (org/directory — reserved)
     - snowflakecomputing.com               # Snowflake SQL REST API (*.snowflakecomputing.com)
+    # Kajabi public API — sync source (api-batch strategy); token + data share one host.
+    - api.kajabi.com

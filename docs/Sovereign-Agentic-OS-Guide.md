@@ -295,7 +295,7 @@ there.
   external APIs/MCPs as tools. You grant **use**, never the token; **reads are automatic, writes
   are approval-gated** (destructive ops blocked), and secrets are write-only. The Supported
   Connectors gallery is **grouped by vendor stack** (Microsoft · Google · AWS · Databricks ·
-  Snowflake · Salesforce · Atlassian · Open source · Other) and searchable. When nothing in the
+  Snowflake · Salesforce · Kajabi · Atlassian · Open source · Other) and searchable. When nothing in the
   gallery fits, a **Custom Connector** lets you add your own **REST/GraphQL API** or **MCP
   server** in one governed action: you name it, give the base URL and a write-only credential,
   and the OS **atomically files the egress-allowlist request** for that host — reads auto-allow,
@@ -320,8 +320,11 @@ there.
   scheduled sync (see *Data* above), so an import is a living dataset, not a one-time snapshot.
   Operational sources are first-class here too: PostgreSQL / MySQL / SQL Server sync on a
   timestamp or id cursor, **Kafka** topics land append-only on a per-partition offset cursor
-  (de-duplicate downstream), and **Salesforce** objects sync incrementally by `SystemModstamp`
-  over the REST API — schedules run from every 15 minutes (append recommended at high
+  (de-duplicate downstream), **Salesforce** objects sync incrementally by `SystemModstamp`
+  over the REST API, and **Kajabi** resources sync over its public API with honest per-resource
+  cursors (purchases incrementally by `updated_at`; contacts/customers/orders by `created_at` —
+  new records only, edits need a full refresh; resources without a documented cursor are
+  full-refresh only) — schedules run from every 15 minutes (append recommended at high
   frequency; frequent merges accumulate delete files) up to weekly.
   And for BI on your own desktop, a
   **one-click Power BI** button downloads a `.pbids` file that drops Power BI Desktop straight
@@ -1043,7 +1046,7 @@ light/dark theming.
 **Connections** federate the outside world through one governed door: the tab lists connections
 (All/My/Domain/Company, with app-generated MCP connections folded in), a **vendor-stack-grouped,
 searchable Supported Connectors** gallery (Microsoft · Google · AWS · Databricks · Snowflake ·
-Salesforce · Atlassian · Open source · Other), a **Custom Connector** for your own REST/GraphQL
+Salesforce · Kajabi · Atlassian · Open source · Other), a **Custom Connector** for your own REST/GraphQL
 API or MCP server (one action creates the connection *and* files the egress request), and **Talk
 to Connectors**. The catalogue spans **operational databases** (PostgreSQL · MySQL · SQL Server ·
 MongoDB via Trino), **code & DevOps** (GitHub), **docs & knowledge** (Notion · Atlassian),
@@ -1060,7 +1063,11 @@ source (configured topics federate as governed tables; an append-only **per-part
 cursor** lands messages in the lakehouse — no one-time import of an unbounded stream), and
 **Salesforce** as an API-based operational source (no Trino connector exists, so the sync pulls
 `SystemModstamp` slices over the REST API page-by-page and streams them into the lakehouse;
-deletes are not detected in v1 and every pull consumes API quota)), **one-click Power BI**
+deletes are not detected in v1 and every pull consumes API quota), and **Kajabi** as its
+SaaS peer over the public API (OAuth client-credentials from Settings → Public API; JSON:API
+pages stream into the lakehouse with honest per-resource cursors — purchases by `updated_at`,
+contacts/customers/orders by `created_at` new-records-only, the rest full-refresh only; deletes
+never detected)), **one-click Power BI**
 (a `.pbids` file into Cube's Postgres-wire SQL API, DirectQuery, as the per-domain `bi_<domain>`
 principal so per-domain RLS re-runs on every query — no embedded password), an **Apache Airflow**
 connector (governed `trigger_dag`/monitor), and **OpenMetadata** (read/discover of a customer's

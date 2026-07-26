@@ -346,6 +346,46 @@ test('api-batch: a slice failure records an honest error row, cursor unchanged',
   assert.equal(out.run!.cursorBefore, '2026-06-01T00:00:00.000Z');
 });
 
+test('api-batch: a kajabi connection routes to the kajabi slice runner (not salesforce)', async () => {
+  const seen: Record<string, unknown>[] = [];
+  const { deps } = fakes({
+    dataset: () => dataset({ source: { schema: 'kajabi', table: 'purchases' }, cursor: { kind: 'timestamp', column: 'updated_at' } }),
+    connectionCatalog: async () => null, // not a warehouse ⇒ api-batch
+    apiPlatform: async () => 'kajabi',
+    watermark: () => '2026-06-01T00:00:00.000Z',
+    salesforceSlice: async () => { throw new Error('must not be called'); },
+    kajabiSlice: async (args) => {
+      seen.push(args as unknown as Record<string, unknown>);
+      return { rowsAffected: 5, batchId: 'ds1.hw', highWatermark: '2026-06-30T00:00:00.000Z' };
+    },
+  });
+  const out = await runDatasetSync('ds1', 'schedule', deps);
+  assert.ok(out.ok && !out.skipped && out.run!.status === 'ok');
+  assert.equal(seen.length, 1);
+  const args = seen[0] as { resource: string; mode: string; watermark: string | null; datasetSlug: string };
+  assert.equal(args.resource, 'purchases');
+  assert.equal(args.mode, 'append');
+  assert.equal(args.watermark, '2026-06-01T00:00:00.000Z');
+  assert.equal(args.datasetSlug, 'orders');
+  assert.equal(out.run!.rowsAffected, 5);
+  assert.equal(out.run!.cursorAfter, '2026-06-30T00:00:00.000Z');
+  assert.equal(out.run!.batchId, 'ds1.hw');
+});
+
+test('api-batch: kajabi merge mode is an honest error naming the platform', async () => {
+  const { deps } = fakes({
+    dataset: () => dataset({ mode: 'merge', mergeKeys: ['id'], cursor: { kind: 'timestamp', column: 'updated_at' } }),
+    connectionCatalog: async () => null,
+    apiPlatform: async () => 'kajabi',
+    kajabiSlice: async () => { throw new Error('must not be called'); },
+    salesforceSlice: async () => { throw new Error('must not be called'); },
+  });
+  const out = await runDatasetSync('ds1', 'schedule', deps);
+  assert.ok(out.ok && !out.skipped);
+  assert.equal(out.run!.status, 'error');
+  assert.match(out.run!.error!, /Kajabi sync supports append or full-refresh only/);
+});
+
 // ------------------------------------------- deterministic retry window (H2) --
 
 const ERRORED_ATTEMPT = {

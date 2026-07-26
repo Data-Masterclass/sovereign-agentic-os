@@ -18,9 +18,17 @@ async function discover(id: string, schema: string | undefined) {
   try {
     return await discoverWarehouse(id, user, { schema });
   } catch (e) {
-    // Not a warehouse catalog -> a Salesforce connection discovers its queryable
-    // SObjects via REST describe instead (same response shape, read-only).
+    // Not a warehouse catalog -> an api-batch sync source discovers its resources
+    // instead (same response shape, read-only): Salesforce lists queryable SObjects
+    // via REST describe; Kajabi lists its curated documented resources after a real
+    // token round-trip. Dispatch on the connection's template (DLS-scoped read).
     if ((e as { status?: number }).status === 400 && /Not a warehouse connection/i.test((e as Error).message)) {
+      const { getConnectionForUser } = await import('@/lib/connections/store');
+      const c = await getConnectionForUser(id, user);
+      if (c.template === 'kajabi-api') {
+        const { discoverKajabiResources } = await import('@/lib/connections/kajabi');
+        return discoverKajabiResources(id, user);
+      }
       const { discoverSalesforceObjects } = await import('@/lib/connections/salesforce');
       return discoverSalesforceObjects(id, user);
     }

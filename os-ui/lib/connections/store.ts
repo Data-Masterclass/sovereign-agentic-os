@@ -713,6 +713,18 @@ const CONNECTION_HEALTH: Partial<Record<ConnectionTemplateKey, HealthFn>> = {
       ? { ok: true, mode: 'live', detail: `Salesforce is reachable (${h.detail}) The credential never leaves the server.` }
       : { ok: false, mode: 'offline', detail: `Salesforce is unreachable or refused the credential (${h.detail}) — check the Connected App + egress, then re-test.` };
   },
+  // KAJABI: real client-credentials token grant + `GET /v1/sites?page[size]=1` over
+  // the public API. A rejected credential is an honest x — never a fake green. The
+  // client secret never leaves the server (lib/connections/kajabi.ts).
+  'kajabi-api': async (c) => {
+    const { kajabiHealth } = await import('./kajabi.ts');
+    const h = await kajabiHealth(c);
+    c.mode = h.ok ? 'live' : 'offline';
+    c.health = h.ok ? 'healthy' : 'needs-reconnect';
+    return h.ok
+      ? { ok: true, mode: 'live', detail: `Kajabi is reachable (${h.detail}) The credential never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Kajabi is unreachable or refused the credential (${h.detail}) — check the Public API key + egress, then re-test.` };
+  },
   github: async (c) => {
     const h = await githubHealth(githubConnFrom(c));
     c.mode = h.connected ? 'live' : 'offline';

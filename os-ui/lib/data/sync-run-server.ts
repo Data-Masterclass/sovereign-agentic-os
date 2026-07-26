@@ -4,6 +4,7 @@
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
 import type { SalesforceSliceArgs } from '../connections/salesforce.ts';
+import type { KajabiSliceArgs } from '../connections/kajabi.ts';
 import { config } from '../core/config.ts';
 import { executeRun, queryRun, type ExecuteIdentity } from '../infra/governed.ts';
 import type { Dataset, DatasetSyncMode, Layer } from './dataset-schema.ts';
@@ -120,13 +121,21 @@ export type SyncDeps = {
   resolveOwner?: (ownerId: string) => Promise<CurrentUser | null>;
   /** The warehouse connection's external Trino catalog name, or null when the
    *  connection is missing / not a warehouse. A null answer falls through to the
-   *  API-BATCH strategy (Salesforce) — see `salesforceSlice`. */
+   *  API-BATCH strategy (Salesforce / Kajabi) — see `apiPlatform`. */
   connectionCatalog?: (connId: string, user: CurrentUser) => Promise<string | null>;
+  /** Which API-BATCH platform a NON-catalog connection is. Defaults to
+   *  'salesforce' when unresolvable so the Salesforce slice runner surfaces its
+   *  honest "not an available sync source" error (never a silent success). */
+  apiPlatform?: (connId: string, user: CurrentUser) => Promise<'salesforce' | 'kajabi'>;
   /** The API-BATCH slice runner (Salesforce): pulls the slice via the REST API and
    *  streams it to the data-runner. The live impl resolves + validates the
    *  connection itself and throws an honest error when it is no sync source. */
   salesforceSlice?: (
     args: SalesforceSliceArgs,
+  ) => Promise<{ rowsAffected: number | null; batchId?: string; highWatermark: string | null }>;
+  /** The API-BATCH slice runner (Kajabi) — the Kajabi peer of `salesforceSlice`. */
+  kajabiSlice?: (
+    args: KajabiSliceArgs,
   ) => Promise<{ rowsAffected: number | null; batchId?: string; highWatermark: string | null }>;
   query?: (sql: string, principal?: string) => Promise<{ rows: string[][] }>;
   execute?: (sql: string, identity: ExecuteIdentity) => Promise<{ rowsAffected: number | null }>;
@@ -167,6 +176,26 @@ async function liveSalesforceSlice(
 ): Promise<{ rowsAffected: number | null; batchId?: string; highWatermark: string | null }> {
   const { runSalesforceSlice } = await import('../connections/salesforce.ts');
   return runSalesforceSlice(args);
+}
+
+async function liveKajabiSlice(
+  args: KajabiSliceArgs,
+): Promise<{ rowsAffected: number | null; batchId?: string; highWatermark: string | null }> {
+  const { runKajabiSlice } = await import('../connections/kajabi.ts');
+  return runKajabiSlice(args);
+}
+
+/** Which api-batch platform a non-catalog connection is. 'salesforce' on any
+ *  failure — the Salesforce slice runner then re-resolves and throws the honest
+ *  "not an available sync source" error under the caller's identity. */
+async function liveApiPlatform(connId: string, user: CurrentUser): Promise<'salesforce' | 'kajabi'> {
+  try {
+    const { getConnectionForUser } = await import('../connections/store.ts');
+    const c = await getConnectionForUser(connId, user);
+    return c.template === 'kajabi-api' ? 'kajabi' : 'salesforce';
+  } catch {
+    return 'salesforce';
+  }
 }
 
 /** A deterministic, guard-safe per-slice batch id (same slice ⇒ same id, so a retry
@@ -259,9 +288,9 @@ export async function runDatasetSync(
   try {
     // STRATEGY: 'federated-sql' when the connection mounts a Trino catalog (every
     // warehouse/operational-db/kafka source), 'api-batch' when it does not
-    // (Salesforce — Trino cannot reach it; the slice is pulled over REST and
-    // streamed to the data-runner). Both run AS the owner, both advance the cursor
-    // only after the landing succeeded.
+    // (Salesforce / Kajabi — Trino cannot reach them; the slice is pulled over REST
+    // and streamed to the data-runner). Both run AS the owner, both advance the
+    // cursor only after the landing succeeded.
     const catalog = await (deps.connectionCatalog ?? liveConnectionCatalog)(sync.connectionId, owner);
     let highWatermark: string | null = null;
     let rowsAffected: number | null = null;
@@ -353,34 +382,42 @@ export async function runDatasetSync(
     };
 
     if (!catalog) {
-      // ---- api-batch (Salesforce) ----
+      // ---- api-batch (Salesforce / Kajabi) ----
+      const platform = await (deps.apiPlatform ?? liveApiPlatform)(sync.connectionId, owner);
       if (mode === 'merge') {
-        throw new Error('Salesforce sync supports append or full-refresh only (merge needs a federated SQL source)');
+        throw new Error(
+          `${platform === 'kajabi' ? 'Kajabi' : 'Salesforce'} sync supports append or full-refresh only (merge needs a federated SQL source)`,
+        );
       }
-      const sf = await (deps.salesforceSlice ?? liveSalesforceSlice)({
+      // Both runners share the executor contract: probe/reuse the window, delete
+      // the deterministic batch, stream pages to the data-runner, return the hw.
+      const common = {
         connectionId: sync.connectionId,
         owner,
-        object: sync.source.table,
         mode: mode as 'full-refresh' | 'append',
         watermark: cursorBefore,
         datasetSlug: physicalSlug(d),
         target,
         identity,
         execute,
-        mkBatchId: (hw) => sliceBatchId(datasetId, hw),
+        mkBatchId: (hw: string) => sliceBatchId(datasetId, hw),
         // Deterministic retry: reuse an unconfirmed attempt's window, and persist
         // the planned window as the 'running' marker BEFORE any row lands.
         window: staleWindow,
-        onWindow: (hw, bid) => {
+        onWindow: (hw: string, bid: string) => {
           highWatermark = hw;
           batchId = bid;
           markDispatch();
         },
         startedAt,
-      });
-      rowsAffected = sf.rowsAffected;
-      batchId = sf.batchId;
-      highWatermark = sf.highWatermark;
+      };
+      const sliced =
+        platform === 'kajabi'
+          ? await (deps.kajabiSlice ?? liveKajabiSlice)({ ...common, resource: sync.source.table })
+          : await (deps.salesforceSlice ?? liveSalesforceSlice)({ ...common, object: sync.source.table });
+      rowsAffected = sliced.rowsAffected;
+      batchId = sliced.batchId;
+      highWatermark = sliced.highWatermark;
       return finish();
     }
     const source: SyncSource = { catalog, schema: sync.source.schema, table: sync.source.table };

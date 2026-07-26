@@ -1840,6 +1840,7 @@ egressProxy:
     - salesforce.com           # Connections slice — Salesforce API endpoints
     - my.salesforce.com
     - login.salesforce.com
+    - api.kajabi.com           # Kajabi public API (token + data — one host)
     - notion.com               # Connections slice — Notion MCP endpoints
     - mcp.notion.com
     - api.notion.com

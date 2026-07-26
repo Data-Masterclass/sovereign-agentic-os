@@ -124,6 +124,10 @@ const DEFAULT_ALLOWLIST = [
   'admin.googleapis.com', // GCP Admin SDK (optional org/directory reads — reserved)
   // oauth2.googleapis.com (above) already covers the GCP JWT-bearer token exchange
   'snowflakecomputing.com', // Snowflake SQL REST API (<account>.snowflakecomputing.com via subdomain rule)
+  // Kajabi public API — sync source (api-batch strategy). Token endpoint + data
+  // API share the one host (also added to the chart egressProxy.allowlist +
+  // deploy/egress-connectors-overlay.yaml).
+  'api.kajabi.com',
 ];
 
 function allowlist(): string[] {

@@ -209,6 +209,13 @@ export type ConnectionTemplateKey =
   | 'onedrive'
   | 'notion-mcp'
   | 'salesforce-api'
+  // Kajabi over its public REST API (api.kajabi.com/v1 — hand-built typed client,
+  // lib/connections/kajabi.ts). OAuth client-credentials from Settings → Public API;
+  // the ONE vaulted credential is `<client_id>:<client_secret>`. Like Salesforce, a
+  // Kajabi connection is an OPERATIONAL SYNC SOURCE (the `api-batch` strategy):
+  // JSON:API pages stream to the data-runner; only `purchases` has a true update
+  // cursor — see lib/connections/kajabi-resources.ts for the honest per-resource map.
+  | 'kajabi-api'
   | 'generic-mcp'
   | 'generic-api'
   | 'database'
@@ -392,6 +399,39 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
       },
       { name: 'mass_update', description: 'Bulk update many records (write).', write: true, mode: 'Off' },
       { name: 'delete_record', description: 'Delete a record (write).', write: true, mode: 'Blocked' },
+    ],
+  },
+  {
+    // Kajabi over its public REST API (hand-built typed client, lib/connections/kajabi.ts —
+    // no Trino connector; the hosted Kajabi MCP is per-user interactive OAuth, not a headless
+    // server-to-server pull, so scheduled sync hand-builds). Auth is OAuth CLIENT-CREDENTIALS
+    // against a Settings → Public API key; the ONE vaulted credential is
+    // `<client_id>:<client_secret>` (split server-side, never on the record). Besides the
+    // capability tools below, a Kajabi connection is an OPERATIONAL SYNC SOURCE: the scheduled
+    // sync pulls JSON:API pages (descending-cursor stop-early paging) and streams them to the
+    // data-runner (the `api-batch` executor strategy). HONEST LIMITS: only `purchases` has a
+    // true update cursor; contacts/customers/orders/form_submissions are created-at-only
+    // (edits not detected); other resources are full-refresh only; deletes never detected;
+    // Kajabi publishes no rate-limit contract. Requires the Pro plan or the API add-on.
+    key: 'kajabi-api',
+    label: 'Kajabi (REST API)',
+    type: 'SaaS',
+    connector: 'saas',
+    auth: 'service',
+    endpointHint: 'https://api.kajabi.com',
+    secretKey: 'kajabi-client-credentials',
+    tools: [
+      { name: 'read_contact', description: 'Read a contact (read).', write: false, mode: 'Read', limits: { dataScope: 'your Kajabi sites' } },
+      { name: 'read_purchase', description: 'Read an offer purchase (read).', write: false, mode: 'Read', limits: { dataScope: 'your Kajabi sites' } },
+      { name: 'list_offers', description: 'List offers (read).', write: false, mode: 'Read' },
+      {
+        name: 'tag_contact',
+        description: 'Add a tag to a contact (write).',
+        write: true,
+        mode: 'Write-approval',
+        limits: { dataScope: 'your Kajabi contacts', rateLimitPerMin: 10 },
+      },
+      { name: 'delete_contact', description: 'Delete a contact (write).', write: true, mode: 'Blocked' },
     ],
   },
   {
@@ -984,7 +1024,7 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
  * import, the connections gate, adapter tests) and is deliberately NOT offered in
  * the create picker — a user can never stand up a non-working mock connection.
  */
-export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp', 'generic-api', 'generic-mcp', 'airflow', 'github', 'supabase', 'atlassian', 'slack', 'gmail', 'gcal', 'outlook', 'teams', 'entra', 'purview', 'ai-foundry', 'sagemaker', 'gcp-identity', 'gcp-directory', 'snowflake-governance', 'salesforce-api'];
+export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp', 'generic-api', 'generic-mcp', 'airflow', 'github', 'supabase', 'atlassian', 'slack', 'gmail', 'gcal', 'outlook', 'teams', 'entra', 'purview', 'ai-foundry', 'sagemaker', 'gcp-identity', 'gcp-directory', 'snowflake-governance', 'salesforce-api', 'kajabi-api'];
 
 export function isUserFacingTemplate(key: string): boolean {
   return (USER_FACING_TEMPLATE_KEYS as string[]).includes(key);

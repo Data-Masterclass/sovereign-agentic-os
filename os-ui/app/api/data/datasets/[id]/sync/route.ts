@@ -99,7 +99,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
             ? c.warehouse.platform
             : c.template === 'salesforce-api'
               ? 'salesforce'
-              : null;
+              : c.template === 'kajabi-api'
+                ? 'kajabi'
+                : null;
       } catch {
         platform = null;
       }

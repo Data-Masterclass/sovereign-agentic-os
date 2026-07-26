@@ -20,6 +20,7 @@ export type StackId =
   | 'databricks'
   | 'snowflake'
   | 'salesforce'
+  | 'kajabi'
   | 'atlassian'
   | 'opensource'
   | 'other';
@@ -38,6 +39,7 @@ export const STACKS: Stack[] = [
   { id: 'databricks', label: 'Databricks',   accent: '#D4401A' },   // muted from #FF3621
   { id: 'snowflake',  label: 'Snowflake',    accent: '#29B5E8' },
   { id: 'salesforce', label: 'Salesforce',   accent: '#0096C7' },   // muted from #00A1E0
+  { id: 'kajabi',     label: 'Kajabi',       accent: '#4A55C7' },   // muted from Kajabi blurple
   { id: 'atlassian',  label: 'Atlassian',    accent: '#0052CC' },
   { id: 'opensource', label: 'Open source',  accent: '#3FB950' },
   { id: 'other',      label: 'Other',        accent: '#8B9299' },
@@ -64,6 +66,8 @@ const TEMPLATE_STACK: Record<string, StackId> = {
   'snowflake-governance':'snowflake',
   // Salesforce
   'salesforce-api':      'salesforce',
+  // Kajabi
+  'kajabi-api':          'kajabi',
   // Atlassian
   'atlassian':           'atlassian',
   // Open source / self-hosted

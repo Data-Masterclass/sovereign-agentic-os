@@ -274,6 +274,29 @@ const SALESFORCE: InstallGuide = {
   caveat: 'Every sync consumes Salesforce **API quota** — schedule large objects sparingly. Deletes are NOT detected in v1 (no IsDeleted/queryAll yet); formula-field changes do not bump SystemModstamp. Reachability and credentials are only confirmed against your live org at Test time.',
 };
 
+const KAJABI: InstallGuide = {
+  key: 'kajabi-api',
+  title: 'Kajabi (REST API)',
+  summary: 'Connect a Kajabi account via its public API (OAuth client-credentials). Reads auto-allow, writes are held; purchases sync incrementally by updated_at — other resources honestly degrade (see the per-resource notes).',
+  prerequisites: [
+    'Kajabi **Pro plan** (or the Public API add-on) — the public API is not on every plan.',
+    'A **User API Key** from Kajabi **Settings → Public API** (`app.kajabi.com/admin/settings/public_api`) — only **Owners/Subowners** can create one; scope its permissions read-only where possible.',
+    'The key\'s **Client ID** and **Client Secret** — entered as ONE credential `client_id:client_secret`; stored in Secrets Manager, **never** on the record.',
+    'The API host `api.kajabi.com` on the **egress allowlist** (in the default list).',
+    'Builder/Admin rights (service-credential connector, not personal OAuth).',
+  ],
+  steps: [
+    'On the Kajabi card, click **Connect**.',
+    'Name the connection; keep the endpoint `https://api.kajabi.com`.',
+    'Paste the credential as `client_id:client_secret` — stored once in Secrets Manager.',
+    'Create the connection, then **Test** on its card (a real token grant + `GET /v1/sites`).',
+    'To land a resource in the lakehouse: create a dataset with a **scheduled sync** on this connection (discovery lists the documented resources: contacts, customers, purchases, orders, offers, products, …) — the first run creates the Bronze copy; later runs pull only newer records where the API supports it.',
+  ],
+  whatTheOsDoes:
+    'Registers a governed outbound API connection. Reads auto-allow; writes are held for approval; deletes are blocked. Scheduled syncs run **as the dataset owner**: the OS probes the resource\'s max cursor (`sort=-updated_at`/`-created_at`), pulls the JSON:API slice page-by-page (≤100 rows/page, stop-early at the watermark), flattens attributes + to-one relationship ids into columns, and streams each page to the lakehouse with `_loaded_at`/`_batch_id` lineage on every row.',
+  caveat: 'HONEST LIMITS: only **purchases** documents an update cursor (updated_at) — contacts/customers/orders/form_submissions sync **new records only** (created_at; edits need a full refresh), and transactions/offers/products/courses/forms/tags are **full-refresh only**. Deletes are never detected. Kajabi publishes **no rate-limit contract** — 429s surface honestly and the next run re-covers the slice. Multi-site accounts sync all sites (filter on the `site_id` column downstream). Reachability and credentials are only confirmed against your live account at Test time.',
+};
+
 
 const GDRIVE: InstallGuide = {
   key: 'gdrive',
@@ -689,7 +712,7 @@ const GUIDES: InstallGuide[] = [
   GLUE, SNOWFLAKE, BIGQUERY, DATABRICKS, FABRIC,
   POSTGRESQL, MYSQL, SQLSERVER, MONGODB, KAFKA,
   GDRIVE, ONEDRIVE, NOTION, AIRFLOW, OM_CATALOG,
-  GITHUB, SUPABASE, ATLASSIAN, SALESFORCE,
+  GITHUB, SUPABASE, ATLASSIAN, SALESFORCE, KAJABI,
   SLACK, GMAIL, GCAL, OUTLOOK, TEAMS,
   ENTRA, PURVIEW, AI_FOUNDRY, SAGEMAKER,
   GCP_IDENTITY, GCP_DIRECTORY, SNOWFLAKE_GOVERNANCE,
