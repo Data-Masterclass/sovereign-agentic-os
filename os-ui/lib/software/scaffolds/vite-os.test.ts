@@ -81,7 +81,9 @@ test('vite-os scaffold: Dockerfile is multi-stage (builder + nginx)', () => {
   const f = byPath('Dockerfile');
   assert.ok(f, 'Dockerfile is present');
   assert.match(f!.content, /FROM node:\S+ AS builder/i, 'has a named builder stage');
-  assert.match(f!.content, /FROM nginx:/i, 'has a nginx serving stage');
+  // Serving stage is the NON-ROOT nginx-unprivileged image (uid 101) so the runner can
+  // enforce runAsNonRoot without the pod needing root to start.
+  assert.match(f!.content, /FROM nginxinc\/nginx-unprivileged:/i, 'has a non-root nginx serving stage');
 });
 
 test('vite-os scaffold: Dockerfile builds SPA and serves nginx on port 8080', () => {

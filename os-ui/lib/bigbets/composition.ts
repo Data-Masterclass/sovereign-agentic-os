@@ -17,7 +17,7 @@
  * data product used by a dashboard + an agent becomes visible and earns credit.
  */
 
-import { type Artifact, type Tab, UPSTREAM_TABS } from './model.ts';
+import { type Tab, UPSTREAM_TABS } from './model.ts';
 import { resolveArtifact } from './sources.ts';
 
 export type CompositionNode = {
@@ -80,7 +80,3 @@ export function downstreamCounts(map: CompositionMap): Map<string, number> {
   return counts;
 }
 
-/** Convenience: the artifact behind a node (for the value join). */
-export function nodeArtifact(nodeId: string): Artifact | null {
-  return resolveArtifact(nodeId);
-}

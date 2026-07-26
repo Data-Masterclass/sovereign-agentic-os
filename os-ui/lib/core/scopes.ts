@@ -57,6 +57,22 @@ export function scopeLabel(key: ScopeKey, kind?: string): string {
   return SCOPE_GROUPS.find((g) => g.key === key)!.label(kind);
 }
 
+/**
+ * The three visibility TIERS every tab normalises to, and the CSS badge class each
+ * renders (defined in globals.css). Tabs name their tiers differently
+ * (personal/dataset/Personal, domain/asset/shared, marketplace/product/certified),
+ * but the badge CLASS for a given tier is identical everywhere — this is that one
+ * map. Callers translate their own tier vocabulary to a `NormalTier` and read the
+ * class here, keeping their own display NOUNS (which intentionally differ).
+ */
+export type NormalTier = 'personal' | 'shared' | 'certified';
+
+export const TIER_BADGE_CLASS: Record<NormalTier, string> = {
+  personal: 'vis-personal',
+  shared: 'vis-shared',
+  certified: 'vis-certified',
+};
+
 /** A stored visibility/tier value — internal, unchanged. Mapped to a scope for DISPLAY. */
 export type Visibility = 'Personal' | 'Shared' | 'Certified' | 'Marketplace' | string;
 
@@ -200,4 +216,38 @@ export function activeScopeCounts<T extends Owned & { archived?: boolean }>(
     shared: tilesForScope(groups, 'shared', currentUserId).active.length,
     marketplace: tilesForScope(groups, 'marketplace', currentUserId).active.length,
   };
+}
+
+/**
+ * The two folder trees a tab navigates: the caller's PERSONAL tree and the shared
+ * DOMAIN tree. Every artifact list buckets its items into one of these roots.
+ */
+export type FolderRoot = 'personal' | 'domain';
+
+/**
+ * The folder root(s) a scope segment addresses — one place for the mapping that
+ * trims the folder rail + picker to the roots that can hold in-scope items:
+ *   • My         → personal only
+ *   • Domain     → domain only
+ *   • Company    → domain only
+ *   • All        → both trees
+ * (Each tab keeps its own `rootOf(item)` — that reads the tab's tier vocabulary.)
+ */
+export function rootsForScope(scope: ScopeKey): FolderRoot[] {
+  if (scope === 'mine') return ['personal'];
+  if (scope === 'shared' || scope === 'marketplace') return ['domain'];
+  return ['personal', 'domain']; // 'all'
+}
+
+/**
+ * Whether an artifact card should render its origin DomainTag in the given scope.
+ * True whenever the list mixes domains — the Domain, Company and All views — where
+ * the tag disambiguates same-named items across domains. (The My view is a single
+ * caller's own drawer, so the tag is redundant there.)
+ *
+ * NOTE: the Data tab's DatasetTiles intentionally omits 'all' from its own
+ * showDomain and is NOT migrated to this helper — do not "fix" that.
+ */
+export function showDomainForScope(scope: ScopeKey): boolean {
+  return scope === 'shared' || scope === 'marketplace' || scope === 'all';
 }

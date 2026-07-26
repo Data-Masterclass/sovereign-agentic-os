@@ -11,6 +11,7 @@ RUN useradd -u 1000 -m app
 COPY --chown=1000:1000 app.py /app/app.py
 USER 1000
 
-ENV PORT=8000
+ENV PORT=8000 \
+    HOME=/tmp
 EXPOSE 8000
 ENTRYPOINT ["python", "/app/app.py"]

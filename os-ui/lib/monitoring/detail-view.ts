@@ -35,7 +35,7 @@ import {
   type CheckVerdict,
   type DqSummary,
 } from './telemetry-core';
-import { LAYERS, type Layer } from '@/lib/data/dataset-schema';
+import { LAYERS, type Layer } from '@/lib/data';
 
 /**
  * The big DIAGNOSIS-WINDOW payloads. Everything a user needs to diagnose ONE agent

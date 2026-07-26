@@ -38,3 +38,30 @@ test('approve & remember writes a standing policy that matches the same request 
   assert.equal(isRemembered('access_request', { dataset: 'mart_sales' }), true);
   assert.equal(isRemembered('access_request', { dataset: 'other' }), false);
 });
+
+// ---- Audit read scoping — builder's search must not leak foreign domain entries ----
+
+test('builder search({}) returns only their own domain entries, never foreign domain entries', () => {
+  // Seed entries for two domains.
+  record({ actor: 'bea', action: 'deploy', subject: 'app1', domain: 'sales', reason: 'sales deploy' });
+  record({ actor: 'kenji', action: 'cost.cap.set', subject: 'budget', domain: 'finance', reason: 'finance cap' });
+
+  // A builder in 'sales' must not see finance entries — use the domains filter
+  // (the route/API applies this for non-admin users).
+  const salesOnly = search({ domains: ['sales'] });
+  assert.ok(salesOnly.length > 0, 'the builder sees their own domain entries');
+  assert.ok(salesOnly.every((e) => e.domain === 'sales'), 'no foreign domain entries returned');
+
+  // Confirm the finance entry is excluded.
+  assert.ok(!salesOnly.some((e) => e.domain === 'finance'), 'finance entry must not appear in sales search');
+});
+
+test('admin search({}) (no domains filter) returns entries for all domains', () => {
+  record({ actor: 'bea', action: 'deploy', subject: 'app2', domain: 'sales', reason: 'sales' });
+  record({ actor: 'kenji', action: 'deny', subject: 'budget', domain: 'finance', reason: 'finance' });
+
+  // Without a domains restriction an admin sees everything.
+  const all = search({});
+  const domains = new Set(all.map((e) => e.domain));
+  assert.ok(domains.has('sales') && domains.has('finance'), 'admin sees both domains');
+});

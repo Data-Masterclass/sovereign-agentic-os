@@ -20,8 +20,6 @@ import { osMirror } from '@/lib/infra/os-mirror';
  * Memory NEVER crosses domains: every read/write is keyed by `{domain, agent}`.
  */
 
-const TTL_MS = 1000 * 60 * 60; // 1h working-memory TTL (end-of-conversation in prod)
-
 export type Turn = { role: 'user' | 'assistant'; content: string; at: string };
 
 type Thread = { threadId: string; domain: string; agent: string; turns: Turn[]; touched: number };
@@ -53,7 +51,6 @@ function state(): MemoryState {
   if (!g[STATE_KEY]) g[STATE_KEY] = { threads: new Map(), facts: new Map(), factHydration: null };
   return g[STATE_KEY]!;
 }
-const threads = state().threads;
 const facts = state().facts;
 
 function now(): string {
@@ -62,34 +59,6 @@ function now(): string {
 function id(p: string): string {
   return `${p}_${Math.random().toString(36).slice(2, 9)}`;
 }
-function key(domain: string, agent: string, threadId: string): string {
-  return `${domain}::${agent}::${threadId}`;
-}
-
-function reap(): void {
-  const cutoff = Date.now() - TTL_MS;
-  for (const [k, t] of threads) if (t.touched < cutoff) threads.delete(k);
-}
-
-// ----------------------------------------------------------- Short-term (Valkey) --
-
-/** Load the working memory for a thread (creating it on first use). */
-export function getThread(domain: string, agent: string, threadId: string): Turn[] {
-  reap();
-  const t = threads.get(key(domain, agent, threadId));
-  return t ? t.turns : [];
-}
-
-/** Append a turn to working memory (the checkpointer write). */
-export function appendTurn(domain: string, agent: string, threadId: string, turn: Omit<Turn, 'at'>): void {
-  const k = key(domain, agent, threadId);
-  const existing = threads.get(k) ?? { threadId, domain, agent, turns: [], touched: Date.now() };
-  existing.turns.push({ ...turn, at: now() });
-  existing.turns = existing.turns.slice(-30);
-  existing.touched = Date.now();
-  threads.set(k, existing);
-}
-
 // ------------------------------------------------------------- Long-term (durable) --
 
 // Shared durable-mirror core (lib/os-mirror.ts): first write probes the cluster

@@ -1,0 +1,184 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ */
+import 'server-only';
+import type { CurrentUser } from '@/lib/core/auth';
+import type { McpTool, JsonSchema } from './server';
+import {
+  P, mcpToken, fail, str, num, bool, strArr, slug, rand, defaultGoLive,
+  colDocs, mapSteps, mapRules, mapActors, normFiles,
+  type Principal,
+} from './write-common';
+
+// --- Governed lib functions (the EXACT same the UI + /api routes call) ---------
+import {
+  createDataset,
+  buildVersion,
+  setDocs as setDatasetDocs,
+  requestPromotion as requestDatasetPromotion,
+  getDataset,
+  archiveDataset,
+  deleteDataset,
+  defineMeasure,
+  buildGoldJoin as commitGoldJoin,
+  addCheck,
+  builtLayerFqn,
+  type PromotionRequest,
+} from '@/lib/data/store';
+import { runQualityChecks } from '@/lib/data/dq-run';
+import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/data';
+import { queryRun } from '@/lib/infra/governed';
+import { publishPromotionLive } from '@/lib/data/publish-server';
+import { enqueue, getApproval, decide, listApprovals } from '@/lib/governance/approvals';
+import { canBuildStage, canPassThrough, stageArtifact } from '@/lib/data/panels';
+import { scaffoldCubeYaml } from '@/lib/data/metrics';
+import { ingestAndRegisterBronze } from '@/lib/data/ingest';
+import { buildStage, commitLayerVersion } from '@/lib/data/build/server';
+import {
+  silverPlan,
+  goldJoinPlan,
+  goldMeasureToCube,
+  CAST_TYPES,
+  type TransformOp,
+  type ResolvedJoin,
+  type GoldDimension,
+  type GoldMeasure,
+  type JoinType,
+} from '@/lib/data/transform';
+import { assetTarget } from '@/lib/data/store-fqn';
+import type { ExecuteIdentity } from '@/lib/infra/governed';
+import type { Layer, Quality, DataVisibility, Grant, ColumnDoc, DatasetUpstream } from '@/lib/data';
+import { measureFromForm, measureMember, type MetricForm, type GuidedFilter, type GuidedWindow } from '@/lib/metrics/model';
+import type { MeasureType } from '@/lib/data/metrics';
+import { buildMetric } from '@/lib/metrics/build/server';
+import { exploreMetric } from '@/lib/metrics/build/explore-server';
+import type { Granularity } from '@/lib/metrics/explorer';
+import { getMetric } from '@/lib/metrics/store';
+import { governMetric, canPromote as canPromoteMetric } from '@/lib/metrics/governance';
+import { transition as transitionDataset } from '@/lib/data/store';
+
+import {
+  createWorkflow,
+  updateWorkflow,
+  updateTacit,
+  getWorkflow,
+  getDomainKnowledge,
+  archiveWorkflow,
+  deleteWorkflow,
+} from '@/lib/knowledge/store';
+import { knowledgeConsumers } from '@/lib/knowledge/consumers';
+import { fileArtifactPromotion, promoteThroughSeam, isLadderKind, type LadderKind } from '@/lib/governance/ladder';
+import { pendingHandle } from '@/lib/mcp/pending';
+import {
+  serializeWorkflow,
+  deriveActors,
+  ACTOR_TYPES,
+  type Workflow,
+  type WorkflowStep,
+  type WorkflowRule,
+  type ActorType,
+  type Actor,
+} from '@/lib/knowledge/schema';
+import { indexWorkflow, indexDomain, purgeKnowledgeUnits } from '@/lib/knowledge/index-pipeline';
+
+import {
+  createFile,
+  setDocs as setFileDocs,
+  attachObject,
+  objectKeyForAsset,
+  requestPromotion as requestFilePromotion,
+  applyApprovedFilePromotion,
+  type FilePromotionRequest,
+} from '@/lib/files/store';
+import { reindexFile } from '@/lib/files/pipeline-server';
+import { putBlob } from '@/lib/files/object-store';
+import type { Sensitivity } from '@/lib/files/asset-schema';
+
+import { saveDashboard } from '@/lib/dashboards/store';
+import { fromTiles, type ChartSpec } from '@/lib/dashboards/model';
+import { claimsFromUser, delegate } from '@/lib/data/identity';
+
+import {
+  createBet,
+  getBet,
+  updateBet,
+  addComponent,
+  archiveBet,
+  unarchiveBet,
+  deleteBet,
+  restoreBetVersion,
+  setBetWorkflow,
+  wireComponents,
+  unwireComponents,
+  canEdit as canEditBet,
+  type CreateBetInput,
+} from '@/lib/bigbets/store';
+import { getPillar } from '@/lib/strategy/pillars';
+import { deriveBetName, INTERPLAY_RELATIONS, type BigBet, type InterplayRelation, type Tab as BetTab, type ValueBasis } from '@/lib/bigbets';
+import { resolveLinkedComponent } from '@/lib/bigbets/attach-server';
+
+import {
+  createSystem,
+  writeFile as writeAgentFile,
+  getSystemForEdit,
+  getSystemForRun,
+} from '@/lib/agents/store';
+import { isTemplateKey } from '@/lib/agents/templates';
+import { buildSystem } from '@/lib/agents/build/server';
+
+import { patchAppDesign, getAppForUser, type AppEpic } from '@/lib/software/apps';
+import { normalizeContextGrants } from '@/lib/core/context-grants';
+
+// ============================== DASHBOARDS ====================================
+export const dashboardWriteTools: McpTool[] = [
+  {
+    name: 'create_dashboard',
+    tab: 'dashboards',
+    minRole: 'creator',
+    description:
+      'Create (or replace) a dashboard you own — tiles/charts that reference GOVERNED metric members. Runs in YOUR My scope with no approval, and imports to Superset so it EMBEDS LIVE end-to-end (no offline placeholder; a best-effort offline-mock only if Superset is unreachable). Same governed path as the Dashboards tab. Sharing it wider is the separate governed promote ladder (owner files request_promotion → a domain admin approves).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Stable id (to replace an existing one you own); auto-generated if omitted.' },
+        name: { type: 'string', description: 'Dashboard name, e.g. "Sales Overview".' },
+        view: { type: 'string', description: 'The Cube view (one gold dataset’s view) the charts bind to.' },
+        charts: {
+          type: 'array',
+          description: 'At least one chart on a governed metric member.',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              vizType: { type: 'string', enum: ['big_number_total', 'line', 'bar', 'table'] },
+              metric: { type: 'string', description: 'Governed metric member, e.g. "Orders.revenue".' },
+              dimensions: { type: 'array', items: { type: 'string' } },
+            },
+            required: ['name', 'vizType', 'metric'],
+          },
+        },
+      },
+      required: ['name', 'view', 'charts'],
+      examples: [
+        { name: 'Sales Overview', view: 'Orders', charts: [{ name: 'Total revenue', vizType: 'big_number_total', metric: 'Orders.revenue' }] },
+      ],
+    },
+    call: async (user, args) => {
+      const name = str(args.name).trim();
+      if (!name) fail('create_dashboard needs a `name`', 400);
+      const view = str(args.view).trim();
+      if (!view) fail('create_dashboard needs a `view` (the gold dataset’s Cube view)', 400);
+      const charts = (Array.isArray(args.charts) ? args.charts : []) as ChartSpec[];
+      if (!charts.length) fail('a dashboard needs at least one chart on a governed metric', 400);
+      const id = str(args.id).trim() || `dash_${slug(name)}_${rand()}`;
+      // Scope the dashboard's governed view to the caller's domain. Tier-1 native dashboards
+      // render at VIEW time (Apache ECharts on the governed Cube layer, per-viewer RLS) —
+      // there is no Superset import step, so create_dashboard is persist-only (mirrors
+      // /api/dashboards/build).
+      const spec = fromTiles(name, view, charts, user.domains[0]);
+      const rec = saveDashboard(P(user), id, spec);
+      return { id: rec.id, tier: rec.tier, spec: rec.spec };
+    },
+  },
+];
+

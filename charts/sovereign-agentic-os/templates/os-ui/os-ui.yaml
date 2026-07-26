@@ -428,6 +428,14 @@ spec:
             - name: ML_ENABLED
               value: "true"
             {{- end }}
+            {{- if .Values.mlTrainer.image }}
+            # Science training runtime — the ml-trainer image the os-ui's training
+            # route injects into per-model batch Jobs (lib/science/training.ts).
+            # Nil-safe: absent ⇒ env unset ⇒ config.ts falls back to the hardcoded
+            # dev default `sovereign-os/ml-trainer:0.1.0`.
+            - name: ML_TRAINER_IMAGE
+              value: {{ printf "%s:%s" .Values.mlTrainer.image.repository .Values.mlTrainer.image.tag | quote }}
+            {{- end }}
             {{- if .Values.terminal.enabled }}
             # In-UI Terminal. The UI mints a short-lived token (signed with the
             # SAME secret the broker verifies) for authorised roles, then the

@@ -20,6 +20,13 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     soa.dev/purpose: software-runner
+    {{- /* Pod Security Standards: enforce (nil-safe default `baseline` under
+           --reuse-values). Student apps run untrusted code; `baseline` blocks host
+           namespaces / privileged / hostPath. See the follow-up note in values.yaml
+           for the move to `restricted`. */}}
+    pod-security.kubernetes.io/enforce: {{ .Values.softwareRunner.podSecurityStandard | default "baseline" }}
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: {{ .Values.softwareRunner.podSecurityStandard | default "baseline" }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -57,4 +64,124 @@ subjects:
   - kind: ServiceAccount
     name: os-ui
     namespace: {{ .Release.Namespace }}
+{{- if (.Values.softwareRunner.networkPolicy | default dict).enabled }}
+{{- /*
+  SECURITY (C2c/C2d): network isolation for the student-apps namespace.
+
+  Apps are UNTRUSTED code. The runner serves each app as a static SPA (nginx) whose
+  ONLY legitimate traffic is: INGRESS from the ingress controller (public per-app
+  host) and EGRESS to DNS. The browser talks to os-ui directly over the public
+  ingress (the OS_API_URL baked at build time), so the app POD never needs to reach
+  os-ui or any platform service in-cluster. We therefore default-deny both
+  directions and open only those two paths.
+
+  NOTE: kind's default CNI (kindnet) does NOT enforce NetworkPolicies — locally these
+  are inert; on STACKIT (Cilium) they enforce. Written to keep the stack working when
+  enforced (mirrors templates/network/egress-policies.yaml).
+*/}}
+---
+# 1) Default-deny ALL ingress + egress for every app pod (baseline).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: apps-default-deny
+  namespace: {{ .Values.softwareRunner.namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# 2) Allow ingress ONLY from the ingress-controller namespace (public per-app host).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: apps-allow-ingress-from-controller
+  namespace: {{ .Values.softwareRunner.namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ (.Values.softwareRunner.networkPolicy | default dict).ingressNamespace | default "ingress-nginx" }}
+---
+# 3) Allow egress to DNS only (kube-system :53). No platform services, no internet —
+# a static SPA needs nothing else; the browser reaches os-ui over the public ingress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: apps-allow-dns-egress
+  namespace: {{ .Values.softwareRunner.namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+        # Gardener/SKE CoreDNS listens on 8053 (see egress-policies.yaml note).
+        - { protocol: UDP, port: 8053 }
+        - { protocol: TCP, port: 8053 }
+---
+# 4) INGRESS lock on query-tool (in the PLATFORM namespace): only os-ui pods may reach
+# it. The governed query engine must not be callable by any other in-namespace pod
+# (agent-runtime reaches it INDIRECTLY via os-ui's /api/agents/tool, never directly).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: query-tool-allow-os-ui-only
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: query-tool
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui
+      ports:
+        - { protocol: TCP, port: 8000 }
+---
+# 5) INGRESS lock on data-runner: only os-ui pods may reach it (the ingest/land path
+# is always mediated by the os-ui backend, which supplies the session-bound principal).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: data-runner-allow-os-ui-only
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: data-runner
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui
+      ports:
+        - { protocol: TCP, port: 8000 }
+{{- end }}
 {{- end }}

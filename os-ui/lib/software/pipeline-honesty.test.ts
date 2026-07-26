@@ -305,3 +305,53 @@ test('unreachable Forgejo leaves the stage untouched and SAYS so', async () => {
   assert.equal(r.status, 'pending');
   assert.match(r.note ?? '', /unreachable/);
 });
+
+// ---- Cancelled + skipped conclusions (the two missing conclusions) ---
+
+test('latest run CANCELLED → failing (same branch as failure) + REGISTRY_PASS heal', async () => {
+  // Per apps.ts:1297 — `failure` and `cancelled` share a branch → 'failing'.
+  const app = await liveApp('Cancelled Run');
+  const fake = fakeForgejo((method, url) => {
+    if (method === 'GET' && url.endsWith(repoUrl(app))) return { status: 200, json: { has_actions: true } };
+    if (method === 'GET' && url.includes(`${repoUrl(app)}/commits`)) return { status: 200, json: [{ sha: 'headcancelled' }] };
+    if (method === 'GET' && url.includes(`${repoUrl(app)}/actions/tasks`)) {
+      return { status: 200, json: { total_count: 1, workflow_runs: [{ head_sha: 'headcancelled', status: 'cancelled' }] } };
+    }
+    if (method === 'PUT' && url.includes('/actions/secrets/REGISTRY_PASS')) return { status: 204 };
+    return undefined;
+  });
+  try {
+    const r = await refreshActionsStage(app, { force: true });
+    assert.equal(r.status, 'failing', 'a cancelled run maps to failing (not pending/ok)');
+    assert.match(r.note ?? '', /FAILED/, 'the note must say FAILED so the UI shows it honestly');
+    assert.equal(app.pipeline.actions, 'failing');
+    const heal = fake.calls.find((c) => c.method === 'PUT' && c.url.includes('/actions/secrets/REGISTRY_PASS'));
+    assert.ok(heal, 'a cancelled run must also trigger the REGISTRY_PASS heal (same branch as failure)');
+  } finally {
+    fake.restore();
+  }
+});
+
+test('latest run SKIPPED → pending (honest in-progress note, not ok)', async () => {
+  // Per apps.ts:1314 — any status that is not '' and not 'success' falls into
+  // the pending branch. 'skipped' is such a status.
+  const app = await liveApp('Skipped Run');
+  const fake = fakeForgejo((method, url) => {
+    if (method !== 'GET') return undefined;
+    if (url.endsWith(repoUrl(app))) return { status: 200, json: { has_actions: true } };
+    if (url.includes(`${repoUrl(app)}/commits`)) return { status: 200, json: [{ sha: 'headskipped1' }] };
+    if (url.includes(`${repoUrl(app)}/actions/tasks`)) {
+      return { status: 200, json: { total_count: 1, workflow_runs: [{ head_sha: 'headskipped1', status: 'skipped' }] } };
+    }
+    return undefined;
+  });
+  try {
+    const r = await refreshActionsStage(app, { force: true });
+    assert.equal(r.status, 'pending', 'a skipped run is not finished — stage must be pending');
+    assert.match(r.note ?? '', /not finished/, 'the note must surface the status so the operator knows');
+    assert.equal(app.pipeline.actions, 'pending');
+    assert.ok(!fake.calls.some((c) => c.method === 'PUT' && c.url.includes('/actions/secrets/')), 'no heal for a skipped run');
+  } finally {
+    fake.restore();
+  }
+});

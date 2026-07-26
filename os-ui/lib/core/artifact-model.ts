@@ -82,11 +82,22 @@ export const TYPE_LABELS: Record<ArtifactType, string> = {
   skill: 'Skill',
 };
 
-/** The next lifecycle stage an admin can promote to, or null if already top. */
-export function nextVisibility(v: Visibility): Visibility | null {
-  if (v === 'Personal') return 'Shared';
-  if (v === 'Shared') return 'Certified';
-  return null;
+/**
+ * Tier → OS-wide lifecycle visibility, the ONE mapping every tab's tile/detail view
+ * used to re-derive as a private `lcVis`. Each tab names its middle/top tiers
+ * differently — Data `asset`/`product`, Metrics/Dashboards `domain`/`marketplace`,
+ * Science/Agents `Domain`|`Shared`/`Marketplace` — but they all collapse to the
+ * same lifecycle `visibility` the delete/lifecycle gate reads:
+ *   • the SHARED middle tier   (asset | domain | Domain | Shared)      → 'shared'
+ *   • the CERTIFIED top tier    (product | marketplace | Marketplace)  → 'certified'
+ *   • everything else (the personal/dataset floor)                     → 'personal'
+ * Returns the lowercase `lib/core/lifecycle` Visibility (NOT this module's
+ * capitalized `Visibility` type).
+ */
+export function visibilityForTier(tier: string): 'personal' | 'shared' | 'certified' {
+  if (tier === 'asset' || tier === 'domain' || tier === 'Domain' || tier === 'Shared') return 'shared';
+  if (tier === 'product' || tier === 'marketplace' || tier === 'Marketplace') return 'certified';
+  return 'personal';
 }
 
 export function promoteLabel(v: Visibility): string | null {

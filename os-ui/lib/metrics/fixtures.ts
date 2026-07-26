@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { emptyVersions, type Dataset } from '../data/dataset-schema.ts';
+import { emptyVersions, type Dataset } from '../data/index.ts';
 
 /** A built, documented Gold "Sales" dataset — the shared test fixture for the
  *  Metrics/Dashboards spine (kept out of *.test.ts so importing it never re-runs

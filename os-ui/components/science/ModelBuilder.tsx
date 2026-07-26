@@ -8,6 +8,7 @@ import { useUser } from '@/lib/useUser';
 import { roleAtLeast } from '@/lib/core/session';
 import { canManageArtifact } from '@/lib/governance/edit-scope';
 import type { Visibility } from '@/lib/core/lifecycle';
+import { visibilityForTier } from '@/lib/core/artifact-model';
 import DomainTag from '@/components/DomainTag';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
@@ -30,8 +31,7 @@ import {
 const SCI_MODE_KEY = 'science.viewMode';
 
 /** Model tier → the OS-wide lifecycle visibility (drives the delete gate). */
-const lcVis = (tier: ModelSummary['tier']): Visibility =>
-  tier === 'Domain' ? 'shared' : tier === 'Marketplace' ? 'certified' : 'personal';
+const lcVis = (tier: ModelSummary['tier']): Visibility => visibilityForTier(tier);
 /** Model tier → the shared ladder tier the PromoteButton speaks. */
 const ladderTier = (tier: ModelSummary['tier']): PromoteTier =>
   tier === 'Domain' ? 'Shared' : tier === 'Marketplace' ? 'Marketplace' : 'Personal';

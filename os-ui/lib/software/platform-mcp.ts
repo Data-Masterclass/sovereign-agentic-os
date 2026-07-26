@@ -184,15 +184,3 @@ export function platformMcpToolNames(): string[] {
   return PLATFORM_MCP_TOOLS.map((t) => t.name).sort();
 }
 
-/** Touch an app so a caller can confirm visibility under their own identity. */
-export async function mcpGetApp(user: CurrentUser, appId: string) {
-  const app = await getAppByIdInternal(appId);
-  if (!app) throw withStatus(new Error('App not found'), 404);
-  // Same visibility rule as the UI: only the owner's own / their domain's / shared.
-  const visible =
-    (app.visibility === 'Personal' && app.owner === user.id) ||
-    (app.visibility === 'Shared' && user.domains.includes(app.domain)) ||
-    app.visibility === 'Certified';
-  if (!visible) throw withStatus(new Error('App not found'), 404);
-  return app;
-}

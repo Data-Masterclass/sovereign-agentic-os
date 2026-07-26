@@ -24,7 +24,7 @@ from starlette.responses import JSONResponse
 import trino
 import trino.exceptions
 
-from execute_guard import ExecuteError, connect_kwargs, guard
+from execute_guard import ExecuteError, connect_kwargs, guard, guard_read
 
 PORT = int(os.environ.get("PORT", "8000"))
 TRINO_HOST = os.environ.get("TRINO_HOST", "trino")
@@ -57,6 +57,10 @@ def _connect(principal: str | None = None, schema: str | None = None):
 
 
 def run_query(sql: str, principal: str | None = None, schema: str | None = None) -> dict:
+    # Defence-in-depth: enforce read-only single-statement BEFORE touching Trino, so
+    # the read tool can never mutate the lakehouse even if a caller sends write SQL.
+    # (Trino's OPA plugin remains the authoritative row/column governance layer.)
+    sql = guard_read(sql)
     eff_schema = schema or TRINO_SCHEMA
     conn = _connect(principal, eff_schema)
     cur = conn.cursor()
@@ -127,6 +131,9 @@ async def http_query(req: Request):
             run_query, sql, body.get("principal"), body.get("schema")
         )
         return JSONResponse(result)
+    except ExecuteError as e:
+        # Read-guard rejection (write/DDL/stacked/comment) — an honest 400, not a 500.
+        return JSONResponse({"error": str(e)}, status_code=e.status)
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"error": str(e)}, status_code=500)
 

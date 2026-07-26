@@ -12,6 +12,7 @@ from execute_guard import (
     ExecuteError,
     connect_kwargs,
     guard,
+    guard_read,
     parse_statement,
     personal_schema,
 )
@@ -442,6 +443,87 @@ class PrincipalThreadingTests(unittest.TestCase):
             http_scheme="http", default_user="query-agent",
         )
         self.assertEqual(kw["user"], "query-agent")
+
+
+class ReadGuardTests(unittest.TestCase):
+    """The /query read-path defence-in-depth guard (guard_read). Read-only, single
+    statement, no comment/stacked smuggling, no write/DDL/privilege verb."""
+
+    def test_plain_select_ok(self):
+        self.assertEqual(
+            guard_read("SELECT order_date, revenue FROM daily_revenue ORDER BY 1"),
+            "SELECT order_date, revenue FROM daily_revenue ORDER BY 1",
+        )
+
+    def test_with_cte_ok(self):
+        guard_read("WITH t AS (SELECT 1 AS a) SELECT * FROM t")
+
+    def test_show_tables_ok(self):
+        # list_tables() runs `show tables` through run_query -> guard_read.
+        guard_read("show tables")
+
+    def test_describe_ok(self):
+        guard_read("DESCRIBE iceberg.sales.daily_revenue")
+
+    def test_explain_ok(self):
+        guard_read("EXPLAIN SELECT * FROM iceberg.sales.orders")
+
+    def test_trailing_semicolon_ok(self):
+        guard_read("SELECT 1;")
+
+    def test_replace_function_not_tripped(self):
+        # `replace(...)` is a legitimate Trino string function, not a write verb.
+        guard_read("SELECT replace(name, 'a', 'b') FROM iceberg.sales.orders")
+
+    def test_column_named_like_verb_ok(self):
+        # `created_at` / `updated_at` must not trip the create/update word match.
+        guard_read("SELECT created_at, updated_at FROM iceberg.sales.orders")
+
+    def test_insert_rejected(self):
+        self.assertEqual(status_of(lambda: guard_read("INSERT INTO t SELECT 1")), 400)
+
+    def test_update_rejected(self):
+        self.assertEqual(status_of(lambda: guard_read("UPDATE t SET x = 1")), 400)
+
+    def test_delete_rejected(self):
+        self.assertEqual(status_of(lambda: guard_read("DELETE FROM t WHERE 1=1")), 400)
+
+    def test_ddl_create_rejected(self):
+        self.assertEqual(
+            status_of(lambda: guard_read("CREATE TABLE t AS SELECT 1")), 400
+        )
+
+    def test_drop_rejected(self):
+        self.assertEqual(status_of(lambda: guard_read("DROP TABLE t")), 400)
+
+    def test_grant_rejected(self):
+        self.assertEqual(status_of(lambda: guard_read("GRANT SELECT ON t TO u")), 400)
+
+    def test_stacked_statement_rejected(self):
+        self.assertEqual(
+            status_of(lambda: guard_read("SELECT 1; DROP TABLE t")), 400
+        )
+
+    def test_comment_rejected(self):
+        self.assertEqual(
+            status_of(lambda: guard_read("SELECT 1 -- sneaky")), 400
+        )
+        self.assertEqual(
+            status_of(lambda: guard_read("SELECT /* x */ 1")), 400
+        )
+
+    def test_stacked_write_after_select_rejected(self):
+        # The classic SSRF/stacked write — a SELECT that smuggles a write after ';'.
+        self.assertEqual(
+            status_of(lambda: guard_read(
+                "SELECT 1; INSERT INTO iceberg.sales.orders SELECT * FROM x"
+            )),
+            400,
+        )
+
+    def test_empty_rejected(self):
+        self.assertEqual(status_of(lambda: guard_read("")), 400)
+        self.assertEqual(status_of(lambda: guard_read("   ")), 400)
 
 
 if __name__ == "__main__":

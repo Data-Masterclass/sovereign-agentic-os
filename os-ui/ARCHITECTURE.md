@@ -4,11 +4,11 @@ Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 -->
 # os-ui architecture
 
-The Sovereign Agentic OS web app. One rule governs the layout: **everything is
-either a tab, infrastructure, or core.** A contributor who learns one tab can
-work on any tab, because every tab is shaped the same way.
+The Sovereign Agentic OS web app. The layout has four rings: **core, infra, the
+tabs, and the shared services that sit across the tabs.** A contributor who learns
+one tab can work on any tab, because every tab is shaped the same way.
 
-## The three layers
+## The four rings
 
 ```
 lib/core/     Cross-cutting primitives every layer may import.
@@ -29,13 +29,31 @@ lib/<tab>/    ONE module per OS tab (data, knowledge, files, metrics,
               home, tutorials). Uniform internal shape (below). A tab imports
               DOWN into core + infra, and NEVER sideways into another tab's
               internals — only through that tab's index.ts.
+
+lib/<service>/ SHARED SERVICES that sit ACROSS the tabs — not a tab of their own,
+              they compose several tabs' public APIs into one cross-cutting
+              surface. mcp is the API-aggregation layer (it MAY import tab
+              index.ts's to expose every tab as governed MCP tools); alongside it:
+              assistant, talk (the in-app conversational surfaces), tabs (the
+              nav/guide registry), models (model-role resolver), lineage (unified
+              cross-tab lineage), folders (the shared folder registry), oauth,
+              notifications, prefs, hermes (agentskills.io gateway, pure + unwired).
+              These may import multiple tab indexes; they never reach into a tab's
+              internals. app-sdk + app-ui back the Software tab's generated apps.
 ```
 
-Dependency direction is strict and one-way: **`<tab>` → `infra` → `core`.**
-core imports nothing but core; infra imports core; tabs import infra + core.
-A tab reaching into another tab's internals is the one thing code review rejects
-— cross-tab needs go through the other tab's `index.ts` public API (or an event
-/ the os-mirror).
+Dependency direction is strict and one-way: **`<tab>` → `infra` → `core`**, with
+the shared services layered ABOVE the tabs (`<service>` → `<tab>.index` → infra →
+core). core imports nothing but core; infra imports core; tabs import infra + core;
+a shared service may additionally import tab `index.ts`'s. A tab reaching into
+another tab's internals is the one thing code review rejects — cross-tab needs go
+through the other tab's `index.ts` public API (or an event / the os-mirror).
+
+**Documented debt:** `lib/superset`, `lib/powerbi` and `lib/git` are external-service
+CLIENTS (Superset embed/SSO, Power BI TMDL export, Forgejo git) that belong under
+`lib/infra` long-term — they talk to the outside world, not across tabs. They are
+listed here as shared services today only because they have not been moved yet; do
+NOT treat their current location as the pattern.
 
 ## The tab-module contract
 
@@ -88,7 +106,11 @@ to their destinations; `lib/connections` is the reference template (index.ts + s
 - **Phase A** ✓ — dead-code pruned (`components/knowledge/ContextPanel.tsx` deleted),
   READMEs added to the 13 previously doc-less `lib/` modules.
 - **Phase B** (planned) — barrel cleanup: `index.ts` + `schema.ts` in every tab that lacks them.
-- **Phase C** (planned) — `lib/models/roles.ts` role-resolution audit.
+- **Phase C** (planned) — access-control audit of the `lib/governance` ladder +
+  `edit-scope` (the artifact promote/edit gates). NOT `lib/models/roles.ts` (that is
+  the model-role RESOLVER, a different concern). Note: `edit-scope` now lives in
+  `lib/core/edit-scope.ts` (moved out of governance to break the tab↔governance
+  import cycles; `lib/governance/edit-scope.ts` is a re-export shim).
 - **Phase D** (planned) — `components/core` thin-route-handler pass.
 - **Phase E** (planned) — `lib/agents/build/live.ts`, `lib/infra/forgejo.ts`, `lib/core/git-versioning.ts` (live-adapter hardening; do NOT touch until Phase E).
 - **Phase F** (planned) — OpenMetadata connector promotion.
@@ -111,3 +133,21 @@ to their destinations; `lib/connections` is the reference template (index.ts + s
 | `data-handoff.ts`, `planning.ts` | `lib/data/` / `lib/strategy/` respectively |
 
 The compiler + the full test suite are the safety net for every move.
+
+### The non-tab `app/api` routes
+
+Most `app/api/<tab>/` routes belong to a tab. A handful are cross-cutting endpoints
+that don't map 1:1 to a tab — they compose the governed spine or a shared service.
+Each is still thin (parse → call a `lib` fn through the governed path → shape):
+
+| Route | What it does |
+|---|---|
+| `catalog/` | Structured-data catalog — an honest union of the datasets/tables the caller can actually see, labelled by source. |
+| `tables/` | Lakehouse table list via the governed query-tool (Trino `show tables` through the caller's principal + OPA). |
+| `query/` | Structured-data query — the browser POSTs `{ sql }`; forwarded through `infra/governed` to Trino under the caller's identity. |
+| `cube/models/` | Cluster-internal Cube model feed — consumed only by the in-namespace Cube sidecar over the ClusterIP (not a browser surface). |
+| `traces/` | Monitoring → Langfuse: reads governed run traces (stamped with the caller's principal) for the observability views. |
+| `artifacts/` | Read-through to a single artifact (+ its marketplace view) by id — the shared artifact-model surface across tabs. |
+| `context/` | Which grantable CONTEXT (connections · data · knowledge · files · metrics) the caller can attach to an agent/app, per kind. |
+| `classify/` | Classify + describe an unstructured document via the LiteLLM gateway (one-line description, content type, suggested tags). |
+| `chat/` | Chat → sample-agent: server-side call to the in-cluster sample-agent's `/ask`, returning its grounded answer. |

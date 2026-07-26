@@ -39,13 +39,6 @@ export function mcpUnauthorized(): NextResponse {
   );
 }
 
-/** Streamable HTTP offers no server-initiated SSE stream — POST JSON-RPC only. */
-export function mcpMethodNotAllowed(): NextResponse {
-  return NextResponse.json(
-    { error: 'Method Not Allowed — this MCP endpoint uses Streamable HTTP: POST JSON-RPC 2.0.' },
-    { status: 405, headers: { Allow: 'POST' } },
-  );
-}
 
 /**
  * The Streamable-HTTP server→client stream (the transport's optional GET). Every OS

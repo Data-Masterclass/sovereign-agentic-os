@@ -4,7 +4,6 @@
 'use client';
 
 import type { jsPDF } from 'jspdf';
-import { MARCELLUS, RUBIK_REGULAR, RUBIK_SEMIBOLD, OSWALD_MEDIUM, FRAUNCES } from './brand-fonts-data.ts';
 
 /**
  * Register the datamasterclass brand faces into a jsPDF document so the Agents
@@ -64,9 +63,14 @@ let warned = false;
 /**
  * Embed + register the brand faces. Returns true when the real fonts are active,
  * false when it fell back to core fonts (the painter then uses `Fallback`).
+ *
+ * The font payload (brand-fonts-data) is loaded lazily via dynamic import so it
+ * is excluded from the initial /agents bundle (~298 KB saved on first load).
  */
-export function registerBrandFonts(doc: jsPDF): boolean {
+export async function registerBrandFonts(doc: jsPDF): Promise<boolean> {
   try {
+    const { MARCELLUS, RUBIK_REGULAR, RUBIK_SEMIBOLD, OSWALD_MEDIUM, FRAUNCES } =
+      await import('./brand-fonts-data.ts');
     const add = (file: string, b64: string, family: string, style: string) => {
       doc.addFileToVFS(file, b64);
       doc.addFont(file, family, style);

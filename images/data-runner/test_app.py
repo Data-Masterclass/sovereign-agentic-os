@@ -257,5 +257,83 @@ class IngestRowsNdjsonTests(unittest.TestCase):
         self.assertEqual(out["rowCount"], len(ROWS_BASE["rows"]))
 
 
+# ─────────────────────────────────────────────────────────────────────────────────
+# Failure-mode tests — arrow-read / append errors must surface cleanly
+# ─────────────────────────────────────────────────────────────────────────────────
+
+class FailureModeTests(unittest.TestCase):
+    """Stub _read_to_arrow to raise; assert clean error, not partial table or
+    raw traceback leaking into the response."""
+
+    def test_arrow_read_failure_raises_clean_exception(self):
+        """_read_to_arrow raising must propagate as a clean exception from ingest(),
+        not silently succeed with a partial or empty table."""
+        log = []
+
+        def raising_read(*_a, **_kw):
+            raise RuntimeError("DuckDB: cannot parse file — corrupt data")
+
+        with mock.patch.object(app, "_s3_client", lambda: FakeS3()), \
+             mock.patch.object(app, "_catalog", lambda: FakeCatalog(log, exists=False)), \
+             mock.patch.object(app, "_read_to_arrow", raising_read):
+            with self.assertRaises(Exception) as ctx:
+                app.ingest(dict(BASE))
+
+        # The exception message must be meaningful — not a raw AttributeError from
+        # trying to call .schema on None or similar.
+        self.assertIn("DuckDB", str(ctx.exception),
+                      "the original error message must be preserved, not swallowed")
+        # Nothing was written to Iceberg — no create/append in the log.
+        ops = [op for op, *_ in log]
+        self.assertNotIn("append", ops, "no partial write must occur when read fails")
+        self.assertNotIn("create", ops)
+
+    def test_arrow_append_failure_raises_clean_exception(self):
+        """catalog.append raising (schema mismatch, network issue) must bubble up
+        cleanly from ingest() so the HTTP handler can return a 500 with the real error."""
+        log = []
+
+        class FailingTable:
+            def append(self, _arrow):
+                raise IOError("Polaris: write delegation denied — use STAGED create")
+
+        class FailingCatalog(FakeCatalog):
+            def create_table(self, ident, schema=None):
+                self.log.append(("create", ident))
+                return FailingTable()
+
+        with mock.patch.object(app, "_s3_client", lambda: FakeS3()), \
+             mock.patch.object(app, "_catalog", lambda: FailingCatalog(log, exists=False)), \
+             mock.patch.object(app, "_read_to_arrow", lambda *_: FakeArrow()):
+            with self.assertRaises(Exception) as ctx:
+                app.ingest(dict(BASE))
+
+        self.assertIn("Polaris", str(ctx.exception),
+                      "the Polaris write error must surface verbatim")
+        # A create was attempted (table didn't exist) but no partial write succeeded.
+        ops = [op for op, *_ in log]
+        self.assertIn("create", ops)
+        # The real append was tried (it raised) — no second append must follow.
+        self.assertEqual(ops.count("append"), 0,
+                         "failed append must not produce a second silent attempt")
+
+    def test_ingest_rows_arrow_read_failure_surfaces_cleanly(self):
+        """Same guarantee for ingest_rows(): a _read_to_arrow failure must raise,
+        not return an 'ok' response with 0 rows."""
+        log = []
+
+        def raising_read(*_a, **_kw):
+            raise ValueError("read_json_auto: unexpected token at position 0")
+
+        with mock.patch.object(app, "_catalog", lambda: FakeCatalog(log, exists=False)), \
+             mock.patch.object(app, "_read_to_arrow", raising_read):
+            with self.assertRaises(Exception) as ctx:
+                app.ingest_rows(dict(ROWS_BASE))
+
+        self.assertIn("read_json_auto", str(ctx.exception))
+        ops = [op for op, *_ in log]
+        self.assertNotIn("append", ops)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

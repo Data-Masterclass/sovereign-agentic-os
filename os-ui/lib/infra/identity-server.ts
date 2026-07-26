@@ -12,16 +12,23 @@ import { type AgentScope, type DelegatedToken, claimsFromUser, delegate } from '
  * delegation and gets R2/R3 subtly wrong.
  *
  * `region` is an optional demo "view as" affordance for the per-viewer RLS walkthrough
- * (two viewers, different rows). In production the region (and other attributes) come
- * from the Ory JWT claims, not the request body — this only seeds the security context
- * the same way the IdP will.
+ * (two viewers, different rows). SECURITY (M1): a client-supplied region must NEVER
+ * seed a real RLS security context for an ordinary user — that would let any signed-in
+ * user impersonate another region on the live Cube/Trino path. So the body-supplied
+ * region is honored ONLY for an admin (the deliberate "view as" affordance); for every
+ * other role it is ignored and the region derives from the session identity alone
+ * (today the mock session carries none — exactly as production behaves before the Ory
+ * JWT supplies a region claim). When the real IdP lands, region comes from the JWT, not
+ * the request body, for all roles.
  */
 export async function delegatedToken(
   scope: AgentScope,
   opts: { region?: string } = {},
 ): Promise<{ token: DelegatedToken; user: CurrentUser }> {
   const user = await requireUser();
-  const attributes: Record<string, string> = opts.region ? { region: opts.region } : {};
+  // Only an admin may override the viewed region from the request body (view-as demo).
+  const region = user.role === 'admin' ? opts.region : undefined;
+  const attributes: Record<string, string> = region ? { region } : {};
   const claims = claimsFromUser({ id: user.id, domains: user.domains, role: user.role, attributes });
   return { token: delegate(claims, scope), user };
 }

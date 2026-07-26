@@ -115,7 +115,3 @@ export async function applyGuardrails(workflow: Workflow): Promise<GuardrailResu
   return { compiled, apply };
 }
 
-/** Test/inspection hook: read the mock-registered policy for a workflow. */
-export function mockPolicyFor(workflowId: string): CompiledGuardrails | undefined {
-  return MOCK_POLICIES.get(workflowId);
-}

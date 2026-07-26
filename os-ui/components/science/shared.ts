@@ -10,6 +10,8 @@
  * train/deploy + inline eval/monitor charts are Phase 2-4.
  */
 
+import { TIER_BADGE_CLASS } from '@/lib/core/scopes';
+
 export type ModelTier = 'Personal' | 'Domain' | 'Marketplace';
 export type ModelStage = 'Staging' | 'Production' | 'Archived';
 export type TaskType =
@@ -121,10 +123,11 @@ export const TIER_LABEL: Record<ModelTier, string> = {
   Domain: 'Domain',
   Marketplace: 'Company',
 };
+// Badge CLASS per tier is OS-wide (lib/core/scopes); map this tab's vocabulary onto it.
 export const TIER_BADGE: Record<ModelTier, string> = {
-  Personal: 'vis-personal',
-  Domain: 'vis-shared',
-  Marketplace: 'vis-certified',
+  Personal: TIER_BADGE_CLASS.personal,
+  Domain: TIER_BADGE_CLASS.shared,
+  Marketplace: TIER_BADGE_CLASS.certified,
 };
 
 export const TASK_LABEL: Record<TaskType, string> = {

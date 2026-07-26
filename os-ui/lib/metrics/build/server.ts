@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { Dataset, Measure } from '../../data/dataset-schema.ts';
+import type { Dataset, Measure } from '../../data/index.ts';
 import { type DelegatedToken, propagate } from '../../data/identity.ts';
 import { scaffoldCubeYaml } from '../../data/metrics.ts';
 import { measureMember } from '../model.ts';

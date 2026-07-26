@@ -43,10 +43,6 @@ export function allUnits(): IndexedUnit[] {
   return [...idx().values()];
 }
 
-export function unitCount(): number {
-  return idx().size;
-}
-
 /** Whether a given workflow already has indexed units (per-scope check — used to
  *  decide if an on-demand retrieval must index this workflow first). */
 export function hasWorkflowUnits(workflowId: string): boolean {

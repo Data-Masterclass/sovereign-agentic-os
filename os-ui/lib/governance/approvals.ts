@@ -217,10 +217,6 @@ export function decide(approvalId: string, decision: 'approve' | 'reject', by: s
   return a;
 }
 
-export function pendingCount(domain?: string): number {
-  return listApprovals({ domain, status: 'pending' }).length;
-}
-
 /** Stamp what the approval actually did (the executed effect), for the card + audit. */
 export function recordEffect(
   approvalId: string,

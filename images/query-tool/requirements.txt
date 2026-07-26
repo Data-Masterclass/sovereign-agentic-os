@@ -2,5 +2,4 @@
 # THROUGH central Trino (Iceberg on Polaris); Trino enforces row/column governance
 # (the Trino->OPA plugin). No DuckDB/pyiceberg here — that is the sandbox lane.
 trino>=0.330,<1
-requests>=2.31,<3
 mcp>=1.2,<2

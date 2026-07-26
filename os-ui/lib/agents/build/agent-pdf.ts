@@ -389,7 +389,7 @@ async function newBrandedDoc(): Promise<{
   const [{ jsPDF }, autoTableMod] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
   const autoTable = autoTableMod.default as unknown as (d: jsPDF, o: Record<string, unknown>) => void;
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-  const brand = registerBrandFonts(doc);
+  const brand = await registerBrandFonts(doc);
   const p = makePainter(doc, autoTable, brand);
   return { doc, p, brand };
 }

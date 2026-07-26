@@ -5,7 +5,7 @@
 
 import { useState } from 'react';
 import { useUser } from '@/lib/useUser';
-import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/core/scopes';
+import { SCOPE_GROUPS, groupByScope, scopeCounts, showDomainForScope, type ScopeKey } from '@/lib/core/scopes';
 import DomainTag from '@/components/DomainTag';
 import {
   TIER_BADGE,
@@ -60,7 +60,7 @@ export default function ModelTiles({
         <div className="tile-top">
           <span className="tile-name">{m.name}</span>
           <div className="row" style={{ gap: 4, alignItems: 'center' }}>
-            {scope === 'shared' || scope === 'marketplace' || scope === 'all' ? <DomainTag domain={m.domain} /> : null}
+            {showDomainForScope(scope) ? <DomainTag domain={m.domain} /> : null}
             <span className={`badge ${TIER_BADGE[m.tier]}`}>{TIER_LABEL[m.tier]}</span>
           </div>
         </div>

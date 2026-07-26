@@ -32,10 +32,6 @@ export type ContextTraceRecord = ContextTraceEvent & { id: string; timestamp: st
 const RING: ContextTraceRecord[] = [];
 const RING_MAX = 100;
 
-export function recentContextTraces(limit = 25): ContextTraceRecord[] {
-  return RING.slice(-limit).reverse();
-}
-
 async function withTimeout(url: string, init: RequestInit, ms = 2500): Promise<Response | null> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);

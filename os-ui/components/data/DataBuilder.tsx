@@ -28,6 +28,7 @@ import { initialStageState, markDone, advance, type StageState } from '@/lib/cor
 import { DATA_STAGES, type DataStageId, type DataCtx } from '@/lib/data/stages';
 import BuilderModeToggle from '@/components/core/BuilderModeToggle';
 import type { ViewMode } from '@/lib/core/view-mode';
+import { TIER_BADGE_CLASS } from '@/lib/core/scopes';
 import type { GoldSpec } from '@/lib/data/dataset-schema';
 
 const DATA_MODE_KEY = 'data.viewMode';
@@ -211,7 +212,7 @@ function formatDate(iso: string): string {
   }
 }
 
-const TIER_BADGE: Record<Dataset['tier'], string> = { dataset: 'vis-personal', asset: 'vis-shared', product: 'vis-certified' };
+const TIER_BADGE: Record<Dataset['tier'], string> = { dataset: TIER_BADGE_CLASS.personal, asset: TIER_BADGE_CLASS.shared, product: TIER_BADGE_CLASS.certified };
 const TIER_WORD: Record<Dataset['tier'], string> = { dataset: 'Personal dataset', asset: 'Data asset', product: 'Data product' };
 // Display words for a dataset's stored visibility. Core (lib/core/scopes.ts) is the
 // source of truth for scope vocabulary; these lowercase keys are this tab's own field

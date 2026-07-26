@@ -13,6 +13,7 @@ import { SCOPE_GROUPS, groupByScope, scopeCounts, visibilityLabel, type ScopeKey
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import type { Visibility } from '@/lib/core/lifecycle';
+import { visibilityForTier } from '@/lib/core/artifact-model';
 import DomainTag from '@/components/DomainTag';
 
 /**
@@ -39,8 +40,7 @@ const visClass = (v: string) => (v === 'Shared' ? 'vis-shared' : v === 'Marketpl
 const visLabel = (v: string) => visibilityLabel(v);
 
 /** Systems visibility → the OS-wide lifecycle visibility (drives the delete gate). */
-const lcVis = (v: Summary['visibility']): Visibility =>
-  v === 'Shared' ? 'shared' : v === 'Marketplace' ? 'certified' : 'personal';
+const lcVis = (v: Summary['visibility']): Visibility => visibilityForTier(v);
 
 export default function SystemsList({ onOpen }: { onOpen: (id: string) => void }) {
   const [showArchived, setShowArchived] = useState(false);

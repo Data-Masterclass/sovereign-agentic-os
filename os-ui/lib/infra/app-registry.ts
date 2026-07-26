@@ -126,18 +126,9 @@ export async function grantsForDurable(principal: string): Promise<string[]> {
   return [...tools];
 }
 
-export function getConnection(id: string): AppConnection | null {
-  return CONNS.get(id) ?? null;
-}
-
 export function getConnectionByApp(appId: string): AppConnection | null {
   for (const c of CONNS.values()) if (c.appId === appId) return c;
   return null;
-}
-
-/** All registered app connections (most recent first). */
-export function listConnections(): AppConnection[] {
-  return [...CONNS.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 /** Update a connection's visibility when its app is promoted. */

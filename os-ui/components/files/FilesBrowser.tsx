@@ -8,7 +8,7 @@ import { useSearchParams } from 'next/navigation';
 import { useUser } from '@/lib/useUser';
 import { roleAtLeast } from '@/lib/core/session';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials';
-import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/core/scopes';
+import { SCOPE_GROUPS, groupByScope, scopeCounts, rootsForScope, type ScopeKey, type FolderRoot } from '@/lib/core/scopes';
 import {
   itemsUnderFolder,
   normaliseFolderPath,
@@ -18,6 +18,7 @@ import {
 import FolderTree, { FolderPickerModal, type FolderRef } from '@/components/core/FolderTree';
 import FolderLayout from '@/components/core/FolderLayout';
 import { ensureFolderId, renamedPath } from '@/lib/folders/client';
+import { useFolders } from '@/lib/folders/useFolders';
 import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
 import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
 import { canManageArtifact, type ArtifactScope } from '@/lib/governance/edit-scope';
@@ -154,7 +155,6 @@ function FileRow({
 
 /** Which folder ROOT a file's folders live in — its private tree (dataset) or the
  *  domain tree (shared/certified). Mirrors how the store groups by tier. */
-type FolderRoot = 'personal' | 'domain';
 function rootOf(f: Summary): FolderRoot {
   return f.tier === 'dataset' ? 'personal' : 'domain';
 }
@@ -171,16 +171,6 @@ function canManageFile(u: ManageUser | null, f: Summary): boolean {
   return u ? canManageArtifact(u, { owner: f.owner, domain: f.domain, scope: scopeOf(f) }) : false;
 }
 
-/** Which folder roots to show in the rail + picker for each scope tab.
- *  - mine       → personal only (dataset-tier files)
- *  - shared     → domain only (asset/product-tier files)
- *  - marketplace → domain only (product-tier files)
- *  - all        → both (keep the current behaviour for the All view) */
-function rootsForScope(scope: ScopeKey): FolderRoot[] {
-  if (scope === 'mine') return ['personal'];
-  if (scope === 'shared' || scope === 'marketplace') return ['domain'];
-  return ['personal', 'domain'];
-}
 
 function FilesBrowserInner() {
   const { user } = useUser();
@@ -193,10 +183,6 @@ function FilesBrowserInner() {
   const [sel, setSel] = useState<{ root: FolderRoot; path: string } | null>(null);
   const [tag, setTag] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  // Explicit folder rows from the governed registry (Wave 1), per root. Unioned
-  // with folders synthesised from the file facets so implicit folders keep showing.
-  const [personalNodes, setPersonalNodes] = useState<FolderPathNode[]>([]);
-  const [domainNodes, setDomainNodes] = useState<FolderPathNode[]>([]);
   // Multi-select in the grid → bulk "Move to folder…" / Promote / Archive.
   const [picked, setPicked] = useState<Set<string>>(new Set());
   // A bulk op is running (disable the bar + show a spinner); a concise result notice
@@ -206,6 +192,9 @@ function FilesBrowserInner() {
   // ?archived=1 additionally returns soft-archived files (their own section), so an
   // archived file stays openable → its preview exposes Restore + Delete (OS-wide rule).
   const [showArchived, setShowArchived] = useState(false);
+  // Explicit folder rows from the governed registry (Wave 1), per root. Unioned
+  // with folders synthesised from the file facets so implicit folders keep showing.
+  const { personalNodes, domainNodes, loadFolders } = useFolders('files', showArchived);
   // Folder picker modal: which file ids are being moved; null = closed.
   const [pickerIds, setPickerIds] = useState<string[] | null>(null);
   // Folder lifecycle: folder being moved (opens a second picker); null = closed.
@@ -254,18 +243,6 @@ function FilesBrowserInner() {
     setTag(null);
     setSelected(focusId);
   }, [focusId, groups]);
-
-  const loadFolders = useCallback(async () => {
-    const archivedParam = showArchived ? '&archived=1' : '';
-    try {
-      const [pRes, dRes] = await Promise.all([
-        fetch(`/api/folders?tab=files&scope=personal${archivedParam}`, { cache: 'no-store' }),
-        fetch(`/api/folders?tab=files&scope=domain${archivedParam}`, { cache: 'no-store' }),
-      ]);
-      if (pRes.ok) setPersonalNodes(((await pRes.json()).folders ?? []) as FolderPathNode[]);
-      if (dRes.ok) setDomainNodes(((await dRes.json()).folders ?? []) as FolderPathNode[]);
-    } catch { /* the facet-synthesised rail still renders without the registry */ }
-  }, [showArchived]);
 
   const refresh = useCallback(async () => {
     setErr('');

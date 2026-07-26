@@ -71,15 +71,11 @@ postgres:
 retrieval:
   knnDimension: 3072
 osUI:
-  embedDim: 3072
   image:
     repository: ghcr.io/aborek/sovereign-os/os-ui
     tag: "0.1.0@sha256:5719957f3a78e1f54f28b0a90eaa686a1a244c4b9beab1f903cf1d231996bd36"
 
 # --- LLM -> Azure OpenAI via LiteLLM (keyless, Entra token refresh) -----------
-llm:
-  mode: external
-  provider: azure
 litellm:
   db:
     endpoint: pg-rw

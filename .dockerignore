@@ -3,3 +3,22 @@
 # duplicate dirs from poisoning the TypeScript @types auto-include.
 **/node_modules
 **/.next
+
+# Large directories not consumed by any Dockerfile — trim the build context.
+# The os-ui Dockerfile (images/os-ui/Dockerfile) COPYs os-ui/ and docs/components
+# so those are kept. Everything below is excluded.
+deploy/
+charts/
+images/
+seed/
+tests/
+ee/
+cli/
+licenses/
+
+# Binary and generated files that bloat the context
+*.sql
+*.png
+*.pdf
+sbom.cdx.json
+.git

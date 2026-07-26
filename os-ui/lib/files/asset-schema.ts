@@ -9,7 +9,7 @@ import {
   type Grantee,
   TIERS,
   visibilityFor,
-} from '../data/dataset-schema.ts';
+} from '../data/index.ts';
 
 /**
  * `asset.yaml` — the SINGLE source of truth for one file in the Files tab.

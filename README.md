@@ -42,13 +42,10 @@ STACKIT managed) · `values.example.yaml` (the `mode: bundled|external` contract
 > with `deploy/stackit off`. (Managed-services Mode B and multi-node HA are **known-blocked**:
 > cross-node pod networking on SKE-in-an-SNA is broken — single node sidesteps it.)
 
-> **The OS UI** is a **v1.0 front door** — every sidebar tab is a real surface: Home (live
-> stack status), Agents, Knowledge, Structured Data, Software (CI), Monitoring, Governance,
-> Dashboards, Gateway, Orchestration, Science, Metrics, Unstructured Data, Connections,
-> Marketplace, Strategy/Big Bets, Settings, and About/Licenses. Styled to the Sovereign
-> Agentic brand. It ships with **real, self-hosted authentication** (scrypt-hashed
-> passwords, signed sessions, roles) — see **First-run sign-in** below. A future swap to
-> Ory keeps the same `currentUser`/`requireUser` seam.
+> **The OS UI** is a **v1.0 front door** (os-ui 0.5.99) — every sidebar tab is a real,
+> live surface. It ships with **real, self-hosted authentication** (scrypt-hashed passwords,
+> signed sessions, four roles) — see **First-run sign-in** below. A future swap to Ory keeps
+> the same `currentUser`/`requireUser` seam.
 
 ### First-run sign-in (OS UI)
 
@@ -75,7 +72,55 @@ array; plaintext passwords there are hashed on ingest) — but the default ships
 > **Local only.** Real STACKIT provisioning stays gated on the SA key + cost sign-off
 > (`../stackit/stackit.md`).
 
-## What's in the agent-core slice
+## What ships today
+
+os-ui **0.5.99** · chart **0.2.11**
+
+### Sidebar tabs (every one is live)
+
+Five sections. All tabs are real surfaces — no mocks, no stubs.
+
+**Entry** — Home (live stack status) · Cockpit · Tutorials · MCP (builder+) · About / Licenses
+
+**Plan** — Strategy · Big Bets · Operating Model · Workflows · Marketplace (builder+)
+
+**Context** — Knowledge · Files · Data · Connections · Metrics
+
+**Build** — Agents · Software · Science · Dashboards · Console (builder+, Shell admin-only)
+
+**Govern** — Policies & Approvals (builder+) · Monitoring (builder+) · Components (admin) · LLM Gateway (builder+) · Admin (builder+, admin-gated tiles)
+
+### Highlights
+
+- **Native ECharts dashboards.** Tier-1 panels are server-rendered ECharts queried from Cube via
+  the governed SQL API with per-user RLS — no `<iframe>`. Tier-2 links out to Power BI, Tableau,
+  or Superset in a dedicated tab.
+- **Connector catalogue.** 30+ connectors in 11 categories: messaging (Slack, Gmail, Google
+  Calendar, Outlook, Teams), code & DevOps (GitHub, Supabase, Atlassian), docs & knowledge
+  (Notion), operational databases (PostgreSQL, MySQL, SQL Server, MongoDB via Trino federation),
+  data warehouses (Snowflake, BigQuery, Databricks, AWS Glue, Fabric), enterprise apps (Salesforce,
+  Airflow, Kajabi), cloud governance & ML (Microsoft Entra, Purview, Azure AI Foundry, AWS
+  SageMaker, GCP identity, Snowflake governance), and LLM providers.
+- **FiveTran-style scheduled incremental sync.** Full-refresh, append (`_loaded_at`/`_batch_id`
+  lineage), and cursor-based incremental modes; a durable sync-runs store with cursor watermarks and
+  quarantine after 10 consecutive failures; per-dataset CronJob provisioning.
+- **Software builder.** Epic/story tree (Define stage picks from four templates — Application /
+  Website / APIs only / Empty; the Sovereign app template is the default scaffold with AppShell +
+  OS-delegated identity + MCP link); Build stage streams agent commits to Forgejo with sha-aware
+  writes; Publish runs a live security scan; Operate shows live tool activity.
+- **Governed MCP front door.** Every OS capability is reachable over the MCP protocol with the
+  same OPA-checked, RLS/DLS-filtered routes the UI uses. LiteLLM is the model/MCP gateway.
+- **Monitoring with honest accounting.** Token/cost tallies hydrated from live Langfuse traces on
+  read; per-model EUR/1M pricing admin-editable; detail expands in the main window.
+- **Analytics-as-code.** Promoted datasets dual-write to a Forgejo `analytics` monorepo as dbt
+  models + Cube YAML. Cube can be switched to serve from git (`cube.modelSync.source: git`).
+- **Agents builder — 5-stage flow.** Define · Design · Build · Run · Evaluate. Template library,
+  interactive grant picker (read / read+propose / read+write per capability), per-agent context
+  attribution in Evaluate, PDF results and evaluation reports.
+
+For the full user guide see **`docs/Sovereign-Agentic-OS-Guide.md`** (and PDF).
+
+## Platform foundations — how the base was built
 
 The thinnest end-to-end slice that proves the system works:
 
@@ -92,8 +137,7 @@ The thinnest end-to-end slice that proves the system works:
 | **sample LangGraph agent** | calls LLM via LiteLLM, traced in Langfuse, RAG over OpenSearch | bespoke template |
 
 No pgvector (OpenSearch is the retrieval backbone). MinIO (AGPL) is the local S3 stand-in
-only — never bundled/shipped; on STACKIT the real Object Storage endpoint is used. For a full
-current overview see **`docs/Sovereign-Agentic-OS-Guide.md`** (the user guide / PDF). No Redis (SSPL) — Valkey.
+only — never bundled/shipped; on STACKIT the real Object Storage endpoint is used. No Redis (SSPL) — Valkey.
 
 ## Prerequisites
 
@@ -103,6 +147,9 @@ current overview see **`docs/Sovereign-Agentic-OS-Guide.md`** (the user guide / 
   ClickHouse + Postgres)
 
 ## Run it locally
+
+> **Recommended:** use `./install.sh` — it handles all steps below interactively. The manual
+> `helm install -f values.local.yaml` path below is kept for reference; the wizard supersedes it.
 
 ```bash
 # 0. validate the chart (no cluster needed)
@@ -156,11 +203,12 @@ kubectl -n agentic-os port-forward svc/agentic-os-langfuse-web 3000:3000   # Lan
 kubectl -n agentic-os port-forward svc/agentic-os-litellm 4000:4000        # LiteLLM
 ```
 
-## Pinned versions (agent-core slice)
+## Pinned versions
 
 | Thing | Version |
 |---|---|
-| Umbrella chart | 0.2.0 |
+| Umbrella chart | **0.2.11** |
+| OS UI | **0.5.99** |
 | Langfuse chart / app | 1.5.36 / v3.194.1 |
 | LiteLLM chart | 1.90.0 |
 | OpenSearch chart | 3.7.0 |
@@ -221,7 +269,7 @@ The Dagster image bundles dbt + dagster-dbt; dbt models load as Dagster assets
 (`daily_revenue`/`stg_orders`/`raw_orders`) and materializing them runs `dbt
 build` against the warehouse (validated: RUN_SUCCESS).
 
-Remaining for later: Layer 3 (MCP tools + central Trino/Iceberg + Superset) + the OS UI.
+Layer 3 (MCP tools + central Trino/Iceberg) and the OS UI (os-ui 0.5.99) are complete and shipped.
 
 ### Data tier wiring (Layer 2)
 

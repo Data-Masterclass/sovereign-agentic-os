@@ -36,19 +36,6 @@ export const PRODUCT_TYPES: ProductType[] = [
   'app',
 ];
 
-export const PRODUCT_TYPE_LABELS: Record<ProductType, string> = {
-  dataset: 'Data product',
-  transformation: 'Transformation',
-  metric: 'Metric',
-  dashboard: 'Dashboard',
-  agent: 'Agent',
-  knowledge: 'Knowledge',
-  connection: 'Connection',
-  file: 'Files',
-  skill: 'Skill',
-  app: 'App',
-};
-
 /**
  * How a consumer imports a product. The default per type encodes the golden-path
  * table; `read-grant` is the default for every data-like product (single source,
@@ -60,13 +47,6 @@ export const PRODUCT_TYPE_LABELS: Record<ProductType, string> = {
  *  - `template`        a connection template; bring your own creds (full-shared is a trusted option).
  */
 export type ImportMode = 'read-grant' | 'fork' | 'deploy-instance' | 'template';
-
-export const IMPORT_MODE_LABELS: Record<ImportMode, string> = {
-  'read-grant': 'Read in place (governed grant)',
-  fork: 'Fork to own (editable copy)',
-  'deploy-instance': 'Deploy your own instance',
-  template: 'Use as template (your own creds)',
-};
 
 /** Where the compiled grant is actually enforced (the policy-compiler target). */
 export type EnforcementTarget = 'opa-trino' | 'cube-rls' | 'opensearch-dls' | 'instance' | 'template' | 'copy';

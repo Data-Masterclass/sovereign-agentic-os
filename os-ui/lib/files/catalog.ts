@@ -4,7 +4,6 @@
 import 'server-only';
 import { config } from '@/lib/core/config';
 import type { LineageEdge } from '@/lib/files/lineage';
-import type { FileAsset } from '@/lib/files/asset-schema';
 
 /**
  * OpenMetadata catalog + lineage push (LIVE-or-mock). The authoritative record is
@@ -46,19 +45,3 @@ export async function pushLineage(edge: LineageEdge): Promise<boolean> {
   return Boolean(res && res.ok);
 }
 
-/** Catalog (register) a file as an OM container asset (best-effort). */
-export async function catalogFile(a: FileAsset): Promise<boolean> {
-  const res = await omFetch('/api/v1/containers', {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      name: a.id,
-      displayName: a.name,
-      description: a.description,
-      fileFormats: [a.kind],
-      tags: a.tags.map((t) => ({ tagFQN: `Files.${t}` })),
-      sourceUrl: a.deepLink,
-    }),
-  });
-  return Boolean(res && res.ok);
-}

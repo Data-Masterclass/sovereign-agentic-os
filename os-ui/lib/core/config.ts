@@ -121,7 +121,6 @@ export const config = {
   // SAME `object-storage-credentials` Secret + `soa.s3Endpoint` the lakehouse uses.
   s3Endpoint: base(env('S3_ENDPOINT', 'http://minio:9000')),
   s3Region: env('S3_REGION', 'us-east-1'),
-  s3PathStyle: env('S3_PATH_STYLE', 'true').toLowerCase() !== 'false',
   uploadsBucket: env('UPLOADS_BUCKET', 'lakehouse'),
   // The governed Files-tab object store. Uploaded originals live under the store's
   // prefix invariant `s3://files/<owner|domain>/…` (lib/files/asset-schema.ts →
@@ -386,19 +385,14 @@ export const config = {
   // back to a dead ws://localhost the browser can never reach on a real deploy.
   terminalBrokerWsUrl: consoleEnv('TERMINAL_BROKER_WS', 'ws://localhost:8090/terminal'),
 
-  // ---- Domain-Builder Workbench. The OS UI mints a short-lived single-use HMAC
-  // token (signed with workbenchBrokerSecret — the SAME value the workbench-broker
-  // verifies with) for an authenticated `builder` whose role is in
-  // workbenchAllowedRoles, scoped to ONE of their domains. The browser then opens
-  // their PERSISTENT code-server through the broker at workbenchBrokerUrl (which
-  // reconciles + reverse-proxies it). Default OFF; the secret is server-only and
-  // never reaches the browser. ----------------------------------------------
-  workbenchEnabled: env('WORKBENCH_ENABLED', '') === 'true',
+  // ---- Domain-Builder Workbench. An authenticated `builder` whose role is in
+  // workbenchAllowedRoles, scoped to ONE of their domains, opens their PERSISTENT
+  // code-server through the broker at workbenchBrokerUrl (which reconciles +
+  // reverse-proxies it). ----------------------------------------------------
   workbenchAllowedRoles: env('WORKBENCH_ALLOWED_ROLES', 'builder,admin')
     .split(',')
     .map((r) => r.trim())
     .filter(Boolean),
-  workbenchBrokerSecret: env('WORKBENCH_BROKER_SECRET', 'dev-only-insecure-workbench-secret-change-me'),
   // consoleEnv for the same reason as terminalBrokerWsUrl above (chart renders
   // "" when ingress.hosts.workbench is unset — honour it, don't dial localhost).
   workbenchBrokerUrl: base(consoleEnv('WORKBENCH_BROKER_URL', 'http://localhost:8091')),

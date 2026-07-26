@@ -42,7 +42,7 @@ import { initialStageState, canEnter, isSatisfied, markDone, type StageState } f
 import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { buildStatusRail } from '@/lib/software/build-activity';
 import { targetKey, type BuildAction, type BuildTarget } from '@/lib/software/build-target';
-import TeamPanel from '@/app/software/TeamPanel';
+import TeamPanel from '@/app/(build)/software/TeamPanel';
 import StageAssistant from './StageAssistant';
 import { SW_STAGES, type SwStageId, type SwCtx } from './stages';
 

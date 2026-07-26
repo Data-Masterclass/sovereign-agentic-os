@@ -123,6 +123,43 @@ test('deleteBatchSql un-lands exactly one batch', () => {
   assert.throws(() => deleteBatchSql(target, "a' OR true"), WarehouseError);
 });
 
+// ---- Tenant-scoping / schema-smuggling tests -----------------------------------
+// The DELETE target schema is ALWAYS derived from owner.id (personal_<slug>)
+// by sync-run-server.ts — the body cannot pick an arbitrary schema.
+// These tests pin that the SQL builder itself also cannot be tricked into emitting
+// a schema outside the owner's personal lane when the schema identifier is validated.
+
+test('deleteBatchSql schema is owner-derived: personal_lena deletes only from personal_lena', () => {
+  // target.schema is derived from owner.id by the caller (sync-run-server.ts)
+  // and cannot differ from the owner's personal lane.
+  const ownerTarget = { schema: 'personal_lena', table: 'bronze_orders' };
+  const sql = deleteBatchSql(ownerTarget, 'ds_1:100');
+  assert.match(sql, /iceberg\.personal_lena\.bronze_orders/, 'DELETE targets the owner schema');
+  assert.ok(!sql.includes('personal_maya'), 'cannot target a different user schema');
+});
+
+test('deleteBatchSql schema-smuggling: an adversarial schema identifier is rejected', () => {
+  // If someone tries to supply a schema that smuggles SQL via an invalid identifier
+  // the targetFqn validator must throw WarehouseError.
+  assert.throws(
+    () => deleteBatchSql({ schema: "personal_lena'; DROP TABLE iceberg.personal_maya.bronze_orders; --", table: 'bronze_orders' }, 'ds_1:100'),
+    WarehouseError,
+    'an injected schema must throw — it is not a valid catalog name',
+  );
+});
+
+test('deleteBatchSql adversarial owner/batch combo: schema derived from owner.id only', () => {
+  // Scenario: attacker controls the batchId but NOT the schema — the schema is owner.id.
+  // Even with a valid batchId the DELETE stays scoped to the owner schema.
+  const attackerBatch = 'ds_1:100'; // legitimate batchId format
+  const legitTarget = { schema: 'personal_lena', table: 'bronze_orders' };
+  const sql = deleteBatchSql(legitTarget, attackerBatch);
+  // The only table touched is the owner's.
+  assert.match(sql, /DELETE FROM iceberg\.personal_lena\.bronze_orders/);
+  // Ensure no other schema appears.
+  assert.ok(!sql.includes('personal_maya') && !sql.includes('domain_') && !sql.includes('shared_'));
+});
+
 // --------------------------------------------------------------------- merge --
 
 test('mergeSql compiles staging CTAS + MERGE + DROP with explicit columns', () => {

@@ -8,6 +8,8 @@
  * only consumes the JSON those routes return.
  */
 
+import { TIER_BADGE_CLASS } from '@/lib/core/scopes';
+
 export type DashTier = 'personal' | 'domain' | 'marketplace';
 
 export type DashboardSummary = {
@@ -139,8 +141,9 @@ export function flatMetrics(g: MetricGroups | null): MetricSummary[] {
 export const VIZ_TYPES: VizType[] = ['big_number', 'line', 'area', 'bar', 'pie', 'table'];
 export const CHANNELS: Channel[] = ['email', 'slack', 'in_app'];
 export const TIER_LABEL: Record<DashTier, string> = { personal: 'Personal', domain: 'Domain', marketplace: 'Company' };
+// Badge CLASS per tier is OS-wide (lib/core/scopes); map this tab's vocabulary onto it.
 export const TIER_BADGE: Record<DashTier, string> = {
-  personal: 'vis-personal',
-  domain: 'vis-shared',
-  marketplace: 'vis-certified',
+  personal: TIER_BADGE_CLASS.personal,
+  domain: TIER_BADGE_CLASS.shared,
+  marketplace: TIER_BADGE_CLASS.certified,
 };

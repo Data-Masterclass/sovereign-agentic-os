@@ -262,6 +262,71 @@ test('runSalesforceSlice fails honestly when the object is not incrementally syn
   await assert.rejects(() => runSalesforceSlice(args), /no SystemModstamp/);
 });
 
+// ---- error-path: watermark-safety -------------------------------------------
+
+test('pullSalesforceSlice: 401 on page 2 surfaces honest error, watermark does not advance', async () => {
+  const { fetchImpl } = fakeFetch([
+    ['/query/next-1', () => mkRes(401, { error: 'SESSION_EXPIRED' })],
+    ['/query?q=', () => mkRes(200, {
+      totalSize: 2, done: false, nextRecordsUrl: '/services/data/v61.0/query/next-1',
+      records: [{ attributes: { type: 'Account' }, Id: 'p1r1' }],
+    })],
+  ]);
+  const batches: unknown[] = [];
+  const res = await pullSalesforceSlice({
+    conn: conn(fetchImpl), token: 'tok', object: 'Account', fields: ['Id'],
+    watermark: null, highWatermark: '2026-02-01T00:00:00.000Z',
+    onBatch: async (r) => { batches.push(r); },
+  });
+  assert.ok(!res.ok, 'must surface the error');
+  assert.match(res.reason, /401/, 'reason must mention the HTTP status');
+  assert.equal(batches.length, 1, 'page-1 batch was delivered before the error — at-least-once');
+});
+
+test('pullSalesforceSlice: malformed HTML body on page 2 surfaces parse error, watermark does not advance', async () => {
+  const htmlRes = (): Response => ({
+    ok: true, status: 200,
+    headers: { get: () => null },
+    json: async () => { throw new SyntaxError('unexpected token'); },
+    text: async () => '<html>error</html>',
+  } as unknown as Response);
+  const { fetchImpl } = fakeFetch([
+    ['/query/next-1', htmlRes],
+    ['/query?q=', () => mkRes(200, {
+      totalSize: 2, done: false, nextRecordsUrl: '/services/data/v61.0/query/next-1',
+      records: [{ attributes: { type: 'Account' }, Id: 'p1r1' }],
+    })],
+  ]);
+  const batches: unknown[] = [];
+  const res = await pullSalesforceSlice({
+    conn: conn(fetchImpl), token: 'tok', object: 'Account', fields: ['Id'],
+    watermark: null, highWatermark: '2026-02-01T00:00:00.000Z',
+    onBatch: async (r) => { batches.push(r); },
+  });
+  assert.ok(!res.ok, 'must surface the parse error');
+  assert.match(res.reason, /unreachable/i, 'caught JSON parse → Salesforce unreachable');
+  assert.equal(batches.length, 1, 'page-1 batch was delivered before the error — at-least-once');
+});
+
+test('pullSalesforceSlice: 429 on page 2 surfaces rate-limit error, watermark does not advance', async () => {
+  const { fetchImpl } = fakeFetch([
+    ['/query/next-1', () => mkRes(429, {})],
+    ['/query?q=', () => mkRes(200, {
+      totalSize: 2, done: false, nextRecordsUrl: '/services/data/v61.0/query/next-1',
+      records: [{ attributes: { type: 'Account' }, Id: 'p1r1' }],
+    })],
+  ]);
+  const batches: unknown[] = [];
+  const res = await pullSalesforceSlice({
+    conn: conn(fetchImpl), token: 'tok', object: 'Account', fields: ['Id'],
+    watermark: null, highWatermark: '2026-02-01T00:00:00.000Z',
+    onBatch: async (r) => { batches.push(r); },
+  });
+  assert.ok(!res.ok, 'must surface the rate-limit error');
+  assert.match(res.reason, /rate-limit/i, 'reason must mention rate-limiting');
+  assert.equal(batches.length, 1, 'page-1 batch was delivered before the rate-limit — at-least-once');
+});
+
 test('runSalesforceSlice incremental retry reuses the given window; dispatch marker fires before landing', async () => {
   const calls: Call[] = [];
   const { fetchImpl } = fakeFetch(SF_ROUTES([{ Id: '9' }]), calls);

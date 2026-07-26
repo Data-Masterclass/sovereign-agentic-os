@@ -73,10 +73,6 @@ let mode: SourceMode = 'mock';
 export function sourceMode(): SourceMode {
   return mode;
 }
-/** Test/ops hook: in kind we always answer from the mock. */
-export function setSourceMode(m: SourceMode): void {
-  mode = m;
-}
 
 const artifacts = new Map<string, Artifact>();
 let seeded = false;

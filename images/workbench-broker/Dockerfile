@@ -4,8 +4,8 @@
 # Secrets in the WORKBENCH namespace ONLY, and reverse-proxies the browser to them.
 FROM node:22.13.1-alpine3.21 AS deps
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm install --omit=dev --no-audit --no-fund
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund
 
 FROM node:22.13.1-alpine3.21 AS runner
 WORKDIR /app

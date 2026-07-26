@@ -491,10 +491,13 @@ export async function createConnection(
     return cW;
   }
 
-  // Egress guardrail: an external endpoint must be on the allowlist (Admin
-  // guardrail; or an Admin-approved request). Checked BEFORE any credential use.
+  // Egress guardrail: an endpoint must be on the allowlist (Admin guardrail; or an
+  // Admin-approved request) — checked BEFORE any credential use. Deny-by-default now
+  // also covers INTERNAL / in-cluster / loopback targets (SSRF hardening): a
+  // user-supplied `http://query-tool:8080` (or trino/opa/minio/kubernetes.default.svc)
+  // is refused unless an operator explicitly allowlisted that host.
   const egress = isEgressAllowed(endpoint);
-  if (egress.external && !egress.allowed) {
+  if (!egress.allowed) {
     throw withStatus(
       new Error(`Endpoint host "${egress.host}" is not on the egress allowlist — request access and an Administrator must approve it first`),
       403,
@@ -1499,10 +1502,12 @@ async function runAllow(
   reason: string,
   mode?: string,
 ): Promise<ToolCallResult> {
-  // CONNECTOR-STANDARD §3.3: egress allowlist re-checked before EVERY external call
-  // (fail-closed — mirrors the create-time check at ~line 465). An internal/offline
-  // endpoint (external:false) is always allowed; only external hosts are gated.
-  if (c.egress.external) {
+  // CONNECTOR-STANDARD §3.3: egress allowlist re-checked before EVERY call (fail-closed
+  // — mirrors the create-time check). Deny-by-default now also covers INTERNAL /
+  // in-cluster / loopback targets (SSRF hardening): a user-supplied `http://query-tool`
+  // (or trino/opa/minio/kubernetes.default.svc) is refused unless an operator explicitly
+  // allowlisted that host. `isEgressAllowed` returns allowed:false for such targets.
+  {
     const egress = isEgressAllowed(c.endpoint);
     if (!egress.allowed) {
       const tr = await trace({ principal: c.principal, tool, input: { args, asAgent }, output: { denied: `egress not allowed: ${egress.host}` }, decision: 'deny' });

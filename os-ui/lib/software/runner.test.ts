@@ -72,6 +72,18 @@ test('deployment manifest: 1 replica, requests+limits, TCP readiness probe, imag
   assert.ok(c.readinessProbe.tcpSocket, 'has a TCP readiness probe (image-agnostic)');
   assert.equal(c.ports[0].containerPort, 8080);
   assert.equal(m.metadata.labels['app.kubernetes.io/managed-by'], 'os-ui');
+  // Container hardening (defence-in-depth for untrusted student apps).
+  assert.equal(c.securityContext.allowPrivilegeEscalation, false, 'no privilege escalation');
+  assert.deepEqual(c.securityContext.capabilities.drop, ['ALL'], 'drops all Linux capabilities');
+  assert.equal(c.securityContext.seccompProfile.type, 'RuntimeDefault', 'seccomp RuntimeDefault');
+  // Pod-level seccomp; runAsNonRoot deliberately OMITTED so an old root image already
+  // deployed does not CrashLoop on rollout (see runner.ts follow-up note).
+  assert.equal(m.spec.template.spec.securityContext.seccompProfile.type, 'RuntimeDefault');
+  assert.equal(
+    m.spec.template.spec.securityContext.runAsNonRoot,
+    undefined,
+    'runAsNonRoot NOT enforced yet — old root images must keep rolling',
+  );
 });
 
 test('service manifest: port 80 → targetPort 8080, selects the deployment pods', () => {

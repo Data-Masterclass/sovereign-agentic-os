@@ -4,7 +4,7 @@
 import 'server-only';
 import { cubeLoad } from '@/lib/infra/governed';
 import { type DelegatedToken } from '../../data/identity.ts';
-import type { Dataset, Measure } from '../../data/dataset-schema.ts';
+import type { Dataset, Measure } from '../../data/index.ts';
 import { type CubeExecutor, type Granularity, dropToSql, explore, exploreSpec } from '../explorer.ts';
 import { isCubeSyncLag, liveMetricsReachable } from './live-clients.ts';
 

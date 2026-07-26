@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { roleAtLeast } from '@/lib/core/session';
-import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/core/scopes';
+import { SCOPE_GROUPS, groupByScope, scopeCounts, rootsForScope, showDomainForScope, type ScopeKey, type FolderRoot } from '@/lib/core/scopes';
 import { canManageArtifact } from '@/lib/governance/edit-scope';
 import {
   itemsUnderFolder,
@@ -17,6 +17,7 @@ import {
 import FolderTree, { FolderPickerModal, type FolderRef } from '@/components/core/FolderTree';
 import FolderLayout from '@/components/core/FolderLayout';
 import { ensureFolderId, renamedPath } from '@/lib/folders/client';
+import { useFolders } from '@/lib/folders/useFolders';
 import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
 import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
 import DomainTag from '@/components/DomainTag';
@@ -41,16 +42,8 @@ import {
  */
 
 /** Which folder ROOT a metric's folders live in — personal (mine) or domain (shared/mkt). */
-type FolderRoot = 'personal' | 'domain';
 function rootOf(m: MetricSummary): FolderRoot {
   return m.tier === 'personal' ? 'personal' : 'domain';
-}
-
-/** The single folder root(s) a scope segment addresses (scope-driven single root). */
-function rootsForScope(scope: ScopeKey): FolderRoot[] {
-  if (scope === 'mine') return ['personal'];
-  if (scope === 'shared' || scope === 'marketplace') return ['domain'];
-  return ['personal', 'domain']; // 'all'
 }
 
 function MetricCard({
@@ -59,7 +52,7 @@ function MetricCard({
   m: MetricSummary; onOpen: (m: MetricSummary) => void; scope: ScopeKey;
   canManage: boolean; onMove?: (m: MetricSummary) => void;
 }) {
-  const showDomain = scope === 'shared' || scope === 'marketplace' || scope === 'all';
+  const showDomain = showDomainForScope(scope);
   // FAIL-SOFT: one metric's model couldn't load — render its reason inline, non-clickable,
   // so the rest of the registry stays live (one bad cube never 500s the whole surface).
   if (m.error) {
@@ -139,23 +132,11 @@ function MetricsRegistryInner({
   const [err, setErr] = useState('');
   // Folder rail selection (root, path) — mirrors Files/Data. `null` = every metric.
   const [sel, setSel] = useState<{ root: FolderRoot; path: string } | null>(null);
-  const [personalNodes, setPersonalNodes] = useState<FolderPathNode[]>([]);
-  const [domainNodes, setDomainNodes] = useState<FolderPathNode[]>([]);
+  const { personalNodes, domainNodes, loadFolders } = useFolders('metrics', showArchived);
   // Move picker: which metric ids are moving; null = closed.
   const [moveIds, setMoveIds] = useState<{ ids: string[]; root: FolderRoot } | null>(null);
   const [folderMove, setFolderMove] = useState<FolderRef | null>(null);
 
-  const loadFolders = useCallback(async () => {
-    try {
-      const q = showArchived ? '&archived=1' : '';
-      const [pRes, dRes] = await Promise.all([
-        fetch(`/api/folders?tab=metrics&scope=personal${q}`, { cache: 'no-store' }),
-        fetch(`/api/folders?tab=metrics&scope=domain${q}`, { cache: 'no-store' }),
-      ]);
-      if (pRes.ok) setPersonalNodes(((await pRes.json()).folders ?? []) as FolderPathNode[]);
-      if (dRes.ok) setDomainNodes(((await dRes.json()).folders ?? []) as FolderPathNode[]);
-    } catch { /* the synthesised rail still renders without the registry */ }
-  }, [showArchived]);
   useEffect(() => { void loadFolders(); }, [loadFolders, groups]);
 
   const uid = user?.id ?? '';

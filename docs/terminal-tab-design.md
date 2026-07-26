@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0
 Copyright 2026 Borek Data Ventures UG -->
+<!-- historical design spec — tab shipped as Console (/console) in os-ui 0.5.5; not living documentation -->
 
 # In-UI Terminal Tab — Design, Threat Model & kind Prototype (for sign-off)
 

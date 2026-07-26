@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import yaml from 'js-yaml';
-import type { Dataset, Measure, MeasureFilter, RollingWindow } from '../data/dataset-schema.ts';
+import type { Dataset, Measure, MeasureFilter, RollingWindow } from '../data/index.ts';
 import { MEASURE_TYPES, type MeasureType, cubeViewName, slug } from '../data/metrics.ts';
 
 /**

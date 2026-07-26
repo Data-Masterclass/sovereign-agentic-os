@@ -17,7 +17,7 @@ import {
 } from './asset-schema.ts';
 // The governance lifecycle is RE-USED from the Data tab (locked decision #note):
 // Files are governed exactly like Data — same tiers, roles, visibility.
-import { canTransition, tierAfter, visibilityFor } from '../data/dataset-schema.ts';
+import { canTransition, tierAfter, visibilityFor } from '../data/index.ts';
 
 function sample(over: Partial<FileAsset> = {}): FileAsset {
   return { ...emptyAsset({ id: 'as_x', name: 'acme.pdf', owner: 'amir', domain: 'sales' }), ...over };

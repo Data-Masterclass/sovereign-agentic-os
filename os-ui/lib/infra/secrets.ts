@@ -148,26 +148,61 @@ export function egressHost(endpoint: string): string {
   }
 }
 
+/**
+ * Is this host an INTERNAL / in-cluster / loopback target? These are the hosts a
+ * user-supplied connector endpoint must NOT be able to reach by default — reaching
+ * an in-cluster service (`query-tool`, `trino`, `opa`, `minio`, `kubernetes.default`)
+ * or loopback would be a server-side request forgery (SSRF) into the platform.
+ *
+ * Covers: bare hostnames (no dot, e.g. `opa`), `*.svc` / `*.cluster.local` /
+ * `*.local`, `localhost`, IPv4 loopback `127.0.0.0/8`, IPv6 loopback `::1`, and IPv6
+ * link-local `fe80::/10` (M2). Raw RFC1918 / 169.254 literals are additionally caught
+ * by the private-literal check below; this predicate is the internal-NAME + loopback
+ * layer that the old `isExternal` (return-false === auto-allow) let through.
+ */
+export function isInternalTarget(endpoint: string): boolean {
+  const host = egressHost(endpoint);
+  if (!host) return true; // un-parseable / empty → treat as internal (deny by default)
+  if (host === 'localhost') return true;
+  if (host === '::1' || host === '[::1]') return true; // IPv6 loopback
+  if (/^\[?fe80:/i.test(host)) return true; // IPv6 link-local fe80::/10
+  if (/^127\./.test(host)) return true; // IPv4 loopback 127.0.0.0/8
+  if (/\.(local|cluster\.local|svc)$/.test(host)) return true; // in-cluster / local dev
+  if (!host.includes('.')) return true; // bare service name (e.g. "opa", "query-tool")
+  return false;
+}
+
 /** An endpoint is "external" unless it targets an in-cluster / local host. */
 export function isExternal(endpoint: string): boolean {
   const host = egressHost(endpoint);
   if (!host) return false;
-  if (host === 'localhost' || host === '127.0.0.1') return false;
-  // In-cluster service names / local dev domains are not external internet.
-  if (/\.(local|cluster\.local|svc)$/.test(host)) return false;
-  if (!host.includes('.')) return false; // bare service name (e.g. "opa")
-  return true;
+  return !isInternalTarget(endpoint);
 }
 
-/** Is this endpoint permitted to egress? Subdomains of an allowlisted host pass. */
+/** Is `host` explicitly present on the egress allowlist (or an Admin-approved request)? */
+function onAllowlist(host: string): boolean {
+  const list = allowlist();
+  return list.some((d) => host === d || host.endsWith(`.${d}`)) || isHostApproved(host);
+}
+
+/**
+ * Is this endpoint permitted to egress? Subdomains of an allowlisted host pass.
+ *
+ * DENY-BY-DEFAULT for internal targets: an in-cluster / loopback host is refused
+ * UNLESS it is explicitly on the egress allowlist. This closes the SSRF where a
+ * signed-in user creates a connector with `endpoint: http://query-tool:8080` (or
+ * trino/opa/minio/kubernetes.default.svc) and gets a server-side fetch to an internal
+ * service. External hosts still require the allowlist as before.
+ */
 export function isEgressAllowed(endpoint: string): { external: boolean; host: string; allowed: boolean } {
   const host = egressHost(endpoint);
-  const external = isExternal(endpoint);
-  if (!external) return { external: false, host, allowed: true };
-  const list = allowlist();
+  const internal = isInternalTarget(endpoint);
+  if (internal) {
+    // Internal targets are denied unless the operator EXPLICITLY allowlisted them.
+    return { external: false, host, allowed: onAllowlist(host) };
+  }
   // Allowed if on the static Admin allowlist OR an Admin-approved egress request.
-  const allowed = list.some((d) => host === d || host.endsWith(`.${d}`)) || isHostApproved(host);
-  return { external: true, host, allowed };
+  return { external: true, host, allowed: onAllowlist(host) };
 }
 
 /** The egress proxy the connection tools route external calls through (audit). */

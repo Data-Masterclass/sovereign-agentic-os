@@ -33,7 +33,6 @@ import { isValidCatalogName, WarehouseError } from '../connections/warehouse/typ
 
 /** How a sync keeps the copy current. */
 export type SyncMode = 'full-refresh' | 'append' | 'merge';
-export const SYNC_MODES: SyncMode[] = ['full-refresh', 'append', 'merge'];
 
 /** Cursor kinds. `timestamp` + `number` are the scalar cursors; `kafka-offsets` is
  *  the per-partition offsets map (see the kafka section below). The remaining

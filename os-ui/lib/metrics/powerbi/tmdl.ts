@@ -35,7 +35,7 @@
  * dataset with no I/O, no Cube server, no Power BI SDK.
  */
 
-import type { Dataset, Measure, ColumnDoc } from '../../data/dataset-schema.ts';
+import type { Dataset, Measure, ColumnDoc } from '../../data/index.ts';
 import {
   cubeViewName,
   cubeName,

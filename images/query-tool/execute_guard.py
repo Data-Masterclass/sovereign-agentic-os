@@ -118,6 +118,75 @@ class ExecuteError(Exception):
         self.status = status
 
 
+# --------------------------------------------------------------- read guard ----
+# Defence-in-depth for the /query READ path. Trino's OPA plugin is the authoritative
+# governance layer (row filters + column masks) and the query runs as the caller's
+# principal, but /query has historically accepted ANY SQL. This guard enforces the
+# READ contract at the edge: a single statement, no comment-smuggling, and no write /
+# DDL / privilege / procedure verb — so a compromised or confused caller cannot use
+# the read tool to mutate the lakehouse or escalate. It rejects before Trino is
+# touched. Writes have their own governed door (/execute + guard()).
+#
+# Leading keyword allowlist: only these can start a /query statement.
+_READ_LEADING = ("select", "with", "show", "describe", "desc", "explain", "values", "table")
+
+# Any of these verbs appearing as a standalone word anywhere in the statement is a
+# write / DDL / privilege / session / procedure operation and is refused on /query.
+# NB: `replace` is deliberately NOT listed — it is a legitimate Trino string function
+# (`replace(col,'a','b')`), and `CREATE OR REPLACE` is already caught by `create`.
+_FORBIDDEN_VERBS = (
+    "insert", "update", "delete", "merge", "upsert",
+    "create", "alter", "drop", "truncate", "rename",
+    "grant", "revoke", "deny",
+    "call", "commit", "rollback",
+    "reset", "use", "prepare", "deallocate",
+)
+
+
+def guard_read(sql: str) -> str:
+    """Validate a /query READ statement. Raises ExecuteError(400) for a write/DDL,
+    multiple statements, or a smuggled comment. Returns the trimmed single statement.
+
+    Reuses the SAME comment + single-statement discipline as the write path so the
+    two doors cannot diverge."""
+    if not sql or not sql.strip():
+        raise ExecuteError(400, "missing sql")
+    s = sql.strip()
+
+    # Reject comments outright — no comment-smuggling (same rule as the write path).
+    if "--" in s or "/*" in s or "*/" in s:
+        raise ExecuteError(400, "SQL comments are not allowed on the query path")
+
+    # Exactly ONE statement: strip a single optional trailing ';', then any remaining
+    # ';' means stacked statements.
+    if s.endswith(";"):
+        s = s[:-1].rstrip()
+    if ";" in s:
+        raise ExecuteError(400, "multiple statements are not allowed")
+    if not s:
+        raise ExecuteError(400, "missing sql")
+
+    lowered = s.lower()
+    first = re.match(r"[a-z]+", lowered)
+    if not first or first.group(0) not in _READ_LEADING:
+        raise ExecuteError(
+            400,
+            "only read-only statements are allowed on /query "
+            "(SELECT / WITH / SHOW / DESCRIBE / EXPLAIN / VALUES)",
+        )
+
+    # No write/DDL/privilege/procedure verb anywhere (word-boundary match so column
+    # names like `created_at` or `update_ts` are not tripped).
+    for verb in _FORBIDDEN_VERBS:
+        if re.search(rf"\b{verb}\b", lowered):
+            raise ExecuteError(
+                400,
+                f"statement contains a non-read operation ('{verb}') — "
+                "/query is read-only; use the governed write path for changes",
+            )
+    return s
+
+
 @dataclass
 class ParsedWrite:
     kind: str            # 'create_schema' | 'ctas' | 'drop_table' | 'insert_select' | 'merge'

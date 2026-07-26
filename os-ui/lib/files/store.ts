@@ -26,7 +26,7 @@ import {
   canTransition,
   tierAfter,
   visibilityFor,
-} from '../data/dataset-schema.ts';
+} from '../data/index.ts';
 import { canRead } from './dls.ts';
 import { canManageArtifact, type ArtifactScope } from '../governance/edit-scope.ts';
 import { promotionGate, gateReason } from './promotion.ts';

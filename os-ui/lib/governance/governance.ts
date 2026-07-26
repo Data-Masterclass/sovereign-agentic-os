@@ -116,9 +116,6 @@ export function matchStandingPolicy(principal: string, tool: string, args: Recor
   return null;
 }
 
-export function listStandingPolicies(principal?: string): StandingPolicy[] {
-  return [...govStanding().standing.values()].filter((p) => (principal ? p.principal === principal : true));
-}
 export function revokeStandingPolicy(id: string): boolean {
   return govStanding().standing.delete(id);
 }
@@ -131,13 +128,6 @@ export function _clearStandingPolicies(): void {
 
 export type SafetyPreset = 'read-only' | 'read-propose' | 'read-bounded' | 'full-in-scope';
 export const SAFETY_PRESETS: SafetyPreset[] = ['read-only', 'read-propose', 'read-bounded', 'full-in-scope'];
-
-export const SAFETY_PRESET_HELP: Record<SafetyPreset, string> = {
-  'read-only': 'Reads only. Any write is blocked and queued for review.',
-  'read-propose': 'Reads run; writes are drafted (proposed) for a human to execute.',
-  'read-bounded': 'Reads run; bounded writes auto-run within their limit; approval-writes are queued.',
-  'full-in-scope': 'Everything the capability profile exposes runs; only out-of-scope is blocked.',
-};
 
 export type AutonomousEffect = 'allow' | 'propose' | 'block';
 export type AutonomousDecision = { effect: AutonomousEffect; reason: string; queue: boolean };

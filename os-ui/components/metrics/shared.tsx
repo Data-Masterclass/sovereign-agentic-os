@@ -10,6 +10,8 @@
  * the same shapes five times.
  */
 
+import { TIER_BADGE_CLASS } from '@/lib/core/scopes';
+
 export type MetricTier = 'personal' | 'domain' | 'marketplace';
 
 export type MetricSummary = {
@@ -70,10 +72,12 @@ export type GovernResult = {
 export type DatasetTile = { id: string; name: string; tier: 'dataset' | 'asset' | 'product'; owner: string };
 export type DatasetGroups = { mine: DatasetTile[]; domain: DatasetTile[]; marketplace: DatasetTile[] };
 
+// The badge CLASS per tier is OS-wide (lib/core/scopes) — only the tier VOCABULARY
+// differs per tab, so map this tab's keys onto the shared class map.
 export const TIER_BADGE: Record<MetricTier, string> = {
-  personal: 'vis-personal',
-  domain: 'vis-shared',
-  marketplace: 'vis-certified',
+  personal: TIER_BADGE_CLASS.personal,
+  domain: TIER_BADGE_CLASS.shared,
+  marketplace: TIER_BADGE_CLASS.certified,
 };
 export const TIER_WORD: Record<MetricTier, string> = {
   personal: 'Personal',

@@ -54,28 +54,6 @@ export async function importDashboardBundle(
 }
 
 /**
- * PHYSICALLY delete a Superset dashboard by TITLE (the delete side of the Dashboards
- * lifecycle). Resolves the numeric id via the list endpoint (we key our records by name,
- * not the Superset id), then `DELETE /api/v1/dashboard/{id}` with the CSRF token. Returns
- * `false` when no dashboard by that title exists (already gone — an honest, non-fatal
- * outcome); throws on a hard failure so the caller reports ✗. `fetchImpl` is injectable.
- */
-export async function deleteDashboardByName(
-  base: string,
-  name: string,
-  fetchImpl: typeof fetch = fetch,
-): Promise<boolean> {
-  const auth = await csrf(fetchImpl, base);
-  const id = await resolveDashboardIdByTitle(base, name, fetchImpl);
-  if (id == null) return false; // no such dashboard — already gone
-
-  const headers = serviceHeaders(base, auth, { accept: 'application/json' });
-  const delRes = await withTimeout(fetchImpl, `${base}/api/v1/dashboard/${id}`, { method: 'DELETE', headers });
-  if (!delRes || !delRes.ok) throw new Error(`Superset dashboard delete failed (${delRes?.status ?? 'unreachable'})`);
-  return true;
-}
-
-/**
  * Resolve a Superset dashboard's numeric id from its TITLE (we key our records by name,
  * not the Superset id). Returns null when no dashboard by that title exists; throws on a
  * hard lookup failure.

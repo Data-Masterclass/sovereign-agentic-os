@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { Dataset } from '../data/dataset-schema.ts';
+import type { Dataset } from '../data/index.ts';
 import { cubeViewName } from '../data/metrics.ts';
 import type { CubeQuery } from '../infra/governed.ts';
 import type { Granularity } from '../metrics/explorer.ts';

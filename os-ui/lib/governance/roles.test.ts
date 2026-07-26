@@ -14,8 +14,10 @@ import {
   canAdministerUsers,
   userAdminInScope,
   canTouchUser,
+  hasRole,
   type Actor,
 } from './roles.ts';
+import { roleAtLeast } from '../core/session.ts';
 
 const user: Actor = { id: 'amir', domains: ['sales'], role: 'creator' };
 const builder: Actor = { id: 'bea', domains: ['sales'], role: 'builder' };
@@ -138,4 +140,38 @@ test('USER-ADMIN no-lateral/no-upward: a Domain admin never touches an admin or 
   assert.equal(canTouchUser(domainAdmin, 'admin'), false, 'no upward moves');
   assert.equal(canTouchUser(admin, 'domain_admin'), true);
   assert.equal(canTouchUser(admin, 'admin'), true);
+});
+
+// ---- Explicit roleAtLeast / hasRole floor tests (guards the known landmine) ----
+// The landmine: a check written as `role === 'builder'` or `role === 'admin'` silently
+// denies domain_admin because it is an exact-set check, not a floor check.
+
+test('FLOOR: domain_admin passes a builder-floor check in their own domain', () => {
+  const da: Actor = { id: 'dana', domains: ['sales'], role: 'domain_admin' };
+
+  // roleAtLeast (session.ts) — the canonical floor predicate.
+  assert.equal(roleAtLeast(da.role, 'builder'), true, 'domain_admin must pass a builder floor');
+  assert.equal(roleAtLeast(da.role, 'domain_admin'), true, 'domain_admin passes its own floor');
+  assert.equal(roleAtLeast(da.role, 'admin'), false, 'domain_admin does not reach admin floor');
+
+  // hasRole (roles.ts) — the same predicate on an Actor.
+  assert.equal(hasRole(da, 'builder'), true, 'hasRole: domain_admin ≥ builder');
+  assert.equal(hasRole(da, 'domain_admin'), true, 'hasRole: domain_admin ≥ domain_admin');
+  assert.equal(hasRole(da, 'admin'), false, 'hasRole: domain_admin < admin');
+});
+
+test('FLOOR: domain_admin fails for a foreign domain', () => {
+  const da: Actor = { id: 'dana', domains: ['sales'], role: 'domain_admin' };
+  const finItem = { domain: 'finance', approverRole: 'builder' as const, scope: 'domain' as const };
+  assert.equal(canApprove(da, finItem), false, 'domain_admin of sales cannot approve finance items');
+});
+
+test('FLOOR: undefined/unknown role fails closed (compiles to creator rank)', () => {
+  // An unknown role must never accidentally pass a floor check — it must normalise
+  // to the lowest rank (creator = 0) so the gate is deny-by-default.
+  const bogusRole = 'agentic-leader' as Actor['role'];
+  assert.equal(roleAtLeast(bogusRole, 'builder'), false, 'unknown role fails builder floor');
+  assert.equal(roleAtLeast(bogusRole, 'domain_admin'), false, 'unknown role fails domain_admin floor');
+  // roleRank falls back to creator (rank 0).
+  assert.equal(roleRank(bogusRole), roleRank('creator'));
 });

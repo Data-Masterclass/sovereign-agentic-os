@@ -30,10 +30,6 @@ import { reindexById, reindexFile } from '@/lib/files/pipeline-server';
 // import ledger that powers the incremental skip across syncs.
 const ledger = new Map<string, { fileId: string; hash: string }>();
 
-export function __resetConnectorLedger(): void {
-  ledger.clear();
-}
-
 function principalFor(source: ConnectorSource): Principal {
   return { id: source.owner, domains: [source.domain], role: 'creator' };
 }

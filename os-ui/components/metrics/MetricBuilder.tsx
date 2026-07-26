@@ -11,6 +11,7 @@ import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import PromoteButton, { type PromoteTier } from '@/components/lifecycle/PromoteButton';
 import type { Visibility } from '@/lib/core/lifecycle';
+import { visibilityForTier } from '@/lib/core/artifact-model';
 import DomainTag from '@/components/DomainTag';
 import StageShell from '@/components/core/StageShell';
 import { initialStageState, markDone, type StageState } from '@/lib/core/stages';
@@ -111,9 +112,8 @@ type PreviewResult = {
   pending?: boolean;
 };
 
-/** Metric tier → lifecycle visibility (drives delete gate). */
-const lcVis = (tier: MetricSummary['tier']): Visibility =>
-  tier === 'domain' ? 'shared' : tier === 'marketplace' ? 'certified' : 'personal';
+/** Metric tier → lifecycle visibility (drives delete gate) — OS-wide mapping. */
+const lcVis = (tier: MetricSummary['tier']): Visibility => visibilityForTier(tier);
 /** Metric tier → the PromoteButton's ladder tier. */
 const ladderTier = (tier: MetricSummary['tier']): PromoteTier =>
   tier === 'domain' ? 'Shared' : tier === 'marketplace' ? 'Marketplace' : 'Personal';

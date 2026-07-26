@@ -142,7 +142,7 @@ test('LOCKDOWN 6: the governed DATA authz spine fails CLOSED on OPA-unreachable'
 });
 
 test('LOCKDOWN 7: sign-in and sign-out do a full-page navigation to bust the router cache', () => {
-  assert.match(read('app/signin/page.tsx'), /window\.location\.assign\(next\)/, 'sign-in full-page navigates');
+  assert.match(read('app/(entry)/signin/page.tsx'), /window\.location\.assign\(next\)/, 'sign-in full-page navigates');
   assert.match(read('components/Sidebar.tsx'), /window\.location\.assign\('\/signin'\)/, 'sign-out full-page navigates');
 });
 
@@ -201,9 +201,9 @@ test('ROLE-PERMS: the role-permissions API is admin-only on both verbs', () => {
 // ---------------------------------------------------------------------------
 
 test('PLATFORM-GATE 1: /components has a server-side admin layout', () => {
-  const src = read('app/components/layout.tsx');
-  assert.match(src, /currentUser/, 'app/components/layout.tsx must call currentUser');
-  assert.match(src, /role !== 'admin'/, 'app/components/layout.tsx must gate non-admins');
+  const src = read('app/(govern)/components/layout.tsx');
+  assert.match(src, /currentUser/, 'app/(govern)/components/layout.tsx must call currentUser');
+  assert.match(src, /role !== 'admin'/, 'app/(govern)/components/layout.tsx must gate non-admins');
 });
 
 test('PLATFORM-GATE 2: /console is builder+ for the governed Query surface; the raw Shell stays admin-only', () => {
@@ -211,9 +211,9 @@ test('PLATFORM-GATE 2: /console is builder+ for the governed Query surface; the 
   // The page is now builder+ (governed Query — OPA/RLS per caller). The page re-checks
   // that gate, and gates the raw Shell (arbitrary command execution) to admins only
   // via canShell; the admin-query API + terminal broker enforce the same server-side.
-  const src = read('app/console/page.tsx');
-  assert.match(src, /roleAtLeast\(user\.role, 'builder'\)/, 'app/console/page.tsx must have a builder+ page gate');
-  assert.match(src, /canShell=\{user\.role === 'admin'\}/, 'app/console/page.tsx must gate the raw Shell to admins');
+  const src = read('app/(build)/console/page.tsx');
+  assert.match(src, /roleAtLeast\(user\.role, 'builder'\)/, 'app/(build)/console/page.tsx must have a builder+ page gate');
+  assert.match(src, /canShell=\{user\.role === 'admin'\}/, 'app/(build)/console/page.tsx must gate the raw Shell to admins');
   // The Query API must be builder+, and Cube mode must stay admin-only.
   const api = read('app/api/admin-query/route.ts');
   assert.match(api, /roleAtLeast\(u\.role, 'builder'\)/, 'admin-query must gate to builder+');
@@ -224,9 +224,9 @@ test('PLATFORM-GATE 3: /about is open to all roles (moved from Admin group to En
   // About / Licenses (open-source component list) is purely informational.
   // It was moved from the dissolved Admin group to the Entry group — all roles
   // can now read it. The server still calls currentUser() for future personalisation.
-  const src = read('app/about/page.tsx');
-  assert.match(src, /currentUser/, 'app/about/page.tsx must still call currentUser');
-  assert.doesNotMatch(src, /role !== 'admin'/, "app/about/page.tsx must NOT gate non-admins (all-roles accessible)");
+  const src = read('app/(entry)/about/page.tsx');
+  assert.match(src, /currentUser/, 'app/(entry)/about/page.tsx must still call currentUser');
+  assert.doesNotMatch(src, /role !== 'admin'/, "app/(entry)/about/page.tsx must NOT gate non-admins (all-roles accessible)");
 });
 
 test('PLATFORM-GATE 4: consolidated tab gates — Policies & Approvals is builder+, admin tabs unchanged', () => {
@@ -257,13 +257,13 @@ test('PLATFORM-GATE 4: consolidated tab gates — Policies & Approvals is builde
 
 test('PLATFORM-GATE 5: removed tab routes are redirect stubs, not content (no 404s for old links)', () => {
   const targets: Record<string, string> = {
-    'app/users/page.tsx': '/platform',
-    'app/gateway/page.tsx': '/components',
-    'app/orchestration/page.tsx': '/components',
-    'app/consoles/page.tsx': '/components',
-    'app/workbench/page.tsx': '/components',
-    'app/terminal/page.tsx': '/console',
-    'app/admin-query/page.tsx': '/console',
+    'app/(system)/users/page.tsx': '/platform',
+    'app/(system)/gateway/page.tsx': '/components',
+    'app/(system)/orchestration/page.tsx': '/components',
+    'app/(system)/consoles/page.tsx': '/components',
+    'app/(system)/workbench/page.tsx': '/components',
+    'app/(build)/terminal/page.tsx': '/console',
+    'app/(build)/admin-query/page.tsx': '/console',
   };
   for (const [p, target] of Object.entries(targets)) {
     const src = read(p);

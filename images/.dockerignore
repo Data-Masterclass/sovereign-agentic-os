@@ -1,0 +1,4 @@
+# .dockerignore for image builds whose context is images/ (e.g. Python agents).
+# Suppresses Python bytecode and test files from every sub-image context.
+**/__pycache__
+**/test_*.py

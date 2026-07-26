@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { Dataset, Measure } from '../data/dataset-schema.ts';
+import type { Dataset, Measure } from '../data/index.ts';
 import { deregisterPlan, deregisterCubeMembers } from './physical-delete.ts';
 
 // deregisterPlan reads only name/domain (via cubeName/cubeViewName/measureMember); a

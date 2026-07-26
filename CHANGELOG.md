@@ -13,6 +13,51 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.0] — 2026-07-26
+
+Whole-codebase audit + refactor release (six parallel audits: architecture, security,
+dependencies, dead code, docs, tests). No feature changes; structure, security and honesty.
+
+### Security
+- Connector egress is deny-by-default for in-cluster targets (bare hostnames, `*.svc`,
+  `*.cluster.local`, `localhost`, `::1`, `fe80::/10`) — closes a server-side request
+  forgery path from user-supplied connector endpoints; internal hosts now require an
+  explicit allowlist entry.
+- User-deployed app pods hardened (caps-drop, no privilege escalation, seccomp) and the
+  apps namespace gets Pod Security `baseline` + default-deny NetworkPolicies; app scaffolds
+  now build non-root images (`nginx-unprivileged`, `USER node`).
+- query-tool and data-runner accept ingress only from os-ui; query-tool `/query` enforces
+  read-only single statements.
+- Client-supplied `viewerRegion` is honored only for admin view-as; live RLS context
+  otherwise derives from the session.
+- Removed a stale tracked script copy that carried a hardcoded exercise credential
+  (credential rotated).
+### Changed
+- Shared auth boundary (`requirePrincipal`/`errorResponse`), `edit-scope`, and `cron-util`
+  lifted to `lib/core` (re-export shims keep all imports working); dataset-schema consumed
+  via the `lib/data` index; the two 2k-line MCP tool files split into 19 per-domain modules;
+  `app/` pages organized into route groups mirroring the sidebar (URLs unchanged);
+  scope/tier/folder helpers consolidated into `lib/core`.
+- ARCHITECTURE.md rewritten to the four-ring model (core · infra · tabs · shared services)
+  with a verified module and API-directory map.
+### Removed
+- ~3,700 lines of dead code: 30 unreferenced files (old monitoring drawer, pre-redesign
+  panels, retired workbench/tool-embed surfaces), 26 dead exports, the orphaned
+  workbench-session route and its config keys, unreferenced brand bitmaps, dead Helm values
+  keys, unused pip/npm dependencies.
+### Fixed
+- dbt-ingestion S3 endpoint pointed at removed SeaweedFS; now MinIO.
+- `ML_TRAINER_IMAGE` is actually wired from Helm values into the os-ui deployment.
+- The `/agents` route no longer eagerly ships a 298 KB font payload (lazy-loaded on PDF export).
+### CI / tests
+- GitHub CI now runs the full TypeScript suite, all Python image test suites and the
+  license gate (previously build-only). +43 targeted tests: session-crypto verification,
+  governance approvals route, role floors, sync tenant scoping, connector error paths
+  (401/malformed/429 mid-pagination), web-fetch's first tests, data-runner failure modes.
+- Broker images get committed lockfiles (`npm ci`); Docker build context slimmed ~50 MB.
+
+## [os-ui 0.5.99] — 2026-07-26
+
 ### Added
 - **Kajabi connector with scheduled sync** — a new `kajabi-api` connection template (Supported
   Connectors gallery, own vendor stack, install guide) over Kajabi's public API
@@ -29,6 +74,51 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   refresh); transactions/offers/products/courses/forms/tags are full-refresh only; deletes never
   detected; Kajabi publishes no rate-limit contract (429s surface honestly). `api.kajabi.com`
   added to the egress allowlists (lib, chart, connector overlay).
+
+## [os-ui 0.5.98] — 2026-07-26
+
+### Fixed
+- **CI status now reads the real run outcome.** Software CI badges read the most-recent run result
+  from the Forgejo Checks API; a re-run updates the badge without a pod restart.
+- **Repo-secret self-heal.** If a required repo secret is missing it is written on the next build,
+  removing a class of silent build failures that required manual operator intervention.
+
+## [os-ui 0.5.97] — 2026-07-26
+
+### Fixed
+- **Software commits were silent no-ops.** The Forgejo contents-API `PUT` requires the blob's
+  current sha for updates; previous writes omitted it, so every commit after the first returned
+  422 and nothing was persisted. Writes are now sha-aware (fetch current sha, pass it on update);
+  the pipeline surface is honest about the outcome; and a self-heal pass reconciles any apps left
+  in a stale state.
+
+## [os-ui 0.5.88–0.5.96] — 2026-07-25
+
+Batch of features shipped across merge commits `fb9b8ae`, `baf0636`, `1a2e54c`, `83f97fb`, `56c4549`
+(see individual commit messages for detail).
+
+### Added
+- **Native ECharts dashboards (Tier-1).** Replaces the Superset iframe embed with server-rendered
+  ECharts panels queried directly from Cube via the governed SQL API (per-user RLS, no `<iframe>`).
+  Tier-2 keeps Power BI / Tableau / Superset as external "open in own tab" links. Dashboard build is
+  a 5-stage flow (Define · Design · Build · View · Govern) with a per-stage AI assistant.
+- **Monitoring truth.** Agent-run token/cost accounting is now hydrated from the live Langfuse trace
+  on read (not a cached estimate); detail expands in the main window with rich agent diagnosis;
+  per-model EUR/1M pricing is admin-editable in Models & Providers; real STACKIT pricing wired for
+  cost display.
+- **FiveTran-style scheduled incremental sync (Wave 1 + Wave 2).** Connectors support full-refresh,
+  append (`_loaded_at`/`_batch_id` lineage), and cursor-based incremental modes. A durable sync-runs
+  store tracks cursor watermarks and quarantines after 10 consecutive failures. Per-dataset CronJob
+  provisioning; sync history and stale-downstream hints in the UI; data-runner append mode. Wave 2
+  adds query-tool concurrency guards (schema-gated INSERT-SELECT / MERGE / DELETE-by-batch-id /
+  expire_snapshots / optimize).
+- **Sovereign app template** — the default scaffold for new Software apps: `AppShell` +
+  OS-delegated identity + multi-domain scoping + admin/user-directory + MCP link +
+  `build-contract` README. Four template options in the Define picker: Application / Website /
+  APIs only / Empty.
+- **Software Build-stage epic/story tree.** Epics panel left, build chat right, a General
+  super-epic; Design · Build · Test · Review actions per story; honest preview shapes
+  (no fake "deployed" state); deployed-rollout fix.
 
 ## [os-ui 0.5.46] — 2026-07-19
 

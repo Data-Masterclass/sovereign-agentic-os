@@ -178,6 +178,18 @@ export function buildDeploymentManifest(spec: RunnerSpec, namespace: string, dep
                 // Memory limit == request (>= request, valid); cpu capped at 1.
                 limits: { cpu: '1', memory: spec.memory },
               },
+              // Container hardening (defence-in-depth for untrusted student apps).
+              // These are safe for BOTH the current non-root scaffolds (nginx-
+              // unprivileged uid 101 / node uid 1000) AND any older root-nginx image
+              // still deployed: a static file server needs NO Linux capability to bind
+              // 8080 (>1024) or serve files, and never escalates privileges. We do NOT
+              // set `runAsNonRoot` HERE so an old root image already deployed does not
+              // CrashLoop on its next rollout — see the pod-level note below.
+              securityContext: {
+                allowPrivilegeEscalation: false,
+                capabilities: { drop: ['ALL'] },
+                seccompProfile: { type: 'RuntimeDefault' },
+              },
               // TCP readiness is image-agnostic (an HTTP path may 404 on a
               // healthy app), so it drives the running/deploying transition
               // off the process actually LISTENING, not a fabricated timer.
@@ -189,6 +201,16 @@ export function buildDeploymentManifest(spec: RunnerSpec, namespace: string, dep
               },
             },
           ],
+          // Pod-level hardening. `runAsNonRoot` is intentionally OMITTED for now: the
+          // current scaffolds build non-root images, but apps deployed from an EARLIER
+          // (root nginx) scaffold still run `:latest` root images until CI rebuilds
+          // them, and enforcing runAsNonRoot would CrashLoop those on the next deploy.
+          // seccomp RuntimeDefault is safe for every image. FOLLOW-UP: once all live
+          // apps are rebuilt from the non-root scaffold, add
+          // `runAsNonRoot: true` here and tighten the namespace to PSS `restricted`.
+          securityContext: {
+            seccompProfile: { type: 'RuntimeDefault' },
+          },
         },
       },
     },

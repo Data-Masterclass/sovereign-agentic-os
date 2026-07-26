@@ -285,7 +285,6 @@ postgres:
   # per-app credential Secrets keep the SAME names (External Secrets supplies them).
   external:
     host: ""                   # managed PostgreSQL host (e.g. STACKIT PostgreSQL Flex)
-    port: "5432"
   clusterName: pg              # creates services pg-rw / pg-ro / pg-r
   instances: 1                 # local: single instance (3 in production for HA)
   database: langfuse
@@ -979,7 +978,6 @@ opensearch:
     protocol: https            # managed endpoints terminate TLS
     host: ""                   # managed OpenSearch host
     port: "9200"
-    secretName: opensearch-credentials
   clusterName: opensearch
   masterService: opensearch
   singleNode: true
@@ -1719,7 +1717,7 @@ openmetadata:
       s3:
         bucket: "dbt"
         prefix: "artifacts/"
-        endpoint: "http://seaweedfs-s3:8333"
+        endpoint: "http://minio:9000"
         region: "us-east-1"
         secretName: "object-storage-credentials"
         accessKeyIdKey: "AWS_ACCESS_KEY_ID"
@@ -1881,6 +1879,22 @@ softwareRunner:
   runnerImage: "traefik/whoami:latest"
   ingressClass: ""        # falls back to ingress.className
   tlsIssuer: ""           # falls back to ingress.tlsIssuer
+  # SECURITY (C2): isolate student apps from the platform.
+  #   podSecurityStandard — the enforced PSS level on the apps namespace. `baseline`
+  #     for now (blocks host namespaces / privileged / hostPath while still allowing
+  #     root-nginx images that predate the non-root scaffold). FOLLOW-UP: once every
+  #     live app is rebuilt from the non-root scaffold, set the runner's pod
+  #     `runAsNonRoot` and raise this to `restricted`.
+  #   networkPolicy.enabled — default-deny ingress+egress in the apps namespace, then
+  #     allow only ingress from the ingress-controller namespace and egress to DNS.
+  #     Gated (nil-safe under --reuse-values) and inert under kindnet (see egress note).
+  #   networkPolicy.ingressNamespace — the namespace the ingress controller runs in
+  #     (matched by its `kubernetes.io/metadata.name` label); the ONLY source allowed
+  #     to reach app pods. Adjust per cluster (ingress-nginx default).
+  podSecurityStandard: baseline
+  networkPolicy:
+    enabled: true
+    ingressNamespace: ingress-nginx
 
 # -----------------------------------------------------------------------------
 # Connections golden path — manually-credentialed Connections (API/MCP/Database/
@@ -1984,7 +1998,12 @@ queryTool:
   enabled: true
   image:
     repository: sovereign-os/query-tool     # built locally, loaded into kind
-    tag: "0.5.0"                             # 0.5.0 = sync write shapes (INSERT-SELECT,
+    tag: "0.6.0"                             # 0.6.0 = /query read guard (defence-in-depth:
+                                             #         read-only single-statement; rejects
+                                             #         write/DDL/privilege/stacked/comment
+                                             #         before Trino — Trino->OPA still the
+                                             #         authoritative row/column layer).
+                                             # 0.5.0 = sync write shapes (INSERT-SELECT,
                                              #         MERGE, DELETE-by-batch-id,
                                              #         expire_snapshots, optimize).
                                              # 0.4.2 = write-floor role set includes
@@ -2169,10 +2188,6 @@ trino:
   resources:
     requests: { cpu: "1", memory: 2Gi }
     limits: { cpu: "4", memory: 8Gi }
-
-# Apache Spark — optional distributed batch/ETL engine (off by default).
-spark:
-  enabled: false
 
 # -----------------------------------------------------------------------------
 # Superset — dashboards/BI (subchart). External CNPG `superset` DB; web-only with
@@ -2415,9 +2430,6 @@ softwareDelivery:
     repo: demo-app
     image: traefik/whoami:v1.10.3
     namespace: demo
-  # Software golden path (per-app builds in the Software tab): the live-subdomain
-  # suffix surfaced on each app page (set OS_APPS_DOMAIN on the OS UI to match).
-  appsDomain: apps.local
 
 # -----------------------------------------------------------------------------
 # Analytics monorepo (epic #146 Phase 1).
@@ -3004,8 +3016,6 @@ mlflow:
   backendDatabase: mlflow
   backendSecretName: postgres-mlflow-credentials   # CNPG `mlflow` role (extraDatabases)
   artifactBucket: mlflow                            # objectStorage.buckets entry
-  s3:
-    endpoint: "http://minio:9000"        # MinIO locally; STACKIT Object Storage in prod
   resources:
     requests: { cpu: 100m, memory: 384Mi }
     limits: { cpu: "1", memory: 1Gi }

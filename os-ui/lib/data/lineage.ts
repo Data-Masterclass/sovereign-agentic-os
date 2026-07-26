@@ -4,7 +4,7 @@
 import type { Dataset, Layer } from './dataset-schema.ts';
 import { transparencyGate, type GateResult } from './transparency.ts';
 import { slug, physicalSlug } from './store-fqn.ts';
-import { cubeViewName, goldMartFqn } from './metrics.ts';
+import { cubeViewName } from './metrics.ts';
 
 /**
  * End-to-end lineage for one dataset, assembled from the single source — spanning
@@ -111,7 +111,3 @@ export function lineageFor(d: Dataset): LineageGraph {
   };
 }
 
-/** The governed mart FQN at the head of the consumption chain (handover contract). */
-export function lineageRootFqn(d: Dataset): string {
-  return goldMartFqn(d);
-}

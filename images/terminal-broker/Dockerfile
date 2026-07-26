@@ -2,8 +2,8 @@
 # Non-root, minimal. Holds the ONLY (tightly-scoped) k8s credential in the path.
 FROM node:22.13.1-alpine3.21 AS deps
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm install --omit=dev --no-audit --no-fund
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund
 
 FROM node:22.13.1-alpine3.21 AS runner
 WORKDIR /app

@@ -8,10 +8,13 @@ import { useUser } from '@/lib/useUser';
 import { roleAtLeast } from '@/lib/core/session';
 import { canManageArtifact } from '@/lib/governance/edit-scope';
 import { DATASET_SCOPES, tilesForScope, scopeCounts, type DatasetScope } from '@/lib/data/dataset-scopes';
+import { rootsForScope, TIER_BADGE_CLASS, type FolderRoot } from '@/lib/core/scopes';
+import { visibilityForTier } from '@/lib/core/artifact-model';
 import { itemsUnderFolder, normaliseFolderPath, folderName, type FolderPathNode } from '@/lib/core/folders';
 import FolderTree, { FolderPickerModal, type FolderRef } from '@/components/core/FolderTree';
 import FolderLayout from '@/components/core/FolderLayout';
 import { ensureFolderId, renamedPath } from '@/lib/folders/client';
+import { useFolders } from '@/lib/folders/useFolders';
 import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import DomainTag from '@/components/DomainTag';
@@ -39,23 +42,12 @@ type Groups = { mine: Tile[]; domain: Tile[]; marketplace: Tile[] };
 
 /** Which folder ROOT a dataset's folders live in — its private tree (dataset) or the
  *  domain tree (shared/certified). Mirrors how the store groups by tier. */
-type FolderRoot = 'personal' | 'domain';
 function rootOf(t: Tile): FolderRoot {
   return t.tier === 'dataset' ? 'personal' : 'domain';
 }
 
-/** Which folder roots are relevant for the active scope. Used to trim the rail and
- *  the folder picker so the user only sees roots that contain items in-scope. */
-function rootsForScope(scope: DatasetScope): FolderRoot[] {
-  if (scope === 'mine') return ['personal'];
-  if (scope === 'shared') return ['domain'];
-  if (scope === 'marketplace') return ['domain'];
-  return ['personal', 'domain']; // 'all'
-}
-
 /** Tile tier → the OS-wide lifecycle visibility (drives the delete gate). */
-const lcVis = (tier: Tile['tier']): Visibility =>
-  tier === 'asset' ? 'shared' : tier === 'product' ? 'certified' : 'personal';
+const lcVis = (tier: Tile['tier']): Visibility => visibilityForTier(tier);
 
 function freshLabel(iso: string | null): string {
   if (!iso) return 'not built yet';
@@ -68,7 +60,7 @@ function freshLabel(iso: string | null): string {
   return `updated ${d.toLocaleDateString()}`;
 }
 
-const TIER_BADGE: Record<Tile['tier'], string> = { dataset: 'vis-personal', asset: 'vis-shared', product: 'vis-certified' };
+const TIER_BADGE: Record<Tile['tier'], string> = { dataset: TIER_BADGE_CLASS.personal, asset: TIER_BADGE_CLASS.shared, product: TIER_BADGE_CLASS.certified };
 const TIER_WORD: Record<Tile['tier'], string> = { dataset: 'Dataset', asset: 'Data asset', product: 'Data product' };
 
 /** The B/S/G refinement dots on a tile — one logical dataset, three versions. */
@@ -173,10 +165,6 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
   // Folder rail (Wave 1 primitive, mirrors Files): a (root, path) selection filters
   // the grid to datasets under that folder. `null` = every dataset in the scope.
   const [sel, setSel] = useState<{ root: FolderRoot; path: string } | null>(null);
-  // Explicit folder rows from the governed registry, per root — unioned with folders
-  // synthesised from the visible datasets' own paths so implicit folders keep showing.
-  const [personalNodes, setPersonalNodes] = useState<FolderPathNode[]>([]);
-  const [domainNodes, setDomainNodes] = useState<FolderPathNode[]>([]);
   // Multi-select in the grid → bulk "Move selected…".
   const [picked, setPicked] = useState<Set<string>>(new Set());
   // Folder picker modal for dataset moves: ids being moved; null = closed.
@@ -185,6 +173,9 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
   const [folderMove, setFolderMove] = useState<FolderRef | null>(null);
   // Archive/lifecycle UI (mirrors the Knowledge tab's reference pattern).
   const [showArchived, setShowArchived] = useState(false);
+  // Explicit folder rows from the governed registry, per root (unioned below with
+  // folders synthesised from the visible datasets' own paths so implicit ones show).
+  const { personalNodes, domainNodes, loadFolders } = useFolders('data', showArchived);
   // Import-from-warehouse affordance: registered warehouse connections a builder can
   // materialize a table from. Lazily loaded from the same /api/connections endpoint the
   // Connections tab uses; only offered when there's at least one warehouse connection.
@@ -208,18 +199,6 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
     })();
     return () => { cancelled = true; };
   }, [canImportWarehouse]);
-
-  const loadFolders = useCallback(async () => {
-    try {
-      const suffix = showArchived ? '&archived=1' : '';
-      const [pRes, dRes] = await Promise.all([
-        fetch(`/api/folders?tab=data&scope=personal${suffix}`, { cache: 'no-store' }),
-        fetch(`/api/folders?tab=data&scope=domain${suffix}`, { cache: 'no-store' }),
-      ]);
-      if (pRes.ok) setPersonalNodes(((await pRes.json()).folders ?? []) as FolderPathNode[]);
-      if (dRes.ok) setDomainNodes(((await dRes.json()).folders ?? []) as FolderPathNode[]);
-    } catch { /* the synthesised rail still renders without the registry */ }
-  }, [showArchived]);
 
   const refresh = useCallback(async () => {
     setErr('');

@@ -269,7 +269,7 @@ export async function resolveSalesforce(connId: string, user: CurrentUser): Prom
     );
   }
   const egress = isEgressAllowed(c.endpoint);
-  if (egress.external && !egress.allowed) {
+  if (!egress.allowed) {
     throw Object.assign(
       new Error(`Egress to ${egress.host} is not allowlisted — request egress approval for this Salesforce org first`),
       { status: 403 },

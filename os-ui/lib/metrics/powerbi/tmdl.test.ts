@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyVersions, type Dataset, type Measure } from '../../data/dataset-schema.ts';
+import { emptyVersions, type Dataset, type Measure } from '../../data/index.ts';
 import {
   datasetToTmdl,
   daxForMeasure,

@@ -2,7 +2,7 @@
 title: "Sovereign Agentic OS"
 subtitle: "The governed, EU-sovereign operating system for data, knowledge, agents and software — where AI gets real, safe hands on your work."
 author: "Orchestrated by Data Masterclass · datamasterclass.com · www.sovereign-agentic.com"
-date: "Chart 0.2.11 (app 0.2.0-alpha.11 · os-ui 0.5.94) · generated {{DATE}} from commit {{GIT_COMMIT}}"
+date: "Chart 0.2.11 (app 0.2.0-alpha.11 · os-ui 0.6.0) · generated {{DATE}} from commit {{GIT_COMMIT}}"
 titlepage: true
 titlepage-rule-color: "c8a24a"
 toc: true
@@ -391,7 +391,10 @@ honestly rather than inventing an answer when retrieval comes back empty.
   before/after **file diff** of what was committed per run; the raw code panel lives one
   click away in the **Developer view**) · **Preview** (a live in-cluster pod) · **Operate** (the deployed app plus
   its live tool surface). A persistent **Build ▸ Preview ▸ Deploy status rail** keeps the
-  honest, single-glance state in view throughout. New apps scaffold from the **Sovereign
+  honest, single-glance state in view throughout. At **Define** you pick one of **four
+  scaffold templates** — **Application** (the default, full OS UX), **Website**, **APIs only**
+  (no user interface), or **Empty app** — and each pre-shapes the epic structure the Build
+  stage works through. The default is the **Sovereign
   standard app template** — a Vite + React + TypeScript SPA that already *is* an OS app before
   the first story is built. It boots *in the OS design*: it vendors **`@sovereign-os/ui`**
   (the gold-on-black AppShell and `.sb-*` primitives, no build step, no registry) and calls
@@ -406,7 +409,11 @@ honestly rather than inventing an answer when retrieval comes back empty.
   the app's own MCP connection in Connections. The scaffolded **README is the build
   contract** — it documents how each story adds a page + section, and the Build assistant
   reads the same text as context. Code commits to an
-  in-cluster **Forgejo** repo (no GitHub, no tokens, your code never leaves). An app can still
+  in-cluster **Forgejo** repo (no GitHub, no tokens, your code never leaves). Commits are
+  **sha-aware** — every write fetches the live blob sha first, so concurrent edits can never
+  silently no-op or overwrite — and the pipeline status is **earned, not claimed**: the CI
+  badge reflects the actual outcome of the latest Actions run on your commit (a missing repo
+  secret even self-heals on the next push). An app can still
   **declare its surface** — `surface: ui | api | both` in `app.yaml`, which wins over
   auto-detection so a Streamlit/Gradio/Flask UI is never mislabelled "API." *Request deploy*
   assembles a review card — a security scan of the **live repo tree**, resource envelope, diff —
@@ -725,7 +732,10 @@ Every model call goes through **LiteLLM** — the one gateway that enforces the 
 per-key spend caps, tracing and graceful back-pressure. Inference runs on **STACKIT AI Model
 Serving**, an EU-sovereign, pay-per-token, three-tier set that an Administrator configures in
 **Admin → Models & Providers** (a single live-sourced store; the three below are the helm
-defaults — the OS is admin-configurable, not hardcoded to any provider):
+defaults — the OS is admin-configurable, not hardcoded to any provider). Each model also
+carries **per-token prices (EUR per 1M input / output tokens)**, editable in the same
+Models & Providers screen; these drive the cost figures in Monitoring — a model with no
+price set shows **"—"** honestly rather than a fake €0:
 
 | Role | Helm-default model | LiteLLM name |
 |---|---|---|

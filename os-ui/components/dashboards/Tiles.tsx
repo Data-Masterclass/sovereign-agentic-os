@@ -5,7 +5,7 @@
 
 import { useState } from 'react';
 import { useUser } from '@/lib/useUser';
-import { SCOPE_GROUPS, groupByScope, scopeCounts, type ScopeKey } from '@/lib/core/scopes';
+import { SCOPE_GROUPS, groupByScope, scopeCounts, showDomainForScope, type ScopeKey } from '@/lib/core/scopes';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { TIER_BADGE, TIER_LABEL } from './shared';
 import type { DashboardGroups, DashboardSummary } from './shared';
@@ -52,7 +52,7 @@ export default function Tiles({
       <div className="tile-top">
         <span className="tile-name">{d.name}</span>
         <div className="row" style={{ gap: 4, alignItems: 'center' }}>
-          {(scope === 'shared' || scope === 'marketplace' || scope === 'all') ? <DomainTag domain={d.domain} /> : null}
+          {showDomainForScope(scope) ? <DomainTag domain={d.domain} /> : null}
           <span className={`badge ${TIER_BADGE[d.tier]}`}>{TIER_LABEL[d.tier]}</span>
         </div>
       </div>

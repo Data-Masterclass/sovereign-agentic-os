@@ -23,11 +23,6 @@
  * Creator can create/commit/preview/request_deploy but NEVER self-approve a
  * go-live — that stays a human Builder decision in /software/reviews.
  */
-export const SOFTWARE_TEAM_NAME = 'Software Delivery Team';
-
-/** The domain the instructor seeds into (the default tenant scope). */
-export const SOFTWARE_TEAM_DOMAIN = 'platform';
-
 export const SOFTWARE_TEAM_YAML = `version: '1'
 system:
   name: Software Delivery Team

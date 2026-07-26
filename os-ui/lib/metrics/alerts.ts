@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { measureMember } from './model.ts';
-import type { Dataset, Measure } from '../data/dataset-schema.ts';
+import type { Dataset, Measure } from '../data/index.ts';
 
 /**
  * Alerts on governed metrics. An alert sets a THRESHOLD on a metric member; on breach it

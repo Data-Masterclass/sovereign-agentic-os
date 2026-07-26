@@ -372,6 +372,71 @@ test('runKajabiSlice incremental retry reuses the given window; dispatch marker 
   assert.match(executed[0], /_batch_id/, 'delete-by-batch-id ran before the re-pull');
 });
 
+// ---- error-path: watermark-safety -------------------------------------------
+
+test('pullKajabiSlice: 401 on page 2 surfaces honest error, watermark does not advance', async () => {
+  const { fetchImpl } = fakeFetch([
+    [(u) => u.includes('page%5Bnumber%5D=2'), () => mkRes(401, { error: 'unauthorized' })],
+    ['/v1/purchases', () => mkRes(200, {
+      data: [rec('2', { updated_at: '2026-06-10T00:00:00Z' })],
+      links: { next: 'https://api.kajabi.com/v1/purchases?page[number]=2' },
+    })],
+  ]);
+  const batches: unknown[] = [];
+  const res = await pullKajabiSlice({
+    conn: conn(fetchImpl), token: 'tok', resource: 'purchases', cursorField: 'updated_at',
+    watermark: null, highWatermark: '2026-06-30T00:00:00.000Z',
+    onBatch: async (r) => { batches.push(r); },
+  });
+  assert.ok(!res.ok, 'must surface the error');
+  assert.match(res.reason, /401/, 'reason must mention the HTTP status');
+  assert.equal(batches.length, 1, 'page-1 batch was delivered before the error — at-least-once');
+});
+
+test('pullKajabiSlice: malformed HTML body on page 2 surfaces parse error, watermark does not advance', async () => {
+  const htmlRes = (): Response => ({
+    ok: true, status: 200,
+    headers: { get: () => null },
+    json: async () => { throw new SyntaxError('unexpected token'); },
+    text: async () => '<html>error</html>',
+  } as unknown as Response);
+  const { fetchImpl } = fakeFetch([
+    [(u) => u.includes('page%5Bnumber%5D=2'), htmlRes],
+    ['/v1/purchases', () => mkRes(200, {
+      data: [rec('2', { updated_at: '2026-06-10T00:00:00Z' })],
+      links: { next: 'https://api.kajabi.com/v1/purchases?page[number]=2' },
+    })],
+  ]);
+  const batches: unknown[] = [];
+  const res = await pullKajabiSlice({
+    conn: conn(fetchImpl), token: 'tok', resource: 'purchases', cursorField: 'updated_at',
+    watermark: null, highWatermark: '2026-06-30T00:00:00.000Z',
+    onBatch: async (r) => { batches.push(r); },
+  });
+  assert.ok(!res.ok, 'must surface the parse error');
+  assert.match(res.reason, /unreachable/i, 'caught JSON parse → Kajabi unreachable');
+  assert.equal(batches.length, 1, 'page-1 batch was delivered before the error — at-least-once');
+});
+
+test('pullKajabiSlice: 429 on page 2 surfaces rate-limit error, watermark does not advance (mid-pagination)', async () => {
+  const { fetchImpl } = fakeFetch([
+    [(u) => u.includes('page%5Bnumber%5D=2'), () => mkRes(429, {})],
+    ['/v1/purchases', () => mkRes(200, {
+      data: [rec('2', { updated_at: '2026-06-10T00:00:00Z' })],
+      links: { next: 'https://api.kajabi.com/v1/purchases?page[number]=2' },
+    })],
+  ]);
+  const batches: unknown[] = [];
+  const res = await pullKajabiSlice({
+    conn: conn(fetchImpl), token: 'tok', resource: 'purchases', cursorField: 'updated_at',
+    watermark: null, highWatermark: '2026-06-30T00:00:00.000Z',
+    onBatch: async (r) => { batches.push(r); },
+  });
+  assert.ok(!res.ok, 'must surface the rate-limit error');
+  assert.match(res.reason, /rate-limit/i, 'reason must mention rate-limiting');
+  assert.equal(batches.length, 1, 'page-1 batch was delivered before the rate-limit — at-least-once');
+});
+
 test('runKajabiSlice surfaces a 429 honestly (no rate-limit contract exists — retry next run)', async () => {
   const routes: [string | ((u: string) => boolean), () => Response][] = [
     ['/v1/oauth/token', () => mkRes(200, { access_token: 'tok' })],

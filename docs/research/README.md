@@ -77,3 +77,7 @@ Read this page first. Deep-link into individual reports only for the full eviden
 ---
 
 *All four extracted reports are verbatim from completed agent transcripts. Date: 2026-07-19.*
+
+---
+
+These are internal working documents produced during platform development — they are design-decision inputs, not user-facing documentation or living specifications for the shipped product.

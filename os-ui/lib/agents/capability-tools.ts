@@ -120,10 +120,6 @@ export function planToolsForId(id: string, capability: Capability): string[] {
   return target ? [...PLAN_TOOLS_BY_TARGET[target]] : [];
 }
 
-/** Every tool a plan grant could ever provision across all plan targets. */
-export function allPlanTools(): string[] {
-  return Array.from(new Set(Object.values(PLAN_TOOLS_BY_TARGET).flat()));
-}
 
 /** Just the create/write tools for `kind` — stripped when a kind stops writing.
  * Read tools are left in place on removal (harmless, and may be hand-picked). */

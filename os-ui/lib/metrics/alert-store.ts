@@ -86,24 +86,10 @@ export function saveAlertRule(rule: AlertRule, owner: string, domain = 'default'
   return rec;
 }
 
-export function getAlertRule(id: string): AlertRuleRecord | null {
-  return alertStoreState().rules.get(id) ?? null;
-}
-
 export function listAlertRules(owner?: string): AlertRuleRecord[] {
   const rules = Array.from(alertStoreState().rules.values());
   if (!owner) return rules;
   return rules.filter((r) => r.owner === owner);
-}
-
-export function deleteAlertRule(id: string, owner: string): boolean {
-  const s = alertStoreState();
-  const rec = s.rules.get(id);
-  if (!rec || rec.owner !== owner) return false;
-  s.rules.delete(id);
-  // Best-effort mirror removal (osMirror does not expose delete; set archived flag)
-  mirror.writeThrough(id, { ...rec, _deleted: true });
-  return true;
 }
 
 export function recordEvaluation(id: string, value: number, breached: boolean): AlertRuleRecord | null {
