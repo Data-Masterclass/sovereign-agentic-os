@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { config } from '@/lib/core/config';
+import { serviceBearerHeader } from '@/lib/infra/service-bearer';
 import type { Role } from '@/lib/core/session';
 
 /**
@@ -294,7 +295,7 @@ export async function queryRun(sql: string, principal?: string, schema?: string)
     `${config.queryToolUrl}/query`,
     {
       method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      headers: { 'content-type': 'application/json', accept: 'application/json', ...serviceBearerHeader() },
       body: JSON.stringify(body),
     },
     8000,
@@ -366,7 +367,7 @@ export async function executeRun(
     `${config.queryToolUrl}/execute`,
     {
       method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      headers: { 'content-type': 'application/json', accept: 'application/json', ...serviceBearerHeader() },
       body: JSON.stringify(body),
     },
     timeoutMs,

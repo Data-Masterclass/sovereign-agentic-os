@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { getArtifact } from '@/lib/core/artifacts';
 import { promoteOrRequest } from '@/lib/governance/ladder';
 import { listApprovals } from '@/lib/governance/approvals';
@@ -12,31 +12,19 @@ export const dynamic = 'force-dynamic';
 /** Personal → Shared → Certified. Runs THROUGH the governance effect seam. A
  *  non-approver OWNER files a promotion REQUEST (approved by a domain_admin+ in
  *  Governance) instead of being dead-ended; an approver promotes directly. */
-export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id } = await ctx.params;
-    const r = await promoteOrRequest('artifact', id, user);
-    if (r.requested) return NextResponse.json({ requested: true, approval: r.approval });
-    const item = await getArtifact(id);
-    return NextResponse.json({ item });
-  } catch (e) {
-    const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
-  }
-}
+export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
+  const { id } = params;
+  const r = await promoteOrRequest('artifact', id, user);
+  if (r.requested) return NextResponse.json({ requested: true, approval: r.approval });
+  const item = await getArtifact(id);
+  return NextResponse.json({ item });
+}, { defaultStatus: 500 });
 
 /** The pending promotion request for this artifact (so the UI shows "awaiting approval"). */
-export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    await requireUser();
-    const { id } = await ctx.params;
-    const request = listApprovals({ status: 'pending' }).find(
-      (a) => a.kind === 'artifact_promote' && a.payload?.artifactKind === 'artifact' && a.payload?.id === id,
-    ) ?? null;
-    return NextResponse.json({ request });
-  } catch (e) {
-    const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
-  }
-}
+export const GET = withRoute<{ id: string }>(async ({ params }) => {
+  const { id } = params;
+  const request = listApprovals({ status: 'pending' }).find(
+    (a) => a.kind === 'artifact_promote' && a.payload?.artifactKind === 'artifact' && a.payload?.id === id,
+  ) ?? null;
+  return NextResponse.json({ request });
+}, { defaultStatus: 500 });

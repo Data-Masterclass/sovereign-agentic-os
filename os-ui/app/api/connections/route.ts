@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { createConnection, listConnectionsForUser, type WarehouseCreateInput } from '@/lib/connections';
 import { userFacingTemplates, isUserFacingTemplate, templateByKey, type ConnectionTemplateKey } from '@/lib/connections';
 import { roleAtLeast } from '@/lib/core/session';
@@ -13,15 +13,8 @@ import { WAREHOUSE_PLATFORMS, type WarehousePlatform } from '@/lib/connections/w
 
 export const dynamic = 'force-dynamic';
 
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
 /** Governed connections visible to the caller (Personal + domain Shared + Marketplace). */
-export async function GET(req: Request) {
-  try {
-    const user = await requireUser();
+export const GET = withRoute(async ({ user, req }) => {
     // ?archived=1 additionally returns soft-archived connections (hidden by default).
     const includeArchived = new URL(req.url).searchParams.get('archived') === '1';
     const connections = await listConnectionsForUser(user, { includeArchived });
@@ -70,19 +63,14 @@ export async function GET(req: Request) {
     await ensureOAuthAppsHydrated();
     const oauthProviders = providerCatalog().map((p) => ({ provider: p.provider, label: p.label, configured: p.configured }));
     return NextResponse.json({ user, connections, templates, warehouse, canCreate, canCreatePersonal, oauthProviders });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { defaultStatus: 500 });
 
 /**
  * New connection (Builder/Admin only). Writes the credential to Secrets Manager
  * (record keeps only a ref), checks the egress allowlist for external endpoints,
  * compiles the safe-preset capability profile into the connection's OPA policy.
  */
-export async function POST(req: Request) {
-  try {
-    const user = await requireUser();
+export const POST = withRoute(async ({ user, req }) => {
     const body = await req.json();
     const name = String(body?.name ?? '').trim();
     const template = String(body?.template ?? '') as ConnectionTemplateKey;
@@ -130,7 +118,4 @@ export async function POST(req: Request) {
       omService: isOmCatalog && body?.omService ? String(body.omService) : undefined,
     });
     return NextResponse.json({ connection: conn }, { status: 201 });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { defaultStatus: 500 });

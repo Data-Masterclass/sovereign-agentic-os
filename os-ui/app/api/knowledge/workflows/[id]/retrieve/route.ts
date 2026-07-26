@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { getWorkflow, getDomainKnowledge } from '@/lib/knowledge/store';
 import { chunkWorkflow, chunkDomain } from '@/lib/knowledge/chunk';
 import { indexWorkflow, indexDomain } from '@/lib/knowledge/index-pipeline';
@@ -13,13 +13,6 @@ import { traceContext } from '@/lib/knowledge/knowledge-trace';
 
 export const dynamic = 'force-dynamic';
 
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
-type Params = { params: Promise<{ id: string }> };
-
 /**
  * POST { query } → the governed context pack for this workflow:
  *   • PINNED: the domain card + the workflow's structured steps + its HARD rules.
@@ -27,11 +20,9 @@ type Params = { params: Promise<{ id: string }> };
  * Traces pinned-vs-retrieved to Langfuse. A non-granted principal is DENIED (the
  * retrieval is blocked) — the gate the validation step exercises.
  */
-export async function POST(req: Request, { params }: Params) {
-  try {
-    const user = await requireUser();
-    const { id } = await params;
-    const body = await req.json().catch(() => ({}));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }) => {
+    const { id } = params;
     const query = typeof body.query === 'string' ? body.query.trim() : '';
     if (!query) return NextResponse.json({ error: 'A query is required' }, { status: 400 });
 
@@ -110,7 +101,4 @@ export async function POST(req: Request, { params }: Params) {
       })),
       trace: { id: trace.id, landed: trace.landed },
     });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { parse: true, defaultStatus: 500 });

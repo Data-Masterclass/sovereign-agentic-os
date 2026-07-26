@@ -1,0 +1,751 @@
+/* ============================================================================
+   Simple ⇄ Developer builder — the guided, plain-fields Simple mode.
+   Calm, linear, Apple-clean: generous spacing, one gold accent, complexity
+   hidden. Developer mode reuses the existing surfaces above unchanged.
+   ============================================================================ */
+
+/* The header toggle — a compact segmented control (reuses the rt-seg language). */
+.mode-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.mode-toggle button {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: calc(var(--radius) - 4px);
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+}
+.mode-toggle button:hover:not(.active) { color: var(--text); }
+.mode-toggle button.active {
+  background: var(--gold-soft);
+  border-color: var(--gold-line);
+  color: var(--gold-text);
+}
+
+/* --- guided step rail --- */
+.simple-builder { margin-top: 6px; }
+.sb-steps {
+  list-style: none;
+  display: flex;
+  gap: 8px;
+  padding: 0;
+  margin: 0 0 22px;
+  flex-wrap: wrap;
+}
+.sb-step button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 14px 6px 6px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 13px;
+  transition: border-color 0.16s ease, color 0.16s ease, background 0.16s ease;
+}
+.sb-step button:disabled { opacity: 0.5; cursor: not-allowed; }
+.sb-step button:hover:not(:disabled) { border-color: var(--border-strong); color: var(--text); }
+.sb-step.active button {
+  border-color: var(--gold-line);
+  background: var(--gold-soft);
+  color: var(--text);
+}
+.sb-step-n {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.sb-step.active .sb-step-n { background: var(--gold); border-color: var(--gold-deep); color: #fff; }
+.sb-step.done .sb-step-n { background: var(--teal); border-color: var(--teal-dim); color: #fff; }
+.sb-step-label { font-weight: 600; }
+
+/* --- progress stepper (OS-wide determinate stepper + live commentary) ---
+   Reusable primitive (components/core/ProgressStepper.tsx). Extracted verbatim from the
+   Agents "Build" stepper — same gold shimmer while active, teal ✓ done, red ✗ fail. */
+.progress-stepper { display: flex; flex-direction: column; gap: 10px; }
+.ps-bar {
+  height: 6px; width: 100%; border-radius: 999px;
+  background: var(--border); overflow: hidden;
+}
+.ps-bar-fill {
+  height: 100%; border-radius: 999px;
+  background: linear-gradient(90deg, var(--gold), var(--gold-deep));
+  transition: width 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ps-bar-fill.animating {
+  background-image: linear-gradient(90deg, var(--gold), var(--gold-deep), var(--gold));
+  background-size: 200% 100%;
+  animation: ps-shimmer 1.5s linear infinite;
+}
+.ps-bar-fill.ok { background: linear-gradient(90deg, var(--teal-dim), var(--teal)); animation: none; }
+.ps-bar-fill.fail { background: linear-gradient(90deg, #c0392b, #e05a4a); animation: none; }
+@keyframes ps-shimmer { from { background-position: 200% 0; } to { background-position: 0 0; } }
+
+.ps-commentary { font-size: 12.5px; color: var(--text-muted); }
+
+.ps-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ps-step {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 12.5px; color: var(--text-muted);
+  transition: color 0.2s ease, opacity 0.2s ease;
+  opacity: 0.55;
+}
+.ps-step.active { color: var(--text); opacity: 1; font-weight: 600; }
+.ps-step.done { color: var(--text); opacity: 1; }
+.ps-step.fail { color: #c0392b; opacity: 1; font-weight: 600; }
+.ps-dot {
+  width: 20px; height: 20px; flex: 0 0 20px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%; font-size: 11px; font-weight: 700;
+  border: 1px solid var(--border-strong); background: var(--panel); color: var(--text-muted);
+}
+.ps-step.active .ps-dot { border-color: var(--gold-deep); color: var(--gold-deep); }
+.ps-step.done .ps-dot { background: var(--teal); border-color: var(--teal-dim); color: #fff; }
+.ps-step.fail .ps-dot { background: #c0392b; border-color: #a5281c; color: #fff; }
+
+/* --- describe hero --- */
+.sb-hero {
+  border: 1px solid var(--gold-line);
+  background: linear-gradient(180deg, var(--gold-soft), transparent 140px);
+  border-radius: 16px;
+  padding: 24px;
+}
+.sb-hero-title {
+  margin: 0 0 6px;
+  font-family: var(--font-oswald, inherit);
+  font-size: 22px;
+  letter-spacing: 0.2px;
+}
+.sb-hero-sub { margin: 0 0 14px; color: var(--text-muted); font-size: 14px; max-width: 60ch; }
+.sb-hero-input {
+  width: 100%;
+  resize: vertical;
+  font-size: 15px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-input);
+  color: var(--text);
+  box-sizing: border-box;
+}
+.sb-hero-input:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-soft); }
+
+.sb-name-row { margin-top: 22px; display: flex; flex-direction: column; gap: 6px; max-width: 420px; }
+.sb-field-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  display: block;
+  margin-bottom: 5px;
+}
+
+/* --- agents step --- */
+.sb-section-title {
+  margin: 4px 0 2px;
+  font-family: var(--font-oswald, inherit);
+  font-size: 18px;
+}
+.sb-agent-list { display: flex; flex-direction: column; gap: 14px; margin-top: 6px; }
+.sb-empty {
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  padding: 20px;
+  color: var(--text-muted);
+  font-size: 14px;
+  text-align: center;
+}
+.sb-add { margin-top: 14px; }
+
+.sb-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px 18px;
+  background: var(--panel);
+}
+.sb-card.start { border-color: var(--gold-line); }
+.sb-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.sb-card-order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.sb-card-id { font-size: 13px; font-weight: 600; }
+.sb-card-tools { display: inline-flex; gap: 4px; }
+.icon-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-muted);
+  border-radius: 8px;
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  transition: border-color 0.16s ease, color 0.16s ease;
+}
+.icon-btn:hover:not(:disabled) { border-color: var(--border-strong); color: var(--text); }
+.icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.icon-btn.danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+
+.sb-card input[type='text'],
+.sb-card textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 14px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-input);
+  color: var(--text);
+  font-family: inherit;
+}
+.sb-card textarea { resize: vertical; line-height: 1.5; }
+.sb-card input[type='text']:focus,
+.sb-card textarea:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-soft); }
+
+.sb-card-meta { margin-top: 12px; }
+.sb-model { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.sb-tools { margin-top: 14px; }
+.sb-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.sb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+.sb-chip.granted { border-color: var(--teal); background: rgba(31, 143, 136, 0.08); }
+.sb-chip.suggest {
+  appearance: none;
+  cursor: pointer;
+  border-style: dashed;
+  border-color: var(--gold-line);
+  background: transparent;
+  color: var(--text);
+  transition: background 0.16s ease;
+}
+.sb-chip.suggest:hover { background: var(--gold-soft); }
+.sb-chip-why { color: var(--text-faint); font-size: 11px; }
+.sb-chip-x {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 0 0 2px;
+  line-height: 1;
+}
+.sb-chip-x:hover { color: var(--danger); }
+.sb-suggest { margin-top: 10px; }
+
+/* ── Per-item access-level segmented control (Simple Define, "What your team can use") ──
+   A labelled 3-way segment. The ACTIVE option is filled + bold so the current level is
+   unambiguous at a glance; inactive options are quiet. Fully controlled = no flicker. */
+.sb-access-seg {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px;
+  background: var(--bg-elevated);
+}
+.sb-access-seg-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 4px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.sb-access-seg-btn:hover:not(:disabled):not(.active) { color: var(--text); background: var(--gold-soft); }
+.sb-access-seg-btn.active {
+  background: var(--teal);
+  color: #fff;
+  font-weight: 650;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+.sb-access-seg-btn:disabled { cursor: default; }
+/* Locked (system read-only / full-in-scope): keep the active value legible but dimmed. */
+.sb-access-seg.locked { opacity: 0.85; }
+.sb-access-seg.locked .sb-access-seg-btn.active { background: var(--text-faint); color: #fff; }
+
+/* ── Per-agent capabilities box + picker (Simple Design) ── */
+.sb-cap-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+.sb-cap-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--bg-elevated);
+  padding: 6px 8px;
+}
+.sb-cap-row.open { border-color: var(--gold-line); }
+.sb-cap-row-head { display: flex; align-items: center; gap: 8px; }
+.sb-cap-row-name {
+  appearance: none;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+  padding: 0;
+}
+.sb-cap-caret { margin-left: auto; color: var(--text-faint); font-size: 11px; }
+.sb-cap-desc { font-size: 12px; line-height: 1.5; }
+
+.sb-cap-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+  padding: 24px;
+}
+.sb-cap-modal {
+  width: min(560px, 100%);
+  max-height: 82vh;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-lg, 0 20px 50px rgba(0, 0, 0, 0.25));
+}
+.sb-cap-groups { display: flex; flex-direction: column; gap: 14px; }
+.sb-cap-group { display: flex; flex-direction: column; gap: 4px; }
+.sb-cap-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--bg);
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+.sb-cap-option:hover { border-color: var(--gold-line); }
+.sb-cap-option.on { border-color: var(--teal); background: rgba(31, 143, 136, 0.06); }
+.sb-cap-option input[type='checkbox'] { margin-top: 2px; cursor: pointer; }
+.sb-cap-option-body { display: flex; flex-direction: column; gap: 2px; }
+.sb-cap-option-name { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.sb-cap-option-desc { font-size: 12px; color: var(--text-faint); line-height: 1.45; }
+
+.sb-run { margin-top: 4px; }
+.sb-resources {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  padding: 14px 16px;
+  margin-bottom: 18px;
+}
+.sb-resource { margin-top: 12px; }
+.sb-resource:first-of-type { margin-top: 6px; }
+
+/* ── Declared outputs ("Where the results go") + Save-result ──
+   Quiet, calm rows consistent with the grant chips: one output per row, a muted
+   kind badge, the name, then the destination folder. The add-row lays its labelled
+   fields out inline, wrapping gracefully. No new palette — reuses the OS tokens. */
+.sb-out-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.sb-out-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+}
+.sb-out-name { font-weight: 600; }
+.sb-out-dest { display: inline-flex; align-items: center; }
+.sb-out-add {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border-strong, var(--border));
+  border-radius: 10px;
+}
+.sb-out-add-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+.sb-out-add-fields > select,
+.sb-out-add-fields > input,
+.sb-out-folder {
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+.sb-out-addbtn { margin-top: 10px; }
+.sb-save-outputs {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  padding: 12px 14px;
+}
+
+/* ── Grant-panel heading HIERARCHY ("What your team can use") ──
+   The two GROUP headings (Plan Items / Context) are the primary structure; each
+   CATEGORY heading (Data, Knowledge, Operating Manual…) is the secondary structure;
+   the My/Domain/Company scope labels inside a picker are tertiary sub-labels. Before,
+   categories reused the tiny faint uppercase `.sb-field-label`, so they read SMALLER
+   than the My/Domain sub-labels — inverted hierarchy. These give each level a clear,
+   distinct weight/size/contrast. */
+.sb-grant-group {
+  margin-top: 20px;
+  padding-top: 4px;
+}
+.sb-grant-group:first-of-type { margin-top: 10px; }
+.sb-grant-group-title {
+  font-size: 17px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  margin: 0 0 2px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--border-strong, var(--border));
+}
+.sb-grant-group-sub {
+  font-size: 12.5px;
+  color: var(--text-faint);
+  margin: 6px 0 4px;
+}
+.sb-grant-cat {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated, var(--panel));
+}
+.sb-grant-cat-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text);
+  display: block;
+  margin: 0 0 8px;
+}
+/* Scope sub-labels (My/Domain/Company + the folder-tree roots) inside a category read
+   as clearly SECONDARY to the category title. */
+.sb-grant-cat .sb-field-label,
+.sb-grant-cat .section-title {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  font-weight: 600;
+}
+.sb-resource-picker {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  padding: 10px 12px;
+}
+.sb-picker-list { display: flex; flex-direction: column; gap: 2px; max-height: 240px; overflow-y: auto; }
+.sb-picker-row {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm, 6px);
+  font-size: 12.5px;
+}
+.sb-picker-row:hover { background: var(--gold-soft); }
+.sb-picker-row > span:first-of-type { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Large primary action — the ONE main button of a step (▶ Run, Deploy / Go Live).
+   Shares the gold `.btn` box; just bigger padding + font so it reads as primary.
+   Tasteful, not oversized. Use `btn lg` (or `btn ghost lg` for a large secondary). */
+.btn.lg {
+  padding: 14px 26px;
+  font-size: 15px;
+  letter-spacing: 0.7px;
+}
+.btn.sm.lg { padding: 14px 26px; font-size: 15px; } /* lg wins if both slip in */
+
+/* ── Outlook-style recurrence editor (agent schedule trigger) ─────────────────── */
+.rec-editor { display: flex; flex-direction: column; gap: 10px; max-width: 520px; }
+.rec-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rec-inline { display: inline-flex; align-items: center; gap: 8px; }
+.rec-lbl { font-size: 12.5px; color: var(--text-muted); }
+.rec-editor input[type='time'],
+.rec-editor select {
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 13.5px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.14s, box-shadow 0.14s;
+}
+.rec-editor input[type='time']:focus,
+.rec-editor select:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px var(--gold-soft);
+}
+.rec-days { display: flex; flex-wrap: wrap; gap: 6px; }
+.rec-chip {
+  font: inherit; font-size: 12.5px; cursor: pointer;
+  padding: 6px 11px; border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--panel); color: var(--text-muted);
+  transition: background 0.14s, color 0.14s, border-color 0.14s;
+}
+.rec-chip:hover:not(:disabled) { border-color: var(--gold); }
+.rec-chip.on { background: var(--gold-soft); color: var(--gold-text); border-color: var(--gold-line); font-weight: 600; }
+.rec-chip:disabled { opacity: 0.5; cursor: not-allowed; }
+.rec-summary {
+  font-size: 13px; color: var(--text);
+  padding: 8px 12px; border-radius: 8px;
+  background: var(--gold-soft); border: 1px solid var(--gold-line);
+}
+.rec-advanced > summary {
+  cursor: pointer; font-size: 12px; color: var(--text-muted);
+  padding: 2px 0; user-select: none; width: fit-content;
+}
+
+/* ── Folder Picker (FolderTree variant="picker") ───────────────────────── */
+/* Hide the inline "New folder here" (+) button until the row is hovered.   */
+.fp-new-here {
+  opacity: 0;
+  transition: opacity 0.12s;
+  pointer-events: none;
+}
+.folder-row:hover .fp-new-here {
+  opacity: 1;
+  pointer-events: auto;
+}
+.rec-advanced > summary:hover { color: var(--text); }
+
+/* ── Toasts (components/core/Toast.tsx) ────────────────────────────────────
+   The OS-wide "that did something" confirmation. Bottom-right stack, brand
+   panel chrome, tone accent on the left edge. Passive and self-dismissing —
+   never a modal. Sits above the confirm dialog backdrop so a post-confirm
+   success is always visible. */
+.toast-viewport {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-end;
+  pointer-events: none; /* clicks fall through the empty region */
+  max-width: min(380px, calc(100vw - 40px));
+}
+.toast {
+  pointer-events: auto; /* but the cards themselves are interactive */
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 12px 11px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 30px -12px rgba(20, 18, 12, 0.4);
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+  animation: toast-in 0.22s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+/* An actionable toast (e.g. "needs approval") stacks a message row over a row of
+   buttons — the icon+message keep their layout, the actions sit calmly beneath. */
+.toast-actionable {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+.toast-body {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.toast-actions {
+  display: flex;
+  gap: 8px;
+  padding-left: 31px; /* align under the message, past the icon */
+  flex-wrap: wrap;
+}
+.toast-actions .btn.sm {
+  padding: 4px 12px;
+  font-size: 12px;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.toast-icon {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+}
+.toast-msg { flex: 1 1 auto; }
+.toast-close {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 5px;
+  transition: color 0.12s, background 0.12s;
+}
+.toast-close:hover { color: var(--text); background: var(--panel-2); }
+.toast-success { border-left-color: var(--teal); }
+.toast-success .toast-icon { background: var(--teal); }
+.toast-error { border-left-color: var(--danger); }
+.toast-error .toast-icon { background: var(--danger); }
+.toast-info { border-left-color: var(--gold); }
+.toast-info .toast-icon { background: var(--gold); color: #20160a; }
+
+/* The ✓ flash inside ActionButton after a successful async action. */
+.ab-done {
+  display: inline-block;
+  font-weight: 700;
+  animation: ab-pop 0.2s ease-out;
+}
+@keyframes ab-pop {
+  from { transform: scale(0.6); opacity: 0.4; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* ─────────────── Native dashboards (Tier 1: ECharts on the Cube layer) ─────────────── */
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  margin-top: 14px;
+}
+.panel-card {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px 12px;
+  overflow: hidden;
+  transition: border-color 0.14s, box-shadow 0.14s;
+}
+.panel-card:hover {
+  border-color: var(--gold-line);
+  box-shadow: 0 10px 30px -20px rgba(0, 0, 0, 0.7);
+}
+.panel-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.panel-card-title {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--text);
+}
+.panel-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.panel-kpi {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 4px;
+}
+.panel-kpi-value {
+  font-family: var(--font-head);
+  font-size: 40px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--text);
+  line-height: 1;
+}
+.panel-kpi-label {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  text-transform: lowercase;
+}

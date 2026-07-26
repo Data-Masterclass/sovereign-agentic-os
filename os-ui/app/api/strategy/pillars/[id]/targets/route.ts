@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { getPillar, setTargets } from '@/lib/strategy/pillars';
 import {
   type TargetSet,
@@ -13,11 +13,6 @@ import {
 } from '@/lib/strategy';
 
 export const dynamic = 'force-dynamic';
-
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
 
 /** Coerce arbitrary input into a clean AnnualQuarterly (annual + 4 sub-targets). */
 function coerceAQ(raw: unknown): AnnualQuarterly {
@@ -33,27 +28,27 @@ function coerceAQ(raw: unknown): AnnualQuarterly {
 }
 
 /** Set annual + quarterly targets for value, active people, and certified counts. */
-export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id } = await ctx.params;
-    // Authorize early (clear 403 before parsing the whole body).
-    const pillar = await getPillar(user, id);
-    const body = await req.json().catch(() => ({} as Record<string, unknown>));
+export const PUT = withRoute<{ id: string }, Record<string, unknown>>(async ({ user, params, body }) => {
+  const { id } = params;
+  // Authorize early (clear 403 before parsing the whole body).
+  const pillar = await getPillar(user, id);
 
-    const certified = {} as TargetSet['certified'];
-    for (const k of ARTIFACT_KINDS) certified[k] = coerceAQ(body?.certified?.[k]);
+  const b = body as {
+    certified?: Record<string, unknown>;
+    valueGenerated?: unknown;
+    activeCreators?: unknown;
+    activeBuilders?: unknown;
+  };
+  const certified = {} as TargetSet['certified'];
+  for (const k of ARTIFACT_KINDS) certified[k] = coerceAQ(b?.certified?.[k]);
 
-    const targets: TargetSet = {
-      valueGenerated: coerceAQ(body?.valueGenerated),
-      activeCreators: coerceAQ(body?.activeCreators),
-      activeBuilders: coerceAQ(body?.activeBuilders),
-      certified,
-    };
-    void pillar;
-    const item = await setTargets(user, id, targets);
-    return NextResponse.json({ item });
-  } catch (e) {
-    return fail(e);
-  }
-}
+  const targets: TargetSet = {
+    valueGenerated: coerceAQ(b?.valueGenerated),
+    activeCreators: coerceAQ(b?.activeCreators),
+    activeBuilders: coerceAQ(b?.activeBuilders),
+    certified,
+  };
+  void pillar;
+  const item = await setTargets(user, id, targets);
+  return NextResponse.json({ item });
+}, { parse: true, defaultStatus: 500 });

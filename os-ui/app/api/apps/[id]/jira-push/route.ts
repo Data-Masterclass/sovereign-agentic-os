@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { getAppForUser } from '@/lib/software/apps';
 import { listConnectionsForUser, callConnectionTool } from '@/lib/connections';
 import { planJiraIssues, pickConnectionForTemplate } from '@/lib/software/design-push';
@@ -20,12 +20,9 @@ export const dynamic = 'force-dynamic';
  *
  * Body: { projectKey, issueType?, connectionId? }.
  */
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id } = await ctx.params;
+export const POST = withRoute<{ id: string }, { projectKey?: string; connectionId?: string }>(async ({ user, params, body }) => {
+    const { id } = params;
     const app = await getAppForUser(id, user);
-    const body = (await req.json().catch(() => ({}))) as { projectKey?: string; connectionId?: string };
 
     const projectKey = String(body.projectKey ?? '').trim();
     if (!projectKey) {
@@ -81,10 +78,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       queued,
       failed,
     });
-  } catch (e) {
-    const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
-  }
-}
+}, { parse: true, defaultStatus: 500 });
 
 type JiraRef = { epicId: string; storyId?: string };

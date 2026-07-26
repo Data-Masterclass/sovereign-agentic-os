@@ -3,8 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/core/config';
-import { requireUser } from '@/lib/core/auth';
-import { errorResponse } from '@/lib/data/server';
+import { withRoute } from '@/lib/core/route-server';
 import { shapeTraceMetrics, type RawObservation, type TraceMetrics } from '@/lib/agents/build/run-diagnostics';
 
 export const dynamic = 'force-dynamic';
@@ -41,15 +40,7 @@ async function fetchObservations(): Promise<RawObservation[] | null> {
   }
 }
 
-export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    await requireUser();
-  } catch (e) {
-    return errorResponse(e);
-  }
-  // Best-effort: the id is part of the route contract; consumed for parity/logging.
-  await ctx.params;
-
+export const GET = withRoute<{ id: string }>(async ({ req }) => {
   // The client passes the run's node names so observations can be attributed to a
   // node; missing/garbage input just yields un-attributed (totals-only) metrics.
   const nodeNames = (new URL(req.url).searchParams.get('nodes') ?? '')
@@ -63,4 +54,4 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     return NextResponse.json({ metrics: UNAVAILABLE });
   }
   return NextResponse.json({ metrics: shapeTraceMetrics(observations, nodeNames) });
-}
+});

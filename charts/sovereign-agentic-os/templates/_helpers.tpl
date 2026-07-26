@@ -186,6 +186,24 @@ http://minio:9000
   value: {{ .Values.queryTool.trino.schema | quote }}
 {{- end -}}
 
+{{/*
+Shared service-bearer env (defense-in-depth for the os-ui -> query-tool /
+os-ui -> data-runner data-plane calls). Emits SERVICE_BEARER_TOKEN from the
+`service-bearer-token` Secret ONLY when serviceBearer.enabled is true. Nil-safe:
+when the key is absent/false this renders NOTHING, so query-tool, data-runner and
+os-ui all run exactly as before (no env => services skip the check, os-ui sends no
+header). Mounted identically in all three so the token compared is the token sent.
+*/}}
+{{- define "soa.serviceBearerEnv" -}}
+{{- if (.Values.serviceBearer).enabled }}
+- name: SERVICE_BEARER_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: service-bearer-token
+      key: SERVICE_BEARER_TOKEN
+{{- end }}
+{{- end -}}
+
 {{/* StorageClass helper: "" => cluster default. */}}
 {{- define "soa.storageClass" -}}
 {{- if .Values.global.storageClass }}storageClassName: {{ .Values.global.storageClass | quote }}{{- end -}}

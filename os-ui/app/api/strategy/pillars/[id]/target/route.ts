@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { setHeadlineTarget } from '@/lib/strategy/pillars';
 import { METRIC_TYPES, HORIZONS, type MetricType, type Horizon } from '@/lib/strategy';
 
@@ -14,22 +14,15 @@ export const dynamic = 'force-dynamic';
  * horizon (year-end · 6/12/24/36-month), whose end date the server derives.
  * Builder (domain) / Admin (tenant); audited.
  */
-export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id } = await ctx.params;
-    const body = await req.json().catch(() => ({} as Record<string, unknown>));
-    const value = Number(body?.value);
-    const metricType = METRIC_TYPES.includes(body?.metricType as MetricType)
-      ? (body.metricType as MetricType)
-      : 'ebit';
-    const horizon = HORIZONS.includes(body?.horizon as Horizon)
-      ? (body.horizon as Horizon)
-      : 'year-end';
-    const item = await setHeadlineTarget(user, id, { value, metricType, horizon });
-    return NextResponse.json({ item });
-  } catch (e) {
-    const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
-  }
-}
+export const PUT = withRoute<{ id: string }, Record<string, unknown>>(async ({ user, params, body }) => {
+  const { id } = params;
+  const value = Number(body?.value);
+  const metricType = METRIC_TYPES.includes(body?.metricType as MetricType)
+    ? (body.metricType as MetricType)
+    : 'ebit';
+  const horizon = HORIZONS.includes(body?.horizon as Horizon)
+    ? (body.horizon as Horizon)
+    : 'year-end';
+  const item = await setHeadlineTarget(user, id, { value, metricType, horizon });
+  return NextResponse.json({ item });
+}, { parse: true, defaultStatus: 500 });

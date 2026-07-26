@@ -1,0 +1,123 @@
+/* ============================================================================
+ * Auth flows (sign-in footer, recover, bootstrap) + first-login onboarding
+ * wizard. The card shells (.signin-wrap / .signin-card) carry a fixed dark
+ * token context, so these helpers use the same dark hexes the sign-in card
+ * already hardcodes (#16131d panel, #272231 border, #f4f0e7 text, gold accent).
+ * Copyright 2026 Borek Data Ventures UG
+ * ========================================================================== */
+
+/* First-run hint under the sign-in sub-title */
+.signin-firstrun {
+  margin-top: 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #8a8270;
+  border-left: 2px solid var(--gold-line);
+  padding-left: 10px;
+}
+
+/* Quiet footer link row (sign-in + recover) */
+.auth-foot {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #272231;
+  text-align: center;
+  font-size: 12.5px;
+}
+.auth-foot.plain {
+  border-top: none;
+  padding-top: 8px;
+  margin-top: 4px;
+}
+.auth-foot a {
+  color: #b0a99c;
+  transition: color 0.14s;
+}
+.auth-foot a:hover {
+  color: var(--gold-light);
+}
+
+/* Slightly wider card for the bootstrap setup form */
+.auth-card-wide {
+  max-width: 440px;
+}
+
+/* "optional" tag inside a form label */
+.auth-optional {
+  font-family: var(--font-body);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 10.5px;
+  color: #6a6258;
+  margin-left: 6px;
+}
+
+/* ---- Password strength meter ---- */
+.auth-strength-wrap {
+  margin-top: 8px;
+}
+.auth-strength-bar {
+  height: 5px;
+  border-radius: 999px;
+  background: #100e15;
+  border: 1px solid #272231;
+  overflow: hidden;
+}
+.auth-strength-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.2s ease, background-color 0.2s ease;
+}
+.auth-strength-rules {
+  margin-top: 6px;
+  display: grid;
+  gap: 2px;
+}
+.auth-strength-rule {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--teal);
+}
+.auth-strength-rule.unmet {
+  color: #8a8270;
+}
+
+/* ---- Verify / success panel (bootstrap + recover) ---- */
+.auth-verify-panel {
+  text-align: center;
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+}
+.auth-verify-icon {
+  width: 46px;
+  height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 20px;
+  color: #20160a;
+  background: linear-gradient(180deg, var(--gold-light), var(--gold) 55%, var(--gold-deep));
+  box-shadow: 0 6px 18px -8px rgba(200, 162, 74, 0.7);
+}
+.auth-verify-title {
+  font-family: var(--font-head);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: #f4f0e7;
+}
+.auth-verify-desc {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #b0a99c;
+  max-width: 320px;
+}
+.auth-verify-note {
+  font-size: 11.5px;
+  color: #8a8270;
+  max-width: 320px;
+  line-height: 1.5;
+}
+

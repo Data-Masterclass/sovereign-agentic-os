@@ -76,6 +76,32 @@ function fromRing(r: TraceRecord): AgentRunRecord {
 }
 
 /**
+ * Parse ONE Langfuse trace row into a run record (plus its principal), or null
+ * for a malformed row. Langfuse rolls cost/tokens onto the trace; we accept the
+ * common field names. Our own metadata comes FIRST for cost — Langfuse reports
+ * totalCost 0 (not absent) for traces with no priced generations, which would
+ * short-circuit `??` and pin the cost to a fake $0.
+ */
+function fromLangfuseRow(t: Record<string, unknown>): (AgentRunRecord & { principal: string }) | null {
+  const meta = (t.metadata ?? {}) as Record<string, unknown>;
+  const at = Date.parse(String(t.timestamp ?? ''));
+  if (!Number.isFinite(at)) return null;
+  return {
+    principal: String(meta.principal ?? ''),
+    id: String(t.id ?? ''),
+    at,
+    name: String(t.name ?? 'run'),
+    model: typeof meta.model === 'string' ? meta.model : undefined,
+    decision: typeof meta.decision === 'string' ? meta.decision : undefined,
+    health: verdictOf(meta.decision as string | undefined, t.output),
+    costUsd: num(meta.costUsd) ?? num(t.totalCost) ?? num(t.calculatedTotalCost),
+    tokens: num(t.totalTokens) ?? num((t.usage as Record<string, unknown>)?.total) ?? num(meta.tokens),
+    ms: num(t.latency),
+    source: 'live',
+  };
+}
+
+/**
  * Fetch the last-7-day Langfuse traces for one system's principal(s). Returns `null`
  * when Langfuse is unreachable (so the caller degrades to the ring honestly), or a
  * (possibly empty) array when it is reachable. We over-fetch by time window and
@@ -92,26 +118,9 @@ async function langfuseRunsFor(systemId: string, nowMs: number): Promise<AgentRu
     const rows: Record<string, unknown>[] = Array.isArray(data?.data) ? data.data : [];
     const out: AgentRunRecord[] = [];
     for (const t of rows) {
-      const meta = (t.metadata ?? {}) as Record<string, unknown>;
-      const principal = String(meta.principal ?? '');
-      if (!belongsToSystem(principal, systemId)) continue;
-      const at = Date.parse(String(t.timestamp ?? ''));
-      if (!Number.isFinite(at)) continue;
-      out.push({
-        id: String(t.id ?? ''),
-        at,
-        name: String(t.name ?? 'run'),
-        model: typeof meta.model === 'string' ? meta.model : undefined,
-        decision: typeof meta.decision === 'string' ? meta.decision : undefined,
-        health: verdictOf(meta.decision as string, t.output),
-        // Langfuse rolls cost/tokens onto the trace; accept the common field names.
-        // Our own metadata comes FIRST for cost — Langfuse reports totalCost 0 for
-        // traces with no priced generations, which would short-circuit `??`.
-        costUsd: num(meta.costUsd) ?? num(t.totalCost) ?? num(t.calculatedTotalCost),
-        tokens: num(t.totalTokens) ?? num((t.usage as Record<string, unknown>)?.total) ?? num(meta.tokens),
-        ms: num(t.latency),
-        source: 'live',
-      });
+      const rec = fromLangfuseRow(t);
+      if (!rec || !belongsToSystem(rec.principal, systemId)) continue;
+      out.push(rec);
     }
     return out;
   } catch {
@@ -163,28 +172,13 @@ export async function agentTelemetryBatch(
       const data = JSON.parse(await res.text());
       const rows: Record<string, unknown>[] = Array.isArray(data?.data) ? data.data : [];
       for (const t of rows) {
-        const meta = (t.metadata ?? {}) as Record<string, unknown>;
-        const sid = systemIdOf(String(meta.principal ?? ''));
+        const rec = fromLangfuseRow(t);
+        if (!rec) continue;
+        const sid = systemIdOf(rec.principal);
         if (!sid) continue;
-        const at = Date.parse(String(t.timestamp ?? ''));
-        if (!Number.isFinite(at)) continue;
-        const id = String(t.id ?? '');
         const arr = byId.get(sid) ?? [];
-        if (arr.some((x) => x.id === id)) continue; // de-dupe vs ring
-        arr.push({
-          id,
-          at,
-          name: String(t.name ?? 'run'),
-          model: typeof meta.model === 'string' ? meta.model : undefined,
-          decision: typeof meta.decision === 'string' ? meta.decision : undefined,
-          health: verdictOf(meta.decision as string, t.output),
-          // meta.costUsd first — Langfuse's totalCost is 0 (not absent) for
-          // unpriced generations and would short-circuit `??` (see above).
-          costUsd: num(meta.costUsd) ?? num(t.totalCost) ?? num(t.calculatedTotalCost),
-          tokens: num(t.totalTokens) ?? num((t.usage as Record<string, unknown>)?.total) ?? num(meta.tokens),
-          ms: num(t.latency),
-          source: 'live',
-        });
+        if (arr.some((x) => x.id === rec.id)) continue; // de-dupe vs ring
+        arr.push(rec);
         byId.set(sid, arr);
       }
     } catch {
@@ -194,6 +188,51 @@ export async function agentTelemetryBatch(
 
   for (const [, arr] of byId) arr.sort((a, b) => b.at - a.at);
   return { runsBySystem: byId, langfuseReachable };
+}
+
+/**
+ * TENANT-TOTAL run records for the last 7 days — EVERY principal (agent systems
+ * `os-*` AND assistants), for the LLM Gateway spend tile. Same two real sources
+ * as the Monitoring tiles (Langfuse traces + the in-process governed ring),
+ * de-duped by id, so Gateway and Monitoring spend agree by construction.
+ * `langfuseReachable` false + empty runs ⇒ spend is UNKNOWN, not 0.
+ */
+export async function tenantRuns(
+  nowMs: number,
+): Promise<{ runs: AgentRunRecord[]; langfuseReachable: boolean }> {
+  const fromMs = nowMs - WINDOW_MS;
+  const byId = new Map<string, AgentRunRecord>();
+
+  // Ring first — always available, reflects this process's runs.
+  for (const r of recentTraces(200)) {
+    const rec = fromRing(r);
+    if (!Number.isFinite(rec.at) || rec.at < fromMs || rec.at > nowMs) continue;
+    byId.set(rec.id, rec);
+  }
+
+  const from = new Date(fromMs).toISOString();
+  const auth = Buffer.from(`${config.langfusePublicKey}:${config.langfuseSecretKey}`).toString('base64');
+  const url = `${config.langfuseUrl}/api/public/traces?limit=100&fromTimestamp=${encodeURIComponent(from)}`;
+  const res = await readFetch(url, { headers: { authorization: `Basic ${auth}`, accept: 'application/json' } });
+
+  let langfuseReachable = false;
+  if (res && res.ok) {
+    langfuseReachable = true;
+    try {
+      const data = JSON.parse(await res.text());
+      const rows: Record<string, unknown>[] = Array.isArray(data?.data) ? data.data : [];
+      for (const t of rows) {
+        const rec = fromLangfuseRow(t);
+        if (!rec || byId.has(rec.id)) continue; // de-dupe vs ring
+        byId.set(rec.id, rec);
+      }
+    } catch {
+      /* keep ring-only */
+    }
+  }
+
+  const runs = [...byId.values()].sort((a, b) => b.at - a.at);
+  return { runs, langfuseReachable };
 }
 
 /**

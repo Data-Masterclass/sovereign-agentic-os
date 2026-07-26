@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { NextResponse, type NextRequest } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { NextResponse } from 'next/server';
+import { withRoute } from '@/lib/core/route-server';
 import {
   getTileOrder,
   setTileOrder,
@@ -12,11 +12,6 @@ import {
 } from '@/lib/prefs/tile-order';
 
 export const dynamic = 'force-dynamic';
-
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
 
 function validSurface(s: unknown): s is TileOrderSurface {
   return (TILE_ORDER_SURFACES as readonly string[]).includes(s as string);
@@ -51,19 +46,14 @@ function sanitizeOrder(raw: unknown): string[] {
  * given surface. Returns { order: [] } if nothing saved yet. 400 on unknown
  * surface, 401 if unauthenticated.
  */
-export async function GET(req: NextRequest) {
-  try {
-    const user = await requireUser();
-    const surface = req.nextUrl.searchParams.get('surface') ?? '';
-    if (!validSurface(surface)) {
-      return NextResponse.json({ error: `Unknown surface: "${surface}"` }, { status: 400 });
-    }
-    const order = await getTileOrder(user.id, surface);
-    return NextResponse.json({ order });
-  } catch (e) {
-    return fail(e);
+export const GET = withRoute(async ({ user, req }) => {
+  const surface = new URL(req.url).searchParams.get('surface') ?? '';
+  if (!validSurface(surface)) {
+    return NextResponse.json({ error: `Unknown surface: "${surface}"` }, { status: 400 });
   }
-}
+  const order = await getTileOrder(user.id, surface);
+  return NextResponse.json({ order });
+}, { defaultStatus: 500 });
 
 /**
  * PUT /api/prefs/tile-order
@@ -72,17 +62,11 @@ export async function GET(req: NextRequest) {
  * The userId always comes from the session — never from the body.
  * 400 on unknown surface, 401 if unauthenticated.
  */
-export async function PUT(req: Request) {
-  try {
-    const user = await requireUser();
-    const body = await req.json().catch(() => ({})) as Record<string, unknown>;
-    const surface = body?.surface ?? '';
-    if (!validSurface(surface)) {
-      return NextResponse.json({ error: `Unknown surface: "${surface}"` }, { status: 400 });
-    }
-    await setTileOrder(user.id, surface, sanitizeOrder(body?.order));
-    return NextResponse.json({ ok: true });
-  } catch (e) {
-    return fail(e);
+export const PUT = withRoute<Record<string, string>, Record<string, unknown>>(async ({ user, body }) => {
+  const surface = body?.surface ?? '';
+  if (!validSurface(surface)) {
+    return NextResponse.json({ error: `Unknown surface: "${surface}"` }, { status: 400 });
   }
-}
+  await setTileOrder(user.id, surface, sanitizeOrder(body?.order));
+  return NextResponse.json({ ok: true });
+}, { parse: true, defaultStatus: 500 });

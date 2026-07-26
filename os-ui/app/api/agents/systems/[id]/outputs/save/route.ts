@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { getSystem } from '@/lib/agents/store';
 import { createFile } from '@/lib/files/store';
 import { createPersonalKnowledge } from '@/lib/knowledge/personal-store';
@@ -12,11 +12,6 @@ import { canSaveFromResult, DATA_NON_TABULAR_NOTE } from '@/lib/agents/output-sa
 import type { DeclaredOutput } from '@/lib/agents/system-schema';
 
 export const dynamic = 'force-dynamic';
-
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
 
 /**
  * POST → SAVE the last run's final result into a DECLARED OUTPUT (Run/Evaluate action).
@@ -34,11 +29,8 @@ function fail(e: unknown) {
  * on the tab. Body: `{ index, text }` — the output index into `system.outputs` + the
  * run text to persist (the client passes the output it just saw).
  */
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id } = await ctx.params;
-    const body = (await req.json().catch(() => ({}))) as { index?: number; text?: string };
+export const POST = withRoute<{ id: string }, { index?: number; text?: string }>(async ({ user, params, body }) => {
+    const { id } = params;
 
     const view = getSystem(id, user);
     const outputs: DeclaredOutput[] = view.system.outputs ?? [];
@@ -90,7 +82,4 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       return NextResponse.json({ error: `The dataset was created but the result could not be ingested (${outcome.report.mode ?? 'ingest failed'}).` }, { status: 502 });
     }
     return NextResponse.json({ saved: { kind: 'data', id: ds.id, name: ds.name, folder } });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { parse: true, defaultStatus: 500 });

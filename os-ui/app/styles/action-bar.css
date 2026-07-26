@@ -1,0 +1,74 @@
+/* ============================================================================
+   ActionBar — top-left first-class action row (below the topbar).
+   Bigger, clearly visible primary buttons for course participants.
+   All tabs that pass mcpTab/tutorial to PageHeader inherit this automatically.
+   ========================================================================== */
+
+.action-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 28px 0;
+  flex-wrap: wrap;
+}
+
+/* Primary action button — bigger than the old topbar tut-link, brand-gold */
+.action-bar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--gold-line);
+  background: var(--gold-soft);
+  color: var(--gold-text);
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 8px 17px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+}
+.action-bar-btn:hover {
+  background: rgba(200, 162, 74, 0.22);
+  border-color: var(--gold);
+  transform: translateY(-1px);
+}
+/* action-bar variant of TutorialLink */
+.tut-link-action-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--gold-line);
+  background: var(--gold-soft);
+  color: var(--gold-text);
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 8px 17px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+}
+.tut-link-action-bar:hover {
+  background: rgba(200, 162, 74, 0.22);
+  border-color: var(--gold);
+  transform: translateY(-1px);
+}
+.tut-link-action-bar .tut-link-spark {
+  font-size: 13px;
+}
+
+@media (max-width: 720px) {
+  .action-bar {
+    padding: 12px 16px 0;
+    gap: 8px;
+  }
+  .action-bar-btn,
+  .tut-link-action-bar {
+    font-size: 12.5px;
+    padding: 7px 13px;
+  }
+}
+

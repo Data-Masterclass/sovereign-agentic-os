@@ -2,7 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal, errorResponse } from '@/lib/files/server';
+import { withRoute } from '@/lib/core/route-server';
+import type { CurrentUser } from '@/lib/core/auth';
+import { requirePrincipal } from '@/lib/files/server';
 import { requestPromotion, promotionStatus } from '@/lib/files/store';
 import { enqueue, listApprovals } from '@/lib/governance/approvals';
 import type { DataVisibility, Grant } from '@/lib/data';
@@ -18,53 +20,42 @@ export const dynamic = 'force-dynamic';
  *          object-store prefix + DLS). The Creator cannot self-promote.
  *   GET  — the docs-gate status + any pending request (so the preview shows it).
  */
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requirePrincipal();
-    const { id } = await ctx.params;
-    const body = (await req.json().catch(() => ({}))) as { visibility?: DataVisibility; grants?: Grant[] };
+export const POST = withRoute<{ id: string }, { visibility?: DataVisibility; grants?: Grant[] }>(async ({ user, params, body }) => {
+  const { id } = params;
 
-    const existing = listApprovals({ status: 'pending' }).find(
-      (a) => a.kind === 'file_promote' && a.payload?.fileId === id,
-    );
-    if (existing) return NextResponse.json({ approval: existing, already: true });
+  const existing = listApprovals({ status: 'pending' }).find(
+    (a) => a.kind === 'file_promote' && a.payload?.fileId === id,
+  );
+  if (existing) return NextResponse.json({ approval: existing, already: true });
 
-    const request = requestPromotion(id, user, { visibility: body.visibility, grants: body.grants });
-    const approval = enqueue({
-      kind: 'file_promote',
-      title: `Promote “${request.fileName}” to a domain asset`,
-      detail: `${user.id} requests sharing ${request.fileName} with the ${request.domain} domain (visibility: ${request.visibility}). A domain admin must approve.`,
-      agent: user.id,
-      domain: request.domain,
-      requestedBy: user.id,
-      tool: 'file_promote',
-      payload: request as unknown as Record<string, unknown>,
-      // Personal→Domain is a governed rung: a domain_admin+ approves (a builder is an
-      // owner who PROPOSES, not the approver). Matches the MCP request_promotion path
-      // + the ladder tabs (metrics/artifacts/…). The inbox `canApprove` gate is the
-      // fail-closed enforcement point.
-      approverRole: 'domain_admin',
-      scope: 'domain',
-    });
-    return NextResponse.json({ approval });
-  } catch (e) {
-    return errorResponse(e);
-  }
-}
+  const request = requestPromotion(id, user, { visibility: body.visibility, grants: body.grants });
+  const approval = enqueue({
+    kind: 'file_promote',
+    title: `Promote "${request.fileName}" to a domain asset`,
+    detail: `${user.id} requests sharing ${request.fileName} with the ${request.domain} domain (visibility: ${request.visibility}). A domain admin must approve.`,
+    agent: user.id,
+    domain: request.domain,
+    requestedBy: user.id,
+    tool: 'file_promote',
+    payload: request as unknown as Record<string, unknown>,
+    // Personal→Domain is a governed rung: a domain_admin+ approves (a builder is an
+    // owner who PROPOSES, not the approver). Matches the MCP request_promotion path
+    // + the ladder tabs (metrics/artifacts/…). The inbox `canApprove` gate is the
+    // fail-closed enforcement point.
+    approverRole: 'domain_admin',
+    scope: 'domain',
+  });
+  return NextResponse.json({ approval });
+}, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });
 
-export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requirePrincipal();
-    const { id } = await ctx.params;
-    const status = promotionStatus(id, user); // view-scope guard + the docs gate
-    // Only a still-PENDING request should render as "awaiting approval"; a decided
-    // (approved/rejected) one stays in the queue, so an unfiltered lookup would
-    // lock the owner out of ever re-requesting after a rejection.
-    const pending = listApprovals({ status: 'pending' }).find(
-      (a) => a.kind === 'file_promote' && a.payload?.fileId === id,
-    );
-    return NextResponse.json({ tier: status.tier, gate: status.gate, request: pending ?? null });
-  } catch (e) {
-    return errorResponse(e);
-  }
-}
+export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
+  const { id } = params;
+  const status = promotionStatus(id, user); // view-scope guard + the docs gate
+  // Only a still-PENDING request should render as "awaiting approval"; a decided
+  // (approved/rejected) one stays in the queue, so an unfiltered lookup would
+  // lock the owner out of ever re-requesting after a rejection.
+  const pending = listApprovals({ status: 'pending' }).find(
+    (a) => a.kind === 'file_promote' && a.payload?.fileId === id,
+  );
+  return NextResponse.json({ tier: status.tier, gate: status.gate, request: pending ?? null });
+}, { gate: requirePrincipal as () => Promise<CurrentUser> });

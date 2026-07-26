@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { listPillars } from '@/lib/strategy/pillars';
 import { canCreatePillar } from '@/lib/strategy';
 
@@ -17,9 +17,7 @@ export const dynamic = 'force-dynamic';
  * Response shape:
  *   { pillars: [{id, name, scope, metric}], canCreatePillar: boolean, userDomains: string[] }
  */
-export async function GET() {
-  try {
-    const user = await requireUser();
+export const GET = withRoute(async ({ user }) => {
     const rawPillars = await listPillars(user);
 
     const pillars = rawPillars.map((p) => {
@@ -46,8 +44,4 @@ export async function GET() {
       user.domains.some((d) => canCreatePillar(user, 'domain', d));
 
     return NextResponse.json({ pillars, canCreatePillar: canCreate, userDomains: user.domains });
-  } catch (e) {
-    const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
-  }
-}
+}, { defaultStatus: 500 });

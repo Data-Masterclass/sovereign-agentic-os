@@ -74,6 +74,7 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_ACCESS_KEY_ID } }
             - name: AWS_SECRET_ACCESS_KEY
               valueFrom: { secretKeyRef: { name: {{ .Values.objectStorage.secretName }}, key: AWS_SECRET_ACCESS_KEY } }
+            {{- include "soa.serviceBearerEnv" . | nindent 12 }}
           ports:
             - { name: http, containerPort: 8000 }
           readinessProbe:

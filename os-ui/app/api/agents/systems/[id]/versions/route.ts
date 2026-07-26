@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import {
   ensureHydrated,
   listSystemVersions,
@@ -21,11 +21,6 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
 /**
  * Version history for one agent system — GIT-backed (Forgejo commit log) when the
  * system has a repo Forgejo can reach, else the snapshot versionLog fallback.
@@ -40,11 +35,8 @@ function fail(e: unknown) {
  * The `{ version, at, author, summary }` shape + numeric `{ version }` restore
  * contract is IDENTICAL to the snapshot route, so the VersionHistory UI is unchanged.
  */
-export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    await ensureHydrated();
-    const user = await requireUser();
-    const { id } = await ctx.params;
+export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
+    const { id } = params;
 
     // Git primary: only for a caller who can edit (the repo + its history is the
     // system's source of truth). A viewer still gets the snapshot list below.
@@ -56,7 +48,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     } catch (e) {
       // A 403 (viewer) is a real permission answer — re-throw it. Any other error
       // (Forgejo unreachable) falls through to the snapshot log honestly.
-      if ((e as { status?: number })?.status === 403) return fail(e);
+      if ((e as { status?: number })?.status === 403) throw e;
     }
     if (git) {
       return NextResponse.json({ versions: git, source: 'git' });
@@ -69,17 +61,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       summary: v.summary,
     }));
     return NextResponse.json({ versions: list, source: 'snapshot' });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { hydrate: ensureHydrated, defaultStatus: 500 });
 
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    await ensureHydrated();
-    const user = await requireUser();
-    const { id } = await ctx.params;
-    const body = (await req.json().catch(() => ({}))) as { version?: number };
+export const POST = withRoute<{ id: string }, { version?: number }>(async ({ user, params, body }) => {
+    const { id } = params;
     if (typeof body.version !== 'number') {
       return NextResponse.json({ error: 'A version number is required.' }, { status: 400 });
     }
@@ -93,7 +78,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       getSystemForEdit(id, user); // edit-scope before any side effect
       sha = await shaForVersion(forgejo, systemRepo(id), body.version);
     } catch (e) {
-      if ((e as { status?: number })?.status === 403) return fail(e);
+      if ((e as { status?: number })?.status === 403) throw e;
     }
     if (sha) {
       const { yaml } = await restoreGitVersion(forgejo, systemRepo(id), sha, user.id);
@@ -111,7 +96,4 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // Snapshot fallback: no git history / Forgejo unreachable.
     const rec = restoreSystemVersion(id, user, body.version);
     return NextResponse.json({ id: rec.id, updatedAt: rec.updatedAt, source: 'snapshot' });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { parse: true, hydrate: ensureHydrated, defaultStatus: 500 });

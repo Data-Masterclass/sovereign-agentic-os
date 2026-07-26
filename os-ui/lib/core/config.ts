@@ -94,6 +94,15 @@ export const config = {
   // POST /run. Off by default (opt-in Science component); probed gracefully.
   mlAgentUrl: base(env('ML_AGENT_URL', 'http://ml-agent:8000')),
 
+  // Shared service bearer for the in-cluster data-plane services (query-tool +
+  // data-runner). Defense-in-depth BEHIND the NetworkPolicies: those services trust
+  // the principal/role/domains in the request body, and only os-ui is meant to call
+  // them, so os-ui presents this bearer to prove identity — network reach alone is not
+  // enough. Empty string = feature OFF (the chart sets this env only when the shared
+  // Secret exists; the services then also skip the check — fail-open by design, netpol
+  // is the primary boundary). Server-only, never reaches the browser.
+  serviceBearerToken: env('SERVICE_BEARER_TOKEN', ''),
+
   // query-tool (governed, Trino): POST {QUERY_TOOL_URL}/query  {"sql": "..."}
   queryToolUrl: base(env('QUERY_TOOL_URL', 'http://query-tool:8000')),
 
@@ -324,11 +333,13 @@ export const config = {
   // degrades gracefully once it is spent. Env-overridable.
   agentTeamRunMaxSteps: Number(env('AGENT_TEAM_RUN_MAX_STEPS', '')) || 400,
   // LLM Gateway tab — the read-only, tenant-total usage/spend panel
-  // (app/api/gateway/usage). The budget envelope is surfaced for the "budget
-  // used" bar; it mirrors the chart's litellmAgentKey.maxBudget / budgetDuration
-  // (USD cap + reset window). Read-only; no key or per-user datum reaches the
-  // browser — the master key stays server-side in the usage route.
-  litellmBudgetUsd: Number(env('LITELLM_BUDGET_USD', '5')) || 0,
+  // (app/api/gateway/usage). The budget envelope is DISPLAY-ONLY: set it to
+  // mirror the chart's litellmAgentKey.maxBudget / budgetDuration (the USD cap
+  // LiteLLM actually enforces on its key, on ITS OWN spend meter). Default 0 =
+  // no budget configured — the tab renders the honest "no weekly budget set"
+  // state instead of implying a $5 cap nobody set. Read-only; no key or
+  // per-user datum reaches the browser — the master key stays server-side.
+  litellmBudgetUsd: Number(env('LITELLM_BUDGET_USD', '0')) || 0,
   litellmBudgetWindow: env('LITELLM_BUDGET_WINDOW', 'weekly'),
   // Explicit model pricing for Monitoring cost attribution (USD per 1M tokens per
   // LiteLLM model_name, e.g. {"sovereign-default":{"inputPerM":0.1,"outputPerM":0.4}}).

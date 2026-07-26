@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
+import { withRoute } from '@/lib/core/route-server';
 import { requireAdmin } from '@/lib/core/auth';
 import { toggleComponent } from '@/lib/platform-admin/platform';
 
@@ -20,21 +21,8 @@ export const runtime = 'nodejs';
  * platform-admin action — middleware lets every /api/* through, so this route is
  * the only real gate. Non-admins (participant/creator/builder) get 403.
  */
-export async function POST(req: Request) {
-  try {
-    await requireAdmin();
-  } catch (e) {
-    const status = (e as { status?: number })?.status ?? 401;
-    return NextResponse.json({ error: (e as Error).message }, { status });
-  }
-
-  let id = '';
-  try {
-    const body = await req.json();
-    id = (body?.id ?? '').toString().trim();
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
-  }
+export const POST = withRoute<Record<string, string>, { id?: unknown }>(async ({ body }) => {
+  const id = (body?.id ?? '').toString().trim();
   if (!id) {
     return NextResponse.json({ error: 'Missing component id' }, { status: 400 });
   }
@@ -48,4 +36,4 @@ export async function POST(req: Request) {
       { status: 502 },
     );
   }
-}
+}, { gate: requireAdmin, parse: true, invalidJsonStatus: 400, invalidJsonMessage: 'Invalid JSON body', defaultStatus: 401 });

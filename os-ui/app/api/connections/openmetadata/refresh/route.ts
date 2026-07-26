@@ -3,6 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/core/auth';
+import type { CurrentUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { config } from '@/lib/core/config';
 import { previewCatalogIngest, applyCatalogIngest } from '@/lib/connections/openmetadata-ingest';
 
@@ -24,32 +26,20 @@ export const dynamic = 'force-dynamic';
  *   GET  → dry-run PREVIEW across all governed marts (READ-ONLY, no writes).
  *   POST → APPLY the refresh (admin-gated; the route is the governance boundary).
  */
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
 function humanServiceFqnFrom(req: Request): string | undefined {
   const v = new URL(req.url).searchParams.get('humanServiceFqn');
   return v && v.trim().length > 0 ? v.trim() : undefined;
 }
 
-export async function GET(req: Request) {
-  try {
-    const user = await requireAdmin();
+export const GET = withRoute(async ({ user, req }) => {
     if (!config.openmetadataIngestEnabled) {
       return NextResponse.json({ error: 'Catalog ingestion is disabled (OPENMETADATA_INGEST_ENABLED is not true).' }, { status: 403 });
     }
     const preview = await previewCatalogIngest(user, { humanServiceFqn: humanServiceFqnFrom(req) });
     return NextResponse.json(preview);
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { gate: requireAdmin as () => Promise<CurrentUser>, defaultStatus: 500 });
 
-export async function POST(req: Request) {
-  try {
-    const user = await requireAdmin();
+export const POST = withRoute(async ({ user, req }) => {
     if (!config.openmetadataIngestEnabled) {
       return NextResponse.json({ error: 'Catalog ingestion is disabled (OPENMETADATA_INGEST_ENABLED is not true).' }, { status: 403 });
     }
@@ -57,7 +47,4 @@ export async function POST(req: Request) {
     // A partial failure (a real write error on some mart) is honest, not a 500 — return
     // the roll-up with ok:false so the caller/cron sees exactly what did (not) happen.
     return NextResponse.json(result, { status: result.ok ? 200 : 207 });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { gate: requireAdmin as () => Promise<CurrentUser>, defaultStatus: 500 });

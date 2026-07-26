@@ -2,17 +2,12 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { proposePlan, approvePlan, type Mode, type PlanCompleter } from '@/lib/bigbets/planner';
 import { principal, plannerHooks } from '@/lib/bigbets/server';
 import { assistantComplete } from '@/lib/assistant/complete';
 
 export const dynamic = 'force-dynamic';
-
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
 
 /**
  * POST → the Big Bet planner.
@@ -21,11 +16,9 @@ function fail(e: unknown) {
  *                                                       governed flow (never promotes)
  * OPA-gated + Langfuse-traced through the wired hooks.
  */
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id } = await ctx.params;
-    const b = await req.json().catch(() => ({}));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const POST = withRoute<{ id: string }, any>(async ({ user, params, body: b }) => {
+    const { id } = params;
 
     // The planner runs on the ONE governed assistant LLM under the caller identity.
     const complete: PlanCompleter = async (messages) =>
@@ -44,7 +37,4 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     }
 
     return NextResponse.json({ error: "action must be 'propose' or 'approve'" }, { status: 400 });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { parse: true, defaultStatus: 500 });

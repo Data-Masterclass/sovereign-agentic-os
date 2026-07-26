@@ -35,7 +35,16 @@ export type Tab = {
   role?: string; // human-readable display hint (legacy informational label)
   /** Machine-readable minimum role required to see + reach this tab. */
   minRole?: Role;
+  /** Optional-layer gate: the tab only makes sense when the active domain has
+   *  this layer enabled (today only 'ml' — the Science layer). Navigation-level
+   *  hiding only, exactly like minRole: the page itself stays reachable and the
+   *  serving plane reports the layer being off honestly. */
+  requiresLayer?: 'ml';
 };
+
+/** The active domain's optional-layer flags, as far as the client knows them.
+ *  `null`/`undefined` = unknown (no active domain chosen, or record not found). */
+export type LayerFlags = { ml?: boolean } | null | undefined;
 
 export type TabGroup = {
   heading?: string;
@@ -83,7 +92,10 @@ export const TAB_GROUPS: TabGroup[] = [
     tabs: [
       { label: 'Agents', icon: '✦', href: '/agents' },
       { label: 'Software', icon: '⌘', href: '/software' },
-      { label: 'Science', icon: '∿', href: '/science' },
+      // Science only exists where the domain's optional Science layer (layers.ml,
+      // toggled in Admin → Domains) is on — hidden from the nav when it is
+      // explicitly off for the active domain (see tabVisible).
+      { label: 'Science', icon: '∿', href: '/science', requiresLayer: 'ml' },
       { label: 'Dashboards', icon: '▦', href: '/dashboards' },
       // Console merges the former Terminal (/terminal) and Query (/admin-query)
       // operator tools into one page with a Shell | Query switch. The tab is
@@ -120,23 +132,30 @@ export const TABS: Tab[] = TAB_GROUPS.flatMap((g) => g.tabs);
 const ROLE_RANK: Record<Role, number> = { creator: 0, builder: 1, domain_admin: 2, admin: 3 };
 
 /**
- * Pure visibility check: can `userRole` see `tab`?
+ * Pure visibility check: can `userRole` see `tab` in the active domain?
  * No `minRole` on the tab means visible to everyone.
  * A `null`/`undefined` userRole (unauthenticated) always passes — the Edge
  * middleware handles the redirect to /signin before the page renders.
+ *
+ * `layers` are the ACTIVE domain's optional-layer flags. A layer-gated tab is
+ * hidden ONLY when the layer is EXPLICITLY disabled (`false`); unknown/absent
+ * layers FAIL OPEN and the tab stays visible — navigation must never lock a
+ * user out on missing data, and the serving plane already 404s honestly when
+ * the layer really is off.
  */
-export function tabVisible(tab: Tab, userRole: Role | null | undefined): boolean {
+export function tabVisible(tab: Tab, userRole: Role | null | undefined, layers?: LayerFlags): boolean {
+  if (tab.requiresLayer && layers?.[tab.requiresLayer] === false) return false;
   if (!tab.minRole) return true;
   if (!userRole) return true; // middleware guards; UI shows tabs, server redirects
   return (ROLE_RANK[userRole] ?? 0) >= (ROLE_RANK[tab.minRole] ?? 0);
 }
 
 /**
- * Filter tab groups for a given user role. Empty groups (all tabs hidden) are
- * dropped so no dangling heading appears in the sidebar.
+ * Filter tab groups for a given user role + active-domain layers. Empty groups
+ * (all tabs hidden) are dropped so no dangling heading appears in the sidebar.
  */
-export function filterTabGroups(groups: TabGroup[], userRole: Role | null | undefined): TabGroup[] {
+export function filterTabGroups(groups: TabGroup[], userRole: Role | null | undefined, layers?: LayerFlags): TabGroup[] {
   return groups
-    .map((g) => ({ ...g, tabs: g.tabs.filter((t) => tabVisible(t, userRole)) }))
+    .map((g) => ({ ...g, tabs: g.tabs.filter((t) => tabVisible(t, userRole, layers)) }))
     .filter((g) => g.tabs.length > 0);
 }

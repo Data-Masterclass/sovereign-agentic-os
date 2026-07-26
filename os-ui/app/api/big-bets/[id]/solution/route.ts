@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { principal, actor } from '@/lib/bigbets/server';
 import {
   getSolution,
@@ -19,11 +19,6 @@ import { resolveLinkedComponent } from '@/lib/bigbets/attach-server';
 
 export const dynamic = 'force-dynamic';
 
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
 const isRelation = (v: unknown): v is InterplayRelation =>
   typeof v === 'string' && INTERPLAY_RELATIONS.includes(v as InterplayRelation);
 
@@ -32,17 +27,11 @@ const isRelation = (v: unknown): v is InterplayRelation =>
  * ComponentRef (with its `role`), the interplay edges and the saved canvas positions.
  * The exact shape the store's `getSolution` returns — the Design tab reads it directly.
  */
-export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    await ensureHydrated();
-    const user = await requireUser();
-    const { id } = await ctx.params;
+export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
+    const { id } = params;
     const solution = getSolution(id, principal(user));
     return NextResponse.json(solution);
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { hydrate: ensureHydrated, defaultStatus: 500 });
 
 /**
  * POST → the write path for the wizard + canvas (ALL edit-gated in the store):
@@ -57,12 +46,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
  * edit gate, the invariants and the audit. Returns the fresh blueprint so the canvas
  * can re-render from one round trip.
  */
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    await ensureHydrated();
-    const user = await requireUser();
-    const { id } = await ctx.params;
-    const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+export const POST = withRoute<{ id: string }, Record<string, unknown>>(async ({ user, params, body }) => {
+    const { id } = params;
     const p = principal(user);
 
     switch (body.action) {
@@ -127,7 +112,4 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     }
     // Return the fresh blueprint so the caller re-renders from one round trip.
     return NextResponse.json(getSolution(id, p));
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { parse: true, hydrate: ensureHydrated, defaultStatus: 500 });

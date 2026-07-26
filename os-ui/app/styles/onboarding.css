@@ -1,0 +1,113 @@
+/* ============================================================================
+ * First-login onboarding wizard — the one allowed centered overlay. Reuses the
+ * dark card look; small, friendly, role-aware.
+ * ========================================================================== */
+.wiz-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(8, 7, 10, 0.66);
+  backdrop-filter: blur(3px);
+  animation: wiz-fade 0.18s ease-out;
+}
+@keyframes wiz-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.wiz-card {
+  position: relative;
+  width: 100%;
+  max-width: 440px;
+  background: #16131d;
+  border: 1px solid #272231;
+  border-radius: 16px;
+  padding: 30px 28px 22px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+  animation: wiz-rise 0.2s ease-out;
+}
+@keyframes wiz-rise {
+  from { transform: translateY(10px); opacity: 0.4; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.wiz-skip {
+  position: absolute;
+  top: 16px;
+  right: 18px;
+  background: transparent;
+  border: none;
+  color: #8a8270;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 4px;
+  transition: color 0.14s;
+}
+.wiz-skip:hover {
+  color: #f4f0e7;
+}
+.wiz-body {
+  min-height: 168px;
+}
+.wiz-eyebrow {
+  font-family: var(--font-sub);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  font-size: 10.5px;
+  color: var(--gold-light);
+}
+.wiz-title {
+  font-family: var(--font-head);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: #f4f0e7;
+  margin: 8px 0 0;
+}
+.wiz-text {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: #b0a99c;
+  margin: 12px 0 0;
+}
+.wiz-text strong {
+  color: #f4f0e7;
+  font-weight: 600;
+}
+.wiz-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 14px;
+}
+.wiz-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid #272231;
+}
+.wiz-dots {
+  display: flex;
+  gap: 7px;
+}
+.wiz-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #38313f;
+  transition: background 0.18s, transform 0.18s;
+}
+.wiz-dot.active {
+  background: var(--gold-light);
+  transform: scale(1.15);
+}
+.wiz-actions {
+  display: flex;
+  gap: 8px;
+}
+

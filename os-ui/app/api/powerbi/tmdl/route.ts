@@ -2,7 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal, errorResponse } from '@/lib/data/server';
+import { withRoute } from '@/lib/core/route-server';
+import type { CurrentUser } from '@/lib/core/auth';
+import { requirePrincipal } from '@/lib/data/server';
 import { config } from '@/lib/core/config';
 import { getDataset } from '@/lib/data/store';
 import { getMetric } from '@/lib/metrics/store';
@@ -30,52 +32,47 @@ export const dynamic = 'force-dynamic';
  * ?format=json                   — return { tmdl, filename, mappings } instead of a file
  *                                   download (so a UI can preview the Cube→DAX mapping).
  */
-export async function GET(req: Request) {
-  try {
-    const user = await requirePrincipal();
-    const url = new URL(req.url);
-    const metricId = url.searchParams.get('metricId');
-    const datasetId = url.searchParams.get('datasetId');
-    const asJson = url.searchParams.get('format') === 'json';
+export const GET = withRoute(async ({ user, req }) => {
+  const url = new URL(req.url);
+  const metricId = url.searchParams.get('metricId');
+  const datasetId = url.searchParams.get('datasetId');
+  const asJson = url.searchParams.get('format') === 'json';
 
-    if (!metricId && !datasetId) {
-      const err = new Error('metricId or datasetId is required') as Error & { status?: number };
-      err.status = 400;
-      throw err;
-    }
-
-    // Resolve through the governed store: throws 403/404 unless the caller can VIEW it.
-    // This IS the export's governance gate — same canView scope as the metric.
-    const dataset = metricId ? getMetric(metricId, user).dataset : getDataset(datasetId as string, user);
-
-    if (!config.cubeSqlApiEnabled) {
-      const err = new Error(
-        'The Cube SQL API is not enabled on this instance. A Power BI semantic model needs a live governed endpoint to bind to — ask your platform admin to set CUBE_SQL_API_ENABLED=true and expose the SQL API port.',
-      ) as Error & { status?: number };
-      err.status = 503;
-      throw err;
-    }
-
-    const endpoint = { host: config.cubeSqlHost, port: config.cubeSqlPort };
-    const tmdl = datasetToTmdl(dataset, { endpoint });
-    const filename = tmdlFilename(dataset);
-
-    if (asJson) {
-      return NextResponse.json(
-        { tmdl, filename, mappings: measureMappings(dataset) },
-        { headers: { 'Cache-Control': 'no-store' } },
-      );
-    }
-
-    return new NextResponse(tmdl, {
-      status: 200,
-      headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
-        'Content-Disposition': `attachment; filename="${filename}"`,
-        'Cache-Control': 'no-store',
-      },
-    });
-  } catch (e) {
-    return errorResponse(e);
+  if (!metricId && !datasetId) {
+    const err = new Error('metricId or datasetId is required') as Error & { status?: number };
+    err.status = 400;
+    throw err;
   }
-}
+
+  // Resolve through the governed store: throws 403/404 unless the caller can VIEW it.
+  // This IS the export's governance gate — same canView scope as the metric.
+  const dataset = metricId ? getMetric(metricId, user).dataset : getDataset(datasetId as string, user);
+
+  if (!config.cubeSqlApiEnabled) {
+    const err = new Error(
+      'The Cube SQL API is not enabled on this instance. A Power BI semantic model needs a live governed endpoint to bind to — ask your platform admin to set CUBE_SQL_API_ENABLED=true and expose the SQL API port.',
+    ) as Error & { status?: number };
+    err.status = 503;
+    throw err;
+  }
+
+  const endpoint = { host: config.cubeSqlHost, port: config.cubeSqlPort };
+  const tmdl = datasetToTmdl(dataset, { endpoint });
+  const filename = tmdlFilename(dataset);
+
+  if (asJson) {
+    return NextResponse.json(
+      { tmdl, filename, mappings: measureMappings(dataset) },
+      { headers: { 'Cache-Control': 'no-store' } },
+    );
+  }
+
+  return new NextResponse(tmdl, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Cache-Control': 'no-store',
+    },
+  });
+}, { gate: requirePrincipal as () => Promise<CurrentUser>, defaultStatus: 400 });

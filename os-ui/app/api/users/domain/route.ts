@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { roleAtLeast } from '@/lib/core/session';
 import { directoryVisibleTo, listUsers } from '@/lib/platform-admin/users';
 
@@ -16,19 +16,13 @@ export const dynamic = 'force-dynamic';
  * MANAGEMENT stays in the OS (Admin → Users). No email or account flags leave
  * this route — only id, name, role and domains.
  */
-export async function GET() {
-  try {
-    const user = await requireUser();
-    if (!roleAtLeast(user.role, 'domain_admin')) {
-      return NextResponse.json(
-        { error: 'The user directory is available to domain admins and administrators.' },
-        { status: 403 },
-      );
-    }
-    const users = directoryVisibleTo({ role: user.role, domains: user.domains }, await listUsers());
-    return NextResponse.json({ users });
-  } catch (e) {
-    const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
+export const GET = withRoute(async ({ user }) => {
+  if (!roleAtLeast(user.role, 'domain_admin')) {
+    return NextResponse.json(
+      { error: 'The user directory is available to domain admins and administrators.' },
+      { status: 403 },
+    );
   }
-}
+  const users = directoryVisibleTo({ role: user.role, domains: user.domains }, await listUsers());
+  return NextResponse.json({ users });
+}, { defaultStatus: 500 });

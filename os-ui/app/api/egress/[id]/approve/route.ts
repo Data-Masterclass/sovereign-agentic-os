@@ -3,6 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { decideEgress } from '@/lib/connections';
 
 export const dynamic = 'force-dynamic';
@@ -12,17 +13,10 @@ export const dynamic = 'force-dynamic';
  * the host to the allowlist so connections to it pass the egress check; all
  * outbound stays logged. Body: { decision?: 'approve' | 'reject' }.
  */
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const admin = await requireAdmin();
-    const { id } = await ctx.params;
-    const body = await req.json().catch(() => ({}));
-    const decision = body?.decision === 'reject' ? 'reject' : 'approve';
-    const r = decideEgress(id, decision, admin.id);
-    if (!r) return NextResponse.json({ error: 'Egress request not found' }, { status: 404 });
-    return NextResponse.json({ request: r });
-  } catch (e) {
-    const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
-  }
-}
+export const POST = withRoute<{ id: string }, { decision?: string }>(async ({ user: admin, params, body }) => {
+  const { id } = params;
+  const decision = body?.decision === 'reject' ? 'reject' : 'approve';
+  const r = decideEgress(id, decision, admin.id);
+  if (!r) return NextResponse.json({ error: 'Egress request not found' }, { status: 404 });
+  return NextResponse.json({ request: r });
+}, { parse: true, gate: requireAdmin, defaultStatus: 500 });

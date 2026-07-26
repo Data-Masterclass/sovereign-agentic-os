@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { listAppsForUser } from '@/lib/software/apps';
 import { getConnectionByApp } from '@/lib/infra/app-registry';
 
@@ -13,9 +13,7 @@ export const dynamic = 'force-dynamic';
  * golden path §4): every app the caller can see contributes its MCP connection +
  * governed tools, scoped by the same Personal/Shared/Marketplace visibility.
  */
-export async function GET() {
-  try {
-    const user = await requireUser();
+export const GET = withRoute(async ({ user }) => {
     const apps = await listAppsForUser(user);
     const connections = apps
       .map((a) => {
@@ -35,8 +33,4 @@ export async function GET() {
       })
       .filter(Boolean);
     return NextResponse.json({ connections });
-  } catch (e) {
-    const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
-  }
-}
+}, { defaultStatus: 500 });

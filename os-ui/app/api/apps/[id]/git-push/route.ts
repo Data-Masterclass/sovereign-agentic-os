@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { getAppForUser, listAppFilesForViewer } from '@/lib/software/apps';
 import { listConnectionsForUser, callConnectionTool } from '@/lib/connections';
 import { pickConnectionForTemplate } from '@/lib/software/design-push';
@@ -22,12 +22,9 @@ export const dynamic = 'force-dynamic';
  * we surface that honestly. Honest fallback: no GitHub connection ⇒ "connect GitHub
  * first". Body: { repo: "owner/repo", connectionId? }.
  */
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id } = await ctx.params;
+export const POST = withRoute<{ id: string }, { repo?: string; connectionId?: string }>(async ({ user, params, body }) => {
+    const { id } = params;
     const app = await getAppForUser(id, user);
-    const body = (await req.json().catch(() => ({}))) as { repo?: string; connectionId?: string };
 
     const repo = String(body.repo ?? '').trim();
     if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repo)) {
@@ -78,8 +75,4 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       return NextResponse.json({ connectionId: chosenId, repo, queued: true, approvalId: out.approvalId, reason: out.reason }, { status: 202 });
     }
     return NextResponse.json({ error: out.reason }, { status: 403 });
-  } catch (e) {
-    const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
-  }
-}
+}, { parse: true, defaultStatus: 500 });

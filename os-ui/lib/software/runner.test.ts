@@ -76,13 +76,13 @@ test('deployment manifest: 1 replica, requests+limits, TCP readiness probe, imag
   assert.equal(c.securityContext.allowPrivilegeEscalation, false, 'no privilege escalation');
   assert.deepEqual(c.securityContext.capabilities.drop, ['ALL'], 'drops all Linux capabilities');
   assert.equal(c.securityContext.seccompProfile.type, 'RuntimeDefault', 'seccomp RuntimeDefault');
-  // Pod-level seccomp; runAsNonRoot deliberately OMITTED so an old root image already
-  // deployed does not CrashLoop on rollout (see runner.ts follow-up note).
+  // Pod-level seccomp + non-root assertion (all live apps rebuilt from scaffolds
+  // with numeric image users, so PSS `restricted` admission passes).
   assert.equal(m.spec.template.spec.securityContext.seccompProfile.type, 'RuntimeDefault');
   assert.equal(
     m.spec.template.spec.securityContext.runAsNonRoot,
-    undefined,
-    'runAsNonRoot NOT enforced yet — old root images must keep rolling',
+    true,
+    'runAsNonRoot enforced — restricted-PSS-ready manifests',
   );
 });
 

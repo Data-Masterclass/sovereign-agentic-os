@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { previewFilesForApp } from '@/lib/software/apps';
 import { readSdkSource } from '@/lib/software/app-sdk-vendor';
 import { readUiSource } from '@/lib/software/app-ui-vendor';
@@ -26,18 +26,12 @@ export const dynamic = 'force-dynamic';
  * calls the OS same-origin AS the signed-in user, so governance still decides what
  * data renders — this route only ships the source, never any granted data.
  */
-export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id } = await ctx.params;
-    const { files, template, mode } = await previewFilesForApp(id, user);
-    // Inject the SDK + design-system under node_modules so the bare imports resolve
-    // in the in-browser bundler with no external registry / CDN egress.
-    const sdk = readSdkSource('node_modules/@sovereign-os/app-sdk');
-    const ui = readUiSource('node_modules/@sovereign-os/ui');
-    return NextResponse.json({ files, sdk, ui, template, mode });
-  } catch (e) {
-    const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
-  }
-}
+export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
+  const { id } = params;
+  const { files, template, mode } = await previewFilesForApp(id, user);
+  // Inject the SDK + design-system under node_modules so the bare imports resolve
+  // in the in-browser bundler with no external registry / CDN egress.
+  const sdk = readSdkSource('node_modules/@sovereign-os/app-sdk');
+  const ui = readUiSource('node_modules/@sovereign-os/ui');
+  return NextResponse.json({ files, sdk, ui, template, mode });
+}, { defaultStatus: 500 });

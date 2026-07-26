@@ -39,6 +39,7 @@ broad credentials are invented.
 
 Plain HTTP: POST /ingest + POST /ingest-rows + GET /health.
 """
+import hmac
 import io
 import json
 import os
@@ -52,6 +53,24 @@ from botocore.config import Config as BotoConfig
 from pyiceberg.catalog import load_catalog
 
 PORT = int(os.environ.get("PORT", "8000"))
+
+# Service-to-service bearer (defense-in-depth). This process trusts the caller's
+# `principal` (session-bound, supplied by os-ui) and is only meant to be called by
+# os-ui; the NetworkPolicies are the primary boundary, but network reach alone must
+# not equal identity. When SERVICE_BEARER_TOKEN is set, /ingest + /ingest-rows require
+# a matching `Authorization: Bearer <token>` (constant-time). When UNSET, the check is
+# skipped (fail-open by design — see startup warning). /health is always open.
+SERVICE_BEARER_TOKEN = os.environ.get("SERVICE_BEARER_TOKEN", "")
+
+
+def bearer_ok(auth_header: str) -> bool:
+    """Constant-time check of the Authorization bearer against SERVICE_BEARER_TOKEN.
+    Returns True immediately when the token is unset (auth disabled)."""
+    if not SERVICE_BEARER_TOKEN:
+        return True
+    got = auth_header[7:] if auth_header[:7].lower() == "bearer " else ""
+    return bool(got) and hmac.compare_digest(got, SERVICE_BEARER_TOKEN)
+
 
 # Polaris REST catalog (Iceberg). Same endpoint/warehouse Trino uses.
 POLARIS_URI = os.environ.get("POLARIS_URI", "http://polaris:8181/api/catalog")
@@ -323,6 +342,9 @@ class Handler(BaseHTTPRequestHandler):
         if path not in ("/ingest", "/ingest-rows"):
             self._send(404, {"error": "not found"})
             return
+        if not bearer_ok(self.headers.get("Authorization", "")):
+            self._send(401, {"ok": False, "error": "unauthorized"})
+            return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(length) or b"{}")
@@ -344,9 +366,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    if not SERVICE_BEARER_TOKEN:
+        print("[data-runner] WARNING: SERVICE_BEARER_TOKEN unset — service-bearer auth "
+              "DISABLED (fail-open; NetworkPolicy is the only boundary).")
     print(f"[data-runner] /ingest + /ingest-rows + /health on :{PORT} "
           f"(polaris={POLARIS_URI}, warehouse={POLARIS_WAREHOUSE}, "
-          f"s3={S3_ENDPOINT}, uploadsBucket={UPLOADS_BUCKET})")
+          f"s3={S3_ENDPOINT}, uploadsBucket={UPLOADS_BUCKET}, "
+          f"bearerAuth={'on' if SERVICE_BEARER_TOKEN else 'off'})")
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 
 

@@ -4,6 +4,7 @@
 import 'server-only';
 import { NextResponse } from 'next/server';
 import { requireAdmin, type CurrentUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { roleAtLeast } from '@/lib/core/session';
 import { config } from '@/lib/core/config';
 import { getPublicUser } from '@/lib/platform-admin/users';
@@ -54,11 +55,6 @@ export const dynamic = 'force-dynamic';
  */
 
 const ANALYTICS_REPO = 'analytics';
-
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
 
 function shaFrom(req: Request, body?: { sha?: unknown }): string | null {
   const q = new URL(req.url).searchParams.get('sha');
@@ -255,39 +251,28 @@ async function run(sha: string, approver: CurrentUser, mode: 'preview' | 'apply'
 
 // ─── HTTP ──────────────────────────────────────────────────────────────────────
 
-export async function GET(req: Request) {
-  try {
-    const admin = await requireAdmin();
-    if (!config.analyticsApplyEnabled) {
-      return NextResponse.json(
-        { error: 'Analytics apply is disabled (ANALYTICS_APPLY_ENABLED is not true).' },
-        { status: 403 },
-      );
-    }
-    const sha = shaFrom(req);
-    if (!sha) return NextResponse.json({ error: 'A valid ?sha= (7–64 hex chars) is required.' }, { status: 400 });
-    const { status, body } = await run(sha, admin, 'preview');
-    return NextResponse.json(body, { status });
-  } catch (e) {
-    return fail(e);
+export const GET = withRoute(async ({ user: admin, req }) => {
+  if (!config.analyticsApplyEnabled) {
+    return NextResponse.json(
+      { error: 'Analytics apply is disabled (ANALYTICS_APPLY_ENABLED is not true).' },
+      { status: 403 },
+    );
   }
-}
+  const sha = shaFrom(req);
+  if (!sha) return NextResponse.json({ error: 'A valid ?sha= (7–64 hex chars) is required.' }, { status: 400 });
+  const { status, body } = await run(sha, admin, 'preview');
+  return NextResponse.json(body, { status });
+}, { gate: requireAdmin, defaultStatus: 500 });
 
-export async function POST(req: Request) {
-  try {
-    const admin = await requireAdmin();
-    if (!config.analyticsApplyEnabled) {
-      return NextResponse.json(
-        { error: 'Analytics apply is disabled (ANALYTICS_APPLY_ENABLED is not true).' },
-        { status: 403 },
-      );
-    }
-    const bodyJson = (await req.json().catch(() => ({}))) as { sha?: unknown };
-    const sha = shaFrom(req, bodyJson);
-    if (!sha) return NextResponse.json({ error: 'A valid sha (7–64 hex chars) is required.' }, { status: 400 });
-    const { status, body } = await run(sha, admin, 'apply');
-    return NextResponse.json(body, { status });
-  } catch (e) {
-    return fail(e);
+export const POST = withRoute<Record<string, string>, { sha?: unknown }>(async ({ user: admin, body: bodyJson, req }) => {
+  if (!config.analyticsApplyEnabled) {
+    return NextResponse.json(
+      { error: 'Analytics apply is disabled (ANALYTICS_APPLY_ENABLED is not true).' },
+      { status: 403 },
+    );
   }
-}
+  const sha = shaFrom(req, bodyJson);
+  if (!sha) return NextResponse.json({ error: 'A valid sha (7–64 hex chars) is required.' }, { status: 400 });
+  const { status, body } = await run(sha, admin, 'apply');
+  return NextResponse.json(body, { status });
+}, { parse: true, gate: requireAdmin, defaultStatus: 500 });

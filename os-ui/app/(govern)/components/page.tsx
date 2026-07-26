@@ -231,7 +231,9 @@ export default function ComponentsPage() {
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <p className="lead" style={{ marginBottom: 0 }}>
             Every component in the stack with <strong>live status</strong>, refreshed every
-            8&nbsp;seconds. Open a tool&apos;s console straight from its row; expand a row for
+            8&nbsp;seconds. Open a tool&apos;s console straight from its row — it embeds in
+            the OS when it can render same-origin, and opens in its own tab when it
+            can&apos;t. Expand a row for
             its address, login, docs, and diagnostics. Switching a workload off scales
             it&nbsp;0↔1; <em>disabled</em> means it isn&apos;t installed in this deployment.
             Core services can&apos;t be switched off.

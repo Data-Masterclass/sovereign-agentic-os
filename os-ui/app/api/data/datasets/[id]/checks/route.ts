@@ -2,6 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
+import { withRoute } from '@/lib/core/route-server';
+import type { CurrentUser } from '@/lib/core/auth';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { requireUser } from '@/lib/core/auth';
 import { getDataset, addCheck, removeCheck, builtLayerFqn } from '@/lib/data/store';
@@ -24,21 +26,19 @@ export const dynamic = 'force-dynamic';
  *         fake pass. (dbt-core test integration is the future path.)
  * DELETE — remove a check by id (canEdit gate).
  */
-export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requirePrincipal();
-    const { id } = await ctx.params;
-    const dataset = getDataset(id, user);
-    return NextResponse.json({ checks: dataset.checks ?? [] });
-  } catch (e) {
-    return errorResponse(e);
-  }
-}
+export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
+  const { id } = params;
+  const dataset = getDataset(id, user);
+  return NextResponse.json({ checks: dataset.checks ?? [] });
+}, { gate: requirePrincipal as () => Promise<CurrentUser> });
 
 function numOrUndef(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 }
 
+/**
+ * SKIP: POST calls requireUser() mid-handler (for OM DQ appender) — left hand-rolled.
+ */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
     const user = await requirePrincipal();
@@ -115,16 +115,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
 }
 
-export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requirePrincipal();
-    const { id } = await ctx.params;
-    const body = (await req.json().catch(() => ({}))) as { checkId?: string };
-    const checkId = (body.checkId ?? '').trim();
-    if (!checkId) return NextResponse.json({ error: 'checkId is required' }, { status: 400 });
-    const dataset = removeCheck(id, user, checkId);
-    return NextResponse.json({ checks: dataset.checks ?? [] });
-  } catch (e) {
-    return errorResponse(e);
-  }
-}
+export const DELETE = withRoute<{ id: string }, { checkId?: string }>(async ({ user, params, body }) => {
+  const { id } = params;
+  const checkId = (body.checkId ?? '').trim();
+  if (!checkId) return NextResponse.json({ error: 'checkId is required' }, { status: 400 });
+  const dataset = removeCheck(id, user, checkId);
+  return NextResponse.json({ checks: dataset.checks ?? [] });
+}, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });

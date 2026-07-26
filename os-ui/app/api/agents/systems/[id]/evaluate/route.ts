@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { getSystem } from '@/lib/agents/store';
 import { assistantComplete } from '@/lib/assistant/complete';
 import { judgeRun, type JudgeComplete } from '@/lib/agents/evaluate-judge';
@@ -33,11 +33,6 @@ function gatherGrantedCriteria(system: System, user: CurrentUser): string {
   return parts.join('\n').slice(0, 4000);
 }
 
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
 /**
  * The system's stated purpose, as the judge's "task Description". Mirrors the run
  * route's `defaultRunTask` (name + domain) so the judge scores against the SAME job
@@ -58,47 +53,41 @@ function systemDescription(system: { system: { name: string; domain: string } })
  * no new model client is created. The judge logic itself is the pure, unit-tested
  * `judgeRun` in `lib/agents/evaluate-judge.ts`.
  */
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id } = await ctx.params;
-    const body = (await req.json().catch(() => ({}))) as {
-      output?: string;
-      description?: string;
-      tacitKnowledge?: string;
-    };
+export const POST = withRoute<{ id: string }, {
+  output?: string;
+  description?: string;
+  tacitKnowledge?: string;
+}>(async ({ user, params, body }) => {
+  const { id } = params;
 
-    // Edit-scope: getSystem enforces read access (owner / in-domain); reuse its view.
-    const view = getSystem(id, user);
+  // Edit-scope: getSystem enforces read access (owner / in-domain); reuse its view.
+  const view = getSystem(id, user);
 
-    // Prefer the output the client just saw; fall back to the persisted last run.
-    const output = (typeof body.output === 'string' && body.output.trim())
-      ? body.output
-      : (view.lastRun?.output ?? '');
-    if (!output.trim()) {
-      return NextResponse.json({ error: 'Run the team first — there is no output to evaluate yet.' }, { status: 400 });
-    }
-
-    // Task description: an explicit override, else the persisted Define description
-    // (the author's own words), else the generic fallback — so the judge scores the
-    // REAL task whenever the team stated one.
-    const description = (typeof body.description === 'string' && body.description.trim())
-      ? body.description
-      : (view.system.system.description?.trim() || systemDescription(view.system));
-
-    // Success criteria: an explicit override, else auto-gathered from the granted
-    // knowledge workflows' tacit notes — so grounding is judged against the actual rules.
-    const tacitKnowledge = (typeof body.tacitKnowledge === 'string' && body.tacitKnowledge.trim())
-      ? body.tacitKnowledge
-      : gatherGrantedCriteria(view.system, user);
-
-    // Route the judge through the ONE governed assistant model (Langfuse-audited).
-    const complete: JudgeComplete = (messages) =>
-      assistantComplete(messages, { user: user.id }).then((r) => r.content);
-
-    const result = await judgeRun({ output, description, tacitKnowledge }, complete);
-    return NextResponse.json(result);
-  } catch (e) {
-    return fail(e);
+  // Prefer the output the client just saw; fall back to the persisted last run.
+  const output = (typeof body.output === 'string' && body.output.trim())
+    ? body.output
+    : (view.lastRun?.output ?? '');
+  if (!output.trim()) {
+    return NextResponse.json({ error: 'Run the team first — there is no output to evaluate yet.' }, { status: 400 });
   }
-}
+
+  // Task description: an explicit override, else the persisted Define description
+  // (the author's own words), else the generic fallback — so the judge scores the
+  // REAL task whenever the team stated one.
+  const description = (typeof body.description === 'string' && body.description.trim())
+    ? body.description
+    : (view.system.system.description?.trim() || systemDescription(view.system));
+
+  // Success criteria: an explicit override, else auto-gathered from the granted
+  // knowledge workflows' tacit notes — so grounding is judged against the actual rules.
+  const tacitKnowledge = (typeof body.tacitKnowledge === 'string' && body.tacitKnowledge.trim())
+    ? body.tacitKnowledge
+    : gatherGrantedCriteria(view.system, user);
+
+  // Route the judge through the ONE governed assistant model (Langfuse-audited).
+  const complete: JudgeComplete = (messages) =>
+    assistantComplete(messages, { user: user.id }).then((r) => r.content);
+
+  const result = await judgeRun({ output, description, tacitKnowledge }, complete);
+  return NextResponse.json(result);
+}, { parse: true, defaultStatus: 500 });

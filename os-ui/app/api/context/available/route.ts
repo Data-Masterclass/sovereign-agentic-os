@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { availableContext, availableContextWithFolders } from '@/lib/software/available-context';
 import type { ContextKind } from '@/lib/core/context-grants';
 
@@ -27,26 +27,16 @@ export const dynamic = 'force-dynamic';
  */
 const KINDS: ContextKind[] = ['connections', 'data', 'knowledge', 'files', 'metrics'];
 
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
-export async function GET(req: Request) {
-  try {
-    const user = await requireUser();
-    const url = new URL(req.url);
-    const kind = url.searchParams.get('kind') as ContextKind | null;
-    if (!kind || !KINDS.includes(kind)) {
-      return NextResponse.json({ error: `kind must be one of: ${KINDS.join(', ')}` }, { status: 400 });
-    }
-    if (url.searchParams.get('folders') === '1') {
-      const { items, folders } = await availableContextWithFolders(user, [kind]);
-      return NextResponse.json({ items: items[kind] ?? [], folders: folders[kind] ?? [] });
-    }
-    const map = await availableContext(user, [kind]);
-    return NextResponse.json({ items: map[kind] ?? [] });
-  } catch (e) {
-    return fail(e);
+export const GET = withRoute(async ({ user, req }) => {
+  const url = new URL(req.url);
+  const kind = url.searchParams.get('kind') as ContextKind | null;
+  if (!kind || !KINDS.includes(kind)) {
+    return NextResponse.json({ error: `kind must be one of: ${KINDS.join(', ')}` }, { status: 400 });
   }
-}
+  if (url.searchParams.get('folders') === '1') {
+    const { items, folders } = await availableContextWithFolders(user, [kind]);
+    return NextResponse.json({ items: items[kind] ?? [], folders: folders[kind] ?? [] });
+  }
+  const map = await availableContext(user, [kind]);
+  return NextResponse.json({ items: map[kind] ?? [] });
+}, { defaultStatus: 500 });

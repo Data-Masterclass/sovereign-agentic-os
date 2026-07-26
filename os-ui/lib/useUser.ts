@@ -15,6 +15,9 @@ export type Me = {
   allDomains?: string[];
   /** The chosen active operating domain, or null = all domains. */
   activeDomain?: string | null;
+  /** The active domain's optional-layer flags (layers.ml = Science layer), or
+   *  null = unknown — layer-gated tabs fail OPEN on null (lib/core/tabs.ts). */
+  activeDomainLayers?: { ml?: boolean } | null;
   role: Role;
 };
 

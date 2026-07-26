@@ -2,7 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal, errorResponse } from '@/lib/data/server';
+import { withRoute } from '@/lib/core/route-server';
+import type { CurrentUser } from '@/lib/core/auth';
+import { requirePrincipal } from '@/lib/data/server';
 import { requestPromotion, getDataset } from '@/lib/data/store';
 import { transparencyGate } from '@/lib/data/transparency';
 import { enqueue, listApprovals } from '@/lib/governance/approvals';
@@ -18,57 +20,46 @@ export const dynamic = 'force-dynamic';
  *           applies the dataset→asset move into Trino). The Creator cannot self-promote.
  *   GET   — the request's status for this dataset (so the stepper shows pending/approved).
  */
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requirePrincipal();
-    const { id } = await ctx.params;
-    const body = (await req.json().catch(() => ({}))) as { visibility?: DataVisibility; grants?: Grant[] };
+export const POST = withRoute<{ id: string }, { visibility?: DataVisibility; grants?: Grant[] }>(async ({ user, params, body }) => {
+  const { id } = params;
 
-    // Avoid a duplicate pending request for the same dataset.
-    const existing = listApprovals({ status: 'pending' }).find(
-      (a) => a.kind === 'dataset_promote' && a.payload?.datasetId === id,
-    );
-    if (existing) return NextResponse.json({ approval: existing, already: true });
+  // Avoid a duplicate pending request for the same dataset.
+  const existing = listApprovals({ status: 'pending' }).find(
+    (a) => a.kind === 'dataset_promote' && a.payload?.datasetId === id,
+  );
+  if (existing) return NextResponse.json({ approval: existing, already: true });
 
-    const request = requestPromotion(id, user, { visibility: body.visibility, grants: body.grants });
-    const approval = enqueue({
-      kind: 'dataset_promote',
-      title: `Promote “${request.datasetName}” to a data asset`,
-      detail: `${user.id} requests promoting ${request.datasetName} into ${request.target} (visibility: ${request.visibility}). A domain admin must approve.`,
-      agent: user.id,
-      domain: request.domain,
-      requestedBy: user.id,
-      tool: 'data_promote',
-      payload: request as unknown as Record<string, unknown>,
-      // Personal→Domain is a governed rung: a domain_admin+ approves (a builder is an
-      // owner who PROPOSES, not the approver). Matches the MCP request_promotion path
-      // + the ladder tabs. The inbox `canApprove` gate is the fail-closed enforcement.
-      approverRole: 'domain_admin',
-      scope: 'domain',
-    });
-    return NextResponse.json({ approval });
-  } catch (e) {
-    return errorResponse(e);
-  }
-}
+  const request = requestPromotion(id, user, { visibility: body.visibility, grants: body.grants });
+  const approval = enqueue({
+    kind: 'dataset_promote',
+    title: `Promote "${request.datasetName}" to a data asset`,
+    detail: `${user.id} requests promoting ${request.datasetName} into ${request.target} (visibility: ${request.visibility}). A domain admin must approve.`,
+    agent: user.id,
+    domain: request.domain,
+    requestedBy: user.id,
+    tool: 'data_promote',
+    payload: request as unknown as Record<string, unknown>,
+    // Personal→Domain is a governed rung: a domain_admin+ approves (a builder is an
+    // owner who PROPOSES, not the approver). Matches the MCP request_promotion path
+    // + the ladder tabs. The inbox `canApprove` gate is the fail-closed enforcement.
+    approverRole: 'domain_admin',
+    scope: 'domain',
+  });
+  return NextResponse.json({ approval });
+}, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });
 
-export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requirePrincipal();
-    const { id } = await ctx.params;
-    const dataset = getDataset(id, user); // view-scope guard
-    // The panel's status source: an in-flight request wins; otherwise the LATEST
-    // decided one (so a failed publish shows its real error until re-requested,
-    // and a stale earlier decision can't shadow a newer attempt).
-    const all = listApprovals().filter(
-      (a) => a.kind === 'dataset_promote' && a.payload?.datasetId === id,
-    );
-    const request =
-      all.find((a) => a.status === 'pending') ??
-      [...all].sort((x, y) => (y.decidedAt ?? y.createdAt).localeCompare(x.decidedAt ?? x.createdAt))[0] ??
-      null;
-    return NextResponse.json({ tier: dataset.tier, gate: transparencyGate(dataset), request });
-  } catch (e) {
-    return errorResponse(e);
-  }
-}
+export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
+  const { id } = params;
+  const dataset = getDataset(id, user); // view-scope guard
+  // The panel's status source: an in-flight request wins; otherwise the LATEST
+  // decided one (so a failed publish shows its real error until re-requested,
+  // and a stale earlier decision can't shadow a newer attempt).
+  const all = listApprovals().filter(
+    (a) => a.kind === 'dataset_promote' && a.payload?.datasetId === id,
+  );
+  const request =
+    all.find((a) => a.status === 'pending') ??
+    [...all].sort((x, y) => (y.decidedAt ?? y.createdAt).localeCompare(x.decidedAt ?? x.createdAt))[0] ??
+    null;
+  return NextResponse.json({ tier: dataset.tier, gate: transparencyGate(dataset), request });
+}, { gate: requirePrincipal as () => Promise<CurrentUser> });

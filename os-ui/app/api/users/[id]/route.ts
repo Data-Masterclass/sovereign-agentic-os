@@ -2,22 +2,19 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
+import { withRoute } from '@/lib/core/route-server';
 import { requireAdmin } from '@/lib/core/auth';
 import { archiveUser, deleteUser, restoreUser, updateUser } from '@/lib/platform-admin/users';
 import { ROLES, type Role } from '@/lib/core/session';
 
 export const dynamic = 'force-dynamic';
 
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
-export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    await requireAdmin();
-    const { id } = await ctx.params;
-    const body = await req.json();
+export const PATCH = withRoute<{ id: string }>(async ({ params, req }) => {
+    const { id } = params;
+    // Bare body read on purpose: an unparseable body throws the SyntaxError to
+    // the wrapper's catch → 500 with the parse-error message, exactly as before.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body: any = await req.json();
     if ('password' in (body as object)) {
       return NextResponse.json({ error: 'This endpoint does not handle passwords' }, { status: 400 });
     }
@@ -37,21 +34,13 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       role: ROLES.includes(body?.role) ? (body.role as Role) : undefined,
     });
     return NextResponse.json({ user });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { gate: requireAdmin, defaultStatus: 500 });
 
-export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const admin = await requireAdmin();
-    const { id } = await ctx.params;
-    if (id === admin.id) {
-      return NextResponse.json({ error: 'You cannot delete your own account' }, { status: 400 });
-    }
-    await deleteUser(id);
-    return NextResponse.json({ ok: true });
-  } catch (e) {
-    return fail(e);
+export const DELETE = withRoute<{ id: string }>(async ({ user: admin, params }) => {
+  const { id } = params;
+  if (id === admin.id) {
+    return NextResponse.json({ error: 'You cannot delete your own account' }, { status: 400 });
   }
-}
+  await deleteUser(id);
+  return NextResponse.json({ ok: true });
+}, { gate: requireAdmin, defaultStatus: 500 });

@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { getWorkflow, getDomainKnowledge } from '@/lib/knowledge/store';
 import { chunkWorkflow, chunkDomain } from '@/lib/knowledge/chunk';
 import {
@@ -15,13 +15,6 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
-type Params = { params: Promise<{ id: string }> };
-
 /**
  * POST → run the eval harness for this workflow (online metrics over its indexed
  * units): a golden Q&A set (grounded-answer rate) + access-control checks
@@ -29,12 +22,10 @@ type Params = { params: Promise<{ id: string }> };
  * override the default cases; otherwise we derive sensible defaults from the
  * workflow's own hard rules + tacit + links.
  */
-export async function POST(req: Request, { params }: Params) {
-  try {
-    const user = await requireUser();
-    const { id } = await params;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }) => {
+    const { id } = params;
     const view = getWorkflow(id, user);
-    const body = await req.json().catch(() => ({}));
 
     const units = embedUnits([
       ...chunkWorkflow({ workflow: view.workflow, owner: view.owner, tacit: view.tacit, updatedAt: view.updatedAt }),
@@ -71,7 +62,4 @@ export async function POST(req: Request, { params }: Params) {
         policyViolationRate: accessReport.violationRate,
       },
     });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { parse: true, defaultStatus: 500 });

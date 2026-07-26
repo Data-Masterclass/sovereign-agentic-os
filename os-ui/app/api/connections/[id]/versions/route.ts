@@ -2,15 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { listConnectionVersions, restoreConnectionVersion } from '@/lib/connections';
 
 export const dynamic = 'force-dynamic';
-
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
 
 /**
  * Version history for one connection's capability profile — the OS-wide
@@ -18,10 +13,8 @@ function fail(e: unknown) {
  *   GET           → the versions (newest first; edit-scoped).
  *   POST {version} → restore a prior profile (edit-scoped; snapshots current first).
  */
-export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id } = await ctx.params;
+export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
+    const { id } = params;
     const list = (await listConnectionVersions(id, user)).map((v) => ({
       version: v.version,
       at: v.at,
@@ -29,22 +22,13 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       summary: v.summary,
     }));
     return NextResponse.json({ versions: list });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { defaultStatus: 500 });
 
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id } = await ctx.params;
-    const body = (await req.json().catch(() => ({}))) as { version?: number };
+export const POST = withRoute<{ id: string }, { version?: number }>(async ({ user, params, body }) => {
+    const { id } = params;
     if (typeof body.version !== 'number') {
       return NextResponse.json({ error: 'A version number is required.' }, { status: 400 });
     }
     const c = await restoreConnectionVersion(id, user, body.version);
     return NextResponse.json({ id: c.id });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { parse: true, defaultStatus: 500 });

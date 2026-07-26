@@ -58,6 +58,24 @@ test('langfuse + litellm are registered with the right gate + SSO mode', () => {
   assert.equal(roleAllowed('builder', TOOLS.langfuse.minRole), false, 'non-admin cannot open embedded Langfuse');
 });
 
+test('own-tab policy: root-absolute-asset SPAs + WS tools carry ownTab; verified embeds do not', () => {
+  // These consoles CANNOT render behind /tools/<key>: their SPAs load
+  // root-absolute assets (/_next/*, /static/*) that collide with os-ui's own
+  // routes (verified live: Langfuse/Dagster chunk requests 404 on the OS
+  // origin), or they need WebSockets (JupyterHub). Each must carry the Tier-2
+  // own-tab metadata so the ToolWindow shows the card, never a blank iframe.
+  for (const key of ['langfuse', 'superset', 'dagster', 'featureform', 'jupyterhub']) {
+    const t = TOOLS[key];
+    assert.ok(t.ownTab, `${key} carries ownTab`);
+    assert.ok(t.ownTab!.reason.length > 0, `${key} ownTab.reason is honest, not empty`);
+    assert.equal(typeof t.ownTab!.consoleUrl, 'string', `${key} ownTab.consoleUrl is a string (may be '')`);
+  }
+  // The verified-working embeds (relative asset URLs) stay in the frame.
+  for (const key of ['mlflow', 'cube', 'forgejo', 'litellm']) {
+    assert.equal(TOOLS[key].ownTab, undefined, `${key} stays iframe-embedded`);
+  }
+});
+
 test('role gate: minRole is enforced by rank, not equality', () => {
   // participant < creator < builder < admin
   assert.equal(roleAllowed('creator', 'creator'), true);

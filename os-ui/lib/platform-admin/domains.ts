@@ -43,7 +43,7 @@ export type DomainTemplate = {
 export const TEMPLATES: DomainTemplate[] = [
   { id: 'blank', name: 'Blank', description: 'Core data + agents only.', layers: { ml: false } },
   { id: 'analytics', name: 'Analytics', description: 'Core + dashboards; no heavy ML.', layers: { ml: false } },
-  { id: 'science', name: 'Data Science', description: 'Adds the ML layer (Layer 4).', layers: { ml: true } },
+  { id: 'science', name: 'Data Science', description: 'Adds the Science layer (Layer 4).', layers: { ml: true } },
   { id: 'big-data', name: 'Big Data', description: 'Core data + agents; large-batch processing.', layers: { ml: false } },
 ];
 

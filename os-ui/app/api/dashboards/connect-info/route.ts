@@ -2,7 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal, errorResponse } from '@/lib/data/server';
+import { requirePrincipal } from '@/lib/data/server';
+import { withRoute } from '@/lib/core/route-server';
+import type { CurrentUser } from '@/lib/core/auth';
 import { config } from '@/lib/core/config';
 
 export const dynamic = 'force-dynamic';
@@ -13,15 +15,10 @@ export const dynamic = 'force-dynamic';
  * `supersetUrl` is returned ONLY when the operator configured a non-empty console URL — the
  * UI hides the "Open in Superset" link otherwise (no dead link). No secrets here.
  */
-export async function GET() {
-  try {
-    const user = await requirePrincipal();
-    const supersetUrl = (config.supersetUrl ?? '').trim();
-    return NextResponse.json({
-      domain: user.domains[0] ?? '',
-      supersetUrl: supersetUrl || null,
-    });
-  } catch (e) {
-    return errorResponse(e);
-  }
-}
+export const GET = withRoute(async ({ user }) => {
+  const supersetUrl = (config.supersetUrl ?? '').trim();
+  return NextResponse.json({
+    domain: user.domains[0] ?? '',
+    supersetUrl: supersetUrl || null,
+  });
+}, { gate: requirePrincipal as () => Promise<CurrentUser> });

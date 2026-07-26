@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { getSystem } from '@/lib/agents/store';
 import { listDatasets, ensureHydrated } from '@/lib/data/store';
 import { listWorkflows, ensureHydrated as ensureWorkflowsHydrated } from '@/lib/knowledge/store';
@@ -92,15 +92,8 @@ function builtLayers(dots: { bronze: boolean; silver: boolean; gold: boolean }):
   return out;
 }
 
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
-export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id } = await ctx.params;
+export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
+    const { id } = params;
     const principal = { id: user.id, domains: user.domains, role: user.role };
 
     // Scope gate: confirm the caller can view this system (throws 403/404).
@@ -218,7 +211,4 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     }
 
     return NextResponse.json(folders ? { items, folders } : { items });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { defaultStatus: 500 });

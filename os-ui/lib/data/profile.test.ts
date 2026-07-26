@@ -157,12 +157,15 @@ const OSUI = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const routeSrc = readFileSync(resolve(OSUI, 'app/api/data/datasets/[id]/profile/route.ts'), 'utf8');
 
 test('profile route rejects an anonymous caller (401) and a non-viewer (403)', () => {
-  // requirePrincipal() throws the 401-tagged error for anon callers.
-  assert.match(routeSrc, /requirePrincipal\(\)/, 'gates on a session (401 for anon)');
+  // requirePrincipal throws the 401-tagged error for anon callers — either called
+  // inline (`requirePrincipal()`) or wired as the `withRoute` gate (`gate: requirePrincipal`),
+  // which runs the same gate internally (route-wrapper migration, wave 1).
+  assert.match(routeSrc, /requirePrincipal\(\)|gate: requirePrincipal/, 'gates on a session (401 for anon)');
   // getDataset(id, user) is the canView guard — throws 403 for a non-viewer.
   assert.match(routeSrc, /getDataset\(id, user\)/, 'view-scope guard (403 for a non-viewer)');
-  // Tagged auth statuses (401/403) are folded into the response, not swallowed.
-  assert.match(routeSrc, /errorResponse\(e\)/, 'surfaces the tagged 401/403 status');
+  // Tagged auth statuses (401/403) are folded into the response, not swallowed —
+  // by errorResponse(e) inline, or by withRoute's catch (same envelope + tagged status).
+  assert.match(routeSrc, /errorResponse\(e\)|withRoute\s*[<(]/, 'surfaces the tagged 401/403 status');
 });
 
 test('profile route derives the principal from the session, never the request body', () => {

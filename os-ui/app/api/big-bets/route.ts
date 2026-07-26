@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { createBet, listBets, ensureHydrated } from '@/lib/bigbets/store';
 import { deriveBetName } from '@/lib/bigbets';
 import { principal } from '@/lib/bigbets/server';
@@ -12,16 +12,8 @@ import { realizedValue } from '@/lib/bigbets/value';
 
 export const dynamic = 'force-dynamic';
 
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
 /** GET → the bets the caller may view, each with a headline rollup + realized value. */
-export async function GET(req: Request) {
-  try {
-    await ensureHydrated();
-    const user = await requireUser();
+export const GET = withRoute(async ({ user, req }) => {
     const p = principal(user);
     const includeArchived = new URL(req.url).searchParams.get('archived') === '1';
     const bets = listBets(p, { includeArchived }).map((bet) => {
@@ -47,10 +39,7 @@ export async function GET(req: Request) {
       };
     });
     return NextResponse.json({ bets });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { hydrate: ensureHydrated, defaultStatus: 500 });
 
 /**
  * POST → create a Big Bet (Builder/Admin own; Creator drafts).
@@ -60,12 +49,8 @@ export async function GET(req: Request) {
  * is DERIVED from the problem statement (no separate name field). Older callers
  * that still send `{ name, problem: { who, need, … } }` keep working.
  */
-export async function POST(req: Request) {
-  try {
-    await ensureHydrated();
-    const user = await requireUser();
-    const b = await req.json().catch(() => ({}));
-
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const POST = withRoute<Record<string, string>, any>(async ({ user, body: b }) => {
     // Accept either the new shape (problem = string statement) or the legacy
     // object shape (problem = { who, need, obstacle, impact }).
     const legacy = b?.problem && typeof b.problem === 'object';
@@ -96,7 +81,4 @@ export async function POST(req: Request) {
       members: Array.isArray(b.members) ? b.members : undefined,
     });
     return NextResponse.json({ id: bet.id });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { parse: true, hydrate: ensureHydrated, defaultStatus: 500 });

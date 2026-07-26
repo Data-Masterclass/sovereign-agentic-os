@@ -44,6 +44,9 @@ mock.module('@/lib/core/auth', {
       }
       return ADMIN;
     },
+    // route-server (withRoute) imports requireUser as its DEFAULT gate; this
+    // route swaps in requireAdmin above, so the export only needs to exist.
+    requireUser: async () => ADMIN,
   },
 });
 // A LIVE config view: `analyticsApplyEnabled` is a getter over the mutable FLAG so

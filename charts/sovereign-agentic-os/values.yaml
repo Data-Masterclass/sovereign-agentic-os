@@ -1998,7 +1998,12 @@ queryTool:
   enabled: true
   image:
     repository: sovereign-os/query-tool     # built locally, loaded into kind
-    tag: "0.6.0"                             # 0.6.0 = /query read guard (defence-in-depth:
+    tag: "0.6.1"                             # 0.6.1 = service-bearer auth (require
+                                             #         Authorization: Bearer on /query +
+                                             #         /execute when SERVICE_BEARER_TOKEN
+                                             #         is set; /health stays open; fail-
+                                             #         open when unset — netpol primary).
+                                             # 0.6.0 = /query read guard (defence-in-depth:
                                              #         read-only single-statement; rejects
                                              #         write/DDL/privilege/stacked/comment
                                              #         before Trino — Trino->OPA still the
@@ -2045,7 +2050,10 @@ dataRunner:
   enabled: true
   image:
     repository: sovereign-os/data-runner     # built locally, loaded into kind
-    tag: "0.2.0"   # 0.2.0 = /ingest mode append|replace (scheduled sync slices)
+    tag: "0.2.1"   # 0.2.1 = service-bearer auth (/ingest + /ingest-rows require
+                   #         Authorization: Bearer when SERVICE_BEARER_TOKEN set;
+                   #         /health open; fail-open when unset — netpol primary).
+                   # 0.2.0 = /ingest mode append|replace (scheduled sync slices)
   polaris:
     # Same Polaris REST catalog + warehouse Trino reads/writes.
     uri: "http://polaris:8181/api/catalog"
@@ -2066,6 +2074,28 @@ dataRunner:
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "1", memory: 1Gi }
+
+# -----------------------------------------------------------------------------
+# service-bearer — shared token for the in-cluster DATA-PLANE calls
+# (os-ui -> query-tool + os-ui -> data-runner). Defense-in-depth BEHIND the
+# NetworkPolicies: those services trust the principal/role/domains in the request
+# body and are only meant to be called by os-ui, so os-ui presents this bearer to
+# prove it IS os-ui — network reach alone never equals identity.
+#
+# NIL-SAFE / opt-in: when `enabled` is false (default), NO Secret is rendered and
+# SERVICE_BEARER_TOKEN is set NOWHERE — query-tool, data-runner and os-ui all run
+# EXACTLY as before (the services skip the check, os-ui attaches no header). A
+# --reuse-values upgrade that never had this key still renders + runs unchanged.
+#
+# When enabled, the token resolves like os-ui-session (no secret in git):
+#   1. explicit `serviceBearer.token` (operator / ExternalSecret), else
+#   2. the value already in the Secret (preserved across upgrades via `lookup`), else
+#   3. a freshly generated 48-char random value on first install.
+# GITOPS CAVEAT: `lookup` is empty under Argo CD / `helm template`, so set
+# `serviceBearer.token` explicitly (an ExternalSecret is ideal) for those pipelines.
+serviceBearer:
+  enabled: false
+  token: ""
 
 # NOTE (2026-06-29): The personal-query sandbox engine was removed. Personal data
 # now lives as a physical Iceberg table in `iceberg.personal_<uid>.*` and is queried

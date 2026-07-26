@@ -2,15 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { listWorkflows } from '@/lib/knowledge/store';
 
 export const dynamic = 'force-dynamic';
-
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
 
 /**
  * GET ?q=&for=data|agents|software → workflows the user can ATTACH AS CONTEXT in
@@ -22,9 +17,7 @@ function fail(e: unknown) {
  * Only workflows the caller may see are returned (the store's view scope); a light
  * keyword filter ranks by title/domain match.
  */
-export async function GET(req: Request) {
-  try {
-    const user = await requireUser();
+export const GET = withRoute(async ({ user, req }) => {
     const { searchParams } = new URL(req.url);
     const q = (searchParams.get('q') ?? '').trim().toLowerCase();
 
@@ -50,7 +43,4 @@ export async function GET(req: Request) {
       }));
 
     return NextResponse.json({ suggestions: ranked });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { defaultStatus: 500 });

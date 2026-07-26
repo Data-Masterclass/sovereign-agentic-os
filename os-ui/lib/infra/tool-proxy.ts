@@ -61,6 +61,17 @@ export type Tool = {
   embeddable: boolean;
   sso: ToolSso;
   note?: string;
+  /**
+   * Set when the tool CANNOT render inside the same-origin `/tools/<key>` frame
+   * and must open in its own tab instead (the Tier-2 pattern the OS already uses
+   * for Superset). The classic cause: the tool's SPA loads ROOT-ABSOLUTE assets
+   * (`/_next/*`, `/static/*`, `/api/*`) that resolve against the OS origin and
+   * collide with os-ui's OWN Next.js routes → every chunk 404s → blank iframe
+   * (exactly how the Superset embed died). `consoleUrl` is the tool's own
+   * external URL (its ingress) — may be `''` when the operator configured none;
+   * the UI then says so honestly instead of rendering a dead link.
+   */
+  ownTab?: { reason: string; consoleUrl: string };
 };
 
 /** Structural principal — avoids importing the server-only auth facade into tests. */
@@ -100,6 +111,12 @@ export const TOOLS: Record<string, Tool> = {
     embeddable: true,
     sso: { mode: 'none' },
     note: 'Featureform OSS has no per-user accounts; the proxy + role gate IS the access control. creator+ (matches MLflow, its Science-tab sibling) so a creator can open it from the Layer-4 grid.',
+    // Featureform's dashboard loads root-absolute assets → blank behind the
+    // /tools prefix (no clean base-path config). Own tab.
+    ownTab: {
+      reason: 'The Featureform dashboard loads its scripts from the site root, which collides with the OS’s own routes inside the embedded frame.',
+      consoleUrl: config.featureformConsoleUrl,
+    },
   },
   cube: {
     key: 'cube',
@@ -143,6 +160,13 @@ export const TOOLS: Record<string, Tool> = {
       roleMap: { admin: 'Admin', builder: 'Alpha', 'creator': 'Gamma' },
     },
     note: 'AUTH_REMOTE_USER + auto-user-registration; role via X-Forwarded-Roles.',
+    // Standing platform decision (native-Cube dashboards work): Superset is a
+    // Tier-2 "open in its own tab" tool, never embedded — its /static asset
+    // paths 307 to /signin behind the proxy prefix (the original blank iframe).
+    ownTab: {
+      reason: 'Superset serves its assets from the site root, so it cannot render inside the embedded frame — the OS uses native dashboards as Tier 1 and the Superset console in its own tab as Tier 2.',
+      consoleUrl: config.supersetUrl,
+    },
   },
   langfuse: {
     key: 'langfuse',
@@ -158,6 +182,16 @@ export const TOOLS: Record<string, Tool> = {
     embeddable: true,
     sso: { mode: 'session' }, // NextAuth: proxy signs a server-only account in.
     note: 'NextAuth SSO — the proxy establishes the session server-side (lib/tool-sso-langfuse.ts); no second login, password never reaches the browser.',
+    // Langfuse is a Next.js app whose HTML is fully client-rendered from
+    // root-absolute /_next/* chunks — behind /tools/langfuse those resolve to
+    // os-ui's OWN /_next and 404, so the frame stays blank. Its client also
+    // calls /api/trpc/* + /api/auth/* at the root, colliding with os-ui's /api.
+    // The official image has NO runtime base-path (Next basePath is build-time),
+    // so this is structurally un-embeddable. Own tab (its own ingress + login).
+    ownTab: {
+      reason: 'Langfuse is itself a Next.js app: its scripts and API calls target the site root (/_next, /api), which collide with the OS’s own routes inside the embedded frame, and its official image has no base-path support.',
+      consoleUrl: config.langfuseConsoleUrl,
+    },
   },
   litellm: {
     key: 'litellm',
@@ -217,6 +251,15 @@ export const TOOLS: Record<string, Tool> = {
     embeddable: true,
     sso: { mode: 'none' },
     note: 'HTTP UI embeds now; live subscriptions need the WS ingress path rule (prepared).',
+    // Dagster's UI is ALSO Next.js with root-absolute /_next/* chunks → blank
+    // behind the /tools prefix. Dagster DOES support `--path-prefix` upstream,
+    // but flipping it moves the in-cluster GraphQL URL for every server-side
+    // caller too — a deploy-verified chart change, not a UI patch. Until then:
+    // own tab (its dedicated ingress; Dagster OSS has no login).
+    ownTab: {
+      reason: 'Dagster’s console is a Next.js app whose scripts load from the site root and collide with the OS’s own routes inside the embedded frame. (Proper fix: dagster-webserver --path-prefix — a chart change verified on deploy.)',
+      consoleUrl: config.dagsterConsoleUrl,
+    },
   },
 
   // --- Documented, NOT HTTP-embeddable (status panel / native / WS-ingress) --
@@ -231,6 +274,12 @@ export const TOOLS: Record<string, Tool> = {
     embeddable: false,
     sso: { mode: 'header', userHeader: 'X-Forwarded-User' }, // RemoteUserAuthenticator
     note: 'Kernels/terminals need WebSockets — served via the ingress WS path rule, not this proxy.',
+    // Honest refusal, styled: the card replaces the raw 501 JSON the iframe
+    // used to show when JupyterHub was opened from the grid.
+    ownTab: {
+      reason: 'JupyterHub kernels and terminals run over WebSockets, which this HTTP frame cannot carry.',
+      consoleUrl: config.jupyterhubConsoleUrl,
+    },
   },
   kserve: {
     key: 'kserve',

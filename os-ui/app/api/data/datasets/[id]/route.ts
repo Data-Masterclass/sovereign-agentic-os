@@ -2,6 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
+import { withRoute } from '@/lib/core/route-server';
+import type { CurrentUser } from '@/lib/core/auth';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { requireUser } from '@/lib/core/auth';
 import { getDataset, isDatasetArchived, archiveDataset, unarchiveDataset, deleteDataset, renameDataset } from '@/lib/data/store';
@@ -13,19 +15,14 @@ import { firstOmCatalogFor, omSoftDeleteForConnection, omReactivateForConnection
 export const dynamic = 'force-dynamic';
 
 /** One logical dataset, opened as its Bronze→Silver→Gold stepper. */
-export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requirePrincipal();
-    const { id } = await ctx.params;
-    const dataset = getDataset(id, user);
-    // `archived` is a record-level flag (not in the yaml-derived Dataset), so fold it
-    // in here — the detail view needs it to offer Restore instead of Archive.
-    const archived = isDatasetArchived(id, user);
-    return NextResponse.json({ dataset: { ...dataset, archived }, stages: stepperStages(dataset) });
-  } catch (e) {
-    return errorResponse(e);
-  }
-}
+export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
+  const { id } = params;
+  const dataset = getDataset(id, user);
+  // `archived` is a record-level flag (not in the yaml-derived Dataset), so fold it
+  // in here — the detail view needs it to offer Restore instead of Archive.
+  const archived = isDatasetArchived(id, user);
+  return NextResponse.json({ dataset: { ...dataset, archived }, stages: stepperStages(dataset) });
+}, { gate: requirePrincipal as () => Promise<CurrentUser> });
 
 /**
  * POST → dataset lifecycle: `archive` (reversible soft-hide) or `unarchive`.
@@ -35,6 +32,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
  * Best-effort OM soft-delete / reactivation fires AFTER the OS archive succeeds.
  * An unreachable OM or an untested OM version is silently swallowed — the OS
  * archive/restore is authoritative and NEVER blocked by an OM error.
+ *
+ * SKIP: uses Promise.all([requireUser(), requirePrincipal()]) — two parallel gates.
  */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
@@ -82,14 +81,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
  * best-effort AS the caller. A table the engine couldn't drop is reported as
  * `physical.orphaned` — the delete stands, the leftover is never silent.
  */
-export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requirePrincipal();
-    const { id } = await ctx.params;
-    const dataset = deleteDataset(id, user); // throws 403/409 → nothing is dropped
-    const physical = await dropPhysicalTables(dataset, user, executeRun);
-    return NextResponse.json({ ok: true, physical });
-  } catch (e) {
-    return errorResponse(e);
-  }
-}
+export const DELETE = withRoute<{ id: string }>(async ({ user, params }) => {
+  const { id } = params;
+  const dataset = deleteDataset(id, user); // throws 403/409 → nothing is dropped
+  const physical = await dropPhysicalTables(dataset, user, executeRun);
+  return NextResponse.json({ ok: true, physical });
+}, { gate: requirePrincipal as () => Promise<CurrentUser> });

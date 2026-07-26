@@ -202,14 +202,14 @@ export function buildDeploymentManifest(spec: RunnerSpec, namespace: string, dep
             },
           ],
           // Pod-level hardening. `runAsNonRoot` is intentionally OMITTED for now: the
-          // current scaffolds build non-root images, but apps deployed from an EARLIER
-          // (root nginx) scaffold still run `:latest` root images until CI rebuilds
-          // them, and enforcing runAsNonRoot would CrashLoop those on the next deploy.
-          // seccomp RuntimeDefault is safe for every image. FOLLOW-UP: once all live
-          // apps are rebuilt from the non-root scaffold, add
-          // `runAsNonRoot: true` here and tighten the namespace to PSS `restricted`.
+          // All live apps have been rebuilt from non-root scaffolds with NUMERIC
+          // image users (kubelet can only verify runAsNonRoot against a numeric
+          // uid), so the pod now asserts non-root and the namespace can run PSS
+          // `restricted`. A root image reaching this manifest fails admission —
+          // by design, not by accident.
           securityContext: {
             seccompProfile: { type: 'RuntimeDefault' },
+            runAsNonRoot: true,
           },
         },
       },

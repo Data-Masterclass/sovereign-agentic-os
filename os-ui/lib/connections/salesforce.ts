@@ -5,6 +5,7 @@ import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
 import type { Connection } from '@/lib/connections/schema';
 import { getSecretServerSide, isEgressAllowed } from '@/lib/infra/secrets';
+import { serviceBearerHeader } from '@/lib/infra/service-bearer';
 import { deleteBatchSql, type SyncTarget } from '@/lib/data/sync-sql';
 import type { ExecuteIdentity } from '@/lib/infra/governed';
 import { config } from '@/lib/core/config';
@@ -350,7 +351,7 @@ async function postIngestRows(
 ): Promise<void> {
   const res = await fetchImpl(`${url}/ingest-rows`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    headers: { 'content-type': 'application/json', accept: 'application/json', ...serviceBearerHeader() },
     body: JSON.stringify(payload),
     cache: 'no-store',
   });

@@ -4,6 +4,7 @@
 import 'server-only';
 import { config } from '@/lib/core/config';
 import { cubeLoad, executeRun, queryRun } from '@/lib/infra/governed';
+import { serviceBearerHeader } from '@/lib/infra/service-bearer';
 import { listUsers as userRoster } from '@/lib/platform-admin/users';
 import { importDashboardBundle } from '@/lib/superset/client';
 import {
@@ -207,7 +208,7 @@ async function postIngest(input: { principal?: string; dataset: string; objectKe
     `${config.dataRunnerUrl}/ingest`,
     {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...serviceBearerHeader() },
       body: JSON.stringify({ principal: input.principal, dataset: input.dataset, objectKey: input.objectKey }),
     },
     60_000, // large files: DuckDB read + PyIceberg write can take a while.

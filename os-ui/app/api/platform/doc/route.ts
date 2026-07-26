@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
+import { withRoute } from '@/lib/core/route-server';
 import { requireAdmin } from '@/lib/core/auth';
 import { readComponentDoc } from '@/lib/core/componentDocs';
 
@@ -16,13 +17,7 @@ export const runtime = 'nodejs';
  * is sanitised to the alnum/-/_ alphabet so it can never walk out of the docs
  * directory. Rendered into the Components surface's side panel.
  */
-export async function GET(req: Request) {
-  try {
-    await requireAdmin();
-  } catch (e) {
-    const status = (e as { status?: number })?.status ?? 401;
-    return NextResponse.json({ error: (e as Error).message }, { status });
-  }
+export const GET = withRoute(async ({ req }) => {
   const url = new URL(req.url);
   const raw = (url.searchParams.get('id') ?? '').trim();
   const id = raw.replace(/[^a-zA-Z0-9_-]/g, '');
@@ -34,4 +29,4 @@ export async function GET(req: Request) {
     status: 200,
     headers: { 'content-type': 'text/markdown; charset=utf-8' },
   });
-}
+}, { gate: requireAdmin, defaultStatus: 401 });

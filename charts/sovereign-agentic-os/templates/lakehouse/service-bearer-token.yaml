@@ -1,0 +1,39 @@
+{{- if (.Values.serviceBearer).enabled }}
+{{- /*
+  Shared service-bearer Secret for the in-cluster data-plane calls
+  (os-ui -> query-tool + os-ui -> data-runner). Defense-in-depth behind the
+  NetworkPolicies: those services trust the principal/role/domains in the request
+  body and are only meant to be called by os-ui, so os-ui presents this bearer to
+  prove identity — network reach alone never equals identity.
+
+  Rendered ONLY when serviceBearer.enabled is true (opt-in, nil-safe): when the key
+  is absent/false NO Secret exists and SERVICE_BEARER_TOKEN is wired nowhere, so
+  everything behaves exactly as today (services skip the check; os-ui sends no header).
+
+  Resolution order (mirrors os-ui-session; no secret is committed to git):
+    1. an explicit `serviceBearer.token` (operator-provided / ExternalSecret), else
+    2. the value already stored in this Secret (preserved across `helm upgrade`
+       via `lookup`), else
+    3. a freshly generated 48-char random value on first install.
+
+  GITOPS CAVEAT: `lookup` returns empty under Argo CD / Flux / `helm template`, so
+  set `serviceBearer.token` explicitly (an ExternalSecret is ideal) for those.
+*/}}
+{{- $name := "service-bearer-token" }}
+{{- $existing := (lookup "v1" "Secret" .Release.Namespace $name) }}
+{{- $current := "" }}
+{{- if $existing }}{{ $current = (index $existing.data "SERVICE_BEARER_TOKEN" | b64dec) }}{{- end }}
+{{- $secret := .Values.serviceBearer.token | default $current | default (randAlphaNum 48) }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/resource-policy": keep
+type: Opaque
+stringData:
+  SERVICE_BEARER_TOKEN: {{ $secret | quote }}
+{{- end }}

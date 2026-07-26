@@ -3,18 +3,28 @@
  */
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/core/config';
-import { requireUser } from '@/lib/core/auth';
-import { errorResponse } from '@/lib/data/server';
-import { shapeUsage, type RawActivity, type RawSpend } from '@/lib/monitoring/gateway-usage';
+import { withRoute } from '@/lib/core/route-server';
+import { tenantRuns } from '@/lib/monitoring/adapters/agent-telemetry';
+import {
+  shapeActivity,
+  weeklyRunSpend,
+  type GatewayUsage,
+  type RawActivity,
+} from '@/lib/monitoring/gateway-usage';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * LLM Gateway usage (read-only, ALL users). Reads LiteLLM's TENANT-aggregate
- * endpoints server-side with the master key (which NEVER leaves this process)
- * and returns a key-free summary: total requests + tokens, total spend, and the
- * budget envelope. No per-user data, no keys — the browser sees only the shaped
- * `usage` object. Requires an OS session (401 for anon).
+ * LLM Gateway usage (read-only, ALL users). Two honest sources, shaped server-side:
+ *   • requests + tokens: LiteLLM `/global/activity` (the master key NEVER leaves
+ *     this process) — LiteLLM meters these regardless of pricing. `activity: null`
+ *     when the gateway did not answer (the tab renders "—", not a fake 0).
+ *   • spend (7 days, EUR): the OS's own run-summary traces via `tenantRuns` — the
+ *     SAME sources and run-time EUR pricing the Monitoring tiles use, so the two
+ *     tabs agree. NOT LiteLLM `/global/spend`, which meters $0 forever for
+ *     self-hosted routes absent from LiteLLM's price map.
+ * No per-user data, no keys — the browser sees only the shaped `usage` object.
+ * Requires an OS session (401 for anon).
  */
 async function getJson<T>(path: string): Promise<T | null> {
   try {
@@ -29,36 +39,29 @@ async function getJson<T>(path: string): Promise<T | null> {
   }
 }
 
-export async function GET() {
-  try {
-    await requireUser();
-  } catch (e) {
-    return errorResponse(e);
-  }
-
-  // Tenant totals (requests + tokens) and total spend. Both fail soft to null.
-  // `/global/activity` REQUIRES a start_date/end_date (a bare call 400s) — pass a
-  // rolling 30-day window (YYYY-MM-DD, UTC).
+export const GET = withRoute(async () => {
+  // Tenant activity totals — fail soft to null. `/global/activity` REQUIRES a
+  // start_date/end_date (a bare call 400s) — pass a rolling 30-day window
+  // (YYYY-MM-DD, UTC).
   const iso = (d: Date) => d.toISOString().slice(0, 10);
-  const end = new Date();
-  const start = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const nowMs = Date.now();
+  const end = new Date(nowMs);
+  const start = new Date(nowMs - 30 * 24 * 60 * 60 * 1000);
   const activity = await getJson<RawActivity>(
     `/global/activity?start_date=${iso(start)}&end_date=${iso(end)}`,
   );
-  const spend = await getJson<RawSpend>('/global/spend');
 
-  if (activity == null && spend == null) {
-    return NextResponse.json(
-      { error: 'Could not reach the LiteLLM gateway for usage.' },
-      { status: 502 },
-    );
-  }
+  // 7-day tenant spend from the run-summary traces (Langfuse + in-process ring).
+  const { runs, langfuseReachable } = await tenantRuns(nowMs);
+  const weekly = weeklyRunSpend(runs, nowMs);
+  // With Langfuse down, ring runs still prove telemetry; down + empty ⇒ unknown.
+  const telemetryOk = langfuseReachable || runs.length > 0;
 
-  const usage = shapeUsage({
-    activity,
-    spend,
+  const usage: GatewayUsage = {
+    activity: activity == null ? null : shapeActivity(activity),
+    weekly: { ...weekly, telemetryOk },
     budgetUsd: config.litellmBudgetUsd,
     budgetWindow: config.litellmBudgetWindow,
-  });
+  };
   return NextResponse.json({ usage });
-}
+});

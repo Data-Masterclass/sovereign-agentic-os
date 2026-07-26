@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { getSystem, readFile, writeFile } from '@/lib/agents/store';
 import { serializeSystem, SystemError, type System } from '@/lib/agents/system-schema';
 import { applyInstruction, scaffoldSystem, type InstructionResult } from '@/lib/agents/assistant';
@@ -38,34 +38,24 @@ async function resolve(system: System, instruction: string, role: Role): Promise
   }
 }
 
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
 /**
  * POST → the agent-system helper. It edits the SAME system.yaml the canvas/Monaco
  * edit (via the store's writeFile), so the result is identical to the manual path
  * and a subsequent Build runs the same orchestrator. No separate code path.
  */
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id } = await ctx.params;
-    const body = await req.json().catch(() => ({}));
-    const instruction = typeof body.instruction === 'string' ? body.instruction : '';
-    if (!instruction.trim()) return NextResponse.json({ error: 'An instruction is required.' }, { status: 400 });
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }) => {
+  const { id } = params;
+  const instruction = typeof body.instruction === 'string' ? body.instruction : '';
+  if (!instruction.trim()) return NextResponse.json({ error: 'An instruction is required.' }, { status: 400 });
 
-    const view = getSystem(id, user);
-    const { system, summary } = await resolve(view.system, instruction, user.role);
-    const yaml = serializeSystem(system);
+  const view = getSystem(id, user);
+  const { system, summary } = await resolve(view.system, instruction, user.role);
+  const yaml = serializeSystem(system);
 
-    // Commit through the same whitelisted, sha-checked file write.
-    const current = readFile(id, user, 'system.yaml');
-    writeFile(id, user, { path: 'system.yaml', content: yaml, sha: current.sha });
+  // Commit through the same whitelisted, sha-checked file write.
+  const current = readFile(id, user, 'system.yaml');
+  writeFile(id, user, { path: 'system.yaml', content: yaml, sha: current.sha });
 
-    return NextResponse.json({ summary, system });
-  } catch (e) {
-    return fail(e);
-  }
-}
+  return NextResponse.json({ summary, system });
+}, { parse: true, defaultStatus: 500 });

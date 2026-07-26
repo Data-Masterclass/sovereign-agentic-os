@@ -243,6 +243,10 @@ spec:
                   key: token
             - name: QUERY_TOOL_URL
               value: {{ $u.queryToolUrl | quote }}
+            # Shared service bearer the os-ui presents to query-tool + data-runner
+            # (defense-in-depth behind the NetworkPolicies). Rendered ONLY when
+            # serviceBearer.enabled — nil-safe: absent => no header, services skip check.
+            {{- include "soa.serviceBearerEnv" . | nindent 12 }}
             {{- if .Values.softwareRunner.enabled }}
             # ---- Software live-app runner (Software tab). The os-ui provisions a
             # real Deployment+Service+Ingress per built app into softwareRunner.namespace

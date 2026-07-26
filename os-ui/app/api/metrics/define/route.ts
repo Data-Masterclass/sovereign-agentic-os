@@ -2,7 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal, errorResponse } from '@/lib/data/server';
+import { requirePrincipal } from '@/lib/data/server';
+import { withRoute } from '@/lib/core/route-server';
+import type { CurrentUser } from '@/lib/core/auth';
 import { defineMeasure, getDataset } from '@/lib/data/store';
 import { scaffoldCubeYaml } from '@/lib/data/metrics';
 import { delegatedToken } from '@/lib/infra/identity-server';
@@ -22,41 +24,35 @@ export const dynamic = 'force-dynamic';
  *      a non-Gold/non-governed dataset, surfacing "promote it in Data first");
  *   4. run the metric Build (cube → resolve → explorer consistency), LIVE or offline-mock.
  */
-export async function POST(req: Request) {
-  try {
-    const user = await requirePrincipal();
-    const body = (await req.json().catch(() => ({}))) as { datasetId?: string; form?: MetricForm; agent?: MetricForm };
-    const datasetId = (body.datasetId ?? '').trim();
-    if (!datasetId) return NextResponse.json({ error: 'datasetId is required' }, { status: 400 });
-    if (!body.form) return NextResponse.json({ error: 'a metric form is required' }, { status: 400 });
+export const POST = withRoute<Record<string, string>, { datasetId?: string; form?: MetricForm; agent?: MetricForm }>(async ({ user, body }) => {
+  const datasetId = (body.datasetId ?? '').trim();
+  if (!datasetId) return NextResponse.json({ error: 'datasetId is required' }, { status: 400 });
+  if (!body.form) return NextResponse.json({ error: 'a metric form is required' }, { status: 400 });
 
-    const measure = measureFromForm(body.form);
+  const measure = measureFromForm(body.form);
 
-    // Persist on the governed Gold dataset (throws a helpful 400 if it isn't ready).
-    const dataset = defineMeasure(datasetId, user, measure);
+  // Persist on the governed Gold dataset (throws a helpful 400 if it isn't ready).
+  const dataset = defineMeasure(datasetId, user, measure);
 
-    // Prove convergence: form vs the agent proposal vs the YAML now scaffolded with it.
-    const yaml = scaffoldCubeYaml(dataset);
-    const conv = convergence(dataset, { form: body.form, agent: body.agent ?? body.form, yaml });
-    // Sanity: the YAML round-trips to the same measure (defensive, never user-facing).
-    measureFromYaml(yaml, body.form.name);
+  // Prove convergence: form vs the agent proposal vs the YAML now scaffolded with it.
+  const yaml = scaffoldCubeYaml(dataset);
+  const conv = convergence(dataset, { form: body.form, agent: body.agent ?? body.form, yaml });
+  // Sanity: the YAML round-trips to the same measure (defensive, never user-facing).
+  measureFromYaml(yaml, body.form.name);
 
-    const { token } = await delegatedToken('domain');
-    const build = await buildMetric(dataset, measure, token);
+  const { token } = await delegatedToken('domain');
+  const build = await buildMetric(dataset, measure, token);
 
-    // The metric is ALREADY persisted (defineMeasure above). If the only reason the build
-    // isn't green is Cube sync lag (the sidecar hasn't pushed the measure yet), report it
-    // as pending (200) — the value converges within a few seconds — never a lost metric.
-    return NextResponse.json({
-      datasetId,
-      measure,
-      member: build.member,
-      convergence: conv,
-      build,
-      cube: yaml,
-      ...(build.pending ? { pending: true } : {}),
-    });
-  } catch (e) {
-    return errorResponse(e);
-  }
-}
+  // The metric is ALREADY persisted (defineMeasure above). If the only reason the build
+  // isn't green is Cube sync lag (the sidecar hasn't pushed the measure yet), report it
+  // as pending (200) — the value converges within a few seconds — never a lost metric.
+  return NextResponse.json({
+    datasetId,
+    measure,
+    member: build.member,
+    convergence: conv,
+    build,
+    cube: yaml,
+    ...(build.pending ? { pending: true } : {}),
+  });
+}, { gate: requirePrincipal as () => Promise<CurrentUser>, parse: true });

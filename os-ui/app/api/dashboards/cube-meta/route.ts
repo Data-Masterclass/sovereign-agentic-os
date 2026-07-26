@@ -2,7 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal, errorResponse } from '@/lib/data/server';
+import { requirePrincipal } from '@/lib/data/server';
+import { withRoute } from '@/lib/core/route-server';
+import type { CurrentUser } from '@/lib/core/auth';
 import { cubeMeta } from '@/lib/infra/governed';
 import { listMetrics } from '@/lib/metrics/store';
 import { narrowCubeMeta } from '@/lib/dashboards/cube-meta';
@@ -17,14 +19,9 @@ export const dynamic = 'force-dynamic';
  * teaching flow), the narrowing falls back to a members-from-registry view so the builder
  * still works.
  */
-export async function GET() {
-  try {
-    const user = await requirePrincipal();
-    const groups = listMetrics(user);
-    const members = [...groups.mine, ...groups.domain, ...groups.marketplace].map((m) => m.member);
-    const meta = await cubeMeta();
-    return NextResponse.json({ views: narrowCubeMeta(members, meta) });
-  } catch (e) {
-    return errorResponse(e);
-  }
-}
+export const GET = withRoute(async ({ user }) => {
+  const groups = listMetrics(user);
+  const members = [...groups.mine, ...groups.domain, ...groups.marketplace].map((m) => m.member);
+  const meta = await cubeMeta();
+  return NextResponse.json({ views: narrowCubeMeta(members, meta) });
+}, { gate: requirePrincipal as () => Promise<CurrentUser> });

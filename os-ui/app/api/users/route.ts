@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
+import { withRoute } from '@/lib/core/route-server';
 import { requireAdmin } from '@/lib/core/auth';
 import { createUser, knownDomains, listUsers } from '@/lib/platform-admin/users';
 import { assessPasswordStrength } from '@/lib/core/password';
@@ -9,27 +10,18 @@ import { ROLES, type Role } from '@/lib/core/session';
 
 export const dynamic = 'force-dynamic';
 
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
 /** Admin: list users + the known domain set (for the create form). */
-export async function GET() {
-  try {
-    await requireAdmin();
-    const [users, domains] = await Promise.all([listUsers(), knownDomains()]);
-    return NextResponse.json({ users, domains });
-  } catch (e) {
-    return fail(e);
-  }
-}
+export const GET = withRoute(async () => {
+  const [users, domains] = await Promise.all([listUsers(), knownDomains()]);
+  return NextResponse.json({ users, domains });
+}, { gate: requireAdmin, defaultStatus: 500 });
 
 /** Admin: create a user assigned to one or more domains + a role. */
-export async function POST(req: Request) {
-  try {
-    await requireAdmin();
-    const body = await req.json();
+export const POST = withRoute(async ({ req }) => {
+    // Bare body read on purpose: an unparseable body throws the SyntaxError to
+    // the wrapper's catch → 500 with the parse-error message, exactly as before.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body: any = await req.json();
     const role = (ROLES.includes(body?.role) ? body.role : 'creator') as Role;
     const domains = Array.isArray(body?.domains) ? body.domains.map(String).filter(Boolean) : [];
     const password = String(body?.password ?? '');
@@ -49,7 +41,4 @@ export async function POST(req: Request) {
       role,
     });
     return NextResponse.json({ user }, { status: 201 });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { gate: requireAdmin, defaultStatus: 500 });

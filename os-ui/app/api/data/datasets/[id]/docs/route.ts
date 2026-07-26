@@ -2,7 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal, errorResponse } from '@/lib/data/server';
+import { withRoute } from '@/lib/core/route-server';
+import type { CurrentUser } from '@/lib/core/auth';
+import { requirePrincipal } from '@/lib/data/server';
 import { setDocs } from '@/lib/data/store';
 import { transparencyGate } from '@/lib/data/transparency';
 import type { ColumnDoc } from '@/lib/data';
@@ -14,14 +16,8 @@ export const dynamic = 'force-dynamic';
  * column descriptions into dataset.yaml, and returns the live transparency-gate
  * status so the UI can show exactly what is still missing before promotion.
  */
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requirePrincipal();
-    const { id } = await ctx.params;
-    const body = (await req.json().catch(() => ({}))) as { description?: string; columns?: ColumnDoc[] };
-    const dataset = setDocs(id, user, { description: body.description, columns: body.columns });
-    return NextResponse.json({ dataset, gate: transparencyGate(dataset) });
-  } catch (e) {
-    return errorResponse(e);
-  }
-}
+export const POST = withRoute<{ id: string }, { description?: string; columns?: ColumnDoc[] }>(async ({ user, params, body }) => {
+  const { id } = params;
+  const dataset = setDocs(id, user, { description: body.description, columns: body.columns });
+  return NextResponse.json({ dataset, gate: transparencyGate(dataset) });
+}, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });

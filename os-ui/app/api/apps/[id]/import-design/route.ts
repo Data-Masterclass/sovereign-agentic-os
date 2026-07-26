@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { getEditableAppForUser } from '@/lib/software/apps';
 import { commitToApp } from '@/lib/software/server';
 import { validateFrontendImport } from '@/lib/software/design-push';
@@ -42,36 +42,29 @@ async function fetchDesignFromUrl(url: string): Promise<{ ok: true; text: string
  *
  * Body: { code?: string, url?: string }.
  */
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id } = await ctx.params;
-    const app = await getEditableAppForUser(id, user);
-    const body = (await req.json().catch(() => ({}))) as { code?: string; url?: string };
+export const POST = withRoute<{ id: string }, { code?: string; url?: string }>(async ({ user, params, body }) => {
+  const { id } = params;
+  const app = await getEditableAppForUser(id, user);
 
-    let raw = String(body.code ?? '').trim();
-    if (!raw && body.url) {
-      const fetched = await fetchDesignFromUrl(String(body.url).trim());
-      if (!fetched.ok) return NextResponse.json({ error: fetched.reason }, { status: 400 });
-      raw = fetched.text;
-    }
-
-    const validated = validateFrontendImport(raw);
-    if (!validated.ok) return NextResponse.json({ error: validated.reason }, { status: 400 });
-
-    const { app: updated, step } = await commitToApp(
-      id,
-      { id: user.id },
-      validated.files,
-      `Seed frontend from Claude design (${app.name})`,
-    );
-    return NextResponse.json({
-      seeded: validated.files.map((f) => f.path),
-      mode: step.mode,
-      app: { id: updated.id, updatedAt: updated.updatedAt },
-    });
-  } catch (e) {
-    const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
+  let raw = String(body.code ?? '').trim();
+  if (!raw && body.url) {
+    const fetched = await fetchDesignFromUrl(String(body.url).trim());
+    if (!fetched.ok) return NextResponse.json({ error: fetched.reason }, { status: 400 });
+    raw = fetched.text;
   }
-}
+
+  const validated = validateFrontendImport(raw);
+  if (!validated.ok) return NextResponse.json({ error: validated.reason }, { status: 400 });
+
+  const { app: updated, step } = await commitToApp(
+    id,
+    { id: user.id },
+    validated.files,
+    `Seed frontend from Claude design (${app.name})`,
+  );
+  return NextResponse.json({
+    seeded: validated.files.map((f) => f.path),
+    mode: step.mode,
+    app: { id: updated.id, updatedAt: updated.updatedAt },
+  });
+}, { parse: true, defaultStatus: 500 });

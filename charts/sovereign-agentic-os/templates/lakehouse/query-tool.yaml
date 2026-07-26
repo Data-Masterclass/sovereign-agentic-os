@@ -48,6 +48,7 @@ spec:
             - name: HOME
               value: /tmp
             {{- include "soa.queryToolEnv" . | nindent 12 }}
+            {{- include "soa.serviceBearerEnv" . | nindent 12 }}
           ports:
             - { name: http, containerPort: 8000 }
           readinessProbe:

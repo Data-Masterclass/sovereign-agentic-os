@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { roleAtLeast } from '@/lib/core/session';
 import { getPersonalKnowledge, ensureHydrated } from '@/lib/knowledge/personal-store';
 import {
@@ -12,13 +12,6 @@ import {
 } from '@/lib/governance/ladder';
 
 export const dynamic = 'force-dynamic';
-
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
-type Params = { params: Promise<{ id: string }> };
 
 /**
  * Promote a personal ("My knowledge") entry along the governed ladder — the SAME
@@ -33,11 +26,8 @@ type Params = { params: Promise<{ id: string }> };
  *
  * The rung is derived from the entry's current tier — never a silent jump.
  */
-export async function POST(_req: Request, { params }: Params) {
-  try {
-    const user = await requireUser();
-    await ensureHydrated();
-    const { id } = await params;
+export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
+    const { id } = params;
     const entry = getPersonalKnowledge(id, user); // view-gate + current tier
 
     // Personal → Shared (rung 1). domain_admin+ one-shots; a creator/builder files a
@@ -62,7 +52,4 @@ export async function POST(_req: Request, { params }: Params) {
     }
 
     return NextResponse.json({ error: 'This knowledge is already certified.' }, { status: 409 });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { hydrate: ensureHydrated, defaultStatus: 500 });

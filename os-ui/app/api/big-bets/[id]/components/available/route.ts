@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { getBet } from '@/lib/bigbets/store';
 import { principal } from '@/lib/bigbets/server';
 import { sourceFor } from '@/lib/bigbets';
@@ -15,11 +15,6 @@ export const dynamic = 'force-dynamic';
 
 const TABS: Tab[] = ['data', 'metric', 'dashboard', 'software', 'agent', 'ml', 'knowledge', 'files', 'connection'];
 
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
 /**
  * GET → list artifacts the caller can see for a given tab, so the component
  * picker can browse and choose rather than paste a raw id.
@@ -29,10 +24,8 @@ function fail(e: unknown) {
  * the rest of the BigBets surface — never trust the client id; attachment is
  * still re-resolved server-side by the POST /components route).
  */
-export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id } = await ctx.params;
+export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
+    const { id } = params;
     const p = principal(user);
 
     // Scope gate: confirm the caller can view this bet.
@@ -60,7 +53,4 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
         visibility: a.visibility,
       })),
     });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { defaultStatus: 500 });

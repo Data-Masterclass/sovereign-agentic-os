@@ -2,6 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
+import { withRoute } from '@/lib/core/route-server';
+import type { CurrentUser } from '@/lib/core/auth';
 import { requirePrincipal, errorResponse } from '@/lib/files/server';
 import { listFiles, createFile, attachObject, objectKeyForAsset, type UploadInput } from '@/lib/files/store';
 import { putBlob } from '@/lib/files/object-store';
@@ -15,23 +17,21 @@ export const dynamic = 'force-dynamic';
 
 /** The file browser: GET lists the user's drive (mine/domain/marketplace + facets);
  *  POST uploads a new file into the governed object store (a private file at v1). */
-export async function GET(req: Request) {
-  try {
-    const user = await requirePrincipal();
-    // ?archived=1 additionally returns soft-archived files (their own section), so an
-    // archived file stays openable → its preview exposes Restore + Delete (OS-wide rule).
-    const includeArchived = new URL(req.url).searchParams.get('archived') === '1';
-    return NextResponse.json(listFiles(user, { includeArchived }));
-  } catch (e) {
-    return errorResponse(e);
-  }
-}
+export const GET = withRoute(async ({ user, req }) => {
+  // ?archived=1 additionally returns soft-archived files (their own section), so an
+  // archived file stays openable → its preview exposes Restore + Delete (OS-wide rule).
+  const includeArchived = new URL(req.url).searchParams.get('archived') === '1';
+  return NextResponse.json(listFiles(user, { includeArchived }));
+}, { gate: requirePrincipal as () => Promise<CurrentUser> });
 
 /** True when a file's bytes should also be kept as indexable extracted text. */
 function isTextLike(name: string, type: string): boolean {
   return /^text\//.test(type) || /json|csv|xml|markdown|yaml/.test(type) || /\.(txt|md|csv|tsv|json|log|xml|yaml|yml)$/i.test(name);
 }
 
+/**
+ * SKIP (POST): multipart/formData + raw arrayBuffer — binary upload route.
+ */
 export async function POST(req: Request) {
   try {
     const user = await requirePrincipal();

@@ -138,7 +138,7 @@ export default function DomainsPage() {
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>Domain</th><th>Owner</th><th>Template</th><th>ML layer</th><th></th></tr>
+              <tr><th>Domain</th><th>Owner</th><th>Template</th><th>Science layer</th><th></th></tr>
             </thead>
             <tbody>
               {domains.map((d) => (
@@ -191,6 +191,7 @@ export default function DomainsPage() {
                     <button
                       className={'switch' + (d.layers.ml ? ' on' : '')}
                       disabled={busy === d.id || d.archived}
+                      title={`${d.layers.ml ? 'Disable' : 'Enable'} the Science layer for this domain`}
                       onClick={() => patch(d, { op: 'layer', layer: 'ml', enabled: !d.layers.ml })}
                     >
                       <span className="switch-track"><span className="switch-thumb" /></span>

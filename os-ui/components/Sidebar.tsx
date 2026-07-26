@@ -25,8 +25,10 @@ export default function Sidebar() {
   }
 
   // Derive the visible tab groups once per render. filterTabGroups uses the
-  // machine-readable minRole on each tab — no string parsing, no edge cases.
-  const visibleGroups = filterTabGroups(TAB_GROUPS, user?.role ?? null);
+  // machine-readable minRole + requiresLayer on each tab — no string parsing,
+  // no edge cases. Layers are the ACTIVE domain's (from /api/auth/me); unknown
+  // layers fail open, so a missing record never hides navigation.
+  const visibleGroups = filterTabGroups(TAB_GROUPS, user?.role ?? null, user?.activeDomainLayers ?? null);
 
   function renderTab(tab: Tab) {
     if (!tab.href) {

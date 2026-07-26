@@ -3,8 +3,8 @@
  */
 import 'server-only';
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { ensureHydrated, getFolder, type Principal } from '@/lib/folders';
+import { withRoute } from '@/lib/core/route-server';
+import { ensureHydrated, getFolder } from '@/lib/folders';
 import { moveFolder, archiveFolder, restoreFolder, deleteFolder } from '@/lib/folders/folder-lifecycle';
 // Registering the adapters is a prerequisite for the member-item cascade.
 import '@/lib/folders/adapters';
@@ -25,17 +25,6 @@ import '@/lib/folders/adapters';
  */
 export const dynamic = 'force-dynamic';
 
-async function principal(): Promise<Principal> {
-  const u = await requireUser();
-  await ensureHydrated();
-  return { id: u.id, role: u.role, domains: u.domains };
-}
-
-function errorResponse(e: unknown): NextResponse {
-  const status = (e as { status?: number }).status ?? 400;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
 /** Resolve the tab a folder row belongs to (the adapter key for its cascade). */
 function tabOf(id: string): string {
   const node = getFolder(id);
@@ -47,48 +36,31 @@ function tabOf(id: string): string {
   return node.tab;
 }
 
-export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await principal();
-    const { id } = await ctx.params;
-    const body = (await req.json().catch(() => ({}))) as { path?: string };
-    if (!body.path || !String(body.path).trim()) {
-      return NextResponse.json({ error: 'a new path is required' }, { status: 400 });
-    }
-    const folder = moveFolder(user, tabOf(id), id, String(body.path));
-    return NextResponse.json({ folder });
-  } catch (e) {
-    return errorResponse(e);
+export const PATCH = withRoute<{ id: string }, { path?: string }>(async ({ user, params, body }) => {
+  const { id } = params;
+  if (!body.path || !String(body.path).trim()) {
+    return NextResponse.json({ error: 'a new path is required' }, { status: 400 });
   }
-}
+  const folder = moveFolder(user, tabOf(id), id, String(body.path));
+  return NextResponse.json({ folder });
+}, { parse: true, hydrate: ensureHydrated });
 
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await principal();
-    const { id } = await ctx.params;
-    const body = (await req.json().catch(() => ({}))) as { action?: string };
-    const tab = tabOf(id);
-    if (body.action === 'archive') {
-      const rows = archiveFolder(user, tab, id);
-      return NextResponse.json({ ok: true, archived: rows.map((r) => r.id) });
-    }
-    if (body.action === 'restore') {
-      const rows = restoreFolder(user, tab, id);
-      return NextResponse.json({ ok: true, restored: rows.map((r) => r.id) });
-    }
-    return NextResponse.json({ error: "action must be 'archive' or 'restore'" }, { status: 400 });
-  } catch (e) {
-    return errorResponse(e);
+export const POST = withRoute<{ id: string }, { action?: string }>(async ({ user, params, body }) => {
+  const { id } = params;
+  const tab = tabOf(id);
+  if (body.action === 'archive') {
+    const rows = archiveFolder(user, tab, id);
+    return NextResponse.json({ ok: true, archived: rows.map((r) => r.id) });
   }
-}
+  if (body.action === 'restore') {
+    const rows = restoreFolder(user, tab, id);
+    return NextResponse.json({ ok: true, restored: rows.map((r) => r.id) });
+  }
+  return NextResponse.json({ error: "action must be 'archive' or 'restore'" }, { status: 400 });
+}, { parse: true, hydrate: ensureHydrated });
 
-export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await principal();
-    const { id } = await ctx.params;
-    const result = deleteFolder(user, tabOf(id), id);
-    return NextResponse.json({ ok: true, ...result });
-  } catch (e) {
-    return errorResponse(e);
-  }
-}
+export const DELETE = withRoute<{ id: string }>(async ({ user, params }) => {
+  const { id } = params;
+  const result = deleteFolder(user, tabOf(id), id);
+  return NextResponse.json({ ok: true, ...result });
+}, { hydrate: ensureHydrated });

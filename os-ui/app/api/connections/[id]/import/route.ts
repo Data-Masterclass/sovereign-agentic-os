@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { importWarehouseTable } from '@/lib/connections';
 
 export const dynamic = 'force-dynamic';
@@ -14,16 +14,13 @@ export const dynamic = 'force-dynamic';
  * caller (re-gated in the lib). The response carries `datasetId` so the UI opens
  * the new dataset; it then refines Bronze → Silver → Gold like any other.
  */
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id } = await ctx.params;
-    const body = (await req.json().catch(() => ({}))) as {
+export const POST = withRoute<{ id: string }, {
       schema?: string;
       table?: string;
       name?: string;
       targetDomain?: string;
-    };
+    }>(async ({ user, params, body }) => {
+    const { id } = params;
     const schema = (body.schema ?? '').trim();
     const table = (body.table ?? '').trim();
     if (!schema || !table) {
@@ -36,8 +33,4 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       targetDomain: body.targetDomain,
     });
     return NextResponse.json(result);
-  } catch (e) {
-    const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
-  }
-}
+}, { parse: true, defaultStatus: 500 });

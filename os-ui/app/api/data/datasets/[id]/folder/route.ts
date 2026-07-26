@@ -2,7 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal, errorResponse } from '@/lib/data/server';
+import { withRoute } from '@/lib/core/route-server';
+import type { CurrentUser } from '@/lib/core/auth';
+import { requirePrincipal } from '@/lib/data/server';
 import { moveDataset } from '@/lib/data/store';
 
 export const dynamic = 'force-dynamic';
@@ -16,17 +18,11 @@ export const dynamic = 'force-dynamic';
  *
  *   POST /api/data/datasets/:id/folder  { folder }  → move the dataset
  */
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requirePrincipal();
-    const { id } = await ctx.params;
-    const body = (await req.json().catch(() => ({}))) as { folder?: string };
-    if (typeof body.folder !== 'string') {
-      return NextResponse.json({ error: 'a folder path is required' }, { status: 400 });
-    }
-    const dataset = moveDataset(id, user, body.folder); // 403 → nothing written
-    return NextResponse.json({ dataset });
-  } catch (e) {
-    return errorResponse(e);
+export const POST = withRoute<{ id: string }, { folder?: string }>(async ({ user, params, body }) => {
+  const { id } = params;
+  if (typeof body.folder !== 'string') {
+    return NextResponse.json({ error: 'a folder path is required' }, { status: 400 });
   }
-}
+  const dataset = moveDataset(id, user, body.folder); // 403 → nothing written
+  return NextResponse.json({ dataset });
+}, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });

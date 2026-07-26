@@ -15,6 +15,7 @@ Exposed as an MCP server (streamable-http at /mcp) for the gateway, plus plain
 HTTP /query + /health for direct use and probes.
 """
 import asyncio
+import hmac
 import os
 
 from mcp.server.fastmcp import FastMCP
@@ -40,6 +41,24 @@ TRINO_SCHEMA = os.environ.get("TRINO_SCHEMA", "sales")
 # The Trino session user the OPA row/column plugin governs. The gateway authorizes
 # tool access per agent key; the query runs as this governed domain principal.
 TRINO_USER = os.environ.get("TRINO_USER", "query-agent")
+
+# Service-to-service bearer (defense-in-depth). This process trusts the
+# principal/role/domains in the request body and is only meant to be called by os-ui;
+# the NetworkPolicies are the primary boundary, but network reach alone must not equal
+# identity. When SERVICE_BEARER_TOKEN is set, every data endpoint requires a matching
+# `Authorization: Bearer <token>` (constant-time compared). When UNSET, the check is
+# skipped (fail-open by design — see startup warning). /health is always open.
+SERVICE_BEARER_TOKEN = os.environ.get("SERVICE_BEARER_TOKEN", "")
+
+
+def _bearer_ok(req: Request) -> bool:
+    """Constant-time check of the Authorization bearer against SERVICE_BEARER_TOKEN.
+    Returns True immediately when the token is unset (auth disabled)."""
+    if not SERVICE_BEARER_TOKEN:
+        return True
+    header = req.headers.get("authorization", "")
+    got = header[7:] if header[:7].lower() == "bearer " else ""
+    return bool(got) and hmac.compare_digest(got, SERVICE_BEARER_TOKEN)
 
 
 def _connect(principal: str | None = None, schema: str | None = None):
@@ -116,6 +135,8 @@ async def health(_req: Request):
 
 @mcp.custom_route("/query", methods=["POST"])
 async def http_query(req: Request):
+    if not _bearer_ok(req):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await req.json()
     sql = body.get("sql", "")
     if not sql:
@@ -147,6 +168,8 @@ async def http_execute(req: Request):
     target-schema/role check (see execute_guard). The data-confidentiality boundary is
     the Trino session user (principal): even a spoofed identity field cannot read past
     what that principal is entitled to, because the CTAS reads run under Trino->OPA."""
+    if not _bearer_ok(req):
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
     body = await req.json()
     sql = body.get("sql", "")
     principal = body.get("principal")
@@ -175,7 +198,10 @@ async def http_execute(req: Request):
 
 
 if __name__ == "__main__":
+    if not SERVICE_BEARER_TOKEN:
+        print("[query] WARNING: SERVICE_BEARER_TOKEN unset — service-bearer auth "
+              "DISABLED (fail-open; NetworkPolicy is the only boundary).")
     print(f"[query] Trino MCP (/mcp) + HTTP (/health,/query) on :{PORT} "
           f"(trino={TRINO_HOST}:{TRINO_PORT}, catalog={TRINO_CATALOG}, "
-          f"schema={TRINO_SCHEMA})")
+          f"schema={TRINO_SCHEMA}, bearerAuth={'on' if SERVICE_BEARER_TOKEN else 'off'})")
     mcp.run(transport="streamable-http")

@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { addComponent } from '@/lib/bigbets/store';
 import { actor } from '@/lib/bigbets/server';
 import { type Tab } from '@/lib/bigbets';
@@ -11,21 +11,14 @@ export const dynamic = 'force-dynamic';
 
 const TABS: Tab[] = ['data', 'metric', 'dashboard', 'software', 'agent', 'ml', 'knowledge', 'files', 'connection'];
 
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
 /**
  * POST → add a component to the bet. Either links an existing artifact (`artifactId`)
  * or scaffolds a new one via the tab's governed create flow (`scaffold:{title}`),
  * tagging it with the bet id. Reuse, never fork.
  */
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id } = await ctx.params;
-    const b = await req.json().catch(() => ({}));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const POST = withRoute<{ id: string }, any>(async ({ user, params, body: b }) => {
+    const { id } = params;
     if (!TABS.includes(b.tab)) return NextResponse.json({ error: `tab must be one of ${TABS.join(', ')}` }, { status: 400 });
     if (!b.plannedReady) return NextResponse.json({ error: 'plannedReady (yyyy-mm-dd) is required' }, { status: 400 });
     const { ref } = addComponent(id, actor(user), {
@@ -38,7 +31,4 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       weight: typeof b.weight === 'number' ? b.weight : undefined,
     });
     return NextResponse.json({ refId: ref.id, artifactId: ref.artifactId });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { parse: true, defaultStatus: 500 });

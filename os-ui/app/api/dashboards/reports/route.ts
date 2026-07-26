@@ -2,7 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal, errorResponse } from '@/lib/data/server';
+import { requirePrincipal } from '@/lib/data/server';
+import { withRoute } from '@/lib/core/route-server';
+import type { CurrentUser } from '@/lib/core/auth';
 import { roleAtLeast } from '@/lib/core/session';
 import { getPublicUser } from '@/lib/platform-admin/users';
 import { type ScheduledReport, sendReport } from '@/lib/dashboards/reports';
@@ -16,19 +18,13 @@ export const dynamic = 'force-dynamic';
  * when a mailer is configured, else persists an in-app notification (never a no-op).
  * Governance: only a Builder+ may trigger a send (same rank that may promote/build).
  */
-export async function POST(req: Request) {
-  try {
-    const user = await requirePrincipal();
-    if (!roleAtLeast(user.role, 'builder')) {
-      return NextResponse.json({ error: 'not permitted to send reports' }, { status: 403 });
-    }
-    const body = (await req.json().catch(() => ({}))) as { report?: ScheduledReport };
-    if (!body.report) return NextResponse.json({ error: 'a report is required' }, { status: 400 });
-    const { report, send } = sendReport(body.report, Date.now());
-    const email = (await getPublicUser(user.id))?.email;
-    const delivery = await deliverReport(report, { userId: user.id, email }, send.sentAt);
-    return NextResponse.json({ ok: true, report, send, delivery });
-  } catch (e) {
-    return errorResponse(e);
+export const POST = withRoute<Record<string, string>, { report?: ScheduledReport }>(async ({ user, body }) => {
+  if (!roleAtLeast(user.role, 'builder')) {
+    return NextResponse.json({ error: 'not permitted to send reports' }, { status: 403 });
   }
-}
+  if (!body.report) return NextResponse.json({ error: 'a report is required' }, { status: 400 });
+  const { report, send } = sendReport(body.report, Date.now());
+  const email = (await getPublicUser(user.id))?.email;
+  const delivery = await deliverReport(report, { userId: user.id, email }, send.sentAt);
+  return NextResponse.json({ ok: true, report, send, delivery });
+}, { gate: requirePrincipal as () => Promise<CurrentUser>, parse: true });

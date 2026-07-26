@@ -3,6 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { decide, getApproval, listApprovals } from '@/lib/governance/approvals';
 import { curateFact, proposeFact } from '@/lib/agents/agent-memory';
 import { trace } from '@/lib/infra/agent-governed';
@@ -28,18 +29,13 @@ export const dynamic = 'force-dynamic';
  *   POST { id, decision } -> approve/reject. Approving APPLIES the write
  *     (attributed to the agent + the approving human) and logs it to Langfuse.
  */
-export async function GET() {
-  try {
-    await requireUser();
-  } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
-  }
+export const GET = withRoute(async () => {
   const all = listApprovals();
   return NextResponse.json({
     approvals: all,
     pending: all.filter((a) => a.status === 'pending').length,
   });
-}
+}, { defaultStatus: 401 });
 
 export async function POST(req: Request) {
   let user;

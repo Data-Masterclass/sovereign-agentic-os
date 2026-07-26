@@ -2,20 +2,13 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { roleAtLeast } from '@/lib/core/session';
 import { getWorkflow, getDomainKnowledge } from '@/lib/knowledge/store';
 import { indexWorkflow, indexDomain } from '@/lib/knowledge/index-pipeline';
 import { promoteThroughSeam, fileArtifactPromotion, fileArtifactCertification } from '@/lib/governance/ladder';
 
 export const dynamic = 'force-dynamic';
-
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
-type Params = { params: Promise<{ id: string }> };
 
 /**
  * POST → publish (draft→live, Personal→Shared) or certify (Shared→Marketplace).
@@ -27,11 +20,8 @@ type Params = { params: Promise<{ id: string }> };
  * one shot; a creator (owner without the gate) FILES request_promotion for a
  * Builder to approve — the same ladder every artifact rides.
  */
-export async function POST(req: Request, { params }: Params) {
-  try {
-    const user = await requireUser();
-    const { id } = await params;
-    const body = (await req.json().catch(() => ({}))) as { action?: 'publish' | 'certify' };
+export const POST = withRoute<{ id: string }, { action?: 'publish' | 'certify' }>(async ({ user, params, body }) => {
+    const { id } = params;
     // Honour the caller's INTENT: publish→rung 1, certify→rung 2. A mismatch with
     // the workflow's tier is a typed conflict, never a silent tier jump.
     const rung = body.action === 'certify' ? 'certify' : 'promote';
@@ -64,7 +54,4 @@ export async function POST(req: Request, { params }: Params) {
       publishedAt: rec.publishedAt,
       publishedBy: rec.publishedBy,
     });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { parse: true, defaultStatus: 500 });

@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { config } from '@/lib/core/config';
 import { realForgejoAdmin } from '@/lib/git/live-clients';
 import { mintToken } from '@/lib/git/token-mint';
@@ -44,15 +44,7 @@ export const dynamic = 'force-dynamic';
  * `git push` with the minted token need a live Forgejo (kind/STACKIT).
  */
 
-export async function POST(req: Request) {
-  let user;
-  try {
-    user = await requireUser(); // 401 when anon (never mints for an unauthenticated caller)
-  } catch (e) {
-    const status = (e as { status?: number })?.status ?? 401;
-    return NextResponse.json({ error: (e as Error).message }, { status });
-  }
-
+export const POST = withRoute<Record<string, string>, { repos?: unknown }>(async ({ user, body }) => {
   if (!config.gitTokenMintEnabled) {
     return NextResponse.json(
       { error: 'Git token mint is disabled (GIT_TOKEN_MINT_ENABLED is not true).' },
@@ -60,7 +52,6 @@ export async function POST(req: Request) {
     );
   }
 
-  const body = (await req.json().catch(() => ({}))) as { repos?: unknown };
   const repos = Array.isArray(body.repos) ? body.repos.map(String) : undefined;
 
   // The desktop git helper clones/pushes against the BROWSER-reachable Forgejo host
@@ -82,4 +73,4 @@ export async function POST(req: Request) {
     // never the admin credential or a token value.
     return NextResponse.json({ error: (e as Error).message }, { status: 502 });
   }
-}
+}, { parse: true, defaultStatus: 401 });

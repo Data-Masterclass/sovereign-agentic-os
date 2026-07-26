@@ -13,6 +13,46 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.1] — 2026-07-26
+
+Deferred-hardening release: everything the 0.6.0 audit consciously postponed,
+plus same-day fixes for user-reported issues.
+
+### Security
+- query-tool and data-runner accept an optional shared service-bearer token
+  (chart-generated Secret, constant-time check, opt-in `serviceBearer.enabled`,
+  health endpoints open) — network reach alone no longer equals identity.
+- User-app pod manifests now assert `runAsNonRoot`; scaffolds emit numeric
+  image UIDs (kubelet can't verify names); the live app was rebuilt through
+  the governed pipeline and the apps namespace targets Pod Security
+  `restricted`.
+### Changed
+- ~276 API route handlers migrated onto one `withRoute()` wrapper (auth →
+  parse → error envelope; per-route status defaults preserved byte-identically;
+  ~2,900 lines of hand-rolled boilerplate removed). The security tripwire now
+  sweeps the whole route tree: every route must be guarded or on an explicit
+  unauthenticated-by-design list. Streaming/OAuth/auth-boundary/protocol routes
+  deliberately stay hand-rolled.
+- `globals.css` (6,629 lines) split into `app/styles/*` with byte-identical
+  emitted CSS (proven by build-output diff).
+- Science tab now honors the domain's Science layer (hidden when explicitly
+  off; fail-open on unknown); "ML layer" renamed to "Science layer" in the UI
+  (internal keys unchanged).
+### Fixed
+- LLM Gateway "Budget (weekly)" no longer shows a fake $0: it reports real
+  7-day EUR spend from the same traces and prices as Monitoring, with honest
+  states for unpriced models, unreachable telemetry, and unset budgets.
+- Embedded tools: consoles whose SPAs load root-absolute assets (Langfuse and
+  Dagster are Next.js apps whose `/_next/*` chunks collided with os-ui's own
+  `/_next` behind the `/tools/<key>` prefix and 404'd → blank iframe under the
+  overlay header) no longer render an empty frame. The tool registry now carries
+  per-tool `ownTab` metadata; such tools (Langfuse, Superset, Dagster,
+  Featureform, and WebSocket-bound JupyterHub — previously raw 501 JSON) show
+  the Tier-2 "opens in its own tab" card with the tool's own console link.
+  Verified-working embeds (MLflow, Cube — relative asset URLs — plus Forgejo and
+  LiteLLM) are untouched. New `GET /api/tools/[tool]` reports the embed mode,
+  guarded identically to the proxy route (session + per-tool role gate).
+
 ## [os-ui 0.6.0] — 2026-07-26
 
 Whole-codebase audit + refactor release (six parallel audits: architecture, security,

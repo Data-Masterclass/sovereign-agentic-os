@@ -3,14 +3,13 @@
  */
 import 'server-only';
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import {
   ensureHydrated,
   listFolders,
   createFolder,
   type FolderTab,
   type FolderScope,
-  type Principal,
 } from '@/lib/folders';
 
 /**
@@ -26,17 +25,6 @@ export const dynamic = 'force-dynamic';
 const TABS: FolderTab[] = ['files', 'knowledge', 'data', 'metrics'];
 const SCOPES: FolderScope[] = ['personal', 'domain'];
 
-async function principal(): Promise<Principal> {
-  const u = await requireUser();
-  await ensureHydrated();
-  return { id: u.id, role: u.role, domains: u.domains };
-}
-
-function errorResponse(e: unknown): NextResponse {
-  const status = (e as { status?: number }).status ?? 400;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
 function readTab(v: string | null): FolderTab {
   return TABS.includes(v as FolderTab) ? (v as FolderTab) : 'files';
 }
@@ -44,39 +32,28 @@ function readScope(v: string | null): FolderScope {
   return SCOPES.includes(v as FolderScope) ? (v as FolderScope) : 'personal';
 }
 
-export async function GET(req: Request) {
-  try {
-    const user = await principal();
-    const url = new URL(req.url);
-    const tab = readTab(url.searchParams.get('tab'));
-    const scope = readScope(url.searchParams.get('scope'));
-    const includeArchived = url.searchParams.get('archived') === '1';
-    return NextResponse.json({ folders: listFolders(user, tab, scope, { includeArchived }) });
-  } catch (e) {
-    return errorResponse(e);
-  }
-}
+export const GET = withRoute(async ({ user, req }) => {
+  const url = new URL(req.url);
+  const tab = readTab(url.searchParams.get('tab'));
+  const scope = readScope(url.searchParams.get('scope'));
+  const includeArchived = url.searchParams.get('archived') === '1';
+  return NextResponse.json({ folders: listFolders(user, tab, scope, { includeArchived }) });
+}, { hydrate: ensureHydrated });
 
-export async function POST(req: Request) {
-  try {
-    const user = await principal();
-    const body = (await req.json().catch(() => ({}))) as {
-      tab?: string;
-      scope?: string;
-      path?: string;
-      domain?: string;
-    };
-    if (!body.path || !String(body.path).trim()) {
-      return NextResponse.json({ error: 'a folder needs a path' }, { status: 400 });
-    }
-    const folder = createFolder(user, {
-      tab: readTab(body.tab ?? null),
-      scope: readScope(body.scope ?? null),
-      path: String(body.path),
-      domain: body.domain,
-    });
-    return NextResponse.json({ folder }, { status: 201 });
-  } catch (e) {
-    return errorResponse(e);
+export const POST = withRoute<Record<string, string>, {
+  tab?: string;
+  scope?: string;
+  path?: string;
+  domain?: string;
+}>(async ({ user, body }) => {
+  if (!body.path || !String(body.path).trim()) {
+    return NextResponse.json({ error: 'a folder needs a path' }, { status: 400 });
   }
-}
+  const folder = createFolder(user, {
+    tab: readTab(body.tab ?? null),
+    scope: readScope(body.scope ?? null),
+    path: String(body.path),
+    domain: body.domain,
+  });
+  return NextResponse.json({ folder }, { status: 201 });
+}, { parse: true, hydrate: ensureHydrated });

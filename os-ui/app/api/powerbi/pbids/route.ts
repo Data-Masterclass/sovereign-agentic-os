@@ -2,8 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { errorResponse } from '@/lib/data/server';
+import { withRoute } from '@/lib/core/route-server';
 import { config } from '@/lib/core/config';
 import { buildPbids, pbidsToString, pbidsFilename } from '@/lib/powerbi/pbids';
 
@@ -35,45 +34,40 @@ export const dynamic = 'force-dynamic';
  *
  * ?domain=<id> — selects which of the caller's domains to generate for; defaults to first.
  */
-export async function GET(req: Request) {
-  try {
-    const user = await requireUser();
-    const requested = new URL(req.url).searchParams.get('domain');
-    const domain = requested ?? user.domains[0];
+export const GET = withRoute(async ({ user, req }) => {
+  const requested = new URL(req.url).searchParams.get('domain');
+  const domain = requested ?? user.domains[0];
 
-    if (!domain) {
-      const err = new Error('No domain in scope') as Error & { status?: number };
-      err.status = 400;
-      throw err;
-    }
-    if (!user.domains.includes(domain)) {
-      const err = new Error(`Not a member of domain '${domain}'`) as Error & { status?: number };
-      err.status = 403;
-      throw err;
-    }
-    if (!config.cubeSqlApiEnabled) {
-      const err = new Error(
-        'The Cube SQL API is not enabled on this instance. Ask your platform admin to set CUBE_SQL_API_ENABLED=true and configure an external ingress for the SQL API port.',
-      ) as Error & { status?: number };
-      err.status = 503;
-      throw err;
-    }
-
-    const pbids = buildPbids(domain, config.cubeSqlHost, config.cubeSqlPort);
-    const body = pbidsToString(pbids);
-    const filename = pbidsFilename(domain);
-
-    return new NextResponse(body, {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        // The `.pbids` extension triggers Power BI Desktop to open it directly.
-        'Content-Disposition': `attachment; filename="${filename}"`,
-        // No caching — connection details can change if the operator updates the host/port.
-        'Cache-Control': 'no-store',
-      },
-    });
-  } catch (e) {
-    return errorResponse(e);
+  if (!domain) {
+    const err = new Error('No domain in scope') as Error & { status?: number };
+    err.status = 400;
+    throw err;
   }
-}
+  if (!user.domains.includes(domain)) {
+    const err = new Error(`Not a member of domain '${domain}'`) as Error & { status?: number };
+    err.status = 403;
+    throw err;
+  }
+  if (!config.cubeSqlApiEnabled) {
+    const err = new Error(
+      'The Cube SQL API is not enabled on this instance. Ask your platform admin to set CUBE_SQL_API_ENABLED=true and configure an external ingress for the SQL API port.',
+    ) as Error & { status?: number };
+    err.status = 503;
+    throw err;
+  }
+
+  const pbids = buildPbids(domain, config.cubeSqlHost, config.cubeSqlPort);
+  const body = pbidsToString(pbids);
+  const filename = pbidsFilename(domain);
+
+  return new NextResponse(body, {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/json',
+      // The `.pbids` extension triggers Power BI Desktop to open it directly.
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      // No caching — connection details can change if the operator updates the host/port.
+      'Cache-Control': 'no-store',
+    },
+  });
+}, { defaultStatus: 400 });

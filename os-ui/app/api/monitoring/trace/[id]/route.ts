@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { assertInScope, fetchTrace, scopeForUser } from '@/lib/monitoring';
 
 export const dynamic = 'force-dynamic';
@@ -16,19 +16,13 @@ export const dynamic = 'force-dynamic';
  * trace by guessing its id. The scope check is on the SAME identity the overview
  * uses; there is no privileged side-channel.
  */
-export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requireUser();
-    const scope = await scopeForUser(user);
-    const { id } = await ctx.params;
+export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
+  const scope = await scopeForUser(user);
+  const { id } = params;
 
-    const trace = await fetchTrace(id);
-    // Throws 404 if missing, 403 if out of scope — before any step/log is returned.
-    assertInScope(scope, trace);
+  const trace = await fetchTrace(id);
+  // Throws 404 if missing, 403 if out of scope — before any step/log is returned.
+  assertInScope(scope, trace);
 
-    return NextResponse.json({ trace });
-  } catch (e) {
-    const status = (e as Error & { status?: number }).status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
-  }
-}
+  return NextResponse.json({ trace });
+}, { defaultStatus: 500 });

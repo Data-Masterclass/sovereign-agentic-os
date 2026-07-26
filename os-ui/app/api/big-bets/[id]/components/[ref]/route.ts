@@ -2,26 +2,19 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { setComponentPlan, setOverride, removeComponent } from '@/lib/bigbets/store';
 import { principal } from '@/lib/bigbets/server';
 
 export const dynamic = 'force-dynamic';
 
-function fail(e: unknown) {
-  const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
-}
-
 /**
  * PATCH → edit a component reference's plan (start/plannedReady/dependsOn/weight)
  * and/or its owner override (shown beside the derived state, never replacing it).
  */
-export async function PATCH(req: Request, ctx: { params: Promise<{ id: string; ref: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id, ref } = await ctx.params;
-    const b = await req.json().catch(() => ({}));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const PATCH = withRoute<{ id: string; ref: string }, any>(async ({ user, params, body: b }) => {
+    const { id, ref } = params;
     const p = principal(user);
     if (b.override !== undefined) {
       setOverride(id, p, ref, b.override === null ? null : { note: b.override.note, asserts: b.override.asserts });
@@ -30,19 +23,11 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string; r
       setComponentPlan(id, p, ref, { start: b.start, plannedReady: b.plannedReady, dependsOn: b.dependsOn, weight: b.weight });
     }
     return NextResponse.json({ ok: true });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { parse: true, defaultStatus: 500 });
 
 /** DELETE → remove the component reference (untags the artifact; never deletes it). */
-export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string; ref: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id, ref } = await ctx.params;
+export const DELETE = withRoute<{ id: string; ref: string }>(async ({ user, params }) => {
+    const { id, ref } = params;
     removeComponent(id, principal(user), ref);
     return NextResponse.json({ ok: true });
-  } catch (e) {
-    return fail(e);
-  }
-}
+}, { defaultStatus: 500 });

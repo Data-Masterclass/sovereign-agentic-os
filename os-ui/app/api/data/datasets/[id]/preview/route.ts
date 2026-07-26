@@ -2,7 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal, errorResponse } from '@/lib/data/server';
+import { withRoute } from '@/lib/core/route-server';
+import type { CurrentUser } from '@/lib/core/auth';
+import { requirePrincipal } from '@/lib/data/server';
 import { getDataset, builtLayerFqn } from '@/lib/data/store';
 import { queryRun } from '@/lib/infra/governed';
 import { runPreview } from '@/lib/data/preview';
@@ -25,31 +27,26 @@ export const dynamic = 'force-dynamic';
  * or its physical table isn't materialized yet, the pure `runPreview` core answers with
  * a CALM `available:false` "build it first" state — never a raw `TABLE_NOT_FOUND`.
  */
-export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requirePrincipal(); // 401 for anon
-    const { id } = await ctx.params;
-    const dataset = getDataset(id, user); // 403 for a non-viewer (canView guard)
+export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
+  const { id } = params;
+  const dataset = getDataset(id, user); // 403 for a non-viewer (canView guard)
 
-    const url = new URL(req.url);
-    const requested = url.searchParams.get('layer') as Layer | null;
-    const limit = url.searchParams.get('limit');
+  const url = new URL(req.url);
+  const requested = url.searchParams.get('layer') as Layer | null;
+  const limit = url.searchParams.get('limit');
 
-    // Resolve the physical table tier-aware (the SAME name the ask/query surface uses).
-    // builtLayerFqn also returns the PRINCIPAL to read as: a private dataset lives in
-    // the owner's personal_<uid> lane and must be read AS the owner (else Trino's OPA
-    // plugin denies the columns); a governed asset is read as the caller's domain.
-    const target = builtLayerFqn(dataset, user, requested ?? undefined);
-    const principal = target?.principal ?? (user.domains[0] ?? user.id);
+  // Resolve the physical table tier-aware (the SAME name the ask/query surface uses).
+  // builtLayerFqn also returns the PRINCIPAL to read as: a private dataset lives in
+  // the owner's personal_<uid> lane and must be read AS the owner (else Trino's OPA
+  // plugin denies the columns); a governed asset is read as the caller's domain.
+  const target = builtLayerFqn(dataset, user, requested ?? undefined);
+  const principal = target?.principal ?? (user.domains[0] ?? user.id);
 
-    const outcome = await runPreview({
-      target,
-      limit,
-      query: (sql) => queryRun(sql, principal),
-    });
+  const outcome = await runPreview({
+    target,
+    limit,
+    query: (sql) => queryRun(sql, principal),
+  });
 
-    return NextResponse.json({ datasetId: id, name: dataset.name, ...outcome });
-  } catch (e) {
-    return errorResponse(e); // folds the tagged 401/403 (and any 4xx) into a response
-  }
-}
+  return NextResponse.json({ datasetId: id, name: dataset.name, ...outcome });
+}, { gate: requirePrincipal as () => Promise<CurrentUser> });

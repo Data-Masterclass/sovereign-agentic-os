@@ -2,7 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal, errorResponse } from '@/lib/data/server';
+import { requirePrincipal } from '@/lib/data/server';
+import { withRoute } from '@/lib/core/route-server';
+import type { CurrentUser } from '@/lib/core/auth';
 import { ensureHydrated, moveMetric } from '@/lib/metrics/lifecycle';
 
 export const dynamic = 'force-dynamic';
@@ -15,18 +17,11 @@ export const dynamic = 'force-dynamic';
  *
  *   POST /api/metrics/:id/folder  { folder }  → move the metric
  */
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    await ensureHydrated();
-    const user = await requirePrincipal();
-    const { id } = await ctx.params;
-    const body = (await req.json().catch(() => ({}))) as { folder?: string };
-    if (typeof body.folder !== 'string') {
-      return NextResponse.json({ error: 'a folder path is required' }, { status: 400 });
-    }
-    const metric = moveMetric(id, user, body.folder); // 403 → nothing written
-    return NextResponse.json({ metric });
-  } catch (e) {
-    return errorResponse(e);
+export const POST = withRoute<{ id: string }, { folder?: string }>(async ({ user, params, body }) => {
+  const { id } = params;
+  if (typeof body.folder !== 'string') {
+    return NextResponse.json({ error: 'a folder path is required' }, { status: 400 });
   }
-}
+  const metric = moveMetric(id, user, body.folder); // 403 → nothing written
+  return NextResponse.json({ metric });
+}, { gate: requirePrincipal as () => Promise<CurrentUser>, hydrate: ensureHydrated, parse: true });

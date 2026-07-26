@@ -31,6 +31,9 @@ mock.module('@/lib/core/auth', {
       }
       return { id: 'root', name: 'Root', domains: [], role: 'admin' };
     },
+    // route-server (withRoute) imports requireUser as its DEFAULT gate; this
+    // route swaps in requireAdmin above, so the export only needs to exist.
+    requireUser: async () => ({ id: 'root', name: 'Root', domains: [], role: 'admin' }),
   },
 });
 mock.module('@/lib/agents/build/live-clients', {

@@ -335,5 +335,31 @@ class FailureModeTests(unittest.TestCase):
         self.assertNotIn("append", ops)
 
 
+class TestServiceBearer(unittest.TestCase):
+    """The service-bearer guard: constant-time token check on /ingest + /ingest-rows.
+    When SERVICE_BEARER_TOKEN is unset the check is disabled (fail-open by design —
+    the NetworkPolicy is the primary boundary). /health never carries the token."""
+
+    def test_absent_env_allows_any_request(self):
+        # No token configured -> every request passes (today's behaviour preserved).
+        with mock.patch.object(app, "SERVICE_BEARER_TOKEN", ""):
+            self.assertTrue(app.bearer_ok(""))
+            self.assertTrue(app.bearer_ok("Bearer whatever"))
+            self.assertTrue(app.bearer_ok("garbage"))
+
+    def test_valid_token_passes(self):
+        with mock.patch.object(app, "SERVICE_BEARER_TOKEN", "s3cr3t"):
+            self.assertTrue(app.bearer_ok("Bearer s3cr3t"))
+            self.assertTrue(app.bearer_ok("bearer s3cr3t"))  # scheme case-insensitive
+
+    def test_missing_or_wrong_token_rejected(self):
+        with mock.patch.object(app, "SERVICE_BEARER_TOKEN", "s3cr3t"):
+            self.assertFalse(app.bearer_ok(""))               # no header
+            self.assertFalse(app.bearer_ok("s3cr3t"))          # no Bearer scheme
+            self.assertFalse(app.bearer_ok("Bearer wrong"))    # wrong token
+            self.assertFalse(app.bearer_ok("Bearer "))         # empty token
+            self.assertFalse(app.bearer_ok("Bearer s3cr3t "))  # trailing space differs
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

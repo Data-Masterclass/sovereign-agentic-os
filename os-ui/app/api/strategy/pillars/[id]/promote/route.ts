@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { promotePillar } from '@/lib/strategy/pillars';
 
 export const dynamic = 'force-dynamic';
@@ -15,24 +15,12 @@ export const dynamic = 'force-dynamic';
  *   • GET  → `{ request: null }` (the button pre-checks for a pending request).
  *   • POST → promotes in one shot → `{ item }`; a non-approver hits the store's 403.
  */
-export async function GET(_req: Request, _ctx: { params: Promise<{ id: string }> }) {
-  try {
-    await requireUser();
-    return NextResponse.json({ request: null });
-  } catch (e) {
-    const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
-  }
-}
+export const GET = withRoute<{ id: string }>(async () => {
+  return NextResponse.json({ request: null });
+}, { defaultStatus: 500 });
 
-export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await requireUser();
-    const { id } = await ctx.params;
-    const item = await promotePillar(user, id);
-    return NextResponse.json({ item });
-  } catch (e) {
-    const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
-  }
-}
+export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
+  const { id } = params;
+  const item = await promotePillar(user, id);
+  return NextResponse.json({ item });
+}, { defaultStatus: 500 });

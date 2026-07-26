@@ -300,3 +300,52 @@ test('TAB-SET every section has exactly 5 tabs', () => {
     );
   }
 });
+
+// ---- Layer gating (Science ⇔ the domain's Science layer, layers.ml) ---------
+
+test('TAB-LAYER Science carries requiresLayer=ml; no other tab is layer-gated', () => {
+  const science = BUILD_GROUP.tabs.find((t) => t.label === 'Science');
+  assert.ok(science, 'Science tab must exist in Build group');
+  assert.equal(science!.requiresLayer, 'ml', 'Science must be gated on the ml (Science) layer');
+  const others = TAB_GROUPS.flatMap((g) => g.tabs).filter((t) => t.label !== 'Science');
+  for (const t of others) assert.equal(t.requiresLayer, undefined, `only Science is layer-gated, not "${t.label}"`);
+});
+
+test('TAB-LAYER Science hidden when the active domain explicitly has ml:false (every role)', () => {
+  for (const role of ['creator', 'builder', 'domain_admin', 'admin'] as Role[]) {
+    const labels = filterTabGroups(TAB_GROUPS, role, { ml: false }).flatMap((g) => g.tabs.map((t) => t.label));
+    assert.ok(!labels.includes('Science'), `${role} must not see Science when ml is explicitly off`);
+  }
+});
+
+test('TAB-LAYER Science visible when ml:true', () => {
+  const labels = filterTabGroups(TAB_GROUPS, 'creator', { ml: true }).flatMap((g) => g.tabs.map((t) => t.label));
+  assert.ok(labels.includes('Science'), 'Science must show when the layer is on');
+});
+
+test('TAB-LAYER unknown/absent layers FAIL OPEN — Science stays visible', () => {
+  // No layers arg, null, and a record without the ml key all show Science:
+  // navigation never locks out on missing data; the serving plane 404s
+  // honestly when the layer really is off.
+  for (const layers of [undefined, null, {}]) {
+    const labels = filterTabGroups(TAB_GROUPS, 'creator', layers).flatMap((g) => g.tabs.map((t) => t.label));
+    assert.ok(labels.includes('Science'), `Science must fail open for layers=${JSON.stringify(layers)}`);
+  }
+});
+
+test('TAB-LAYER minRole filtering is unaffected by the layers argument', () => {
+  for (const layers of [{ ml: false }, { ml: true }, null]) {
+    const creator = filterTabGroups(TAB_GROUPS, 'creator', layers).flatMap((g) => g.tabs.map((t) => t.label));
+    assert.ok(!creator.includes('Console'), 'creator still must not see Console (builder+)');
+    assert.ok(!creator.includes('MCP'), 'creator still must not see MCP (builder+)');
+    const admin = filterTabGroups(TAB_GROUPS, 'admin', layers).flatMap((g) => g.tabs.map((t) => t.label));
+    assert.ok(admin.includes('Components'), 'admin still sees Components regardless of layers');
+  }
+});
+
+test('TAB-LAYER tabVisible combines both gates: layer off wins even for admin', () => {
+  const science = BUILD_GROUP.tabs.find((t) => t.label === 'Science')!;
+  assert.equal(tabVisible(science, 'admin', { ml: false }), false, 'ml:false hides Science even for admin');
+  assert.equal(tabVisible(science, 'admin', { ml: true }), true);
+  assert.equal(tabVisible(science, null, { ml: false }), false, 'layer gate applies even when role is unknown');
+});

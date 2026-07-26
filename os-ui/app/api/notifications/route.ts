@@ -2,7 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal, errorResponse } from '@/lib/data/server';
+import type { CurrentUser } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
+import { requirePrincipal } from '@/lib/data/server';
 import { ensureHydrated, listNotifications } from '@/lib/notifications/store';
 
 export const dynamic = 'force-dynamic';
@@ -12,12 +14,6 @@ export const dynamic = 'force-dynamic';
  * delivery lands when no mailer is configured — so a "send" is never a silent no-op:
  * the recipient can read it back here.
  */
-export async function GET() {
-  try {
-    const user = await requirePrincipal();
-    await ensureHydrated();
-    return NextResponse.json({ notifications: listNotifications(user.id) });
-  } catch (e) {
-    return errorResponse(e);
-  }
-}
+export const GET = withRoute(async ({ user }) => {
+  return NextResponse.json({ notifications: listNotifications(user.id) });
+}, { gate: requirePrincipal as () => Promise<CurrentUser>, hydrate: ensureHydrated });

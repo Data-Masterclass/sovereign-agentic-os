@@ -4,6 +4,7 @@
 import 'server-only';
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/core/auth';
+import { withRoute } from '@/lib/core/route-server';
 import { realForgejo } from '@/lib/agents/build/live-clients';
 import { listGovernedDatasets } from '@/lib/data/store';
 import { writeAnalyticsFiles } from '@/lib/data/analytics-repo';
@@ -55,15 +56,8 @@ function recordingForgejo(inner: ForgejoClient, log: WriteLog): ForgejoClient {
   };
 }
 
-export async function POST() {
-  // 1. Admin-only — authoritative 401 (anon) / 403 (non-admin) gate.
-  try {
-    await requireAdmin();
-  } catch (e) {
-    const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
-  }
-
+// 1. Admin-only — authoritative 401 (anon) / 403 (non-admin) gate.
+export const POST = withRoute(async () => {
   // 2. Reachability probe — the real client swallows unreachability into `null`
   //    on reads, so probe explicitly and fail loudly (503) rather than silently
   //    "succeeding" with zero writes when Forgejo is down. `ensureRepo` is
@@ -107,4 +101,4 @@ export async function POST() {
     dbtModelsWritten: [...log.dbt, ...log.other],
     errors,
   });
-}
+}, { gate: requireAdmin, defaultStatus: 500 });
