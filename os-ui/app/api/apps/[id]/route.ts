@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
-import { getAppForUser, updateAppDocs, patchAppDesign, type AppEpic } from '@/lib/software/apps';
+import { getAppForUser, updateAppDocs, patchAppDesign, refreshActionsStage, type AppEpic } from '@/lib/software/apps';
 import { normalizeContextGrants } from '@/lib/core/context-grants';
 import { reconcileDeployApproval } from '@/lib/software/review';
 import { getConnectionByApp } from '@/lib/infra/app-registry';
@@ -26,6 +26,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     // reconcile it to its true state on load. Idempotent + fail-soft (never blocks
     // the load); mutates the same in-cache app object, so the response is healed.
     await reconcileDeployApproval(app);
+    // SELF-HEAL 2: recompute the pipeline `actions` stage from live Forgejo (30s
+    // TTL) — 'ok' only when the latest push really produced an Actions run, and a
+    // disabled repo Actions unit is auto-enabled. Same in-cache mutate as above.
+    await refreshActionsStage(app);
     const connection = getConnectionByApp(app.id);
     return NextResponse.json({ user, app, connection });
   } catch (e) {

@@ -22,6 +22,7 @@ import {
   listAppFilesForViewer,
   readAppFileForViewer,
   templateFiles,
+  refreshActionsStage,
 } from '@/lib/software/apps';
 import { forgejoReachable, getSnapshot } from '@/lib/software/server';
 import { getReviewCard, listReviewCards, PREVIEW_PENDING_NOTE } from '@/lib/software/review';
@@ -762,6 +763,10 @@ const waveBReadTools: McpTool[] = [
       const appId = str(args.appId).trim();
       if (!appId) fail('get_software_status needs an `appId` (from list_software)', 400);
       const app = await getAppForUser(appId, user); // visibility guard (404)
+      // HONEST `actions` stage: re-verified against live Forgejo on every status
+      // read — 'ok' only when the latest push on main actually produced a run;
+      // a disabled repo Actions unit is auto-healed (see refreshActionsStage).
+      const actions = await refreshActionsStage(app, { force: true });
       const openCard = app.deploy.reviewCardId ? await getReviewCard(app.deploy.reviewCardId) : null;
       const latest = openCard ?? (await listReviewCards({ domain: app.domain })).find((c) => c.appId === app.id) ?? null;
       const isLive = app.deploy.state === 'live';
@@ -800,6 +805,7 @@ const waveBReadTools: McpTool[] = [
         },
         build: {
           pipeline: app.pipeline,
+          ...(actions.note ? { actionsNote: actions.note } : {}),
           repo: app.repo.fullName,
           repoUrl: app.repo.htmlUrl,
           lastCommit: lastCommit ? { message: lastCommit.content, at: lastCommit.at } : null,

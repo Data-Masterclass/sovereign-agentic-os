@@ -72,7 +72,7 @@ import type { ForgejoClient, ForgejoCommit, ForgejoCommitFiles } from '@/lib/inf
  */
 
 export type PipelineStage = 'forgejo' | 'actions' | 'harbor' | 'argocd' | 'live';
-export type StageStatus = 'ok' | 'pending' | 'offline' | 'disabled';
+export type StageStatus = 'ok' | 'pending' | 'offline' | 'disabled' | 'stalled';
 
 export type AppFile = {
   name: string;
@@ -1196,6 +1196,91 @@ export async function deleteAppRepo(
   return { ok: false, live: true, action: 'noop', detail: `Forgejo rejected the repo delete (HTTP ${res.status}).` };
 }
 
+// ------------------------------------------------------------ Actions health --
+
+/** Throttle live Actions checks per app (the app page GET calls this on load). */
+const actionsCheckedAt = new Map<string, number>();
+const ACTIONS_CHECK_TTL_MS = 30_000;
+
+export type ActionsHealth = { status: StageStatus; note: string | null };
+
+/**
+ * Recompute the pipeline `actions` stage HONESTLY from live Forgejo — and
+ * SELF-HEAL the one repairable cause. 'ok' is earned, never assumed:
+ *
+ *   • Repo Actions unit disabled  → auto-enable it (`PATCH has_actions:true`,
+ *     admin token, server-side, traced) — the next push builds. No support
+ *     ticket, no Forgejo UI work.
+ *   • Latest main commit HAS an Actions task → 'ok' (a push really built).
+ *   • Latest main commit has NO task        → 'stalled' + a repair hint —
+ *     never the old unconditional "actions: ok".
+ *
+ * Mutates `app.pipeline.actions` (write-through) so the app card and
+ * `get_software_status` show the same truth. Fail-soft: an unreachable Forgejo
+ * leaves the stored stage untouched and SAYS so.
+ */
+export async function refreshActionsStage(app: App, opts?: { force?: boolean }): Promise<ActionsHealth> {
+  if (app.mode !== 'live') return { status: app.pipeline.actions, note: null };
+  const last = actionsCheckedAt.get(app.id) ?? 0;
+  if (!opts?.force && Date.now() - last < ACTIONS_CHECK_TTL_MS) {
+    return { status: app.pipeline.actions, note: null };
+  }
+  const { owner, repo } = repoCoords(app);
+  const repoRes = await forgejoApi('GET', `/repos/${owner}/${repo}`);
+  if (repoRes.status === 0) {
+    return { status: app.pipeline.actions, note: 'Forgejo unreachable — Actions status not refreshed.' };
+  }
+  actionsCheckedAt.set(app.id, Date.now());
+  const apply = (status: StageStatus, note: string | null): ActionsHealth => {
+    if (app.pipeline.actions !== status) {
+      app.pipeline.actions = status;
+      writeThrough(app);
+    }
+    return { status, note };
+  };
+  if (!repoRes.ok) return { status: app.pipeline.actions, note: `Forgejo error reading the repo (HTTP ${repoRes.status}).` };
+
+  const hasActions = (repoRes.data as { has_actions?: boolean } | null)?.has_actions;
+  if (hasActions === false) {
+    // ONE-SHOT HEAL: a repo without the Actions unit can never build on push.
+    const heal = await forgejoApi('PATCH', `/repos/${owner}/${repo}`, { has_actions: true });
+    void trace({
+      principal: app.mcpPrincipal,
+      tool: 'generate',
+      input: { action: 'heal_actions_unit', repo: `${owner}/${repo}` },
+      output: { healed: heal.ok, status: heal.status },
+      decision: 'allow',
+    });
+    if (!heal.ok) {
+      return apply(
+        'disabled',
+        `The Actions unit is DISABLED on ${owner}/${repo} and auto-enable failed (HTTP ${heal.status}) — enable it under the repo's Settings → Units in Forgejo.`,
+      );
+    }
+    return apply('pending', 'The Actions unit was disabled on the repo — auto-enabled it; the next push to main will build.');
+  }
+
+  const commits = await forgejoApi('GET', `/repos/${owner}/${repo}/commits?sha=main&limit=1`);
+  const head =
+    commits.ok && Array.isArray(commits.data) && commits.data[0]
+      ? String((commits.data[0] as { sha?: string }).sha ?? '')
+      : '';
+  if (!head) return apply('pending', 'No commits on main yet — nothing for CI to build.');
+
+  const tasks = await forgejoApi('GET', `/repos/${owner}/${repo}/actions/tasks`);
+  if (!tasks.ok) {
+    return apply('pending', `Could not read Actions tasks (HTTP ${tasks.status}) — not claiming a build that is unverified.`);
+  }
+  const runs = ((tasks.data as { workflow_runs?: { head_sha?: string }[] } | null)?.workflow_runs ?? []).filter(
+    (r) => r && typeof r === 'object',
+  );
+  if (runs.some((r) => String(r.head_sha ?? '') === head)) return apply('ok', null);
+  return apply(
+    'stalled',
+    `The latest push on main (${head.slice(0, 10)}) produced NO Actions run — CI is stalled. Check that .forgejo/workflows/ci.yml exists on main and that the last commit actually reached Forgejo, then re-commit to trigger a build.`,
+  );
+}
+
 // ----------------------------------------------------------------- MCP wiring --
 
 function rehydrateConnection(app: App): void {
@@ -1280,7 +1365,9 @@ export async function createApp(
   const live = repo.mode === 'live';
   const pipeline: Record<PipelineStage, StageStatus> = {
     forgejo: live ? 'ok' : 'offline',
-    actions: live ? 'ok' : 'pending',
+    // HONEST: 'ok' is EARNED, never assumed — `refreshActionsStage` flips it to
+    // 'ok' only once the latest push on main actually produced an Actions run.
+    actions: 'pending',
     // Harbor is a default-off heavy workload; CI uses Forgejo's registry locally.
     harbor: config.harborEnabled ? (live ? 'ok' : 'pending') : 'disabled',
     argocd: live ? 'ok' : 'pending',

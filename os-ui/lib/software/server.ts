@@ -77,38 +77,104 @@ function authHeader(): string {
 function liveBackend(): PipelineBackend {
   const mode: RunMode = 'live';
   const owner = config.forgejoRepoOwner;
-  async function put(slug: string, f: ScaffoldFile, message: string): Promise<boolean> {
+  async function api(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<{ ok: boolean; status: number; data: unknown }> {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 3000);
     try {
-      const res = await fetch(
-        `${config.forgejoUrl}/api/v1/repos/${owner}/${slug}/contents/${f.path.split('/').map(encodeURIComponent).join('/')}`,
-        {
-          method: 'PUT',
-          headers: { authorization: authHeader(), accept: 'application/json', 'content-type': 'application/json' },
-          body: JSON.stringify({ content: Buffer.from(f.content, 'utf8').toString('base64'), message, branch: 'main' }),
-          cache: 'no-store',
-          signal: ctrl.signal,
-        },
-      );
-      return res.ok || res.status === 422; // 422 = already exists with same content
+      const res = await fetch(`${config.forgejoUrl}/api/v1${path}`, {
+        method,
+        headers: { authorization: authHeader(), accept: 'application/json', 'content-type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        cache: 'no-store',
+        signal: ctrl.signal,
+      });
+      const raw = await res.text();
+      let data: unknown = null;
+      try {
+        data = raw ? JSON.parse(raw) : null;
+      } catch {
+        data = raw;
+      }
+      return { ok: res.ok, status: res.status, data };
     } catch {
-      return false;
+      return { ok: false, status: 0, data: null };
     } finally {
       clearTimeout(timer);
     }
   }
+  /**
+   * Create-or-update ONE file as its own commit — the sha dance Forgejo requires.
+   * The contents API needs the current blob `sha` on UPDATE: a PUT without it
+   * fails request binding with 422 before Forgejo even looks at the file. The
+   * old code sent no sha and treated 422 as success ("already exists"), so every
+   * post-seed commit to an existing file silently became a no-op — no commit, no
+   * push, NO CI RUN, while the step still reported ok. Identical content is
+   * skipped honestly (no empty commit → no phantom Actions task).
+   */
+  async function put(slug: string, f: ScaffoldFile, message: string): Promise<'committed' | 'unchanged' | 'failed'> {
+    const enc = f.path.split('/').map(encodeURIComponent).join('/');
+    const cur = await api('GET', `/repos/${owner}/${slug}/contents/${enc}?ref=main`);
+    if (cur.status === 0) return 'failed'; // unreachable — never guess
+    const d = cur.ok
+      ? (cur.data as { type?: string; sha?: string; content?: string; encoding?: string } | null)
+      : null;
+    const sha = d?.type === 'file' && typeof d.sha === 'string' && d.sha ? d.sha : null;
+    if (sha) {
+      const existing =
+        typeof d?.content === 'string'
+          ? d.encoding === 'base64'
+            ? Buffer.from(d.content, 'base64').toString('utf8')
+            : d.content
+          : null;
+      if (existing === f.content) return 'unchanged';
+      const res = await api('PUT', `/repos/${owner}/${slug}/contents/${enc}`, {
+        content: Buffer.from(f.content, 'utf8').toString('base64'),
+        message,
+        branch: 'main',
+        sha,
+      });
+      return res.ok ? 'committed' : 'failed';
+    }
+    const res = await api('POST', `/repos/${owner}/${slug}/contents/${enc}`, {
+      content: Buffer.from(f.content, 'utf8').toString('base64'),
+      message,
+      branch: 'main',
+    });
+    return res.ok ? 'committed' : 'failed';
+  }
+  async function putAll(slug: string, files: ScaffoldFile[], message: (f: ScaffoldFile) => string) {
+    let committed = 0;
+    let unchanged = 0;
+    const failed: string[] = [];
+    for (const f of files) {
+      const r = await put(slug, f, message(f));
+      if (r === 'committed') committed++;
+      else if (r === 'unchanged') unchanged++;
+      else failed.push(f.path);
+    }
+    return { committed, unchanged, failed };
+  }
   return {
     mode,
     async scaffoldRepo(slug, files) {
-      let n = 0;
-      for (const f of files) if (await put(slug, f, `seed ${f.path}`)) n++;
-      return { ok: n > 0, mode, detail: `live: seeded ${n}/${files.length} files into ${slug}` };
+      const { committed, unchanged, failed } = await putAll(slug, files, (f) => `seed ${f.path}`);
+      const n = committed + unchanged;
+      const detail =
+        `live: seeded ${n}/${files.length} files into ${slug}` +
+        (failed.length > 0 ? ` — FAILED: ${failed.join(', ')}` : '');
+      return { ok: n > 0, mode, detail };
     },
     async commit(slug, files, message) {
-      let n = 0;
-      for (const f of files) if (await put(slug, f, message)) n++;
-      return { ok: n === files.length, mode, detail: `live: committed ${n}/${files.length} files to ${slug}` };
+      const { committed, unchanged, failed } = await putAll(slug, files, () => message);
+      const parts = [`live: committed ${committed}/${files.length} files to ${slug}`];
+      if (unchanged > 0) parts.push(`${unchanged} unchanged (skipped)`);
+      if (failed.length > 0) parts.push(`FAILED: ${failed.join(', ')}`);
+      else if (committed === 0) parts.push('nothing changed — no push, so no CI run');
+      return { ok: failed.length === 0, mode, detail: parts.join('; ') };
     },
     async preview(slug) {
       // Argo CD ApplicationSet PR/branch generator spins this up on a cluster;
