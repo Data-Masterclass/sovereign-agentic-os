@@ -176,8 +176,9 @@ export type DataCheck = {
 
 /** Sync mode / cursor-kind literals — kept in LOCKSTEP with `sync-sql.ts` (this base
  *  module stays import-light so client bundles never drag the warehouse registry in).
- *  The reserved cursor kinds ('delta-version'|'bq-partition'|'kafka-offsets') parse but
- *  are not executable yet (v1 implements timestamp/number). */
+ *  Executable kinds: timestamp | number | kafka-offsets (per-partition offsets map,
+ *  append-only). The reserved kinds ('delta-version'|'bq-partition') parse but are
+ *  not executable yet. */
 export type DatasetSyncMode = 'full-refresh' | 'append' | 'merge';
 export const DATASET_SYNC_MODES: DatasetSyncMode[] = ['full-refresh', 'append', 'merge'];
 export type DatasetSyncCursorKind = 'timestamp' | 'number' | 'delta-version' | 'bq-partition' | 'kafka-offsets';

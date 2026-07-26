@@ -366,13 +366,20 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
     ],
   },
   {
+    // Salesforce over its REST API (hand-built typed client, lib/connections/salesforce.ts —
+    // no Trino connector and no first-party MCP for server-to-server data pulls). Auth is the
+    // OAuth CLIENT-CREDENTIALS flow against a Connected App; the ONE vaulted credential is
+    // `<consumer_key>:<consumer_secret>` (split server-side, never on the record). Besides the
+    // capability tools below, a Salesforce connection is an OPERATIONAL SYNC SOURCE: the
+    // scheduled sync pulls SystemModstamp slices via REST and streams them to the data-runner
+    // (the `api-batch` executor strategy).
     key: 'salesforce-api',
     label: 'Salesforce (REST API)',
     type: 'API',
     connector: 'api',
     auth: 'service',
     endpointHint: 'https://yourorg.my.salesforce.com',
-    secretKey: 'oauth-token',
+    secretKey: 'client-credentials',
     tools: [
       { name: 'read_account', description: 'Read an account (read).', write: false, mode: 'Read', limits: { dataScope: 'Sales domain accounts' } },
       { name: 'read_opportunity', description: 'Read an opportunity (read).', write: false, mode: 'Read', limits: { dataScope: 'Sales domain opportunities' } },
@@ -977,7 +984,7 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
  * import, the connections gate, adapter tests) and is deliberately NOT offered in
  * the create picker — a user can never stand up a non-working mock connection.
  */
-export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp', 'generic-api', 'generic-mcp', 'airflow', 'github', 'supabase', 'atlassian', 'slack', 'gmail', 'gcal', 'outlook', 'teams', 'entra', 'purview', 'ai-foundry', 'sagemaker', 'gcp-identity', 'gcp-directory', 'snowflake-governance'];
+export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp', 'generic-api', 'generic-mcp', 'airflow', 'github', 'supabase', 'atlassian', 'slack', 'gmail', 'gcal', 'outlook', 'teams', 'entra', 'purview', 'ai-foundry', 'sagemaker', 'gcp-identity', 'gcp-directory', 'snowflake-governance', 'salesforce-api'];
 
 export function isUserFacingTemplate(key: string): boolean {
   return (USER_FACING_TEMPLATE_KEYS as string[]).includes(key);

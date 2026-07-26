@@ -91,6 +91,7 @@ const WAREHOUSE_PLATFORM_STACK: Record<string, StackId> = {
   'databricks-delta': 'databricks',
   'fabric':           'microsoft',
   'glue':             'aws',
+  'kafka':            'opensource',
 };
 
 /**

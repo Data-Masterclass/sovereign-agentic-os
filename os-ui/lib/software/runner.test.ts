@@ -90,6 +90,36 @@ test('ingress manifest: per-app host, TLS secret, class + cluster-issuer match t
   assert.equal(m.spec.rules[0].http.paths[0].backend.service.port.number, 80);
 });
 
+test('deployment manifest: deployedAt stamps the pod template so a re-deploy ROLLS the pods', () => {
+  const spec = runnerSpec(APP);
+  const stamped = buildDeploymentManifest(spec, NS, '2026-07-26T00:00:00.000Z') as any;
+  assert.equal(
+    stamped.spec.template.metadata.annotations['soa.sovereign-os/deployed-at'],
+    '2026-07-26T00:00:00.000Z',
+    'the per-deploy stamp changes the pod template → a real rollout, not a k8s no-op',
+  );
+  // Always re-pull: `:latest` is mutable, so a restarted pod must fetch the image
+  // CI just published — never keep serving the first-ever pulled (stub) image.
+  assert.equal(stamped.spec.template.spec.containers[0].imagePullPolicy, 'Always');
+  // Without the stamp the manifest stays deterministic (no annotations block).
+  const bare = buildDeploymentManifest(spec, NS) as any;
+  assert.equal(bare.spec.template.metadata.annotations, undefined);
+  assert.equal(bare.spec.template.spec.containers[0].imagePullPolicy, 'Always');
+});
+
+test('deployApp stamps every applied Deployment with a fresh deployed-at annotation', async () => {
+  const { client, calls } = mockK8s({
+    [`GET /api/v1/namespaces/${NS}`]: { status: 200 },
+    GET: { status: 404 },
+    POST: { status: 201 },
+  });
+  await deployApp(APP, { ...OPTS, k8s: client });
+  const post = calls.find((c) => c.method === 'POST' && c.path === DEP)!;
+  const ann = (post.body as any).spec.template.metadata.annotations;
+  assert.ok(ann && typeof ann['soa.sovereign-os/deployed-at'] === 'string', 'deploy carries the rollout stamp');
+  assert.ok(!Number.isNaN(Date.parse(ann['soa.sovereign-os/deployed-at'])), 'stamp is a real timestamp');
+});
+
 // --------------------------------------------------------------- Deploy --------
 
 test('deployApp CREATES ns + Deployment + Service + Ingress when none exist', async () => {

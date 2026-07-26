@@ -216,3 +216,239 @@ test('mirrorLease: token claim + stale reclaim + fresh hold', async () => {
   // A crashed holder (stale marker) is reclaimed after the TTL.
   assert.equal(await lease.acquire('ds1', '2026-07-25T12:00:00.000Z'), 'acquired');
 });
+
+// ---------------------------------------------------------------- kafka runs --
+
+function kafkaFakes(over: Partial<SyncDeps> = {}) {
+  const queried: Call[] = [];
+  const f = fakes({
+    dataset: () =>
+      dataset({
+        source: { schema: 'default', table: 'orders' },
+        mode: 'append',
+        cursor: { kind: 'kafka-offsets', column: '_partition_offset' },
+      }),
+    connectionCatalog: async () => 'kafka_events',
+    query: async (sql) => {
+      queried.push({ sql });
+      if (/GROUP BY _partition_id/.test(sql)) return { rows: [['0', '100'], ['1', '7']] };
+      return { rows: [] };
+    },
+    ...over,
+  });
+  return { ...f, queried };
+}
+
+test('kafka first load: CREATE OR REPLACE bounded to probed highs, offsets watermark', async () => {
+  const { deps, executed, queried } = kafkaFakes({ watermark: () => null });
+  const out = await runDatasetSync('ds1', 'schedule', deps);
+  assert.ok(out.ok && !out.skipped && out.run!.status === 'ok');
+  assert.match(queried[0].sql, /SELECT _partition_id, max\(_partition_offset\) AS hw FROM kafka_events\.default\.orders/);
+  assert.equal(executed.length, 1, 'one CTAS, no delete-batch on first load');
+  assert.match(executed[0].sql, /^CREATE OR REPLACE TABLE iceberg\.personal_lena\.bronze_orders AS SELECT \*, _partition_id AS _kafka_partition/);
+  assert.match(executed[0].sql, /\(_partition_id = 0 AND _partition_offset <= 100\) OR \(_partition_id = 1 AND _partition_offset <= 7\)$/);
+  assert.equal(out.run!.cursorAfter, '{"0":"100","1":"7"}');
+  assert.ok(out.run!.batchId, 'first load lands under a batch id too');
+});
+
+test('kafka incremental: delete-batch + per-partition INSERT windows, marks merged', async () => {
+  const { deps, executed } = kafkaFakes({ watermark: () => '{"0":"41","1":"7"}' });
+  const out = await runDatasetSync('ds1', 'schedule', deps);
+  assert.ok(out.ok && !out.skipped && out.run!.status === 'ok');
+  assert.match(executed[0].sql, /^DELETE FROM iceberg\.personal_lena\.bronze_orders WHERE _batch_id = '/);
+  assert.match(executed[1].sql, /^INSERT INTO iceberg\.personal_lena\.bronze_orders SELECT \*, _partition_id AS _kafka_partition/);
+  assert.match(executed[1].sql, /\(_partition_id = 0 AND _partition_offset > 41 AND _partition_offset <= 100\)$/);
+  assert.ok(!executed[1].sql.includes('_partition_id = 1'), 'partition 1 has nothing new — omitted');
+  assert.equal(out.run!.cursorAfter, '{"0":"100","1":"7"}');
+});
+
+test('kafka nothing-advanced: honest zero-row ok run, no write', async () => {
+  const { deps, executed } = kafkaFakes({ watermark: () => '{"0":"100","1":"7"}' });
+  const out = await runDatasetSync('ds1', 'schedule', deps);
+  assert.ok(out.ok && !out.skipped);
+  assert.equal(out.run!.rowsAffected, 0);
+  assert.equal(executed.length, 0, 'no write attempted');
+  assert.equal(out.run!.cursorAfter, '{"0":"100","1":"7"}');
+});
+
+test('kafka empty topics (no partitions probed): zero-row run, cursor unchanged', async () => {
+  const { deps, executed } = kafkaFakes({
+    watermark: () => '{"0":"41"}',
+    query: async () => ({ rows: [] }),
+  });
+  const out = await runDatasetSync('ds1', 'schedule', deps);
+  assert.ok(out.ok && !out.skipped);
+  assert.equal(out.run!.rowsAffected, 0);
+  assert.equal(out.run!.cursorAfter, '{"0":"41"}');
+  assert.equal(executed.length, 0);
+});
+
+test('kafka reset: full re-load replaces the copy and re-anchors the offsets', async () => {
+  const { deps, executed } = kafkaFakes({ watermark: () => '{"0":"41","1":"7"}' });
+  const out = await runDatasetSync('ds1', 'reset', deps);
+  assert.ok(out.ok && !out.skipped && out.run!.status === 'ok');
+  assert.equal(out.run!.mode, 'full-refresh');
+  assert.match(executed[0].sql, /^CREATE OR REPLACE TABLE iceberg\.personal_lena\.bronze_orders AS SELECT \*, /);
+  assert.match(executed[0].sql, /\(_partition_id = 0 AND _partition_offset <= 100\)/);
+  assert.equal(out.run!.cursorBefore, null);
+  assert.equal(out.run!.cursorAfter, '{"0":"100","1":"7"}');
+});
+
+// ---------------------------------------------- api-batch strategy (salesforce) --
+
+test('api-batch: a non-catalog connection routes to the salesforce slice runner', async () => {
+  const seen: Record<string, unknown>[] = [];
+  const { deps } = fakes({
+    dataset: () => dataset({ source: { schema: 'salesforce', table: 'Account' }, cursor: { kind: 'timestamp', column: 'SystemModstamp' } }),
+    connectionCatalog: async () => null, // not a warehouse ⇒ api-batch
+    watermark: () => '2026-06-01T00:00:00.000Z',
+    salesforceSlice: async (args) => {
+      seen.push(args as unknown as Record<string, unknown>);
+      return { rowsAffected: 42, batchId: 'ds1.hw', highWatermark: '2026-06-30T00:00:00.000Z' };
+    },
+  });
+  const out = await runDatasetSync('ds1', 'schedule', deps);
+  assert.ok(out.ok && !out.skipped && out.run!.status === 'ok');
+  assert.equal(seen.length, 1);
+  const args = seen[0] as { object: string; mode: string; watermark: string | null; datasetSlug: string; target: { schema: string; table: string } };
+  assert.equal(args.object, 'Account');
+  assert.equal(args.mode, 'append');
+  assert.equal(args.watermark, '2026-06-01T00:00:00.000Z');
+  assert.equal(args.datasetSlug, 'orders');
+  assert.deepEqual(args.target, { schema: 'personal_lena', table: 'bronze_orders' });
+  assert.equal(out.run!.rowsAffected, 42);
+  assert.equal(out.run!.cursorAfter, '2026-06-30T00:00:00.000Z');
+  assert.equal(out.run!.batchId, 'ds1.hw');
+});
+
+test('api-batch: merge mode is an honest error (needs a federated SQL source)', async () => {
+  const { deps } = fakes({
+    dataset: () => dataset({ mode: 'merge', mergeKeys: ['Id'], cursor: { kind: 'timestamp', column: 'SystemModstamp' } }),
+    connectionCatalog: async () => null,
+    salesforceSlice: async () => { throw new Error('must not be called'); },
+  });
+  const out = await runDatasetSync('ds1', 'schedule', deps);
+  assert.ok(out.ok && !out.skipped);
+  assert.equal(out.run!.status, 'error');
+  assert.match(out.run!.error!, /append or full-refresh only/);
+});
+
+test('api-batch: a slice failure records an honest error row, cursor unchanged', async () => {
+  const { deps } = fakes({
+    connectionCatalog: async () => null,
+    watermark: () => '2026-06-01T00:00:00.000Z',
+    salesforceSlice: async () => { throw new Error('Salesforce rate-limited; retry after 30s'); },
+  });
+  const out = await runDatasetSync('ds1', 'schedule', deps);
+  assert.ok(out.ok && !out.skipped);
+  assert.equal(out.run!.status, 'error');
+  assert.match(out.run!.error!, /rate-limited/);
+  assert.equal(out.run!.cursorBefore, '2026-06-01T00:00:00.000Z');
+});
+
+// ------------------------------------------- deterministic retry window (H2) --
+
+const ERRORED_ATTEMPT = {
+  id: 'ds1:prev', datasetId: 'ds1', startedAt: '2026-07-25T09:00:00.000Z',
+  finishedAt: '2026-07-25T09:00:10.000Z', status: 'error' as const, mode: 'append' as const,
+  cursorBefore: '50', highWatermark: '77', batchId: 'ds1.77', error: 'client timeout', ranBy: 'lena',
+};
+
+test('append retry after an unconfirmed attempt reuses ITS window — no fresh probe', async () => {
+  const { deps, executed, queried } = fakes({
+    watermark: () => '50',
+    latestRun: () => ERRORED_ATTEMPT,
+  });
+  const out = await runDatasetSync('ds1', 'schedule', deps);
+  assert.ok(out.ok && !out.skipped && out.run!.status === 'ok');
+  assert.equal(queried.length, 0, 'the moved high watermark is NOT re-probed');
+  // The deterministic batch id recomputes from the reused HW → the delete un-lands
+  // exactly what the unconfirmed attempt may have landed, then the SAME slice re-appends.
+  assert.equal(out.run!.batchId, sliceBatchId('ds1', '77'));
+  assert.match(executed[0].sql, new RegExp(`_batch_id = '${sliceBatchId('ds1', '77')}'`));
+  assert.match(executed[1].sql, /WHERE id > 50 AND id <= 77$/);
+  assert.equal(out.run!.cursorAfter, '77');
+});
+
+test('a stale running marker (crash) is reused the same way', async () => {
+  const { deps, executed } = fakes({
+    watermark: () => '50',
+    latestRun: () => ({ ...ERRORED_ATTEMPT, status: 'running' as const, error: undefined }),
+  });
+  const out = await runDatasetSync('ds1', 'schedule', deps);
+  assert.ok(out.ok && !out.skipped && out.run!.status === 'ok');
+  assert.match(executed[1].sql, /WHERE id > 50 AND id <= 77$/);
+});
+
+test('the window is NOT reused after a confirmed success or a moved watermark', async () => {
+  // Latest run ok ⇒ fresh probe (HW 100 from the fake query).
+  const ok = fakes({ watermark: () => '50', latestRun: () => ({ ...ERRORED_ATTEMPT, status: 'ok' as const }) });
+  const o1 = await runDatasetSync('ds1', 'schedule', ok.deps);
+  assert.match(ok.executed[1].sql, /WHERE id > 50 AND id <= 100$/);
+  assert.ok(o1.ok);
+
+  // The error row belongs to an OLDER watermark ⇒ its window is dead — fresh probe.
+  const moved = fakes({ watermark: () => '60', latestRun: () => ERRORED_ATTEMPT });
+  const o2 = await runDatasetSync('ds1', 'schedule', moved.deps);
+  assert.match(moved.executed[1].sql, /WHERE id > 60 AND id <= 100$/);
+  assert.ok(o2.ok);
+});
+
+test('an append run persists a running dispatch marker BEFORE the INSERT, finalized in place', async () => {
+  // Real run store (record/update not faked): the marker must never survive as a
+  // second row — one run, one row, running → ok.
+  const dispatched: string[] = [];
+  const { deps } = fakes({
+    execute: async (sql: string) => {
+      if (/^INSERT INTO/.test(sql)) {
+        const rows = listSyncRuns('ds1');
+        dispatched.push(...rows.map((r) => `${r.status}:${r.highWatermark ?? ''}:${r.batchId ?? ''}`));
+      }
+      return { rowsAffected: 7 };
+    },
+  });
+  const out = await runDatasetSync('ds1', 'schedule', deps);
+  assert.ok(out.ok && !out.skipped);
+  assert.deepEqual(dispatched, [`running:100:${sliceBatchId('ds1', '100')}`],
+    'the window {HW, batchId} was durable before the INSERT flew');
+  const rows = listSyncRuns('ds1');
+  assert.equal(rows.length, 1, 'the marker is finalized in place — no stray row');
+  assert.equal(rows[0].status, 'ok');
+  assert.equal(rows[0].highWatermark, '100', 'the window stays on the final row');
+});
+
+test('a failed INSERT finalizes the marker to error and KEEPS the window for the retry', async () => {
+  const { deps } = fakes({
+    execute: async (sql: string) => {
+      if (/^INSERT INTO/.test(sql)) throw new Error('statement timeout');
+      return { rowsAffected: 0 };
+    },
+  });
+  const out = await runDatasetSync('ds1', 'schedule', deps);
+  assert.ok(out.ok && !out.skipped);
+  assert.equal(out.run!.status, 'error');
+  const rows = listSyncRuns('ds1');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].highWatermark, '100');
+  assert.equal(rows[0].batchId, sliceBatchId('ds1', '100'));
+  // …and the NEXT run (same watermark) would reuse exactly that window: the
+  // executor's staleWindow predicate accepts this row.
+  assert.equal(rows[0].cursorBefore, '50');
+});
+
+test('kafka incremental retry reuses the offsets window', async () => {
+  const { deps, executed, queried } = kafkaFakes({
+    watermark: () => '{"0":"41","1":"7"}',
+    latestRun: () => ({
+      id: 'ds1:prev', datasetId: 'ds1', startedAt: 'x', finishedAt: 'x',
+      status: 'error' as const, mode: 'append' as const,
+      cursorBefore: '{"0":"41","1":"7"}', highWatermark: '{"0":"90","1":"7"}',
+      batchId: 'ds1.k', error: 'client timeout', ranBy: 'lena',
+    }),
+  });
+  const out = await runDatasetSync('ds1', 'schedule', deps);
+  assert.ok(out.ok && !out.skipped && out.run!.status === 'ok');
+  assert.equal(queried.length, 0, 'partition highs are NOT re-probed');
+  assert.match(executed[1].sql, /\(_partition_id = 0 AND _partition_offset > 41 AND _partition_offset <= 90\)$/);
+  assert.equal(out.run!.cursorAfter, '{"0":"90","1":"7"}');
+});

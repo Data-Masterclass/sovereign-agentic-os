@@ -239,8 +239,11 @@ objectStorage:
     repository: amazon/aws-cli
     digest: sha256:e14216fb361cce909ce199616711ad103182d5937f851cda9bebf25867d7180a   # 2.31.13
   resources:
-    requests: { cpu: 100m, memory: 256Mi }
-    limits: { cpu: "1", memory: 768Mi }
+    requests: { cpu: 100m, memory: 512Mi }
+    # Raised 768Mi→1536Mi (2026-07-26 audit: live MinIO sat at 86% of 768Mi —
+    # headroom for scheduled-sync slice writes; the 20Gi PVC is the real ceiling,
+    # see docs/data-sync-scaling.md for the external-object-storage path).
+    limits: { cpu: "1", memory: 1536Mi }
   # Data volume. Off by default — the kind stand-in uses an emptyDir (a laptop
   # tenant is torn down anyway). Turn ON for any DURABLE deploy (STACKIT) so the
   # Iceberg data files survive a pod roll; otherwise a MinIO restart wipes the

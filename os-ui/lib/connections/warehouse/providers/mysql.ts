@@ -71,7 +71,10 @@ export const mysqlProvider: WarehouseProvider = {
   label: 'MySQL / MariaDB',
   trinoConnector: 'mysql',
   nativeInImage: true,
-  capabilities: { federate: true, import: true },
+  // First-class OPERATIONAL sync source: the scheduled incremental sync's
+  // timestamp/number cursor path runs against this catalog (guard-verified).
+  capabilities: { federate: true, import: true, sync: true },
+  category: 'operational',
   catalogProps: (source) => mysqlProps(source as MySqlConfig),
   // A MySQL DATABASE is the Trino schema; `SHOW TABLES FROM <catalog>.<schema>` lists it.
   discoverTables: (source, schema) => showTablesQuery(source, schema),

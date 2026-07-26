@@ -12,13 +12,20 @@ Path (single-purpose, no orchestration):
     -> DuckDB reads + infers the schema (CSV/Parquet/JSON)
     -> PyIceberg writes `lakehouse.personal_<uid>.bronze_<slug>` via Polaris REST.
 
+/ingest-rows accepts a JSON body with inline rows (list of dicts) instead of an
+S3 object key. Designed for Salesforce API-batch sync: os-ui pulls rows from the
+Salesforce REST API (which Trino cannot reach) and streams them here page-by-page.
+Each batch is written to a temp NDJSON file so the same DuckDB read_json_auto path
+infers the schema — identical to an NDJSON file upload. Callers must page their
+payloads; a single batch is capped at 10 000 rows.
+
 Governance / isolation (M1 = personal lane ONLY):
   * The target namespace is `personal_<uid>` DERIVED FROM the caller's `principal`
     (the trusted os-ui backend supplies it, session-bound, never the browser) — the
     request body can NOT pick an arbitrary domain schema. A caller can only land data
     in their OWN personal schema.
   * The object being read MUST live under the caller's own `uploads/<uid>/` prefix
-    (cross-user object-read guard).
+    (cross-user object-read guard, /ingest only).
   * Per-user READ isolation of `personal_<uid>.*` is enforced downstream by the
     Trino->OPA row rule (keyed on principal) on the governed read path — the same
     boundary every other reader crosses. The runner is the writer, not a read door.
@@ -30,7 +37,7 @@ goes through Polaris. We therefore reuse the SAME Polaris OAuth client Trino wri
 Iceberg with (trino-catalog-credentials) and the SAME object-storage creds — no new
 broad credentials are invented.
 
-Plain HTTP: POST /ingest + GET /health.
+Plain HTTP: POST /ingest + POST /ingest-rows + GET /health.
 """
 import io
 import json
@@ -213,6 +220,88 @@ def ingest(body: dict) -> dict:
     }
 
 
+_INGEST_ROWS_CAP = 10_000  # callers must page; this endpoint must never buffer huge payloads
+
+
+def ingest_rows(body: dict) -> dict:
+    """Ingest an inline list of row dicts into a personal-lane Bronze table.
+
+    Accepts: { principal, dataset, rows, mode? }
+    Writes rows to a temp NDJSON file and reads it back through the same
+    _read_to_arrow / read_json_auto path as /ingest — schema inference is identical.
+    """
+    principal = (body.get("principal") or "").strip()
+    dataset = (body.get("dataset") or "").strip()
+    rows = body.get("rows")
+    mode = (body.get("mode") or "replace").strip().lower()
+
+    if not principal:
+        raise ValueError("missing principal")
+    if not dataset:
+        raise ValueError("missing dataset")
+    if not isinstance(rows, list) or len(rows) == 0:
+        raise ValueError("rows must be a non-empty list of dicts")
+    if len(rows) > _INGEST_ROWS_CAP:
+        raise ValueError(
+            f"batch exceeds {_INGEST_ROWS_CAP}-row cap ({len(rows)} rows); "
+            "stream page-by-page"
+        )
+    if mode not in ("replace", "append"):
+        raise ValueError("mode must be 'replace' or 'append'")
+
+    uid = slug(principal)
+    ds_slug = slug(dataset)
+    if not uid:
+        raise ValueError("principal did not resolve to a valid uid")
+    if not ds_slug:
+        raise ValueError("dataset did not resolve to a valid name")
+
+    # M1 personal lane ONLY: target schema is derived from the caller, not the body.
+    namespace = f"personal_{uid}"
+    requested = slug(body.get("schema") or namespace)
+    if requested != namespace:
+        raise PermissionError(
+            f"schema '{body.get('schema')}' not allowed; personal lane only "
+            f"(target is {namespace})"
+        )
+
+    table_name = f"bronze_{ds_slug}"
+    fqn_trino = f"iceberg.{namespace}.{table_name}"
+
+    # Materialise the row batch as NDJSON so _read_to_arrow / read_json_auto infers
+    # the schema exactly like a JSON file upload does (same DuckDB path, same types).
+    with tempfile.NamedTemporaryFile(
+        dir="/tmp", suffix=".ndjson", delete=True, mode="w", encoding="utf-8"
+    ) as tmp:
+        for row in rows:
+            tmp.write(json.dumps(row) + "\n")
+        tmp.flush()
+        arrow = _read_to_arrow(tmp.name, f"{ds_slug}.ndjson")
+
+    # Write the Iceberg Bronze table via Polaris REST (same logic as /ingest).
+    catalog = _catalog()
+    catalog.create_namespace_if_not_exists((namespace,))
+    exists = catalog.table_exists((namespace, table_name))
+    if mode == "append" and exists:
+        # Keep the table; PyIceberg validates the Arrow schema against the table schema
+        # and errors honestly on drift — surfaces as a 500 with the real message.
+        tbl = catalog.load_table((namespace, table_name))
+    else:
+        if exists:
+            catalog.drop_table((namespace, table_name))
+        tbl = catalog.create_table((namespace, table_name), schema=arrow.schema)
+    tbl.append(arrow)
+
+    columns = [{"name": f.name, "type": str(f.type)} for f in arrow.schema]
+    return {
+        "ok": True,
+        "table": fqn_trino,
+        "rowCount": arrow.num_rows,
+        "columns": columns,
+        "mode": mode,
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code: int, payload: dict):
         body = json.dumps(payload).encode("utf-8")
@@ -230,7 +319,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path.rstrip("/") != "/ingest":
+        path = self.path.rstrip("/")
+        if path not in ("/ingest", "/ingest-rows"):
             self._send(404, {"error": "not found"})
             return
         try:
@@ -240,7 +330,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"ok": False, "error": f"bad request: {e}"})
             return
         try:
-            self._send(200, ingest(body))
+            handler_fn = ingest if path == "/ingest" else ingest_rows
+            self._send(200, handler_fn(body))
         except (ValueError, KeyError) as e:
             self._send(400, {"ok": False, "error": str(e)})
         except PermissionError as e:
@@ -253,7 +344,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    print(f"[data-runner] /ingest + /health on :{PORT} "
+    print(f"[data-runner] /ingest + /ingest-rows + /health on :{PORT} "
           f"(polaris={POLARIS_URI}, warehouse={POLARIS_WAREHOUSE}, "
           f"s3={S3_ENDPOINT}, uploadsBucket={UPLOADS_BUCKET})")
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

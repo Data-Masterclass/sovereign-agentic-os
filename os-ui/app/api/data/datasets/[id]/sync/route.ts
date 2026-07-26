@@ -83,8 +83,30 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     const { id } = await ctx.params;
     const dataset = getDataset(id, user); // canView gate (403/404)
     await ensureSyncRunsHydrated().catch(() => {});
+    // The source connection's PLATFORM (kafka ⇒ the panel locks mode/cursor to the
+    // offsets kind). Lazy import + best-effort: an unresolvable connection is an
+    // honest null, never a 500 on the status read.
+    let platform: string | null = null;
+    if (dataset.sync) {
+      try {
+        const [{ getConnectionForUser }, { requireUser }] = await Promise.all([
+          import('@/lib/connections/store'),
+          import('@/lib/core/auth'),
+        ]);
+        const c = await getConnectionForUser(dataset.sync.connectionId, await requireUser());
+        platform =
+          c.template === 'warehouse' && c.warehouse
+            ? c.warehouse.platform
+            : c.template === 'salesforce-api'
+              ? 'salesforce'
+              : null;
+      } catch {
+        platform = null;
+      }
+    }
     return NextResponse.json({
       sync: dataset.sync ?? null,
+      platform,
       runs: listSyncRuns(id).slice(-20).reverse(), // newest first for the history strip
       watermark: currentWatermark(id),
       quarantined: isQuarantined(id),

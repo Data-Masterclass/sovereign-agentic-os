@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as esbuild from 'esbuild-wasm';
+import { detectPreviewShape, unsupportedShapeMessage } from '@/lib/software/preview-shape';
 
 /**
  * "Instant preview" — the sub-second, no-deploy inner-loop preview for a governed
@@ -105,14 +106,6 @@ function vfsPlugin(fs: Map<string, string>): esbuild.Plugin {
   };
 }
 
-/** Pick the SPA entry point the app boots from (matches the vite-os scaffold). */
-function pickEntry(fs: Map<string, string>): string | null {
-  for (const c of ['/src/main.tsx', '/src/main.ts', '/src/index.tsx', '/src/index.ts']) {
-    if (fs.has(c)) return c;
-  }
-  return null;
-}
-
 /** Build the sandbox HTML: import-map → same-origin runtime, CSS, then the JS. */
 function buildSrcDoc(js: string, css: string): string {
   const map = {
@@ -139,7 +132,7 @@ function buildSrcDoc(js: string, css: string): string {
   ].join('\n');
 }
 
-type Phase = 'idle' | 'building' | 'ready' | 'error';
+type Phase = 'idle' | 'building' | 'ready' | 'error' | 'unsupported';
 
 export default function InstantPreview({
   appId,
@@ -151,12 +144,14 @@ export default function InstantPreview({
   const [tab, setTab] = useState<'instant' | 'deployed'>('instant');
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [unsupported, setUnsupported] = useState<string | null>(null);
   const [srcDoc, setSrcDoc] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
 
   const build = useCallback(async () => {
     setPhase('building');
     setError(null);
+    setUnsupported(null);
     try {
       const res = await fetch(`/api/software/${encodeURIComponent(appId)}/preview-files`, {
         credentials: 'include',
@@ -174,8 +169,16 @@ export default function InstantPreview({
       add(data.sdk);
       add(data.ui);
 
-      const entry = pickEntry(fs);
-      if (!entry) throw new Error('No SPA entry point found (expected src/main.tsx).');
+      // Detect the app's actual shape from ITS OWN files (not the injected
+      // packages): a Vite entry bundles; a legacy Next.js scaffold (or anything
+      // else without an SPA entry) gets an HONEST explanation, never an opaque error.
+      const shape = detectPreviewShape((data.files ?? []).map((f) => f.path));
+      if (shape.kind !== 'vite') {
+        setUnsupported(unsupportedShapeMessage(shape));
+        setPhase('unsupported');
+        return;
+      }
+      const entry = shape.entry;
 
       await initEsbuild();
       const out = await esbuild.build({
@@ -239,7 +242,15 @@ export default function InstantPreview({
       </div>
 
       {tab === 'instant' ? (
-        <InstantView phase={phase} error={error} srcDoc={srcDoc} nonce={nonce} onRetry={build} />
+        <InstantView
+          phase={phase}
+          error={error}
+          unsupported={unsupported}
+          srcDoc={srcDoc}
+          nonce={nonce}
+          onRetry={build}
+          onShowDeployed={() => setTab('deployed')}
+        />
       ) : (
         <DeployedView previewUrl={previewUrl} nonce={deployNonceRef.current} />
       )}
@@ -279,15 +290,19 @@ function TabButton({
 function InstantView({
   phase,
   error,
+  unsupported,
   srcDoc,
   nonce,
   onRetry,
+  onShowDeployed,
 }: {
   phase: Phase;
   error: string | null;
+  unsupported: string | null;
   srcDoc: string | null;
   nonce: number;
   onRetry: () => void;
+  onShowDeployed: () => void;
 }) {
   return (
     <div>
@@ -295,6 +310,18 @@ function InstantView({
         Instant preview — your <code>src/*</code> bundled in the browser (esbuild-wasm), calling the
         governed OS API as you. Real granted data, or the app’s own honest error. No deploy needed.
       </div>
+
+      {/* An app shape the in-browser bundler honestly cannot preview (legacy
+          Next.js scaffold, or no SPA entry) — a calm explanation, not an error. */}
+      {phase === 'unsupported' && (
+        <div className="grant-block">
+          <strong style={{ display: 'block', marginBottom: 6 }}>Instant preview not available for this app</strong>
+          <p className="hint" style={{ marginTop: 0 }}>{unsupported}</p>
+          <button type="button" className="btn" onClick={onShowDeployed} style={{ marginTop: 4 }}>
+            Show deployed build
+          </button>
+        </div>
+      )}
 
       {phase === 'building' && (
         <p className="hint" style={{ marginTop: 0 }}>

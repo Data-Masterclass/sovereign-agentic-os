@@ -35,9 +35,10 @@ import { isValidCatalogName, WarehouseError } from '../connections/warehouse/typ
 export type SyncMode = 'full-refresh' | 'append' | 'merge';
 export const SYNC_MODES: SyncMode[] = ['full-refresh', 'append', 'merge'];
 
-/** Cursor kinds. v1 implements `timestamp` + `number`; the other members reserve
- *  room for engine-native cursors (Delta table versions, BigQuery partition ids,
- *  Kafka offsets) without a schema change when they land. */
+/** Cursor kinds. `timestamp` + `number` are the scalar cursors; `kafka-offsets` is
+ *  the per-partition offsets map (see the kafka section below). The remaining
+ *  members reserve room for engine-native cursors (Delta table versions, BigQuery
+ *  partition ids) without a schema change when they land. */
 export type SyncCursorKind = 'timestamp' | 'number' | 'delta-version' | 'bq-partition' | 'kafka-offsets';
 export type SyncCursor = { kind: SyncCursorKind; column: string };
 
@@ -229,6 +230,136 @@ export function mergeSql(input: MergeInput): { staging: string; merge: string; d
     `WHEN NOT MATCHED THEN INSERT (${cols.join(', ')}) VALUES (${cols.map((c) => `s.${c}`).join(', ')})`;
   const drop = `DROP TABLE IF EXISTS ${stg}`;
   return { staging, merge, drop, stagingTable };
+}
+
+// ------------------------------------------------------- kafka offset cursor ----
+/**
+ * KAFKA-OFFSETS cursor (append-only). The watermark is not one scalar but a map of
+ * per-partition high-water offsets — serialized as canonical JSON into the SAME
+ * `cursorBefore`/`cursorAfter` run-row fields the scalar cursors use (kind =
+ * 'kafka-offsets'). The probe reads `max(_partition_offset)` per partition (the
+ * connector's internal columns — `kafka.hide-internal-columns=false`); the slice is
+ * a per-partition `(id = P AND offset > lo AND offset <= hi)` OR-window. First load
+ * and reset are a CREATE OR REPLACE CTAS bounded to the SAME probed highs, which
+ * also CREATES the Bronze copy (Kafka has no one-time import). Every statement is
+ * an already-allowlisted query-tool shape (CTAS / INSERT…SELECT / DELETE-by-batch).
+ */
+
+/** Per-partition high-water offsets: partition id → highest landed offset. */
+export type KafkaOffsets = Record<string, string>;
+
+function requireOffsetInt(v: string, what: string): string {
+  const s = (v ?? '').trim();
+  if (!/^[0-9]+$/.test(s)) throw new WarehouseError(`sync: kafka ${what} '${v}' is not a non-negative integer`);
+  return s;
+}
+
+/** Canonical (numerically-sorted-key) JSON for an offsets map — deterministic, so
+ *  the same watermark always serializes to the same string (and batch id). */
+export function serializeKafkaOffsets(offsets: KafkaOffsets): string {
+  const keys = Object.keys(offsets).sort((a, b) => Number(a) - Number(b));
+  const canon: KafkaOffsets = {};
+  for (const k of keys) canon[requireOffsetInt(k, 'partition id')] = requireOffsetInt(offsets[k], 'offset');
+  return JSON.stringify(canon);
+}
+
+/** Parse a stored offsets watermark. Tolerant: null/malformed ⇒ null (first-run
+ *  semantics) — a corrupted cursor re-loads rather than crashing the sync. */
+export function parseKafkaOffsets(raw: string | null | undefined): KafkaOffsets | null {
+  if (!raw) return null;
+  try {
+    const o = JSON.parse(raw) as Record<string, unknown>;
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+    const out: KafkaOffsets = {};
+    for (const [k, v] of Object.entries(o)) {
+      if (!/^[0-9]+$/.test(k) || typeof v !== 'string' || !/^[0-9]+$/.test(v)) return null;
+      out[k] = v;
+    }
+    return Object.keys(out).length > 0 ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Per-partition max: the merged watermark after a run covered `highs`. Never
+ *  regresses a partition (a shrunken probe — retention — keeps the old mark). */
+export function mergeKafkaOffsets(before: KafkaOffsets | null, highs: KafkaOffsets): KafkaOffsets {
+  const out: KafkaOffsets = { ...(before ?? {}) };
+  for (const [p, hi] of Object.entries(highs)) {
+    const lo = out[p];
+    out[p] = lo !== undefined && BigInt(lo) >= BigInt(hi) ? lo : hi;
+  }
+  return out;
+}
+
+/** True when any probed partition holds offsets beyond the watermark. */
+export function kafkaHasNew(before: KafkaOffsets | null, highs: KafkaOffsets): boolean {
+  if (!before) return Object.keys(highs).length > 0;
+  return Object.entries(highs).some(([p, hi]) => before[p] === undefined || BigInt(hi) > BigInt(before[p]));
+}
+
+/** The governed READ probing each partition's current high offset. Run BEFORE the
+ *  write so the slice window is stable while producers keep publishing. */
+export function kafkaOffsetsProbeSql(source: SyncSource): string {
+  return (
+    `SELECT _partition_id, max(_partition_offset) AS hw ` +
+    `FROM ${externalTableFqn(source.catalog, source.schema, source.table)} GROUP BY _partition_id`
+  );
+}
+
+export type KafkaSliceInput = {
+  target: SyncTarget;
+  source: SyncSource;
+  /** Last landed offsets (null ⇒ full load: everything up to `highs`). */
+  before: KafkaOffsets | null;
+  /** The probed per-partition highs this run syncs up to. */
+  highs: KafkaOffsets;
+  /** Deterministic per-slice batch id — lands as `_batch_id` on every row. */
+  batchId: string;
+  /** Run-start timestamp — lands as `_loaded_at` on every row. */
+  loadedAt: string;
+};
+
+/** The per-partition OR-window + the offset-stamped select list (shared by the
+ *  append slice and the full-load CTAS so both land the SAME column shape). */
+function kafkaSliceSelect(input: KafkaSliceInput): string {
+  const src = externalTableFqn(input.source.catalog, input.source.schema, input.source.table);
+  const batchId = requireSafeBatchId(input.batchId);
+  const loadedAt = cursorLiteral('timestamp', input.loadedAt);
+  const parts = Object.keys(input.highs).sort((a, b) => Number(a) - Number(b));
+  const clauses: string[] = [];
+  for (const p of parts) {
+    const pid = requireOffsetInt(p, 'partition id');
+    const hi = requireOffsetInt(input.highs[p], 'offset');
+    const lo = input.before?.[p];
+    if (lo !== undefined) {
+      if (BigInt(hi) <= BigInt(requireOffsetInt(lo, 'offset'))) continue; // nothing new here
+      clauses.push(`(_partition_id = ${pid} AND _partition_offset > ${lo} AND _partition_offset <= ${hi})`);
+    } else {
+      clauses.push(`(_partition_id = ${pid} AND _partition_offset <= ${hi})`);
+    }
+  }
+  if (clauses.length === 0) {
+    throw new WarehouseError('sync: kafka slice has no advanced partition (check kafkaHasNew before building)');
+  }
+  return (
+    `SELECT *, _partition_id AS _kafka_partition, _partition_offset AS _kafka_offset, ` +
+    `${loadedAt} AS _loaded_at, '${batchId}' AS _batch_id ` +
+    `FROM ${src} WHERE ${clauses.join(' OR ')}`
+  );
+}
+
+/** Incremental Kafka APPEND: insert only the per-partition offset windows, stamped
+ *  with `_kafka_partition`/`_kafka_offset` + the `_loaded_at`/`_batch_id` lineage. */
+export function kafkaAppendSql(input: KafkaSliceInput): string {
+  return `INSERT INTO ${targetFqn(input.target)} ${kafkaSliceSelect({ ...input })}`;
+}
+
+/** First load / reset: CREATE OR REPLACE the Bronze copy bounded to the probed
+ *  highs — the SAME select shape as the append slice, so later appends line up.
+ *  This is also how a Kafka dataset's table comes to exist (no one-time import). */
+export function kafkaFullLoadSql(input: Omit<KafkaSliceInput, 'before'>): string {
+  return `CREATE OR REPLACE TABLE ${targetFqn(input.target)} AS ${kafkaSliceSelect({ ...input, before: null })}`;
 }
 
 /** Iceberg snapshot maintenance: expire snapshots older than `retention` (e.g. '7d').

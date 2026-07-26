@@ -52,6 +52,9 @@ export async function GET(req: Request) {
               platform: pr.platform,
               label: pr.label,
               capabilities: pr.capabilities,
+              // Gallery grouping/label: 'operational' (OLTP sync sources) or
+              // 'streaming' (Kafka); null = plain warehouse.
+              category: pr.category ?? null,
               credentialFields: pr.credentialFields,
               secretKeys: pr.secretMaterial.secretKeys,
               liveVerificationRequired: pr.liveVerificationRequired,

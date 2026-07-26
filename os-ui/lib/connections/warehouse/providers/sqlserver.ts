@@ -85,7 +85,10 @@ export const sqlServerProvider: WarehouseProvider = {
   label: 'Microsoft SQL Server',
   trinoConnector: 'sqlserver',
   nativeInImage: true,
-  capabilities: { federate: true, import: true },
+  // First-class OPERATIONAL sync source: the scheduled incremental sync's
+  // timestamp/number cursor path runs against this catalog (guard-verified).
+  capabilities: { federate: true, import: true, sync: true },
+  category: 'operational',
   catalogProps: (source) => sqlServerProps(source as SqlServerConfig),
   // A SQL Server SCHEMA (within the pinned database) is the Trino schema;
   // `SHOW TABLES FROM <catalog>.<schema>` lists it.

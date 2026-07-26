@@ -190,3 +190,119 @@ test('expireSnapshotsSql emits the guarded maintenance statement', () => {
 test('optimizeSql emits the guarded compaction statement', () => {
   assert.equal(optimizeSql(target), 'ALTER TABLE iceberg.personal_lena.bronze_orders EXECUTE optimize');
 });
+
+// ------------------------------------------------------------- kafka offsets --
+
+import {
+  kafkaAppendSql,
+  kafkaFullLoadSql,
+  kafkaHasNew,
+  kafkaOffsetsProbeSql,
+  mergeKafkaOffsets,
+  parseKafkaOffsets,
+  serializeKafkaOffsets,
+} from './sync-sql.ts';
+
+const kafkaSource = { catalog: 'kafka_events', schema: 'default', table: 'orders' };
+const kafkaLineage = { batchId: 'ds_1.k', loadedAt: '2026-02-01T00:00:00Z' };
+const KAFKA_SELECT_HEAD =
+  'SELECT *, _partition_id AS _kafka_partition, _partition_offset AS _kafka_offset, ' +
+  "TIMESTAMP '2026-02-01 00:00:00' AS _loaded_at, 'ds_1.k' AS _batch_id ";
+
+test('kafkaOffsetsProbeSql probes per-partition highs on the federated topic', () => {
+  assert.equal(
+    kafkaOffsetsProbeSql(kafkaSource),
+    'SELECT _partition_id, max(_partition_offset) AS hw FROM kafka_events.default.orders GROUP BY _partition_id',
+  );
+});
+
+test('kafka offsets serialize canonically, parse tolerantly, merge without regression', () => {
+  assert.equal(serializeKafkaOffsets({ '10': '5', '2': '7' }), '{"2":"7","10":"5"}');
+  assert.deepEqual(parseKafkaOffsets('{"0":"41","1":"7"}'), { '0': '41', '1': '7' });
+  assert.equal(parseKafkaOffsets('not json'), null);
+  assert.equal(parseKafkaOffsets('{"0":"drop table"}'), null);
+  assert.equal(parseKafkaOffsets(null), null);
+  // Merge takes the per-partition MAX — a shrunken probe (retention) never regresses.
+  assert.deepEqual(mergeKafkaOffsets({ '0': '50' }, { '0': '10', '1': '3' }), { '0': '50', '1': '3' });
+  assert.throws(() => serializeKafkaOffsets({ '0': '1; DROP' }), WarehouseError);
+});
+
+test('kafkaHasNew detects advanced or brand-new partitions', () => {
+  assert.equal(kafkaHasNew(null, { '0': '1' }), true);
+  assert.equal(kafkaHasNew({ '0': '5' }, { '0': '5' }), false);
+  assert.equal(kafkaHasNew({ '0': '5' }, { '0': '6' }), true);
+  assert.equal(kafkaHasNew({ '0': '5' }, { '0': '5', '1': '0' }), true);
+  assert.equal(kafkaHasNew(null, {}), false);
+});
+
+test('kafkaAppendSql emits per-partition offset windows with lineage + offset columns', () => {
+  const sql = kafkaAppendSql({
+    target,
+    source: kafkaSource,
+    before: { '0': '41', '1': '7' },
+    highs: { '0': '100', '1': '7', '2': '3' },
+    ...kafkaLineage,
+  });
+  assert.equal(
+    sql,
+    `INSERT INTO iceberg.personal_lena.bronze_orders ${KAFKA_SELECT_HEAD}` +
+      'FROM kafka_events.default.orders WHERE ' +
+      '(_partition_id = 0 AND _partition_offset > 41 AND _partition_offset <= 100) OR ' +
+      '(_partition_id = 2 AND _partition_offset <= 3)',
+    'partition 1 (no new offsets) is omitted; new partition 2 has no lower bound',
+  );
+});
+
+test('kafkaFullLoadSql CREATEs OR REPLACEs the copy bounded to the probed highs', () => {
+  const sql = kafkaFullLoadSql({ target, source: kafkaSource, highs: { '0': '41' }, ...kafkaLineage });
+  assert.equal(
+    sql,
+    `CREATE OR REPLACE TABLE iceberg.personal_lena.bronze_orders AS ${KAFKA_SELECT_HEAD}` +
+      'FROM kafka_events.default.orders WHERE (_partition_id = 0 AND _partition_offset <= 41)',
+  );
+});
+
+test('kafka builders validate everything folded into SQL', () => {
+  const base = { target, source: kafkaSource, before: null, ...kafkaLineage };
+  assert.throws(() => kafkaAppendSql({ ...base, highs: {} }), WarehouseError);
+  assert.throws(() => kafkaAppendSql({ ...base, highs: { '0': '1 OR 1=1' } }), WarehouseError);
+  assert.throws(() => kafkaAppendSql({ ...base, highs: { 'x': '1' } }), WarehouseError);
+  assert.throws(
+    () => kafkaAppendSql({ ...base, highs: { '0': '1' }, batchId: "x' OR '1'='1" }),
+    WarehouseError,
+  );
+});
+
+// The generated kafka statements must clear the query-tool guard's allowlisted
+// shapes (mirrored from images/query-tool/execute_guard.py — INSERT INTO … SELECT,
+// CREATE OR REPLACE … AS SELECT, DELETE … WHERE _batch_id = '<id>').
+test('kafka SQL matches the query-tool guard shapes (mirror cross-check)', () => {
+  const RE_INSERT_SELECT = /^insert\s+into\s+iceberg\.([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)\s+select\b[\s\S]*$/i;
+  const RE_CTAS_REPLACE = /^create\s+or\s+replace\s+table\s+iceberg\.([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)\s+as\s+select\b[\s\S]*$/i;
+  const append = kafkaAppendSql({ target, source: kafkaSource, before: { '0': '1' }, highs: { '0': '9' }, ...kafkaLineage });
+  const full = kafkaFullLoadSql({ target, source: kafkaSource, highs: { '0': '9' }, ...kafkaLineage });
+  assert.match(append, RE_INSERT_SELECT);
+  assert.match(full, RE_CTAS_REPLACE);
+  for (const sql of [append, full]) {
+    assert.ok(!sql.includes(';') && !sql.includes('--') && !sql.includes('/*'), 'no comments / extra statements');
+  }
+});
+
+// ---------------------------------------------- operational sources (postgres) --
+
+// The timestamp-cursor slice against a federated OPERATIONAL catalog (postgresql/
+// mysql/sqlserver) must clear the query-tool guard's insert_select shape — the same
+// mirror the kafka cross-check uses. (The guard's own suite re-checks the literal
+// SQL: images/query-tool/test_execute_guard.py::SyncGeneratedSqlTests.)
+test('operational-database slice SQL clears the guard mirror (postgresql catalog)', () => {
+  const sql = appendSql({
+    target,
+    source: { catalog: 'pg_erp', schema: 'public', table: 'orders' },
+    cursor: tsCursor,
+    watermark: '2026-01-01 00:00:00',
+    highWatermark: '2026-02-01 00:00:00',
+    ...lineage,
+  });
+  assert.match(sql, /^insert\s+into\s+iceberg\.([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)\s+select\b[\s\S]*$/i);
+  assert.ok(!sql.includes(';') && !sql.includes('--') && !sql.includes('/*'));
+});

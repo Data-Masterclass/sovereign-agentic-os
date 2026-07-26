@@ -139,7 +139,16 @@ function labels(spec: RunnerSpec): Record<string, string> {
 
 // ------------------------------------------------------------- Manifests -------
 
-export function buildDeploymentManifest(spec: RunnerSpec, namespace: string): Record<string, unknown> {
+/**
+ * `deployedAt` (ISO timestamp) is stamped as a POD-TEMPLATE annotation so every
+ * re-deploy CHANGES the template and triggers a real rollout. Without it a
+ * re-apply of an identical spec (the image ref is the stable `:latest` tag) is a
+ * no-op to Kubernetes: the pod keeps running the image it pulled FIRST — which is
+ * why apps kept serving the scaffold stub after CI had long since published the
+ * real build. Combined with `imagePullPolicy: Always`, the restarted pod re-pulls
+ * the current `:latest` from the registry.
+ */
+export function buildDeploymentManifest(spec: RunnerSpec, namespace: string, deployedAt?: string): Record<string, unknown> {
   const name = runnerName(spec.slug);
   const sel = { app: name };
   return {
@@ -150,12 +159,19 @@ export function buildDeploymentManifest(spec: RunnerSpec, namespace: string): Re
       replicas: 1,
       selector: { matchLabels: sel },
       template: {
-        metadata: { labels: { ...labels(spec), ...sel } },
+        metadata: {
+          labels: { ...labels(spec), ...sel },
+          ...(deployedAt ? { annotations: { 'soa.sovereign-os/deployed-at': deployedAt } } : {}),
+        },
         spec: {
           containers: [
             {
               name: 'app',
               image: spec.image,
+              // Always re-pull: the runner serves mutable tags (`:latest`), so a
+              // restarted pod must fetch the image CI just published, not reuse
+              // the node's stale cache.
+              imagePullPolicy: 'Always',
               ports: [{ containerPort: spec.port }],
               resources: {
                 requests: { cpu: spec.cpu, memory: spec.memory },
@@ -313,7 +329,9 @@ export async function deployApp(app: RunnerApp, options: RunnerOpts = {}): Promi
   if (!nsRes.reachable) return { ok: false, live: false, action: 'noop', name, host: spec.host, url: null, phase: 'offline', detail: UNREACHABLE };
   if (!nsRes.ok) return { ok: false, live: true, action: 'noop', name, host: spec.host, url: null, phase: 'failed', detail: `Could not ensure runner namespace ${o.namespace}.` };
 
-  const dep = await applyObject(o.k8s, c.deployments, name, buildDeploymentManifest(spec, o.namespace));
+  // Stamp this deploy so the pod template CHANGES → Kubernetes rolls the pods and
+  // (with imagePullPolicy Always) re-pulls the current `:latest` the CI published.
+  const dep = await applyObject(o.k8s, c.deployments, name, buildDeploymentManifest(spec, o.namespace, new Date().toISOString()));
   if (!dep.reachable) return { ok: false, live: false, action: 'noop', name, host: spec.host, url: null, phase: 'offline', detail: UNREACHABLE };
   const svc = await applyObject(o.k8s, c.services, name, buildServiceManifest(spec, o.namespace));
   const ing = await applyObject(o.k8s, c.ingresses, name, buildIngressManifest(spec, o.namespace, o));

@@ -9,6 +9,7 @@ import { parseSystem, serializeSystem, type System } from '../system-schema.ts';
 import { SOFTWARE_TEAM_YAML } from '../software-team.ts';
 import { isAgenticOsTeam, type OsToolDeps } from './os-tools.ts';
 import { runOsTeam, osPreamble } from './agentic-graph-server.ts';
+import { setModelPrices, _reset as resetModelPrices } from '@/lib/platform-admin/model-prices';
 
 /**
  * T4 — the run graph is generalised to the whole OS toolset. These tests prove a
@@ -237,8 +238,37 @@ test('runOsTeam emits ONE run-summary trace with the summed token usage (Monitor
   assert.equal(t.tokens, 330, 'plan 110 + act 220; the usage-less final call adds 0');
   assert.deepEqual(t.input, { prompt: 'How many rows?' });
   assert.deepEqual(t.output, { path: res.path });
-  // No MODEL_PRICES_JSON in tests → cost is undefined ("—"), never a fabricated 0.
+  // No price book in tests (env seed empty, store empty) → cost is undefined
+  // ("—"), never a fabricated 0.
   assert.equal(t.costUsd, undefined);
+});
+
+test('runOsTeam prices the run from the ADMIN-SAVED price book (effectiveModelPrices, no env needed)', async () => {
+  // Store a price for BOTH tier models this run calls (plan=sovereign-reasoning,
+  // act=sovereign-default) in the durable store — no MODEL_PRICES_JSON env at all.
+  resetModelPrices();
+  setModelPrices({
+    'sovereign-reasoning': { inputPerM: 1000, outputPerM: 2000 },
+    'sovereign-default': { inputPerM: 1000, outputPerM: 2000 },
+  }, 'admin');
+  try {
+    const deps = spyDeps();
+    await runOsTeam({
+      user: CREATOR,
+      yaml: mixedYaml(),
+      systemId: 'sys-priced',
+      messages: [{ role: 'user', content: 'How many rows?' }],
+      llm: usageReportingLlm('query_data'),
+      toolDeps: deps,
+      maxIterations: 3,
+    });
+    const t = deps.calls.trace.find((c) => c.principal === 'os-sys-priced:run');
+    assert.ok(t, 'run-summary trace fired');
+    // input 300 (100+200) at €1000/1M + output 30 (10+20) at €2000/1M = €0.36.
+    assert.equal(t.costUsd, 0.36);
+  } finally {
+    resetModelPrices(); // later suites still see an honest unpriced ⇒ undefined
+  }
 });
 
 test('runOsTeam run-summary trace carries tokens: undefined when NO call reported usage (never fabricated)', async () => {

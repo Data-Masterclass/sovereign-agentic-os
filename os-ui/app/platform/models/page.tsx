@@ -45,6 +45,10 @@ const ROLE_META: { key: RoleKey; label: string; help: string }[] = [
 
 const EMPTY_ASSISTANT = { label: 'STACKIT managed LLM', baseUrl: '', modelName: '', apiKey: '' };
 
+// Token prices (EUR per 1M tokens) — stored beats the deployment-config seed.
+type PriceRow = { inputPerM: number; outputPerM: number; source: 'stored' | 'env' };
+type PriceEdit = { input: string; output: string };
+
 export default function ModelsPage() {
   const [models, setModels] = useState<Model[]>([]);
   const [assistant, setAssistant] = useState('');
@@ -55,6 +59,10 @@ export default function ModelsPage() {
   const [catalog, setCatalog] = useState<CatalogModel[]>([]);
   const [catalogSource, setCatalogSource] = useState<'litellm' | 'offline' | null>(null);
   const [modelRoles, setModelRoles] = useState<Record<RoleKey, string>>({ standard: '', reasoning: '', embeddings: '' });
+  // Token prices: the effective book (stored/env per row) + unsaved field edits.
+  const [prices, setPrices] = useState<Record<string, PriceRow>>({});
+  const [pricesMeta, setPricesMeta] = useState<{ updatedAt?: string; updatedBy?: string }>({});
+  const [priceEdits, setPriceEdits] = useState<Record<string, PriceEdit>>({});
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
@@ -69,16 +77,18 @@ export default function ModelsPage() {
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const [mRes, cRes, sRes] = await Promise.all([
+      const [mRes, cRes, sRes, pRes] = await Promise.all([
         fetch('/api/platform-admin/models', { cache: 'no-store' }),
         fetch('/api/agents/models', { cache: 'no-store' }),
         fetch('/api/platform-admin/settings', { cache: 'no-store' }),
+        fetch('/api/platform-admin/models/prices', { cache: 'no-store' }),
       ]);
       const mBody = await mRes.json();
       if (!mRes.ok) { setError(mBody.error ?? 'Failed to load'); return; }
       setModels(mBody.models ?? []); setAssistant(mBody.assistant ?? ''); setAssistantExplicit(Boolean(mBody.assistantExplicit)); setKeys(mBody.keys ?? []);
       if (cRes.ok) { const c = await cRes.json(); setCatalog(c.models ?? []); setCatalogSource(c.source ?? null); }
       if (sRes.ok) { const s = await sRes.json(); if (s.settings?.modelRoles) setModelRoles(s.settings.modelRoles); }
+      if (pRes.ok) { const p = await pRes.json(); setPrices(p.prices ?? {}); setPricesMeta({ updatedAt: p.updatedAt, updatedBy: p.updatedBy }); setPriceEdits({}); }
     } catch (e) { setError((e as Error).message); } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -95,6 +105,37 @@ export default function ModelsPage() {
       else { setToast('Saved the default model per role — every assistant, agent and embedding call resolves through these.'); await load(); }
     } finally { setBusy(''); }
   }, [modelRoles, load]);
+
+  // Save the edited token prices. Both fields set → an override; both cleared on
+  // a stored row → remove the override (back to the deployment seed / unpriced).
+  const savePrices = useCallback(async () => {
+    const patch: Record<string, { inputPerM: number; outputPerM: number } | null> = {};
+    for (const [name, e] of Object.entries(priceEdits)) {
+      const inp = e.input.trim();
+      const out = e.output.trim();
+      if (inp === '' && out === '') {
+        if (prices[name]?.source === 'stored') patch[name] = null;
+        continue;
+      }
+      const inputPerM = Number(inp);
+      const outputPerM = Number(out);
+      if (inp === '' || out === '' || !Number.isFinite(inputPerM) || inputPerM < 0 || !Number.isFinite(outputPerM) || outputPerM < 0) {
+        setError(`${name}: both € prices are required and must be ≥ 0 (leave both empty to clear).`);
+        return;
+      }
+      patch[name] = { inputPerM, outputPerM };
+    }
+    if (Object.keys(patch).length === 0) return;
+    setBusy('prices'); setError('');
+    try {
+      const res = await fetch('/api/platform-admin/models/prices', {
+        method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prices: patch }),
+      });
+      const body = await res.json();
+      if (!res.ok) setError(body.error ?? 'Failed to save prices');
+      else { setToast('Saved token prices — Monitoring cost attribution uses these immediately, no redeploy.'); await load(); }
+    } finally { setBusy(''); }
+  }, [priceEdits, prices, load]);
 
   const registerAssistant = useCallback(async () => {
     if (!reg.label.trim() || !reg.baseUrl.trim() || !reg.modelName.trim() || !reg.apiKey.trim()) return;
@@ -381,6 +422,70 @@ export default function ModelsPage() {
             </tbody>
           </table>
         </div>
+
+        <div className="section-title" style={{ marginTop: 22 }}>Token prices · € per 1M tokens</div>
+        <div className="hint" style={{ marginBottom: 10 }}>
+          What Monitoring charges a run against, per LiteLLM <code>model_name</code> (STACKIT bills EUR).
+          Saved prices are durable and apply immediately — no redeploy. Values marked
+          <em> seeded from deployment config</em> come from <code>MODEL_PRICES_JSON</code> until you save
+          an override; clear both fields to drop an override again. An unpriced model is honest:
+          its runs show <strong>—</strong>, never a fabricated €0.
+          {pricesMeta.updatedAt ? ` Last saved by ${pricesMeta.updatedBy} · ${new Date(pricesMeta.updatedAt).toLocaleString()}.` : ''}
+        </div>
+        <div className="table-wrap" style={{ marginBottom: 10 }}>
+          <table>
+            <thead><tr><th>Model</th><th>€ input / 1M</th><th>€ output / 1M</th><th>Status</th></tr></thead>
+            <tbody>
+              {(() => {
+                // Every configured model_name: live catalog + governed catalog + any
+                // priced key (stored or env) that is no longer in either list.
+                const names = [...new Set([
+                  ...catalog.map((c) => c.model_name),
+                  ...models.map((m) => m.id),
+                  ...Object.keys(prices),
+                ])].sort();
+                const edit = (name: string, field: keyof PriceEdit, value: string) => {
+                  const cur = prices[name];
+                  const base: PriceEdit = priceEdits[name]
+                    ?? { input: cur ? String(cur.inputPerM) : '', output: cur ? String(cur.outputPerM) : '' };
+                  setPriceEdits({ ...priceEdits, [name]: { ...base, [field]: value } });
+                };
+                return names.map((name) => {
+                  const cur = prices[name];
+                  const e = priceEdits[name];
+                  const inputVal = e ? e.input : cur ? String(cur.inputPerM) : '';
+                  const outputVal = e ? e.output : cur ? String(cur.outputPerM) : '';
+                  return (
+                    <tr key={name}>
+                      <td><span className="mono" style={{ fontSize: 12 }}>{name}</span></td>
+                      <td>
+                        <input type="number" min={0} step="any" value={inputVal} placeholder="—"
+                          style={{ width: 110 }} disabled={busy === 'prices'}
+                          onChange={(ev) => edit(name, 'input', ev.target.value)} />
+                      </td>
+                      <td>
+                        <input type="number" min={0} step="any" value={outputVal} placeholder="—"
+                          style={{ width: 110 }} disabled={busy === 'prices'}
+                          onChange={(ev) => edit(name, 'output', ev.target.value)} />
+                      </td>
+                      <td>
+                        {e ? <span className="pa-tag">unsaved</span>
+                          : cur?.source === 'stored' ? <span className="pa-tag">admin-set</span>
+                          : cur?.source === 'env' ? <span className="muted" style={{ fontSize: 11 }}>seeded from deployment config</span>
+                          : <span className="muted" style={{ fontSize: 11 }}>Unpriced — cost shows —</span>}
+                      </td>
+                    </tr>
+                  );
+                });
+              })()}
+            </tbody>
+          </table>
+        </div>
+        {catalog.length === 0 && models.length === 0 && Object.keys(prices).length === 0
+          ? <div className="hint">No models configured yet — register a model above to price it.</div> : null}
+        <button className="btn" disabled={busy === 'prices' || Object.keys(priceEdits).length === 0} onClick={savePrices} style={{ marginBottom: 6 }}>
+          {busy === 'prices' ? <span className="spin" /> : 'Save prices'}
+        </button>
 
         <div className="section-title" style={{ marginTop: 22 }}>Provider keys</div>
         <div className="card" style={{ marginBottom: 16 }}>

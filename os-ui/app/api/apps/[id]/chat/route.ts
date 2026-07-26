@@ -10,29 +10,12 @@ import { diffTrees, type FileChange } from '@/lib/software/build-changeset';
 import { runTabAgent, renderAssistantText } from '@/lib/assistant/runtime';
 import { AssistantNotConfiguredError } from '@/lib/assistant/complete';
 import { toolCallToLine, committedSummaryLine, type ActivityLine } from '@/lib/software/build-activity';
+import { asChatRunMode, isReadOnlyMode, modeDirective, READ_ONLY_MODE_TOOLS, type ChatRunMode } from '@/lib/software/chat-modes';
+import type { BuildTarget } from '@/lib/software/build-target';
 
 export const dynamic = 'force-dynamic';
 
 type Msg = { role: 'user' | 'assistant'; content: string };
-type BuildMode = 'plan' | 'build';
-/** A story the Build run is targeting (from the Design EPIC/story selector). */
-type BuildStory = { epicId: string; storyId: string; label?: string };
-
-/**
- * PLAN mode = discuss + plan with ZERO code changes: the agent may only READ
- * (list/get software, read the app files, status) — no commit/preview/deploy. The
- * allowlist is enforced by the harness (not just prompted), so a Plan turn cannot
- * mutate the app. BUILD mode leaves the full software tool set in place.
- */
-const PLAN_MODE_TOOLS = [
-  'whoami',
-  'list_capabilities',
-  'get_guide',
-  'list_software',
-  'get_software',
-  'read_app_files',
-  'get_software_status',
-];
 
 /**
  * A concise, ACCURATE description of the OS-client SDK surface + the `vite-os`
@@ -104,15 +87,19 @@ function appContext(
     docs: string;
     epics?: { id: string; title: string; stories: { id: string; title: string; asA: string; iWant: string; soThat: string; acceptance: string }[] }[];
   },
-  mode: BuildMode,
-  story: BuildStory | null,
+  mode: ChatRunMode,
+  target: BuildTarget | null,
 ): string {
-  // Governed OS frontends: the vite-os SPA and the Sovereign standard app.
-  const isGovernedFrontend = app.template === 'vite-os' || app.template === 'sovereign-app';
+  // Governed OS frontends: every Vite-based scaffold (vite-os, sovereign-app,
+  // website, empty) — the vendored SDK/UI brief applies to all of them.
+  const isGovernedFrontend = ['vite-os', 'sovereign-app', 'website', 'empty'].includes(app.template);
   const isSovereignApp = app.template === 'sovereign-app';
-  const stackLine = isGovernedFrontend
-    ? 'It is a Vite + React governed OS-frontend app that lives in its own Forgejo repo'
-    : 'It is a Next.js + Supabase app that lives in its own Forgejo repo';
+  const stackLine =
+    app.template === 'api-service'
+      ? 'It is an APIs-only service (zero-dependency Node HTTP server, NO user interface) that lives in its own Forgejo repo'
+      : isGovernedFrontend
+        ? 'It is a Vite + React governed OS-frontend app that lives in its own Forgejo repo'
+        : 'It is a Next.js + Supabase app that lives in its own Forgejo repo';
   const lines = [
     `You are the build assistant for the "${app.name}" application (appId: ${app.id}).`,
     stackLine,
@@ -141,38 +128,40 @@ function appContext(
     );
   }
 
-  if (mode === 'plan') {
-    lines.push(
-      '',
-      '## Mode: PLAN (read-only)',
-      'You are in PLAN mode. Do NOT write, commit, preview or deploy anything — those',
-      'tools are unavailable to you here. READ the app files and status as needed, then',
-      'reply with a concise, concrete implementation plan (the files you WOULD change and',
-      'why). The user will switch to BUILD mode to execute it.',
-    );
-  } else {
-    lines.push(
-      '',
-      '## Mode: BUILD (execute end-to-end)',
-      `To build: generate the files, then call \`commit\` with THIS appId (${app.id}) to`,
-      'write them (re-parsed on every commit), `start_preview` for the private sandbox, and',
-      '`request_deploy` to open the Builder review gate. When you make a design decision or',
-      'change the data model, state it explicitly so it can be captured under the app.',
-    );
-  }
+  // The `## Mode: …` directive (plan/build/test/review) — pure, unit-tested.
+  lines.push('', ...modeDirective(mode, app.id));
 
-  if (story) {
-    const epic = app.epics?.find((e) => e.id === story.epicId);
-    const st = epic?.stories.find((s) => s.id === story.storyId);
+  // The targeted scope from the epic/story tree: a single story (the classic
+  // target), an EPIC (work its stories in order), or nothing (= whole app).
+  if (target?.kind === 'story') {
+    const epic = app.epics?.find((e) => e.id === target.epicId);
+    const st = epic?.stories.find((s) => s.id === target.storyId);
     if (st) {
       lines.push(
         '',
-        '## Target story (implement THIS story)',
+        '## Target story (THIS story is the scope)',
         `EPIC: ${epic?.title || '(untitled)'}`,
         `Story: ${st.title || '(untitled)'}`,
         `As a ${st.asA || '…'}, I want ${st.iWant || '…'}, so that ${st.soThat || '…'}.`,
         st.acceptance ? `Acceptance: ${st.acceptance}` : '',
-        'Focus this turn on delivering exactly this story.',
+        'Focus this turn on exactly this story.',
+      );
+    }
+  } else if (target?.kind === 'epic') {
+    const epic = app.epics?.find((e) => e.id === target.epicId);
+    if (epic) {
+      lines.push(
+        '',
+        '## Target EPIC (THIS epic is the scope)',
+        `EPIC: ${epic.title || '(untitled)'}`,
+        'Its stories, in order:',
+        ...epic.stories.map((s, i) => {
+          const acceptance = s.acceptance ? ` Acceptance: ${s.acceptance}` : '';
+          return `${i + 1}. ${s.title || '(untitled)'} — as a ${s.asA || '…'}, I want ${s.iWant || '…'}, so that ${s.soThat || '…'}.${acceptance}`;
+        }),
+        mode === 'build'
+          ? 'Work the stories IN ORDER, each to its acceptance criteria; state clearly which you delivered this turn.'
+          : 'Cover every story of this EPIC in your response.',
       );
     }
   }
@@ -201,14 +190,21 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const { id } = await ctx.params;
 
   let messages: Msg[] = [];
-  let mode: BuildMode = 'build';
-  let story: BuildStory | null = null;
+  let mode: ChatRunMode = 'build';
+  let target: BuildTarget | null = null;
   try {
     const body = await req.json();
     messages = Array.isArray(body?.messages) ? body.messages : [];
-    if (body?.mode === 'plan' || body?.mode === 'build') mode = body.mode;
-    if (body?.story && typeof body.story.epicId === 'string' && typeof body.story.storyId === 'string') {
-      story = { epicId: body.story.epicId, storyId: body.story.storyId, label: typeof body.story.label === 'string' ? body.story.label : undefined };
+    mode = asChatRunMode(body?.mode);
+    // The targeted scope: `target` ({kind, epicId?, storyId?}) is the current shape;
+    // the legacy `story` ({epicId, storyId}) stays accepted for backward compat.
+    const t = body?.target;
+    if (t?.kind === 'app') target = { kind: 'app' };
+    else if (t?.kind === 'epic' && typeof t.epicId === 'string') target = { kind: 'epic', epicId: t.epicId };
+    else if (t?.kind === 'story' && typeof t.epicId === 'string' && typeof t.storyId === 'string') {
+      target = { kind: 'story', epicId: t.epicId, storyId: t.storyId };
+    } else if (body?.story && typeof body.story.epicId === 'string' && typeof body.story.storyId === 'string') {
+      target = { kind: 'story', epicId: body.story.epicId, storyId: body.story.storyId };
     }
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
@@ -268,9 +264,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           user,
           tab: 'software',
           messages: clean,
-          extraContext: appContext(app, mode, story),
-          // PLAN mode is read-only — enforced by the harness, not just the prompt.
-          toolNames: mode === 'plan' ? PLAN_MODE_TOOLS : undefined,
+          extraContext: appContext(app, mode, target),
+          // Plan/test/review are read-only — enforced by the harness, not just the prompt.
+          toolNames: isReadOnlyMode(mode) ? READ_ONLY_MODE_TOOLS : undefined,
           onPlan: (plan) => send({ type: 'plan', text: plan }),
           onStep: (step) => {
             const line: ActivityLine = toolCallToLine(step);

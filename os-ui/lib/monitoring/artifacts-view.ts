@@ -55,7 +55,7 @@ export type DataHealthRow = {
   /** Last scheduled-sync run time (ISO), or null when the dataset has never synced. */
   lastSync: string | null;
   /** Last sync run outcome, or null when never synced. */
-  syncStatus: 'ok' | 'error' | 'skipped' | null;
+  syncStatus: 'ok' | 'error' | 'skipped' | 'running' | null;
 };
 
 export type AgentScopeGroups = { mine: AgentTile[]; domain: AgentTile[]; marketplace: AgentTile[] };

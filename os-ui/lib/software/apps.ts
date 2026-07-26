@@ -34,6 +34,9 @@ import type {
 } from '@/lib/software/model';
 import { viteOsFiles } from '@/lib/software/scaffolds/vite-os';
 import { sovereignAppFiles, sovereignAppGuide } from '@/lib/software/scaffolds/sovereign-app';
+import { websiteFiles, websiteGuide } from '@/lib/software/scaffolds/website';
+import { apiServiceFiles, apiServiceGuide } from '@/lib/software/scaffolds/api-service';
+import { emptyAppFiles, emptyAppGuide } from '@/lib/software/scaffolds/empty-app';
 import { vendorSdkForRepo, applySdkFileDep } from '@/lib/software/app-sdk-vendor';
 import { vendorUiForRepo, applyUiFileDep } from '@/lib/software/app-ui-vendor';
 import { snapshotFiles, getSnapshot } from '@/lib/software/snapshot';
@@ -197,20 +200,32 @@ export type App = {
 
 // ----------------------------------------------------------------- Templates --
 
-export type AppTemplateKey = 'nextjs-supabase' | 'service' | 'script' | 'dashboard' | 'vite-os' | 'sovereign-app';
+export type AppTemplateKey =
+  | 'nextjs-supabase'
+  | 'service'
+  | 'script'
+  | 'dashboard'
+  | 'vite-os'
+  | 'sovereign-app'
+  | 'website'
+  | 'api-service'
+  | 'empty';
 
 /** Runtime kind per template (drives the per-template/per-runtime adapter). */
 export const TEMPLATE_RUNTIME: Record<AppTemplateKey, 'web' | 'service' | 'script' | 'dashboard'> = {
   'nextjs-supabase': 'web',
   'vite-os': 'web',
   'sovereign-app': 'web',
+  website: 'web',
+  'api-service': 'service',
+  empty: 'web',
   service: 'service',
   script: 'script',
   dashboard: 'dashboard',
 };
 
 /** Templates that are governed OS frontends (Vite SPA + vendored @sovereign-os/ui + app-sdk). */
-export const GOVERNED_FRONTEND_TEMPLATES: ReadonlySet<AppTemplateKey> = new Set(['vite-os', 'sovereign-app']);
+export const GOVERNED_FRONTEND_TEMPLATES: ReadonlySet<AppTemplateKey> = new Set(['vite-os', 'sovereign-app', 'website', 'empty']);
 
 type Template = {
   key: AppTemplateKey;
@@ -570,25 +585,120 @@ function slugFromSubdomain(sub: string): string {
   return sub.split('.')[0] || sub;
 }
 
+/**
+ * The WEBSITE template — a public-facing site (landing/marketing style): the OS
+ * theme tokens for coherence, but NO sign-in/admin/identity chrome. Same Vite
+ * infra base as sovereign-app, so preview/CI/deploy are identical.
+ */
+function websiteTemplate(): Template {
+  const base = viteOsTemplate();
+  return {
+    ...base,
+    key: 'website',
+    label: 'Website (public site, no sign-in)',
+    tools: () => [
+      { name: 'list_pages', description: 'List the site sections/pages (read).', write: false },
+    ],
+    designDecisions: (name) =>
+      [
+        `# ${name} — design decisions`,
+        '',
+        '- **Kind:** public website — NO sign-in, NO admin, NO identity chrome.',
+        '- **Stack:** Vite + React + TypeScript; OS theme tokens (`@sovereign-os/ui/theme.css`) for coherence.',
+        '- **Structure:** one SECTIONS registry (src/sections.tsx) drives nav + page; epics add sections.',
+        '- **Served by:** nginx on port 8080 via the same sovereign CI as every app.',
+      ].join('\n'),
+    dataDescriptions: (name) =>
+      [`# ${name} — data descriptions`, '', 'A public site: content lives in the code; no operational data model yet.'].join('\n'),
+    docs: (name, sub) => [websiteGuide(name), '', `Live at **https://${sub}** (once CI → registry → runner have synced).`].join('\n'),
+    files: (name, slug) => websiteFiles(name, slug),
+  };
+}
+
+/**
+ * The APIs-ONLY template — a headless governed service: a zero-dependency Node
+ * HTTP server on the runner's port 8080, `surface: api` DECLARED so it is never
+ * mislabeled as a UI app. Epics add endpoints (ROUTES table + openapi.yaml).
+ */
+function apiServiceTemplate(): Template {
+  const base = viteOsTemplate();
+  return {
+    ...base,
+    key: 'api-service',
+    label: 'APIs only (headless service)',
+    tools: () => [
+      { name: 'healthz', description: 'Liveness/readiness of the service (read).', write: false },
+      { name: 'hello', description: 'Hello endpoint — the starter capability (read).', write: false },
+    ],
+    designDecisions: (name) =>
+      [
+        `# ${name} — design decisions`,
+        '',
+        '- **Kind:** APIs only — headless, `surface: api`; no UI is ever served.',
+        '- **Stack:** zero-dependency Node (node:http) on port 8080; ROUTES table in server.mjs.',
+        '- **Contract:** every endpoint is declared in openapi.yaml (feeds the governed MCP tools).',
+      ].join('\n'),
+    dataDescriptions: (name) =>
+      [`# ${name} — data descriptions`, '', 'A headless service: define its data model as endpoints take shape.'].join('\n'),
+    docs: (name, sub) => [apiServiceGuide(name), '', `Live at **https://${sub}** (once CI → registry → runner have synced).`].join('\n'),
+    files: (name, slug) => apiServiceFiles(name, slug),
+  };
+}
+
+/** The EMPTY APP template — the bare minimum that builds/previews/deploys. */
+function emptyAppTemplate(): Template {
+  const base = viteOsTemplate();
+  return {
+    ...base,
+    key: 'empty',
+    label: 'Empty app (blank canvas)',
+    tools: (slug) => [
+      { name: `${slug.replace(/-/g, '_')}_status`, description: 'Health/status of the app (read).', write: false },
+    ],
+    designDecisions: (name) =>
+      [`# ${name} — design decisions`, '', '- **Kind:** empty app — a blank canvas; decisions are made as epics land.'].join('\n'),
+    dataDescriptions: (name) => [`# ${name} — data descriptions`, '', 'Nothing yet — a blank canvas.'].join('\n'),
+    docs: (name, sub) => [emptyAppGuide(name), '', `Live at **https://${sub}** (once CI → registry → runner have synced).`].join('\n'),
+    files: (name, slug) => emptyAppFiles(name, slug),
+  };
+}
+
 const TEMPLATES: Record<AppTemplateKey, Template> = {
   'nextjs-supabase': nextjsSupabaseTemplate(),
   'vite-os': viteOsTemplate(),
   'sovereign-app': sovereignAppTemplate(),
+  website: websiteTemplate(),
+  'api-service': apiServiceTemplate(),
+  empty: emptyAppTemplate(),
   service: genericTemplate('service', 'Service / API'),
   script: genericTemplate('script', 'Script / scheduled job'),
   dashboard: dashboardTemplate(),
 };
 
-// `sovereign-app` is listed first: it is the default for a new app (the Sovereign
-// standard base app). The other templates stay selectable — and existing apps
-// keep the template they were created with.
-export const APP_TEMPLATES: { key: AppTemplateKey; label: string }[] = [
-  { key: 'sovereign-app', label: 'Sovereign standard app (OS identity, governed)' },
-  { key: 'vite-os', label: 'Vite + React OS app (SPA, governed)' },
-  { key: 'nextjs-supabase', label: 'Web app (Next.js + Supabase)' },
-  { key: 'service', label: 'Service / API' },
-  { key: 'script', label: 'Script / scheduled job' },
-  { key: 'dashboard', label: 'Dashboard-as-app' },
+// The CREATE PICKER — exactly four choices; `sovereign-app` ("Application") is
+// the default. Legacy templates (vite-os, nextjs-supabase, service, script,
+// dashboard) keep working for existing apps but are NOT offered here.
+export const APP_TEMPLATES: { key: AppTemplateKey; label: string; blurb: string }[] = [
+  {
+    key: 'sovereign-app',
+    label: 'Application',
+    blurb: 'Starts with the Sovereign OS look, sign-in, admin and multi-domain setup.',
+  },
+  {
+    key: 'website',
+    label: 'Website',
+    blurb: 'A public-facing site — clean pages, no sign-in or admin chrome.',
+  },
+  {
+    key: 'api-service',
+    label: 'APIs only',
+    blurb: 'A headless service — governed endpoints, no user interface.',
+  },
+  {
+    key: 'empty',
+    label: 'Empty App',
+    blurb: 'The bare minimum that builds and deploys — a blank canvas.',
+  },
 ];
 
 // ----------------------------------------------------------------- Registry ---

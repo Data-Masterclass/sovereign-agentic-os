@@ -36,7 +36,7 @@ const software: TutorialDef = {
     {
       illustration: 'agent',
       title: 'Build — watch the agent work, live',
-      body: 'Click a story in the "Epics & stories" tree to target it — its chip walks to do → building → done, with an honest blocked when a run fails, and the header counts the stories built. Flip Plan ⇄ Build and describe the change, or just press "Build this story →". The run streams as it happens: the plan first, then one line per action — "Committed 3 files", "Provisioning preview…" — with failures as honest ⚠ warnings. Builders can "show details" for the raw tool I/O; the committed diff lands under "Changes this run", and the code panel is one click away in the Developer view.',
+      body: 'Select a node in the "Epics & stories" tree on the left — "General — the whole app", an EPIC, or a story — and the four scope actions appear above the chat: Design · Build · Test · Review. Design refines the selection in Plan mode, Build commits real code for it, Test critically checks the committed code story-by-story, Review summarizes what shipped and proposes ideas. Story chips walk to do → building → done, with an honest blocked when a run fails. The run streams as it happens: the plan first, then one line per action — "Committed 3 files", "Provisioning preview…" — with failures as honest ⚠ warnings. Builders can "show details" for the raw tool I/O; the committed diff lands under "Changes this run", and the code panel is one click away in the Developer view.',
     },
     {
       illustration: 'sandbox',
@@ -82,7 +82,7 @@ const software: TutorialDef = {
       sandboxAnchor: ANCHORS.software.sandbox,
       route: '/software',
       title: 'Build with the live feed',
-      body: 'Click a story in the "Epics & stories" tree beside the chat to target it, keep the toggle on Build (Plan discusses without touching code), and describe the change — or press "Build this story →". Watch the activity feed: plan, then one line per action, warnings when something fails, the diff when it commits — and the story\'s chip turn done. The status rail above tracks Repo · Preview · Deploy the whole time.',
+      body: 'Select "General — the whole app", an EPIC, or a story in the "Epics & stories" tree on the left, then act on it with the buttons above the chat: Design · Build · Test · Review. Or keep the toggle on Build (Plan discusses without touching code) and describe the change yourself. Watch the activity feed: plan, then one line per action, warnings when something fails, the diff when it commits — and the story\'s chip turn done. The status rail above tracks Repo · Preview · Deploy the whole time.',
     },
     {
       anchor: ANCHORS.software.preview,

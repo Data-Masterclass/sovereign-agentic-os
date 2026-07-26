@@ -104,7 +104,10 @@ export const postgresProvider: WarehouseProvider = {
   label: 'PostgreSQL',
   trinoConnector: 'postgresql',
   nativeInImage: true,
-  capabilities: { federate: true, import: true },
+  // First-class OPERATIONAL sync source: the scheduled incremental sync's
+  // timestamp/number cursor path runs against this catalog (guard-verified).
+  capabilities: { federate: true, import: true, sync: true },
+  category: 'operational',
   catalogProps: (source) => postgresProps(source as PostgresConfig),
   // A PostgreSQL SCHEMA is the Trino schema; `SHOW TABLES FROM <catalog>.<schema>`
   // lists it (information_schema-backed). The shared builder validates the schema id.

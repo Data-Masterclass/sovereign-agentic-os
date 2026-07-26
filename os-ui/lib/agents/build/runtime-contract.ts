@@ -94,7 +94,9 @@ export function principalFor(systemId: string, node?: string): string {
   return node ? `os-${systemId}:${node}` : `os-${systemId}`;
 }
 
-/** USD per 1M tokens for one LiteLLM model_name (see config.modelPrices). */
+/** Price per 1M tokens for one LiteLLM model_name (EUR on STACKIT; see
+ *  lib/platform-admin/model-prices.effectiveModelPrices — admin-saved over the
+ *  env MODEL_PRICES_JSON seed). */
 export type ModelPrice = { inputPerM: number; outputPerM: number };
 
 /**

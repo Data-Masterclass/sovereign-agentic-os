@@ -294,7 +294,7 @@ export default function WarehouseImportPanel({
             <SyncPanel
               datasetId={done.datasetId}
               canEdit
-              setupSource={{ connectionId: conn.id, schema: done.source.schema, table: done.source.table }}
+              setupSource={{ connectionId: conn.id, schema: done.source.schema, table: done.source.table, platform: conn.platform }}
             />
           ) : null}
         </div>

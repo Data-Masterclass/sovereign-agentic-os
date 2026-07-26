@@ -9,11 +9,19 @@ import BuildDiff, { type FileChange } from './BuildDiff';
 import { summarizeChanges } from '@/lib/software/build-changeset';
 import type { ActivityLine } from '@/lib/software/build-activity';
 import { consumeBuildStream, type BuildStreamEvent } from '@/lib/software/build-stream';
+import {
+  ACTION_MODE,
+  actionPrompt,
+  targetLabel,
+  type BuildAction,
+  type BuildTarget,
+  type TargetEpic,
+} from '@/lib/software/build-target';
+import type { ChatRunMode } from '@/lib/software/chat-modes';
 
 export type { FileChange };
 export type ChatMessage = { role: 'user' | 'assistant'; content: string };
 export type BuildMode = 'plan' | 'build';
-export type BuildStory = { epicId: string; storyId: string; label?: string };
 
 /** One rendered activity row: the human line + its raw tool I/O (details on demand). */
 type FeedItem = { line: ActivityLine; raw?: { tool: string; args: unknown; result: string } };
@@ -30,24 +38,37 @@ export default function BuildChat({
   appId,
   appName,
   mode,
-  story,
+  target,
+  epics,
   initialMessages = [],
   onBuilt,
   onRunStart,
   onRunEnd,
+  onModeChange,
+  onAction,
+  lastAction = null,
   showDetails = false,
 }: {
   appId: string;
   appName: string;
   mode: BuildMode;
-  story: BuildStory | null;
+  /** The tree-selected scope this chat acts on (General / an EPIC / a story). */
+  target: BuildTarget | null;
+  /** The designed epics — for the action prompts + scope labels. */
+  epics: TargetEpic[];
   initialMessages?: ChatMessage[];
   /** Called after a BUILD run that changed files, so the parent can mark the story done + reload. */
   onBuilt?: (changes: FileChange[]) => void;
   /** A run started streaming (the parent can mark the targeted story "building"). */
   onRunStart?: () => void;
-  /** The run ended; `failed` is true when it errored (→ the story shows "blocked"). */
-  onRunEnd?: (failed: boolean) => void;
+  /** The run ended; `failed` is true when it errored. `runMode` says what kind of run it was. */
+  onRunEnd?: (failed: boolean, runMode: ChatRunMode) => void;
+  /** Design/Build action buttons flip the parent's Plan ⇄ Build toggle through this. */
+  onModeChange?: (mode: BuildMode) => void;
+  /** Records which action ran for the selected node (the "last: …" hint). */
+  onAction?: (action: BuildAction) => void;
+  /** The action that last ran for the selected node, if any. */
+  lastAction?: BuildAction | null;
   /** Builders may reveal the raw tool I/O behind each activity line ("show details"). */
   showDetails?: boolean;
 }) {
@@ -67,7 +88,7 @@ export default function BuildChat({
   const stop = useCallback(() => abortRef.current?.abort(), []);
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, runMode: ChatRunMode = mode) => {
       const content = text.trim();
       if (!content || loading) return;
       setError('');
@@ -91,7 +112,7 @@ export default function BuildChat({
         const res = await fetch(`/api/apps/${appId}/chat`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ agent: 'software', messages: next, mode, story: story ?? undefined }),
+          body: JSON.stringify({ agent: 'software', messages: next, mode: runMode, target: target ?? undefined }),
           signal: ctrl.signal,
         });
         if (!res.ok) {
@@ -126,7 +147,7 @@ export default function BuildChat({
             const bubble = stripThinking(e.finalText || e.content);
             setMessages((m) => [...m, { role: 'assistant', content: bubble }]);
             setLastChanges(changes);
-            if (mode === 'build' && changes.length > 0) onBuilt?.(changes);
+            if (runMode === 'build' && changes.length > 0) onBuilt?.(changes);
           }
         });
       } catch (e) {
@@ -138,18 +159,52 @@ export default function BuildChat({
       } finally {
         abortRef.current = null;
         setLoading(false);
-        onRunEnd?.(failed);
+        onRunEnd?.(failed, runMode);
         scrollDown();
       }
     },
-    [appId, loading, messages, mode, story, onBuilt, onRunStart, onRunEnd],
+    [appId, loading, messages, mode, target, onBuilt, onRunStart, onRunEnd],
+  );
+
+  // One of the four scope actions (Design · Build · Test · Review) for the
+  // selected node: Design/Build also flip the Plan ⇄ Build toggle (Design maps
+  // to Plan); Test/Review run as read-only prompt modes without moving it.
+  const runAction = useCallback(
+    (action: BuildAction) => {
+      if (!target || loading) return;
+      if (action === 'design') onModeChange?.('plan');
+      if (action === 'build') onModeChange?.('build');
+      onAction?.(action);
+      void send(actionPrompt(action, epics, target), ACTION_MODE[action]);
+    },
+    [target, loading, epics, onModeChange, onAction, send],
   );
 
   const planning = mode === 'plan';
   const label = planning ? 'plan assistant' : 'build assistant';
 
+  const ACTIONS: { key: BuildAction; label: string; title: string }[] = [
+    { key: 'design', label: 'Design', title: 'Refine the design of the selection (Plan mode — no code changes)' },
+    { key: 'build', label: 'Build', title: 'Implement the selection — commits real code' },
+    { key: 'test', label: 'Test', title: 'Critically test the selection against the committed code (read-only)' },
+    { key: 'review', label: 'Review', title: 'Review what has been built — risks + feature ideas (read-only)' },
+  ];
+
   return (
     <div className="chat claude">
+      {/* Scope action bar — appears when a node is selected in the tree. */}
+      {target ? (
+        <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+          {ACTIONS.map((a) => (
+            <button key={a.key} type="button" className="btn sm" disabled={loading} title={a.title} onClick={() => runAction(a.key)}>
+              {a.label}
+            </button>
+          ))}
+          <span className="muted" style={{ fontSize: 12, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            on {targetLabel(epics, target)}{lastAction ? ` · last: ${lastAction}` : ''}
+          </span>
+        </div>
+      ) : null}
       <div className="chat-log" style={{ minHeight: 360 }} ref={scrollRef}>
         {messages.length === 0 ? (
           <div className="chat-empty">
@@ -206,22 +261,6 @@ export default function BuildChat({
       {/* The per-run changeset — before/after diffs of what this Build run committed. */}
       {!planning && lastChanges.length > 0 ? (
         <BuildDiff changes={lastChanges} summary={summarizeChanges(lastChanges)} />
-      ) : null}
-
-      {/* A story is targeted → the chat proposes building it in one click. */}
-      {!planning && !loading && story?.label ? (
-        <div className="row" style={{ marginTop: 10, gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            className="btn sm"
-            onClick={() => send(`Build this story: ${story.label}. Implement it end-to-end to its acceptance criteria.`)}
-          >
-            Build this story →
-          </button>
-          <span className="muted" style={{ fontSize: 12, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {story.label}
-          </span>
-        </div>
       ) : null}
 
       <form onSubmit={(e) => { e.preventDefault(); send(input); }} style={{ marginTop: 12 }}>

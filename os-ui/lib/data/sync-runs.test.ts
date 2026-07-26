@@ -93,3 +93,29 @@ test('same-millisecond appends never clobber', () => {
   recordSyncRun({ datasetId: 'a', startedAt: at, finishedAt: at, status: 'error', mode: 'append', ranBy: 'x' });
   assert.equal(listSyncRuns('a').length, 2);
 });
+
+// ------------------------------------------- running rows + in-place updates --
+
+import { updateSyncRun } from './sync-runs.ts';
+
+test('running rows are not error evidence and updateSyncRun finalizes in place', () => {
+  __resetSyncRuns();
+  const base = { datasetId: 'dsr', finishedAt: 'x', mode: 'append' as const, ranBy: 'u' };
+  recordSyncRun({ ...base, startedAt: '2026-01-01T00:00:00Z', status: 'error', error: 'boom' });
+  const running = recordSyncRun({
+    ...base, startedAt: '2026-01-01T01:00:00Z', status: 'running',
+    cursorBefore: '5', highWatermark: '9', batchId: 'dsr.9',
+  });
+  // A trailing 'running' marker is stepped over — the error streak stays visible.
+  assert.equal(consecutiveErrorCount('dsr'), 1);
+  assert.equal(currentWatermark('dsr'), null);
+
+  const done = updateSyncRun(running.id, { status: 'ok', cursorAfter: '9', rowsAffected: 3, finishedAt: 'y' });
+  assert.ok(done && done.status === 'ok');
+  assert.equal(listSyncRuns('dsr').length, 2, 'finalized in place — no third row');
+  assert.equal(currentWatermark('dsr'), '9');
+  assert.equal(consecutiveErrorCount('dsr'), 0, 'the ok run resets the streak');
+  assert.equal(done!.highWatermark, '9', 'the window survives the finalize');
+
+  assert.equal(updateSyncRun('nope', { status: 'ok' }), null, 'unknown id is an honest null');
+});

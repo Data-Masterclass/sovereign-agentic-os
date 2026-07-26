@@ -22,6 +22,7 @@ import { postgresProvider } from './providers/postgres.ts';
 import { mysqlProvider } from './providers/mysql.ts';
 import { sqlServerProvider } from './providers/sqlserver.ts';
 import { mongoProvider } from './providers/mongodb.ts';
+import { kafkaProvider } from './providers/kafka.ts';
 
 /** Every supported warehouse platform → its provider. Not all platforms may have a
  *  provider yet (operational-database platforms are registered incrementally as their
@@ -36,6 +37,7 @@ export const WAREHOUSE_PROVIDERS: Partial<Record<WarehousePlatform, WarehousePro
   mysql: mysqlProvider,
   sqlserver: sqlServerProvider,
   mongodb: mongoProvider,
+  kafka: kafkaProvider,
 };
 
 /** Resolve the provider for a platform. Throws `WarehouseError` on an unknown one. */

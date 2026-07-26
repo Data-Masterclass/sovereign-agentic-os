@@ -36,7 +36,8 @@ export type WarehousePlatform =
   | 'postgresql'
   | 'mysql'
   | 'sqlserver'
-  | 'mongodb';
+  | 'mongodb'
+  | 'kafka';
 
 export const WAREHOUSE_PLATFORMS: WarehousePlatform[] = [
   'glue',
@@ -48,6 +49,7 @@ export const WAREHOUSE_PLATFORMS: WarehousePlatform[] = [
   'mysql',
   'sqlserver',
   'mongodb',
+  'kafka',
 ];
 
 /**
@@ -82,7 +84,8 @@ export type WarehousePlatformConfig =
   | PostgresConfig
   | MySqlConfig
   | SqlServerConfig
-  | MongoConfig;
+  | MongoConfig
+  | KafkaConfig;
 
 /** AWS Glue / Athena via the Trino Hive/Iceberg connector (`hive.metastore=glue`). */
 export type GlueConfig = {
@@ -229,6 +232,29 @@ export type MongoConfig = {
   srv?: boolean;
   /** Vault ref name for the FULL connection URL incl. credentials (NEVER inlined). */
   connectionUrlSecretRef?: string;
+};
+
+/**
+ * Apache Kafka via the Trino native `kafka` connector. STREAMING federation: each
+ * CONFIGURED topic becomes one queryable table in the `default` schema, with the
+ * internal columns (`_partition_id`, `_partition_offset`, `_timestamp`, `_message`,
+ * `_key`, …) exposed so offset-based scheduled sync can slice by partition/offset.
+ * FEDERATE-ONLY: there is no one-time import-as-product — data lands in the OS
+ * lakehouse through the `kafka-offsets` scheduled sync (append-only). There is no
+ * broker-side schema discovery beyond the configured topics. Security: PLAINTEXT or
+ * SSL (JVM default truststore); SASL needs an operator-mounted client-properties
+ * file (`kafka.config.resources`) — see the provider's honest notes.
+ */
+export type KafkaConfig = {
+  platform: 'kafka';
+  /** Comma-separated broker list `host:port[,host:port…]` (→ `kafka.nodes`). */
+  bootstrapServers: string;
+  /** Comma-separated topic names exposed as tables (→ `kafka.table-names`). Each
+   *  must be a lowercase identifier (`[a-z_][a-z0-9_]*`) so it stays addressable
+   *  through the governed three-part FQN. */
+  topics: string;
+  /** Broker security protocol: `PLAINTEXT` (default) or `SSL`. */
+  securityProtocol?: string;
 };
 
 /**

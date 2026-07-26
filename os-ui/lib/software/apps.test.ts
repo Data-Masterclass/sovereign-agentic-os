@@ -230,3 +230,51 @@ test('templateFiles: sovereign-app ships the full standard-app skeleton', () => 
     assert.ok(paths.includes(p), `scaffold includes ${p}`);
   }
 });
+
+// ---------------------------------------------------- four-template picker ----
+
+test('APP_TEMPLATES: the create picker offers exactly the four choices, Application first', async () => {
+  const { APP_TEMPLATES } = await import('./apps.ts');
+  assert.deepEqual(
+    APP_TEMPLATES.map((t: { key: string }) => t.key),
+    ['sovereign-app', 'website', 'api-service', 'empty'],
+  );
+  assert.equal(APP_TEMPLATES[0].label, 'Application', 'the default is labelled Application');
+});
+
+test('createApp: website → public Vite site, surface ui, docs carry the page contract', async () => {
+  __resetAppsCache();
+  const app = await createApp(user, { name: 'Acme Site', template: 'website' });
+  assert.equal(app.template, 'website');
+  assert.deepEqual(app.surface, { ui: true, api: false }, 'app.yaml declares surface: ui');
+  assert.match(app.docs, /How epics add pages/, 'docs are the sections contract');
+  const paths = templateFiles('website', 'Acme Site', 'acme-site').map((f) => f.path);
+  assert.ok(paths.includes('src/sections.tsx') && paths.includes('nginx.conf'), 'sections + shared infra');
+});
+
+test('createApp: api-service → headless, surface api declared (never mislabeled)', async () => {
+  __resetAppsCache();
+  const app = await createApp(user, { name: 'Billing API', template: 'api-service' });
+  assert.equal(app.template, 'api-service');
+  assert.deepEqual(app.surface, { ui: false, api: true }, 'app.yaml declares surface: api');
+  const paths = templateFiles('api-service', 'Billing API', 'billing-api').map((f) => f.path);
+  assert.ok(paths.includes('server.mjs'), 'ships the zero-dep server');
+  assert.ok(!paths.includes('index.html'), 'no UI entry');
+});
+
+test('createApp: empty → the bare minimum that still builds and deploys', async () => {
+  __resetAppsCache();
+  const app = await createApp(user, { name: 'Scratch', template: 'empty' });
+  assert.equal(app.template, 'empty');
+  assert.deepEqual(app.surface, { ui: true, api: false });
+  const paths = templateFiles('empty', 'Scratch', 'scratch').map((f) => f.path);
+  for (const p of ['src/main.tsx', 'src/App.tsx', 'Dockerfile', '.forgejo/workflows/ci.yml']) {
+    assert.ok(paths.includes(p), `minimal scaffold includes ${p}`);
+  }
+});
+
+test('createApp: legacy templates still work for existing flows (not in the picker)', async () => {
+  __resetAppsCache();
+  const app = await createApp(user, { name: 'Legacy Vite', template: 'vite-os' });
+  assert.equal(app.template, 'vite-os', 'legacy keys keep creating');
+});

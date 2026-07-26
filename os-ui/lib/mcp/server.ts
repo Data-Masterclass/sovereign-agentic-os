@@ -154,7 +154,11 @@ const PLATFORM_SCHEMAS: Record<string, JsonSchema> = {
     properties: {
       name: { type: 'string', description: 'App name.' },
       description: { type: 'string' },
-      template: { type: 'string', description: "Template key (e.g. 'nextjs-supabase')." },
+      template: {
+        type: 'string',
+        description:
+          "Template key: 'sovereign-app' (Application — OS look, sign-in, admin; the default), 'website' (public site, no sign-in), 'api-service' (APIs only, headless), or 'empty' (blank canvas). Legacy keys (e.g. 'nextjs-supabase') stay accepted for existing apps.",
+      },
       domain: { type: 'string', description: 'Domain to create in (must be one of yours).' },
       surface: {
         type: 'string',

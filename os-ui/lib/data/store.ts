@@ -856,9 +856,14 @@ export function setDatasetSync(id: string, user: Principal, sync: DatasetSync | 
     }
     if (sync.mode !== 'full-refresh') {
       if (!sync.cursor?.column) fail(`sync: ${sync.mode} mode requires a cursor column`, 400);
-      if (sync.cursor.kind !== 'timestamp' && sync.cursor.kind !== 'number') {
-        fail(`sync: cursor kind '${sync.cursor.kind}' is not implemented yet (timestamp|number)`, 400);
+      if (sync.cursor.kind !== 'timestamp' && sync.cursor.kind !== 'number' && sync.cursor.kind !== 'kafka-offsets') {
+        fail(`sync: cursor kind '${sync.cursor.kind}' is not implemented yet (timestamp|number|kafka-offsets)`, 400);
       }
+    }
+    // Kafka offset sync is APPEND-ONLY (streams have no stable key to merge on, and
+    // replacing an unbounded topic copy is the reset ACTION, not a schedule mode).
+    if (sync.cursor?.kind === 'kafka-offsets' && sync.mode !== 'append') {
+      fail('sync: kafka-offsets cursors support append mode only', 400);
     }
     if (sync.mode === 'merge' && (!sync.mergeKeys || sync.mergeKeys.length === 0)) {
       fail('sync: merge mode requires at least one merge key', 400);

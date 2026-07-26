@@ -105,6 +105,16 @@ export const config = {
   // offline-mock so the teaching flow still runs.
   dataRunnerUrl: base(env('DATA_RUNNER_URL', 'http://data-runner:8000')),
 
+  // Scheduled-sync WRITE statement timeout (ms). Real incremental slices routinely
+  // outlive the interactive 15s default `executeRun` uses, so the sync executor
+  // passes this instead. Clamped to 45 min — it must stay WELL below the sync
+  // lease TTL (60 min, SYNC_LEASE_TTL_MS): a statement outliving its lease is how
+  // duplicate concurrent runs happen. Default 10 min.
+  syncStatementTimeoutMs: Math.min(
+    Number(env('SYNC_STATEMENT_TIMEOUT_MS', '')) || 600000,
+    45 * 60 * 1000,
+  ),
+
   // Object storage (MinIO / STACKIT Object Storage) — the Data-tab upload streams
   // a file to `s3://<uploadsBucket>/uploads/<uid>/<file>` (path-style SigV4 PUT,
   // lib/data/object-store.ts) before calling the runner. Server-only creds; the

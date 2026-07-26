@@ -19,7 +19,12 @@ import type { DatasetSyncMode } from './dataset-schema.ts';
  * Reads are honest: no run yet ⇒ empty list ⇒ "never synced", never a fabricated ok.
  */
 
-export type SyncRunStatus = 'ok' | 'error' | 'skipped';
+/** 'running' is the DISPATCH marker: written BEFORE an append slice's INSERT so the
+ *  planned window {cursorBefore, highWatermark, batchId} survives a client timeout
+ *  or crash — the next attempt REUSES it (delete-by-batch-id + re-append the SAME
+ *  slice) instead of probing a moved high watermark, which would duplicate rows.
+ *  It is finalized in place to ok/error; a stale 'running' row means a crash. */
+export type SyncRunStatus = 'ok' | 'error' | 'skipped' | 'running';
 
 export type SyncRunRecord = {
   /** `${datasetId}:${startedAt}` — unique, sortable, one per run. */
@@ -32,6 +37,10 @@ export type SyncRunRecord = {
   /** Cursor window this run covered (absent for full-refresh without a cursor). */
   cursorBefore?: string | null;
   cursorAfter?: string | null;
+  /** The probed high watermark the run's slice was bounded to (kafka-offsets: the
+   *  serialized offsets map). Persisted on 'running'/'error' rows so a retry can
+   *  re-cover the EXACT same window (see SyncRunStatus). */
+  highWatermark?: string | null;
   rowsAffected?: number | null;
   /** The honest failure message (status 'error') or skip reason (status 'skipped'). */
   error?: string;
@@ -74,6 +83,7 @@ const mirror = osMirror({
         mode: { type: 'keyword' },
         cursorBefore: { type: 'keyword' },
         cursorAfter: { type: 'keyword' },
+        highWatermark: { type: 'keyword' },
         rowsAffected: { type: 'long' },
         error: { type: 'text' },
         ranBy: { type: 'keyword' },
@@ -137,6 +147,19 @@ export function recordSyncRun(input: Omit<SyncRunRecord, 'id'>): SyncRunRecord {
   return rec;
 }
 
+/** Finalize (or amend) ONE run row IN PLACE — how a 'running' dispatch marker
+ *  becomes its ok/error row without leaving a stray duplicate in the history.
+ *  Write-through; null when the row is unknown (caller then records a fresh row). */
+export function updateSyncRun(id: string, patch: Partial<SyncRunRecord>): SyncRunRecord | null {
+  const s = state();
+  const rec = s.runs.get(id);
+  if (!rec) return null;
+  const next: SyncRunRecord = { ...rec, ...patch, id: rec.id, datasetId: rec.datasetId };
+  s.runs.set(rec.id, next);
+  mirror.writeThrough(rec.id, next);
+  return next;
+}
+
 /** All retained runs for a dataset, oldest→newest. */
 export function listSyncRuns(datasetId: string): SyncRunRecord[] {
   return runsFor(state(), datasetId);
@@ -158,13 +181,13 @@ export function currentWatermark(datasetId: string): string | null {
   return null;
 }
 
-/** Trailing consecutive errors (newest backwards). 'skipped' rows are not evidence
- *  either way and are stepped over; an 'ok' run resets the streak. */
+/** Trailing consecutive errors (newest backwards). 'skipped' and 'running' rows are
+ *  not evidence either way and are stepped over; an 'ok' run resets the streak. */
 export function consecutiveErrorCount(datasetId: string): number {
   const runs = runsFor(state(), datasetId);
   let n = 0;
   for (let i = runs.length - 1; i >= 0; i--) {
-    if (runs[i].status === 'skipped') continue;
+    if (runs[i].status === 'skipped' || runs[i].status === 'running') continue;
     if (runs[i].status !== 'error') break;
     n++;
   }

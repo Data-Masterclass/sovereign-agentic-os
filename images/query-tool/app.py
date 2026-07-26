@@ -14,6 +14,7 @@ behind Trino's governance boundary (never a second door to governed marts).
 Exposed as an MCP server (streamable-http at /mcp) for the gateway, plus plain
 HTTP /query + /health for direct use and probes.
 """
+import asyncio
 import os
 
 from mcp.server.fastmcp import FastMCP
@@ -119,7 +120,13 @@ async def http_query(req: Request):
         # Optional per-call identity so Trino's OPA plugin governs the right user,
         # and an optional session schema so the caller targets their own domain
         # (os-ui's catalog passes the caller's domain) instead of a fixed literal.
-        return JSONResponse(run_query(sql, body.get("principal"), body.get("schema")))
+        # CONCURRENCY: the Trino DB-API call BLOCKS — run it on a worker thread so
+        # one slow statement never serializes the whole async server (effective
+        # concurrency of 1 was the scalability-audit finding).
+        result = await asyncio.to_thread(
+            run_query, sql, body.get("principal"), body.get("schema")
+        )
+        return JSONResponse(result)
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -146,7 +153,12 @@ async def http_execute(req: Request):
     except ExecuteError as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=e.status)
     try:
-        return JSONResponse(run_execute(sql, principal, parsed.schema))
+        # CONCURRENCY: same worker-thread offload as /query — sync writes can run
+        # for minutes (SYNC_STATEMENT_TIMEOUT_MS in os-ui); executed inline they
+        # would block every other statement on the event loop. No server-side
+        # timeout is enforced here — the CLIENT owns the statement budget.
+        result = await asyncio.to_thread(run_execute, sql, principal, parsed.schema)
+        return JSONResponse(result)
     except trino.exceptions.TrinoUserError as e:
         # A genuine SQL/permission error from Trino (incl. an OPA-denied read) — the
         # caller's mistake, surfaced honestly with the real message.

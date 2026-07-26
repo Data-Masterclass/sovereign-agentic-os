@@ -116,7 +116,13 @@ export type WarehouseProvider = {
   /** iceberg | hive | delta-lake | snowflake | bigquery (all native in trinodb/trino:476). */
   trinoConnector: string;
   nativeInImage: boolean;
-  capabilities: { federate: boolean; import: boolean };
+  /** `sync` (optional, additive): the platform is a first-class SCHEDULED-SYNC
+   *  source — the incremental executor has a verified cursor path for it
+   *  (timestamp/number for operational databases, kafka-offsets for Kafka). */
+  capabilities: { federate: boolean; import: boolean; sync?: boolean };
+  /** Optional gallery grouping/label: 'operational' (OLTP databases used as
+   *  operational sync sources) or 'streaming' (Kafka). Absent = plain warehouse. */
+  category?: 'operational' | 'streaming';
   /** Pure: same input → same output; throws `WarehouseError` on bad input. */
   catalogProps(source: WarehouseSource): TrinoCatalogProps;
   /**

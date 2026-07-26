@@ -300,18 +300,18 @@ h3 {
   width: 100%;
   padding: 7px 10px;
   border-radius: 9px;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  color: var(--text-muted);
+  /* Match the opened picker: gold surface, black text — one visual voice. */
+  background: var(--gold-light);
+  border: 1px solid var(--gold-deep);
+  color: #1a1300;
   font-size: 12.5px;
   font-weight: 600;
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.12s ease, background 0.12s ease;
+  transition: border-color 0.12s ease, background 0.12s ease, filter 0.12s ease;
 }
 .domain-switch-btn:hover:not(:disabled) {
-  border-color: var(--accent, #6ea8fe);
-  color: var(--text);
+  filter: brightness(1.05);
 }
 .domain-switch-btn:disabled {
   opacity: 0.6;
@@ -321,11 +321,12 @@ h3 {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--accent, #6ea8fe);
+  /* Dark on the gold button surface (matches the black text). */
+  background: #1a1300;
   flex: none;
 }
 .domain-switch-dot.all {
-  background: var(--text-faint);
+  background: rgba(26, 19, 0, 0.45);
 }
 .domain-switch-current {
   flex: 1;

@@ -3,6 +3,8 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
+import type { SalesforceSliceArgs } from '../connections/salesforce.ts';
+import { config } from '../core/config.ts';
 import { executeRun, queryRun, type ExecuteIdentity } from '../infra/governed.ts';
 import type { Dataset, DatasetSyncMode, Layer } from './dataset-schema.ts';
 import { buildVersion, datasetForScheduler } from './store.ts';
@@ -14,8 +16,16 @@ import {
   expireSnapshotsSql,
   fullRefreshSql,
   highWatermarkProbeSql,
+  kafkaAppendSql,
+  kafkaFullLoadSql,
+  kafkaHasNew,
+  kafkaOffsetsProbeSql,
+  mergeKafkaOffsets,
   mergeSql,
   optimizeSql,
+  parseKafkaOffsets,
+  serializeKafkaOffsets,
+  type KafkaOffsets,
   type SyncCursor,
   type SyncSource,
   type SyncTarget,
@@ -25,8 +35,10 @@ import {
   ensureSyncRunsHydrated,
   isQuarantined,
   lastMaintenanceAt,
+  latestSyncRun,
   recordSyncRun,
   syncRunsMirror,
+  updateSyncRun,
   type SyncRunRecord,
 } from './sync-runs.ts';
 
@@ -107,13 +119,24 @@ export type SyncDeps = {
   dataset?: (id: string) => Dataset | null;
   resolveOwner?: (ownerId: string) => Promise<CurrentUser | null>;
   /** The warehouse connection's external Trino catalog name, or null when the
-   *  connection is missing / not a warehouse. */
+   *  connection is missing / not a warehouse. A null answer falls through to the
+   *  API-BATCH strategy (Salesforce) — see `salesforceSlice`. */
   connectionCatalog?: (connId: string, user: CurrentUser) => Promise<string | null>;
+  /** The API-BATCH slice runner (Salesforce): pulls the slice via the REST API and
+   *  streams it to the data-runner. The live impl resolves + validates the
+   *  connection itself and throws an honest error when it is no sync source. */
+  salesforceSlice?: (
+    args: SalesforceSliceArgs,
+  ) => Promise<{ rowsAffected: number | null; batchId?: string; highWatermark: string | null }>;
   query?: (sql: string, principal?: string) => Promise<{ rows: string[][] }>;
   execute?: (sql: string, identity: ExecuteIdentity) => Promise<{ rowsAffected: number | null }>;
   /** Marks Bronze rebuilt (lights freshness — Monitoring reads versions.bronze.updatedAt). */
   markBronzeBuilt?: (id: string, owner: CurrentUser) => void;
   record?: typeof recordSyncRun;
+  /** Finalize the 'running' dispatch marker in place (defaults to the real store). */
+  update?: typeof updateSyncRun;
+  /** The most recent run row — the retry-window source (error/'running' + window). */
+  latestRun?: (id: string) => SyncRunRecord | null;
   watermark?: (id: string) => string | null;
   quarantined?: (id: string) => boolean;
   lastMaintenance?: (id: string) => string | null;
@@ -137,6 +160,13 @@ async function liveConnectionCatalog(connId: string, user: CurrentUser): Promise
   } catch {
     return null;
   }
+}
+
+async function liveSalesforceSlice(
+  args: SalesforceSliceArgs,
+): Promise<{ rowsAffected: number | null; batchId?: string; highWatermark: string | null }> {
+  const { runSalesforceSlice } = await import('../connections/salesforce.ts');
+  return runSalesforceSlice(args);
 }
 
 /** A deterministic, guard-safe per-slice batch id (same slice ⇒ same id, so a retry
@@ -214,36 +244,214 @@ export async function runDatasetSync(
   const mode: DatasetSyncMode = trigger === 'reset' ? 'full-refresh' : sync.mode;
   const cursorBefore = trigger === 'reset' ? null : (deps.watermark ?? currentWatermark)(datasetId);
   const query = deps.query ?? ((sql: string, principal?: string) => queryRun(sql, principal));
-  const execute = deps.execute ?? ((sql: string, identity: ExecuteIdentity) => executeRun(sql, identity));
+  // Sync slices routinely outlive the interactive 15s default — the executor runs
+  // with its own statement budget (SYNC_STATEMENT_TIMEOUT_MS, well below the lease).
+  const execute =
+    deps.execute ??
+    ((sql: string, identity: ExecuteIdentity) => executeRun(sql, identity, undefined, config.syncStatementTimeoutMs));
   const identity: ExecuteIdentity = { principal: owner.id, uid: owner.id, domains: owner.domains, role: owner.role };
   const target: SyncTarget = { schema: personalSchema(owner.id), table: `bronze_${physicalSlug(d)}` };
   const targetFqn = `iceberg.${target.schema}.${target.table}`;
 
+  // The DISPATCH-marker row id ('running' → finalized in place to ok/error).
+  let pendingRunId: string | null = null;
+
   try {
+    // STRATEGY: 'federated-sql' when the connection mounts a Trino catalog (every
+    // warehouse/operational-db/kafka source), 'api-batch' when it does not
+    // (Salesforce — Trino cannot reach it; the slice is pulled over REST and
+    // streamed to the data-runner). Both run AS the owner, both advance the cursor
+    // only after the landing succeeded.
     const catalog = await (deps.connectionCatalog ?? liveConnectionCatalog)(sync.connectionId, owner);
-    if (!catalog) throw new Error(`Connection ${sync.connectionId} is not an available warehouse connection`);
+    let highWatermark: string | null = null;
+    let rowsAffected: number | null = null;
+    let batchId: string | undefined;
+    const cursor = sync.cursor as SyncCursor | undefined;
+
+    // DETERMINISTIC RETRY WINDOW (append). If the previous attempt for this SAME
+    // watermark dispatched a slice but never confirmed success — an 'error' row, or
+    // a stale 'running' marker left by a crash/client timeout whose INSERT may have
+    // SUCCEEDED in Trino — REUSE its probed high watermark: the deterministic batch
+    // id recomputes identically, delete-by-batch-id un-lands the earlier attempt,
+    // and the SAME slice re-appends. Probing fresh would move the window, mint a
+    // different batch id, and the idempotent delete would never fire → duplicates.
+    // Only after a confirmed success does the next run probe a fresh watermark.
+    const prior = (deps.latestRun ?? latestSyncRun)(datasetId);
+    const staleWindow =
+      mode === 'append' &&
+      prior &&
+      (prior.status === 'error' || prior.status === 'running') &&
+      prior.mode === 'append' &&
+      prior.batchId &&
+      prior.highWatermark !== undefined &&
+      prior.highWatermark !== null &&
+      (prior.cursorBefore ?? null) === cursorBefore
+        ? { highWatermark: prior.highWatermark }
+        : null;
+
+    // The dispatch marker: persist {cursorBefore, highWatermark, batchId} BEFORE the
+    // INSERT flies, so even a crash leaves enough to retry the exact slice.
+    const update = deps.update ?? updateSyncRun;
+    const markDispatch = (): void => {
+      pendingRunId = record({
+        datasetId,
+        startedAt,
+        finishedAt: startedAt,
+        status: 'running',
+        mode,
+        cursorBefore,
+        highWatermark,
+        ranBy: owner.id,
+        ...(batchId ? { batchId } : {}),
+      }).id;
+    };
+
+    // Shared SUCCESS tail — cursor advance, Bronze freshness, stale flags, Iceberg
+    // maintenance, the ok run row. BOTH strategies end here (steps 3 + 4).
+    const finish = async (): Promise<SyncOutcome> => {
+      // 3. Write confirmed → NOW the cursor may advance, Bronze freshness lights, and
+      //    already-built downstream layers are flagged stale (v1 never auto-rebuilds).
+      const cursorAfter = cursor ? (highWatermark ?? cursorBefore) : null;
+      const staleDownstream = (['silver', 'gold'] as const).filter((l: Layer) => d.versions[l].built) as ('silver' | 'gold')[];
+      try {
+        (deps.markBronzeBuilt ?? ((id: string, u: CurrentUser) => void buildVersion(id, u, 'bronze', {})))(datasetId, owner);
+      } catch {
+        /* freshness marking is additive — the landed data is already real */
+      }
+
+      // 4. Maintenance cadence (>24h): optimize (compaction) + expire_snapshots.
+      //    Best-effort — a maintenance hiccup never fails a successful sync.
+      let maintenance = false;
+      const lastM = (deps.lastMaintenance ?? lastMaintenanceAt)(datasetId);
+      if (lastM === null || Date.parse(startedAt) - Date.parse(lastM) > MAINTENANCE_INTERVAL_MS) {
+        try {
+          await execute(optimizeSql(target), identity);
+          await execute(expireSnapshotsSql(target), identity);
+          maintenance = true;
+        } catch {
+          maintenance = false;
+        }
+      }
+
+      const done = {
+        finishedAt: now(),
+        status: 'ok' as const,
+        mode,
+        cursorBefore,
+        cursorAfter,
+        rowsAffected,
+        ...(staleDownstream.length > 0 ? { staleDownstream } : {}),
+        ...(maintenance ? { maintenance } : {}),
+        ...(batchId ? { batchId } : {}),
+      };
+      // Finalize the dispatch marker in place; fall back to a fresh row when none
+      // was written (full-refresh / merge / zero-row runs) or it is unknown.
+      const run =
+        (pendingRunId ? update(pendingRunId, done) : null) ??
+        record({ datasetId, startedAt, ranBy: owner.id, ...done });
+      return { ok: true, run };
+    };
+
+    if (!catalog) {
+      // ---- api-batch (Salesforce) ----
+      if (mode === 'merge') {
+        throw new Error('Salesforce sync supports append or full-refresh only (merge needs a federated SQL source)');
+      }
+      const sf = await (deps.salesforceSlice ?? liveSalesforceSlice)({
+        connectionId: sync.connectionId,
+        owner,
+        object: sync.source.table,
+        mode: mode as 'full-refresh' | 'append',
+        watermark: cursorBefore,
+        datasetSlug: physicalSlug(d),
+        target,
+        identity,
+        execute,
+        mkBatchId: (hw) => sliceBatchId(datasetId, hw),
+        // Deterministic retry: reuse an unconfirmed attempt's window, and persist
+        // the planned window as the 'running' marker BEFORE any row lands.
+        window: staleWindow,
+        onWindow: (hw, bid) => {
+          highWatermark = hw;
+          batchId = bid;
+          markDispatch();
+        },
+        startedAt,
+      });
+      rowsAffected = sf.rowsAffected;
+      batchId = sf.batchId;
+      highWatermark = sf.highWatermark;
+      return finish();
+    }
     const source: SyncSource = { catalog, schema: sync.source.schema, table: sync.source.table };
 
     // 1. Probe the high watermark BEFORE the write (a stable slice window even while
     //    the source keeps writing). Runs AS the owner — the same governed read a
     //    one-time import's CTAS performs.
-    let highWatermark: string | null = null;
-    const cursor = sync.cursor as SyncCursor | undefined;
     if (cursor && (cursor.kind === 'timestamp' || cursor.kind === 'number')) {
-      const probe = await query(highWatermarkProbeSql(source, cursor), owner.id);
-      highWatermark = normaliseProbe(probe.rows?.[0]?.[0]);
+      if (staleWindow) {
+        highWatermark = staleWindow.highWatermark; // re-cover the unconfirmed slice
+      } else {
+        const probe = await query(highWatermarkProbeSql(source, cursor), owner.id);
+        highWatermark = normaliseProbe(probe.rows?.[0]?.[0]);
+      }
     }
 
     // 2. The write itself.
-    let rowsAffected: number | null = null;
-    let batchId: string | undefined;
-    if (mode === 'full-refresh') {
+    if (cursor?.kind === 'kafka-offsets') {
+      // KAFKA OFFSET SYNC (append-only). The "high watermark" is the per-partition
+      // offsets map, serialized as canonical JSON into the same cursor fields.
+      // First load / reset is a CREATE OR REPLACE CTAS bounded to the probed highs
+      // — which also CREATES the Bronze copy (Kafka has no one-time import);
+      // incremental runs are delete-batch + INSERT of the per-partition windows.
+      if (mode === 'merge') {
+        throw new Error('Kafka sync is append-only — merge is not supported for kafka-offsets cursors');
+      }
+      const before = parseKafkaOffsets(cursorBefore); // null ⇒ first load (or reset)
+      // Retry-window reuse (incremental only): a failed/crashed attempt re-covers
+      // ITS OWN offsets window instead of probing moved partition highs.
+      let highs: KafkaOffsets | null =
+        before !== null && staleWindow ? parseKafkaOffsets(staleWindow.highWatermark) : null;
+      if (!highs) {
+        const probe = await query(kafkaOffsetsProbeSql(source), owner.id);
+        highs = {};
+        for (const row of probe.rows ?? []) {
+          const pid = normaliseProbe(row?.[0]);
+          const hi = normaliseProbe(row?.[1]);
+          if (pid !== null && hi !== null) highs[pid] = hi;
+        }
+      }
+      if (Object.keys(highs).length === 0) {
+        rowsAffected = 0; // empty topic(s) — honestly nothing to sync, cursor unchanged
+      } else {
+        highWatermark = serializeKafkaOffsets(mergeKafkaOffsets(before, highs));
+        if (before === null) {
+          // First load / reset: CREATE OR REPLACE is its own idempotency — no
+          // dispatch marker needed (a retry simply replaces the copy).
+          batchId = sliceBatchId(datasetId, highWatermark);
+          rowsAffected = (
+            await execute(kafkaFullLoadSql({ target, source, highs, batchId, loadedAt: startedAt }), identity)
+          ).rowsAffected;
+        } else if (!kafkaHasNew(before, highs)) {
+          rowsAffected = 0; // probed, nothing advanced — cursor keeps (merged) marks
+        } else {
+          batchId = sliceBatchId(datasetId, highWatermark);
+          markDispatch(); // persist the window BEFORE the INSERT flies
+          await execute(deleteBatchSql(target, batchId), identity); // retry idempotency
+          rowsAffected = (
+            await execute(kafkaAppendSql({ target, source, before, highs, batchId, loadedAt: startedAt }), identity)
+          ).rowsAffected;
+        }
+      }
+    } else if (mode === 'full-refresh') {
       rowsAffected = (await execute(fullRefreshSql(target, source), identity)).rowsAffected;
     } else if (!cursor || (cursor.kind !== 'timestamp' && cursor.kind !== 'number')) {
       throw new Error(`Sync mode '${mode}' needs a timestamp or number cursor column`);
     } else if (highWatermark === null) {
       rowsAffected = 0; // empty source — honestly nothing to sync, cursor unchanged
     } else if (mode === 'append') {
+      // The batch id is deterministic on (dataset, HW) — with a reused window it
+      // recomputes to the earlier attempt's id, so the delete un-lands exactly it.
       batchId = sliceBatchId(datasetId, highWatermark);
       const slice = {
         target, source, cursor,
@@ -253,6 +461,7 @@ export async function runDatasetSync(
         batchId,
         loadedAt: startedAt,
       };
+      markDispatch(); // persist the window BEFORE the INSERT flies
       await execute(deleteBatchSql(target, batchId), identity); // retry idempotency (no-op first time)
       rowsAffected = (await execute(appendSql(slice), identity)).rowsAffected;
     } else {
@@ -275,58 +484,22 @@ export async function runDatasetSync(
       await execute(drop, identity);
     }
 
-    // 3. Write confirmed → NOW the cursor may advance, Bronze freshness lights, and
-    //    already-built downstream layers are flagged stale (v1 never auto-rebuilds).
-    const cursorAfter = cursor ? (highWatermark ?? cursorBefore) : null;
-    const staleDownstream = (['silver', 'gold'] as const).filter((l: Layer) => d.versions[l].built) as ('silver' | 'gold')[];
-    try {
-      (deps.markBronzeBuilt ?? ((id: string, u: CurrentUser) => void buildVersion(id, u, 'bronze', {})))(datasetId, owner);
-    } catch {
-      /* freshness marking is additive — the landed data is already real */
-    }
-
-    // 4. Maintenance cadence (>24h): optimize (compaction) + expire_snapshots.
-    //    Best-effort — a maintenance hiccup never fails a successful sync.
-    let maintenance = false;
-    const lastM = (deps.lastMaintenance ?? lastMaintenanceAt)(datasetId);
-    if (lastM === null || Date.parse(startedAt) - Date.parse(lastM) > MAINTENANCE_INTERVAL_MS) {
-      try {
-        await execute(optimizeSql(target), identity);
-        await execute(expireSnapshotsSql(target), identity);
-        maintenance = true;
-      } catch {
-        maintenance = false;
-      }
-    }
-
-    const run = record({
-      datasetId,
-      startedAt,
-      finishedAt: now(),
-      status: 'ok',
-      mode,
-      cursorBefore,
-      cursorAfter,
-      rowsAffected,
-      ranBy: owner.id,
-      ...(staleDownstream.length > 0 ? { staleDownstream } : {}),
-      ...(maintenance ? { maintenance } : {}),
-      ...(batchId ? { batchId } : {}),
-    });
-    return { ok: true, run };
+    return finish();
   } catch (e) {
     // Honest failure row: the cursor does NOT advance, so the next run re-covers
-    // the slice (idempotent by construction — the CronJob's backoffLimit retries).
-    const run = record({
-      datasetId,
-      startedAt,
+    // the slice. A finalized dispatch marker KEEPS its {highWatermark, batchId}, so
+    // that retry re-covers the SAME window (deterministic — never a fresh probe
+    // over an unconfirmed slice).
+    const fail = {
       finishedAt: now(),
-      status: 'error',
+      status: 'error' as const,
       mode,
       cursorBefore,
       error: (e as Error).message,
-      ranBy: owner.id,
-    });
+    };
+    const run =
+      (pendingRunId ? (deps.update ?? updateSyncRun)(pendingRunId, fail) : null) ??
+      record({ datasetId, startedAt, ranBy: owner.id, ...fail });
     return { ok: true, run };
   } finally {
     lease.release(datasetId, now());

@@ -350,6 +350,9 @@ export async function executeRun(
   sql: string,
   identity: ExecuteIdentity,
   schema?: string,
+  // Interactive default stays 15s; long-running callers (the scheduled-sync
+  // executor — config.syncStatementTimeoutMs) pass their own budget explicitly.
+  timeoutMs = 15000,
 ): Promise<ExecuteResult> {
   const body: Record<string, unknown> = {
     sql,
@@ -366,7 +369,7 @@ export async function executeRun(
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify(body),
     },
-    15000,
+    timeoutMs,
   );
   if (!res) throw new Error('Could not reach query-tool');
   const text = await res.text();

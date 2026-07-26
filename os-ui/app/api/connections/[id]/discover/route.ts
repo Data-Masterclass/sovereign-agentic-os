@@ -15,7 +15,17 @@ export const dynamic = 'force-dynamic';
  */
 async function discover(id: string, schema: string | undefined) {
   const user = await requireUser();
-  return discoverWarehouse(id, user, { schema });
+  try {
+    return await discoverWarehouse(id, user, { schema });
+  } catch (e) {
+    // Not a warehouse catalog -> a Salesforce connection discovers its queryable
+    // SObjects via REST describe instead (same response shape, read-only).
+    if ((e as { status?: number }).status === 400 && /Not a warehouse connection/i.test((e as Error).message)) {
+      const { discoverSalesforceObjects } = await import('@/lib/connections/salesforce');
+      return discoverSalesforceObjects(id, user);
+    }
+    throw e;
+  }
 }
 
 export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {

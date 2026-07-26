@@ -700,6 +700,12 @@ export function viteOsClientFile(): ScaffoldFile {
   return srcOsTs();
 }
 
+/** The sovereign CI build→push workflow — shared by NON-Vite scaffolds too
+ *  (e.g. the api-service template), so every app ships through the same CI. */
+export function ciWorkflowFile(slug: string): ScaffoldFile {
+  return dotforgejoWorkflow(slug);
+}
+
 /**
  * ALL files for the Vite OS template. `viteOsFiles` is now the canonical, complete
  * seeder (it already includes `src/index.css`), so this is a thin alias kept for the

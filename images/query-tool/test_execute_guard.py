@@ -361,6 +361,58 @@ class TargetAuthzTests(unittest.TestCase):
         self.assertEqual(p.kind, "drop_table")
 
 
+class SyncGeneratedSqlTests(unittest.TestCase):
+    """CROSS-CHECK: the exact statement shapes os-ui's sync builders emit
+    (lib/data/sync-sql.ts) clear the allowlist. Kept as literal strings so a guard
+    tightening that would break the scheduled sync fails HERE, in the guard's own
+    suite, not in production. The kafka-offsets slice (v2 sync) is an INSERT-SELECT
+    with a per-partition OR-window — the existing insert_select shape covers it, and
+    the kafka full load is a plain CREATE OR REPLACE CTAS; NO new shape was added."""
+
+    def test_kafka_append_slice_clears_insert_select(self):
+        p = guard(
+            "INSERT INTO iceberg.personal_lena.bronze_orders "
+            "SELECT *, _partition_id AS _kafka_partition, _partition_offset AS _kafka_offset, "
+            "TIMESTAMP '2026-02-01 00:00:00' AS _loaded_at, 'ds_1.k' AS _batch_id "
+            "FROM kafka_events.default.orders WHERE "
+            "(_partition_id = 0 AND _partition_offset > 41 AND _partition_offset <= 100) OR "
+            "(_partition_id = 2 AND _partition_offset <= 3)",
+            **CREATOR,
+        )
+        self.assertEqual(p.kind, "insert_select")
+        self.assertEqual(p.schema, "personal_lena")
+
+    def test_kafka_full_load_clears_ctas(self):
+        p = guard(
+            "CREATE OR REPLACE TABLE iceberg.personal_lena.bronze_orders AS "
+            "SELECT *, _partition_id AS _kafka_partition, _partition_offset AS _kafka_offset, "
+            "TIMESTAMP '2026-02-01 00:00:00' AS _loaded_at, 'ds_1.k' AS _batch_id "
+            "FROM kafka_events.default.orders WHERE (_partition_id = 0 AND _partition_offset <= 41)",
+            **CREATOR,
+        )
+        self.assertEqual(p.kind, "ctas")
+
+    def test_operational_db_slice_clears_insert_select(self):
+        # The timestamp-cursor slice against a federated OPERATIONAL catalog
+        # (postgresql/mysql/sqlserver) — the same shape a warehouse slice uses.
+        p = guard(
+            "INSERT INTO iceberg.personal_lena.bronze_orders "
+            "SELECT *, TIMESTAMP '2026-02-01 00:00:00' AS _loaded_at, 'ds1.2026' AS _batch_id "
+            "FROM pg_shop.public.orders WHERE updated_at > "
+            "TIMESTAMP '2026-01-01 00:00:00' - INTERVAL '15' MINUTE "
+            "AND updated_at <= TIMESTAMP '2026-02-01 00:00:00'",
+            **CREATOR,
+        )
+        self.assertEqual(p.kind, "insert_select")
+
+    def test_sync_delete_batch_clears_delete_shape(self):
+        p = guard(
+            "DELETE FROM iceberg.personal_lena.bronze_orders WHERE _batch_id = 'ds1.0-100-1-7'",
+            **CREATOR,
+        )
+        self.assertEqual(p.kind, "delete_batch")
+
+
 class PrincipalThreadingTests(unittest.TestCase):
     def test_ctas_reading_masked_table_still_runs_as_principal(self):
         # A CTAS whose SELECT reads a governed (potentially masked) table is allowed

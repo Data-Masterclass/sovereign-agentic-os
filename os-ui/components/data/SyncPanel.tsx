@@ -4,6 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { isFrequentCron, nextCronRun } from '@/lib/data/sync-next-run';
 
 /**
  * "Keep this in sync" — the calm face over SCHEDULED INCREMENTAL SYNC. One panel,
@@ -33,7 +34,7 @@ type SyncConfig = {
 type SyncRun = {
   id: string;
   startedAt: string;
-  status: 'ok' | 'error' | 'skipped';
+  status: 'ok' | 'error' | 'skipped' | 'running';
   mode: string;
   rowsAffected?: number | null;
   cursorAfter?: string | null;
@@ -47,13 +48,26 @@ type SyncStatus = {
   watermark: string | null;
   quarantined: boolean;
   consecutiveErrors: number;
+  /** The source connection's platform (kafka ⇒ offsets cursor, append only). */
+  platform?: string | null;
 };
 
 const PRESETS: { label: string; cron: string }[] = [
+  { label: 'Every 15 minutes', cron: '*/15 * * * *' },
+  { label: 'Every 30 minutes', cron: '*/30 * * * *' },
   { label: 'Hourly', cron: '0 * * * *' },
   { label: 'Daily', cron: '0 6 * * *' },
   { label: 'Weekly', cron: '0 6 * * 1' },
 ];
+
+/** "Refreshes every 15 minutes · next ≈ 10:30" — the prominent cadence line. */
+function cadenceLine(cron: string): string {
+  const label = PRESETS.find((p) => p.cron === cron)?.label;
+  const phrase = label ? label.charAt(0).toLowerCase() + label.slice(1) : `on ${cron}`;
+  const next = nextCronRun(cron, new Date());
+  const nextTxt = next ? ` · next ≈ ${next.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}` : '';
+  return `Refreshes ${phrase}${nextTxt}`;
+}
 
 const MODE_LABELS: Record<SyncConfig['mode'], string> = {
   'full-refresh': 'Full refresh',
@@ -81,7 +95,7 @@ export default function SyncPanel({
   /** Known column names for the cursor/key pickers (optional — free text otherwise). */
   columns?: string[];
   /** First-time setup bootstrap (the import panel knows the source it just copied). */
-  setupSource?: { connectionId: string; schema: string; table: string };
+  setupSource?: { connectionId: string; schema: string; table: string; platform?: string };
 }) {
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -129,8 +143,17 @@ export default function SyncPanel({
   if (!source) return null;
 
   const cron = preset === 'Custom' ? customCron : (PRESETS.find((p) => p.label === preset)?.cron ?? customCron);
-  const incremental = mode !== 'full-refresh';
-  const canSave = canEdit && !busy && (!incremental || cursorColumn.trim()) && (mode !== 'merge' || mergeKeys.trim());
+  // Platform-locked panels — the engine room enforces the same rules again:
+  //   kafka      → append-only, cursor = per-partition offsets (tracked automatically).
+  //   salesforce → API-based pull; cursor locked to SystemModstamp; no merge.
+  const platformKey = status?.platform ?? setupSource?.platform ?? null;
+  const isKafka = platformKey === 'kafka';
+  const isSalesforce = platformKey === 'salesforce';
+  const lockedCursor = isKafka || isSalesforce;
+  const effMode: SyncConfig['mode'] = isKafka ? 'append' : isSalesforce && mode === 'merge' ? 'append' : mode;
+  const incremental = effMode !== 'full-refresh';
+  const canSave =
+    canEdit && !busy && (!incremental || lockedCursor || cursorColumn.trim()) && (effMode !== 'merge' || mergeKeys.trim());
 
   async function save() {
     if (!canSave) return;
@@ -140,9 +163,15 @@ export default function SyncPanel({
       const sync: SyncConfig = {
         connectionId: source!.connectionId,
         source: { schema: source!.schema, table: source!.table },
-        mode,
-        ...(incremental ? { cursor: { kind: cursorKind, column: cursorColumn.trim() } } : {}),
-        ...(mode === 'merge' ? { mergeKeys: mergeKeys.split(',').map((k) => k.trim()).filter(Boolean) } : {}),
+        mode: effMode,
+        ...(isKafka
+          ? { cursor: { kind: 'kafka-offsets', column: '_partition_offset' } }
+          : isSalesforce && incremental
+            ? { cursor: { kind: 'timestamp', column: 'SystemModstamp' } }
+            : incremental
+              ? { cursor: { kind: cursorKind, column: cursorColumn.trim() } }
+              : {}),
+        ...(effMode === 'merge' ? { mergeKeys: mergeKeys.split(',').map((k) => k.trim()).filter(Boolean) } : {}),
         schedule: { cron },
         enabled,
       };
@@ -209,20 +238,42 @@ export default function SyncPanel({
 
       {canEdit ? (
         <>
-          <div className="seg">
-            {(Object.keys(MODE_LABELS) as SyncConfig['mode'][]).map((m) => (
-              <button key={m} className={mode === m ? 'on' : ''} onClick={() => setMode(m)}>{MODE_LABELS[m]}</button>
-            ))}
-          </div>
-          <p className="hint" style={{ margin: '8px 0 0' }}>
-            {mode === 'full-refresh'
-              ? 'Re-copies the whole table each run. Simple and exact — best for small tables.'
-              : mode === 'append'
-                ? 'Adds only rows newer than the last sync (may re-deliver late rows — exact-once needs "Update by key").'
-                : 'Upserts changed rows by key. Best on a daily-ish cadence.'}
-          </p>
+          {isKafka ? (
+            <p className="hint" style={{ margin: 0 }}>
+              Streaming source — new messages are <strong>appended</strong>, tracked by Kafka
+              partition offsets (no cursor column to pick). Full refresh and update-by-key are not
+              available for streams; de-duplicate downstream if producers retry.
+            </p>
+          ) : (
+            <>
+              <div className="seg">
+                {(Object.keys(MODE_LABELS) as SyncConfig['mode'][])
+                  .filter((m) => !(isSalesforce && m === 'merge'))
+                  .map((m) => (
+                    <button key={m} className={effMode === m ? 'on' : ''} onClick={() => setMode(m)}>{MODE_LABELS[m]}</button>
+                  ))}
+              </div>
+              <p className="hint" style={{ margin: '8px 0 0' }}>
+                {isSalesforce
+                  ? effMode === 'full-refresh'
+                    ? 'Re-pulls every record over the Salesforce API each run — API-quota heavy; best for small objects.'
+                    : 'Pulls only records modified since the last sync (SystemModstamp) over the Salesforce API. Deletes are not detected (v1).'
+                  : effMode === 'full-refresh'
+                    ? 'Re-copies the whole table each run. Simple and exact — best for small tables.'
+                    : effMode === 'append'
+                      ? 'Adds only rows newer than the last sync (may re-deliver late rows — exact-once needs "Update by key").'
+                      : 'Upserts changed rows by key. Best on a daily-ish cadence.'}
+              </p>
+            </>
+          )}
 
-          {incremental ? (
+          {isSalesforce && incremental ? (
+            <p className="hint" style={{ margin: '6px 0 0' }}>
+              Change tracking uses <span className="mono">SystemModstamp</span> — set automatically, nothing to pick.
+            </p>
+          ) : null}
+
+          {incremental && !lockedCursor ? (
             <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
               <input
                 type="text"
@@ -245,7 +296,7 @@ export default function SyncPanel({
             </div>
           ) : null}
 
-          {mode === 'merge' ? (
+          {effMode === 'merge' ? (
             <div className="row" style={{ gap: 8, marginTop: 8 }}>
               <input
                 type="text"
@@ -291,6 +342,15 @@ export default function SyncPanel({
               </>
             ) : null}
           </div>
+          {enabled ? (
+            <p style={{ margin: '10px 0 0', fontSize: 13, fontWeight: 600 }}>{cadenceLine(cron)}</p>
+          ) : null}
+          {effMode === 'merge' && isFrequentCron(cron) ? (
+            <p className="hint" style={{ margin: '6px 0 0' }}>
+              At this cadence, frequent merges accumulate delete files that slow reads over time.
+              &ldquo;Add new rows&rdquo; is recommended for schedules of 30 minutes or less — de-duplicate downstream.
+            </p>
+          ) : null}
         </>
       ) : status.sync ? (
         <p className="muted" style={{ fontSize: 13, margin: 0 }}>
@@ -303,7 +363,7 @@ export default function SyncPanel({
 
       {status.sync ? (
         <p className="muted" style={{ fontSize: 12.5, margin: '10px 0 0' }}>
-          {status.sync.enabled ? `Runs ${presetFor(status.sync.schedule.cron) === 'Custom' ? 'on' : presetFor(status.sync.schedule.cron).toLowerCase()} schedule ` : 'Schedule off '}
+          {status.sync.enabled ? `${cadenceLine(status.sync.schedule.cron)} ` : 'Schedule off '}
           <span className="mono" style={{ fontSize: 11 }}>{status.sync.schedule.cron}</span>
           {status.watermark ? <> · synced through <span className="mono" style={{ fontSize: 11 }}>{status.watermark}</span></> : null}
         </p>
@@ -324,7 +384,7 @@ export default function SyncPanel({
                     <td>{MODE_LABELS[r.mode as SyncConfig['mode']] ?? r.mode}{r.maintenance ? ' · maintenance' : ''}</td>
                     <td>{typeof r.rowsAffected === 'number' ? r.rowsAffected : '—'}</td>
                     <td>
-                      {r.status === 'ok' ? '✓ ok' : r.status === 'skipped' ? '– skipped' : '✗ error'}
+                      {r.status === 'ok' ? '✓ ok' : r.status === 'skipped' ? '– skipped' : r.status === 'running' ? '… running' : '✗ error'}
                       {r.error ? <span className="muted" style={{ fontSize: 12 }}> — {r.error}</span> : null}
                     </td>
                     <td className="mono" style={{ fontSize: 11 }}>{r.cursorAfter ?? '—'}</td>

@@ -46,6 +46,8 @@ async function appLifecycle(id: string, action: 'archive' | 'unarchive' | 'delet
 type AppsData = {
   user: { id: string; role: string };
   apps: AppItem[];
+  /** The create picker's four choices (server-defined; sovereign-app is default). */
+  templates?: { key: string; label: string; blurb: string }[];
 };
 
 /** A running app's deploy state → a calm status badge. */
@@ -78,6 +80,7 @@ export default function SoftwarePage() {
 
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
+  const [template, setTemplate] = useState('sovereign-app');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   const [scope, setScope] = useState<ScopeKey>('all');
@@ -91,7 +94,7 @@ export default function SoftwarePage() {
       const res = await fetch('/api/apps', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, template }),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -209,6 +212,38 @@ export default function SoftwarePage() {
                   if (e.key === 'Enter') create();
                 }}
               />
+              {/* The four-template picker — calm radio cards; Application is default. */}
+              <div
+                role="radiogroup"
+                aria-label="App template"
+                style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 8, marginTop: 12 }}
+              >
+                {(data?.templates ?? []).map((t) => {
+                  const active = template === t.key;
+                  return (
+                    <button
+                      key={t.key}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      onClick={() => setTemplate(t.key)}
+                      style={{
+                        textAlign: 'left',
+                        padding: '10px 12px',
+                        border: `1px solid ${active ? 'var(--gold)' : 'var(--border)'}`,
+                        borderRadius: 'var(--radius)',
+                        background: active ? 'var(--panel)' : 'transparent',
+                        cursor: 'pointer',
+                        font: 'inherit',
+                        color: 'inherit',
+                      }}
+                    >
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{t.label}</div>
+                      <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{t.blurb}</div>
+                    </button>
+                  );
+                })}
+              </div>
               <div className="row" style={{ marginTop: 10, gap: 10, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
                 <button type="button" className="btn ghost" onClick={() => { setOpen(false); setError(''); }} disabled={creating}>
                   Cancel
@@ -218,9 +253,9 @@ export default function SoftwarePage() {
                 </button>
               </div>
               <p className="sw-create-note">
-                No need to pick an app type — describe it in chat and the build agent infers whether
-                it needs a UI, an API, or both from what it actually builds. A sovereign Forgejo repo
-                is created in-cluster; if git isn&apos;t ready yet you can still build in honest offline mode.
+                The template only sets the starting point — describe the rest in chat and the build
+                agent takes it from there. A sovereign Forgejo repo is created in-cluster; if git
+                isn&apos;t ready yet you can still build in honest offline mode.
               </p>
               {error ? <div className="error" style={{ marginTop: 10 }}>{error}</div> : null}
             </div>

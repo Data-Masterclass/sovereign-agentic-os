@@ -41,6 +41,7 @@ import {
 import { initialStageState, canEnter, isSatisfied, markDone, type StageState } from '@/lib/core/stages';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { buildStatusRail } from '@/lib/software/build-activity';
+import { targetKey, type BuildAction, type BuildTarget } from '@/lib/software/build-target';
 import TeamPanel from '@/app/software/TeamPanel';
 import StageAssistant from './StageAssistant';
 import { SW_STAGES, type SwStageId, type SwCtx } from './stages';
@@ -75,6 +76,8 @@ export type SoftwareApp = {
   slug: string;
   name: string;
   description: string;
+  /** The scaffold the app was created from — locked after creation. */
+  template: string;
   purpose: string;
   epics: Epic[];
   grants: ContextGrantsValue;
@@ -113,6 +116,19 @@ const STAGE_STEP_LABEL: Record<(typeof STAGES)[number], string> = {
 const MODE_KEY = 'software.viewMode';
 /** The context kinds the Software Define stage offers. */
 const SW_GRANT_KINDS: ContextKind[] = ['connections', 'data', 'knowledge', 'files', 'metrics'];
+
+/** Display names for the app's scaffold template (locked after creation). */
+const TEMPLATE_LABEL: Record<string, string> = {
+  'sovereign-app': 'Application',
+  website: 'Website',
+  'api-service': 'APIs only',
+  empty: 'Empty App',
+  'vite-os': 'Vite OS app (legacy)',
+  'nextjs-supabase': 'Next.js + Supabase (legacy)',
+  service: 'Service (legacy)',
+  script: 'Script (legacy)',
+  dashboard: 'Dashboard (legacy)',
+};
 
 function pipelineSteps(pipeline: Record<string, string>): { steps: Step[]; active: boolean; done: boolean; ok: boolean } {
   let firstPendingSeen = false;
@@ -199,8 +215,8 @@ export default function SoftwareBuilder({
     if (typeof window !== 'undefined') window.localStorage.setItem(MODE_KEY, m);
   };
 
-  // The build target the Build stage points at (an epic/story from Design).
-  const [target, setTarget] = useState<{ epicId: string; storyId: string } | null>(null);
+  // The scope the Build stage acts on — General (whole app), an EPIC, or a story.
+  const [target, setTarget] = useState<BuildTarget | null>(null);
 
   const canEditCode = roleAtLeast(user.role, 'builder');
   const canEdit = app.owner === user.id || roleAtLeast(user.role, 'domain_admin');
@@ -590,8 +606,11 @@ function DefineStage({
       <label className="comp-label">App name</label>
       <input type="text" value={app.name} readOnly title="Named on create — rename via the delivery team or build chat" />
       <div className="hint" style={{ marginTop: 6 }}>
-        id: <code>{app.slug}</code> · surface: <code>{surfaceLabel}</code> ·{' '}
-        the build agent infers UI/API from what it actually builds — no upfront type to pick.
+        id: <code>{app.slug}</code> · template:{' '}
+        <span className="badge muted" title="Chosen at creation — locked afterwards">
+          {TEMPLATE_LABEL[app.template] ?? app.template}
+        </span>{' '}
+        · surface: <code>{surfaceLabel}</code>
       </div>
 
       <label className="comp-label" style={{ marginTop: 16 }}>Purpose</label>
@@ -878,8 +897,8 @@ function BuildStage({
   epics: Epic[];
   canEditCode: boolean;
   onBuilt: () => void;
-  target: { epicId: string; storyId: string } | null;
-  setTarget: (t: { epicId: string; storyId: string } | null) => void;
+  target: BuildTarget | null;
+  setTarget: (t: BuildTarget | null) => void;
   /** Persist an updated epics array (per-story status). Undefined when the viewer can't edit. */
   onSaveEpics?: (epics: Epic[]) => void;
   /** Jump back to the Design stage (the tree's empty-state pointer). */
@@ -893,27 +912,21 @@ function BuildStage({
   // stories' LAST Build run failed (session-scoped; a later success clears it).
   const [running, setRunning] = useState(false);
   const [failedStoryIds, setFailedStoryIds] = useState<ReadonlySet<string>>(new Set());
+  // Which action (design/build/test/review) last ran per tree node — session-scoped.
+  const [lastActionByNode, setLastActionByNode] = useState<Record<string, BuildAction>>({});
 
-  const storyOptions = epics.flatMap((e) =>
-    e.stories.map((s) => ({
-      epicId: e.id,
-      storyId: s.id,
-      status: s.status,
-      label: `${e.title || 'Untitled EPIC'} › ${s.title || 'Untitled story'}`,
-    })),
-  );
-  const selected = target ? storyOptions.find((o) => o.epicId === target.epicId && o.storyId === target.storyId) : null;
+  const targetedStory = target?.kind === 'story' ? target : null;
 
   // On a successful BUILD run against a targeted story, mark it done (backward-compatible
   // status write through the same governed epics patch). No-op when nothing was targeted.
   const handleBuilt = (changes: FileChange[]) => {
-    if (buildMode === 'build' && target && changes.length > 0) {
-      if (onSaveEpics) onSaveEpics(withStoryStatus(epics, target.epicId, target.storyId, 'done'));
+    if (targetedStory && changes.length > 0) {
+      if (onSaveEpics) onSaveEpics(withStoryStatus(epics, targetedStory.epicId, targetedStory.storyId, 'done'));
       // Success clears a previous failure for this story.
       setFailedStoryIds((prev) => {
-        if (!prev.has(target.storyId)) return prev;
+        if (!prev.has(targetedStory.storyId)) return prev;
         const next = new Set(prev);
-        next.delete(target.storyId);
+        next.delete(targetedStory.storyId);
         return next;
       });
     }
@@ -922,15 +935,14 @@ function BuildStage({
     onBuilt();
   };
 
-  // A failed BUILD run against a targeted story marks it blocked in the tree.
-  const handleRunEnd = (failed: boolean) => {
+  // A failed BUILD run against a targeted story marks it blocked in the tree
+  // (test/review/plan runs never mark blocked — they change nothing).
+  const handleRunEnd = (failed: boolean, runMode: string) => {
     setRunning(false);
-    if (failed && buildMode === 'build' && target) {
-      setFailedStoryIds((prev) => new Set(prev).add(target.storyId));
+    if (failed && runMode === 'build' && targetedStory) {
+      setFailedStoryIds((prev) => new Set(prev).add(targetedStory.storyId));
     }
   };
-
-  const buildStory = target ? { epicId: target.epicId, storyId: target.storyId, label: selected?.label } : null;
 
   return (
     <div style={{ marginTop: 4 }} {...anchorAttr(ANCHORS.software.build)}>
@@ -940,7 +952,7 @@ function BuildStage({
         <p className="hint" style={{ marginTop: 0, flex: 1 }}>
           {buildMode === 'plan'
             ? 'Plan mode — the assistant discusses the change and drafts an implementation plan. It writes no code; switch to Build to execute.'
-            : <>Build mode — click a story in the tree to target it, then let the assistant commit real code and show you the diff. {canEditCode ? 'The code panel is one click away in the Developer view.' : ''} Every commit lands in this app’s sovereign in-cluster repo.</>}
+            : <>Build mode — select General, an EPIC or a story in the tree, then act on it with Design · Build · Test · Review, or describe the change yourself. {canEditCode ? 'The code panel is one click away in the Developer view.' : ''} Every commit lands in this app’s sovereign in-cluster repo.</>}
         </p>
         {/* Plan ⇄ Build segmented control — reuses the OS `.mode-toggle` language. */}
         <div className="mode-toggle" role="group" aria-label="Build mode" style={{ flexShrink: 0 }}>
@@ -969,8 +981,9 @@ function BuildStage({
         <TeamPanel onBuilt={onBuilt} />
       </div>
 
-      {/* Left: the streaming build chat (unchanged). Right: the EPIC & story tree —
-          the app's designed structure IS the build target selector in Simple view. */}
+      {/* Left: the EPIC & story tree — the app's designed structure IS the scope
+          selector (General / EPIC / story). Right: the streaming chat with the
+          Design · Build · Test · Review actions above it. */}
       <div
         style={{
           display: 'grid',
@@ -980,25 +993,29 @@ function BuildStage({
           marginTop: 16,
         }}
       >
+        <EpicStoryTree
+          epics={epics}
+          target={target}
+          onTarget={setTarget}
+          run={{ targetedStoryId: buildMode === 'build' ? targetedStory?.storyId ?? null : null, running, failedStoryIds }}
+          onGoDesign={onGoDesign}
+        />
         <BuildChat
           appId={app.id}
           appName={app.name}
           mode={buildMode}
-          story={buildStory}
+          target={target}
+          epics={epics}
           initialMessages={app.chat
             .filter((m) => m.role === 'user' || m.role === 'assistant')
             .map((m) => ({ role: m.role, content: m.content }))}
           onBuilt={handleBuilt}
           onRunStart={() => setRunning(true)}
           onRunEnd={handleRunEnd}
+          onModeChange={setBuildMode}
+          onAction={(a) => { if (target) setLastActionByNode((m) => ({ ...m, [targetKey(target)]: a })); }}
+          lastAction={target ? lastActionByNode[targetKey(target)] ?? null : null}
           showDetails={canEditCode}
-        />
-        <EpicStoryTree
-          epics={epics}
-          target={target}
-          onTarget={setTarget}
-          run={{ targetedStoryId: buildMode === 'build' ? target?.storyId ?? null : null, running, failedStoryIds }}
-          onGoDesign={onGoDesign}
         />
       </div>
 

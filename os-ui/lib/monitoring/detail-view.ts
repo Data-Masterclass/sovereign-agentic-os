@@ -210,7 +210,7 @@ export type DatasetDetail = {
   };
   /** Scheduled-sync signal (additive, fail-soft): last run + outcome, or nulls when
    *  the dataset has never synced. */
-  sync: { lastSync: string | null; syncStatus: 'ok' | 'error' | 'skipped' | null };
+  sync: { lastSync: string | null; syncStatus: 'ok' | 'error' | 'skipped' | 'running' | null };
   /** Build/version timeline for the medallion layers (bronze→silver→gold). */
   layers: { layer: Layer; built: boolean; passThrough: boolean; quality: string; updatedAt: string | null }[];
   /** Snapshot version log (newest first): who/when/what. */
@@ -259,7 +259,7 @@ export async function datasetDetail(user: CurrentUser, datasetId: string, nowMs:
 
   // Scheduled-sync signal — additive + fail-soft (an unreachable mirror ⇒ nulls).
   let lastSync: string | null = null;
-  let syncStatus: 'ok' | 'error' | 'skipped' | null = null;
+  let syncStatus: 'ok' | 'error' | 'skipped' | 'running' | null = null;
   try {
     await ensureSyncRunsHydrated();
     const s = latestSyncRun(datasetId);

@@ -14,7 +14,8 @@ import { trackUsage, type ToolSpec, type AgenticStep, type LlmCall, type UsageTr
 import { loadBuildSpec } from '@/lib/tabs/build-spec';
 import { parseSystem, type System } from '../system-schema.ts';
 import { compile } from '../langgraph-compile.ts';
-import { principalFor, runCostUsd } from './runtime-contract.ts';
+import { principalFor, runCostUsd, type ModelPrice } from './runtime-contract.ts';
+import { effectiveModelPrices } from '@/lib/platform-admin/model-prices';
 import { runAgenticGraph, runNode, type AgenticGraphResult, type AgenticGraphDeps } from './agentic-graph.ts';
 import { liveEmbedder } from '@/lib/infra/context/librarian-live.ts';
 import {
@@ -196,6 +197,10 @@ export type RunOsTeamInput = {
 export async function runOsTeam(input: RunOsTeamInput): Promise<AgenticGraphResult> {
   const sys = parseSystem(input.yaml);
   const ir = compile(sys);
+  // Resolve the price book ONCE per run start (admin-saved prices over the env
+  // seed; fail-soft) — `runCostUsd` stays pure and the summary trace below prices
+  // the run against the book that was current when it started.
+  const prices = await effectiveModelPrices();
   // Live embedder for the Context Librarian handoff: the predecessor's material is
   // kept whole by RELEVANCE to the downstream node's need. Degrades to the keepRows
   // handoff automatically when the embedder falls back to the offline hash.
@@ -230,7 +235,7 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<AgenticGraphResu
     onStep: input.onStep,
     onNodeComplete: input.onNodeComplete,
   });
-  emitRunSummaryTrace(input, result, tracked);
+  emitRunSummaryTrace(input, result, tracked, prices);
   return result;
 }
 
@@ -243,11 +248,17 @@ const RUN_TRACE_PROMPT_MAX = 500;
  * was silently untraced, leaving the tiles at tokens=0). MUST use principalFor
  * (`os-<id>`) — the telemetry batch only groups `os-` principals. Tokens are the
  * run's AGGREGATE reported usage; when NO model call reported usage they stay
- * undefined (never fabricated). Cost is priced ONLY from explicit MODEL_PRICES_JSON
+ * undefined (never fabricated). Cost is priced ONLY from the explicit price book
+ * (admin-saved prices over the env MODEL_PRICES_JSON seed, resolved at run start)
  * over the models this run ACTUALLY called (unpriced ⇒ undefined ⇒ "—", never 0).
  * Fire-and-forget: telemetry never blocks or fails the run.
  */
-function emitRunSummaryTrace(input: RunOsTeamInput, result: AgenticGraphResult, tracked: UsageTracker): void {
+function emitRunSummaryTrace(
+  input: RunOsTeamInput,
+  result: AgenticGraphResult,
+  tracked: UsageTracker,
+  prices: Readonly<Record<string, ModelPrice>>,
+): void {
   const usage = tracked.usage();
   const prompt = lastUserText(input.messages);
   // Tests inject their trace spy via toolDeps (the same seam the executor uses).
@@ -259,7 +270,7 @@ function emitRunSummaryTrace(input: RunOsTeamInput, result: AgenticGraphResult, 
     output: { path: result.path },
     decision: 'allow',
     tokens: usage?.total,
-    costUsd: runCostUsd(usage, tracked.models(), config.modelPrices),
+    costUsd: runCostUsd(usage, tracked.models(), prices),
   });
 }
 

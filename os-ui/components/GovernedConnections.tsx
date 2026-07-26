@@ -93,7 +93,9 @@ type WarehouseField = { key: string; label: string; required: boolean; help?: st
 type WarehouseProviderMeta = {
   platform: string;
   label: string;
-  capabilities: { federate: boolean; import: boolean };
+  capabilities: { federate: boolean; import: boolean; sync?: boolean };
+  /** 'operational' (OLTP sync sources) | 'streaming' (Kafka) | null = warehouse. */
+  category?: 'operational' | 'streaming' | null;
   credentialFields: WarehouseField[];
   secretKeys: string[];
   liveVerificationRequired: string[];
@@ -363,14 +365,29 @@ function GovernedConnectionsInner() {
         // pre-set to that platform so it skips the generic platform-choice step.
         if (warehouseMeta) {
           for (const p of warehouseMeta.providers) {
-            const caps = [p.capabilities.federate ? 'federate' : null, p.capabilities.import ? 'import' : null]
-              .filter(Boolean).join(' · ');
+            const caps = [
+              p.capabilities.federate ? 'federate' : null,
+              p.capabilities.import ? 'import' : null,
+              p.capabilities.sync ? 'scheduled sync' : null,
+            ].filter(Boolean).join(' · ');
+            // Operational databases (Postgres/MySQL/SQL Server) and streams (Kafka)
+            // are labeled as such so users see them as SYNC-capable sources, not
+            // just another warehouse to federate.
+            const kind = p.category === 'operational'
+              ? 'Operational database'
+              : p.category === 'streaming'
+                ? 'Streaming'
+                : 'Warehouse';
             cards.push({
               key: `warehouse:${p.platform}`,
               guideKey: p.platform,
               label: p.label,
-              meta: `Warehouse · federated Trino catalog${caps ? ` · ${caps}` : ''}`,
-              blurb: 'Federate this lakehouse as one governed catalog — query live under OPA, then import tables as owned products.',
+              meta: `${kind} · federated Trino catalog${caps ? ` · ${caps}` : ''}`,
+              blurb: p.category === 'operational'
+                ? 'Federate this database as one governed catalog — query live under OPA, import tables, and keep copies fresh with scheduled incremental sync.'
+                : p.category === 'streaming'
+                  ? 'Federate topics as governed tables and land them in the lakehouse with the append-only offset-cursor scheduled sync.'
+                  : 'Federate this lakehouse as one governed catalog — query live under OPA, then import tables as owned products.',
               stackId: warehousePlatformStack(p.platform),
               start: { mode: 'type', template: 'warehouse', presetPlatform: p.platform },
             });

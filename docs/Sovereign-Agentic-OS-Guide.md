@@ -285,7 +285,11 @@ there.
   lands in Iceberg carrying `_loaded_at` / `_batch_id` lineage columns. The dataset shows its
   **sync history and watermark**; ten consecutive failures **auto-pause** the schedule (with a
   one-click *Reset & full re-sync* recovery), and freshness in **Monitoring** reflects the
-  last sync.
+  last sync. Scheduled sync is built for *incremental slices*, not bulk backfills: the current
+  per-run limits (statement timeout, single-node Trino sizing, object-storage capacity), the
+  honest estimates behind them, and the concrete scale-up playbook — exact Helm values, backfill
+  windowing, and when to switch to staged-file loads — are documented in
+  [`docs/data-sync-scaling.md`](data-sync-scaling.md).
 - **Connections — governed bridges to outside systems.** A Connection is `credentials +
   endpoint + a set of governed tools`, never a raw pipe — used to bring data in and to expose
   external APIs/MCPs as tools. You grant **use**, never the token; **reads are automatic, writes
@@ -314,6 +318,11 @@ there.
   Fabric/OneLake — so you can query it in place under the same OPA path, or import a core table
   as a governed data product into the sovereign lakehouse — and keep the copy fresh with a
   scheduled sync (see *Data* above), so an import is a living dataset, not a one-time snapshot.
+  Operational sources are first-class here too: PostgreSQL / MySQL / SQL Server sync on a
+  timestamp or id cursor, **Kafka** topics land append-only on a per-partition offset cursor
+  (de-duplicate downstream), and **Salesforce** objects sync incrementally by `SystemModstamp`
+  over the REST API — schedules run from every 15 minutes (append recommended at high
+  frequency; frequent merges accumulate delete files) up to weekly.
   And for BI on your own desktop, a
   **one-click Power BI** button downloads a `.pbids` file that drops Power BI Desktop straight
   into the pre-filled PostgreSQL connector for the **Cube SQL API** — connecting as the
@@ -1044,8 +1053,14 @@ Purview · Azure AI Foundry · AWS SageMaker, read-only), data-ingest (Google Dr
 medallion **layer choice** on agent data grants, an admin-enabled **external-warehouse connector**
 (federate AWS Glue/Athena · Snowflake · BigQuery · Databricks/Delta, plus experimental
 Fabric/OneLake, through Trino — discover → register → import → **scheduled incremental sync**
-(full-refresh / append / merge as the dataset's owner, cursor + lookback, auto-pause after
-repeated failures), no YAML), **one-click Power BI**
+(full-refresh / append / merge as the dataset's owner, cursor + lookback, presets from every
+15 minutes to weekly, auto-pause after repeated failures), no YAML — with PostgreSQL · MySQL ·
+SQL Server surfaced as **sync-capable operational databases**, **Apache Kafka** as a streaming
+source (configured topics federate as governed tables; an append-only **per-partition offset
+cursor** lands messages in the lakehouse — no one-time import of an unbounded stream), and
+**Salesforce** as an API-based operational source (no Trino connector exists, so the sync pulls
+`SystemModstamp` slices over the REST API page-by-page and streams them into the lakehouse;
+deletes are not detected in v1 and every pull consumes API quota)), **one-click Power BI**
 (a `.pbids` file into Cube's Postgres-wire SQL API, DirectQuery, as the per-domain `bi_<domain>`
 principal so per-domain RLS re-runs on every query — no embedded password), an **Apache Airflow**
 connector (governed `trigger_dag`/monitor), and **OpenMetadata** (read/discover of a customer's

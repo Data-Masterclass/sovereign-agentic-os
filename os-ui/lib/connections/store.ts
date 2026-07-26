@@ -701,6 +701,18 @@ const CONNECTION_HEALTH: Partial<Record<ConnectionTemplateKey, HealthFn>> = {
       ? { ok: true, mode: 'live', detail: `Airflow at ${c.egress.host} is reachable${h.detail ? ` (${h.detail})` : ''}. The token is never sent on the health probe.` }
       : { ok: false, mode: 'offline', detail: `Airflow at ${c.egress.host} is unreachable (${h.reason ?? 'network error'}) — check the base URL + egress, then re-test.` };
   },
+  // SALESFORCE: real client-credentials token grant + `SELECT Id FROM Organization
+  // LIMIT 1` over the REST API. A rejected credential is an honest x — never a fake
+  // green. The consumer secret never leaves the server (lib/connections/salesforce.ts).
+  'salesforce-api': async (c) => {
+    const { salesforceHealth } = await import('./salesforce.ts');
+    const h = await salesforceHealth(c);
+    c.mode = h.ok ? 'live' : 'offline';
+    c.health = h.ok ? 'healthy' : 'needs-reconnect';
+    return h.ok
+      ? { ok: true, mode: 'live', detail: `Salesforce is reachable (${h.detail}) The credential never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Salesforce is unreachable or refused the credential (${h.detail}) — check the Connected App + egress, then re-test.` };
+  },
   github: async (c) => {
     const h = await githubHealth(githubConnFrom(c));
     c.mode = h.connected ? 'live' : 'offline';
