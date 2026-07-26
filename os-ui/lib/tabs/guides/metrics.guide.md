@@ -8,7 +8,7 @@ The Metrics tab is the OS's single source of truth for business numbers. A metri
 
 1. **Precondition: a governed Gold dataset.** Metrics require a Gold-tier dataset as their backing source. If no Gold dataset exists for your concept, complete the Data pathway first. Call `list_datasets` filtered to `tier: "gold"` to confirm.
 2. **Dedupe check.** Call `list_metrics` to see what is already defined in your domain. Defining a metric that already exists by another name produces two competing definitions of the same number — avoid this.
-3. **Preview first (optional).** Call `preview_metric(datasetId, name, aggregation, ...)` to see the number without persisting anything. Returns rows + SQL + mode (live/offline-mock). If the measure has not synced to the query engine yet, returns `pending: true` — wait ~30 s and try again. Use this to validate the definition before committing.
+3. **Preview first (optional).** Call `preview_metric(datasetId, name, aggregation, ...)` to see the number without persisting anything. An unsaved draft is computed via governed SQL (mode `live (sql)`, same row security); a saved+delivered measure resolves via governed Cube (mode `live`); offline degrades to `offline-mock`. Returns rows + SQL + mode; `pending: true` only for rolling-window/running-total shapes, which the query engine computes after `define_metric`. Use this to validate the definition before committing.
 4. **Define.** Call `define_metric` with:
    - `datasetId` — the ID of the Gold dataset
    - `name` — canonical business name (e.g. `gross_revenue`, `order_count`)

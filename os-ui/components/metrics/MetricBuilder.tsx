@@ -108,7 +108,8 @@ type Measure = { name: string; type: string };
 type PreviewResult = {
   member: string;
   rows: Record<string, unknown>[];
-  mode: 'live' | 'offline-mock';
+  /** 'live (sql)' = pre-save preview computed via governed SQL (not yet Cube-served). */
+  mode: 'live' | 'live (sql)' | 'offline-mock';
   pending?: boolean;
 };
 
@@ -334,9 +335,12 @@ export default function MetricBuilder({
     } catch (e) { setPreviewErr((e as Error).message); setPreview(null); } finally { setPreviewBusy(false); }
   }, [canSubmit, datasetId, form]);
 
-  // Auto-poll while pending — up to 6 times (30 s total, 5 s interval).
+  // Auto-poll while pending — up to 6 times (30 s total, 5 s interval). Only once the
+  // metric is SAVED: post-save pending is sidecar sync lag and resolves by waiting;
+  // pre-save pending (a rolling-window draft) can't resolve until Publish, so polling
+  // would just spin.
   useEffect(() => {
-    if (!preview?.pending) return;
+    if (!preview?.pending || !saved) return;
     let tries = 0;
     const MAX = 6;
     const id = setInterval(async () => {
@@ -345,7 +349,7 @@ export default function MetricBuilder({
       if (tries >= MAX) clearInterval(id);
     }, 5000);
     return () => clearInterval(id);
-  }, [preview?.pending, runPreview]);
+  }, [preview?.pending, saved, runPreview]);
 
   /* ── save ── */
   const submit = useCallback(async () => {
@@ -459,7 +463,13 @@ export default function MetricBuilder({
                 label="Explain a preview error or pending state in plain language."
                 cta="Explain the status"
                 disabled={!previewErr && !preview?.pending}
-                payload={() => ({ error: previewErr || (preview?.pending ? 'The metric is still syncing to the query engine.' : '') })}
+                payload={() => ({
+                  error: previewErr || (preview?.pending
+                    ? (saved
+                      ? 'The metric is still syncing to the query engine.'
+                      : 'This rolling-window definition is computed by the query engine after Publish — it has no pre-save preview.')
+                    : ''),
+                })}
               />
             );
           }
@@ -663,8 +673,9 @@ export default function MetricBuilder({
                 <div>
                   <span className="comp-label" style={{ margin: 0 }}>Live number</span>
                   <p className="hint" style={{ marginTop: 4, marginBottom: 0 }}>
-                    Runs the exact governed query your saved metric will resolve, under your own identity.
-                    Row-level security applies. Nothing is saved yet.
+                    {saved
+                      ? 'Resolves the exact governed query-engine member your metric serves, under your own identity. Row-level security applies.'
+                      : 'Computed via a governed SQL query under your own identity — row-level security applies. The query-engine-served value appears after Publish. Nothing is saved yet.'}
                   </p>
                 </div>
                 <button className="btn ghost" onClick={runPreview} disabled={previewBusy || !canSubmit} style={{ marginLeft: 12 }}>
@@ -677,8 +688,9 @@ export default function MetricBuilder({
               {preview ? (
                 preview.pending ? (
                   <div className="stub-page" style={{ marginTop: 10 }}>
-                    Syncing — the live value appears within ~30 s as the query engine picks up
-                    this metric. Re-run preview shortly, or wait for the auto-refresh.
+                    {saved
+                      ? 'Syncing — the live value appears within ~30 s as the query engine picks up this metric. Re-run preview shortly, or wait for the auto-refresh.'
+                      : 'This shape (rolling window / running total) is computed by the query engine, so it has no pre-save preview — the live value appears after Publish.'}
                   </div>
                 ) : preview.rows.length === 0 ? (
                   <div className="stub-page" style={{ marginTop: 10 }}>
@@ -687,8 +699,13 @@ export default function MetricBuilder({
                 ) : (
                   <>
                     <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: 10 }}>
-                      <span className={`badge ${preview.mode === 'live' ? 'ok' : 'muted'}`}>{preview.mode}</span>
+                      <span className={`badge ${preview.mode.startsWith('live') ? 'ok' : 'muted'}`}>{preview.mode}</span>
                       <span className="muted mono" style={{ fontSize: 12 }}>{preview.member}</span>
+                      {preview.mode === 'live (sql)' ? (
+                        <span className="hint" style={{ margin: 0 }}>
+                          governed SQL preview — the query engine serves this number after Publish
+                        </span>
+                      ) : null}
                     </div>
                     <div className="table-wrap" style={{ marginTop: 10 }}>
                       <table>

@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
+import yaml from 'js-yaml';
 import { config } from '@/lib/core/config';
 import { cubeLoad, cubeScalar } from '@/lib/infra/governed';
 import { type MetricCubeClient, type MetricLiveDeps } from './live.ts';
@@ -37,27 +38,76 @@ export function isCubeSyncLag(e: unknown): boolean {
   return /not found for path|not found/i.test((e as Error)?.message ?? '');
 }
 
-export function realMetricCube(): MetricCubeClient {
-  return {
-    async reload(_view, _schema) {
-      // LIVENESS CHECK ONLY. Cube's schema comes from (1) a ConfigMap seed of static models
-      // at boot + (2) the model-sync sidecar that HTTP-polls os-ui's GET /api/cube/models
-      // every few seconds and writes the .cube.yml files Cube hot-reloads. There is no
-      // Forgejo→Cube path. So a freshly-defined measure only appears after the next sidecar
-      // poll — this /meta probe confirms Cube is UP, not that it has THIS measure yet (the
-      // resolveMeasure verify + fail-soft handle the sync gap). 4xx/5xx/unreachable → ✗.
-      const res = await withTimeout(`${config.cubeUrl}/cubejs-api/v1/meta`);
-      if (!res || !res.ok) throw new Error(`Cube /meta not ready (${res?.status ?? 'unreachable'})`);
-    },
-    async resolveMeasure(member) {
-      try {
-        return await cubeScalar({ measures: [member], limit: 1 }, member);
-      } catch (e) {
-        // Measure not yet compiled into Cube (sidecar sync lag) → not-yet-resolved, not a throw.
-        if (isCubeSyncLag(e)) return null;
-        throw e;
+/** The measure MEMBERS (`View.measure`) a generated schema declares — what reload
+ *  awaits delivery of. Tolerant of a malformed schema (empty list, never a throw). */
+export function measureMembersFromSchema(schema: string, view: string): string[] {
+  try {
+    const doc = yaml.load(schema) as { cubes?: { measures?: { name?: unknown }[] }[] } | null;
+    const out: string[] = [];
+    for (const c of doc?.cubes ?? []) {
+      for (const m of c?.measures ?? []) {
+        if (typeof m?.name === 'string' && m.name) out.push(`${view}.${m.name}`);
       }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Bounded await-delivery: poll `probe` until it reports delivered, up to `budgetMs`.
+ * Returns 'delivered' | 'pending' HONESTLY — never fabricates readiness, never throws
+ * on a timeout (a probe error still propagates). Injectable sleep/now so tests run
+ * without real waiting.
+ */
+export async function awaitDelivery(
+  probe: () => Promise<boolean>,
+  opts: { budgetMs?: number; intervalMs?: number; sleep?: (ms: number) => Promise<void>; now?: () => number } = {},
+): Promise<'delivered' | 'pending'> {
+  const budgetMs = opts.budgetMs ?? 12000; // ~2 sidecar poll intervals
+  const intervalMs = opts.intervalMs ?? 2000;
+  const now = opts.now ?? Date.now;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const deadline = now() + budgetMs;
+  for (;;) {
+    if (await probe()) return 'delivered';
+    if (now() >= deadline) return 'pending';
+    await sleep(intervalMs);
+  }
+}
+
+export function realMetricCube(): MetricCubeClient {
+  async function resolveMeasure(member: string): Promise<number | null> {
+    try {
+      return await cubeScalar({ measures: [member], limit: 1 }, member);
+    } catch (e) {
+      // Measure not yet compiled into Cube (sidecar sync lag) → not-yet-resolved, not a throw.
+      if (isCubeSyncLag(e)) return null;
+      throw e;
+    }
+  }
+  return {
+    async reload(view, schema) {
+      // BOUNDED AWAIT-DELIVERY (replaces the old /meta liveness ping, which proved Cube
+      // was up but said nothing about THIS schema). Cube's schema comes from the
+      // model-sync sidecar (polls os-ui's GET /api/cube/models every few seconds and
+      // writes the .cube.yml files; schemaVersion() lazily recompiles on the next
+      // query) — so we poll until every measure the schema declares actually RESOLVES
+      // (the same resolveMeasure probe verify uses; the query also triggers the lazy
+      // recompile), up to ~12 s = 2 sidecar intervals. Delivered → done; still pending
+      // after the budget → return quietly and let verify report the non-resolution
+      // honestly (the build shows "syncing", not a false ✓). A genuine Cube error
+      // (unreachable / 5xx) still throws ⇒ ✗.
+      const unresolved = new Set(measureMembersFromSchema(schema, view));
+      await awaitDelivery(async () => {
+        for (const member of [...unresolved]) {
+          if ((await resolveMeasure(member)) !== null) unresolved.delete(member);
+        }
+        return unresolved.size === 0;
+      });
     },
+    resolveMeasure,
     async explore(query, securityContext) {
       try {
         const { rows } = await cubeLoad(query, { securityContext });

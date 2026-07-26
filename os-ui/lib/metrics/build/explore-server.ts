@@ -2,10 +2,18 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { cubeLoad } from '@/lib/infra/governed';
-import { type DelegatedToken } from '../../data/identity.ts';
+import { cubeLoad, queryRun } from '@/lib/infra/governed';
+import { type DelegatedToken, propagate } from '../../data/identity.ts';
 import type { Dataset, Measure } from '../../data/index.ts';
-import { type CubeExecutor, type Granularity, dropToSql, explore, exploreSpec } from '../explorer.ts';
+import {
+  type CubeExecutor,
+  type Granularity,
+  dropToSql,
+  explore,
+  exploreSpec,
+  previewTrinoSql,
+  sqlRowsToExploreRows,
+} from '../explorer.ts';
 import { isCubeSyncLag, liveMetricsReachable } from './live-clients.ts';
 
 /**
@@ -17,7 +25,9 @@ import { isCubeSyncLag, liveMetricsReachable } from './live-clients.ts';
  * the analyst would drop to, labelled live/offline-mock.
  */
 
-export type ExploreMode = 'live' | 'offline-mock';
+/** 'live (sql)' = the pre-save preview: the number came from a governed Trino query
+ *  (the draft measure isn't in Cube yet), honestly labelled apart from Cube-served. */
+export type ExploreMode = 'live' | 'live (sql)' | 'offline-mock';
 
 /** The live executor: governed Cube load with the viewer's securityContext (R3 RLS). */
 function liveExecutor(): CubeExecutor {
@@ -68,10 +78,37 @@ export async function exploreMetric(
   measure: Measure,
   token: DelegatedToken,
   slice: { dimensions?: string[]; timeDimension?: string; granularity?: Granularity; limit?: number } = {},
+  opts: {
+    /** True when this measure is NOT yet persisted on the dataset (a pre-save draft):
+     *  Cube cannot know the member (the sidecar only ships persisted metrics), so the
+     *  preview runs as governed SQL through Trino instead — never a Cube query for a
+     *  member that can't exist. Saved + delivered metrics keep the Cube path. */
+    unsaved?: boolean;
+  } = {},
 ): Promise<ExploreServerResult> {
   const spec = exploreSpec(dataset, measure, slice);
   const live = await liveMetricsReachable();
   const base = { member: spec.member, sql: dropToSql(spec), mode: (live ? 'live' : 'offline-mock') as ExploreMode };
+  if (live && opts.unsaved) {
+    // PRE-SAVE preview: compute the same number as ONE governed Trino SELECT over the
+    // gold mart, under the viewer's delegated identity (R3 — Trino/OPA row security),
+    // honestly labelled 'live (sql)'. After save/delivery the Cube path takes over.
+    const identities = propagate(token); // throws if the token isn't user-delegated (R2/R3)
+    const sql = previewTrinoSql(dataset, measure, spec);
+    if (!sql) {
+      // No faithful plain-SQL form (rolling window / running total): the value is
+      // computed by Cube after Publish — honest pending, not a fabricated number.
+      return { ...base, rows: [], securityContext: identities.cube.securityContext, pending: true };
+    }
+    const result = await queryRun(sql, identities.trino.user);
+    return {
+      ...base,
+      sql,
+      mode: 'live (sql)',
+      rows: sqlRowsToExploreRows(result.columns, result.rows, spec),
+      securityContext: identities.cube.securityContext,
+    };
+  }
   try {
     const result = await explore(spec, token, live ? liveExecutor() : mockExecutor());
     return { ...base, rows: result.rows, securityContext: result.securityContext };

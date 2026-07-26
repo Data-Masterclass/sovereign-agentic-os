@@ -127,7 +127,10 @@ data:
   private one), and writes each changed model into the SHARED /cube/conf/model dir.
   Cube dev-mode schema-watch then hot-reloads. The static demo seed models
   (northpeakcommerce/daily_revenue/mart_sales .yml) are left untouched — delivered
-  files use a distinct `<slug>.cube.yml` suffix, so they never collide.
+  files use a distinct `<slug>.cube.yml` suffix, so they never collide. After each
+  SUCCESSFUL fetch, delivered `<slug>.cube.yml` files absent from the payload are
+  pruned (a deleted dataset's cube can't linger); seed `.yml` files are never pruned,
+  and a fetch error deletes nothing. A heartbeat logs every ~60 polls.
 */}}
 apiVersion: v1
 kind: ConfigMap
@@ -148,6 +151,7 @@ data:
     var MODEL_DIR = process.env.MODEL_DIR || '/cube/conf/model';
     var POLL_MS = (parseInt(process.env.POLL_SECONDS || '30', 10) || 30) * 1000;
     var written = new Map();
+    var polls = 0; // heartbeat counter — proves the sidecar loop is alive (~every 60 polls)
 
     function log(msg) { process.stdout.write('[cube-model-sync] ' + msg + '\n'); }
 
@@ -172,14 +176,37 @@ data:
       return /^[a-z0-9_]+\.cube\.yml$/.test(b) ? b : null;
     }
 
+    // Prune DELIVERED models absent from the source payload. Matches ONLY the
+    // delivered-suffix `<slug>.cube.yml` pattern — the seed `.yml` files (ConfigMap
+    // demo models) are NEVER touched. Called only after a SUCCESSFUL fetch, so an
+    // os-ui/Forgejo outage can never delete anything (last-known models are kept).
+    function pruneStale(expectedNames) {
+      var files;
+      try { files = fs.readdirSync(MODEL_DIR); } catch (e) { return; }
+      var removed = 0;
+      for (var i = 0; i < files.length; i++) {
+        var f = files[i];
+        if (!/^[a-z0-9_]+\.cube\.yml$/.test(f)) continue;
+        if (expectedNames.indexOf(f) !== -1) continue;
+        try {
+          fs.unlinkSync(path.join(MODEL_DIR, f));
+          written.delete(f);
+          removed++;
+        } catch (e) { log('prune error for ' + f + ': ' + (e && e.message)); }
+      }
+      if (removed) log('pruned ' + removed + ' stale delivered model(s) from ' + MODEL_DIR);
+    }
+
     function syncOnce() {
       return fetchJson(URL_STR).then(function (payload) {
         var models = (payload && Array.isArray(payload.models)) ? payload.models : [];
         var changed = 0;
+        var expected = [];
         for (var i = 0; i < models.length; i++) {
           var m = models[i];
           var name = safeName(m && m.file);
           if (!name || typeof m.model !== 'string') continue;
+          expected.push(name);
           if (written.get(name) === m.model) continue;
           var dest = path.join(MODEL_DIR, name);
           var tmp = dest + '.tmp';
@@ -189,6 +216,7 @@ data:
           changed++;
         }
         if (changed) log('wrote ' + changed + ' model(s) to ' + MODEL_DIR);
+        pruneStale(expected);
       });
     }
 {{- if eq $c.modelSync.source "git" }}
@@ -278,11 +306,14 @@ data:
           });
         }, Promise.resolve()).then(function () {
           if (changed) log('wrote ' + changed + ' model(s) from git to ' + MODEL_DIR);
+          pruneStale(files.map(function (f) { return f.name; }));
         });
       });
     }
 
     function loop() {
+      polls++;
+      if (polls % 60 === 0) log('heartbeat: ' + polls + ' polls, tracking ' + written.size + ' delivered model(s)');
       syncOnceGit().catch(function (e) { log('git sync error (keeping last models): ' + (e && e.message)); }).then(function () {
         setTimeout(loop, POLL_MS);
       });
@@ -294,6 +325,8 @@ data:
 {{- else }}
 
     function loop() {
+      polls++;
+      if (polls % 60 === 0) log('heartbeat: ' + polls + ' polls, tracking ' + written.size + ' delivered model(s)');
       syncOnce().catch(function (e) { log('sync error: ' + (e && e.message)); }).then(function () {
         setTimeout(loop, POLL_MS);
       });
@@ -349,10 +382,15 @@ stringData:
   CUBEJS_SQL_USER: {{ $c.sqlApi.user | quote }}
   CUBEJS_SQL_PASSWORD: {{ $sqlPass | quote }}
 ---
+{{- end }}
 {{- /*
-  Cube config file (cube.js) — Cube auto-loads /cube/conf/cube.js. It implements
+  Cube config file (cube.js) — Cube auto-loads /cube/conf/cube.js. ALWAYS rendered
+  (NOT gated on sqlApi.enabled): its `schemaVersion()` is what makes Cube recompile
+  when the model-sync sidecar rewrites a .cube.yml (#142) — schema refresh must
+  survive sqlApi.enabled=false. It also implements
   checkSqlAuth: on a Postgres-wire login it verifies the shared CUBEJS_SQL_PASSWORD and
-  maps the SQL USERNAME `bi_<domain>` to that domain's securityContext
+  maps the SQL USERNAME `bi_<domain>` to that domain's securityContext (both are inert
+  while the SQL listener is off)
   { sub, domains, role:'creator', scope:'bi-readonly' } — the SAME structural keys the
   governed HTTP path uses (os-ui lib/infra/governed.ts RLS_STRUCTURAL_KEYS). queryRewrite
   is the safety net that REJECTS any SQL-API query whose connection lacks a domain scope,
@@ -435,7 +473,6 @@ data:
       },
     };
 ---
-{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -475,19 +512,15 @@ spec:
         - name: model-init
           image: "{{ $c.image.repository }}@{{ $c.image.digest }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
-          {{- if $c.sqlApi.enabled }}
-          # Also seed the SQL-API cube.js config into the writable conf dir (Cube auto-loads
-          # /cube/conf/cube.js) — checkSqlAuth maps the domain BI login to its securityContext.
+          # ALWAYS seed cube.js into the writable conf dir (Cube auto-loads
+          # /cube/conf/cube.js): its schemaVersion() drives the sidecar-write →
+          # recompile loop (#142) with or without the SQL API; checkSqlAuth in the
+          # same file only matters when the SQL listener is on.
           command: ["/bin/sh", "-c", "mkdir -p /conf/model && cp /model/*.yml /conf/model/ && cp /sql-config/cube.js /conf/cube.js"]
-          {{- else }}
-          command: ["/bin/sh", "-c", "mkdir -p /conf/model && cp /model/*.yml /conf/model/"]
-          {{- end }}
           volumeMounts:
             - { name: conf, mountPath: /conf }
             - { name: model, mountPath: /model, readOnly: true }
-            {{- if $c.sqlApi.enabled }}
             - { name: sql-config, mountPath: /sql-config, readOnly: true }
-            {{- end }}
       containers:
         - name: cube
           image: "{{ $c.image.repository }}@{{ $c.image.digest }}"
@@ -599,11 +632,10 @@ spec:
         - name: model
           configMap:
             name: cube-model
-        {{- if $c.sqlApi.enabled }}
+        # Always mounted — cube.js (schemaVersion) is required regardless of sqlApi.
         - name: sql-config
           configMap:
             name: cube-sql-config
-        {{- end }}
         {{- if $c.modelSync.enabled }}
         - name: model-sync
           configMap:

@@ -207,6 +207,10 @@ export function scaffoldCubeYaml(d: Dataset): string {
   const knownMembers = new Set<string>([...dimCols.map((c) => c.name), ...measureNames]);
   const measures = (d.measures.length ? d.measures : [{ name: 'count', type: 'count', sql: '' } as Measure]).map((m) => measureYaml(m, knownMembers));
   const includes = [...viewMembers(d)]; // the view's member set (measures + non-pk dims)
+  // A measure-less dataset scaffolds the default cube-level `count` measure (above) —
+  // include it in the view too, or the view exposes no measure at all (#142: empty
+  // views like Northpeak_Campaigns).
+  if (d.measures.length === 0 && !includes.includes('count')) includes.unshift('count');
   return [
     'cubes:',
     `  - name: ${cube}`,

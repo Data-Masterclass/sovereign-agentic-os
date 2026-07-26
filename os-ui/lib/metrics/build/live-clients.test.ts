@@ -35,7 +35,7 @@ mock.module('@/lib/infra/governed', {
   },
 });
 
-const { realMetricCube, isCubeSyncLag } = await import('./live-clients.ts');
+const { realMetricCube, isCubeSyncLag, awaitDelivery, measureMembersFromSchema } = await import('./live-clients.ts');
 
 test('isCubeSyncLag: true for a Cube "not found for path" 400, false for real errors', () => {
   assert.equal(
@@ -74,6 +74,93 @@ test('explore: still THROWS a genuine error', async () => {
   cubeError = new Error('Could not reach Cube');
   await assert.rejects(
     () => realMetricCube().explore({ measures: ['View.m'], dimensions: [], limit: 1 }, { sub: 'a' }),
+    /reach Cube/,
+  );
+});
+
+// ------------------------------------- reload = bounded await-delivery (#142) ----
+// No real sleeps: awaitDelivery takes injectable now/sleep, so the 12 s budget is
+// simulated with a fake clock (house style — tests never wait wall-clock time).
+
+test('awaitDelivery: delivered on the first probe — returns immediately, no sleeping', async () => {
+  const sleeps: number[] = [];
+  const status = await awaitDelivery(async () => true, {
+    sleep: async (ms) => { sleeps.push(ms); },
+  });
+  assert.equal(status, 'delivered');
+  assert.deepEqual(sleeps, [], 'a delivered schema never waits');
+});
+
+test('awaitDelivery: delivered after a few polls (sidecar lands mid-budget)', async () => {
+  let t = 0;
+  const sleeps: number[] = [];
+  let probes = 0;
+  const status = await awaitDelivery(async () => ++probes >= 3, {
+    budgetMs: 12000,
+    intervalMs: 2000,
+    now: () => t,
+    sleep: async (ms) => { sleeps.push(ms); t += ms; },
+  });
+  assert.equal(status, 'delivered');
+  assert.equal(probes, 3);
+  assert.deepEqual(sleeps, [2000, 2000], 'polled exactly until delivery');
+});
+
+test('awaitDelivery: HONEST pending once the ~12 s budget (2 sidecar intervals) is spent', async () => {
+  let t = 0;
+  const sleeps: number[] = [];
+  const status = await awaitDelivery(async () => false, {
+    budgetMs: 12000,
+    intervalMs: 2000,
+    now: () => t,
+    sleep: async (ms) => { sleeps.push(ms); t += ms; },
+  });
+  assert.equal(status, 'pending', 'never fabricates delivery');
+  assert.equal(sleeps.length, 6, '6 × 2 s = the 12 s budget, then stop — bounded, not forever');
+});
+
+test('awaitDelivery: a probe error (Cube genuinely broken) still propagates', async () => {
+  await assert.rejects(
+    () => awaitDelivery(async () => { throw new Error('Could not reach Cube'); }),
+    /reach Cube/,
+  );
+});
+
+test('measureMembersFromSchema: the measures a schema declares, as View members', () => {
+  const schema = [
+    'cubes:',
+    '  - name: sales',
+    '    sql_table: iceberg.sales.gold_sales',
+    '    measures:',
+    '      - name: revenue',
+    '        type: sum',
+    '        sql: net_amount',
+    '      - name: orders',
+    '        type: count',
+    '    dimensions:',
+    '      - name: region',
+    '        sql: region',
+    '        type: string',
+    '',
+    'views:',
+    '  - name: Sales',
+    '    cubes:',
+    '      - join_path: sales',
+    '        includes: [revenue, orders, region]',
+  ].join('\n');
+  assert.deepEqual(measureMembersFromSchema(schema, 'Sales'), ['Sales.revenue', 'Sales.orders']);
+  assert.deepEqual(measureMembersFromSchema('not: [valid', 'Sales'), [], 'malformed schema → empty, never a throw');
+});
+
+test('reload: returns once every schema measure RESOLVES (delivered on first probe)', async () => {
+  cubeError = null; // cubeScalar resolves 42 ⇒ delivered immediately, no waiting
+  await realMetricCube().reload('View', 'cubes:\n  - name: v\n    measures:\n      - name: m\n        type: count\n');
+});
+
+test('reload: a genuine Cube error (unreachable) still throws ⇒ ✗, never a false ✓', async () => {
+  cubeError = new Error('Could not reach Cube');
+  await assert.rejects(
+    () => realMetricCube().reload('View', 'cubes:\n  - name: v\n    measures:\n      - name: m\n        type: count\n'),
     /reach Cube/,
   );
 });

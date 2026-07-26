@@ -38,7 +38,7 @@ export type MetricGroups = { mine: MetricSummary[]; domain: MetricSummary[]; mar
 
 export type CheckRow = { name: string; ok: boolean; detail: string };
 export type BuildRow = { tool: string; status: 'ok' | 'fail'; detail: string; error?: string };
-export type Mode = 'live' | 'offline-mock';
+export type Mode = 'live' | 'live (sql)' | 'offline-mock';
 
 export type DefineResult = {
   datasetId: string;
@@ -142,9 +142,9 @@ export function ChecksList({ rows }: { rows: CheckRow[] }) {
   );
 }
 
-/** The honest live / offline-mock label (gold when live, quiet otherwise). */
+/** The honest live / live (sql) / offline-mock label (gold when live, quiet otherwise). */
 export function ModeBadge({ mode }: { mode: Mode }) {
-  return <span className={`badge ${mode === 'live' ? 'ok' : 'muted'}`}>{mode}</span>;
+  return <span className={`badge ${mode.startsWith('live') ? 'ok' : 'muted'}`}>{mode}</span>;
 }
 
 /** The metric Build report (cube → metric-explorer, apply→verify) + its mode.

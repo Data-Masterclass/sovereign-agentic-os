@@ -3,7 +3,7 @@
 **Purpose:** One definition of every number. A metric is a governed Cube member defined on a dataset’s built GOLD version — define-here / explore / chart / ask-the-agent all read the identical number.
 
 **Tools (MCP `metrics`):**
-- `preview_metric(datasetId, name, aggregation, column?, dimensions?, timeDimension?, granularity?, limit?)` — transient preview: same governed Cube query, same RLS, no persist. Returns rows + SQL + mode. Returns `pending: true` if the measure hasn't synced yet (~30 s).
+- `preview_metric(datasetId, name, aggregation, column?, dimensions?, timeDimension?, granularity?, limit?)` — transient preview, no persist. An unsaved draft is computed via governed SQL (mode `live (sql)`, same row security); a saved+delivered measure resolves via governed Cube (mode `live`). Returns rows + SQL + mode; `pending: true` only for shapes (rolling window / running total) the query engine computes after define.
 - `define_metric(datasetId, name, aggregation, column?, dimensions?, …)` — persist a measure on a Gold, GOVERNED (asset/product) dataset. Returns the canonical member + generated Cube YAML. Returns `pending: true` if the query engine hasn't synced yet.
 - `promote_metric(metricId)` — promote one rung (Personal→Domain or Domain→Company). Creator owner files a request; builder+ runs the consistency-gated transition directly.
 

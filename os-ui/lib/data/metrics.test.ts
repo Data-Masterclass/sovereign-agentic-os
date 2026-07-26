@@ -75,6 +75,9 @@ test('a dashboard bundle binds the Cube view to the query service', () => {
 test('a measure-less gold still scaffolds a count cube (so the view is valid)', () => {
   const y = scaffoldCubeYaml(gold({ measures: [] }));
   assert.match(y, /name: count\n\s+type: count/);
+  // #142: the default cube-level `count` must ALSO be in the view `includes`, or the
+  // view exposes no measure at all (the empty Northpeak_Campaigns symptom).
+  assert.match(y, /includes: \[count, /);
 });
 
 test('the richer Cube measure fields emit only when present (plain measures unchanged)', () => {

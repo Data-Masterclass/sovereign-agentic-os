@@ -48,7 +48,7 @@ import {
 import { assetTarget } from '@/lib/data/store-fqn';
 import type { ExecuteIdentity } from '@/lib/infra/governed';
 import type { Layer, Quality, DataVisibility, Grant, ColumnDoc, DatasetUpstream } from '@/lib/data';
-import { measureFromForm, measureMember, type MetricForm, type GuidedFilter, type GuidedWindow } from '@/lib/metrics/model';
+import { measureFromForm, measureMember, sameMeasure, type MetricForm, type GuidedFilter, type GuidedWindow } from '@/lib/metrics/model';
 import type { MeasureType } from '@/lib/data/metrics';
 import { buildMetric } from '@/lib/metrics/build/server';
 import { exploreMetric } from '@/lib/metrics/build/explore-server';
@@ -232,7 +232,7 @@ export const metricWriteTools: McpTool[] = [
     tab: 'metrics',
     minRole: 'creator',
     description:
-      'Preview the number a metric definition will produce — same governed Cube query, same per-viewer RLS, without persisting anything. Use this BEFORE define_metric to validate the number. Returns rows + mode (live/offline-mock) + the SQL. If the measure has not synced yet, returns pending: true.',
+      'Preview the number a metric definition will produce, without persisting anything. Use this BEFORE define_metric to validate the number. An unsaved draft is computed via governed SQL (Trino, same row security) and labelled mode "live (sql)"; a saved+delivered measure resolves via governed Cube (mode "live"); offline degrades to "offline-mock". Returns rows + mode + the SQL. pending: true only when the shape (rolling window) is computable solely by the query engine after define_metric.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -261,13 +261,16 @@ export const metricWriteTools: McpTool[] = [
       const measure = measureFromForm(form);
       const dataset = getDataset(datasetId, P(user));
       const draft = { ...dataset, measures: [...dataset.measures.filter((m) => m.name !== measure.name), measure] };
+      // UNSAVED draft → exploreMetric previews via governed SQL ('live (sql)') instead
+      // of querying Cube for a member the sidecar hasn't (and can't have) delivered.
+      const unsaved = !dataset.measures.some((m) => sameMeasure(m, measure));
       const token = mcpToken(user);
       const result = await exploreMetric(draft, measure, token, {
         dimensions: strArr(args.dimensions),
         timeDimension: str(args.timeDimension) || undefined,
         granularity: (str(args.granularity) as Granularity) || undefined,
         limit: typeof args.limit === 'number' ? Math.min(args.limit, 100) : 20,
-      });
+      }, { unsaved });
       return { datasetId, measure, ...result };
     },
   },

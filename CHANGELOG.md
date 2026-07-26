@@ -13,6 +13,23 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.2] — 2026-07-26
+
+### Fixed
+- Metric Preview (#142 close-out): the live diagnosis proved the metric→Cube
+  sidecar sync WORKS (~10s end-to-end); the real gap was the pre-save Preview
+  querying Cube for a member that cannot exist yet. Unsaved drafts now preview
+  via a governed Trino SQL query under the viewer's own identity (honestly
+  labelled "live (sql)"); the Cube-served value takes over after Publish.
+  Rolling-window shapes state honestly that they have no pre-save preview.
+- Metric build `reload()` no longer pings /meta and calls it done — it awaits
+  actual schema delivery (bounded ~12s) so builds report delivered vs syncing
+  truthfully.
+- Cube schema refresh (`schemaVersion`) no longer silently disappears when the
+  SQL API is disabled; the model-sync sidecar now prunes models for deleted
+  datasets (after successful fetches only) and logs a heartbeat.
+- Views for measure-less datasets expose the promised `count` fallback.
+
 ## [os-ui 0.6.1] — 2026-07-26
 
 Deferred-hardening release: everything the 0.6.0 audit consciously postponed,
