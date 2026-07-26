@@ -136,7 +136,7 @@ function pipelineSteps(pipeline: Record<string, string>): { steps: Step[]; activ
     const status = pipeline[s] ?? 'pending';
     let state: StepState;
     if (status === 'ok' || status === 'disabled') state = 'done';
-    else if (status === 'offline') state = 'fail';
+    else if (status === 'offline' || status === 'failing') state = 'fail';
     else {
       state = firstPendingSeen ? 'pending' : 'active';
       firstPendingSeen = true;

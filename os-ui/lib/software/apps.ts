@@ -72,7 +72,7 @@ import type { ForgejoClient, ForgejoCommit, ForgejoCommitFiles } from '@/lib/inf
  */
 
 export type PipelineStage = 'forgejo' | 'actions' | 'harbor' | 'argocd' | 'live';
-export type StageStatus = 'ok' | 'pending' | 'offline' | 'disabled' | 'stalled';
+export type StageStatus = 'ok' | 'pending' | 'offline' | 'disabled' | 'stalled' | 'failing';
 
 export type AppFile = {
   name: string;
@@ -882,6 +882,20 @@ function withVendoredUi(tpl: Template, files: ScaffoldFile[]): ScaffoldFile[] {
 }
 
 /**
+ * Idempotently (re)assert the repo-level Actions secrets the seeded CI workflow
+ * depends on — today exactly one: REGISTRY_PASS (checkout clone + registry login).
+ * Forgejo's PUT creates or overwrites, so calling this is always safe. Used at
+ * seed time AND as a self-heal when a run fails (refreshActionsStage), so a
+ * missing/rotated secret can never permanently brick an app's CI.
+ */
+async function ensureRepoActionsSecrets(owner: string, repo: string): Promise<boolean> {
+  const r = await forgejoApi('PUT', `/repos/${owner}/${repo}/actions/secrets/REGISTRY_PASS`, {
+    data: config.forgejoPassword,
+  });
+  return r.ok;
+}
+
+/**
  * Best-effort: create the per-app Forgejo repo + seed the template files. Returns
  * a live result when Forgejo is reachable, or an offline shell otherwise — the
  * golden path still works for teaching, honestly labelled.
@@ -909,9 +923,7 @@ async function scaffoldRepo(
   // The CI workflow logs in to the registry with the REGISTRY_PASS Actions
   // secret; set it before seeding the workflow so the first push can build.
   // (Admin creds — the same local-dev convenience the demo-app seed uses.)
-  await forgejoApi('PUT', `/repos/${owner}/${slug}/actions/secrets/REGISTRY_PASS`, {
-    data: config.forgejoPassword,
-  });
+  await ensureRepoActionsSecrets(owner, slug);
   const seeded: string[] = [];
   // Seed the SOURCE first (Dockerfile + manifests + app.yaml …) and the Actions
   // workflow LAST, exactly like the proven demo-app seed: each contents-API PUT is
@@ -1211,8 +1223,11 @@ export type ActionsHealth = { status: StageStatus; note: string | null };
  *   • Repo Actions unit disabled  → auto-enable it (`PATCH has_actions:true`,
  *     admin token, server-side, traced) — the next push builds. No support
  *     ticket, no Forgejo UI work.
- *   • Latest main commit HAS an Actions task → 'ok' (a push really built).
- *   • Latest main commit has NO task        → 'stalled' + a repair hint —
+ *   • Latest main commit's run SUCCEEDED   → 'ok' (a push really built).
+ *   • Latest main commit's run FAILED      → 'failing' + re-assert the repo's
+ *     REGISTRY_PASS Actions secret (the workflow's one dependency, idempotent).
+ *   • Latest main commit's run in progress → 'pending', said as such.
+ *   • Latest main commit has NO task       → 'stalled' + a repair hint —
  *     never the old unconditional "actions: ok".
  *
  * Mutates `app.pipeline.actions` (write-through) so the app card and
@@ -1271,10 +1286,36 @@ export async function refreshActionsStage(app: App, opts?: { force?: boolean }):
   if (!tasks.ok) {
     return apply('pending', `Could not read Actions tasks (HTTP ${tasks.status}) — not claiming a build that is unverified.`);
   }
-  const runs = ((tasks.data as { workflow_runs?: { head_sha?: string }[] } | null)?.workflow_runs ?? []).filter(
+  const runs = ((tasks.data as { workflow_runs?: { head_sha?: string; status?: string }[] } | null)?.workflow_runs ?? []).filter(
     (r) => r && typeof r === 'object',
   );
-  if (runs.some((r) => String(r.head_sha ?? '') === head)) return apply('ok', null);
+  // Newest-first: the FIRST run for the head sha is the one that counts (re-runs).
+  const headRun = runs.find((r) => String(r.head_sha ?? '') === head);
+  if (headRun) {
+    // HONEST job-status read: 'ok' means the run SUCCEEDED, not merely existed.
+    const st = String(headRun.status ?? '');
+    if (st === 'failure' || st === 'cancelled') {
+      // ONE-SHOT HEAL for the workflow's single external dependency: re-assert
+      // the REGISTRY_PASS Actions secret (idempotent, admin creds, traced) so a
+      // missing/rotated secret is repaired before the next push.
+      const healed = await ensureRepoActionsSecrets(owner, repo);
+      void trace({
+        principal: app.mcpPrincipal,
+        tool: 'generate',
+        input: { action: 'heal_actions_secrets', repo: `${owner}/${repo}`, runStatus: st },
+        output: { healed },
+        decision: 'allow',
+      });
+      return apply(
+        'failing',
+        `The latest CI run for ${head.slice(0, 10)} FAILED (status: ${st}). Re-asserted the repo's REGISTRY_PASS Actions secret${healed ? '' : ' (re-assert also failed)'} — check the run log in Forgejo (${owner}/${repo} → Actions), fix the cause, then push again to rebuild.`,
+      );
+    }
+    if (st && st !== 'success') {
+      return apply('pending', `CI run for ${head.slice(0, 10)} is not finished yet (status: ${st}).`);
+    }
+    return apply('ok', null);
+  }
   return apply(
     'stalled',
     `The latest push on main (${head.slice(0, 10)}) produced NO Actions run — CI is stalled. Check that .forgejo/workflows/ci.yml exists on main and that the last commit actually reached Forgejo, then re-commit to trigger a build.`,

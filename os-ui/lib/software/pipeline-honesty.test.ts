@@ -205,6 +205,79 @@ test('actions ok is EARNED: latest main commit has an Actions task', async () =>
   }
 });
 
+test('latest run FAILED → failing (never ok) + REGISTRY_PASS secret re-asserted', async () => {
+  const app = await liveApp('Failed Run');
+  const fake = fakeForgejo((method, url) => {
+    if (method === 'GET' && url.endsWith(repoUrl(app))) return { status: 200, json: { has_actions: true } };
+    if (method === 'GET' && url.includes(`${repoUrl(app)}/commits`)) return { status: 200, json: [{ sha: 'headshafail' }] };
+    if (method === 'GET' && url.includes(`${repoUrl(app)}/actions/tasks`)) {
+      return { status: 200, json: { total_count: 1, workflow_runs: [{ head_sha: 'headshafail', status: 'failure' }] } };
+    }
+    if (method === 'PUT' && url.includes('/actions/secrets/REGISTRY_PASS')) return { status: 204 };
+    return undefined;
+  });
+  try {
+    const r = await refreshActionsStage(app, { force: true });
+    assert.equal(r.status, 'failing', 'a failed run must be SAID, not counted as ok');
+    assert.match(r.note ?? '', /FAILED/);
+    assert.equal(app.pipeline.actions, 'failing');
+    const heal = fake.calls.find((c) => c.method === 'PUT' && c.url.includes('/actions/secrets/REGISTRY_PASS'));
+    assert.ok(heal, 'a failed run must re-assert the REGISTRY_PASS Actions secret (idempotent heal)');
+  } finally {
+    fake.restore();
+  }
+});
+
+test('latest run still RUNNING → pending with an in-progress note, not ok', async () => {
+  const app = await liveApp('Running Run');
+  const fake = fakeForgejo((method, url) => {
+    if (method !== 'GET') return undefined;
+    if (url.endsWith(repoUrl(app))) return { status: 200, json: { has_actions: true } };
+    if (url.includes(`${repoUrl(app)}/commits`)) return { status: 200, json: [{ sha: 'headsharun1' }] };
+    if (url.includes(`${repoUrl(app)}/actions/tasks`)) {
+      return { status: 200, json: { total_count: 1, workflow_runs: [{ head_sha: 'headsharun1', status: 'running' }] } };
+    }
+    return undefined;
+  });
+  try {
+    const r = await refreshActionsStage(app, { force: true });
+    assert.equal(r.status, 'pending');
+    assert.match(r.note ?? '', /not finished/);
+    assert.ok(!fake.calls.some((c) => c.method === 'PUT' && c.url.includes('/actions/secrets/')), 'no secret heal for an in-progress run');
+  } finally {
+    fake.restore();
+  }
+});
+
+test('newest run for head wins: an old failure below a fresh success stays ok', async () => {
+  const app = await liveApp('Rerun Ok');
+  const fake = fakeForgejo((method, url) => {
+    if (method !== 'GET') return undefined;
+    if (url.endsWith(repoUrl(app))) return { status: 200, json: { has_actions: true } };
+    if (url.includes(`${repoUrl(app)}/commits`)) return { status: 200, json: [{ sha: 'headrerun99' }] };
+    if (url.includes(`${repoUrl(app)}/actions/tasks`)) {
+      // Forgejo lists tasks newest-first: the re-run succeeded, the first try failed.
+      return {
+        status: 200,
+        json: {
+          total_count: 2,
+          workflow_runs: [
+            { head_sha: 'headrerun99', status: 'success' },
+            { head_sha: 'headrerun99', status: 'failure' },
+          ],
+        },
+      };
+    }
+    return undefined;
+  });
+  try {
+    const r = await refreshActionsStage(app, { force: true });
+    assert.equal(r.status, 'ok', 'the newest run for the head sha decides');
+  } finally {
+    fake.restore();
+  }
+});
+
 test('latest push with NO Actions run → stalled, never ok', async () => {
   const app = await liveApp('Stalled');
   const fake = fakeForgejo((method, url) => {
