@@ -13,6 +13,16 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.8] — 2026-07-27
+
+### Changed
+- Software tab is now one coherent conversational product: the StageConversation
+  primitive (context header · structure twin · scoped thread · outcome sink)
+  now composes Define, Design, Preview, and Operate — each stage owns exactly
+  ONE scoped assistant, redundant shell-level assistants removed. Completes the
+  "the assistant is the flow, not a stapled-on addon" recomposition begun in
+  the Build stage.
+
 ## [os-ui 0.6.7] — 2026-07-27
 
 ### Added

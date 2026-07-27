@@ -40,7 +40,7 @@ import {
 import StageConversation from '@/components/core/StageConversation';
 import { initialStageState, canEnter, isSatisfied, markDone, type StageState } from '@/lib/core/stages';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials';
-import { buildStatusRail, buildOutcome, type BuildOutcome } from '@/lib/software/build-activity';
+import { buildStatusRail } from '@/lib/software/build-activity';
 import { targetKey, type BuildAction, type BuildTarget } from '@/lib/software/build-target';
 import TeamPanel from '@/app/(build)/software/TeamPanel';
 import StageAssistant from './StageAssistant';
@@ -434,15 +434,13 @@ export default function SoftwareBuilder({
           onState={setStage}
           ariaLabel="Software stages"
           assistant={(st) =>
-            // Define + Design own their own StageAssistantChat inside the stage body (so
-            // Apply can wire straight into purpose/grants/epics/stories). The other stages
-            // keep the one-shot explainer here.
+            // Every stage now owns its ONE scoped conversation inside the stage body via
+            // the StageConversation primitive (Define · Design · Preview · Operate) or its
+            // BuildChat (Build) — so there is no second, shell-level assistant. Build keeps
+            // the one-shot file-explainer here because its conversation is the code-writing
+            // BuildChat, not a StageAssistantChat.
             st.id === 'build' ? (
               <StageAssistant appId={app.id} stage="build" label="Explain a file or what to ask the build chat next." cta="Explain" />
-            ) : st.id === 'preview' ? (
-              <StageAssistant appId={app.id} stage="preview" label="Read the runner conditions — why isn't the pod ready?" cta="Explain the wait" />
-            ) : st.id === 'operate' ? (
-              <StageAssistant appId={app.id} stage="operate" label="Explain scan findings, justify go-live, or triage the live app." cta="Help" />
             ) : null
           }
         >
@@ -591,21 +589,17 @@ function DefineStage({
   // Apply assistant grant suggestions → fold into the current grants (clamped to cap) + persist.
   const applyGrants = (sg: SuggestedGrant[]) => onSaveGrants(applyGrantsSuggestion(grants, sg, cap));
 
-  return (
-    <div className="agent-editor" style={{ marginTop: 4 }} {...anchorAttr(ANCHORS.software.define)}>
-      <label className="comp-label">App name</label>
-      <input type="text" value={app.name} readOnly title="Named on create — rename via the delivery team or build chat" />
-      <div className="hint" style={{ marginTop: 6 }}>
-        id: <code>{app.slug}</code> · template:{' '}
-        <span className="badge muted" title="Chosen at creation — locked afterwards">
-          {TEMPLATE_LABEL[app.template] ?? app.template}
-        </span>{' '}
-        · surface: <code>{surfaceLabel}</code>
-      </div>
+  const grantCount = SW_GRANT_KINDS.reduce((n, k) => n + (grants[k]?.length ?? 0), 0);
+  const purposeSet = !!(app.purpose ?? '').trim();
 
-      <label className="comp-label" style={{ marginTop: 16 }}>Purpose</label>
+  // Structure — the app's spec being shaped: its purpose and the governed context it may
+  // use. This is the direct-manipulation twin of the conversation; the assistant's
+  // suggestions flow straight into these controls.
+  const structure = (
+    <>
+      <label className="comp-label">Purpose</label>
       <p className="hint" style={{ marginTop: 0 }}>
-        What is this app for? One or two sentences in your own words — the Define stage is complete once a purpose is set.
+        What is this app for? One or two sentences — Define is complete once a purpose is set.
       </p>
       <textarea
         value={purpose}
@@ -626,8 +620,7 @@ function DefineStage({
       <div className="section-title">Granted context (no raw credentials)</div>
       <p className="hint" style={{ marginTop: 0 }}>
         Apps consume governed resources — OPA-scoped and run AS you, never raw secrets. Grant the
-        Connections, Data, Knowledge, Files and Metrics this app may use. Expand a kind to grant at
-        folder or item level, at Read / Read+propose / Read+write.
+        Connections, Data, Knowledge, Files and Metrics this app may use, at folder or item level.
       </p>
       <SoftwareContextGrants
         value={grants}
@@ -636,15 +629,43 @@ function DefineStage({
         cap={cap}
         canEdit={canEdit}
       />
+    </>
+  );
 
-      {/* The real, governed Define assistant — chat + apply-able suggestions. */}
-      <StageAssistantChat
-        appId={app.id}
-        stage="define"
-        intro="Improve the purpose and suggest which governed context to grant."
-        starters={['Sharpen my purpose', 'What context should this app be granted?']}
-        onApplyPurpose={canEdit ? applyPurpose : undefined}
-        onApplyGrants={canEdit ? applyGrants : undefined}
+  return (
+    <div className="agent-editor" {...anchorAttr(ANCHORS.software.define)}>
+      <StageConversation
+        context={
+          <>
+            <span className="sc-scope">{app.name}</span>
+            <span className="sc-hint">
+              id <code>{app.slug}</code> · template{' '}
+              <span className="badge muted" title="Chosen at creation — locked afterwards">
+                {TEMPLATE_LABEL[app.template] ?? app.template}
+              </span>{' '}
+              · surface <code>{surfaceLabel}</code>
+            </span>
+            <span className="sc-hint sc-spacer">Describe the app — the conversation shapes its purpose &amp; the context it may use.</span>
+          </>
+        }
+        structure={structure}
+        conversation={
+          <StageAssistantChat
+            appId={app.id}
+            stage="define"
+            intro="Improve the purpose and suggest which governed context to grant."
+            starters={['Sharpen my purpose', 'What context should this app be granted?']}
+            onApplyPurpose={canEdit ? applyPurpose : undefined}
+            onApplyGrants={canEdit ? applyGrants : undefined}
+          />
+        }
+        outcome={
+          <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span className="comp-label" style={{ margin: 0 }}>Defined</span>
+            <span className={`badge ${purposeSet ? 'ok' : 'muted'}`}>{purposeSet ? 'Purpose set' : 'Purpose pending'}</span>
+            <span className="badge muted">{grantCount} context grant{grantCount === 1 ? '' : 's'}</span>
+          </div>
+        }
       />
     </div>
   );
@@ -675,20 +696,41 @@ function DesignStage({
   const applyStories = (groups: SuggestedStoriesForEpic[]) => onSave(applyStoriesSuggestion(epics, groups));
 
   const hasStories = epics.some((e) => (e.stories?.length ?? 0) > 0);
+  const epicCount = epics.length;
+  const storyCount = epics.reduce((n, e) => n + (e.stories?.length ?? 0), 0);
+  const purpose = (app.purpose ?? '').trim();
 
   return (
-    <div style={{ marginTop: 4 }} {...anchorAttr(ANCHORS.software.design)}>
-      <DesignBoard epics={epics} canEdit={canEdit} onSave={onSave} />
-
-      {canEdit ? <ShipDesignPanel app={app} hasStories={hasStories} onReload={onReload} /> : null}
-
-      <StageAssistantChat
-        appId={app.id}
-        stage="design"
-        intro="Propose EPICs and user stories from the purpose — Apply creates them."
-        starters={['Suggest EPICs for this app', 'Add user stories to my EPICs']}
-        onApplyEpics={canEdit ? applyEpics : undefined}
-        onApplyStories={canEdit ? applyStories : undefined}
+    <div {...anchorAttr(ANCHORS.software.design)}>
+      <StageConversation
+        context={
+          <>
+            <span className="sc-scope">Design</span>
+            <span className="sc-hint">{purpose ? `for “${purpose}”` : 'shape the backlog for this app'}</span>
+            <span className="sc-hint sc-spacer">The conversation shapes the EPICs &amp; user stories — Apply creates them on the board.</span>
+          </>
+        }
+        structure={<DesignBoard epics={epics} canEdit={canEdit} onSave={onSave} />}
+        conversation={
+          <StageAssistantChat
+            appId={app.id}
+            stage="design"
+            intro="Propose EPICs and user stories from the purpose — Apply creates them."
+            starters={['Suggest EPICs for this app', 'Add user stories to my EPICs']}
+            onApplyEpics={canEdit ? applyEpics : undefined}
+            onApplyStories={canEdit ? applyStories : undefined}
+          />
+        }
+        outcome={
+          <>
+            <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: canEdit ? 12 : 0 }}>
+              <span className="comp-label" style={{ margin: 0 }}>Backlog</span>
+              <span className={`badge ${epicCount > 0 ? 'ok' : 'muted'}`}>{epicCount} EPIC{epicCount === 1 ? '' : 's'}</span>
+              <span className={`badge ${storyCount > 0 ? 'ok' : 'muted'}`}>{storyCount} stor{storyCount === 1 ? 'y' : 'ies'}</span>
+            </div>
+            {canEdit ? <ShipDesignPanel app={app} hasStories={hasStories} onReload={onReload} /> : null}
+          </>
+        }
       />
     </div>
   );
@@ -1055,27 +1097,12 @@ function PreviewStage({
   connTools: Tool[];
 }) {
   const [showApi, setShowApi] = useState(false);
-  return (
-    <div style={{ marginTop: 4 }} {...anchorAttr(ANCHORS.software.preview)}>
-      {/* ── Live-data preview: the REAL deployed build the runner serves, embedded over
-           the governed OS API as you. This is the single honest preview surface — shown
-           only when a live pod URL is actually served (never a fabricated iframe). ── */}
-      {surface.ui && app.deploy.previewUrl ? (
-        <div className="grant-block" style={{ marginBottom: 16 }}>
-          <div className="comp-label">Preview · live data</div>
-          <p className="hint" style={{ marginTop: 4, marginBottom: 10 }}>
-            The deployed build served by the runner, calling the governed OS API as you —
-            real granted data, or a real error.
-          </p>
-          <iframe
-            title="App preview"
-            src={app.deploy.previewUrl}
-            style={{ width: '100%', height: 420, border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--bg)' }}
-          />
-        </div>
-      ) : null}
 
-      {/* ── Deployed build: the exact image the runner serves + its provision controls ── */}
+  // Structure — the deployed build the runner serves + its provision controls and pipeline
+  // health. Acting on it (provision / rebuild / open) is direct manipulation; the
+  // conversation beside it diagnoses why the pod is or isn't ready.
+  const structure = (
+    <>
       {surface.ui ? <div className="comp-label" style={{ marginBottom: 6 }}>Deployed build · exactly what ships</div> : null}
       <div className="sw-monitor">
         <div className="sw-monitor-main">
@@ -1154,6 +1181,56 @@ function PreviewStage({
           </button>
         </div>
       ) : null}
+    </>
+  );
+
+  return (
+    <div {...anchorAttr(ANCHORS.software.preview)}>
+      <StageConversation
+        context={
+          <>
+            <span className="sc-scope">Preview</span>
+            <span className="sc-hint mono">{app.subdomain}</span>
+            <span className={`badge ${app.deploy.previewUrl ? 'ok' : 'muted'}`}>{app.deploy.previewUrl ? 'Preview running' : 'Runner pending'}</span>
+            <span className="sc-hint sc-spacer">Provision a runner, then talk through what it serves — or why the pod isn&apos;t ready.</span>
+          </>
+        }
+        structure={structure}
+        conversation={
+          <StageAssistantChat
+            appId={app.id}
+            stage="preview"
+            intro="Read the runner conditions — why isn't the pod ready, and what does the preview serve?"
+            starters={['Why is the pod not ready?', 'Explain the build & deploy pipeline state']}
+          />
+        }
+        outcome={
+          surface.ui ? (
+            <div className="grant-block">
+              <div className="comp-label">Preview · live data</div>
+              {app.deploy.previewUrl ? (
+                <>
+                  <p className="hint" style={{ marginTop: 4, marginBottom: 10 }}>
+                    The deployed build served by the runner, calling the governed OS API as you —
+                    real granted data, or a real error.
+                  </p>
+                  <iframe
+                    title="App preview"
+                    src={app.deploy.previewUrl}
+                    style={{ width: '100%', height: 420, border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--bg)' }}
+                  />
+                  <a href={app.deploy.previewUrl} target="_blank" rel="noreferrer" className="sw-quiet-link" style={{ fontSize: 12, display: 'inline-block', marginTop: 8 }}>Open app UI ↗</a>
+                </>
+              ) : (
+                <p className="hint" style={{ marginTop: 4 }}>
+                  No live preview yet — provision a runner above. The URL appears once the pod is
+                  ready; this shows the real deployed app, never a mock.
+                </p>
+              )}
+            </div>
+          ) : undefined
+        }
+      />
     </div>
   );
 }
@@ -1195,8 +1272,12 @@ function OperateStage({
 }) {
   const version = app.deploy.releases > 0 ? `v${app.deploy.releases}` : 'Unpublished';
   const dep = deployBadge(app.deploy.state);
-  return (
-    <div style={{ marginTop: 4 }} {...anchorAttr(ANCHORS.software.operate)}>
+
+  // Structure — the governed control surface for the deployed app: publish a release, the
+  // in-review card, and the promotion + lifecycle rungs. These are the direct-manipulation
+  // controls the conversation reasons about (justify go-live, triage a finding).
+  const structure = (
+    <>
       {/* ── Publish a release (merged from the old Publish stage) ── */}
       <div className="sw-publish">
         <div className="sw-publish-row">
@@ -1237,51 +1318,6 @@ function OperateStage({
         </div>
       ) : null}
 
-      {/* ── Live pod state ── */}
-      <div className="sw-monitor" style={{ marginTop: 16 }}>
-        <div className="sw-monitor-main">
-          <div className="sw-monitor-status">
-            <span className={`sw-dot ${app.deploy.state === 'live' ? 'on' : 'off'}`} aria-hidden="true" />
-            <div>
-              <div className="sw-monitor-state">{dep.label} · {version}</div>
-              <div className="sw-monitor-sub mono">{app.subdomain}</div>
-            </div>
-          </div>
-          <div className="row" style={{ gap: 8, alignItems: 'center', flexShrink: 0 }}>
-            {surface.ui && app.deploy.previewUrl ? (
-              <a href={app.deploy.previewUrl} target="_blank" rel="noreferrer" className="btn">Open app UI ↗</a>
-            ) : null}
-            {app.repo.fullName ? <button type="button" className="btn ghost" onClick={onOpenRepo}>Repo →</button> : null}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Governed tool-call surface ── */}
-      {surface.api ? (
-        <div className="sw-api" style={{ marginTop: 12 }}>
-          <div className="hint" style={{ marginTop: 0, marginBottom: 8 }}>
-            The app’s capabilities as governed MCP tools (principal <span className="mono">{app.mcpPrincipal}</span>). Every call runs AS you, OPA-checked and audit-traced.
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>Tool</th><th>Kind</th><th>Description</th><th /></tr></thead>
-              <tbody>
-                {connTools.map((t) => (
-                  <tr key={t.name}>
-                    <td className="mono">{t.name}</td>
-                    <td><span className={`badge ${t.write ? 'warn' : 'ok'}`}>{t.write ? 'write' : 'read'}</span></td>
-                    <td className="muted">{t.description}</td>
-                    <td><button className="btn ghost sm" onClick={() => onCallTool(t.name)}>Call</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {toolNote ? <div className="hint" style={{ marginTop: 10 }}>⚠ {toolNote}</div> : null}
-          {toolOut ? <pre className="answer mono" style={{ marginTop: 10, fontSize: 12, whiteSpace: 'pre-wrap' }}>{toolOut}</pre> : null}
-        </div>
-      ) : null}
-
       {/* ── Promotion + lifecycle ── */}
       <div className="section-title">Promotion ladder</div>
       <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
@@ -1319,6 +1355,79 @@ function OperateStage({
         <span className={`badge ${app.status === 'active' ? 'ok' : 'muted'}`}>{app.status}</span>
       </div>
       {msg ? <div className={msg.startsWith('✓') ? 'answer' : 'error'} style={{ marginTop: 12 }}>{msg}</div> : null}
+    </>
+  );
+
+  return (
+    <div {...anchorAttr(ANCHORS.software.operate)}>
+      <StageConversation
+        context={
+          <>
+            <span className="sc-scope">Operate</span>
+            <span className={dep.cls}>{dep.label}</span>
+            <span className="badge muted">{version}</span>
+            <span className="sc-hint mono">{app.subdomain}</span>
+            <span className="sc-hint sc-spacer">Publish, promote and run the live app — the conversation helps justify go-live &amp; triage it.</span>
+          </>
+        }
+        structure={structure}
+        conversation={
+          <StageAssistantChat
+            appId={app.id}
+            stage="operate"
+            intro="Explain scan findings, justify go-live, or triage the live app."
+            starters={['Justify going live', 'Triage the live app']}
+          />
+        }
+        outcome={
+          <>
+            {/* ── Live pod state — the deployed app, with its direct links ── */}
+            <div className="sw-monitor">
+              <div className="sw-monitor-main">
+                <div className="sw-monitor-status">
+                  <span className={`sw-dot ${app.deploy.state === 'live' ? 'on' : 'off'}`} aria-hidden="true" />
+                  <div>
+                    <div className="sw-monitor-state">{dep.label} · {version}</div>
+                    <div className="sw-monitor-sub mono">{app.subdomain}</div>
+                  </div>
+                </div>
+                <div className="row" style={{ gap: 8, alignItems: 'center', flexShrink: 0 }}>
+                  {surface.ui && app.deploy.previewUrl ? (
+                    <a href={app.deploy.previewUrl} target="_blank" rel="noreferrer" className="btn">Open app UI ↗</a>
+                  ) : null}
+                  {app.repo.fullName ? <button type="button" className="btn ghost" onClick={onOpenRepo}>Repo →</button> : null}
+                </div>
+              </div>
+            </div>
+
+            {/* ── Governed tool-call surface — the app's MCP capabilities + real call output ── */}
+            {surface.api ? (
+              <div className="sw-api" style={{ marginTop: 12 }}>
+                <div className="hint" style={{ marginTop: 0, marginBottom: 8 }}>
+                  The app’s capabilities as governed MCP tools (principal <span className="mono">{app.mcpPrincipal}</span>). Every call runs AS you, OPA-checked and audit-traced.
+                </div>
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Tool</th><th>Kind</th><th>Description</th><th /></tr></thead>
+                    <tbody>
+                      {connTools.map((t) => (
+                        <tr key={t.name}>
+                          <td className="mono">{t.name}</td>
+                          <td><span className={`badge ${t.write ? 'warn' : 'ok'}`}>{t.write ? 'write' : 'read'}</span></td>
+                          <td className="muted">{t.description}</td>
+                          <td><button className="btn ghost sm" onClick={() => onCallTool(t.name)}>Call</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {toolNote ? <div className="hint" style={{ marginTop: 10 }}>⚠ {toolNote}</div> : null}
+                {toolOut ? <pre className="answer mono" style={{ marginTop: 10, fontSize: 12, whiteSpace: 'pre-wrap' }}>{toolOut}</pre> : null}
+              </div>
+            ) : null}
+          </>
+        }
+      />
     </div>
   );
 }

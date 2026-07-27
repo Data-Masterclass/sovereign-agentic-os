@@ -280,6 +280,58 @@
 .chat.claude form textarea:focus { border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-soft); }
 .chat.claude .chip { background: var(--panel); }
 
+/* ==========================================================================
+ * StageConversation — the "assistant IS the flow" composition primitive
+ * (components/core/StageConversation.tsx). Context header · structure|thread
+ * body · outcome sink. The conversation is the centre of gravity: the thread
+ * gets the visual weight, structure is its direct-manipulation twin, and the
+ * outcome sink shows concrete cause→effect. One rhythm for every Software stage.
+ * ========================================================================== */
+.stage-conversation {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 4px;
+}
+.stage-conversation-context {
+  display: flex;
+  align-items: center;
+  gap: 10px 14px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.stage-conversation-context .sc-scope { font-weight: 600; }
+.stage-conversation-context .sc-hint { color: var(--text-muted); }
+.stage-conversation-context .sc-spacer { margin-left: auto; }
+
+.stage-conversation-body {
+  display: grid;
+  /* Structure (the tree/spec) is the calmer twin; the thread carries the weight. */
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 16px;
+  align-items: start;
+}
+.stage-conversation-body.is-solo { grid-template-columns: minmax(0, 1fr); }
+.stage-conversation-structure { min-width: 0; }
+.stage-conversation-thread { min-width: 0; }
+/* The stage's chat is the visible centre of gravity — it never floats free of
+   the primitive: reset the standalone chat's top-margin so it sits flush. */
+.stage-conversation-thread .sac { margin-top: 0; }
+
+.stage-conversation-outcome {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+@media (max-width: 900px) {
+  .stage-conversation-body { grid-template-columns: minmax(0, 1fr); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sw-create, .sw-app, .sw-create-go { transition: none; }
   .sw-create:not(.is-open):hover, .sw-app:hover { transform: none; }
