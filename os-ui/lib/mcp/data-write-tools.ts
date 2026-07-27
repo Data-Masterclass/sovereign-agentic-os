@@ -23,8 +23,14 @@ import {
   buildGoldJoin as commitGoldJoin,
   addCheck,
   builtLayerFqn,
+  setDatasetSync,
+  requireDatasetEditable,
   type PromotionRequest,
 } from '@/lib/data/store';
+import { DATASET_SYNC_MODES, type DatasetSync, type DatasetSyncMode } from '@/lib/data/dataset-schema';
+import { runDatasetSync } from '@/lib/data/sync-run-server';
+import { reconcileSyncCron } from '@/lib/data/sync-cron';
+import { kajabiCursorField } from '@/lib/connections/kajabi-resources';
 import { runQualityChecks } from '@/lib/data/dq-run';
 import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/data';
 import { queryRun } from '@/lib/infra/governed';
@@ -596,7 +602,161 @@ export const dataWriteTools: McpTool[] = [
       return { id, name: d.name, action: 'delete', deleted: true, reversible: false };
     },
   },
+  {
+    name: 'set_dataset_sync',
+    tab: 'data',
+    minRole: 'creator',
+    description:
+      'Configure (or enable/disable) SCHEDULED INCREMENTAL SYNC on a connector-backed dataset you can edit — the Data tab’s "Keep this in sync" panel, the SAME governed path as PUT /api/data/datasets/:id/sync: the strict store gate validates, then the per-dataset CronJob is reconciled and the cluster outcome is reported HONESTLY (`cron.live:false` when no CronJob could be provisioned — never a claim). Modes: full-refresh (re-copy each run) · append (rows newer than the cursor; late rows may re-deliver) · merge (upsert by mergeKeys — warehouse sources only, daily-ish cadence). PER-SOURCE LOCKS (the panel’s rules, enforced server-side): kafka → append ONLY, cursor auto-locked to partition offsets; salesforce → no merge, incremental cursor auto-locked to SystemModstamp; kajabi → no merge, cursor auto-locked to the resource’s DOCUMENTED field — `purchases` is true incremental (updated_at: new AND changed), contacts/customers/orders/form_submissions are created_at-only (NEW records append; EDITS are not detected — full-refresh to capture them), cursorless resources (offers, products, transactions, …) are full-refresh ONLY (a typed bad_request otherwise, never fake incremental). Warehouse sources pass their own `cursor` {column, kind}. Schedule: a preset (every-15-minutes|every-30-minutes|hourly|daily|weekly) or a 5-field cron. Before: create_dataset + a first import/ingest from the connection. After: sync_dataset_now to run immediately, get_sync_status to watch. Governance: edit scope (owner / domain admin) re-checked in-lib; the sync executes AS the dataset OWNER, never a service principal.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        datasetId: { type: 'string', description: 'Target dataset id (from list_datasets).' },
+        connectionId: { type: 'string', description: 'The source connection id (from list_connections) — warehouse/Kafka, Salesforce or Kajabi.' },
+        source: {
+          type: 'object',
+          description: 'What to pull: {schema, table}. For API sources, table is the object/resource (e.g. Salesforce "Account", Kajabi "purchases") and schema is a label (e.g. "salesforce").',
+          properties: { schema: { type: 'string' }, table: { type: 'string' } },
+          required: ['schema', 'table'],
+        },
+        mode: { type: 'string', enum: [...DATASET_SYNC_MODES], description: 'full-refresh | append | merge (see the per-source locks in the tool description).' },
+        cursor: {
+          type: 'object',
+          description: 'Warehouse sources only — the new-rows column: {column, kind: timestamp|number}. Kafka/Salesforce/Kajabi lock the cursor automatically; anything passed here is ignored for them.',
+          properties: { column: { type: 'string' }, kind: { type: 'string', enum: ['timestamp', 'number'] } },
+          required: ['column'],
+        },
+        mergeKeys: { type: 'array', items: { type: 'string' }, description: 'merge mode only: the upsert key column(s).' },
+        schedule: { type: 'string', description: 'A preset — every-15-minutes (*/15 * * * *) | every-30-minutes (*/30 * * * *) | hourly (0 * * * *) | daily (0 6 * * *) | weekly (0 6 * * 1) — or a raw 5-field cron (UTC).' },
+        enabled: { type: 'boolean', description: 'false keeps the config but deletes the schedule trigger (default true).' },
+      },
+      required: ['datasetId', 'connectionId', 'source', 'mode', 'schedule'],
+      examples: [
+        { datasetId: 'ds_ab12cd', connectionId: 'conn_x1', source: { schema: 'sales', table: 'orders' }, mode: 'append', cursor: { column: 'updated_at', kind: 'timestamp' }, schedule: 'hourly' },
+        { datasetId: 'ds_ab12cd', connectionId: 'conn_kj1', source: { schema: 'kajabi', table: 'purchases' }, mode: 'append', schedule: 'daily' },
+      ],
+    },
+    call: async (user, args) => {
+      const datasetId = str(args.datasetId).trim();
+      if (!datasetId) fail('set_dataset_sync needs a `datasetId`', 400);
+      const connectionId = str(args.connectionId).trim();
+      if (!connectionId) fail('set_dataset_sync needs a `connectionId` (from list_connections)', 400);
+      const src = (args.source ?? {}) as Record<string, unknown>;
+      const schema = str(src.schema).trim();
+      const table = str(src.table).trim();
+      if (!schema || !table) fail('set_dataset_sync needs `source` {schema, table}', 400);
+      const mode = str(args.mode) as DatasetSyncMode;
+      if (!DATASET_SYNC_MODES.includes(mode)) fail(`sync \`mode\` must be ${DATASET_SYNC_MODES.join('|')}`, 400);
+      const scheduleIn = str(args.schedule).trim();
+      if (!scheduleIn) fail('set_dataset_sync needs a `schedule` (preset or 5-field cron)', 400);
+      const cron = SYNC_SCHEDULE_PRESETS[scheduleIn.toLowerCase()] ?? scheduleIn;
+
+      const p = P(user);
+      getDataset(datasetId, p); // view-scope + existence guard first (typed 403/404 — no leak)
+
+      // PER-SOURCE MODE/CURSOR LOCKS — the SAME truth the SyncPanel renders and the
+      // executor re-enforces (kafka: store gate; salesforce/kajabi: slice runners;
+      // kajabi cursor honesty: kajabi-resources.ts). Enforced here at CONFIG time so
+      // an agent can never save a schedule that would only fail at run time.
+      const platform = await syncSourcePlatform(connectionId, user);
+      let cursor: DatasetSync['cursor'];
+      if (platform === 'kafka') {
+        if (mode !== 'append') {
+          fail('Kafka topics sync append-only (streams have no stable key to merge on; replacing the copy is the reset action, not a mode) — use mode "append"', 400);
+        }
+        cursor = { kind: 'kafka-offsets', column: '_partition_offset' }; // tracked automatically
+      } else if (platform === 'salesforce') {
+        if (mode === 'merge') fail('Salesforce sync supports append or full-refresh only (merge needs a federated SQL source)', 400);
+        if (mode === 'append') cursor = { kind: 'timestamp', column: 'SystemModstamp' }; // locked — set automatically
+      } else if (platform === 'kajabi') {
+        if (mode === 'merge') fail('Kajabi sync supports append or full-refresh only (merge needs a federated SQL source)', 400);
+        if (mode === 'append') {
+          const field = kajabiCursorField(table);
+          if (!field) {
+            fail(`Kajabi resource '${table}' documents no timestamp cursor — full-refresh is the only honest sync mode for it (use mode "full-refresh")`, 400);
+          }
+          cursor = { kind: 'timestamp', column: field }; // locked to the documented field
+        }
+      } else if (mode !== 'full-refresh') {
+        const cur = (args.cursor ?? {}) as Record<string, unknown>;
+        const column = str(cur.column).trim();
+        if (!column) fail(`sync mode '${mode}' needs a \`cursor\` {column, kind: timestamp|number} for this source`, 400);
+        cursor = { kind: str(cur.kind) === 'number' ? 'number' : 'timestamp', column };
+      }
+
+      const sync: DatasetSync = {
+        connectionId,
+        source: { schema, table },
+        mode,
+        ...(cursor ? { cursor } : {}),
+        ...(mode === 'merge' ? { mergeKeys: strArr(args.mergeKeys) } : {}),
+        schedule: { cron },
+        enabled: args.enabled === undefined ? true : bool(args.enabled),
+      };
+      // The store's STRICT gate — edit scope, valid cron, cursor-for-incremental,
+      // merge keys — the SAME authority the PUT route delegates to (no re-derived
+      // validation here). Then reconcile the per-dataset CronJob and report the
+      // cluster outcome honestly (live:false is a saved-but-not-provisioned truth).
+      const dataset = setDatasetSync(datasetId, p, sync);
+      const cronOut = await reconcileSyncCron(datasetId, dataset.sync ?? null);
+      return { datasetId, platform, sync: dataset.sync ?? null, cron: cronOut };
+    },
+  },
+  {
+    name: 'sync_dataset_now',
+    tab: 'data',
+    minRole: 'creator',
+    description:
+      'Trigger ONE immediate sync run of a dataset you can edit — the panel’s "Sync now" (or, with reset:true, "Reset & full re-sync": replace the copy and restart the cursor from now), the SAME governed executor as POST /api/data/datasets/:id/sync. Returns the outcome HONESTLY: {run} with the real run record (status ok|error, rowsAffected, cursor window, batchId) after the write confirmed — the cursor advances ONLY on success; or {skipped, reason} when another run holds the lease or nothing is due (skip-not-queue, never a phantom success); a dataset with no sync configured is a typed conflict. A successful manual run also clears quarantine. Before: set_dataset_sync. After: get_sync_status for history + watermark. Governance: edit scope re-checked (same gate as the route’s manual trigger); the sync itself executes AS the dataset OWNER through the governed query path — never a service principal.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        datasetId: { type: 'string', description: 'Dataset id with a configured sync (from set_dataset_sync / list_datasets).' },
+        reset: { type: 'boolean', description: 'true = full re-sync: replace the copy and restart the cursor from now.' },
+      },
+      required: ['datasetId'],
+      examples: [{ datasetId: 'ds_ab12cd' }, { datasetId: 'ds_ab12cd', reset: true }],
+    },
+    call: async (user, args) => {
+      const datasetId = str(args.datasetId).trim();
+      if (!datasetId) fail('sync_dataset_now needs a `datasetId`', 400);
+      const p = P(user);
+      getDataset(datasetId, p); // view-scope guard first (typed 403/404 — no leak)
+      requireDatasetEditable(datasetId, p); // the SAME edit gate as the route's manual POST
+      const outcome = await runDatasetSync(datasetId, bool(args.reset) ? 'reset' : 'manual');
+      if (!outcome.ok) fail(outcome.error, outcome.status);
+      if (outcome.skipped) return { skipped: true, reason: outcome.reason, run: outcome.run ?? null };
+      return { skipped: false, run: outcome.run };
+    },
+  },
 ];
+
+/** The panel's schedule presets, verbatim (SyncPanel.tsx PRESETS) — plus raw cron. */
+const SYNC_SCHEDULE_PRESETS: Record<string, string> = {
+  'every-15-minutes': '*/15 * * * *',
+  'every-30-minutes': '*/30 * * * *',
+  hourly: '0 * * * *',
+  daily: '0 6 * * *',
+  weekly: '0 6 * * 1',
+};
+
+/** The source connection's sync platform — the SAME mapping the sync status route
+ *  uses (warehouse ⇒ its platform e.g. kafka/snowflake; salesforce-api ⇒ salesforce;
+ *  kajabi-api ⇒ kajabi; anything else ⇒ null). Resolved through the governed
+ *  connection store AS the caller — an unseeable connection is a typed 403/404.
+ *  Lazy import (the route's pattern): the heavy connections store stays out of the
+ *  static graph. */
+async function syncSourcePlatform(connectionId: string, user: CurrentUser): Promise<string | null> {
+  const { getConnectionForUser } = await import('@/lib/connections/store');
+  const c = await getConnectionForUser(connectionId, user);
+  return c.template === 'warehouse' && c.warehouse
+    ? c.warehouse.platform
+    : c.template === 'salesforce-api'
+      ? 'salesforce'
+      : c.template === 'kajabi-api'
+        ? 'kajabi'
+        : null;
+}
 
 /** The governed WRITE identity, derived from the SESSION user (never the args). */
 function executeIdentity(u: CurrentUser): ExecuteIdentity {

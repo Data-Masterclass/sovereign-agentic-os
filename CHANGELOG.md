@@ -13,6 +13,18 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.3] — 2026-07-27
+
+### Added
+- MCP parity for the scheduled-sync engine: `set_dataset_sync` (configure
+  "keep in sync" with the same per-source mode/cursor locking the panel
+  enforces — Kajabi/Salesforce cursors auto-locked, cursorless resources
+  honestly refuse incremental), `sync_dataset_now` (manual/reset trigger,
+  verbatim run record, honest lease-skip), and `get_sync_status` (config,
+  run history, watermark, quarantine, next scheduled run) — all through the
+  same governed store gates as the HTTP routes. Data tab MCP context/guide
+  now teach the keep-in-sync path.
+
 ## [os-ui 0.6.2] — 2026-07-26
 
 ### Fixed

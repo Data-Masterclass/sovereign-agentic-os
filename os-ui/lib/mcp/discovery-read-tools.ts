@@ -84,6 +84,15 @@ import type { Granularity } from '@/lib/metrics/explorer';
 import { claimsFromUser, delegate } from '@/lib/data/identity';
 import { listModelsForUser, type ModelViewer } from '@/lib/science';
 import { CHURN, DEFAULT_FEATURES } from '@/lib/science/churn';
+import {
+  consecutiveErrorCount,
+  currentWatermark,
+  ensureSyncRunsHydrated,
+  isQuarantined,
+  lastMaintenanceAt,
+  listSyncRuns,
+} from '@/lib/data/sync-runs';
+import { nextCronRun } from '@/lib/data/sync-next-run';
 
 // ================================ READ / LIST =================================
 export const readTools: McpTool[] = [
@@ -200,6 +209,56 @@ export const readTools: McpTool[] = [
       }
       const profile = assembleProfile({ fqn, layer, columns, statsRes, topRes, previewRes });
       return { datasetId: id, name: dataset.name, available: true, ...profile };
+    },
+  },
+  {
+    name: 'get_sync_status',
+    tab: 'data',
+    minRole: 'creator',
+    description:
+      'Read a dataset’s SCHEDULED-SYNC state — the same payload as GET /api/data/datasets/:id/sync: the saved config (mode, cursor, schedule, enabled), the source connection’s platform (kafka/salesforce/kajabi/warehouse — the per-source lock context), the estimated `nextRunAt` (UTC; null when the sync is disabled or the cron isn’t a simple preset shape — an honest omission, never a guess), the recent run history newest-first (per run: status ok|error|skipped|running, rowsAffected, cursor window, batchId, the honest error message), the current cursor `watermark` (cursorAfter of the latest ok run; null = never synced), and the QUARANTINE state (≥10 trailing consecutive errors auto-pauses scheduled runs; any successful run — e.g. sync_dataset_now — clears it, no flag to reset). Path: the read half of the sync loop. Before: set_dataset_sync. After: sync_dataset_now to run/resume, or set_dataset_sync to adjust. Governance: read-only, DLS-scoped like get_dataset — an unseeable id is not_found (no existence leak); an unresolvable connection reports platform:null honestly rather than failing the read.',
+    inputSchema: {
+      type: 'object',
+      properties: { datasetId: { type: 'string', description: 'Dataset id from list_datasets.' } },
+      required: ['datasetId'],
+      examples: [{ datasetId: 'ds_ab12cd' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.datasetId).trim();
+      if (!id) fail('get_sync_status needs a `datasetId`', 400);
+      const d = getDataset(id, P(user)); // canView gate (403/404 — no leak)
+      await ensureSyncRunsHydrated().catch(() => {});
+      // The source connection's PLATFORM (same mapping as the sync status route).
+      // Best-effort: an unresolvable connection is an honest null, never a failed read.
+      let platform: string | null = null;
+      if (d.sync) {
+        try {
+          const c = await getConnectionForUser(d.sync.connectionId, user);
+          platform =
+            c.template === 'warehouse' && c.warehouse
+              ? c.warehouse.platform
+              : c.template === 'salesforce-api'
+                ? 'salesforce'
+                : c.template === 'kajabi-api'
+                  ? 'kajabi'
+                  : null;
+        } catch {
+          platform = null;
+        }
+      }
+      const next = d.sync?.enabled ? nextCronRun(d.sync.schedule.cron, new Date()) : null;
+      return {
+        datasetId: id,
+        name: d.name,
+        sync: d.sync ?? null,
+        platform,
+        nextRunAt: next ? next.toISOString() : null,
+        runs: listSyncRuns(id).slice(-20).reverse(), // newest first, same window as the UI
+        watermark: currentWatermark(id),
+        quarantined: isQuarantined(id),
+        consecutiveErrors: consecutiveErrorCount(id),
+        lastMaintenanceAt: lastMaintenanceAt(id),
+      };
     },
   },
   {

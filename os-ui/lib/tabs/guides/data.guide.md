@@ -26,6 +26,8 @@ The Data tab is the foundation of the OS. It stores versioned, governed datasets
 
 **Note:** `query_data` is read-only at any point in the flow. Re-promoting an already-Domain dataset returns `conflict` — treat it as idempotent.
 
+**Keep it in sync (connector-backed datasets).** When the Bronze came from a connection (warehouse table, Kafka topic, Salesforce object, Kajabi resource) rather than a one-off upload, call `set_dataset_sync(...)` after create + first ingest to keep it fresh on a schedule (preset or cron), `sync_dataset_now(...)` to run once immediately (`reset: true` replaces the copy and restarts the cursor), and `get_sync_status(...)` for config, next run, run history and watermark. Cursor semantics are honest per source — Kafka is append-only on partition offsets, Salesforce locks to `SystemModstamp`, Kajabi locks to each resource's documented field (only `purchases` detects edits; created_at-only resources sync new records; cursorless resources are full-refresh only — asking for more is a typed `bad_request`). After ~10 consecutive failures the schedule auto-quarantines; fix the source and run `sync_dataset_now(...)` to resume.
+
 ## What to consider
 
 - **Reuse first.** Duplicate datasets fragment the single source of truth. Always run `list_datasets` before `create_dataset`.
