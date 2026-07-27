@@ -93,8 +93,8 @@ export const PROMPTS: McpPrompt[] = [
   {
     name: 'author_and_publish_knowledge',
     title: 'Author & publish knowledge',
-    description: 'Capture a workflow (steps + rules + tacit), index it, and publish it to Domain.',
-    arguments: [arg('topic', 'What the workflow is about', true), arg('domain', 'Your domain')],
+    description: 'Capture a business process (also called: workflow, process workflow, SOP (Standard Operating Procedure) — steps + rules + tacit), index it, and publish it to Domain.',
+    arguments: [arg('topic', 'What the business process is about', true), arg('domain', 'Your domain')],
     tab: 'knowledge',
     minRole: 'creator',
     guide: 'knowledge',

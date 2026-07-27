@@ -7,9 +7,10 @@ The Metrics tab is the OS's single source of truth for business numbers. A metri
 ## How to build it
 
 1. **Precondition: a governed Gold dataset.** Metrics require a Gold-tier dataset as their backing source. If no Gold dataset exists for your concept, complete the Data pathway first. Call `list_datasets` filtered to `tier: "gold"` to confirm.
-2. **Dedupe check.** Call `list_metrics` to see what is already defined in your domain. Defining a metric that already exists by another name produces two competing definitions of the same number — avoid this.
-3. **Preview first (optional).** Call `preview_metric(datasetId, name, aggregation, ...)` to see the number without persisting anything. An unsaved draft is computed via governed SQL (mode `live (sql)`, same row security); a saved+delivered measure resolves via governed Cube (mode `live`); offline degrades to `offline-mock`. Returns rows + SQL + mode; `pending: true` only for rolling-window/running-total shapes, which the query engine computes after `define_metric`. Use this to validate the definition before committing.
-4. **Define.** Call `define_metric` with:
+2. **Suggest first (optional, no dataset needed).** Call `suggest_metrics(goal?)` to have the reasoning model propose 3–6 candidate metrics grounded in your STRATEGY (pillars), OPERATING MODEL, business PROCESSES (workflows) and the datasets you can see. It defines nothing — each candidate returns name/description/why, an optional real `pillarId` + `processId`, a visible `datasetId`, a ready-to-define `form`, and a `crossEntity` flag when its inputs span datasets (build a curated dataset in Data first — the tool never invents a join). Candidates whose dataset isn't visible or whose columns aren't real are dropped; `grounding` reports how much context informed the ask. Feed a chosen candidate's `form` straight into `define_metric`.
+3. **Dedupe check.** Call `list_metrics` to see what is already defined in your domain. Defining a metric that already exists by another name produces two competing definitions of the same number — avoid this.
+4. **Preview first (optional).** Call `preview_metric(datasetId, name, aggregation, ...)` to see the number without persisting anything. An unsaved draft is computed via governed SQL (mode `live (sql)`, same row security); a saved+delivered measure resolves via governed Cube (mode `live`); offline degrades to `offline-mock`. Returns rows + SQL + mode; `pending: true` only for rolling-window/running-total shapes, which the query engine computes after `define_metric`. Use this to validate the definition before committing.
+5. **Define.** Call `define_metric` with:
    - `datasetId` — the ID of the Gold dataset
    - `name` — canonical business name (e.g. `gross_revenue`, `order_count`)
    - `aggregation` — one of `count`, `count_distinct`, `count_distinct_approx` (fast approximate distinct for large cardinalities), `sum`, `avg`, `min`, `max`, or `number` (a derived/ratio measure)
@@ -24,9 +25,9 @@ The Metrics tab is the OS's single source of truth for business numbers. A metri
    - `ratio: {numerator, denominator}` — with `aggregation: "number"`, a **derived measure** = numerator / denominator over two EXISTING measure members on the same cube.
    - `format` — display format (`currency`, `percent`, `number`, …).
    - `drillMembers` — drill-down members exposed for exploration.
-5. **Read the definition back.** Call `get_metric` with the metric `id` (`<datasetId>.<measure>`) to read back exactly what was registered — the aggregation + column, the backing dataset, the canonical Cube member and the generated Cube YAML — before iterating or charting it.
-6. **Read the number.** Call `query_metric` with the metric `id` from `list_metrics` (`<datasetId>.<measure>`), optionally sliced by `dimensions` / `timeDimension` + `granularity`. This is how "what is revenue this month" resolves — through the SEMANTIC LAYER, never raw SQL: the tool accepts no SQL by construction, and Cube applies YOUR per-viewer row-level security (the securityContext is derived from your session identity), so the number you read is identical to the charts.
-7. **Promote (optional).** To move a metric up the governance ladder (Personal→Domain or Domain→Company), call `promote_metric(metricId)`. A creator owner files a request (`{ requested: true, approval }`) — a domain admin must approve. A builder+ runs the consistency-gated transition directly. The metric inherits its backing dataset's governance: promote the dataset in the Data tab first if it is still Personal.
+6. **Read the definition back.** Call `get_metric` with the metric `id` (`<datasetId>.<measure>`) to read back exactly what was registered — the aggregation + column, the backing dataset, the canonical Cube member and the generated Cube YAML — before iterating or charting it.
+7. **Read the number.** Call `query_metric` with the metric `id` from `list_metrics` (`<datasetId>.<measure>`), optionally sliced by `dimensions` / `timeDimension` + `granularity`. This is how "what is revenue this month" resolves — through the SEMANTIC LAYER, never raw SQL: the tool accepts no SQL by construction, and Cube applies YOUR per-viewer row-level security (the securityContext is derived from your session identity), so the number you read is identical to the charts.
+8. **Promote (optional).** To move a metric up the governance ladder (Personal→Domain or Domain→Company), call `promote_metric(metricId)`. A creator owner files a request (`{ requested: true, approval }`) — a domain admin must approve. A builder+ runs the consistency-gated transition directly. The metric inherits its backing dataset's governance: promote the dataset in the Data tab first if it is still Personal.
 
 That is the complete flow.
 
@@ -44,7 +45,7 @@ That is the complete flow.
 
 | Step | Role required |
 |---|---|
-| `list_datasets`, `list_metrics`, `get_metric`, `query_metric` | Creator |
+| `suggest_metrics`, `list_datasets`, `list_metrics`, `get_metric`, `query_metric` | Creator |
 | `define_metric` | Creator |
 | Promotion | Inherited from backing Gold dataset |
 

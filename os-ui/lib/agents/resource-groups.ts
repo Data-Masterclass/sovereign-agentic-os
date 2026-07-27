@@ -5,10 +5,10 @@
  * The two labelled SECTIONS of the Simple builder's "What your team can use" grant
  * panel, matching the OS information architecture:
  *
- *   ① Plan Items   — Strategy · Big Bets · Operating Model · Workflows
+ *   ① Plan Items   — Strategy · Big Bets · Operating Model · Business Processes
  *   ② Context      — Knowledge · Files · Data · Connections · Metrics
  *
- * Workflows is its OWN member of Plan Items, SEPARATE from Knowledge (they were
+ * Business Processes is its OWN member of Plan Items, SEPARATE from Knowledge (they were
  * historically conflated because a workflow id `wf_…` shares the `grants.knowledge`
  * list with knowledge docs `pk_…`; the two sections keep them visually distinct and
  * route each to the correct grant channel — see `resourceKindGrantField`).
@@ -88,7 +88,7 @@ export const RESOURCE_MEMBERS: ResourceMember[] = [
     field: 'plan', feedKind: 'operating-manual',
   },
   {
-    key: 'workflows', label: 'Workflows', section: 'plan', wireable: true,
+    key: 'workflows', label: 'Business Processes', section: 'plan', wireable: true,
     field: 'knowledge', feedKind: 'knowledge', idFamily: 'workflow',
   },
 

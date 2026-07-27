@@ -136,11 +136,11 @@ export const knowledgeWriteTools: McpTool[] = [
     tab: 'knowledge',
     minRole: 'creator',
     description:
-      'Author a Personal (draft) knowledge workflow — the runbook for a task: an optional markdown body, ordered `steps` (each with an actor and optional per-step `tacit` note), workflow `rules`, an optional `actors` registry, and an optional workflow-level `tacit` string (the TACIT.md companion — unstructured know-how that resists formalization: the gotchas, the "why", the tribal memory). Actors have five categories — Human · Software · Agent · Customer · Partner — where Customer and Partner are EXTERNAL (outside the organisation). The optional `actors` array lets you describe each actor once (name · category · description) and steps reference them by name; if you omit it, a registry is derived from the steps automatically. Same governed store as the Knowledge tab. Publish it later with `publish_knowledge`.',
+      'Author a Personal (draft) knowledge business process (also called: workflow, process workflow, SOP (Standard Operating Procedure)) — the runbook for a task: an optional markdown body, ordered `steps` (each with an actor and optional per-step `tacit` note), process `rules`, an optional `actors` registry, and an optional process-level `tacit` string (the TACIT.md companion — unstructured know-how that resists formalization: the gotchas, the "why", the tribal memory). Actors have five categories — Human · Software · Agent · Customer · Partner — where Customer and Partner are EXTERNAL (outside the organisation). The optional `actors` array lets you describe each actor once (name · category · description) and steps reference them by name; if you omit it, a registry is derived from the steps automatically. Same governed store as the Knowledge tab. Publish it later with `publish_knowledge`.',
     inputSchema: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: 'Workflow title, e.g. "Refund handling".' },
+        title: { type: 'string', description: 'Business process title, e.g. "Refund handling".' },
         domain: { type: 'string', description: 'One of YOUR domains; defaults to your first.' },
         markdown: { type: 'string', description: 'Optional free markdown body (context/prose).' },
         steps: {
@@ -183,13 +183,13 @@ export const knowledgeWriteTools: McpTool[] = [
         },
         rules: {
           type: 'array',
-          description: 'Workflow decision rules.',
+          description: 'Business process decision rules.',
           items: { type: 'object', properties: { text: { type: 'string' }, hard: { type: 'boolean' } }, required: ['text'] },
         },
         tacit: {
           type: 'string',
           description:
-            'Workflow-level tacit knowledge (the sibling TACIT.md). Use this for unstructured know-how that resists formalization — the gotchas, the "why behind the why", institutional memory, cultural nuances that don\'t fit into steps or rules. Markdown is fine; headings split it into separately-retrievable chunks. Per-step inline notes go in `steps[].tacit` instead.',
+            'Process-level tacit knowledge (the sibling TACIT.md). Use this for unstructured know-how that resists formalization — the gotchas, the "why behind the why", institutional memory, cultural nuances that don\'t fit into steps or rules. Markdown is fine; headings split it into separately-retrievable chunks. Per-step inline notes go in `steps[].tacit` instead.',
         },
       },
       required: ['title'],
@@ -252,10 +252,10 @@ export const knowledgeWriteTools: McpTool[] = [
     tab: 'knowledge',
     minRole: 'domain_admin',
     description:
-      'Publish a draft workflow My → Domain (draft→live) and re-index it for retrieval. Domain-admin+ only (the My→Domain approval gate). This is the "approve half" of the ladder: the flip runs THROUGH the governance effect seam (no direct publish back door). Idempotency: publishing an already-live workflow returns a `conflict`.',
+      'Publish a draft business process My → Domain (draft→live) and re-index it for retrieval. Domain-admin+ only (the My→Domain approval gate). This is the "approve half" of the ladder: the flip runs THROUGH the governance effect seam (no direct publish back door). Idempotency: publishing an already-live business process returns a `conflict`.',
     inputSchema: {
       type: 'object',
-      properties: { workflowId: { type: 'string', description: 'Draft workflow id to publish.' } },
+      properties: { workflowId: { type: 'string', description: 'Draft business process id to publish.' } },
       required: ['workflowId'],
       examples: [{ workflowId: 'wf_ab12cd' }],
     },
@@ -282,10 +282,10 @@ export const knowledgeWriteTools: McpTool[] = [
     tab: 'knowledge',
     minRole: 'creator',
     description:
-      'Re-run the indexing pipeline (unit-chunk → embed → hybrid index) for a workflow you can see + its domain card, so `search_knowledge` returns it. Idempotent — safe to re-run.',
+      'Re-run the indexing pipeline (unit-chunk → embed → hybrid index) for a business process you can see + its domain card, so `search_knowledge` returns it. Idempotent — safe to re-run.',
     inputSchema: {
       type: 'object',
-      properties: { workflowId: { type: 'string', description: 'Workflow id to (re)index.' } },
+      properties: { workflowId: { type: 'string', description: 'Business process id to (re)index.' } },
       required: ['workflowId'],
       examples: [{ workflowId: 'wf_ab12cd' }],
     },
@@ -304,11 +304,11 @@ export const knowledgeWriteTools: McpTool[] = [
     tab: 'knowledge',
     minRole: 'creator',
     description:
-      'RETIRE a knowledge workflow you can edit — the Knowledge tab’s lifecycle: `archive` (the default: reversible soft-hide, retains the record + history, unarchive with author_knowledge’s sibling flow) or `delete` (PHYSICAL + irreversible: removes the record, its version history, and purges its indexed units from OpenSearch + the offline mirror so it stops being retrievable). Same governed store the Knowledge tab + `/api/knowledge/workflows/[id]` call. LINEAGE-AWARE: blocked with a typed 409 if any App or Agent system still consumes it (never orphan a live dependency) — remove those uses first. Role gate (edit scope, re-checked in-lib): the OWNER may retire their own Personal/unshared workflow; a SHARED/domain workflow needs a same-domain Builder+ (the Knowledge edit gate). Physical `delete` additionally refuses a still-published (`live`) workflow — archive/unpublish it first (mirrors the store). Idempotency: retiring a missing workflow is a typed not_found.',
+      'RETIRE a knowledge business process you can edit — the Knowledge tab’s lifecycle: `archive` (the default: reversible soft-hide, retains the record + history, unarchive with author_knowledge’s sibling flow) or `delete` (PHYSICAL + irreversible: removes the record, its version history, and purges its indexed units from OpenSearch + the offline mirror so it stops being retrievable). Same governed store the Knowledge tab + `/api/knowledge/workflows/[id]` call. LINEAGE-AWARE: blocked with a typed 409 if any App or Agent system still consumes it (never orphan a live dependency) — remove those uses first. Role gate (edit scope, re-checked in-lib): the OWNER may retire their own Personal/unshared business process; a SHARED/domain business process needs a same-domain Builder+ (the Knowledge edit gate). Physical `delete` additionally refuses a still-published (`live`) business process — archive/unpublish it first (mirrors the store). Idempotency: retiring a missing business process is a typed not_found.',
     inputSchema: {
       type: 'object',
       properties: {
-        workflowId: { type: 'string', description: 'The knowledge workflow id to retire.' },
+        workflowId: { type: 'string', description: 'The knowledge business process id to retire.' },
         action: {
           type: 'string',
           enum: ['archive', 'delete'],

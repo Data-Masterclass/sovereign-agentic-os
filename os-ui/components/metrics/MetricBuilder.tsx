@@ -20,11 +20,13 @@ import { useToast } from '@/components/core/Toast';
 import BuilderModeToggle from '@/components/core/BuilderModeToggle';
 import type { ViewMode } from '@/lib/core/view-mode';
 import MetricStageAssistant from './MetricStageAssistant';
+import SuggestPanel, { type Candidate } from './SuggestMetrics';
 import ExploreMetric from './ExploreMetric';
 import Alerts from './Alerts';
 import ConnectPowerBI from '@/components/powerbi/ConnectPowerBI';
 import {
   type DatasetGroups,
+  type DatasetTile,
   type DefineResult,
   type MetricGroups,
   type MetricSummary,
@@ -32,6 +34,7 @@ import {
   ChecksList,
   TIER_BADGE,
   TIER_WORD,
+  datasetLayerLabel,
   leaf,
 } from './shared';
 
@@ -102,7 +105,7 @@ const EMPTY_FORM: Form = {
   granularity: 'month',
 };
 
-type Column = { name: string };
+type Column = { name: string; description?: string };
 type Measure = { name: string; type: string };
 
 type PreviewResult = {
@@ -121,10 +124,23 @@ const ladderTier = (tier: MetricSummary['tier']): PromoteTier =>
 
 /* ─────────────────────────── sub-hooks ─────────────────────────────────── */
 
-function useDataset(datasetId: string) {
-  const [state, setState] = useState({ columns: [] as string[], measures: [] as Measure[], deliverable: true });
+/** The chosen dataset's governed detail — columns (with docs), measures, description and
+ *  deliverability — from the SAME per-dataset fetch the picker's warning uses. `columnDocs`
+ *  + `description` + `measures` feed the Define assistant (P0-3) so its proposal is grounded
+ *  in the real, documented schema, not just bare column names. */
+type DatasetDetail = {
+  columns: string[];
+  columnDocs: Column[];
+  measures: Measure[];
+  description: string;
+  deliverable: boolean;
+};
+const EMPTY_DETAIL: DatasetDetail = { columns: [], columnDocs: [], measures: [], description: '', deliverable: true };
+
+function useDataset(datasetId: string): DatasetDetail {
+  const [state, setState] = useState<DatasetDetail>(EMPTY_DETAIL);
   useEffect(() => {
-    if (!datasetId) { setState({ columns: [], measures: [], deliverable: true }); return; }
+    if (!datasetId) { setState(EMPTY_DETAIL); return; }
     let live = true;
     (async () => {
       try {
@@ -135,9 +151,15 @@ function useDataset(datasetId: string) {
           const cols = (ds.columns ?? []) as Column[];
           const ms = (ds.measures ?? []) as Measure[];
           const deliverable = ds.tier !== 'dataset' && Boolean(ds?.versions?.gold?.built);
-          setState({ columns: cols.map((c) => c.name).filter(Boolean), measures: ms, deliverable });
+          setState({
+            columns: cols.map((c) => c.name).filter(Boolean),
+            columnDocs: cols.filter((c) => c.name),
+            measures: ms,
+            description: typeof ds.description === 'string' ? ds.description : '',
+            deliverable,
+          });
         }
-      } catch { if (live) setState({ columns: [], measures: [], deliverable: true }); }
+      } catch { if (live) setState(EMPTY_DETAIL); }
     })();
     return () => { live = false; };
   }, [datasetId]);
@@ -146,7 +168,24 @@ function useDataset(datasetId: string) {
 
 /* ─────────────────────────── small pieces ──────────────────────────────── */
 
-function DatasetPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+/**
+ * The grouped dataset picker — My · Domain · Company, each option layer-badged with a
+ * TOLERANT label ({@link datasetLayerLabel}, so a future "curated" kind can't break it).
+ * The deliverability warning lives IN the picker (right under the select) so the user
+ * learns a dataset isn't Gold-served BEFORE they invest in the form — not after Publish.
+ * Deliverability for the SELECTED dataset comes from the parent's governed per-dataset
+ * fetch (`useDataset`), so tiles stay untouched (no extra field on the list payload).
+ */
+function DatasetPicker({
+  value,
+  onChange,
+  selectedDeliverable,
+}: {
+  value: string;
+  onChange: (id: string) => void;
+  /** The chosen dataset's deliverability, from the parent lazy fetch (null = unknown yet). */
+  selectedDeliverable: boolean | null;
+}) {
   const [groups, setGroups] = useState<DatasetGroups | null>(null);
   useEffect(() => {
     (async () => {
@@ -156,13 +195,36 @@ function DatasetPicker({ value, onChange }: { value: string; onChange: (id: stri
       } catch { /* surfaced by the define call */ }
     })();
   }, []);
-  const all = groups ? [...groups.mine, ...groups.domain, ...groups.marketplace] : [];
-  const tierLabel = { dataset: 'private', asset: 'asset', product: 'product' } as const;
+
+  const group = (label: string, tiles: DatasetTile[]) =>
+    tiles.length ? (
+      <optgroup key={label} label={label}>
+        {tiles.map((d) => (
+          <option key={d.id} value={d.id}>{d.name} · {datasetLayerLabel(d.tier)}</option>
+        ))}
+      </optgroup>
+    ) : null;
+
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} style={{ minWidth: 260 }}>
-      <option value="">choose a dataset…</option>
-      {all.map((d) => <option key={d.id} value={d.id}>{d.name} · {tierLabel[d.tier]}</option>)}
-    </select>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <select value={value} onChange={(e) => onChange(e.target.value)} style={{ minWidth: 260 }}>
+        <option value="">choose a dataset…</option>
+        {groups ? (
+          <>
+            {group('My', groups.mine)}
+            {group('Domain', groups.domain)}
+            {group('Company', groups.marketplace)}
+          </>
+        ) : null}
+      </select>
+      {value && selectedDeliverable === false ? (
+        <p className="hint" style={{ margin: 0 }}>
+          Heads up: this dataset isn&apos;t a governed <strong>Gold</strong> asset yet, so its
+          metrics won&apos;t reach the query engine. Promote it to <strong>Shared</strong> and build
+          Gold in Data to serve it — you can still define now.
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -229,7 +291,11 @@ export default function MetricBuilder({
   const [datasetId, setDatasetId] = useState(existing ? '' : (initialDatasetId ?? ''));
   const [form, setForm] = useState<Form>(EMPTY_FORM);
   const [usedAgent, setUsedAgent] = useState(false);
-  const { columns, measures, deliverable } = useDataset(datasetId);
+  // P0-1: a real free-text goal the Define assistant proposes from. Separate from
+  // `suggestGoal` (which steers the dataset-free "Suggest metrics" panel).
+  const [goalText, setGoalText] = useState('');
+  const [suggestGoal, setSuggestGoal] = useState('');
+  const { columns, columnDocs, measures, description, deliverable } = useDataset(datasetId);
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
 
   const isRatio = form.aggregation === 'number';
@@ -284,6 +350,21 @@ export default function MetricBuilder({
     const base = initialStageState(METRIC_STAGES);
     return existing ? { ...base, current: 'monitor' } : base;
   });
+
+  /* ── apply a suggested candidate — one click pre-fills dataset + full form and lands
+        on Refine (the form is already validated server-side against the real columns). */
+  const applyCandidate = useCallback((c: Candidate) => {
+    setDatasetId(c.datasetId);
+    setForm({
+      ...EMPTY_FORM,
+      name: c.form.name,
+      aggregation: c.form.aggregation,
+      column: c.form.column,
+      dimensions: c.form.dimensions,
+    });
+    setUsedAgent(true);
+    setStage((s) => ({ ...s, current: 'refine' }));
+  }, []);
 
   // The "saved" metric — either the pre-existing one or the one we just saved.
   const saved: MetricSummary | null = useMemo(() => {
@@ -433,8 +514,17 @@ export default function MetricBuilder({
                 stage="define"
                 label="Describe your metric in words — the assistant will fill the form."
                 cta="Propose from goal →"
-                disabled={!datasetId || columns.length === 0}
-                payload={() => ({ goal: `define a metric on this dataset`, columns })}
+                disabled={!datasetId || columns.length === 0 || !goalText.trim()}
+                payload={() => ({
+                  // P0-1: the REAL user goal, not a hardcoded string.
+                  goal: goalText.trim() || 'define a useful metric on this dataset',
+                  columns,
+                  // P0-3: ground the proposal in the documented schema — column docs,
+                  // the dataset description and the measures already defined.
+                  columnDocs: columnDocs.filter((c) => c.description),
+                  datasetDescription: description,
+                  measures,
+                })}
                 onForm={(f) => {
                   if (f.name) set({ name: f.name });
                   if (f.aggregation && AGGREGATIONS.some((a) => a.value === f.aggregation)) set({ aggregation: f.aggregation });
@@ -504,21 +594,40 @@ export default function MetricBuilder({
               describe it in words — the form fills automatically, ready for you to review.
             </p>
 
-            <div className="guided-panel">
-              <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                <span className="comp-label" style={{ margin: 0 }}>Source dataset</span>
-                <DatasetPicker value={datasetId} onChange={setDatasetId} />
+            <SuggestPanel
+              goal={suggestGoal}
+              onGoal={setSuggestGoal}
+              onPick={applyCandidate}
+            />
+
+            <div className="guided-panel" style={{ marginTop: 14 }}>
+              <div className="row" style={{ gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                <span className="comp-label" style={{ margin: 0, marginTop: 6 }}>Source dataset</span>
+                <DatasetPicker
+                  value={datasetId}
+                  onChange={setDatasetId}
+                  selectedDeliverable={datasetId ? deliverable : null}
+                />
               </div>
               <p className="hint" style={{ marginTop: 8 }}>
                 A metric lives on a governed Gold <strong>asset</strong> or <strong>product</strong>.
                 Pick a private dataset and promote it in Data first.
               </p>
-              {datasetId && !deliverable ? (
-                <p className="hint" style={{ marginTop: 6 }}>
-                  Heads up: promote this dataset to <strong>Shared</strong> and build <strong>Gold</strong> so
-                  its metrics reach the query engine — you can still define now.
-                </p>
-              ) : null}
+            </div>
+
+            <div className="guided-panel" style={{ marginTop: 14 }}>
+              <span className="comp-label" style={{ margin: 0 }}>What should this metric measure?</span>
+              <textarea
+                placeholder="e.g. total net revenue by region each month"
+                value={goalText}
+                onChange={(e) => setGoalText(e.target.value)}
+                rows={2}
+                style={{ marginTop: 8, width: '100%', maxWidth: 520, resize: 'vertical' }}
+              />
+              <p className="hint" style={{ marginTop: 6 }}>
+                Describe it in plain words, then use <strong>Propose from goal</strong> above — the
+                assistant reads this dataset&apos;s columns and fills the form for you to review.
+              </p>
             </div>
 
             <div className="guided-panel" style={{ marginTop: 14 }}>
@@ -561,6 +670,17 @@ export default function MetricBuilder({
               <p className="hint" style={{ marginTop: 8 }}>
                 {AGGREGATIONS.find((a) => a.value === form.aggregation)?.hint}
               </p>
+
+              {/* Narrowest-dataset guidance: if the column you need isn't on THIS dataset,
+                  the honest fix is a curated (joined) dataset in Data — never an invented
+                  join here. Shown when an aggregation needs a column the dataset lacks. */}
+              {needsColumn && datasetId && columns.length === 0 ? (
+                <p className="hint" style={{ marginTop: 6 }}>
+                  This dataset has no documented columns to measure. If the number you need lives
+                  across tables, build a <strong>curated dataset</strong> in Data (a governed join)
+                  and define the metric on that.
+                </p>
+              ) : null}
 
               {isRatio ? (
                 <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>

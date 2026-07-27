@@ -329,7 +329,7 @@ const agentTools: McpTool[] = [
   {
     name: 'list_agent_systems',
     description:
-      'List the agent systems you can see (yours, domain-shared, marketplace). Read-only and scoped to your identity — the same visibility rule as the Agents tab.',
+      'List the agent systems you can see (also called: AI teams, assistant teams) — yours, domain-shared, marketplace. Read-only and scoped to your identity — the same visibility rule as the Agents tab.',
     minRole: 'creator',
     tab: 'agents',
     inputSchema: { type: 'object', properties: {} },

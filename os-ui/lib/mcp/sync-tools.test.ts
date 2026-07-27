@@ -27,6 +27,10 @@ mock.module('@/lib/data/sync-run-server', {
       SYNC_CALLS.push({ datasetId, trigger });
       return SYNC_OUTCOME;
     },
+    // Pure helper the DQ remediation server re-imports (batch-id lineage) — mirror
+    // the real mint so the module mock stays load-compatible for the tool registry.
+    sliceBatchId: (datasetId: string, highWatermark: string) =>
+      `${datasetId}.${highWatermark.replace(/[^A-Za-z0-9_.:-]+/g, '-')}`.replace(/[^A-Za-z0-9_.:-]+/g, '-'),
   },
 });
 

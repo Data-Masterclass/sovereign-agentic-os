@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { failResponse, runStageAssistant } from '@/lib/assistant/stage-route';
+import { runSuggest } from '@/lib/metrics/suggest-server';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,17 +18,34 @@ export const dynamic = 'force-dynamic';
  * fields. Every other stage returns `{ text }` (plain prose).
  */
 
-type Stage = 'define' | 'refine' | 'preview' | 'publish' | 'monitor';
-const STAGES = new Set<Stage>(['define', 'refine', 'preview', 'publish', 'monitor']);
+type Stage = 'define' | 'refine' | 'preview' | 'publish' | 'monitor' | 'suggest';
+const STAGES = new Set<Stage>(['define', 'refine', 'preview', 'publish', 'monitor', 'suggest']);
+
+/** The five per-stage prompt helpers (NOT `suggest`, which assembles context server-side). */
+type PromptStage = Exclude<Stage, 'suggest'>;
 
 function promptFor(
-  stage: Stage,
+  stage: PromptStage,
   body: Record<string, unknown>,
 ): { system: string; user: string; json: boolean } {
   const s = (v: unknown) => (typeof v === 'string' ? v : '');
   const goal = s(body.goal);
   const columns = Array.isArray(body.columns)
     ? body.columns.filter((c): c is string => typeof c === 'string')
+    : [];
+  // P0-3: the documented schema the Define proposal should be grounded in.
+  const columnDocs = Array.isArray(body.columnDocs)
+    ? (body.columnDocs as unknown[])
+        .map((c) => (c && typeof c === 'object' ? (c as Record<string, unknown>) : {}))
+        .map((c) => ({ name: s(c.name).trim(), description: s(c.description).trim() }))
+        .filter((c) => c.name && c.description)
+    : [];
+  const datasetDescription = s(body.datasetDescription).trim();
+  const measures = Array.isArray(body.measures)
+    ? (body.measures as unknown[])
+        .map((m) => (m && typeof m === 'object' ? (m as Record<string, unknown>) : {}))
+        .map((m) => ({ name: s(m.name).trim(), type: s(m.type).trim() }))
+        .filter((m) => m.name)
     : [];
   const aggregation = s(body.aggregation);
   const errorMsg = s(body.error);
@@ -36,13 +54,23 @@ function promptFor(
   const historyHint = s(body.historyHint);
 
   switch (stage) {
-    case 'define':
+    case 'define': {
+      // P0-3: give the model the documented schema (column docs, dataset description,
+      // existing measures) so its single proposal is grounded, not just column-name matching.
+      const docs = columnDocs.length
+        ? `\nColumn docs: ${columnDocs.map((c) => `${c.name} — ${c.description}`).join('; ')}`
+        : '';
+      const about = datasetDescription ? `\nDataset: ${datasetDescription}` : '';
+      const ms = measures.length
+        ? `\nExisting measures (reuse names for a ratio, don't redefine): ${measures.map((m) => `${m.name}(${m.type})`).join(', ')}`
+        : '';
       return {
         json: true,
         system:
-          'You help a business user define a governed metric on a data table. Given their goal and the table\'s real columns, propose ONE metric as a JSON object: {"name": string, "aggregation": one of "count"|"count_distinct"|"sum"|"avg"|"min"|"max", "column": string or "", "dimensions": string[]}. Use ONLY columns from the provided list. For count, column is "". Be concise — no prose, just the JSON object.',
-        user: `Goal: ${goal || '(none given)'}\nAvailable columns: ${columns.join(', ') || '(none)'}\nReturn the JSON metric definition.`,
+          'You help a business user define a governed metric on a data table. Given their goal, the table\'s real columns (with any documentation) and its dataset description, propose ONE metric as a JSON object: {"name": string, "aggregation": one of "count"|"count_distinct"|"sum"|"avg"|"min"|"max", "column": string or "", "dimensions": string[]}. Use ONLY columns from the provided list; let the column docs and dataset description guide which column and aggregation genuinely answer the goal. For count, column is "". Be concise — no prose, just the JSON object.',
+        user: `Goal: ${goal || '(none given)'}\nAvailable columns: ${columns.join(', ') || '(none)'}${docs}${about}${ms}\nReturn the JSON metric definition.`,
       };
+    }
     case 'refine':
       return {
         json: false,
@@ -76,7 +104,8 @@ function promptFor(
 
 /**
  * POST { stage, ... } → a stage-scoped suggestion.
- * Define returns `{ form }` (parsed JSON); every other stage returns `{ text }`.
+ * `suggest` assembles the caller's strategy/OM/process/dataset context and returns
+ * `{ candidates, grounding }`; `define` returns `{ form }`; every other stage `{ text }`.
  */
 export async function POST(req: Request) {
   try {
@@ -85,9 +114,17 @@ export async function POST(req: Request) {
     const stage = body.stage as Stage;
     if (!STAGES.has(stage)) {
       return NextResponse.json(
-        { error: 'A valid stage is required (define|refine|preview|publish|monitor).' },
+        { error: 'A valid stage is required (define|refine|preview|publish|monitor|suggest).' },
         { status: 400 },
       );
+    }
+
+    // The strategy-grounded "suggest metrics" stage: server assembles ALL context
+    // under the caller, runs the reasoning model, and validates candidates against the
+    // real, visible datasets (drops any fabricated dataset/column).
+    if (stage === 'suggest') {
+      const goal = typeof body.goal === 'string' ? body.goal : undefined;
+      return NextResponse.json(await runSuggest(user, goal));
     }
 
     return await runStageAssistant({

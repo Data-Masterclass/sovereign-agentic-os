@@ -92,7 +92,7 @@ export function buildWorkflowReport(workflow: Workflow, gaps: Gap[] = []): Workf
   }));
 
   return {
-    title: workflow.title || 'Untitled workflow',
+    title: workflow.title || 'Untitled business process',
     subtitle: subtitleParts.join('  ·  '),
     meta: { domain: workflow.domain, status, visibility: visLabel, version: workflow.version },
     actors,

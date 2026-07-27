@@ -98,7 +98,7 @@ export const connectionTools: McpTool[] = [
     tab: 'connections',
     minRole: 'creator',
     description:
-      'List what CAN be connected — the connection template catalog: each template’s key, label, what it connects (Drive / Database / API / MCP / SaaS), whether it is PERSONAL (per-user OAuth — any user may connect their own account) or SHARED (service credentials — creating it needs a Builder/Admin), the endpoint hint, the fields create_connection needs, and the safe preset capability profile (reads on · writes opt-in · deletes blocked). Purpose: step 0 of the Connections golden path — know the catalog before you connect. Before: whoami. After: list_connections (reuse first!), then create_connection with a template key from here. Governance: read-only and identical for every role; this reads the SAME template registry create_connection validates against, so a key listed here is always accepted there (one source of truth).',
+      'List what CAN be connected — the connection template catalog (also called: integration, data source, Google, Microsoft, AWS, Snowflake, Databricks): each template’s key, label, what it connects (Drive / Database / API / MCP / SaaS), whether it is PERSONAL (per-user OAuth — any user may connect their own account) or SHARED (service credentials — creating it needs a Builder/Admin), the endpoint hint, the fields create_connection needs, and the safe preset capability profile (reads on · writes opt-in · deletes blocked). Purpose: step 0 of the Connections golden path — know the catalog before you connect. Before: whoami. After: list_connections (reuse first!), then create_connection with a template key from here. Governance: read-only and identical for every role; this reads the SAME template registry create_connection validates against, so a key listed here is always accepted there (one source of truth).',
     inputSchema: NO_ARGS,
     call: async () => ({
       templates: CONNECTION_TEMPLATES
@@ -161,7 +161,7 @@ export const connectionTools: McpTool[] = [
     tab: 'connections',
     minRole: 'creator',
     description:
-      'List the connections you can see (personal + shared data sources). Path: step 1 (reuse!) of the Connections golden path (guide: sovereign-os://guide/path/connections). Before: whoami. After: get_connection, or create_connection only if nothing fits. Governance: read-only, DLS-scoped — you never see another user’s personal connection.',
+      'List the connections you can see (also called: integration, data source, Google, Microsoft, AWS, Snowflake, Databricks) — personal + shared. Path: step 1 (reuse!) of the Connections golden path (guide: sovereign-os://guide/path/connections). Before: whoami. After: get_connection, or create_connection only if nothing fits. Governance: read-only, DLS-scoped — you never see another user’s personal connection.',
     inputSchema: NO_ARGS,
     call: async (user) => listConnectionsForUser(user),
   },
@@ -170,7 +170,7 @@ export const connectionTools: McpTool[] = [
     tab: 'connections',
     minRole: 'creator',
     description:
-      'Read one connection you can see (template, endpoint, tier, sync state — NEVER the raw credential). Path: DISCOVERY for the Connections golden path. Before: list_connections. After: test_connection, or consume it from an app via use_connection BY REFERENCE. Governance: read-only; unseeable id → not_found.',
+      'Read one connection (also called: integration, data source, Google, Microsoft, AWS, Snowflake, Databricks) you can see — template, endpoint, tier, sync state — NEVER the raw credential. Path: DISCOVERY for the Connections golden path. Before: list_connections. After: test_connection, or consume it from an app via use_connection BY REFERENCE. Governance: read-only; unseeable id → not_found.',
     inputSchema: idArg('connId', 'Connection id from list_connections.'),
     call: async (user, args) => {
       const id = str(args.connId).trim();
@@ -183,7 +183,7 @@ export const connectionTools: McpTool[] = [
     tab: 'connections',
     minRole: 'creator',
     description:
-      'Create a PERSONAL connection to a data source (per-user OAuth). Path: step 2 of the Connections golden path. Before: list_connections (reuse first). After: test_connection, then Builder promote_connection to share. Governance: any user may connect a personal account; SHARED (service-credential) templates require a Builder/Admin (the lib re-gates). The credential is stored server-side—the model never sees it.',
+      'Create a PERSONAL connection (also called: integration, data source, Google, Microsoft, AWS, Snowflake, Databricks) via per-user OAuth. Path: step 2 of the Connections golden path. Before: list_connections (reuse first). After: test_connection, then Builder promote_connection to share. Governance: any user may connect a personal account; SHARED (service-credential) templates require a Builder/Admin (the lib re-gates). The credential is stored server-side—the model never sees it.',
     inputSchema: {
       type: 'object',
       properties: {

@@ -66,7 +66,7 @@ export const strategyReadTools: McpTool[] = [
     tab: 'strategy',
     minRole: 'creator',
     description:
-      'List the strategy pillars you can see (tenant pillars + your own domain pillars). Purpose: step 1 of the Strategy golden path — the value spine the whole org rolls up to. Before: whoami. After: get_pillar for one pillar’s value + rollup, or (Builder) create_pillar only if nothing fits. Governance: read-only, scoped by canViewPillar per row — a pillar in a domain you are not in never appears.',
+      'List the strategy pillars you can see (also called: strategic goals, objectives, north stars) — tenant pillars + your own domain pillars. Purpose: step 1 of the Strategy golden path — the value spine the whole org rolls up to. Before: whoami. After: get_pillar for one pillar’s value + rollup, or (Builder) create_pillar only if nothing fits. Governance: read-only, scoped by canViewPillar per row — a pillar in a domain you are not in never appears.',
     inputSchema: { type: 'object', properties: {}, examples: [{}] },
     call: async (user) => listPillars(user),
   },
@@ -75,7 +75,7 @@ export const strategyReadTools: McpTool[] = [
     tab: 'strategy',
     minRole: 'creator',
     description:
-      'Read ONE strategy pillar you can see: its value metric + how the number is kept (describe/governed/manual), the RLS-scoped value roll-up (total distributed down to contributing bets, masked to YOUR entitled domains), the value history series, and the recent audit tail. Purpose: the read-back half of the Strategy golden path — read the real, RLS-correct value instead of assuming. Before: list_pillars. After: record_value_entry / link_bet_to_pillar (Builder). Governance: read-only; a pillar you cannot view is a typed forbidden/not_found (no existence leak), and per-bet values you are not entitled to are masked to null by the roll-up.',
+      'Read ONE strategy pillar (also called: strategic goal, objective, north star) you can see: its value metric + how the number is kept (describe/governed/manual), the RLS-scoped value roll-up (total distributed down to contributing bets, masked to YOUR entitled domains), the value history series, and the recent audit tail. Purpose: the read-back half of the Strategy golden path — read the real, RLS-correct value instead of assuming. Before: list_pillars. After: record_value_entry / link_bet_to_pillar (Builder). Governance: read-only; a pillar you cannot view is a typed forbidden/not_found (no existence leak), and per-bet values you are not entitled to are masked to null by the roll-up.',
     inputSchema: {
       type: 'object',
       properties: { pillarId: { type: 'string', description: 'Pillar id from list_pillars.' } },
@@ -107,7 +107,7 @@ export const strategyWriteTools: McpTool[] = [
     tab: 'strategy',
     minRole: 'creator',
     description:
-      'Create a strategy pillar (a personal/My, domain, or tenant/Company value spine), optionally describing its value metric up front. Purpose: frame the strategy the org rolls up to. Before: list_pillars (reuse first). After: link_bet_to_pillar to attach real bets, record_value_entry to track value, promote_pillar to raise its tier. Governance: canCreatePillar re-gates in-lib — a PERSONAL (My) pillar is open to any user in a domain they belong to; a DOMAIN pillar needs a Builder/Admin IN that domain; a TENANT pillar needs a platform Admin. A creator asking for domain/tenant is refused (forbidden) — create it My-scope (scope "personal") and hand off a promote to Domain.',
+      'Create a strategy pillar (also called: strategic goal, objective, north star) — a personal/My, domain, or tenant/Company value spine — optionally describing its value metric up front. Purpose: frame the strategy the org rolls up to. Before: list_pillars (reuse first). After: link_bet_to_pillar to attach real bets, record_value_entry to track value, promote_pillar to raise its tier. Governance: canCreatePillar re-gates in-lib — a PERSONAL (My) pillar is open to any user in a domain they belong to; a DOMAIN pillar needs a Builder/Admin IN that domain; a TENANT pillar needs a platform Admin. A creator asking for domain/tenant is refused (forbidden) — create it My-scope (scope "personal") and hand off a promote to Domain.',
     inputSchema: {
       type: 'object',
       properties: {

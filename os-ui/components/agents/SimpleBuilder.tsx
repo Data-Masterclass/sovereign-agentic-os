@@ -1682,7 +1682,7 @@ function TeamResources({
       {/* ① Plan Items ─ Strategy · Big Bets · Operating Manual · Workflows */}
       <ResourceSectionBlock
         title="① Plan Items"
-        subtitle="Your strategy, big bets, operating manual and workflows."
+        subtitle="Your strategy, big bets, operating manual and business processes."
         members={membersOf('plan')}
         systemId={systemId} system={system} canEdit={canEdit} onCommit={onCommit}
       />

@@ -147,9 +147,17 @@ export async function assistantComplete(
     temperature?: number;
     caller?: AssistantCaller;
     signal?: AbortSignal;
+    /**
+     * OPTIONAL explicit model (a LiteLLM model_name, e.g. `roleModel('reasoning')`).
+     * Default: the ONE admin-configured assistant model. Callers that split work
+     * across the reasoning/standard tiers (DQ remediation proposals) pass this;
+     * everything else keeps the single-assistant behaviour. Cost caps + audit
+     * tagging apply identically either way.
+     */
+    model?: string;
   } = {},
 ): Promise<{ content: string; model: string }> {
-  const model = resolveAssistantModelId();
+  const model = opts.model && opts.model.trim().length > 0 ? opts.model : resolveAssistantModelId();
   const caller = opts.caller ?? liteLlmAssistantCaller();
   const user = typeof opts.user === 'string' ? opts.user : opts.user?.id;
   const domains = typeof opts.user === 'string' ? undefined : opts.user?.domains;

@@ -56,6 +56,7 @@ import type { Granularity } from '@/lib/metrics/explorer';
 import { getMetric } from '@/lib/metrics/store';
 import { governMetric, canPromote as canPromoteMetric } from '@/lib/metrics/governance';
 import { transition as transitionDataset } from '@/lib/data/store';
+import { runSuggest } from '@/lib/metrics/suggest-server';
 
 import {
   createWorkflow,
@@ -132,11 +133,30 @@ import { normalizeContextGrants } from '@/lib/core/context-grants';
 // =============================== METRICS ======================================
 export const metricWriteTools: McpTool[] = [
   {
+    name: 'suggest_metrics',
+    tab: 'metrics',
+    minRole: 'creator',
+    description:
+      'Suggest 3–6 high-value candidate metrics grounded in the caller\'s STRATEGY (pillars), OPERATING MODEL, business PROCESSES (workflows) and the datasets they can see — the same governed context the Metrics tab "Suggest metrics" button uses. Read-only: proposes candidates, defines nothing. Each candidate carries name/description/why, an optional real pillarId + processId (workflow) it grounds on, a visible datasetId, a ready-to-define `form` (aggregation + real column + dimensions), and an optional `crossEntity` flag when its inputs span datasets (build a curated/joined dataset in Data first — never an invented join). Candidates whose dataset isn\'t visible or whose columns aren\'t real are dropped; `grounding` reports how much strategy/OM/process/data context actually informed the suggestions. Runs the reasoning model AS you; audited + cost-capped.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        goal: { type: 'string', description: 'Optional free-text goal to steer the suggestions (e.g. "metrics for our checkout funnel"). Omit to propose the metrics this business most needs.' },
+      },
+      required: [],
+      examples: [{}, { goal: 'metrics that show whether our onboarding is working' }],
+    },
+    call: async (user, args) => {
+      const goal = str(args.goal).trim() || undefined;
+      return await runSuggest(user, goal);
+    },
+  },
+  {
     name: 'define_metric',
     tab: 'metrics',
     minRole: 'creator',
     description:
-      'Define a governed metric on a dataset’s built GOLD version — the one definition of a number (Cube member). The dataset must already be a governed asset/product (promote it in Data first). Returns the canonical member + the generated Cube YAML. THE FULL MEASURE MODEL (same as the Metrics tab form — all optional, a plain call yields exactly {name,type,sql}): `aggregation` — count · count_distinct · count_distinct_approx (fast approximate distinct) · sum · avg · min · max · number (a DERIVED/ratio measure). `filter` — a FILTERED measure: aggregate only rows where {column op value} (op: equals|notEquals|gt|gte|lt|lte|set|notSet). `runningTotal` — a cumulative running total from the beginning of time. `rollingWindow` — a trailing time window (last N day|week|month|quarter|year), mutually exclusive with runningTotal. `ratio` — for aggregation "number", a derived measure numerator/denominator over two OTHER measures on the same cube. `format` — display format (currency|percent|number…). `drillMembers` — drill-down members exposed for exploration. `timeDimension`+`granularity` are query-time (query_metric), not part of the definition.',
+      'Define a governed metric (also called: KPI, measure, indicator) on a dataset’s built GOLD version — the one definition of a number (Cube member). The dataset must already be a governed asset/product (promote it in Data first). Returns the canonical member + the generated Cube YAML. THE FULL MEASURE MODEL (same as the Metrics tab form — all optional, a plain call yields exactly {name,type,sql}): `aggregation` — count · count_distinct · count_distinct_approx (fast approximate distinct) · sum · avg · min · max · number (a DERIVED/ratio measure). `filter` — a FILTERED measure: aggregate only rows where {column op value} (op: equals|notEquals|gt|gte|lt|lte|set|notSet). `runningTotal` — a cumulative running total from the beginning of time. `rollingWindow` — a trailing time window (last N day|week|month|quarter|year), mutually exclusive with runningTotal. `ratio` — for aggregation "number", a derived measure numerator/denominator over two OTHER measures on the same cube. `format` — display format (currency|percent|number…). `drillMembers` — drill-down members exposed for exploration. `timeDimension`+`granularity` are query-time (query_metric), not part of the definition.',
     inputSchema: {
       type: 'object',
       properties: {

@@ -21,11 +21,11 @@ import type { DataCheck } from './dataset-schema.ts';
  * the governed-SQL bridge that makes the recorded rules actually execute today.
  */
 
-function quoteIdent(name: string): string {
+export function quoteIdent(name: string): string {
   return `"${String(name).replace(/"/g, '""')}"`;
 }
 
-function quoteLit(s: string): string {
+export function quoteLit(s: string): string {
   return `'${String(s).replace(/'/g, "''")}'`;
 }
 
@@ -57,31 +57,52 @@ export function compileCheck(check: DataCheck, fqn: string): CompiledCheck {
   const c = quoteIdent(col);
   const from = `from ${fqn}`;
 
-  let where: string;
+  if (check.rule === 'unique') {
+    // Rows whose value repeats: count total rows in duplicate groups (non-null).
+    // Aggregate-shaped (cross-row), so it has NO per-row violation predicate.
+    return {
+      id: check.id,
+      sql:
+        `select coalesce(sum(cnt), 0) as v from ` +
+        `(select ${c} as k, count(*) as cnt ${from} where ${c} is not null group by ${c} having count(*) > 1) t`,
+    };
+  }
+
+  const where = violationPredicate(check, c);
+  if (where === null) throw new DqError(`unknown rule '${(check as { rule?: string }).rule}'`);
+  return { id: check.id, sql: `select count(*) as v ${from} where ${where}` };
+}
+
+/**
+ * The per-row VIOLATION predicate for a row-shaped rule, over an arbitrary SQL
+ * reference `ref` for the checked column (default: the quoted column itself). This is
+ * the ONE predicate the whole DQ surface shares: `compileCheck` counts with it, the
+ * remediation sampler SELECTs failing rows with it, the governed fix-MERGE matches ON
+ * it (ref = `t."col"`), and the fix PREVIEW measures residual violations with it
+ * (ref = the proposed transform expression) — so "what counts as failing" can never
+ * drift between counting, fixing and verifying.
+ *
+ * Returns null for `unique` (aggregate-shaped — no per-row predicate exists) and for
+ * an unknown rule; throws {@link DqError} only for missing/invalid rule args (same
+ * contract as {@link compileCheck}).
+ */
+export function violationPredicate(check: DataCheck, ref?: string): string | null {
+  if (!check.rule || check.rule === 'unique') return null;
+  const col = (check.column ?? '').trim();
+  if (!col) throw new DqError(`${check.rule} needs a column`);
+  const c = ref ?? quoteIdent(col);
   switch (check.rule) {
     case 'not_null':
-      where = `${c} is null`;
-      break;
+      return `${c} is null`;
     case 'not_blank':
       // A violation is NULL or an empty / whitespace-only string.
-      where = `${c} is null or trim(cast(${c} as varchar)) = ''`;
-      break;
-    case 'unique': {
-      // Rows whose value repeats: count total rows in duplicate groups (non-null).
-      return {
-        id: check.id,
-        sql:
-          `select coalesce(sum(cnt), 0) as v from ` +
-          `(select ${c} as k, count(*) as cnt ${from} where ${c} is not null group by ${c} having count(*) > 1) t`,
-      };
-    }
+      return `${c} is null or trim(cast(${c} as varchar)) = ''`;
     case 'accepted_values': {
       const vals = (check.values ?? []).map((v) => String(v).trim()).filter((v) => v.length > 0);
       if (vals.length === 0) throw new DqError('accepted_values needs at least one allowed value');
       const list = vals.map((v) => quoteLit(v)).join(', ');
       // A non-null value NOT in the accepted set is a violation.
-      where = `${c} is not null and cast(${c} as varchar) not in (${list})`;
-      break;
+      return `${c} is not null and cast(${c} as varchar) not in (${list})`;
     }
     case 'range': {
       const hasMin = typeof check.min === 'number';
@@ -91,13 +112,47 @@ export function compileCheck(check: DataCheck, fqn: string): CompiledCheck {
       if (hasMin) parts.push(`${c} < ${num(check.min!)}`);
       if (hasMax) parts.push(`${c} > ${num(check.max!)}`);
       // A non-null value outside [min, max] is a violation.
-      where = `${c} is not null and (${parts.join(' or ')})`;
-      break;
+      return `${c} is not null and (${parts.join(' or ')})`;
     }
     default:
-      throw new DqError(`unknown rule '${(check as { rule?: string }).rule}'`);
+      return null;
   }
-  return { id: check.id, sql: `select count(*) as v ${from} where ${where}` };
+}
+
+/**
+ * A read-only SELECT of rows that VIOLATE the rule (the remediation sample). Row-shaped
+ * rules reuse the ONE {@link violationPredicate}; `unique` samples the rows inside
+ * duplicate groups (ordered by the column so duplicates sit together). Throws
+ * {@link DqError} for a rule that isn't executable — same contract as compileCheck.
+ */
+export function failingRowsSql(check: DataCheck, fqn: string, limit: number): string {
+  if (!check.rule) throw new DqError('this check is a free-text intention, not an executable rule');
+  const col = (check.column ?? '').trim();
+  if (!col) throw new DqError(`${check.rule} needs a column`);
+  const c = quoteIdent(col);
+  const n = Math.max(1, Math.floor(limit));
+  if (check.rule === 'unique') {
+    return (
+      `select * from ${fqn} where ${c} in ` +
+      `(select ${c} from ${fqn} where ${c} is not null group by ${c} having count(*) > 1) ` +
+      `order by ${c} limit ${n}`
+    );
+  }
+  const where = violationPredicate(check, c);
+  if (where === null) throw new DqError(`unknown rule '${(check as { rule?: string }).rule}'`);
+  return `select * from ${fqn} where ${where} limit ${n}`;
+}
+
+/**
+ * A read-only SELECT of rows that PASS the rule — the contrast sample the remediation
+ * assistant sees next to the failing rows. Null for `unique` (per-row pass/fail is not
+ * defined for a cross-row rule).
+ */
+export function passingRowsSql(check: DataCheck, fqn: string, limit: number): string | null {
+  const where = violationPredicate(check);
+  if (where === null) return null;
+  const n = Math.max(1, Math.floor(limit));
+  return `select * from ${fqn} where not (${where}) limit ${n}`;
 }
 
 /** A human label for a rule (used by the editor + reports + MCP). */

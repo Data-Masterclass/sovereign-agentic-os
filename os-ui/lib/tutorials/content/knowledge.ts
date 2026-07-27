@@ -14,10 +14,10 @@ const knowledge: TutorialDef = {
   hook: {
     illustration: 'knowledge',
     title: 'The context your agents read',
-    body: 'Two surfaces, one playbook. Knowledge holds free-form notes — how you work, key contacts, domain context. Workflows (its own tab) holds your business processes with steps and decision rules. Agents read both as context automatically — no copy-paste required.',
+    body: 'Two surfaces, one playbook. Knowledge holds free-form notes — how you work, key contacts, domain context. Business Processes (its own tab) holds your business processes with steps and decision rules. Agents read both as context automatically — no copy-paste required.',
     byRole: {
       builder: {
-        body: 'Two surfaces, one playbook: Knowledge notes and Workflows. You approve what gets promoted to the Domain tier — so every agent in the domain is aligned on the same, reviewed context.',
+        body: 'Two surfaces, one playbook: Knowledge notes and Business Processes. You approve what gets promoted to the Domain tier — so every agent in the domain is aligned on the same, reviewed context.',
       },
     },
   },
@@ -30,23 +30,23 @@ const knowledge: TutorialDef = {
     },
     {
       illustration: 'build',
-      title: 'Map a process as a workflow',
-      body: 'On the Workflows tab, "+ New workflow" names a business process — Bank Submission, Customer Onboarding — and lays out its steps and decision rules. The Domain Operating Manual (overview, glossary, goals) lives at the top of Workflows.',
+      title: 'Map a business process',
+      body: 'On the Business Processes tab, "+ New business process" names a process — Bank Submission, Customer Onboarding — and lays out its steps and decision rules. The Domain Operating Manual (overview, glossary, goals) lives at the top of Business Processes.',
     },
     {
       illustration: 'publish',
       title: 'Promote what the domain should share',
-      body: 'Both notes and workflows climb the same ladder: "Promote to Domain" (or "Request promotion") sends it for approval in Policies & Approvals; an Admin can "Certify to Company". "Unshare" and "Revoke from Company" walk it back.',
+      body: 'Both notes and business processes climb the same ladder: "Promote to Domain" (or "Request promotion") sends it for approval in Policies & Approvals; an Admin can "Certify to Company". "Unshare" and "Revoke from Company" walk it back.',
       byRole: {
         builder: {
-          body: 'Both notes and workflows climb the same ladder. Requests land in Policies & Approvals for your yes; an Admin certifies to Company. What you approve becomes live context for every domain agent.',
+          body: 'Both notes and business processes climb the same ladder. Requests land in Policies & Approvals for your yes; an Admin certifies to Company. What you approve becomes live context for every domain agent.',
         },
       },
     },
     {
       illustration: 'agent',
       title: 'Agents read it automatically',
-      body: 'Published knowledge becomes agent context: an agent granted your knowledge pulls the relevant notes and workflows when it works. Archived notes are hidden from your agents — the archive is how you retire stale context without deleting it.',
+      body: 'Published knowledge becomes agent context: an agent granted your knowledge pulls the relevant notes and business processes when it works. Archived notes are hidden from your agents — the archive is how you retire stale context without deleting it.',
     },
   ],
 
@@ -68,14 +68,14 @@ const knowledge: TutorialDef = {
     {
       anchor: ANCHORS.knowledge.organize,
       sandboxAnchor: ANCHORS.knowledge.sandbox,
-      title: 'Map a workflow',
-      body: 'Switch to the Workflows tab and "+ New workflow": name the business process, lay out its steps and decision rules. Workflows follow the same My / Domain / Company scopes as everything else.',
+      title: 'Map a business process',
+      body: 'Switch to the Business Processes tab and "+ New business process": name the process, lay out its steps and decision rules. Business processes follow the same My / Domain / Company scopes as everything else.',
       route: '/workflows',
     },
     {
       anchor: ANCHORS.knowledge.publish,
       title: 'Promote to Domain',
-      body: '"Promote to Domain" — or "Request promotion" — files the request; it is approved in Policies & Approvals. Once approved, the note or workflow becomes live context for every domain agent.',
+      body: '"Promote to Domain" — or "Request promotion" — files the request; it is approved in Policies & Approvals. Once approved, the note or business process becomes live context for every domain agent.',
       governedWrite: true,
       route: '/knowledge',
     },
@@ -97,15 +97,15 @@ const knowledge: TutorialDef = {
   framing: {
     user: {
       verb: 'Explore',
-      hook: 'Read the domain\'s notes and workflows and see how the pieces connect.',
+      hook: 'Read the domain\'s notes and business processes and see how the pieces connect.',
     },
     creator: {
       verb: 'Create',
-      hook: 'Write notes and map workflows that give your agents real context.',
+      hook: 'Write notes and map business processes that give your agents real context.',
     },
     builder: {
       verb: 'Review & promote',
-      hook: 'Approve the notes and workflows that become your domain\'s shared playbook.',
+      hook: 'Approve the notes and business processes that become your domain\'s shared playbook.',
     },
   },
 };

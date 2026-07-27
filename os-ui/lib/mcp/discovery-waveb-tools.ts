@@ -110,7 +110,7 @@ export const waveBReadTools: McpTool[] = [
     tab: 'metrics',
     minRole: 'creator',
     description:
-      'Read ONE governed metric — its definition (aggregation + aggregated column), the gold dataset it is defined on, its tier + owner, the canonical Cube member every consumer resolves, and the generated Cube YAML. Purpose: read back exactly what define_metric registered so you iterate on the real definition instead of guessing. Before: list_metrics (take the `id`, shaped `<datasetId>.<measure>`). After: query_metric to evaluate the number, or create_dashboard to chart the member. Governance: read-only, resolved through the SAME dataset canView gate as list_metrics — a metric on a dataset you cannot see is a typed not_found/forbidden (no existence leak).',
+      'Read ONE governed metric (also called: KPI, measure, indicator) — its definition (aggregation + aggregated column), the gold dataset it is defined on, its tier + owner, the canonical Cube member every consumer resolves, and the generated Cube YAML. Purpose: read back exactly what define_metric registered so you iterate on the real definition instead of guessing. Before: list_metrics (take the `id`, shaped `<datasetId>.<measure>`). After: query_metric to evaluate the number, or create_dashboard to chart the member. Governance: read-only, resolved through the SAME dataset canView gate as list_metrics — a metric on a dataset you cannot see is a typed not_found/forbidden (no existence leak).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -150,7 +150,7 @@ export const waveBReadTools: McpTool[] = [
     tab: 'dashboards',
     minRole: 'creator',
     description:
-      'Read ONE dashboard you can see — its charts with their governed metric members, the Cube view they bind to, tier and owner. Purpose: read back exactly what create_dashboard saved so you can iterate (create_dashboard with the same `id` replaces it) or attach it to a Big Bet. Before: list_dashboards. After: query_metric on a chart’s member to read the same number, or attach_component to put it on a bet. Governance: read-only, the SAME visibility rule as list_dashboards (My · Domain · Company) — an unseeable id is a typed not_found/forbidden (no existence leak).',
+      'Read ONE dashboard you can see (also called: report, business intelligence (BI), data visualization) — its charts with their governed metric members, the Cube view they bind to, tier and owner. Purpose: read back exactly what create_dashboard saved so you can iterate (create_dashboard with the same `id` replaces it) or attach it to a Big Bet. Before: list_dashboards. After: query_metric on a chart’s member to read the same number, or attach_component to put it on a bet. Governance: read-only, the SAME visibility rule as list_dashboards (My · Domain · Company) — an unseeable id is a typed not_found/forbidden (no existence leak).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -184,7 +184,7 @@ export const waveBReadTools: McpTool[] = [
     tab: 'bigbets',
     minRole: 'creator',
     description:
-      'Read ONE Big Bet you can see — the problem + solution, pillar and north-star metric, the € target vs the REALIZED value (resolved RLS-scoped to YOU), the attached component references with their live derived status, completion and status. Purpose: the read-back half of the Big Bets golden path — progress is DERIVED from the components’ real lifecycle, never hand-set, so read it here instead of assuming. Before: list_big_bets. After: attach_component to grow the roadmap, update_big_bet to record the solution/status/realized value. Governance: read-only, the store’s own view scope (members + domain peers; cross-domain bets are members/Admin-only) — an unseeable id is a typed not_found/forbidden, and a not-yet-shared component’s detail is redacted to null for non-members (no governance shortcut).',
+      'Read ONE Big Bet you can see (also called: initiative, strategic investment, project) — the problem + solution, pillar and north-star metric, the € target vs the REALIZED value (resolved RLS-scoped to YOU), the attached component references with their live derived status, completion and status. Purpose: the read-back half of the Big Bets golden path — progress is DERIVED from the components’ real lifecycle, never hand-set, so read it here instead of assuming. Before: list_big_bets. After: attach_component to grow the roadmap, update_big_bet to record the solution/status/realized value. Governance: read-only, the store’s own view scope (members + domain peers; cross-domain bets are members/Admin-only) — an unseeable id is a typed not_found/forbidden, and a not-yet-shared component’s detail is redacted to null for non-members (no governance shortcut).',
     inputSchema: {
       type: 'object',
       properties: {

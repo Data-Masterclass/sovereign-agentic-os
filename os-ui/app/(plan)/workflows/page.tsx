@@ -140,7 +140,7 @@ export default function WorkflowsPage() {
 
   return (
     <ConfirmProvider>
-      <PageHeader title="Workflows" crumb="business processes · steps · decision rules" tutorial="knowledge" />
+      <PageHeader title="Business Processes" crumb="steps · decision rules · tacit knowledge" tutorial="knowledge" />
       <div className="content">
 
         <div className="row" style={{ marginTop: 18, justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 10 }}>
@@ -153,7 +153,7 @@ export default function WorkflowsPage() {
               className="btn ghost"
               style={{ opacity: showArchived ? 1 : 0.7 }}
               onClick={() => setShowArchived((s) => !s)}
-              title="Archived workflows are hidden by default"
+              title="Archived business processes are hidden by default"
             >
               {showArchived ? 'Hide archived' : 'Show archived'}
             </button>
@@ -161,7 +161,7 @@ export default function WorkflowsPage() {
               className="btn"
               onClick={() => setView(view === 'new' ? 'list' : 'new')}
             >
-              {view === 'new' ? 'Cancel' : '+ New workflow'}
+              {view === 'new' ? 'Cancel' : '+ New business process'}
             </button>
           </div>
         </div>
@@ -177,7 +177,7 @@ export default function WorkflowsPage() {
                 type="text"
                 value={newTitle}
                 onChange={(e) => setNewTitle(e.target.value)}
-                placeholder="Workflow name — e.g. Bank Submission, Customer Onboarding…"
+                placeholder="Business process name — e.g. Bank Submission, Customer Onboarding…"
                 autoFocus
                 style={{ flex: 1 }}
               />
@@ -191,7 +191,7 @@ export default function WorkflowsPage() {
 
         {wfLoading ? (
           <div className="stub-page" style={{ marginTop: 24 }}>
-            <span className="spin" /> Loading workflows…
+            <span className="spin" /> Loading business processes…
           </div>
         ) : wfError ? (
           <div className="error" style={{ marginTop: 16 }}>{wfError}</div>
@@ -201,7 +201,7 @@ export default function WorkflowsPage() {
             <div className="seg" style={{ marginTop: 18 }}>
               {SCOPE_GROUPS.map((g) => (
                 <button key={g.key} type="button" className={wfScope === g.key ? 'on' : ''} onClick={() => setWfScope(g.key)}>
-                  {g.label('Workflows')}{wfCounts ? ` (${wfCounts[g.key]})` : ''}
+                  {g.label('Business Processes')}{wfCounts ? ` (${wfCounts[g.key]})` : ''}
                 </button>
               ))}
             </div>
@@ -213,9 +213,9 @@ export default function WorkflowsPage() {
             {scopedWorkflows.length === 0 && !showArchived && (
               <div className="stub-page" style={{ marginTop: 32 }}>
                 {wfScope === 'mine' || wfScope === 'all'
-                  ? 'No workflows yet. Create one above to document a business process.'
+                  ? 'No business processes yet. Create one above to document a business process.'
                   : wfScope === 'shared'
-                    ? 'Nothing in Domain yet — promote a workflow to share it with your domain.'
+                    ? 'Nothing in Domain yet — promote a business process to share it with your domain.'
                     : 'Nothing in Company yet.'}
               </div>
             )}
@@ -225,19 +225,19 @@ export default function WorkflowsPage() {
                 <>
                   <div className="section-title" style={{ marginTop: 28 }}>Archived</div>
                   <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-                    Archived workflows are hidden from agents and the working lists.
+                    Archived business processes are hidden from agents and the working lists.
                     Restore brings one back; Delete removes it permanently.
                   </p>
                   <div className="k-workflow-grid">{archivedWorkflows.map(renderCell)}</div>
                 </>
               ) : (
-                <div className="hint" style={{ marginTop: 20 }}>No archived workflows.</div>
+                <div className="hint" style={{ marginTop: 20 }}>No archived business processes.</div>
               )
             )}
 
             {!canPublish && allWorkflows.some((w) => w.status === 'draft') && (
               <div className="hint" style={{ marginTop: 16 }}>
-                Draft workflows are visible to you and domain builders.
+                Draft business processes are visible to you and domain builders.
                 A builder or admin publishes them to make them live.
               </div>
             )}

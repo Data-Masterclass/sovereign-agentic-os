@@ -32,8 +32,11 @@ import { runDatasetSync } from '@/lib/data/sync-run-server';
 import { reconcileSyncCron } from '@/lib/data/sync-cron';
 import { kajabiCursorField } from '@/lib/connections/kajabi-resources';
 import { runQualityChecks } from '@/lib/data/dq-run';
+import { proposeFixes, applyFixes, type FixApplyInput } from '@/lib/data/dq-fix-server';
+import { assistantComplete } from '@/lib/assistant/complete';
+import { roleModel } from '@/lib/models/roles';
 import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/data';
-import { queryRun } from '@/lib/infra/governed';
+import { queryRun, executeRun } from '@/lib/infra/governed';
 import { publishPromotionLive } from '@/lib/data/publish-server';
 import { enqueue, getApproval, decide, listApprovals } from '@/lib/governance/approvals';
 import { canBuildStage, canPassThrough, stageArtifact } from '@/lib/data/panels';
@@ -142,7 +145,7 @@ export const dataWriteTools: McpTool[] = [
     tab: 'data',
     minRole: 'creator',
     description:
-      'Create a new PRIVATE dataset (a Bronze→Silver→Gold spine) in one of your domains — the same governed path as the Data tab’s “New dataset”. Starts Personal/owner-only; sharing is the separate governed `promote_dataset`. Optionally seed column docs. Idempotency: each call creates a distinct dataset.',
+      'Create a new PRIVATE dataset (also called: table, data product) — a Bronze→Silver→Gold spine — in one of your domains, the same governed path as the Data tab’s “New dataset”. Starts Personal/owner-only; sharing is the separate governed `promote_dataset`. Optionally seed column docs. Idempotency: each call creates a distinct dataset.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -359,7 +362,7 @@ export const dataWriteTools: McpTool[] = [
     tab: 'data',
     minRole: 'creator',
     description:
-      'Build a dataset’s physical GOLD by JOINING its Silver with other governed datasets you may read — the Data tab’s stage-4 reuse, compiled into ONE governed CTAS. You pass dataset IDS to join (never table names — each is re-resolved through the canView guard), the join keys, projected dimensions and derived measures (sum/avg/count/count_distinct/min/max, or count(*) with agg "count" and no col). Column refs are {ref, column} where ref 0 = your Silver base and 1..n = the joined datasets in order. KEY MAPPING / RECONCILE: same-name keys auto-match with no extra config; when the two sides differ, set the join key’s optional `adapt` to reconcile them symmetrically (both sides wrapped): `{mode:"text"}` normalizes to lower(trim(cast … as varchar)) so keys differing only by case/whitespace/format line up, `{mode:"cast",type}` coerces both sides to one Trino type (varchar|integer|bigint|double|boolean|date|timestamp) — e.g. an id stored as varchar on one side, integer on the other. Purpose: the reuse step of the physical Data golden path — the measures recorded here feed define_metric after promotion. Before: transform_silver (Silver must be built); pick join partners from list_datasets (governed asset/product tiers with a built table). After: document_dataset → request_promotion → define_metric. Governance: the CTAS targets YOUR OWN schema and executes AS YOU (Trino→OPA masks every joined read); a non-visible pick is a typed forbidden; Gold + lineage + measures are recorded ONLY on a ✓ apply+verify.',
+      'Build a dataset’s physical GOLD by JOINING its Silver with other governed datasets you may read — this produces a curated dataset (also called: 360 view, data mart, aggregated dataset, platinum dataset). The Data tab’s stage-4 reuse, compiled into ONE governed CTAS. You pass dataset IDS to join (never table names — each is re-resolved through the canView guard), the join keys, projected dimensions and derived measures (sum/avg/count/count_distinct/min/max, or count(*) with agg "count" and no col). Column refs are {ref, column} where ref 0 = your Silver base and 1..n = the joined datasets in order. KEY MAPPING / RECONCILE: same-name keys auto-match with no extra config; when the two sides differ, set the join key’s optional `adapt` to reconcile them symmetrically (both sides wrapped): `{mode:"text"}` normalizes to lower(trim(cast … as varchar)) so keys differing only by case/whitespace/format line up, `{mode:"cast",type}` coerces both sides to one Trino type (varchar|integer|bigint|double|boolean|date|timestamp) — e.g. an id stored as varchar on one side, integer on the other. Purpose: the reuse step of the physical Data golden path — the measures recorded here feed define_metric after promotion. Before: transform_silver (Silver must be built); pick join partners from list_datasets (governed asset/product tiers with a built table). After: document_dataset → request_promotion → define_metric. Governance: the CTAS targets YOUR OWN schema and executes AS YOU (Trino→OPA masks every joined read); a non-visible pick is a typed forbidden; Gold + lineage + measures are recorded ONLY on a ✓ apply+verify.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -544,7 +547,7 @@ export const dataWriteTools: McpTool[] = [
     tab: 'data',
     minRole: 'creator',
     description:
-      'Run a dataset’s data-quality rules and READ the result — the "Run checks" button. Each structured rule is compiled to a governed COUNT-of-violations SQL and executed through the SAME governed query path AS THE OWNER (a private dataset’s personal_<uid> table is read as its owner, OPA-governed), producing a REAL pass/fail per rule plus an aggregate badge (passing | failing | unknown). Honesty: a rule that can’t run (nothing materialised yet, or a free-text intention) is reported "not_run", NEVER a fake pass. Before: define_quality_rules (+ a built layer to check). Governance: Creator+ on a dataset you can see; read-only.',
+      'Run a dataset’s data-quality rules and READ the result — the "Run checks" button. Each structured rule is compiled to a governed COUNT-of-violations SQL and executed through the SAME governed query path AS THE OWNER (a private dataset’s personal_<uid> table is read as its owner, OPA-governed), producing a REAL pass/fail per rule plus an aggregate badge (passing | failing | unknown). Honesty: a rule that can’t run (nothing materialised yet, or a free-text intention) is reported "not_run", NEVER a fake pass. Before: define_quality_rules (+ a built layer to check). After: propose_quality_fixes on a failing rule to get AI-proposed remediations. Governance: Creator+ on a dataset you can see; read-only.',
     inputSchema: {
       type: 'object',
       properties: { datasetId: { type: 'string', description: 'Dataset id whose rules to run (from get_dataset).' } },
@@ -561,6 +564,115 @@ export const dataWriteTools: McpTool[] = [
         queryFn: (sql) => queryRun(sql, resolved?.principal),
       });
       return { datasetId, name: dataset.name, ...report };
+    },
+  },
+  {
+    name: 'propose_quality_fixes',
+    tab: 'data',
+    minRole: 'creator',
+    description:
+      'PROPOSE AI remediations for ONE failing quality rule — the Validate stage’s "Propose fixes" button, the SAME governed path as POST /api/data/datasets/:id/dq/propose. The rule is re-run FOR REAL first (a passing rule proposes nothing); failing rows are sampled (honest "showing N of M"); the REASONING model establishes the fix and the STANDARD model fills per-row values (the model split). Returns EITHER a batch proposal (ONE guard-validated column-transform expression, previewed before→after with a MEASURED residual — estimatedFix is derived by SQL, never trusted from the model), OR per-row fixes (ONLY when the dataset declares a unique key column and ≤200 rows fail — row identity is NEVER guessed), OR an honest kind:"none" diagnosis for rules a single-column edit cannot fix (e.g. unique). Model unconfigured/over-cap/unreachable ⇒ offline:true, never a fake proposal. READ-ONLY: nothing is applied — apply_quality_fixes is the explicit, edit-gated write door. Before: run_quality_checks (to find the failing rule id). Governance: Creator+ on a dataset you can see.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        datasetId: { type: 'string', description: 'Dataset id (from list_datasets).' },
+        checkId: { type: 'string', description: 'The failing rule’s check id (from run_quality_checks results).' },
+      },
+      required: ['datasetId', 'checkId'],
+      examples: [{ datasetId: 'ds_ab12cd', checkId: 'chk_1' }],
+    },
+    call: async (user, args) => {
+      const datasetId = str(args.datasetId).trim();
+      const checkId = str(args.checkId).trim();
+      if (!datasetId) fail('propose_quality_fixes needs a `datasetId`', 400);
+      if (!checkId) fail('propose_quality_fixes needs a `checkId`', 400);
+      const p = P(user);
+      const dataset = getDataset(datasetId, p); // canView gate
+      const check = (dataset.checks ?? []).find((c) => c.id === checkId);
+      if (!check) fail('unknown check — run run_quality_checks to list the rule ids', 404);
+      const resolved = builtLayerFqn(dataset, p);
+      return proposeFixes(dataset, check, {
+        fqn: resolved?.fqn ?? null,
+        layer: resolved?.layer ?? null,
+        queryFn: (sql) => queryRun(sql, resolved?.principal),
+        complete: async (messages, role) =>
+          (await assistantComplete(messages, { user: { id: user.id, domains: user.domains }, model: roleModel(role) })).content,
+      });
+    },
+  },
+  {
+    name: 'apply_quality_fixes',
+    tab: 'data',
+    minRole: 'creator',
+    description:
+      'APPLY accepted DQ remediations for ONE rule — the Validate stage’s "Apply" buttons, the SAME governed path as POST /api/data/datasets/:id/dq/apply. Modes: batch (ONE column-transform expression, re-validated server-side by the fix guard — statements/subqueries/unknown identifiers are refused) or rows ({pk,proposed} pairs bound as escaped literals, matched on the dataset’s DECLARED unique key — refused honestly when no key is declared). Executes ONE whitelisted MERGE through the governed /execute AS YOU (the query-tool re-gates statement shape + schema/role floor), then RE-RUNS the rule — the response’s `recheck` is the real post-fix verdict (a fix that didn’t fix stays red). Records a durable remediation run (batch id + pre-apply Iceberg snapshot id; revert is via Console — no governed rollback shape exists). NOTHING applies except through this explicit call. Before: propose_quality_fixes (or your own expression). Governance: edit scope (owner / in-domain domain_admin+), re-checked in-lib; role floor for the physical write re-enforced by the query-tool.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        datasetId: { type: 'string', description: 'Dataset id (from list_datasets).' },
+        checkId: { type: 'string', description: 'The rule’s check id (from run_quality_checks).' },
+        mode: { type: 'string', enum: ['batch', 'rows'], description: 'batch = one column-transform expression; rows = explicit per-row values.' },
+        sqlExpr: { type: 'string', description: 'batch only: the column-transform expression (guard-validated).' },
+        fixes: {
+          type: 'array',
+          description: 'rows only: the accepted fixes.',
+          items: {
+            type: 'object',
+            properties: {
+              pk: { type: 'string', description: 'Key-column value of the row to fix.' },
+              proposed: { type: 'string', description: 'The corrected value (bound as a literal).' },
+            },
+            required: ['pk', 'proposed'],
+          },
+        },
+      },
+      required: ['datasetId', 'checkId', 'mode'],
+      examples: [
+        { datasetId: 'ds_ab12cd', checkId: 'chk_1', mode: 'batch', sqlExpr: 'trim(lower(email))' },
+        { datasetId: 'ds_ab12cd', checkId: 'chk_2', mode: 'rows', fixes: [{ pk: 'ord_0012', proposed: 'EU' }] },
+      ],
+    },
+    call: async (user, args) => {
+      const datasetId = str(args.datasetId).trim();
+      const checkId = str(args.checkId).trim();
+      if (!datasetId) fail('apply_quality_fixes needs a `datasetId`', 400);
+      if (!checkId) fail('apply_quality_fixes needs a `checkId`', 400);
+      const p = P(user);
+      const dataset = requireDatasetEditable(datasetId, p); // edit gate (403/404)
+      const check = (dataset.checks ?? []).find((c) => c.id === checkId);
+      if (!check) fail('unknown check — run run_quality_checks to list the rule ids', 404);
+      const resolved = builtLayerFqn(dataset, p);
+      if (!resolved) fail('nothing is built yet — there is no table to fix', 409);
+
+      let input: FixApplyInput;
+      const mode = str(args.mode).trim();
+      if (mode === 'batch') {
+        const sqlExpr = str(args.sqlExpr).trim();
+        if (!sqlExpr) fail('batch mode needs a `sqlExpr`', 400);
+        input = { mode: 'batch', sqlExpr };
+      } else if (mode === 'rows') {
+        const fixes = (Array.isArray(args.fixes) ? args.fixes : [])
+          .map((f) => {
+            const r = f as Record<string, unknown>;
+            return { pk: str(r?.pk).trim(), proposed: typeof r?.proposed === 'string' ? r.proposed : String(r?.proposed ?? '') };
+          })
+          .filter((f) => f.pk.length > 0);
+        if (fixes.length === 0) fail('rows mode needs at least one accepted fix', 400);
+        input = { mode: 'rows', fixes };
+      } else {
+        fail("apply_quality_fixes `mode` must be 'batch' or 'rows'", 400);
+      }
+
+      return applyFixes(dataset, check, input, {
+        fqn: resolved.fqn,
+        layer: resolved.layer,
+        queryFn: (sql) => queryRun(sql, resolved.principal),
+        // The governed WRITE runs AS the caller — identity from the session, never args.
+        executeFn: (sql) =>
+          executeRun(sql, { principal: resolved.principal, uid: user.id, domains: user.domains, role: user.role }),
+        ranBy: user.id,
+        domain: dataset.domain,
+      });
     },
   },
   {
@@ -607,7 +719,7 @@ export const dataWriteTools: McpTool[] = [
     tab: 'data',
     minRole: 'creator',
     description:
-      'Configure (or enable/disable) SCHEDULED INCREMENTAL SYNC on a connector-backed dataset you can edit — the Data tab’s "Keep this in sync" panel, the SAME governed path as PUT /api/data/datasets/:id/sync: the strict store gate validates, then the per-dataset CronJob is reconciled and the cluster outcome is reported HONESTLY (`cron.live:false` when no CronJob could be provisioned — never a claim). Modes: full-refresh (re-copy each run) · append (rows newer than the cursor; late rows may re-deliver) · merge (upsert by mergeKeys — warehouse sources only, daily-ish cadence). PER-SOURCE LOCKS (the panel’s rules, enforced server-side): kafka → append ONLY, cursor auto-locked to partition offsets; salesforce → no merge, incremental cursor auto-locked to SystemModstamp; kajabi → no merge, cursor auto-locked to the resource’s DOCUMENTED field — `purchases` is true incremental (updated_at: new AND changed), contacts/customers/orders/form_submissions are created_at-only (NEW records append; EDITS are not detected — full-refresh to capture them), cursorless resources (offers, products, transactions, …) are full-refresh ONLY (a typed bad_request otherwise, never fake incremental). Warehouse sources pass their own `cursor` {column, kind}. Schedule: a preset (every-15-minutes|every-30-minutes|hourly|daily|weekly) or a 5-field cron. Before: create_dataset + a first import/ingest from the connection. After: sync_dataset_now to run immediately, get_sync_status to watch. Governance: edit scope (owner / domain admin) re-checked in-lib; the sync executes AS the dataset OWNER, never a service principal.',
+      'Configure (or enable/disable) SCHEDULED INCREMENTAL SYNC (also called: refresh, data pipeline, ETL) on a connector-backed dataset you can edit — the Data tab’s "Keep this in sync" panel, the SAME governed path as PUT /api/data/datasets/:id/sync: the strict store gate validates, then the per-dataset CronJob is reconciled and the cluster outcome is reported HONESTLY (`cron.live:false` when no CronJob could be provisioned — never a claim). Modes: full-refresh (re-copy each run) · append (rows newer than the cursor; late rows may re-deliver) · merge (upsert by mergeKeys — warehouse sources only, daily-ish cadence). PER-SOURCE LOCKS (the panel’s rules, enforced server-side): kafka → append ONLY, cursor auto-locked to partition offsets; salesforce → no merge, incremental cursor auto-locked to SystemModstamp; kajabi → no merge, cursor auto-locked to the resource’s DOCUMENTED field — `purchases` is true incremental (updated_at: new AND changed), contacts/customers/orders/form_submissions are created_at-only (NEW records append; EDITS are not detected — full-refresh to capture them), cursorless resources (offers, products, transactions, …) are full-refresh ONLY (a typed bad_request otherwise, never fake incremental). Warehouse sources pass their own `cursor` {column, kind}. Schedule: a preset (every-15-minutes|every-30-minutes|hourly|daily|weekly) or a 5-field cron. Before: create_dataset + a first import/ingest from the connection. After: sync_dataset_now to run immediately, get_sync_status to watch. Governance: edit scope (owner / domain admin) re-checked in-lib; the sync executes AS the dataset OWNER, never a service principal.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -707,7 +819,7 @@ export const dataWriteTools: McpTool[] = [
     tab: 'data',
     minRole: 'creator',
     description:
-      'Trigger ONE immediate sync run of a dataset you can edit — the panel’s "Sync now" (or, with reset:true, "Reset & full re-sync": replace the copy and restart the cursor from now), the SAME governed executor as POST /api/data/datasets/:id/sync. Returns the outcome HONESTLY: {run} with the real run record (status ok|error, rowsAffected, cursor window, batchId) after the write confirmed — the cursor advances ONLY on success; or {skipped, reason} when another run holds the lease or nothing is due (skip-not-queue, never a phantom success); a dataset with no sync configured is a typed conflict. A successful manual run also clears quarantine. Before: set_dataset_sync. After: get_sync_status for history + watermark. Governance: edit scope re-checked (same gate as the route’s manual trigger); the sync itself executes AS the dataset OWNER through the governed query path — never a service principal.',
+      'Trigger ONE immediate sync run (also called: refresh, data pipeline, ETL) of a dataset you can edit — the panel’s "Sync now" (or, with reset:true, "Reset & full re-sync": replace the copy and restart the cursor from now), the SAME governed executor as POST /api/data/datasets/:id/sync. Returns the outcome HONESTLY: {run} with the real run record (status ok|error, rowsAffected, cursor window, batchId) after the write confirmed — the cursor advances ONLY on success; or {skipped, reason} when another run holds the lease or nothing is due (skip-not-queue, never a phantom success); a dataset with no sync configured is a typed conflict. A successful manual run also clears quarantine. Before: set_dataset_sync. After: get_sync_status for history + watermark. Governance: edit scope re-checked (same gate as the route’s manual trigger); the sync itself executes AS the dataset OWNER through the governed query path — never a service principal.',
     inputSchema: {
       type: 'object',
       properties: {

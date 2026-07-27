@@ -383,7 +383,7 @@ function KnowledgePageInner() {
           personal context about how you work; <strong>Domain</strong> are notes promoted
           by domain members; <strong>Company</strong> is certified knowledge from across the org.
           The <strong>Domain Operating Manual</strong> (overview / glossary / goals / context) lives
-          at the top of the <strong>Workflows</strong> tab.
+          at the top of the <strong>Business Processes</strong> tab.
         </p>
 
         {/* ── CREATE — capture a note in one line. ── */}

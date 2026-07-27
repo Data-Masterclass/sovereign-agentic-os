@@ -136,7 +136,7 @@ export const agentWriteTools: McpTool[] = [
     tab: 'agents',
     minRole: 'creator',
     description:
-      'Create a new agent system (LangGraph). Always starts My-scope/owner-only — in My scope you have full rights and the system (which runs AS you) needs no approval. Sharing is the governed promote ladder (a domain admin approves the flip to Domain, an Admin certifies to Company). Optionally start from a server-authored template.',
+      'Create a new agent system (also called: AI team, assistant team). Always starts My-scope/owner-only — in My scope you have full rights and the system (which runs AS you) needs no approval. Sharing is the governed promote ladder (a domain admin approves the flip to Domain, an Admin certifies to Company). Optionally start from a server-authored template.',
     inputSchema: {
       type: 'object',
       properties: {

@@ -101,7 +101,7 @@ export const readTools: McpTool[] = [
     tab: 'data',
     minRole: 'creator',
     description:
-      'List the datasets you can see (My · Domain · Company), grouped by tier. Path: DISCOVERY for the Data golden path (guide: sovereign-os://guide/path/data). Before: whoami. After: reuse an id with get_dataset / define_metric, or create_dataset only if nothing fits. Governance: read-only, DLS-scoped to your identity — you never see rows you are not entitled to.',
+      'List the datasets you can see (My · Domain · Company), grouped by tier (also called: table, data product). Path: DISCOVERY for the Data golden path (guide: sovereign-os://guide/path/data). Before: whoami. After: reuse an id with get_dataset / define_metric, or create_dataset only if nothing fits. Governance: read-only, DLS-scoped to your identity — you never see rows you are not entitled to.',
     inputSchema: NO_ARGS,
     call: async (user) => listDatasets(P(user)),
   },
@@ -110,7 +110,7 @@ export const readTools: McpTool[] = [
     tab: 'data',
     minRole: 'creator',
     description:
-      'Read one dataset you can see (medallion versions, docs, tier, data-quality rules) plus its semantic-layer state: `cube.ready` is true when the dataset is shared/certified AND its Gold is built — it is then AUTO-REGISTERED as a queryable Cube model (view `cube.view`, dimensions from the gold columns, count fallback) WITHOUT any define_metric step. `queryable` names the physical FQN + layer this dataset resolves to for YOU — Gold by default, or the medallion `layer` your data grant selects (bronze/silver). Path: DISCOVERY for the Data golden path. Before: list_datasets. After: add_dataset_version / document_dataset / define_quality_rules → run_quality_checks / define_metric (only to ADD measures — the model is already queryable). Governance: read-only; an id you cannot see returns not_found (no existence leak).',
+      'Read one dataset you can see (also called: table, data product) — medallion versions, docs, tier, data-quality rules — plus its semantic-layer state: `cube.ready` is true when the dataset is shared/certified AND its Gold is built — it is then AUTO-REGISTERED as a queryable Cube model (view `cube.view`, dimensions from the gold columns, count fallback) WITHOUT any define_metric step. `queryable` names the physical FQN + layer this dataset resolves to for YOU — Gold by default, or the medallion `layer` your data grant selects (bronze/silver). Path: DISCOVERY for the Data golden path. Before: list_datasets. After: add_dataset_version / document_dataset / define_quality_rules → run_quality_checks / define_metric (only to ADD measures — the model is already queryable). Governance: read-only; an id you cannot see returns not_found (no existence leak).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -216,7 +216,7 @@ export const readTools: McpTool[] = [
     tab: 'data',
     minRole: 'creator',
     description:
-      'Read a dataset’s SCHEDULED-SYNC state — the same payload as GET /api/data/datasets/:id/sync: the saved config (mode, cursor, schedule, enabled), the source connection’s platform (kafka/salesforce/kajabi/warehouse — the per-source lock context), the estimated `nextRunAt` (UTC; null when the sync is disabled or the cron isn’t a simple preset shape — an honest omission, never a guess), the recent run history newest-first (per run: status ok|error|skipped|running, rowsAffected, cursor window, batchId, the honest error message), the current cursor `watermark` (cursorAfter of the latest ok run; null = never synced), and the QUARANTINE state (≥10 trailing consecutive errors auto-pauses scheduled runs; any successful run — e.g. sync_dataset_now — clears it, no flag to reset). Path: the read half of the sync loop. Before: set_dataset_sync. After: sync_dataset_now to run/resume, or set_dataset_sync to adjust. Governance: read-only, DLS-scoped like get_dataset — an unseeable id is not_found (no existence leak); an unresolvable connection reports platform:null honestly rather than failing the read.',
+      'Read a dataset’s SCHEDULED-SYNC state (also called: refresh, data pipeline, ETL) — the same payload as GET /api/data/datasets/:id/sync: the saved config (mode, cursor, schedule, enabled), the source connection’s platform (kafka/salesforce/kajabi/warehouse — the per-source lock context), the estimated `nextRunAt` (UTC; null when the sync is disabled or the cron isn’t a simple preset shape — an honest omission, never a guess), the recent run history newest-first (per run: status ok|error|skipped|running, rowsAffected, cursor window, batchId, the honest error message), the current cursor `watermark` (cursorAfter of the latest ok run; null = never synced), and the QUARANTINE state (≥10 trailing consecutive errors auto-pauses scheduled runs; any successful run — e.g. sync_dataset_now — clears it, no flag to reset). Path: the read half of the sync loop. Before: set_dataset_sync. After: sync_dataset_now to run/resume, or set_dataset_sync to adjust. Governance: read-only, DLS-scoped like get_dataset — an unseeable id is not_found (no existence leak); an unresolvable connection reports platform:null honestly rather than failing the read.',
     inputSchema: {
       type: 'object',
       properties: { datasetId: { type: 'string', description: 'Dataset id from list_datasets.' } },
@@ -266,7 +266,7 @@ export const readTools: McpTool[] = [
     tab: 'knowledge',
     minRole: 'creator',
     description:
-      'List the knowledge workflows you can see (My · Domain · Company). Path: DISCOVERY for the Knowledge golden path (guide: sovereign-os://guide/path/knowledge). Before: whoami. After: get_knowledge, or search_knowledge for content. Governance: read-only, DLS-scoped.',
+      'List the knowledge business processes you can see (also called: workflows, process workflows, SOPs (Standard Operating Procedures)) — My · Domain · Company. Path: DISCOVERY for the Knowledge golden path (guide: sovereign-os://guide/path/knowledge). Before: whoami. After: get_knowledge, or search_knowledge for content. Governance: read-only, DLS-scoped.',
     inputSchema: NO_ARGS,
     call: async (user) => listWorkflows(P(user)),
   },
@@ -275,7 +275,7 @@ export const readTools: McpTool[] = [
     tab: 'knowledge',
     minRole: 'creator',
     description:
-      'Read one knowledge workflow you can see (steps, rules, tacit, status). Path: DISCOVERY for the Knowledge golden path. Before: list_knowledge / search_knowledge. After: index_knowledge or (Builder) publish_knowledge. Governance: read-only; unseeable id → not_found.',
+      'Read one knowledge business process (also called: workflow, process workflow, SOP (Standard Operating Procedure)) you can see — steps, rules, tacit, status. Path: DISCOVERY for the Knowledge golden path. Before: list_knowledge / search_knowledge. After: index_knowledge or (Builder) publish_knowledge. Governance: read-only; unseeable id → not_found.',
     inputSchema: idArg('workflowId', 'Workflow id from list_knowledge.'),
     call: async (user, args) => {
       const id = str(args.workflowId).trim();
@@ -315,7 +315,7 @@ export const readTools: McpTool[] = [
     tab: 'metrics',
     minRole: 'creator',
     description:
-      'List the governed metric members you can see (the one definition of every number). Path: DISCOVERY for the Metrics + Dashboards golden paths (guide: sovereign-os://guide/path/metrics). Before: whoami. After: reuse a member on a dashboard, or define_metric only if missing. Governance: read-only, DLS-scoped.',
+      'List the governed metric members you can see (also called: KPIs, measures, indicators) — the one definition of every number. Path: DISCOVERY for the Metrics + Dashboards golden paths (guide: sovereign-os://guide/path/metrics). Before: whoami. After: reuse a member on a dashboard, or define_metric only if missing. Governance: read-only, DLS-scoped.',
     inputSchema: NO_ARGS,
     call: async (user) => listMetrics(P(user)),
   },
@@ -324,7 +324,7 @@ export const readTools: McpTool[] = [
     tab: 'metrics',
     minRole: 'creator',
     description:
-      'EVALUATE a governed metric — resolve its canonical Cube member and return the number(s), optionally sliced by dimensions/time. This is how "what is revenue this month" resolves through the SEMANTIC LAYER, not raw SQL: no SQL is accepted or generated here BY CONSTRUCTION — the tool builds a Cube load query from the member, and Cube applies per-viewer row-level security from YOUR delegated identity (securityContext), exactly like the Metrics explorer and every dashboard. Two viewers get two different row sets; the number can never drift from the charts. Path: the read half of the Metrics golden path. Before: list_metrics (take a metric `id`, shaped `<datasetId>.<measure>`). After: chart the same member with create_dashboard, or wire it into an agent. Governance: read-only; a metric on a dataset you cannot see → not_found; offline the OS answers with the honestly-labelled offline-mock resolver (mode is always stated).',
+      'EVALUATE a governed metric (also called: KPI, measure, indicator) — resolve its canonical Cube member and return the number(s), optionally sliced by dimensions/time. This is how "what is revenue this month" resolves through the SEMANTIC LAYER, not raw SQL: no SQL is accepted or generated here BY CONSTRUCTION — the tool builds a Cube load query from the member, and Cube applies per-viewer row-level security from YOUR delegated identity (securityContext), exactly like the Metrics explorer and every dashboard. Two viewers get two different row sets; the number can never drift from the charts. Path: the read half of the Metrics golden path. Before: list_metrics (take a metric `id`, shaped `<datasetId>.<measure>`). After: chart the same member with create_dashboard, or wire it into an agent. Governance: read-only; a metric on a dataset you cannot see → not_found; offline the OS answers with the honestly-labelled offline-mock resolver (mode is always stated).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -369,7 +369,7 @@ export const readTools: McpTool[] = [
     tab: 'dashboards',
     minRole: 'creator',
     description:
-      'List the dashboards you can see (My · Domain · Company). Path: DISCOVERY for the Dashboards golden path (guide: sovereign-os://guide/path/dashboards). Before: whoami. After: create_dashboard, or attach one to a big bet. Governance: read-only, DLS-scoped.',
+      'List the dashboards you can see (also called: reports, business intelligence (BI), data visualizations) — My · Domain · Company. Path: DISCOVERY for the Dashboards golden path (guide: sovereign-os://guide/path/dashboards). Before: whoami. After: create_dashboard, or attach one to a big bet. Governance: read-only, DLS-scoped.',
     inputSchema: NO_ARGS,
     call: async (user) => listDashboards(P(user)),
   },
@@ -378,7 +378,7 @@ export const readTools: McpTool[] = [
     tab: 'bigbets',
     minRole: 'creator',
     description:
-      'List the Big Bets you can see (initiative roadmaps over real OS components). Path: DISCOVERY for the Big Bets golden path (guide: sovereign-os://guide/path/bigbets). Before: whoami + list_datasets/list_dashboards/list_agent_systems (the bet tracks REAL components). After: create_big_bet. Governance: read-only, DLS-scoped.',
+      'List the Big Bets you can see (also called: initiatives, strategic investments, projects) — roadmaps over real OS components. Path: DISCOVERY for the Big Bets golden path (guide: sovereign-os://guide/path/bigbets). Before: whoami + list_datasets/list_dashboards/list_agent_systems (the bet tracks REAL components). After: create_big_bet. Governance: read-only, DLS-scoped.',
     inputSchema: NO_ARGS,
     call: async (user) => listBets(P(user)),
   },
@@ -387,7 +387,7 @@ export const readTools: McpTool[] = [
     tab: 'agents',
     minRole: 'creator',
     description:
-      'Read one agent system you can see (system.yaml, agents, grants, status). Path: DISCOVERY for the Agents golden path (guide: sovereign-os://guide/path/agents). Before: list_agent_systems. After: commit_agent_files / build_agent_system. Governance: read-only; unseeable id → not_found.',
+      'Read one agent system (also called: AI team, assistant team) you can see — system.yaml, agents, grants, status. Path: DISCOVERY for the Agents golden path (guide: sovereign-os://guide/path/agents). Before: list_agent_systems. After: commit_agent_files / build_agent_system. Governance: read-only; unseeable id → not_found.',
     inputSchema: idArg('systemId', 'System id from list_agent_systems.'),
     call: async (user, args) => {
       const id = str(args.systemId).trim();

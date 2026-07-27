@@ -136,7 +136,7 @@ export const bigbetWriteTools: McpTool[] = [
     tab: 'bigbets',
     minRole: 'creator',
     description:
-      'Frame a Big Bet — an initiative roadmap over real OS components — under a REAL strategy pillar it rolls up to. A creator files a draft; a Builder/Admin owns an active bet (cross-domain bets are Admin-only). Same governed store as the Big Bets tab. Containment: `pillarId` is REQUIRED and re-resolved through canViewPillar FIRST — a pillar you cannot see is a typed not_found/forbidden, so a bet can never be filed under an unseen pillar. Before: list_pillars (pick the pillar this bet delivers). After: attach_component to hang real artifacts, get_big_bet to read the derived status back.',
+      'Frame a Big Bet (also called: initiative, strategic investment, project) — an initiative roadmap over real OS components — under a REAL strategy pillar it rolls up to. A creator files a draft; a Builder/Admin owns an active bet (cross-domain bets are Admin-only). Same governed store as the Big Bets tab. Containment: `pillarId` is REQUIRED and re-resolved through canViewPillar FIRST — a pillar you cannot see is a typed not_found/forbidden, so a bet can never be filed under an unseen pillar. Before: list_pillars (pick the pillar this bet delivers). After: attach_component to hang real artifacts, get_big_bet to read the derived status back.',
     inputSchema: {
       type: 'object',
       properties: {

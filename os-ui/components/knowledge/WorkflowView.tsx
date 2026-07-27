@@ -291,7 +291,7 @@ export default function WorkflowView({
       // ── Workflow rules + Handover / gaps summary ──────────────────────────
       if (report.workflowRules.length > 0) {
         space(10);
-        line('Workflow rules', 14, true, 18);
+        line('Process rules', 14, true, 18);
         for (const r of report.workflowRules) line(`•  ${r.text}${r.hard ? ' (hard)' : ''}`, 10, false, 14);
       }
       if (report.gaps.length > 0) {
@@ -345,7 +345,7 @@ export default function WorkflowView({
         if (approval?.id) notifyApprovalFiled(approval, 'workflow', () => { void reload(); });
         return;
       }
-      setPubMsg(`Workflow is now ${d.visibility === 'Marketplace' ? 'certified company-wide' : 'live'}.`);
+      setPubMsg(`Business process is now ${d.visibility === 'Marketplace' ? 'certified company-wide' : 'live'}.`);
       await reload();
     } finally {
       setPublishing(false);
@@ -356,7 +356,7 @@ export default function WorkflowView({
     <>
       <PageHeader title="Knowledge" crumb="workflow" />
       <div className="content">
-        <button className="btn ghost sm" onClick={onBack}>← Workflows</button>
+        <button className="btn ghost sm" onClick={onBack}>← Business Processes</button>
         <div className="stub-page" style={{ marginTop: 16 }}><span className="spin" /> Loading…</div>
       </div>
     </>
@@ -366,7 +366,7 @@ export default function WorkflowView({
     <>
       <PageHeader title="Knowledge" crumb="workflow" />
       <div className="content">
-        <button className="btn ghost sm" onClick={onBack}>← Workflows</button>
+        <button className="btn ghost sm" onClick={onBack}>← Business Processes</button>
         <div className="error" style={{ marginTop: 16 }}>{error || 'Workflow not found.'}</div>
       </div>
     </>
@@ -382,7 +382,7 @@ export default function WorkflowView({
       <div className="content">
         {/* Header */}
         <div className="k-detail-head">
-          <button className="btn ghost sm" onClick={onBack}>← Workflows</button>
+          <button className="btn ghost sm" onClick={onBack}>← Business Processes</button>
           {renaming ? (
             <span className="rename-inline">
               <input
@@ -403,8 +403,8 @@ export default function WorkflowView({
                 <button
                   className="rename-pencil"
                   onClick={() => { setNameDraft(data.title); setRenameErr(''); setRenaming(true); }}
-                  title="Rename this workflow"
-                  aria-label="Rename this workflow"
+                  title="Rename this business process"
+                  aria-label="Rename this business process"
                 >✎</button>
               ) : null}
             </h2>
@@ -422,7 +422,7 @@ export default function WorkflowView({
           )}
           {acting ? <span className="spin" title="saving…" /> : null}
           {data.publishedBy && <span className="muted" style={{ fontSize: 12 }}>published by {data.publishedBy}</span>}
-          <span className="mono muted" style={{ fontSize: 11 }} title="Workflow ID">{data.id}</span>
+          <span className="mono muted" style={{ fontSize: 11 }} title="Business process ID">{data.id}</span>
           {renameErr && <span className="badge err" style={{ fontSize: 11 }}>{renameErr}</span>}
 
           {/* Export PDF — top-right of the workflow detail. Leads with the visual
@@ -432,7 +432,7 @@ export default function WorkflowView({
             style={{ marginLeft: 'auto' }}
             onClick={() => void exportPdf()}
             disabled={pdfBusy}
-            title="Export this workflow as a PDF — the visual flow first, then all content"
+            title="Export this business process as a PDF — the visual flow first, then all content"
           >
             {pdfBusy ? <span className="spin" /> : 'Export PDF'}
           </button>

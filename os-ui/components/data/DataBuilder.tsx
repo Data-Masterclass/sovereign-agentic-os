@@ -3,7 +3,7 @@
  */
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { canManageArtifact } from '@/lib/governance/edit-scope';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials';
@@ -13,6 +13,7 @@ import GoldJoinPanel from './GoldJoinPanel';
 import ExplorePanel from './ExplorePanel';
 import BronzePanel from './BronzePanel';
 import SyncPanel from './SyncPanel';
+import QualityFixPanel from './QualityFixPanel';
 import StageAssistant, { type DefineDraft } from './StageAssistant';
 import TalkTo from '@/components/talk/TalkTo';
 import { TALK_PRESENTATION } from '@/lib/talk/schema';
@@ -454,6 +455,8 @@ export default function DataBuilder({
   const [ranAt, setRanAt] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [runErr, setRunErr] = useState('');
+  // ---- AI-proposed remediations: which failing rule's fix panel is open ----
+  const [fixOpen, setFixOpen] = useState<string | null>(null);
   // ---- health score + persisted trend + profile-driven suggestions (Validate) ----
   const [health, setHealth] = useState<HealthScore | null>(null);
   const [trend, setTrend] = useState<TrendPoint[]>([]);
@@ -1036,6 +1039,17 @@ export default function DataBuilder({
               <SyncPanel datasetId={dataset.id} canEdit={canEdit} columns={colNames} />
             ) : null}
 
+            {/* Raw shape — the SAME governed rows/columns statistics treatment the Silver
+                and Gold builders show (ExplorePanel: row/column counts, completeness,
+                distinct, range), honestly labeled Bronze. Stats only here — the governed
+                50-row preview below stays the raw-rows view. */}
+            {dataset.versions.bronze?.built ? (
+              <>
+                <div className="section-title" style={{ marginTop: 22 }}>Your Bronze table</div>
+                <ExplorePanel datasetId={dataset.id} builtLayers={['bronze']} showPreview={false} />
+              </>
+            ) : null}
+
             {/* Raw preview of what landed — the governed SELECT * LIMIT 50. */}
             <div className="section-title" style={{ marginTop: 22 }}>
               Raw preview
@@ -1264,19 +1278,51 @@ export default function DataBuilder({
                   <tbody>
                     {checks.map((chk) => {
                       const r = results[chk.id];
+                      const failing = r?.status === 'fail';
                       return (
-                        <tr key={chk.id}>
-                          <td className="mono" style={{ whiteSpace: 'nowrap', fontWeight: 600 }}>{ruleText(chk)}</td>
-                          <td className="muted">{chk.createdBy}</td>
-                          <td>
-                            {r ? (
-                              r.status === 'pass' ? <span className="status-chip s-searchable" style={{ cursor: 'default' }}>✓ pass</span>
-                                : r.status === 'fail' ? <span className="status-chip s-stored" style={{ cursor: 'default' }} title={`${r.violations} violating row(s)`}>✗ fail · {r.violations}</span>
-                                  : <span className="muted" title={r.reason}>not run</span>
-                            ) : <span className="muted">—</span>}
-                          </td>
-                          {canEdit ? <td><button className="btn ghost sm" onClick={() => deleteRule(chk.id)} aria-label="Remove rule">×</button></td> : null}
-                        </tr>
+                        <Fragment key={chk.id}>
+                          <tr>
+                            <td className="mono" style={{ whiteSpace: 'nowrap', fontWeight: 600 }}>{ruleText(chk)}</td>
+                            <td className="muted">{chk.createdBy}</td>
+                            <td>
+                              {r ? (
+                                r.status === 'pass' ? <span className="status-chip s-searchable" style={{ cursor: 'default' }}>✓ pass</span>
+                                  : r.status === 'fail' ? <span className="status-chip s-stored" style={{ cursor: 'default' }} title={`${r.violations} violating row(s)`}>✗ fail · {r.violations}</span>
+                                    : <span className="muted" title={r.reason}>not run</span>
+                              ) : <span className="muted">—</span>}
+                              {failing ? (
+                                <button
+                                  className="btn ghost sm"
+                                  style={{ marginLeft: 8 }}
+                                  aria-expanded={fixOpen === chk.id}
+                                  onClick={() => setFixOpen((open) => (open === chk.id ? null : chk.id))}
+                                >
+                                  {fixOpen === chk.id ? 'Hide fixes' : 'Fix…'}
+                                </button>
+                              ) : null}
+                            </td>
+                            {canEdit ? <td><button className="btn ghost sm" onClick={() => deleteRule(chk.id)} aria-label="Remove rule">×</button></td> : null}
+                          </tr>
+                          {failing && fixOpen === chk.id ? (
+                            <tr>
+                              <td colSpan={canEdit ? 4 : 3} style={{ background: 'var(--panel)', paddingTop: 0 }}>
+                                {/* AI-proposed remediations — propose (read + advice) then an explicit,
+                                    edit-gated apply; the rule is RE-RUN after apply and the fresh verdict
+                                    replaces this row's chip (a fix that didn't fix stays red). */}
+                                <QualityFixPanel
+                                  datasetId={dataset.id}
+                                  checkId={chk.id}
+                                  column={chk.column ?? ''}
+                                  canEdit={canEdit}
+                                  onApplied={(recheck) => {
+                                    setResults((m) => ({ ...m, [chk.id]: recheck as CheckResult }));
+                                    void loadDq(); // refresh the persisted trend after a real change
+                                  }}
+                                />
+                              </td>
+                            </tr>
+                          ) : null}
+                        </Fragment>
                       );
                     })}
                   </tbody>

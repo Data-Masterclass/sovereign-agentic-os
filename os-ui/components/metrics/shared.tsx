@@ -68,9 +68,22 @@ export type GovernResult = {
   consistency: { ok?: boolean; member?: string | null; rows: CheckRow[] };
 };
 
-/** A dataset summary as the Data tab serves it — only Gold asset/product may host a metric. */
-export type DatasetTile = { id: string; name: string; tier: 'dataset' | 'asset' | 'product'; owner: string };
+/** A dataset summary as the Data tab serves it — only Gold asset/product may host a metric.
+ *  `tier` is typed tolerantly (any string) so a future dataset kind (e.g. "curated") can be
+ *  served without breaking the picker — {@link datasetLayerLabel} degrades to the raw kind. */
+export type DatasetTile = { id: string; name: string; tier: string; owner: string };
 export type DatasetGroups = { mine: DatasetTile[]; domain: DatasetTile[]; marketplace: DatasetTile[] };
+
+/**
+ * The friendly LAYER label for a dataset tier — CENTRALISED + tolerant. A metric lives on
+ * a governed Gold asset/product; a private `dataset` is a personal draft. An UNKNOWN kind
+ * (e.g. an upcoming "curated") is shown verbatim instead of crashing on a missing map key
+ * (watch-point 2 — the local `tierLabel` map used to throw for any new kind).
+ */
+const DATASET_LAYER_LABEL: Record<string, string> = { dataset: 'private', asset: 'asset', product: 'product' };
+export function datasetLayerLabel(tier: string): string {
+  return DATASET_LAYER_LABEL[tier] ?? tier;
+}
 
 // The badge CLASS per tier is OS-wide (lib/core/scopes) — only the tier VOCABULARY
 // differs per tab, so map this tab's keys onto the shared class map.

@@ -13,6 +13,39 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.4] — 2026-07-27
+
+### Added
+- Data Validate stage: run all defined quality checks directly, see per-rule
+  pass/fail with sampled failing rows, and get AI-PROPOSED REMEDIATIONS —
+  batch fixes (one previewed transformation for a whole failure class) or
+  per-row fixes, in a table with per-row Accept / manual edit / Skip plus
+  "Apply AI recommendations" and "Apply N accepted changes". Fixes apply via
+  governed MERGE under the caller's identity with a remediation batch id and
+  pre-apply snapshot recorded; the rule re-runs after apply and stays red if
+  the fix didn't fix. LLM-generated expressions pass a strict scalar-expression
+  validator — never raw SQL. MCP parity: propose_quality_fixes /
+  apply_quality_fixes. Per-row fixes require a documented key column (never a
+  guessed one).
+- Metrics Define: a real free-text goal input (the assistant previously
+  received a hardcoded goal), a grouped dataset picker with layer badges and
+  deliverability warnings, an assistant that finally sees column types + docs,
+  and "Suggest metrics" — candidates grounded in Strategic Pillars, the
+  Operating Model, and Business Processes, each pre-filling the editor with
+  the narrowest right dataset. Honest grounding banner when pillars/OM are
+  undefined. MCP parity: suggest_metrics.
+- Row/column statistics now shown identically on raw, silver, AND gold data
+  previews (one shared implementation).
+- MCP discoverability: approved synonym aliases on every tool family's primary
+  verbs (KPI/measure→metric, BI/report→dashboard, SOP/business workflow→
+  business process, project→big bet, north star→pillar, Google/Microsoft/AWS/
+  Snowflake/Databricks→connection, ETL/refresh→sync, …) + a collision lint
+  test guarding alias uniqueness across families.
+### Changed
+- "Workflows" is now displayed as "Business Processes" everywhere user-facing
+  (nav, pages, guides, tutorials, PDF export, MCP descriptions). Internal
+  routes, ids, and MCP tool names unchanged.
+
 ## [os-ui 0.6.3] — 2026-07-27
 
 ### Added
