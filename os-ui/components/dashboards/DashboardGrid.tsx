@@ -66,7 +66,7 @@ function PanelCard({
       ) : loading && !res ? (
         <div className="panel-state" style={{ height: 240 }}><span className="spin" /></div>
       ) : res ? (
-        <PanelChart panel={panel} rows={res.rows} pending={res.pending} />
+        <PanelChart panel={panel} rows={res.rows} pending={res.pending} warning={res.warning} />
       ) : null}
     </div>
   );

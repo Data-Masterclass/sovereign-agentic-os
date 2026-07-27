@@ -145,11 +145,15 @@ export default function PanelChart({
   panel,
   rows,
   pending,
+  warning,
   height = 240,
 }: {
   panel: Panel;
   rows: Record<string, unknown>[];
   pending?: boolean;
+  /** LOUD degradation notice (Northpeak fix): a requested member isn't in the served
+   *  model — rendered as an inline warning, never a silently de-dimensioned chart. */
+  warning?: string;
   height?: number;
 }) {
   const colors = useMemo(
@@ -168,6 +172,15 @@ export default function PanelChart({
     [isChart, panel, rows, colors],
   );
 
+  // Honest inline WARNING first (Northpeak fix): the panel's group-by/measure is not in
+  // the served model. Louder than the quiet states below — silent single-bar is the bug.
+  if (warning) {
+    return (
+      <div className="panel-state" style={{ height, padding: 12, textAlign: 'center' }}>
+        <span className="error" role="alert">⚠ {warning}</span>
+      </div>
+    );
+  }
   if (pending) {
     return (
       <div className="panel-state" style={{ height }}>

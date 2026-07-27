@@ -2,8 +2,13 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { requireUser, type CurrentUser } from '@/lib/core/auth';
 import { failResponse, runStageAssistant } from '@/lib/assistant/stage-route';
+import { cubeMeta } from '@/lib/infra/governed';
+import { listMetrics } from '@/lib/metrics/store';
+import { narrowCubeMeta, type RegistryViewDims } from '@/lib/dashboards/cube-meta';
+import { listGovernedDatasets } from '@/lib/data/store';
+import { cubeViewName, registryDimensionMembers } from '@/lib/data/metrics';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,8 +27,27 @@ export const dynamic = 'force-dynamic';
 type Stage = 'define' | 'design' | 'build' | 'view' | 'govern';
 const STAGES = new Set<Stage>(['define', 'design', 'build', 'view', 'govern']);
 
+/** The governed dimension members of ONE view the caller may see — served Cube /meta
+ *  first, registry fallback otherwise (the same narrowing as /api/dashboards/cube-meta),
+ *  so the Design assistant can propose GROUP-BY charts instead of only scalar tiles
+ *  (Northpeak fix: a bar with no dimension collapses to a single bar). */
+async function designDimensionsFor(user: CurrentUser, view: string): Promise<string[]> {
+  if (!view) return [];
+  try {
+    const groups = listMetrics(user);
+    const members = [...groups.mine, ...groups.domain, ...groups.marketplace].map((m) => m.member);
+    const registryDims: RegistryViewDims = new Map(
+      listGovernedDatasets().map((d) => [cubeViewName(d), registryDimensionMembers(d)]),
+    );
+    const v = narrowCubeMeta(members, await cubeMeta(), registryDims).find((x) => x.view === view);
+    return v ? [...v.dimensions, ...v.timeDimensions] : [];
+  } catch {
+    return []; // dimension enrichment is additive — never fail the assistant for it
+  }
+}
+
 /** Build the stage-scoped system + user prompt pair from the request body. */
-function promptFor(stage: Stage, body: Record<string, unknown>): { system: string; user: string; json: boolean } {
+function promptFor(stage: Stage, body: Record<string, unknown>, designDims: string[] = []): { system: string; user: string; json: boolean } {
   const s = (v: unknown) => (typeof v === 'string' ? v : '');
   const prompt = s(body.prompt);
   const view = s(body.view);
@@ -45,8 +69,8 @@ function promptFor(stage: Stage, body: Record<string, unknown>): { system: strin
       return {
         json: true,
         system:
-          'You design dashboard chart tiles over a SINGLE governed Cube view. Return ONLY a JSON array (no prose, no code fences) of chart objects: {"name": string, "vizType": one of "big_number_total"|"line"|"bar"|"table", "metric": one of the provided member ids}. Prefer a big_number_total per key measure, a line trend for the primary measure, and a bar or table top-N. Use only members from the provided list. 3-6 charts.',
-        user: `Cube view: ${view || '(unknown)'}\nAvailable members: ${members.join(', ') || '(none)'}\nGoal (optional): ${prompt}\nReturn the JSON chart array.`,
+          'You design dashboard chart tiles over a SINGLE governed Cube view. Return ONLY a JSON array (no prose, no code fences) of chart objects: {"name": string, "vizType": one of "big_number_total"|"line"|"bar"|"pie"|"table", "metric": one of the provided measure member ids, "dimensions": OPTIONAL array of ONE dimension member id from the provided dimensions list (the group-by for a bar/pie — a bar or pie without a dimension collapses to a single meaningless bar, so ALWAYS set one when dimensions are available)}. Prefer a big_number_total per key measure, a line trend for the primary measure, and a bar or pie grouped by a categorical dimension. Use only member ids from the provided lists — never invent one. 3-6 charts.',
+        user: `Cube view: ${view || '(unknown)'}\nAvailable measures: ${members.join(', ') || '(none)'}\nAvailable dimensions: ${designDims.join(', ') || '(none)'}\nGoal (optional): ${prompt}\nReturn the JSON chart array.`,
       };
     case 'build':
       return {
@@ -85,8 +109,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'A valid stage is required (define|design|build|view|govern).' }, { status: 400 });
     }
 
+    const designDims = stage === 'design'
+      ? await designDimensionsFor(user, typeof body.view === 'string' ? body.view : '')
+      : [];
     return await runStageAssistant({
-      prompt: promptFor(stage, body),
+      prompt: promptFor(stage, body, designDims),
       user,
       jsonKey: 'charts',
       expectArray: true,

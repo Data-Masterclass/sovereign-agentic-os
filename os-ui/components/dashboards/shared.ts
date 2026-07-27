@@ -64,8 +64,10 @@ export function panelMetrics(p: Panel): string[] {
   return p.metric ? [p.metric] : [];
 }
 
-/** A view's palette from GET /api/dashboards/cube-meta (narrowed to governed views). */
-export type PanelViewMeta = { view: string; measures: string[]; dimensions: string[]; timeDimensions: string[] };
+/** A view's palette from GET /api/dashboards/cube-meta (narrowed to governed views).
+ *  `served:false` ⇒ Cube does not currently serve this view (registry-fallback palette) —
+ *  the builder warns loudly; charts still bind their real members and are flagged at render. */
+export type PanelViewMeta = { view: string; measures: string[]; dimensions: string[]; timeDimensions: string[]; served?: boolean };
 export type CubeMetaResponse = { views: PanelViewMeta[] };
 
 /** GET /api/dashboards/[id] — the panels + binding for an existing dashboard. */
@@ -76,6 +78,10 @@ export type PanelQueryResponse = {
   rows: Record<string, unknown>[];
   mode: EmbedMode;
   pending?: boolean;
+  /** LOUD degradation notice: a requested member isn't in the served Cube model (the
+   *  dataset's domain table may need re-promotion). Rendered inline, never swallowed. */
+  warning?: string;
+  missingMembers?: string[];
   securityContext: Record<string, unknown>;
   sql: string;
 };

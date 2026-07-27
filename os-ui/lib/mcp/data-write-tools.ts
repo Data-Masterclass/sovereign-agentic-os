@@ -4,6 +4,7 @@
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
 import type { McpTool, JsonSchema } from './server';
+import { roleAtLeast } from '@/lib/core/session';
 import {
   P, mcpToken, fail, str, num, bool, strArr, slug, rand, defaultGoLive,
   colDocs, mapSteps, mapRules, mapActors, normFiles, INGEST_MAX_BYTES,
@@ -37,7 +38,7 @@ import { assistantComplete } from '@/lib/assistant/complete';
 import { roleModel } from '@/lib/models/roles';
 import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/data';
 import { queryRun, executeRun } from '@/lib/infra/governed';
-import { publishPromotionLive } from '@/lib/data/publish-server';
+import { publishPromotionLive, rematerializeDomainTableLive } from '@/lib/data/publish-server';
 import { enqueue, getApproval, decide, listApprovals } from '@/lib/governance/approvals';
 import { canBuildStage, canPassThrough, stageArtifact } from '@/lib/data/panels';
 import { scaffoldCubeYaml } from '@/lib/data/metrics';
@@ -410,6 +411,11 @@ export const dataWriteTools: McpTool[] = [
           description: 'Derived measures: {name, agg} for count(*), {name, agg, col} for a column aggregate, or {name, agg, left, op, right} for an expression.',
           items: { type: 'object', properties: { name: { type: 'string' }, agg: { type: 'string', enum: ['sum', 'avg', 'count', 'count_distinct', 'min', 'max'] } }, required: ['name', 'agg'] },
         },
+        rematerializeOnly: {
+          type: 'boolean',
+          description:
+            'REPAIR MODE: true skips the build and just re-runs the publish CTAS (owner’s personal gold → domain schema) for an ALREADY-PROMOTED dataset whose domain table is missing or stale. Builder+ only; picks are ignored (pass []). Never touches versions/lineage/measures.',
+        },
       },
       required: ['datasetId', 'picks'],
       examples: [
@@ -438,6 +444,23 @@ export const dataWriteTools: McpTool[] = [
       if (!datasetId) fail('build_gold_join needs a `datasetId`', 400);
       const p = P(user);
       const dataset = getDataset(datasetId, p); // view-scope guard on the base
+
+      // REPAIR MODE (parity with the gold-join route): re-run ONLY the publish CTAS for a
+      // promoted dataset whose domain table is missing/stale — no build, no spec needed.
+      if (args.rematerializeOnly === true) {
+        if (dataset.tier === 'dataset') fail('Not promoted — nothing to re-materialize', 400);
+        if (!roleAtLeast(user.role, 'builder')) {
+          fail('Re-materializing the shared domain table needs Builder or above', 403);
+        }
+        const out = await rematerializeDomainTableLive(datasetId, p);
+        return {
+          ok: out.ok,
+          domainTable: out.ok
+            ? { state: 'refreshed', fqn: out.fqn }
+            : { state: 'stale', fqn: out.fqn, reason: out.error },
+        };
+      }
+
       if (!canBuildStage(dataset.versions, 'gold')) {
         fail('Bring in the Silver version before joining it (run transform_silver first)', 400);
       }
@@ -475,6 +498,26 @@ export const dataWriteTools: McpTool[] = [
         artifact: stageArtifact(dataset.name, 'gold'),
         body: plan.sql,
       });
+      // Northpeak fix — MATERIALIZATION DRIFT (MCP parity with the gold-join route): a
+      // rebuild of an ALREADY-PROMOTED dataset leaves the governed domain table (what Cube
+      // reads) on the prior snapshot. Auto-refresh it as a Builder+ (the write floor);
+      // otherwise report an honest STALE state. Best-effort — never fails the ✓ rebuild.
+      let domainTable: { state: 'refreshed' | 'stale' | 'not-promoted'; fqn?: string; reason?: string } =
+        { state: 'not-promoted' };
+      if (updated.tier !== 'dataset') {
+        if (roleAtLeast(user.role, 'builder')) {
+          try {
+            const out = await rematerializeDomainTableLive(datasetId, p);
+            domainTable = out.ok
+              ? { state: 'refreshed', fqn: out.fqn }
+              : { state: 'stale', fqn: out.fqn, reason: out.error };
+          } catch (e) {
+            domainTable = { state: 'stale', reason: e instanceof Error ? e.message : String(e) };
+          }
+        } else {
+          domainTable = { state: 'stale', reason: 'Rebuilt by a creator — a Builder must re-promote to refresh the shared domain table.' };
+        }
+      }
       return {
         ok: true,
         mode: build.mode,
@@ -483,6 +526,7 @@ export const dataWriteTools: McpTool[] = [
         goldRegistered: true,
         measures: updated.measures,
         upstreams: updated.upstreams,
+        domainTable,
       };
     },
   },

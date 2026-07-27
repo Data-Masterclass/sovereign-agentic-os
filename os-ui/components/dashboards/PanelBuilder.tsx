@@ -144,9 +144,24 @@ export default function PanelBuilder({
         <button className="btn" style={{ marginLeft: 'auto' }} onClick={add} disabled={!draft}>＋ Add panel</button>
       </div>
 
+      {/* LOUD degradation notice (Northpeak fix): the view is not currently served by Cube —
+          the palette fell back to the governed registry. The chart is still created WITH its
+          group-by spec and will show an honest warning at render until the model is served
+          (the dataset's domain table may be missing/stale and need re-promotion). */}
+      {viewMeta && viewMeta.served === false ? (
+        <div className="error" role="alert" style={{ marginTop: 8 }}>
+          ⚠ Cube is not serving “{view}” right now — the dataset’s domain table may be missing or
+          stale and need re-promotion. You can still design this panel (members come from the
+          governed registry); it will warn instead of rendering until the model is served.
+        </div>
+      ) : null}
       {(needsDimension && !viewMeta?.dimensions?.length) || (isTimeSeries && !viewMeta?.timeDimensions?.length) ? (
         <div className="hint" style={{ marginTop: 8 }}>
-          {meta === null ? 'Loading the view’s dimensions…' : 'No matching dimensions on this view yet (they appear once the metric syncs to Cube).'}
+          {meta === null
+            ? 'Loading the view’s dimensions…'
+            : viewMeta?.served === false
+              ? 'No dimensions known for this view — the governed registry has no documented Gold columns for it either. Document the dataset’s columns, or re-promote it so Cube serves the view.'
+              : 'No matching dimensions on this view yet (they appear once the metric syncs to Cube).'}
         </div>
       ) : null}
 

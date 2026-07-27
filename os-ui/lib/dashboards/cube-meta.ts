@@ -16,6 +16,12 @@ export type PanelView = {
   measures: string[];
   dimensions: string[];
   timeDimensions: string[];
+  /** TRUE when Cube's /meta actually reports this view; FALSE when the palette fell back
+   *  to the governed registry (Cube unreachable, sidecar lag, or — the Northpeak case — the
+   *  dataset's domain table is missing/stale so Cube can't serve the view). An unserved
+   *  view's members are still OFFERED (a chart is created WITH its spec, flagged at render),
+   *  but the builder must WARN loudly — never silently empty the group-by palette. */
+  served: boolean;
 };
 
 /** The view prefix of a governed metric member (`View.measure` → `View`). */
@@ -24,7 +30,12 @@ export function viewOfMember(member: string): string {
   return i > 0 ? member.slice(0, i) : member;
 }
 
-export function narrowCubeMeta(members: string[], meta: CubeMetaView[]): PanelView[] {
+/** Registry-known dimension members per view — the fallback palette source when Cube
+ *  does not serve a view (see `served` above). Built server-side from the governed
+ *  dataset registry (`registryDimensionMembers`), keyed by view name. */
+export type RegistryViewDims = Map<string, { dimensions: string[]; timeDimensions: string[] }>;
+
+export function narrowCubeMeta(members: string[], meta: CubeMetaView[], registryDims?: RegistryViewDims): PanelView[] {
   const allowedViews = new Set<string>();
   const registryMeasures = new Map<string, Set<string>>();
   for (const member of members) {
@@ -37,7 +48,17 @@ export function narrowCubeMeta(members: string[], meta: CubeMetaView[]): PanelVi
   const byName = new Map(meta.map((c) => [c.name, c]));
   return [...allowedViews].map((view) => {
     const live = byName.get(view);
-    if (live) return { view, measures: live.measures, dimensions: live.dimensions, timeDimensions: live.timeDimensions };
-    return { view, measures: [...(registryMeasures.get(view) ?? [])], dimensions: [], timeDimensions: [] };
+    if (live) return { view, measures: live.measures, dimensions: live.dimensions, timeDimensions: live.timeDimensions, served: true };
+    // Not served by Cube → fall back to the GOVERNED REGISTRY so the builder still offers
+    // the real members (Northpeak fix: the group-by must never silently vanish from the
+    // palette). `served: false` makes the degradation loud in the builder.
+    const reg = registryDims?.get(view);
+    return {
+      view,
+      measures: [...(registryMeasures.get(view) ?? [])],
+      dimensions: reg?.dimensions ?? [],
+      timeDimensions: reg?.timeDimensions ?? [],
+      served: false,
+    };
   });
 }

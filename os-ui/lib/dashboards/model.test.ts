@@ -4,8 +4,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  type Panel, buildPanelCubeQuery, fromTiles, fromAgent, normalizePanel, panelMetrics,
-  sameDashboard, viewFor,
+  type Panel, buildPanelCubeQuery, fromTiles, fromAgent, missingPanelMembers, normalizePanel,
+  panelMetrics, panelRequestedMembers, sameDashboard, viewFor,
 } from './model.ts';
 import { goldSales } from '../metrics/fixtures.ts';
 
@@ -80,4 +80,38 @@ test('buildPanelCubeQuery folds the legacy `metric` alias into measures', () => 
   const q = buildPanelCubeQuery({ name: 'KPI', vizType: 'big_number', metric: 'Sales.revenue' });
   assert.deepEqual(q.measures, ['Sales.revenue']);
   assert.equal(q.dimensions, undefined);
+});
+
+// ── Northpeak fix: the missing-member guard (never a silent de-dimension) ──────
+
+const servedFull = {
+  measures: ['Sales.revenue'],
+  dimensions: ['Sales.region', 'Sales.partner_name'],
+  timeDimensions: ['Sales.order_date'],
+};
+
+test('panelRequestedMembers: measures + group-by dimensions + time dimension', () => {
+  const p: Panel = {
+    name: 'By partner', vizType: 'bar', metrics: ['Sales.revenue'],
+    dimensions: ['Sales.partner_name'], timeDimension: 'Sales.order_date',
+  };
+  assert.deepEqual(panelRequestedMembers(p), ['Sales.revenue', 'Sales.partner_name', 'Sales.order_date']);
+});
+
+test('missingPanelMembers: empty when the served model exposes every requested member', () => {
+  const p: Panel = { name: 'By partner', vizType: 'bar', metrics: ['Sales.revenue'], dimensions: ['Sales.partner_name'] };
+  assert.deepEqual(missingPanelMembers(p, servedFull), []);
+});
+
+test('missingPanelMembers: a group-by the served model lacks is REPORTED (the single-bar bug)', () => {
+  const p: Panel = { name: 'By center', vizType: 'bar', metrics: ['Sales.revenue'], dimensions: ['Sales.service_center_id'] };
+  assert.deepEqual(missingPanelMembers(p, servedFull), ['Sales.service_center_id']);
+});
+
+test('missingPanelMembers: an entirely unserved view reports EVERY requested member', () => {
+  const p: Panel = { name: 'By brand', vizType: 'bar', metrics: ['Cases.avg_interactions'], dimensions: ['Cases.brand'] };
+  assert.deepEqual(
+    missingPanelMembers(p, { measures: [], dimensions: [], timeDimensions: [] }),
+    ['Cases.avg_interactions', 'Cases.brand'],
+  );
 });

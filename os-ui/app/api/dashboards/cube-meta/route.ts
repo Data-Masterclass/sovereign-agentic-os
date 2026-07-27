@@ -7,7 +7,9 @@ import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
 import { cubeMeta } from '@/lib/infra/governed';
 import { listMetrics } from '@/lib/metrics/store';
-import { narrowCubeMeta } from '@/lib/dashboards/cube-meta';
+import { narrowCubeMeta, type RegistryViewDims } from '@/lib/dashboards/cube-meta';
+import { listGovernedDatasets } from '@/lib/data/store';
+import { cubeViewName, registryDimensionMembers } from '@/lib/data/metrics';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,5 +25,12 @@ export const GET = withRoute(async ({ user }) => {
   const groups = listMetrics(user);
   const members = [...groups.mine, ...groups.domain, ...groups.marketplace].map((m) => m.member);
   const meta = await cubeMeta();
-  return NextResponse.json({ views: narrowCubeMeta(members, meta) });
+  // Registry fallback (Northpeak fix): the governed datasets' REAL dimension members, so a
+  // view Cube doesn't serve still offers its group-bys (flagged `served:false`, warned in the
+  // builder) instead of silently emptying the palette. Entitlement unchanged: narrowCubeMeta
+  // only emits views behind the caller's visible metrics; this map merely enriches those.
+  const registryDims: RegistryViewDims = new Map(
+    listGovernedDatasets().map((d) => [cubeViewName(d), registryDimensionMembers(d)]),
+  );
+  return NextResponse.json({ views: narrowCubeMeta(members, meta, registryDims) });
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });

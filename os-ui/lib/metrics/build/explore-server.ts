@@ -71,6 +71,10 @@ export type ExploreServerResult = {
   mode: ExploreMode;
   /** True when Cube is up but the just-defined measure hasn't sync'd yet (soft "syncing"). */
   pending?: boolean;
+  /** LOUD degradation notice (Northpeak fix): requested slice members the view does not
+   *  expose were dropped from the query — the result is NOT sliced as asked. */
+  warning?: string;
+  droppedMembers?: string[];
 };
 
 export async function exploreMetric(
@@ -88,7 +92,19 @@ export async function exploreMetric(
 ): Promise<ExploreServerResult> {
   const spec = exploreSpec(dataset, measure, slice);
   const live = await liveMetricsReachable();
-  const base = { member: spec.member, sql: dropToSql(spec), mode: (live ? 'live' : 'offline-mock') as ExploreMode };
+  const base = {
+    member: spec.member,
+    sql: dropToSql(spec),
+    mode: (live ? 'live' : 'offline-mock') as ExploreMode,
+    // NEVER a silent de-dimension (Northpeak fix): members the view doesn't expose were
+    // dropped from the query — say so on every result shape this function returns.
+    ...(spec.dropped && spec.dropped.length > 0
+      ? {
+          droppedMembers: spec.dropped,
+          warning: `Not sliced by ${spec.dropped.map((d) => `“${d}”`).join(', ')} — ${spec.dropped.length === 1 ? 'this member is' : 'these members are'} not exposed on the governed view (the dataset's domain table may need re-promotion, or the column isn't documented on the Gold).`,
+        }
+      : {}),
+  };
   if (live && opts.unsaved) {
     // PRE-SAVE preview: compute the same number as ONE governed Trino SELECT over the
     // gold mart, under the viewer's delegated identity (R3 — Trino/OPA row security),

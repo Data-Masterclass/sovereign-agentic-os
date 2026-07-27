@@ -219,3 +219,118 @@ test('publishPlan target always equals the promotion target (one FQN contract)',
   // Guard-shape: one statement, no comments, no ';' — accepted verbatim by /execute.
   assert.ok(!plan.sql.includes(';') && !plan.sql.includes('--'));
 });
+
+// ── Northpeak fix: STALE domain tables + re-materialization on source rebuild ──
+// The bug pair: (a) a promoted dataset's Gold rebuild rewrote only the personal lane —
+// the governed domain table (what Cube reads) silently kept the PRIOR snapshot;
+// (b) nothing ever re-ran the publish CTAS. Now the rebuild FLAGS the drift and
+// `rematerializeDomainTable` re-runs the same governed CTAS + probe, clearing it.
+
+test('rebuilding a PROMOTED dataset’s gold flags the domain table STALE (visible, never silent)', async () => {
+  const { id, req } = ready();
+  await publishApprovedPromotion(req, bea, fakeBuild(true).deps);
+  assert.equal(getDataset(id, amir).domainTableStale, undefined, 'in sync right after promotion');
+  buildVersion(id, amir, 'gold', { quality: 'passing', artifact: 'g2' }); // the source rebuild
+  assert.equal(getDataset(id, amir).domainTableStale, true, 'the drift is flagged');
+  // The visible stale state reaches the tile summary too (a promoted asset lists
+  // under the domain group for its owner).
+  const { listDatasets } = await import('./store.ts');
+  const groups = listDatasets(amir);
+  const summary = [...groups.mine, ...groups.domain, ...groups.marketplace].find((s) => s.id === id);
+  assert.equal(summary?.domainTableStale, true);
+});
+
+test('a BRONZE build (sync freshness) does not flag the domain table', async () => {
+  const { id, req } = ready();
+  await publishApprovedPromotion(req, bea, fakeBuild(true).deps);
+  buildVersion(id, amir, 'bronze', { quality: 'passing', artifact: 'b2' });
+  assert.equal(getDataset(id, amir).domainTableStale, undefined);
+});
+
+test('an UN-promoted dataset never carries the stale flag', () => {
+  const d = createDataset(amir, { name: 'Orders' });
+  buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'b' });
+  buildVersion(d.id, amir, 'silver', { quality: 'passing', artifact: 's' });
+  buildVersion(d.id, amir, 'gold', { quality: 'passing', artifact: 'g' });
+  assert.equal(getDataset(d.id, amir).domainTableStale, undefined);
+});
+
+test('re-materialize re-runs the SAME publish CTAS (right FQNs) as the operating Builder and clears STALE', async () => {
+  const { id, req } = ready();
+  await publishApprovedPromotion(req, bea, fakeBuild(true).deps);
+  buildVersion(id, amir, 'gold', { quality: 'passing', artifact: 'g2' });
+  assert.equal(getDataset(id, amir).domainTableStale, true);
+
+  const { rematerializeDomainTable } = await import('./publish.ts');
+  const fb = fakeBuild(true);
+  const out = await rematerializeDomainTable(id, bea, fb.deps);
+  assert.equal(out.ok, true);
+  assert.equal(out.ok && out.fqn, 'iceberg.sales.gold_orders');
+  // The refresh CTAS copies the owner's freshly-rebuilt personal gold → the domain schema.
+  assert.equal(fb.calls.length, 1);
+  assert.equal(
+    fb.calls[0].write.transformSql,
+    'create or replace table iceberg.sales.gold_orders as select * from iceberg.personal_amir.gold_orders',
+  );
+  assert.equal(fb.calls[0].write.identity.uid, 'bea', 'runs AS the operator (Builder write floor)');
+  assert.equal(fb.calls[0].write.releaseSchema, 'personal_amir');
+  // The independent probe re-checked the exact domain target before clearing the flag.
+  assert.deepEqual(fb.probes, [{ fqn: 'iceberg.sales.gold_orders', principal: 'sales' }]);
+  assert.equal(getDataset(id, amir).domainTableStale, undefined, 'STALE cleared on ✓');
+});
+
+test('re-materialize is idempotent: refreshing an already-in-sync table is a harmless ✓', async () => {
+  const { id, req } = ready();
+  await publishApprovedPromotion(req, bea, fakeBuild(true).deps);
+  const { rematerializeDomainTable } = await import('./publish.ts');
+  const out = await rematerializeDomainTable(id, bea, fakeBuild(true).deps);
+  assert.equal(out.ok, true);
+  assert.equal(getDataset(id, amir).domainTableStale, undefined);
+});
+
+test('HONESTY: a failed refresh CTAS leaves the STALE flag set + surfaces the real error', async () => {
+  const { id, req } = ready();
+  await publishApprovedPromotion(req, bea, fakeBuild(true).deps);
+  buildVersion(id, amir, 'gold', { quality: 'passing', artifact: 'g2' });
+  const { rematerializeDomainTable } = await import('./publish.ts');
+  const out = await rematerializeDomainTable(id, bea, fakeBuild(false).deps);
+  assert.equal(out.ok, false);
+  assert.match((out as { error: string }).error, /TABLE_NOT_FOUND/);
+  assert.equal(getDataset(id, amir).domainTableStale, true, 'still honestly stale');
+});
+
+test('FAIL-CLOSED: a refresh whose domain probe fails throws 502 and keeps the STALE flag', async () => {
+  const { id, req } = ready();
+  await publishApprovedPromotion(req, bea, fakeBuild(true).deps);
+  buildVersion(id, amir, 'gold', { quality: 'passing', artifact: 'g2' });
+  const { rematerializeDomainTable } = await import('./publish.ts');
+  await assert.rejects(
+    () => rematerializeDomainTable(id, bea, fakeBuild(true, undefined, /* domainTableLive */ false).deps),
+    (e: DatasetError) => e.status === 502,
+  );
+  assert.equal(getDataset(id, amir).domainTableStale, true);
+});
+
+test('the domain-schema write floor: a creator cannot re-materialize (honest stale outcome, no build)', async () => {
+  const { id, req } = ready();
+  await publishApprovedPromotion(req, bea, fakeBuild(true).deps);
+  buildVersion(id, amir, 'gold', { quality: 'passing', artifact: 'g2' });
+  const { rematerializeDomainTable } = await import('./publish.ts');
+  const fb = fakeBuild(true);
+  const out = await rematerializeDomainTable(id, amir, fb.deps); // amir is a creator
+  assert.equal(out.ok, false);
+  assert.match((out as { error: string }).error, /Builder/);
+  assert.equal(fb.calls.length, 0, 'nothing reaches the write path');
+  assert.equal(getDataset(id, amir).domainTableStale, true);
+});
+
+test('re-materialize refuses a dataset that was never promoted', async () => {
+  const d = createDataset(amir, { name: 'Orders' });
+  buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'b' });
+  buildVersion(d.id, amir, 'silver', { quality: 'passing', artifact: 's' });
+  const { rematerializeDomainTable } = await import('./publish.ts');
+  // As the owner (a private dataset isn't even VISIBLE to a non-owner builder — canView).
+  const out = await rematerializeDomainTable(d.id, amir, fakeBuild(true).deps);
+  assert.equal(out.ok, false);
+  assert.match((out as { error: string }).error, /not promoted/);
+});

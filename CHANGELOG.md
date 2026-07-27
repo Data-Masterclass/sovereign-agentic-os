@@ -13,6 +13,31 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.6] — 2026-07-27
+
+### Added
+- Repair mode for materialization drift: `rematerializeOnly: true` on the gold
+  build (route + build_gold_join MCP tool) re-runs just the publish CTAS for an
+  already-promoted dataset — heals missing/stale domain tables without
+  re-specifying the gold spec. Builder+ only.
+
+## [os-ui 0.6.5] — 2026-07-27
+
+### Fixed
+- Promotion materialization (the "single-column dashboard" bug): approving a
+  promotion now ALWAYS materializes the physical domain table, and rebuilding
+  a promoted dataset's gold re-materializes the domain copy automatically
+  (Builder+; creators get an honest "stale" state instead). Pre-existing
+  promotions whose CTAS never landed can be healed by re-running the gold
+  build. New domainTableStale flag tracks drift honestly.
+- Silent dimension loss is gone everywhere: panels whose group-by dimension is
+  missing from the served Cube model now show an inline warning naming the
+  member and remedy (never a silently un-grouped single bar); chart creation
+  with unknown members creates-with-flag or reports rejection (never silent
+  discard); the Design assistant can propose dimensions; the dashboard palette
+  falls back to the dataset's real gold dimensions when Cube isn't serving the
+  view yet; metrics explorer surfaces dropped slice members.
+
 ## [os-ui 0.6.4] — 2026-07-27
 
 ### Added

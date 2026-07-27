@@ -33,3 +33,30 @@ test('a governed view Cube does not report falls back to the registry measures',
   assert.deepEqual(views[0].measures.sort(), ['Campaign.clicks', 'Campaign.spend']);
   assert.deepEqual(views[0].dimensions, []);
 });
+
+test('served flag: a Cube-reported view is served:true; an unreported one is served:false (loud, not silent)', () => {
+  const views = narrowCubeMeta(['Sales.revenue', 'Campaign.spend'], meta);
+  const sales = views.find((v) => v.view === 'Sales')!;
+  const campaign = views.find((v) => v.view === 'Campaign')!;
+  assert.equal(sales.served, true);
+  assert.equal(campaign.served, false, 'the degradation is FLAGGED — the builder warns instead of silently emptying');
+});
+
+test('Northpeak fix: an unserved view’s group-bys come from the GOVERNED REGISTRY — never a silently empty palette', () => {
+  // The missing/stale-domain-table case: Cube can't serve the view, but the registry
+  // knows the gold dimensions. The palette must still offer them (spec created + flagged).
+  const registryDims = new Map([
+    ['Campaign', { dimensions: ['Campaign.partner_name', 'Campaign.service_center_id'], timeDimensions: ['Campaign.created_at'] }],
+  ]);
+  const views = narrowCubeMeta(['Campaign.spend'], meta, registryDims);
+  assert.equal(views.length, 1);
+  assert.equal(views[0].served, false);
+  assert.deepEqual(views[0].dimensions, ['Campaign.partner_name', 'Campaign.service_center_id']);
+  assert.deepEqual(views[0].timeDimensions, ['Campaign.created_at']);
+});
+
+test('the registry fallback never leaks a view the caller has no metric on', () => {
+  const registryDims = new Map([['HR', { dimensions: ['HR.dept'], timeDimensions: [] }]]);
+  const views = narrowCubeMeta(['Sales.revenue'], meta, registryDims);
+  assert.ok(!views.some((v) => v.view === 'HR'), 'entitlement narrowing still wins');
+});

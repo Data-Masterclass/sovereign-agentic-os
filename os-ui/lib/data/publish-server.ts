@@ -5,7 +5,7 @@ import 'server-only';
 import { buildStage } from './build/server.ts';
 import { liveDataReachable, realTrino } from './build/live-clients.ts';
 import { realForgejo } from '../agents/build/live-clients.ts';
-import { publishApprovedPromotion, type PublishOutcome } from './publish.ts';
+import { publishApprovedPromotion, rematerializeDomainTable, type PublishOutcome, type RematerializeOutcome } from './publish.ts';
 import { listGovernedDatasets } from './store.ts';
 import { syncAnalyticsRepo } from './analytics-repo.ts';
 import type { MaterializationVerifier, Principal, PromotionRequest } from './store.ts';
@@ -44,4 +44,20 @@ export async function publishPromotionLive(
     syncAnalyticsRepo(realForgejo(), listGovernedDatasets(), approver.id);
   }
   return outcome;
+}
+
+/**
+ * The server-boundary RE-MATERIALIZE (Northpeak fix): re-run the publish CTAS for an
+ * already-promoted dataset whose Gold was rebuilt, refreshing the governed domain table +
+ * clearing the STALE marker. Wired to the SAME live Build runner + domain probe as promotion,
+ * so a rebuild's new data reaches Cube (and thus every dashboard) instead of drifting silently.
+ */
+export async function rematerializeDomainTableLive(
+  datasetId: string,
+  operator: Principal,
+): Promise<RematerializeOutcome> {
+  return rematerializeDomainTable(datasetId, operator, {
+    buildPromote: (dataset, principal, write) => buildStage(dataset, 'promote', principal, write),
+    verifyDomainTable,
+  });
 }

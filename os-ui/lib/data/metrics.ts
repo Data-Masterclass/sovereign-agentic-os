@@ -185,6 +185,25 @@ export function viewMembers(d: Dataset): Set<string> {
   ]);
 }
 
+/** The REGISTRY-derived dimension members of a dataset's Cube view (`View.column`),
+ *  split into plain vs time dimensions exactly as `scaffoldCubeYaml` emits them (non-pk,
+ *  measure-collision dropped, `inferDimType` decides time). The Northpeak fix uses this
+ *  as the panel-builder palette FALLBACK when Cube does not (yet/anymore) serve the view —
+ *  so a chart can still be created WITH its group-by spec (and flagged), instead of the
+ *  palette silently emptying and the group-by being discarded at create time. */
+export function registryDimensionMembers(d: Dataset): { dimensions: string[]; timeDimensions: string[] } {
+  const view = cubeViewName(d);
+  const pk = primaryKeyColumn(d.columns);
+  const measureNames = new Set(d.measures.map((m) => m.name));
+  const dimCols = d.columns.filter((c) => c.name !== pk && !measureNames.has(c.name));
+  const dimensions: string[] = [];
+  const timeDimensions: string[] = [];
+  for (const c of dimCols) {
+    (inferDimType(c.name) === 'time' ? timeDimensions : dimensions).push(`${view}.${c.name}`);
+  }
+  return { dimensions, timeDimensions };
+}
+
 /** Build the Cube model YAML (cube + view) from the Gold columns + named measures —
  *  the file the Metric step would hand-write only the `measures:` block of. */
 export function scaffoldCubeYaml(d: Dataset): string {

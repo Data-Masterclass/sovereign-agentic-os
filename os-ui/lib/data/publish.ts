@@ -2,9 +2,12 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { ExecuteIdentity } from '@/lib/infra/governed';
+import { roleAtLeast } from '../core/session.ts';
 import { visibilityFor, type Dataset } from './dataset-schema.ts';
 import {
   applyApprovedPromotion,
+  clearDomainTableStale,
+  getDataset,
   listGovernedDatasets,
   requireDomainTableMaterialized,
   validatePromotion,
@@ -139,4 +142,61 @@ export async function publishApprovedPromotion(
   );
 
   return { ok: true, fqn: plan.target, mode: report.mode, report, cubeView: view?.view ?? null, dataset };
+}
+
+export type RematerializeOutcome =
+  | { ok: true; fqn: string; mode: string; report: DataBuildReport; dataset: Dataset }
+  | { ok: false; fqn: string; mode?: string; report?: DataBuildReport; error: string };
+
+/**
+ * RE-MATERIALIZE an ALREADY-PROMOTED dataset's governed domain table (the Northpeak fix).
+ * When a promoted dataset's Gold is rebuilt, the domain copy (`iceberg.<domain>.gold_<slug>`
+ * — the FQN Cube + every consumer reads) drifts to a PRIOR snapshot (`domainTableStale`). This
+ * re-runs the SAME publish CTAS the original approval ran (source = the owner's freshly-rebuilt
+ * personal-lane Gold → target = the domain schema), re-probes the domain table, and CLEARS the
+ * stale flag on ✓. It NEVER flips a tier (the dataset is already an asset/product) and NEVER
+ * touches an un-promoted dataset (409). Same identity contract as promotion: the CTAS runs AS
+ * the operator (Builder+ — the domain-schema write floor). Idempotent: refreshing an in-sync
+ * table is a harmless CREATE OR REPLACE. HONEST: a failed build leaves the flag set + the real error.
+ */
+export async function rematerializeDomainTable(
+  datasetId: string,
+  operator: Principal,
+  deps: PublishDeps,
+): Promise<RematerializeOutcome> {
+  // Read AS the operator (canView), then require an already-promoted dataset.
+  const d = getDataset(datasetId, operator);
+  if (d.tier === 'dataset') {
+    return { ok: false, fqn: '', error: 'This dataset is not promoted — nothing to re-materialize' };
+  }
+  // Domain-schema write floor (separation of duties, same as promotion): only a Builder+
+  // may re-run a CTAS into the governed domain schema. A creator's rebuild leaves it STALE.
+  if (!roleAtLeast(operator.role, 'builder')) {
+    return { ok: false, fqn: '', error: 'Re-materializing the domain table requires a Builder — the rebuild is flagged stale until a Builder re-promotes it' };
+  }
+
+  const plan = publishPlan(d);
+  const identity: ExecuteIdentity = {
+    principal: operator.id,
+    uid: operator.id,
+    domains: operator.domains,
+    role: operator.role,
+  };
+  const report = await deps.buildPromote(d, operator.id, {
+    transformSql: plan.sql,
+    schemaSql: plan.schemaSql,
+    identity,
+    releaseSchema: plan.sourceSchema,
+  });
+  if (!report.ok) {
+    const failed = report.rows.find((r) => r.status === 'fail');
+    return { ok: false, fqn: plan.target, mode: report.mode, report, error: failed?.error ?? 'the re-materialization did not pass' };
+  }
+
+  // FAIL-CLOSED: re-probe the exact domain target independently before clearing STALE.
+  await requireDomainTableMaterialized(plan.target, operator, deps.verifyDomainTable);
+
+  // ✓: the domain table now holds the rebuilt data → clear the stale marker.
+  const dataset = clearDomainTableStale(datasetId, operator);
+  return { ok: true, fqn: plan.target, mode: report.mode, report, dataset };
 }

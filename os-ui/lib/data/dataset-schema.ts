@@ -269,6 +269,14 @@ export type Dataset = {
    *  pre-existing datasets stay un-emitted until they are re-promoted (zero migration,
    *  byte-stable). Set at promote time. Omitted from yaml when false. */
   gitBacked?: boolean;
+  /** STALE-DOMAIN-TABLE marker (Northpeak fix). Set true when a PROMOTED dataset's
+   *  personal-lane Gold is REBUILT but the governed domain table (`iceberg.<domain>.gold_<slug>`
+   *  — the FQN Cube + every consumer reads) was not re-materialized in the same act, so the
+   *  domain copy holds a PRIOR snapshot. While true, consumers must be warned and the table
+   *  re-promoted (re-run the publish CTAS). CLEARED the moment the domain CTAS re-runs. ABSENT/
+   *  false ⇒ the domain table is in sync (or the dataset was never promoted) — omitted from
+   *  the yaml (byte-stable, zero migration; the `gitBacked` precedent). */
+  domainTableStale?: boolean;
 };
 
 export class DatasetError extends Error {
@@ -605,6 +613,8 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
   const cubeNamespaced = doc.cubeNamespaced === true ? true : undefined;
   // #146 Phase 6: absent/false ⇒ no dbt model emitted (pre-existing datasets stay un-emitted).
   const gitBacked = doc.gitBacked === true ? true : undefined;
+  // Northpeak fix: absent/false ⇒ the domain table is in sync (or never promoted).
+  const domainTableStale = doc.domainTableStale === true ? true : undefined;
 
   return {
     version: doc.version !== undefined ? String(doc.version) : '1',
@@ -632,6 +642,7 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
     ...(sync ? { sync } : {}),
     ...(cubeNamespaced ? { cubeNamespaced } : {}),
     ...(gitBacked ? { gitBacked } : {}),
+    ...(domainTableStale ? { domainTableStale } : {}),
   };
 }
 
@@ -703,6 +714,9 @@ export function serializeDataset(d: Dataset): string {
   // Omit-when-false (#146 Phase 6): pre-existing datasets serialize exactly as before,
   // un-emitted until re-promoted with gitBacked=true.
   if (d.gitBacked) doc.gitBacked = true;
+  // Omit-when-false (byte-stable): only a promoted dataset whose domain table drifted
+  // from a rebuild carries this; every in-sync/un-promoted dataset serializes as before.
+  if (d.domainTableStale) doc.domainTableStale = true;
   return yaml.dump(doc, { lineWidth: 100, noRefs: true });
 }
 

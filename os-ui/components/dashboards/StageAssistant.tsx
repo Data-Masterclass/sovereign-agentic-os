@@ -31,8 +31,9 @@ export default function StageAssistant({
   stage: 'define' | 'design' | 'build' | 'view' | 'govern';
   /** Extra fields merged into the request body (prompt/view/members/reason/rls/name/tier). */
   payload: () => Record<string, unknown>;
-  /** Design only — receive the suggested chart array. */
-  onCharts?: (charts: Array<{ name: string; vizType: string; metric: string }>) => void;
+  /** Design only — receive the suggested chart array (dimensions = the group-by members,
+   *  preserved end-to-end so a bar/pie keeps its grouping — never silently de-dimensioned). */
+  onCharts?: (charts: Array<{ name: string; vizType: string; metric: string; dimensions?: string[] }>) => void;
   disabled?: boolean;
 }) {
   const [text, setText] = useState('');
@@ -52,7 +53,7 @@ export default function StageAssistant({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((data as { error?: string }).error ?? `Request failed (${res.status})`);
       if (onCharts && Array.isArray((data as { charts?: unknown }).charts)) {
-        const charts = (data as { charts: Array<{ name: string; vizType: string; metric: string }> }).charts;
+        const charts = (data as { charts: Array<{ name: string; vizType: string; metric: string; dimensions?: string[] }> }).charts;
         onCharts(charts);
         setText(`Suggested ${charts.length} chart${charts.length === 1 ? '' : 's'} — review them below.`);
       } else {

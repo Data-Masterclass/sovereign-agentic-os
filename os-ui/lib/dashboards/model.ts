@@ -157,3 +157,30 @@ export function buildPanelCubeQuery(panel: Panel): CubeQuery {
   if (p.filters && p.filters.length) query.filters = p.filters;
   return query;
 }
+
+/** The full member set a panel REQUESTS from the served model (measures + group-by
+ *  dimensions + the time dimension). The Cube query must be able to resolve every one of
+ *  these; a member the served model lacks means the panel would render wrong (silently). */
+export function panelRequestedMembers(panel: Panel): string[] {
+  const p = normalizePanel(panel);
+  const out = [...p.metrics];
+  if (p.dimensions) out.push(...p.dimensions);
+  if (p.timeDimension) out.push(p.timeDimension);
+  return out;
+}
+
+/** The served model's member set for a view (measures + dimensions + timeDimensions). */
+export type ServedModel = { measures: string[]; dimensions: string[]; timeDimensions: string[] };
+
+/**
+ * The members a panel requests that the SERVED Cube model does NOT expose — the Northpeak
+ * silent-degradation guard. When a promoted dataset's domain table is missing/stale, its Cube
+ * view can't be served with those dimensions, so a group-by would vanish and the chart collapse
+ * to a single bar. This returns exactly which members are absent so the caller can WARN loudly
+ * instead of silently dropping the group-by. Empty result ⇒ every requested member resolves.
+ * A served model with NO members at all (view entirely unserved) returns every requested member.
+ */
+export function missingPanelMembers(panel: Panel, served: ServedModel): string[] {
+  const have = new Set<string>([...served.measures, ...served.dimensions, ...served.timeDimensions]);
+  return panelRequestedMembers(panel).filter((m) => !have.has(m));
+}

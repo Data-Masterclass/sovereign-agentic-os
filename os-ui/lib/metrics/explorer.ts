@@ -30,6 +30,10 @@ export type ExploreSpec = {
   timeDimension?: string;
   granularity?: Granularity;
   limit?: number;
+  /** LOUD-degradation record (Northpeak fix): slice members the view does NOT expose,
+   *  dropped from the query so Cube doesn't 400 — but REPORTED, never silent. A non-empty
+   *  list means the rendered result is NOT sliced the way the caller asked. */
+  dropped?: string[];
 };
 
 /** Build an ExploreSpec from a dataset + measure + chosen slice (UI convenience). */
@@ -38,20 +42,24 @@ export function exploreSpec(
   measure: Measure,
   slice: { dimensions?: string[]; timeDimension?: string; granularity?: Granularity; limit?: number } = {},
 ): ExploreSpec {
-  // Fail-soft reconcile: the Cube VIEW only exposes its `includes` members, so a
-  // slice on a non-member (classically the dataset PRIMARY KEY, which is a cube
-  // dimension but excluded from the view) would 400 at Cube. Drop non-members here
-  // so the query can never reference a member that isn't in the view (mirrors the
-  // scrub in lib/infra/governed.ts).
+  // Reconcile against the view's member set: a slice on a non-member (classically the
+  // dataset PRIMARY KEY, which is a cube dimension but excluded from the view) would 400
+  // at Cube, so it is dropped from the QUERY — but NEVER silently (Northpeak fix): every
+  // dropped member is recorded on `spec.dropped` so the caller must surface an honest
+  // "not sliced by X" warning instead of rendering a de-dimensioned chart as if it were fine.
   const members = viewMembers(dataset);
   const dims = (slice.dimensions ?? []).filter((d) => members.has(d));
+  const droppedDims = (slice.dimensions ?? []).filter((d) => !members.has(d));
   const timeOk = slice.timeDimension && members.has(slice.timeDimension) ? slice.timeDimension : undefined;
+  const droppedTime = slice.timeDimension && !timeOk ? [slice.timeDimension] : [];
+  const dropped = [...droppedDims, ...droppedTime];
   return {
     member: measureMember(dataset, measure),
     dimensions: dims.map((d) => dimensionMember(dataset, d)),
     timeDimension: timeOk ? dimensionMember(dataset, timeOk) : undefined,
     granularity: timeOk ? slice.granularity : undefined,
     limit: slice.limit,
+    ...(dropped.length > 0 ? { dropped } : {}),
   };
 }
 

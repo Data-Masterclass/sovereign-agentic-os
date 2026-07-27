@@ -100,6 +100,9 @@ export default function DashboardBuilder({
   const [build, setBuild] = useState<BuildResponse | null>(null);
   const [building, setBuilding] = useState(false);
   const [buildErr, setBuildErr] = useState('');
+  // Honest Design-assistant outcome (Northpeak fix): if a suggested chart had to be dropped
+  // (unknown member), SAY so — never a silent filter that quietly shrinks the chart list.
+  const [designNote, setDesignNote] = useState('');
   const [viewed, setViewed] = useState(false);
   const [liveRls, setLiveRls] = useState('');
   // An existing dashboard's panels are fetched (the list returns only a count); a fresh one
@@ -258,7 +261,25 @@ export default function DashboardBuilder({
               stage="design" label="Suggest chart tiles from this view’s measures." cta="Suggest charts"
               disabled={!view || palette.length === 0}
               payload={() => ({ view, prompt: name, members: palette.filter((m) => viewOfMetric(m.member) === view).map((m) => m.member) })}
-              onCharts={(cs) => setCharts(cs.filter((c) => VIZ_TYPES.includes(normalizeViz(c.vizType)) && palette.some((m) => m.member === c.metric)).map((c) => ({ name: c.name, vizType: normalizeViz(c.vizType), metrics: [c.metric] })))}
+              onCharts={(cs) => {
+                // NEVER a silent discard (Northpeak fix): keep every chart whose measure is
+                // governed, PRESERVE its group-by dimensions (the spec survives — a missing
+                // dimension is flagged at render, not stripped here), and REPORT any chart
+                // that had to be rejected for an unknown measure.
+                const ok = cs.filter((c) => VIZ_TYPES.includes(normalizeViz(c.vizType)) && palette.some((m) => m.member === c.metric));
+                const dropped = cs.filter((c) => !ok.includes(c));
+                setCharts(ok.map((c) => ({
+                  name: c.name,
+                  vizType: normalizeViz(c.vizType),
+                  metrics: [c.metric],
+                  ...(Array.isArray(c.dimensions) && c.dimensions.length
+                    ? { dimensions: c.dimensions.filter((d): d is string => typeof d === 'string').slice(0, 1) }
+                    : {}),
+                })));
+                setDesignNote(dropped.length
+                  ? `${dropped.length} suggested chart${dropped.length === 1 ? ' was' : 's were'} rejected — unknown or ungoverned member${dropped.length === 1 ? '' : 's'}: ${dropped.map((c) => c.metric || c.name).join(', ')}.`
+                  : '');
+              }}
             />
           ) : st.id === 'build' ? (
             <StageAssistant
@@ -289,11 +310,14 @@ export default function DashboardBuilder({
         ) : null}
 
         {stage.current === 'design' ? (
-          <DesignStage
-            view={view} palette={palette}
-            charts={charts} addPanel={addPanel} removeChart={removeChart}
-            multiView={multiView} views={views}
-          />
+          <>
+            {designNote ? <div className="error" role="alert" style={{ marginBottom: 10 }}>⚠ {designNote}</div> : null}
+            <DesignStage
+              view={view} palette={palette}
+              charts={charts} addPanel={addPanel} removeChart={removeChart}
+              multiView={multiView} views={views}
+            />
+          </>
         ) : null}
 
         {stage.current === 'build' ? (

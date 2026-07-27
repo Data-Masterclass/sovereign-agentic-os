@@ -23,15 +23,16 @@ import {
   buildGoldJoin as commitGoldJoin,
   addCheck,
   builtLayerFqn,
+  listGovernedDatasets,
   type PromotionRequest,
 } from '@/lib/data/store';
 import { runQualityChecks } from '@/lib/data/dq-run';
 import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/data';
-import { queryRun } from '@/lib/infra/governed';
+import { cubeMeta, queryRun } from '@/lib/infra/governed';
 import { publishPromotionLive } from '@/lib/data/publish-server';
 import { enqueue, getApproval, decide, listApprovals } from '@/lib/governance/approvals';
 import { canBuildStage, canPassThrough, stageArtifact } from '@/lib/data/panels';
-import { scaffoldCubeYaml } from '@/lib/data/metrics';
+import { cubeViewName, registryDimensionMembers, scaffoldCubeYaml } from '@/lib/data/metrics';
 import { ingestAndRegisterBronze } from '@/lib/data/ingest';
 import { buildStage, commitLayerVersion } from '@/lib/data/build/server';
 import {
@@ -95,7 +96,9 @@ import { putBlob } from '@/lib/files/object-store';
 import type { Sensitivity } from '@/lib/files/asset-schema';
 
 import { saveDashboard } from '@/lib/dashboards/store';
-import { fromTiles, type ChartSpec } from '@/lib/dashboards/model';
+import { fromTiles, missingPanelMembers, type ChartSpec } from '@/lib/dashboards/model';
+import { narrowCubeMeta, type RegistryViewDims } from '@/lib/dashboards/cube-meta';
+import { listMetrics } from '@/lib/metrics/store';
 import { claimsFromUser, delegate } from '@/lib/data/identity';
 
 import {
@@ -177,7 +180,38 @@ export const dashboardWriteTools: McpTool[] = [
       // /api/dashboards/build).
       const spec = fromTiles(name, view, charts, user.domains[0]);
       const rec = saveDashboard(P(user), id, spec);
-      return { id: rec.id, tier: rec.tier, spec: rec.spec };
+      // FLAG AT CREATE, never silently degrade (Northpeak fix): check every chart's
+      // requested members against the served model (registry fallback). The dashboard IS
+      // created with its full spec — but any member the served model lacks is reported
+      // here AND warned at render, so a bar can never silently collapse to a single
+      // un-grouped column because a domain table is missing/stale.
+      const warnings: string[] = [];
+      try {
+        const groups = listMetrics(P(user));
+        const members = [...groups.mine, ...groups.domain, ...groups.marketplace].map((m) => m.member);
+        const registryDims: RegistryViewDims = new Map(
+          listGovernedDatasets().map((d) => [cubeViewName(d), registryDimensionMembers(d)]),
+        );
+        const views = narrowCubeMeta(members, await cubeMeta().catch(() => []), registryDims);
+        const v = views.find((x) => x.view === view);
+        const served = v
+          ? { measures: v.measures, dimensions: v.dimensions, timeDimensions: v.timeDimensions }
+          : { measures: [], dimensions: [], timeDimensions: [] };
+        for (const chart of rec.spec.charts) {
+          const missing = missingPanelMembers(chart, served);
+          if (missing.length > 0) {
+            warnings.push(
+              `Chart “${chart.name}”: member${missing.length === 1 ? '' : 's'} ${missing.map((m) => `“${m}”`).join(', ')} not available on view “${view}” — the dataset's domain table may be missing/stale and need re-promotion. The chart keeps its spec and will show an honest warning until the model serves it.`,
+            );
+          }
+        }
+        if (v && v.served === false) {
+          warnings.push(`View “${view}” is not currently served by Cube — the dataset's domain table may be missing or stale (re-promotion refreshes it). Panels render an honest warning until it is served.`);
+        }
+      } catch {
+        /* the flagging is additive — never fail a successful create for it */
+      }
+      return { id: rec.id, tier: rec.tier, spec: rec.spec, ...(warnings.length ? { warnings } : {}) };
     },
   },
 ];

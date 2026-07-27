@@ -93,6 +93,9 @@ export type DatasetSummary = {
   storage: ReturnType<typeof storageFor>;
   /** Soft-archived (retained, reversible). Absent/false = live. */
   archived?: boolean;
+  /** VISIBLE STALE STATE (Northpeak fix): the promoted domain table holds a prior
+   *  snapshot (source rebuilt, publish CTAS not yet re-run). Absent = in sync. */
+  domainTableStale?: boolean;
 };
 
 type DataStoreState = {
@@ -357,6 +360,7 @@ function summarise(d: Dataset, archived = false): DatasetSummary {
     dots: { bronze: d.versions.bronze.built, silver: d.versions.silver.built, gold: d.versions.gold.built },
     storage: storageFor(d.tier),
     archived,
+    ...(d.domainTableStale ? { domainTableStale: true } : {}),
   };
 }
 
@@ -640,6 +644,12 @@ export function buildVersion(
   if (patch.body !== undefined && next.artifact) {
     rec.artifacts = { ...(rec.artifacts ?? {}), [next.artifact]: patch.body };
   }
+  // Northpeak fix (materialization drift): rebuilding the PUBLISHED layer (or building a
+  // gold above a silver-published asset) of an ALREADY-PROMOTED dataset rewrites only the
+  // owner's personal lane — the governed domain copy now holds a prior snapshot (or lacks
+  // the new layer entirely). Flag it STALE until the publish CTAS re-runs. Bronze builds
+  // (incl. sync freshness marks) don't touch the domain copy directly and stay unflagged.
+  if (d.tier !== 'dataset' && layer !== 'bronze') d.domainTableStale = true;
   persist(rec, d, { author: user.id, summary: `build ${layer}` });
   return d;
 }
@@ -668,6 +678,12 @@ export function buildGoldJoin(
   d.measures = input.measures;
   d.upstreams = input.upstreams;
   if (input.goldSpec) d.goldSpec = input.goldSpec;
+  // Northpeak fix (materialization drift): if this dataset is ALREADY promoted, the
+  // governed domain table (`iceberg.<domain>.gold_<slug>`) — the FQN Cube + every consumer
+  // reads — is now a PRIOR snapshot: this rebuild only rewrote the owner's personal-lane
+  // Gold. Flag it STALE so the domain copy is honestly known to be behind until the publish
+  // CTAS re-runs (auto-refreshed by a builder+ rebuilder in the route, else surfaced + re-promoted).
+  if (d.tier !== 'dataset') d.domainTableStale = true;
   persist(rec, d, { author: user.id, summary: 'build gold join' });
   return d;
 }
@@ -1131,6 +1147,30 @@ export async function verifyPromotedMaterialization(
   const d = editOf(rec, user); // owner or domain admin — edit authority to repair
   if (d.tier === 'dataset') fail('This dataset is not promoted — nothing to re-materialize', 409);
   await requireDomainTableMaterialized(assetTarget(d), user, verify);
+  // The domain table now resolves → it is in sync with the source again. Clear the STALE
+  // marker (idempotent: no-op when it was never set) so consumers stop being warned.
+  if (d.domainTableStale) {
+    delete d.domainTableStale;
+    persist(rec, d, { author: user.id, summary: 're-materialize: domain table confirmed in sync' });
+  }
+  return d;
+}
+
+/** Clear the STALE-domain-table marker after a confirmed re-materialization (the publish
+ *  CTAS re-ran + the domain probe passed). Gated like a promotion approval — the OWNER or
+ *  any BUILDER+ in the dataset's domain (the same people who may run the refresh CTAS) —
+ *  NOT the narrower edit scope, so the approving Builder who just re-materialized can
+ *  honestly clear the drift they fixed. Idempotent: a no-op when the flag was never set. */
+export function clearDomainTableStale(id: string, user: Principal): Dataset {
+  const rec = get(id);
+  const d = parseDataset(rec.yaml);
+  const inDomain = user.domains.includes(d.domain);
+  const mayClear = d.owner === user.id || (inDomain && roleAtLeast(user.role, 'builder'));
+  if (!mayClear) fail('Clearing the stale marker requires the owner or a Builder in the dataset’s domain', 403);
+  if (d.domainTableStale) {
+    delete d.domainTableStale;
+    persist(rec, d, { author: user.id, summary: 're-materialize: domain table refreshed' });
+  }
   return d;
 }
 

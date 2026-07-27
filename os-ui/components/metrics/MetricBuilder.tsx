@@ -114,6 +114,9 @@ type PreviewResult = {
   /** 'live (sql)' = pre-save preview computed via governed SQL (not yet Cube-served). */
   mode: 'live' | 'live (sql)' | 'offline-mock';
   pending?: boolean;
+  /** LOUD degradation notice: requested slice members not exposed on the governed view
+   *  were dropped — the preview is NOT sliced as asked (never a silent de-dimension). */
+  warning?: string;
 };
 
 /** Metric tier → lifecycle visibility (drives delete gate) — OS-wide mapping. */
@@ -407,7 +410,7 @@ export default function MetricBuilder({
       });
       const data = await res.json();
       if (!res.ok) { setPreviewErr(data.error ?? 'Preview failed'); setPreview(null); return; }
-      const p: PreviewResult = { member: data.member, rows: data.rows ?? [], mode: data.mode, pending: data.pending };
+      const p: PreviewResult = { member: data.member, rows: data.rows ?? [], mode: data.mode, pending: data.pending, warning: data.warning };
       setPreview(p);
       // Mark preview done in-stage once we get a live non-pending result.
       if (!p.pending && p.rows.length > 0) {
@@ -804,6 +807,8 @@ export default function MetricBuilder({
               </div>
 
               {previewErr ? <div className="error" style={{ marginTop: 10 }}>{previewErr}</div> : null}
+              {/* Honest slice warning (Northpeak fix): a dropped slice member is never silent. */}
+              {preview?.warning ? <div className="error" role="alert" style={{ marginTop: 10 }}>⚠ {preview.warning}</div> : null}
 
               {preview ? (
                 preview.pending ? (

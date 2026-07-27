@@ -6,6 +6,8 @@ import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
 import { requirePrincipal } from '@/lib/data/server';
 import { getDataset, buildGoldJoin } from '@/lib/data/store';
+import { rematerializeDomainTableLive } from '@/lib/data/publish-server';
+import { roleAtLeast } from '@/lib/core/session';
 import { assetTarget } from '@/lib/data/store-fqn';
 import { stepperStages, stageArtifact, canBuildStage } from '@/lib/data/panels';
 import { buildStage } from '@/lib/data/build/server';
@@ -47,6 +49,26 @@ export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }
   const { id } = params;
 
   const dataset = getDataset(id, user); // view-scope guard on the base
+
+  // REPAIR MODE — `rematerializeOnly: true` skips the build entirely and just re-runs
+  // the publish CTAS (owner's personal gold → domain schema). Heals promoted datasets
+  // whose domain copy is missing/stale WITHOUT re-specifying the gold spec (the drift
+  // class behind the Northpeak single-column dashboards). Builder+ only; never touches
+  // versions/lineage/measures — the personal lane is the source of truth it copies.
+  if (body?.rematerializeOnly === true) {
+    if (dataset.tier === 'dataset') {
+      return NextResponse.json({ error: 'Not promoted — nothing to re-materialize' }, { status: 400 });
+    }
+    if (!roleAtLeast(user.role, 'builder')) {
+      return NextResponse.json({ error: 'Re-materializing the shared domain table needs Builder or above' }, { status: 403 });
+    }
+    const out = await rematerializeDomainTableLive(id, user);
+    const domainTable = out.ok
+      ? { state: 'refreshed' as const, fqn: out.fqn }
+      : { state: 'stale' as const, fqn: out.fqn, reason: out.error };
+    return NextResponse.json({ dataset: getDataset(id, user), domainTable }, { status: out.ok ? 200 : 502 });
+  }
+
   if (!canBuildStage(dataset.versions, 'gold')) {
     return NextResponse.json({ error: 'Bring in the Silver version before joining it' }, { status: 400 });
   }
@@ -106,5 +128,31 @@ export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }
     goldSpec: parseGoldSpec(body.goldSpec),
   });
 
-  return NextResponse.json({ build, sql: plan.sql, target: plan.target, dataset: updated, stages: stepperStages(updated) });
+  // Northpeak fix — MATERIALIZATION DRIFT. If the rebuilt dataset is ALREADY promoted, its
+  // governed domain table (what Cube + every dashboard reads) now holds the PRIOR snapshot
+  // (`buildGoldJoin` flagged it stale). Auto-refresh it when the rebuilder is a Builder+ (the
+  // domain-schema write floor) so the new data reaches Cube in the same act — matching user
+  // expectations ("I rebuilt it, the dashboard should update"). A creator's rebuild cannot
+  // write the domain schema, so it stays honestly STALE until a Builder re-promotes it. The
+  // re-materialize is best-effort: it NEVER fails the successful personal-lane rebuild — we
+  // report `domainTable` so the UI can show refreshed/stale/needs-a-builder honestly.
+  let domainTable: { state: 'refreshed' | 'stale' | 'not-promoted'; fqn?: string; reason?: string } =
+    { state: 'not-promoted' };
+  if (updated.tier !== 'dataset') {
+    if (roleAtLeast(user.role, 'builder')) {
+      try {
+        const out = await rematerializeDomainTableLive(id, user);
+        domainTable = out.ok
+          ? { state: 'refreshed', fqn: out.fqn }
+          : { state: 'stale', fqn: out.fqn, reason: out.error };
+      } catch (e) {
+        domainTable = { state: 'stale', reason: e instanceof Error ? e.message : String(e) };
+      }
+    } else {
+      domainTable = { state: 'stale', reason: 'Rebuilt by a creator — a Builder must re-promote to refresh the shared domain table.' };
+    }
+  }
+
+  const finalDataset = domainTable.state === 'refreshed' ? getDataset(id, user) : updated;
+  return NextResponse.json({ build, sql: plan.sql, target: plan.target, dataset: finalDataset, domainTable, stages: stepperStages(finalDataset) });
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });
