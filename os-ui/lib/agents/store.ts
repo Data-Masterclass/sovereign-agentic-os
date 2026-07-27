@@ -97,6 +97,19 @@ export type LastRun = {
    */
   grantedIds?: { data: string[]; knowledge: string[]; files: string[]; metrics: string[]; connections: string[] };
   output?: string;
+  /**
+   * The run's WRITE accounting, counted DIRECTLY from the executed steps (never
+   * inferred): how many records were written straight to the runner's own My scope
+   * (the My-direct rule) vs how many writes are HELD in Governance → Inbox. Drives the
+   * honest "wrote N to My <tab> · M awaiting approval" line in the Run panel + Evaluate.
+   * Additive + back-compatible: absent on runs recorded before it shipped.
+   */
+  writeSummary?: {
+    line: string;
+    wrote: { tab: string; count: number }[];
+    wroteTotal: number;
+    heldTotal: number;
+  };
   mode?: 'live' | 'offline-mock';
   traceStoreAvailable?: boolean;
   traceUrl?: string;

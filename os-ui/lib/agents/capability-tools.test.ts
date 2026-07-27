@@ -31,7 +31,21 @@ test('Write grants add the create/write tools on top of read', () => {
     assert.ok(toolsForGrant('knowledge', cap).includes('author_knowledge'));
     assert.ok(toolsForGrant('files', cap).includes('upload_file'));
     assert.ok(toolsForGrant('connections', cap).includes('create_connection'));
+    // METRICS is now a grantable WRITE: a write grant provisions define_metric (on top of
+    // the read set) — the My-scope KPI-define capability, gated by the same preset/rule.
+    const metrics = toolsForGrant('metrics', cap);
+    assert.ok(metrics.includes('query_metric'), 'metrics keeps its read tools');
+    assert.ok(metrics.includes('define_metric'), `metrics ${cap} grants define_metric`);
+    // promote_metric stays a governed hand-off — never auto-granted.
+    assert.ok(!metrics.includes('promote_metric'), 'promote_metric is a hand-off, not auto-granted');
   }
+});
+
+test('metrics Read grants no write; define_metric needs a write grant', () => {
+  const read = toolsForGrant('metrics', 'Read');
+  assert.ok(read.includes('list_metrics') && read.includes('query_metric'));
+  assert.ok(!read.includes('define_metric'), 'a read-only metrics grant must not grant define_metric');
+  assert.deepEqual(toolsForGrant('metrics', 'Off'), []);
 });
 
 test('Off / Blocked provision nothing', () => {

@@ -7,9 +7,7 @@ import type { CurrentUser } from '@/lib/core/auth';
 import { requirePrincipal } from '@/lib/data/server';
 import { getDataset, builtLayerFqn } from '@/lib/data/store';
 import { queryRun } from '@/lib/infra/governed';
-import { assistantComplete } from '@/lib/assistant/complete';
-import { roleModel } from '@/lib/models/roles';
-import { proposeFixes } from '@/lib/data/dq-fix-server';
+import { proposeFixes, dqComplete } from '@/lib/data/dq-fix-server';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,8 +24,9 @@ export const dynamic = 'force-dynamic';
  *
  * READ + advice only: canView gate (getDataset), reads AS the builtLayerFqn resolver's
  * principal (OPA-governed), and NOTHING is written — apply is its own edit-gated door.
- * The reasoning model establishes the pattern; the standard model fills per-row values
- * (roleModel split through the ONE audited, cost-capped assistantComplete).
+ * Cost routing (see `dqComplete`): the diagnosis runs STANDARD-FIRST and escalates to
+ * reasoning only when the cheap reply is not usable JSON; the per-row fill stays on
+ * standard — all through the ONE audited, cost-capped assistantComplete.
  */
 export const POST = withRoute<{ id: string }, { checkId?: string }>(async ({ user, params, body }) => {
   const dataset = getDataset(params.id, user); // canView gate (403/404)
@@ -40,13 +39,7 @@ export const POST = withRoute<{ id: string }, { checkId?: string }>(async ({ use
     fqn: resolved?.fqn ?? null,
     layer: resolved?.layer ?? null,
     queryFn: (sql) => queryRun(sql, resolved?.principal),
-    complete: async (messages, role) =>
-      (
-        await assistantComplete(messages, {
-          user: { id: user.id, domains: user.domains },
-          model: roleModel(role),
-        })
-      ).content,
+    complete: dqComplete({ id: user.id, domains: user.domains }),
   });
   return NextResponse.json(envelope);
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });

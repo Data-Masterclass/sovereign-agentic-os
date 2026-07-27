@@ -40,6 +40,8 @@ import {
   recordRemediation,
   type RemediationRecord,
 } from './dq-remediations.ts';
+import { assistantComplete } from '@/lib/assistant/complete';
+import { completeWithEscalation } from '@/lib/assistant/escalate';
 
 /**
  * AI-PROPOSED DQ REMEDIATIONS — the governed server orchestration (Validate stage).
@@ -81,6 +83,31 @@ export type FixProposeDeps = {
    */
   complete: (messages: AssistantMsg[], role: 'reasoning' | 'standard') => Promise<string>;
 };
+
+/**
+ * The GOVERNED model wiring both callers (the propose route + the MCP tool) share, so
+ * they run the SAME cost-routed path (MCP parity by construction).
+ *
+ * Cost routing: the `'reasoning'` diagnosis call runs STANDARD-FIRST and escalates to
+ * reasoning ONLY when the cheap reply is not usable JSON — the JSON-shape guard
+ * ({@link parseModelJson}) is the gate the surface already applies (its output is then
+ * further guard-validated by {@link coerceProposal}, so a bad expression is still
+ * withheld honestly). The `'standard'` per-row fill call stays on standard directly.
+ * Every call goes through the ONE audited, cost-capped `assistantComplete` gateway.
+ */
+export function dqComplete(user: { id: string; domains?: string[] }): FixProposeDeps['complete'] {
+  return async (messages, role) => {
+    if (role === 'standard') {
+      return (await assistantComplete(messages, { user })).content;
+    }
+    // reasoning diagnosis → standard-first, escalate on non-JSON.
+    const { content } = await completeWithEscalation(messages, {
+      user,
+      validate: (raw) => parseModelJson(raw) !== null,
+    });
+    return content;
+  };
+}
 
 export type ProposeEnvelope = {
   checkId: string;

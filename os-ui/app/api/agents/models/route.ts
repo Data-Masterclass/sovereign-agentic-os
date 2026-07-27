@@ -13,8 +13,14 @@ export const dynamic = 'force-dynamic';
 type LiteLLMModel = {
   model_name?: string;
   litellm_params?: { model?: string; api_base?: string };
-  model_info?: { mode?: string };
+  /** `db_model` — LiteLLM's own seeded-vs-admin-added flag: true = registered at
+   *  runtime via /model/new (DB-backed, removable), false/absent = seeded from the
+   *  static model_list config (managed by the deployment). */
+  model_info?: { mode?: string; db_model?: boolean };
 };
+
+/** A catalog row + the seeded-vs-admin-added discriminator for the admin page. */
+type CatalogRow = ModelInfo & { dbModel: boolean };
 
 /**
  * Enrich a live LiteLLM alias with catalog display + provenance + provider TYPE.
@@ -57,14 +63,22 @@ export async function GET() {
       const data = (await res.json()) as { data?: LiteLLMModel[] };
       const seen = new Set<string>();
       const models: ModelInfo[] = [];
+      // Admin-added iff EVERY deployment row under the alias is DB-registered —
+      // a mixed alias (config seed + a db extra) stays "managed" (not removable).
+      const dbModel = new Map<string, boolean>();
       for (const raw of data?.data ?? []) {
         const info = enrich(raw);
-        if (info && !seen.has(info.model_name)) {
+        if (!info) continue;
+        dbModel.set(info.model_name, (dbModel.get(info.model_name) ?? true) && raw.model_info?.db_model === true);
+        if (!seen.has(info.model_name)) {
           seen.add(info.model_name);
           models.push(info);
         }
       }
-      if (models.length > 0) return NextResponse.json({ models, source: 'litellm', roles: roleModels() });
+      if (models.length > 0) {
+        const rows: CatalogRow[] = models.map((m) => ({ ...m, dbModel: dbModel.get(m.model_name) === true }));
+        return NextResponse.json({ models: rows, source: 'litellm', roles: roleModels() });
+      }
     }
   } catch {
     /* fall through to the offline catalog */
@@ -73,6 +87,7 @@ export async function GET() {
   }
   // Offline: the install catalog (Standard gpt-oss-20b / Reasoning + Vision Qwen3-VL-235B / Embeddings Qwen3-VL-Embedding-8B).
   // The shipped seed models are all STACKIT-managed inference, so group them there.
-  const models: ModelInfo[] = Object.values(MODEL_CATALOG).map((m) => ({ ...m, providerType: 'stackit' as const }));
+  // All install-catalog entries are deployment seeds → dbModel false (not removable).
+  const models: CatalogRow[] = Object.values(MODEL_CATALOG).map((m) => ({ ...m, providerType: 'stackit' as const, dbModel: false }));
   return NextResponse.json({ models, source: 'offline', roles: roleModels() });
 }

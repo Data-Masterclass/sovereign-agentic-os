@@ -4,6 +4,7 @@
 import 'server-only';
 import { NextResponse } from 'next/server';
 import { assistantComplete } from '@/lib/assistant/complete';
+import { completeWithEscalation } from '@/lib/assistant/escalate';
 
 /**
  * Shared scaffolding for the per-STAGE tab assistants (Data · Metrics · Dashboards ·
@@ -54,34 +55,56 @@ export type StageAssistantOptions = {
 };
 
 /**
- * Run one stage-scoped completion and shape the response exactly as the tab routes did:
- * prose → `{ text }`; JSON → `{ [jsonKey]: parsed }` (502 on unusable shape). Callers wrap
- * this in try/catch and hand thrown errors to {@link failResponse}.
+ * Strip stray code fences, parse defensively, and guard the expected shape. Returns the
+ * parsed value when it matches (`expectArray` ⇒ array, else a plain object), else null.
+ * This is the ONE JSON shape guard for a stage — used BOTH as the cost-routing
+ * escalation validator and to build the final response, so the two never diverge.
  */
-export async function runStageAssistant(opts: StageAssistantOptions): Promise<NextResponse> {
-  const { prompt, user } = opts;
-  const { content } = await assistantComplete(
-    [
-      { role: 'system', content: prompt.system },
-      { role: 'user', content: prompt.user },
-    ],
-    { user: { id: user.id, domains: user.domains } },
-  );
-
-  if (!prompt.json) return NextResponse.json({ text: content });
-
-  // JSON stage: strip stray code fences, parse defensively, guard the expected shape.
+function parseStageJson(content: string, expectArray?: boolean): unknown {
   const cleaned = content.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
   let parsed: unknown;
   try {
     parsed = JSON.parse(cleaned);
   } catch {
-    parsed = null;
+    return null;
   }
-  const ok = opts.expectArray
+  const ok = expectArray
     ? Array.isArray(parsed)
     : !!parsed && typeof parsed === 'object' && !Array.isArray(parsed);
-  if (!ok) {
+  return ok ? parsed : null;
+}
+
+/**
+ * Run one stage-scoped completion and shape the response exactly as the tab routes did:
+ * prose → `{ text }`; JSON → `{ [jsonKey]: parsed }` (502 on unusable shape). Callers wrap
+ * this in try/catch and hand thrown errors to {@link failResponse}.
+ *
+ * Cost routing: a PROSE stage has no validator, so it runs on the ONE assistant model
+ * (standard) directly. A JSON stage's output IS strictly validated (the shape guard), so
+ * it runs STANDARD-FIRST and escalates to reasoning ONLY when the cheap reply fails the
+ * SAME guard — the guard is the quality gate. Admin toggle OFF pins JSON stages to
+ * reasoning directly (see `completeWithEscalation`).
+ */
+export async function runStageAssistant(opts: StageAssistantOptions): Promise<NextResponse> {
+  const { prompt, user } = opts;
+  const messages = [
+    { role: 'system' as const, content: prompt.system },
+    { role: 'user' as const, content: prompt.user },
+  ];
+
+  // Prose: no validator to gate on → the single standard assistant call, unchanged.
+  if (!prompt.json) {
+    const { content } = await assistantComplete(messages, { user: { id: user.id, domains: user.domains } });
+    return NextResponse.json({ text: content });
+  }
+
+  // JSON: standard-first, escalate once to reasoning on a shape-guard miss.
+  const { content } = await completeWithEscalation(messages, {
+    user: { id: user.id, domains: user.domains },
+    validate: (raw) => parseStageJson(raw, opts.expectArray) !== null,
+  });
+  const parsed = parseStageJson(content, opts.expectArray);
+  if (parsed === null) {
     return NextResponse.json(
       { error: opts.jsonError ?? 'The assistant did not return a usable result — try rephrasing.' },
       { status: 502 },

@@ -341,6 +341,30 @@ export function registerModel(input: {
 }
 
 /**
+ * Remove an ADMIN-REGISTERED model from the governed catalog (+ durable mirror).
+ * SERVER-SIDE GUARD: the chart-seeded platform aliases carry NO `endpoint` (they
+ * exist only in the deployment config) and are refused with 409 — "managed by the
+ * deployment" — regardless of what any UI shows. The gateway side (`/model/delete`
+ * with the db_model check) is handled by lib/platform-admin/model-remove.ts; this
+ * only maintains the governance record. An explicit assistant pin at the removed
+ * model is cleared back to "follow Standard" so it can never point at a ghost.
+ */
+export function removeModel(modelId: string): Model {
+  seed();
+  const s = modelsState();
+  const m = s.catalog.get(modelId);
+  if (!m) throw fail('Unknown model', 404);
+  if (!m.endpoint) throw fail(`${modelId} is managed by the deployment (seeded from the platform config) — it cannot be removed here`, 409);
+  s.catalog.delete(modelId);
+  mirror.deleteThrough(modelId);
+  if (s.assistant === modelId) {
+    s.assistant = '';
+    mirror.writeThrough('__assistant__', { id: '__assistant__', assistant: '' });
+  }
+  return m;
+}
+
+/**
  * The id of the ONE model that powers every built-in assistant. An EMPTY explicit
  * override means "follow the unified STANDARD role", so this returns the effective
  * model_name the assistant will actually run on.

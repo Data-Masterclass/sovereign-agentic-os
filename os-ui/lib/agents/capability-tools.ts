@@ -67,13 +67,16 @@ const CONNECTIONS_CHIP_TOOLS = ['list_connections', 'get_connection', 'test_conn
 /** Create/write tools per kind — added on top of the read set when the grant writes.
  * Promotion/lifecycle tools (request_promotion, publish_knowledge, promote_connection,
  * approve_*) are DELIBERATELY excluded: those are governed hand-offs, not "use it".
- * Metrics + plan have no author path in the builder, so writing grants nothing extra. */
+ * `metrics` grants `define_metric` — the define-a-KPI write, wired through the SAME
+ * governed metrics path the MCP tool uses (a My-scope write, so it runs DIRECTLY under
+ * the My-direct rule; `promote_metric` stays a governed hand-off, excluded). `plan` has
+ * no author path in the builder, so writing grants nothing extra. */
 const WRITE_TOOLS: Record<GrantKind, string[]> = {
   data: ['create_dataset', 'ingest_dataset', 'transform_silver', 'build_gold_join', 'add_dataset_version', 'document_dataset'],
   knowledge: ['author_knowledge', 'index_knowledge'],
   files: ['upload_file'],
   connections: ['create_connection', 'import_warehouse_table'],
-  metrics: [],
+  metrics: ['define_metric'],
   plan: [],
 };
 

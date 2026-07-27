@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {
   _reset, listModels, getDefaults, setEnabled, registerProviderKey, listProviderKeys,
   registerAssistantModel, getAssistantModel, getAssistantModelId, setAssistantModel,
-  registerModel,
+  registerModel, removeModel, isAssistantExplicit,
 } from './models.ts';
 import { _reset as resetSettings } from './settings.ts';
 
@@ -127,6 +127,37 @@ test('registerModel rejects an endpoint without a secrets reference', () => {
     () => registerModel({ id: 'bad', label: 'Bad', task: 'chat', providerType: 'openai-compatible', endpoint: { baseUrl: 'https://x/v1', modelName: 'm', keyRef: { name: '', key: '' }, fingerprint: '' }, addedBy: 'sara' }),
     (e: { status?: number }) => e.status === 400,
   );
+});
+
+const REMOVE_EP = { baseUrl: 'https://llm.example/v1', modelName: 'up', keyRef: { name: 'model-rm', key: 'api_key' }, fingerprint: 'sha256:rm' };
+
+test('removeModel refuses every chart-seeded platform alias (server-side guard, 409)', () => {
+  for (const id of ['sovereign-default', 'sovereign-reasoning', 'sovereign-embed', 'sovereign-mock']) {
+    assert.throws(() => removeModel(id), (e: { status?: number }) => e.status === 409, `${id} must be managed-by-the-deployment`);
+    assert.ok(listModels().some((m) => m.id === id), `${id} must survive the refused remove`);
+  }
+});
+
+test('removeModel deletes an administrator-registered model from the catalog', () => {
+  registerModel({ id: 'my-cloud-llm', label: 'My cloud LLM', task: 'chat', providerType: 'openai-compatible', endpoint: REMOVE_EP, addedBy: 'sara' });
+  assert.ok(listModels().some((m) => m.id === 'my-cloud-llm'));
+  const removed = removeModel('my-cloud-llm');
+  assert.equal(removed.id, 'my-cloud-llm');
+  assert.ok(!listModels().some((m) => m.id === 'my-cloud-llm'));
+});
+
+test('removeModel 404s on an unknown id', () => {
+  assert.throws(() => removeModel('ghost'), (e: { status?: number }) => e.status === 404);
+});
+
+test('removing the explicitly-pinned assistant model clears the pin back to follow-Standard', () => {
+  registerModel({ id: 'my-cloud-llm', label: 'My cloud LLM', task: 'chat', providerType: 'openai-compatible', endpoint: REMOVE_EP, addedBy: 'sara' });
+  setAssistantModel('my-cloud-llm');
+  assert.equal(isAssistantExplicit(), true);
+  removeModel('my-cloud-llm');
+  // Never a ghost pin: back to following the STANDARD role.
+  assert.equal(isAssistantExplicit(), false);
+  assert.equal(getAssistantModelId(), 'sovereign-default');
 });
 
 test('globalThis pin: modelsState is shared under soa.platform.models', () => {

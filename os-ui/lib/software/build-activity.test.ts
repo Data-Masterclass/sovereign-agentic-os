@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toolCallToLine, committedSummaryLine, errorReason, buildStatusRail } from './build-activity.ts';
+import { toolCallToLine, committedSummaryLine, errorReason, buildStatusRail, buildOutcome } from './build-activity.ts';
 
 test('commit maps to a file-count line from its files[] arg', () => {
   const l = toolCallToLine({
@@ -99,4 +99,17 @@ test('buildStatusRail: a filed deploy review reads in-review (not live)', () => 
   const dep = rail.find((s) => s.label === 'Deploy')!;
   assert.equal(dep.value, 'in-review');
   assert.equal(dep.tone, 'active');
+});
+
+test('buildOutcome: concrete files + net delta, null on empty', () => {
+  assert.equal(buildOutcome([]), null);
+  const out = buildOutcome([
+    { path: 'src/App.tsx', before: 'a\nb', after: 'a\nb\nc\nd' }, // +2
+    { path: 'src/os.ts', before: 'x\ny\nz', after: 'x' }, // -2
+  ]);
+  assert.equal(out!.fileCount, 2);
+  assert.deepEqual(out!.files, ['src/App.tsx', 'src/os.ts']);
+  assert.equal(out!.added, 2);
+  assert.equal(out!.removed, 2);
+  assert.equal(out!.headline, '2 files changed (+2 −2)');
 });

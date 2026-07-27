@@ -59,3 +59,37 @@ export function storyProgress(epics: TreeEpic[]): { built: number; total: number
   }
   return { built, total };
 }
+
+/** The honest state of a whole epic in the one-at-a-time sequence. */
+export type EpicStatus = 'not-started' | 'in-progress' | 'done';
+
+/**
+ * Derive an epic's sequence state from its stories' PERSISTED statuses — honest,
+ * never guessed:
+ *   • done        — the epic has stories AND every one of them is done.
+ *   • in-progress — at least one story is done (but not all).
+ *   • not-started — no story is done (or the epic has no stories yet).
+ */
+export function deriveEpicStatus(epic: TreeEpic): EpicStatus {
+  const stories = epic.stories ?? [];
+  if (stories.length === 0) return 'not-started';
+  const doneCount = stories.filter((s) => s.status === 'done').length;
+  if (doneCount === stories.length) return 'done';
+  if (doneCount > 0) return 'in-progress';
+  return 'not-started';
+}
+
+/** "2 of 4 stories" for a single epic. */
+export function epicProgress(epic: TreeEpic): { built: number; total: number } {
+  const stories = epic.stories ?? [];
+  return { built: stories.filter((s) => s.status === 'done').length, total: stories.length };
+}
+
+/**
+ * The CURRENT epic in the one-at-a-time journey — the first epic that isn't done.
+ * Returns its index (or -1 when there are no epics, or all are done). This is the
+ * epic the Build stage makes visually primary and defaults its scope to.
+ */
+export function currentEpicIndex(epics: TreeEpic[]): number {
+  return epics.findIndex((e) => deriveEpicStatus(e) !== 'done');
+}

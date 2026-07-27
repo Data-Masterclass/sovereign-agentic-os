@@ -188,7 +188,14 @@ export function answerMessages(question: string, sql: string, grid: AskGrid): As
 // --------------------------------------------------------------- orchestrator --
 
 export type AskLlm = (messages: AskMessage[], model: string) => Promise<string>;
-export type AskModels = { generate: string; summarize: string };
+/**
+ * The tiers a turn uses. `generate` runs FIRST; when `generateEscalate` is set AND
+ * the first tier's SQL fails {@link validateReadOnlySelect}, generation retries ONCE
+ * on the escalate tier (Cost routing: standard-first, reasoning only on a validation
+ * miss — the read-only-SELECT guard is the quality gate). Unset ⇒ no escalation
+ * (single-tier behaviour, unchanged). `summarize` grounds the answer over real rows.
+ */
+export type AskModels = { generate: string; summarize: string; generateEscalate?: string };
 
 export type AskSuccess = {
   ok: true;
@@ -223,13 +230,27 @@ export async function runAsk(input: {
     return { ok: false, kind: 'no_dataset', message: NO_DATASET_MESSAGE };
   }
 
-  const raw = await input.llm(sqlGenMessages(question, input.datasets), input.models.generate);
-  const sql = extractSql(raw);
+  const genMessages = sqlGenMessages(question, input.datasets);
+  const raw = await input.llm(genMessages, input.models.generate);
+  let sql = extractSql(raw);
   if (sql.toUpperCase().includes(NO_DATASET_TOKEN)) {
     return { ok: false, kind: 'no_dataset', message: NO_DATASET_MESSAGE };
   }
 
-  const v = validateReadOnlySelect(sql);
+  let v = validateReadOnlySelect(sql);
+  // COST ROUTING: the cheap tier's SQL failed the read-only-SELECT guard → escalate
+  // generation ONCE to the reasoning tier (the guard is the safety gate; a NO_DATASET
+  // answer is a real answer, not a failure, so it is NOT escalated). A blank/invalid
+  // reasoning SQL still surfaces the honest invalid_sql below.
+  if (!v.ok && input.models.generateEscalate && input.models.generateEscalate !== input.models.generate) {
+    const escalatedRaw = await input.llm(genMessages, input.models.generateEscalate);
+    const escalatedSql = extractSql(escalatedRaw);
+    if (escalatedSql.toUpperCase().includes(NO_DATASET_TOKEN)) {
+      return { ok: false, kind: 'no_dataset', message: NO_DATASET_MESSAGE };
+    }
+    sql = escalatedSql;
+    v = validateReadOnlySelect(sql);
+  }
   if (!v.ok) return { ok: false, kind: 'invalid_sql', message: v.reason, sql };
 
   let grid: AskGrid;

@@ -26,6 +26,15 @@ export type Settings = {
   // re-points ROLE→alias; it never rewrites the fixed LiteLLM aliases. `tools` is
   // the agent tool-calling model (default Qwen, for clean OpenAI tool_calls).
   modelRoles: { reasoning: string; standard: string; tools: string; embeddings: string };
+  // COST ROUTING — when ON (default), surfaces whose output is STRICTLY VALIDATED
+  // before use run the STANDARD model first and escalate to the reasoning model
+  // ONLY on validation/parse failure (one escalation, then honest failure). The
+  // validators are the quality gate, so this is safe by construction. OFF pins those
+  // surfaces to the reasoning model directly (the pre-cost-routing behaviour). This
+  // NEVER touches the agent PLAN phase or free-form surfaces with no validator —
+  // those stay premium regardless (see lib/assistant/escalate.ts). Admin role pins
+  // still decide the actual aliases each tier resolves to.
+  standardFirstEscalation: boolean;
 };
 
 const EMPTY_ROLES = { reasoning: '', standard: '', tools: '', embeddings: '' };
@@ -38,6 +47,7 @@ let settings: Settings = {
   localization: { locale: 'en', available: ['en', 'de'] },
   notifications: { email: 'admin@datamasterclass.com', backupFailure: true, costThreshold: true },
   modelRoles: { ...EMPTY_ROLES },
+  standardFirstEscalation: true,
 };
 
 function fail(message: string, status: number): Error {
@@ -63,6 +73,13 @@ export function updateSettings(patch: Partial<Settings> & Record<string, unknown
     localization: { ...settings.localization, ...(patch.localization ?? {}) },
     notifications: { ...settings.notifications, ...(patch.notifications ?? {}) },
     modelRoles: { ...settings.modelRoles, ...(patch.modelRoles ?? {}) },
+    // Nil-safe: only a real boolean flips it; an absent/non-boolean patch keeps the
+    // current value (defaults ON), so a partial settings PUT never silently disables
+    // cost routing.
+    standardFirstEscalation:
+      typeof patch.standardFirstEscalation === 'boolean'
+        ? patch.standardFirstEscalation
+        : settings.standardFirstEscalation,
   };
   return settings;
 }
@@ -76,5 +93,6 @@ export function _reset(): void {
     localization: { locale: 'en', available: ['en', 'de'] },
     notifications: { email: 'admin@datamasterclass.com', backupFailure: true, costThreshold: true },
     modelRoles: { ...EMPTY_ROLES },
+    standardFirstEscalation: true,
   };
 }

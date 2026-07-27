@@ -5,6 +5,7 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { stripThinking } from '@/lib/agents/agent-chat-response';
+import Markdown from '@/components/Markdown';
 import BuildDiff, { type FileChange } from './BuildDiff';
 import { summarizeChanges } from '@/lib/software/build-changeset';
 import type { ActivityLine } from '@/lib/software/build-activity';
@@ -183,26 +184,42 @@ export default function BuildChat({
   const planning = mode === 'plan';
   const label = planning ? 'plan assistant' : 'build assistant';
 
-  const ACTIONS: { key: BuildAction; label: string; title: string }[] = [
+  // The four scope actions. Build is PRIMARY (gold) — it's the verb that ships
+  // code; Design · Test · Review are secondary (ghost) but full-size, not tiny.
+  const ACTIONS: { key: BuildAction; label: string; title: string; primary?: boolean }[] = [
     { key: 'design', label: 'Design', title: 'Refine the design of the selection (Plan mode — no code changes)' },
-    { key: 'build', label: 'Build', title: 'Implement the selection — commits real code' },
+    { key: 'build', label: 'Build', title: 'Implement the selection — commits real code', primary: true },
     { key: 'test', label: 'Test', title: 'Critically test the selection against the committed code (read-only)' },
     { key: 'review', label: 'Review', title: 'Review what has been built — risks + feature ideas (read-only)' },
   ];
 
   return (
     <div className="chat claude">
-      {/* Scope action bar — appears when a node is selected in the tree. */}
+      {/* Scope action bar — appears when a node is selected in the tree. Full-size,
+          prominent controls: Build primary, the rest comfortably-clickable ghosts. */}
       {target ? (
-        <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
-          {ACTIONS.map((a) => (
-            <button key={a.key} type="button" className="btn sm" disabled={loading} title={a.title} onClick={() => runAction(a.key)}>
-              {a.label}
-            </button>
-          ))}
-          <span className="muted" style={{ fontSize: 12, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            on {targetLabel(epics, target)}{lastAction ? ` · last: ${lastAction}` : ''}
-          </span>
+        <div className="sw-build-actionbar">
+          <div className="sw-build-actionbar-scope">
+            <span className="comp-label" style={{ fontSize: 11 }}>Working on</span>
+            <strong style={{ fontSize: 13, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {targetLabel(epics, target)}
+            </strong>
+            {lastAction ? <span className="badge muted" style={{ fontSize: 10 }}>last: {lastAction}</span> : null}
+          </div>
+          <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            {ACTIONS.map((a) => (
+              <button
+                key={a.key}
+                type="button"
+                className={a.primary ? 'btn' : 'btn ghost'}
+                disabled={loading}
+                title={a.title}
+                onClick={() => runAction(a.key)}
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
         </div>
       ) : null}
       <div className="chat-log" style={{ minHeight: 360 }} ref={scrollRef}>
@@ -216,7 +233,9 @@ export default function BuildChat({
           messages.map((m, i) => (
             <div key={i} className={`bubble ${m.role}`}>
               <div className="bubble-role">{m.role === 'user' ? 'You' : label}</div>
-              <div className="bubble-body">{m.content}</div>
+              <div className="bubble-body">
+                {m.role === 'assistant' ? <Markdown>{m.content}</Markdown> : m.content}
+              </div>
             </div>
           ))
         )}
@@ -235,7 +254,7 @@ export default function BuildChat({
               {planText ? (
                 <div style={{ marginBottom: feed.length ? 10 : 0 }}>
                   <div className="section-title" style={{ fontSize: 11, marginBottom: 4 }}>Plan</div>
-                  <div className="muted" style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{planText}</div>
+                  <Markdown muted>{planText}</Markdown>
                 </div>
               ) : null}
               {feed.length > 0 ? (

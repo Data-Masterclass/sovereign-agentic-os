@@ -4,7 +4,14 @@
 /** Tests for the Build-stage epic/story tree derivation (lib/software/story-tree.ts). */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { deriveStoryStatus, storyProgress, type BuildRunSignals } from './story-tree.ts';
+import {
+  deriveStoryStatus,
+  storyProgress,
+  deriveEpicStatus,
+  epicProgress,
+  currentEpicIndex,
+  type BuildRunSignals,
+} from './story-tree.ts';
 
 const idle: BuildRunSignals = { targetedStoryId: null, running: false, failedStoryIds: new Set() };
 
@@ -57,4 +64,39 @@ test('story-tree: progress counts done stories across epics', () => {
   ];
   assert.deepEqual(storyProgress(epics), { built: 2, total: 4 });
   assert.deepEqual(storyProgress([]), { built: 0, total: 0 });
+});
+
+test('story-tree: epic status is honest — not-started / in-progress / done', () => {
+  // No stories yet → not-started (nothing to build).
+  assert.equal(deriveEpicStatus({ id: 'e', stories: [] }), 'not-started');
+  // No done stories → not-started.
+  assert.equal(deriveEpicStatus({ id: 'e', stories: [{ id: 'a' }, { id: 'b' }] }), 'not-started');
+  // Some done → in-progress.
+  assert.equal(
+    deriveEpicStatus({ id: 'e', stories: [{ id: 'a', status: 'done' }, { id: 'b' }] }),
+    'in-progress',
+  );
+  // All done → done.
+  assert.equal(
+    deriveEpicStatus({ id: 'e', stories: [{ id: 'a', status: 'done' }, { id: 'b', status: 'done' }] }),
+    'done',
+  );
+});
+
+test('story-tree: epicProgress counts done vs total for one epic', () => {
+  assert.deepEqual(epicProgress({ id: 'e', stories: [{ id: 'a', status: 'done' }, { id: 'b' }] }), { built: 1, total: 2 });
+  assert.deepEqual(epicProgress({ id: 'e', stories: [] }), { built: 0, total: 0 });
+});
+
+test('story-tree: currentEpicIndex points at the first not-done epic', () => {
+  const epics = [
+    { id: 'e1', stories: [{ id: 'a', status: 'done' as const }] }, // done
+    { id: 'e2', stories: [{ id: 'b', status: 'done' as const }, { id: 'c' }] }, // in-progress
+    { id: 'e3', stories: [{ id: 'd' }] }, // not-started
+  ];
+  assert.equal(currentEpicIndex(epics), 1);
+  // All done → -1 (the journey is complete).
+  assert.equal(currentEpicIndex([{ id: 'e', stories: [{ id: 'a', status: 'done' as const }] }]), -1);
+  // No epics → -1.
+  assert.equal(currentEpicIndex([]), -1);
 });

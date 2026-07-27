@@ -78,6 +78,17 @@ export function roleModel(role: ModelRole): string {
   return override && override.trim().length > 0 ? override : roleDefault(role);
 }
 
+/**
+ * Whether STANDARD-FIRST ESCALATION is active (Cost routing). ON (default) means the
+ * strictly-validated cost-routed surfaces try the standard tier first and escalate to
+ * reasoning only on validation failure; OFF pins them to reasoning directly. This is
+ * the ONE admin switch `completeWithEscalation` consults. Nil-safe: an unset/legacy
+ * settings blob (older store) defaults ON. Server-only (reads the admin settings).
+ */
+export function standardFirstEscalationEnabled(): boolean {
+  return getSettings().standardFirstEscalation !== false;
+}
+
 /** All effective role models — surfaced to the agent builder + admin panel. */
 export function roleModels(): Record<ModelRole, string> {
   return {

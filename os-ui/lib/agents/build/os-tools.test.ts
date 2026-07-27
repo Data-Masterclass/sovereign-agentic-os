@@ -18,6 +18,8 @@ import {
   writesAreHeld,
   writeTargetScope,
   holdDecision,
+  summarizeWriteOutcomes,
+  writeOutcomesLine,
   type ScopedItemsLoader,
   type OsToolDeps,
 } from './os-tools.ts';
@@ -485,4 +487,48 @@ test('resolveFolderGrants is pure (input system untouched)', async () => {
   const before = serializeSystem(sys);
   await resolveFolderGrants(sys, async () => [{ id: 'ds_a', folder: '/contracts' }]);
   assert.equal(serializeSystem(sys), before);
+});
+
+// --- RUN-REPORT HONESTY: write-outcome accounting (counted, never inferred) ------
+
+/** A held step's typed envelope (the exact shape errorResult('held', …) produces). */
+const HELD = JSON.stringify({ error: { code: 'held', reason: 'requires domain_admin approval' } });
+/** A non-policy execution error (a Trino/engine failure) — must NOT count as held. */
+const EXEC_ERR = JSON.stringify({ error: { code: 'bad_request', reason: 'bad sql' } });
+
+test('summarizeWriteOutcomes: counts direct My-writes by tab, held separately, ignores reads', () => {
+  const o = summarizeWriteOutcomes([
+    { tool: 'create_dataset', result: 'ok', isError: false },    // direct → My Data
+    { tool: 'ingest_dataset', result: 'ok', isError: false },    // direct → My Data
+    { tool: 'define_metric', result: 'ok', isError: false },     // direct → My Metrics
+    { tool: 'query_data', result: 'rows', isError: false },      // a READ — ignored
+    { tool: 'publish_knowledge', result: HELD, isError: true },  // held → Governance
+  ]);
+  assert.equal(o.wroteTotal, 3);
+  assert.equal(o.heldTotal, 1);
+  const byTab = Object.fromEntries(o.wrote.map((g) => [g.tab, g.count]));
+  assert.equal(byTab['Data'], 2);
+  assert.equal(byTab['Metrics'], 1);
+});
+
+test('summarizeWriteOutcomes: a NON-held execution error is neither written nor held', () => {
+  const o = summarizeWriteOutcomes([{ tool: 'create_dataset', result: EXEC_ERR, isError: true }]);
+  assert.equal(o.wroteTotal, 0, 'a failed write did not write');
+  assert.equal(o.heldTotal, 0, 'a failed write is not "held for approval"');
+});
+
+test('summarizeWriteOutcomes: resolves legacy aliases (write_file → upload_file → Files)', () => {
+  const o = summarizeWriteOutcomes([{ tool: 'write_file', result: 'ok', isError: false }]);
+  assert.equal(o.wroteTotal, 1);
+  assert.equal(o.wrote[0].tab, 'Files');
+});
+
+test('writeOutcomesLine: honest sentences for direct + held, empty when nothing wrote', () => {
+  assert.equal(writeOutcomesLine(summarizeWriteOutcomes([{ tool: 'query_data', result: 'r', isError: false }])), '');
+  const line = writeOutcomesLine(summarizeWriteOutcomes([
+    { tool: 'define_metric', result: 'ok', isError: false },
+    { tool: 'publish_knowledge', result: HELD, isError: true },
+  ]));
+  assert.match(line, /Wrote 1 record directly — 1 to My Metrics\./);
+  assert.match(line, /1 write awaiting approval in Governance → Inbox\./);
 });

@@ -7,7 +7,7 @@ import { getSystemForRun, setRunning, recordActivity, setActivity, clearActivity
 import type { LastRun } from '@/lib/agents/store';
 import { runSystem } from '@/lib/agents/build/server';
 import { runOsTeam } from '@/lib/agents/build/agentic-graph-server';
-import { isAgenticOsTeam, resolveFolderGrantsForRun } from '@/lib/agents/build/os-tools';
+import { isAgenticOsTeam, resolveFolderGrantsForRun, summarizeWriteOutcomes, writeOutcomesLine } from '@/lib/agents/build/os-tools';
 import { classifyStepError, type AgenticGraphResult } from '@/lib/agents/build/agentic-graph';
 import { governYamlForOwner } from '@/lib/agents/build/owner-grants';
 import { deriveContextUsage } from '@/lib/agents/build/context-usage';
@@ -139,21 +139,30 @@ function finalizeTeamRun(team: AgenticGraphResult, running: boolean, yaml: strin
   // the honest consumption record. Attached to the response + LastRun.
   const contextUsage = deriveContextUsage(team.runs.map((r) => ({ steps: r.result.steps })));
   const grantedIds = grantedIdsFromYaml(yaml);
+  // Honest WRITE accounting — counted DIRECTLY from every node's executed steps: direct
+  // My-scope writes (the My-direct rule) vs writes held in Governance → Inbox. `held` is
+  // now the REAL held-write count (was hard-coded 0), so the panel never under-reports a
+  // queued write.
+  const outcomes = summarizeWriteOutcomes(
+    team.runs.flatMap((r) => r.result.steps.map((s) => ({ tool: s.tool, result: s.result, isError: s.isError }))),
+  );
+  const writeSummary = { line: writeOutcomesLine(outcomes), ...outcomes };
   const lastRun: LastRun = {
     at: Date.now(),
     running,
     ok: teamOk,
     path: team.path,
     traces: 0,
-    held: 0,
+    held: outcomes.heldTotal,
     steps: teamSteps,
     nodes,
     contextUsage,
     grantedIds,
     output: team.finalText,
+    writeSummary,
     mode: 'live',
   };
-  const body = { running, mode: 'live' as const, team: true, ok: teamOk, path: team.path, finalText: team.finalText, nodes, contextUsage, grantedIds };
+  const body = { running, mode: 'live' as const, team: true, ok: teamOk, path: team.path, finalText: team.finalText, nodes, contextUsage, grantedIds, writeSummary };
   return { body, lastRun };
 }
 

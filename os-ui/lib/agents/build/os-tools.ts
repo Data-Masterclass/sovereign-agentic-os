@@ -315,6 +315,90 @@ export async function resolveFolderGrantsForRun(
  */
 const WRITE_APPROVAL_NAMES = new Set(ALL_WRITE_TOOLS.map((t) => t.name));
 
+/** The tab a write tool lands its artifact in — for the honest "wrote N … to My <tab>"
+ *  run-report line. Falls back to the tab the write-tool catalog records; an unmapped
+ *  write is summarised generically ("My workspace"). */
+const WRITE_TOOL_TAB = new Map<string, string>(ALL_WRITE_TOOLS.map((t) => [t.name, t.tab]));
+
+/** Human labels for the tabs the run report names (keeps "My Data" not "My data"). */
+const TAB_LABEL: Record<string, string> = {
+  data: 'Data', knowledge: 'Knowledge', files: 'Files', metrics: 'Metrics',
+  dashboards: 'Dashboards', connections: 'Connections', software: 'Software',
+  agents: 'Agents', strategy: 'Strategy', science: 'Science',
+};
+
+/** One run's write accounting — direct My-scope writes vs writes held for approval. */
+export type WriteOutcomes = {
+  /** Successful DIRECT writes (My-scope, ran without approval), grouped by tab label. */
+  wrote: { tab: string; count: number }[];
+  /** Total direct writes across all tabs (= sum of `wrote[].count`). */
+  wroteTotal: number;
+  /** Writes HELD for approval (Domain/Company escalations or read-only blocks). */
+  heldTotal: number;
+};
+
+/** A run step as the report sees it — the minimal shape both run paths already carry. */
+export type RunStepLite = { tool: string; result: string; isError: boolean };
+
+/** True when an errored step's typed envelope carries the `held` (approval) code. */
+function isHeldStep(step: RunStepLite): boolean {
+  if (!step.isError) return false;
+  try {
+    const code = (JSON.parse(step.result) as { error?: { code?: string } })?.error?.code;
+    return code === 'held';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Count a run's WRITE outcomes DIRECTLY from its executed steps — the honest source
+ * for the run report (never inferred). A step is a WRITE iff its (alias-resolved) tool
+ * is in {@link WRITE_APPROVAL_NAMES}. It COUNTS as:
+ *   • a direct write — the write tool ran without error (a My-scope write executed under
+ *     the My-direct rule); grouped by the tab it wrote to; OR
+ *   • a held write   — the step errored with the typed `held` code (Domain/Company
+ *     escalation or a read-only block enqueued to Governance → Inbox).
+ * Non-write tools and non-`held` execution errors are ignored. Pure + deterministic.
+ */
+export function summarizeWriteOutcomes(steps: RunStepLite[]): WriteOutcomes {
+  const byTab = new Map<string, number>();
+  let wroteTotal = 0;
+  let heldTotal = 0;
+  for (const step of steps) {
+    const tool = resolveAlias(step.tool);
+    if (!WRITE_APPROVAL_NAMES.has(tool)) continue;
+    if (isHeldStep(step)) {
+      heldTotal += 1;
+    } else if (!step.isError) {
+      const tab = TAB_LABEL[WRITE_TOOL_TAB.get(tool) ?? ''] ?? 'workspace';
+      byTab.set(tab, (byTab.get(tab) ?? 0) + 1);
+      wroteTotal += 1;
+    }
+  }
+  const wrote = Array.from(byTab.entries()).map(([tab, count]) => ({ tab, count }));
+  return { wrote, wroteTotal, heldTotal };
+}
+
+/**
+ * The one-line, human run-report sentence for a run's write outcomes — the honest
+ * "what changed" surfaced in the Run panel result and the Evaluate per-agent view:
+ *   • "Wrote 2 record(s) to My Data, 1 to My Metrics."   (direct My-scope writes)
+ *   • "1 write awaiting approval in Governance → Inbox."  (held writes)
+ * Both clauses appear when both occurred; an empty run yields '' (no writes to report).
+ */
+export function writeOutcomesLine(o: WriteOutcomes): string {
+  const parts: string[] = [];
+  if (o.wroteTotal > 0) {
+    const groups = o.wrote.map((g) => `${g.count} to My ${g.tab}`).join(', ');
+    parts.push(`Wrote ${o.wroteTotal} record${o.wroteTotal === 1 ? '' : '(s)'} directly — ${groups}.`);
+  }
+  if (o.heldTotal > 0) {
+    parts.push(`${o.heldTotal} write${o.heldTotal === 1 ? '' : 's'} awaiting approval in Governance → Inbox.`);
+  }
+  return parts.join(' ');
+}
+
 /**
  * Does the system's safety preset HOLD writes for human approval? Mirrors
  * `lib/governance/governance.ts` `resolveAutonomous` for the agent-run path:
@@ -613,7 +697,11 @@ export function grantedToolExecutor(
       { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: mcpName, arguments: args } },
       { tools: granted },
     );
-    await safeTrace(deps, sysPrincipal, mcpName, args, 'allow');
+    // Honest decision note: a granted WRITE that reached gate 2 is a My-scope write that
+    // ran DIRECTLY (the My-direct rule) — record it as such, not a bare 'allow', so the
+    // trace tells the truth about WHY no approval was needed.
+    const wroteDirectly = WRITE_APPROVAL_NAMES.has(mcpName) && writeTargetScope(mcpName, args) === 'personal';
+    await safeTrace(deps, sysPrincipal, mcpName, args, 'allow', wroteDirectly ? 'allow (own My scope)' : undefined);
 
     if (res?.error) return { text: `Error: ${res.error.message}`, isError: true };
     const result = (res?.result ?? {}) as { content?: { text?: string }[]; isError?: boolean };
@@ -622,16 +710,19 @@ export function grantedToolExecutor(
   };
 }
 
-/** Mirror a step under the system principal for Monitoring; never throws. */
+/** Mirror a step under the system principal for Monitoring; never throws. `note`
+ *  carries an honest human-readable qualifier (e.g. 'allow (own My scope)' for a
+ *  direct My-scope write) surfaced in the trace output alongside the coarse Effect. */
 async function safeTrace(
   deps: OsToolDeps,
   principal: string,
   tool: string,
   input: unknown,
   decision: Effect,
+  note?: string,
 ): Promise<void> {
   try {
-    await deps.trace({ principal, tool, input, output: { decision }, decision });
+    await deps.trace({ principal, tool, input, output: { decision: note ?? decision }, decision });
   } catch {
     /* attribution is best-effort — the governed lib already traced under the user */
   }

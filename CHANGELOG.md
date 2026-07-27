@@ -13,6 +13,35 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.7] — 2026-07-27
+
+### Added
+- Agents: writes whose target is the owner's own "My" scope now execute
+  DIRECTLY (no approval) under both read+write and Write-approval — approval is
+  reserved for Domain/Company targets; another user's personal space stays
+  unreachable by construction. Metrics is now an agent-grantable write
+  capability (define_metric). Run reports state write outcomes prominently
+  ("wrote N to My Data" / "N awaiting approval → Governance → Inbox").
+- Standard-first cost routing: validated LLM surfaces (suggest_metrics, DQ
+  propose, NL→SQL, structured stage assistants) run the standard tier first and
+  escalate to reasoning only on validation failure — one admin toggle; traces
+  attribute to the model that answered.
+- Admin Models & Providers: catalog split into "Managed AI (STACKIT)"
+  (not removable) and "Added by administrators" (removable, with reference
+  safety listing role-pin/fallback usages before deletion). Master key never
+  leaves the server.
+### Changed
+- Software Build stage recomposed as a one-epic-at-a-time journey: an ordered
+  epic checklist with honest per-epic state, a single conversational surface
+  (new reusable StageConversation primitive) replacing three stapled-on
+  assistant boxes, epic-scoped and human-readable (markdown) chat, visible
+  build outcomes, and the real deployed-pod preview (esbuild-wasm InstantPreview
+  removed).
+### Fixed
+- LiteLLM now has a fallback chain (sovereign-default/mock → premium, reasoning
+  → reasoning-fast) so a provider rate limit fails over instead of failing a
+  student's agent run.
+
 ## [os-ui 0.6.6] — 2026-07-27
 
 ### Added

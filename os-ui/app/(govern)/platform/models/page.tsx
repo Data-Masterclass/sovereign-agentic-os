@@ -6,26 +6,33 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
+import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
+import { splitCatalog } from '@/lib/platform-admin/catalog-groups';
 
 type Task = 'chat' | 'reasoning' | 'embedding';
-type Model = { id: string; label: string; provider: string; task: Task; tier: 'sovereign' | 'premium'; route: string; enabled: boolean; capEUR: number | null };
+// `endpoint` is present ONLY on administrator-registered models (a secrets-manager
+// ref + fingerprint, never a raw key) — its presence marks a model as removable
+// when the live gateway can't say (offline). Mirrors lib/platform-admin/catalog-groups.
+type Model = { id: string; label: string; provider: string; task: Task; tier: 'sovereign' | 'premium'; route: string; enabled: boolean; capEUR: number | null; endpoint?: unknown };
 type Key = { provider: string; fingerprint: string; addedBy: string; addedAt: string };
+type ModelReference = { kind: 'role' | 'assistant' | 'agent'; label: string };
 
 // The three per-ROLE defaults are ONE store: the platform-admin settings
 // `modelRoles`, resolved at runtime by lib/models/roles.ts. This page shows the
 // SAME values (and writes the SAME store) as Settings → Model roles.
 type RoleKey = 'standard' | 'reasoning' | 'embeddings';
 type ProviderType = 'stackit' | 'openai-compatible' | 'azure' | 'bedrock' | 'self-hosted';
-type CatalogModel = { model_name: string; display: string; provenance: 'internal' | 'external'; providerType?: ProviderType; tier?: string };
+// `dbModel` = LiteLLM's seeded-vs-admin-added flag (true ⇒ registered via the
+// add-provider wizard, removable; false ⇒ seeded from the deployment config).
+type CatalogModel = { model_name: string; display: string; provenance: 'internal' | 'external'; providerType?: ProviderType; tier?: string; dbModel?: boolean };
 
-// Provider-family group headings for the live Catalog. Order = display order.
-const PROVIDER_GROUPS: { type: ProviderType; label: string }[] = [
-  { type: 'stackit', label: 'STACKIT managed inference' },
-  { type: 'openai-compatible', label: 'OpenAI-compatible' },
-  { type: 'self-hosted', label: 'Self-hosted (in-cluster / WireGuard)' },
-  { type: 'azure', label: 'Azure OpenAI' },
-  { type: 'bedrock', label: 'AWS Bedrock' },
-];
+const PROVIDER_LABELS: Record<ProviderType, string> = {
+  stackit: 'STACKIT managed inference',
+  'openai-compatible': 'OpenAI-compatible',
+  'self-hosted': 'self-hosted',
+  azure: 'Azure OpenAI',
+  bedrock: 'AWS Bedrock',
+};
 
 // "Add provider" wizard — MVP ships OpenAI-compatible + STACKIT; Azure/Bedrock are
 // scaffolded (disabled) so the stepper already has their slot for a later phase.
@@ -50,6 +57,16 @@ type PriceRow = { inputPerM: number; outputPerM: number; source: 'stored' | 'env
 type PriceEdit = { input: string; output: string };
 
 export default function ModelsPage() {
+  // The remove flow uses the OS-standard confirm dialog — provider wraps the page once.
+  return (
+    <ConfirmProvider>
+      <ModelsPageInner />
+    </ConfirmProvider>
+  );
+}
+
+function ModelsPageInner() {
+  const confirm = useConfirm();
   const [models, setModels] = useState<Model[]>([]);
   const [assistant, setAssistant] = useState('');
   const [assistantExplicit, setAssistantExplicit] = useState(false);
@@ -59,6 +76,9 @@ export default function ModelsPage() {
   const [catalog, setCatalog] = useState<CatalogModel[]>([]);
   const [catalogSource, setCatalogSource] = useState<'litellm' | 'offline' | null>(null);
   const [modelRoles, setModelRoles] = useState<Record<RoleKey, string>>({ standard: '', reasoning: '', embeddings: '' });
+  // Cost routing: standard-first escalation (default ON). Strictly-validated surfaces
+  // try Standard first and escalate to Reasoning only on a validation miss.
+  const [standardFirst, setStandardFirst] = useState(true);
   // Token prices: the effective book (stored/env per row) + unsaved field edits.
   const [prices, setPrices] = useState<Record<string, PriceRow>>({});
   const [pricesMeta, setPricesMeta] = useState<{ updatedAt?: string; updatedBy?: string }>({});
@@ -87,7 +107,7 @@ export default function ModelsPage() {
       if (!mRes.ok) { setError(mBody.error ?? 'Failed to load'); return; }
       setModels(mBody.models ?? []); setAssistant(mBody.assistant ?? ''); setAssistantExplicit(Boolean(mBody.assistantExplicit)); setKeys(mBody.keys ?? []);
       if (cRes.ok) { const c = await cRes.json(); setCatalog(c.models ?? []); setCatalogSource(c.source ?? null); }
-      if (sRes.ok) { const s = await sRes.json(); if (s.settings?.modelRoles) setModelRoles(s.settings.modelRoles); }
+      if (sRes.ok) { const s = await sRes.json(); if (s.settings?.modelRoles) setModelRoles(s.settings.modelRoles); setStandardFirst(s.settings?.standardFirstEscalation !== false); }
       if (pRes.ok) { const p = await pRes.json(); setPrices(p.prices ?? {}); setPricesMeta({ updatedAt: p.updatedAt, updatedBy: p.updatedBy }); setPriceEdits({}); }
     } catch (e) { setError((e as Error).message); } finally { setLoading(false); }
   }, []);
@@ -98,13 +118,13 @@ export default function ModelsPage() {
     setBusy('roles'); setError('');
     try {
       const res = await fetch('/api/platform-admin/settings', {
-        method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ modelRoles }),
+        method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ modelRoles, standardFirstEscalation: standardFirst }),
       });
       const body = await res.json();
       if (!res.ok) setError(body.error ?? 'Save failed');
       else { setToast('Saved the default model per role — every assistant, agent and embedding call resolves through these.'); await load(); }
     } finally { setBusy(''); }
-  }, [modelRoles, load]);
+  }, [modelRoles, standardFirst, load]);
 
   // Save the edited token prices. Both fields set → an override; both cleared on
   // a stored row → remove the override (back to the deployment seed / unpriced).
@@ -195,6 +215,47 @@ export default function ModelsPage() {
     } finally { setBusy(''); }
   }, [provider, value, load]);
 
+  // Remove an administrator-added model — reference-aware two-step confirm.
+  // Usages (role pins, assistant pin, agent per-node pins) are listed in the FIRST
+  // dialog; a model that is in use additionally requires typing its alias (the
+  // explicit second confirmation) before the force-remove is sent. The server
+  // re-checks both (409 without force; seeded models always refused).
+  const removeCatalogModel = useCallback(async (name: string) => {
+    setError('');
+    let refs: ModelReference[] = [];
+    try {
+      const rRes = await fetch(`/api/platform-admin/models/${encodeURIComponent(name)}/references`, { cache: 'no-store' });
+      if (rRes.ok) refs = (await rRes.json()).references ?? [];
+    } catch { /* sweep unavailable — the server still blocks a referenced delete */ }
+    const used = refs.length > 0;
+    const ok = await confirm({
+      title: `Remove “${name}”?`,
+      body: used
+        ? `Used as: ${refs.map((r) => r.label).join(' · ')}. Removing this model breaks those until an admin re-points them.`
+        : 'The model is removed from the gateway and disappears from every picker. Your provider account is untouched — you can add it again anytime with Add provider.',
+      confirmLabel: used ? 'Continue' : 'Remove',
+      danger: true,
+    });
+    if (!ok) return;
+    if (used) {
+      const ok2 = await confirm({
+        title: 'Remove a model that is in use?',
+        body: 'The usages listed before will fail until an admin re-points them. Type the model alias to confirm.',
+        confirmLabel: 'Remove anyway',
+        danger: true,
+        confirmPhrase: name,
+      });
+      if (!ok2) return;
+    }
+    setBusy(`rm-${name}`);
+    try {
+      const res = await fetch(`/api/platform-admin/models/${encodeURIComponent(name)}${used ? '?force=1' : ''}`, { method: 'DELETE' });
+      const body = await res.json();
+      if (!res.ok) setError(body.error ?? 'Remove failed');
+      else { setToast(`Removed ${name} — it is gone from the gateway and every picker.`); await load(); }
+    } finally { setBusy(''); }
+  }, [confirm, load]);
+
   return (
     <>
       <PageHeader title="Models & Providers" crumb="platform · the LiteLLM catalog (sovereign + STACKIT)" />
@@ -244,6 +305,29 @@ export default function ModelsPage() {
               </div>
             );
           })}
+          <label
+            className="row"
+            style={{ gap: 10, alignItems: 'flex-start', marginTop: 6, marginBottom: 14, cursor: 'pointer' }}
+          >
+            <input
+              type="checkbox"
+              checked={standardFirst}
+              disabled={busy !== ''}
+              onChange={(e) => setStandardFirst(e.target.checked)}
+              style={{ marginTop: 3 }}
+            />
+            <span className="hint" style={{ flex: 1 }}>
+              <strong>Standard-first escalation</strong> (cost routing)
+              <span style={{ display: 'block', fontSize: 12, marginTop: 2 }}>
+                For surfaces whose output is strictly validated before use — suggest metrics, DQ
+                fix proposals, structured stage assistants, NL→SQL generation — run <strong>Standard</strong>{' '}
+                first and escalate to <strong>Reasoning</strong> only when validation fails. The validators
+                are the quality gate, so this is safe by construction. Every escalation is traced to the
+                model that actually answered. Turn off to send those surfaces straight to Reasoning.
+                The agent plan phase and free-form surfaces always use Reasoning regardless.
+              </span>
+            </span>
+          </label>
           <button className="btn" disabled={busy === 'roles'} onClick={saveRoles}>
             {busy === 'roles' ? <span className="spin" /> : 'Save'}
           </button>
@@ -345,83 +429,107 @@ export default function ModelsPage() {
           )}
         </div>
 
-        <div className="section-title" style={{ marginTop: 22 }}>Catalog<span className="count-pill">{models.length}</span></div>
-        <div className="hint" style={{ marginBottom: 10 }}>
-          Grouped by provider family from the LIVE gateway (<code>/model/info</code>), each row showing its
-          OS tier mapping. Enable/disable + per-model caps are governed here.
-          {catalogSource === 'offline' ? ' LiteLLM is unreachable — showing the install catalog.' : ''}
-        </div>
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>Model</th><th>Tier</th><th>Route</th><th>Cap €/mo</th><th>Enabled</th></tr></thead>
-            <tbody>
-              {(() => {
-                // The effective per-role default ids: the override else the platform baseline.
-                const roleDefaults = new Set([
-                  modelRoles.standard || 'sovereign-default',
-                  modelRoles.reasoning || 'sovereign-reasoning',
-                  modelRoles.embeddings || 'sovereign-embed',
-                ]);
-                // Group the LIVE catalog (from /model/info) by provider family. Any
-                // governance-only model not seen live still shows under its own family
-                // (or STACKIT for the seed). Join to `models` for enable/cap controls.
-                const govById = new Map(models.map((m) => [m.id, m]));
-                const liveByName = new Map(catalog.map((c) => [c.model_name, c]));
-                const allNames = new Set<string>([...liveByName.keys(), ...govById.keys()]);
-                const groupOf = (name: string): ProviderType =>
-                  liveByName.get(name)?.providerType
-                  ?? (govById.get(name)?.provider as ProviderType | undefined)
-                  ?? 'stackit';
-                return PROVIDER_GROUPS.flatMap((g) => {
-                  const names = [...allNames].filter((n) => groupOf(n) === g.type).sort();
-                  if (names.length === 0) return [];
-                  return [
-                    <tr key={`grp-${g.type}`}><td colSpan={5} style={{ background: 'var(--panel-2, rgba(0,0,0,0.03))', fontWeight: 600, fontSize: 12 }}>{g.label}<span className="count-pill">{names.length}</span></td></tr>,
-                    ...names.map((name) => {
-                      const live = liveByName.get(name);
-                      const m = govById.get(name);
-                      const isDefault = roleDefaults.has(name);
-                      const isAssistant = assistant === name;
-                      return (
-                        <tr key={name}>
-                          <td>
-                            <strong>{live?.display ?? m?.label ?? name}</strong>
-                            {isDefault ? <span className="pa-tag" style={{ marginLeft: 8 }}>default</span> : null}
-                            {isAssistant ? <span className="pa-tag" style={{ marginLeft: 8 }}>assistant</span> : null}
-                            <div className="muted" style={{ fontSize: 11 }}>{name}{m ? ` · ${m.task}` : ''}{live?.tier ? ` · ${live.tier} tier` : ''}</div>
-                          </td>
-                          <td>{live?.tier ? <span className="pa-tag">{live.tier}</span> : (m ? <span className="pa-tag">{m.tier}</span> : <span className="muted">—</span>)}</td>
-                          <td>{m?.route ?? (live?.provenance === 'internal' ? 'self-hosted' : 'stackit')}</td>
-                          <td>
-                            {m ? (
-                              <input
-                                type="number" min={0} defaultValue={m.capEUR ?? ''} placeholder="none"
-                                style={{ width: 90 }} disabled={busy === name}
-                                onBlur={(e) => { const v = e.target.value.trim(); patch(name, { op: 'cap', capEUR: v === '' ? null : Number(v) }); }}
-                              />
-                            ) : <span className="muted">—</span>}
-                          </td>
-                          <td>
-                            {m ? (
-                              <button
-                                className={`switch${m.enabled ? ' on' : ''}`} disabled={busy === name}
-                                onClick={() => patch(name, { op: 'enable', enabled: !m.enabled })}
-                                title={isDefault && m.enabled ? 'A default model cannot be disabled' : ''}
-                              >
-                                <span className="switch-track"><span className="switch-thumb" /></span>
-                                <span className="switch-text">{m.enabled ? 'On' : 'Off'}</span>
-                              </button>
-                            ) : <span className="muted" style={{ fontSize: 11 }}>live-only</span>}
-                          </td>
-                        </tr>
-                      );
-                    }),
-                  ];
-                });
-              })()}
-            </tbody>
-          </table>
-        </div>
+        {(() => {
+          // The two catalog groups — the split rule lives in lib/platform-admin/
+          // catalog-groups.ts (live db_model flag, else the governed endpoint mark).
+          const liveByName = new Map(catalog.map((c) => [c.model_name, c]));
+          const govById = new Map(models.map((m) => [m.id, m]));
+          const { managed, adminAdded } = splitCatalog(catalog, models);
+          // The effective per-role default ids: the override else the platform baseline.
+          const roleDefaults = new Set([
+            modelRoles.standard || 'sovereign-default',
+            modelRoles.reasoning || 'sovereign-reasoning',
+            modelRoles.embeddings || 'sovereign-embed',
+          ]);
+          const familyOf = (name: string): string => {
+            const t = liveByName.get(name)?.providerType ?? (govById.get(name)?.provider as ProviderType | undefined);
+            return t ? (PROVIDER_LABELS[t] ?? t) : '';
+          };
+          const row = (name: string, removable: boolean) => {
+            const live = liveByName.get(name);
+            const m = govById.get(name);
+            const isDefault = roleDefaults.has(name);
+            const isAssistant = assistant === name;
+            const family = familyOf(name);
+            return (
+              <tr key={name}>
+                <td>
+                  <strong>{live?.display ?? m?.label ?? name}</strong>
+                  {isDefault ? <span className="pa-tag" style={{ marginLeft: 8 }}>default</span> : null}
+                  {isAssistant ? <span className="pa-tag" style={{ marginLeft: 8 }}>assistant</span> : null}
+                  <div className="muted" style={{ fontSize: 11 }}>{name}{m ? ` · ${m.task}` : ''}{family ? ` · ${family}` : ''}{live?.tier ? ` · ${live.tier} tier` : ''}</div>
+                </td>
+                <td>{live?.tier ? <span className="pa-tag">{live.tier}</span> : (m ? <span className="pa-tag">{m.tier}</span> : <span className="muted">—</span>)}</td>
+                <td>{m?.route ?? (live?.provenance === 'internal' ? 'self-hosted' : 'stackit')}</td>
+                <td>
+                  {m ? (
+                    <input
+                      type="number" min={0} defaultValue={m.capEUR ?? ''} placeholder="none"
+                      style={{ width: 90 }} disabled={busy === name}
+                      onBlur={(e) => { const v = e.target.value.trim(); patch(name, { op: 'cap', capEUR: v === '' ? null : Number(v) }); }}
+                    />
+                  ) : <span className="muted">—</span>}
+                </td>
+                <td>
+                  {m ? (
+                    <button
+                      className={`switch${m.enabled ? ' on' : ''}`} disabled={busy === name}
+                      onClick={() => patch(name, { op: 'enable', enabled: !m.enabled })}
+                      title={isDefault && m.enabled ? 'A default model cannot be disabled' : ''}
+                    >
+                      <span className="switch-track"><span className="switch-thumb" /></span>
+                      <span className="switch-text">{m.enabled ? 'On' : 'Off'}</span>
+                    </button>
+                  ) : <span className="muted" style={{ fontSize: 11 }}>live-only</span>}
+                </td>
+                {removable ? (
+                  <td>
+                    <button
+                      className="btn ghost" disabled={busy === `rm-${name}`}
+                      onClick={() => removeCatalogModel(name)}
+                      style={{ color: 'var(--danger)' }}
+                    >
+                      {busy === `rm-${name}` ? <span className="spin" /> : 'Remove'}
+                    </button>
+                  </td>
+                ) : null}
+              </tr>
+            );
+          };
+          return (
+            <>
+              <div className="section-title" style={{ marginTop: 22 }}>Managed AI (STACKIT)<span className="count-pill">{managed.length}</span></div>
+              <div className="hint" style={{ marginBottom: 10 }}>
+                The platform&rsquo;s built-in models, managed by the deployment — always available, not removable here.
+                {catalogSource === 'offline' ? ' LiteLLM is unreachable — showing the install catalog.' : ''}
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Model</th><th>Tier</th><th>Route</th><th>Cap €/mo</th><th>Enabled</th></tr></thead>
+                  <tbody>{managed.map((name) => row(name, false))}</tbody>
+                </table>
+              </div>
+
+              <div className="section-title" style={{ marginTop: 22 }}>Added by administrators<span className="count-pill">{adminAdded.length}</span></div>
+              <div className="hint" style={{ marginBottom: 10 }}>
+                Models an admin connected with <strong>Add provider</strong> — each can be removed; the OS first
+                shows where it is used (role pins, the assistant, agents) so nothing breaks silently.
+              </div>
+              {adminAdded.length === 0 ? (
+                <div className="hint" style={{ marginBottom: 10 }}>
+                  No custom models — add your cloud provider&rsquo;s LLM with <strong>Add provider</strong> above.
+                </div>
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Model</th><th>Tier</th><th>Route</th><th>Cap €/mo</th><th>Enabled</th><th /></tr></thead>
+                    <tbody>{adminAdded.map((name) => row(name, true))}</tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          );
+        })()}
 
         <div className="section-title" style={{ marginTop: 22 }}>Token prices · € per 1M tokens</div>
         <div className="hint" style={{ marginBottom: 10 }}>

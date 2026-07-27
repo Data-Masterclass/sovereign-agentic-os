@@ -173,3 +173,45 @@ export function committedSummaryLine(
   const n = changes.length;
   return `Committed ${n} file${n === 1 ? '' : 's'} to ${appName} (+${added} −${removed})`;
 }
+
+/** A concrete, human-readable outcome of a Build turn — "what was actually built". */
+export type BuildOutcome = {
+  /** Number of files the commit touched. */
+  fileCount: number;
+  /** The touched file paths (for a legible "cause → effect" list). */
+  files: string[];
+  /** Net lines added / removed across the changeset. */
+  added: number;
+  removed: number;
+  /** A one-line summary, e.g. "3 files changed (+120 −8)". */
+  headline: string;
+};
+
+/**
+ * Summarize a completed Build changeset into a concrete outcome the UI can show
+ * next to the status rail — files changed (count + names) and the net line delta.
+ * Returns null for an empty changeset (nothing was built). PURE.
+ */
+export function buildOutcome(
+  changes: { path: string; before: string; after: string }[],
+): BuildOutcome | null {
+  if (!changes || changes.length === 0) return null;
+  let added = 0;
+  let removed = 0;
+  for (const c of changes) {
+    const beforeLines = c.before ? c.before.split('\n').length : 0;
+    const afterLines = c.after ? c.after.split('\n').length : 0;
+    const delta = afterLines - beforeLines;
+    if (delta > 0) added += delta;
+    else removed += -delta;
+  }
+  const files = changes.map((c) => c.path);
+  const n = files.length;
+  return {
+    fileCount: n,
+    files,
+    added,
+    removed,
+    headline: `${n} file${n === 1 ? '' : 's'} changed (+${added} −${removed})`,
+  };
+}

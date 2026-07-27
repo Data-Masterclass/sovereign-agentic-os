@@ -57,6 +57,8 @@ type LastRun = {
   /** Declared grant ids per kind at run time — for the granted-vs-used strip. */
   grantedIds?: GrantedIds;
   output?: string;
+  /** Honest write accounting — direct My-scope writes vs writes held in Governance. */
+  writeSummary?: WriteSummary;
   mode?: 'live' | 'offline-mock';
   traceStoreAvailable?: boolean;
   traceUrl?: string;
@@ -64,6 +66,14 @@ type LastRun = {
 
 /** Grant ids per kind, mirroring ContextKind — for the Evaluate granted-vs-used strip. */
 type GrantedIds = Record<ContextKind, string[]>;
+
+/** The run's honest write accounting — direct My-scope writes vs writes held for approval. */
+type WriteSummary = {
+  line: string;
+  wrote: { tab: string; count: number }[];
+  wroteTotal: number;
+  heldTotal: number;
+};
 
 /** Formats a Unix-ms timestamp as a compact relative time string. */
 function timeAgo(atMs: number): string {
@@ -105,6 +115,7 @@ type RunReport = {
   contextUsage?: RunContextUsage;
   grantedIds?: GrantedIds;
   output?: string;
+  writeSummary?: WriteSummary;
   mode?: 'live' | 'offline-mock';
   traceStoreAvailable?: boolean;
   traceUrl?: string;
@@ -122,7 +133,7 @@ type TeamNode = {
   finalText?: string;
   steps?: (NodeStep & { errorKind?: ErrorKind })[];
 };
-type RawRun = Partial<RunReport> & { team?: boolean; finalText?: string; nodes?: TeamNode[]; contextUsage?: RunContextUsage; grantedIds?: GrantedIds };
+type RawRun = Partial<RunReport> & { team?: boolean; finalText?: string; nodes?: TeamNode[]; contextUsage?: RunContextUsage; grantedIds?: GrantedIds; writeSummary?: WriteSummary };
 
 function normalizeRun(body: RawRun): RunReport {
   const steps: RunStep[] =
@@ -161,6 +172,7 @@ function normalizeRun(body: RawRun): RunReport {
     contextUsage,
     grantedIds: body.grantedIds,
     output: typeof rawOut === 'string' ? rawOut : rawOut ? JSON.stringify(rawOut) : undefined,
+    writeSummary: body.writeSummary,
     mode: body.mode,
     traceStoreAvailable: body.traceStoreAvailable,
     traceUrl: body.traceUrl,
@@ -408,6 +420,35 @@ function ContextUsed({ items, title }: { items: ContextItem[]; title: string }) 
 /** Context items scoped to ONE node — re-derived from that node's own tool steps. */
 function nodeContextItems(node: RunNode): ContextItem[] {
   return deriveContextUsage([{ steps: node.steps }]).items;
+}
+
+/**
+ * The honest WRITE-OUTCOME banner: "wrote N record(s) to My <tab>" for direct My-scope
+ * writes and "M write(s) awaiting approval in Governance → Inbox" for held ones. Counts
+ * come straight off `run.writeSummary` (the server counted them from real steps), so it
+ * never over- or under-reports. Renders nothing when the run wrote nothing (the common
+ * read-only case) so it doesn't add noise.
+ */
+function WriteOutcomeBanner({ writeSummary }: { writeSummary?: WriteSummary }) {
+  if (!writeSummary || (writeSummary.wroteTotal === 0 && writeSummary.heldTotal === 0)) return null;
+  return (
+    <div
+      style={{
+        marginTop: 0, marginBottom: 10, padding: '8px 12px',
+        border: '1px solid var(--border, #e5e5e5)', borderRadius: 10,
+        display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center',
+      }}
+    >
+      {writeSummary.wroteTotal > 0 ? (
+        <span className="badge ok">
+          Wrote {writeSummary.wroteTotal} directly{writeSummary.wrote.length > 0 ? ` — ${writeSummary.wrote.map((g) => `${g.count} to My ${g.tab}`).join(', ')}` : ''}
+        </span>
+      ) : null}
+      {writeSummary.heldTotal > 0 ? (
+        <span className="badge warn">{writeSummary.heldTotal} awaiting approval ↗ Governance → Inbox</span>
+      ) : null}
+    </div>
+  );
 }
 
 /**
@@ -1217,6 +1258,12 @@ export default function BuildRunPanel({
               <p className="hint" style={{ margin: 0 }}>(the run produced no final text)</p>
             )}
           </div>
+
+          {/* WRITE OUTCOMES — the honest "what actually changed" banner, prominent right
+              under the final output: direct My-scope writes (ran without approval, the
+              My-direct rule) and any writes held in Governance → Inbox. Counted from the
+              real executed steps, never inferred. Silent when the run wrote nothing. */}
+          <WriteOutcomeBanner writeSummary={run.writeSummary} />
 
           {/* Path, governed-call counts and the raw tool-call table are run DETAIL —
               in Simple mode they belong under Evaluate (mirrored below), so Run stays

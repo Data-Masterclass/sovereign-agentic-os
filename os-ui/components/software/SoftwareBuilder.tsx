@@ -5,7 +5,6 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import dynamic from 'next/dynamic';
 import CodePanel from '@/components/CodePanel';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import ReviewCard, { type ReviewCardData } from '@/components/ReviewCard';
@@ -38,23 +37,14 @@ import {
   type SuggestedEpic,
   type SuggestedStoriesForEpic,
 } from '@/lib/software/assistant-suggestions';
+import StageConversation from '@/components/core/StageConversation';
 import { initialStageState, canEnter, isSatisfied, markDone, type StageState } from '@/lib/core/stages';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials';
-import { buildStatusRail } from '@/lib/software/build-activity';
+import { buildStatusRail, buildOutcome, type BuildOutcome } from '@/lib/software/build-activity';
 import { targetKey, type BuildAction, type BuildTarget } from '@/lib/software/build-target';
 import TeamPanel from '@/app/(build)/software/TeamPanel';
 import StageAssistant from './StageAssistant';
 import { SW_STAGES, type SwStageId, type SwCtx } from './stages';
-
-/**
- * The in-browser "Instant preview" (esbuild-wasm) is CLIENT-ONLY — it needs the DOM
- * and must never run at SSR/prerender. Load it lazily with ssr:false so the Software
- * pages still statically render.
- */
-const InstantPreview = dynamic(() => import('./InstantPreview'), {
-  ssr: false,
-  loading: () => <p className="hint" style={{ marginTop: 0 }}>Loading instant preview…</p>,
-});
 
 type Visibility = 'Personal' | 'Shared' | 'Certified';
 type Tool = { name: string; description: string; write: boolean };
@@ -1019,15 +1009,30 @@ function BuildStage({
         />
       </div>
 
-      {/* ── Live-data preview — the real deployed build served by the runner, calling
-           the governed OS API as you; reloads after each Build commit + redeploy. ── */}
+      {/* ── Live preview — the REAL deployed build served by the runner (never a
+           fabricated frame): an iframe of the live pod URL when one is served, else an
+           honest pointer to the Preview stage. Reloads after each Build commit. ── */}
       {app.surface?.ui ? (
         <div className="grant-block" style={{ marginTop: 16 }}>
           <div className="comp-label">Preview · live data</div>
-          <p className="hint" style={{ marginTop: 4, marginBottom: 10 }}>
-            The deployed build served by the runner, calling the governed OS API as you — real granted data or a real error.
-          </p>
-          <InstantPreview key={previewKey} appId={app.id} previewUrl={app.deploy.previewUrl} />
+          {app.deploy.previewUrl ? (
+            <>
+              <p className="hint" style={{ marginTop: 4, marginBottom: 10 }}>
+                The deployed build served by the runner, calling the governed OS API as you — real granted data or a real error.
+              </p>
+              <iframe
+                key={previewKey}
+                src={app.deploy.previewUrl}
+                title="Live app preview"
+                style={{ width: '100%', height: 420, border: '1px solid var(--line)', borderRadius: 10, background: '#0b0b0d' }}
+              />
+              <a href={app.deploy.previewUrl} target="_blank" rel="noreferrer" className="sw-quiet-link" style={{ fontSize: 12, display: 'inline-block', marginTop: 8 }}>Open app UI ↗</a>
+            </>
+          ) : (
+            <p className="hint" style={{ marginTop: 4 }}>
+              No live preview yet — provision one in the <strong>Preview</strong> stage after your first build. This shows the real deployed app, never a mock.
+            </p>
+          )}
         </div>
       ) : null}
     </div>
@@ -1052,19 +1057,25 @@ function PreviewStage({
   const [showApi, setShowApi] = useState(false);
   return (
     <div style={{ marginTop: 4 }} {...anchorAttr(ANCHORS.software.preview)}>
-      {/* ── Live-data preview: the real deployed build embedded over the governed OS API ── */}
-      {surface.ui ? (
+      {/* ── Live-data preview: the REAL deployed build the runner serves, embedded over
+           the governed OS API as you. This is the single honest preview surface — shown
+           only when a live pod URL is actually served (never a fabricated iframe). ── */}
+      {surface.ui && app.deploy.previewUrl ? (
         <div className="grant-block" style={{ marginBottom: 16 }}>
           <div className="comp-label">Preview · live data</div>
           <p className="hint" style={{ marginTop: 4, marginBottom: 10 }}>
             The deployed build served by the runner, calling the governed OS API as you —
             real granted data, or a real error.
           </p>
-          <InstantPreview appId={app.id} previewUrl={app.deploy.previewUrl} />
+          <iframe
+            title="App preview"
+            src={app.deploy.previewUrl}
+            style={{ width: '100%', height: 420, border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--bg)' }}
+          />
         </div>
       ) : null}
 
-      {/* ── Deployed build: the exact image the runner serves (secondary, slower) ── */}
+      {/* ── Deployed build: the exact image the runner serves + its provision controls ── */}
       {surface.ui ? <div className="comp-label" style={{ marginBottom: 6 }}>Deployed build · exactly what ships</div> : null}
       <div className="sw-monitor">
         <div className="sw-monitor-main">

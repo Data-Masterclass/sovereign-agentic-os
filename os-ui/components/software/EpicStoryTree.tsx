@@ -3,19 +3,35 @@
  */
 'use client';
 
-import { deriveStoryStatus, storyProgress, type BuildRunSignals, type TreeStoryStatus } from '@/lib/software/story-tree';
+import {
+  deriveStoryStatus,
+  deriveEpicStatus,
+  epicProgress,
+  currentEpicIndex,
+  storyProgress,
+  type BuildRunSignals,
+  type TreeStoryStatus,
+  type EpicStatus,
+} from '@/lib/software/story-tree';
 import type { BuildTarget } from '@/lib/software/build-target';
 
 /** The Design shapes the tree renders (mirrors SoftwareBuilder's Epic/Story). */
 type Story = { id: string; title: string; status?: 'todo' | 'building' | 'done' };
 type Epic = { id: string; title: string; stories: Story[] };
 
-/** The status chip — honest tones on the existing badge language. */
+/** The story status chip — honest tones on the existing badge language. */
 function StatusChip({ status }: { status: TreeStoryStatus }) {
   if (status === 'done') return <span className="badge ok">done ✓</span>;
   if (status === 'building') return <span className="badge warn">building</span>;
   if (status === 'blocked') return <span className="badge err">blocked</span>;
   return <span className="badge muted">to do</span>;
+}
+
+/** The epic-level state chip for the sequence. */
+function EpicStateChip({ status }: { status: EpicStatus }) {
+  if (status === 'done') return <span className="badge ok">done ✓</span>;
+  if (status === 'in-progress') return <span className="badge warn">in progress</span>;
+  return <span className="badge muted">not started</span>;
 }
 
 /** One selectable tree row — the shared button chrome (gold border when active). */
@@ -25,17 +41,21 @@ function NodeButton({
   title,
   children,
   emphasis = false,
+  current = false,
 }: {
   active: boolean;
   onClick: () => void;
   title: string;
   children: React.ReactNode;
   emphasis?: boolean;
+  /** The CURRENT epic in the one-at-a-time sequence — a calm gold wash even when unselected. */
+  current?: boolean;
 }) {
   return (
     <button
       type="button"
       aria-pressed={active}
+      aria-current={current ? 'step' : undefined}
       onClick={onClick}
       title={title}
       className="row"
@@ -45,10 +65,10 @@ function NodeButton({
         alignItems: 'center',
         justifyContent: 'space-between',
         textAlign: 'left',
-        padding: emphasis ? '8px 10px' : '6px 10px',
-        border: `1px solid ${active ? 'var(--gold)' : 'var(--border)'}`,
+        padding: emphasis ? '8px 10px' : '7px 10px',
+        border: `1px solid ${active ? 'var(--gold)' : current ? 'var(--gold-line)' : 'var(--border)'}`,
         borderRadius: 'var(--radius)',
-        background: active ? 'var(--panel)' : 'transparent',
+        background: active ? 'var(--panel)' : current ? 'var(--gold-soft)' : 'transparent',
         cursor: 'pointer',
         font: 'inherit',
         color: 'inherit',
@@ -60,13 +80,16 @@ function NodeButton({
 }
 
 /**
- * The Build stage's EPIC & STORY TREE (Simple view) — the app's structure as
- * designed, with a synthetic "General" super-epic on top that stands for the
- * ENTIRE app. Clicking any node (General / an EPIC / a story) selects it as the
- * scope the chat actions (Design · Build · Test · Review) run on; clicking the
- * selected node again clears the selection. Status derivation is pure
- * (lib/software/story-tree.ts): building = targeted in the running build,
- * done = the persisted story-done model, blocked = the last run for it failed.
+ * The Build stage's EPIC & STORY tree — the one-at-a-time build journey. It reads
+ * as an ORDERED checklist: a "General" umbrella on top (the whole app), then the
+ * epics NUMBERED 1..n in sequence. Each epic carries an honest state (not started /
+ * in progress / done, derived from its stories) and its story progress. The CURRENT
+ * epic — the first that isn't done — is visually primary (a calm gold wash), and
+ * when it completes a "Start Epic N ▸" affordance points at the next one.
+ *
+ * Clicking any node (General / an epic / a story) focuses the whole right side on
+ * THAT scope; clicking the selected node again clears it. Status derivation is pure
+ * (lib/software/story-tree.ts) and never fabricated.
  */
 export default function EpicStoryTree({
   epics,
@@ -85,18 +108,20 @@ export default function EpicStoryTree({
   const { built, total } = storyProgress(epics);
   const toggle = (next: BuildTarget) =>
     onTarget(JSON.stringify(target) === JSON.stringify(next) ? null : next);
+  const select = (next: BuildTarget) => onTarget(next);
 
   const generalActive = target?.kind === 'app';
+  const curIdx = currentEpicIndex(epics);
 
   return (
     <div className="grant-block">
-      <div className="comp-label">Epics &amp; stories</div>
+      <div className="comp-label">Build journey</div>
       <p className="hint" style={{ marginTop: 4 }}>
-        Select General, an EPIC or a story — the Design · Build · Test · Review buttons act on it.
+        Build one epic at a time, in order. Pick an epic to focus the assistant on it — or General for the whole app.
       </p>
 
-      {/* The synthetic "General" super-epic — the whole app as one calm node. */}
-      <div style={{ marginTop: 8 }}>
+      {/* The "General" umbrella — the whole app, above the numbered sequence. */}
+      <div style={{ marginTop: 10 }}>
         <NodeButton
           active={generalActive}
           onClick={() => toggle({ kind: 'app' })}
@@ -117,63 +142,107 @@ export default function EpicStoryTree({
         </NodeButton>
       </div>
 
-      {total === 0 ? (
-        <div style={{ marginTop: 10 }}>
+      {total === 0 && epics.length === 0 ? (
+        <div style={{ marginTop: 14 }}>
           <p className="hint" style={{ marginTop: 0 }}>
-            No epics yet — design the backlog first. The tree of epics and user stories
-            appears here, and each node becomes a one-click scope for the chat actions.
+            <strong>Build your app one epic at a time — start with Epic 1.</strong> No epics yet: design the
+            backlog first and each epic appears here as a numbered step.
           </p>
           {onGoDesign ? (
-            <button type="button" className="btn ghost sm" onClick={onGoDesign} style={{ marginTop: 4 }}>
-              Go to Design →
+            <button type="button" className="btn ghost" onClick={onGoDesign} style={{ marginTop: 8 }}>
+              Design the epics →
             </button>
           ) : null}
         </div>
       ) : (
-        epics.map((e) => {
-          const epicActive = target?.kind === 'epic' && target.epicId === e.id;
-          return (
-            <div key={e.id} style={{ marginTop: 12 }}>
-              <NodeButton
-                active={epicActive}
-                onClick={() => toggle({ kind: 'epic', epicId: e.id })}
-                title={epicActive ? 'Selected — click to clear' : 'Select this EPIC as the scope'}
-              >
-                <span className="comp-label" style={{ fontSize: 11, opacity: 0.85, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {epicActive ? '▸ ' : ''}{e.title || 'Untitled EPIC'}
-                </span>
-                <span className="muted" style={{ fontSize: 11, flexShrink: 0 }}>
-                  {e.stories.length} {e.stories.length === 1 ? 'story' : 'stories'}
-                </span>
-              </NodeButton>
-              {e.stories.length === 0 ? (
-                <p className="hint" style={{ margin: '4px 0 0 10px' }}>No stories in this EPIC yet.</p>
-              ) : (
-                <ul style={{ listStyle: 'none', margin: '4px 0 0 10px', padding: 0, display: 'grid', gap: 4 }}>
-                  {e.stories.map((s) => {
-                    const active = target?.kind === 'story' && target.epicId === e.id && target.storyId === s.id;
-                    const status = deriveStoryStatus(s, run);
-                    return (
-                      <li key={s.id}>
-                        <NodeButton
-                          active={active}
-                          onClick={() => toggle({ kind: 'story', epicId: e.id, storyId: s.id })}
-                          title={active ? 'Selected — click to clear' : 'Select this story as the scope'}
-                        >
-                          <span style={{ fontSize: 13, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {active ? '▸ ' : ''}{s.title || 'Untitled story'}
-                          </span>
-                          <StatusChip status={status} />
-                        </NodeButton>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-          );
-        })
+        <ol className="sw-epic-sequence" style={{ listStyle: 'none', margin: '14px 0 0', padding: 0, display: 'grid', gap: 12 }}>
+          {epics.map((e, i) => {
+            const epicActive = target?.kind === 'epic' && target.epicId === e.id;
+            const status = deriveEpicStatus(e);
+            const isCurrent = i === curIdx;
+            const { built: eb, total: et } = epicProgress(e);
+            return (
+              <li key={e.id}>
+                <div className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
+                  {/* Ordinal rail — the sequence number, calm and legible. */}
+                  <span className={`sw-epic-ordinal${status === 'done' ? ' is-done' : ''}${isCurrent ? ' is-current' : ''}`} aria-hidden="true">
+                    {status === 'done' ? '✓' : i + 1}
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <NodeButton
+                      active={epicActive}
+                      current={isCurrent && !epicActive}
+                      onClick={() => toggle({ kind: 'epic', epicId: e.id })}
+                      title={epicActive ? 'Selected — click to clear' : 'Focus the assistant on this epic'}
+                    >
+                      <span className="row" style={{ gap: 8, alignItems: 'center', minWidth: 0 }}>
+                        <span style={{ fontSize: 13, fontWeight: isCurrent ? 600 : 500, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {e.title || `Epic ${i + 1}`}
+                        </span>
+                      </span>
+                      <span className="row" style={{ gap: 6, alignItems: 'center', flexShrink: 0 }}>
+                        {et > 0 ? <span className="muted" style={{ fontSize: 11 }}>{eb}/{et}</span> : null}
+                        <EpicStateChip status={status} />
+                      </span>
+                    </NodeButton>
+
+                    {/* The current epic's stories are shown inline; completed / upcoming
+                        epics stay collapsed to keep the sequence calm. */}
+                    {isCurrent ? (
+                      e.stories.length === 0 ? (
+                        <p className="hint" style={{ margin: '6px 0 0' }}>No stories in this epic yet — add them in Design.</p>
+                      ) : (
+                        <ul style={{ listStyle: 'none', margin: '6px 0 0', padding: 0, display: 'grid', gap: 4 }}>
+                          {e.stories.map((s) => {
+                            const active = target?.kind === 'story' && target.epicId === e.id && target.storyId === s.id;
+                            const sStatus = deriveStoryStatus(s, run);
+                            return (
+                              <li key={s.id}>
+                                <NodeButton
+                                  active={active}
+                                  onClick={() => toggle({ kind: 'story', epicId: e.id, storyId: s.id })}
+                                  title={active ? 'Selected — click to clear' : 'Focus the assistant on this story'}
+                                >
+                                  <span style={{ fontSize: 13, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {active ? '▸ ' : ''}{s.title || 'Untitled story'}
+                                  </span>
+                                  <StatusChip status={sStatus} />
+                                </NodeButton>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )
+                    ) : null}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
       )}
+
+      {/* "Next epic" affordance — when a DONE epic is selected and a current epic
+          still awaits, point the user at it: the natural one-at-a-time hand-off. */}
+      {(() => {
+        if (curIdx < 0) return null; // every epic done, or none.
+        const cur = epics[curIdx];
+        const selectedEpic = target?.kind === 'epic' ? epics.find((e) => e.id === target.epicId) : null;
+        const onDoneEpic = selectedEpic ? deriveEpicStatus(selectedEpic) === 'done' : false;
+        // Show when nothing is selected yet, or a completed epic is selected.
+        const show = (!target || onDoneEpic) && !(target?.kind === 'epic' && target.epicId === cur.id);
+        if (!show) return null;
+        return (
+          <button
+            type="button"
+            className="btn ghost"
+            style={{ marginTop: 12 }}
+            onClick={() => select({ kind: 'epic', epicId: cur.id })}
+          >
+            {built === 0 ? 'Start' : 'Continue with'} Epic {curIdx + 1} · {cur.title || 'current'} ▸
+          </button>
+        );
+      })()}
     </div>
   );
 }

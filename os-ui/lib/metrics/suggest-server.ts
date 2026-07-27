@@ -3,8 +3,7 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
-import { roleModel } from '@/lib/models/roles';
-import { assistantComplete } from '@/lib/assistant/complete';
+import { completeWithEscalation } from '@/lib/assistant/escalate';
 import { listPillars } from '@/lib/strategy/pillars';
 import { resolveManual, type ManualScope } from '@/lib/knowledge/manual';
 import { getDomainKnowledge, listWorkflows, getWorkflow } from '@/lib/knowledge/store';
@@ -119,9 +118,17 @@ export async function assembleSuggestContext(user: CurrentUser, goal?: string): 
 }
 
 /**
- * Assemble context, run the REASONING model through the ONE governed assistant, and
- * validate the JSON into real candidates. Throws the assistant's honest 503/402 (no
- * model / cost cap) and the {@link SuggestError} 502 (unusable output) — no fake AI.
+ * Assemble context, run the model through the ONE governed assistant STANDARD-FIRST
+ * (Cost routing), and validate the JSON into real candidates. Throws the assistant's
+ * honest 503/402 (no model / cost cap) and the {@link SuggestError} 502 (unusable
+ * output) — no fake AI.
+ *
+ * Cost routing: the output is strictly validated ({@link parseCandidates} drops any
+ * candidate whose dataset isn't visible or whose columns aren't real), so we run
+ * standard first and escalate to reasoning ONLY when the cheap answer yields no usable
+ * candidate — the validator is the quality gate. A first-pass standard answer that
+ * parses into ≥1 real candidate is as usable as a reasoning one. Admin toggle OFF pins
+ * it to reasoning directly (see `completeWithEscalation`).
  */
 export async function runSuggest(user: CurrentUser, goal?: string): Promise<SuggestResult> {
   const ctx = await assembleSuggestContext(user, goal);
@@ -129,10 +136,19 @@ export async function runSuggest(user: CurrentUser, goal?: string): Promise<Sugg
   // grounding) WITHOUT spending a model call.
   if (ctx.datasets.length === 0) return { candidates: [], grounding: groundingOf(ctx) };
 
-  const { content } = await assistantComplete(suggestMetricsMessages(ctx), {
+  const { content } = await completeWithEscalation(suggestMetricsMessages(ctx), {
     user: { id: user.id, domains: user.domains },
-    // Suggestion is a synthesis task → the reasoning tier (per the review).
-    model: roleModel('reasoning'),
+    // Usable iff the reply parses into at least one REAL candidate (visible dataset +
+    // real columns). Unparseable JSON or an all-dropped/empty set → escalate once.
+    validate: (raw) => {
+      try {
+        return parseCandidates(raw, ctx).candidates.length > 0;
+      } catch {
+        return false; // SuggestError (unparseable) → not usable → escalate
+      }
+    },
   });
+  // Re-run the SAME validated parse on the answer that actually stood (standard or the
+  // escalated reasoning reply) to produce the final result / honest 502.
   return parseCandidates(content, ctx);
 }

@@ -33,9 +33,7 @@ import { runDatasetSync } from '@/lib/data/sync-run-server';
 import { reconcileSyncCron } from '@/lib/data/sync-cron';
 import { kajabiCursorField } from '@/lib/connections/kajabi-resources';
 import { runQualityChecks } from '@/lib/data/dq-run';
-import { proposeFixes, applyFixes, type FixApplyInput } from '@/lib/data/dq-fix-server';
-import { assistantComplete } from '@/lib/assistant/complete';
-import { roleModel } from '@/lib/models/roles';
+import { proposeFixes, applyFixes, dqComplete, type FixApplyInput } from '@/lib/data/dq-fix-server';
 import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/data';
 import { queryRun, executeRun } from '@/lib/infra/governed';
 import { publishPromotionLive, rematerializeDomainTableLive } from '@/lib/data/publish-server';
@@ -639,8 +637,7 @@ export const dataWriteTools: McpTool[] = [
         fqn: resolved?.fqn ?? null,
         layer: resolved?.layer ?? null,
         queryFn: (sql) => queryRun(sql, resolved?.principal),
-        complete: async (messages, role) =>
-          (await assistantComplete(messages, { user: { id: user.id, domains: user.domains }, model: roleModel(role) })).content,
+        complete: dqComplete({ id: user.id, domains: user.domains }),
       });
     },
   },

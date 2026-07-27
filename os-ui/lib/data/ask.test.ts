@@ -244,6 +244,64 @@ test('ASK: invalid generated SQL is REJECTED and never executed', async () => {
   assert.equal(executed, 0, 'rejected SQL must never reach queryRun');
 });
 
+test('ASK cost-routing: a VALID standard SQL is used as-is — generation never escalates', async () => {
+  // Distinct aliases per tier so we can attribute each call unambiguously.
+  const models: string[] = [];
+  const llm = async (_messages: AskMessage[], model: string) => {
+    models.push(model);
+    if (model === 'gen-standard') return 'select region, sum(revenue) as total from iceberg.sales.gold_northpeak_commerce group by region';
+    if (model === 'gen-reasoning') return 'ESCALATED — should not run';
+    return 'grounded answer'; // summarize
+  };
+  const out = await runAsk({
+    question: 'total revenue by region',
+    datasets: [northpeak],
+    llm,
+    models: { generate: 'gen-standard', generateEscalate: 'gen-reasoning', summarize: 'sum-standard' },
+    query: async () => grid([['EMEA', '120']]),
+  });
+  assert.ok(out.ok);
+  assert.ok(!models.includes('gen-reasoning')); // standard SQL passed the guard → no escalation
+  assert.deepEqual(models, ['gen-standard', 'sum-standard']); // generate then summarize, no escalation
+});
+
+test('ASK cost-routing: standard SQL that fails the guard escalates ONCE to reasoning, which runs', async () => {
+  const models: string[] = [];
+  const executed: string[] = [];
+  const llm = async (_messages: AskMessage[], model: string) => {
+    models.push(model);
+    if (model === 'gen-standard') return 'delete from iceberg.sales.gold_northpeak_commerce'; // fails read-only guard
+    if (model === 'gen-reasoning') return 'select region, sum(revenue) as total from iceberg.sales.gold_northpeak_commerce group by region';
+    return 'grounded answer';
+  };
+  const out = await runAsk({
+    question: 'total revenue by region',
+    datasets: [northpeak],
+    llm,
+    models: { generate: 'gen-standard', generateEscalate: 'gen-reasoning', summarize: 'sum-standard' },
+    query: async (sql) => { executed.push(sql); return grid([['EMEA', '120']]); },
+  });
+  assert.ok(out.ok);
+  // Generation ran standard then escalated ONCE to reasoning, then summarize — no second escalation.
+  assert.deepEqual(models, ['gen-standard', 'gen-reasoning', 'sum-standard']);
+  assert.equal(executed.length, 1); // only the validated reasoning SQL ran
+  assert.match(executed[0], /^select region/);
+});
+
+test('ASK cost-routing: both tiers produce invalid SQL → honest invalid_sql, nothing executed', async () => {
+  let executed = 0;
+  const out = await runAsk({
+    question: 'wipe it',
+    datasets: [northpeak],
+    llm: async () => 'drop table iceberg.sales.gold_northpeak_commerce', // both tiers fail the guard
+    models: { generate: 'sovereign-default', generateEscalate: 'sovereign-reasoning', summarize: 's' },
+    query: async () => { executed++; return grid([]); },
+  });
+  assert.equal(out.ok, false);
+  assert.equal((out as { kind: string }).kind, 'invalid_sql');
+  assert.equal(executed, 0);
+});
+
 test('ASK: an invented hyphenated table name is rejected as invalid_sql, never executed', async () => {
   let executed = 0;
   const out = await runAsk({
