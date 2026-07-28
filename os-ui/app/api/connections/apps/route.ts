@@ -16,6 +16,9 @@ export const dynamic = 'force-dynamic';
 export const GET = withRoute(async ({ user }) => {
     const apps = await listAppsForUser(user);
     const connections = apps
+      // Archived apps have had their MCP grant + connection torn down; never
+      // surface a connection for one (deleted apps are already gone from the list).
+      .filter((a) => a.status !== 'archived')
       .map((a) => {
         const c = getConnectionByApp(a.id);
         if (!c) return null;

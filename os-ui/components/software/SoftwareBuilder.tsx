@@ -670,8 +670,10 @@ function DefineStage({
   const surfaceLabel = [app.surface?.ui ? 'UI' : '', app.surface?.api ? 'API' : ''].filter(Boolean).join(' + ') || 'inferred on build';
 
   // The context-grant safety ceiling for an app: builders may grant direct writes,
-  // everyone else caps at read+propose (writes held for approval).
-  const cap = contextAccessCap(canEdit ? 'read-write' : 'read-propose');
+  // everyone else caps at read+propose (writes held for approval). New grants START
+  // at read-only (the safe default) — the user raises each item to Read+propose /
+  // Read+write up to the ceiling when they actually need write access.
+  const cap = { ...contextAccessCap(canEdit ? 'read-write' : 'read-propose'), default: 'read-only' as const };
 
   const dirty = purpose !== (app.purpose ?? '');
 

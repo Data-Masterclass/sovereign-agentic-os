@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { getAppForUser } from '@/lib/software/apps';
 import { failResponse } from '@/lib/assistant/stage-route';
+import { parseJsonReply } from '@/lib/assistant/json-reply';
 import { assistantComplete } from '@/lib/assistant/complete';
 import { roleModel } from '@/lib/models/roles';
 import { availableContext, type AvailableContext } from '@/lib/software/available-context';
@@ -205,16 +206,6 @@ function contextBlock(
       ].join('\n');
     case 'publish':
       return `App "${app.name}" (${surface}) is ${app.deploy.state} (v${app.deploy.releases}). Missing metadata: ${app.manifest.missing.join(', ') || 'none'}. Governed tools: ${app.mcpTools.map((t) => `${t.name}${t.write ? '(write)' : ''}`).join(', ') || 'none'}.`;
-  }
-}
-
-/** Strip stray ```json fences before parsing a structured reply. */
-function parseJsonReply(content: string): unknown {
-  const cleaned = content.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    return null;
   }
 }
 

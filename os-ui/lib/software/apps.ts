@@ -784,6 +784,7 @@ function hydrateAppDoc(app: App): App {
   if (!Array.isArray(app.epics)) app.epics = [];
   app.grants = normalizeContextGrants(app.grants);
   // Re-hydrate the in-process MCP grant so agents can call it after a restart.
+  // rehydrateConnection is status-aware — it never resurrects an archived app.
   if (app.connectionId) rehydrateConnection(app);
   return app;
 }
@@ -1395,7 +1396,12 @@ export async function refreshActionsStage(app: App, opts?: { force?: boolean }):
 
 // ----------------------------------------------------------------- MCP wiring --
 
-function rehydrateConnection(app: App): void {
+export function rehydrateConnection(app: App): void {
+  // NEVER resurrect an archived app: archiveApp() intentionally drops its grant +
+  // connection, so re-arming here (on a restart's hydrate, or any caller) would
+  // silently make a disabled app callable again + reappear in Connections. This is
+  // the single authoritative guard — unarchiveApp flips status to 'active' first.
+  if (app.status === 'archived') return;
   // Re-arm the auto-MCP capability profile in OPA (reads-on/writes-off) so the
   // governed gate works after a restart, not just the static app-registry grant.
   generateAndCompile(app.mcpPrincipal, { tools: app.mcpTools });

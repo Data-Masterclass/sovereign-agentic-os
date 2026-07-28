@@ -13,6 +13,43 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.16] — 2026-07-28
+
+### Fixed
+- **Design-stage assistant now creates EPICs & user stories again** (was returning
+  a wall of "poorly formatted markdown" with no suggestion cards). Root cause: the
+  Design/Test assistant runs on the reasoning model, which routinely wraps its JSON
+  in a sentence of preamble or a trailing note; the route's parser only stripped a
+  code fence then did a naive `JSON.parse`, so any surrounding prose failed the
+  parse and the whole reply fell back to the raw blob with zero structured
+  suggestions. Added a tolerant `parseJsonReply` (shared `lib/assistant/json-reply.ts`)
+  that recovers the first balanced `{…}` object from within prose — the "Create
+  EPICs" / "Add stories" / spec cards fire again and the visible message is the
+  model's own clean markdown.
+
+### Changed
+- **App context grants now default to Read (read-only)** — a newly granted
+  connection/data/knowledge/file/metric starts read-only (the safe default); the
+  user raises an individual item to Read+propose / Read+write when it actually
+  needs write access. The write ceiling is unchanged (builders may still grant
+  writes), only the starting value is safer.
+
+## [os-ui 0.6.15] — 2026-07-28
+
+### Fixed
+- **Archiving or deleting a software app now tears down its MCP/API connection**
+  — no more orphaned connection lingering in the Connections tab (e.g. "KIEKERT
+  NACHVERHANDLUNGS-COCKPIT MCP" surviving its app). The cascade already dropped
+  the grant on `archiveApp`/`deleteApp`, but two gaps kept the connection alive:
+  (1) the boot **re-hydrate re-registered every app's connection without checking
+  status**, so an archived app's MCP (and its OPA grant) came back on the next pod
+  restart — `rehydrateConnection` is now the single authoritative guard and never
+  resurrects an archived app; (2) `/api/connections/apps` **listed archived apps'
+  connections**, now filtered out. Restore is symmetric: `unarchiveApp`
+  re-registers the connection so it reappears immediately (not only after a
+  restart). Deleted apps already drop out of the list. Security-relevant: an
+  archived app is no longer silently callable again after a restart.
+
 ## [os-ui 0.6.14] — 2026-07-28
 
 ### Fixed

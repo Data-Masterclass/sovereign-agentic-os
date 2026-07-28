@@ -4,8 +4,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
-import { createApp, deleteAppRepo } from '@/lib/software/apps';
+import { createApp, deleteAppRepo, rehydrateConnection } from '@/lib/software/apps';
 import { authorizeConnectionCall } from '@/lib/infra/agent-governed';
+import { getConnectionByApp } from '@/lib/infra/app-registry';
 import { archiveApp, unarchiveApp, deleteApp, useAsData, consumeResource, dependentsOf, demoteApp } from './lifecycle.ts';
 import { getAppByIdInternal, promoteApp } from '@/lib/software/apps';
 
@@ -38,6 +39,27 @@ test('archive disables the MCP but RETAINS the data artifact (restorable)', asyn
   const restored = await unarchiveApp(app.id, owner);
   assert.equal(restored.status, 'active');
   assert.equal(authorizeConnectionCall(app.mcpPrincipal, readTool).effect, 'allow');
+});
+
+test('archive/delete cascade to the app-registry MCP connection (no orphan in Connections)', async () => {
+  const app = await createApp(owner, { name: 'Cascade App', template: 'service' });
+  // A live app has a registered connection (this is what the Connections tab lists).
+  assert.ok(getConnectionByApp(app.id), 'a live app registers its MCP connection');
+
+  // ARCHIVE tears down the connection so it no longer surfaces in Connections.
+  await archiveApp(app.id, owner);
+  assert.equal(getConnectionByApp(app.id), null, 'archived app has no MCP connection');
+  // A re-hydrate (pod restart) must NOT resurrect an archived app's connection.
+  rehydrateConnection((await getAppByIdInternal(app.id))!);
+  assert.equal(getConnectionByApp(app.id), null, 'archived app stays disconnected across a restart');
+
+  // UNARCHIVE re-registers it (symmetric restore — reappears immediately).
+  await unarchiveApp(app.id, owner);
+  assert.ok(getConnectionByApp(app.id), 'restored app re-registers its MCP connection');
+
+  // DELETE removes it for good.
+  await deleteApp(app.id, owner);
+  assert.equal(getConnectionByApp(app.id), null, 'deleted app has no MCP connection');
 });
 
 test('consume rejects a raw credential; records a reference (no embedded creds)', async () => {

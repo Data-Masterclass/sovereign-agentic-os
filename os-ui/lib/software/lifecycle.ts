@@ -9,12 +9,12 @@ import {
   listAllAppsInternal,
   removeAppInternal,
   deleteAppRepo,
+  rehydrateConnection,
   withStatus,
   type App,
 } from '@/lib/software/apps';
 import { removeConnection, setConnectionVisibility } from '@/lib/infra/app-registry';
 import { unregisterConnectionProfile, trace } from '@/lib/infra/agent-governed';
-import { generateAndCompile } from './auto-mcp.ts';
 import { stopApp as stopRunner, deleteApp as deleteRunner } from './runner.ts';
 import type { ConsumedResource } from './model.ts';
 import { roleAtLeast } from '@/lib/core/session';
@@ -86,7 +86,10 @@ export async function unarchiveApp(appId: string, user: CurrentUser): Promise<Ap
   app.status = 'active';
   app.deploy.state = 'preview';
   app.pipeline.live = 'pending';
-  generateAndCompile(app.mcpPrincipal, { tools: app.mcpTools });
+  // Symmetric with archiveApp's teardown: re-arm the OPA profile AND re-register
+  // the app-registry connection so the MCP is callable again AND reappears in the
+  // Connections tab immediately — not only after the next pod restart re-hydrates.
+  rehydrateConnection(app);
   await persistApp(app);
   void trace({
     principal: app.mcpPrincipal,
