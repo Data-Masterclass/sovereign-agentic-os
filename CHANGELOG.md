@@ -13,6 +13,27 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.20] — 2026-07-28
+
+### Fixed
+- **Generated apps no longer fail to build when the agent uses common UI
+  components.** Diagnosed on a live app whose Forgejo CI was silently failing —
+  the build had written a story page importing `Alert` and `Spinner` from
+  `@sovereign-os/ui`, but the vendored package didn't export them, so the app
+  never compiled and the live URL stayed frozen on an old release (the app looked
+  "live" but showed no stories). Fixes:
+  - **Ship `Alert` + `Spinner` in the vendored `@sovereign-os/ui`** (`lib/app-ui/`,
+    now vendored into every generated app) so agent-written pages that use them
+    compile. Added the `sb-spin` keyframe to the theme.
+  - **The build directive now enumerates the EXACT `@sovereign-os/ui` exports**
+    and forbids importing anything else (Modal/Dialog/Tabs/… → a compile break),
+    with the correct patterns for Alert/Spinner/Textarea/Select — so the agent
+    stops inventing components.
+  - **The build directive now requires registering each new story page in
+    `src/template/sections.tsx` in the SAME build run** — an unregistered page is
+    invisible ("builds fine but no feature shows"), which was the other half of
+    the "no user stories in the UI" report.
+
 ## [os-ui 0.6.19] — 2026-07-28
 
 ### Fixed

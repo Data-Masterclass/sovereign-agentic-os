@@ -101,6 +101,21 @@ export const CODE_STRUCTURE_CONVENTION = [
   'across stories in core/ (or epics/<epic>/general/ if epic-local). Never put real logic in',
   'app/ — only a page/handler that renders/calls the structured implementation. Keep template/',
   'intact.',
+  '',
+  '## UI primitives — import ONLY these from `@sovereign-os/ui` (nothing else is exported):',
+  '  AppShell · Button · Card · Badge · Input · Textarea · Select · Table · Section · Panel · Alert · Spinner · cx',
+  'Importing any component NOT in this list (Modal, Dialog, Tabs, Tooltip, Grid, Flex, Icon, …) makes the',
+  'build FAIL to compile — compose from the primitives above or plain HTML/CSS instead. Correct usage:',
+  '  • `<Alert variant="info|success|warning|error">…</Alert>` for notices/errors; `<Spinner />` while loading.',
+  '  • Multi-line text is `<Textarea rows={3} …/>` — NOT `<Input as="textarea">`.',
+  '  • `<Select>` renders a native <select>: pass `<option value=…>` CHILDREN (no `options=` prop).',
+  '',
+  '## Wire every story into the UI — a built page that is not registered is INVISIBLE:',
+  'After creating a story page under epics/<epic>/<story>/<Name>.tsx (default-export a component), you MUST',
+  'register it in `src/template/sections.tsx`: add its import + ONE `SECTIONS` entry `{ id, label, icon, page }`.',
+  'Do this in the SAME build run as the page — never leave "register the page" as a follow-up. If you skip it,',
+  'the build looks fine but the app shows no feature. Replace the placeholder `workspace` entry with the first',
+  'real section.',
 ].join('\n');
 
 /**

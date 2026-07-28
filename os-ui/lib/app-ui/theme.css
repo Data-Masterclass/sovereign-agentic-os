@@ -635,3 +635,6 @@
     height: auto;
   }
 }
+
+/* Spinner keyframe — used by the <Spinner> primitive (self-contained rotation). */
+@keyframes sb-spin { to { transform: rotate(360deg); } }

@@ -22,3 +22,5 @@ export { Input, Textarea, type InputProps, type TextareaProps } from './Input.ts
 export { Select, type SelectProps } from './Select.tsx';
 export { Table, type TableProps } from './Table.tsx';
 export { Section, Panel, type SectionProps, type PanelProps } from './Section.tsx';
+export { Alert, type AlertProps, type AlertVariant } from './Alert.tsx';
+export { Spinner, type SpinnerProps } from './Spinner.tsx';

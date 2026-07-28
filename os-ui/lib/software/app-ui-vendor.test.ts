@@ -19,6 +19,8 @@ const EXPECTED_FILES = [
   'Select.tsx',
   'Table.tsx',
   'Section.tsx',
+  'Alert.tsx',
+  'Spinner.tsx',
   'AppShell.tsx',
   'index.ts',
   'README.md',
