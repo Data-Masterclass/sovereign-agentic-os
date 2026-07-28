@@ -3,7 +3,20 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { asChatRunMode, isReadOnlyMode, modeDirective, READ_ONLY_MODE_TOOLS } from './chat-modes.ts';
+import { asChatRunMode, isReadOnlyMode, modeDirective, modelRoleForMode, tierNote, READ_ONLY_MODE_TOOLS } from './chat-modes.ts';
+
+test('tier policy: plan (Design) / test / review run on reasoning; build codegen on standard', () => {
+  assert.equal(modelRoleForMode('plan'), 'reasoning');
+  assert.equal(modelRoleForMode('test'), 'reasoning');
+  assert.equal(modelRoleForMode('review'), 'reasoning');
+  // The actual code generation is NEVER escalated — standard does the bulk writing.
+  assert.equal(modelRoleForMode('build'), 'standard');
+});
+
+test('tier note is an honest label', () => {
+  assert.equal(tierNote('reasoning'), 'reasoning model');
+  assert.equal(tierNote('standard'), 'standard model');
+});
 
 test('asChatRunMode: valid modes pass through; anything else defaults to build', () => {
   for (const m of ['plan', 'build', 'test', 'review'] as const) assert.equal(asChatRunMode(m), m);

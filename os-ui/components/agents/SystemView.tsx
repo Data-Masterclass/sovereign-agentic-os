@@ -77,6 +77,8 @@ type SystemViewData = {
   ir: unknown;
   compileError: string | null;
   canEdit: boolean;
+  /** True for editors AND for in-domain consumers of a Shared system. Server-computed. */
+  canRun: boolean;
   role: Role;
   hermesEnabled: boolean;
   /** Soft-archived (retained, reversible). Absent/false = live. */
@@ -349,7 +351,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
           {data.running ? (
             <button className="btn ghost sm" onClick={() => post('run', { stop: true })} disabled={!data.canEdit || acting}>Stop</button>
           ) : (
-            <button className="btn sm" onClick={() => post('run', { prompt: 'Test invocation' })} disabled={!data.canEdit || acting}>Run</button>
+            <button className="btn sm" onClick={() => post('run', { prompt: 'Test invocation' })} disabled={!data.canRun || acting}>Run</button>
           )}
           <ScheduleBadge schedule={data.schedule} />
           {canPromote ? (
@@ -503,8 +505,8 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
         ) : null}
         {panel === 'build' ? (
           <>
-            <TriggerEditor systemId={systemId} schedule={data.schedule} canEdit={data.canEdit && !acting} onSaved={reloadAll} />
-            <BuildRunPanel systemId={systemId} running={data.running} canEdit={data.canEdit} lastBuild={data.lastBuild} activity={data.activity} lastRun={data.lastRun} nodePath={runOrder(sys, data.disabledAgents)} onStateChange={reloadAll} />
+            <TriggerEditor systemId={systemId} schedule={data.schedule} canEdit={data.canEdit && !acting} canRun={data.canRun && !acting} onSaved={reloadAll} />
+            <BuildRunPanel systemId={systemId} running={data.running} canEdit={data.canEdit} canRun={data.canRun} lastBuild={data.lastBuild} activity={data.activity} lastRun={data.lastRun} nodePath={runOrder(sys, data.disabledAgents)} onStateChange={reloadAll} />
           </>
         ) : null}
       </div>
@@ -607,12 +609,16 @@ function ScheduleBadge({ schedule }: { schedule: Schedule }) {
  * Lives inside the Build & run panel (mirrors Simple mode's Run phase). Same
  * `/schedule` route contract — RecurrenceEditor produces the cron string.
  */
-function TriggerEditor({ systemId, schedule, canEdit, onSaved }: { systemId: string; schedule: Schedule; canEdit: boolean; onSaved: () => void | Promise<void> }) {
+function TriggerEditor({ systemId, schedule, canEdit, canRun, onSaved }: { systemId: string; schedule: Schedule; canEdit: boolean; canRun: boolean; onSaved: () => void | Promise<void> }) {
   const [kind, setKind] = useState<Schedule['kind']>(schedule.kind);
   const [cron, setCron] = useState(schedule.cron ?? '0 9 * * 1');
   const [busy, setBusy] = useState(false);
   const [cronStatus, setCronStatus] = useState<CronStatus | null>(null);
   const [err, setErr] = useState('');
+  // On-demand trigger state for event-mode systems (non-editors who can run).
+  const [triggerPrompt, setTriggerPrompt] = useState('');
+  const [triggering, setTriggering] = useState(false);
+  const [triggerResult, setTriggerResult] = useState<{ ok: boolean; message: string } | null>(null);
   useEffect(() => { setKind(schedule.kind); }, [schedule.kind]);
   useEffect(() => { if (schedule.cron) setCron(schedule.cron); }, [schedule.cron]);
 
@@ -641,6 +647,30 @@ function TriggerEditor({ systemId, schedule, canEdit, onSaved }: { systemId: str
     if (next === kind) return;
     setKind(next);
     void save(next === 'cron' ? { kind: next, cron } : next === 'event' ? { kind: next, event: 'on_demand' } : { kind: next });
+  };
+
+  const doTrigger = async () => {
+    setTriggering(true);
+    setTriggerResult(null);
+    try {
+      const res = await fetch(`/api/agents/systems/${systemId}/run`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(triggerPrompt.trim() ? { prompt: triggerPrompt.trim() } : {}),
+      });
+      const b = await res.json();
+      if (!res.ok) {
+        setTriggerResult({ ok: false, message: b.error ?? 'Trigger failed' });
+      } else {
+        const output = typeof b.output === 'string' ? b.output : typeof b.finalText === 'string' ? b.finalText : null;
+        setTriggerResult({ ok: true, message: output ? output.slice(0, 400) + (output.length > 400 ? '…' : '') : 'Run completed.' });
+        await onSaved();
+      }
+    } catch (e) {
+      setTriggerResult({ ok: false, message: (e as Error).message });
+    } finally {
+      setTriggering(false);
+    }
   };
 
   return (
@@ -673,10 +703,36 @@ function TriggerEditor({ systemId, schedule, canEdit, onSaved }: { systemId: str
       ) : null}
 
       {kind === 'event' ? (
-        <div style={{ marginTop: 10 }} className="hint">
-          Trigger it from another system or the API with{' '}
-          <span className="mono">run_agent_system</span> (MCP) or{' '}
-          <span className="mono">POST /api/agents/systems/{systemId}/run</span>. No schedule is set — it runs when called.
+        <div style={{ marginTop: 10 }}>
+          {/* On-demand trigger: available to anyone canRun (editors + in-domain consumers). */}
+          {canRun ? (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button className="btn" onClick={() => void doTrigger()} disabled={triggering}>
+                  {triggering ? <span className="spin" /> : '▶ Trigger now'}
+                </button>
+                <input
+                  type="text"
+                  value={triggerPrompt}
+                  onChange={(e) => setTriggerPrompt(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && !triggering) void doTrigger(); }}
+                  placeholder="Optional input for this run"
+                  style={{ flex: 1, minWidth: 180 }}
+                  disabled={triggering}
+                />
+              </div>
+              {triggerResult ? (
+                <div className={triggerResult.ok ? 'answer' : 'error'} style={{ marginTop: 10, fontSize: 13, whiteSpace: 'pre-wrap' }}>
+                  {triggerResult.ok ? <><span className="badge ok">✓ Triggered</span> {triggerResult.message}</> : triggerResult.message}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          <div className="hint">
+            Wire an external caller: use{' '}
+            <span className="mono">run_agent_system</span> (MCP) or{' '}
+            <span className="mono">POST /api/agents/systems/{systemId}/run</span>. No schedule is set — it runs when called.
+          </div>
         </div>
       ) : null}
 

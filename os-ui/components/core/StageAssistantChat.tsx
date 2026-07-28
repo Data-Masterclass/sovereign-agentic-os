@@ -11,6 +11,7 @@ import type {
   SuggestedEpic,
   SuggestedStoriesForEpic,
 } from '@/lib/software/assistant-suggestions';
+import type { StorySpec } from '@/lib/software/story-spec';
 
 /**
  * StageAssistantChat — the ONE reusable, governed assistant CHAT panel any guided stage
@@ -41,11 +42,14 @@ export default function StageAssistantChat({
   onApplyGrants,
   onApplyEpics,
   onApplyStories,
+  onApplySpec,
+  specTargetLabel,
+  onApplyImprovements,
 }: {
   /** The app the assistant reads under the caller's governance (server-side). */
   appId: string;
   /** The guided stage — routed to the stage-scoped prompt server-side. */
-  stage: 'define' | 'design' | 'build' | 'preview' | 'operate';
+  stage: 'define' | 'design' | 'build' | 'test' | 'publish';
   /** A one-line "what this helper does here", shown above the thread. */
   intro: string;
   /** Optional quick-start prompts shown when the thread is empty. */
@@ -58,6 +62,12 @@ export default function StageAssistantChat({
   onApplyEpics?: (epics: SuggestedEpic[]) => void;
   /** Design: add suggested stories under existing epics. */
   onApplyStories?: (groups: SuggestedStoriesForEpic[]) => void;
+  /** Design (spec mode): fold a suggested spec into the selected story's spec. */
+  onApplySpec?: (spec: Partial<StorySpec>) => void;
+  /** Design (spec mode): the story the spec suggestion applies to (shown on the card). */
+  specTargetLabel?: string;
+  /** Test: turn the verifier's suggested improvements into pending Build-tree items. */
+  onApplyImprovements?: (improvements: NonNullable<StageSuggestions['suggestedImprovements']>) => void;
 }) {
   const [thread, setThread] = useState<Turn[]>([]);
   const [suggestions, setSuggestions] = useState<StageSuggestions>({});
@@ -107,7 +117,11 @@ export default function StageAssistantChat({
     !!suggestions.improvedPurpose ||
     (suggestions.suggestedGrants?.length ?? 0) > 0 ||
     (suggestions.suggestedEpics?.length ?? 0) > 0 ||
-    (suggestions.suggestedStories?.length ?? 0) > 0;
+    (suggestions.suggestedStories?.length ?? 0) > 0 ||
+    ((suggestions.suggestedSpec?.features?.length ?? 0) +
+      (suggestions.suggestedSpec?.nfrs?.length ?? 0) +
+      (suggestions.suggestedSpec?.rules?.length ?? 0)) > 0 ||
+    (suggestions.suggestedImprovements?.length ?? 0) > 0;
 
   return (
     <div className="sac">
@@ -211,6 +225,45 @@ export default function StageAssistantChat({
                     <ul className="sac-sublist">
                       {g.stories.map((s, j) => <li key={j}>{s.title}</li>)}
                     </ul>
+                  </li>
+                ))}
+              </ul>
+            </SuggestionCard>
+          ) : null}
+
+          {suggestions.suggestedSpec && onApplySpec ? (
+            <SuggestionCard
+              label={`Suggested spec${specTargetLabel ? ` for “${specTargetLabel}”` : ''}`}
+              onApply={() => onApplySpec(suggestions.suggestedSpec!)}
+              applyLabel="Add to spec"
+            >
+              <div className="sac-spec">
+                {(['features', 'nfrs', 'rules'] as const).map((k) => {
+                  const items = suggestions.suggestedSpec?.[k] ?? [];
+                  if (items.length === 0) return null;
+                  const label = k === 'features' ? 'Features' : k === 'nfrs' ? 'NFRs' : 'Rules';
+                  return (
+                    <div key={k}>
+                      <span className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.03em' }}>{label}</span>
+                      <ul className="sac-list">{items.map((it, i) => <li key={i}>{it}</li>)}</ul>
+                    </div>
+                  );
+                })}
+              </div>
+            </SuggestionCard>
+          ) : null}
+
+          {suggestions.suggestedImprovements?.length && onApplyImprovements ? (
+            <SuggestionCard
+              label={`Improvements (${suggestions.suggestedImprovements.length})`}
+              onApply={() => onApplyImprovements(suggestions.suggestedImprovements!)}
+              applyLabel="Add to Build to-do"
+            >
+              <ul className="sac-list">
+                {suggestions.suggestedImprovements.map((im, i) => (
+                  <li key={i}>
+                    <span className={`badge ${im.kind === 'design' ? 'warn' : 'muted'}`} style={{ fontSize: 10 }}>{im.kind === 'design' ? 'needs design' : 'rebuild'}</span>{' '}
+                    {im.note}
                   </li>
                 ))}
               </ul>

@@ -85,10 +85,19 @@ export default function McpConnect({ tab }: { tab?: string } = {}) {
   }
 }`;
 
+  // Codex (OpenAI CLI) — first-class path for the OpenAI ecosystem. The token is
+  // held in a launchctl env var (never in Codex config or a chat); Codex reads it
+  // by name via --bearer-token-env-var. Uses the SAME dynamic endpoint/serverName
+  // the other snippets use, so it is always correct for this deployment.
+  const codexEnvVar = 'SOVEREIGN_AGENTIC_OS_TOKEN';
+  const codexSetenv = `launchctl setenv ${codexEnvVar} '${token}'`;
+  const codexAdd = `codex mcp add ${serverName} \\\n  --url ${endpoint} \\\n  --bearer-token-env-var ${codexEnvVar}`;
+  const codexGet = `codex mcp get ${serverName}`;
+
   return (
     <div className="card" style={{ marginTop: 4 }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-        <strong>{tab ? `Run this tab from Claude & ChatGPT` : 'Run the OS from Claude & ChatGPT'}</strong>
+        <strong>{tab ? `Run this tab from Claude, Codex & ChatGPT` : 'Run the OS from Claude, Codex & ChatGPT'}</strong>
         <span className="pa-tag">remote MCP</span>
       </div>
       <p className="muted" style={{ margin: '8px 0 14px', fontSize: 12.5, maxWidth: 640 }}>
@@ -168,7 +177,7 @@ export default function McpConnect({ tab }: { tab?: string } = {}) {
 
             <label style={{ display: 'grid', gap: 4 }}>
               <span className="muted" style={{ fontSize: 11.5 }}>
-                Personal token — only for token-based platforms (e.g. ChatGPT) · treat like a password
+                Personal token — for token-based platforms (e.g. Codex, ChatGPT) · treat like a password
               </span>
               <div className="row" style={{ gap: 8 }}>
                 <input
@@ -211,7 +220,64 @@ export default function McpConnect({ tab }: { tab?: string } = {}) {
             </div>
           </details>
 
-          <div className="section-title" style={{ marginTop: 16 }}>3 · Connect from ChatGPT</div>
+          <div className="section-title" style={{ marginTop: 18 }}>
+            3 · Connect from Codex <span className="pa-tag" style={{ marginLeft: 6 }}>best for OpenAI</span>
+          </div>
+          <p className="muted" style={{ fontSize: 12, margin: '4px 0 8px', maxWidth: 640 }}>
+            The richest way to drive the OS from the OpenAI ecosystem — every governed tool, from your terminal.
+            Verified with the Codex desktop app on macOS.
+          </p>
+          <ol style={{ margin: '4px 0 4px', paddingLeft: 22, fontSize: 12.5, lineHeight: 1.9, color: 'var(--text)' }}>
+            <li>Copy your <strong>endpoint URL</strong> and <strong>personal token</strong> above — never paste the token into a Codex chat.</li>
+            <li>
+              In Terminal, make the token available to Codex (keep the single quotes):
+              <div className="row" style={{ gap: 8, alignItems: 'flex-start', margin: '6px 0' }}>
+                <pre className="mono" style={{ flex: 1, whiteSpace: 'pre-wrap', margin: 0, fontSize: 12, color: '#1a1813', background: '#ffffff' }}>{codexSetenv}</pre>
+                <CopyButton text={codexSetenv} />
+              </div>
+            </li>
+            <li>
+              Add the MCP server:
+              <div className="row" style={{ gap: 8, alignItems: 'flex-start', margin: '6px 0' }}>
+                <pre className="mono" style={{ flex: 1, whiteSpace: 'pre-wrap', margin: 0, fontSize: 12, color: '#1a1813', background: '#ffffff' }}>{codexAdd}</pre>
+                <CopyButton text={codexAdd} />
+              </div>
+            </li>
+            <li>
+              Fully <strong>quit Codex (⌘Q)</strong> and reopen it — required so Codex picks up the token. Then run{' '}
+              <span className="mono">/mcp</span> in a new conversation to confirm <span className="mono">{serverName}</span> is active.
+            </li>
+          </ol>
+          <details style={{ marginTop: 4 }}>
+            <summary className="muted" style={{ cursor: 'pointer', fontSize: 12 }}>Full setup, verification &amp; troubleshooting</summary>
+            <div style={{ fontSize: 12, lineHeight: 1.7, color: 'var(--text)', marginTop: 8, display: 'grid', gap: 6, maxWidth: 660 }}>
+              <p style={{ margin: 0 }}>
+                <strong>Verify from Terminal</strong> — run <span className="mono">{codexGet}</span>. The result should show{' '}
+                <span className="mono">enabled: true</span>, <span className="mono">transport: streamable_http</span>, your endpoint URL, and{' '}
+                <span className="mono">bearer_token_env_var: {codexEnvVar}</span>.
+              </p>
+              <p style={{ margin: 0 }}>
+                <strong>Test it</strong> — in a new Codex conversation: <em>&ldquo;Use Sovereign Agentic OS to identify me and list the
+                capabilities available to my account.&rdquo;</em> Codex returns your delegated identity, role, domains, and tools.
+              </p>
+              <p style={{ margin: 0 }}>
+                <strong>Updating the token</strong> — re-run the <span className="mono">launchctl setenv</span> command with the new token, then fully quit and reopen Codex.
+              </p>
+              <p style={{ margin: 0 }}>
+                <strong>After restarting your Mac</strong> — macOS may clear the launchctl variable. If Codex reports an auth error, re-run step 2 and restart Codex.
+              </p>
+              <p style={{ margin: 0 }}>
+                <strong>Troubleshooting</strong> — if it was added incorrectly, remove it with <span className="mono">codex mcp remove {serverName}</span> and repeat the steps.
+                On <span className="mono">Unauthorized / HTTP 401</span>: confirm the token is valid, wrapped in single quotes, and the variable is named exactly{' '}
+                <span className="mono">{codexEnvVar}</span>; then quit and reopen Codex. Do <strong>not</strong> use <span className="mono">codex mcp login</span> — the OS uses the personal bearer-token setup above.
+              </p>
+              <p className="muted" style={{ margin: 0 }}>
+                Security: typing the token in Terminal may store it in your shell history — clear that entry afterward, or use your organisation&rsquo;s approved secret manager.
+              </p>
+            </div>
+          </details>
+
+          <div className="section-title" style={{ marginTop: 16 }}>4 · Connect from ChatGPT</div>
           <ol style={{ margin: '4px 0 4px', paddingLeft: 22, fontSize: 12.5, lineHeight: 1.9, color: 'var(--text)' }}>
             <li>Open <strong>Settings</strong> → <strong>Connectors</strong> (enable <em>Developer mode</em> if asked).</li>
             <li>Click <strong>Add custom connector</strong> and give it a name (e.g. &ldquo;Sovereign OS&rdquo;).</li>
@@ -220,7 +286,7 @@ export default function McpConnect({ tab }: { tab?: string } = {}) {
             <li>Save, then enable it in the chat composer&rsquo;s tools. ChatGPT now works as you, fully governed.</li>
           </ol>
 
-          <div className="section-title" style={{ marginTop: 16 }}>4 · Connect from Claude Code (terminal)</div>
+          <div className="section-title" style={{ marginTop: 16 }}>5 · Connect from Claude Code (terminal)</div>
           <p className="muted" style={{ fontSize: 12, margin: '4px 0 6px' }}>One command — paste into your terminal:</p>
           <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
             <pre className="mono" style={{ flex: 1, whiteSpace: 'pre-wrap', margin: 0, fontSize: 12, color: '#1a1813', background: '#ffffff' }}>{claudeCode}</pre>

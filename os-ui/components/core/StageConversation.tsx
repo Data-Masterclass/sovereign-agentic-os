@@ -50,6 +50,7 @@ export default function StageConversation({
   conversation,
   outcome,
   anchorProps,
+  reverse = false,
 }: {
   context: ReactNode;
   structure?: ReactNode;
@@ -57,14 +58,21 @@ export default function StageConversation({
   outcome?: ReactNode;
   /** Optional tutorial-anchor attributes spread onto the root. */
   anchorProps?: Record<string, unknown>;
+  /**
+   * Put the CONVERSATION on the left and the STRUCTURE on the right (default is
+   * structure-left). Design uses this — assistant-left, epics-right — where there is no
+   * build-tree to anchor the left; every other stage keeps the default. Layout only.
+   */
+  reverse?: boolean;
 }) {
+  const structureCol = structure ? <div className="stage-conversation-structure">{structure}</div> : null;
+  const threadCol = <div className="stage-conversation-thread">{conversation}</div>;
   return (
     <div className="stage-conversation" {...anchorProps}>
       {context ? <div className="stage-conversation-context">{context}</div> : null}
 
       <div className={`stage-conversation-body${structure ? '' : ' is-solo'}`}>
-        {structure ? <div className="stage-conversation-structure">{structure}</div> : null}
-        <div className="stage-conversation-thread">{conversation}</div>
+        {reverse ? <>{threadCol}{structureCol}</> : <>{structureCol}{threadCol}</>}
       </div>
 
       {outcome ? <div className="stage-conversation-outcome">{outcome}</div> : null}

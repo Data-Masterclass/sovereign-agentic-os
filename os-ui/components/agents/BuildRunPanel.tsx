@@ -688,6 +688,7 @@ export default function BuildRunPanel({
   system,
   running,
   canEdit,
+  canRun: canRunProp,
   lastBuild,
   activity,
   lastRun,
@@ -701,6 +702,8 @@ export default function BuildRunPanel({
   system?: System;
   running: boolean;
   canEdit: boolean;
+  /** When true, the Run button is enabled even for non-editors (in-domain consumers of a Shared system). */
+  canRun?: boolean;
   lastBuild?: LastBuild | null;
   activity?: ActivityMarker | null;
   lastRun?: LastRun | null;
@@ -716,6 +719,10 @@ export default function BuildRunPanel({
    */
   phase?: 'all' | 'build' | 'run' | 'evaluate';
 }) {
+  // canRunProp absent → fall back to canEdit (back-compat with callers that haven't
+  // threaded the new prop yet, e.g. SimpleBuilder). When present, use it as the
+  // authoritative gate: the server already enforces run authz; the UI just surfaces it.
+  const canRun = canRunProp !== undefined ? canRunProp : canEdit;
   const showBuild = phase === 'all' || phase === 'build';
   const showRun = phase === 'all' || phase === 'run';
   const showEvaluate = phase === 'all' || phase === 'evaluate';
@@ -1159,7 +1166,7 @@ export default function BuildRunPanel({
           fills a real, purpose-derived default when the prompt is empty — no need to
           re-type the task. An optional collapsible adds a one-off input for this run. */}
       <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <button className="btn lg" onClick={() => doRun(false)} disabled={runningNow || !canEdit}>
+        <button className="btn lg" onClick={() => doRun(false)} disabled={runningNow || !canRun}>
           {runningNow ? <span className="spin" /> : '▶ Run'}
         </button>
         {running ? (

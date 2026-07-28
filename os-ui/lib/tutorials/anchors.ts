@@ -81,8 +81,11 @@ export const ANCHORS = {
     define: 'software.define',
     design: 'software.design',
     build: 'software.build',
-    preview: 'software.preview',
-    operate: 'software.operate',
+    // Test replaces the old Preview stage; Publish replaces Operate. The anchor
+    // STRING values stay stable ('software.preview'/'software.operate') so existing
+    // tutorial content keeps resolving — only the key (the stage vocabulary) changed.
+    test: 'software.preview',
+    publish: 'software.operate',
   },
   science: {
     sandbox: 'science.sandbox',

@@ -13,6 +13,41 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.9] — 2026-07-28
+
+### Changed
+- **Software tab redesigned into five single-purpose stages** — Define ·
+  Design · Build · Test · Publish, each owning exactly ONE function and ONE
+  assistant. Define carries a 4-template picker (Sovereign **Application** —
+  OS-session sign-in + Admin section + user directory — as the default).
+  Design is the reasoning-tier home of ALL planning: one epic at a time
+  (prev/next), read-first with an Edit toggle, assistant-left / epic-right,
+  each user story expanding to its Features · NFRs · Rules spec.
+- **Build is standard-model execution only.** A hierarchical Epics › Stories ›
+  Features tree with capped batch selection (8 features), a selection checkbox
+  distinct from a green done-✓ status, an always-visible spec with an honest
+  built-vs-pending detail (an item is built only once its story commit lands —
+  never fake-ticked), and a design-before-build gate (unspecced features are
+  not buildable). Full Define context grounds every generation.
+- **Test replaces Preview**: one "Verify & Improve" action (reasoning tier)
+  verifies each built story against its spec and turns shortfalls into pending
+  Build to-dos (missed-spec → rebuild; scope change → routed back to Design),
+  while keeping the live-pod preview. **Publish replaces Operate** (deploy,
+  review card, promote/demote, MCP surface, lifecycle).
+- **Per-stage model tiers**: reasoning for Design and Test, standard for Build
+  code generation (never auto-escalated). Honest tier badge per stage.
+
+### Added
+- **Agents tab — in-tab Trigger for API-mode systems.** Systems whose trigger
+  mode is `event` get a first-class "Trigger now" affordance (optional input +
+  result), available to in-domain consumers of a Shared system — driven by a
+  server-computed `canRun` so authorization stays server-authoritative.
+- **Connect your AI tool — Codex is now a first-class path** (above ChatGPT):
+  short copy-paste setup (`launchctl setenv` + `codex mcp add
+  --bearer-token-env-var`) with the full setup, verification and
+  troubleshooting in an expandable detail. Token stays out of the config and
+  out of any Codex chat.
+
 ## [os-ui 0.6.8] — 2026-07-27
 
 ### Changed

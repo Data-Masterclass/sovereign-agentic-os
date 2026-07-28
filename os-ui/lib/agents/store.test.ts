@@ -13,6 +13,7 @@ import {
   getSystem,
   getSystemForEdit,
   getSystemForRun,
+  canRunCheck,
   listFiles,
   readFile,
   writeFile,
@@ -207,6 +208,34 @@ test('Probe pre-auth: a Shared in-domain viewer is denied edit-scope; an in-doma
   assert.ok(getSystem(shared.id, amir)); // amir can view (Shared, in-domain)
   assert.throws(() => getSystemForEdit(shared.id, amir), /not permitted to edit/i);
   assert.ok(getSystemForEdit(shared.id, admin)); // in-domain admin may edit
+});
+
+test('canRun: in-domain consumer of a Shared system can run but not edit; out-of-domain cannot', () => {
+  // This test covers the UI gate: the systems GET now stamps canRun:true for
+  // in-domain consumers of a Shared, event-mode system, giving them the Trigger button.
+  // (a) In-domain consumer (non-editor) can run a Shared system via getSystemForRun.
+  __resetStore();
+  const shared = makeShared(sara, { name: 'Campaign Agent', domain: 'sales' });
+
+  // canRunCheck returns true for the owner (editor path).
+  const sharedRec = getSystem(shared.id, sara);
+  assert.ok(canRunCheck(sharedRec, sara), 'owner can run');
+
+  // amir is in-domain (sales), non-editor: canRun=true, canEdit=false.
+  assert.ok(canRunCheck(sharedRec, amir), 'in-domain consumer can run a Shared system');
+  assert.throws(() => getSystemForEdit(shared.id, amir), /not permitted to edit/i);
+  assert.ok(getSystemForRun(shared.id, amir), 'getSystemForRun succeeds for in-domain consumer');
+
+  // kenji is out-of-domain (finance): canRun=false.
+  assert.equal(canRunCheck(sharedRec, kenji), false, 'out-of-domain cannot run a Shared system');
+  assert.throws(() => getSystemForRun(shared.id, kenji), /not permitted to run/i);
+
+  // (b) Personal system: only owner can run, not even in-domain peers.
+  const personal = createSystem(sara, { name: 'Private', domain: 'sales' });
+  const personalRec = getSystem(personal.id, sara);
+  assert.ok(canRunCheck(personalRec, sara), 'owner can run personal');
+  assert.equal(canRunCheck(personalRec, amir), false, 'in-domain non-owner cannot run a Personal system');
+  assert.throws(() => getSystemForRun(personal.id, amir), /not permitted to run/i);
 });
 
 test("an owner's own Marketplace system lists under Mine only (no double-list)", () => {

@@ -93,3 +93,15 @@ export function epicProgress(epic: TreeEpic): { built: number; total: number } {
 export function currentEpicIndex(epics: TreeEpic[]): number {
   return epics.findIndex((e) => deriveEpicStatus(e) !== 'done');
 }
+
+/**
+ * Clamp an epic index into the valid range for one-at-a-time epic navigation
+ * (Design detail's prev/next switcher). An empty list yields 0; out-of-range clamps
+ * to the nearest end. Pure so the switcher's bounds are unit-testable.
+ */
+export function clampEpicIndex(index: number, count: number): number {
+  if (count <= 0) return 0;
+  if (index < 0) return 0;
+  if (index > count - 1) return count - 1;
+  return index;
+}

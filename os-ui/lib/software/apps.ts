@@ -32,6 +32,7 @@ import type {
   ScaffoldFile,
   SurfaceDeclaration,
 } from '@/lib/software/model';
+import { normalizeSpec, type StorySpec } from '@/lib/software/story-spec';
 import { viteOsFiles } from '@/lib/software/scaffolds/vite-os';
 import { sovereignAppFiles, sovereignAppGuide } from '@/lib/software/scaffolds/sovereign-app';
 import { websiteFiles, websiteGuide } from '@/lib/software/scaffolds/website';
@@ -99,6 +100,14 @@ export type AppStory = {
    * apps load unchanged; set to 'done' when a Build run for this story completes.
    */
   status?: 'todo' | 'building' | 'done';
+  /**
+   * The Design-stage SPECIFICATION for this story — three editable lists
+   * (features / non-functional requirements / rules) the Design conversation
+   * shapes and the Build stage ticks against. Optional + defaults to undefined
+   * (no spec authored) so pre-spec apps load byte-identically; normalised on save
+   * so a malformed payload can never widen the shape. See lib/software/story-spec.ts.
+   */
+  spec?: StorySpec;
 };
 
 /**
@@ -682,22 +691,22 @@ export const APP_TEMPLATES: { key: AppTemplateKey; label: string; blurb: string 
   {
     key: 'sovereign-app',
     label: 'Application',
-    blurb: 'Starts with the Sovereign OS look, sign-in, admin and multi-domain setup.',
+    blurb: 'Full OS experience — sign in via your OS session, an Admin section with the user directory and settings, multi-tenant. Enables the whole flow: a UI to design, build and test.',
   },
   {
     key: 'website',
     label: 'Website',
-    blurb: 'A public-facing site — clean pages, no sign-in or admin chrome.',
+    blurb: 'A public-facing site — clean pages, no sign-in or admin chrome. Full design→build→test→publish flow, without the OS session/Admin skeleton.',
   },
   {
     key: 'api-service',
     label: 'APIs only',
-    blurb: 'A headless service — governed endpoints, no user interface.',
+    blurb: 'A headless service — governed MCP endpoints, no user interface. Test checks the tool surface; there is no live-app iframe to preview.',
   },
   {
     key: 'empty',
     label: 'Empty App',
-    blurb: 'The bare minimum that builds and deploys — a blank canvas.',
+    blurb: 'A blank canvas that still builds and deploys. Bring your own structure; every stage stays available.',
   },
 ];
 
@@ -1584,6 +1593,25 @@ export async function updateAppDocs(
 }
 
 /**
+ * Sanitise every story's Design SPEC before persist — normalises the three lists and
+ * DROPS an empty/garbage spec so the field stays absent (byte-stable) for stories the
+ * user never specified. Everything else on the epics/stories is passed through
+ * untouched; the caller still owns the epic/story CRUD.
+ */
+function normalizeEpicSpecs(epics: AppEpic[]): AppEpic[] {
+  return epics.map((e) => ({
+    ...e,
+    stories: (e.stories ?? []).map((s) => {
+      const spec = normalizeSpec(s.spec);
+      if (spec) return { ...s, spec };
+      // No usable spec → ensure the field is absent, not an empty object.
+      const { spec: _drop, ...rest } = s;
+      return rest;
+    }),
+  }));
+}
+
+/**
  * Persist the Define + Design surfaces — the app's PURPOSE, its DESIGN epics/stories,
  * and its governed CONTEXT GRANTS. Same fail-closed edit-scope as `updateAppDocs`
  * (owner, owning-domain admin, or admin). Any field left undefined is untouched, so
@@ -1600,7 +1628,7 @@ export async function patchAppDesign(
   if (!a) throw withStatus(new Error('App not found'), 404);
   if (!isOwnerOrAdminApp(a, user)) throw withStatus(new Error('Not permitted to edit this app'), 403);
   if (patch.purpose !== undefined) a.purpose = patch.purpose.slice(0, 2000);
-  if (patch.epics !== undefined) a.epics = patch.epics;
+  if (patch.epics !== undefined) a.epics = normalizeEpicSpecs(patch.epics);
   if (patch.grants !== undefined) a.grants = normalizeContextGrants(patch.grants);
   a.updatedAt = now();
   map.set(a.id, a);

@@ -24,6 +24,7 @@ import {
   type ContextKind,
 } from '@/lib/core/context-grants';
 import type { AppEpic, AppStory } from '@/lib/software/apps';
+import { type StorySpec } from '@/lib/software/story-spec';
 
 /** A single context-grant the assistant proposes: which kind + id, at what access. */
 export type SuggestedGrant = {
@@ -69,6 +70,32 @@ export type StageSuggestions = {
   suggestedEpics?: SuggestedEpic[];
   /** Design: stories to add under existing epics, referenced by title. */
   suggestedStories?: SuggestedStoriesForEpic[];
+  /**
+   * Design (spec mode): the three spec lists proposed for the CURRENTLY-SELECTED
+   * story — features, non-functional requirements and rules. The host folds them
+   * into that story's spec on Apply (never a blind write). Partial: any list may
+   * be omitted.
+   */
+  suggestedSpec?: Partial<StorySpec>;
+  /**
+   * Test (Verify & Improve): concrete improvements the verifier drafted for built
+   * stories/features that fell short of spec, plus scope-changing feedback. Each is
+   * tied to a story; `kind` says whether it's a REBUILD (missed spec) or a DESIGN
+   * change (new requirement). The host turns them into pending Build-tree items.
+   */
+  suggestedImprovements?: RawImprovementSuggestion[];
+};
+
+/** One improvement the Test verifier / feedback proposes (pre-normalisation). */
+export type RawImprovementSuggestion = {
+  /** 'rebuild' (built code missed spec) | 'design' (a new/changed requirement). */
+  kind?: 'rebuild' | 'design';
+  /** The exact story id this improvement targets. */
+  storyId?: string;
+  /** The feature index within that story, when feature-specific. */
+  featureIndex?: number;
+  /** A short human note: what to change. */
+  note?: string;
 };
 
 /** A stage-assistant reply: markdown prose plus optional structured suggestions. */
@@ -182,6 +209,24 @@ export function applyStoriesSuggestion(
   });
 }
 
+/**
+ * Fold a suggested spec into a story's existing spec — de-duplicated, appended (never
+ * replacing what the user already wrote). Pure — returns a NEW StorySpec. A partial
+ * suggestion (only features, say) leaves the other lists untouched.
+ */
+export function applySpecSuggestion(current: StorySpec | undefined, suggested: Partial<StorySpec>): StorySpec {
+  const merge = (a: string[], b: string[] | undefined): string[] => {
+    const seen = new Set(a.map((x) => x.toLowerCase()));
+    const add = (b ?? []).map((x) => x.trim()).filter((x) => x && !seen.has(x.toLowerCase()));
+    return [...a, ...add];
+  };
+  return {
+    features: merge(current?.features ?? [], suggested.features),
+    nfrs: merge(current?.nfrs ?? [], suggested.nfrs),
+    rules: merge(current?.rules ?? [], suggested.rules),
+  };
+}
+
 // ------------------------------------------------------ reply normalisation --
 
 /**
@@ -254,6 +299,33 @@ export function normalizeAssistantReply(raw: unknown, kinds: ContextKind[]): Sta
       })
       .filter((g): g is SuggestedStoriesForEpic => g !== null);
     if (groups.length) suggestions.suggestedStories = groups;
+  }
+
+  if (rec.suggestedSpec && typeof rec.suggestedSpec === 'object') {
+    const o = rec.suggestedSpec as Record<string, unknown>;
+    const list = (v: unknown): string[] =>
+      (Array.isArray(v) ? v : []).filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean);
+    const spec: Partial<StorySpec> = {};
+    const f = list(o.features); if (f.length) spec.features = f;
+    const n = list(o.nfrs); if (n.length) spec.nfrs = n;
+    const r = list(o.rules); if (r.length) spec.rules = r;
+    if (spec.features || spec.nfrs || spec.rules) suggestions.suggestedSpec = spec;
+  }
+
+  if (Array.isArray(rec.suggestedImprovements)) {
+    const imps = rec.suggestedImprovements
+      .map((raw): RawImprovementSuggestion | null => {
+        if (!raw || typeof raw !== 'object') return null;
+        const o = raw as Record<string, unknown>;
+        const storyId = str(o.storyId).trim();
+        const note = str(o.note).trim();
+        if (!storyId || !note) return null;
+        const kind = o.kind === 'design' ? 'design' : 'rebuild';
+        const featureIndex = typeof o.featureIndex === 'number' && o.featureIndex >= 0 ? o.featureIndex : undefined;
+        return { kind, storyId, note, featureIndex };
+      })
+      .filter((i): i is RawImprovementSuggestion => i !== null);
+    if (imps.length) suggestions.suggestedImprovements = imps;
   }
 
   return { message, suggestions };

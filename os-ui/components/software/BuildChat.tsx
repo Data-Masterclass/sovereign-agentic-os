@@ -3,7 +3,7 @@
  */
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { stripThinking } from '@/lib/agents/agent-chat-response';
 import Markdown from '@/components/Markdown';
 import BuildDiff, { type FileChange } from './BuildDiff';
@@ -49,6 +49,8 @@ export default function BuildChat({
   onAction,
   lastAction = null,
   showDetails = false,
+  actions = ['design', 'build', 'test', 'review'],
+  buildTrigger = 0,
 }: {
   appId: string;
   appName: string;
@@ -72,6 +74,19 @@ export default function BuildChat({
   lastAction?: BuildAction | null;
   /** Builders may reveal the raw tool I/O behind each activity line ("show details"). */
   showDetails?: boolean;
+  /**
+   * The scope actions to offer above the chat. Defaults to all four
+   * (Design · Build · Test · Review). The redesigned Build stage passes NO
+   * actions ([]) because its ONE primary "Build this user story" button lives in
+   * the main area above the chat — the chat is for feedback + improvements only.
+   */
+  actions?: BuildAction[];
+  /**
+   * A monotonic counter the parent bumps to fire a BUILD run of the current
+   * target from OUTSIDE the chat (the Build stage's one "Build this user story"
+   * button). Ignored while a run is loading or when no target is selected.
+   */
+  buildTrigger?: number;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     initialMessages.map((m) => (m.role === 'assistant' ? { ...m, content: stripThinking(m.content) } : m)),
@@ -181,23 +196,37 @@ export default function BuildChat({
     [target, loading, epics, onModeChange, onAction, send],
   );
 
+  // The Build stage's external "Build this user story" button bumps `buildTrigger`;
+  // fire a BUILD run of the current target (never on mount — the ref guards the
+  // initial value). Honest no-op when a run is in flight or nothing is selected.
+  const lastTrigger = useRef(buildTrigger);
+  useEffect(() => {
+    if (buildTrigger === lastTrigger.current) return;
+    lastTrigger.current = buildTrigger;
+    if (!target || loading) return;
+    onModeChange?.('build');
+    onAction?.('build');
+    void send(actionPrompt('build', epics, target), 'build');
+  }, [buildTrigger, target, loading, epics, onModeChange, onAction, send]);
+
   const planning = mode === 'plan';
   const label = planning ? 'plan assistant' : 'build assistant';
 
   // The four scope actions. Build is PRIMARY (gold) — it's the verb that ships
   // code; Design · Test · Review are secondary (ghost) but full-size, not tiny.
-  const ACTIONS: { key: BuildAction; label: string; title: string; primary?: boolean }[] = [
+  const ALL_ACTIONS: { key: BuildAction; label: string; title: string; primary?: boolean }[] = [
     { key: 'design', label: 'Design', title: 'Refine the design of the selection (Plan mode — no code changes)' },
     { key: 'build', label: 'Build', title: 'Implement the selection — commits real code', primary: true },
     { key: 'test', label: 'Test', title: 'Critically test the selection against the committed code (read-only)' },
     { key: 'review', label: 'Review', title: 'Review what has been built — risks + feature ideas (read-only)' },
   ];
+  const ACTIONS = ALL_ACTIONS.filter((a) => actions.includes(a.key));
 
   return (
     <div className="chat claude">
       {/* Scope action bar — appears when a node is selected in the tree. Full-size,
           prominent controls: Build primary, the rest comfortably-clickable ghosts. */}
-      {target ? (
+      {target && ACTIONS.length > 0 ? (
         <div className="sw-build-actionbar">
           <div className="sw-build-actionbar-scope">
             <span className="comp-label" style={{ fontSize: 11 }}>Working on</span>

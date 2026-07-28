@@ -18,9 +18,7 @@ import StageShell from '@/components/core/StageShell';
 import BuilderModeToggle from '@/components/core/BuilderModeToggle';
 import StageAssistantChat from '@/components/core/StageAssistantChat';
 import SoftwareContextGrants from './SoftwareContextGrants';
-import DesignBoard from './DesignBoard';
 import BuildChat, { type FileChange } from './BuildChat';
-import EpicStoryTree from './EpicStoryTree';
 import type { ViewMode } from '@/lib/core/view-mode';
 import {
   contextAccessCap,
@@ -33,17 +31,39 @@ import {
   applyGrantsSuggestion,
   applyEpicsSuggestion,
   applyStoriesSuggestion,
+  applySpecSuggestion,
   type SuggestedGrant,
   type SuggestedEpic,
   type SuggestedStoriesForEpic,
+  type RawImprovementSuggestion,
 } from '@/lib/software/assistant-suggestions';
+import {
+  normalizeImprovement,
+  dropImprovement,
+  isBuildable,
+  kindLabel,
+  type Improvement,
+} from '@/lib/software/improvements';
 import StageConversation from '@/components/core/StageConversation';
 import { initialStageState, canEnter, isSatisfied, markDone, type StageState } from '@/lib/core/stages';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { buildStatusRail } from '@/lib/software/build-activity';
-import { targetKey, type BuildAction, type BuildTarget } from '@/lib/software/build-target';
+import { type BuildTarget } from '@/lib/software/build-target';
+import { everyStoryHasSpec, specHasContent, type StorySpec } from '@/lib/software/story-spec';
+import {
+  BUILD_BATCH_CAP,
+  featureId,
+  pruneSelection,
+  selectedCount,
+  toggleFeature as toggleFeatureSel,
+  toggleGroup as toggleGroupSel,
+} from '@/lib/software/build-selection';
+import { defineContextNote } from '@/lib/software/define-context';
+import { modelRoleForMode, tierNote } from '@/lib/software/chat-modes';
 import TeamPanel from '@/app/(build)/software/TeamPanel';
-import StageAssistant from './StageAssistant';
+import DesignEpicDetail from './DesignEpicDetail';
+import SpecTree, { type SpecNode } from './SpecTree';
+import SpecDetailPanel from './SpecDetailPanel';
 import { SW_STAGES, type SwStageId, type SwCtx } from './stages';
 
 type Visibility = 'Personal' | 'Shared' | 'Certified';
@@ -51,7 +71,7 @@ type Tool = { name: string; description: string; write: boolean };
 type ChatMsg = { role: 'user' | 'assistant'; content: string; at: string };
 
 /** A Design user story (mirrors lib/software/apps.ts AppStory). */
-type Story = { id: string; title: string; asA: string; iWant: string; soThat: string; acceptance: string; status?: 'todo' | 'building' | 'done' };
+type Story = { id: string; title: string; asA: string; iWant: string; soThat: string; acceptance: string; status?: 'todo' | 'building' | 'done'; spec?: StorySpec };
 /** A Design epic (mirrors lib/software/apps.ts AppEpic). */
 type Epic = {
   id: string;
@@ -104,6 +124,8 @@ const STAGE_STEP_LABEL: Record<(typeof STAGES)[number], string> = {
 };
 
 const MODE_KEY = 'software.viewMode';
+/** A stable empty selection set (Design passes this — it has no build-select). */
+const EMPTY_SET: ReadonlySet<string> = new Set<string>();
 /** The context kinds the Software Define stage offers. */
 const SW_GRANT_KINDS: ContextKind[] = ['connections', 'data', 'knowledge', 'files', 'metrics'];
 
@@ -207,6 +229,18 @@ export default function SoftwareBuilder({
 
   // The scope the Build stage acts on — General (whole app), an EPIC, or a story.
   const [target, setTarget] = useState<BuildTarget | null>(null);
+  // The Test→Build improvement to-dos (session-scoped): concrete fixes the Test verifier
+  // (or free-text feedback) drafted, shown as pending items in the Build tree. Lifted here
+  // so Test authors them and Build consumes them.
+  const [improvements, setImprovements] = useState<Improvement[]>([]);
+  const addImprovements = (raws: RawImprovementSuggestion[]) => {
+    const findStory = (sid: string) => {
+      const e = (app.epics ?? []).find((ep) => ep.stories.some((s) => s.id === sid));
+      return e ? { epicId: e.id } : null;
+    };
+    const cleaned = raws.map((r) => normalizeImprovement(r, findStory)).filter((i): i is Improvement => i !== null);
+    if (cleaned.length) setImprovements((prev) => [...prev, ...cleaned]);
+  };
 
   const canEditCode = roleAtLeast(user.role, 'builder');
   const canEdit = app.owner === user.id || roleAtLeast(user.role, 'domain_admin');
@@ -234,6 +268,7 @@ export default function SoftwareBuilder({
     named: !!app.name.trim(),
     hasPurpose: !!(app.purpose ?? '').trim(),
     hasDesign: epics.some((e) => (e.stories?.length ?? 0) > 0),
+    designSpecComplete: everyStoryHasSpec(epics),
     committed,
     previewed: !!app.deploy.previewUrl || previewAck,
     deployed: app.deploy.releases > 0,
@@ -433,16 +468,6 @@ export default function SoftwareBuilder({
           ctx={ctx}
           onState={setStage}
           ariaLabel="Software stages"
-          assistant={(st) =>
-            // Every stage now owns its ONE scoped conversation inside the stage body via
-            // the StageConversation primitive (Define · Design · Preview · Operate) or its
-            // BuildChat (Build) — so there is no second, shell-level assistant. Build keeps
-            // the one-shot file-explainer here because its conversation is the code-writing
-            // BuildChat, not a StageAssistantChat.
-            st.id === 'build' ? (
-              <StageAssistant appId={app.id} stage="build" label="Explain a file or what to ask the build chat next." cta="Explain" />
-            ) : null
-          }
         >
           {stage.current === 'define' ? (
             <DefineStage
@@ -464,21 +489,26 @@ export default function SoftwareBuilder({
               target={target} setTarget={setTarget}
               onSaveEpics={canEdit ? (next) => saveDesign({ epics: next }) : undefined}
               onGoDesign={() => setStage((s) => ({ ...s, current: 'design' }))}
+              improvements={improvements}
+              onDropImprovement={(id) => setImprovements((prev) => dropImprovement(prev, id))}
             />
           ) : null}
 
-          {stage.current === 'preview' ? (
-            <PreviewStage
-              app={app} surface={surface} pipe={pipe}
+          {stage.current === 'test' ? (
+            <TestStage
+              app={app} epics={epics} surface={surface} pipe={pipe}
               busy={busy} onPreview={() => deployAction('preview')}
               deployMsg={deployMsg}
-              offlineAck={previewAck} onOfflineAck={() => { setPreviewAck(true); setStage((s) => markDone(s, 'preview')); }}
+              offlineAck={previewAck} onOfflineAck={() => { setPreviewAck(true); setStage((s) => markDone(s, 'test')); }}
               connTools={connection?.tools ?? app.mcpTools}
+              improvements={improvements}
+              onAddImprovements={addImprovements}
+              onGoBuild={() => setStage((s) => ({ ...s, current: 'build' }))}
             />
           ) : null}
 
-          {stage.current === 'operate' ? (
-            <OperateStage
+          {stage.current === 'publish' ? (
+            <PublishStage
               app={app} surface={surface} user={user}
               connTools={connection?.tools ?? app.mcpTools}
               reviewCard={reviewCard}
@@ -673,13 +703,23 @@ function DefineStage({
 
 /* ─────────────────────────── Design ─────────────────────────── */
 
+/** Set one story's spec inside the epics tree, returning a new array (immutable). */
+function withStorySpec(epics: Epic[], epicId: string, storyId: string, spec: StorySpec): Epic[] {
+  return epics.map((e) =>
+    e.id !== epicId ? e : { ...e, stories: e.stories.map((s) => (s.id === storyId ? { ...s, spec } : s)) },
+  );
+}
+
 /**
- * The Design stage — the JIRA-like-but-simpler EPIC + user-story board
- * (components/software/DesignBoard.tsx), plus the governed Design assistant chat whose
- * suggestions Apply straight into the epics: `suggestedEpics` CREATE epics,
- * `suggestedStories` ADD stories under existing epics — both persisted through the SAME
- * governed `onSave` (→ patchAppDesign). The board persists the whole array on Save.
- * The assistant only suggests; Apply is the user-confirmed, governed write.
+ * The Design stage — the SPECIFICATION, read-first, ONE EPIC AT A TIME. Layout is
+ * Assistant on the LEFT, the epic detail on the RIGHT (StageConversation `reverse`) —
+ * Design has no build-tree, so the assistant leads. The right panel
+ * (components/software/DesignEpicDetail.tsx) shows a single epic with a prev/next
+ * switcher, clean read mode by default and an explicit Edit toggle; each user story is
+ * an EXPANDING row revealing its Features · NFRs · Rules. Expanding a story makes it the
+ * assistant's target, so `suggestedSpec` folds into THAT story;
+ * `suggestedEpics`/`suggestedStories` still grow the backlog. Every write goes through
+ * the SAME governed `onSave` (→ patchAppDesign).
  */
 function DesignStage({
   app, epics, canEdit, onSave, onReload,
@@ -690,43 +730,60 @@ function DesignStage({
   onSave: (epics: Epic[]) => void;
   onReload: () => void;
 }) {
-  // Apply suggested epics → create them + persist immediately (governed path).
   const applyEpics = (sug: SuggestedEpic[]) => onSave(applyEpicsSuggestion(epics, sug));
-  // Apply suggested stories → add under the referenced existing epics + persist.
   const applyStories = (groups: SuggestedStoriesForEpic[]) => onSave(applyStoriesSuggestion(epics, groups));
 
+  // The story the user is focused on (the expanded row) — the assistant's spec target.
+  const [activeStory, setActiveStory] = useState<{ epicId: string; storyId: string } | null>(null);
+  const targetStory = activeStory
+    ? epics.find((e) => e.id === activeStory.epicId)?.stories.find((s) => s.id === activeStory.storyId) ?? null
+    : null;
+
+  const applySpec = (partial: Partial<StorySpec>) => {
+    if (!activeStory || !targetStory) return;
+    onSave(withStorySpec(epics, activeStory.epicId, activeStory.storyId, applySpecSuggestion(targetStory.spec, partial)));
+  };
+
   const hasStories = epics.some((e) => (e.stories?.length ?? 0) > 0);
-  const epicCount = epics.length;
-  const storyCount = epics.reduce((n, e) => n + (e.stories?.length ?? 0), 0);
+  const stories = epics.flatMap((e) => e.stories ?? []);
+  const specced = stories.filter((s) => specHasContent(s.spec)).length;
   const purpose = (app.purpose ?? '').trim();
 
   return (
     <div {...anchorAttr(ANCHORS.software.design)}>
       <StageConversation
+        reverse
         context={
           <>
             <span className="sc-scope">Design</span>
-            <span className="sc-hint">{purpose ? `for “${purpose}”` : 'shape the backlog for this app'}</span>
-            <span className="sc-hint sc-spacer">The conversation shapes the EPICs &amp; user stories — Apply creates them on the board.</span>
+            <span className="badge muted" title="Design does all the planning on the reasoning model">Design · reasoning model</span>
+            <span className="sc-hint">{purpose ? `for “${purpose}”` : 'specify the app story by story'}</span>
+            <span className="sc-hint sc-spacer">Expand a story, discuss what it should do — watch its Features · NFRs · Rules fill.</span>
           </>
         }
-        structure={<DesignBoard epics={epics} canEdit={canEdit} onSave={onSave} />}
+        structure={
+          <DesignEpicDetail epics={epics} canEdit={canEdit} onSave={onSave} onActiveStory={setActiveStory} />
+        }
         conversation={
           <StageAssistantChat
             appId={app.id}
             stage="design"
-            intro="Propose EPICs and user stories from the purpose — Apply creates them."
-            starters={['Suggest EPICs for this app', 'Add user stories to my EPICs']}
+            intro={targetStory ? `Specify “${targetStory.title.trim() || 'this story'}” — features, NFRs and rules.` : 'Propose EPICs and user stories, or expand a story to specify it.'}
+            starters={targetStory
+              ? ['List features for this story', 'What rules and NFRs should it have?']
+              : ['Suggest EPICs for this app', 'Add user stories to my EPICs']}
             onApplyEpics={canEdit ? applyEpics : undefined}
             onApplyStories={canEdit ? applyStories : undefined}
+            onApplySpec={canEdit && targetStory ? applySpec : undefined}
+            specTargetLabel={targetStory?.title.trim() || undefined}
           />
         }
         outcome={
           <>
             <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: canEdit ? 12 : 0 }}>
-              <span className="comp-label" style={{ margin: 0 }}>Backlog</span>
-              <span className={`badge ${epicCount > 0 ? 'ok' : 'muted'}`}>{epicCount} EPIC{epicCount === 1 ? '' : 's'}</span>
-              <span className={`badge ${storyCount > 0 ? 'ok' : 'muted'}`}>{storyCount} stor{storyCount === 1 ? 'y' : 'ies'}</span>
+              <span className="comp-label" style={{ margin: 0 }}>Specification</span>
+              <span className={`badge ${stories.length > 0 ? 'ok' : 'muted'}`}>{stories.length} stor{stories.length === 1 ? 'y' : 'ies'}</span>
+              <span className={`badge ${specced === stories.length && stories.length > 0 ? 'ok' : 'muted'}`}>{specced} / {stories.length} specified</span>
             </div>
             {canEdit ? <ShipDesignPanel app={app} hasStories={hasStories} onReload={onReload} /> : null}
           </>
@@ -922,8 +979,38 @@ function BuildStatusRail({ app }: { app: SoftwareApp }) {
   );
 }
 
+/** Which stories own the selected feature-ids (by parsing the `${storyId}#f${i}` ids). */
+function selectedStoryIds(selected: ReadonlySet<string>): Set<string> {
+  const out = new Set<string>();
+  for (const id of selected) out.add(id.split('#')[0]);
+  return out;
+}
+
+/**
+ * Map the SELECTED feature-set to the tightest existing BuildTarget so the one Build
+ * press builds exactly that scope (its specs travel into the prompt):
+ *   • features from ONE story  → that story;
+ *   • features across stories of ONE epic → that epic (built story-by-story);
+ *   • features across MULTIPLE epics → the whole app (remaining stories).
+ * Honest: the target we build is always the smallest scope that covers the selection.
+ */
+function selectionToTarget(epics: Epic[], selected: ReadonlySet<string>): BuildTarget | null {
+  const storyIds = selectedStoryIds(selected);
+  if (storyIds.size === 0) return null;
+  const epicOf = (sid: string) => epics.find((e) => e.stories.some((s) => s.id === sid));
+  if (storyIds.size === 1) {
+    const sid = [...storyIds][0];
+    const epic = epicOf(sid);
+    if (!epic) return null;
+    return { kind: 'story', epicId: epic.id, storyId: sid };
+  }
+  const epicIds = new Set([...storyIds].map((sid) => epicOf(sid)?.id).filter(Boolean) as string[]);
+  if (epicIds.size === 1) return { kind: 'epic', epicId: [...epicIds][0] };
+  return { kind: 'app' };
+}
+
 function BuildStage({
-  app, epics, canEditCode, onBuilt, target, setTarget, onSaveEpics, onGoDesign,
+  app, epics, canEditCode, onBuilt, target, setTarget, onSaveEpics, onGoDesign, improvements, onDropImprovement,
 }: {
   app: SoftwareApp;
   epics: Epic[];
@@ -935,158 +1022,265 @@ function BuildStage({
   onSaveEpics?: (epics: Epic[]) => void;
   /** Jump back to the Design stage (the tree's empty-state pointer). */
   onGoDesign?: () => void;
+  /** Test→Build improvement to-dos to show as pending items in the tree. */
+  improvements: Improvement[];
+  /** Drop an improvement (once addressed / dismissed). */
+  onDropImprovement: (id: string) => void;
 }) {
   // Plan ⇄ Build: Plan discusses/plans with ZERO code changes; Build executes end-to-end.
   const [buildMode, setBuildMode] = useState<'plan' | 'build'>('build');
   // Bumped after each Build commit so the instant preview re-fetches the new files.
   const [previewKey, setPreviewKey] = useState(0);
-  // Live run signals for the epic/story tree: is a run streaming, and which
-  // stories' LAST Build run failed (session-scoped; a later success clears it).
+  // Live run signals: is a run streaming, and which stories' LAST Build run failed.
   const [running, setRunning] = useState(false);
   const [failedStoryIds, setFailedStoryIds] = useState<ReadonlySet<string>>(new Set());
-  // Which action (design/build/test/review) last ran per tree node — session-scoped.
-  const [lastActionByNode, setLastActionByNode] = useState<Record<string, BuildAction>>({});
 
-  const targetedStory = target?.kind === 'story' ? target : null;
+  // The DETAIL node open on the right (nav) — always-visible spec + built-state.
+  const [node, setNode] = useState<SpecNode>({ kind: 'app' });
+  // The features QUEUED for the next build (capped batch-select).
+  const [selected, setSelected] = useState<ReadonlySet<string>>(EMPTY_SET);
+  // Bumped to fire a build of the current target from the one Build button.
+  const [buildTrigger, setBuildTrigger] = useState(0);
+  // The story-ids this build run targets (captured at press) — so on success we mark
+  // EVERY targeted story done + clear its selection, even for an epic/whole-app scope
+  // where `target` is not a single story. Honest: these are exactly the stories whose
+  // features the user queued and the run built.
+  const [buildingStoryIds, setBuildingStoryIds] = useState<string[]>([]);
 
-  // On a successful BUILD run against a targeted story, mark it done (backward-compatible
-  // status write through the same governed epics patch). No-op when nothing was targeted.
+  // Prune selections that no longer exist when the spec changes upstream.
+  useEffect(() => { setSelected((sel) => pruneSelection(sel, epics)); }, [epics]);
+
+  const selCount = selectedCount(selected);
+  const buildTargetForSelection = useMemo(() => selectionToTarget(epics, selected), [epics, selected]);
+
+  // On a successful BUILD run, mark every story that was in the batch done, clear its
+  // selection, and clear any prior failure. Works for story, epic and whole-app scopes.
   const handleBuilt = (changes: FileChange[]) => {
-    if (targetedStory && changes.length > 0) {
-      if (onSaveEpics) onSaveEpics(withStoryStatus(epics, targetedStory.epicId, targetedStory.storyId, 'done'));
-      // Success clears a previous failure for this story.
+    if (buildingStoryIds.length > 0 && changes.length > 0) {
+      if (onSaveEpics) {
+        let next = epics;
+        for (const sid of buildingStoryIds) {
+          const epic = next.find((e) => e.stories.some((s) => s.id === sid));
+          if (epic) next = withStoryStatus(next, epic.id, sid, 'done');
+        }
+        onSaveEpics(next);
+      }
+      const builtSet = new Set(buildingStoryIds);
+      setSelected((sel) => {
+        const nx = new Set<string>();
+        for (const id of sel) if (!builtSet.has(id.split('#')[0])) nx.add(id);
+        return nx;
+      });
       setFailedStoryIds((prev) => {
-        if (!prev.has(targetedStory.storyId)) return prev;
-        const next = new Set(prev);
-        next.delete(targetedStory.storyId);
-        return next;
+        const n = new Set(prev);
+        for (const sid of buildingStoryIds) n.delete(sid);
+        return n;
       });
     }
-    // A commit changed the files — refresh the instant preview.
     if (changes.length > 0) setPreviewKey((k) => k + 1);
     onBuilt();
   };
 
-  // A failed BUILD run against a targeted story marks it blocked in the tree
-  // (test/review/plan runs never mark blocked — they change nothing).
   const handleRunEnd = (failed: boolean, runMode: string) => {
     setRunning(false);
-    if (failed && runMode === 'build' && targetedStory) {
-      setFailedStoryIds((prev) => new Set(prev).add(targetedStory.storyId));
+    if (failed && runMode === 'build' && buildingStoryIds.length > 0) {
+      setFailedStoryIds((prev) => { const n = new Set(prev); for (const sid of buildingStoryIds) n.add(sid); return n; });
     }
   };
 
-  return (
-    <div style={{ marginTop: 4 }} {...anchorAttr(ANCHORS.software.build)}>
-      {/* Persistent Build ▸ Preview ▸ Deploy status rail — honest, single-glance state. */}
-      <BuildStatusRail app={app} />
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-        <p className="hint" style={{ marginTop: 0, flex: 1 }}>
-          {buildMode === 'plan'
-            ? 'Plan mode — the assistant discusses the change and drafts an implementation plan. It writes no code; switch to Build to execute.'
-            : <>Build mode — select General, an EPIC or a story in the tree, then act on it with Design · Build · Test · Review, or describe the change yourself. {canEditCode ? 'The code panel is one click away in the Developer view.' : ''} Every commit lands in this app’s sovereign in-cluster repo.</>}
-        </p>
-        {/* Plan ⇄ Build segmented control — reuses the OS `.mode-toggle` language. */}
-        <div className="mode-toggle" role="group" aria-label="Build mode" style={{ flexShrink: 0 }}>
-          <button
-            type="button"
-            className={buildMode === 'plan' ? 'active' : ''}
-            aria-pressed={buildMode === 'plan'}
-            title="Discuss & plan — no code changes"
-            onClick={() => setBuildMode('plan')}
-          >
-            Plan
-          </button>
-          <button
-            type="button"
-            className={buildMode === 'build' ? 'active' : ''}
-            aria-pressed={buildMode === 'build'}
-            title="Execute end-to-end — commits real code"
-            onClick={() => setBuildMode('build')}
-          >
-            Build
-          </button>
-        </div>
-      </div>
+  // The one "Build" press: map the selection to a target, remember the batch's stories,
+  // set the target, and fire the run.
+  const runBuild = () => {
+    const t = buildTargetForSelection;
+    if (!t || running) return;
+    setBuildingStoryIds([...selectedStoryIds(selected)]);
+    setTarget(t);
+    setBuildMode('build');
+    // The target prop flows to BuildChat; bump the trigger next tick so the chat sees it.
+    setBuildTrigger((n) => n + 1);
+  };
 
+  const toggleFeat = (fid: string) => setSelected((sel) => toggleFeatureSel(sel, fid));
+  const toggleGrp = (fids: string[]) => setSelected((sel) => toggleGroupSel(sel, fids));
+
+  // The effective target for the ONE assistant (BuildChat). A batch build sets `target`
+  // explicitly; a free-text build with nothing queued attributes to the STORY the user
+  // has selected in the detail (so a typed "add a login form" is still attributed +
+  // ticked). Falls back to null (whole-app) only when nothing is selected.
+  const nodeStoryTarget: BuildTarget | null = node.kind === 'story'
+    ? { kind: 'story', epicId: node.epicId, storyId: node.storyId }
+    : node.kind === 'feature'
+      ? { kind: 'story', epicId: node.epicId, storyId: node.storyId }
+      : null;
+  const chatTarget = target ?? nodeStoryTarget;
+
+  const capNote = `Build in focused batches of up to ${BUILD_BATCH_CAP} features so each result is reliable and reviewable.`;
+  const buildLabel = (() => {
+    if (buildTargetForSelection?.kind === 'story') {
+      const done = epics.find((e) => e.id === (buildTargetForSelection as { epicId: string }).epicId)
+        ?.stories.find((s) => s.id === (buildTargetForSelection as { storyId: string }).storyId)?.status === 'done';
+      return done ? 'Rebuild this user story' : 'Build this user story';
+    }
+    return `Build ${selCount} selected feature${selCount === 1 ? '' : 's'}`;
+  })();
+
+  // The structured LEFT surface: the capped-batch spec tree + the one Build button.
+  const structure = (
+    <div>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+        <div className="comp-label" style={{ margin: 0 }}>Epics · stories · features</div>
+        <span className={`badge ${selCount >= BUILD_BATCH_CAP ? 'warn' : 'muted'}`} title={capNote}>{selCount} / {BUILD_BATCH_CAP} selected</span>
+      </div>
+      <p className="hint" style={{ marginTop: 4 }}>
+        Tick the features to build next (selecting a story or EPIC cascades to its features). {capNote} A feature with no Design spec can&apos;t be built — specify it in Design first.
+      </p>
       <div style={{ marginTop: 10 }}>
-        <TeamPanel onBuilt={onBuilt} />
+        {epics.length === 0 ? (
+          <div className="db-empty" style={{ padding: 18, border: '1px dashed var(--border)', borderRadius: 10, textAlign: 'center' }}>
+            <p className="muted" style={{ margin: 0 }}>No stories yet — specify the app in Design first.</p>
+            {onGoDesign ? <button className="btn sm" style={{ marginTop: 10 }} onClick={onGoDesign}>Go to Design →</button> : null}
+          </div>
+        ) : (
+          <SpecTree
+            epics={epics}
+            selected={node}
+            onSelectNode={setNode}
+            selectable
+            selectedFeatures={selected}
+            onToggleFeature={toggleFeat}
+            onToggleGroup={toggleGrp}
+            onGoDesign={onGoDesign}
+          />
+        )}
       </div>
 
-      {/* Left: the EPIC & story tree — the app's designed structure IS the scope
-          selector (General / EPIC / story). Right: the streaming chat with the
-          Design · Build · Test · Review actions above it. */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))',
-          gap: 16,
-          alignItems: 'start',
-          marginTop: 16,
-        }}
-      >
-        <EpicStoryTree
-          epics={epics}
-          target={target}
-          onTarget={setTarget}
-          run={{ targetedStoryId: buildMode === 'build' ? targetedStory?.storyId ?? null : null, running, failedStoryIds }}
-          onGoDesign={onGoDesign}
-        />
-        <BuildChat
-          appId={app.id}
-          appName={app.name}
-          mode={buildMode}
-          target={target}
-          epics={epics}
-          initialMessages={app.chat
-            .filter((m) => m.role === 'user' || m.role === 'assistant')
-            .map((m) => ({ role: m.role, content: m.content }))}
-          onBuilt={handleBuilt}
-          onRunStart={() => setRunning(true)}
-          onRunEnd={handleRunEnd}
-          onModeChange={setBuildMode}
-          onAction={(a) => { if (target) setLastActionByNode((m) => ({ ...m, [targetKey(target)]: a })); }}
-          lastAction={target ? lastActionByNode[targetKey(target)] ?? null : null}
-          showDetails={canEditCode}
-        />
-      </div>
-
-      {/* ── Live preview — the REAL deployed build served by the runner (never a
-           fabricated frame): an iframe of the live pod URL when one is served, else an
-           honest pointer to the Preview stage. Reloads after each Build commit. ── */}
-      {app.surface?.ui ? (
-        <div className="grant-block" style={{ marginTop: 16 }}>
-          <div className="comp-label">Preview · live data</div>
-          {app.deploy.previewUrl ? (
-            <>
-              <p className="hint" style={{ marginTop: 4, marginBottom: 10 }}>
-                The deployed build served by the runner, calling the governed OS API as you — real granted data or a real error.
-              </p>
-              <iframe
-                key={previewKey}
-                src={app.deploy.previewUrl}
-                title="Live app preview"
-                style={{ width: '100%', height: 420, border: '1px solid var(--line)', borderRadius: 10, background: '#0b0b0d' }}
-              />
-              <a href={app.deploy.previewUrl} target="_blank" rel="noreferrer" className="sw-quiet-link" style={{ fontSize: 12, display: 'inline-block', marginTop: 8 }}>Open app UI ↗</a>
-            </>
-          ) : (
-            <p className="hint" style={{ marginTop: 4 }}>
-              No live preview yet — provision one in the <strong>Preview</strong> stage after your first build. This shows the real deployed app, never a mock.
-            </p>
-          )}
+      {/* Test → Build improvement to-dos: pending items the Test verifier drafted.
+          'rebuild' → queue a rebuild of its story; 'needs design' → refine in Design first. */}
+      {improvements.length > 0 ? (
+        <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+          <div className="comp-label" style={{ margin: 0 }}>Improvements to build ({improvements.length})</div>
+          <p className="hint" style={{ marginTop: 2 }}>From Test — each is a reviewable to-do. Nothing runs until you build it.</p>
+          <ul style={{ listStyle: 'none', margin: '8px 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {improvements.map((im) => {
+              const story = epics.find((e) => e.id === im.epicId)?.stories.find((s) => s.id === im.storyId);
+              return (
+                <li key={im.id} className="row" style={{ gap: 8, alignItems: 'center', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 10px', background: 'var(--panel)' }}>
+                  <span className={`badge ${im.kind === 'design' ? 'warn' : 'muted'}`} style={{ fontSize: 10 }}>{kindLabel(im.kind)}</span>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 12.5 }}>{im.note} <span className="muted">· {story?.title.trim() || 'story'}</span></span>
+                  {isBuildable(im) ? (
+                    <button className="btn ghost sm" title="Queue this story to rebuild next" onClick={() => { setSelected((sel) => toggleGroupSel(new Set(sel), (story?.spec?.features ?? []).map((_, i) => featureId(im.storyId, i)))); }}>Queue rebuild</button>
+                  ) : onGoDesign ? (
+                    <button className="btn ghost sm" title="This changes the spec — refine it in Design first" onClick={onGoDesign}>Refine in Design</button>
+                  ) : null}
+                  <button className="icon-btn" title="Dismiss" onClick={() => onDropImprovement(im.id)}>✕</button>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       ) : null}
+
+      {/* The ONE primary Build button — builds the selected set (tightest scope). */}
+      <div className="row" style={{ gap: 10, marginTop: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button
+          className="btn lg"
+          disabled={!buildTargetForSelection || running}
+          onClick={runBuild}
+          title={buildTargetForSelection ? 'Build the selected features — commits real code' : 'Select at least one feature to build'}
+        >
+          {running ? <span className="spin" /> : buildLabel}
+        </button>
+        {selCount === 0 ? <span className="muted" style={{ fontSize: 12 }}>Select features on the left to build.</span> : null}
+      </div>
+
+      {/* Always-visible detail: the selected item's spec + honest built-state. */}
+      <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+        <SpecDetailPanel node={node} epics={epics} />
+      </div>
+    </div>
+  );
+
+  return (
+    <div {...anchorAttr(ANCHORS.software.build)}>
+      <BuildStatusRail app={app} />
+      <div style={{ marginTop: 4, marginBottom: 12 }}>
+        <TeamPanel onBuilt={onBuilt} />
+      </div>
+      <StageConversation
+        context={
+          <>
+            <span className="sc-scope">Build</span>
+            <span className="badge muted" title="The build runs code generation on the standard model — no reasoning escalation">Build · {tierNote(modelRoleForMode('build'))}</span>
+            <span className="sc-hint">Context from Define: {defineContextNote({ template: app.template, purpose: app.purpose })}</span>
+            <span className="sc-hint sc-spacer">Tick features → Build the batch on the standard model, grounded in the Design spec. The assistant refines &amp; gives feedback.</span>
+          </>
+        }
+        structure={structure}
+        conversation={
+          <BuildChat
+            appId={app.id}
+            appName={app.name}
+            mode={buildMode}
+            target={chatTarget}
+            epics={epics}
+            actions={[]}
+            buildTrigger={buildTrigger}
+            initialMessages={app.chat
+              .filter((m) => m.role === 'user' || m.role === 'assistant')
+              .map((m) => ({ role: m.role, content: m.content }))}
+            onBuilt={handleBuilt}
+            onRunStart={() => { setRunning(true); if (buildingStoryIds.length === 0 && chatTarget?.kind === 'story') setBuildingStoryIds([chatTarget.storyId]); }}
+            onRunEnd={(failed, m) => { handleRunEnd(failed, m); setBuildingStoryIds([]); }}
+            onModeChange={setBuildMode}
+            showDetails={canEditCode}
+          />
+        }
+        outcome={
+          app.surface?.ui ? (
+            <div className="grant-block">
+              <div className="comp-label">Preview · live data</div>
+              {app.deploy.previewUrl ? (
+                <>
+                  <p className="hint" style={{ marginTop: 4, marginBottom: 10 }}>
+                    The deployed build served by the runner, calling the governed OS API as you — real granted data or a real error.
+                  </p>
+                  <iframe
+                    key={previewKey}
+                    src={app.deploy.previewUrl}
+                    title="Live app preview"
+                    style={{ width: '100%', height: 420, border: '1px solid var(--line)', borderRadius: 10, background: '#0b0b0d' }}
+                  />
+                  <a href={app.deploy.previewUrl} target="_blank" rel="noreferrer" className="sw-quiet-link" style={{ fontSize: 12, display: 'inline-block', marginTop: 8 }}>Open app UI ↗</a>
+                </>
+              ) : (
+                <p className="hint" style={{ marginTop: 4 }}>
+                  No live preview yet — provision one in the <strong>Test</strong> stage after your first build. This shows the real deployed app, never a mock.
+                </p>
+              )}
+            </div>
+          ) : undefined
+        }
+      />
     </div>
   );
 }
 
-/* ─────────────────────────── Preview ─────────────────────────── */
+/* ─────────────────────────── Test (replaces Preview) ─────────────────────────── */
 
-function PreviewStage({
-  app, surface, pipe, busy, onPreview, deployMsg, offlineAck, onOfflineAck, connTools,
+/**
+ * The Test stage — run the app and LLM-test each BUILT story against its Design spec.
+ * It keeps the LIVE-POD view (the real deployed/preview iframe + provision control — the
+ * honest "see it running" surface) and adds the test conversation: stage="test" reads
+ * the committed code + each story's spec and reports PASS/FAIL per item (grounded, never
+ * fabricated). Structured: the runner monitor + a "what will be tested" spec summary;
+ * conversation: the LLM tester; outcome: the live-pod iframe.
+ */
+function TestStage({
+  app, epics, surface, pipe, busy, onPreview, deployMsg, offlineAck, onOfflineAck, connTools,
+  improvements, onAddImprovements, onGoBuild,
 }: {
   app: SoftwareApp;
+  epics: Epic[];
   surface: { ui: boolean; api: boolean };
   pipe: { steps: Step[]; active: boolean; done: boolean; ok: boolean };
   busy: boolean;
@@ -1095,14 +1289,66 @@ function PreviewStage({
   offlineAck: boolean;
   onOfflineAck: () => void;
   connTools: Tool[];
+  improvements: Improvement[];
+  onAddImprovements: (raws: RawImprovementSuggestion[]) => void;
+  onGoBuild: () => void;
 }) {
   const [showApi, setShowApi] = useState(false);
+  // "Verify & Improve" run state — fires the reasoning verifier + folds its improvements
+  // into the shared Build to-do list. Honest: it only proposes; nothing auto-builds.
+  const [verifying, setVerifying] = useState(false);
+  const [verifyMsg, setVerifyMsg] = useState('');
+  const stories = epics.flatMap((e) => e.stories ?? []);
+  const builtStories = stories.filter((s) => s.status === 'done');
 
-  // Structure — the deployed build the runner serves + its provision controls and pipeline
-  // health. Acting on it (provision / rebuild / open) is direct manipulation; the
-  // conversation beside it diagnoses why the pod is or isn't ready.
+  async function verifyAndImprove() {
+    if (verifying) return;
+    setVerifying(true);
+    setVerifyMsg('');
+    try {
+      const res = await fetch(`/api/apps/${app.id}/assistant`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ stage: 'test', messages: [{ role: 'user', content: 'Verify every built story against its Design spec and draft concrete improvements for anything that falls short.' }] }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { message?: string; suggestions?: { suggestedImprovements?: RawImprovementSuggestion[] }; error?: string };
+      if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+      const imps = data.suggestions?.suggestedImprovements ?? [];
+      if (imps.length) { onAddImprovements(imps); setVerifyMsg(`✓ ${imps.length} improvement${imps.length === 1 ? '' : 's'} added to the Build to-do list.`); }
+      else setVerifyMsg(data.message ? '✓ Verified — no shortfalls flagged.' : '✓ Verified.');
+    } catch (e) {
+      setVerifyMsg(`✗ ${(e as Error).message}`);
+    } finally {
+      setVerifying(false);
+    }
+  }
+
+  // Structure — the deployed build the runner serves + provision controls + pipeline
+  // health, and a summary of which built stories the LLM tester will check against spec.
   const structure = (
     <>
+      <div className="grant-block" style={{ marginBottom: 12 }}>
+        <div className="comp-label" style={{ margin: 0 }}>Verify against spec</div>
+        <div className="row" style={{ gap: 8, marginTop: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span className={`badge ${builtStories.length > 0 ? 'ok' : 'muted'}`}>{builtStories.length} built stor{builtStories.length === 1 ? 'y' : 'ies'}</span>
+          <span className="muted" style={{ fontSize: 12 }}>{stories.length - builtStories.length} not built yet</span>
+        </div>
+        <p className="hint" style={{ marginTop: 6 }}>
+          The reasoning verifier reads the committed code and each built story&apos;s spec (features · NFRs · rules), reports PASS/FAIL per item (grounded, never fabricated), and drafts a concrete improvement for anything that falls short.
+        </p>
+        <div className="row" style={{ gap: 10, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn" disabled={verifying || builtStories.length === 0} onClick={verifyAndImprove} title={builtStories.length === 0 ? 'Build a story first' : 'Verify each built story vs its spec and draft improvements'}>
+            {verifying ? <span className="spin" /> : 'Verify & Improve'}
+          </button>
+          {improvements.length > 0 ? (
+            <button className="btn ghost sm" onClick={onGoBuild} title="See the improvements as Build to-dos">{improvements.length} improvement{improvements.length === 1 ? '' : 's'} → Build</button>
+          ) : null}
+        </div>
+        {verifyMsg ? <div className={verifyMsg.startsWith('✓') ? 'answer' : 'error'} style={{ marginTop: 10 }}>{verifyMsg}</div> : null}
+        <p className="hint" style={{ marginTop: 8 }}>
+          Improvements land as reviewable to-dos in Build — nothing auto-runs. A missed spec item becomes a <strong>rebuild</strong> (standard model); feedback that changes the requirement is routed to <strong>Design</strong> first.
+        </p>
+      </div>
       {surface.ui ? <div className="comp-label" style={{ marginBottom: 6 }}>Deployed build · exactly what ships</div> : null}
       <div className="sw-monitor">
         <div className="sw-monitor-main">
@@ -1185,23 +1431,25 @@ function PreviewStage({
   );
 
   return (
-    <div {...anchorAttr(ANCHORS.software.preview)}>
+    <div {...anchorAttr(ANCHORS.software.test)}>
       <StageConversation
         context={
           <>
-            <span className="sc-scope">Preview</span>
+            <span className="sc-scope">Test</span>
+            <span className="badge muted" title="Verification runs on the reasoning model">Test · reasoning model</span>
             <span className="sc-hint mono">{app.subdomain}</span>
             <span className={`badge ${app.deploy.previewUrl ? 'ok' : 'muted'}`}>{app.deploy.previewUrl ? 'Preview running' : 'Runner pending'}</span>
-            <span className="sc-hint sc-spacer">Provision a runner, then talk through what it serves — or why the pod isn&apos;t ready.</span>
+            <span className="sc-hint sc-spacer">Run the app, and LLM-test each built story against its Design spec.</span>
           </>
         }
         structure={structure}
         conversation={
           <StageAssistantChat
             appId={app.id}
-            stage="preview"
-            intro="Read the runner conditions — why isn't the pod ready, and what does the preview serve?"
-            starters={['Why is the pod not ready?', 'Explain the build & deploy pipeline state']}
+            stage="test"
+            intro="Verify the built stories against their spec, give feedback, or ask why the pod isn't ready. Improvements become Build to-dos."
+            starters={['Verify the built stories against their spec', 'Why is the pod not ready?']}
+            onApplyImprovements={onAddImprovements}
           />
         }
         outcome={
@@ -1235,9 +1483,9 @@ function PreviewStage({
   );
 }
 
-/* ─────────────────────────── Operate (merged Publish + Operate) ─────────────────────────── */
+/* ─────────────────────────── Publish (replaces Operate) ─────────────────────────── */
 
-function OperateStage({
+function PublishStage({
   app, surface, user, connTools, reviewCard,
   publishLabel, publishDisabled, inReview, onPublish, deployMsg,
   toolOut, toolNote, onCallTool, onOpenRepo,
@@ -1359,11 +1607,11 @@ function OperateStage({
   );
 
   return (
-    <div {...anchorAttr(ANCHORS.software.operate)}>
+    <div {...anchorAttr(ANCHORS.software.publish)}>
       <StageConversation
         context={
           <>
-            <span className="sc-scope">Operate</span>
+            <span className="sc-scope">Publish</span>
             <span className={dep.cls}>{dep.label}</span>
             <span className="badge muted">{version}</span>
             <span className="sc-hint mono">{app.subdomain}</span>
@@ -1374,7 +1622,7 @@ function OperateStage({
         conversation={
           <StageAssistantChat
             appId={app.id}
-            stage="operate"
+            stage="publish"
             intro="Explain scan findings, justify go-live, or triage the live app."
             starters={['Justify going live', 'Triage the live app']}
           />

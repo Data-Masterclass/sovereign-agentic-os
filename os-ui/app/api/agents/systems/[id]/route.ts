@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getSystem, archiveSystem, unarchiveSystem, deleteSystem, ensureHydrated } from '@/lib/agents/store';
+import { getSystem, canRunCheck, archiveSystem, unarchiveSystem, deleteSystem, ensureHydrated } from '@/lib/agents/store';
 import { purgeSystemResources } from '@/lib/agents/physical-delete';
 import { realForgejo } from '@/lib/agents/build/live-clients';
 import { reconcileScheduleCron } from '@/lib/agents/schedule-cron';
@@ -28,6 +28,7 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
     compileError = (e as Error).message;
   }
   const canEdit = view.owner === user.id || (user.role === 'admin' && user.domains.includes(view.domain));
+  const canRun = canRunCheck(view, user);
   return NextResponse.json({
     id: view.id,
     name: view.name,
@@ -46,6 +47,7 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
     ir,
     compileError,
     canEdit,
+    canRun,
     role: user.role,
     // Whether the Hermes autonomous runtime is provisioned in this deployment.
     // The runtime option is always SHOWN (per plan); when false, selecting it is

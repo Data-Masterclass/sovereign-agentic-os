@@ -10,8 +10,17 @@ import {
   deriveEpicStatus,
   epicProgress,
   currentEpicIndex,
+  clampEpicIndex,
   type BuildRunSignals,
 } from './story-tree.ts';
+
+test('story-tree: clampEpicIndex keeps one-at-a-time nav in bounds', () => {
+  assert.equal(clampEpicIndex(0, 3), 0);
+  assert.equal(clampEpicIndex(2, 3), 2);
+  assert.equal(clampEpicIndex(5, 3), 2); // past the end → last
+  assert.equal(clampEpicIndex(-1, 3), 0); // before the start → first
+  assert.equal(clampEpicIndex(0, 0), 0); // empty → 0
+});
 
 const idle: BuildRunSignals = { targetedStoryId: null, running: false, failedStoryIds: new Set() };
 

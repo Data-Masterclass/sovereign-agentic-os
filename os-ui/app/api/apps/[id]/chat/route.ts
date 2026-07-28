@@ -10,7 +10,8 @@ import { diffTrees, type FileChange } from '@/lib/software/build-changeset';
 import { runTabAgent, renderAssistantText } from '@/lib/assistant/runtime';
 import { AssistantNotConfiguredError } from '@/lib/assistant/complete';
 import { toolCallToLine, committedSummaryLine, type ActivityLine } from '@/lib/software/build-activity';
-import { asChatRunMode, isReadOnlyMode, modeDirective, READ_ONLY_MODE_TOOLS, type ChatRunMode } from '@/lib/software/chat-modes';
+import { asChatRunMode, isReadOnlyMode, modeDirective, modelRoleForMode, READ_ONLY_MODE_TOOLS, type ChatRunMode } from '@/lib/software/chat-modes';
+import { defineContextBlock, specPromptLines as specLines } from '@/lib/software/define-context';
 import type { BuildTarget } from '@/lib/software/build-target';
 
 export const dynamic = 'force-dynamic';
@@ -79,13 +80,15 @@ function appContext(
   app: {
     id: string;
     name: string;
+    description?: string;
+    purpose?: string;
     template: string;
     subdomain: string;
     repo: { fullName: string };
     designDecisions: string;
     dataDescriptions: string;
     docs: string;
-    epics?: { id: string; title: string; stories: { id: string; title: string; asA: string; iWant: string; soThat: string; acceptance: string }[] }[];
+    epics?: { id: string; title: string; stories: { id: string; title: string; asA: string; iWant: string; soThat: string; acceptance: string; spec?: { features?: string[]; nfrs?: string[]; rules?: string[] } }[] }[];
   },
   mode: ChatRunMode,
   target: BuildTarget | null,
@@ -105,6 +108,10 @@ function appContext(
     stackLine,
     `(${app.repo.fullName}) and ships via Forgejo Actions → Harbor → Argo CD to`,
     `${app.subdomain}.`,
+    // The full Define context (template + name + description + purpose) grounds every
+    // code change — features are built from what the app IS, never invented.
+    '',
+    defineContextBlock(app),
   ];
 
   // Governed-frontend apps talk to the OS only through the OS-client SDK — teach
@@ -144,7 +151,8 @@ function appContext(
         `Story: ${st.title || '(untitled)'}`,
         `As a ${st.asA || '…'}, I want ${st.iWant || '…'}, so that ${st.soThat || '…'}.`,
         st.acceptance ? `Acceptance: ${st.acceptance}` : '',
-        'Focus this turn on exactly this story.',
+        ...specLines(st.spec),
+        'Focus this turn on exactly this story; deliver its features to spec.',
       );
     }
   } else if (target?.kind === 'epic') {
@@ -157,7 +165,9 @@ function appContext(
         'Its stories, in order:',
         ...epic.stories.map((s, i) => {
           const acceptance = s.acceptance ? ` Acceptance: ${s.acceptance}` : '';
-          return `${i + 1}. ${s.title || '(untitled)'} — as a ${s.asA || '…'}, I want ${s.iWant || '…'}, so that ${s.soThat || '…'}.${acceptance}`;
+          const spec = specLines(s.spec);
+          const specSuffix = spec.length ? ` [${spec.join(' | ')}]` : '';
+          return `${i + 1}. ${s.title || '(untitled)'} — as a ${s.asA || '…'}, I want ${s.iWant || '…'}, so that ${s.soThat || '…'}.${acceptance}${specSuffix}`;
         }),
         mode === 'build'
           ? 'Work the stories IN ORDER, each to its acceptance criteria; state clearly which you delivered this turn.'
@@ -227,7 +237,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   // before/after changeset a Build turn produced (the harness commits through
   // `commitToApp`, which updates this same per-app snapshot).
   const before = getSnapshot(app.id);
-  const model = roleModel('standard');
+  // Per-stage MODEL TIER (Software tab policy): plan (Design) / test / review run on the
+  // REASONING model — the spec-drafting, verification and review reasoning; build (code
+  // GENERATION) runs on STANDARD — the standard model does the bulk file writing and is
+  // NEVER auto-escalated to reasoning. See lib/software/chat-modes.ts modelRoleForMode.
+  const model = roleModel(modelRoleForMode(mode));
 
   /**
    * STREAMING Build run (SSE, text/event-stream). Each event is one JSON line

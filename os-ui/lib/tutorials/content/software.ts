@@ -14,10 +14,10 @@ const software: TutorialDef = {
   hook: {
     illustration: 'build',
     title: 'Build software by chatting — governed end to end',
-    body: 'Five stages — Define · Design · Build · Preview · Operate. State a purpose, shape EPICs and user stories, then watch the build agent work live: the plan first, then one honest line per action, every commit landing in a sovereign in-cluster repo. Preview is yours alone; going live is a governed Builder review.',
+    body: 'Five stages — Define · Design · Build · Test · Publish. State a purpose, shape EPICs and user stories, then watch the build agent work live: the plan first, then one honest line per action, every commit landing in a sovereign in-cluster repo. Preview is yours alone; going live is a governed Builder review.',
     byRole: {
       builder: {
-        body: 'Five stages — Define · Design · Build · Preview · Operate. Your lane adds the gates: flip to the Developer view for the raw code panel, expand the raw tool I/O behind every activity line, and review deploy requests — security scan, granted resources, the diff — before anything goes live.',
+        body: 'Five stages — Define · Design · Build · Test · Publish. Your lane adds the gates: flip to the Developer view for the raw code panel, expand the raw tool I/O behind every activity line, and review deploy requests — security scan, granted resources, the diff — before anything goes live.',
       },
     },
   },
@@ -36,16 +36,16 @@ const software: TutorialDef = {
     {
       illustration: 'agent',
       title: 'Build — watch the agent work, live',
-      body: 'Select a node in the "Epics & stories" tree on the left — "General — the whole app", an EPIC, or a story — and the four scope actions appear above the chat: Design · Build · Test · Review. Design refines the selection in Plan mode, Build commits real code for it, Test critically checks the committed code story-by-story, Review summarizes what shipped and proposes ideas. Story chips walk to do → building → done, with an honest blocked when a run fails. The run streams as it happens: the plan first, then one line per action — "Committed 3 files", "Provisioning preview…" — with failures as honest ⚠ warnings. Builders can "show details" for the raw tool I/O; the committed diff lands under "Changes this run", and the code panel is one click away in the Developer view.',
+      body: 'Build works off the spec. The left tree is Epics › Stories › Features/NFRs/Rules; tick the features to build next — ticking a story or EPIC cascades, capped at 8 per batch so each result is reliable. One Build button builds the selected set. Two distinct marks: a selection checkbox ("queue to build next") and a green done ✓ badge (already built — a status, not a toggle; done items stay in the tree). The right panel always shows the selected item\'s spec, and after a build ticks each item honestly against what shipped — pending if unverifiable, never fake-ticked. The run streams live (plan, then one line per action, ⚠ on failure); the build chat at the bottom is for feedback. Builders can "show details" for the raw tool I/O and open the code panel in the Developer view.',
     },
     {
       illustration: 'sandbox',
-      title: 'Preview — your private running app',
-      body: 'The persistent status rail answers "where is this app?" at a glance: Repo · Preview (none → provisioning → live) · Deploy (none → in-review → live) — never faking a state it can\'t see. "Provision preview" starts a private runner; "Open app UI ↗" appears once the pod is ready, and the pipeline — Scaffold repo, Build image (CI), Publish to registry, Deploy, Live / health — shows exactly where it stands.',
+      title: 'Test — run it and check it against spec',
+      body: 'Keep the live-pod view: the status rail answers "where is this app?" at a glance (Repo · Preview · Deploy, never faking a state it can\'t see), "Provision preview" starts a private runner and "Open app UI ↗" opens the real app. Then the LLM tester reads the committed code and each built story\'s spec and reports PASS/FAIL per item — grounded, never fabricated.',
     },
     {
       illustration: 'publish',
-      title: 'Operate — a governed go-live',
+      title: 'Publish — a governed go-live',
       body: '"Publish release" files a deploy review — approve it in Policies & Approvals. A Builder sees the security scan, the governed resources requested, its footprint and the change diff before anything ships; routine in-envelope updates ship automatically. Once live: call the app\'s governed MCP tools and climb the promotion ladder — My → Domain → Company.',
       byRole: {
         builder: {
@@ -74,25 +74,25 @@ const software: TutorialDef = {
       anchor: ANCHORS.software.design,
       sandboxAnchor: ANCHORS.software.sandbox,
       route: '/software',
-      title: 'Design the backlog',
-      body: '"+ Add EPIC", fill its technical / ux / governance requirements, and "+ Add story" with acceptance criteria — then "Save design". Or ask the assistant to "Suggest EPICs for this app" and Apply what it proposes.',
+      title: 'Design — specify each story',
+      body: 'Design is the specification. Pick a user story in the tree, then give it three lists — Features (what it does), Non-functional requirements (how well), Rules (governance). The assistant can draft the spec grounded in your Define context; you Apply what it proposes. Add or edit EPICs & stories in the "Backlog & structure" board. Design is complete once every story has a spec.',
     },
     {
       anchor: ANCHORS.software.build,
       sandboxAnchor: ANCHORS.software.sandbox,
       route: '/software',
-      title: 'Build with the live feed',
-      body: 'Select "General — the whole app", an EPIC, or a story in the "Epics & stories" tree on the left, then act on it with the buttons above the chat: Design · Build · Test · Review. Or keep the toggle on Build (Plan discusses without touching code) and describe the change yourself. Watch the activity feed: plan, then one line per action, warnings when something fails, the diff when it commits — and the story\'s chip turn done. The status rail above tracks Repo · Preview · Deploy the whole time.',
+      title: 'Build in focused batches',
+      body: 'The left tree is Epics › Stories › Features/NFRs/Rules. Tick the features to build next (ticking a story or EPIC cascades to its features) — up to 8 per batch so each result is reliable and reviewable; the counter shows "N / 8 selected". One Build button builds the selected set. The right panel always shows the selected item\'s spec and, after build, ticks each item honestly against what actually shipped (pending if unverifiable, never fake-ticked) — done items stay in the tree, green. The build chat at the bottom is for feedback and refinements; the status rail tracks Repo · Preview · Deploy throughout.',
     },
     {
-      anchor: ANCHORS.software.preview,
+      anchor: ANCHORS.software.test,
       sandboxAnchor: ANCHORS.software.sandbox,
       route: '/software',
-      title: 'Run the private preview',
-      body: '"Provision preview" asks the in-cluster runner for a private pod; "Open app UI ↗" appears once it serves, with the live-data preview calling the governed OS API as you. No cluster reachable? "Acknowledge offline" says so honestly and lets you continue.',
+      title: 'Test the built stories',
+      body: '"Provision preview" asks the in-cluster runner for a private pod; "Open app UI ↗" appears once it serves the real app, calling the governed OS API as you. Then run the LLM tester: it reads the committed code and each built story\'s spec and reports PASS/FAIL per item — grounded in what it can see, never fabricated. No cluster reachable? "Acknowledge offline" says so honestly and lets you continue.',
     },
     {
-      anchor: ANCHORS.software.operate,
+      anchor: ANCHORS.software.publish,
       route: '/software',
       governedWrite: true,
       title: 'Request the go-live',

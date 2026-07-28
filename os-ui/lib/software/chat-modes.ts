@@ -27,6 +27,27 @@ export function isReadOnlyMode(mode: ChatRunMode): boolean {
   return mode !== 'build';
 }
 
+/** The model role each software run mode should resolve to (pure — the tier policy). */
+export type SwModelRole = 'reasoning' | 'standard';
+
+/**
+ * The MODEL TIER per software run mode (Software tab tier policy). Reasoning is used in
+ * exactly the reasoning-heavy places — PLAN (the Design spec/plan drafting + design
+ * conversation), TEST (verify each story/feature against its spec) and REVIEW (reason
+ * about what shipped). BUILD — the actual code GENERATION — stays STANDARD: the whole
+ * point is the standard model does the bulk file writing; codegen is never auto-escalated
+ * to reasoning. (The batch build's plan/sequence + built-vs-pending verification are the
+ * reasoning-shaped work; they live in Design/Test which are pinned to reasoning.)
+ */
+export function modelRoleForMode(mode: ChatRunMode): SwModelRole {
+  return mode === 'build' ? 'standard' : 'reasoning';
+}
+
+/** A short, honest UI note for the tier a stage runs on. */
+export function tierNote(role: SwModelRole): string {
+  return role === 'reasoning' ? 'reasoning model' : 'standard model';
+}
+
 /**
  * The governed READ-ONLY tool allowlist (list/get software, read the app files,
  * status) shared by plan, test and review runs — no commit/preview/deploy.

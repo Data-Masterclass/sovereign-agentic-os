@@ -556,7 +556,9 @@ export function getSystemForEdit(systemId: string, user: Principal): SystemView 
  * this widens NOTHING for Marketplace. File WRITES and Build still use
  * {@link getSystemForEdit}, keeping a crisp boundary: run ≠ edit.
  */
-function canRun(rec: SystemRecord, user: Principal): boolean {
+/** Exported so the systems GET route can stamp `canRun` onto the client payload.
+ *  Server is the source of truth — the client never re-computes authz. */
+export function canRunCheck(rec: SystemRecord, user: Principal): boolean {
   if (canEdit(rec, user)) return true;
   if (rec.visibility === 'Shared' && user.domains.includes(rec.domain)) {
     // Any in-domain member (creator+) may RUN a Shared agent; the base
@@ -568,7 +570,7 @@ function canRun(rec: SystemRecord, user: Principal): boolean {
 
 export function getSystemForRun(systemId: string, user: Principal): SystemView {
   const rec = get(systemId);
-  if (!canRun(rec, user)) fail('Not permitted to run this system', 403);
+  if (!canRunCheck(rec, user)) fail('Not permitted to run this system', 403);
   return { ...rec, system: parseSystem(rec.yaml) };
 }
 

@@ -4,6 +4,18 @@
 
 The Software tab is where apps and services are built, deployed, and governed. Software is the most dependency-rich surface in the OS: it can consume governed datasets, published knowledge, and promoted connections — all by reference, never by copying. Deployed software runs as the signed-in user under OPA policy. Optionally, a running app can export its output back to the Bronze data tier via `use_as_data`, closing the cross-tab spine loop.
 
+## Guided flow (UI) — five stages, each one function
+
+1. **Define** — name it, **pick a template** (Application = the Sovereign standard app: OS sign-in + Admin/user-directory + settings + multi-tenant, and the DEFAULT; Website; APIs only; Empty — locked at creation), state its purpose, and grant governed context. The whole Define context (template + name/description + purpose) is carried into every later spec-draft and code-generation prompt, so features are grounded in what the app is.
+2. **Design** — the SPECIFICATION. Read-first, one epic at a time (prev/next), with an Edit toggle. Per user story, three lists: **Features**, **Non-functional requirements**, **Rules** (stories are expandable spec rows). Assistant on the left, epic detail on the right. Complete when every story has a spec.
+3. **Build** — EXECUTION. The left tree is Epics › Stories › Features/NFRs/Rules; tick the features to build next (a **selection checkbox**, capped at 8 features per batch — distinct from the green **done ✓** status badge), then press the one Build button. The right panel always shows the selected item's spec and, after a build, ticks each item honestly against what shipped (pending if unverifiable, never fake-ticked). Feedback goes to the build chat at the bottom.
+4. **Test** — one "Verify & Improve" button LLM-verifies each built story against its Design spec (PASS/FAIL per item, grounded in the committed code) and drafts concrete improvements for shortfalls; the LIVE-POD view (real preview app + provision control) stays here. Improvements become pending Build to-dos — a missed spec item is a **rebuild** (standard model); feedback that changes the requirement is routed to **Design** first.
+5. **Publish** — request go-live (a Builder deploy review), then run the live app, call its governed MCP tools, and climb the promotion ladder.
+
+**Model tiers (cost policy):** Define — no LLM. Design — **reasoning** (all planning + the full spec). Build — **standard only** (code generation from the finalized spec, deterministic sequencing, never escalated to reasoning). Test — **reasoning** (verify built code vs spec → the fix loop rebuilds on standard). Publish — no LLM. Each stage shows an honest tier badge.
+
+The MCP tool sequence below is the same governed path the UI drives.
+
 ## How to build it
 
 1. **Reuse check.** Call `list_software` to see what exists in your domain. Call `get_software` to inspect a specific app before forking or duplicating it.
