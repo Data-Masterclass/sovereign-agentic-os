@@ -1364,6 +1364,11 @@ export async function listAppsForUser(user: CurrentUser): Promise<App[]> {
   const map = await getCache();
   return [...map.values()]
     .filter((a) => visibleToUser(a, user))
+    // ACTIVE-DOMAIN scope: narrow "My" (Personal) apps to the domain being acted in
+    // (auth.ts narrows user.domains to [active]; "All Domains" keeps every membership).
+    // Shared already filters on user.domains via visibleToUser; Certified stays tenant-wide.
+    // The single-app open (getAppForUser) intentionally stays un-narrowed.
+    .filter((a) => a.visibility !== 'Personal' || !a.domain || user.domains.includes(a.domain))
     .sort((x, y) => y.updatedAt.localeCompare(x.updatedAt));
 }
 

@@ -126,10 +126,71 @@ function fail(message: string, status: number): never {
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 
-// --- Platform tools (create→build→preview→deploy parity) -----------------------
+// --- Platform tools (Define→Design→Build→Test→Publish parity) ------------------
 // Elevated tools are role-gated in the governed layer (promote/decide_deploy →
 // builder+, delete → owner-or-builder+); we mirror that as the visibility floor.
-const ELEVATED = new Set(['promote', 'decide_deploy', 'delete']);
+// `commit` is DEVELOPER MODE — a raw direct file write that bypasses the staged
+// governance, so it too floors at builder (the governed fn re-gates identically).
+const ELEVATED = new Set(['promote', 'decide_deploy', 'delete', 'commit']);
+
+/** A build/test TARGET — the whole app, one epic, or one story (the Build-stage scope). */
+const TARGET_SCHEMA: JsonSchema = {
+  type: 'object',
+  description: 'The unit to act on. Omit for the whole app; pass epicId for an epic; epicId+storyId for one story.',
+  properties: {
+    kind: { type: 'string', enum: ['app', 'epic', 'story'], description: "Scope kind (default 'app')." },
+    epicId: { type: 'string', description: 'Epic id (from get_software).' },
+    storyId: { type: 'string', description: 'Story id (from get_software), with its epicId.' },
+  },
+};
+
+// The Design-stage spec tree (epics → stories → per-story features/NFRs/rules). Mirrors
+// the UI PATCH shape (set_app_design) so design_software authors it the governed way.
+const DESIGN_EPICS_SCHEMA = {
+  type: 'array' as const,
+  description: 'Design epics. Each groups user stories under technical/UX/governance requirements; each story carries a spec (features/NFRs/rules) and a build status.',
+  items: {
+    type: 'object',
+    properties: {
+      id: { type: 'string' },
+      title: { type: 'string' },
+      description: { type: 'string' },
+      requirements: {
+        type: 'object',
+        properties: { technical: { type: 'string' }, ux: { type: 'string' }, governance: { type: 'string' } },
+      },
+      stories: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            title: { type: 'string' },
+            asA: { type: 'string' },
+            iWant: { type: 'string' },
+            soThat: { type: 'string' },
+            acceptance: { type: 'string' },
+            status: { type: 'string', enum: ['todo', 'building', 'done'], description: "Set to 'done' after a build committed this story." },
+            spec: {
+              type: 'object',
+              description: 'The Design spec: three editable lists the Build stage builds to and Test verifies against.',
+              properties: {
+                features: { type: 'array', items: { type: 'string' } },
+                nfrs: { type: 'array', items: { type: 'string' } },
+                rules: { type: 'array', items: { type: 'string' } },
+              },
+            },
+          },
+          required: ['id', 'title', 'asA', 'iWant', 'soThat'],
+        },
+      },
+    },
+    required: ['id', 'title'],
+  },
+};
+
+const GRANT_LEVELS = ['read-only', 'read-propose', 'read-write'];
+const grantList = { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, access: { type: 'string', enum: GRANT_LEVELS } }, required: ['id', 'access'] } };
 
 const APP_ID_ONLY: JsonSchema = {
   type: 'object',
@@ -172,6 +233,65 @@ const PLATFORM_SCHEMAS: Record<string, JsonSchema> = {
       },
     },
     required: ['name'],
+  },
+  design_software: {
+    type: 'object',
+    description: "STAGE 2 · DESIGN. Author the app's specification tree. All fields except appId are optional; unset fields are untouched.",
+    properties: {
+      appId: { type: 'string', description: 'App id from list_software.' },
+      purpose: { type: 'string', description: "The app's stated purpose (Define/Design), ≤2000 chars." },
+      epics: DESIGN_EPICS_SCHEMA,
+      grants: {
+        type: 'object',
+        description: 'Governed context grants (capability metadata — never raw credentials).',
+        properties: {
+          connections: grantList,
+          data: grantList,
+          knowledge: grantList,
+          files: grantList,
+          metrics: grantList,
+        },
+      },
+    },
+    required: ['appId'],
+    examples: [
+      {
+        appId: 'app_ab12cd',
+        epics: [{ id: 'epic_1', title: 'Ticket triage', stories: [{ id: 'story_1', title: 'Auto-label', asA: 'agent', iWant: 'tickets labelled on arrival', soThat: 'I triage faster', spec: { features: ['Label on arrival'], nfrs: ['<200ms'], rules: ['No PII in logs'] } }] }],
+      },
+    ],
+  },
+  build_software: {
+    type: 'object',
+    description: 'STAGE 3 · BUILD. Build a unit from its finalized spec (design-before-build gated, standard tier). Returns the governed build directive + committed files + built-vs-pending.',
+    properties: { appId: { type: 'string', description: 'App id from list_software.' }, target: TARGET_SCHEMA },
+    required: ['appId'],
+    examples: [{ appId: 'app_ab12cd', target: { kind: 'story', epicId: 'epic_1', storyId: 'story_1' } }],
+  },
+  verify_software: {
+    type: 'object',
+    description: 'STAGE 4 · TEST. 5-dimension verification of a built unit against its spec. Returns the governed test directive + committed files; optional findings become dimension-tagged refinements.',
+    properties: {
+      appId: { type: 'string', description: 'App id from list_software.' },
+      target: TARGET_SCHEMA,
+      findings: {
+        type: 'array',
+        description: 'Shortfalls found while verifying. Each is normalized into a dimension-tagged refinement.',
+        items: {
+          type: 'object',
+          properties: {
+            storyId: { type: 'string', description: 'The story the shortfall belongs to.' },
+            note: { type: 'string', description: 'What to change.' },
+            dimension: { type: 'string', enum: ['functionality', 'ux', 'code', 'security', 'docs'] },
+            kind: { type: 'string', enum: ['rebuild', 'design'], description: "'rebuild' = missed spec (default); 'design' = the requirement itself changes." },
+            featureIndex: { type: 'number' },
+          },
+          required: ['storyId', 'note'],
+        },
+      },
+    },
+    required: ['appId'],
+    examples: [{ appId: 'app_ab12cd', target: { kind: 'story', epicId: 'epic_1', storyId: 'story_1' }, findings: [{ storyId: 'story_1', note: 'Empty state missing', dimension: 'ux' }] }],
   },
   commit: {
     type: 'object',

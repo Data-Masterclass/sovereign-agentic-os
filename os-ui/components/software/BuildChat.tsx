@@ -7,6 +7,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { stripThinking } from '@/lib/agents/agent-chat-response';
 import Markdown from '@/components/Markdown';
 import BuildDiff, { type FileChange } from './BuildDiff';
+import ProgressStepper from '@/components/core/ProgressStepper';
+import { deriveBuildProgress } from './build-progress';
 import { summarizeChanges } from '@/lib/software/build-changeset';
 import type { ActivityLine } from '@/lib/software/build-activity';
 import { consumeBuildStream, type BuildStreamEvent } from '@/lib/software/build-stream';
@@ -212,6 +214,19 @@ export default function BuildChat({
   const planning = mode === 'plan';
   const label = planning ? 'plan assistant' : 'build assistant';
 
+  // The live BUILD stepper — so a build RUN visibly shows itself building (Plan → Generate
+  // → Commit → Preview) instead of a silent spinner. Only for BUILD runs (plan/test/review
+  // are read-only and never commit); derived from the same live signals the chat holds.
+  const buildProgress = deriveBuildProgress({
+    running: loading && !planning,
+    hasPlan: !!planText,
+    activityCount: feed.length,
+    committed: lastChanges.length > 0,
+    previewed: false,
+    failed: !!error,
+  });
+  const showBuildStepper = !planning && (loading || feed.length > 0 || planText || lastChanges.length > 0);
+
   // The four scope actions. Build is PRIMARY (gold) — it's the verb that ships
   // code; Design · Test · Review are secondary (ghost) but full-size, not tiny.
   const ALL_ACTIONS: { key: BuildAction; label: string; title: string; primary?: boolean }[] = [
@@ -280,6 +295,19 @@ export default function BuildChat({
               ) : null}
             </div>
             <div className="bubble-body">
+              {showBuildStepper ? (
+                <ProgressStepper
+                  steps={buildProgress.steps}
+                  active={buildProgress.active}
+                  done={buildProgress.done}
+                  ok={buildProgress.ok}
+                  commentary={
+                    error ? 'Build stopped — see the error below.'
+                      : loading ? (planText && feed.length === 0 ? 'Planning the change…' : 'Generating & committing code…')
+                        : lastChanges.length > 0 ? 'Build committed.' : undefined
+                  }
+                />
+              ) : null}
               {planText ? (
                 <div style={{ marginBottom: feed.length ? 10 : 0 }}>
                   <div className="section-title" style={{ fontSize: 11, marginBottom: 4 }}>Plan</div>

@@ -14,21 +14,24 @@ The Software tab is where apps and services are built, deployed, and governed. S
 
 **Model tiers (cost policy):** Define — no LLM. Design — **reasoning** (all planning + the full spec). Build — **standard only** (code generation from the finalized spec, deterministic sequencing, never escalated to reasoning). Test — **reasoning** (verify built code vs spec → the fix loop rebuilds on standard). Publish — no LLM. Each stage shows an honest tier badge.
 
-The MCP tool sequence below is the same governed path the UI drives.
+The MCP tool sequence below is the same governed path the UI drives — **the staged Define → Design → Build → Test → Publish flow is the default; direct `commit` is the deliberate exception (Developer mode).**
 
-## How to build it
+## How to build it (the staged governed flow — default path)
 
-1. **Reuse check.** Call `list_software` to see what exists in your domain. Call `get_software` to inspect a specific app before forking or duplicating it.
-2. **Create.** Call `create_software` with `name`, an optional `domain` and `template` (e.g. `nextjs-supabase`), and an optional `surface` — **declare the app's surface** as `ui` (serves a frontend), `api` (headless / tool surface), or `both`. A declared surface wins over auto-detection, so a UI app is never mislabelled as API; omit it to let the OS infer the surface from the code (an app can also declare `surface:` in its `app.yaml`). This creates a My-scope draft AND seeds the app's Forgejo repo with a **real build→push CI workflow** (plus the `REGISTRY_PASS` Actions secret). From here on, every push to `main` **auto-builds the app image** on the in-cluster Forgejo Actions runner and pushes the tag the app runner pulls — no manual build step. Use `get_software_status` to watch the build pipeline.
-3. **Commit code.** Call `commit` with your code payload. A commit is a push to `main`, so it triggers the auto-build. Declare consumed dependencies in a `.app/` manifest file within the commit — list the dataset IDs, knowledge IDs, and connection IDs your app will use. Read your work back with `read_app_files` — the app's committed file tree, or one file's content when you pass a `path`. What you committed is what you read; iterate on the real code, never a guess.
-4. **Wire dependencies by reference.** Call `use_data({ datasetId })`, `use_knowledge({ knowledgeId })`, and `use_connection({ connectionId })` to formally bind each dependency. The OS enforces that you can only wire assets you have read access to. Credentials are never copied into the app.
-5. **Preview.** Call `start_preview` to run the app privately. The preview is sandboxed and visible only to you.
-6. **Request deploy.** Call `request_deploy` to open a Builder review card. The app stays in preview until a Builder acts.
-7. ⛔ **Builder decides.** A Builder or Admin calls `decide_deploy` to approve or reject. Approval moves the app to the declared target environment.
-   At any point, `get_software_status` returns the ONE honest status card — preview/deploy state, the review decision + reviewer, release count and the build pipeline. URLs appear only when a runner actually serves them; a pending runner is stated, never papered over.
-8. **Optional: close the loop.** Call `use_as_data` to register the app's output as a Bronze dataset, feeding the data tier.
+An external agent (Claude / Codex) walks the IDENTICAL five governed stages the UI does. Each stage tool reuses the same governed server function the UI calls — so the design-before-build gate, model tiers, role gates, folder structure and audit all apply automatically.
 
-Additional lifecycle tools: `promote` (scope promotion), `archive` (reversible soft-hide that retains data + lineage — an archived app can be **restored**, or hard-`delete`d), `delete` (hard delete — blocked if another asset depends on this one).
+0. **Reuse check.** Call `list_software` to see what exists in your domain. Call `get_software` to inspect a specific app (its epic/story/spec tree + grants + lifecycle) before forking or duplicating it.
+1. **Define — `create_software`.** Pass `name`, an optional `domain` and `template` (`sovereign-app` = the default Application; `website`; `api-service`; `empty`), an optional `surface` (`ui` | `api` | `both` — a declaration wins over auto-detection, so a UI app is never mislabelled as API), and an optional `purpose`. This creates a My-scope draft AND seeds the app's Forgejo repo with a **real build→push CI workflow** (plus the `REGISTRY_PASS` Actions secret): every push to `main` **auto-builds the image** — no manual build step. Watch the pipeline with `get_software_status`.
+2. **Design — `design_software`.** Author the SPECIFICATION tree: `purpose`, `epics` (each with user stories), and per-story `spec` (three lists: **features**, **non-functional requirements**, **rules**) plus governed context `grants`. This is the reasoning-tier stage; a story must have a spec here before it can be built.
+3. **Build — `build_software`.** Build a SPECIFIC unit — the whole app, one `epic`, or one `story` (pass `target`) — from its finalized spec. It **enforces the design-before-build gate** (refuses stories with no spec, naming them), pins the **standard** tier, and returns the governed build directive + Define context + the target's spec + the code-structure convention (write each story under `epics/<epic>/<story>/`; `app/` stays thin router entrypoints) + the current committed files and honest built-vs-pending progress. Author the code, then `commit` it, then mark completed stories done via `design_software` (set the story `status` to `done`). Read code back any time with `read_app_files`.
+4. **Test — `verify_software`.** Verify a built unit against its spec across the **five dimensions** (Functionality · User Experience · Code Structure · Security · Documentation). It returns the governed test directive + the committed code to verify against (read-only, reasoning tier). Report PASS/FAIL per dimension and pass any shortfalls as `findings` — each becomes a dimension-tagged **refinement** via the same refinement model the UI uses (a missed-spec item is a rebuild; a requirement change routes back to Design first). Feed refinements back into Build.
+5. **Publish.** `start_preview` runs the app privately (no review). `request_deploy` opens a Builder review card (security scan + envelope + diff). ⛔ A Builder/Admin then calls `decide_deploy` to approve/reject (a non-Builder gets a 403; approval requires a passing scan). `promote` climbs the tier ladder. `get_software_status` returns the ONE honest status card at any point — URLs appear only when a runner actually serves them.
+
+**Wire dependencies by reference** (any stage): `use_data`, `use_knowledge`, `use_connection` formally bind a granted asset — you can only wire what you have read access to; credentials are never copied into the app. **Close the loop:** `use_as_data` registers the app's output as a Bronze dataset. Lifecycle: `promote`, `archive` (reversible soft-hide, restorable), `delete` (hard delete — lineage-blocked).
+
+## Developer mode — direct `commit` (the escape hatch, NOT the default)
+
+`commit` writes files DIRECTLY to the app folders, **bypassing the staged Design → Build → Test governance and the design-before-build gate**. It is role-gated to **Builder/Admin** — a Creator cannot use it to bypass the governed stages. Reach for it only as a deliberate exception (e.g. a low-level fix outside the epic/story model); the normal flow is `design_software` → `build_software` → `verify_software`. A commit is a push to `main`, so it triggers the auto-build; declare consumed dependencies in a `.app/` manifest within the commit.
 
 ## What to consider
 
@@ -42,10 +45,13 @@ Additional lifecycle tools: `promote` (scope promotion), `archive` (reversible s
 
 | Step | Role required |
 |---|---|
-| `list_software`, `get_software`, `read_app_files`, `get_software_status` | Creator |
-| `create_software`, `commit`, `use_data`, `use_knowledge`, `use_connection`, `start_preview`, `request_deploy`, `use_as_data`, `promote`, `archive` | Creator (own work) |
-| ⛔ `decide_deploy` | Builder or Admin |
+| `list_software`, `get_software`, `read_app_files`, `get_software_status`, `build_software`, `verify_software` | Creator |
+| `create_software`, `design_software`, `use_data`, `use_knowledge`, `use_connection`, `start_preview`, `request_deploy`, `use_as_data`, `archive` | Creator (own work) |
+| ⛔ `decide_deploy`, `promote` | Builder or Admin |
+| ⛔ `commit` (Developer mode — direct file write, bypasses the staged governance) | Builder or Admin |
 | `delete` | Creator (lineage permitting) |
+
+`build_software` and `verify_software` are read-only planning tools — they hand back the governed build/test directive + committed code and enforce the design-before-build gate; the actual writes still flow through `commit` (Developer mode) or, for spec/status, `design_software`.
 
 OPA checks every dependency reference at wire time and at deploy time. Langfuse traces every production invocation.
 
@@ -56,20 +62,28 @@ list_software({ domain: "data-eng" })
 → [{ id: "sw_22A...", name: "invoice-loader", state: "deployed" }]
 — a loader exists; create a separate transform app
 
-create_software({ name: "invoice-transformer", domain: "data-eng", template: "nextjs-supabase", surface: "api" })
-→ { id: "sw_33B...", surface: "api", state: "draft" }
+create_software({ name: "invoice-transformer", domain: "data-eng", template: "api-service", surface: "api", purpose: "Transform loaded invoices into the gold model" })
+→ { id: "sw_33B...", surface: "api", state: "draft" }        # DEFINE
 
-commit({ id: "sw_33B...", files: { "main.py": "...", ".app/deps.yaml": "datasets: [ds_01J...]" } })
-→ { committed: true }
+design_software({ appId: "sw_33B...", epics: [{ id: "epic_1", title: "Transform", stories: [
+  { id: "story_1", title: "Normalize amounts", asA: "analyst", iWant: "amounts in EUR", soThat: "reports reconcile",
+    spec: { features: ["Convert currency"], nfrs: ["<500ms/1k rows"], rules: ["No raw credentials in code"] } }] }] })
+→ { epics: [...] }                                            # DESIGN (spec authored)
 
-use_data({ appId: "sw_33B...", datasetId: "ds_01J..." })
-→ { wired: true }
+build_software({ appId: "sw_33B...", target: { kind: "story", epicId: "epic_1", storyId: "story_1" } })
+→ { stage: "build", gate: "passed", tier: "standard", directive: "…", progress: { itemsBuilt: 0, itemsTotal: 3 }, code: {…} }
+# author the code from the directive, then:
+commit({ appId: "sw_33B...", files: [{ path: "src/epics/epic_1/story_1/Normalize.tsx", content: "…" }, { path: ".app/deps.yaml", content: "datasets: [ds_01J...]" }] })   # Developer mode — Builder+
+design_software({ appId: "sw_33B...", epics: [/* story_1 with status: "done" */] })
 
-start_preview({ id: "sw_33B..." })
-→ { previewUrl: "https://preview.os/sw_33B...", state: "running" }
+verify_software({ appId: "sw_33B...", target: { kind: "story", epicId: "epic_1", storyId: "story_1" },
+  findings: [{ storyId: "story_1", note: "Handle empty input", dimension: "ux" }] })
+→ { stage: "test", tier: "reasoning", directive: "…", refinements: [{ kind: "rebuild", dimension: "ux", … }] }   # TEST
 
-request_deploy({ id: "sw_33B...", environment: "shared" })
-→ { reviewCardId: "rc_55D...", state: "pending_deploy" }
+use_data({ appId: "sw_33B...", ref: "ds_01J..." })
+start_preview({ appId: "sw_33B..." })
+request_deploy({ appId: "sw_33B..." })
+→ { kind: "review", card: { id: "rc_55D..." } }              # PUBLISH (Builder review)
 ```
 
-A Builder then calls `decide_deploy({ reviewCardId: "rc_55D...", decision: "approve" })`.
+A Builder then calls `decide_deploy({ cardId: "rc_55D...", decision: "approve" })`.

@@ -421,6 +421,18 @@ export type SystemGroups = { mine: SystemSummary[]; domain: SystemSummary[]; mar
  * restore or delete. A shared/marketplace system, once archived by its owner,
  * disappears from everyone's domain/marketplace list too.
  */
+/**
+ * The caller's systems, grouped. Archived systems are HIDDEN by default (soft
+ * archive) — the owner/Admin can list them explicitly via `includeArchived` to
+ * restore or delete. A shared/marketplace system, once archived by its owner,
+ * disappears from everyone's domain/marketplace list too.
+ *
+ * ACTIVE-DOMAIN scope: a Personal system shows under "My" only when its domain
+ * is in the caller's live scope. With an active domain chosen (sidebar switcher),
+ * user.domains is narrowed to [active] by auth.ts, so "My" filters to that domain
+ * too. "All Domains" keeps user.domains = every membership, so every personal
+ * system still shows. Shared/Marketplace tiers already narrow via their own checks.
+ */
 export function listSystems(user: Principal, opts: { includeArchived?: boolean } = {}): SystemGroups {
   ensureSeeded();
   const mine: SystemSummary[] = [];
@@ -428,7 +440,11 @@ export function listSystems(user: Principal, opts: { includeArchived?: boolean }
   const marketplace: SystemSummary[] = [];
   for (const rec of state().store.values()) {
     if (rec.archived && !opts.includeArchived) continue;
-    if (rec.owner === user.id) mine.push(summarise(rec));
+    // Owner takes priority (no double-listing: the owner's own Marketplace/Shared system
+    // appears under Mine, never under Domain/Marketplace for that user). The domain check
+    // is the ACTIVE-DOMAIN scope gate: a Personal system created in domain A must not show
+    // when domain B is active — auth.ts has already narrowed user.domains to [active].
+    if (rec.owner === user.id && user.domains.includes(rec.domain)) mine.push(summarise(rec));
     else if (rec.visibility === 'Shared' && user.domains.includes(rec.domain)) domain.push(summarise(rec));
     else if (rec.visibility === 'Marketplace') marketplace.push(summarise(rec));
   }
@@ -486,7 +502,9 @@ export function agentHealthRows(user: Principal): AgentHealthRow[] {
   for (const rec of state().store.values()) {
     if (rec.archived) continue;
     let scope: AgentHealthRow['scope'] | null = null;
-    if (rec.owner === user.id) scope = 'mine';
+    // Mirror listSystems ordering: owner takes priority (no double-list), then shared,
+    // then marketplace. Domain check gates personal scope to the active domain.
+    if (rec.owner === user.id && user.domains.includes(rec.domain)) scope = 'mine';
     else if (rec.visibility === 'Shared' && user.domains.includes(rec.domain)) scope = 'domain';
     else if (rec.visibility === 'Marketplace') scope = 'marketplace';
     if (!scope) continue;

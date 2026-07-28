@@ -209,7 +209,7 @@ test('createApp: the DEFAULT template is the Sovereign standard app', async () =
   assert.deepEqual(app.surface, { ui: true, api: false }, 'app.yaml declares surface: ui');
   // The docs handed to the Build assistant carry the skeleton guide.
   assert.match(app.docs, /Sovereign standard app/, 'docs identify the standard app');
-  assert.match(app.docs, /src\/sections\.tsx/, 'docs tell the agent where epics add sections');
+  assert.match(app.docs, /epics\//, 'docs describe the epics/<epic>/<story> structure');
   assert.match(app.docs, /identity contract/i, 'docs state the identity contract');
 });
 
@@ -217,11 +217,12 @@ test('templateFiles: sovereign-app ships the full standard-app skeleton', () => 
   const paths = templateFiles('sovereign-app', 'Std App', 'std-app').map((f) => f.path);
   for (const p of [
     'src/App.tsx',
-    'src/sections.tsx',
-    'src/identity.tsx',
-    'src/scope.ts',
-    'src/pages/Admin.tsx',
-    'src/pages/Overview.tsx',
+    'src/template/sections.tsx',
+    'src/template/identity.tsx',
+    'src/template/scope.ts',
+    'src/template/pages/Admin.tsx',
+    'src/template/pages/Overview.tsx',
+    'src/core/store.ts',
     'app.yaml',
     'README.md',
     'Dockerfile',
@@ -277,4 +278,21 @@ test('createApp: legacy templates still work for existing flows (not in the pick
   __resetAppsCache();
   const app = await createApp(user, { name: 'Legacy Vite', template: 'vite-os' });
   assert.equal(app.template, 'vite-os', 'legacy keys keep creating');
+});
+
+test('active-domain: a My app created in domain A is hidden when domain B is active, shown under A / All', async () => {
+  __resetAppsCache();
+  const owner = { id: 'dsc1', name: 'DSC', domains: ['sales'], role: 'admin' as const };
+  await createApp(owner, { name: 'SalesApp', template: 'empty' }); // Personal, domain = sales
+
+  // Acting in a different domain (auth.ts narrows user.domains to [active]) → hidden.
+  const inFinance = { ...owner, domains: ['finance'] };
+  assert.equal((await listAppsForUser(inFinance)).some((a) => a.name === 'SalesApp'), false, 'hidden in other domain');
+
+  // Acting in sales → shown.
+  assert.equal((await listAppsForUser(owner)).some((a) => a.name === 'SalesApp'), true, 'shown in its domain');
+
+  // All Domains (every membership) → shown.
+  const allDomains = { ...owner, domains: ['sales', 'finance'] };
+  assert.equal((await listAppsForUser(allDomains)).some((a) => a.name === 'SalesApp'), true, 'shown under All Domains');
 });

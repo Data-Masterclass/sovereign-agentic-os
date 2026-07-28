@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { asChatRunMode, isReadOnlyMode, modeDirective, modelRoleForMode, tierNote, READ_ONLY_MODE_TOOLS } from './chat-modes.ts';
+import { asChatRunMode, isReadOnlyMode, modeDirective, modelRoleForMode, tierNote, READ_ONLY_MODE_TOOLS, BUILD_PRINCIPLES, CODE_STRUCTURE_CONVENTION } from './chat-modes.ts';
 
 test('tier policy: plan (Design) / test / review run on reasoning; build codegen on standard', () => {
   assert.equal(modelRoleForMode('plan'), 'reasoning');
@@ -43,10 +43,65 @@ test('modeDirective: each mode gets its own honest directive; build names the ap
   assert.match(modeDirective('plan', 'app_1').join('\n'), /PLAN.*read-only/s);
   assert.match(modeDirective('build', 'app_1').join('\n'), /appId \(app_1\)/);
   const t = modeDirective('test', 'app_1').join('\n');
-  assert.match(t, /critical tester/);
+  assert.match(t, /verifier/i);
   assert.match(t, /NEVER fabricate test execution/);
   assert.match(t, /read_app_files/);
   const r = modeDirective('review', 'app_1').join('\n');
   assert.match(r, /file-by-file/);
   assert.match(r, /never invent functionality/);
+});
+
+// --------------------------------------------------------- BUILD_PRINCIPLES --
+
+test('BUILD_PRINCIPLES: exactly five one-line principles, one per Test dimension', () => {
+  const lines = BUILD_PRINCIPLES.split('\n');
+  assert.equal(lines.length, 5, 'exactly five principles');
+  for (const l of lines) assert.ok(!l.includes('\n') && l.trim().length > 0, 'each is one non-empty line');
+  // 1:1 with the five Test dimensions.
+  assert.match(BUILD_PRINCIPLES, /Functionality/);
+  assert.match(BUILD_PRINCIPLES, /User Experience/);
+  assert.match(BUILD_PRINCIPLES, /Code Structure/);
+  assert.match(BUILD_PRINCIPLES, /Security/);
+  assert.match(BUILD_PRINCIPLES, /Documentation/);
+});
+
+// --------------------------------------------- code-structure convention --
+
+test('CODE_STRUCTURE_CONVENTION: names template/core/epics + thin app entrypoints', () => {
+  assert.match(CODE_STRUCTURE_CONVENTION, /template\//);
+  assert.match(CODE_STRUCTURE_CONVENTION, /core\//);
+  assert.match(CODE_STRUCTURE_CONVENTION, /epics\/<epicKey>\/<storyKey>\//);
+  assert.match(CODE_STRUCTURE_CONVENTION, /epics\/<epicKey>\/general\//);
+  assert.match(CODE_STRUCTURE_CONVENTION, /THIN entrypoints/i);
+  assert.match(CODE_STRUCTURE_CONVENTION, /governed data plane/i);
+});
+
+// --------------------------------------- BUILD directive injects both --
+
+test('modeDirective(build): injects BUILD_PRINCIPLES + the code-structure convention', () => {
+  const b = modeDirective('build', 'app_1').join('\n');
+  assert.ok(b.includes(BUILD_PRINCIPLES), 'build prompt carries the five build principles');
+  assert.ok(b.includes(CODE_STRUCTURE_CONVENTION), 'build prompt carries the structure convention');
+  assert.match(b, /epics\/<epic>\/<story>/, 'tells the model where story code goes');
+});
+
+// ------------------------------------ PLAN (Design draft) injects principles --
+
+test('modeDirective(plan): the Design drafting prompt carries the build principles', () => {
+  const p = modeDirective('plan', 'app_1').join('\n');
+  assert.ok(p.includes(BUILD_PRINCIPLES), 'design drafts against the same principles it builds by');
+});
+
+// --------------------------------- TEST = true 5-dimension verification --
+
+test('modeDirective(test): verifies across the five named dimensions with per-dim PASS/FAIL', () => {
+  const t = modeDirective('test', 'app_1').join('\n');
+  for (const dim of ['Functionality', 'User Experience', 'Code Structure', 'Security', 'Documentation']) {
+    assert.match(t, new RegExp(dim), `checks ${dim}`);
+  }
+  assert.match(t, /PASS\/FAIL/i, 'reports PASS/FAIL per dimension');
+  assert.match(t, /epics → stories → features → NFRs → rules/, 'verifies the full spec hierarchy');
+  assert.match(t, /TAGGED with its\s+dimension/, 'each shortfall is tagged with its dimension');
+  assert.match(t, /functionality \| ux \| code \| security \| docs/, 'names the dimension tags');
+  assert.match(t, /CITE the/, 'findings cite real files');
 });

@@ -327,7 +327,14 @@ async function getCache(): Promise<Map<string, Connection>> {
 // ------------------------------------------------------------------- Scoping ---
 
 function visibleToUser(c: Connection, user: CurrentUser): boolean {
-  if (c.visibility === 'Personal') return c.owner === user.id;
+  if (c.visibility === 'Personal') {
+    // Owner-only. ACTIVE-DOMAIN scope: a personal connection is only shown when
+    // its domain is in the caller's live scope — with an active domain chosen,
+    // user.domains is narrowed to [active], so "My" filters to that domain too.
+    // "All domains" keeps user.domains = every membership so all personal
+    // connections remain visible. Matches the data/files/metrics/pillars pattern.
+    return c.owner === user.id && (!c.domain || user.domains.includes(c.domain));
+  }
   if (c.visibility === 'Shared') return user.domains.includes(c.domain);
   return true; // Certified (Marketplace) — discoverable across domains
 }

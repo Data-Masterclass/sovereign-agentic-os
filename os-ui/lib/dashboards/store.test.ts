@@ -121,3 +121,41 @@ test('archive: a PERSONAL dashboard is owner-only; a SHARED one admits domain_ad
   const otherDomainAdmin: Principal = { id: 'omar', domains: ['ops'], role: 'domain_admin' };
   assert.throws(() => setDashboardArchived('dash_da', otherDomainAdmin, true), (e: { status?: number }) => e.status === 403);
 });
+
+// ------------------------------------------------- active-domain scoping (0.6.x) --
+
+test('active-domain: personal dashboard in domain A does NOT appear when domain B is active', () => {
+  const userA: Principal = { id: 'zoe', domains: ['sales'], role: 'creator' };
+  saveDashboard(userA, 'dash_scope_a', spec('Sales Dash'));
+  // Simulate "domain B active": user.domains narrowed to ['ops']
+  const userB: Principal = { id: 'zoe', domains: ['ops'], role: 'creator' };
+  const { mine } = listDashboards(userB);
+  assert.ok(!mine.some((d) => d.id === 'dash_scope_a'), 'domain-A dashboard must not appear when domain B is active');
+});
+
+test('active-domain: personal dashboard in domain A DOES appear when domain A is active', () => {
+  const userA: Principal = { id: 'zoe', domains: ['sales'], role: 'creator' };
+  saveDashboard(userA, 'dash_scope_b', spec('Sales Dash'));
+  const { mine } = listDashboards(userA);
+  assert.ok(mine.some((d) => d.id === 'dash_scope_b'), 'domain-A dashboard must appear when domain A is active');
+});
+
+test('active-domain: personal dashboard appears when "All Domains" is active (user.domains = all)', () => {
+  const userA: Principal = { id: 'zoe', domains: ['sales'], role: 'creator' };
+  saveDashboard(userA, 'dash_scope_c', spec('Sales Dash'));
+  // Simulate "All Domains": user.domains = all memberships
+  const userAll: Principal = { id: 'zoe', domains: ['sales', 'ops'], role: 'creator' };
+  const { mine } = listDashboards(userAll);
+  assert.ok(mine.some((d) => d.id === 'dash_scope_c'), 'domain-A dashboard must appear when All Domains is active');
+});
+
+test('active-domain: Marketplace tier is never narrowed by active domain', () => {
+  const userA: Principal = { id: 'ada', domains: ['sales'], role: 'admin' };
+  saveDashboard(userA, 'dash_scope_mkt', spec('Public Dash'));
+  transitionDashboard('dash_scope_mkt', userA, 'promote');
+  transitionDashboard('dash_scope_mkt', userA, 'certify');
+  // Active domain set to 'ops' (a completely different domain)
+  const userOps: Principal = { id: 'bob', domains: ['ops'], role: 'creator' };
+  const { marketplace } = listDashboards(userOps);
+  assert.ok(marketplace.some((d) => d.id === 'dash_scope_mkt'), 'Marketplace dashboard must appear regardless of active domain');
+});

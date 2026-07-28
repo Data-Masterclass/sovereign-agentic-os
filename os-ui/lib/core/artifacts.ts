@@ -173,8 +173,11 @@ function manageArg(a: Artifact): { owner: string; domain: string; scope: Artifac
 function visibleToUser(a: Artifact, user: CurrentUser): boolean {
   // Certified copies the user pulled from the Marketplace are theirs to see.
   if (a.origin === 'certified-copy') return a.owner === user.id;
-  // Personal: owner only.
-  if (a.visibility === 'Personal') return a.owner === user.id;
+  // Personal: owner only. ACTIVE-DOMAIN scope: a personal artifact is only
+  // shown when its domain is in the caller's live scope — with an active domain
+  // chosen, user.domains is narrowed to [active], so "My" filters to that
+  // domain too. "All domains" keeps user.domains = every membership.
+  if (a.visibility === 'Personal') return a.owner === user.id && (!a.domain || user.domains.includes(a.domain));
   // Shared: visible to everyone in that domain — but only for domains the user
   // belongs to.
   if (a.visibility === 'Shared') return user.domains.includes(a.domain);

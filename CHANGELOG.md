@@ -13,6 +13,47 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.11] — 2026-07-28
+
+### Changed
+- **Software tab — refinement lifecycle across Test · Design · Build.** A Test
+  "Verify & Improve" finding is now a tracked refinement with a visible
+  **Proposed → Designed → Built** state, shown as the SAME list in all three
+  stages (dimension-tagged). Per-item **Design** (reasoning drafts the spec and
+  shows it), then **Build** (standard) → Built (stays visible), with the
+  design-before-build gate; plus **Design all** / **Build all** (8-cap) and a
+  **Design & Build** accelerator. Fixes the old dead-end where refinements never
+  reached Design.
+- **Generated apps are structured by epic/story.** Scaffolds emit
+  `src/template/` (fixed), `src/core/` (shared), `src/epics/<epic>/<story>/`
+  (per-story code), with thin entrypoints; the build writes each story's code
+  into its folder. Build now injects **5 build principles** (aligned to the Test
+  dimensions), and **Test verifies across 5 dimensions** — Functionality · User
+  Experience · Code Structure · Security · Documentation.
+- **Build/Deploy show live progress** via the core `ProgressStepper` (Plan →
+  Generate → Commit → Preview for build; Scaffold → … → Live for deploy), so a
+  running build/go-live is visible, not a silent flip. Developer view moves the
+  BUILD/DEPLOY console to the top full-width, code below.
+- **"Connect your AI Tool via MCP" button** is now a prominent gold pill in the
+  topbar (was near-invisible).
+
+### Added
+- **Software MCP mirrors the five governed stages** — `create_software`
+  (Define) · `design_software` (Design) · `build_software` (Build, enforces the
+  design-before-build gate + standard tier + epic/story folders) ·
+  `verify_software` (Test, 5-dimension) · `request_deploy`/`decide_deploy`/
+  `promote` (Publish). Every tool wraps the same governed server function the UI
+  uses. Raw `commit` becomes a **developer-mode escape hatch, role-gated to
+  builder+** and labeled as bypassing the staged governance.
+
+### Fixed
+- **Domain-scoping is now universal.** "My" (and Shared) artifacts narrow to the
+  domain you're acting in across dashboards, science, agents, Strategic Pillars,
+  Big Bets, Connections, the base artifacts store, and software; Company/
+  Marketplace stays tenant-wide; "All Domains" shows everything. (Folders +
+  data/files/metrics already did; Operating Manual + Workflows were already
+  correct.) Display/scoping only — no artifact ever crossed a domain boundary.
+
 ## [os-ui 0.6.10] — 2026-07-28
 
 ### Fixed

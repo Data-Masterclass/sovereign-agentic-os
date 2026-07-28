@@ -736,3 +736,40 @@ test('lastRun and activity are independent: one can be set without affecting the
   assert.ok(v2.lastRun, 'lastRun survives clearActivity');
   assert.equal(v2.activity, undefined, 'activity cleared');
 });
+
+// ------------------------------------------------- active-domain scoping (0.6.x) --
+
+test('active-domain: personal system in domain A does NOT appear under Mine when domain B is active', () => {
+  __resetStore();
+  // sara creates a Personal system in the sales domain
+  const sys = createSystem(sara, { name: 'Sales Agent', domain: 'sales' });
+  // Simulate "domain B active": user.domains narrowed to ['finance']
+  const saraFinance: Principal = { id: 'sara', domains: ['finance'], role: 'domain_admin' };
+  const { mine } = listSystems(saraFinance);
+  assert.ok(!mine.some((s) => s.id === sys.id), 'sales domain system must not appear when finance domain is active');
+});
+
+test('active-domain: personal system in domain A DOES appear under Mine when domain A is active', () => {
+  __resetStore();
+  const sys = createSystem(sara, { name: 'Sales Agent', domain: 'sales' });
+  const { mine } = listSystems(sara);
+  assert.ok(mine.some((s) => s.id === sys.id), 'sales domain system must appear when sales domain is active');
+});
+
+test('active-domain: personal system appears under Mine when All Domains is active (user.domains = all)', () => {
+  __resetStore();
+  const sys = createSystem(sara, { name: 'Sales Agent', domain: 'sales' });
+  // Simulate "All Domains": user.domains = all memberships
+  const saraAll: Principal = { id: 'sara', domains: ['sales', 'finance'], role: 'domain_admin' };
+  const { mine } = listSystems(saraAll);
+  assert.ok(mine.some((s) => s.id === sys.id), 'sales domain system must appear when All Domains is active');
+});
+
+test('active-domain: Marketplace tier is never narrowed by active domain', () => {
+  __resetStore();
+  const market = makeMarketplace(sara, { name: 'Public Kit', domain: 'sales' });
+  // A user whose active domain is 'finance' (completely different domain)
+  const financeUser: Principal = { id: 'fin', domains: ['finance'], role: 'creator' };
+  const { marketplace } = listSystems(financeUser);
+  assert.ok(marketplace.some((s) => s.id === market.id), 'Marketplace system must appear regardless of active domain');
+});

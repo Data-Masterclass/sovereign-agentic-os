@@ -553,3 +553,36 @@ test('the OWNER may predict their own model without a third-party OPA grant (bot
   const other = await authorizePredict('lead_scoring', { principal: 'user:bob', domains: ['sales'], isAgent: false }, denyPredict);
   assert.equal(other.decision, 'deny');
 });
+
+// ------------------------------------------------- active-domain scoping (0.6.x) --
+
+test('active-domain: Personal model in domain A does NOT appear for owner when domain B is active', () => {
+  _resetModels();
+  upsertModel({ ...personalModel(), owner: 'sara', domain: 'sales', tier: 'Personal' });
+  // Simulate "domain B (finance) active": viewer.domains narrowed to ['finance']
+  const result = listModelsForUser({ id: 'sara', domains: ['finance'] });
+  assert.ok(!result.some((m) => m.model === 'test_model'), 'sales Personal model must not appear when finance domain is active');
+});
+
+test('active-domain: Personal model in domain A DOES appear for owner when domain A is active', () => {
+  _resetModels();
+  upsertModel({ ...personalModel(), owner: 'sara', domain: 'sales', tier: 'Personal' });
+  const result = listModelsForUser({ id: 'sara', domains: ['sales'] });
+  assert.ok(result.some((m) => m.model === 'test_model'), 'sales Personal model must appear when sales domain is active');
+});
+
+test('active-domain: Personal model appears when All Domains is active (viewer.domains = all)', () => {
+  _resetModels();
+  upsertModel({ ...personalModel(), owner: 'sara', domain: 'sales', tier: 'Personal' });
+  // Simulate "All Domains": viewer.domains = every membership
+  const result = listModelsForUser({ id: 'sara', domains: ['sales', 'finance'] });
+  assert.ok(result.some((m) => m.model === 'test_model'), 'sales Personal model must appear when All Domains is active');
+});
+
+test('active-domain: Marketplace tier is never narrowed by active domain', () => {
+  _resetModels();
+  upsertModel({ ...personalModel(), tier: 'Marketplace' });
+  // Active domain set to 'finance' (completely different from model's sales domain)
+  const result = listModelsForUser({ id: 'bob', domains: ['finance'] });
+  assert.ok(result.some((m) => m.model === 'test_model'), 'Marketplace model must appear regardless of active domain');
+});

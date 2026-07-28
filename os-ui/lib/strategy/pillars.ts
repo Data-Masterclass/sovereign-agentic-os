@@ -189,6 +189,13 @@ async function getCache(): Promise<Map<string, Pillar>> {
  * pillars + all tenant (Company) pillars. Archived pillars are hidden from the
  * default working list; `includeArchived` opts them back in for the owner/editor
  * to restore or delete.
+ *
+ * ACTIVE-DOMAIN scope: a personal (My) pillar shows only when its domain is in
+ * the caller's live scope — with an active domain chosen, user.domains is
+ * narrowed to [active], so "My" filters to that domain too. "All domains" shows
+ * every personal pillar the owner holds across their memberships. Domain-scope
+ * pillars already narrow via canViewPillar → entitledToDomain → user.domains.
+ * Tenant (Company) pillars are never narrowed.
  */
 const SCOPE_ORDER: Record<PillarScope, number> = { tenant: 0, domain: 1, personal: 2 };
 
@@ -198,7 +205,16 @@ export async function listPillars(
 ): Promise<Pillar[]> {
   const map = await getCache();
   return [...map.values()]
-    .filter((p) => canViewPillar(user, p) && (opts.includeArchived || !p.archived))
+    .filter((p) => {
+      if (!canViewPillar(user, p)) return false;
+      if (!opts.includeArchived && p.archived) return false;
+      // ACTIVE-DOMAIN scope for the personal ("My") tier: a personal pillar is
+      // owner-only but must also be scoped to the active domain so a user acting
+      // in domain A does not see personal pillars they created in domain B.
+      // Domain + tenant pillars are already narrowed by canViewPillar's domain check.
+      if (p.scope === 'personal') return !p.domain || user.domains.includes(p.domain);
+      return true;
+    })
     .sort((a, b) => {
       // Company → Domain → My, then by recency within a tier.
       if (a.scope !== b.scope) return SCOPE_ORDER[a.scope] - SCOPE_ORDER[b.scope];

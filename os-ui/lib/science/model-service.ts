@@ -215,20 +215,28 @@ export type ModelViewer = { id: string; domains: string[] };
 
 /**
  * RLS predicate mirroring `lib/artifacts.visibleToUser` for the model tier ladder:
- *   • Personal    → owner only (never leak another user's Personal model)
+ *   • Personal    → owner only AND domain must be in the viewer's live scope
  *   • Domain      → members of the owning domain only (no cross-domain leak)
  *   • Marketplace → published cross-domain (discovery; any domain may see + import)
+ *
+ * ACTIVE-DOMAIN scope: a Personal model shows only when its domain is in the
+ * caller's live scope. With an active domain chosen (sidebar switcher), user.domains
+ * is narrowed to [active] by auth.ts, so "My" filters to that domain. "All Domains"
+ * keeps user.domains = every membership, so every personal model still shows.
+ * Domain/Marketplace tiers already narrow via their own domain/tier checks.
  */
 function modelVisibleToUser(m: ServiceModel, viewer: ModelViewer): boolean {
   if (m.tier === 'Marketplace') return true;
-  if (m.tier === 'Personal') return m.owner === viewer.id;
-  return viewer.domains.includes(m.domain);
+  if (m.tier === 'Domain') return viewer.domains.includes(m.domain);
+  // Personal: owner only, AND domain must be in the caller's live scope.
+  return m.owner === viewer.id && viewer.domains.includes(m.domain);
 }
 
 /**
  * RLS-scoped model list for a viewer — the SAFE variant for any tab/cockpit
- * surface. Returns the viewer's own Personal models + the Domain models of the
- * domains they belong to + Marketplace-published models, and nothing else.
+ * surface. Returns the viewer's own Personal models (in-scope domain) + the Domain
+ * models of the domains they belong to + Marketplace-published models, and nothing
+ * else.
  */
 export function listModelsForUser(viewer: ModelViewer, opts: { includeArchived?: boolean } = {}): ServiceModel[] {
   return [...store().values()]

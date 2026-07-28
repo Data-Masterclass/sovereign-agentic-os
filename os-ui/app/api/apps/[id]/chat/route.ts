@@ -125,13 +125,21 @@ function appContext(
   if (isSovereignApp) {
     lines.push(
       '',
-      '## Sovereign standard app — skeleton contract',
-      'This app is a Sovereign standard app. NEVER remove the skeleton: OS-delegated',
-      'identity (src/identity.tsx — no local accounts/passwords, ever), the scope',
-      'helpers (src/scope.ts — every record carries owner + domain), the Admin section,',
-      'and the MCP top-bar link. To add a feature: create src/pages/<Name>.tsx and',
-      'register it in src/sections.tsx (one entry = nav + routing). See ## Docs for the',
-      'full skeleton guide.',
+      '## Sovereign standard app — skeleton contract + code structure',
+      'This app is a Sovereign standard app. Its code MIRRORS the epic/story spec:',
+      '  • src/template/ — the FIXED scaffold: OS-delegated identity (template/identity.tsx —',
+      '    no local accounts/passwords, ever), the scope helpers (template/scope.ts — every',
+      '    record carries owner + domain), roles, app-meta, the AppShell layout (template/',
+      '    shell.tsx), the section registry (template/sections.tsx) and the Admin/Overview',
+      '    pages. NEVER remove it.',
+      '  • src/core/ — overarching custom functionality + the SHARED governed data plane',
+      '    (core/store.ts — the OS SDK, NOT Supabase) and shared pages.',
+      '  • src/epics/<epic>/<story>/ — where each built story\'s feature code + its data go;',
+      '    src/epics/<epic>/general/ for epic-wide shared code.',
+      '  • src/App.tsx / src/main.tsx — THIN entrypoints ONLY (they mount the template Shell).',
+      'To add a feature: create src/epics/<epic>/<story>/<Name>.tsx and register ONE entry in',
+      'src/template/sections.tsx (nav + routing). Keep template/ intact and the entrypoints',
+      'thin. See ## Docs for the full skeleton guide and the code-structure convention.',
     );
   }
 

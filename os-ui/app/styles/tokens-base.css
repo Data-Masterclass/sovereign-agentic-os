@@ -3876,31 +3876,40 @@ button.card.tile:hover .tile-action { opacity: 1; }
 }
 
 /* Global "Connect your AI Tool via MCP" button — lives in the top-right topbar
-   on every page. Apple-dark: translucent white border, muted fill, off-white
-   text; teal ⊕ spark signals "connect". Transitions on hover only. */
+   (solid-black #0c0b0d) on every page. It was near-invisible (5% white fill); it's
+   now a PROMINENT gold-accented pill — a warm fill, a clear gold border and bright
+   off-white text so it reads unmistakably against the black bar. The teal ⊕ spark
+   signals "connect". Transitions + a soft lift on hover. */
 .topbar-mcp-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text);
+  border: 1px solid var(--gold);
+  background: linear-gradient(180deg, rgba(200, 162, 74, 0.28), rgba(200, 162, 74, 0.16));
+  color: #f7f2e6;
   font-family: var(--font-body);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 0.01em;
-  padding: 5px 12px;
+  padding: 6px 14px;
   border-radius: 999px;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  box-shadow: 0 1px 6px rgba(200, 162, 74, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
   white-space: nowrap;
 }
 .topbar-mcp-btn:hover {
-  background: rgba(255, 255, 255, 0.10);
-  border-color: rgba(255, 255, 255, 0.30);
+  background: linear-gradient(180deg, rgba(200, 162, 74, 0.42), rgba(200, 162, 74, 0.26));
+  border-color: #dcb968;
+  box-shadow: 0 2px 10px rgba(200, 162, 74, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  transform: translateY(-1px);
+}
+.topbar-mcp-btn:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
 }
 .topbar-mcp-btn .tut-link-spark {
-  color: var(--teal);
+  color: #7fe6dd;
   font-size: 11px;
 }
 

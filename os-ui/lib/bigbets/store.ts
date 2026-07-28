@@ -280,10 +280,28 @@ export function createBet(user: Principal, input: CreateBetInput): BigBet {
  * List bets the user may view. Archived bets (status === 'archived') are hidden
  * from the default working list — the owner or Admin can opt-in via `includeArchived`
  * to review, restore, or permanently delete them.
+ *
+ * ACTIVE-DOMAIN scope: a bet owned by the caller shows under "My" only when its
+ * domain is in the caller's live scope — with an active domain chosen, user.domains
+ * is narrowed to [active], so owner-held bets filter to that domain too. Domain-
+ * peer bets are already narrowed by canView → user.domains.includes(bet.domain).
+ * Cross-domain bets are admin-owned and always visible to admins. Company/
+ * Marketplace bets are never narrowed.
  */
 export function listBets(user: Principal, opts: { includeArchived?: boolean } = {}): BigBet[] {
   return [...state().bets.values()]
-    .filter((b) => canView(b, user) && (opts.includeArchived || b.status !== 'archived'))
+    .filter((b) => {
+      if (!canView(b, user)) return false;
+      if (!opts.includeArchived && b.status === 'archived') return false;
+      // ACTIVE-DOMAIN scope: if the caller is the owner (My-tier) but the bet
+      // lives in a domain outside their current live scope, hide it. Admin sees
+      // all (admin role bypasses canView's domain check already). Cross-domain
+      // bets are admin-owned so they pass the role check above.
+      if (user.role !== 'admin' && b.owner === user.id) {
+        return !b.domain || user.domains.includes(b.domain);
+      }
+      return true;
+    })
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 

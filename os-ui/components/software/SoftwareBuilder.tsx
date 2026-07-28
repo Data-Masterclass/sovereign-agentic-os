@@ -40,10 +40,16 @@ import {
 import {
   normalizeImprovement,
   dropImprovement,
-  isBuildable,
-  kindLabel,
+  markDesignedById,
+  markBuiltById,
+  designAll,
+  buildAll,
+  refinementsToDesign,
+  refinementsToBuild,
   type Improvement,
 } from '@/lib/software/improvements';
+import RefinementList, { type RefineHandlers } from './RefinementList';
+import { buildableBatch } from './refinement-view';
 import StageConversation from '@/components/core/StageConversation';
 import { initialStageState, canEnter, isSatisfied, markDone, type StageState } from '@/lib/core/stages';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials';
@@ -52,7 +58,6 @@ import { type BuildTarget } from '@/lib/software/build-target';
 import { everyStoryHasSpec, specHasContent, type StorySpec } from '@/lib/software/story-spec';
 import {
   BUILD_BATCH_CAP,
-  featureId,
   pruneSelection,
   selectedCount,
   toggleFeature as toggleFeatureSel,
@@ -213,6 +218,81 @@ export default function SoftwareBuilder({
     };
     const cleaned = raws.map((r) => normalizeImprovement(r, findStory)).filter((i): i is Improvement => i !== null);
     if (cleaned.length) setImprovements((prev) => [...prev, ...cleaned]);
+  };
+
+  // Resolve a story-id → its human title (for refinement attribution + build targeting).
+  const storyById = (sid: string) => (app.epics ?? []).flatMap((e) => e.stories ?? []).find((s) => s.id === sid) ?? null;
+  const storyTitleOf = (sid: string) => storyById(sid)?.title?.trim() || 'story';
+
+  // Draft a concrete Design spec for ONE refinement on the REASONING model (the design
+  // conversation route), so the design output is REAL — shown inline, then fed to the build.
+  // Honest fallback: if the route can't answer, we draft from the note itself rather than fake.
+  async function draftSpecFor(imp: Improvement): Promise<string> {
+    const story = storyById(imp.storyId);
+    const prompt = `Draft a concrete Design spec addition for this refinement so it can be built. Refinement: "${imp.note}". Target story: "${story?.title?.trim() || imp.storyId}". Return the specific feature(s), non-functional requirement(s) and rule(s) to add — terse, buildable.`;
+    try {
+      const res = await fetch(`/api/apps/${app.id}/assistant`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ stage: 'design', messages: [{ role: 'user', content: prompt }] }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { message?: string };
+      const text = (data.message ?? '').trim();
+      if (text) return text;
+    } catch {
+      /* fall through to the honest local draft */
+    }
+    return `Spec for “${imp.note}” (story: ${story?.title?.trim() || imp.storyId}).`;
+  }
+
+  // Advance ONE refinement to 'designed' with a real drafted spec.
+  async function designRefinement(imp: Improvement): Promise<void> {
+    const spec = await draftSpecFor(imp);
+    setImprovements((prev) => markDesignedById(prev, imp.id, spec));
+  }
+  // Advance ONE refinement to 'built' (its rebuild/build ran).
+  function buildRefinement(imp: Improvement): void {
+    setImprovements((prev) => markBuiltById(prev, imp.id));
+  }
+  // Accelerator: design (if needed) THEN build one item — the design output still lands
+  // in state first (visible), then the build advances it to 'built'.
+  async function designAndBuildRefinement(imp: Improvement): Promise<void> {
+    if (refinementsToDesign([imp]).length > 0) {
+      const spec = await draftSpecFor(imp);
+      setImprovements((prev) => markBuiltById(markDesignedById(prev, imp.id, spec), imp.id));
+    } else {
+      setImprovements((prev) => markBuiltById(prev, imp.id));
+    }
+  }
+  // Batch: design every designable refinement (each gets a real drafted spec).
+  async function designAllRefinements(): Promise<void> {
+    const toDraft = refinementsToDesign(improvements);
+    const specs = new Map<string, string>();
+    for (const imp of toDraft) specs.set(imp.id, await draftSpecFor(imp));
+    setImprovements((prev) => designAll(prev, (i) => specs.get(i.id) ?? `Spec for “${i.note}”.`));
+  }
+  // Batch: build every currently-buildable refinement, capped for a reviewable batch.
+  function buildAllRefinements(): void {
+    const batch = new Set(buildableBatch(improvements).map((i) => i.id));
+    setImprovements((prev) => prev.map((i) => (batch.has(i.id) ? markBuiltById([i], i.id)[0] : i)));
+  }
+  // Batch accelerator: design all, then build all — both steps applied, designs retained.
+  async function designAndBuildAllRefinements(): Promise<void> {
+    const toDraft = refinementsToDesign(improvements);
+    const specs = new Map<string, string>();
+    for (const imp of toDraft) specs.set(imp.id, await draftSpecFor(imp));
+    setImprovements((prev) => buildAll(designAll(prev, (i) => specs.get(i.id) ?? `Spec for “${i.note}”.`)));
+  }
+
+  // The one handler bundle every stage's RefinementList consumes (same list, same lifecycle).
+  const refineHandlers: RefineHandlers = {
+    onDesign: designRefinement,
+    onBuild: buildRefinement,
+    onDesignAndBuild: designAndBuildRefinement,
+    onDesignAll: designAllRefinements,
+    onBuildAll: buildAllRefinements,
+    onDesignAndBuildAll: designAndBuildAllRefinements,
+    onDismiss: (id) => setImprovements((prev) => dropImprovement(prev, id)),
   };
 
   const canEditCode = roleAtLeast(user.role, 'builder');
@@ -459,7 +539,10 @@ export default function SoftwareBuilder({
           ) : null}
 
           {stage.current === 'design' ? (
-            <DesignStage app={app} epics={epics} canEdit={canEdit} onSave={(next) => saveDesign({ epics: next })} onReload={onReload} />
+            <DesignStage
+              app={app} epics={epics} canEdit={canEdit} onSave={(next) => saveDesign({ epics: next })} onReload={onReload}
+              refinements={improvements} refineHandlers={refineHandlers} storyTitleOf={storyTitleOf}
+            />
           ) : null}
 
           {stage.current === 'build' ? (
@@ -469,7 +552,8 @@ export default function SoftwareBuilder({
               onSaveEpics={canEdit ? (next) => saveDesign({ epics: next }) : undefined}
               onGoDesign={() => setStage((s) => ({ ...s, current: 'design' }))}
               improvements={improvements}
-              onDropImprovement={(id) => setImprovements((prev) => dropImprovement(prev, id))}
+              refineHandlers={refineHandlers}
+              storyTitleOf={storyTitleOf}
             />
           ) : null}
 
@@ -483,6 +567,9 @@ export default function SoftwareBuilder({
               improvements={improvements}
               onAddImprovements={addImprovements}
               onGoBuild={() => setStage((s) => ({ ...s, current: 'build' }))}
+              onGoDesign={() => setStage((s) => ({ ...s, current: 'design' }))}
+              refineHandlers={refineHandlers}
+              storyTitleOf={storyTitleOf}
             />
           ) : null}
 
@@ -526,21 +613,30 @@ function DeveloperSurface({
   msg: string;
 }) {
   const consoleLines = [msg, deployMsg, toolOut].filter(Boolean).join('\n\n');
+  // Developer layout: the BUILD / DEPLOY CONSOLE sits at the TOP, full screen width; the
+  // code (which needs the room) sits BELOW it at full width.
   return (
     <div style={{ marginTop: 4 }}>
       <p className="hint" style={{ marginTop: 0 }}>
-        The raw surface: the app’s committed files (edit + commit in-browser) and the live
-        build/deploy console. Everything here is real app state — nothing is simulated.
+        The raw surface: the live build/deploy console up top, then the app’s committed files
+        below (edit + commit in-browser). Everything here is real app state — nothing is simulated.
       </p>
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))',
-          gap: 16,
-          alignItems: 'start',
-          marginTop: 12,
-        }}
-      >
+
+      {/* Build / deploy console — TOP, full width. */}
+      <div className="grant-block" style={{ marginTop: 12 }}>
+        <div className="comp-label">Build / deploy console</div>
+        {consoleLines ? (
+          <pre className="answer mono" style={{ marginTop: 8, fontSize: 12, whiteSpace: 'pre-wrap' }}>{consoleLines}</pre>
+        ) : (
+          <p className="hint" style={{ marginTop: 4 }}>
+            No console output yet — run a preview, publish, or call a tool from the Simple flow and the real output appears here.
+            Pipeline: <span className="mono">{Object.entries(app.pipeline).map(([k, v]) => `${k}=${v}`).join(', ')}</span>.
+          </p>
+        )}
+      </div>
+
+      {/* Code — BELOW, full width (code needs the space). */}
+      <div style={{ marginTop: 16 }}>
         {canEditCode ? (
           <CodePanel appId={app.id} repoFullName={app.repo.fullName} />
         ) : (
@@ -549,17 +645,6 @@ function DeveloperSurface({
             <p className="hint" style={{ marginTop: 4 }}>Editing the code is builder-only. Repo: <span className="mono">{app.repo.fullName || '(not scaffolded)'}</span>.</p>
           </div>
         )}
-        <div className="grant-block">
-          <div className="comp-label">Build / deploy console</div>
-          {consoleLines ? (
-            <pre className="answer mono" style={{ marginTop: 8, fontSize: 12, whiteSpace: 'pre-wrap' }}>{consoleLines}</pre>
-          ) : (
-            <p className="hint" style={{ marginTop: 4 }}>
-              No console output yet — run a preview, publish, or call a tool from the Simple flow and the real output appears here.
-              Pipeline: <span className="mono">{Object.entries(app.pipeline).map(([k, v]) => `${k}=${v}`).join(', ')}</span>.
-            </p>
-          )}
-        </div>
       </div>
     </div>
   );
@@ -701,13 +786,16 @@ function withStorySpec(epics: Epic[], epicId: string, storyId: string, spec: Sto
  * the SAME governed `onSave` (→ patchAppDesign).
  */
 function DesignStage({
-  app, epics, canEdit, onSave, onReload,
+  app, epics, canEdit, onSave, onReload, refinements, refineHandlers, storyTitleOf,
 }: {
   app: SoftwareApp;
   epics: Epic[];
   canEdit: boolean;
   onSave: (epics: Epic[]) => void;
   onReload: () => void;
+  refinements: Improvement[];
+  refineHandlers: RefineHandlers;
+  storyTitleOf: (storyId: string) => string;
 }) {
   const applyEpics = (sug: SuggestedEpic[]) => onSave(applyEpicsSuggestion(epics, sug));
   const applyStories = (groups: SuggestedStoriesForEpic[]) => onSave(applyStoriesSuggestion(epics, groups));
@@ -741,7 +829,19 @@ function DesignStage({
           </>
         }
         structure={
-          <DesignEpicDetail epics={epics} canEdit={canEdit} onSave={onSave} onActiveStory={setActiveStory} />
+          <>
+            <DesignEpicDetail epics={epics} canEdit={canEdit} onSave={onSave} onActiveStory={setActiveStory} />
+            {canEdit && refinements.length > 0 ? (
+              <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+                <RefinementList
+                  refinements={refinements}
+                  storyTitle={storyTitleOf}
+                  variant="design"
+                  handlers={refineHandlers}
+                />
+              </div>
+            ) : null}
+          </>
         }
         conversation={
           <StageAssistantChat
@@ -989,7 +1089,7 @@ function selectionToTarget(epics: Epic[], selected: ReadonlySet<string>): BuildT
 }
 
 function BuildStage({
-  app, epics, canEditCode, onBuilt, target, setTarget, onSaveEpics, onGoDesign, improvements, onDropImprovement,
+  app, epics, canEditCode, onBuilt, target, setTarget, onSaveEpics, onGoDesign, improvements, refineHandlers, storyTitleOf,
 }: {
   app: SoftwareApp;
   epics: Epic[];
@@ -1001,10 +1101,12 @@ function BuildStage({
   onSaveEpics?: (epics: Epic[]) => void;
   /** Jump back to the Design stage (the tree's empty-state pointer). */
   onGoDesign?: () => void;
-  /** Test→Build improvement to-dos to show as pending items in the tree. */
+  /** Test→Build refinement to-dos to show as pending items in the tree. */
   improvements: Improvement[];
-  /** Drop an improvement (once addressed / dismissed). */
-  onDropImprovement: (id: string) => void;
+  /** The shared refinement lifecycle handlers (design/build/design&build + batches). */
+  refineHandlers: RefineHandlers;
+  /** Resolve a story-id → its title. */
+  storyTitleOf: (storyId: string) => string;
 }) {
   // Plan ⇄ Build: Plan discusses/plans with ZERO code changes; Build executes end-to-end.
   const [buildMode, setBuildMode] = useState<'plan' | 'build'>('build');
@@ -1133,29 +1235,18 @@ function BuildStage({
         )}
       </div>
 
-      {/* Test → Build improvement to-dos: pending items the Test verifier drafted.
-          'rebuild' → queue a rebuild of its story; 'needs design' → refine in Design first. */}
+      {/* Test → Build refinements: the SAME lifecycle list, here in its Build lane. Only
+          buildable items (rebuild-proposed / designed) build; a proposed design-kind is
+          gated (design-before-build) and points to Design. Built items stay visible. */}
       {improvements.length > 0 ? (
         <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-          <div className="comp-label" style={{ margin: 0 }}>Improvements to build ({improvements.length})</div>
-          <p className="hint" style={{ marginTop: 2 }}>From Test — each is a reviewable to-do. Nothing runs until you build it.</p>
-          <ul style={{ listStyle: 'none', margin: '8px 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {improvements.map((im) => {
-              const story = epics.find((e) => e.id === im.epicId)?.stories.find((s) => s.id === im.storyId);
-              return (
-                <li key={im.id} className="row" style={{ gap: 8, alignItems: 'center', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 10px', background: 'var(--panel)' }}>
-                  <span className={`badge ${im.kind === 'design' ? 'warn' : 'muted'}`} style={{ fontSize: 10 }}>{kindLabel(im.kind)}</span>
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 12.5 }}>{im.note} <span className="muted">· {story?.title.trim() || 'story'}</span></span>
-                  {isBuildable(im) ? (
-                    <button className="btn ghost sm" title="Queue this story to rebuild next" onClick={() => { setSelected((sel) => toggleGroupSel(new Set(sel), (story?.spec?.features ?? []).map((_, i) => featureId(im.storyId, i)))); }}>Queue rebuild</button>
-                  ) : onGoDesign ? (
-                    <button className="btn ghost sm" title="This changes the spec — refine it in Design first" onClick={onGoDesign}>Refine in Design</button>
-                  ) : null}
-                  <button className="icon-btn" title="Dismiss" onClick={() => onDropImprovement(im.id)}>✕</button>
-                </li>
-              );
-            })}
-          </ul>
+          <RefinementList
+            refinements={improvements}
+            storyTitle={storyTitleOf}
+            variant="build"
+            handlers={refineHandlers}
+            onGoDesign={onGoDesign}
+          />
         </div>
       ) : null}
 
@@ -1256,7 +1347,7 @@ function BuildStage({
  */
 function TestStage({
   app, epics, surface, pipe, busy, onPreview, deployMsg, offlineAck, onOfflineAck, connTools,
-  improvements, onAddImprovements, onGoBuild,
+  improvements, onAddImprovements, onGoBuild, onGoDesign, refineHandlers, storyTitleOf,
 }: {
   app: SoftwareApp;
   epics: Epic[];
@@ -1271,6 +1362,9 @@ function TestStage({
   improvements: Improvement[];
   onAddImprovements: (raws: RawImprovementSuggestion[]) => void;
   onGoBuild: () => void;
+  onGoDesign: () => void;
+  refineHandlers: RefineHandlers;
+  storyTitleOf: (storyId: string) => string;
 }) {
   const [showApi, setShowApi] = useState(false);
   // "Verify & Improve" run state — fires the reasoning verifier + folds its improvements
@@ -1293,7 +1387,7 @@ function TestStage({
       const data = (await res.json().catch(() => ({}))) as { message?: string; suggestions?: { suggestedImprovements?: RawImprovementSuggestion[] }; error?: string };
       if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
       const imps = data.suggestions?.suggestedImprovements ?? [];
-      if (imps.length) { onAddImprovements(imps); setVerifyMsg(`✓ ${imps.length} improvement${imps.length === 1 ? '' : 's'} added to the Build to-do list.`); }
+      if (imps.length) { onAddImprovements(imps); setVerifyMsg(`✓ ${imps.length} refinement${imps.length === 1 ? '' : 's'} found — shown below (Proposed).`); }
       else setVerifyMsg(data.message ? '✓ Verified — no shortfalls flagged.' : '✓ Verified.');
     } catch (e) {
       setVerifyMsg(`✗ ${(e as Error).message}`);
@@ -1316,18 +1410,41 @@ function TestStage({
           The reasoning verifier reads the committed code and each built story&apos;s spec (features · NFRs · rules), reports PASS/FAIL per item (grounded, never fabricated), and drafts a concrete improvement for anything that falls short.
         </p>
         <div className="row" style={{ gap: 10, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button className="btn" disabled={verifying || builtStories.length === 0} onClick={verifyAndImprove} title={builtStories.length === 0 ? 'Build a story first' : 'Verify each built story vs its spec and draft improvements'}>
+          <button className="btn" disabled={verifying || builtStories.length === 0} onClick={verifyAndImprove} title={builtStories.length === 0 ? 'Build a story first' : 'Verify each built story vs its spec and draft refinements'}>
             {verifying ? <span className="spin" /> : 'Verify & Improve'}
           </button>
           {improvements.length > 0 ? (
-            <button className="btn ghost sm" onClick={onGoBuild} title="See the improvements as Build to-dos">{improvements.length} improvement{improvements.length === 1 ? '' : 's'} → Build</button>
+            <span className="badge muted" title="Findings render below as refinement cards">{improvements.length} refinement{improvements.length === 1 ? '' : 's'} below</span>
           ) : null}
         </div>
         {verifyMsg ? <div className={verifyMsg.startsWith('✓') ? 'answer' : 'error'} style={{ marginTop: 10 }}>{verifyMsg}</div> : null}
         <p className="hint" style={{ marginTop: 8 }}>
-          Improvements land as reviewable to-dos in Build — nothing auto-runs. A missed spec item becomes a <strong>rebuild</strong> (standard model); feedback that changes the requirement is routed to <strong>Design</strong> first.
+          Refinements land as reviewable to-dos — nothing auto-runs. A missed spec item becomes a <strong>rebuild</strong> (standard model); feedback that changes the requirement is routed to <strong>Design</strong> first.
         </p>
       </div>
+
+      {/* The findings, right here as refinement cards (Proposed) — the SAME lifecycle list
+          shown in Design/Build, so a finding's dimension + target story + state is legible
+          the moment it's flagged. Read-only in Test: you act on them in Design / Build. */}
+      {improvements.length > 0 ? (
+        <div className="grant-block" style={{ marginBottom: 12 }}>
+          <RefinementList
+            refinements={improvements}
+            storyTitle={storyTitleOf}
+            variant="test"
+            handlers={{ onDismiss: refineHandlers.onDismiss }}
+          />
+          <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+            {refinementsToBuild(improvements).length > 0 ? (
+              <button className="btn ghost sm" onClick={onGoBuild} title="Act on the buildable refinements in Build">{refinementsToBuild(improvements).length} → Build</button>
+            ) : null}
+            {refinementsToDesign(improvements).length > 0 ? (
+              <button className="btn ghost sm" onClick={onGoDesign} title="Design the scope-changing refinements first">{refinementsToDesign(improvements).length} → Design</button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       {surface.ui ? <div className="comp-label" style={{ marginBottom: 6 }}>Deployed build · exactly what ships</div> : null}
       <div className="sw-monitor">
         <div className="sw-monitor-main">
@@ -1622,13 +1739,21 @@ function PublishStage({
                   {app.repo.fullName ? <button type="button" className="btn ghost" onClick={onOpenRepo}>Repo →</button> : null}
                 </div>
               </div>
-            </div>
 
-            {/* ── Honest pipeline status — the SAME shared derivation Test reads, so a real
-                 build/deploy failure is surfaced here too, never hidden behind the badge. ── */}
-            {pipe.done && !pipe.ok ? (
-              <div className="error" style={{ marginTop: 12 }}>{pipe.commentary}</div>
-            ) : null}
+              {/* ── Live DEPLOY stepper — the SAME shared pipeline-view derivation Test reads,
+                   rendered on the core ProgressStepper so a deploy/go-live is VISIBLE as it
+                   runs (Scaffold → Build image → Registry → Deploy → Live), never a silent
+                   badge flip. A real failure surfaces the marked stage here too. ── */}
+              <div className="sw-health">
+                <ProgressStepper
+                  steps={pipe.steps}
+                  active={pipe.active}
+                  done={pipe.done}
+                  ok={pipe.ok}
+                  commentary={pipe.commentary}
+                />
+              </div>
+            </div>
 
             {/* ── Governed tool-call surface — the app's MCP capabilities + real call output ── */}
             {surface.api ? (
