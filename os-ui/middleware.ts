@@ -14,6 +14,26 @@ import { corsHeadersFor } from '@/lib/core/cors';
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
+  // CREDENTIALED CORS for deployed governed apps calling back into the OS
+  // (identity delegation: os.whoami() etc. from `<slug>.<domain>.<appsDomain>`).
+  // Computed FIRST so it applies to EVERY governed surface — crucially including
+  // the PUBLIC `/api/auth/me` the app SDK's os.whoami() hits BEFORE anything else
+  // (it lives in the always-public block below; without this the credentialed
+  // cross-origin whoami is blocked by the browser → "Load failed"). Reflect ONLY
+  // recognised app/OS origins; same-origin calls carry no Origin and are untouched.
+  const cors =
+    pathname.startsWith('/api/') || pathname.startsWith('/tools/')
+      ? corsHeadersFor(req.headers.get('origin'), appConfig.osPublicUrl, appConfig.appsBaseDomain)
+      : null;
+  // Answer the preflight uniformly (a public auth route or a self-guarded API route).
+  if (cors && req.method === 'OPTIONS') {
+    return new NextResponse(null, { status: 204, headers: cors });
+  }
+  const withCors = (res: NextResponse): NextResponse => {
+    if (cors) for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);
+    return res;
+  };
+
   // Always-public paths.
   if (
     pathname.startsWith('/signin') ||
@@ -29,29 +49,14 @@ export async function middleware(req: NextRequest) {
     pathname === '/icon.svg' ||
     pathname === '/favicon.ico'
   ) {
-    return NextResponse.next();
+    return withCors(NextResponse.next());
   }
 
   // API routes AND the same-origin tool proxy guard themselves (return 401
   // JSON via requireUser()), so let them pass rather than redirecting — an
   // unauthenticated iframe should see a clean 401, not an HTML /signin page.
   if (pathname.startsWith('/api/') || pathname.startsWith('/tools/')) {
-    // CREDENTIALED CORS for deployed governed apps calling back into the OS
-    // (identity delegation: os.whoami() etc. from `<slug>.<domain>.<appsDomain>`).
-    // Reflect ONLY recognised app/OS origins; same-origin calls carry no Origin
-    // and pass through unchanged. Answer the preflight here; attach headers to
-    // the real response so the credentialed fetch is accepted by the browser.
-    const cors = corsHeadersFor(
-      req.headers.get('origin'),
-      appConfig.osPublicUrl,
-      appConfig.appsBaseDomain,
-    );
-    if (cors && req.method === 'OPTIONS') {
-      return new NextResponse(null, { status: 204, headers: cors });
-    }
-    const res = NextResponse.next();
-    if (cors) for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);
-    return res;
+    return withCors(NextResponse.next());
   }
 
   const token = req.cookies.get(SESSION_COOKIE)?.value;

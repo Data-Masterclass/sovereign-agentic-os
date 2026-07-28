@@ -71,6 +71,8 @@ test('the Creator→Builder handoff: a domain Builder approves a dataset they do
   const asset = applyApprovedPromotion(req, bea);
   assert.equal(asset.tier, 'asset');
   assert.equal(asset.visibility, 'domain');
+  // #146: promotion enrolls the governed asset in the analytics-as-code mono-repo.
+  assert.equal(asset.gitBacked, true);
   // now a sales peer can view it; amir still owns it
   assert.equal(getDataset(id, bea).tier, 'asset');
 });

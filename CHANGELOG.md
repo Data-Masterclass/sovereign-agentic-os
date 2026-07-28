@@ -13,6 +13,27 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.18] — 2026-07-28
+
+### Fixed
+- **Generated-app SSO to the OS now actually completes** (was still failing with
+  "The OS could not be reached … Load failed"). Root cause: the OS middleware
+  applied credentialed CORS to `/api/*` — but `/api/auth/me`, the endpoint the app
+  SDK's `os.whoami()` hits FIRST, sits in the always-public early-return that ran
+  BEFORE the CORS block, so that one response carried no `Access-Control-Allow-Origin`
+  and the browser blocked the cross-origin whoami. CORS is now computed first and
+  applied to every governed surface including the public auth routes (preflight
+  answered uniformly). Server-side fix — existing deployed apps start working after
+  this rolls out, no rebuild required.
+
+### Changed
+- **#146 — governed datasets now enroll in the analytics-as-code mono-repo on
+  promotion.** Promoting a dataset (Personal→Domain) marks it `gitBacked`, so the
+  existing promote hook records its **dbt model + `schema.yml`** in the `analytics`
+  Forgejo repo alongside the Cube model + dbt exposures it already wrote. The runtime
+  governed CTAS is unchanged — these are the version-controlled, review-able mirror
+  (the source OpenMetadata ingests for lineage).
+
 ## [os-ui 0.6.17] — 2026-07-28
 
 ### Added

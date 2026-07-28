@@ -1124,6 +1124,11 @@ export function applyApprovedPromotion(req: PromotionRequest, approver: Principa
   d.tier = 'asset'; // storageFor(asset) === 'trino-iceberg'
   d.visibility = visibilityFor('asset', req.visibility);
   d.grants = req.grants;
+  // #146: a governed shared asset becomes part of the analytics-as-code estate —
+  // mark it git-backed so the promote hook records its dbt model + schema.yml in the
+  // `analytics` mono-repo (observability mirror; the runtime CTAS is unchanged). The
+  // flag is sticky + persisted (parseDataset carries it forward through certify).
+  d.gitBacked = true;
   persist(rec, d);
   return d;
 }
