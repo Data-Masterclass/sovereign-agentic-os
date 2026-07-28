@@ -92,7 +92,7 @@ function AgentNodeView({ data, selected }: NodeProps<AgentNode>) {
 function TypedEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, selected }: EdgeProps) {
   const { deleteElements } = useReactFlow();
   const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
-  const d = (data ?? {}) as FlowEdge['data'];
+  const d = (data ?? {}) as FlowEdge['data'] & { canEdit?: boolean };
   const supervise = d.edgeType === 'supervise';
   return (
     <>
@@ -110,10 +110,10 @@ function TypedEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, tar
       <EdgeLabelRenderer>
         <div className="gc-edge-label" style={{ transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)` }}>
           {d.when ? <span className="gc-edge-when">{d.when}</span> : null}
-          {!d.derived ? (
+          {d.canEdit ? (
             <button
               className="gc-edge-x"
-              title={`Remove ${d.edgeType} edge`}
+              title={d.derived ? 'Remove supervise link (drops this membership)' : `Remove ${d.edgeType} edge`}
               onClick={(e) => { e.stopPropagation(); void deleteElements({ edges: [{ id }] }); }}
             >
               ×
@@ -195,9 +195,13 @@ function Flow(props: GraphCanvasProps) {
       source: e.source,
       target: e.target,
       type: e.type,
-      data: e.data,
-      deletable: !e.data.derived,
-    })), [system]);
+      // Carry canEdit onto the edge so the renderer shows its remove control.
+      data: { ...e.data, canEdit },
+      // Removable whenever the graph is editable — INCLUDING a derived supervise
+      // arrow (member→supervisor): removing it drops that membership (removeEdge
+      // handles both the explicit edge and the members[] entry).
+      deletable: canEdit,
+    })), [system, canEdit]);
 
   const [nodes, setNodes] = useState<AgentNode[]>(buildNodes);
   const [edges, setEdges] = useState<Edge[]>(buildEdges);
@@ -257,7 +261,10 @@ function Flow(props: GraphCanvasProps) {
   const onEdgesDelete = useCallback((deleted: Edge[]) => {
     for (const e of deleted) {
       const d = (e.data ?? {}) as FlowEdge['data'];
-      if (!d.derived) onRemoveEdge(e.source, e.target, d.edgeType);
+      // Both explicit edges AND derived supervise arrows are removable: removeEdge
+      // drops the explicit `edges[]` entry AND (for supervise) the members[] entry,
+      // so deleting a member→supervisor arrow correctly ends that membership.
+      onRemoveEdge(e.source, e.target, d.edgeType);
     }
   }, [onRemoveEdge]);
 

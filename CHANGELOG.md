@@ -13,6 +13,18 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.19] — 2026-07-28
+
+### Fixed
+- **Agent graph: supervise arrows between agents can now be removed.** The graph
+  canvas let you delete explicit handoff/supervise edges, but a *derived* supervise
+  arrow (auto-drawn from a supervisor's `members`) had no remove control and ignored
+  the Delete key, so there was no way to un-wire a supervisor from a member on the
+  canvas. Editable graphs now show the `×` on every arrow (and honor Delete) —
+  removing a derived supervise arrow drops that membership (the `edges[]` entry AND
+  the `members[]` entry, via the existing `removeEdge`). View-only graphs are
+  unchanged (no remove control).
+
 ## [os-ui 0.6.18] — 2026-07-28
 
 ### Fixed
