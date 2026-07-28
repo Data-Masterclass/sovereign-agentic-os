@@ -203,3 +203,113 @@ test('listFolders is per-tab (a files folder never leaks into knowledge)', () =>
   assert.deepEqual(listFolders(amir, 'files', 'personal').map((f) => f.path), ['/f']);
   assert.deepEqual(listFolders(amir, 'knowledge', 'personal').map((f) => f.path), ['/k']);
 });
+
+// ─────────────────────────── domain-scoped folder isolation ────────────────
+// These tests prove the fix for the bug: "folder trees are NOT domain-specific".
+// A personal folder created under domain A must NOT appear when the active
+// domain is B, same-named folders in A and B must be distinct rows, and
+// null/undefined activeDomain means "All" (shows both).
+
+// A user who belongs to BOTH sales and ops — multi-domain principal.
+const bi: Principal = { id: 'bi', domains: ['sales', 'ops'], role: 'creator' };
+// bi acting as domain_admin so they can create domain folders
+const biAdmin: Principal = { id: 'bi', domains: ['sales', 'ops'], role: 'domain_admin' };
+
+test('personal folder created under domain A is NOT listed when activeDomain=B', () => {
+  // Create /work stamped in 'sales'.
+  const f = createFolder(bi, { tab: 'files', scope: 'personal', path: '/work', domain: 'sales' });
+  assert.equal(f.domain, 'sales');
+
+  // activeDomain=sales → visible.
+  const inSales = listFolders(bi, 'files', 'personal', { activeDomain: 'sales' }).map((x) => x.path);
+  assert.deepEqual(inSales, ['/work']);
+
+  // activeDomain=ops → NOT visible.
+  const inOps = listFolders(bi, 'files', 'personal', { activeDomain: 'ops' }).map((x) => x.path);
+  assert.deepEqual(inOps, []);
+});
+
+test('same-named personal folders in domain A and B are distinct rows', () => {
+  const fSales = createFolder(bi, { tab: 'files', scope: 'personal', path: '/work', domain: 'sales' });
+  const fOps = createFolder(bi, { tab: 'files', scope: 'personal', path: '/work', domain: 'ops' });
+
+  // They are separate rows.
+  assert.notEqual(fSales.id, fOps.id);
+
+  // Each is visible only under its own domain.
+  const inSales = listFolders(bi, 'files', 'personal', { activeDomain: 'sales' });
+  assert.deepEqual(inSales.map((x) => x.id), [fSales.id]);
+
+  const inOps = listFolders(bi, 'files', 'personal', { activeDomain: 'ops' });
+  assert.deepEqual(inOps.map((x) => x.id), [fOps.id]);
+});
+
+test('activeDomain=null (All) shows folders from every domain the viewer owns', () => {
+  createFolder(bi, { tab: 'files', scope: 'personal', path: '/work', domain: 'sales' });
+  createFolder(bi, { tab: 'files', scope: 'personal', path: '/work', domain: 'ops' });
+
+  // null → All — both appear (sorted by path; same path so order is stable by insertion via sort stability).
+  const all = listFolders(bi, 'files', 'personal', { activeDomain: null });
+  assert.equal(all.length, 2);
+  assert.ok(all.every((f) => f.path === '/work'));
+});
+
+test('domain (shared) folder tier is also scoped by activeDomain', () => {
+  const salesAdmin: Principal = { id: 'salesadmin', domains: ['sales'], role: 'domain_admin' };
+  const opsAdmin: Principal = { id: 'opsadmin', domains: ['ops'], role: 'domain_admin' };
+
+  createFolder(salesAdmin, { tab: 'files', scope: 'domain', path: '/team', domain: 'sales' });
+  createFolder(opsAdmin, { tab: 'files', scope: 'domain', path: '/team', domain: 'ops' });
+
+  // bi belongs to both; with activeDomain=sales only the sales folder surfaces.
+  const inSales = listFolders(bi, 'files', 'domain', { activeDomain: 'sales' }).map((x) => x.domain);
+  assert.deepEqual(inSales, ['sales']);
+
+  const inOps = listFolders(bi, 'files', 'domain', { activeDomain: 'ops' }).map((x) => x.domain);
+  assert.deepEqual(inOps, ['ops']);
+
+  // null → both.
+  const all = listFolders(bi, 'files', 'domain', { activeDomain: null });
+  assert.equal(all.length, 2);
+});
+
+test('folderAndDescendants is scoped to (owner, domain) for personal — cross-domain subtrees do not cascade', () => {
+  const fSales = createFolder(bi, { tab: 'files', scope: 'personal', path: '/a', domain: 'sales' });
+  const childSales = createFolder(bi, { tab: 'files', scope: 'personal', path: '/a/b', domain: 'sales' });
+  const fOps = createFolder(bi, { tab: 'files', scope: 'personal', path: '/a', domain: 'ops' });
+  const childOps = createFolder(bi, { tab: 'files', scope: 'personal', path: '/a/b', domain: 'ops' });
+
+  const salesDescendants = folderAndDescendants(getFolder(fSales.id)!).map((n) => n.id).sort();
+  assert.deepEqual(salesDescendants, [fSales.id, childSales.id].sort());
+
+  const opsDescendants = folderAndDescendants(getFolder(fOps.id)!).map((n) => n.id).sort();
+  assert.deepEqual(opsDescendants, [fOps.id, childOps.id].sort());
+
+  void childSales; void childOps;
+});
+
+test('createFolder personal: idempotent is keyed on (owner, domain, path) — distinct rows for different domains', () => {
+  // Same path, same owner, different domain → two distinct rows.
+  const a = createFolder(bi, { tab: 'knowledge', scope: 'personal', path: '/notes', domain: 'sales' });
+  const b = createFolder(bi, { tab: 'knowledge', scope: 'personal', path: '/notes', domain: 'ops' });
+  assert.notEqual(a.id, b.id);
+
+  // Same path, same owner, same domain → idempotent (returns existing row).
+  const a2 = createFolder(bi, { tab: 'knowledge', scope: 'personal', path: '/notes', domain: 'sales' });
+  assert.equal(a2.id, a.id);
+});
+
+test('single-domain users are unaffected: no activeDomain filter acts like before', () => {
+  // Amir is single-domain (sales). A single-domain user with no activeDomain restriction
+  // still sees all their own folders, same as before this change.
+  createFolder(amir, { tab: 'files', scope: 'personal', path: '/mine' });
+  const all = listFolders(amir, 'files', 'personal', { activeDomain: null });
+  assert.equal(all.length, 1);
+  assert.equal(all[0].path, '/mine');
+
+  // activeDomain='sales' also works — they only have sales folders anyway.
+  const scoped = listFolders(amir, 'files', 'personal', { activeDomain: 'sales' });
+  assert.equal(scoped.length, 1);
+});
+
+void biAdmin; // prevent unused-variable lint

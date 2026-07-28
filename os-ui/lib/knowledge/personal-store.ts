@@ -169,12 +169,20 @@ function summarise(rec: PersonalKnowledgeRecord): PersonalKnowledgeSummary {
   return rest;
 }
 
-/** Grouped payload matching every other OS store: mine / domain / marketplace. */
+/** Grouped payload matching every other OS store: mine / domain / marketplace.
+ *
+ *  `activeDomain` mirrors the OS-wide domain switcher: when non-null the "mine"
+ *  group is restricted to entries stamped with that domain (consistent with how
+ *  `listFolders` and the artifact lists behave on a scoped domain). The "domain"
+ *  (Shared) group is also narrowed — only entries from the active domain surface.
+ *  The "marketplace" (Certified) group is tenant-wide and is never narrowed.
+ *  null / undefined = "All domains" — shows every owned / visible entry. */
 export function listPersonalKnowledge(
   user: Principal,
-  opts: { includeArchived?: boolean } = {},
+  opts: { includeArchived?: boolean; activeDomain?: string | null } = {},
 ): PersonalKnowledgeGroups {
   ensureSeeded();
+  const activeDomain = opts.activeDomain ?? null;
   const mine: PersonalKnowledgeSummary[] = [];
   const domain: PersonalKnowledgeSummary[] = [];
   const marketplace: PersonalKnowledgeSummary[] = [];
@@ -182,9 +190,17 @@ export function listPersonalKnowledge(
   for (const rec of st().entries.values()) {
     if (rec.archived && !opts.includeArchived) continue;
     if (!canView(rec, user)) continue;
-    if (rec.visibility === 'Marketplace') marketplace.push(summarise(rec));
-    else if (rec.visibility === 'Shared') domain.push(summarise(rec));
-    else mine.push(summarise(rec));
+    if (rec.visibility === 'Marketplace') {
+      marketplace.push(summarise(rec));
+    } else if (rec.visibility === 'Shared') {
+      // Domain group: only surface if it matches the active domain (when one is set).
+      if (activeDomain !== null && rec.domain !== activeDomain) continue;
+      domain.push(summarise(rec));
+    } else {
+      // Mine group: personal entries are owner-private; scope by active domain when set.
+      if (activeDomain !== null && rec.domain !== activeDomain) continue;
+      mine.push(summarise(rec));
+    }
   }
 
   const byTitle = (a: PersonalKnowledgeSummary, b: PersonalKnowledgeSummary) => a.title.localeCompare(b.title);

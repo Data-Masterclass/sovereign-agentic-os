@@ -8,7 +8,7 @@ import Link from 'next/link';
 import CodePanel from '@/components/CodePanel';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import ReviewCard, { type ReviewCardData } from '@/components/ReviewCard';
-import ProgressStepper, { type Step, type StepState } from '@/components/core/ProgressStepper';
+import ProgressStepper from '@/components/core/ProgressStepper';
 import DomainTag from '@/components/DomainTag';
 import { useToolWindow } from '@/components/ToolWindowProvider';
 import { useApprovalNotifier } from '@/components/lifecycle/useApprovalNotifier';
@@ -65,6 +65,7 @@ import DesignEpicDetail from './DesignEpicDetail';
 import SpecTree, { type SpecNode } from './SpecTree';
 import SpecDetailPanel from './SpecDetailPanel';
 import { SW_STAGES, type SwStageId, type SwCtx } from './stages';
+import { derivePipelineView, type PipelineView } from '@/lib/software/pipeline-view';
 
 type Visibility = 'Personal' | 'Shared' | 'Certified';
 type Tool = { name: string; description: string; write: boolean };
@@ -114,15 +115,6 @@ export type SoftwareApp = {
 };
 type Connection = { id: string; name: string; principal: string; visibility: Visibility; tools: Tool[] } | null;
 
-const STAGES = ['forgejo', 'actions', 'harbor', 'argocd', 'live'] as const;
-const STAGE_STEP_LABEL: Record<(typeof STAGES)[number], string> = {
-  forgejo: 'Scaffold repo',
-  actions: 'Build image (CI)',
-  harbor: 'Publish to registry',
-  argocd: 'Deploy',
-  live: 'Live / health',
-};
-
 const MODE_KEY = 'software.viewMode';
 /** A stable empty selection set (Design passes this — it has no build-select). */
 const EMPTY_SET: ReadonlySet<string> = new Set<string>();
@@ -141,25 +133,6 @@ const TEMPLATE_LABEL: Record<string, string> = {
   script: 'Script (legacy)',
   dashboard: 'Dashboard (legacy)',
 };
-
-function pipelineSteps(pipeline: Record<string, string>): { steps: Step[]; active: boolean; done: boolean; ok: boolean } {
-  let firstPendingSeen = false;
-  const steps: Step[] = STAGES.map((s) => {
-    const status = pipeline[s] ?? 'pending';
-    let state: StepState;
-    if (status === 'ok' || status === 'disabled') state = 'done';
-    else if (status === 'offline' || status === 'failing') state = 'fail';
-    else {
-      state = firstPendingSeen ? 'pending' : 'active';
-      firstPendingSeen = true;
-    }
-    return { key: s, label: STAGE_STEP_LABEL[s], state };
-  });
-  const anyFail = steps.some((st) => st.state === 'fail');
-  const anyPending = steps.some((st) => st.state === 'active' || st.state === 'pending');
-  const done = anyFail || !anyPending;
-  return { steps, active: !done, done, ok: !anyFail };
-}
 
 function visBadge(v: Visibility): string {
   return `badge vis-${v.toLowerCase()}`;
@@ -411,7 +384,13 @@ export default function SoftwareBuilder({
     }
   }
 
-  const pipe = useMemo(() => pipelineSteps(app.pipeline), [app.pipeline]);
+  // The ONE honest pipeline derivation — shared with Publish so Test and Publish
+  // can never disagree. A live/serving app shows all upstream stages complete;
+  // a real failure surfaces the same marked stage in both surfaces.
+  const pipe = useMemo(
+    () => derivePipelineView(app.pipeline, { state: app.deploy.state, releases: app.deploy.releases }),
+    [app.pipeline, app.deploy.state, app.deploy.releases],
+  );
 
   return (
     <>
@@ -509,7 +488,7 @@ export default function SoftwareBuilder({
 
           {stage.current === 'publish' ? (
             <PublishStage
-              app={app} surface={surface} user={user}
+              app={app} surface={surface} user={user} pipe={pipe}
               connTools={connection?.tools ?? app.mcpTools}
               reviewCard={reviewCard}
               publishLabel={publishLabel} publishDisabled={publishDisabled} inReview={inReview}
@@ -1282,7 +1261,7 @@ function TestStage({
   app: SoftwareApp;
   epics: Epic[];
   surface: { ui: boolean; api: boolean };
-  pipe: { steps: Step[]; active: boolean; done: boolean; ok: boolean };
+  pipe: PipelineView;
   busy: boolean;
   onPreview: () => void;
   deployMsg: string;
@@ -1382,11 +1361,7 @@ function TestStage({
             active={pipe.active}
             done={pipe.done}
             ok={pipe.ok}
-            commentary={
-              pipe.done
-                ? pipe.ok ? 'Build & deploy complete.' : 'A build/deploy stage did not complete — see the marked stage.'
-                : 'Building & deploying…'
-            }
+            commentary={pipe.commentary}
           />
         </div>
 
@@ -1486,7 +1461,7 @@ function TestStage({
 /* ─────────────────────────── Publish (replaces Operate) ─────────────────────────── */
 
 function PublishStage({
-  app, surface, user, connTools, reviewCard,
+  app, surface, user, pipe, connTools, reviewCard,
   publishLabel, publishDisabled, inReview, onPublish, deployMsg,
   toolOut, toolNote, onCallTool, onOpenRepo,
   canPromoteUI, onPromote, canDemoteUI, demoteLabel, confirmDemoteLabel,
@@ -1495,6 +1470,7 @@ function PublishStage({
   app: SoftwareApp;
   surface: { ui: boolean; api: boolean };
   user: { id: string; role: SessionRole };
+  pipe: PipelineView;
   connTools: Tool[];
   reviewCard: ReviewCardData | null;
   publishLabel: string;
@@ -1647,6 +1623,12 @@ function PublishStage({
                 </div>
               </div>
             </div>
+
+            {/* ── Honest pipeline status — the SAME shared derivation Test reads, so a real
+                 build/deploy failure is surfaced here too, never hidden behind the badge. ── */}
+            {pipe.done && !pipe.ok ? (
+              <div className="error" style={{ marginTop: 12 }}>{pipe.commentary}</div>
+            ) : null}
 
             {/* ── Governed tool-call surface — the app's MCP capabilities + real call output ── */}
             {surface.api ? (

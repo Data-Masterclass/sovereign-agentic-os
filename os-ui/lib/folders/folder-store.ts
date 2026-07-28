@@ -161,8 +161,9 @@ function findByPath(tab: FolderTab, scope: FolderScope, domain: string, owner: s
   const p = normaliseFolderPath(path);
   for (const n of st().store.values()) {
     if (n.tab !== tab || n.scope !== scope || n.path !== p) continue;
-    // Personal folders are keyed by owner; domain folders by domain.
-    if (scope === 'personal' ? n.owner === owner : n.domain === domain) return n;
+    // Personal folders are keyed by (owner, domain) so same-named folders in
+    // different domains are distinct rows. Domain folders are keyed by domain.
+    if (scope === 'personal' ? (n.owner === owner && n.domain === domain) : n.domain === domain) return n;
   }
   return undefined;
 }
@@ -170,22 +171,34 @@ function findByPath(tab: FolderTab, scope: FolderScope, domain: string, owner: s
 // ----------------------------------------------------------------- reads --
 
 /** Every folder the viewer may see in a `tab` for a `scope`. Personal → the
- *  viewer's own folders; domain → the folders shared to any of the viewer's
- *  domains. Archived folders are hidden by default (opt in via `includeArchived`).
- *  Sorted by path for a stable rail order. */
+ *  viewer's own folders, further narrowed to `activeDomain` when non-null; domain
+ *  → the folders shared to any of the viewer's domains (also narrowed when an
+ *  active domain is set). Archived folders are hidden by default (opt in via
+ *  `includeArchived`). Sorted by path for a stable rail order.
+ *
+ *  `activeDomain` mirrors the OS-wide domain switcher: null / undefined means
+ *  "All domains" and shows every folder the viewer owns (same behaviour as the
+ *  artifact lists on the "All" selector). A non-null value restricts the listing
+ *  to folders stamped with that domain — so switching domains diverges the tree. */
 export function listFolders(
   viewer: Principal,
   tab: FolderTab,
   scope: FolderScope,
-  opts: { includeArchived?: boolean } = {},
+  opts: { includeArchived?: boolean; activeDomain?: string | null } = {},
 ): FolderNode[] {
+  const activeDomain = opts.activeDomain ?? null;
   const out: FolderNode[] = [];
   for (const n of st().store.values()) {
     if (n.tab !== tab || n.scope !== scope) continue;
     if (n.archived && !opts.includeArchived) continue;
     if (scope === 'personal') {
-      if (n.owner === viewer.id) out.push(n);
-    } else if (viewer.domains.includes(n.domain)) {
+      if (n.owner !== viewer.id) continue;
+      // When an active domain is chosen, only show folders stamped with it.
+      if (activeDomain !== null && n.domain !== activeDomain) continue;
+      out.push(n);
+    } else {
+      if (!viewer.domains.includes(n.domain)) continue;
+      if (activeDomain !== null && n.domain !== activeDomain) continue;
       out.push(n);
     }
   }
@@ -193,14 +206,21 @@ export function listFolders(
 }
 
 /** Every folder row (tab+scope+lane peers) that IS `node` or a descendant of it.
- *  The lane is personal (owner-keyed) or domain (domain-keyed), mirroring how the
- *  rest of the store scopes. Used by the archive/restore/delete row cascade + the
- *  lifecycle orchestrator's member-item cascade. */
+ *  The lane is personal (owner+domain-keyed) or domain (domain-keyed), mirroring how
+ *  the rest of the store scopes. Used by the archive/restore/delete row cascade + the
+ *  lifecycle orchestrator's member-item cascade. Personal lanes are keyed by
+ *  (owner, domain) so same-named folders in different domains stay distinct. */
 export function folderAndDescendants(node: FolderNode): FolderNode[] {
   const out: FolderNode[] = [];
   for (const n of st().store.values()) {
     if (n.tab !== node.tab || n.scope !== node.scope) continue;
-    if (node.scope === 'personal' ? n.owner !== node.owner : n.domain !== node.domain) continue;
+    if (node.scope === 'personal') {
+      // Personal: scope within the same (owner, domain) pair so a /work folder in
+      // domain A does not cascade into a /work subtree the user owns in domain B.
+      if (n.owner !== node.owner || n.domain !== node.domain) continue;
+    } else {
+      if (n.domain !== node.domain) continue;
+    }
     if (n.path === node.path || n.path.startsWith(node.path + '/')) out.push(n);
   }
   return out;
@@ -277,10 +297,15 @@ export function renameFolder(user: Principal, id: string, toPath: string): Folde
   if (to === from) return node;
 
   const at = now();
-  // Rewrite this row + every descendant row that shares the `from` prefix.
+  // Rewrite this row + every descendant row that shares the `from` prefix, scoped
+  // to the same (owner, domain) lane for personal folders (mirrors folderAndDescendants).
   for (const n of s.store.values()) {
     if (n.tab !== node.tab || n.scope !== node.scope) continue;
-    if (node.scope === 'personal' ? n.owner !== node.owner : n.domain !== node.domain) continue;
+    if (node.scope === 'personal') {
+      if (n.owner !== node.owner || n.domain !== node.domain) continue;
+    } else {
+      if (n.domain !== node.domain) continue;
+    }
     const rewritten = renamePrefix(n.path, from, to);
     if (rewritten === n.path) continue;
     versions.record(n.id, user.id, n, `rename ${n.path} → ${rewritten}`);

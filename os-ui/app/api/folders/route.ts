@@ -37,7 +37,9 @@ export const GET = withRoute(async ({ user, req }) => {
   const tab = readTab(url.searchParams.get('tab'));
   const scope = readScope(url.searchParams.get('scope'));
   const includeArchived = url.searchParams.get('archived') === '1';
-  return NextResponse.json({ folders: listFolders(user, tab, scope, { includeArchived }) });
+  // Narrow the folder tree to the active domain so switching domain diverges the rail.
+  const activeDomain = (user as { activeDomain?: string | null }).activeDomain ?? null;
+  return NextResponse.json({ folders: listFolders(user, tab, scope, { includeArchived, activeDomain }) });
 }, { hydrate: ensureHydrated });
 
 export const POST = withRoute<Record<string, string>, {
@@ -49,11 +51,16 @@ export const POST = withRoute<Record<string, string>, {
   if (!body.path || !String(body.path).trim()) {
     return NextResponse.json({ error: 'a folder needs a path' }, { status: 400 });
   }
+  // For personal-scope creation, stamp the active domain (not the arbitrary first domain)
+  // so the new folder lands under the domain the user is operating in.
+  const activeDomain = (user as { activeDomain?: string | null }).activeDomain ?? null;
+  const scope = readScope(body.scope ?? null);
+  const domain = body.domain ?? (scope === 'personal' && activeDomain ? activeDomain : undefined);
   const folder = createFolder(user, {
     tab: readTab(body.tab ?? null),
-    scope: readScope(body.scope ?? null),
+    scope,
     path: String(body.path),
-    domain: body.domain,
+    domain,
   });
   return NextResponse.json({ folder }, { status: 201 });
 }, { parse: true, hydrate: ensureHydrated });

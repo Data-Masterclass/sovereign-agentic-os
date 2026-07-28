@@ -221,3 +221,70 @@ test('Shared-count bug regression: after Personal→Shared promotion the domain 
   assert.equal(g.domain[0].title, 'Promoted note');
   assert.equal(g.domain[0].visibility, 'Shared');
 });
+
+// ─────────────────────── activeDomain isolation for personal knowledge ──────
+
+// A user who is a member of BOTH 'sales' and 'finance' — tests multi-domain scoping.
+const bi = { id: 'bi', domains: ['sales', 'finance'], role: 'creator' as const };
+const biAdmin = { id: 'bi', domains: ['sales', 'finance'], role: 'domain_admin' as const };
+
+test('activeDomain=A: mine excludes entries stamped for domain B', () => {
+  __resetStore();
+  createPersonalKnowledge(bi, { title: 'Sales note', domain: 'sales' });
+  createPersonalKnowledge(bi, { title: 'Finance note', domain: 'finance' });
+
+  const inSales = listPersonalKnowledge(bi, { activeDomain: 'sales' });
+  assert.equal(inSales.mine.length, 1);
+  assert.equal(inSales.mine[0].title, 'Sales note');
+
+  const inFinance = listPersonalKnowledge(bi, { activeDomain: 'finance' });
+  assert.equal(inFinance.mine.length, 1);
+  assert.equal(inFinance.mine[0].title, 'Finance note');
+});
+
+test('activeDomain=null (All) shows mine entries from every domain', () => {
+  __resetStore();
+  createPersonalKnowledge(bi, { title: 'Sales note', domain: 'sales' });
+  createPersonalKnowledge(bi, { title: 'Finance note', domain: 'finance' });
+
+  const all = listPersonalKnowledge(bi, { activeDomain: null });
+  assert.equal(all.mine.length, 2);
+});
+
+test('activeDomain filters the domain (Shared) group too, but marketplace is never narrowed', () => {
+  __resetStore();
+  // Create entries from each domain and promote them to Shared.
+  const recSales = createPersonalKnowledge(biAdmin, { title: 'Sales shared', domain: 'sales' });
+  const recFinance = createPersonalKnowledge(biAdmin, { title: 'Finance shared', domain: 'finance' });
+  promotePersonalKnowledge(recSales.id, biAdmin);
+  promotePersonalKnowledge(recFinance.id, biAdmin);
+
+  // Certify one to marketplace via an admin (ada is sales-only admin — create a tenant admin).
+  const tenantAdmin = { id: 'ta', domains: ['sales', 'finance'], role: 'admin' as const };
+  const recCertified = createPersonalKnowledge(tenantAdmin, { title: 'Certified entry', domain: 'sales' });
+  promotePersonalKnowledge(recCertified.id, tenantAdmin);
+  certifyPersonalKnowledge(recCertified.id, tenantAdmin);
+
+  // bi belongs to both domains.
+  const inSales = listPersonalKnowledge(bi, { activeDomain: 'sales' });
+  assert.equal(inSales.domain.length, 1, 'domain group scoped to sales');
+  assert.equal(inSales.domain[0].title, 'Sales shared');
+  // Marketplace is never narrowed.
+  assert.equal(inSales.marketplace.length, 1);
+
+  const inFinance = listPersonalKnowledge(bi, { activeDomain: 'finance' });
+  assert.equal(inFinance.domain.length, 1, 'domain group scoped to finance');
+  assert.equal(inFinance.domain[0].title, 'Finance shared');
+  assert.equal(inFinance.marketplace.length, 1, 'marketplace unchanged');
+});
+
+test('single-domain user unaffected: no activeDomain behaves exactly as before', () => {
+  __resetStore();
+  createPersonalKnowledge(amir, { title: 'My note' }); // amir = sales-only
+  const g = listPersonalKnowledge(amir, { activeDomain: null });
+  assert.equal(g.mine.length, 1);
+  const gScoped = listPersonalKnowledge(amir, { activeDomain: 'sales' });
+  assert.equal(gScoped.mine.length, 1);
+});
+
+void biAdmin; // prevent unused-variable lint

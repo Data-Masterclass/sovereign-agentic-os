@@ -13,6 +13,27 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.10] — 2026-07-28
+
+### Fixed
+- **Folders are now domain-scoped.** Switching the active domain diverges the
+  folder tree across every tab (files · knowledge · data · metrics). The
+  personal read path now honours the existing `FolderNode.domain` (list, path
+  lookup, and cascade key on `(owner, domain)`); new folders are stamped with
+  the domain you're operating in; "All" (no active domain) shows everything, as
+  the artifact lists do. Knowledge's personal "mine"/"domain" lists are narrowed
+  the same way (Marketplace stays tenant-wide). This was a display-only issue —
+  artifact CONTENTS were already correctly domain-filtered, so no data crossed a
+  domain boundary. Migration-free: existing folders keep their stamped domain.
+- **Consistent, honest pipeline status across Test and Publish.** Both stages now
+  read ONE shared derivation (`derivePipelineView`): a live, serving app (deploy
+  state `live` + a shipped release) shows every upstream stage complete in BOTH
+  surfaces — a running pod provably built, published and deployed — so a live app
+  no longer shows "Build image (CI) did not complete" in Test while Publish is
+  green. A genuine failure now surfaces the SAME marked, named stage in both
+  (Publish no longer hides a real failure behind a green badge). Non-live apps are
+  never force-greened.
+
 ## [os-ui 0.6.9] — 2026-07-28
 
 ### Changed
